@@ -75,7 +75,8 @@ tf_proto_library(
     protodeps = [
         ":xla_data_proto",
         "//xla/service:hlo_proto",
-    ] + if_google(["@com_google_protobuf//:any"]),
+        "@com_google_protobuf//:any_proto",
+    ],
     visibility = ["//visibility:public"],
 )
 
@@ -416,6 +417,13 @@ xla_cc_test(
         "//xla/hlo/testlib:test",
         "//xla/tsl/platform:test_main",
     ],
+)
+
+cc_library(
+    name = "future",
+    hdrs = ["future.h"],
+    visibility = ["//visibility:public"],
+    deps = ["//xla/tsl/concurrency:future"],
 )
 
 cc_library(
@@ -997,6 +1005,9 @@ xla_cc_test(
         "//xla/hlo/testlib:test",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest",
     ],
 )
@@ -1229,8 +1240,8 @@ cc_library(
             "@com_google_absl//absl/status:statusor",
             "@com_google_absl//absl/strings",
             "@com_google_absl//absl/strings:str_format",
+            "@com_google_protobuf//:protobuf",
             "@tsl//tsl/platform:platform_port",
-            "@tsl//tsl/platform:protobuf",
         ],
 )
 
@@ -1281,7 +1292,7 @@ xla_cc_test(
             "@com_google_absl//absl/status:statusor",
             "@com_google_absl//absl/strings",
             "@com_google_googletest//:gtest",
-            "@tsl//tsl/platform:protobuf",
+            "@com_google_protobuf//:protobuf_lite",
         ],
 )
 
@@ -1332,10 +1343,9 @@ tf_proto_library(
     make_default_target_header_only = True,
     protodeps = [
         "//xla/tsl/protobuf:dnn_proto",
-    ] + if_google([
-        "@com_google_protobuf//:any",
-        "@com_google_protobuf//:duration",
-    ]),
+        "@com_google_protobuf//:any_proto",
+        "@com_google_protobuf//:duration_proto",
+    ],
 )
 
 cc_library(

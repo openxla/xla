@@ -50,7 +50,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/backend_config.h"
-#include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -64,6 +63,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
 #include "xla/hlo/ir/ptrvec.h"
+#include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/parser/hlo_lexer.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
@@ -1306,6 +1306,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       case HloOpcode::kAsin:
       case HloOpcode::kAcos:
       case HloOpcode::kAcosh:
+      case HloOpcode::kAtanh:
       case HloOpcode::kCos:
       case HloOpcode::kCosh:
       case HloOpcode::kErf:
@@ -1500,6 +1501,7 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAtanh:
     case HloOpcode::kCos:
     case HloOpcode::kCosh:
     case HloOpcode::kErf:
@@ -1671,11 +1673,11 @@ HloInstruction::CreateTriangularSolve(const Shape& shape, HloInstruction* a,
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateScaledDot(
-    const Shape& shape, HloInstruction* lhs, HloInstruction* lhs_scale,
-    HloInstruction* rhs, HloInstruction* rhs_scale,
+    const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+    HloInstruction* lhs_scale, HloInstruction* rhs_scale,
     const DotDimensionNumbers& dimension_numbers,
     const PrecisionConfig& precision_config) {
-  return std::make_unique<HloScaledDotInstruction>(shape, lhs, lhs_scale, rhs,
+  return std::make_unique<HloScaledDotInstruction>(shape, lhs, rhs, lhs_scale,
                                                    rhs_scale, dimension_numbers,
                                                    precision_config);
 }
@@ -2727,6 +2729,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     case HloOpcode::kAsin:
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
+    case HloOpcode::kAtanh:
     case HloOpcode::kAllGatherDone:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kRoundNearestAfz:
@@ -2756,6 +2759,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     case HloOpcode::kLogistic:
     case HloOpcode::kSign:
     case HloOpcode::kSin:
+    case HloOpcode::kSinh:
     case HloOpcode::kSqrt:
     case HloOpcode::kCbrt:
     case HloOpcode::kTan:
@@ -2866,9 +2870,9 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
   if (!suffix.empty()) {
     clone->AddSuffixToInstructionName(suffix);
   }
-  if (shape == this->shape()) {
-    clone->CopyOriginalValue(this, /*clone=*/false);
-  }
+  // Copy the original value of the instruction if its shape is compatible with
+  // the clone.
+  clone->CopyOriginalValue(this);
   return clone;
 }
 
@@ -3198,6 +3202,7 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kAllGatherDone:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kAtan2:
+    case HloOpcode::kAtanh:
     case HloOpcode::kAdd:
     case HloOpcode::kBitcast:
     case HloOpcode::kBitcastConvert:
@@ -3597,6 +3602,9 @@ absl::Status HloInstruction::ReplaceAllUsesWithDifferentShape(
     parent_->set_root_instruction(new_producer,
                                   /*accept_different_shape=*/true);
   }
+  // Copy the original value recovery table from this instruction to the new
+  // producer instruction if their shapes are compatible.
+  new_producer->CopyOriginalValue(/*instruction=*/this);
 
   return absl::OkStatus();
 }
@@ -3827,6 +3835,7 @@ bool HloInstruction::IsOpElementwise(HloOpcode opcode) {
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAtanh:
     case HloOpcode::kRoundNearestAfz:
     case HloOpcode::kRoundNearestEven:
     case HloOpcode::kCeil:
@@ -4532,6 +4541,8 @@ absl::Status HloInstruction::Visit(
       return visitor->HandleAsin(this);
     case HloOpcode::kAtan2:
       return visitor->HandleAtan2(this);
+    case HloOpcode::kAtanh:
+      return visitor->HandleAtanh(this);
     case HloOpcode::kRoundNearestAfz:
       return visitor->HandleRound(this);
     case HloOpcode::kRoundNearestEven:
@@ -5243,6 +5254,7 @@ bool IsUnaryOpWithResultAccuracy(HloOpcode opcode) {
     opcode == HloOpcode::kAcos ||
     opcode == HloOpcode::kAcosh ||
     opcode == HloOpcode::kAsin ||
+    opcode == HloOpcode::kAtanh ||
     opcode == HloOpcode::kCbrt ||
     opcode == HloOpcode::kCos ||
     opcode == HloOpcode::kCosh ||
@@ -5985,11 +5997,6 @@ void HloInstruction::set_async_execution_thread(
 
 void HloInstruction::set_called_computations_execution_thread(
     absl::string_view async_execution_thread) {
-  if (GetInstructionCallContext(this->opcode()) == CallContext::kEmbedded) {
-    // There is no need to set the thread name for embedded computations
-    // recursively, because they cannot be executed asynchronously.
-    return;
-  }
   Cast<HloCallableInstruction>(this)->RecursivelySetComputationsThreadName(
       async_execution_thread);
 }
@@ -6036,9 +6043,9 @@ void HloInstruction::set_original_value(
 }
 
 void HloInstruction::CopyOriginalValue(const HloInstruction* instruction,
-                                       bool clone) {
+                                       bool clone, bool issue_warning) {
   ::xla::CopyOriginalValue(/*src_instruction=*/instruction,
-                           /*dest_instruction=*/this, clone);
+                           /*dest_instruction=*/this, clone, issue_warning);
 }
 
 }  // namespace xla

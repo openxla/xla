@@ -44,8 +44,7 @@ namespace aux {
 
 class StringFutureChunkDestination : public aux::ChunkDestination {
  public:
-  explicit StringFutureChunkDestination(
-      xla::PjRtFuture<std::string>::Promise dest)
+  explicit StringFutureChunkDestination(xla::Promise<std::string> dest)
       : dest_(std::move(dest)) {}
   ~StringFutureChunkDestination() override { dest_.Set(ConsumeFinalResult()); }
   absl::Status Put(const void* data, int64_t offset, size_t size,
@@ -78,12 +77,12 @@ class StringFutureChunkDestination : public aux::ChunkDestination {
  private:
   absl::Mutex mu_;
   std::vector<std::pair<size_t, std::string>> chunks_;
-  xla::PjRtFuture<std::string>::Promise dest_;
+  xla::Future<std::string>::Promise dest_;
 };
 
-std::pair<xla::PjRtFuture<std::string>, tsl::RCReference<ChunkDestination>>
+std::pair<xla::Future<std::string>, tsl::RCReference<ChunkDestination>>
 ChunkDestination::MakeStringDest() {
-  auto [promise, result] = xla::PjRtFuture<std::string>::MakePromise();
+  auto [promise, result] = xla::Future<std::string>::MakePromise();
   return std::make_pair(
       std::move(result),
       tsl::MakeRef<StringFutureChunkDestination>(std::move(promise)));
@@ -321,6 +320,25 @@ void PullTable::Handle(tsl::RCReference<ConnectionState> state,
     absl::MutexLock l(mu_);
     auto it = entries_.find(req.uuid());
     entries_.erase(it);
+  }
+}
+
+void PullTable::Reset() {
+  mu_.lock();
+  auto entries = std::move(entries_);
+  auto paused_fetches_by_uuid = std::move(paused_fetches_);
+  mu_.unlock();
+  // Drop entries without the lock held.
+  for (const auto& paused_fetches : paused_fetches_by_uuid) {
+    for (const auto& paused_fetch : paused_fetches.second) {
+      size_t req_id = paused_fetch.base_req_id;
+      for (uint64_t bid : paused_fetch.req.buffer_ids()) {
+        (void)bid;
+        paused_fetch.state->SendError(req_id, 0, 0, true,
+                                      absl::InternalError("PullTable::Reset"));
+        ++req_id;
+      }
+    }
   }
 }
 

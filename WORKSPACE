@@ -9,10 +9,10 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "77ad040f826af31ce3142e3b8bcf6c61972b4f95c84185676fa1af325fbf52c6",
-    strip_prefix = "rules_ml_toolchain-a912c87727405e2145b168e5b62a5d5ae7232cb2",
+    sha256 = "f43d6fe20ddf65d3f0971380dcfb0ae1310f5d6561e4d82cce49ee63869d3ad4",
+    strip_prefix = "rules_ml_toolchain-e1ca4d3189f43bce0c8bc35d758ad316a15497c6",
     urls = [
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/a912c87727405e2145b168e5b62a5d5ae7232cb2.tar.gz",
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/e1ca4d3189f43bce0c8bc35d758ad316a15497c6.tar.gz",
     ],
 )
 
@@ -26,6 +26,8 @@ cc_toolchain_deps()
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_sycl")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 

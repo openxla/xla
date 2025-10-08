@@ -35,11 +35,11 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/execute_options.pb.h"
-#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/serdes.h"
 #include "xla/python/ifrt/serdes_default_version_accessor.h"
 #include "xla/python/ifrt/serdes_version.h"
 #include "xla/python/ifrt/user_context.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -177,6 +177,11 @@ class LoadedExecutable
   // serialized executable is implementation-specific.
   virtual absl::StatusOr<std::string> Serialize() const = 0;
 
+  // Returns the program text in a format that can be used for easy debugging.
+  // The return value is meant to be consumed only by humans (not automated
+  // parsing), since there are no guarantees on how the value is formatted.
+  virtual absl::StatusOr<std::string> GetHumanReadableProgramText() const = 0;
+
   // Returns the user context associated with the creation of this executable.
   // May be `nullptr` if the user context is unset or the runtime does not
   // support it.
@@ -190,7 +195,7 @@ class LoadedExecutable
   // compilation work in the background. Implementations must still ensure that
   // all other methods can be used even without explicitly waiting for the ready
   // future (e.g., via blocking).
-  virtual Future<> GetReadyFuture() const = 0;
+  virtual tsl::Future<> GetReadyFuture() const = 0;
 
   // The following APIs are taken from `xla::PjRtExecutable` for fast
   // prototyping.
@@ -247,7 +252,7 @@ class LoadedExecutable
   struct ExecuteResult {
     // Resulting status of the execution. Filled only if
     // `ExecuteOptions::fill_status` is true.
-    Future<> status;
+    tsl::Future<> status;
     // Output arrays.
     std::vector<ArrayRef> outputs;
   };

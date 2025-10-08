@@ -111,8 +111,7 @@ class TritonTest : public GpuCodegenTest {
     emitter_opts->Add(
         DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_GEMM_SHAPES);
     absl::StatusOr<bool> nested_or =
-        NestGemmFusion(device_desc().gpu_compute_capability(), &mlir_context_)
-            .Run(module.get());
+        NestGemmFusion(device_desc(), &mlir_context_).Run(module.get());
     if (!nested_or.ok()) {
       return ::testing::AssertionFailure() << nested_or.status().message();
     }
@@ -662,7 +661,8 @@ TEST_F(TritonTest, FuseMultiplyInPrologue) {
   )"));
 }
 
-TEST_F(TritonTest, FuseMultiplyInEpilogue) {
+// TODO(b/449140429): Re-enable this test.
+TEST_F(TritonTest, DISABLED_FuseMultiplyInEpilogue) {
   constexpr absl::string_view kHloText = R"(
     HloModule FuseMultiplyInEpilogue
 

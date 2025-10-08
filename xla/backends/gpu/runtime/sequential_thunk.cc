@@ -58,11 +58,12 @@ std::string SequentialThunk::ToString(int indent) const {
       Thunk::KindToString(thunk_with_longest_kind->get()->kind()).length();
   std::string result;
   for (const std::unique_ptr<Thunk>& thunk : thunks_) {
+    absl::StrAppend(&result, indent_str);
     absl::StrAppendFormat(&result,
                           "%03d: ", thunk->thunk_info().thunk_id.value());
     // Write out the thunk kind, padded out to max_thunk_kind_len.
     absl::string_view kind_str = Thunk::KindToString(thunk->kind());
-    absl::StrAppend(&result, indent_str, kind_str,
+    absl::StrAppend(&result, kind_str,
                     std::string(max_thunk_kind_len - kind_str.length(), ' '),
                     "\t");
     absl::StrAppend(&result, thunk->ToString(indent + 1));
@@ -114,6 +115,13 @@ void SequentialThunk::ForAllThunks(
   fn(this);
   for (const std::unique_ptr<Thunk>& thunk : thunks_) {
     thunk->ForAllThunks(fn);
+  }
+}
+
+void SequentialThunk::ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn) {
+  fn(this);
+  for (const std::unique_ptr<Thunk>& thunk : thunks_) {
+    thunk->ForAllThunksMutable(fn);
   }
 }
 

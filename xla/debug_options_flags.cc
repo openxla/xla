@@ -21,6 +21,7 @@ limitations under the License.
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,8 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "google/protobuf/descriptor.h"
+#include "google/protobuf/text_format.h"
 #include "xla/debug_options_parsers.h"
 #include "xla/parse_flags_from_env.h"
 #include "xla/service/collective_utils.h"
@@ -50,7 +53,6 @@ limitations under the License.
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/cpu_info.h"  // NOLINT
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 
 namespace xla {
 
@@ -100,8 +102,7 @@ absl::StatusOr<std::vector<RepeatedFlagModifier>> ParseRepeatedEnumModifiers(
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(tsl::protobuf::RepeatedField<int>* list,
-                                   T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -118,7 +119,7 @@ template <typename T>
 static auto SetterForRepeatedEnum(
     absl::string_view flag_name, absl::string_view enum_prefix,
     bool (*enum_parser)(absl::string_view string_value, T* value),
-    tsl::protobuf::RepeatedField<int>* mutable_array) {
+    google::protobuf::RepeatedField<int>* mutable_array) {
   return [flag_name, enum_prefix, enum_parser,
           mutable_array](const std::string& input) {
     if (input.empty()) {  // Disable all values.
@@ -451,6 +452,11 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_NONE);
   opts.set_xla_gpu_experimental_scaled_dot_with_triton(false);
   opts.set_xla_gpu_experimental_use_raft_select_k(false);
+
+  opts.set_xla_cpu_collective_call_warn_stuck_seconds(20);
+  opts.set_xla_cpu_collective_call_terminate_timeout_seconds(40);
+
+  opts.set_xla_keep_shardings_after_spmd(false);
   return opts;
 }
 
@@ -588,16 +594,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         return true;
       };
 
-  // Custom "sub-parser" lambda for legacy_command_buffer_custom_call_targets.
-  auto setter_for_legacy_command_buffer_custom_call_targets =
-      [debug_options](std::string comma_separated_values) {
-        for (const auto& target : std::vector<std::string>(
-                 absl::StrSplit(comma_separated_values, ','))) {
-          debug_options->add_legacy_command_buffer_custom_call_targets(target);
-        }
-        return true;
-      };
-
   // Custom "sub-parser" lambda for xla_gpu_ptx_file.
   auto setter_for_xla_gpu_ptx_file = [debug_options](std::string value) {
     debug_options->add_xla_gpu_ptx_file(value);
@@ -682,7 +678,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       };
 
   auto command_types_to_string =
-      [](tsl::protobuf::RepeatedField<int> command_types) -> std::string {
+      [](google::protobuf::RepeatedField<int> command_types) -> std::string {
     struct Formatter {
       void operator()(std::string* out, int type) const {
         absl::StrAppend(out, DebugOptions::CommandBufferCmdType_Name(type));
@@ -737,7 +733,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
   };
 
   auto collective_op_types_to_string =
-      [](tsl::protobuf::RepeatedField<int> collective_ops) -> std::string {
+      [](google::protobuf::RepeatedField<int> collective_ops) -> std::string {
     struct Formatter {
       void operator()(std::string* out, int type) const {
         absl::StrAppend(out, DebugOptions::CollectiveOpType_Name(type));
@@ -848,7 +844,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       };
 
   auto xla_gpu_generic_triton_emitter_features_to_string =
-      [](tsl::protobuf::RepeatedField<int> values) -> std::string {
+      [](google::protobuf::RepeatedField<int> values) -> std::string {
     struct Formatter {
       void operator()(std::string* out, int type) const {
         absl::StrAppend(out,
@@ -1611,14 +1607,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       " + and - as prefix, which indicate adding or removing a command type"
       " to/from the default list."));
 
-  flag_list->push_back(
-      tsl::Flag("legacy_command_buffer_custom_call_targets",
-                setter_for_legacy_command_buffer_custom_call_targets, "",
-                "Comma-separated list of custom call targets with legacy "
-                "registry API (non FFI API), whose targets supports lowering "
-                "to command buffer custom command, i.e., custom call target "
-                "supports cuda-graph capturing for CUDA devices."));
-
   flag_list->push_back(tsl::Flag(
       "xla_gpu_graph_min_graph_size",
       int32_setter_for(&DebugOptions::set_xla_gpu_graph_min_graph_size),
@@ -2183,6 +2171,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "(minimum combined number of elements of both matrices "
       "in non-batch dimensions to be considered for a rewrite)."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_use_embeded_device_lib",
+      bool_setter_for(&DebugOptions::set_xla_gpu_use_embeded_device_lib),
+      debug_options->xla_gpu_use_embeded_device_lib(),
+      "Whether to use embeded bitcode library in codegen."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_use_memcpy_local_p2p",
       bool_setter_for(&DebugOptions::set_xla_gpu_use_memcpy_local_p2p),
       debug_options->xla_gpu_use_memcpy_local_p2p(),
@@ -2395,6 +2388,26 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Internal: Enable the RaggedAllToAllDecomposer, an experimental pass "
       "that rewrites ragged-all-to-all as a dense all-to-all operation."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_unsupported_enable_ragged_all_to_all_multi_host_decomposer",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_unsupported_enable_ragged_all_to_all_multi_host_decomposer),  // NOLINT
+      debug_options
+          ->xla_gpu_unsupported_enable_ragged_all_to_all_multi_host_decomposer(),  // NOLINT
+      "Internal: Enable the RaggedAllToAllMultiHostDecomposer, an experimental "
+      "pass to decompose ragged-all-to-all operation in intra-host and "
+      "inter-host parts."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_unsupported_override_fast_interconnect_slice_size",
+      int64_setter_for(
+          &DebugOptions::
+              set_xla_gpu_unsupported_override_fast_interconnect_slice_size),
+      debug_options
+          ->xla_gpu_unsupported_override_fast_interconnect_slice_size(),
+      "Internal: Override the number of devices in the fast interconnect "
+      "domain. Default is 0, which means the number of devices is not "
+      "overridden."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_unsupported_use_all_reduce_one_shot_kernel",
       bool_setter_for(
           &DebugOptions::
@@ -2542,6 +2555,24 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_experimental_scaled_dot_with_triton),
       debug_options->xla_gpu_experimental_scaled_dot_with_triton(),
       "If true, use the Triton emitter for scaled dot."));
+
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_collective_call_warn_stuck_timeout_seconds",
+      int32_setter_for(
+          &DebugOptions::set_xla_cpu_collective_call_warn_stuck_seconds),
+      debug_options->xla_cpu_collective_call_warn_stuck_seconds(),
+      "Set timeout for Collective Call Rendezvous stuck warning"));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_collective_call_terminate_timeout_seconds",
+      int32_setter_for(
+          &DebugOptions::set_xla_cpu_collective_call_terminate_timeout_seconds),
+      debug_options->xla_cpu_collective_call_terminate_timeout_seconds(),
+      "Set timeout for Collective Call Rendezvous termination"));
+  flag_list->push_back(tsl::Flag(
+      "xla_keep_shardings_after_spmd",
+      bool_setter_for(&DebugOptions::set_xla_keep_shardings_after_spmd),
+      debug_options->xla_keep_shardings_after_spmd(),
+      "If true, keep shardings after SPMD."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
@@ -2576,8 +2607,8 @@ bool ParseFlagsFromDebugOptionsFile(absl::string_view filename) {
   file_content = buffer.str();
   file.close();
   DebugOptions new_debug_options;
-  tsl::protobuf::TextFormat::Parser parser;
-  tsl::protobuf::TextFormat::ParseInfoTree tree;
+  google::protobuf::TextFormat::Parser parser;
+  google::protobuf::TextFormat::ParseInfoTree tree;
   parser.WriteLocationsTo(&tree);
   VLOG(1) << "Debug options file contents: " << file_content;
   if (!parser.ParseFromString(file_content, &new_debug_options)) {
@@ -2588,10 +2619,10 @@ bool ParseFlagsFromDebugOptionsFile(absl::string_view filename) {
 
   // Read from new_debug_options, and overwrite the flags in debug_options that
   // are actually mentioned in file_contents.
-  std::vector<const tsl::protobuf::FieldDescriptor*> overwritten_fields;
+  std::vector<const google::protobuf::FieldDescriptor*> overwritten_fields;
   int field_count = new_debug_options.GetDescriptor()->field_count();
   for (int i = 0; i < field_count; i++) {
-    const tsl::protobuf::FieldDescriptor* field =
+    const google::protobuf::FieldDescriptor* field =
         new_debug_options.GetDescriptor()->field(i);
     if (tree.GetLocation(field, field->is_repeated() ? 0 : -1).line != -1) {
       VLOG(2) << "Non default field: " << field->name();

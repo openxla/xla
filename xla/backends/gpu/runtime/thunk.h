@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/executable_run_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -499,6 +500,15 @@ class Thunk {
   // Precondition: Initialize(initialize_params) has been called.
   virtual absl::Status ExecuteOnStream(const ExecuteParams& params) = 0;
 
+  using BufferUses = absl::InlinedVector<BufferUse, 4>;
+
+  // Returns all device buffers used by the thunk.
+  //
+  // Does not propagate buffers from nested thunks.
+  //
+  // The order of the buffers in returned vector is consistent across calls.
+  virtual BufferUses buffer_uses() const { return {}; }
+
   static absl::string_view KindToString(Thunk::Kind kind);
 
   ExecutionStreamId execution_stream_id() const {
@@ -522,6 +532,9 @@ class Thunk {
 
   // Invokes `fn` with this thunk and all nested thunks.
   virtual void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const;
+
+  // Invokes `fn` with this thunk and all nested thunks.
+  virtual void ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn);
 
   // A helper function to get the `GpuCollectives*` pointer from the
   // CollectiveExecuteParams.
@@ -596,6 +609,7 @@ struct ShapedSlice {
 // Returns if the thunk implements a reduction collective (all-reduce or
 // reduce-scatter).
 bool IsReductionCollective(Thunk::Kind kind);
+
 }  // namespace gpu
 }  // namespace xla
 

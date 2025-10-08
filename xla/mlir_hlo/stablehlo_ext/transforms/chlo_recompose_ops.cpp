@@ -280,6 +280,54 @@ struct AcosOpRecomposePattern
   }
 };
 
+struct AtanhOpRecomposePattern
+    : public OpRewritePattern<stablehlo::CompositeOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(stablehlo::CompositeOp op,
+                                PatternRewriter& rewriter) const override {
+    if (op.getName() != "chlo.atanh") {
+      return rewriter.notifyMatchFailure(op, "not a chlo.atanh");
+    }
+    if (op.getVersion() != 1) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported version for chlo.atanh composite");
+    }
+    return recomposeChloOpFromCompositeOp<chlo::AtanhOp>(op, rewriter);
+  }
+};
+
+struct CoshOpRecomposePattern
+    : public OpRewritePattern<stablehlo::CompositeOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(stablehlo::CompositeOp op,
+                                PatternRewriter& rewriter) const override {
+    if (op.getName() != "chlo.cosh") {
+      return rewriter.notifyMatchFailure(op, "not a chlo.cosh");
+    }
+    if (op.getVersion() != 1) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported version for chlo.cosh composite");
+    }
+    return recomposeChloOpFromCompositeOp<chlo::CoshOp>(op, rewriter);
+  }
+};
+
+struct SinhOpRecomposePattern
+    : public OpRewritePattern<stablehlo::CompositeOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(stablehlo::CompositeOp op,
+                                PatternRewriter& rewriter) const override {
+    if (op.getName() != "chlo.sinh") {
+      return rewriter.notifyMatchFailure(op, "not a chlo.sinh");
+    }
+    if (op.getVersion() != 1) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported version for chlo.cosh composite");
+    }
+    return recomposeChloOpFromCompositeOp<chlo::SinhOp>(op, rewriter);
+  }
+};
+
 struct ErfOpRecomposePattern : public OpRewritePattern<stablehlo::CompositeOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(stablehlo::CompositeOp op,
@@ -389,6 +437,36 @@ struct AcosOpCustomCallRecomposePattern
   }
 };
 
+struct AtanhOpCustomCallRecomposePattern
+    : public OpRewritePattern<stablehlo::CustomCallOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(stablehlo::CustomCallOp op,
+                                PatternRewriter& rewriter) const override {
+    return recomposeChloOpFromCustomCall<chlo::AtanhOp>(
+        op, {"mhlo.atanh", "chlo.atanh"}, rewriter);
+  }
+};
+
+struct CoshOpCustomCallRecomposePattern
+    : public OpRewritePattern<stablehlo::CustomCallOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(stablehlo::CustomCallOp op,
+                                PatternRewriter& rewriter) const override {
+    return recomposeChloOpFromCustomCall<chlo::CoshOp>(
+        op, {"mhlo.cosh", "chlo.cosh"}, rewriter);
+  }
+};
+
+struct SinhOpCustomCallRecomposePattern
+    : public OpRewritePattern<stablehlo::CustomCallOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(stablehlo::CustomCallOp op,
+                                PatternRewriter& rewriter) const override {
+    return recomposeChloOpFromCustomCall<chlo::SinhOp>(
+        op, {"mhlo.sinh", "chlo.sinh"}, rewriter);
+  }
+};
+
 }  // namespace
 
 struct ChloRecomposeOpsPass
@@ -411,6 +489,9 @@ struct ChloRecomposeOpsPass
     patterns.add<
       AcosOpCustomCallRecomposePattern,
       AcoshOpCustomCallRecomposePattern,
+      AtanhOpCustomCallRecomposePattern,
+      CoshOpCustomCallRecomposePattern,
+      SinhOpCustomCallRecomposePattern,
       ErfOpCustomCallRecomposePattern,
       RaggedDotOpCustomCallRecomposePattern,
       TanOpCustomCallRecomposePattern,
@@ -420,6 +501,9 @@ struct ChloRecomposeOpsPass
     patterns.add<
       AcosOpRecomposePattern,
       AcoshOpRecomposePattern,
+      AtanhOpRecomposePattern,
+      CoshOpRecomposePattern,
+      SinhOpRecomposePattern,
       ErfOpRecomposePattern,
       RaggedDotOpRecomposePattern,
       TopKOpRecomposePattern>(ctx);

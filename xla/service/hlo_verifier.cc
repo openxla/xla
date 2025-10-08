@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
@@ -85,32 +86,6 @@ absl::Status CheckOperandCount(const HloInstruction* hlo, int expected) {
                     HloOpcodeString(hlo->opcode()), hlo->ToString());
   }
   return absl::OkStatus();
-}
-
-int64_t GetSubgroupSize(HloCollectiveInstruction* hlo,
-                        CollectiveOpGroupMode group_mode) {
-  const HloModuleConfig& config = hlo->GetModule()->config();
-  switch (group_mode) {
-    case CollectiveOpGroupMode::kCrossReplica:
-    case CollectiveOpGroupMode::kCrossReplicaAndPartition: {
-      int64_t replica_subgroup_size =
-          hlo->replica_groups().empty()
-              ? config.replica_count()
-              : hlo->replica_groups()[0].replica_ids_size();
-      if (group_mode == CollectiveOpGroupMode::kCrossReplicaAndPartition) {
-        // Replicas from all partitions participate.
-        replica_subgroup_size *= config.num_partitions();
-      }
-      return replica_subgroup_size;
-    }
-    case CollectiveOpGroupMode::kFlattenedID:
-      // Empty replica groups not allowed in this mode.
-      return hlo->replica_groups()[0].replica_ids_size();
-    case CollectiveOpGroupMode::kCrossPartition:
-      return hlo->replica_groups().empty()
-                 ? config.num_partitions()
-                 : hlo->replica_groups()[0].replica_ids_size();
-  }
 }
 
 absl::Status CheckUnaryOpWithResultAccuracy(HloInstruction* unary) {
@@ -329,9 +304,9 @@ absl::Status ShapeVerifier::HandleScaledDot(HloInstruction* scaled_dot) {
 
   TF_ASSIGN_OR_RETURN(auto dim_numbers,
                       DotOperandDims::FromScaledDot(scaled_dot));
-  TF_RETURN_IF_ERROR(ScalesShapeVerifier(scaled_dot, dim_numbers, 0, 1));
-  TF_RETURN_IF_ERROR(ScalesShapeVerifier(scaled_dot, dim_numbers, 2, 3));
-  if (ShapeUtil::IsScalar(scaled_dot->operand(1)->shape()) &&
+  TF_RETURN_IF_ERROR(ScalesShapeVerifier(scaled_dot, dim_numbers, 0, 2));
+  TF_RETURN_IF_ERROR(ScalesShapeVerifier(scaled_dot, dim_numbers, 1, 3));
+  if (ShapeUtil::IsScalar(scaled_dot->operand(2)->shape()) &&
       ShapeUtil::IsScalar(scaled_dot->operand(3)->shape())) {
     return absl::FailedPreconditionError(absl::StrFormat(
         "At least one of the scales should be not a scalar in %s",
@@ -340,7 +315,7 @@ absl::Status ShapeVerifier::HandleScaledDot(HloInstruction* scaled_dot) {
   TF_ASSIGN_OR_RETURN(
       const Shape expected,
       ShapeInference::InferDotOpShape(
-          scaled_dot->operand(0)->shape(), scaled_dot->operand(2)->shape(),
+          scaled_dot->operand(0)->shape(), scaled_dot->operand(1)->shape(),
           scaled_dot->dot_dimension_numbers(),
           /*preferred_element_type=*/scaled_dot->shape().element_type()));
   return CheckShape(scaled_dot, expected);
@@ -1516,11 +1491,16 @@ absl::Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
     const Shape& operand_subshape = ShapeUtil::GetSubshape(
         custom_call->operand(pair.second.first)->shape(), pair.second.second);
     if (opts_.layout_sensitive) {
-      TF_RET_CHECK(Shape::Equal().IgnoreBuffer(ignore_buffer)(operand_subshape,
-                                                              output_subshape))
-          << "Different aliasing shapes: "
-          << operand_subshape.ToString(/*print_layout=*/true) << " vs "
-          << output_subshape.ToString(/*print_layout=*/true);
+      bool operand_is_scalar = operand_subshape.IsArray() &&
+                               ShapeUtil::ElementsIn(operand_subshape) == 1;
+      auto shape_equal_checker = Shape::Equal().IgnoreBuffer(ignore_buffer);
+      if (operand_is_scalar) {
+        shape_equal_checker.IgnoreMemorySpaceInLayout();
+      }
+      TF_RET_CHECK(shape_equal_checker(operand_subshape, output_subshape))
+          << absl::Substitute("Different aliasing shapes: $0 vs $1",
+                              operand_subshape.ToString(/*print_layout=*/true),
+                              output_subshape.ToString(/*print_layout=*/true));
     } else {
       TF_RET_CHECK(
           Shape::Equal().IgnoreDynamicDimension().IgnoreLayout().IgnoreBuffer(
@@ -1720,13 +1700,10 @@ absl::Status CheckCallableInstructionThreadName(
     const HloInstruction* instruction) {
   for (const HloComputation* computation : instruction->called_computations()) {
     if (instruction->parent() != nullptr) {
-      if (xla::GetInstructionCallContext(instruction->opcode()) !=
-              CallContext::kEmbedded &&
-          instruction->parent()->execution_thread() !=
-              computation->execution_thread()) {
+      if (instruction->parent()->execution_thread() !=
+          computation->execution_thread()) {
         return Internal(
-            "Non-Embedded context callable instruction %s expects parent "
-            "computation thread name "
+            "Callable instruction %s expects parent computation thread name "
             "same as called computation's thread name (%s vs %s).",
             instruction->ToString(), instruction->parent()->execution_thread(),
             computation->execution_thread());
@@ -3747,13 +3724,10 @@ absl::Status InstructionVerifier::Preprocess(HloInstruction* instruction) {
 
   if (opts_.verify_call_nested_computation_thread_name &&
       instruction->has_to_apply() &&
-      xla::GetInstructionCallContext(instruction->opcode()) !=
-          xla::CallContext::kEmbedded &&
       instruction->to_apply()->execution_thread() !=
           instruction->parent()->execution_thread()) {
     return Internal(
-        "Non-Embedded context callable instruction %s to_apply computation "
-        "execution thread does not match (%s vs %s)",
+        "%s to_apply computation execution thread does not match (%s vs %s)",
         instruction->name(), instruction->to_apply()->execution_thread(),
         instruction->parent()->execution_thread());
   }

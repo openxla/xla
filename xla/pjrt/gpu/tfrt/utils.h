@@ -34,6 +34,7 @@ limitations under the License.
 #include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/client/local_client.h"
 #include "xla/executable_run_options.h"
+#include "xla/future.h"
 #include "xla/layout.h"
 #include "xla/maybe_owning.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
@@ -72,7 +72,7 @@ absl::Status WaitForEventOnStream(se::Stream* stream, se::Event* event);
 absl::StatusOr<std::shared_ptr<se::Event>> CreateCudaEvent(
     TfrtGpuDevice* device);
 
-PjRtFuture<> CreateFutureForEvent(tsl::AsyncValueRef<xla::GpuEvent> event);
+Future<> CreateFutureForEvent(tsl::AsyncValueRef<xla::GpuEvent> event);
 
 absl::StatusOr<Shape> GetDestinationDeviceShape(const Shape& host_shape,
                                                 TfrtGpuDevice* device,
@@ -178,6 +178,11 @@ void EnqueueWorkWhenReady(
     tsl::thread::ThreadPool* pool,
     absl::Span<const tsl::RCReference<tsl::AsyncValue>> values,
     absl::AnyInvocable<void()> callee);
+
+absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
+GetLatestIncarnations(
+    absl::Span<PjRtDevice* const> devices,
+    const absl::flat_hash_map<int, IncarnationId>& incarnations);
 
 }  // namespace xla
 

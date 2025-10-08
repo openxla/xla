@@ -24,18 +24,17 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/replica_group.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
@@ -816,7 +815,6 @@ HloInstruction* IsOrHasCollectiveWithChannelId(HloInstruction* instruction) {
   return nullptr;
 }
 
-
 bool IsExclusivelyCrossModule(absl::Span<const ReplicaGroup> replica_groups,
                               bool use_global_ids, bool has_channel_id,
                               const DeviceAssignment& device_assignment) {
@@ -893,4 +891,31 @@ bool HasDuplicateSourcesOrTargets(const SourceTargetPairs& pairs) {
   }
   return false;
 }
+
+int64_t GetSubgroupSize(const HloCollectiveInstruction* hlo,
+                        CollectiveOpGroupMode group_mode) {
+  const HloModuleConfig& config = hlo->GetModule()->config();
+  switch (group_mode) {
+    case CollectiveOpGroupMode::kCrossReplica:
+    case CollectiveOpGroupMode::kCrossReplicaAndPartition: {
+      int64_t replica_subgroup_size =
+          hlo->replica_groups().empty()
+              ? config.replica_count()
+              : hlo->replica_groups()[0].replica_ids_size();
+      if (group_mode == CollectiveOpGroupMode::kCrossReplicaAndPartition) {
+        // Replicas from all partitions participate.
+        replica_subgroup_size *= config.num_partitions();
+      }
+      return replica_subgroup_size;
+    }
+    case CollectiveOpGroupMode::kFlattenedID:
+      // Empty replica groups not allowed in this mode.
+      return hlo->replica_groups()[0].replica_ids_size();
+    case CollectiveOpGroupMode::kCrossPartition:
+      return hlo->replica_groups().empty()
+                 ? config.num_partitions()
+                 : hlo->replica_groups()[0].replica_ids_size();
+  }
+}
+
 }  // end namespace xla

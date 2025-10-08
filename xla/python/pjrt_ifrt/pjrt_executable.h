@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/ExtensibleRTTI.h"
@@ -39,7 +40,6 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
-#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/host_callback.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
+#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -230,10 +231,10 @@ class PjRtLoadedExecutable final
 
   UserContextRef user_context() const override { return user_context_; }
 
-  Future<> GetReadyFuture() const override {
+  tsl::Future<> GetReadyFuture() const override {
     // PjRtCompiler blocks until compilation finishes and returns only the
     // executables that are ready.
-    return Future<>(absl::OkStatus());
+    return tsl::Future<>(absl::OkStatus());
   }
 
   std::optional<std::vector<OpSharding>> GetParameterShardings()
@@ -267,6 +268,15 @@ class PjRtLoadedExecutable final
   }
 
   absl::StatusOr<std::string> Serialize() const override;
+
+  absl::StatusOr<std::string> GetHumanReadableProgramText() const override {
+    TF_ASSIGN_OR_RETURN(auto hlo_modules,
+                        pjrt_loaded_executable_->GetHloModules());
+    return absl::StrJoin(hlo_modules, "\n\n",
+                         [](std::string* out, const auto& hlo_module) {
+                           absl::StrAppend(out, hlo_module->ToString());
+                         });
+  }
 
   int num_devices() const override {
     DCHECK(this);

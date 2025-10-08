@@ -50,7 +50,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/backend_config.h"
-#include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_domain_metadata.h"
@@ -59,6 +58,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/ptrvec.h"
+#include "xla/hlo/ir/replica_group.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/literal_pool.h"
@@ -476,8 +476,8 @@ class alignas(kInstructionTypeMask + 1) HloInstruction {
   // 'rhs_scale', with contracting, batch, ragged, and group dimensions
   // specified in 'dimension_numbers'.
   static std::unique_ptr<HloInstruction> CreateScaledDot(
-      const Shape& shape, HloInstruction* lhs, HloInstruction* lhs_scale,
-      HloInstruction* rhs, HloInstruction* rhs_scale,
+      const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+      HloInstruction* lhs_scale, HloInstruction* rhs_scale,
       const DotDimensionNumbers& dimension_numbers,
       const PrecisionConfig& precision_config);
 
@@ -2449,9 +2449,12 @@ class alignas(kInstructionTypeMask + 1) HloInstruction {
   std::shared_ptr<OriginalValue> original_value() const;
   void set_original_value(std::shared_ptr<OriginalValue> original_value);
 
-  // Copy original value from the input instruction. This performs a deep copy
-  // if clone is set to true. Otherwise, it performs a shallow copy.
-  void CopyOriginalValue(const HloInstruction* instruction, bool clone);
+  // Copy original value from the input instruction if the source and
+  // destination shapes are compatible. This performs a deep copy if clone is
+  // set to true. Otherwise, it performs a shallow copy. Print a warning if the
+  // shapes are not compatible and issue_warning is set to true.
+  void CopyOriginalValue(const HloInstruction* instruction, bool clone = false,
+                         bool issue_warning = false);
 
  protected:
   // Internal constructor for a given opcode/shape, other fields must be filled

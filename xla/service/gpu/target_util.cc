@@ -247,6 +247,9 @@ struct TargetDeviceFunction GetDeviceFunctionRoot(
     case TargetDeviceFunctionID::kAsin: {
       return {"__nv_asin", "__ocml_asin", "_Z16__spirv_ocl_asin"};
     }
+    case TargetDeviceFunctionID::kAtanh: {
+      return {"__nv_atanh", "__ocml_atanh", "_Z15__spirv_ocl_atanh"};
+    }
     case TargetDeviceFunctionID::kCos: {
       return {"__nv_cos", "__ocml_cos", "_Z15__spirv_ocl_cos"};
     }
@@ -312,6 +315,8 @@ std::optional<TargetDeviceFunctionID> GetTargetDeviceFunctionID(HloOpcode op) {
       return TargetDeviceFunctionID::kAsin;
     case HloOpcode::kAtan2:
       return TargetDeviceFunctionID::kAtan2;
+    case HloOpcode::kAtanh:
+      return TargetDeviceFunctionID::kAtanh;
     case HloOpcode::kCos:
       return TargetDeviceFunctionID::kCos;
     case HloOpcode::kCosh:
@@ -394,7 +399,7 @@ std::string ObtainDeviceFunctionName(TargetDeviceFunctionID func_id,
     } else {
       LOG(FATAL) << "Unexpected type while getting device function name.";
     }
-  } else if (target_triple.isSPIR()) {
+  } else if (target_triple.isSPIROrSPIRV()) {
     // TODO(b/370452608): Are there approximate functions we can use for BF16
     // and F16 types?
     if (output_type == BF16 || output_type == F16 || output_type == F32) {
@@ -449,7 +454,7 @@ llvm::CallInst* EmitDeviceFunctionCall(
           .getCallee());
 
   callee->addFnAttrs(attributes);
-  if (target_triple.isSPIR())
+  if (target_triple.isSPIROrSPIRV())
     callee->setCallingConv(llvm::CallingConv::SPIR_FUNC);
 
   return b->CreateCall(callee, llvm_ir::AsArrayRef(operands), name.data());
@@ -468,7 +473,7 @@ llvm::CallInst* EmitCallToTargetIntrinsic(
     llvm_intrinsic_or_function = gpu_intrinsic_id.nvptx_intrinsic_or_function;
   } else if (target_triple.getArch() == llvm::Triple::amdgcn) {
     llvm_intrinsic_or_function = gpu_intrinsic_id.amdgpu_intrinsic_or_function;
-  } else if (target_triple.isSPIR()) {
+  } else if (target_triple.isSPIROrSPIRV()) {
     llvm_intrinsic_or_function = gpu_intrinsic_id.spir_intrinsic_or_function;
   } else {
     LOG(FATAL) << "Invalid triple " << target_triple.str();
@@ -498,7 +503,7 @@ void AnnotateFunctionAsGpuKernel(llvm::Module* module, llvm::Function* func,
     // Attach information so AMDGPU can recognize function as a AMDGPU kernel.
     func->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
     func->addFnAttr("uniform-work-group-size", "true");
-  } else if (target_triple.isSPIR()) {
+  } else if (target_triple.isSPIROrSPIRV()) {
     // Attach information so that it can be recognized as a SPIR kernel.
     func->setCallingConv(llvm::CallingConv::SPIR_KERNEL);
   } else {

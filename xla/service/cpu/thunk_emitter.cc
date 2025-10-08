@@ -116,9 +116,9 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/traceme.h"
 
-#ifdef INTEL_MKL
+#ifdef XLA_ONEDNN
 #include "xla/backends/cpu/runtime/onednn/onednn_op_thunk.h"
-#endif  // INTEL_MKL
+#endif  // XLA_ONEDNN
 
 #if XLA_ONEDNN_USE_GRAPH_API
 #include "xla/backends/cpu/onednn_emitter.h"
@@ -227,6 +227,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitEntryComputation(
 
 absl::StatusOr<std::vector<ThunkEmitter::EmittedKernel>>
 ThunkEmitter::ConsumeKernels() {
+  tsl::profiler::TraceMe trace("ThunkEmitter::ConsumeKernels");
   TF_ASSIGN_OR_RETURN(std::vector<LlvmKernelDefinition> fusion_kernels,
                       parallel_fusion_emitter_.ConsumeKernels());
 
@@ -332,6 +333,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kAdd:
     case HloOpcode::kAnd:
     case HloOpcode::kAtan2:
+    case HloOpcode::kAtanh:
     case HloOpcode::kBroadcast:
     case HloOpcode::kBitcastConvert:
     case HloOpcode::kCbrt:
@@ -869,9 +871,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
                           emitters::GetKernelSpec(
                               kernel_spec.name(), *fusion, &buffer_assignment_,
                               kernel_spec.work_dimensions()));
-      return MakeKernelThunkSequence(
-          instruction, new_kernel_spec,
-          /*min_alignment=*/cpu_function_runtime::MinAlign());
+      return MakeKernelThunkSequence(instruction, new_kernel_spec,
+                                     /*min_alignment=*/MinAlign());
     }
 
     TF_ASSIGN_OR_RETURN(KernelSpec kernel_spec,
@@ -1204,7 +1205,7 @@ static absl::StatusOr<OpBuffers> GetOpBuffers(
   };
 }
 
-#ifdef INTEL_MKL
+#ifdef XLA_ONEDNN
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOneDnnOpThunk(
     const HloInstruction* instruction) {
   auto custom_call = Cast<HloCustomCallInstruction>(instruction);
@@ -1214,6 +1215,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOneDnnOpThunk(
   OneDnnOpThunk::OneDnnOpConfig config;
   if (custom_call_target == "__onednn$matmul") {
     config = backend_config->onednn_matmul_config();
+  } else if (custom_call_target == "__onednn$convolution") {
+    config = backend_config->onednn_conv_config();
+  } else if (custom_call_target == "__onednn$layernorm") {
+    config = backend_config->onednn_layer_norm_config();
+  } else if (custom_call_target == "__onednn$softmax") {
+    config = backend_config->onednn_softmax_config();
   } else {
     return Unimplemented(
         "Custom call target %s is not supported in thunk runtime",
@@ -1225,7 +1232,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOneDnnOpThunk(
   return ThunkSequence::Of<OneDnnOpThunk>(
       custom_call_target, ThunkInfo(custom_call), op_buffers, config);
 }
-#endif  // INTEL_MKL
+#endif  // XLA_ONEDNN
 
 static bool IsValidCustomCallApiVersion(CustomCallApiVersion api_version) {
   switch (api_version) {
@@ -1245,10 +1252,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
 
   // TODO(penporn): Support these existing targets.
   auto custom_call_target = custom_call->custom_call_target();
-  if (custom_call_target == "PadToStatic" ||
-      custom_call_target == "__onednn$convolution" ||
-      custom_call_target == "__onednn$softmax" ||
-      custom_call_target == "__onednn$layernorm") {
+  if (custom_call_target == "PadToStatic") {
     return Unimplemented("Custom call target %s is not implemented.",
                          custom_call_target);
   }
@@ -1257,11 +1261,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
   } else if (custom_call_target == "SliceToDynamic") {
     return EmitSliceToDynamicThunk(instruction);
   } else if (absl::StartsWith(custom_call->custom_call_target(), "__onednn$")) {
-#ifdef INTEL_MKL
+#ifdef XLA_ONEDNN
     return EmitOneDnnOpThunk(instruction);
 #else
     return Unimplemented("XLA is not built with oneDNN.");
-#endif  // INTEL_MKL
+#endif  // XLA_ONEDNN
   }
 
   // Check the API version.

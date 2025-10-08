@@ -151,6 +151,7 @@ cc_library(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -486,9 +487,14 @@ xla_cc_test(
         ":gpu_blas_lt_proto_cc",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor:blas",
+        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
+        "@com_google_protobuf//:protobuf",
     ],
 )
 
@@ -567,15 +573,12 @@ xla_cc_test(
 xla_test(
     name = "gpu_kernel_test",
     srcs = ["gpu_kernel_test.cc"],
-    backend_tags = {
-        # TODO(b/445172709): Re-enable once fixed.
-        "b200": ["broken"],
-    },
     backends = ["gpu"],
     deps = [
         ":gpu_test_kernels",
         ":gpu_test_kernels_fatbin",
         ":tma_metadata",
+        ":tma_metadata_proto_cc",
         "//xla/service:platform_util",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_memory",

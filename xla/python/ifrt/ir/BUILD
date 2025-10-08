@@ -456,8 +456,7 @@ tsl_pybind_extension(
         "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
-        "@pybind11",
-        "@pybind11_abseil//pybind11_abseil:absl_casters",
+        "@nanobind",
     ],
 )
 
@@ -511,6 +510,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt:remap_plan_proto_cc",
         "//xla/python/ifrt/ir/transforms:utils",
+        "//xla/tsl/concurrency:future",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",

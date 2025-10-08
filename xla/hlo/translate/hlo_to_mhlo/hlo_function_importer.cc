@@ -208,8 +208,8 @@ Operation* GetTupleElementOp(mlir::OpBuilder* builder, Value value,
                              llvm::SmallVector<NamedAttribute>&& attributes) {
   attributes.push_back(
       builder->getNamedAttr("index", builder->getI32IntegerAttr(index)));
-  return builder->create<mlir::stablehlo::GetTupleElementOp>(
-      value.getLoc(), value, builder->getI32IntegerAttr(index));
+  return mlir::stablehlo::GetTupleElementOp::create(*builder, value.getLoc(),
+                                                    value, attributes);
 }
 
 // Creates an array of zeros like the given MLIR type, if type has bounded
@@ -567,9 +567,18 @@ absl::StatusOr<Value> HloFunctionImporter::ImportInstructionsImpl(
   // Setup the input parameters.
   const int num_parameters = computation.num_parameters();
 
+  FuncOp func = llvm::dyn_cast<FuncOp>(builder->getBlock()->getParentOp());
   for (int i = 0; i < num_parameters; i++) {
     auto* hlo_parameter = computation.parameter_instruction(i);
     instruction_value_map_[hlo_parameter] = arguments[i];
+    // Only add original value attributes to parameters in functions. Skip
+    // regions.
+    if (hlo_parameter->original_value() && func) {
+      func.setArgAttr(
+          i, kMhloOriginalValueAttr,
+          builder_->getStringAttr(
+              "{" + hlo_parameter->original_value()->ToString() + "}"));
+    }
   }
 
   for (auto instruction : computation.MakeInstructionPostOrder()) {
@@ -715,6 +724,13 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
     attributes.push_back(builder_->getNamedAttr(
         xla::kMhloSharding,
         ConvertSharding(instruction->sharding(), builder_)));
+  }
+
+  if (instruction->original_value()) {
+    attributes.push_back(builder_->getNamedAttr(
+        kMhloOriginalValueAttr,
+        builder_->getStringAttr(
+            "{" + instruction->original_value()->ToString() + "}")));
   }
 
   llvm::SmallVector<NamedAttribute, 4> frontend_attributes;
@@ -2155,6 +2171,7 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       NO_ATTRIBUTE_CASE_MHLO(kAcos, AcosOp);
       NO_ATTRIBUTE_CASE_MHLO(kAsin, AsinOp);
       NO_ATTRIBUTE_CASE_MHLO(kAcosh, AcoshOp);
+      NO_ATTRIBUTE_CASE_MHLO(kAtanh, AtanhOp);
       NO_ATTRIBUTE_CASE_MHLO(kAddDependency, AddDependencyOp);
       NO_ATTRIBUTE_CASE_MHLO(kCosh, CoshOp);
       NO_ATTRIBUTE_CASE_MHLO(kCopy, CopyOp);

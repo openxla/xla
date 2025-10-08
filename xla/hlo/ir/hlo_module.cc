@@ -351,6 +351,8 @@ void HloModule::ReplaceComputations(
 void HloModule::Print(
     Printer* printer, const HloPrintOptions& options,
     const absl::btree_map<std::string, NumericOrString>& custom_fields) const {
+  const std::string tab(2 * options.indent_amount(), ' ');
+  printer->Append(tab);
   printer->Append("HloModule ");
   if (options.print_ids()) {
     // When print_ids() is false, exclude module's name because it includes and
@@ -1448,7 +1450,7 @@ HloComputation* HloModule::DeepCloneComputation(HloComputation* computation,
 }
 
 uint64_t HloModule::RandomNew64() const {
-  absl::MutexLock l(&rng_mutex_);
+  absl::MutexLock l(rng_mutex_);
   return rng_();
 }
 
@@ -1470,7 +1472,10 @@ std::string HloModule::GetFingerprint128(const HloPrintOptions& options) const {
 
 struct OriginalArrayComparator {
   bool operator()(const OriginalArray& lhs, const OriginalArray& rhs) const {
-    return lhs.instruction_name < rhs.instruction_name;
+    if (lhs.instruction_name != rhs.instruction_name) {
+      return lhs.instruction_name < rhs.instruction_name;
+    }
+    return lhs.shape_index < rhs.shape_index;
   }
 };
 
@@ -1505,14 +1510,11 @@ std::string HloModule::OriginalValueRecoveryTable::ToString(
     const std::string tab(2 * (options.indent_amount()), ' ');
     std::string recovery_module_string;
     if (recovery_module) {
-      absl::StrAppend(&recovery_module_string, ",\n", tab, "\"\n",
-                      recovery_module->entry_computation()->ToString(
-                          HloPrintOptions()
-                              .set_print_computation_mode(
-                                  HloPrintOptions::PrintComputationMode::
-                                      kComputationWithEntryKeyword)
-                              .set_indent_amount(options.indent_amount() + 1)),
-                      "\n", tab, "\"");
+      absl::StrAppend(
+          &recovery_module_string, ",\n", tab, "\"\n",
+          recovery_module->ToString(
+              HloPrintOptions().set_indent_amount(options.indent_amount() + 1)),
+          "\n", tab, "\"");
     }
     absl::StrAppend(&result, tab, "{", old_original_array.ToString(), "} : {",
                     new_original_array.ToString(), "}", recovery_module_string,
@@ -1637,7 +1639,7 @@ void HloModule::OriginalValueRecoveryTable::AddRecoveryComputation(
       new_original_array->emplace(
           OriginalArray{GetOriginalValuePlaceholderInstructionName(
                             old_original_array->instruction_name),
-                        shape_index});
+                        old_original_array->shape_index});
     }
     table_.emplace(
         *old_original_array,

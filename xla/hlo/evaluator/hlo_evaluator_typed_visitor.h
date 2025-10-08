@@ -498,6 +498,19 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     return UnsupportedTypeError(atan2);
   }
 
+  absl::Status HandleAtanh(const HloInstruction* atanh) override {
+    if constexpr (!is_complex_v<ReturnT>) {
+      TF_ASSIGN_OR_RETURN(
+          Literal literal,
+          ElementWiseUnaryOp(atanh, [](ElementwiseT elem_operand) {
+            return std::atanh(elem_operand);
+          }));
+      parent_->SetEvaluatedLiteralFor(atanh, std::move(literal));
+      return absl::OkStatus();
+    }
+    return UnsupportedTypeError(atanh);
+  }
+
   absl::Status HandleTanh(const HloInstruction* tanh) override {
     TF_ASSIGN_OR_RETURN(Literal literal,
                         ElementWiseUnaryOp(tanh, [](ElementwiseT elem_operand) {
@@ -1199,6 +1212,25 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     return HandleDotSlowPath(dot);
   }
 
+  void IncrementContractingIndexes(
+      DimensionVector& contracting_indexes,
+      absl::Span<const int64_t> contracting_dims,
+      const DimensionVector& contracting_dim_sizes,
+      std::optional<int64_t> contracting_dim_to_skip = std::nullopt) {
+    for (int i = contracting_dim_sizes.size() - 1; i >= 0; --i) {
+      if (contracting_dim_to_skip.has_value() &&
+          contracting_dim_to_skip.value() == i) {
+        continue;
+      }
+      ++contracting_indexes[contracting_dims[i]];
+      if (contracting_indexes[contracting_dims[i]] !=
+          contracting_dim_sizes[i]) {
+        break;
+      }
+      contracting_indexes[contracting_dims[i]] = 0;
+    }
+  }
+
   absl::Status HandleDotSlowPathWithLiterals(const HloInstruction* dot,
                                              const Literal& lhs_literal,
                                              const Literal& rhs_literal) {
@@ -1281,20 +1313,10 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
                                           rhs_linear_index);
             }
 
-            // If there are no contracting dimensions, do not try to count down
-            // from -1 to 0; that's an infinite loop.
-            if (!contracting_dim_sizes.empty()) {
-              for (int64_t i = contracting_dim_sizes.size() - 1; i >= 0; --i) {
-                lhs_index[lhs_contracting_dims[i]]++;
-                rhs_index[rhs_contracting_dims[i]]++;
-                if (lhs_index[lhs_contracting_dims[i]] !=
-                    contracting_dim_sizes[i]) {
-                  break;
-                }
-                lhs_index[lhs_contracting_dims[i]] = 0;
-                rhs_index[rhs_contracting_dims[i]] = 0;
-              }
-            }
+            IncrementContractingIndexes(lhs_index, lhs_contracting_dims,
+                                        contracting_dim_sizes);
+            IncrementContractingIndexes(rhs_index, rhs_contracting_dims,
+                                        contracting_dim_sizes);
           }
 
           return static_cast<ReturnT>(result_val);
@@ -1427,15 +1449,10 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
                 static_cast<ElementwiseT>(rhs_literal.Get<ReturnT>(rhs_index));
             result_val += ToArithmeticSafeType(lhs) * ToArithmeticSafeType(rhs);
 
-            for (int64_t j = contracting_dim_sizes.size() - 1; j >= 0; --j) {
-              lhs_index[lhs_contracting[j]]++;
-              rhs_index[rhs_contracting[j]]++;
-              if (lhs_index[lhs_contracting[j]] != contracting_dim_sizes[j]) {
-                break;
-              }
-              lhs_index[lhs_contracting[j]] = 0;
-              rhs_index[rhs_contracting[j]] = 0;
-            }
+            IncrementContractingIndexes(lhs_index, lhs_contracting,
+                                        contracting_dim_sizes);
+            IncrementContractingIndexes(rhs_index, rhs_contracting,
+                                        contracting_dim_sizes);
           }
           return static_cast<ReturnT>(result_val);
         }));
@@ -1448,7 +1465,91 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
                                                     const Literal& lhs_literal,
                                                     const Literal& rhs_literal,
                                                     const Literal& gs_literal) {
-    return absl::UnimplementedError("Ragged Dot Batch Mode not implemented");
+    auto ragged_dims = dot->ragged_dot_dimension_numbers();
+    auto dot_dims = ragged_dims.dot_dimension_numbers();
+    int64_t lhs_rank = lhs_literal.shape().dimensions().size();
+    int64_t rhs_rank = rhs_literal.shape().dimensions().size();
+    int64_t gs_rank = gs_literal.shape().dimensions().size();
+
+    auto lhs_contracting = dot_dims.lhs_contracting_dimensions();
+    auto lhs_non_contracting = GetNonContractingDims(
+        lhs_rank, lhs_contracting, dot_dims.lhs_batch_dimensions());
+
+    auto rhs_contracting = dot_dims.rhs_contracting_dimensions();
+    auto rhs_non_contracting = GetNonContractingDims(
+        rhs_rank, rhs_contracting, dot_dims.rhs_batch_dimensions());
+
+    DimensionVector contracting_dim_sizes;
+    contracting_dim_sizes.reserve(lhs_contracting.size());
+    for (int64_t i = 0; i < lhs_contracting.size(); ++i) {
+      int64_t dim_size = lhs_literal.shape().dimensions(lhs_contracting[i]);
+      contracting_dim_sizes.push_back(dim_size);
+    }
+    const int64_t total_contracting_size = Product(contracting_dim_sizes);
+    const int64_t group_dim_index = gs_rank - 1;
+    const int64_t num_groups = gs_literal.shape().dimensions(group_dim_index);
+
+    Shape dot_shape = GetShapeWithLayout(dot->shape());
+    Literal result(dot_shape);
+    TF_RETURN_IF_ERROR(result.PopulateParallel<ReturnT>(
+        [&](absl::Span<const int64_t> result_index, int /*thread_id*/) {
+          // Locations in each operand that we read from to calculate the
+          // result at result_index.
+          DimensionVector lhs_index(lhs_rank);
+          DimensionVector rhs_index(rhs_rank);
+          DimensionVector group_index(gs_rank);
+
+          // The batch dimensions will always be first in the final product.
+          int64_t gs_idx = 0;
+          int64_t idx = 0;
+          for (int64_t i = 0; i < dot_dims.lhs_batch_dimensions_size(); ++i) {
+            lhs_index[dot_dims.lhs_batch_dimensions(i)] = result_index[idx];
+            rhs_index[dot_dims.rhs_batch_dimensions(i)] = result_index[idx];
+            // gs only contains the batch dimensions outer to the ragged dim.
+            if (gs_idx < group_dim_index) {
+              group_index[gs_idx++] = result_index[idx];
+            }
+            ++idx;
+          }
+
+          // Check whether this batch is handled by some group.
+          int64_t batches_handled = 0;
+          for (int i = 0; i < num_groups; ++i) {
+            group_index[group_dim_index] = i;
+            batches_handled += gs_literal.Get<int64_t>(group_index);
+          }
+          if (lhs_index[dot_dims.lhs_batch_dimensions(group_dim_index)] >=
+              batches_handled) {
+            return static_cast<ReturnT>(0);
+          }
+
+          // Non-contracting dimensions - lhs, then rhs.
+          for (int64_t i = 0; i < lhs_non_contracting.size(); ++i) {
+            lhs_index[lhs_non_contracting[i]] = result_index[idx++];
+          }
+          for (int64_t i = 0; i < rhs_non_contracting.size(); ++i) {
+            rhs_index[rhs_non_contracting[i]] = result_index[idx++];
+          }
+
+          // Accumulate resulting product along the contracting dimensions.
+          ElementwiseT result_val = static_cast<ElementwiseT>(0);
+          for (int64_t i = 0; i < total_contracting_size; ++i) {
+            const auto lhs =
+                static_cast<ElementwiseT>(lhs_literal.Get<ReturnT>(lhs_index));
+            const auto rhs =
+                static_cast<ElementwiseT>(rhs_literal.Get<ReturnT>(rhs_index));
+            result_val += ToArithmeticSafeType(lhs) * ToArithmeticSafeType(rhs);
+
+            IncrementContractingIndexes(lhs_index, lhs_contracting,
+                                        contracting_dim_sizes);
+            IncrementContractingIndexes(rhs_index, rhs_contracting,
+                                        contracting_dim_sizes);
+          }
+          return static_cast<ReturnT>(result_val);
+        }));
+
+    parent_->SetEvaluatedLiteralFor(dot, std::move(result));
+    return absl::OkStatus();
   }
 
   absl::Status HandleRaggedDotContractingWithLiterals(
@@ -1552,16 +1653,12 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
           result_val += ToArithmeticSafeType(lhs) * ToArithmeticSafeType(rhs);
         }
 
-        for (int64_t j = contracting_dim_sizes.size() - 1; j >= 0; --j) {
-          if (j == ragged_dim_as_contracting_dim.value()) continue;
-          ++lhs_index[lhs_contracting[j]];
-          ++rhs_index[rhs_contracting[j]];
-          if (lhs_index[lhs_contracting[j]] != contracting_dim_sizes[j]) {
-            break;
-          }
-          lhs_index[lhs_contracting[j]] = 0;
-          rhs_index[rhs_contracting[j]] = 0;
-        }
+        IncrementContractingIndexes(lhs_index, lhs_contracting,
+                                    contracting_dim_sizes,
+                                    ragged_dim_as_contracting_dim);
+        IncrementContractingIndexes(rhs_index, rhs_contracting,
+                                    contracting_dim_sizes,
+                                    ragged_dim_as_contracting_dim);
       }
       return static_cast<ReturnT>(result_val);
     }));
@@ -1640,8 +1737,8 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
 
   absl::Status HandleScaledDot(const HloInstruction* dot) override {
     auto lhs = dot->operand(0);
-    auto lhs_scale = dot->operand(1);
-    auto rhs = dot->operand(2);
+    auto rhs = dot->operand(1);
+    auto lhs_scale = dot->operand(2);
     auto rhs_scale = dot->operand(3);
     CHECK(dot->shape().IsArray());
     CHECK(lhs->shape().IsArray());
@@ -1684,7 +1781,7 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     TF_ASSIGN_OR_RETURN(Literal rhs_scale_literal,
                         evaluate_scale(rhs, rhs_scale));
     return HandleScaledDotSlowPathWithLiterals(
-        dot, lhs_literal, lhs_scale_literal, rhs_literal, rhs_scale_literal);
+        dot, lhs_literal, rhs_literal, lhs_scale_literal, rhs_scale_literal);
   }
 
  private:
@@ -1740,7 +1837,7 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
 
   absl::Status HandleScaledDotSlowPathWithLiterals(
       const HloInstruction* dot, const Literal& lhs_literal,
-      const Literal& lhs_scale_literal, const Literal& rhs_literal,
+      const Literal& rhs_literal, const Literal& lhs_scale_literal,
       const Literal& rhs_scale_literal) {
     const auto& dnums = dot->dot_dimension_numbers();
     CHECK(ShapeUtil::SameElementType(lhs_literal.shape(), rhs_literal.shape()));

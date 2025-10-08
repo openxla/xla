@@ -341,10 +341,16 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
         clique_ids.fingerprint(), peer_access_enabled);
 
     ProcessGpuCliques& cliques = GetProcessGpuCliques();
-    absl::MutexLock lock(cliques.mu);
-    TF_RETURN_IF_ERROR(
-        CheckCliqueKeyIsntStale(cliques.task_state_infos, clique_key));
+    {
+      VLOG(5) << "Locking cliques.mu";
+      absl::MutexLock lock(cliques.mu);
+      VLOG(5) << "Checking clique key " << clique_key.ToString()
+              << " for staleness";
+      TF_RETURN_IF_ERROR(
+          CheckCliqueKeyIsntStale(cliques.task_state_infos, clique_key));
+    }
 
+    VLOG(5) << "Creating communicators";
     TF_ASSIGN_OR_RETURN(
         std::vector<std::unique_ptr<Communicator>> created_comms,
         collectives->CreateCommunicators(clique_key, clique_ids, ranks,
@@ -360,6 +366,19 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
         "nroots=%lld; fingerprint(id)=%d, peer_access_enabled=%d",
         clique_key.ToString(), DeviceRanksToString(ranks), nroots,
         clique_ids.fingerprint(), peer_access_enabled);
+
+    VLOG(5) << "Locking cliques.mu";
+    absl::MutexLock lock(cliques.mu);
+    if (absl::Status s =
+            CheckCliqueKeyIsntStale(cliques.task_state_infos, clique_key);
+        !s.ok()) {
+      LOG(WARNING) << "Clique key " << clique_key.ToString()
+                   << " is stale. Aborting recently created communicators.";
+      for (std::unique_ptr<Communicator>& comm : created_comms) {
+        TF_RETURN_IF_ERROR(comm->Abort());
+      }
+      return s;
+    }
 
     // Create a new clique with given clique key and communicators.
     auto emplaced =
@@ -516,10 +535,16 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
         absl::StrJoin(rank_mapping, ",", rank_mapping_formatter));
 
     ProcessGpuCliques& cliques = GetProcessGpuCliques();
-    absl::MutexLock lock(cliques.mu);
-    TF_RETURN_IF_ERROR(
-        CheckCliqueKeyIsntStale(cliques.task_state_infos, clique_key));
+    {
+      VLOG(5) << "Locking cliques.mu";
+      absl::MutexLock lock(cliques.mu);
+      VLOG(5) << "Checking clique key " << clique_key.ToString()
+              << " for staleness";
+      TF_RETURN_IF_ERROR(
+          CheckCliqueKeyIsntStale(cliques.task_state_infos, clique_key));
+    }
 
+    VLOG(5) << "Splitting communicators";
     TF_ASSIGN_OR_RETURN(
         auto splitted_comms,
         collectives->SplitCommunicators(parent_comms, color, keys, config));
@@ -536,6 +561,19 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
         clique_key.ToString(), parent_clique_key.ToString(), color,
         peer_access_enabled,
         absl::StrJoin(rank_mapping, ",", rank_mapping_formatter));
+
+    VLOG(5) << "Locking cliques.mu";
+    absl::MutexLock lock(cliques.mu);
+    if (absl::Status s =
+            CheckCliqueKeyIsntStale(cliques.task_state_infos, clique_key);
+        !s.ok()) {
+      LOG(WARNING) << "Clique key " << clique_key.ToString()
+                   << " is stale. Aborting recently split communicators.";
+      for (std::unique_ptr<Communicator>& comm : splitted_comms) {
+        TF_RETURN_IF_ERROR(comm->Abort());
+      }
+      return s;
+    }
 
     // Create a new clique with given clique key and communicators.
     auto emplaced =
@@ -753,7 +791,7 @@ static absl::Status AbortOnFailure(
 absl::Status UpdateGlobalProcessInfo(
     absl::Span<tensorflow::CoordinatedTaskStateInfo> infos) {
   ProcessGpuCliques& cliques = GetProcessGpuCliques();
-  absl::MutexLock lock(&cliques.mu);
+  absl::MutexLock lock(cliques.mu);
   absl::Status s = AbortOnFailure(cliques.map, cliques.task_state_infos, infos);
   if (!s.ok()) {
     LOG(WARNING) << s;

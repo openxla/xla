@@ -34,6 +34,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
+#include "xla/codegen/tiling/affine_map_evaluator.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -42,8 +43,6 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
-#include "xla/service/gpu/model/affine_map_evaluator.h"
-#include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -548,24 +547,15 @@ std::optional<CoalescingMap> ComputeCoalescingForAllOperands(
   GroupedByOpIndexingMap thread_id_to_input_memory_layouts;
   for (const auto& [root_index, hero] :
        llvm::enumerate(fusion_analysis.fusion_heroes())) {
-    std::vector<IndexingMap> hero_indexing_maps;
-    hero_indexing_maps.reserve(hero.GetOperands().size());
     // Compute thread ID -> hero operand indexing maps.
-    for (int64_t hero_operand_index = 0;
-         hero_operand_index < hero.GetOperands().size(); ++hero_operand_index) {
-      // TODO(b/447057917): This can be improved to just a single call to
-      // ComputeThreadIdToInputIndexing (without the outer for loop). The maps
-      // for all operands are computed, anyway.
-      std::optional<IndexingMap> thread_id_to_hero_operand_map =
-          fusion_interface->ComputeThreadIdToInputIndexing(
-              root_index, hero_operand_index, mlir_context);
-      if (!thread_id_to_hero_operand_map.has_value()) {
-        return std::nullopt;
-      }
-      hero_indexing_maps.push_back(thread_id_to_hero_operand_map.value());
+    std::optional<std::vector<IndexingMap>> hero_indexing_maps =
+        fusion_interface->ComputeThreadIdToInputIndexing(root_index,
+                                                         mlir_context);
+    if (!hero_indexing_maps.has_value()) {
+      return std::nullopt;
     }
     GetThreadIdToInputMemoryLayoutsMaps(
-        fusion_analysis.fusion(), hero_indexing_maps,
+        fusion_analysis.fusion(), *hero_indexing_maps,
         fusion_analysis.fusion_hero(root_index), operands,
         operand_logical_to_linearized_physical_maps, mlir_context,
         thread_id_to_input_memory_layouts);

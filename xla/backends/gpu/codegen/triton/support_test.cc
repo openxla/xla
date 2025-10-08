@@ -41,7 +41,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/model/tiled_hlo_computation.h"
+#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/statusor.h"
@@ -93,6 +93,7 @@ bool DoesOpSupportType(HloOpcode opcode, PrimitiveType type) {
       return pu::IsFloatingPointType(type) || pu::IsComplexType(type);
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
+    case HloOpcode::kAtanh:
     case HloOpcode::kSinh:
     case HloOpcode::kAsin:
     case HloOpcode::kCbrt:
@@ -449,6 +450,7 @@ constexpr std::array kTestedOpsUnaryElementwise = {
     HloOpcode::kAcos,
     HloOpcode::kAcosh,
     HloOpcode::kAsin,
+    HloOpcode::kAtanh,
     HloOpcode::kCbrt,
     HloOpcode::kCeil,
     HloOpcode::kClz,
@@ -2341,7 +2343,7 @@ ENTRY triton_computation {
   lhs_scale = f8e8m0fnu[16, 1] parameter(1)
   rhs = $0[32, 16] parameter(2)
   rhs_scale = f8e8m0fnu[1, 16] parameter(3)
-  ROOT dot = f32[16, 16] scaled-dot(lhs, lhs_scale, rhs, rhs_scale),
+  ROOT dot = f32[16, 16] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
       lhs_contracting_dims={1},
       rhs_contracting_dims={0}
 }

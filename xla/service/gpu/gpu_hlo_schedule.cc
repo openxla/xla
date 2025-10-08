@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 
-#include <stdbool.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -647,13 +646,13 @@ absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
     }
     return ShapeUtil::ByteSizeOf(shape, pointer_size);
   };
-  return ScheduleModule(
-      module,
-      DefaultMemoryScheduler(alias_info, size_func, PostProcessSchedule),
-      /*execution_threads=*/
-      {HloInstruction::kMainExecutionThread,
-       StreamAttributeAsyncWrapper::kParallelExecutionThread},
-      peak_memory_bytes);
+  return ScheduleModule(module,
+                        DefaultMemoryScheduler(alias_info, std::move(size_func),
+                                               PostProcessSchedule),
+                        /*execution_threads=*/
+                        {HloInstruction::kMainExecutionThread,
+                         StreamAttributeAsyncWrapper::kParallelExecutionThread},
+                        peak_memory_bytes);
 }
 
 }  // end namespace

@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
@@ -52,6 +53,23 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+
+Thunk::BufferUses BufferUseFromKernelArguments(
+    absl::Span<const BufferAllocation::Slice> args,
+    const std::vector<bool>& written) {
+  Thunk::BufferUses buffers;
+  buffers.reserve(args.size());
+  for (int i = 0; i < args.size(); ++i) {
+    // We assume that any buffer is either an input or an output of the
+    // kernel, and inout buffers are represented as 2 separate arguments.
+    if (written[i]) {
+      buffers.push_back(BufferUse::Write(args[i]));
+    } else {
+      buffers.push_back(BufferUse::Read(args[i]));
+    }
+  }
+  return buffers;
+}
 
 //===----------------------------------------------------------------------===//
 // KernelThunk
@@ -255,6 +273,10 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
       launch_dimensions_, cluster_dim_, stream);
 }
 
+Thunk::BufferUses KernelThunk::buffer_uses() const {
+  return BufferUseFromKernelArguments(absl::MakeConstSpan(args_), written_);
+}
+
 //===----------------------------------------------------------------------===//
 // CustomKernelThunk
 //===----------------------------------------------------------------------===//
@@ -321,6 +343,10 @@ absl::Status CustomKernelThunk::ExecuteOnStream(const ExecuteParams& params) {
   return kernel->Launch(custom_kernel_.thread_dims(),
                         custom_kernel_.block_dims(),
                         custom_kernel_.cluster_dims(), params.stream, args);
+}
+
+Thunk::BufferUses CustomKernelThunk::buffer_uses() const {
+  return BufferUseFromKernelArguments(absl::MakeConstSpan(args_), written_);
 }
 
 }  // namespace gpu

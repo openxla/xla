@@ -1,5 +1,5 @@
 // RUN: mlir-hlo-opt --chlo-legalize-to-hlo --split-input-file -verify-diagnostics %s | FileCheck %s --dump-input-context=20
-// RUN: mlir-hlo-opt --chlo-legalize-to-high-level-mhlo="enable-acosh enable-acos" --split-input-file -verify-diagnostics %s | FileCheck %s --check-prefix=CHECK-HIGH-LEVEL
+// RUN: mlir-hlo-opt --chlo-legalize-to-high-level-mhlo="enable-acosh enable-acos enable-atanh enable-cosh enable-sinh" --split-input-file -verify-diagnostics %s | FileCheck %s --check-prefix=CHECK-HIGH-LEVEL
 
 // CHECK-LABEL: func.func @asin_bf16(
 // CHECK-SAME:    %[[TMP_arg0:.*]]: tensor<bf16>
@@ -2640,6 +2640,7 @@ func.func @sinh_f32(%x : tensor<f32>) -> tensor<f32> {
   %1 = chlo.sinh %x : tensor<f32> -> tensor<f32>
   func.return %1 : tensor<f32>
 }
+// CHECK-HIGH-LEVEL: mhlo.sinh
 
 // -----
 
@@ -2652,6 +2653,7 @@ func.func @sinh_f16(%x : tensor<f16>) -> tensor<f16> {
   %1 = chlo.sinh %x : tensor<f16> -> tensor<f16>
   func.return %1 : tensor<f16>
 }
+// CHECK-HIGH-LEVEL: mhlo.sinh
 
 // -----
 
@@ -2669,12 +2671,14 @@ func.func @sinh_complex(%x : tensor<2xcomplex<f32>>) -> tensor<2xcomplex<f32>> {
   %1 = chlo.sinh %x : tensor<2xcomplex<f32>> -> tensor<2xcomplex<f32>>
   func.return %1 : tensor<2xcomplex<f32>>
 }
+// CHECK-HIGH-LEVEL-NOT: mhlo.sinh
 
 // -----
 
 // CHECK-LABEL: @cosh_f32
 // CHECK-SAME: (%[[X:.*]]: tensor<f32>)
 func.func @cosh_f32(%x : tensor<f32>) -> tensor<f32> {
+  // CHECK-HIGH-LEVEL: mhlo.cosh
   // CHECK: %[[HALF:.*]] = mhlo.constant dense<5.000000e-01> : tensor<f32>
   // CHECK: %[[LOG_HALF:.*]] = mhlo.log %[[HALF]] : tensor<f32>
   // CHECK: %[[X_PLUS_LOG_HALF:.*]] = mhlo.add %[[X]], %[[LOG_HALF]] : tensor<f32>
@@ -2736,6 +2740,7 @@ func.func @atanh_f32(%arg : tensor<f32>) -> tensor<f32> {
   %result = "chlo.atanh"(%arg) : (tensor<f32>) -> tensor<f32>
   func.return %result : tensor<f32>
 }
+// CHECK-HIGH-LEVEL: mhlo.atanh
 
 // -----
 
@@ -2814,6 +2819,7 @@ func.func @atanh_complex_f32(%arg : tensor<complex<f32>>) -> tensor<complex<f32>
   %result = "chlo.atanh"(%arg) : (tensor<complex<f32>>) -> tensor<complex<f32>>
   func.return %result : tensor<complex<f32>>
 }
+// CHECK-HIGH-LEVEL-NOT: mhlo.atanh
 
 // -----
 

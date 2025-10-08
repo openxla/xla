@@ -7,6 +7,7 @@ load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "tsl_copts")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load("//xla/tsl/mkl:build_defs.bzl", "if_graph_api")
+load("//xla/tsl/mkl:graph.bzl", "onednn_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -295,7 +296,7 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
+onednn_cc_test(
     name = "onednn_matmul_test",
     srcs = ["onednn_matmul_test.cc"],
     copts = tsl_copts(),
@@ -305,23 +306,17 @@ xla_cc_test(
         "notap",
     ],
     deps = [
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla/hlo/testlib:filecheck",
+        "//xla:error_spec",
         "//xla/hlo/testlib:test",
-        "//xla/hlo/testlib:test_helpers",
-        "//xla/hlo/utils:hlo_matchers",
         "//xla/service:cpu_plugin",
-        "//xla/service/cpu:onednn_contraction_rewriter",
         "//xla/service/cpu:onednn_util",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:platform_port",
     ],
 )
 
-xla_cc_test(
+onednn_cc_test(
     name = "onednn_convolution_test",
     srcs = ["onednn_convolution_test.cc"],
     copts = tsl_copts(),
@@ -347,23 +342,25 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
+onednn_cc_test(
     name = "onednn_memory_util_test",
     srcs = ["onednn_memory_util_test.cc"],
     copts = tsl_copts(),
-    fail_if_no_test_linked = False,  # NOLINT=There are only tests for Intel MKL.
-    fail_if_no_test_selected = False,  # NOLINT=There are only tests for Intel MKL.
     deps = [
         "//xla:shape_util",
         "//xla/hlo/testlib:filecheck",
         "//xla/service:cpu_plugin",
         "//xla/service/cpu:onednn_memory_util",
+        "//xla/service/llvm_ir:ir_array",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -377,6 +374,7 @@ xla_cc_test(
         "notap",
     ],
     deps = [
+        "//xla:error_spec",
         "//xla/hlo/testlib:test",
         "//xla/service:cpu_plugin",
         "//xla/service/cpu:onednn_util",

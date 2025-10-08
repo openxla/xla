@@ -531,6 +531,7 @@ cc_library(
     name = "macros",
     hdrs = ["macros.h"],
     compatible_with = get_compatible_with_portable(),
+    deps = ["@com_google_absl//absl/base:core_headers"],
 )
 
 cc_library(
@@ -692,22 +693,22 @@ cc_library(
 )
 
 cc_library(
-    name = "threadpool_async_executor",
-    hdrs = ["threadpool_async_executor.h"],
+    name = "threadpool_executor",
+    hdrs = ["threadpool_executor.h"],
     deps = [
         ":env",
-        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:executor",
     ],
 )
 
 tsl_cc_test(
-    name = "threadpool_async_executor_test",
-    srcs = ["threadpool_async_executor_test.cc"],
+    name = "threadpool_executor_test",
+    srcs = ["threadpool_executor_test.cc"],
     deps = [
         ":env",
         ":env_impl",
         ":test",
-        ":threadpool_async_executor",
+        ":threadpool_executor",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_main",
     ],
@@ -822,14 +823,17 @@ cc_library(
 cc_library(
     name = "resource_loader",
     testonly = 1,
-    srcs = ["resource_loader.cc"],
+    srcs = if_oss(
+        ["//xla/tsl/platform/default:resource_loader.cc"],
+        google_value = ["//xla/tsl/platform/google:resource_loader.cc"],
+    ),
     textual_hdrs = ["resource_loader.h"],
     deps = [
         ":logging",
         ":test",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
-    ],
+    ] + if_oss(["@bazel_tools//tools/cpp/runfiles"]),
 )
 
 cc_library(

@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/block_level_emitter.h"
 #include "xla/backends/gpu/autotuner/cublas.h"
 #include "xla/backends/gpu/autotuner/cublaslt.h"
+#include "xla/backends/gpu/autotuner/cudnn.h"
 #include "xla/backends/gpu/autotuner/native_emitter.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -61,6 +62,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/call_inliner.h"
+#include "xla/service/compiler.h"
 #include "xla/service/dump.h"
 #include "xla/service/float_support.h"
 #include "xla/service/gpu/alias_info.h"
@@ -89,7 +91,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/cudnn_norm_rewriter.h"
 #include "xla/service/gpu/transforms/cudnn_pad_for_convolutions.h"
 #include "xla/service/gpu/transforms/cudnn_simplify_padding.h"
-#include "xla/service/gpu/transforms/cudnn_vectorize_convolutions.h"
 #include "xla/service/gpu/transforms/gpusolver_rewriter.h"
 #include "xla/service/gpu/transforms/triangular_solve_rewriter.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -208,14 +209,6 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
                                              dnn_version, toolkit_version);
     pipeline.AddPass<ConvPaddingLegalization>();
     pipeline.AddPass<CudnnPadForConvolutions>(cuda_compute_capability);
-    if (!cuda_compute_capability.IsAtLeast(
-            se::CudaComputeCapability::CudaComputeCapabilities::kHopper)) {
-      // CUDNN vectorization is not performant on Hopper and later.
-      // The official guidance is not to use the vectorized layouts anymore on
-      // these newer architectures.
-      pipeline.AddPass<CudnnVectorizeConvolutions>(cuda_compute_capability,
-                                                   dnn_version);
-    }
   }
   // The conv padding/vectorization passes which we need to get rid of.  They
   // also leave behind unnecessary tuple/get-tuple-element pairs that
@@ -241,8 +234,27 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
     pipeline.AddPass<CudnnSimplifyPadding>();
   }
 
-  pipeline.AddPass<ConvertMover>();
-  pipeline.AddPass<GpuAlgebraicSimplifier>(algsimp_options, gpu_version);
+  // tf2xla bridge, DepthwiseConvolutionConverter, ConvRewriter, and
+  // CudnnSimplifyPadding introduce reshapes and transposes.  Run ReshapeMover
+  // to a fixed point.  Include algsimp because ReshapeMover relies on it.
+  [&, &pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
+          "reshape_mover_after_conv_canonicalization")] {
+    ReshapeMoverOptions reshape_mover_options;
+    reshape_mover_options.reshape_of_1d_broadcast_is_cheap = true;
+    pipeline.AddPass<ReshapeMover>(reshape_mover_options);
+    pipeline.AddPass<GpuAlgebraicSimplifier>(algsimp_options, gpu_version);
+  }();
+
+  // The reshapes and transposes can possibly be eliminated using
+  // AlgebraicSimplifier. ConvertMover and ReshapeMover fight with each other.
+  // ConvertMover wants to move some converts down the graph, but ReshapeMover
+  // wants to move them up the graph. We run ConvertMover and algsimp to a fixed
+  // point.
+  [&, &pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
+          "simplify_after_conv_canonicalization")] {
+    pipeline.AddPass<ConvertMover>();
+    pipeline.AddPass<GpuAlgebraicSimplifier>(algsimp_options, gpu_version);
+  }();
 
   // ConvRewriter, ConvPaddingLegalization and
   // CudnnConvPadForTensorCores may add instructions which can be simplified
@@ -336,7 +348,8 @@ absl::Status NVPTXCompiler::AddConvAndGemmAutotuningPasses(
     HloPassPipeline* pipeline, const se::GpuComputeCapability& gpu_version,
     const CompileOptions& options, HloModule* hlo_module,
     AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool,
-    se::StreamExecutor* stream_exec) {
+    se::StreamExecutor* stream_exec,
+    const Compiler::TargetConfig* target_config) {
   const DebugOptions& debug_options = hlo_module->config().debug_options();
   if (hlo_module->config()
           .debug_options()
@@ -346,27 +359,23 @@ absl::Status NVPTXCompiler::AddConvAndGemmAutotuningPasses(
     return absl::OkStatus();
   }
 
-  // TODO(b/407495801): Cached Gemm as well as Conv autotuning results are
-  // loaded in the GpuConvAlgorithmPicker but should be loaded in the autotuner.
-  pipeline->AddPass<GpuConvAlgorithmPicker>(autotune_config);
-
-  if (stream_exec == nullptr) {
-    return absl::OkStatus();
-  }
-
   std::vector<std::unique_ptr<CodegenBackend>> backends;
-  backends.push_back(
-      std::make_unique<CublasBackend>(stream_exec, &debug_options, this));
-  backends.push_back(
-      std::make_unique<CublasLtBackend>(stream_exec, &debug_options, this));
+  backends.push_back(std::make_unique<CublasBackend>(
+      stream_exec, &debug_options, this, target_config));
+  backends.push_back(std::make_unique<CublasLtBackend>(
+      stream_exec, &debug_options, this, target_config));
+  backends.push_back(std::make_unique<CudnnBackend>(stream_exec, &debug_options,
+                                                    this, target_config));
   auto should_autotune = [](const HloInstruction& instruction) -> bool {
     return instruction.opcode() == HloOpcode::kCustomCall &&
-           IsCublasGemm(instruction);
+           (IsCublasGemm(instruction) ||
+            IsCustomCallToDnnConvolution(instruction));
   };
+
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<AutotunerPass> autotuner_pass,
       AutotunerPass::Create(std::move(backends), debug_options, stream_exec,
-                            thread_pool, should_autotune,
+                            thread_pool, should_autotune, target_config,
                             options.device_allocator));
   pipeline->AddPass(std::move(autotuner_pass));
   return absl::OkStatus();
@@ -416,6 +425,7 @@ absl::Status NVPTXCompiler::AddFusionAutotuningPass(
     HloPassPipeline* pipeline, HloModule* hlo_module,
     const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
     stream_executor::StreamExecutor* stream_executor,
+    const Compiler::TargetConfig* target_config,
     HloCostAnalysis::ShapeSizeFunction shape_size_fn) {
   if (stream_executor == nullptr) {
     return absl::OkStatus();
@@ -428,17 +438,22 @@ absl::Status NVPTXCompiler::AddFusionAutotuningPass(
   }
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
-  backends.push_back(std::make_unique<BlockLevelEmitterBackend>(
-      stream_executor, &debug_options, this, shape_size_fn,
-      /*use_default_config=*/true));
-  backends.push_back(std::make_unique<NativeEmitterBackend>(
-      stream_executor, &debug_options, this));
+  auto ble_backend = std::make_unique<BlockLevelEmitterBackend>(
+      &debug_options, this, shape_size_fn, target_config,
+      /*use_default_config=*/true);
+  ble_backend->AllowRegisterSpills();
+  backends.push_back(std::move(ble_backend));
+  auto native_backend = std::make_unique<NativeEmitterBackend>(
+      &debug_options, this, target_config);
+  native_backend->AllowRegisterSpills();
+  backends.push_back(std::move(native_backend));
 
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<AutotunerPass> autotuner_pass,
       AutotunerPass::Create(std::move(backends), debug_options, stream_executor,
                             thread_pool, ShouldAutotuneBetweenFusionEmitters,
-                            options.device_allocator));
+                            target_config, options.device_allocator,
+                            /*optimize_scratch_bytes=*/false));
   pipeline->AddPass(std::move(autotuner_pass));
   return absl::OkStatus();
 }
@@ -587,7 +602,7 @@ void WarnIfBadDriverJITVersion() {
 
 absl::StatusOr<const se::cuda::CompilationProvider*>
 NVPTXCompiler::GetCompilationProvider(const DebugOptions& debug_options) {
-  absl::MutexLock lock(&compilation_providers_mutex_);
+  absl::MutexLock lock(compilation_providers_mutex_);
   std::unique_ptr<se::cuda::CompilationProvider>& compilation_provider =
       compilation_providers_[se::cuda::CompilationProviderOptions::
                                  FromDebugOptions(debug_options)];
@@ -729,7 +744,7 @@ absl::StatusOr<bool> NVPTXCompiler::CanUseLinkModules(
 
 absl::StatusOr<std::vector<uint8_t>> NVPTXCompiler::LinkModules(
     const stream_executor::DeviceDescription& device_description,
-    se::StreamExecutor* stream_exec, std::vector<std::vector<uint8_t>> modules,
+    std::vector<std::vector<uint8_t>> modules,
     const DebugOptions& debug_options) {
   if (modules.empty()) {
     return std::vector<uint8_t>{};
