@@ -1,3 +1,9 @@
+"""
+A much simplified version of third_party/py/python_configure.bzl, which generates the "python_version_repo" repo.
+
+This is just to keep the current build compatible with both WORKSPACE and Bzlmod, we may not need this in future.
+"""
+
 def _python_version_repo_impl(repository_ctx):
     version = repository_ctx.os.environ.get("HERMETIC_PYTHON_VERSION", "3.11")
     use_pywrap_rules = bool(

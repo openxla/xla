@@ -1,4 +1,4 @@
-
+"""Module extension for tsl"""
 load("//third_party:repo.bzl", "tf_vendored")
 
 tsl_extension = module_extension(
