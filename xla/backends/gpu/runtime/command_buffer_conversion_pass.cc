@@ -383,10 +383,6 @@ absl::Status FlushCommandBuffer(
   // them to the new thunks sequence as is.
   if (current_command_buffer_thunks.size() <
       std::max(1, debug_options.xla_gpu_graph_min_graph_size())) {
-    new_thunks.insert(
-        new_thunks.end(),
-        std::make_move_iterator(current_command_buffer_thunks.begin()),
-        std::make_move_iterator(current_command_buffer_thunks.end()));
     if (VLOG_IS_ON(2)) {
       for (const auto& thunk : current_command_buffer_thunks) {
         VLOG(2) << "Thunk kind " << Thunk::KindToString(thunk->kind())
@@ -394,6 +390,10 @@ absl::Status FlushCommandBuffer(
                    "less than the min graph size";
       }
     }
+    new_thunks.insert(
+        new_thunks.end(),
+        std::make_move_iterator(current_command_buffer_thunks.begin()),
+        std::make_move_iterator(current_command_buffer_thunks.end()));
     current_command_buffer_thunks.clear();
     return absl::OkStatus();
   }
