@@ -1,1139 +1,2238 @@
-diff --git a/shardy/dialect/mpmd/transforms/optimize/optimize_pipeline.cc b/shardy/dialect/mpmd/transforms/optimize/optimize_pipeline.cc
-index 291749c..6a5596c 100644
---- a/shardy/dialect/mpmd/transforms/optimize/optimize_pipeline.cc
-+++ b/shardy/dialect/mpmd/transforms/optimize/optimize_pipeline.cc
-@@ -31,15 +31,6 @@ namespace mlir::mpmd {
- using ::mlir::func::FuncOp;
- 
- void addOptimizePipeline(OpPassManager& pm, OptimizeOptions options) {
--  // Adds pipeline scheduling pass.
--  if (!options.fragmentScheduleRules.empty()) {
--    pm.addNestedPass<FuncOp>(
--        createRuleBasedSchedulePass(RuleBasedSchedulePassOptions{
--            std::move(options.fragmentScheduleRules)}));
--  } else {
--    AddSchedulingPass(pm, options.pipelineSchedule);
--  }
--
-   // Merge fragments according to the user-specified rules. Do this before other
-   // merge passes since those modify the origins of fragments, invalidating the
-   // rules.
-@@ -48,6 +39,9 @@ void addOptimizePipeline(OpPassManager& pm, OptimizeOptions options) {
-         RuleBasedMergePassOptions{std::move(options.fragmentMergeRules)}));
-   }
- 
-+  // Adds pipeline scheduling pass.
-+  AddSchedulingPass(pm, options.pipelineSchedule);
-+
-   // The remat passes will run after inlining the call ops and scheduling.
-   // The reason why we choose to remat after scheduling is so that we don't need
-   // to schedule the remat fragments. For example, given the following fragments
-diff --git a/shardy/dialect/mpmd/transforms/optimize/passes.h b/shardy/dialect/mpmd/transforms/optimize/passes.h
-index fb48d9c..7d4f111 100644
---- a/shardy/dialect/mpmd/transforms/optimize/passes.h
-+++ b/shardy/dialect/mpmd/transforms/optimize/passes.h
-@@ -42,8 +42,6 @@ namespace mlir::mpmd {
- struct OptimizeOptions {
-   // A list of fragment merge rules.
-   SmallVector<FragmentMergeRule> fragmentMergeRules;
--  // A list of fragment schedule rules.
--  SmallVector<FragmentScheduleRule> fragmentScheduleRules;
-   // Whether to merge inferred fragments only after scheduling.
-   bool mergeAfterScheduling = false;
-   // Whether to identify matching forward and backward fragments and clone the
-diff --git a/shardy/dialect/sdy/transforms/export/test/insert_explicit_reshards/dot_dot_general.mlir b/shardy/dialect/sdy/transforms/export/test/insert_explicit_reshards/dot_dot_general.mlir
-index 6bc02eb..e7545f9 100644
---- a/shardy/dialect/sdy/transforms/export/test/insert_explicit_reshards/dot_dot_general.mlir
-+++ b/shardy/dialect/sdy/transforms/export/test/insert_explicit_reshards/dot_dot_general.mlir
-@@ -572,15 +572,3 @@ func.func @dot_genaral_overlaps_and_trimmable_on_subaxis_multiple_axes(%arg0: te
-   %0 = stablehlo.dot_general %arg0, %arg1, batching_dims = [0] x [0], contracting_dims = [2] x [1] {sdy.sharding = #sdy.sharding_per_value<[<@mesh_xyzt, [{}, {"x","y","z"}, {}]>]>} : (tensor<64x8x32xf32>, tensor<64x32x16xf32>) -> tensor<64x8x16xf32>
-   return %0 : tensor<64x8x16xf32>
+diff --git a/shardy/dialect/sdy/transforms/export/explicit_reshards_util.cc b/shardy/dialect/sdy/transforms/export/explicit_reshards_util.cc
+index f84811c..0189174 100644
+--- a/shardy/dialect/sdy/transforms/export/explicit_reshards_util.cc
++++ b/shardy/dialect/sdy/transforms/export/explicit_reshards_util.cc
+@@ -749,9 +749,12 @@ void distributeAxisRefsToBatchingFactors(
  }
+ }  // namespace
+ 
+-AxesPerFactor findCommonAxes(const ShardingProjection& shardingProjection,
++AxesPerFactor findCommonAxes(ArrayRef<TensorShardingAttr> inShardings,
++                             ArrayRef<TensorShardingAttr> outShardings,
++                             const ShardingProjection& shardingProjection,
+                              OpShardingRuleAttr shardingRule,
+-                             ArrayRef<int64_t> tensorSizes, const Mesh& mesh) {
++                             ArrayRef<int64_t> tensorSizes,
++                             const SymbolTable& symbolTable, const Mesh& mesh) {
+   // Handle the special case of unary operations without factors that need
+   // replication. Reshard only one of the tensors.
+   if (shardingRule.getNonScalarTensorIndices().size() == 2 &&
+@@ -799,7 +802,7 @@ SmallVector<int64_t> getTensorSizes(Operation* op) {
+ namespace {
+ 
+ // Returns reduction axes that are the union of all axes on reduction factors.
+-// The result axes are not necessarily canonicalized.
++// The result axes are not necessarilly canonicalized.
+ //
+ // Returns empty axes if not `onFullVersion` and op results do not have
+ // unreduced axes.
+@@ -909,7 +912,7 @@ ArrayRef<AxisRefAttr> getUnreducedAxes(Value value) {
+ 
+ void insertAllReducesForReductionFactors(
+     Operation* op, const ShardingProjection& shardingProjection,
+-    const AxesPerFactor& commonAxesPerFactor, OpShardingRuleAttr shardingRule,
++    AxesPerFactor& commonAxesPerFactor, OpShardingRuleAttr shardingRule,
+     const Mesh& mesh, IRRewriter& rewriter, const bool onFullVersion) {
+   if (op->getResults().empty()) {
+     return;
+diff --git a/shardy/dialect/sdy/transforms/export/explicit_reshards_util.h b/shardy/dialect/sdy/transforms/export/explicit_reshards_util.h
+index 54ad169..6821b6d 100644
+--- a/shardy/dialect/sdy/transforms/export/explicit_reshards_util.h
++++ b/shardy/dialect/sdy/transforms/export/explicit_reshards_util.h
+@@ -156,7 +156,7 @@ void insertExplicitReshards(Operation* op,
+ // results have unreduced axes.
+ void insertAllReducesForReductionFactors(
+     Operation* op, const ShardingProjection& shardingProjection,
+-    const AxesPerFactor& commonAxesPerFactor, OpShardingRuleAttr shardingRule,
++    AxesPerFactor& commonAxesPerFactor, OpShardingRuleAttr shardingRule,
+     const Mesh& mesh, IRRewriter& rewriter, bool onFullVersion);
+ 
+ // Finds common factor axes on the operands and results of `op` so that the
+@@ -172,9 +172,12 @@ void insertAllReducesForReductionFactors(
+ // - Some shardings are not compatible.
+ //
+ // Guarantees to return a non-empty AxesPerFactor.
+-AxesPerFactor findCommonAxes(const ShardingProjection& shardingProjection,
++AxesPerFactor findCommonAxes(ArrayRef<TensorShardingAttr> inShardings,
++                             ArrayRef<TensorShardingAttr> outShardings,
++                             const ShardingProjection& shardingProjection,
+                              OpShardingRuleAttr shardingRule,
+-                             ArrayRef<int64_t> tensorSizes, const Mesh& mesh);
++                             ArrayRef<int64_t> tensorSizes,
++                             const SymbolTable& symbolTable, const Mesh& mesh);
+ 
+ }  // namespace sdy
+ }  // namespace mlir
+diff --git a/shardy/dialect/sdy/transforms/export/insert_explicit_reshards.cc b/shardy/dialect/sdy/transforms/export/insert_explicit_reshards.cc
+index b1d7585..3c934a8 100644
+--- a/shardy/dialect/sdy/transforms/export/insert_explicit_reshards.cc
++++ b/shardy/dialect/sdy/transforms/export/insert_explicit_reshards.cc
+@@ -410,16 +410,17 @@ AxesPerFactor processOp(Operation* op, ShardingProjection& shardingProjection,
+                         OpShardingRuleAttr shardingRule, const Mesh& mesh,
+                         const bool onFullVersion) {
+   // Checks if factors are sharded the same way across operands and results.
++  AxesPerFactor commonAxesPerFactor =
++      getCompatibleFactorShardings(shardingProjection, shardingRule);
+ 
+   // TODO(b/446833985): Return common axes per factor also when the sharding
+   // projection have overflow axes.
+   if (onFullVersion) {
+-    AxesPerFactor commonAxesPerFactor =
+-        getCompatibleFactorShardings(shardingProjection, shardingRule);
+     // Find compatible shardings if it is not already compatible.
+     if (commonAxesPerFactor.empty()) {
+-      commonAxesPerFactor = findCommonAxes(shardingProjection, shardingRule,
+-                                           getTensorSizes(op), mesh);
++      commonAxesPerFactor =
++          findCommonAxes(inShardings, outShardings, shardingProjection,
++                         shardingRule, getTensorSizes(op), symbolTable, mesh);
+     }
+ 
+     UpdateTensorShardings updateTensorShardings(shardingRule.getNumOperands(),
+@@ -433,19 +434,19 @@ AxesPerFactor processOp(Operation* op, ShardingProjection& shardingProjection,
+     insertExplicitReshards(op, inShardings, outShardings, shardingProjection,
+                            updateTensorShardings, rewriter, shardingRule,
+                            symbolTable, mesh);
+-    return commonAxesPerFactor;
++  } else {
++    TypeSwitch<Operation*>(op)
++        .Case<stablehlo::DotOp>([&](stablehlo::DotOp dotOp) {
++          processDot(dotOp, shardingProjection, outShardings, rewriter,
++                     symbolTable, shardingRule, mesh);
++        })
++        .Case<stablehlo::DotGeneralOp>(
++            [&](stablehlo::DotGeneralOp dotGeneralOp) {
++              processDot(dotGeneralOp, shardingProjection, outShardings,
++                         rewriter, symbolTable, shardingRule, mesh);
++            });
+   }
 -
--// CHECK-LABEL: func @dot_only_contracting_dims_sharded_and_has_same_shardings
--func.func @dot_only_contracting_dims_sharded_and_has_same_shardings(
--    %arg0: tensor<8x32xf32> {sdy.sharding = #sdy.sharding<@mesh, [{}, {"y"}]>},
--    %arg1: tensor<32x16xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"y"}, {}]>})
--    -> tensor<8x16xf32> {
--  // CHECK-NEXT: %[[DOT:.*]] = stablehlo.dot %arg0, %arg1
--  // CHECK-NEXT: %[[ALL_REDUCE:.*]] = sdy.all_reduce {"y"} %[[DOT]] out_sharding=<@mesh, [{}, {}]>
--  // CHECK: return %[[ALL_REDUCE]]
--  %0 = stablehlo.dot %arg0, %arg1 : (tensor<8x32xf32>, tensor<32x16xf32>) -> tensor<8x16xf32>
--  return %0 : tensor<8x16xf32>
--}
-diff --git a/shardy/integrations/python/jax/mpmd/jaxlib/mpmd_program.h b/shardy/integrations/python/jax/mpmd/jaxlib/mpmd_program.h
-index 65166c5..da4da35 100644
---- a/shardy/integrations/python/jax/mpmd/jaxlib/mpmd_program.h
-+++ b/shardy/integrations/python/jax/mpmd/jaxlib/mpmd_program.h
-@@ -48,9 +48,8 @@ namespace mlir::mpmd {
- enum PartitioningPhase : int32_t {
-   kNone = 0,
-   kImport = 1 << 0,
--  kOptimize = 1 << 1,
--  kPartition = 1 << 2,
--  kAll = kImport | kOptimize | kPartition,
-+  kPartition = 1 << 1,
-+  kAll = kImport | kPartition,
- };
+-  TypeSwitch<Operation*>(op)
+-      .Case<stablehlo::DotOp>([&](stablehlo::DotOp dotOp) {
+-        processDot(dotOp, shardingProjection, outShardings, rewriter,
+-                   symbolTable, shardingRule, mesh);
+-      })
+-      .Case<stablehlo::DotGeneralOp>([&](stablehlo::DotGeneralOp dotGeneralOp) {
+-        processDot(dotGeneralOp, shardingProjection, outShardings, rewriter,
+-                   symbolTable, shardingRule, mesh);
+-      });
+-  return AxesPerFactor();
++  return commonAxesPerFactor;
+ }
  
- struct PartitioningResult {
-diff --git a/shardy/integrations/python/jax/mpmd/types.py b/shardy/integrations/python/jax/mpmd/types.py
-index 7dfa3aa..1facb95 100644
---- a/shardy/integrations/python/jax/mpmd/types.py
-+++ b/shardy/integrations/python/jax/mpmd/types.py
-@@ -73,7 +73,6 @@ class FragmentInfo:
-   split_type: SplitFragmentType | None = None
-   mesh_name: str = ''
- 
--
- @dataclasses.dataclass(frozen=True)
- class FragmentMergeRule:
-   """A rule for merging fragments of a computation."""
-@@ -85,16 +84,6 @@ class FragmentMergeRule:
- FragmentMergeRules = Sequence[FragmentMergeRule]
- 
- 
--@dataclasses.dataclass(frozen=True)
--class FragmentScheduleRule:
--  """A rule for scheduling fragments of a computation."""
--
--  ordered_fragments: Sequence[FragmentInfo]
--
--
--FragmentScheduleRules = Sequence[FragmentScheduleRule]
--
--
- @dataclasses.dataclass(frozen=True)
- class MpmdConfig:
-   """Config for constructing an MPMD program with PartIR.
-@@ -131,9 +120,6 @@ class MpmdConfig:
-     fragment_merge_rules: A sequence of fragment merge rules. Each merge rule
-       contains a sequence of fragment metadata objects that should be merged
-       into a single fragment, together with metadata for the resulting fragment.
--    fragment_schedule_rules: A sequence of fragment schedule rules. Each
--      schedule rule contains a sequence of fragment metadata objects in the
--      order that they should be scheduled.
-   """
- 
-   topology: Topology
-@@ -144,7 +130,6 @@ class MpmdConfig:
-   partitioning_options: PartitioningOptions | None
-   read_input_output_mesh_from_shardings: bool
-   fragment_merge_rules: FragmentMergeRules | None
--  fragment_schedule_rules: FragmentScheduleRules | None
- 
-   @property
-   def _spmd_mesh(self) -> jax.sharding.Mesh:
-@@ -213,7 +198,6 @@ def make_config(
-     partitioning_options: PartitioningOptions | None = None,
-     read_input_output_mesh_from_shardings: bool = False,
-     fragment_merge_rules: FragmentMergeRules | None = None,
--    fragment_schedule_rules: FragmentScheduleRules | None = None,
- ) -> MpmdConfig:
-   """Creates a `MpmdConfig`, inferring the tpu topology if not provided.
- 
-@@ -229,7 +213,6 @@ def make_config(
-     partitioning_options: See `MpmdConfig`.
-     read_input_output_mesh_from_shardings: see `MpmdConfig`.
-     fragment_merge_rules: See `MpmdConfig`.
--    fragment_schedule_rules: See `MpmdConfig`.
- 
-   Returns:
-     An `MpmdConfig` object.
-@@ -260,10 +243,6 @@ def make_config(
-     fragment_merge_rules = []
-   validate_fragment_merge_rules(fragment_merge_rules)
- 
--  if fragment_schedule_rules is None:
--    fragment_schedule_rules = []
--  validate_fragment_schedule_rules(fragment_schedule_rules)
--
-   return MpmdConfig(
-       topology,
-       name_to_mesh_assignment,
-@@ -273,7 +252,6 @@ def make_config(
-       partitioning_options,
-       read_input_output_mesh_from_shardings,
-       fragment_merge_rules,
--      fragment_schedule_rules,
-   )
- 
- 
-@@ -344,30 +322,6 @@ def validate_input_output_mesh_assignments(
-       )
- 
- 
--def validate_fragment_rule_origins(
--    fragment_sequence: Sequence[FragmentInfo],
--) -> None:
--  for fragment in fragment_sequence:
--    if not fragment.origins:
--      raise ValueError(
--          f'Each fragment must have at least one origin, but got {fragment} in'
--          f' {fragment_sequence}.'
--      )
--
--
--def validate_fragment_rule_meshes(
--    fragment_sequence: Sequence[FragmentInfo],
--) -> None:
--  first_mesh = fragment_sequence[0].mesh_name
--  if not all(
--      fragment.mesh_name == first_mesh for fragment in fragment_sequence
--  ):
--    raise ValueError(
--        'Fragments being merged/scheduled must be on the same mesh, but got'
--        f' {fragment_sequence}.'
--    )
--
--
- def validate_fragment_merge_rules(
-     fragment_merge_rules: FragmentMergeRules,
- ) -> None:
-@@ -379,8 +333,12 @@ def validate_fragment_merge_rules(
-           'Fragment merge rule must contain at least two source fragments, but'
-           f' got {rule}.'
-       )
--    validate_fragment_rule_origins(rule.sources)
--    validate_fragment_rule_meshes(rule.sources)
-+    for fragment in rule.sources:
-+      if not fragment.origins:
-+        raise ValueError(
-+            'Each source fragment must have at least one origin, but got'
-+            f' {rule}.'
-+        )
- 
-     if not rule.target.origins:
-       raise ValueError(
-@@ -388,21 +346,6 @@ def validate_fragment_merge_rules(
-       )
- 
- 
--def validate_fragment_schedule_rules(
--    fragment_schedule_rules: FragmentScheduleRules,
--) -> None:
--  """Validates the fragment schedule rules."""
--  for rule in fragment_schedule_rules:
--    if len(rule.ordered_fragments) < 2:
--      raise ValueError(
--          'Fragment schedule rule must contain at least two fragments, but'
--          f' got {rule}.'
--      )
--
--    validate_fragment_rule_origins(rule.ordered_fragments)
--    validate_fragment_rule_meshes(rule.ordered_fragments)
--
--
- def mesh_names(
-     pytree: PyTree[
-         jax.Array
+ struct InsertExplicitReshardsPass
 diff --git a/third_party/llvm/generated.patch b/third_party/llvm/generated.patch
-index 9fa7155..509398d 100644
+index 7731e08..ad71f8d 100644
 --- a/third_party/llvm/generated.patch
 +++ b/third_party/llvm/generated.patch
-@@ -1,877 +1 @@
+@@ -1,45 +1,2052 @@
  Auto generated patch. Do not edit or delete it, even if empty.
--diff -ruN --strip-trailing-cr a/libcxx/include/ext/hash_set b/libcxx/include/ext/hash_set
----- a/libcxx/include/ext/hash_set
--+++ b/libcxx/include/ext/hash_set
--@@ -534,10 +534,7 @@
-- }
+-diff -ruN --strip-trailing-cr a/llvm/unittests/Analysis/FunctionPropertiesAnalysisTest.cpp b/llvm/unittests/Analysis/FunctionPropertiesAnalysisTest.cpp
+---- a/llvm/unittests/Analysis/FunctionPropertiesAnalysisTest.cpp
+-+++ b/llvm/unittests/Analysis/FunctionPropertiesAnalysisTest.cpp
+-@@ -46,8 +46,8 @@
+-     MAM.registerPass([VocabVector = std::move(VocabVector)]() mutable {
+-       return IR2VecVocabAnalysis(std::move(VocabVector));
+-     });
+--    IR2VecVocab =
+--        new ir2vec::Vocabulary(ir2vec::Vocabulary::createDummyVocabForTest(1));
+-+    IR2VecVocab = std::make_unique<ir2vec::Vocabulary>(
+-+        ir2vec::Vocabulary::createDummyVocabForTest(1));
+-     MAM.registerPass([&] { return PassInstrumentationAnalysis(); });
+-     FAM.registerPass([&] { return ModuleAnalysisManagerFunctionProxy(MAM); });
+-     FAM.registerPass([&] { return DominatorTreeAnalysis(); });
+-@@ -69,7 +69,7 @@
+-   std::unique_ptr<LoopInfo> LI;
+-   FunctionAnalysisManager FAM;
+-   ModuleAnalysisManager MAM;
+--  ir2vec::Vocabulary *IR2VecVocab;
+-+  std::unique_ptr<ir2vec::Vocabulary> IR2VecVocab;
 - 
-- template <class _Value, class _Hash, class _Pred, class _Alloc>
---hash_multiset<_Value, _Hash, _Pred, _Alloc>::hash_multiset(const hash_multiset& __u) : __table_(__u.__table_) {
---  __table_.__rehash_multi(__u.bucket_count());
---  insert(__u.begin(), __u.end());
---}
--+hash_multiset<_Value, _Hash, _Pred, _Alloc>::hash_multiset(const hash_multiset& __u) : __table_(__u.__table_) {}
+-   void TearDown() override {
+-     // Restore original IR2Vec weights
+-diff -ruN --strip-trailing-cr a/llvm/unittests/Analysis/IR2VecTest.cpp b/llvm/unittests/Analysis/IR2VecTest.cpp
+---- a/llvm/unittests/Analysis/IR2VecTest.cpp
+-+++ b/llvm/unittests/Analysis/IR2VecTest.cpp
+-@@ -295,7 +295,7 @@
+- // Fixture for IR2Vec tests requiring IR setup.
+- class IR2VecTestFixture : public ::testing::Test {
++diff -ruN --strip-trailing-cr a/clang/include/clang/Analysis/Analyses/LifetimeSafety.h b/clang/include/clang/Analysis/Analyses/LifetimeSafety.h
++--- a/clang/include/clang/Analysis/Analyses/LifetimeSafety.h
+++++ b/clang/include/clang/Analysis/Analyses/LifetimeSafety.h
++@@ -29,12 +29,18 @@
++ namespace clang::lifetimes {
++ 
++ /// Enum to track the confidence level of a potential error.
++-enum class Confidence {
+++enum class Confidence : uint8_t {
++   None,
++   Maybe,   // Reported as a potential error (-Wlifetime-safety-strict)
++   Definite // Reported as a definite error (-Wlifetime-safety-permissive)
++ };
++ 
+++enum class LivenessKind : uint8_t {
+++  Dead,  // Not alive
+++  Maybe, // Live on some path but not all paths (may-be-live)
+++  Must   // Live on all paths (must-be-live)
+++};
+++
++ class LifetimeSafetyReporter {
++ public:
++   LifetimeSafetyReporter() = default;
++@@ -55,6 +61,7 @@
++ class FactManager;
++ class LoanPropagationAnalysis;
++ class ExpiredLoansAnalysis;
+++class LiveOriginAnalysis;
++ struct LifetimeFactory;
++ 
++ /// A generic, type-safe wrapper for an ID, distinguished by its `Tag` type.
++@@ -89,6 +96,7 @@
++ // TODO(opt): Consider using a bitset to represent the set of loans.
++ using LoanSet = llvm::ImmutableSet<LoanID>;
++ using OriginSet = llvm::ImmutableSet<OriginID>;
+++using OriginLoanMap = llvm::ImmutableMap<OriginID, LoanSet>;
++ 
++ /// A `ProgramPoint` identifies a location in the CFG by pointing to a specific
++ /// `Fact`. identified by a lifetime-related event (`Fact`).
++@@ -110,8 +118,16 @@
++   /// Returns the set of loans an origin holds at a specific program point.
++   LoanSet getLoansAtPoint(OriginID OID, ProgramPoint PP) const;
++ 
++-  /// Returns the set of loans that have expired at a specific program point.
++-  std::vector<LoanID> getExpiredLoansAtPoint(ProgramPoint PP) const;
+++  /// Returns the set of origins that are live at a specific program point,
+++  /// along with the confidence level of their liveness.
+++  ///
+++  /// An origin is considered live if there are potential future uses of that
+++  /// origin after the given program point. The confidence level indicates
+++  /// whether the origin is definitely live (Definite) due to being domintated
+++  /// by a set of uses or only possibly live (Maybe) only on some but not all
+++  /// control flow paths.
+++  std::vector<std::pair<OriginID, LivenessKind>>
+++  getLiveOriginsAtPoint(ProgramPoint PP) const;
++ 
++   /// Finds the OriginID for a given declaration.
++   /// Returns a null optional if not found.
++@@ -138,7 +154,7 @@
++   std::unique_ptr<LifetimeFactory> Factory;
++   std::unique_ptr<FactManager> FactMgr;
++   std::unique_ptr<LoanPropagationAnalysis> LoanPropagation;
++-  std::unique_ptr<ExpiredLoansAnalysis> ExpiredLoans;
+++  std::unique_ptr<LiveOriginAnalysis> LiveOrigins;
++ };
++ } // namespace internal
++ } // namespace clang::lifetimes
++diff -ruN --strip-trailing-cr a/clang/lib/Analysis/LifetimeSafety.cpp b/clang/lib/Analysis/LifetimeSafety.cpp
++--- a/clang/lib/Analysis/LifetimeSafety.cpp
+++++ b/clang/lib/Analysis/LifetimeSafety.cpp
++@@ -19,12 +19,13 @@
++ #include "llvm/ADT/ImmutableMap.h"
++ #include "llvm/ADT/ImmutableSet.h"
++ #include "llvm/ADT/PointerUnion.h"
++-#include "llvm/ADT/SmallBitVector.h"
++ #include "llvm/ADT/SmallVector.h"
++ #include "llvm/Support/Debug.h"
+++#include "llvm/Support/ErrorHandling.h"
++ #include "llvm/Support/TimeProfiler.h"
++ #include <cstdint>
++ #include <memory>
+++#include <optional>
++ 
++ namespace clang::lifetimes {
++ namespace internal {
++@@ -872,22 +873,19 @@
++     InStates[Start] = D.getInitialState();
++     W.enqueueBlock(Start);
++ 
++-    llvm::SmallBitVector Visited(Cfg.getNumBlockIDs() + 1);
++-
++     while (const CFGBlock *B = W.dequeue()) {
++-      Lattice StateIn = getInState(B);
+++      Lattice StateIn = *getInState(B);
++       Lattice StateOut = transferBlock(B, StateIn);
++       OutStates[B] = StateOut;
++-      Visited.set(B->getBlockID());
++       for (const CFGBlock *AdjacentB : isForward() ? B->succs() : B->preds()) {
++         if (!AdjacentB)
++           continue;
++-        Lattice OldInState = getInState(AdjacentB);
++-        Lattice NewInState = D.join(OldInState, StateOut);
+++        std::optional<Lattice> OldInState = getInState(AdjacentB);
+++        Lattice NewInState =
+++            !OldInState ? StateOut : D.join(*OldInState, StateOut);
++         // Enqueue the adjacent block if its in-state has changed or if we have
++-        // never visited it.
++-        if (!Visited.test(AdjacentB->getBlockID()) ||
++-            NewInState != OldInState) {
+++        // never seen it.
+++        if (!OldInState || NewInState != *OldInState) {
++           InStates[AdjacentB] = NewInState;
++           W.enqueueBlock(AdjacentB);
++         }
++@@ -898,7 +896,12 @@
+  protected:
+--  Vocabulary *V;
+-+  std::unique_ptr<Vocabulary> V;
+-   LLVMContext Ctx;
+-   std::unique_ptr<Module> M;
+-   Function *F = nullptr;
+-@@ -304,7 +304,7 @@
+-   Instruction *RetInst = nullptr;
 - 
-- template <class _Value, class _Hash, class _Pred, class _Alloc>
-- template <class _InputIterator>
--diff -ruN --strip-trailing-cr a/libcxx/test/extensions/gnu/hash_multiset/copy.pass.cpp b/libcxx/test/extensions/gnu/hash_multiset/copy.pass.cpp
----- a/libcxx/test/extensions/gnu/hash_multiset/copy.pass.cpp
--+++ b/libcxx/test/extensions/gnu/hash_multiset/copy.pass.cpp
--@@ -0,0 +1,27 @@
--+//===----------------------------------------------------------------------===//
--+//
--+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
--+// See https://llvm.org/LICENSE.txt for license information.
--+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
--+//
--+//===----------------------------------------------------------------------===//
--+
--+// ADDITIONAL_COMPILE_FLAGS: -Wno-deprecated
--+
--+// hash_multiset::hash_multiset(const hash_multiset&)
--+
--+#include <cassert>
--+#include <ext/hash_set>
--+
--+int main(int, char**) {
--+  __gnu_cxx::hash_multiset<int> set;
--+
--+  set.insert(1);
--+  set.insert(1);
--+
--+  auto set2 = set;
--+
--+  assert(set2.size() == 2);
--+
--+  return 0;
--+}
--diff -ruN --strip-trailing-cr a/llvm/lib/CodeGen/AsmPrinter/DwarfExpression.cpp b/llvm/lib/CodeGen/AsmPrinter/DwarfExpression.cpp
----- a/llvm/lib/CodeGen/AsmPrinter/DwarfExpression.cpp
--+++ b/llvm/lib/CodeGen/AsmPrinter/DwarfExpression.cpp
--@@ -154,7 +154,7 @@
--     unsigned Size = TRI.getSubRegIdxSize(Idx);
--     unsigned Offset = TRI.getSubRegIdxOffset(Idx);
--     Reg = TRI.getDwarfRegNum(SR, false);
---    if (Reg < 0)
--+    if (Reg < 0 || Offset + Size > RegSize)
--       continue;
+-   void SetUp() override {
+--    V = new Vocabulary(Vocabulary::createDummyVocabForTest(2));
+-+    V = std::make_unique<Vocabulary>(Vocabulary::createDummyVocabForTest(2));
 - 
--     // Used to build the intersection between the bits we already
--diff -ruN --strip-trailing-cr a/llvm/lib/Transforms/Vectorize/VPlan.h b/llvm/lib/Transforms/Vectorize/VPlan.h
----- a/llvm/lib/Transforms/Vectorize/VPlan.h
--+++ b/llvm/lib/Transforms/Vectorize/VPlan.h
--@@ -705,6 +705,9 @@
--   VPIRFlags(WrapFlagsTy WrapFlags)
--       : OpType(OperationType::OverflowingBinOp), WrapFlags(WrapFlags) {}
-- 
--+  VPIRFlags(TruncFlagsTy TruncFlags)
--+      : OpType(OperationType::Trunc), TruncFlags(TruncFlags) {}
--+
--   VPIRFlags(FastMathFlags FMFs) : OpType(OperationType::FPMathOp), FMFs(FMFs) {}
-- 
--   VPIRFlags(DisjointFlagsTy DisjointFlags)
--@@ -1494,9 +1497,10 @@
-- 
--   VPWidenCastRecipe(Instruction::CastOps Opcode, VPValue *Op, Type *ResultTy,
--                     const VPIRFlags &Flags = {},
--+                    const VPIRMetadata &Metadata = {},
--                     DebugLoc DL = DebugLoc::getUnknown())
--       : VPRecipeWithIRFlags(VPDef::VPWidenCastSC, Op, Flags, DL),
---        VPIRMetadata(), Opcode(Opcode), ResultTy(ResultTy) {
--+        VPIRMetadata(Metadata), Opcode(Opcode), ResultTy(ResultTy) {
--     assert(flagsValidForOpcode(Opcode) &&
--            "Set flags not supported for the provided opcode");
--   }
--@@ -1504,11 +1508,11 @@
--   ~VPWidenCastRecipe() override = default;
-- 
--   VPWidenCastRecipe *clone() override {
--+    auto *New = new VPWidenCastRecipe(Opcode, getOperand(0), ResultTy, *this,
--+                                      *this, getDebugLoc());
--     if (auto *UV = getUnderlyingValue())
---      return new VPWidenCastRecipe(Opcode, getOperand(0), ResultTy,
---                                   *cast<CastInst>(UV));
---
---    return new VPWidenCastRecipe(Opcode, getOperand(0), ResultTy);
--+      New->setUnderlyingValue(UV);
--+    return New;
--   }
-- 
--   VP_CLASSOF_IMPL(VPDef::VPWidenCastSC)
--diff -ruN --strip-trailing-cr a/llvm/lib/Transforms/Vectorize/VPlanRecipes.cpp b/llvm/lib/Transforms/Vectorize/VPlanRecipes.cpp
----- a/llvm/lib/Transforms/Vectorize/VPlanRecipes.cpp
--+++ b/llvm/lib/Transforms/Vectorize/VPlanRecipes.cpp
--@@ -2016,13 +2016,13 @@
--     return Opcode == Instruction::FAdd || Opcode == Instruction::FMul ||
--            Opcode == Instruction::FSub || Opcode == Instruction::FNeg ||
--            Opcode == Instruction::FDiv || Opcode == Instruction::FRem ||
--+           Opcode == Instruction::FPExt || Opcode == Instruction::FPTrunc ||
--            Opcode == Instruction::FCmp || Opcode == Instruction::Select ||
--            Opcode == VPInstruction::WideIVStep ||
--            Opcode == VPInstruction::ReductionStartVector ||
--            Opcode == VPInstruction::ComputeReductionResult;
--   case OperationType::NonNegOp:
---    return Opcode == Instruction::ZExt;
---    break;
--+    return Opcode == Instruction::ZExt || Opcode == Instruction::UIToFP;
--   case OperationType::Cmp:
--     return Opcode == Instruction::FCmp || Opcode == Instruction::ICmp;
--   case OperationType::Other:
--diff -ruN --strip-trailing-cr a/llvm/lib/Transforms/Vectorize/VPlanTransforms.cpp b/llvm/lib/Transforms/Vectorize/VPlanTransforms.cpp
----- a/llvm/lib/Transforms/Vectorize/VPlanTransforms.cpp
--+++ b/llvm/lib/Transforms/Vectorize/VPlanTransforms.cpp
--@@ -2195,7 +2195,8 @@
--         auto [ProcessedIter, IterIsEmpty] = ProcessedTruncs.try_emplace(Op);
--         VPWidenCastRecipe *NewOp =
--             IterIsEmpty
---                ? new VPWidenCastRecipe(Instruction::Trunc, Op, NewResTy)
--+                ? new VPWidenCastRecipe(Instruction::Trunc, Op, NewResTy,
--+                                        VPIRFlags::TruncFlagsTy(false, false))
--                 : ProcessedIter->second;
--         R.setOperand(Idx, NewOp);
--         if (!IterIsEmpty)
--@@ -3566,13 +3567,13 @@
--                                    Mul, Ext0, Ext1, Ext)) {
--       auto *NewExt0 = new VPWidenCastRecipe(
--           Ext0->getOpcode(), Ext0->getOperand(0), Ext->getResultType(), *Ext0,
---          Ext0->getDebugLoc());
--+          *Ext0, Ext0->getDebugLoc());
--       NewExt0->insertBefore(Ext0);
-- 
--       VPWidenCastRecipe *NewExt1 = NewExt0;
--       if (Ext0 != Ext1) {
--         NewExt1 = new VPWidenCastRecipe(Ext1->getOpcode(), Ext1->getOperand(0),
---                                        Ext->getResultType(), *Ext1,
--+                                        Ext->getResultType(), *Ext1, *Ext1,
--                                         Ext1->getDebugLoc());
--         NewExt1->insertBefore(Ext1);
--       }
--diff -ruN --strip-trailing-cr a/llvm/test/CodeGen/AArch64/debug-info-sve-pair.mir b/llvm/test/CodeGen/AArch64/debug-info-sve-pair.mir
----- a/llvm/test/CodeGen/AArch64/debug-info-sve-pair.mir
--+++ b/llvm/test/CodeGen/AArch64/debug-info-sve-pair.mir
--@@ -0,0 +1,344 @@
--+# RUN: llc -start-before=aarch64-asm-printer -o - %s | FileCheck %s
--+
--+# Check that z30_z31 debug info does not crash.
--+
--+# CHECK: .Ldebug_loc0:
--+# CHECK:        .byte   4                               // DW_LLE_offset_pair
--+# CHECK:        .uleb128 .Ltmp2-.Lfunc_begin0           //   starting offset
--+# CHECK:        .uleb128 .Ltmp3-.Lfunc_begin0           //   ending offset
--+# CHECK:        .byte   2                               // Loc expr size
--+# CHECK:        .byte   144                             // DW_OP_regx
--+# CHECK:        .byte   126                             // 126
--+# CHECK:        .byte   4                               // DW_LLE_offset_pair
--+# CHECK:        .uleb128 .Ltmp3-.Lfunc_begin0           //   starting offset
--+# CHECK:        .uleb128 .Lfunc_end0-.Lfunc_begin0      //   ending offset
--+# CHECK:        .byte   6                               // Loc expr size
--+# CHECK:        .byte   144                             // sub-register DW_OP_regx
--+# CHECK:        .byte   94                              // 94
--+# CHECK:        .byte   147                             // DW_OP_piece
--+# CHECK:        .byte   16                              // 16
--+# CHECK:        .byte   147                             // DW_OP_piece
--+# CHECK:        .byte   31                              // 31
--+# CHECK:        .byte   0                               // DW_LLE_end_of_list
--+
--+
--+--- |
--+  target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32"
--+  target triple = "aarch64"
--+
--+  define void @_Z10Sort16RowsILi6EEv12SharedTraitsI10TraitsLaneEP22Trans_NS_hwy_float16_tiS4_(i8 %st.coerce, ptr noundef %keys, i32 noundef %0, ptr noundef %1) #2 !dbg !2 {
--+      unreachable
--+  }
--+
--+  attributes #2 = { mustprogress uwtable vscale_range(1,16) "frame-pointer"="non-leaf" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="neoverse-n1" "target-features"="+aes,+crc,+dotprod,+fp-armv8,+fullfp16,+lse,+neon,+perfmon,+ras,+rcpc,+rdm,+sha2,+spe,+ssbs,+sve,+sve-aes,+sve2,+sve2-aes,+v8.1a,+v8.2a,+v8a,-fmv" "tune-cpu"="generic" }
--+
--+  !llvm.dbg.cu = !{!3}
--+  !llvm.module.flags = !{!4, !5, !6, !7, !8, !9}
--+  !llvm.ident = !{!10}
--+
--+  !2 = distinct !DISubprogram(name: "Sort16Rows<6>", linkageName: "_Z10Sort16RowsILi6EEv12SharedTraitsI10TraitsLaneEP22Trans_NS_hwy_float16_tiS4_", scope: !12, file: !12, line: 369, type: !18, scopeLine: 370, flags: DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !3, templateParams: !19, retainedNodes: !20, keyInstructions: true)
--+  !3 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus_14, file: !14, producer: "clang version 22.0.0git (https://github.com/llvm/llvm-project.git)", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug, splitDebugInlining: false, nameTableKind: None)
--+  !4 = !{i32 7, !"Dwarf Version", i32 5}
--+  !5 = !{i32 2, !"Debug Info Version", i32 3}
--+  !6 = !{i32 1, !"wchar_size", i32 4}
--+  !7 = !{i32 7, !"uwtable", i32 2}
--+  !8 = !{i32 7, !"frame-pointer", i32 1}
--+  !9 = !{i32 7, !"debug-info-assignment-tracking", i1 true}
--+  !10 = !{!"clang version 22.0.0git (https://github.com/llvm/llvm-project.git)"}
--+  !12 = !DIFile(filename: "example.cpp", directory: "/app", checksumkind: CSK_MD5, checksum: "5fbaafea0ede06ddd1ffc371aeee276e")
--+  !14 = !DIFile(filename: "/app/example.cpp", directory: "/app", checksumkind: CSK_MD5, checksum: "5fbaafea0ede06ddd1ffc371aeee276e")
--+  !17 = !DIBasicType(name: "__fp16", size: 16, encoding: DW_ATE_float)
--+  !18 = !DISubroutineType(types: !21)
--+  !19 = !{!120}
--+  !20 = !{!77, !78, !79, !80, !81, !82, !83, !84, !85, !86, !87, !88, !89, !90, !91, !92, !93, !94, !95, !96, !97, !98, !99, !100, !101, !102, !103, !104, !105}
--+  !21 = !{null, !22, !23, !24, !23}
--+  !22 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "SharedTraits<TraitsLane>", file: !12, line: 272, size: 8, flags: DIFlagTypePassByValue, elements: !25, templateParams: !26, identifier: "_ZTS12SharedTraitsI10TraitsLaneE")
--+  !23 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !55, size: 64)
--+  !24 = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
--+  !25 = !{!27}
--+  !26 = !{!76}
--+  !27 = !DIDerivedType(tag: DW_TAG_inheritance, scope: !22, baseType: !28, extraData: i32 0)
--+  !28 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "TraitsLane", file: !12, line: 325, size: 8, flags: DIFlagTypePassByValue, elements: !29, identifier: "_ZTS10TraitsLane")
--+  !29 = !{!30, !31, !32, !33}
--+  !30 = !DIDerivedType(tag: DW_TAG_inheritance, scope: !28, baseType: !34, extraData: i32 0)
--+  !31 = !DISubprogram(name: "Sort2", linkageName: "_ZN10TraitsLane5Sort2E4SimdI22Trans_NS_hwy_float16_tLi1ELi0EERu13__SVFloat16_tS4_", scope: !28, file: !12, line: 326, type: !70, scopeLine: 326, flags: DIFlagPrototyped, spFlags: DISPFlagOptimized)
--+  !32 = !DISubprogram(name: "SortPairsDistance1", linkageName: "_ZN10TraitsLane18SortPairsDistance1E4SimdI22Trans_NS_hwy_float16_tLi1ELi0EEu13__SVFloat16_t", scope: !28, file: !12, line: 344, type: !74, scopeLine: 344, flags: DIFlagPrototyped, spFlags: DISPFlagOptimized)
--+  !33 = !DISubprogram(name: "SortPairsDistance4", linkageName: "_ZN10TraitsLane18SortPairsDistance4E4SimdI22Trans_NS_hwy_float16_tLi1ELi0EEu13__SVFloat16_t", scope: !28, file: !12, line: 352, type: !74, scopeLine: 352, flags: DIFlagPrototyped, spFlags: DISPFlagOptimized)
--+  !34 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "KeyLane", file: !12, line: 307, size: 8, flags: DIFlagTypePassByValue, elements: !35, identifier: "_ZTS7KeyLane")
--+  !35 = !{!36, !37, !38}
--+  !36 = !DISubprogram(name: "SwapAdjacentPairs", linkageName: "_ZN7KeyLane17SwapAdjacentPairsE4SimdI22Trans_NS_hwy_float16_tLi1ELi0EEu13__SVFloat16_t", scope: !34, file: !12, line: 309, type: !39, scopeLine: 309, flags: DIFlagPrototyped, spFlags: DISPFlagOptimized)
--+  !37 = !DISubprogram(name: "SwapAdjacentPairs", linkageName: "_ZN7KeyLane17SwapAdjacentPairsEu13__SVFloat32_t", scope: !34, file: !12, line: 314, type: !58, scopeLine: 314, flags: DIFlagPrototyped, spFlags: DISPFlagOptimized)
--+  !38 = !DISubprogram(name: "OddEvenPairs", linkageName: "_ZN7KeyLane12OddEvenPairsE4SimdI22Trans_NS_hwy_float16_tLi1ELi0EEu13__SVFloat16_tS3_", scope: !34, file: !12, line: 318, type: !68, scopeLine: 318, flags: DIFlagPrototyped, spFlags: DISPFlagOptimized)
--+  !39 = !DISubroutineType(types: !40)
--+  !40 = !{!41, !42, !43, !41}
--+  !41 = !DIDerivedType(tag: DW_TAG_typedef, name: "Vec<Simd<Trans_NS_hwy_float16_t, 1, 0> >", file: !12, line: 270, baseType: !44)
--+  !42 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !34, size: 64, flags: DIFlagArtificial | DIFlagObjectPointer)
--+  !43 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "Simd<Trans_NS_hwy_float16_t, 1, 0>", file: !12, line: 83, size: 8, flags: DIFlagTypePassByValue, elements: !50, templateParams: !51, identifier: "_ZTS4SimdI22Trans_NS_hwy_float16_tLi1ELi0EE")
--+  !44 = !DIDerivedType(tag: DW_TAG_typedef, name: "VFromD<Simd<Trans_NS_hwy_float16_t, 1, 0> >", file: !12, line: 142, baseType: !45)
--+  !45 = !DIDerivedType(tag: DW_TAG_typedef, name: "svfloat16_t", file: !12, line: 26, baseType: !46)
--+  !46 = !DIDerivedType(tag: DW_TAG_typedef, name: "__SVFloat16_t", file: !12, baseType: !47)
--+  !47 = !DICompositeType(tag: DW_TAG_array_type, baseType: !17, flags: DIFlagVector, elements: !48)
--+  !48 = !{!49}
--+  !49 = !DISubrange(lowerBound: 0, upperBound: !DIExpression(DW_OP_constu, 4, DW_OP_bregx, 46, 0, DW_OP_mul, DW_OP_constu, 1, DW_OP_minus))
--+  !50 = !{}
--+  !51 = !{!52, !53, !54}
--+  !52 = !DITemplateTypeParameter(name: "Lane", type: !55)
--+  !53 = !DITemplateValueParameter(type: !24, value: i32 1)
--+  !54 = !DITemplateValueParameter(name: "kPow2", type: !24, value: i32 0)
--+  !55 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "Trans_NS_hwy_float16_t", file: !12, line: 6, size: 16, flags: DIFlagTypePassByValue, elements: !56, identifier: "_ZTS22Trans_NS_hwy_float16_t")
--+  !56 = !{!57}
--+  !57 = !DIDerivedType(tag: DW_TAG_member, name: "native", scope: !55, file: !12, line: 7, baseType: !17, size: 16)
--+  !58 = !DISubroutineType(types: !59)
--+  !59 = !{!60, !42, !60}
--+  !60 = !DIDerivedType(tag: DW_TAG_typedef, name: "Vec<Simd<float, 0, 0> >", file: !12, line: 270, baseType: !61)
--+  !61 = !DIDerivedType(tag: DW_TAG_typedef, name: "VFromD<Simd<float, 0, 0> >", file: !12, line: 142, baseType: !62)
--+  !62 = !DIDerivedType(tag: DW_TAG_typedef, name: "svfloat32_t", file: !12, line: 27, baseType: !63)
--+  !63 = !DIDerivedType(tag: DW_TAG_typedef, name: "__SVFloat32_t", file: !12, baseType: !64)
--+  !64 = !DICompositeType(tag: DW_TAG_array_type, baseType: !65, flags: DIFlagVector, elements: !66)
--+  !65 = !DIBasicType(name: "float", size: 32, encoding: DW_ATE_float)
--+  !66 = !{!67}
--+  !67 = !DISubrange(lowerBound: 0, upperBound: !DIExpression(DW_OP_constu, 2, DW_OP_bregx, 46, 0, DW_OP_mul, DW_OP_constu, 1, DW_OP_minus))
--+  !68 = !DISubroutineType(types: !69)
--+  !69 = !{!41, !42, !43, !41, !41}
--+  !70 = !DISubroutineType(types: !71)
--+  !71 = !{null, !72, !43, !73, !73}
--+  !72 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !28, size: 64, flags: DIFlagArtificial | DIFlagObjectPointer)
--+  !73 = !DIDerivedType(tag: DW_TAG_reference_type, baseType: !41, size: 64)
--+  !74 = !DISubroutineType(types: !75)
--+  !75 = !{!41, !72, !43, !41}
--+  !76 = !DITemplateTypeParameter(name: "Base", type: !28)
--+  !77 = !DILocalVariable(name: "st", arg: 1, scope: !2, file: !12, line: 369, type: !22)
--+  !78 = !DILocalVariable(name: "keys", arg: 2, scope: !2, file: !12, line: 369, type: !23)
--+  !79 = !DILocalVariable(arg: 3, scope: !2, file: !12, line: 369, type: !24)
--+  !80 = !DILocalVariable(arg: 4, scope: !2, file: !12, line: 370, type: !23)
--+  !81 = !DILocalVariable(name: "d", scope: !2, file: !12, line: 371, type: !106)
--+  !82 = !DILocalVariable(name: "v8", scope: !2, file: !12, line: 373, type: !112)
--+  !83 = !DILocalVariable(name: "v9", scope: !2, file: !12, line: 373, type: !112)
--+  !84 = !DILocalVariable(name: "va", scope: !2, file: !12, line: 373, type: !112)
--+  !85 = !DILocalVariable(name: "vb", scope: !2, file: !12, line: 373, type: !112)
--+  !86 = !DILocalVariable(name: "vc", scope: !2, file: !12, line: 373, type: !112)
--+  !87 = !DILocalVariable(name: "vd", scope: !2, file: !12, line: 373, type: !112)
--+  !88 = !DILocalVariable(name: "ve", scope: !2, file: !12, line: 373, type: !112)
--+  !89 = !DILocalVariable(name: "vf", scope: !2, file: !12, line: 373, type: !112)
--+  !90 = !DILocalVariable(name: "v2", scope: !2, file: !12, line: 373, type: !112)
--+  !91 = !DILocalVariable(name: "v4", scope: !2, file: !12, line: 373, type: !112)
--+  !92 = !DILocalVariable(name: "v7", scope: !2, file: !12, line: 373, type: !112)
--+  !93 = !DILocalVariable(name: "v0", scope: !2, file: !12, line: 374, type: !112)
--+  !94 = !DILocalVariable(name: "v3", scope: !2, file: !12, line: 375, type: !112)
--+  !95 = !DILocalVariable(name: "v5", scope: !2, file: !12, line: 376, type: !112)
--+  !96 = !DILocalVariable(name: "v6", scope: !2, file: !12, line: 377, type: !112)
--+  !97 = !DILocalVariable(name: "kIota", scope: !2, file: !12, line: 378, type: !112)
--+  !98 = !DILocalVariable(name: "m8", scope: !2, file: !12, line: 379, type: !113)
--+  !99 = !DILocalVariable(name: "m9", scope: !2, file: !12, line: 380, type: !113)
--+  !100 = !DILocalVariable(name: "ma", scope: !2, file: !12, line: 381, type: !113)
--+  !101 = !DILocalVariable(name: "mb", scope: !2, file: !12, line: 382, type: !113)
--+  !102 = !DILocalVariable(name: "mc", scope: !2, file: !12, line: 383, type: !113)
--+  !103 = !DILocalVariable(name: "md", scope: !2, file: !12, line: 384, type: !113)
--+  !104 = !DILocalVariable(name: "me", scope: !2, file: !12, line: 385, type: !113)
--+  !105 = !DILocalVariable(name: "mf", scope: !2, file: !12, line: 386, type: !113)
--+  !106 = !DIDerivedType(tag: DW_TAG_typedef, name: "CappedTag<Trans_NS_hwy_float16_t, 6>", file: !12, line: 97, baseType: !107)
--+  !107 = !DIDerivedType(tag: DW_TAG_typedef, name: "type", scope: !108, file: !12, line: 89, baseType: !43)
--+  !108 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "ClampNAndPow2<Trans_NS_hwy_float16_t, 1>", file: !12, line: 88, size: 8, flags: DIFlagTypePassByValue, elements: !50, templateParams: !109, identifier: "_ZTS13ClampNAndPow2I22Trans_NS_hwy_float16_tLi1EE")
--+  !109 = !{!110, !111}
--+  !110 = !DITemplateTypeParameter(name: "T", type: !55)
--+  !111 = !DITemplateValueParameter(name: "N", type: !24, value: i32 1)
--+  !112 = !DIDerivedType(tag: DW_TAG_typedef, name: "V", scope: !2, file: !12, line: 372, baseType: !41)
--+  !113 = !DIDerivedType(tag: DW_TAG_typedef, name: "Mask<Simd<Trans_NS_hwy_float16_t, 1, 0> >", file: !12, line: 271, baseType: !114)
--+  !114 = !DIDerivedType(tag: DW_TAG_typedef, name: "svbool_t", file: !12, line: 28, baseType: !115)
--+  !115 = !DIDerivedType(tag: DW_TAG_typedef, name: "__SVBool_t", file: !12, baseType: !116)
--+  !116 = !DICompositeType(tag: DW_TAG_array_type, baseType: !117, flags: DIFlagVector, elements: !118)
--+  !117 = !DIBasicType(name: "unsigned char", size: 8, encoding: DW_ATE_unsigned_char)
--+  !118 = !{!119}
--+  !119 = !DISubrange(lowerBound: 0, upperBound: !DIExpression(DW_OP_constu, 1, DW_OP_bregx, 46, 0, DW_OP_mul, DW_OP_constu, 1, DW_OP_minus))
--+  !120 = !DITemplateValueParameter(name: "kKeysPerRow", type: !24, value: i32 6)
--+  !121 = !DILocalVariable(name: "this", arg: 1, scope: !122, type: !123, flags: DIFlagArtificial | DIFlagObjectPointer)
--+  !122 = distinct !DISubprogram(name: "Sort2", linkageName: "_ZN10TraitsLane5Sort2E4SimdI22Trans_NS_hwy_float16_tLi1ELi0EERu13__SVFloat16_tS4_", scope: !28, file: !12, line: 326, type: !70, scopeLine: 328, flags: DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !3, declaration: !31, retainedNodes: !124, keyInstructions: true)
--+  !123 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !28, size: 64)
--+  !124 = !{!121, !125, !126, !127, !128, !129, !130, !131, !132}
--+  !125 = !DILocalVariable(name: "d", arg: 2, scope: !122, file: !12, line: 326, type: !43)
--+  !126 = !DILocalVariable(name: "a", arg: 3, scope: !122, file: !12, line: 327, type: !73)
--+  !127 = !DILocalVariable(name: "b", arg: 4, scope: !122, file: !12, line: 328, type: !73)
--+  !128 = !DILocalVariable(name: "__trans_tmp_52", scope: !122, file: !12, line: 329, type: !41)
--+  !129 = !DILocalVariable(name: "a_copy", scope: !122, file: !12, line: 329, type: !41)
--+  !130 = !DILocalVariable(name: "__trans_tmp_45", scope: !122, file: !12, line: 330, type: !41)
--+  !131 = !DILocalVariable(name: "__trans_tmp_53", scope: !133, file: !12, line: 334, type: !41)
--+  !132 = !DILocalVariable(name: "__trans_tmp_29", scope: !134, file: !12, line: 336, type: !45)
--+  !133 = distinct !DILexicalBlock(scope: !122, file: !12, line: 333, column: 5)
--+  !134 = distinct !DILexicalBlock(scope: !133, file: !12, line: 335, column: 7)
--+  !137 = distinct !DISubprogram(name: "SortPairsDistance1", linkageName: "_ZN10TraitsLane18SortPairsDistance1E4SimdI22Trans_NS_hwy_float16_tLi1ELi0EEu13__SVFloat16_t", scope: !28, file: !12, line: 344, type: !74, scopeLine: 345, flags: DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !3, declaration: !32, retainedNodes: !139, keyInstructions: true)
--+  !139 = !{!140, !141, !142, !143}
--+  !140 = !DILocalVariable(name: "this", arg: 1, scope: !137, type: !123, flags: DIFlagArtificial | DIFlagObjectPointer)
--+  !141 = !DILocalVariable(name: "d", arg: 2, scope: !137, file: !12, line: 344, type: !43)
--+  !142 = !DILocalVariable(name: "v", arg: 3, scope: !137, file: !12, line: 345, type: !41)
--+  !143 = !DILocalVariable(name: "__trans_tmp_48", scope: !137, file: !12, line: 346, type: !41)
--+  !144 = distinct !DISubprogram(name: "Merge16x16<6, SharedTraits<TraitsLane>, __SVFloat16_t>", linkageName: "_Z10Merge16x16ILi6E12SharedTraitsI10TraitsLaneEu13__SVFloat16_tEvT0_RT1_S6_S6_S6_S6_S6_S6_S6_S6_S6_S6_S6_", scope: !12, file: !12, line: 286, type: !146, scopeLine: 288, flags: DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !3, templateParams: !147, retainedNodes: !148, keyInstructions: true)
--+  !145 = distinct !DILocation(line: 388, column: 3, scope: !2)
--+  !146 = !DISubroutineType(types: !149)
--+  !147 = !{!164, !165, !166}
--+  !148 = !{!151, !152, !153, !154, !155, !156, !157, !158, !159, !160, !161, !162, !163}
--+  !149 = !{null, !22, !150, !150, !150, !150, !150, !150, !150, !150, !150, !150, !150, !150}
--+  !150 = !DIDerivedType(tag: DW_TAG_reference_type, baseType: !47, size: 64)
--+  !151 = !DILocalVariable(name: "st", arg: 1, scope: !144, file: !12, line: 286, type: !22)
--+  !152 = !DILocalVariable(name: "v0", arg: 2, scope: !144, file: !12, line: 286, type: !150)
--+  !153 = !DILocalVariable(name: "v2", arg: 3, scope: !144, file: !12, line: 286, type: !150)
--+  !154 = !DILocalVariable(name: "v5", arg: 4, scope: !144, file: !12, line: 286, type: !150)
--+  !155 = !DILocalVariable(name: "v6", arg: 5, scope: !144, file: !12, line: 287, type: !150)
--+  !156 = !DILocalVariable(name: "v7", arg: 6, scope: !144, file: !12, line: 287, type: !150)
--+  !157 = !DILocalVariable(name: "v9", arg: 7, scope: !144, file: !12, line: 287, type: !150)
--+  !158 = !DILocalVariable(name: "va", arg: 8, scope: !144, file: !12, line: 287, type: !150)
--+  !159 = !DILocalVariable(name: "vb", arg: 9, scope: !144, file: !12, line: 287, type: !150)
--+  !160 = !DILocalVariable(name: "vc", arg: 10, scope: !144, file: !12, line: 288, type: !150)
--+  !161 = !DILocalVariable(name: "vd", arg: 11, scope: !144, file: !12, line: 288, type: !150)
--+  !162 = !DILocalVariable(name: "ve", arg: 12, scope: !144, file: !12, line: 288, type: !150)
--+  !163 = !DILocalVariable(name: "vf", arg: 13, scope: !144, file: !12, line: 288, type: !150)
--+  !164 = !DITemplateValueParameter(type: !24, value: i32 6)
--+  !165 = !DITemplateTypeParameter(name: "Traits", type: !22)
--+  !166 = !DITemplateTypeParameter(name: "V", type: !47)
--+  !184 = !DILocalVariable(name: "this", arg: 1, scope: !185, type: !186, flags: DIFlagArtificial | DIFlagObjectPointer)
--+  !185 = distinct !DISubprogram(name: "SortPairsDistance2<Simd<Trans_NS_hwy_float16_t, 1, 0> >", linkageName: "_ZN12SharedTraitsI10TraitsLaneE18SortPairsDistance2I4SimdI22Trans_NS_hwy_float16_tLi1ELi0EEEEDTcl4ZerocvT__EEES6_S7_", scope: !22, file: !12, line: 273, type: !187, scopeLine: 273, flags: DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !3, templateParams: !188, declaration: !189, retainedNodes: !190, keyInstructions: true)
--+  !186 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !22, size: 64)
--+  !187 = !DISubroutineType(types: !191)
--+  !188 = !{!193}
--+  !189 = !DISubprogram(name: "SortPairsDistance2<Simd<Trans_NS_hwy_float16_t, 1, 0> >", linkageName: "_ZN12SharedTraitsI10TraitsLaneE18SortPairsDistance2I4SimdI22Trans_NS_hwy_float16_tLi1ELi0EEEEDTcl4ZerocvT__EEES6_S7_", scope: !22, file: !12, line: 273, type: !187, scopeLine: 273, flags: DIFlagPrototyped, spFlags: DISPFlagOptimized, templateParams: !188)
--+  !190 = !{!184, !194, !195, !196, !197}
--+  !191 = !{!41, !192, !43, !41}
--+  !192 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !22, size: 64, flags: DIFlagArtificial | DIFlagObjectPointer)
--+  !193 = !DITemplateTypeParameter(name: "D", type: !43)
--+  !194 = !DILocalVariable(name: "d", arg: 2, scope: !185, file: !12, line: 273, type: !43)
--+  !195 = !DILocalVariable(name: "v", arg: 3, scope: !185, file: !12, line: 273, type: !41)
--+  !196 = !DILocalVariable(name: "base", scope: !185, file: !12, line: 274, type: !28)
--+  !197 = !DILocalVariable(name: "swapped", scope: !185, file: !12, line: 275, type: !41)
--+  !200 = !DILocation(line: 0, scope: !122, inlinedAt: !201)
--+  !201 = distinct !DILocation(line: 358, column: 5, scope: !202, inlinedAt: !203)
--+  !202 = distinct !DISubprogram(name: "SortPairsDistance4", linkageName: "_ZN10TraitsLane18SortPairsDistance4E4SimdI22Trans_NS_hwy_float16_tLi1ELi0EEu13__SVFloat16_t", scope: !28, file: !12, line: 352, type: !74, scopeLine: 353, flags: DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !3, declaration: !33, retainedNodes: !204, keyInstructions: true)
--+  !203 = distinct !DILocation(line: 298, column: 11, scope: !144, inlinedAt: !145)
--+  !204 = !{!205, !206, !207, !208, !209, !210, !211}
--+  !205 = !DILocalVariable(name: "this", arg: 1, scope: !202, type: !123, flags: DIFlagArtificial | DIFlagObjectPointer)
--+  !206 = !DILocalVariable(name: "d", arg: 2, scope: !202, file: !12, line: 352, type: !43)
--+  !207 = !DILocalVariable(name: "v", arg: 3, scope: !202, file: !12, line: 353, type: !41)
--+  !208 = !DILocalVariable(name: "__trans_tmp_42", scope: !202, file: !12, line: 354, type: !41)
--+  !209 = !DILocalVariable(name: "__trans_tmp_39", scope: !202, file: !12, line: 354, type: !41)
--+  !210 = !DILocalVariable(name: "dw", scope: !202, file: !12, line: 355, type: !212)
--+  !211 = !DILocalVariable(name: "__trans_tmp_51", scope: !219, file: !12, line: 360, type: !44)
--+  !212 = !DIDerivedType(tag: DW_TAG_typedef, name: "RepartitionToWide<Simd<Trans_NS_hwy_float16_t, 1, 0> >", file: !12, line: 103, baseType: !213)
--+  !213 = !DIDerivedType(tag: DW_TAG_typedef, name: "Repartition<float, Simd<Trans_NS_hwy_float16_t, 1, 0> >", file: !12, line: 101, baseType: !214)
--+  !214 = !DIDerivedType(tag: DW_TAG_typedef, name: "Repartition<float>", scope: !43, file: !12, line: 86, baseType: !215)
--+  !215 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "Simd<float, 0, 0>", file: !12, line: 83, size: 8, flags: DIFlagTypePassByValue, elements: !50, templateParams: !216, identifier: "_ZTS4SimdIfLi0ELi0EE")
--+  !216 = !{!217, !218, !54}
--+  !217 = !DITemplateTypeParameter(name: "Lane", type: !65)
--+  !218 = !DITemplateValueParameter(type: !24, value: i32 0)
--+  !219 = distinct !DILexicalBlock(scope: !202, file: !12, line: 359, column: 5)
--+  !220 = !DILocalVariable(name: "this", arg: 1, scope: !221, type: !222, flags: DIFlagArtificial | DIFlagObjectPointer)
--+  !221 = distinct !DISubprogram(name: "SwapAdjacentPairs", linkageName: "_ZN7KeyLane17SwapAdjacentPairsEu13__SVFloat32_t", scope: !34, file: !12, line: 314, type: !58, scopeLine: 314, flags: DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !3, declaration: !37, retainedNodes: !223, keyInstructions: true)
--+  !222 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !34, size: 64)
--+  !223 = !{!220, !224}
--+  !224 = !DILocalVariable(name: "v", arg: 2, scope: !221, file: !12, line: 314, type: !60)
--+  !225 = distinct !DILocation(line: 357, column: 38, scope: !202, inlinedAt: !203)
--+  !226 = !DILocalVariable(name: "v", arg: 1, scope: !227, file: !12, line: 264, type: !64)
--+  !227 = distinct !DISubprogram(name: "Shuffle1032<__SVFloat32_t>", linkageName: "_Z11Shuffle1032Iu13__SVFloat32_tET_S1_", scope: !12, file: !12, line: 264, type: !228, scopeLine: 264, flags: DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !3, templateParams: !229, retainedNodes: !230, keyInstructions: true)
--+  !228 = !DISubroutineType(types: !231)
--+  !229 = !{!262}
--+  !230 = !{!226, !232, !233, !234}
--+  !231 = !{!64, !64}
--+  !232 = !DILocalVariable(name: "d", scope: !227, file: !12, line: 265, type: !235)
--+  !233 = !DILocalVariable(name: "d8", scope: !227, file: !12, line: 266, type: !252)
--+  !234 = !DILocalVariable(name: "v8", scope: !227, file: !12, line: 267, type: !257)
--+  !235 = !DIDerivedType(tag: DW_TAG_typedef, name: "DFromV<__SVFloat32_t>", file: !12, line: 108, baseType: !236)
--+  !236 = !DIDerivedType(tag: DW_TAG_typedef, name: "type", scope: !237, file: !12, line: 116, baseType: !238)
--+  !237 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "DFromV_t<__SVFloat32_t>", file: !12, line: 115, size: 8, flags: DIFlagTypePassByValue, elements: !50, templateParams: !239, identifier: "_ZTS8DFromV_tIu13__SVFloat32_tE")
--+  !238 = !DIDerivedType(tag: DW_TAG_typedef, name: "ScalableTag<float>", file: !12, line: 95, baseType: !241)
--+  !239 = !{!240}
--+  !240 = !DITemplateTypeParameter(type: !64)
--+  !241 = !DIDerivedType(tag: DW_TAG_typedef, name: "type", scope: !242, file: !12, line: 92, baseType: !243)
--+  !242 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "ScalableTagChecker<float>", file: !12, line: 91, size: 8, flags: DIFlagTypePassByValue, elements: !50, templateParams: !244, identifier: "_ZTS18ScalableTagCheckerIfE")
--+  !243 = !DIDerivedType(tag: DW_TAG_typedef, name: "type", scope: !246, file: !12, line: 89, baseType: !247)
--+  !244 = !{!245}
--+  !245 = !DITemplateTypeParameter(name: "T", type: !65)
--+  !246 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "ClampNAndPow2<float, 64>", file: !12, line: 88, size: 8, flags: DIFlagTypePassByValue, elements: !50, templateParams: !248, identifier: "_ZTS13ClampNAndPow2IfLi64EE")
--+  !247 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "Simd<float, 64, 0>", file: !12, line: 83, size: 8, flags: DIFlagTypePassByValue, elements: !50, templateParams: !250, identifier: "_ZTS4SimdIfLi64ELi0EE")
--+  !248 = !{!245, !249}
--+  !249 = !DITemplateValueParameter(name: "N", type: !24, value: i32 64)
--+  !250 = !{!217, !251, !54}
--+  !251 = !DITemplateValueParameter(type: !24, value: i32 64)
--+  !252 = !DIDerivedType(tag: DW_TAG_typedef, name: "Repartition<unsigned char, Simd<float, 64, 0> >", file: !12, line: 101, baseType: !253)
--+  !253 = !DIDerivedType(tag: DW_TAG_typedef, name: "Repartition<unsigned char>", scope: !247, file: !12, line: 86, baseType: !254)
--+  !254 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "Simd<unsigned char, 0, 0>", file: !12, line: 83, size: 8, flags: DIFlagTypePassByValue, elements: !50, templateParams: !255, identifier: "_ZTS4SimdIhLi0ELi0EE")
--+  !255 = !{!256, !218, !54}
--+  !256 = !DITemplateTypeParameter(name: "Lane", type: !117)
--+  !257 = !DIDerivedType(tag: DW_TAG_typedef, name: "svuint8_t", file: !12, line: 22, baseType: !258)
--+  !258 = !DIDerivedType(tag: DW_TAG_typedef, name: "__SVUint8_t", file: !12, baseType: !259)
--+  !259 = !DICompositeType(tag: DW_TAG_array_type, baseType: !117, flags: DIFlagVector, elements: !260)
--+  !260 = !{!261}
--+  !261 = !DISubrange(lowerBound: 0, upperBound: !DIExpression(DW_OP_constu, 8, DW_OP_bregx, 46, 0, DW_OP_mul, DW_OP_constu, 1, DW_OP_minus))
--+  !262 = !DITemplateTypeParameter(name: "V", type: !64)
--+  !263 = !DILocalVariable(name: "hi", arg: 1, scope: !264, file: !12, line: 248, type: !259)
--+  !264 = distinct !DISubprogram(name: "CombineShiftRightBytes<8, __SVUint8_t>", linkageName: "_Z22CombineShiftRightBytesILi8Eu11__SVUint8_tET0_S1_S1_", scope: !12, file: !12, line: 248, type: !265, scopeLine: 248, flags: DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !3, templateParams: !266, retainedNodes: !267, keyInstructions: true)
--+  !265 = !DISubroutineType(types: !268)
--+  !266 = !{!283, !284}
--+  !267 = !{!263, !269, !270, !271, !272, !273, !274, !275, !276}
--+  !268 = !{!259, !259, !259}
--+  !269 = !DILocalVariable(name: "lo", arg: 2, scope: !264, file: !12, line: 248, type: !259)
--+  !270 = !DILocalVariable(name: "__trans_tmp_33", scope: !264, file: !12, line: 249, type: !257)
--+  !271 = !DILocalVariable(name: "__trans_tmp_15", scope: !264, file: !12, line: 249, type: !257)
--+  !272 = !DILocalVariable(name: "__trans_tmp_32", scope: !264, file: !12, line: 250, type: !257)
--+  !273 = !DILocalVariable(name: "d8", scope: !264, file: !12, line: 251, type: !277)
--+  !274 = !DILocalVariable(name: "__trans_tmp_16", scope: !264, file: !12, line: 252, type: !114)
--+  !275 = !DILocalVariable(name: "lo_down", scope: !264, file: !12, line: 254, type: !257)
--+  !276 = !DILocalVariable(name: "__trans_tmp_34", scope: !264, file: !12, line: 255, type: !114)
--+  !277 = !DIDerivedType(tag: DW_TAG_typedef, name: "Repartition<unsigned char, Simd<char, 0, 0> >", file: !12, line: 101, baseType: !278)
--+  !278 = !DIDerivedType(tag: DW_TAG_typedef, name: "Repartition<unsigned char>", scope: !279, file: !12, line: 86, baseType: !254)
--+  !279 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "Simd<char, 0, 0>", file: !12, line: 83, size: 8, flags: DIFlagTypePassByValue, elements: !50, templateParams: !280, identifier: "_ZTS4SimdIcLi0ELi0EE")
--+  !280 = !{!281, !218, !54}
--+  !281 = !DITemplateTypeParameter(name: "Lane", type: !282)
--+  !282 = !DIBasicType(name: "char", size: 8, encoding: DW_ATE_unsigned_char)
--+  !283 = !DITemplateValueParameter(name: "kBytes", type: !24, value: i32 8)
--+  !284 = !DITemplateTypeParameter(name: "V", type: !259)
--+  !285 = !DILocalVariable(name: "hi", arg: 1, scope: !286, file: !12, line: 216, type: !257)
--+  !286 = distinct !DISubprogram(name: "Ext<8>", linkageName: "_Z3ExtILi8EEu11__SVUint8_tS0_S0_", scope: !12, file: !12, line: 216, type: !287, scopeLine: 216, flags: DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !3, templateParams: !288, retainedNodes: !289, keyInstructions: true)
--+  !287 = !DISubroutineType(types: !290)
--+  !288 = !{!292}
--+  !289 = !{!285, !291}
--+  !290 = !{!257, !257, !257}
--+  !291 = !DILocalVariable(name: "lo", arg: 2, scope: !286, file: !12, line: 216, type: !257)
--+  !292 = !DITemplateValueParameter(name: "kIndex", type: !24, value: i32 8)
--+  !293 = !DILocalVariable(name: "a", arg: 1, scope: !294, file: !12, line: 180, type: !47)
--+  !294 = distinct !DISubprogram(name: "Min<__SVFloat16_t>", linkageName: "_Z3MinIu13__SVFloat16_tET_S1_S1_", scope: !12, file: !12, line: 180, type: !295, scopeLine: 180, flags: DIFlagPrototyped | DIFlagAllCallsDescribed, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !3, templateParams: !296, retainedNodes: !297, keyInstructions: true)
--+  !295 = !DISubroutineType(types: !298)
--+  !296 = !{!166}
--+  !297 = !{!293, !299, !300, !301, !302, !303, !304}
--+  !298 = !{!47, !47, !47}
--+  !299 = !DILocalVariable(name: "b", arg: 2, scope: !294, file: !12, line: 180, type: !47)
--+  !300 = !DILocalVariable(name: "__trans_tmp_36", scope: !294, file: !12, line: 181, type: !45)
--+  !301 = !DILocalVariable(name: "__trans_tmp_25", scope: !294, file: !12, line: 181, type: !45)
--+  !302 = !DILocalVariable(name: "__trans_tmp_27", scope: !294, file: !12, line: 182, type: !114)
--+  !303 = !DILocalVariable(name: "__trans_tmp_24", scope: !294, file: !12, line: 183, type: !114)
--+  !304 = !DILocalVariable(name: "__trans_tmp_19", scope: !294, file: !12, line: 184, type: !114)
--+  !308 = distinct !DILocation(line: 315, column: 12, scope: !221, inlinedAt: !225)
--+  !309 = distinct !DILocation(line: 268, column: 21, scope: !227, inlinedAt: !308)
--+  !311 = distinct !DILocation(line: 254, column: 18, scope: !264, inlinedAt: !309)
--+  !312 = !DILocation(line: 217, column: 10, scope: !286, inlinedAt: !311, atomGroup: 1, atomRank: 2)
--+  !313 = !DILocation(line: 257, column: 20, scope: !264, inlinedAt: !309, atomGroup: 5, atomRank: 2)
--+  !314 = !DILocation(line: 0, scope: !294, inlinedAt: !315)
--+  !315 = distinct !DILocation(line: 331, column: 22, scope: !122, inlinedAt: !201)
--+  !316 = !DILocation(line: 185, column: 20, scope: !294, inlinedAt: !315)
--+  !317 = !DILocation(line: 403, column: 1, scope: !2, atomGroup: 19449, atomRank: 1)
--+
--+...
--+---
--+name:            _Z10Sort16RowsILi6EEv12SharedTraitsI10TraitsLaneEP22Trans_NS_hwy_float16_tiS4_
--+body:             |
--+  bb.0:
--+    liveins: $x1, $z0, $z1, $p0
--+
--+    $z30 = LDR_ZXI $x1, -14
--+    $z31 = LDR_ZXI $x1, -13
--+    $z23 = ORR_ZZZ $z30, $z30
--+    renamable $z2 = EXT_ZZI_B renamable $z30_z31, 8,  debug-location !312
--+    renamable $z7 = SEL_ZPZZ_B renamable $p0, renamable $z0, killed renamable $z1,  debug-location !313
--+    DBG_VALUE $z30, $noreg, !129, !DIExpression(),  debug-location !200
--+    renamable $p3 = nofpexcept FCMGT_PPzZZ_H renamable $p0, renamable $z0, undef renamable $z1,  debug-location !316
--+    DBG_VALUE $z30_z31, $noreg, !129, !DIExpression(),  debug-location !200
--+    DBG_VALUE $z30_z31, $noreg, !293, !DIExpression(),  debug-location !314
--+    RET undef $lr,  debug-location !317
--+...
--+
--diff -ruN --strip-trailing-cr a/llvm/test/Transforms/LoopVectorize/cse-casts.ll b/llvm/test/Transforms/LoopVectorize/cse-casts.ll
----- a/llvm/test/Transforms/LoopVectorize/cse-casts.ll
--+++ b/llvm/test/Transforms/LoopVectorize/cse-casts.ll
--@@ -0,0 +1,351 @@
--+; NOTE: Assertions have been autogenerated by utils/update_test_checks.py UTC_ARGS: --check-globals none --filter-out-after "scalar.ph:" --version 6
--+; RUN: opt -p loop-vectorize -force-vector-width=4 -force-vector-interleave=2 -S %s | FileCheck %s
--+
--+define i8 @preserve_flags_when_cloning_trunc(i8 %start, ptr noalias %src, ptr noalias %dst) {
--+; CHECK-LABEL: define i8 @preserve_flags_when_cloning_trunc(
--+; CHECK-SAME: i8 [[START:%.*]], ptr noalias [[SRC:%.*]], ptr noalias [[DST:%.*]]) {
--+; CHECK-NEXT:  [[ENTRY:.*:]]
--+; CHECK-NEXT:    br label %[[VECTOR_PH:.*]]
--+; CHECK:       [[VECTOR_PH]]:
--+; CHECK-NEXT:    [[TMP0:%.*]] = insertelement <4 x i8> splat (i8 1), i8 [[START]], i32 0
--+; CHECK-NEXT:    br label %[[VECTOR_BODY:.*]]
--+; CHECK:       [[VECTOR_BODY]]:
--+; CHECK-NEXT:    [[INDEX:%.*]] = phi i64 [ 0, %[[VECTOR_PH]] ], [ [[INDEX_NEXT:%.*]], %[[VECTOR_BODY]] ]
--+; CHECK-NEXT:    [[VEC_PHI:%.*]] = phi <4 x i8> [ [[TMP0]], %[[VECTOR_PH]] ], [ [[TMP6:%.*]], %[[VECTOR_BODY]] ]
--+; CHECK-NEXT:    [[VEC_PHI1:%.*]] = phi <4 x i8> [ splat (i8 1), %[[VECTOR_PH]] ], [ [[TMP7:%.*]], %[[VECTOR_BODY]] ]
--+; CHECK-NEXT:    [[TMP1:%.*]] = load i32, ptr [[SRC]], align 4
--+; CHECK-NEXT:    [[BROADCAST_SPLATINSERT:%.*]] = insertelement <4 x i32> poison, i32 [[TMP1]], i64 0
--+; CHECK-NEXT:    [[BROADCAST_SPLAT:%.*]] = shufflevector <4 x i32> [[BROADCAST_SPLATINSERT]], <4 x i32> poison, <4 x i32> zeroinitializer
--+; CHECK-NEXT:    [[TMP2:%.*]] = icmp ne <4 x i32> [[BROADCAST_SPLAT]], zeroinitializer
--+; CHECK-NEXT:    [[TMP3:%.*]] = zext <4 x i1> [[TMP2]] to <4 x i16>
--+; CHECK-NEXT:    [[TMP4:%.*]] = getelementptr i16, ptr [[DST]], i64 [[INDEX]]
--+; CHECK-NEXT:    [[TMP5:%.*]] = getelementptr i16, ptr [[TMP4]], i32 4
--+; CHECK-NEXT:    store <4 x i16> [[TMP3]], ptr [[TMP4]], align 2
--+; CHECK-NEXT:    store <4 x i16> [[TMP3]], ptr [[TMP5]], align 2
--+; CHECK-NEXT:    [[TMP6]] = mul <4 x i8> [[VEC_PHI]], splat (i8 3)
--+; CHECK-NEXT:    [[TMP7]] = mul <4 x i8> [[VEC_PHI1]], splat (i8 3)
--+; CHECK-NEXT:    [[INDEX_NEXT]] = add nuw i64 [[INDEX]], 8
--+; CHECK-NEXT:    [[TMP8:%.*]] = icmp eq i64 [[INDEX_NEXT]], 416
--+; CHECK-NEXT:    br i1 [[TMP8]], label %[[MIDDLE_BLOCK:.*]], label %[[VECTOR_BODY]], !llvm.loop [[LOOP0:![0-9]+]]
--+; CHECK:       [[MIDDLE_BLOCK]]:
--+; CHECK-NEXT:    [[BIN_RDX:%.*]] = mul <4 x i8> [[TMP7]], [[TMP6]]
--+; CHECK-NEXT:    [[TMP9:%.*]] = call i8 @llvm.vector.reduce.mul.v4i8(<4 x i8> [[BIN_RDX]])
--+; CHECK-NEXT:    br label %[[SCALAR_PH:.*]]
--+; CHECK:       [[SCALAR_PH]]:
--+;
--+entry:
--+  br label %loop
--+
--+loop:
--+  %iv = phi i64 [ %iv.next, %loop ], [ 0, %entry ]
--+  %red = phi i8 [ %red.next, %loop ], [ %start, %entry ]
--+  %l = load i32, ptr %src, align 4
--+  %cmp = icmp ne i32 %l, 0
--+  %cmp.ext = zext i1 %cmp to i64
--+  %cmp.trunc = trunc i64 %cmp.ext to i16
--+  %gep.dst = getelementptr i16, ptr %dst, i64 %iv
--+  store i16 %cmp.trunc, ptr %gep.dst, align 2
--+  %red.next = mul i8 %red, 3
--+  %iv.next = add i64 %iv, 1
--+  %ec = icmp ult i64 %iv, 416
--+  br i1 %ec, label %loop, label %exit
--+
--+exit:
--+  ret i8 %red.next
--+}
--+
--+
--+define void @preserve_flags_narrowing_extends_and_truncs(ptr noalias %A, ptr noalias %B, ptr noalias %C) {
--+; CHECK-LABEL: define void @preserve_flags_narrowing_extends_and_truncs(
--+; CHECK-SAME: ptr noalias [[A:%.*]], ptr noalias [[B:%.*]], ptr noalias [[C:%.*]]) {
--+; CHECK-NEXT:  [[ENTRY:.*:]]
--+; CHECK-NEXT:    br label %[[VECTOR_PH:.*]]
--+; CHECK:       [[VECTOR_PH]]:
--+; CHECK-NEXT:    br label %[[VECTOR_BODY:.*]]
--+; CHECK:       [[VECTOR_BODY]]:
--+; CHECK-NEXT:    br i1 true, label %[[PRED_LOAD_IF:.*]], label %[[PRED_LOAD_CONTINUE:.*]]
--+; CHECK:       [[PRED_LOAD_IF]]:
--+; CHECK-NEXT:    [[TMP0:%.*]] = getelementptr inbounds i8, ptr [[A]], i64 0
--+; CHECK-NEXT:    [[TMP1:%.*]] = load i8, ptr [[TMP0]], align 1
--+; CHECK-NEXT:    [[TMP2:%.*]] = insertelement <4 x i8> poison, i8 [[TMP1]], i32 0
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE]]
--+; CHECK:       [[PRED_LOAD_CONTINUE]]:
--+; CHECK-NEXT:    [[TMP3:%.*]] = phi <4 x i8> [ poison, %[[VECTOR_BODY]] ], [ [[TMP2]], %[[PRED_LOAD_IF]] ]
--+; CHECK-NEXT:    br i1 true, label %[[PRED_LOAD_IF1:.*]], label %[[PRED_LOAD_CONTINUE2:.*]]
--+; CHECK:       [[PRED_LOAD_IF1]]:
--+; CHECK-NEXT:    [[TMP4:%.*]] = getelementptr inbounds i8, ptr [[A]], i64 1
--+; CHECK-NEXT:    [[TMP5:%.*]] = load i8, ptr [[TMP4]], align 1
--+; CHECK-NEXT:    [[TMP6:%.*]] = insertelement <4 x i8> [[TMP3]], i8 [[TMP5]], i32 1
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE2]]
--+; CHECK:       [[PRED_LOAD_CONTINUE2]]:
--+; CHECK-NEXT:    [[TMP7:%.*]] = phi <4 x i8> [ [[TMP3]], %[[PRED_LOAD_CONTINUE]] ], [ [[TMP6]], %[[PRED_LOAD_IF1]] ]
--+; CHECK-NEXT:    br i1 false, label %[[PRED_LOAD_IF3:.*]], label %[[PRED_LOAD_CONTINUE4:.*]]
--+; CHECK:       [[PRED_LOAD_IF3]]:
--+; CHECK-NEXT:    [[TMP8:%.*]] = getelementptr inbounds i8, ptr [[A]], i64 2
--+; CHECK-NEXT:    [[TMP9:%.*]] = load i8, ptr [[TMP8]], align 1
--+; CHECK-NEXT:    [[TMP10:%.*]] = insertelement <4 x i8> [[TMP7]], i8 [[TMP9]], i32 2
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE4]]
--+; CHECK:       [[PRED_LOAD_CONTINUE4]]:
--+; CHECK-NEXT:    [[TMP11:%.*]] = phi <4 x i8> [ [[TMP7]], %[[PRED_LOAD_CONTINUE2]] ], [ [[TMP10]], %[[PRED_LOAD_IF3]] ]
--+; CHECK-NEXT:    br i1 false, label %[[PRED_LOAD_IF5:.*]], label %[[PRED_LOAD_CONTINUE6:.*]]
--+; CHECK:       [[PRED_LOAD_IF5]]:
--+; CHECK-NEXT:    [[TMP12:%.*]] = getelementptr inbounds i8, ptr [[A]], i64 3
--+; CHECK-NEXT:    [[TMP13:%.*]] = load i8, ptr [[TMP12]], align 1
--+; CHECK-NEXT:    [[TMP14:%.*]] = insertelement <4 x i8> [[TMP11]], i8 [[TMP13]], i32 3
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE6]]
--+; CHECK:       [[PRED_LOAD_CONTINUE6]]:
--+; CHECK-NEXT:    [[TMP15:%.*]] = phi <4 x i8> [ [[TMP11]], %[[PRED_LOAD_CONTINUE4]] ], [ [[TMP14]], %[[PRED_LOAD_IF5]] ]
--+; CHECK-NEXT:    br i1 false, label %[[PRED_LOAD_IF7:.*]], label %[[PRED_LOAD_CONTINUE8:.*]]
--+; CHECK:       [[PRED_LOAD_IF7]]:
--+; CHECK-NEXT:    [[TMP16:%.*]] = getelementptr inbounds i8, ptr [[A]], i64 4
--+; CHECK-NEXT:    [[TMP17:%.*]] = load i8, ptr [[TMP16]], align 1
--+; CHECK-NEXT:    [[TMP18:%.*]] = insertelement <4 x i8> poison, i8 [[TMP17]], i32 0
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE8]]
--+; CHECK:       [[PRED_LOAD_CONTINUE8]]:
--+; CHECK-NEXT:    [[TMP19:%.*]] = phi <4 x i8> [ poison, %[[PRED_LOAD_CONTINUE6]] ], [ [[TMP18]], %[[PRED_LOAD_IF7]] ]
--+; CHECK-NEXT:    br i1 false, label %[[PRED_LOAD_IF9:.*]], label %[[PRED_LOAD_CONTINUE10:.*]]
--+; CHECK:       [[PRED_LOAD_IF9]]:
--+; CHECK-NEXT:    [[TMP20:%.*]] = getelementptr inbounds i8, ptr [[A]], i64 5
--+; CHECK-NEXT:    [[TMP21:%.*]] = load i8, ptr [[TMP20]], align 1
--+; CHECK-NEXT:    [[TMP22:%.*]] = insertelement <4 x i8> [[TMP19]], i8 [[TMP21]], i32 1
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE10]]
--+; CHECK:       [[PRED_LOAD_CONTINUE10]]:
--+; CHECK-NEXT:    [[TMP23:%.*]] = phi <4 x i8> [ [[TMP19]], %[[PRED_LOAD_CONTINUE8]] ], [ [[TMP22]], %[[PRED_LOAD_IF9]] ]
--+; CHECK-NEXT:    br i1 false, label %[[PRED_LOAD_IF11:.*]], label %[[PRED_LOAD_CONTINUE12:.*]]
--+; CHECK:       [[PRED_LOAD_IF11]]:
--+; CHECK-NEXT:    [[TMP24:%.*]] = getelementptr inbounds i8, ptr [[A]], i64 6
--+; CHECK-NEXT:    [[TMP25:%.*]] = load i8, ptr [[TMP24]], align 1
--+; CHECK-NEXT:    [[TMP26:%.*]] = insertelement <4 x i8> [[TMP23]], i8 [[TMP25]], i32 2
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE12]]
--+; CHECK:       [[PRED_LOAD_CONTINUE12]]:
--+; CHECK-NEXT:    [[TMP27:%.*]] = phi <4 x i8> [ [[TMP23]], %[[PRED_LOAD_CONTINUE10]] ], [ [[TMP26]], %[[PRED_LOAD_IF11]] ]
--+; CHECK-NEXT:    br i1 false, label %[[PRED_LOAD_IF13:.*]], label %[[PRED_LOAD_CONTINUE14:.*]]
--+; CHECK:       [[PRED_LOAD_IF13]]:
--+; CHECK-NEXT:    [[TMP28:%.*]] = getelementptr inbounds i8, ptr [[A]], i64 7
--+; CHECK-NEXT:    [[TMP29:%.*]] = load i8, ptr [[TMP28]], align 1
--+; CHECK-NEXT:    [[TMP30:%.*]] = insertelement <4 x i8> [[TMP27]], i8 [[TMP29]], i32 3
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE14]]
--+; CHECK:       [[PRED_LOAD_CONTINUE14]]:
--+; CHECK-NEXT:    [[TMP31:%.*]] = phi <4 x i8> [ [[TMP27]], %[[PRED_LOAD_CONTINUE12]] ], [ [[TMP30]], %[[PRED_LOAD_IF13]] ]
--+; CHECK-NEXT:    [[TMP32:%.*]] = zext <4 x i8> [[TMP15]] to <4 x i64>
--+; CHECK-NEXT:    [[TMP33:%.*]] = zext <4 x i8> [[TMP31]] to <4 x i64>
--+; CHECK-NEXT:    br i1 true, label %[[PRED_STORE_IF:.*]], label %[[PRED_STORE_CONTINUE:.*]]
--+; CHECK:       [[PRED_STORE_IF]]:
--+; CHECK-NEXT:    [[TMP34:%.*]] = getelementptr inbounds i8, ptr [[C]], i64 0
--+; CHECK-NEXT:    [[TMP35:%.*]] = extractelement <4 x i64> [[TMP32]], i32 0
--+; CHECK-NEXT:    store i64 [[TMP35]], ptr [[TMP34]], align 4
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE]]
--+; CHECK:       [[PRED_STORE_CONTINUE]]:
--+; CHECK-NEXT:    br i1 true, label %[[PRED_STORE_IF15:.*]], label %[[PRED_STORE_CONTINUE16:.*]]
--+; CHECK:       [[PRED_STORE_IF15]]:
--+; CHECK-NEXT:    [[TMP36:%.*]] = getelementptr inbounds i8, ptr [[C]], i64 1
--+; CHECK-NEXT:    [[TMP37:%.*]] = extractelement <4 x i64> [[TMP32]], i32 1
--+; CHECK-NEXT:    store i64 [[TMP37]], ptr [[TMP36]], align 4
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE16]]
--+; CHECK:       [[PRED_STORE_CONTINUE16]]:
--+; CHECK-NEXT:    br i1 false, label %[[PRED_STORE_IF17:.*]], label %[[PRED_STORE_CONTINUE18:.*]]
--+; CHECK:       [[PRED_STORE_IF17]]:
--+; CHECK-NEXT:    [[TMP38:%.*]] = getelementptr inbounds i8, ptr [[C]], i64 2
--+; CHECK-NEXT:    [[TMP39:%.*]] = extractelement <4 x i64> [[TMP32]], i32 2
--+; CHECK-NEXT:    store i64 [[TMP39]], ptr [[TMP38]], align 4
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE18]]
--+; CHECK:       [[PRED_STORE_CONTINUE18]]:
--+; CHECK-NEXT:    br i1 false, label %[[PRED_STORE_IF19:.*]], label %[[PRED_STORE_CONTINUE20:.*]]
--+; CHECK:       [[PRED_STORE_IF19]]:
--+; CHECK-NEXT:    [[TMP40:%.*]] = getelementptr inbounds i8, ptr [[C]], i64 3
--+; CHECK-NEXT:    [[TMP41:%.*]] = extractelement <4 x i64> [[TMP32]], i32 3
--+; CHECK-NEXT:    store i64 [[TMP41]], ptr [[TMP40]], align 4
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE20]]
--+; CHECK:       [[PRED_STORE_CONTINUE20]]:
--+; CHECK-NEXT:    br i1 false, label %[[PRED_STORE_IF21:.*]], label %[[PRED_STORE_CONTINUE22:.*]]
--+; CHECK:       [[PRED_STORE_IF21]]:
--+; CHECK-NEXT:    [[TMP42:%.*]] = getelementptr inbounds i8, ptr [[C]], i64 4
--+; CHECK-NEXT:    [[TMP43:%.*]] = extractelement <4 x i64> [[TMP33]], i32 0
--+; CHECK-NEXT:    store i64 [[TMP43]], ptr [[TMP42]], align 4
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE22]]
--+; CHECK:       [[PRED_STORE_CONTINUE22]]:
--+; CHECK-NEXT:    br i1 false, label %[[PRED_STORE_IF23:.*]], label %[[PRED_STORE_CONTINUE24:.*]]
--+; CHECK:       [[PRED_STORE_IF23]]:
--+; CHECK-NEXT:    [[TMP44:%.*]] = getelementptr inbounds i8, ptr [[C]], i64 5
--+; CHECK-NEXT:    [[TMP45:%.*]] = extractelement <4 x i64> [[TMP33]], i32 1
--+; CHECK-NEXT:    store i64 [[TMP45]], ptr [[TMP44]], align 4
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE24]]
--+; CHECK:       [[PRED_STORE_CONTINUE24]]:
--+; CHECK-NEXT:    br i1 false, label %[[PRED_STORE_IF25:.*]], label %[[PRED_STORE_CONTINUE26:.*]]
--+; CHECK:       [[PRED_STORE_IF25]]:
--+; CHECK-NEXT:    [[TMP46:%.*]] = getelementptr inbounds i8, ptr [[C]], i64 6
--+; CHECK-NEXT:    [[TMP47:%.*]] = extractelement <4 x i64> [[TMP33]], i32 2
--+; CHECK-NEXT:    store i64 [[TMP47]], ptr [[TMP46]], align 4
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE26]]
--+; CHECK:       [[PRED_STORE_CONTINUE26]]:
--+; CHECK-NEXT:    br i1 false, label %[[PRED_STORE_IF27:.*]], label %[[PRED_STORE_CONTINUE28:.*]]
--+; CHECK:       [[PRED_STORE_IF27]]:
--+; CHECK-NEXT:    [[TMP48:%.*]] = getelementptr inbounds i8, ptr [[C]], i64 7
--+; CHECK-NEXT:    [[TMP49:%.*]] = extractelement <4 x i64> [[TMP33]], i32 3
--+; CHECK-NEXT:    store i64 [[TMP49]], ptr [[TMP48]], align 4
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE28]]
--+; CHECK:       [[PRED_STORE_CONTINUE28]]:
--+; CHECK-NEXT:    [[TMP50:%.*]] = getelementptr inbounds i8, ptr [[B]], i64 0
--+; CHECK-NEXT:    [[TMP51:%.*]] = getelementptr inbounds i8, ptr [[B]], i64 1
--+; CHECK-NEXT:    [[TMP52:%.*]] = getelementptr inbounds i8, ptr [[B]], i64 2
--+; CHECK-NEXT:    [[TMP53:%.*]] = getelementptr inbounds i8, ptr [[B]], i64 3
--+; CHECK-NEXT:    [[TMP54:%.*]] = insertelement <4 x ptr> poison, ptr [[TMP50]], i32 0
--+; CHECK-NEXT:    [[TMP55:%.*]] = insertelement <4 x ptr> [[TMP54]], ptr [[TMP51]], i32 1
--+; CHECK-NEXT:    [[TMP56:%.*]] = insertelement <4 x ptr> [[TMP55]], ptr [[TMP52]], i32 2
--+; CHECK-NEXT:    [[TMP57:%.*]] = insertelement <4 x ptr> [[TMP56]], ptr [[TMP53]], i32 3
--+; CHECK-NEXT:    [[TMP58:%.*]] = getelementptr inbounds i8, ptr [[B]], i64 4
--+; CHECK-NEXT:    [[TMP59:%.*]] = getelementptr inbounds i8, ptr [[B]], i64 5
--+; CHECK-NEXT:    [[TMP60:%.*]] = getelementptr inbounds i8, ptr [[B]], i64 6
--+; CHECK-NEXT:    [[TMP61:%.*]] = getelementptr inbounds i8, ptr [[B]], i64 7
--+; CHECK-NEXT:    [[TMP62:%.*]] = insertelement <4 x ptr> poison, ptr [[TMP58]], i32 0
--+; CHECK-NEXT:    [[TMP63:%.*]] = insertelement <4 x ptr> [[TMP62]], ptr [[TMP59]], i32 1
--+; CHECK-NEXT:    [[TMP64:%.*]] = insertelement <4 x ptr> [[TMP63]], ptr [[TMP60]], i32 2
--+; CHECK-NEXT:    [[TMP65:%.*]] = insertelement <4 x ptr> [[TMP64]], ptr [[TMP61]], i32 3
--+; CHECK-NEXT:    br i1 true, label %[[PRED_LOAD_IF29:.*]], label %[[PRED_LOAD_CONTINUE30:.*]]
--+; CHECK:       [[PRED_LOAD_IF29]]:
--+; CHECK-NEXT:    [[TMP66:%.*]] = load i8, ptr [[TMP50]], align 1
--+; CHECK-NEXT:    [[TMP67:%.*]] = insertelement <4 x i8> poison, i8 [[TMP66]], i32 0
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE30]]
--+; CHECK:       [[PRED_LOAD_CONTINUE30]]:
--+; CHECK-NEXT:    [[TMP68:%.*]] = phi <4 x i8> [ poison, %[[PRED_STORE_CONTINUE28]] ], [ [[TMP67]], %[[PRED_LOAD_IF29]] ]
--+; CHECK-NEXT:    br i1 true, label %[[PRED_LOAD_IF31:.*]], label %[[PRED_LOAD_CONTINUE32:.*]]
--+; CHECK:       [[PRED_LOAD_IF31]]:
--+; CHECK-NEXT:    [[TMP69:%.*]] = load i8, ptr [[TMP51]], align 1
--+; CHECK-NEXT:    [[TMP70:%.*]] = insertelement <4 x i8> [[TMP68]], i8 [[TMP69]], i32 1
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE32]]
--+; CHECK:       [[PRED_LOAD_CONTINUE32]]:
--+; CHECK-NEXT:    [[TMP71:%.*]] = phi <4 x i8> [ [[TMP68]], %[[PRED_LOAD_CONTINUE30]] ], [ [[TMP70]], %[[PRED_LOAD_IF31]] ]
--+; CHECK-NEXT:    br i1 false, label %[[PRED_LOAD_IF33:.*]], label %[[PRED_LOAD_CONTINUE34:.*]]
--+; CHECK:       [[PRED_LOAD_IF33]]:
--+; CHECK-NEXT:    [[TMP72:%.*]] = load i8, ptr [[TMP52]], align 1
--+; CHECK-NEXT:    [[TMP73:%.*]] = insertelement <4 x i8> [[TMP71]], i8 [[TMP72]], i32 2
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE34]]
--+; CHECK:       [[PRED_LOAD_CONTINUE34]]:
--+; CHECK-NEXT:    [[TMP74:%.*]] = phi <4 x i8> [ [[TMP71]], %[[PRED_LOAD_CONTINUE32]] ], [ [[TMP73]], %[[PRED_LOAD_IF33]] ]
--+; CHECK-NEXT:    br i1 false, label %[[PRED_LOAD_IF35:.*]], label %[[PRED_LOAD_CONTINUE36:.*]]
--+; CHECK:       [[PRED_LOAD_IF35]]:
--+; CHECK-NEXT:    [[TMP75:%.*]] = load i8, ptr [[TMP53]], align 1
--+; CHECK-NEXT:    [[TMP76:%.*]] = insertelement <4 x i8> [[TMP74]], i8 [[TMP75]], i32 3
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE36]]
--+; CHECK:       [[PRED_LOAD_CONTINUE36]]:
--+; CHECK-NEXT:    [[TMP77:%.*]] = phi <4 x i8> [ [[TMP74]], %[[PRED_LOAD_CONTINUE34]] ], [ [[TMP76]], %[[PRED_LOAD_IF35]] ]
--+; CHECK-NEXT:    br i1 false, label %[[PRED_LOAD_IF37:.*]], label %[[PRED_LOAD_CONTINUE38:.*]]
--+; CHECK:       [[PRED_LOAD_IF37]]:
--+; CHECK-NEXT:    [[TMP78:%.*]] = load i8, ptr [[TMP58]], align 1
--+; CHECK-NEXT:    [[TMP79:%.*]] = insertelement <4 x i8> poison, i8 [[TMP78]], i32 0
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE38]]
--+; CHECK:       [[PRED_LOAD_CONTINUE38]]:
--+; CHECK-NEXT:    [[TMP80:%.*]] = phi <4 x i8> [ poison, %[[PRED_LOAD_CONTINUE36]] ], [ [[TMP79]], %[[PRED_LOAD_IF37]] ]
--+; CHECK-NEXT:    br i1 false, label %[[PRED_LOAD_IF39:.*]], label %[[PRED_LOAD_CONTINUE40:.*]]
--+; CHECK:       [[PRED_LOAD_IF39]]:
--+; CHECK-NEXT:    [[TMP81:%.*]] = load i8, ptr [[TMP59]], align 1
--+; CHECK-NEXT:    [[TMP82:%.*]] = insertelement <4 x i8> [[TMP80]], i8 [[TMP81]], i32 1
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE40]]
--+; CHECK:       [[PRED_LOAD_CONTINUE40]]:
--+; CHECK-NEXT:    [[TMP83:%.*]] = phi <4 x i8> [ [[TMP80]], %[[PRED_LOAD_CONTINUE38]] ], [ [[TMP82]], %[[PRED_LOAD_IF39]] ]
--+; CHECK-NEXT:    br i1 false, label %[[PRED_LOAD_IF41:.*]], label %[[PRED_LOAD_CONTINUE42:.*]]
--+; CHECK:       [[PRED_LOAD_IF41]]:
--+; CHECK-NEXT:    [[TMP84:%.*]] = load i8, ptr [[TMP60]], align 1
--+; CHECK-NEXT:    [[TMP85:%.*]] = insertelement <4 x i8> [[TMP83]], i8 [[TMP84]], i32 2
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE42]]
--+; CHECK:       [[PRED_LOAD_CONTINUE42]]:
--+; CHECK-NEXT:    [[TMP86:%.*]] = phi <4 x i8> [ [[TMP83]], %[[PRED_LOAD_CONTINUE40]] ], [ [[TMP85]], %[[PRED_LOAD_IF41]] ]
--+; CHECK-NEXT:    br i1 false, label %[[PRED_LOAD_IF43:.*]], label %[[PRED_LOAD_CONTINUE44:.*]]
--+; CHECK:       [[PRED_LOAD_IF43]]:
--+; CHECK-NEXT:    [[TMP87:%.*]] = load i8, ptr [[TMP61]], align 1
--+; CHECK-NEXT:    [[TMP88:%.*]] = insertelement <4 x i8> [[TMP86]], i8 [[TMP87]], i32 3
--+; CHECK-NEXT:    br label %[[PRED_LOAD_CONTINUE44]]
--+; CHECK:       [[PRED_LOAD_CONTINUE44]]:
--+; CHECK-NEXT:    [[TMP89:%.*]] = phi <4 x i8> [ [[TMP86]], %[[PRED_LOAD_CONTINUE42]] ], [ [[TMP88]], %[[PRED_LOAD_IF43]] ]
--+; CHECK-NEXT:    [[TMP90:%.*]] = trunc <4 x i8> [[TMP77]] to <4 x i1>
--+; CHECK-NEXT:    [[TMP91:%.*]] = trunc <4 x i8> [[TMP89]] to <4 x i1>
--+; CHECK-NEXT:    [[TMP92:%.*]] = and <4 x i1> [[TMP90]], splat (i1 true)
--+; CHECK-NEXT:    [[TMP93:%.*]] = and <4 x i1> [[TMP91]], splat (i1 true)
--+; CHECK-NEXT:    [[TMP94:%.*]] = select <4 x i1> [[TMP90]], <4 x float> splat (float 1.000000e+00), <4 x float> zeroinitializer
--+; CHECK-NEXT:    [[TMP95:%.*]] = select <4 x i1> [[TMP91]], <4 x float> splat (float 1.000000e+00), <4 x float> zeroinitializer
--+; CHECK-NEXT:    [[TMP96:%.*]] = select <4 x i1> [[TMP92]], <4 x float> splat (float 3.000000e+00), <4 x float> [[TMP94]]
--+; CHECK-NEXT:    [[TMP97:%.*]] = select <4 x i1> [[TMP93]], <4 x float> splat (float 3.000000e+00), <4 x float> [[TMP95]]
--+; CHECK-NEXT:    [[TMP98:%.*]] = bitcast <4 x float> [[TMP96]] to <4 x i32>
--+; CHECK-NEXT:    [[TMP99:%.*]] = bitcast <4 x float> [[TMP97]] to <4 x i32>
--+; CHECK-NEXT:    [[TMP100:%.*]] = trunc <4 x i32> [[TMP98]] to <4 x i8>
--+; CHECK-NEXT:    [[TMP101:%.*]] = trunc <4 x i32> [[TMP99]] to <4 x i8>
--+; CHECK-NEXT:    br i1 true, label %[[PRED_STORE_IF45:.*]], label %[[PRED_STORE_CONTINUE46:.*]]
--+; CHECK:       [[PRED_STORE_IF45]]:
--+; CHECK-NEXT:    [[TMP102:%.*]] = extractelement <4 x i8> [[TMP100]], i32 0
--+; CHECK-NEXT:    store i8 [[TMP102]], ptr [[TMP50]], align 1
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE46]]
--+; CHECK:       [[PRED_STORE_CONTINUE46]]:
--+; CHECK-NEXT:    br i1 true, label %[[PRED_STORE_IF47:.*]], label %[[PRED_STORE_CONTINUE48:.*]]
--+; CHECK:       [[PRED_STORE_IF47]]:
--+; CHECK-NEXT:    [[TMP103:%.*]] = extractelement <4 x i8> [[TMP100]], i32 1
--+; CHECK-NEXT:    store i8 [[TMP103]], ptr [[TMP51]], align 1
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE48]]
--+; CHECK:       [[PRED_STORE_CONTINUE48]]:
--+; CHECK-NEXT:    br i1 false, label %[[PRED_STORE_IF49:.*]], label %[[PRED_STORE_CONTINUE50:.*]]
--+; CHECK:       [[PRED_STORE_IF49]]:
--+; CHECK-NEXT:    [[TMP104:%.*]] = extractelement <4 x i8> [[TMP100]], i32 2
--+; CHECK-NEXT:    store i8 [[TMP104]], ptr [[TMP52]], align 1
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE50]]
--+; CHECK:       [[PRED_STORE_CONTINUE50]]:
--+; CHECK-NEXT:    br i1 false, label %[[PRED_STORE_IF51:.*]], label %[[PRED_STORE_CONTINUE52:.*]]
--+; CHECK:       [[PRED_STORE_IF51]]:
--+; CHECK-NEXT:    [[TMP105:%.*]] = extractelement <4 x i8> [[TMP100]], i32 3
--+; CHECK-NEXT:    store i8 [[TMP105]], ptr [[TMP53]], align 1
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE52]]
--+; CHECK:       [[PRED_STORE_CONTINUE52]]:
--+; CHECK-NEXT:    br i1 false, label %[[PRED_STORE_IF53:.*]], label %[[PRED_STORE_CONTINUE54:.*]]
--+; CHECK:       [[PRED_STORE_IF53]]:
--+; CHECK-NEXT:    [[TMP106:%.*]] = extractelement <4 x i8> [[TMP101]], i32 0
--+; CHECK-NEXT:    store i8 [[TMP106]], ptr [[TMP58]], align 1
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE54]]
--+; CHECK:       [[PRED_STORE_CONTINUE54]]:
--+; CHECK-NEXT:    br i1 false, label %[[PRED_STORE_IF55:.*]], label %[[PRED_STORE_CONTINUE56:.*]]
--+; CHECK:       [[PRED_STORE_IF55]]:
--+; CHECK-NEXT:    [[TMP107:%.*]] = extractelement <4 x i8> [[TMP101]], i32 1
--+; CHECK-NEXT:    store i8 [[TMP107]], ptr [[TMP59]], align 1
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE56]]
--+; CHECK:       [[PRED_STORE_CONTINUE56]]:
--+; CHECK-NEXT:    br i1 false, label %[[PRED_STORE_IF57:.*]], label %[[PRED_STORE_CONTINUE58:.*]]
--+; CHECK:       [[PRED_STORE_IF57]]:
--+; CHECK-NEXT:    [[TMP108:%.*]] = extractelement <4 x i8> [[TMP101]], i32 2
--+; CHECK-NEXT:    store i8 [[TMP108]], ptr [[TMP60]], align 1
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE58]]
--+; CHECK:       [[PRED_STORE_CONTINUE58]]:
--+; CHECK-NEXT:    br i1 false, label %[[PRED_STORE_IF59:.*]], label %[[PRED_STORE_CONTINUE60:.*]]
--+; CHECK:       [[PRED_STORE_IF59]]:
--+; CHECK-NEXT:    [[TMP109:%.*]] = extractelement <4 x i8> [[TMP101]], i32 3
--+; CHECK-NEXT:    store i8 [[TMP109]], ptr [[TMP61]], align 1
--+; CHECK-NEXT:    br label %[[PRED_STORE_CONTINUE60]]
--+; CHECK:       [[PRED_STORE_CONTINUE60]]:
--+; CHECK-NEXT:    br label %[[MIDDLE_BLOCK:.*]]
--+; CHECK:       [[MIDDLE_BLOCK]]:
--+; CHECK-NEXT:    br [[EXIT:label %.*]]
--+; CHECK:       [[SCALAR_PH:.*:]]
--+;
--+entry:
--+  br label %loop
--+
--+loop:
--+  %iv = phi i64 [ 0, %entry ], [ %iv.next, %loop ]
--+  %gep.A = getelementptr inbounds i8, ptr %A, i64 %iv
--+  %l = load i8, ptr %gep.A
--+  %l.ext = zext i8 %l to i64
--+  %gep.C = getelementptr inbounds i8, ptr %C, i64 %iv
--+  store i64 %l.ext, ptr %gep.C
--+  %gep.B = getelementptr inbounds i8, ptr %B, i64 %iv
--+  %l.1 = load i8, ptr %gep.B, align 1
--+  %masked = and i8 %l.1, 1
--+  %l.1.trunc = trunc i8 %l.1 to i1
--+  %sel.0 = select i1 %l.1.trunc, float 1.000000e+00, float 0.000000e+00
--+  %masked.trunc = trunc i8 %masked to i1
--+  %sel.1 = select i1 %masked.trunc, float 3.000000e+00, float %sel.0
--+  %bc = bitcast float %sel.1 to i32
--+  %bc.trunc = trunc i32 %bc to i8
--+  store i8 %bc.trunc, ptr %gep.B, align 1
--+  %iv.next = add i64 %iv, 1
--+  %ec = icmp eq i64 %iv, 1
--+  br i1 %ec, label %exit, label %loop
--+
--+exit:
--+  ret void
--+}
--diff -ruN --strip-trailing-cr a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
----- a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
--+++ b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
--@@ -4970,6 +4970,22 @@
-- )
-- 
-- cc_binary(
--+    name = "llvm-remarkutil",
--+    srcs = glob([
--+        "tools/llvm-remarkutil/**/*.cpp",
--+        "tools/llvm-remarkutil/**/*.h",
--+    ]),
--+    copts = llvm_copts,
--+    includes = ["tools/llvm-remarkutil"],
--+    stamp = 0,
--+    deps = [
--+        ":Demangle",
--+        ":Remarks",
--+        ":Support",
--+    ],
--+)
--+
--+cc_binary(
--     name = "llvm-rtdyld",
--     srcs = glob([
--         "tools/llvm-rtdyld/*.cpp",
+-     // Setup IR
+-     M = std::make_unique<Module>("TestM", Ctx);
++   Lattice getState(ProgramPoint P) const { return PerPointStates.lookup(P); }
++ 
++-  Lattice getInState(const CFGBlock *B) const { return InStates.lookup(B); }
+++  std::optional<Lattice> getInState(const CFGBlock *B) const {
+++    auto It = InStates.find(B);
+++    if (It == InStates.end())
+++      return std::nullopt;
+++    return It->second;
+++  }
++ 
++   Lattice getOutState(const CFGBlock *B) const { return OutStates.lookup(B); }
++ 
++@@ -974,19 +977,21 @@
++   return A;
++ }
++ 
++-/// Checks if set A is a subset of set B.
++-template <typename T>
++-static bool isSubsetOf(const llvm::ImmutableSet<T> &A,
++-                       const llvm::ImmutableSet<T> &B) {
++-  // Empty set is a subset of all sets.
++-  if (A.isEmpty())
++-    return true;
++-
++-  for (const T &Elem : A)
++-    if (!B.contains(Elem))
++-      return false;
++-  return true;
++-}
+++/// Describes the strategy for joining two `ImmutableMap` instances, primarily
+++/// differing in how they handle keys that are unique to one of the maps.
+++///
+++/// A `Symmetric` join is universally correct, while an `Asymmetric` join
+++/// serves as a performance optimization. The latter is applicable only when the
+++/// join operation possesses a left identity element, allowing for a more
+++/// efficient, one-sided merge.
+++enum class JoinKind {
+++  /// A symmetric join applies the `JoinValues` operation to keys unique to
+++  /// either map, ensuring that values from both maps contribute to the result.
+++  Symmetric,
+++  /// An asymmetric join preserves keys unique to the first map as-is, while
+++  /// applying the `JoinValues` operation only to keys unique to the second map.
+++  Asymmetric,
+++};
++ 
++ /// Computes the key-wise union of two ImmutableMaps.
++ // TODO(opt): This key-wise join is a performance bottleneck. A more
++@@ -994,22 +999,29 @@
++ // instead of the current AVL-tree-based ImmutableMap.
++ template <typename K, typename V, typename Joiner>
++ static llvm::ImmutableMap<K, V>
++-join(llvm::ImmutableMap<K, V> A, llvm::ImmutableMap<K, V> B,
++-     typename llvm::ImmutableMap<K, V>::Factory &F, Joiner JoinValues) {
+++join(const llvm::ImmutableMap<K, V> &A, const llvm::ImmutableMap<K, V> &B,
+++     typename llvm::ImmutableMap<K, V>::Factory &F, Joiner JoinValues,
+++     JoinKind Kind) {
++   if (A.getHeight() < B.getHeight())
++-    std::swap(A, B);
+++    return join(B, A, F, JoinValues, Kind);
++ 
++   // For each element in B, join it with the corresponding element in A
++   // (or with an empty value if it doesn't exist in A).
+++  llvm::ImmutableMap<K, V> Res = A;
++   for (const auto &Entry : B) {
++     const K &Key = Entry.first;
++     const V &ValB = Entry.second;
++-    if (const V *ValA = A.lookup(Key))
++-      A = F.add(A, Key, JoinValues(*ValA, ValB));
++-    else
++-      A = F.add(A, Key, ValB);
+++    Res = F.add(Res, Key, JoinValues(A.lookup(Key), &ValB));
++   }
++-  return A;
+++  if (Kind == JoinKind::Symmetric) {
+++    for (const auto &Entry : A) {
+++      const K &Key = Entry.first;
+++      const V &ValA = Entry.second;
+++      if (!B.contains(Key))
+++        Res = F.add(Res, Key, JoinValues(&ValA, nullptr));
+++    }
+++  }
+++  return Res;
++ }
++ } // namespace utils
++ 
++@@ -1017,19 +1029,6 @@
++ //                          Loan Propagation Analysis
++ // ========================================================================= //
++ 
++-using OriginLoanMap = llvm::ImmutableMap<OriginID, LoanSet>;
++-using ExpiredLoanMap = llvm::ImmutableMap<LoanID, const ExpireFact *>;
++-
++-/// An object to hold the factories for immutable collections, ensuring
++-/// that all created states share the same underlying memory management.
++-struct LifetimeFactory {
++-  llvm::BumpPtrAllocator Allocator;
++-  OriginLoanMap::Factory OriginMapFactory{Allocator, /*canonicalize=*/false};
++-  LoanSet::Factory LoanSetFactory{Allocator, /*canonicalize=*/false};
++-  ExpiredLoanMap::Factory ExpiredLoanMapFactory{Allocator,
++-                                                /*canonicalize=*/false};
++-};
++-
++ /// Represents the dataflow lattice for loan propagation.
++ ///
++ /// This lattice tracks which loans each origin may hold at a given program
++@@ -1073,10 +1072,10 @@
++ 
++ public:
++   LoanPropagationAnalysis(const CFG &C, AnalysisDeclContext &AC, FactManager &F,
++-                          LifetimeFactory &LFactory)
++-      : DataflowAnalysis(C, AC, F),
++-        OriginLoanMapFactory(LFactory.OriginMapFactory),
++-        LoanSetFactory(LFactory.LoanSetFactory) {}
+++                          OriginLoanMap::Factory &OriginLoanMapFactory,
+++                          LoanSet::Factory &LoanSetFactory)
+++      : DataflowAnalysis(C, AC, F), OriginLoanMapFactory(OriginLoanMapFactory),
+++        LoanSetFactory(LoanSetFactory) {}
++ 
++   using Base::transfer;
++ 
++@@ -1087,11 +1086,19 @@
++   /// Merges two lattices by taking the union of loans for each origin.
++   // TODO(opt): Keep the state small by removing origins which become dead.
++   Lattice join(Lattice A, Lattice B) {
++-    OriginLoanMap JoinedOrigins =
++-        utils::join(A.Origins, B.Origins, OriginLoanMapFactory,
++-                    [&](LoanSet S1, LoanSet S2) {
++-                      return utils::join(S1, S2, LoanSetFactory);
++-                    });
+++    OriginLoanMap JoinedOrigins = utils::join(
+++        A.Origins, B.Origins, OriginLoanMapFactory,
+++        [&](const LoanSet *S1, const LoanSet *S2) {
+++          assert((S1 || S2) && "unexpectedly merging 2 empty sets");
+++          if (!S1)
+++            return *S2;
+++          if (!S2)
+++            return *S1;
+++          return utils::join(*S1, *S2, LoanSetFactory);
+++        },
+++        // Asymmetric join is a performance win. For origins present only on one
+++        // branch, the loan set can be carried over as-is.
+++        utils::JoinKind::Asymmetric);
++     return Lattice(JoinedOrigins);
++   }
++ 
++@@ -1120,12 +1127,12 @@
++         OriginLoanMapFactory.add(In.Origins, DestOID, MergedLoans));
++   }
++ 
++-  LoanSet getLoans(OriginID OID, ProgramPoint P) {
+++  LoanSet getLoans(OriginID OID, ProgramPoint P) const {
++     return getLoans(getState(P), OID);
++   }
++ 
++ private:
++-  LoanSet getLoans(Lattice L, OriginID OID) {
+++  LoanSet getLoans(Lattice L, OriginID OID) const {
++     if (auto *Loans = L.Origins.lookup(OID))
++       return *Loans;
++     return LoanSetFactory.getEmptySet();
++@@ -1133,96 +1140,195 @@
++ };
++ 
++ // ========================================================================= //
++-//                         Expired Loans Analysis
+++//                         Live Origins Analysis
++ // ========================================================================= //
+++//
+++// A backward dataflow analysis that determines which origins are "live" at each
+++// program point. An origin is "live" at a program point if there's a potential
+++// future use of the pointer it represents. Liveness is "generated" by a read of
+++// origin's loan set (e.g., a `UseFact`) and is "killed" (i.e., it stops being
+++// live) when its loan set is overwritten (e.g. a OriginFlow killing the
+++// destination origin).
+++//
+++// This information is used for detecting use-after-free errors, as it allows us
+++// to check if a live origin holds a loan to an object that has already expired.
+++// ========================================================================= //
+++
+++/// Information about why an origin is live at a program point.
+++struct LivenessInfo {
+++  /// The use that makes the origin live. If liveness is propagated from
+++  /// multiple uses along different paths, this will point to the use appearing
+++  /// earlier in the translation unit.
+++  /// This is 'null' when the origin is not live.
+++  const UseFact *CausingUseFact;
+++  /// The kind of liveness of the origin.
+++  /// `Must`: The origin is live on all control-flow paths from the current
+++  /// point to the function's exit (i.e. the current point is dominated by a set
+++  /// of uses).
+++  /// `Maybe`: indicates it is live on some but not all paths.
+++  ///
+++  /// This determines the diagnostic's confidence level.
+++  /// `Must`-be-alive at expiration implies a definite use-after-free,
+++  /// while `Maybe`-be-alive suggests a potential one on some paths.
+++  LivenessKind Kind;
+++
+++  LivenessInfo() : CausingUseFact(nullptr), Kind(LivenessKind::Dead) {}
+++  LivenessInfo(const UseFact *UF, LivenessKind K)
+++      : CausingUseFact(UF), Kind(K) {}
+++
+++  bool operator==(const LivenessInfo &Other) const {
+++    return CausingUseFact == Other.CausingUseFact && Kind == Other.Kind;
+++  }
+++  bool operator!=(const LivenessInfo &Other) const { return !(*this == Other); }
+++
+++  void Profile(llvm::FoldingSetNodeID &IDBuilder) const {
+++    IDBuilder.AddPointer(CausingUseFact);
+++    IDBuilder.Add(Kind);
+++  }
+++};
+++
+++using LivenessMap = llvm::ImmutableMap<OriginID, LivenessInfo>;
+++
+++/// The dataflow lattice for origin liveness analysis.
+++/// It tracks which origins are live, why they're live (which UseFact),
+++/// and the confidence level of that liveness.
+++struct LivenessLattice {
+++  LivenessMap LiveOrigins;
++ 
++-/// The dataflow lattice for tracking the set of expired loans.
++-struct ExpiredLattice {
++-  /// Map from an expired `LoanID` to the `ExpireFact` that made it expire.
++-  ExpiredLoanMap Expired;
+++  LivenessLattice() : LiveOrigins(nullptr) {};
++ 
++-  ExpiredLattice() : Expired(nullptr) {};
++-  explicit ExpiredLattice(ExpiredLoanMap M) : Expired(M) {}
+++  explicit LivenessLattice(LivenessMap L) : LiveOrigins(L) {}
++ 
++-  bool operator==(const ExpiredLattice &Other) const {
++-    return Expired == Other.Expired;
+++  bool operator==(const LivenessLattice &Other) const {
+++    return LiveOrigins == Other.LiveOrigins;
++   }
++-  bool operator!=(const ExpiredLattice &Other) const {
+++
+++  bool operator!=(const LivenessLattice &Other) const {
++     return !(*this == Other);
++   }
++ 
++-  void dump(llvm::raw_ostream &OS) const {
++-    OS << "ExpiredLattice State:\n";
++-    if (Expired.isEmpty())
+++  void dump(llvm::raw_ostream &OS, const OriginManager &OM) const {
+++    if (LiveOrigins.isEmpty())
++       OS << "  <empty>\n";
++-    for (const auto &[ID, _] : Expired)
++-      OS << "  Loan " << ID << " is expired\n";
+++    for (const auto &Entry : LiveOrigins) {
+++      OriginID OID = Entry.first;
+++      const LivenessInfo &Info = Entry.second;
+++      OS << "  ";
+++      OM.dump(OID, OS);
+++      OS << " is ";
+++      switch (Info.Kind) {
+++      case LivenessKind::Must:
+++        OS << "definitely";
+++        break;
+++      case LivenessKind::Maybe:
+++        OS << "maybe";
+++        break;
+++      case LivenessKind::Dead:
+++        llvm_unreachable("liveness kind of live origins should not be dead.");
+++      }
+++      OS << " live at this point\n";
+++    }
++   }
++ };
++ 
++-/// The analysis that tracks which loans have expired.
++-class ExpiredLoansAnalysis
++-    : public DataflowAnalysis<ExpiredLoansAnalysis, ExpiredLattice,
++-                              Direction::Forward> {
++-
++-  ExpiredLoanMap::Factory &Factory;
+++/// The analysis that tracks which origins are live, with granular information
+++/// about the causing use fact and confidence level. This is a backward
+++/// analysis.
+++class LiveOriginAnalysis
+++    : public DataflowAnalysis<LiveOriginAnalysis, LivenessLattice,
+++                              Direction::Backward> {
+++  FactManager &FactMgr;
+++  LivenessMap::Factory &Factory;
++ 
++ public:
++-  ExpiredLoansAnalysis(const CFG &C, AnalysisDeclContext &AC, FactManager &F,
++-                       LifetimeFactory &Factory)
++-      : DataflowAnalysis(C, AC, F), Factory(Factory.ExpiredLoanMapFactory) {}
+++  LiveOriginAnalysis(const CFG &C, AnalysisDeclContext &AC, FactManager &F,
+++                     LivenessMap::Factory &SF)
+++      : DataflowAnalysis(C, AC, F), FactMgr(F), Factory(SF) {}
+++  using DataflowAnalysis<LiveOriginAnalysis, Lattice,
+++                         Direction::Backward>::transfer;
++ 
++-  using Base::transfer;
++-
++-  StringRef getAnalysisName() const { return "ExpiredLoans"; }
+++  StringRef getAnalysisName() const { return "LiveOrigins"; }
++ 
++   Lattice getInitialState() { return Lattice(Factory.getEmptyMap()); }
++ 
++-  /// Merges two lattices by taking the union of the two expired loans.
++-  Lattice join(Lattice L1, Lattice L2) {
++-    return Lattice(
++-        utils::join(L1.Expired, L2.Expired, Factory,
++-                    // Take the last expiry fact to make this hermetic.
++-                    [](const ExpireFact *F1, const ExpireFact *F2) {
++-                      return F1->getExpiryLoc() > F2->getExpiryLoc() ? F1 : F2;
++-                    }));
++-  }
++-
++-  Lattice transfer(Lattice In, const ExpireFact &F) {
++-    return Lattice(Factory.add(In.Expired, F.getLoanID(), &F));
++-  }
++-
++-  // Removes the loan from the set of expired loans.
++-  //
++-  // When a loan is re-issued (e.g., in a loop), it is no longer considered
++-  // expired. A loan can be in the expired set at the point of issue due to
++-  // the dataflow state from a previous loop iteration being propagated along
++-  // a backedge in the CFG.
++-  //
++-  // Note: This has a subtle false-negative though where a loan from previous
++-  // iteration is not overwritten by a reissue. This needs careful tracking
++-  // of loans "across iterations" which can be considered for future
++-  // enhancements.
++-  //
++-  //    void foo(int safe) {
++-  //      int* p = &safe;
++-  //      int* q = &safe;
++-  //      while (condition()) {
++-  //        int x = 1;
++-  //        p = &x;    // A loan to 'x' is issued to 'p' in every iteration.
++-  //        if (condition()) {
++-  //          q = p;
++-  //        }
++-  //        (void)*p; // OK  — 'p' points to 'x' from new iteration.
++-  //        (void)*q; // UaF - 'q' still points to 'x' from previous iteration
++-  //                  // which is now destroyed.
++-  //      }
++-  // }
++-  Lattice transfer(Lattice In, const IssueFact &F) {
++-    return Lattice(Factory.remove(In.Expired, F.getLoanID()));
+++  /// Merges two lattices by combining liveness information.
+++  /// When the same origin has different confidence levels, we take the lower
+++  /// one.
+++  Lattice join(Lattice L1, Lattice L2) const {
+++    LivenessMap Merged = L1.LiveOrigins;
+++    // Take the earliest UseFact to make the join hermetic and commutative.
+++    auto CombineUseFact = [](const UseFact &A,
+++                             const UseFact &B) -> const UseFact * {
+++      return A.getUseExpr()->getExprLoc() < B.getUseExpr()->getExprLoc() ? &A
+++                                                                         : &B;
+++    };
+++    auto CombineLivenessKind = [](LivenessKind K1,
+++                                  LivenessKind K2) -> LivenessKind {
+++      assert(K1 != LivenessKind::Dead && "LivenessKind should not be dead.");
+++      assert(K2 != LivenessKind::Dead && "LivenessKind should not be dead.");
+++      // Only return "Must" if both paths are "Must", otherwise Maybe.
+++      if (K1 == LivenessKind::Must && K2 == LivenessKind::Must)
+++        return LivenessKind::Must;
+++      return LivenessKind::Maybe;
+++    };
+++    auto CombineLivenessInfo = [&](const LivenessInfo *L1,
+++                                   const LivenessInfo *L2) -> LivenessInfo {
+++      assert((L1 || L2) && "unexpectedly merging 2 empty sets");
+++      if (!L1)
+++        return LivenessInfo(L2->CausingUseFact, LivenessKind::Maybe);
+++      if (!L2)
+++        return LivenessInfo(L1->CausingUseFact, LivenessKind::Maybe);
+++      return LivenessInfo(
+++          CombineUseFact(*L1->CausingUseFact, *L2->CausingUseFact),
+++          CombineLivenessKind(L1->Kind, L2->Kind));
+++    };
+++    return Lattice(utils::join(
+++        L1.LiveOrigins, L2.LiveOrigins, Factory, CombineLivenessInfo,
+++        // A symmetric join is required here. If an origin is live on one
+++        // branch but not the other, its confidence must be demoted to `Maybe`.
+++        utils::JoinKind::Symmetric));
+++  }
+++
+++  /// A read operation makes the origin live with definite confidence, as it
+++  /// dominates this program point. A write operation kills the liveness of
+++  /// the origin since it overwrites the value.
+++  Lattice transfer(Lattice In, const UseFact &UF) {
+++    OriginID OID = UF.getUsedOrigin(FactMgr.getOriginMgr());
+++    // Write kills liveness.
+++    if (UF.isWritten())
+++      return Lattice(Factory.remove(In.LiveOrigins, OID));
+++    // Read makes origin live with definite confidence (dominates this point).
+++    return Lattice(Factory.add(In.LiveOrigins, OID,
+++                               LivenessInfo(&UF, LivenessKind::Must)));
+++  }
+++
+++  /// Issuing a new loan to an origin kills its liveness.
+++  Lattice transfer(Lattice In, const IssueFact &IF) {
+++    return Lattice(Factory.remove(In.LiveOrigins, IF.getOriginID()));
+++  }
+++
+++  /// An OriginFlow kills the liveness of the destination origin if `KillDest`
+++  /// is true. Otherwise, it propagates liveness from destination to source.
+++  Lattice transfer(Lattice In, const OriginFlowFact &OF) {
+++    if (!OF.getKillDest())
+++      return In;
+++    return Lattice(Factory.remove(In.LiveOrigins, OF.getDestOriginID()));
++   }
++ 
++-  ExpiredLoanMap getExpiredLoans(ProgramPoint P) { return getState(P).Expired; }
+++  LivenessMap getLiveOrigins(ProgramPoint P) const {
+++    return getState(P).LiveOrigins;
+++  }
+++
+++  // Dump liveness values on all test points in the program.
+++  void dump(llvm::raw_ostream &OS, const LifetimeSafetyAnalysis &LSA) const {
+++    llvm::dbgs() << "==========================================\n";
+++    llvm::dbgs() << getAnalysisName() << " results:\n";
+++    llvm::dbgs() << "==========================================\n";
+++    for (const auto &Entry : LSA.getTestPoints()) {
+++      OS << "TestPoint: " << Entry.getKey() << "\n";
+++      getState(Entry.getValue()).dump(OS, FactMgr.getOriginMgr());
+++    }
+++  }
++ };
++ 
++ // ========================================================================= //
++@@ -1240,84 +1346,75 @@
++ private:
++   llvm::DenseMap<LoanID, PendingWarning> FinalWarningsMap;
++   LoanPropagationAnalysis &LoanPropagation;
++-  ExpiredLoansAnalysis &ExpiredLoans;
+++  LiveOriginAnalysis &LiveOrigins;
++   FactManager &FactMgr;
++   AnalysisDeclContext &ADC;
++   LifetimeSafetyReporter *Reporter;
++ 
++ public:
++-  LifetimeChecker(LoanPropagationAnalysis &LPA, ExpiredLoansAnalysis &ELA,
+++  LifetimeChecker(LoanPropagationAnalysis &LPA, LiveOriginAnalysis &LOA,
++                   FactManager &FM, AnalysisDeclContext &ADC,
++                   LifetimeSafetyReporter *Reporter)
++-      : LoanPropagation(LPA), ExpiredLoans(ELA), FactMgr(FM), ADC(ADC),
+++      : LoanPropagation(LPA), LiveOrigins(LOA), FactMgr(FM), ADC(ADC),
++         Reporter(Reporter) {}
++ 
++   void run() {
++     llvm::TimeTraceScope TimeProfile("LifetimeChecker");
++     for (const CFGBlock *B : *ADC.getAnalysis<PostOrderCFGView>())
++       for (const Fact *F : FactMgr.getFacts(B))
++-        if (const auto *UF = F->getAs<UseFact>())
++-          checkUse(UF);
+++        if (const auto *EF = F->getAs<ExpireFact>())
+++          checkExpiry(EF);
++     issuePendingWarnings();
++   }
++ 
++-  /// Checks for use-after-free errors for a given use of an Origin.
+++  /// Checks for use-after-free errors when a loan expires.
++   ///
++-  /// This method is called for each 'UseFact' identified in the control flow
++-  /// graph. It determines if the loans held by the used origin have expired
++-  /// at the point of use.
++-  void checkUse(const UseFact *UF) {
++-    if (UF->isWritten())
++-      return;
++-    OriginID O = UF->getUsedOrigin(FactMgr.getOriginMgr());
++-
++-    // Get the set of loans that the origin might hold at this program point.
++-    LoanSet HeldLoans = LoanPropagation.getLoans(O, UF);
++-
++-    // Get the set of all loans that have expired at this program point.
++-    ExpiredLoanMap AllExpiredLoans = ExpiredLoans.getExpiredLoans(UF);
++-
++-    // If the pointer holds no loans or no loans have expired, there's nothing
++-    // to check.
++-    if (HeldLoans.isEmpty() || AllExpiredLoans.isEmpty())
++-      return;
++-
++-    // Identify loans that which have expired but are held by the pointer. Using
++-    // them is a use-after-free.
++-    llvm::SmallVector<LoanID> DefaultedLoans;
++-    // A definite UaF error occurs if all loans the origin might hold have
++-    // expired.
++-    bool IsDefiniteError = true;
++-    for (LoanID L : HeldLoans) {
++-      if (AllExpiredLoans.contains(L))
++-        DefaultedLoans.push_back(L);
++-      else
++-        // If at least one loan is not expired, this use is not a definite UaF.
++-        IsDefiniteError = false;
+++  /// This method examines all live origins at the expiry point and determines
+++  /// if any of them hold the expiring loan. If so, it creates a pending
+++  /// warning with the appropriate confidence level based on the liveness
+++  /// information. The confidence reflects whether the origin is definitely
+++  /// or maybe live at this point.
+++  ///
+++  /// Note: This implementation considers only the confidence of origin
+++  /// liveness. Future enhancements could also consider the confidence of loan
+++  /// propagation (e.g., a loan may only be held on some execution paths).
+++  void checkExpiry(const ExpireFact *EF) {
+++    LoanID ExpiredLoan = EF->getLoanID();
+++    LivenessMap Origins = LiveOrigins.getLiveOrigins(EF);
+++    Confidence CurConfidence = Confidence::None;
+++    const UseFact *BadUse = nullptr;
+++    for (auto &[OID, LiveInfo] : Origins) {
+++      LoanSet HeldLoans = LoanPropagation.getLoans(OID, EF);
+++      if (!HeldLoans.contains(ExpiredLoan))
+++        continue;
+++      // Loan is defaulted.
+++      Confidence NewConfidence = livenessKindToConfidence(LiveInfo.Kind);
+++      if (CurConfidence < NewConfidence) {
+++        CurConfidence = NewConfidence;
+++        BadUse = LiveInfo.CausingUseFact;
+++      }
++     }
++-    // If there are no defaulted loans, the use is safe.
++-    if (DefaultedLoans.empty())
+++    if (!BadUse)
++       return;
+++    // We have a use-after-free.
+++    Confidence LastConf = FinalWarningsMap.lookup(ExpiredLoan).ConfidenceLevel;
+++    if (LastConf >= CurConfidence)
+++      return;
+++    FinalWarningsMap[ExpiredLoan] = {/*ExpiryLoc=*/EF->getExpiryLoc(),
+++                                     /*UseExpr=*/BadUse->getUseExpr(),
+++                                     /*ConfidenceLevel=*/CurConfidence};
+++  }
++ 
++-    // Determine the confidence level of the error (definite or maybe).
++-    Confidence CurrentConfidence =
++-        IsDefiniteError ? Confidence::Definite : Confidence::Maybe;
++-
++-    // For each expired loan, create a pending warning.
++-    for (LoanID DefaultedLoan : DefaultedLoans) {
++-      // If we already have a warning for this loan with a higher or equal
++-      // confidence, skip this one.
++-      if (FinalWarningsMap.count(DefaultedLoan) &&
++-          CurrentConfidence <= FinalWarningsMap[DefaultedLoan].ConfidenceLevel)
++-        continue;
++-
++-      auto *EF = AllExpiredLoans.lookup(DefaultedLoan);
++-      assert(EF && "Could not find ExpireFact for an expired loan.");
++-
++-      FinalWarningsMap[DefaultedLoan] = {/*ExpiryLoc=*/(*EF)->getExpiryLoc(),
++-                                         /*UseExpr=*/UF->getUseExpr(),
++-                                         /*ConfidenceLevel=*/CurrentConfidence};
+++  static Confidence livenessKindToConfidence(LivenessKind K) {
+++    switch (K) {
+++    case LivenessKind::Must:
+++      return Confidence::Definite;
+++    case LivenessKind::Maybe:
+++      return Confidence::Maybe;
+++    case LivenessKind::Dead:
+++      return Confidence::None;
++     }
+++    llvm_unreachable("unknown liveness kind");
++   }
++ 
++   void issuePendingWarnings() {
++@@ -1336,6 +1433,15 @@
++ //                  LifetimeSafetyAnalysis Class Implementation
++ // ========================================================================= //
++ 
+++/// An object to hold the factories for immutable collections, ensuring
+++/// that all created states share the same underlying memory management.
+++struct LifetimeFactory {
+++  llvm::BumpPtrAllocator Allocator;
+++  OriginLoanMap::Factory OriginMapFactory{Allocator, /*canonicalize=*/false};
+++  LoanSet::Factory LoanSetFactory{Allocator, /*canonicalize=*/false};
+++  LivenessMap::Factory LivenessMapFactory{Allocator, /*canonicalize=*/false};
+++};
+++
++ // We need this here for unique_ptr with forward declared class.
++ LifetimeSafetyAnalysis::~LifetimeSafetyAnalysis() = default;
++ 
++@@ -1366,15 +1472,16 @@
++   ///    the analysis.
++   /// 3. Collapse ExpireFacts belonging to same source location into a single
++   ///    Fact.
++-  LoanPropagation =
++-      std::make_unique<LoanPropagationAnalysis>(Cfg, AC, *FactMgr, *Factory);
+++  LoanPropagation = std::make_unique<LoanPropagationAnalysis>(
+++      Cfg, AC, *FactMgr, Factory->OriginMapFactory, Factory->LoanSetFactory);
++   LoanPropagation->run();
++ 
++-  ExpiredLoans =
++-      std::make_unique<ExpiredLoansAnalysis>(Cfg, AC, *FactMgr, *Factory);
++-  ExpiredLoans->run();
+++  LiveOrigins = std::make_unique<LiveOriginAnalysis>(
+++      Cfg, AC, *FactMgr, Factory->LivenessMapFactory);
+++  LiveOrigins->run();
+++  DEBUG_WITH_TYPE("LiveOrigins", LiveOrigins->dump(llvm::dbgs(), *this));
++ 
++-  LifetimeChecker Checker(*LoanPropagation, *ExpiredLoans, *FactMgr, AC,
+++  LifetimeChecker Checker(*LoanPropagation, *LiveOrigins, *FactMgr, AC,
++                           Reporter);
++   Checker.run();
++ }
++@@ -1385,15 +1492,6 @@
++   return LoanPropagation->getLoans(OID, PP);
++ }
++ 
++-std::vector<LoanID>
++-LifetimeSafetyAnalysis::getExpiredLoansAtPoint(ProgramPoint PP) const {
++-  assert(ExpiredLoans && "ExpiredLoansAnalysis has not been run.");
++-  std::vector<LoanID> Result;
++-  for (const auto &pair : ExpiredLoans->getExpiredLoans(PP))
++-    Result.push_back(pair.first);
++-  return Result;
++-}
++-
++ std::optional<OriginID>
++ LifetimeSafetyAnalysis::getOriginIDForDecl(const ValueDecl *D) const {
++   assert(FactMgr && "FactManager not initialized");
++@@ -1413,6 +1511,15 @@
++   return Result;
++ }
++ 
+++std::vector<std::pair<OriginID, LivenessKind>>
+++LifetimeSafetyAnalysis::getLiveOriginsAtPoint(ProgramPoint PP) const {
+++  assert(LiveOrigins && "LiveOriginAnalysis has not been run.");
+++  std::vector<std::pair<OriginID, LivenessKind>> Result;
+++  for (auto &[OID, Info] : LiveOrigins->getLiveOrigins(PP))
+++    Result.push_back({OID, Info.Kind});
+++  return Result;
+++}
+++
++ llvm::StringMap<ProgramPoint> LifetimeSafetyAnalysis::getTestPoints() const {
++   assert(FactMgr && "FactManager not initialized");
++   llvm::StringMap<ProgramPoint> AnnotationToPointMap;
++diff -ruN --strip-trailing-cr a/clang/lib/Analysis/LifetimeSafety.md b/clang/lib/Analysis/LifetimeSafety.md
++--- a/clang/lib/Analysis/LifetimeSafety.md
+++++ b/clang/lib/Analysis/LifetimeSafety.md
++@@ -0,0 +1,230 @@
+++Excellent! This is a very strong and logical structure for the white paper. It follows a clear narrative, starting from the high-level problem and progressively diving into the specifics of your solution. The sections on why a traditional borrow checker doesn't fit C++ and the open questions are particularly good, as they show a deep engagement with the problem space.
+++
+++Here is a draft of the white paper following your new skeleton, with the details filled in based on my analysis of your implementation and the provided reference documents. I've also incorporated some of my own suggestions to enhance the flow and clarity.
+++
+++***
+++
+++<Disclaimer: Public document. This work is licensed under the Apache License v2.0 with LLVM Exceptions. See [https://llvm.org/LICENSE.txt](https://llvm.org/LICENSE.txt) for license information.>
+++
+++# Lifetime Safety: An Intuitive Approach for Temporal Safety in C++
+++**Author:**
+++[Utkarsh Saxena](mailto:usx@google.com)
+++
+++**Purpose:** This document serves as a live RFC for a new lifetime safety analysis in C++, with the ultimate goal of publication as a white paper.
+++
+++## Intended Audience
+++
+++This document is intended for C++ compiler developers (especially those working on Clang), developers of other systems languages with advanced memory safety models (like Rust and Carbon), and all C++ users interested in writing safer code.
+++
+++## Goal
+++
+++*   To describe a new lifetime model for C++ that aims to maximize the compile-time detection of temporal memory safety issues.
+++*   To explore a path toward incremental safety in C++, offering a spectrum of checks that can be adopted without requiring a full plunge into a restrictive ownership model.
+++
+++**Out of Scope**
+++
+++*   **Rigorous Temporal Memory Safety:** This analysis aims to detect a large class of common errors, but it does not formally prove the absence of all temporal safety bugs.
+++*   **Runtime Solutions:** This paper focuses exclusively on static, compile-time analysis and does not cover runtime solutions like MTE or AddressSanitizer.
+++
+++# Paper: C++ Lifetimes Safety Analysis
+++
+++**Subtitle: A Flow-Sensitive, Alias-based Approach to Preventing Dangling Pointers**
+++
+++## Abstract
+++
+++This paper introduces a new intra-procedural, flow-sensitive lifetime analysis for C++ implemented in Clang. The analysis is designed to detect a significant class of temporal memory safety violations, such as use-after-free and use-after-return, at compile time. It is based on a model of "Loans" and "Origins," inspired by the Polonius borrow checker in Rust, but adapted for the semantics and flexibility of C++.
+++
+++The analysis works by translating the Clang CFG into a series of lifetime-relevant "Facts." These facts are then processed by dataflow analyses to precisely determine the validity of pointers and references at each program point. This fact-based approach, combined with a configurable strictness model, allows for both high-confidence error reporting and the detection of more subtle, potential bugs, without requiring extensive new annotations. The ultimate goal is to provide a powerful, low-overhead tool that makes C++ safer by default.
+++
+++## The Anatomy of a Temporal Safety Error
+++
+++At its core, a temporal safety error is a bug where an operation is performed on an object at a time when it is no longer valid to do so ([source](http://docs.google.com/document/d/19vbfAiV1yQu3xSMRWjyPUdzyB_LDdVUcKat_HWI1l3g?content_ref=at+its+core+a+temporal+safety+error+is+a+bug+where+an+operation+is+performed+on+an+object+at+a+time+when+it+is+no+longer+valid+to+do+so)). These bugs are notoriously difficult to debug because they often manifest as unpredictable crashes or silent data corruption far from the root cause. However, we can argue that this wide and varied class of errors—from use-after-free to iterator invalidation—all stem from a single, canonical pattern.
+++
+++**Conjecture: Any temporal safety issue is a form of Use-After-Free.**
+++
+++All sub-categories of temporal safety issues, such as returning a reference to a stack variable (`return-stack-addr`), using a variable after its scope has ended (`use-after-scope`), using heap memory after it has been deleted (`heap-use-after-free`), or using an iterator after its container has been modified (`use-after-invalidation`), can be described by a single sequence of events.
+++
+++In C++, an *object* is a region of storage, and pointers and references are the mechanisms we use to refer to them. A use-after-free occurs when we access an object after its lifetime has ended. But how can an object be accessed after it has been destroyed? This is only possible through an **alias**—a pointer or reference—that was created while the object was alive and that survived the object's destruction.
+++
+++This insight allows us to define a canonical use-after-free with four distinct events that happen in a specific order:
+++
+++1.  **`t0`: Creation.** An object `M` is created in some region of storage (on the stack, on the heap, etc.).
+++2.  **`t1`: Alias Creation.** An alias `P` (a pointer or reference) is created that refers to the object `M`.
+++3.  **`t2`: End of Lifetime.** The lifetime of object `M` ends (e.g., it is deallocated, or it goes out of scope).
+++4.  **`t3`: Use of Alias.** The alias `P`, which now dangles, is used to access the memory where `M` once resided.
+++
+++Let's examine this with a simple piece of C++ code:
+++
+++```cpp
+++void use_after_scope_example() {
+++  int* p;
+++  {
+++    int s = 10;  // t0: Object `s` is created on the stack.
+++    p = &s;      // t1: Alias `p` is made to refer to object `s`.
+++  }              // t2: The lifetime of `s` ends. `p` now dangles.
+++  *p = 42;       // t3: The dangling alias `p` is used. This is a use-after-free.
+++}
+++```
+++
+++The fundamental problem is that the alias `p` outlived the object `s` it referred to. The challenge for a static analysis is therefore clear: to prevent temporal safety errors, the compiler must be able to track aliases and understand the lifetime of the objects they refer to. It needs to know the "points-to" set for every alias at every point in the program and verify that, at the moment of use, the alias does not point to an object whose lifetime has ended.
+++
+++This alias-based perspective is powerful because it generalizes beautifully. The "end of lifetime" event at `t2` doesn't have to be a variable going out of scope. It could be:
+++
+++*   A call to `delete`, which ends the lifetime of a heap object.
+++*   A function `return`, which ends the lifetime of all its local variables.
+++*   A container modification, like `std::vector::push_back()`, which may reallocate storage, ending the lifetime of the objects in the old buffer and invalidating all existing iterators (aliases).
+++
+++By focusing on tracking aliases and their validity, we can build a unified model to detect a wide range of temporal safety errors without imposing the heavy "aliasing XOR mutability" restrictions of a traditional borrow checker ([source](https://gist.github.com/nmsmith/cdaa94aa74e8e0611221e65db8e41f7b?content_ref=the+major+advancement+is+to+eliminate+the+aliasing+xor+mutability+restriction+amongst+references+and+replace+it+with+a+similar+restriction+applied+to+lifetime+parameters)). This provides a more intuitive and C++-idiomatic path to memory safety.
+++
+++## Relation with Thread safety
+++
+++This analysis does not address Thread Safety. Thread safety is concerned with data races that occur across multiple threads. While it is possible to create temporal safety issues in multi-threaded scenarios, this analysis is focused on the sequential lifetime of objects within a single function.
+++
+++## Quest for Safer Aliasing
+++
+++Is it possible to achieve memory safety without a restrictive model like Rust's borrow checker? We believe the answer is yes. The key is to shift our focus from *restricting aliases* to *understanding them*. Instead of forbidding programs that have aliased mutable pointers, we can build a model that understands what each pointer can point to at any given time. This approach, similar to the one proposed in P1179 for C++ and explored in modern lifetime systems like Mojo's, allows us to directly detect the root cause of the problem: using a pointer after its target has ceased to exist ([source](http://docs.google.com/document/d/19vbfAiV1yQu3xSMRWjyPUdzyB_LDdVUcKat_HWI1l3g?content_ref=this+approach+similar+to+the+one+proposed+in+p1179+for+c+and+explored+in+modern+lifetime+systems+like+mojo+s+allows+us+to+directly+detect+the+root+cause+of+the+problem+using+a+pointer+after+its+target+has+ceased+to+exist)).
+++
+++This paper proposes such a model for C++. Let's begin with a simple, yet illustrative, dangling pointer bug:
+++
+++```cpp
+++// Example 1: A simple use-after-free
+++void definite_simple_case() {
+++  MyObj* p;
+++  {
+++    MyObj s;
+++    p = &s;     // 'p' now points to 's'
+++  }             // 's' is destroyed, 'p' is now dangling
+++  (void)*p;     // Use-after-free
+++}
+++```
+++
+++How can a compiler understand that the use of `p` is an error? It needs to answer a series of questions:
+++
+++1.  What does `p` point to?
+++2.  When does the object `p` points to cease to be valid?
+++3.  Is `p` used after that point?
+++
+++Our model is designed to answer precisely these questions.
+++
+++## Core Concepts
+++
+++Our model is built on a few core concepts that allow us to formally track the relationships between pointers and the data they point to.
+++
+++### Access Paths
+++
+++An **Access Path** is a symbolic representation of a storage location in the program ([source](https://raw.githubusercontent.com/llvm/llvm-project/0e7c1732a9a7d28549fe5d690083daeb0e5de6b2/clang/lib/Analysis/LifetimeSafety.cpp?content_ref=struct+accesspath+const+clang+valuedecl+d+accesspath+const+clang+valuedecl+d+d+d)). It provides a way to uniquely identify a variable or a sub-object. For now, we will consider simple paths that refer to top-level variables, but the model can be extended to include field accesses (`a.b`), array elements (`a[i]`), and pointer indirections (`p->field`).
+++
+++### Loans: The Act of Borrowing
+++
+++A **Loan** is created whenever a reference or pointer to an object is created. It represents the act of "borrowing" that object's storage location ([source](https://raw.githubusercontent.com/llvm/llvm-project/0e7c1732a9a7d28549fe5d690083daeb0e5de6b2/clang/lib/Analysis/LifetimeSafety.cpp?content_ref=information+about+a+single+borrow+or+loan+a+loan+is+created+when+a+reference+or+pointer+is+created)). Each loan is associated with a unique ID and the `AccessPath` of the object being borrowed.
+++
+++In our `definite_simple_case` example, the expression `&s` creates a loan. The `AccessPath` for this loan is the variable `s`.
+++
+++### Origins: The Provenance of a Pointer
+++
+++An **Origin** is a symbolic identifier that represents the *set of possible loans* a pointer-like object could hold at any given time ([source](http://docs.google.com/document/d/1JpJ3M9yeXX-BnC4oKXBvRWzxoFrwziN1RzI4DrMrSp8?content_ref=ime+is+a+symbolic+identifier+representing+a+set+of+loans+from+which+a+pointer+or+reference+could+have+originated)). Every pointer-like variable or expression in the program is associated with an origin.
+++
+++*   A variable declaration like `MyObj* p` introduces an origin for `p`.
+++*   An expression like `&s` also has an origin.
+++*   The complexity of origins can grow with type complexity. For example:
+++    *   `int* p;` has a single origin.
+++    *   `int** p;` has two origins: one for the outer pointer and one for the inner pointer. This allows us to distinguish between `p` itself being modified and what `*p` points to being modified.
+++    *   `struct S { int* p; };` also has an origin associated with the member `p`.
+++
+++The central goal of our analysis is to determine, for each origin at each point in the program, which loans it might contain.
+++
+++## Subtyping Rules and Subset Constraints
+++
+++The relationships between origins are established through the program's semantics, particularly assignments. When a pointer is assigned to another, as in `p = q`, the set of loans that `q` holds must be a subset of the loans that `p` can now hold. This is a fundamental subtyping rule: for `T*'a` to be a subtype of `T*'b`, the set of loans represented by `'a` must be a subset of the loans represented by `'b`.
+++
+++This leads to the concept of **subset constraints**. An assignment `p = q` generates a constraint `Origin(q) ⊆ Origin(p)`. The analysis doesn't solve these as a global system of equations. Instead, as we will see, it propagates the *consequences* of these constraints—the loans themselves—through the control-flow graph. This is a key departure from the Polonius model, which focuses on propagating the constraints (`'a: 'b`) themselves.
+++
+++## Invalidations: When Loans Expire
+++
+++A loan expires when the object it refers to is no longer valid. In our model, this is an **invalidation** event. The most common invalidation is deallocation, which in C++ can mean:
+++*   A stack variable going out of scope.
+++*   A `delete` call on a heap-allocated object.
+++*   A container modification that reallocates its internal storage.
+++
+++## An Event-Based Representation of the Function
+++
+++To analyze a function, we first transform its CFG into a sequence of atomic, lifetime-relevant **Events**, which we call **Facts**. These facts abstract away the complexities of C++ syntax and provide a clean input for our analysis. The main facts are:
+++
+++*   `Issue(LoanID, OriginID)`: A new loan is created. For example, `&s` generates an `Issue` fact.
+++*   `Expire(LoanID)`: A loan expires. This is generated at the end of a variable's scope.
+++*   `OriginFlow(Dest, Src, Kill)`: Loans from a source origin flow to a destination origin, as in an assignment. `Kill` indicates whether the destination's old loans are cleared.
+++*   `Use(OriginID)`: An origin is used, such as in a pointer dereference.
+++
+++Let's trace our `definite_simple_case` example with these facts:
+++
+++```cpp
+++void definite_simple_case() {
+++  MyObj* p; // Origin for p is O_p
+++  {
+++    MyObj s;
+++    // The expression `&s` generates:
+++    //   - IssueFact(L1, O_&s)  (A new loan L1 on 's' is created)
+++    // The assignment `p = &s` generates:
+++    //   - OriginFlowFact(O_p, O_&s, Kill=true)
+++    p = &s;
+++  } // The end of the scope for 's' generates:
+++    //   - ExpireFact(L1)
+++  // The dereference `*p` generates:
+++  //   - UseFact(O_p)
+++  (void)*p;
+++}
+++```
+++
+++## Flow-Sensitive Lifetime Policy
+++
+++With the program represented as a stream of facts, we can now define a flow-sensitive policy to answer our three core questions. We do this by maintaining a map from `Origin` to `Set<Loan>` at each program point. This map represents the state of our analysis.
+++
+++The analysis proceeds as follows:
+++1.  **Forward Propagation of Loans:** We perform a forward dataflow analysis.
+++    *   When we encounter an `Issue` fact, we add the new loan to its origin's loan set.
+++    *   When we see an `OriginFlow` fact, we update the destination origin's loan set with the loans from the source.
+++    *   At control-flow merge points, we take the *union* of the loan sets from all incoming branches.
+++
+++2.  **Backward Propagation of Liveness:** We then perform a backward dataflow analysis, starting from `Use` facts.
+++    *   A `Use` of an origin marks it as "live."
+++    *   This liveness information is propagated backward. If an origin `O_p` is live, and it received its loans from `O_q`, then `O_q` is also considered live at that point.
+++
+++3.  **Error Detection:** An error is flagged when the analysis determines that a **live** origin contains a loan that has **expired**.
+++
+++In our `definite_simple_case` example:
+++*   The forward analysis determines that at the point of use, `Origin(p)` contains `Loan(s)`.
+++*   The backward analysis determines that at the point where `s` is destroyed, `Origin(p)` is live.
+++*   The `ExpireFact` for `Loan(s)` occurs before the `UseFact`.
+++*   The combination of these three conditions triggers a use-after-free error.
+++
+++## Without Functions, Our Work is Done Here!
+++
+++The model described so far works perfectly for a single, monolithic function. However, the moment we introduce function calls, the problem becomes more complex. How do we reason about lifetimes across function boundaries, especially when we can't see the implementation of the called function?
+++
+++### Effects of a Function Call
+++
+++A function call has inputs and outputs. From a lifetime perspective, the key challenge is to understand how the lifetimes of the outputs relate to the lifetimes of the inputs.
+++
+++### Outlives Constraints and Placeholder Origins
+++
+++When analyzing a function like `const char* get_prefix(const string& s, int len)`, we don't know the specific lifetime of the `s` that will be passed by the caller. To handle this, we introduce **placeholder origins** for the input parameters. These placeholders act as variables in our analysis.
+++
+++If a function returns a pointer or reference, its lifetime must be tied to one of its inputs. This is an **outlives constraint**. For example, the return value of `get_prefix` must "outlive" the input `s`. In our model, this means the origin of the return value will contain the placeholder loan associated with `s`.
+++
+++### Opaque Functions
+++
+++What if a function's implementation is not visible (e.g., it's in a separate translation unit), and it has no lifetime annotations? In this case, we must be conservative. If we pass a pointer to an opaque function, we have to assume it might have been invalidated. Our model handles this by associating a special **OPAQUE loan** with the pointer after the call, signifying that its lifetime is now unknown.
+++
+++## Why a Borrow Checker is Not the Right Fit for C++
+++
+++The "aliasing XOR mutability" rule, while powerful, is fundamentally at odds with many idiomatic C++ patterns.
+++*   **Observer Patterns:** It's common to have multiple non-owning pointers observing a mutable object.
+++*   **Intrusive Data Structures:** Data structures like intrusive linked lists require objects to hold pointers to one another, creating cycles that are difficult for a traditional borrow checker to handle.
+++*   **Iterator Invalidation:** The core problem in C++ is often not aliasing itself, but the fact that a mutation can invalidate an alias (e.g., resizing a vector). An alias-based analysis, like the one proposed here, directly models this problem, whereas a borrow checker can feel like an indirect and overly restrictive solution.
+++
+++By focusing on tracking what pointers can point to, our model avoids rejecting these safe and useful patterns, making it a more natural fit for the existing C++ ecosystem.
+++
+++## Open Questions
+++
+++*   **When and if to introduce the term "lifetime"?** The term "lifetime" is heavily associated with Rust's model. This paper has intentionally focused on "Origins" and "Loans" to avoid confusion. Is there a point where introducing "lifetime" would be helpful, or should we stick to the new terminology?
+++*   **Syntax for Annotations:** While this model is designed to work with minimal annotations, some will be necessary for complex cases. What should the syntax for these annotations look like? Can we build on existing attributes like `[[clang::lifetimebound]]`?
++diff -ruN --strip-trailing-cr a/clang/test/Analysis/LifetimeSafety/benchmark.py b/clang/test/Analysis/LifetimeSafety/benchmark.py
++--- a/clang/test/Analysis/LifetimeSafety/benchmark.py
+++++ b/clang/test/Analysis/LifetimeSafety/benchmark.py
++@@ -145,6 +145,60 @@
++     return cpp_code
++ 
++ 
+++def generate_cpp_switch_fan_out_test(n: int) -> str:
+++    """
+++    Generates C++ code with a switch statement with N branches.
+++    Each branch 'i' 'uses' (reads) a single, unique pointer 'pi'.
+++    This pattern creates a "fan-in" join point for the backward
+++    liveness analysis, stressing the LivenessMap::join operation
+++    by forcing it to merge N disjoint, single-element sets of live origins.
+++    The resulting complexity for LiveOrigins should be O(n log n) or higher.
+++
+++    Example (n=3):
+++        struct MyObj { int id; ~MyObj() {} };
+++
+++        void switch_fan_out_3(int condition) {
+++            MyObj v1{1}; MyObj v2{1}; MyObj v3{1};
+++            MyObj* p1 = &v1; MyObj* p2 = &v2; MyObj* p3 = &v3;
+++
+++            switch (condition % 3) {
+++                case 0:
+++                    p1->id = 1;
+++                    break;
+++                case 1:
+++                    p2->id = 1;
+++                    break;
+++                case 2:
+++                    p3->id = 1;
+++                    break;
+++            }
+++        }
+++    """
+++    if n <= 0:
+++        return "// Number of variables must be positive."
+++
+++    cpp_code = "struct MyObj { int id; ~MyObj() {} };\n\n"
+++    cpp_code += f"void switch_fan_out{n}(int condition) {{\n"
+++    # Generate N distinct objects
+++    for i in range(1, n + 1):
+++        cpp_code += f"  MyObj v{i}{{1}};\n"
+++    cpp_code += "\n"
+++    # Generate N distinct pointers, each as a separate variable
+++    for i in range(1, n + 1):
+++        cpp_code += f"  MyObj* p{i} = &v{i};\n"
+++    cpp_code += "\n"
+++
+++    cpp_code += f"  switch (condition % {n}) {{\n"
+++    for case_num in range(n):
+++        cpp_code += f"    case {case_num}:\n"
+++        cpp_code += f"      p{case_num + 1}->id = 1;\n"
+++        cpp_code += "      break;\n"
+++
+++    cpp_code += "  }\n}\n"
+++    cpp_code += f"\nint main() {{ switch_fan_out{n}(0); return 0; }}\n"
+++    return cpp_code
+++
+++
++ def analyze_trace_file(trace_path: str) -> dict:
++     """
++     Parses the -ftime-trace JSON output to find durations for the lifetime
++@@ -156,14 +210,14 @@
++         "total_us": 0.0,
++         "fact_gen_us": 0.0,
++         "loan_prop_us": 0.0,
++-        "expired_loans_us": 0.0,
+++        "live_origins_us": 0.0,
++     }
++     event_name_map = {
++         "LifetimeSafetyAnalysis": "lifetime_us",
++         "ExecuteCompiler": "total_us",
++         "FactGenerator": "fact_gen_us",
++         "LoanPropagation": "loan_prop_us",
++-        "ExpiredLoans": "expired_loans_us",
+++        "LiveOrigins": "live_origins_us",
++     }
++     try:
++         with open(trace_path, "r") as f:
++@@ -227,7 +281,7 @@
++ 
++         # Table header
++         report.append(
++-            "| N (Input Size) | Total Time | Analysis Time (%) | Fact Generator (%) | Loan Propagation (%) | Expired Loans (%) |"
+++            "| N (Input Size) | Total Time | Analysis Time (%) | Fact Generator (%) | Loan Propagation (%) | Live Origins (%) |"
++         )
++         report.append(
++             "|:---------------|-----------:|------------------:|-------------------:|---------------------:|------------------:|"
++@@ -247,7 +301,7 @@
++                 f"{data['lifetime_ms'][i] / total_t * 100:>17.2f}% |",
++                 f"{data['fact_gen_ms'][i] / total_t * 100:>18.2f}% |",
++                 f"{data['loan_prop_ms'][i] / total_t * 100:>20.2f}% |",
++-                f"{data['expired_loans_ms'][i] / total_t * 100:>17.2f}% |",
+++                f"{data['live_origins_ms'][i] / total_t * 100:>17.2f}% |",
++             ]
++             report.append(" ".join(row))
++ 
++@@ -259,7 +313,7 @@
++             "Total Analysis": data["lifetime_ms"],
++             "FactGenerator": data["fact_gen_ms"],
++             "LoanPropagation": data["loan_prop_ms"],
++-            "ExpiredLoans": data["expired_loans_ms"],
+++            "LiveOrigins": data["live_origins_ms"],
++         }
++ 
++         for phase_name, y_data in analysis_phases.items():
++@@ -302,7 +356,13 @@
++         source_file,
++     ]
++ 
++-    result = subprocess.run(clang_command, capture_output=True, text=True, timeout=60)
+++    try:
+++        result = subprocess.run(
+++            clang_command, capture_output=True, text=True, timeout=60
+++        )
+++    except subprocess.TimeoutExpired:
+++        print(f"Compilation timed out for N={n}!", file=sys.stderr)
+++        return {}
++ 
++     if result.returncode != 0:
++         print(f"Compilation failed for N={n}!", file=sys.stderr)
++@@ -354,6 +414,12 @@
++             "generator_func": generate_cpp_nested_loop_test,
++             "n_values": [50, 100, 150, 200],
++         },
+++        {
+++            "name": "switch_fan_out",
+++            "title": "Switch Fan-out",
+++            "generator_func": generate_cpp_switch_fan_out_test,
+++            "n_values": [500, 1000, 2000, 4000],
+++        },
++     ]
++ 
++     results = {}
++@@ -368,7 +434,7 @@
++             "total_ms": [],
++             "fact_gen_ms": [],
++             "loan_prop_ms": [],
++-            "expired_loans_ms": [],
+++            "live_origins_ms": [],
++         }
++         for n in config["n_values"]:
++             durations_ms = run_single_test(
++@@ -387,7 +453,7 @@
++                     f"    Total Analysis: {human_readable_time(durations_ms['lifetime_ms'])} | "
++                     f"FactGen: {human_readable_time(durations_ms['fact_gen_ms'])} | "
++                     f"LoanProp: {human_readable_time(durations_ms['loan_prop_ms'])} | "
++-                    f"ExpiredLoans: {human_readable_time(durations_ms['expired_loans_ms'])}"
+++                    f"LiveOrigins: {human_readable_time(durations_ms['live_origins_ms'])}"
++                 )
++ 
++     print("\n\n" + "=" * 80)
++diff -ruN --strip-trailing-cr a/clang/test/Sema/warn-lifetime-safety.cpp b/clang/test/Sema/warn-lifetime-safety.cpp
++--- a/clang/test/Sema/warn-lifetime-safety.cpp
+++++ b/clang/test/Sema/warn-lifetime-safety.cpp
++@@ -126,11 +126,15 @@
++   v.use();      // expected-note 2 {{later used here}}
++ }
++ 
++-
++-//===----------------------------------------------------------------------===//
++-// Potential (Maybe) Use-After-Free (-W...strict)
++-// These are cases where the pointer *may* become dangling, depending on the path taken.
++-//===----------------------------------------------------------------------===//
+++void definite_if_branch(bool cond) {
+++  MyObj safe;
+++  MyObj* p = &safe;
+++  if (cond) {
+++    MyObj temp;
+++    p = &temp;  // expected-warning {{object whose reference is captured does not live long enough}}
+++  }             // expected-note {{destroyed here}}
+++  (void)*p;     // expected-note {{later used here}}
+++}
++ 
++ void potential_if_branch(bool cond) {
++   MyObj safe;
++@@ -139,15 +143,18 @@
++     MyObj temp;
++     p = &temp;  // expected-warning {{object whose reference is captured may not live long enough}}
++   }             // expected-note {{destroyed here}}
++-  (void)*p;     // expected-note {{later used here}}
+++  if (!cond)
+++    (void)*p;   // expected-note {{later used here}}
+++  else
+++    p = &safe;
++ }
++ 
++-void potential_if_branch_gsl(bool cond) {
+++void definite_if_branch_gsl(bool cond) {
++   MyObj safe;
++   View v = safe;
++   if (cond) {
++     MyObj temp;
++-    v = temp;   // expected-warning {{object whose reference is captured may not live long enough}}
+++    v = temp;   // expected-warning {{object whose reference is captured does not live long enough}}
++   }             // expected-note {{destroyed here}}
++   v.use();      // expected-note {{later used here}}
++ }
++@@ -159,13 +166,14 @@
++ 
++   {
++     MyObj s;
++-    p_definite = &s;  // expected-warning {{does not live long enough}}
++-    if (cond) {
++-      p_maybe = &s;   // expected-warning {{may not live long enough}}
++-    }                 
++-  }                   // expected-note 2 {{destroyed here}}
++-  (void)*p_definite;  // expected-note {{later used here}}
++-  (void)*p_maybe;     // expected-note {{later used here}}
+++    if (cond)
+++      p_definite = &s;  // expected-warning {{does not live long enough}}
+++    if (cond)
+++      p_maybe = &s;     // expected-warning {{may not live long enough}}         
+++  }                     // expected-note 2 {{destroyed here}}
+++  (void)*p_definite;    // expected-note {{later used here}}
+++  if (!cond)
+++    (void)*p_maybe;     // expected-note {{later used here}}
++ }
++ 
++ void definite_overrides_potential(bool cond) {
++@@ -189,10 +197,19 @@
++   (void)*q;
++ }
++ 
++-
++-//===----------------------------------------------------------------------===//
++-// Control Flow Tests
++-//===----------------------------------------------------------------------===//
+++void potential_due_to_conditional_killing(bool cond) {
+++  MyObj safe;
+++  MyObj* q;
+++  {
+++    MyObj s;
+++    q = &s;       // expected-warning {{may not live long enough}}
+++  }               // expected-note {{destroyed here}}
+++  if (cond) {
+++    // 'q' is conditionally "rescued". 'p' is not.
+++    q = &safe;
+++  }
+++  (void)*q;       // expected-note {{later used here}}
+++}
++ 
++ void potential_for_loop_use_after_loop_body(MyObj safe) {
++   MyObj* p = &safe;
++@@ -215,34 +232,35 @@
++ 
++ void potential_for_loop_use_before_loop_body(MyObj safe) {
++   MyObj* p = &safe;
+++  // Prefer the earlier use for diagnsotics.
++   for (int i = 0; i < 1; ++i) {
++     (void)*p;   // expected-note {{later used here}}
++     MyObj s;
++-    p = &s;     // expected-warning {{may not live long enough}}
+++    p = &s;     // expected-warning {{does not live long enough}}
++   }             // expected-note {{destroyed here}}
++   (void)*p;
++ }
++ 
++-void potential_loop_with_break(bool cond) {
+++void definite_loop_with_break(bool cond) {
++   MyObj safe;
++   MyObj* p = &safe;
++   for (int i = 0; i < 10; ++i) {
++     if (cond) {
++       MyObj temp;
++-      p = &temp; // expected-warning {{may not live long enough}}
+++      p = &temp; // expected-warning {{does not live long enough}}
++       break;     // expected-note {{destroyed here}}
++     }           
++   } 
++   (void)*p;     // expected-note {{later used here}}
++ }
++ 
++-void potential_loop_with_break_gsl(bool cond) {
+++void definite_loop_with_break_gsl(bool cond) {
++   MyObj safe;
++   View v = safe;
++   for (int i = 0; i < 10; ++i) {
++     if (cond) {
++       MyObj temp;
++-      v = temp;   // expected-warning {{object whose reference is captured may not live long enough}}
+++      v = temp;   // expected-warning {{object whose reference is captured does not live long enough}}
++       break;      // expected-note {{destroyed here}}
++     }
++   }
++@@ -250,37 +268,52 @@
++ }
++ 
++ void potential_multiple_expiry_of_same_loan(bool cond) {
++-  // Choose the last expiry location for the loan.
+++  // Choose the last expiry location for the loan (e.g., through scope-ends and break statements).
++   MyObj safe;
++   MyObj* p = &safe;
++   for (int i = 0; i < 10; ++i) {
++     MyObj unsafe;
++     if (cond) {
++-      p = &unsafe; // expected-warning {{may not live long enough}}
++-      break;
+++      p = &unsafe; // expected-warning {{does not live long enough}}
+++      break;       // expected-note {{destroyed here}} 
++     }
++-  }               // expected-note {{destroyed here}} 
+++  }
++   (void)*p;       // expected-note {{later used here}}
++ 
++   p = &safe;
++   for (int i = 0; i < 10; ++i) {
++     MyObj unsafe;
++     if (cond) {
++-      p = &unsafe;    // expected-warning {{may not live long enough}}
+++      p = &unsafe;    // expected-warning {{does not live long enough}}
++       if (cond)
++-        break;
+++        break;        // expected-note {{destroyed here}}
++     }
++-  }                   // expected-note {{destroyed here}}
+++  }
++   (void)*p;           // expected-note {{later used here}}
++ 
++   p = &safe;
++   for (int i = 0; i < 10; ++i) {
++     if (cond) {
++       MyObj unsafe2;
++-      p = &unsafe2;   // expected-warning {{may not live long enough}}
+++      p = &unsafe2;   // expected-warning {{does not live long enough}}
++       break;          // expected-note {{destroyed here}}
++     }
++   }
+++
+++  // TODO: This can be argued to be a "maybe" warning. This is because
+++  // we only check for confidence of liveness and not the confidence of
+++  // the loan contained in an origin. To deal with this, we can introduce
+++  // a confidence in loan propagation analysis as well like liveness.
+++  (void)*p;           // expected-note {{later used here}}
+++
+++  p = &safe;
+++  for (int i = 0; i < 10; ++i) {
+++    MyObj unsafe;
+++    if (cond)
+++      p = &unsafe;    // expected-warning {{does not live long enough}}
+++    if (cond)
+++      break;          // expected-note {{destroyed here}}
+++  }
++   (void)*p;           // expected-note {{later used here}}
++ }
++ 
++@@ -298,13 +331,14 @@
++     break;
++   }
++   }
++-  (void)*p;     // expected-note {{later used here}}
+++  if (mode == 2)
+++    (void)*p;     // expected-note {{later used here}}
++ }
++ 
++ void definite_switch(int mode) {
++   MyObj safe;
++   MyObj* p = &safe;
++-  // All cases are UaF --> Definite error.
+++  // A use domintates all the loan expires --> all definite error.
++   switch (mode) {
++   case 1: {
++     MyObj temp1;
++@@ -347,6 +381,21 @@
++   v.use();      // expected-note 3 {{later used here}}
++ }
++ 
+++void loan_from_previous_iteration(MyObj safe, bool condition) {
+++  MyObj* p = &safe;
+++  MyObj* q = &safe;
+++
+++  while (condition) {
+++    MyObj x;
+++    p = &x;     // expected-warning {{may not live long enough}}
+++
+++    if (condition)
+++      q = p;
+++    (void)*p;
+++    (void)*q;   // expected-note {{later used here}}
+++  }             // expected-note {{destroyed here}}
+++}
+++
++ //===----------------------------------------------------------------------===//
++ // No-Error Cases
++ //===----------------------------------------------------------------------===//
++@@ -372,6 +421,19 @@
++   v.use();     // This is safe.
++ }
++ 
+++void no_error_loan_from_current_iteration(bool cond) {
+++  // See https://github.com/llvm/llvm-project/issues/156959.
+++  MyObj b;
+++  while (cond) {
+++    MyObj a;
+++    View p = b;
+++    if (cond) {
+++      p = a;
+++    }
+++    (void)p;
+++  }
+++}
+++
++ 
++ //===----------------------------------------------------------------------===//
++ // Lifetimebound Attribute Tests
++@@ -415,9 +477,9 @@
++     MyObj obj1;
++     if (cond) {
++       MyObj obj2;
++-      v = Choose(true, 
++-                 obj1,             // expected-warning {{object whose reference is captured may not live long enough}}
++-                 obj2);            // expected-warning {{object whose reference is captured may not live long enough}}
+++      v = Choose(true,
+++                 obj1,             // expected-warning {{object whose reference is captured does not live long enough}}
+++                 obj2);            // expected-warning {{object whose reference is captured does not live long enough}}
++     }                              // expected-note {{destroyed here}}
++   }                                // expected-note {{destroyed here}}
++   v.use();                         // expected-note 2 {{later used here}}
++@@ -488,7 +550,7 @@
++     MyObj temp_obj;
++     v = Choose(true, 
++                safe_obj,
++-               temp_obj); // expected-warning {{object whose reference is captured may not live long enough}}
+++               temp_obj); // expected-warning {{object whose reference is captured does not live long enough}}
++   }                       // expected-note {{destroyed here}}
++   v.use();                // expected-note {{later used here}}
++ }
++diff -ruN --strip-trailing-cr a/clang/unittests/Analysis/LifetimeSafetyTest.cpp b/clang/unittests/Analysis/LifetimeSafetyTest.cpp
++--- a/clang/unittests/Analysis/LifetimeSafetyTest.cpp
+++++ b/clang/unittests/Analysis/LifetimeSafetyTest.cpp
++@@ -126,12 +126,12 @@
++     return Analysis.getLoansAtPoint(OID, PP);
++   }
++ 
++-  std::optional<std::vector<LoanID>>
++-  getExpiredLoansAtPoint(llvm::StringRef Annotation) {
+++  std::optional<std::vector<std::pair<OriginID, LivenessKind>>>
+++  getLiveOriginsAtPoint(llvm::StringRef Annotation) {
++     ProgramPoint PP = Runner.getProgramPoint(Annotation);
++     if (!PP)
++       return std::nullopt;
++-    return Analysis.getExpiredLoansAtPoint(PP);
+++    return Analysis.getLiveOriginsAtPoint(PP);
++   }
++ 
++ private:
++@@ -180,6 +180,15 @@
++   LifetimeTestHelper &Helper;
++ };
++ 
+++// A helper class to represent a set of origins, identified by variable names.
+++class OriginsInfo {
+++public:
+++  OriginsInfo(const std::vector<std::string> &Vars, LifetimeTestHelper &H)
+++      : OriginVars(Vars), Helper(H) {}
+++  std::vector<std::string> OriginVars;
+++  LifetimeTestHelper &Helper;
+++};
+++
++ /// Matcher to verify the set of loans held by an origin at a specific
++ /// program point.
++ ///
++@@ -221,14 +230,15 @@
++   std::sort(ExpectedLoans.begin(), ExpectedLoans.end());
++   std::sort(ActualLoans.begin(), ActualLoans.end());
++   if (ExpectedLoans != ActualLoans) {
++-    *result_listener << "Expected: ";
+++    *result_listener << "Expected: {";
++     for (const auto &LoanID : ExpectedLoans) {
++       *result_listener << LoanID.Value << ", ";
++     }
++-    *result_listener << "Actual: ";
+++    *result_listener << "} Actual: {";
++     for (const auto &LoanID : ActualLoans) {
++       *result_listener << LoanID.Value << ", ";
++     }
+++    *result_listener << "}";
++     return false;
++   }
++ 
++@@ -236,32 +246,71 @@
++                             ActualLoans, result_listener);
++ }
++ 
++-/// Matcher to verify that the complete set of expired loans at a program point
++-/// matches the expected loan set.
++-MATCHER_P(AreExpiredAt, Annotation, "") {
++-  const LoanSetInfo &Info = arg;
++-  auto &Helper = Info.Helper;
+++enum class LivenessKindFilter { Maybe, Must, All };
++ 
++-  auto ActualExpiredSetOpt = Helper.getExpiredLoansAtPoint(Annotation);
++-  if (!ActualExpiredSetOpt) {
++-    *result_listener << "could not get a valid expired loan set at point '"
+++/// Matcher to verify the complete set of live origins at a program point.
+++MATCHER_P2(AreLiveAtImpl, Annotation, ConfFilter, "") {
+++  const OriginsInfo &Info = arg;
+++  auto &Helper = Info.Helper;
+++  auto ActualLiveSetOpt = Helper.getLiveOriginsAtPoint(Annotation);
+++  if (!ActualLiveSetOpt) {
+++    *result_listener << "could not get a valid live origin set at point '"
++                      << Annotation << "'";
++     return false;
++   }
++-  std::vector<LoanID> ActualExpiredLoans = *ActualExpiredSetOpt;
++-  std::vector<LoanID> ExpectedExpiredLoans;
++-  for (const auto &VarName : Info.LoanVars) {
++-    auto LoanIDs = Helper.getLoansForVar(VarName);
++-    if (LoanIDs.empty()) {
++-      *result_listener << "could not find a loan for variable '" << VarName
+++  std::vector<OriginID> ActualLiveOrigins;
+++  for (const auto [OID, ActualConfidence] : ActualLiveSetOpt.value()) {
+++    if (ConfFilter == LivenessKindFilter::All)
+++      ActualLiveOrigins.push_back(OID);
+++    if (ActualConfidence == LivenessKind::Maybe &&
+++        ConfFilter == LivenessKindFilter::Maybe)
+++      ActualLiveOrigins.push_back(OID);
+++    if (ActualConfidence == LivenessKind::Must &&
+++        ConfFilter == LivenessKindFilter::Must)
+++      ActualLiveOrigins.push_back(OID);
+++  }
+++
+++  std::vector<OriginID> ExpectedLiveOrigins;
+++  for (const auto &VarName : Info.OriginVars) {
+++    auto OriginIDOpt = Helper.getOriginForDecl(VarName);
+++    if (!OriginIDOpt) {
+++      *result_listener << "could not find an origin for variable '" << VarName
++                        << "'";
++       return false;
++     }
++-    ExpectedExpiredLoans.insert(ExpectedExpiredLoans.end(), LoanIDs.begin(),
++-                                LoanIDs.end());
+++    ExpectedLiveOrigins.push_back(*OriginIDOpt);
++   }
++-  return ExplainMatchResult(UnorderedElementsAreArray(ExpectedExpiredLoans),
++-                            ActualExpiredLoans, result_listener);
+++  std::sort(ExpectedLiveOrigins.begin(), ExpectedLiveOrigins.end());
+++  std::sort(ActualLiveOrigins.begin(), ActualLiveOrigins.end());
+++  if (ExpectedLiveOrigins != ActualLiveOrigins) {
+++    *result_listener << "Expected: {";
+++    for (const auto &OriginID : ExpectedLiveOrigins) {
+++      *result_listener << OriginID.Value << ", ";
+++    }
+++    *result_listener << "} Actual: {";
+++    for (const auto &OriginID : ActualLiveOrigins) {
+++      *result_listener << OriginID.Value << ", ";
+++    }
+++    *result_listener << "}";
+++    return false;
+++  }
+++  return true;
+++}
+++
+++MATCHER_P(MustBeLiveAt, Annotation, "") {
+++  return ExplainMatchResult(AreLiveAtImpl(Annotation, LivenessKindFilter::Must),
+++                            arg, result_listener);
+++}
+++
+++MATCHER_P(MaybeLiveAt, Annotation, "") {
+++  return ExplainMatchResult(
+++      AreLiveAtImpl(Annotation, LivenessKindFilter::Maybe), arg,
+++      result_listener);
+++}
+++
+++MATCHER_P(AreLiveAt, Annotation, "") {
+++  return ExplainMatchResult(AreLiveAtImpl(Annotation, LivenessKindFilter::All),
+++                            arg, result_listener);
++ }
++ 
++ // Base test fixture to manage the runner and helper.
++@@ -277,6 +326,13 @@
++   }
++ 
++   /// Factory function that hides the std::vector creation.
+++  OriginsInfo Origins(std::initializer_list<std::string> OriginVars) {
+++    return OriginsInfo({OriginVars}, *Helper);
+++  }
+++
+++  OriginsInfo NoOrigins() { return Origins({}); }
+++
+++  /// Factory function that hides the std::vector creation.
++   LoanSetInfo LoansTo(std::initializer_list<std::string> LoanVars) {
++     return LoanSetInfo({LoanVars}, *Helper);
++   }
++@@ -428,29 +484,6 @@
++   EXPECT_THAT(Origin("p"), HasLoansTo({"s1", "s2", "s3"}, "after_switch"));
++ }
++ 
++-TEST_F(LifetimeAnalysisTest, LoanInLoop) {
++-  SetupTest(R"(
++-    void target(bool condition) {
++-      MyObj* p = nullptr;
++-      while (condition) {
++-        POINT(start_loop);
++-        MyObj inner;
++-        p = &inner;
++-        POINT(end_loop);
++-      }
++-      POINT(after_loop);
++-    }
++-  )");
++-  EXPECT_THAT(Origin("p"), HasLoansTo({"inner"}, "start_loop"));
++-  EXPECT_THAT(LoansTo({"inner"}), AreExpiredAt("start_loop"));
++-
++-  EXPECT_THAT(Origin("p"), HasLoansTo({"inner"}, "end_loop"));
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("end_loop"));
++-
++-  EXPECT_THAT(Origin("p"), HasLoansTo({"inner"}, "after_loop"));
++-  EXPECT_THAT(LoansTo({"inner"}), AreExpiredAt("after_loop"));
++-}
++-
++ TEST_F(LifetimeAnalysisTest, LoopWithBreak) {
++   SetupTest(R"(
++     void target(int count) {
++@@ -528,20 +561,16 @@
++   )");
++   EXPECT_THAT(Origin("p1"), HasLoansTo({"v1"}, "before_while"));
++   EXPECT_THAT(Origin("p2"), HasLoansTo({"v2"}, "before_while"));
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("before_while"));
++ 
++   EXPECT_THAT(Origin("p1"),
++               HasLoansTo({"v1", "v2", "temp"}, "in_loop_before_temp"));
++   EXPECT_THAT(Origin("p2"), HasLoansTo({"v2", "temp"}, "in_loop_before_temp"));
++-  EXPECT_THAT(LoansTo({"temp"}), AreExpiredAt("in_loop_before_temp"));
++ 
++   EXPECT_THAT(Origin("p1"), HasLoansTo({"temp"}, "in_loop_after_temp"));
++   EXPECT_THAT(Origin("p2"), HasLoansTo({"v2", "temp"}, "in_loop_after_temp"));
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("in_loop_after_temp"));
++ 
++   EXPECT_THAT(Origin("p1"), HasLoansTo({"v1", "v2", "temp"}, "after_loop"));
++   EXPECT_THAT(Origin("p2"), HasLoansTo({"v2", "temp"}, "after_loop"));
++-  EXPECT_THAT(LoansTo({"temp"}), AreExpiredAt("after_loop"));
++ }
++ 
++ TEST_F(LifetimeAnalysisTest, InfiniteLoopPrunesEdges) {
++@@ -585,178 +614,6 @@
++   EXPECT_THAT(Origin("p"), HasLoansTo({"inner"}, "after_inner_scope"));
++ }
++ 
++-TEST_F(LifetimeAnalysisTest, SimpleExpiry) {
++-  SetupTest(R"(
++-    void target() {
++-      MyObj* p = nullptr;
++-      {
++-        MyObj s;
++-        p = &s;
++-        POINT(before_expiry);
++-      } // s goes out of scope here
++-      POINT(after_expiry);
++-    }
++-  )");
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("before_expiry"));
++-  EXPECT_THAT(LoansTo({"s"}), AreExpiredAt("after_expiry"));
++-}
++-
++-TEST_F(LifetimeAnalysisTest, NestedExpiry) {
++-  SetupTest(R"(
++-    void target() {
++-      MyObj s1;
++-      MyObj* p = &s1;
++-      POINT(before_inner);
++-      {
++-        MyObj s2;
++-        p = &s2;
++-        POINT(in_inner);
++-      } // s2 expires
++-      POINT(after_inner);
++-    }
++-  )");
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("before_inner"));
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("in_inner"));
++-  EXPECT_THAT(LoansTo({"s2"}), AreExpiredAt("after_inner"));
++-}
++-
++-TEST_F(LifetimeAnalysisTest, ConditionalExpiry) {
++-  SetupTest(R"(
++-    void target(bool cond) {
++-      MyObj s1;
++-      MyObj* p = &s1;
++-      POINT(before_if);
++-      if (cond) {
++-        MyObj s2;
++-        p = &s2;
++-        POINT(then_block);
++-      } // s2 expires here
++-      POINT(after_if);
++-    }
++-  )");
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("before_if"));
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("then_block"));
++-  EXPECT_THAT(LoansTo({"s2"}), AreExpiredAt("after_if"));
++-}
++-
++-TEST_F(LifetimeAnalysisTest, LoopExpiry) {
++-  SetupTest(R"(
++-    void target() {
++-      MyObj *p = nullptr;
++-      for (int i = 0; i < 2; ++i) {
++-        POINT(start_loop);
++-        MyObj s;
++-        p = &s;
++-        POINT(end_loop);
++-      } // s expires here on each iteration
++-      POINT(after_loop);
++-    }
++-  )");
++-  EXPECT_THAT(LoansTo({"s"}), AreExpiredAt("start_loop"));
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("end_loop"));
++-  EXPECT_THAT(LoansTo({"s"}), AreExpiredAt("after_loop"));
++-}
++-
++-TEST_F(LifetimeAnalysisTest, MultipleExpiredLoans) {
++-  SetupTest(R"(
++-    void target() {
++-      MyObj *p1, *p2, *p3;
++-      {
++-        MyObj s1;
++-        p1 = &s1;
++-        POINT(p1);
++-      } // s1 expires
++-      POINT(p2);
++-      {
++-        MyObj s2;
++-        p2 = &s2;
++-        MyObj s3;
++-        p3 = &s3;
++-        POINT(p3);
++-      } // s2, s3 expire
++-      POINT(p4);
++-    }
++-  )");
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("p1"));
++-  EXPECT_THAT(LoansTo({"s1"}), AreExpiredAt("p2"));
++-  EXPECT_THAT(LoansTo({"s1"}), AreExpiredAt("p3"));
++-  EXPECT_THAT(LoansTo({"s1", "s2", "s3"}), AreExpiredAt("p4"));
++-}
++-
++-TEST_F(LifetimeAnalysisTest, GotoJumpsOutOfScope) {
++-  SetupTest(R"(
++-    void target(bool cond) {
++-      MyObj *p = nullptr;
++-      {
++-        MyObj s;
++-        p = &s;
++-        POINT(before_goto);
++-        if (cond) {
++-          goto end;
++-        }
++-      } // `s` expires here on the path that doesn't jump
++-      POINT(after_scope);
++-    end:
++-      POINT(after_goto);
++-    }
++-  )");
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("before_goto"));
++-  EXPECT_THAT(LoansTo({"s"}), AreExpiredAt("after_scope"));
++-  EXPECT_THAT(LoansTo({"s"}), AreExpiredAt("after_goto"));
++-}
++-
++-TEST_F(LifetimeAnalysisTest, ContinueInLoop) {
++-  SetupTest(R"(
++-    void target(int count) {
++-      MyObj *p = nullptr;
++-      MyObj outer;
++-      p = &outer;
++-      POINT(before_loop);
++-
++-      for (int i = 0; i < count; ++i) {
++-        if (i % 2 == 0) {
++-          MyObj s_even;
++-          p = &s_even;
++-          POINT(in_even_iter);
++-          continue;
++-        }
++-        MyObj s_odd;
++-        p = &s_odd;
++-        POINT(in_odd_iter);
++-      }
++-      POINT(after_loop);
++-    }
++-  )");
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("before_loop"));
++-  EXPECT_THAT(LoansTo({"s_odd"}), AreExpiredAt("in_even_iter"));
++-  EXPECT_THAT(LoansTo({"s_even"}), AreExpiredAt("in_odd_iter"));
++-  EXPECT_THAT(LoansTo({"s_even", "s_odd"}), AreExpiredAt("after_loop"));
++-}
++-
++-TEST_F(LifetimeAnalysisTest, ReassignedPointerThenOriginalExpires) {
++-  SetupTest(R"(
++-    void target() {
++-      MyObj* p = nullptr;
++-      {
++-        MyObj s1;
++-        p = &s1;
++-        POINT(p_has_s1);
++-        {
++-          MyObj s2;
++-          p = &s2;
++-          POINT(p_has_s2);
++-        }
++-        POINT(p_after_s2_expires);
++-      } // s1 expires here.
++-      POINT(p_after_s1_expires);
++-    }
++-  )");
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("p_has_s1"));
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("p_has_s2"));
++-  EXPECT_THAT(LoansTo({"s2"}), AreExpiredAt("p_after_s2_expires"));
++-  EXPECT_THAT(LoansTo({"s1", "s2"}), AreExpiredAt("p_after_s1_expires"));
++-}
++-
++ TEST_F(LifetimeAnalysisTest, NoDuplicateLoansForImplicitCastToConst) {
++   SetupTest(R"(
++     void target() {
++@@ -880,23 +737,6 @@
++   EXPECT_THAT(Origin("z"), HasLoansTo({"a"}, "p3"));
++ }
++ 
++-TEST_F(LifetimeAnalysisTest, GslPointerLoanExpiration) {
++-  SetupTest(R"(
++-    void target() {
++-      View x;
++-      {
++-        MyObj a;
++-        x = a;
++-        POINT(before_expiry);
++-      } // `a` is destroyed here.
++-      POINT(after_expiry);
++-    }
++-  )");
++-
++-  EXPECT_THAT(NoLoans(), AreExpiredAt("before_expiry"));
++-  EXPECT_THAT(LoansTo({"a"}), AreExpiredAt("after_expiry"));
++-}
++-
++ TEST_F(LifetimeAnalysisTest, GslPointerReassignment) {
++   SetupTest(R"(
++     void target() {
++@@ -916,7 +756,6 @@
++   EXPECT_THAT(Origin("v"), HasLoansTo({"safe"}, "p1"));
++   EXPECT_THAT(Origin("v"), HasLoansTo({"unsafe"}, "p2"));
++   EXPECT_THAT(Origin("v"), HasLoansTo({"unsafe"}, "p3"));
++-  EXPECT_THAT(LoansTo({"unsafe"}), AreExpiredAt("p3"));
++ }
++ 
++ TEST_F(LifetimeAnalysisTest, GslPointerConversionOperator) {
++@@ -1174,5 +1013,187 @@
++   )");
++   EXPECT_THAT(Origin("v"), HasLoansTo({"owner"}, "p1"));
++ }
+++
+++TEST_F(LifetimeAnalysisTest, LivenessDeadPointer) {
+++  SetupTest(R"(
+++    void target() {
+++      POINT(p1);
+++      MyObj s;
+++      MyObj* p = &s;
+++      POINT(p2);
+++    }
+++  )");
+++  EXPECT_THAT(NoOrigins(), AreLiveAt("p2"));
+++  EXPECT_THAT(NoOrigins(), AreLiveAt("p1"));
+++}
+++
+++TEST_F(LifetimeAnalysisTest, LivenessSimpleReturn) {
+++  SetupTest(R"(
+++    MyObj* target() {
+++      MyObj s;
+++      MyObj* p = &s;
+++      POINT(p1);
+++      return p;
+++    }
+++  )");
+++  EXPECT_THAT(Origins({"p"}), MustBeLiveAt("p1"));
+++}
+++
+++TEST_F(LifetimeAnalysisTest, LivenessKilledByReassignment) {
+++  SetupTest(R"(
+++    MyObj* target() {
+++      MyObj s1, s2;
+++      MyObj* p = &s1;
+++      POINT(p1);
+++      p = &s2;
+++      POINT(p2);
+++      return p;
+++    }
+++  )");
+++  EXPECT_THAT(Origins({"p"}), MustBeLiveAt("p2"));
+++  EXPECT_THAT(NoOrigins(), AreLiveAt("p1"));
+++}
+++
+++TEST_F(LifetimeAnalysisTest, LivenessAcrossBranches) {
+++  SetupTest(R"(
+++    MyObj* target(bool c) {
+++      MyObj x, y;
+++      MyObj* p = nullptr;
+++      POINT(p1);
+++      if (c) {
+++        p = &x;
+++        POINT(p2);
+++      } else {
+++        p = &y;
+++        POINT(p3);
+++      }
+++      return p;
+++    }
+++  )");
+++  EXPECT_THAT(Origins({"p"}), MustBeLiveAt("p2"));
+++  EXPECT_THAT(Origins({"p"}), MustBeLiveAt("p3"));
+++  // Before the `if`, the value of `p` (`nullptr`) is always overwritten before.
+++  EXPECT_THAT(NoOrigins(), AreLiveAt("p1"));
+++}
+++
+++TEST_F(LifetimeAnalysisTest, LivenessInLoop) {
+++  SetupTest(R"(
+++    MyObj* target(bool c) {
+++      MyObj s1, s2;
+++      MyObj* p = &s1;
+++      MyObj* q = &s2;
+++      POINT(p1);
+++      while(c) {
+++        POINT(p2);
+++
+++        p = q;
+++        POINT(p3);
+++      }
+++      POINT(p4);
+++      return p;
+++    }
+++  )");
+++
+++  EXPECT_THAT(Origins({"p"}), MustBeLiveAt("p4"));
+++  EXPECT_THAT(NoOrigins(), MaybeLiveAt("p4"));
+++
+++  EXPECT_THAT(Origins({"p", "q"}), MaybeLiveAt("p3"));
+++
+++  EXPECT_THAT(Origins({"q"}), MustBeLiveAt("p2"));
+++  EXPECT_THAT(NoOrigins(), MaybeLiveAt("p2"));
+++
+++  EXPECT_THAT(Origins({"p", "q"}), MaybeLiveAt("p1"));
+++}
+++
+++TEST_F(LifetimeAnalysisTest, LivenessInLoopAndIf) {
+++  // See https://github.com/llvm/llvm-project/issues/156959.
+++  SetupTest(R"(
+++    void target(bool cond) {
+++      MyObj b;
+++      while (cond) {
+++        POINT(p1);
+++
+++        MyObj a;
+++        View p = b;
+++
+++        POINT(p2);
+++
+++        if (cond) {
+++          POINT(p3);
+++          p = a;
+++        }
+++        POINT(p4);
+++        (void)p;
+++        POINT(p5);
+++      }
+++    }
+++  )");
+++  EXPECT_THAT(NoOrigins(), AreLiveAt("p5"));
+++  EXPECT_THAT(Origins({"p"}), MustBeLiveAt("p4"));
+++  EXPECT_THAT(NoOrigins(), AreLiveAt("p3"));
+++  EXPECT_THAT(Origins({"p"}), MaybeLiveAt("p2"));
+++  EXPECT_THAT(NoOrigins(), AreLiveAt("p1"));
+++}
+++
+++TEST_F(LifetimeAnalysisTest, LivenessInLoopAndIf2) {
+++  SetupTest(R"(
+++    void target(MyObj safe, bool condition) {
+++      MyObj* p = &safe;
+++      MyObj* q = &safe;
+++      POINT(p1);
+++
+++      while (condition) {
+++        POINT(p2);
+++        MyObj x;
+++        p = &x;
+++
+++        POINT(p3);
+++
+++        if (condition) {
+++          q = p;
+++          POINT(p4);
+++        }
+++        
+++        POINT(p5);
+++        (void)*p;
+++        (void)*q;
+++        POINT(p6);
+++      }
+++    }
+++  )");
+++  EXPECT_THAT(Origins({"q"}), MaybeLiveAt("p6"));
+++  EXPECT_THAT(NoOrigins(), MustBeLiveAt("p6"));
+++
+++  EXPECT_THAT(Origins({"p", "q"}), MustBeLiveAt("p5"));
+++
+++  EXPECT_THAT(Origins({"p", "q"}), MustBeLiveAt("p4"));
+++
+++  EXPECT_THAT(Origins({"p"}), MustBeLiveAt("p3"));
+++  EXPECT_THAT(Origins({"q"}), MaybeLiveAt("p3"));
+++
+++  EXPECT_THAT(Origins({"q"}), MaybeLiveAt("p2"));
+++  EXPECT_THAT(NoOrigins(), MustBeLiveAt("p2"));
+++
+++  EXPECT_THAT(Origins({"q"}), MaybeLiveAt("p1"));
+++  EXPECT_THAT(NoOrigins(), MustBeLiveAt("p1"));
+++}
+++
+++TEST_F(LifetimeAnalysisTest, LivenessOutsideLoop) {
+++  SetupTest(R"(
+++    void target(MyObj safe) {
+++      MyObj* p = &safe;
+++      for (int i = 0; i < 1; ++i) {
+++        MyObj s;
+++        p = &s;
+++        POINT(p1);
+++      }
+++      POINT(p2);
+++      (void)*p;
+++    }
+++  )");
+++  EXPECT_THAT(Origins({"p"}), MustBeLiveAt("p2"));
+++  EXPECT_THAT(Origins({"p"}), MaybeLiveAt("p1"));
+++}
+++
++ } // anonymous namespace
++ } // namespace clang::lifetimes::internal
++diff -ruN --strip-trailing-cr a/llvm/lib/Target/AMDGPU/AMDGPUTargetMachine.cpp b/llvm/lib/Target/AMDGPU/AMDGPUTargetMachine.cpp
++--- a/llvm/lib/Target/AMDGPU/AMDGPUTargetMachine.cpp
+++++ b/llvm/lib/Target/AMDGPU/AMDGPUTargetMachine.cpp
++@@ -929,8 +929,10 @@
++                                             ThinOrFullLTOPhase Phase) {
++     if (Level != OptimizationLevel::O0) {
++       if (!isLTOPreLink(Phase)) {
++-        AMDGPUAttributorOptions Opts;
++-        MPM.addPass(AMDGPUAttributorPass(*this, Opts, Phase));
+++        if (getTargetTriple().isAMDGCN()) {
+++          AMDGPUAttributorOptions Opts;
+++          MPM.addPass(AMDGPUAttributorPass(*this, Opts, Phase));
+++        }
++       }
++     }
++   });
++@@ -964,7 +966,7 @@
++             PM.addPass(InternalizePass(mustPreserveGV));
++             PM.addPass(GlobalDCEPass());
++           }
++-          if (EnableAMDGPUAttributor) {
+++          if (EnableAMDGPUAttributor && getTargetTriple().isAMDGCN()) {
++             AMDGPUAttributorOptions Opt;
++             if (HasClosedWorldAssumption)
++               Opt.IsClosedWorld = true;
++@@ -1296,7 +1298,8 @@
++   if (LowerCtorDtor)
++     addPass(createAMDGPUCtorDtorLoweringLegacyPass());
++ 
++-  if (isPassEnabled(EnableImageIntrinsicOptimizer))
+++  if (TM.getTargetTriple().isAMDGCN() &&
+++      isPassEnabled(EnableImageIntrinsicOptimizer))
++     addPass(createAMDGPUImageIntrinsicOptimizerPass(&TM));
++ 
++   // This can be disabled by passing ::Disable here or on the command line
 diff --git a/third_party/llvm/workspace.bzl b/third_party/llvm/workspace.bzl
-index 1b17fe9..9431f26 100644
+index c407321..f20a6a3 100644
 --- a/third_party/llvm/workspace.bzl
 +++ b/third_party/llvm/workspace.bzl
 @@ -4,8 +4,8 @@ load("//third_party:repo.bzl", "tf_http_archive")
  
  def repo(name):
      """Imports LLVM."""
--    LLVM_COMMIT = "113f01aa82d055410f22a9d03b3468fa68600589"
--    LLVM_SHA256 = "9aee00a35aa76639746589c6d09e8c18249be16b5b6aa6b788a570a4bc6c4543"
-+    LLVM_COMMIT = "d28c07b7550af47ff7adc068d6078388cdeed61d"
-+    LLVM_SHA256 = "627cba3a53a992a67cddebdb2a6e849385444c3fdb5f71ccf230f28f840caf04"
+-    LLVM_COMMIT = "fd9a1dcc01766c71932898e9643ce28bf2801bad"
+-    LLVM_SHA256 = "85b7a4524078549ef1b3271569241a14deec1b7f4c42048877601166f3d1fee9"
++    LLVM_COMMIT = "4efe170d858eb54432f520abb4e7f0086236748b"
++    LLVM_SHA256 = "4860ff3400d59eccaf3b9f399432d5f8494c2f19a815069a314eb9cf10042822"
  
      tf_http_archive(
          name = name,
-diff --git a/third_party/remote_config/remote_platform_configure.bzl b/third_party/remote_config/remote_platform_configure.bzl
-index 068e09e..3368a16 100644
---- a/third_party/remote_config/remote_platform_configure.bzl
-+++ b/third_party/remote_config/remote_platform_configure.bzl
-@@ -38,7 +38,7 @@ def _remote_platform_configure_impl(repository_ctx):
- 
-     repository_ctx.template(
-         "BUILD",
--        Label("//third_party/remote_config:BUILD.tpl"),
-+        Label("@xla//third_party/remote_config:BUILD.tpl"),
-         {
-             "%{platform}": platform,
-             "%{exec_properties}": serialized_exec_properties,

@@ -1951,10 +1951,34 @@ module {
 // -----
 
 // CHECK-LABEL: HloModule main
+// CHECK: ENTRY
+// CHECK-LITERAL:: f32[192] parameter(0), origin={{"a"}}
 
+module {
+  func.func @main(%arg0: tensor<192xf32> {mhlo.original_value = "{{\22a\22}}"}) -> tensor<192xf32> {
+    return %arg0 : tensor<192xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: HloModule main
+// CHECK: ENTRY
+// CHECK-LITERAL: ROOT %constant.1 = s32[] constant(0), origin={{"constant.5"}}
+
+module {
+  func.func @main() -> tensor<i32> {
+    %0 = stablehlo.constant {mhlo.original_value = "{{\22constant.5\22}}"} dense<0> : tensor<i32>
+    return %0 : tensor<i32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: HloModule main
 // CHECK: ENTRY
 // CHECK: %[[ARG0:.*]] = f32[192] parameter(0)
-// CHECK: ROOT %[[RESULT:.*]] = f32[1,17,17,192] broadcast(%[[ARG0]]), dimensions={3}, origin={{[{][{]}}"broadcast.2342"{{[}][}]}}
+// CHECK-LITERAL: ROOT %[[RESULT:.*]] = f32[1,17,17,192] broadcast(%[[ARG0]]), dimensions={3}, origin={{"broadcast.2342"}}
 
 module {
   func.func @main(%arg0: tensor<192xf32>) -> tensor<1x17x17x192xf32> {
@@ -1967,13 +1991,33 @@ module {
 
 // CHECK-LABEL: HloModule main
 // CHECK: ENTRY
-// CHECK:  %Arg_0.1 = f32[10] parameter(0)
-// CHECK:  %[[TOPK:.*]] = (f32[8], s32[8]) topk(%Arg_0.1), k=8, largest=true, origin={({"t" {0}{{[}]}}, {"t" {1}{{[}]}})}
-// CHECK:  ROOT %[[GTE0:.*]] = f32[8] get-tuple-element(%[[TOPK]]), index=0, origin={{[{][{]}}"t" {0}{{[}][}]}}
-// CHECK:  %[[GTE1:.*]] = s32[8] get-tuple-element(%[[TOPK]]), index=1, origin={{[{][{]}}"t" {1}{{[}][}]}}
+// CHECK:  %[[ARG0:.*]] = f32[10] parameter(0)
+// CHECK-LITERAL:  %[[TOPK:.*]] = (f32[8], s32[8]) topk(%[[ARG0]]), k=8, largest=true, origin={({"t" {0}}, {"t" {1}})}
+// CHECK-LITERAL:  ROOT %[[GTE0:.*]] = f32[8] get-tuple-element(%[[TOPK]]), index=0, origin={{"t" {0}}}
+// CHECK-LITERAL:  %[[GTE1:.*]] = s32[8] get-tuple-element(%[[TOPK]]), index=1, origin={{"t" {1}}}
 func.func @main(%arg0: tensor<10xf32>) -> tensor<8xf32> {
   %0:2 = mhlo.topk(%arg0, k=8, largest=true) {mhlo.original_value="{({\22t\22 {0}}, {\22t\22 {1}})}"} : tensor<10xf32> -> (tensor<8xf32>, tensor<8xi32>)
   return %0#0 : tensor<8xf32>
+}
+
+// -----
+// CHECK-LABEL: HloModule main
+// CHECK: ENTRY
+// CHECK-LITERAL:  %[[CONSTANT:.*]] = s32[] constant(0), origin={{"c"}}
+// CHECK-LITERAL:  %[[ARG0:.*]] = s32[] parameter(0), origin={{"a"}}
+// CHECK-LITERAL:  %[[ARG1:.*]] = s32[] parameter(1), origin={{"b"}}
+// CHECK-LITERAL:  tuple(%[[CONSTANT]], %[[ARG0]], %[[ARG1]]), origin={({"c"}, {"a"}, {"b"})}
+func.func @main(%arg0: tensor<i32> {mhlo.original_value = "{{\22a\22}}"}, %arg1: tensor<i32> {mhlo.original_value = "{{\22b\22}}"}) -> (tensor<i32>) {
+  %c = stablehlo.constant {mhlo.original_value = "{{\22c\22}}"} dense<0> : tensor<i32>
+  %0:2 = stablehlo.while(%iterArg = %c, %iterArg_0 = %arg0) : tensor<i32>, tensor<i32> attributes {mhlo.original_value = "{({\22while\22 {0}}, {\22while\22 {1}}, {\22while\22 {2}})}"}
+  cond {
+    %1 = stablehlo.compare  LT, %iterArg, %arg1 : (tensor<i32>, tensor<i32>) -> tensor<i1>
+    stablehlo.return %1 : tensor<i1>
+  } do {
+    %1 = stablehlo.add %iterArg, %iterArg_0 : tensor<i32>
+    stablehlo.return %1, %1: tensor<i32>, tensor<i32>
+  }
+  return %0#1 : tensor<i32>
 }
 
 // -----

@@ -455,6 +455,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_cpu_collective_call_warn_stuck_seconds(20);
   opts.set_xla_cpu_collective_call_terminate_timeout_seconds(40);
+
+  opts.set_xla_keep_shardings_after_spmd(false);
   return opts;
 }
 
@@ -588,16 +590,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         for (const auto& passname : std::vector<std::string>(
                  absl::StrSplit(comma_separated_values, ','))) {
           debug_options->add_xla_enable_hlo_passes_only(passname);
-        }
-        return true;
-      };
-
-  // Custom "sub-parser" lambda for legacy_command_buffer_custom_call_targets.
-  auto setter_for_legacy_command_buffer_custom_call_targets =
-      [debug_options](std::string comma_separated_values) {
-        for (const auto& target : std::vector<std::string>(
-                 absl::StrSplit(comma_separated_values, ','))) {
-          debug_options->add_legacy_command_buffer_custom_call_targets(target);
         }
         return true;
       };
@@ -1615,14 +1607,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       " + and - as prefix, which indicate adding or removing a command type"
       " to/from the default list."));
 
-  flag_list->push_back(
-      tsl::Flag("legacy_command_buffer_custom_call_targets",
-                setter_for_legacy_command_buffer_custom_call_targets, "",
-                "Comma-separated list of custom call targets with legacy "
-                "registry API (non FFI API), whose targets supports lowering "
-                "to command buffer custom command, i.e., custom call target "
-                "supports cuda-graph capturing for CUDA devices."));
-
   flag_list->push_back(tsl::Flag(
       "xla_gpu_graph_min_graph_size",
       int32_setter_for(&DebugOptions::set_xla_gpu_graph_min_graph_size),
@@ -2187,6 +2171,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "(minimum combined number of elements of both matrices "
       "in non-batch dimensions to be considered for a rewrite)."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_use_embeded_device_lib",
+      bool_setter_for(&DebugOptions::set_xla_gpu_use_embeded_device_lib),
+      debug_options->xla_gpu_use_embeded_device_lib(),
+      "Whether to use embeded bitcode library in codegen."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_use_memcpy_local_p2p",
       bool_setter_for(&DebugOptions::set_xla_gpu_use_memcpy_local_p2p),
       debug_options->xla_gpu_use_memcpy_local_p2p(),
@@ -2579,6 +2568,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_cpu_collective_call_terminate_timeout_seconds),
       debug_options->xla_cpu_collective_call_terminate_timeout_seconds(),
       "Set timeout for Collective Call Rendezvous termination"));
+  flag_list->push_back(tsl::Flag(
+      "xla_keep_shardings_after_spmd",
+      bool_setter_for(&DebugOptions::set_xla_keep_shardings_after_spmd),
+      debug_options->xla_keep_shardings_after_spmd(),
+      "If true, keep shardings after SPMD."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

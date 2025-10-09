@@ -1,4 +1,5 @@
 load("//xla:xla.default.bzl", "xla_cc_test")
+load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -14,7 +15,10 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-    ],
+        "@tsl//tsl/platform",
+    ] + if_google([
+        "@com_google_absl//absl/types:source_location",
+    ]),
 )
 
 xla_cc_test(
@@ -26,6 +30,7 @@ xla_cc_test(
         "//xla/tsl/platform:debug_me_context",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform",
     ],
 )
 
@@ -36,8 +41,10 @@ cc_library(
     deps = [
         "//xla/tsl/platform:debug_me_context",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
+        "@tsl//tsl/platform",
     ],
 )
 
@@ -47,8 +54,12 @@ xla_cc_test(
     deps = [
         ":debug_me_context_util",
         "//xla/tsl/platform:debug_me_context",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform",
     ],
 )
 

@@ -1,6 +1,6 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
-load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -107,6 +107,43 @@ xla_cc_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/tsl/platform:status_matchers",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
+    name = "tiled_hlo_schedule",
+    srcs = ["tiled_hlo_schedule.cc"],
+    hdrs = ["tiled_hlo_schedule.h"],
+    deps = [
+        ":tiling_specification",
+        "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+xla_cc_test(
+    name = "tiled_hlo_schedule_test",
+    srcs = ["tiled_hlo_schedule_test.cc"],
+    deps = [
+        ":tiled_hlo_schedule",
+        ":tiling_specification",
+        "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:indexing_test_utils",
+        "//xla/hlo/analysis:interval",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
     ],
@@ -220,5 +257,152 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "symbolic_tiled_hlo_instruction",
+    srcs = ["symbolic_tiled_hlo_instruction.cc"],
+    hdrs = ["symbolic_tiled_hlo_instruction.h"],
+    deps = [
+        ":symbolic_tile",
+        "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "symbolic_tiled_hlo_instruction_test",
+    srcs = ["symbolic_tiled_hlo_instruction_test.cc"],
+    deps = [
+        ":symbolic_tile",
+        ":symbolic_tiled_hlo_instruction",
+        "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/utils:hlo_traversal",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "tiling_specification",
+    srcs = ["tiling_specification.cc"],
+    hdrs = ["tiling_specification.h"],
+    deps = [
+        ":constraint_expression",
+        ":symbolic_tiled_hlo_instruction",
+        ":tiled_hlo_computation",
+        "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_traversal",
+        "//xla/service:instruction_fusion",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+xla_cc_test(
+    name = "tiling_specification_test",
+    srcs = ["tiling_specification_test.cc"],
+    deps = [
+        ":symbolic_tile_analysis",
+        ":tiling_specification",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
+    name = "symbolic_tile_analysis",
+    srcs = ["symbolic_tile_analysis.cc"],
+    hdrs = ["symbolic_tile_analysis.h"],
+    deps = [
+        ":constraint_expression",
+        ":symbolic_tile",
+        ":symbolic_tiled_hlo_instruction",
+        ":tiled_hlo_computation",
+        ":tiled_hlo_fusion_instruction",
+        ":tiled_hlo_instruction",
+        ":tiling_specification",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:interval",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_traversal",
+        "//xla/service:instruction_fusion",
+        "//xla/service:name_uniquer",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/numeric:bits",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "symbolic_tile_analysis_test",
+    srcs = ["symbolic_tile_analysis_test.cc"],
+    deps = [
+        ":constraint_expression",
+        ":symbolic_tile_analysis",
+        ":symbolic_tiled_hlo_instruction",
+        ":tiled_hlo_computation",
+        ":tiled_hlo_fusion_instruction",
+        ":tiled_hlo_instruction",
+        ":tiling_specification",
+        "//xla:util",
+        "//xla/hlo/analysis:indexing_test_utils",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/hlo/utils:hlo_traversal",
+        "//xla/service:instruction_fusion",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:IR",
     ],
 )

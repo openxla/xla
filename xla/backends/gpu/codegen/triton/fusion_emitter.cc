@@ -88,6 +88,7 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
 #include "xla/backends/gpu/codegen/triton/dot_algorithms.h"
@@ -99,8 +100,10 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
+#include "xla/codegen/emitters/ir/xla_dialect.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/passes.h"
+#include "xla/codegen/tiling/symbolic_tile_analysis.h"
 #include "xla/codegen/tiling/tiled_hlo_computation.h"
 #include "xla/codegen/tiling/tiled_hlo_fusion_instruction.h"
 #include "xla/codegen/tiling/tiled_hlo_instruction.h"
@@ -121,10 +124,8 @@ limitations under the License.
 #include "xla/service/dump.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/llvm_gpu_backend/amdgpu_backend.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
-#include "xla/service/gpu/model/symbolic_tile_analysis.h"
 #include "xla/service/gpu/model/triton_emitter_constraints.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/service/hlo_module_config.h"
@@ -139,7 +140,6 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/rocm_rocdl_path.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -155,6 +155,7 @@ namespace gpu {
 namespace arith = ::mlir::arith;
 namespace ttir = ::mlir::triton;
 namespace mtx = ::mlir::triton::xla;
+namespace stablehlo = ::mlir::stablehlo;
 
 using ::llvm::SmallVector;
 using ::mlir::AffineMap;
@@ -661,9 +662,9 @@ Value EmitTiledTranspose(EmitterLocOpBuilder b, ArrayRef<int64_t> tile_sizes,
   Type output_tensor_type =
       mlir::RankedTensorType::get(padded_tile_sizes, input_element_type);
 
-  SmallVector<int32_t> order = llvm::to_vector_of<int32_t>(dimensions);
+  mlir::DenseI64ArrayAttr order = b.getDenseI64ArrayAttr(dimensions);
 
-  return b.create<ttir::TransOp>(output_tensor_type, input, order);
+  return b.create<stablehlo::TransposeOp>(output_tensor_type, input, order);
 }
 
 absl::StatusOr<ScalarOrTensor> EmitTiledBitcast(
@@ -869,11 +870,11 @@ absl::StatusOr<Value> MaskDotOperand(EmitterLocOpBuilder b,
 // Returns `shape` without all its unit dimensions, as well as the index of the
 // remaining dimensions in the original `shape`.
 std::pair<SmallVector<int64_t>, SmallVector<int64_t>> CollapseUnitDims(
-    llvm::ArrayRef<int64_t> shape, bool scaled_dot = false) {
+    llvm::ArrayRef<int64_t> shape) {
   SmallVector<int64_t> shape_without_unit_dims;
   SmallVector<int64_t> non_unit_dims_indices;
   for (auto [i, size] : llvm::enumerate(shape)) {
-    if (size != 1 || scaled_dot) {
+    if (size != 1) {
       shape_without_unit_dims.push_back(size);
       non_unit_dims_indices.push_back(i);
     }
@@ -892,12 +893,11 @@ enum class DotOperandSide { kLhs, kRhs };
 absl::StatusOr<Value> CanonicalizeDotOperand(EmitterLocOpBuilder b,
                                              Value operand,
                                              int64_t contracting_dim_idx,
-                                             DotOperandSide side,
-                                             bool scaled_dot = false) {
+                                             DotOperandSide side) {
   llvm::ArrayRef<int64_t> shape =
       mlir::cast<ShapedType>(operand.getType()).getShape();
   auto [shape_without_unit_dims, non_unit_dims_indices] =
-      CollapseUnitDims(shape, scaled_dot);
+      CollapseUnitDims(shape);
 
   if (shape_without_unit_dims.size() != 2) {
     return absl::FailedPreconditionError(
@@ -1111,19 +1111,23 @@ absl::StatusOr<ScalarOrTensor> EmitScaledDot(
   SmallVector<int64_t> padded_tile_sizes =
       GetPaddedTileSizes(tiled_hlo_dot.tile_sizes());
 
+  SmallVector<int64_t, 2> padded_tile_sizes_no_unit_dims =
+      CollapseUnitDims(padded_tile_sizes).first;
+
   // Sanity check: Triton historically did not support non-2D dots (and still
   // doesn't support arbitrary nD dots), so we require that the dot is tiled
   // with exactly two non-unit tile sizes. This anyway matches the hardware's
   // expectations, so seems like a reasonable requirement.
   // TODO(b/393299275): this needs to be enforced in tiling.
-  if (padded_tile_sizes.size() != 2) {
+  if (padded_tile_sizes_no_unit_dims.size() != 2) {
     return absl::FailedPreconditionError(
         "Expected dot to be tiled with exactly two non-unit tile sizes");
   }
 
   Type accumulator_type = b.getF32Type();
   Value accumulator =
-      CreateConst(b, accumulator_type, 0.0f, padded_tile_sizes).UnwrapTensor();
+      CreateConst(b, accumulator_type, 0.0f, padded_tile_sizes_no_unit_dims)
+          .UnwrapTensor();
 
   TF_ASSIGN_OR_RETURN(int64_t loop_iteration_count,
                       GetDotLoopIterationCount(tiled_hlo_dot));
@@ -1184,13 +1188,13 @@ absl::StatusOr<ScalarOrTensor> EmitScaledDot(
         Value lhs, MaskDotOperand(b, *tiled_hlo_dot.operand(0), dot_args[0],
                                   ki_i32, lhs_contracting_dim_idx));
     TF_ASSIGN_OR_RETURN(
-        Value lhs_scale,
-        MaskDotOperand(b, *tiled_hlo_dot.operand(1), dot_args[1], ki_i32,
-                       lhs_contracting_dim_idx));
+        Value rhs, MaskDotOperand(b, *tiled_hlo_dot.operand(1), dot_args[1],
+                                  ki_i32, rhs_contracting_dim_idx));
 
     TF_ASSIGN_OR_RETURN(
-        Value rhs, MaskDotOperand(b, *tiled_hlo_dot.operand(2), dot_args[2],
-                                  ki_i32, rhs_contracting_dim_idx));
+        Value lhs_scale,
+        MaskDotOperand(b, *tiled_hlo_dot.operand(2), dot_args[2], ki_i32,
+                       lhs_contracting_dim_idx));
 
     TF_ASSIGN_OR_RETURN(
         Value rhs_scale,
@@ -1199,26 +1203,24 @@ absl::StatusOr<ScalarOrTensor> EmitScaledDot(
 
     // Canonicalize the dot operands to match Triton's/the hardware's
     // expectations.
+    TF_ASSIGN_OR_RETURN(lhs,
+                        CanonicalizeDotOperand(b, lhs, lhs_contracting_dim_idx,
+                                               DotOperandSide::kLhs));
+    TF_ASSIGN_OR_RETURN(rhs,
+                        CanonicalizeDotOperand(b, rhs, rhs_contracting_dim_idx,
+                                               DotOperandSide::kRhs));
     TF_ASSIGN_OR_RETURN(
-        lhs, CanonicalizeDotOperand(b, lhs, lhs_contracting_dim_idx,
-                                    DotOperandSide::kLhs, /*scaled_dot=*/true));
+        lhs_scale, CanonicalizeDotOperand(b, lhs_scale, lhs_contracting_dim_idx,
+                                          DotOperandSide::kLhs));
     TF_ASSIGN_OR_RETURN(
-        lhs_scale,
-        CanonicalizeDotOperand(b, lhs_scale, lhs_contracting_dim_idx,
-                               DotOperandSide::kLhs, /*scaled_dot=*/true));
-    TF_ASSIGN_OR_RETURN(
-        rhs, CanonicalizeDotOperand(b, rhs, rhs_contracting_dim_idx,
-                                    DotOperandSide::kRhs, /*scaled_dot=*/true));
-    TF_ASSIGN_OR_RETURN(
-        rhs_scale,
-        CanonicalizeDotOperand(b, rhs_scale, rhs_contracting_dim_idx,
-                               DotOperandSide::kRhs, /*scaled_dot=*/true));
+        rhs_scale, CanonicalizeDotOperand(b, rhs_scale, rhs_contracting_dim_idx,
+                                          DotOperandSide::kRhs));
 
     TF_ASSIGN_OR_RETURN(
         Value acc_next,
         triton::EmitSingleTileScaledDot(
             b, scaled_dot,
-            triton::ScaledDotOperands{lhs, lhs_scale, rhs, rhs_scale, acc}));
+            triton::ScaledDotOperands{lhs, rhs, lhs_scale, rhs_scale, acc}));
     b.create<mlir::scf::YieldOp>(acc_next);
   }
 
@@ -1230,6 +1232,13 @@ absl::StatusOr<ScalarOrTensor> EmitScaledDot(
   Value result = for_op.getResult(0);
   if (dot_output_type != accumulator_type) {
     result = Cast(b, result, dot_output_type);
+  }
+
+  if (padded_tile_sizes.size() != padded_tile_sizes_no_unit_dims.size()) {
+    TF_ASSIGN_OR_RETURN(
+        ScalarOrTensor wrapped_result,
+        EmitTiledReshape(b, padded_tile_sizes, ScalarOrTensor(result)));
+    result = wrapped_result.UnwrapTensor();
   }
 
   return ScalarOrTensor(result);
@@ -1832,12 +1841,12 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
 }  // namespace
 
 void LoadMlirDialectsForTriton(mlir::MLIRContext& mlir_context) {
-  mlir_context
-      .loadDialect<ttir::TritonDialect, ttir::gpu::TritonGPUDialect,
-                   mlir::arith::ArithDialect, mlir::affine::AffineDialect,
-                   mlir::LLVM::LLVMDialect, xla::XlaDialect,
-                   xla::gpu::XlaGpuDialect, ttir::xla::XlaTritonDialect,
-                   mlir::func::FuncDialect, mlir::tensor::TensorDialect>();
+  mlir_context.loadDialect<
+      ttir::TritonDialect, ttir::gpu::TritonGPUDialect,
+      mlir::arith::ArithDialect, mlir::affine::AffineDialect,
+      mlir::LLVM::LLVMDialect, xla::XlaDialect, xla::gpu::XlaGpuDialect,
+      ttir::xla::XlaTritonDialect, mlir::func::FuncDialect,
+      mlir::tensor::TensorDialect, stablehlo::StablehloDialect>();
   mlir::DialectRegistry registry;
   mlir::func::registerInlinerExtension(registry);
   mlir::LLVM::registerInlinerInterface(registry);
@@ -2042,6 +2051,30 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
         ExtractInstructionIntoNewModule(*fusion)->ToString());
   }
 
+  {  // Convert xTile ops to Triton ops.
+    mlir::PassManager pm(&mlir_context);
+    // Disable verifier because the Triton code may be invalid due to the
+    // unsupported types.
+    pm.enableVerifier(/*enabled=*/false);
+    pm.addPass(mlir::triton::xla::CreateStableHLOLowerToTritonPass());
+    if (mlir::failed(pm.run(triton_module.get()))) {
+      return CreateInternalError(
+          "Failed to convert xTile ops to Triton ops for fusion:", fusion,
+          *triton_module);
+    }
+  }
+
+  if (debug_options.xla_gpu_experimental_scaled_dot_with_triton()) {
+    // Convert unsupported types before verification.
+    mlir::PassManager pm(&mlir_context);
+    pm.addPass(mlir::triton::xla::CreateTritonXLAConvertUnsupportedTypesPass());
+    if (mlir::failed(pm.run(triton_module.get()))) {
+      return CreateInternalError(
+          "Failed to fix unsupported types in Triton module for fusion:",
+          fusion, *triton_module);
+    }
+  }
+
   if (mlir::failed(mlir::verify(*triton_module))) {
     return CreateInternalError(
         "Failed to verify Triton module for fusion:", fusion, *triton_module);
@@ -2177,11 +2210,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   }
 
   CreateTritonXlaPipeline(&pm, gpu_cc, /*rewrite_int4=*/is_xla_fusion,
-                          block_level_parameters.is_tma_allowed,
-                          /*convert_unsupported_types=*/
-                          hlo_module.config()
-                              .debug_options()
-                              .xla_gpu_experimental_scaled_dot_with_triton());
+                          block_level_parameters.is_tma_allowed);
 
   int num_warps = block_level_parameters.num_warps;
   int num_ctas = block_level_parameters.num_ctas;
@@ -2299,8 +2328,7 @@ std::string GetLibdevicePath(const HloModuleConfig& hlo_config,
     return nvptx::LibDevicePath(
         hlo_config.debug_options().xla_gpu_cuda_data_dir());
   }
-  return amdgpu::LibDevicePath(
-      device_info.rocm_compute_capability().gcn_arch_name(), tsl::RocdlRoot());
+  return "";
 }
 
 }  // namespace gpu

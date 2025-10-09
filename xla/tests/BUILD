@@ -416,10 +416,10 @@ cc_library(
     srcs = ["codegen_test_base.cc"],
     hdrs = ["codegen_test_base.h"],
     deps = [
-        ":hlo_test_base",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",
         "//xla/service:executable",
+        "//xla/tests:hlo_test_base_with_mlir_context",
     ],
 )
 
@@ -2771,7 +2771,7 @@ xla_test(
     srcs = ["collective_ops_e2e_test.cc"],
     backend_tags = {
         "gpu": [
-            "multi_gpu",
+            "multi_gpu_h100",
             "no_oss",
         ],
     },
@@ -2779,8 +2779,6 @@ xla_test(
         "gpu",
     ],
     deps = [
-        ":hlo_runner_agnostic_test_base",
-        ":hlo_test_base",
         ":literal_test_util",
         ":test_utils",
         ":xla_internal_test_main",
@@ -2791,14 +2789,27 @@ xla_test(
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:backend",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_module_config",
+        "//xla/service:hlo_runner",
         "//xla/service:hlo_runner_interface",
+        "//xla/service:pattern_matcher",
+        "//xla/service:platform_util",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/integrations:device_mem_allocator",
+        "//xla/stream_executor/integrations:tf_allocator_adapter",
+        "//xla/tsl/framework:bfc_allocator",
+        "//xla/tsl/framework:device_id",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
@@ -3785,5 +3796,15 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_for_library",
+    ],
+)
+
+cc_library(
+    name = "hlo_test_base_with_mlir_context",
+    testonly = True,
+    hdrs = ["hlo_test_base_with_mlir_context.h"],
+    deps = [
+        "//xla/tests:hlo_test_base",
+        "@llvm-project//mlir:IR",
     ],
 )

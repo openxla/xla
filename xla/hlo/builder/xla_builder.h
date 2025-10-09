@@ -709,7 +709,7 @@ class XlaBuilder {
       std::optional<PrimitiveType> preferred_element_type = std::nullopt);
 
   XlaOp ScaledDot(
-      XlaOp lhs, XlaOp lhs_scale, XlaOp rhs, XlaOp rhs_scale,
+      XlaOp lhs, XlaOp rhs, XlaOp lhs_scale, XlaOp rhs_scale,
       const DotDimensionNumbers& dimension_number,
       const PrecisionConfig* precision_config = nullptr,
       std::optional<PrimitiveType> preferred_element_type = std::nullopt);
@@ -1445,7 +1445,7 @@ class XlaBuilder {
                          const RaggedDotDimensionNumbers& dimension_numbers,
                          const PrecisionConfig* precision_config,
                          std::optional<PrimitiveType> preferred_element_type);
-  friend XlaOp ScaledDot(XlaOp lhs, XlaOp lhs_scale, XlaOp rhs, XlaOp rhs_scale,
+  friend XlaOp ScaledDot(XlaOp lhs, XlaOp rhs, XlaOp lhs_scale, XlaOp rhs_scale,
                          const DotDimensionNumbers& dimension_number,
                          const PrecisionConfig* precision_config,
                          std::optional<PrimitiveType> preferred_element_type);
@@ -1772,6 +1772,9 @@ class XlaBuilder {
                     bool expand);
   friend XlaOp Sin(XlaOp operand,
                    const std::optional<ResultAccuracy>& result_accuracy);
+  friend XlaOp Sinh(XlaOp x,
+                    const std::optional<ResultAccuracy>& result_accuracy,
+                    bool expand);
   friend XlaOp Tan(XlaOp operand,
                    const std::optional<ResultAccuracy>& result_accuracy);
   friend XlaOp Tanh(XlaOp operand,

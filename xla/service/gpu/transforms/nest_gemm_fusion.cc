@@ -43,6 +43,8 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/codegen/tiling/symbolic_tile.h"
+#include "xla/codegen/tiling/symbolic_tile_analysis.h"
+#include "xla/codegen/tiling/symbolic_tiled_hlo_instruction.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -57,8 +59,6 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/model/symbolic_tile_analysis.h"
-#include "xla/service/gpu/model/symbolic_tiled_hlo_instruction.h"
 #include "xla/service/gpu/model/triton_emitter_constraints.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/service/matmul_indexing_utils.h"
@@ -270,8 +270,8 @@ absl::Status MakeNestedFusionFromGemmFusion(
     const se::DeviceDescription& device_description) {
   TF_RETURN_IF_ERROR(IsDot(*dot));
   const bool is_scaled_dot = dot->opcode() == HloOpcode::kScaledDot;
-  const int lhs = 0;
-  const int rhs = is_scaled_dot ? 2 : 1;
+  constexpr int lhs = 0;
+  constexpr int rhs = 1;
   TF_ASSIGN_OR_RETURN(TritonGemmConfig config, GetTritonGemmConfig(*fusion));
   HloComputation* computation = fusion->called_computation();
 
@@ -294,7 +294,7 @@ absl::Status MakeNestedFusionFromGemmFusion(
       config));
 
   if (is_scaled_dot) {
-    constexpr int kLhsScale = 1;
+    constexpr int kLhsScale = 2;
     constexpr int kRhsScale = 3;
     constexpr int kContractingScaleFactor = 32;
     auto scale_config = config;

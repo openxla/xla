@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -2052,6 +2053,33 @@ absl::StatusOr<XlaOp> XlaBuilder::TupleInternal(
     const Shape& shape, absl::Span<const XlaOp> elements) {
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
+  // Create a new original value for the tuple instruction. The original value
+  // for each element is copied to the corresponding position in the tuple
+  // original value.
+  std::shared_ptr<OriginalValue> original_value =
+      std::make_shared<OriginalValue>(shape);
+  bool has_original_value = false;
+  for (int64_t i = 0; i < elements.size(); ++i) {
+    HloInstructionProto* element_instr =
+        xla::internal::XlaBuilderFriend::GetInstruction(elements[i]);
+    if (element_instr->has_original_value()) {
+      has_original_value = true;
+      auto element_original_value =
+          xla::OriginalValue::FromProto(element_instr->original_value());
+      original_value->mutable_tree()
+          ->CopySubtreeFrom(/*other*/
+                            xla::OriginalValue::FromProto(
+                                element_instr->original_value())
+                                ->tree(),
+                            /*src_index=*/{}, /*dst_index=*/{i});
+    }
+  }
+  std::optional<OriginalValueProto> original_value_proto;
+  if (has_original_value) {
+    original_value_proto = original_value->ToProto();
+  }
+  xla::XlaScopedOriginalValueAssignment original_value_assignment(
+      this, original_value_proto);
   return AddInstruction(std::move(instr), HloOpcode::kTuple, elements);
 }
 
@@ -2080,6 +2108,21 @@ absl::StatusOr<XlaOp> XlaBuilder::GetTupleElementInternal(const Shape& shape,
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
   instr.set_tuple_index(index);
+
+  std::optional<OriginalValueProto> original_value_proto = original_value();
+  if (original_value_proto.has_value()) {
+    auto original_value = xla::OriginalValue::FromProto(*original_value_proto);
+    auto subtree = original_value->tree().Subtree({index});
+    if (subtree.ok()) {
+      auto element_original_value =
+          std::make_shared<xla::OriginalValue>(subtree.value());
+      original_value_proto = element_original_value->ToProto();
+    }
+  }
+
+  XlaScopedOriginalValueAssignment original_value_assignment(
+      this, original_value_proto);
+
   return AddInstruction(std::move(instr), HloOpcode::kGetTupleElement,
                         {tuple_data});
 }
@@ -2116,7 +2159,7 @@ XlaOp XlaBuilder::DotGeneral(
 }
 
 XlaOp XlaBuilder::ScaledDot(
-    XlaOp lhs, XlaOp lhs_scale, XlaOp rhs, XlaOp rhs_scale,
+    XlaOp lhs, XlaOp rhs, XlaOp lhs_scale, XlaOp rhs_scale,
     const DotDimensionNumbers& dimension_numbers,
     const PrecisionConfig* precision_config,
     std::optional<PrimitiveType> preferred_element_type) {
@@ -2135,7 +2178,7 @@ XlaOp XlaBuilder::ScaledDot(
       *instr.mutable_precision_config() = *precision_config;
     }
     return AddInstruction(std::move(instr), HloOpcode::kScaledDot,
-                          {lhs, lhs_scale, rhs, rhs_scale});
+                          {lhs, rhs, lhs_scale, rhs_scale});
   });
 }
 
@@ -2152,12 +2195,12 @@ absl::StatusOr<XlaOp> XlaBuilder::DotGeneralInternal(
   return AddInstruction(std::move(instr), HloOpcode::kDot, {lhs, rhs});
 }
 
-XlaOp ScaledDot(const XlaOp lhs, const XlaOp lhs_scale, const XlaOp rhs,
+XlaOp ScaledDot(const XlaOp lhs, const XlaOp rhs, const XlaOp lhs_scale,
                 const XlaOp rhs_scale,
                 const DotDimensionNumbers& dimension_numbers,
                 const PrecisionConfig* precision_config,
                 std::optional<PrimitiveType> preferred_element_type) {
-  return lhs.builder()->ScaledDot(lhs, lhs_scale, rhs, rhs_scale,
+  return lhs.builder()->ScaledDot(lhs, rhs, lhs_scale, rhs_scale,
                                   dimension_numbers, precision_config,
                                   preferred_element_type);
 }

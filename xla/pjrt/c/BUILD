@@ -93,6 +93,11 @@ cc_library(
 )
 
 cc_library(
+    name = "pjrt_c_api_tpu_constants",
+    hdrs = ["pjrt_c_api_tpu_constants.h"],
+)
+
+cc_library(
     name = "pjrt_c_api_phase_compile_extension_hdrs",
     hdrs = ["pjrt_c_api_phase_compile_extension.h"],
     visibility = ["//visibility:public"],
@@ -109,15 +114,16 @@ cc_library(
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_phase_compile_extension_hdrs",
         ":pjrt_c_api_wrapper_impl",
+        "//xla/pjrt:partial_program_utils",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_executable",
+        "//xla/pjrt:string_utils",
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/pjrt/proto:pjrt_partial_program_proto_cc",
-        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
     ],
     alwayslink = True,
 )
@@ -209,8 +215,8 @@ cc_library(
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_raw_buffer_extension_hdrs",
         "//xla:future",
-        "//xla/pjrt:pjrt_c_api_client",
         "//xla/pjrt:raw_buffer",
+        "//xla/pjrt/c_api_client:pjrt_c_api_client",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",

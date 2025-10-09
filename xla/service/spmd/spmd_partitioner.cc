@@ -42,7 +42,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/array.h"
 #include "xla/comparison_util.h"
-#include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -50,6 +49,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
@@ -197,7 +197,9 @@ template <typename F>
 
 namespace {
 
-bool ShouldKeepSharding(const HloInstruction* hlo) {
+bool ShouldKeepSharding(const HloInstruction* hlo,
+                        const bool keep_valid_shardings,
+                        const int64_t num_devices) {
   // Keep sharding annotation on Infeed/SendRecv instructions.
   if (hlo->opcode() == HloOpcode::kInfeed ||
       hlo->opcode() == HloOpcode::kOutfeed ||
@@ -208,13 +210,19 @@ bool ShouldKeepSharding(const HloInstruction* hlo) {
       hlo->parent() == hlo->GetModule()->entry_computation()) {
     return true;
   }
+  if (keep_valid_shardings && hlo->has_sharding()) {
+    // SPMD partitioner can generate invalid shardings since sharding is
+    // meaningless after this pass. We only keep valid shardings to avoid
+    // verification error and should be only for debugging.
+    return hlo->sharding().Validate(hlo->shape(), num_devices).ok();
+  }
   return false;
 }
 
 // Clears all sharding attributes from instructions in the module. This must be
 // called only after all SPMD transformation is complete.
 absl::Status ClearShardingAttributes(
-    HloModule* module,
+    HloModule* module, int64_t num_devices,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   auto has_unreduced_axes = [](const HloInstruction* hlo) -> bool {
     return hlo->frontend_attributes().map().contains(sdy::kHasUnreducedAxes);
@@ -226,12 +234,14 @@ absl::Status ClearShardingAttributes(
       param->set_sharding(module->spmd_parameters_shardings()[i]);
     }
   }
+  const bool keep_shardings_after_spmd =
+      module->config().debug_options().xla_keep_shardings_after_spmd();
   for (HloComputation* computation : module->computations(execution_threads)) {
     for (HloInstruction* hlo : computation->instructions()) {
       if (has_unreduced_axes(hlo)) {
         hlo->erase_frontend_attribute(sdy::kHasUnreducedAxes);
       }
-      if (ShouldKeepSharding(hlo)) {
+      if (ShouldKeepSharding(hlo, keep_shardings_after_spmd, num_devices)) {
         continue;
       }
       hlo->clear_sharding();
@@ -5570,7 +5580,8 @@ absl::StatusOr<bool> SpmdPartitioner::Run(
     TF_RETURN_IF_ERROR(pass.Run(module, execution_threads).status());
   }
 
-  TF_RETURN_IF_ERROR(ClearShardingAttributes(module, execution_threads));
+  TF_RETURN_IF_ERROR(ClearShardingAttributes(
+      module, num_replicas() * num_partitions(), execution_threads));
   return changed;
 }
 

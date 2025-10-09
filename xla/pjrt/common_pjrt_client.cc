@@ -279,8 +279,10 @@ CommonPjRtClient::CreateViewOfDeviceBuffer(
         "CommonPjRtClient::CreateViewOfDeviceBuffer does not support `stream` "
         "argument.");
   }
-  TF_ASSIGN_OR_RETURN(Shape device_shape, MakeDefaultShapeForMemorySpace(
-                                              memory_space, shape, nullptr));
+  TF_ASSIGN_OR_RETURN(
+      Shape device_shape,
+      MakeDefaultShapeForMemorySpace(
+          memory_space, shape, shape.has_layout() ? &shape.layout() : nullptr));
   TF_ASSIGN_OR_RETURN(int64_t on_device_bytes_count,
                       GetOnDeviceBytesCount(memory_space, device_shape));
   TF_ASSIGN_OR_RETURN(
@@ -951,6 +953,10 @@ CommonPjRtBufferImpl::AcquireExternalReference() {
       } else {
         data_ptr_ = raw_buffer_->OpaqueDeviceMemoryDataPointer();
       }
+    }
+
+    absl::Status WaitUntilBufferReadyOnStream(std::intptr_t stream) override {
+      return external_reference_.buffer()->WaitUntilBufferReadyOnStream(stream);
     }
 
     ~ScopedHoldAsExternalReference() override = default;

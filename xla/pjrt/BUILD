@@ -508,6 +508,8 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:computation_placer",
         "//xla/service:hlo_proto_cc",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
@@ -516,13 +518,12 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -1228,30 +1229,8 @@ cc_library(
 )
 
 cc_library(
-    name = "pjrt_phase_compile",
-    srcs = ["pjrt_phase_compile.cc"],
-    hdrs = ["pjrt_phase_compile.h"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":pjrt_c_api_client",
-        ":pjrt_compiler",
-        ":pjrt_executable",
-        "//xla/pjrt/c:pjrt_c_api_hdrs",
-        "//xla/pjrt/c:pjrt_c_api_helpers",
-        "//xla/pjrt/c:pjrt_c_api_phase_compile_extension_hdrs",
-        "//xla/pjrt/c:pjrt_c_api_phase_compile_internal",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/cleanup",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:casts",
-    ],
-)
-
-cc_library(
     name = "pjrt_phase_compile_sample_plugin",
+    testonly = True,
     srcs = ["pjrt_phase_compile_sample_plugin.cc"],
     hdrs = ["pjrt_phase_compile_sample_plugin.h"],
     visibility = ["//visibility:private"],
@@ -1265,8 +1244,11 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_phase_compile_extension_hdrs",
         "//xla/pjrt/c:pjrt_c_api_phase_compile_internal",
         "//xla/pjrt/c:pjrt_c_api_wrapper_impl",
+        "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
         "//xla/pjrt/proto:pjrt_partial_program_proto_cc",
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -1278,6 +1260,18 @@ cc_library(
         "@stablehlo//:stablehlo_passes_optimization",
         "@stablehlo//:stablehlo_portable_api",
         "@stablehlo//:stablehlo_serialization",
+    ],
+)
+
+cc_library(
+    name = "errors",
+    srcs = ["errors.cc"],
+    hdrs = ["errors.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:cord",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -1313,26 +1307,62 @@ xla_cc_test(
     srcs = ["pjrt_phase_compile_extension_test.cc"],
     deps = [
         ":pjrt_api",
-        ":pjrt_c_api_client",
         ":pjrt_compiler",
         ":pjrt_executable",
-        ":pjrt_phase_compile",
         ":pjrt_phase_compile_sample_plugin",
-        "//xla/pjrt/c:pjrt_c_api_cpu_internal",
+        ":string_utils",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
-        "//xla/pjrt/c:pjrt_c_api_helpers",
         "//xla/pjrt/c:pjrt_c_api_phase_compile_extension_hdrs",
         "//xla/pjrt/c:pjrt_c_api_phase_compile_internal",
+        "//xla/pjrt/c_api_client:pjrt_c_api_client",
         "//xla/pjrt/proto:pjrt_partial_program_proto_cc",
         "//xla/tsl/lib/core:status_test_util",
-        "//xla/tsl/platform:status_matchers",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@stablehlo//:reference_api",
+    ],
+)
+
+cc_library(
+    name = "string_utils",
+    srcs = ["string_utils.cc"],
+    hdrs = ["string_utils.h"],
+    deps = [
+        "//xla/pjrt/proto:compile_options_proto_cc",
+        "//xla/pjrt/proto:pjrt_partial_program_proto_cc",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "partial_program_utils",
+    srcs = ["partial_program_utils.cc"],
+    hdrs = ["partial_program_utils.h"],
+    deps = [
+        "//xla/pjrt/proto:compile_options_proto_cc",
+        "//xla/pjrt/proto:pjrt_partial_program_proto_cc",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "errors_test",
+    srcs = ["errors_test.cc"],
+    deps = [
+        ":errors",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
     ],
 )

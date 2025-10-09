@@ -1206,21 +1206,40 @@ cc_library(
     deps = [
         ":backend_configs_cc",
         ":cublas_cudnn",
+        ":gpu_norm_runner_proto_cc",
         ":stream_executor_util",
         "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:lazy_op_runner",
-        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:stream",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "gpu_norm_runner_test",
+    srcs = ["gpu_norm_runner_test.cc"],
+    deps = [
+        ":gpu_norm_runner",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/util/proto:parse_text_proto",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+tf_proto_library(
+    name = "gpu_norm_runner_proto",
+    srcs = ["gpu_norm_runner.proto"],
+    deps = [
+        ":backend_configs",
+        "//xla:xla_data_proto",
     ],
 )
 
@@ -1655,6 +1674,7 @@ cc_library(
         "//xla/hlo/transforms/simplifiers:simplify_fp_conversions",
         "//xla/hlo/transforms/simplifiers:slice_sinker",
         "//xla/hlo/transforms/simplifiers:sort_simplifier",
+        "//xla/hlo/transforms/simplifiers:sub_byte_collective_normalization",
         "//xla/hlo/transforms/simplifiers:sub_byte_normalization",
         "//xla/hlo/transforms/simplifiers:tuple_simplifier",
         "//xla/hlo/transforms/simplifiers:zero_sized_hlo_elimination",
@@ -1723,6 +1743,7 @@ cc_library(
         "//xla/service/gpu/transforms:algorithm_checker",
         "//xla/service/gpu/transforms:async_wrapper",
         "//xla/service/gpu/transforms:command_buffer_scheduling",
+        "//xla/service/gpu/transforms:composite_rewriter",
         "//xla/service/gpu/transforms:conv_rewriter",
         "//xla/service/gpu/transforms:cudnn_custom_call_converter",
         "//xla/service/gpu/transforms:custom_kernel_fusion_rewriter",
