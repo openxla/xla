@@ -76,8 +76,8 @@ struct RewriteTruncFPattern : public mlir::OpRewritePattern<ma::TruncFOp> {
     auto src = mlir::cast<FloatValue>(op.getOperand());
     auto dst_ty = mlir::cast<mlir::FloatType>(op.getType());
 
-    const bool is_f8 = llvm::isa<mlir::Float8E4M3FNType>(dst_ty) ||
-                       llvm::isa<mlir::Float8E5M2Type>(dst_ty);
+    const bool is_f8 =
+        llvm::isa<mlir::Float8E4M3FNType, mlir::Float8E5M2Type>(dst_ty);
     const bool is_f4 = llvm::isa<mlir::Float4E2M1FNType>(dst_ty);
 
     if ((is_f8 && enable_f8_) || (is_f4 && enable_f4_)) {
