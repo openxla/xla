@@ -1,7 +1,12 @@
 """
-A much simplified version of third_party/py/python_configure.bzl, which generates the "python_version_repo" repo.
+A much simplified version of third_party/py/python_repo.bzl, which generates the "python_version_repo" repo.
 
 This is just to keep the current build compatible with both WORKSPACE and Bzlmod, we may not need this in future.
+"""
+
+_PY_VERSION_BZL = """
+HERMETIC_PYTHON_VERSION = "{version}"
+USE_PYWRAP_RULES = {use_pywrap_rules}
 """
 
 def _python_version_repo_impl(repository_ctx):
@@ -9,13 +14,10 @@ def _python_version_repo_impl(repository_ctx):
     use_pywrap_rules = bool(
         repository_ctx.os.environ.get("USE_PYWRAP_RULES", False),
     )
-    repository_ctx.file("BUILD", "")
+    repository_ctx.file("BUILD.bazel", "")
     repository_ctx.file(
         "py_version.bzl",
-        """
-HERMETIC_PYTHON_VERSION = "{version}"
-USE_PYWRAP_RULES = {use_pywrap_rules}
-""".format(
+        _PY_VERSION_BZL.format(
             version = version,
             use_pywrap_rules = use_pywrap_rules,
         )
