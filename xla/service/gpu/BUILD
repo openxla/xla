@@ -2595,6 +2595,8 @@ cc_library(
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/profiler/lib:traceme_encode",
     ],
 )
 
