@@ -15,6 +15,7 @@ limitations under the License.
 #include "xla/stream_executor/sycl/sycl_gpu_runtime.h"
 
 #include <gtest/gtest.h>
+
 #include "xla/tsl/platform/status_matchers.h"
 
 namespace stream_executor::sycl {
@@ -41,6 +42,98 @@ TEST(SyclGpuRuntimeTest, TestStaticDeviceContext) {
   TF_ASSERT_OK_AND_ASSIGN(::sycl::context current_sycl_context,
                           SyclDevicePool::GetDeviceContext());
   EXPECT_EQ(saved_sycl_context, current_sycl_context);
+}
+
+TEST(SyclGpuRuntimeTest, TestStreamPoolCreateSynchronizeAndDestroy) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      StreamPtr stream_handle,
+      SyclStreamPool::GetOrCreateStream(kDefaultDeviceOrdinal,
+                                        /*enable_multiple_streams=*/false));
+  ASSERT_NE(stream_handle, nullptr);
+
+  ASSERT_TRUE(
+      SyclStreamPool::SynchronizeStreamPool(kDefaultDeviceOrdinal).ok());
+
+  ASSERT_TRUE(
+      SyclStreamPool::DestroyStream(kDefaultDeviceOrdinal, stream_handle).ok());
+  EXPECT_EQ(stream_handle, nullptr);
+}
+
+TEST(SyclGpuRuntimeTest, TestStreamPoolCreateAfterDestroy) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      StreamPtr stream_handle,
+      SyclStreamPool::GetOrCreateStream(kDefaultDeviceOrdinal,
+                                        /*enable_multiple_streams=*/false));
+  ASSERT_NE(stream_handle, nullptr);
+
+  ASSERT_TRUE(
+      SyclStreamPool::DestroyStream(kDefaultDeviceOrdinal, stream_handle).ok());
+  ASSERT_EQ(stream_handle, nullptr);
+
+  // Verify that we can create a new stream after destroying the previous one.
+  TF_ASSERT_OK_AND_ASSIGN(
+      stream_handle,
+      SyclStreamPool::GetOrCreateStream(kDefaultDeviceOrdinal,
+                                        /*enable_multiple_streams=*/false));
+  ASSERT_NE(stream_handle, nullptr);
+
+  // Clean up the stream after the test.
+  ASSERT_TRUE(
+      SyclStreamPool::DestroyStream(kDefaultDeviceOrdinal, stream_handle).ok());
+  EXPECT_EQ(stream_handle, nullptr);
+}
+
+TEST(SyclGpuRuntimeTest, TestStreamPoolCreate_Negative) {
+  constexpr int kInvalidDeviceOrdinal = -1;
+  EXPECT_EQ(SyclStreamPool::GetOrCreateStream(kInvalidDeviceOrdinal,
+                                              /*enable_multiple_streams=*/false)
+                .status()
+                .code(),
+            absl::StatusCode::kInvalidArgument);
+}
+
+TEST(SyclGpuRuntimeTest, TestStreamPoolDestroy_Negative) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      StreamPtr stream_handle,
+      SyclStreamPool::GetOrCreateStream(kDefaultDeviceOrdinal,
+                                        /*enable_multiple_streams=*/false));
+  ASSERT_NE(stream_handle, nullptr);
+
+  ASSERT_TRUE(
+      SyclStreamPool::DestroyStream(kDefaultDeviceOrdinal, stream_handle).ok());
+  ASSERT_EQ(stream_handle, nullptr);
+
+  // Try to destroy the stream again, which should be a no-op.
+  EXPECT_EQ(SyclStreamPool::DestroyStream(kDefaultDeviceOrdinal, stream_handle)
+                .code(),
+            absl::StatusCode::kInvalidArgument);
+  EXPECT_EQ(stream_handle, nullptr);
+}
+
+TEST(SyclGpuRuntimeTest, TestMaxStreamsPerDevice) {
+  // Ensure that the maximum number of streams per device is respected.
+  constexpr int kMaxStreams = 8;
+  std::vector<StreamPtr> streams(kMaxStreams);
+  for (int i = 0; i < kMaxStreams - 1; ++i) {
+    TF_ASSERT_OK_AND_ASSIGN(streams[i], SyclStreamPool::GetOrCreateStream(
+                                            kDefaultDeviceOrdinal,
+                                            /*enable_multiple_streams=*/true));
+    ASSERT_NE(streams[i], nullptr);
+  }
+
+  // Attempt to create one more stream, which should fail.
+  EXPECT_EQ(SyclStreamPool::GetOrCreateStream(kDefaultDeviceOrdinal,
+                                              /*enable_multiple_streams=*/true)
+                .status()
+                .code(),
+            absl::StatusCode::kResourceExhausted);
+
+  // Clean up the streams created.
+  for (int i = 0; i < kMaxStreams - 1; ++i) {
+    ASSERT_TRUE(
+        SyclStreamPool::DestroyStream(kDefaultDeviceOrdinal, streams[i]).ok());
+    EXPECT_EQ(streams[i], nullptr);
+  }
 }
 
 }  // namespace
