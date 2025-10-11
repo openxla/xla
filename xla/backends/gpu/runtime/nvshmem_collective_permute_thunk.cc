@@ -56,23 +56,6 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
-namespace {
-
-absl::StatusOr<const int64_t> GetCurrentId(
-    Thunk::CollectiveExecuteParams* collective_params,
-    const P2PConfig& config) {
-  GlobalDeviceId global_device_id = collective_params->global_device_id;
-  TF_ASSIGN_OR_RETURN(
-      const DeviceAssignment::LogicalID current_logical_id,
-      collective_params->device_assn->LogicalIdForDevice(global_device_id));
-  const int64_t current_id =
-      config.config.group_mode == CollectiveOpGroupMode::kCrossReplica
-          ? current_logical_id.replica_id
-          : current_logical_id.computation_id;
-  return current_id;
-}
-
-}  // namespace
 
 NvshmemCollectivePermuteStartThunk::NvshmemCollectivePermuteStartThunk(
     ThunkInfo thunk_info, const HloCollectivePermuteInstruction* instr,
@@ -153,7 +136,7 @@ absl::Status NvshmemCollectivePermuteStartThunk::RunNvshmemCollective(
                              std::vector<CollectiveThunk::Buffer>(buffers_),
                              config_.config.operand_element_type));
   TF_ASSIGN_OR_RETURN(const int64_t current_id,
-                      GetCurrentId(params.collective_params, config_));
+                      GetCurrentId(params.collective_params, config_.config));
   std::string device_string =
       CollectiveThunk::GetDeviceString(*params.collective_params);
 
