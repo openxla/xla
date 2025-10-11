@@ -4,7 +4,7 @@
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("@pythons_hub//:interpreters.bzl", "INTERPRETER_LABELS")
 load(
-    "@xla//third_party/remote_config:common.bzl",
+    "@local_xla//third_party/remote_config:common.bzl",
     "BAZEL_SH",
     "PYTHON_BIN_PATH",
     "PYTHON_LIB_PATH",
