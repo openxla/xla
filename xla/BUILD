@@ -403,6 +403,7 @@ cc_library(
         "//xla/tsl/platform:errors",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
+        "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
     ],
