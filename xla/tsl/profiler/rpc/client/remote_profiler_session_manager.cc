@@ -64,6 +64,7 @@ RemoteProfilerSessionManager::RemoteProfilerSessionManager(
 
 RemoteProfilerSessionManager::~RemoteProfilerSessionManager() {
   VLOG(2) << "Destroying RemoteProfilerSessionManager.";
+  cq_.Shutdown();
 }
 
 absl::Status RemoteProfilerSessionManager::Init() {
@@ -87,13 +88,14 @@ absl::Status RemoteProfilerSessionManager::Init() {
   clients_.reserve(options_.service_addresses_size());
 
   ProfileRequest request = request_;
-  for (auto& service_address : options_.service_addresses()) {
+  for (int32_t idx = 0; idx < options_.service_addresses_size(); ++idx) {
+    auto& service_address = options_.service_addresses(idx);
     std::string resolved_service_address = resolver_(service_address);
     request.set_host_name(resolved_service_address);
 
     // Creation also issues Profile RPC asynchronously.
     auto client = RemoteProfilerSession::Create(resolved_service_address,
-                                                deadline, request);
+                                                deadline, request, &cq_, idx);
     clients_.push_back(std::move(client));
   }
 
@@ -107,13 +109,41 @@ RemoteProfilerSessionManager::WaitForCompletion() {
   std::vector<RemoteProfilerSessionManager::Response> remote_responses(
       clients_.size());
 
-  for (int32_t idx = 0; idx < clients_.size(); ++idx) {
-    auto& remote_response = remote_responses[idx];
-    auto* client = clients_[idx].get();
-    remote_response.profile_response =
-        client->WaitForCompletion(remote_response.status);
-    remote_response.service_address = std::string(client->GetServiceAddress());
+  for (int32_t req_cnt = 0; req_cnt < clients_.size(); ++req_cnt) {
+    int64 got_tag = -1;
+    bool ok = false;
+    bool success = cq_.Next(reinterpret_cast<void**>(&got_tag), &ok);
+    if (!success) {
+      LOG(ERROR) << "Completion queue drained after processing " << req_cnt
+                << " of " << clients_.size() << " clients";
+      break;
+    }
+    if (!ok) {
+      if (got_tag != -1) {
+        int64 client_id = *(reinterpret_cast<int64*>(got_tag));
+        remote_responses[req_cnt].status = absl::InternalError(absl::StrCat(
+            "Missing or invalid event from completion queue.", client_id));
+        LOG(ERROR) << "Missing or invalid event from completion queue."
+                   << client_id;
+        continue;
+      } else {
+        remote_responses[req_cnt].status = absl::InternalError(
+            "Missing or invalid event from completion queue without a tag.");
+        LOG(ERROR)
+            << "Missing or invalid event from completion queue without a tag.";
+        continue;
+      }
+    }
+    auto* client = clients_[got_tag].get();
+    remote_responses[req_cnt].profile_response =
+        client->HandleCompletion(remote_responses[req_cnt].status,
+                                 reinterpret_cast<void*>(&got_tag), ok);
+    remote_responses[req_cnt].service_address =
+        std::string(client->GetServiceAddress());
   }
+  LOG(INFO) << "Completed waiting for completion of " << clients_.size()
+            << " clients";
+
   return remote_responses;
 }
 
