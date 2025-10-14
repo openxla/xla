@@ -460,7 +460,7 @@ ENTRY main.49 {
 
 TEST_P(CommandBufferTest, DynamicSliceCopyFusionCmd) {
   constexpr absl::string_view hlo_text = R"(
-    dynamic_slice {any
+    dynamic_slice {
       p0 = s32[4,8,8]{2,1,0} parameter(0)
       p1 = s32[] parameter(1)
       c1 = s32[] constant(1)
