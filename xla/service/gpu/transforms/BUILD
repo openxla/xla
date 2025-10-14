@@ -2162,6 +2162,7 @@ xla_cc_test(
     name = "reduce_scatter_creator_test",
     srcs = ["reduce_scatter_creator_test.cc"],
     deps = [
+        ":algebraic_simplifier",
         ":reduce_scatter_creator",
         "//xla:util",
         "//xla/hlo/ir:hlo",
@@ -2170,6 +2171,7 @@ xla_cc_test(
         "//xla/service:hlo_module_config",
         "//xla/service:pattern_matcher",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/stream_executor:device_description",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
