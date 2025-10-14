@@ -564,7 +564,7 @@ bool IsScaledDotFusion(const HloInstruction* fusion_instr) {
   if (fusion_instr->fusion_kind() != HloInstruction::FusionKind::kCustom) {
     return false;
   }
-  return IsFusionKind(*fusion_instr, kTritonScaledDotFusionKind);
+  return IsGpuFusionKind(*fusion_instr, kTritonScaledDotFusionKind);
 }
 
 absl::Status RewriteGemmFusionToCall(HloInstruction* fusion_instr) {
@@ -894,8 +894,8 @@ GemmFusionAutotunerImpl::GenerateDotConfigs(const HloFusionInstruction& fusion,
   // Add CustomKernelFusion (Cutlass) configs, if available.
   // Go through all the instructions in the fusion body try to match them to
   // a custom kernel fusion pattern.
-  if ((IsFusionKind(fusion, kCustomFusionKind) ||
-       IsFusionKind(fusion, kTritonGemmFusionKind)) &&
+  if ((IsGpuFusionKind(fusion, kCustomFusionKind) ||
+       IsGpuFusionKind(fusion, kTritonGemmFusionKind)) &&
       IsAutotuningEnabled() && !config_.IsDeviceless()) {
     std::vector<BackendConfig> custom_kernel_fusion_configs =
         GenerateCustomKernelFusionConfigs(fusion,

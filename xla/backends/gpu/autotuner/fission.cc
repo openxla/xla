@@ -200,7 +200,7 @@ bool IsCustomKernel(const HloComputation* computation) {
     return false;
   }
 
-  return IsFusionKind(*instruction, kCustomFusionKind);
+  return IsGpuFusionKind(*instruction, kCustomFusionKind);
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>

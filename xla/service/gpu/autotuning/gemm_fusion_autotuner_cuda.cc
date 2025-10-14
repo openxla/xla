@@ -60,8 +60,8 @@ bool GemmFusionAutotunerImpl::AddLibConfigs(
         debug_options_.xla_gpu_cudnn_gemm_fusion_level() > 1) ||
        (cc.IsAtLeastBlackwell() &&
         debug_options_.xla_gpu_cudnn_gemm_fusion_level() > 0));
-  if ((IsFusionKind(fusion, kCuDnnFusionKind) && IsAutotuningEnabled()) ||
-      (IsFusionKind(fusion, kTritonGemmFusionKind) && is_cudnn_enabled &&
+  if ((IsGpuFusionKind(fusion, kCuDnnFusionKind) && IsAutotuningEnabled()) ||
+      (IsGpuFusionKind(fusion, kTritonGemmFusionKind) && is_cudnn_enabled &&
        algorithm_util::IsSupportedByCudnn(
            dot->precision_config().algorithm()) &&
        IsAutotuningEnabled())) {
@@ -70,7 +70,7 @@ bool GemmFusionAutotunerImpl::AddLibConfigs(
       configs.push_back(CuDnnConfig{plan_id});
     }
   }
-  if (IsFusionKind(fusion, kCuDnnFusionKind)) {
+  if (IsGpuFusionKind(fusion, kCuDnnFusionKind)) {
     if (!IsAutotuningEnabled()) {
       configs.push_back(CuDnnConfig{-1});
     }

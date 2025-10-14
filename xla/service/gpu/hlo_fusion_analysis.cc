@@ -204,7 +204,7 @@ int SmallestBitWidth(const Container& args) {
 
 }  // namespace
 
-bool IsFusionKind(const HloInstruction& hlo, absl::string_view kind) {
+bool IsGpuFusionKind(const HloInstruction& hlo, absl::string_view kind) {
   auto gpu_config = hlo.backend_config<GpuBackendConfig>();
   if (!gpu_config.ok()) {
     return false;

@@ -294,8 +294,8 @@ bool IsInTritonNestedGemmFusion(const HloInstruction& hlo) {
   if (!hlo.parent()->IsFusionComputation()) {
     return false;
   }
-  return IsFusionKind(*hlo.parent()->FusionInstruction(),
-                      kTritonNestedGemmFusionKind);
+  return IsGpuFusionKind(*hlo.parent()->FusionInstruction(),
+                         kTritonNestedGemmFusionKind);
 }
 
 absl::Status CheckSupportedCheckDotDimensions(const HloDotInstruction& dot) {

@@ -431,8 +431,8 @@ class OrderedUniquePtrValueHashSet {
 bool IsWithinNestedGemmFusion(const HloInstruction* hlo) {
   const HloComputation* computation = hlo->parent();
   if (computation->IsFusionComputation()) {
-    return gpu::IsFusionKind(*computation->FusionInstruction(),
-                             gpu::kTritonNestedGemmFusionKind);
+    return gpu::IsGpuFusionKind(*computation->FusionInstruction(),
+                                gpu::kTritonNestedGemmFusionKind);
   }
 
   return false;

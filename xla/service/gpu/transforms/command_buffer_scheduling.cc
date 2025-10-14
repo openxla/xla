@@ -120,8 +120,8 @@ static bool AsyncStartOrDoneCommandIsSupported(
 
   if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
     // We don't currently support dynamic memcpy fusions in command buffers.
-    if (IsFusionKind(*hlo->async_wrapped_instruction(),
-                     kDynamicMemcpyFusionKind)) {
+    if (IsGpuFusionKind(*hlo->async_wrapped_instruction(),
+                        kDynamicMemcpyFusionKind)) {
       return config.enabled_commands.contains(
           DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
     }
@@ -274,7 +274,7 @@ static bool IsCommand(const HloInstruction* hlo,
     if (backend_config.kind() == kCuDnnFusionKind) {
       return config.enabled_commands.contains(DebugOptions::CUDNN);
     }
-    if (IsFusionKind(*fusion, kDynamicMemcpyFusionKind)) {
+    if (IsGpuFusionKind(*fusion, kDynamicMemcpyFusionKind)) {
       return config.enabled_commands.contains(
           DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
     }
