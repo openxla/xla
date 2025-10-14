@@ -460,7 +460,7 @@ ENTRY main.49 {
 
 TEST_P(CommandBufferTest, DynamicSliceCopyFusionCmd) {
   constexpr absl::string_view hlo_text = R"(
-    dynamic_slice {
+    dynamic_slice {any
       p0 = s32[4,8,8]{2,1,0} parameter(0)
       p1 = s32[] parameter(1)
       c1 = s32[] constant(1)
@@ -576,6 +576,24 @@ TEST_P(CommandBufferTest, DynamicSliceCopyFusionCmd) {
 
   EXPECT_TRUE(
       RunAndCompareNoHloPasses(std::move(module), ErrorSpec{1e-3, 2e-3}));
+
+  debug_options.add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLASLT);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
+  debug_options.set_xla_gpu_command_buffer_unroll_loops(true);
+  config.set_debug_options(debug_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto unrolled_module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
+
+  EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(unrolled_module),
+                                       ErrorSpec{1e-3, 2e-3}));
 }
 
 TEST_P(CommandBufferUnrollTest, WhileLoop) {
