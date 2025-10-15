@@ -18,6 +18,10 @@ rocm_redist_ubuntu_22_04 = {
                 sha256 = "9d1bb3a5006a5b69655abbd890efaad1d347b3cd66b5d0a7fe60a6885494b19b",
             ),
             struct(
+                url = "https://repo.radeon.com/rocm/apt/6.4.1/pool/main/h/hipblaslt6.4.1/hipblaslt6.4.1_0.12.1.60401-83~22.04_amd64.deb",
+                sha256 = "b53019fa5e46dc1ec4725960da9c30c6564db7adc10eb176f00d6dc99f565f3a",
+            ),
+            struct(
                 url = "https://repo.radeon.com/rocm/apt/6.4.1/pool/main/h/hipblas-dev/hipblas-dev_2.4.0.60401-83~22.04_amd64.deb",
                 sha256 = "df5dd894a6840693f060fcdd1e96c0e8cf9eed16b2763643f17a5a9c4baa69a5",
             ),

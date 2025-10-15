@@ -164,9 +164,9 @@ cc_library(
 cc_library(
     name = "rocm_hip",
     srcs = glob([
-        "%{rocm_root}/lib/libamdhip*.so"
-        "%{rocm_root}/lib/libhiprtc.so*"
-        "%{rocm_root}/lib/libhiprtc-builtins.so*"
+        "%{rocm_root}/lib/libamdhip*.so",
+        "%{rocm_root}/lib/libhiprtc.so*",
+        "%{rocm_root}/lib/libhiprtc-builtins.so*",
     ]),
     hdrs = glob(["%{rocm_root}/include/hip/**"]),
     include_prefix = "rocm",
@@ -188,7 +188,11 @@ cc_library(
 # Used by jax_rocm_plugin to minimally link to hip runtime.
 cc_library(
     name = "hip_runtime",
-    srcs = glob(["%{rocm_root}/lib/libamdhip*.so"]),
+    srcs = glob([
+        "%{rocm_root}/lib/libamdhip*.so",
+        "%{rocm_root}/lib/libhiprtc.so*",
+        "%{rocm_root}/lib/libhiprtc-builtins.so*",
+    ]),
     hdrs = glob(["%{rocm_root}/include/hip/**"]),
     include_prefix = "rocm",
     includes = [
@@ -205,6 +209,9 @@ cc_library(
 
 cc_library(
     name = "rocblas",
+    srcs = glob([
+        "%{rocm_root}/lib/librocblas*.so*",
+    ]),
     hdrs = glob(["%{rocm_root}/include/rocblas/**"]),
     data = glob([
         "%{rocm_root}/lib/librocblas*.so*",
@@ -278,7 +285,11 @@ cc_library(
     linkopts = ["-Wl,-rpath,local_config_rocm/rocm/rocm_dis/lib"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
-    deps = [":rocm_config"],
+    deps = [
+        ":rocm_config",
+        ":hipblaslt",
+        ":hipblas",
+    ],
 )
 
 cc_library(
@@ -396,7 +407,6 @@ cc_library(
 
 cc_library(
     name = "hipblas",
-    srcs = glob(["%{rocm_root}/lib/libhipblas.so*"]),
     hdrs = glob(["%{rocm_root}/include/hipblas/**"]),
     data = glob(["%{rocm_root}/lib/libhipblas.so*"]),
     include_prefix = "rocm",
@@ -405,6 +415,7 @@ cc_library(
     ],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
+    linkopts = ["-Wl,-rpath,local_config_rocm/rocm/rocm_dis/lib"],
     deps = [
         ":hipblas-common",
         ":rocm_config",
