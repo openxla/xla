@@ -21,8 +21,8 @@ set -x
 SCRIPT_DIR=$(dirname $0)
 bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
 	"$@" \
-	--test_tag_filters=gpu,requires-gpu-amd,-requires-gpu-nvidia,-requires-gpu-intel,-no_oss,-oss_excluded,-oss_serial,-no_gpu,-no_rocm,-requires-gpu-sm60,-requires-gpu-sm60-only,-requires-gpu-sm70,-requires-gpu-sm70-only,-requires-gpu-sm80,-requires-gpu-sm80-only,-requires-gpu-sm86,-requires-gpu-sm86-only,-requires-gpu-sm89,-requires-gpu-sm89-only,-requires-gpu-sm90,-requires-gpu-sm90-only \
-	--build_tag_filters=gpu,requires-gpu-amd,-requires-gpu-nvidia,-requires-gpu-intel,-no_oss,-oss_excluded,-oss_serial,-no_gpu,-no_rocm,-requires-gpu-sm60,-requires-gpu-sm60-only,-requires-gpu-sm70,-requires-gpu-sm70-only,-requires-gpu-sm80,-requires-gpu-sm80-only,-requires-gpu-sm86,-requires-gpu-sm86-only,-requires-gpu-sm89,-requires-gpu-sm89-only,-requires-gpu-sm90,-requires-gpu-sm90-only \
+	--test_tag_filters=gpu,requires-gpu-amd,-oneapi-only,-cuda-only,-requires-gpu-nvidia,-requires-gpu-intel,-no_oss,-oss_excluded,-oss_serial,-no_gpu,-no_rocm,-requires-gpu-sm60,-requires-gpu-sm60-only,-requires-gpu-sm70,-requires-gpu-sm70-only,-requires-gpu-sm80,-requires-gpu-sm80-only,-requires-gpu-sm86,-requires-gpu-sm86-only,-requires-gpu-sm89,-requires-gpu-sm89-only,-requires-gpu-sm90,-requires-gpu-sm90-only \
+	--build_tag_filters=gpu,requires-gpu-amd,-oneapi-only,-cuda-only,-requires-gpu-nvidia,-requires-gpu-intel,-no_oss,-oss_excluded,-oss_serial,-no_gpu,-no_rocm,-requires-gpu-sm60,-requires-gpu-sm60-only,-requires-gpu-sm70,-requires-gpu-sm70-only,-requires-gpu-sm80,-requires-gpu-sm80-only,-requires-gpu-sm86,-requires-gpu-sm86-only,-requires-gpu-sm89,-requires-gpu-sm89-only,-requires-gpu-sm90,-requires-gpu-sm90-only \
 	--profile=/tf/pkg/profile.json.gz \
 	--keep_going \
 	--test_env=TF_TESTS_PER_GPU=1 \
