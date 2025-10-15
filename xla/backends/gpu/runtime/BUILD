@@ -2248,6 +2248,7 @@ xla_test(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/tsl/platform:status",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
