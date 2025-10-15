@@ -153,13 +153,6 @@ class PjRtCpuClient final : public CommonPjRtClient {
 
   using PjRtClient::BufferFromHostLiteral;
 
-  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
-  MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
-                              PjRtDevice* device,
-                              PjRtCrossHostRecvNotifier notifier) override {
-    return Unimplemented("MakeCrossHostReceiveBuffers not implemented.");
-  }
-
   absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>> ImportForeignMemory(
       void* device_ptr, absl::AnyInvocable<void() &&> on_delete_callback,
       size_t on_device_bytes_count, PjRtMemorySpace* memory_space) override;

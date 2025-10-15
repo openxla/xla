@@ -32,19 +32,25 @@ extern "C" {
 
 #define PJRT_API_CROSS_HOST_TRANSFERS_EXTENSION_VERSION 1
 
-// ---------------------------------- Methods ----------------------------------
-
-typedef void (*PJRT_Transfers_CrossHostRecvNotifier)(
-    PJRT_Error* error, const char** serialized_descriptors,
-    size_t* descriptors_sizes, size_t num_descriptors, void* user_arg);
-
-struct PJRT_Transfers_CrossHostRecvNotifierInfo {
-  void* user_arg;
-  PJRT_Transfers_CrossHostRecvNotifier notifier;
+struct PJRT_Transfers_PJRT_Client_CrossHostSendBuffers_Args {
+  size_t struct_size;
+  PJRT_Extension_Base* extension_start;
+  PJRT_Client* client;
+  size_t num_buffers;
+  PJRT_Buffer** buffers;
+  const xla::PjRtGlobalDeviceId*
+      dst_global_device_ids;  // Has size num_buffers.
+  xla::CrossHostTransferKey transfer_key;
+  PJRT_Event** send_events;  // out, has size num_buffers.
 };
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_Transfers_CrossHostRecvNotifierInfo, notifier);
 
-struct PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args {
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Transfers_PJRT_Client_CrossHostSendBuffers_Args,
+                          send_events);
+
+typedef PJRT_Error* PJRT_Transfers_PJRT_Client_CrossHostSendBuffers(
+    PJRT_Transfers_PJRT_Client_CrossHostSendBuffers_Args* args);
+
+struct PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args {
   size_t struct_size;
   PJRT_Extension_Base* extension_start;
   PJRT_Client* client;
@@ -54,40 +60,29 @@ struct PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args {
   PJRT_Buffer_Type* element_types;
   PJRT_Buffer_MemoryLayout** layouts;
   PJRT_Device* device;
-  PJRT_Transfers_CrossHostRecvNotifierInfo notifier;
-  PJRT_Buffer** buffers;  // out
-  size_t num_buffers;     // out
+  const xla::PjRtGlobalDeviceId* src_global_device_ids;  // Has size num_shapes.
+  xla::CrossHostTransferKey transfer_key;                // Has size num_shapes.
+  PJRT_Buffer** buffers;  // out (has size num_shapes).
 };
+
 PJRT_DEFINE_STRUCT_TRAITS(
-    PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args, num_buffers);
+    PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args, buffers);
 
-typedef PJRT_Error* PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers(
-    PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args* args);
-
-struct PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args {
-  size_t struct_size;
-  PJRT_Extension_Base* extension_start;
-  PJRT_Buffer* buffer;
-  const char* serialized_descriptor;
-  size_t serialized_descriptor_size;
-};
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args,
-                          serialized_descriptor_size);
-
-typedef void PJRT_Buffer_CopyToRemoteDevice(
-    PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args* args);
+typedef PJRT_Error* PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers(
+    PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args* args);
 
 // --------------------------- Extension entrypoint ----------------------------
 
 typedef struct PJRT_CrossHostTransfers_Extension {
   PJRT_Extension_Base base;
 
-  PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers*
-      PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers;
-  PJRT_Buffer_CopyToRemoteDevice* PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice;
+  PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers*
+      PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers;
+  PJRT_Transfers_PJRT_Client_CrossHostSendBuffers*
+      PJRT_Transfers_PJRT_Client_CrossHostSendBuffers;
 } PJRT_CrossHostTransfers_Extension;
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_CrossHostTransfers_Extension,
-                          PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice);
+                          PJRT_Transfers_PJRT_Client_CrossHostSendBuffers);
 
 #ifdef __cplusplus
 }
