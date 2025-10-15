@@ -868,6 +868,67 @@ ENTRY r {
                             ErrorSpec{/*aabs=*/1, /*arel=*/1e-3}));
 }
 
+TEST_F(CuDnnFusionExecutionTest, ConvFpropWithNHWCLayoutExecutesCorrectly) {
+  EXPECT_TRUE(RunAndCompare(R"(
+fusion {
+  zero = f32[] constant(0)
+  zeros = f32[2,9,9,32] broadcast(zero), dimensions={}
+  input = f32[2,9,9,17] parameter(0)
+  filter = f32[32,3,3,17] parameter(1)
+  conv = f32[2,9,9,32] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, feature_group_count=1
+  ROOT relu = f32[2,9,9,32] maximum(zeros, conv)
+}
+
+
+ENTRY Test {
+  input = f32[2,9,9,17] parameter(0)
+  filter = f32[32,3,3,17] parameter(1)
+  ROOT conv = f32[2,9,9,32] fusion(input, filter), kind=kCustom, calls=fusion, backend_config={"fusion_backend_config": {kind: "__cudnn$fusion", cudnn_fusion_config: {"name":"conv_fprop"}}}
+})",
+                            ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-3}));
+}
+
+TEST_F(CuDnnFusionExecutionTest, ConvWgradWithNHWCLayoutExecutesCorrectly) {
+  EXPECT_TRUE(RunAndCompare(R"(
+fusion {
+  zero = f32[] constant(0)
+  zeros = f32[32,3,3,17] broadcast(zero), dimensions={}
+  input = f32[2,9,9,17] parameter(0)
+  dout = f32[2,9,9,32] parameter(1)
+  conv = f32[32,3,3,17] convolution(input, dout), window={size=9x9 pad=1_1x1_1}, dim_labels=f01b_i01o->f01b, feature_group_count=1
+  ROOT relu = f32[32,3,3,17] maximum(zeros, conv)
+}
+
+
+ENTRY Test {
+  input = f32[2,9,9,17] parameter(0)
+  dout = f32[2,9,9,32] parameter(1)
+  ROOT conv = f32[32,3,3,17] fusion(input, dout), kind=kCustom, calls=fusion, backend_config={"fusion_backend_config": {kind: "__cudnn$fusion", cudnn_fusion_config: {"name":"conv_wgrad"}}}
+})",
+                            ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-3}));
+}
+
+TEST_F(CuDnnFusionExecutionTest, ConvDgradWithNHWCLayoutExecutesCorrectly) {
+  // TODO: needs to be fixed here because a reverse of filter is missing
+  EXPECT_TRUE(RunAndCompare(R"(
+fusion {
+  zero = f32[] constant(0)
+  zeros = f32[2,9,9,17] broadcast(zero), dimensions={}
+  dout = f32[2,9,9,32] parameter(0)
+  filter = f32[32,3,3,17] parameter(1)
+  conv = f32[2,9,9,17] convolution(dout, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_i01o->b01f, feature_group_count=1
+  ROOT relu = f32[2,9,9,17] maximum(zeros, conv)
+}
+
+
+ENTRY Test {
+  dout = f32[2,9,9,32] parameter(0)
+  filter = f32[32,3,3,17] parameter(1)
+  ROOT conv = f32[2,9,9,17] fusion(dout, filter), kind=kCustom, calls=fusion, backend_config={"fusion_backend_config": {kind: "__cudnn$fusion", cudnn_fusion_config: {"name":"conv_dgrad"}}}
+})",
+                            ErrorSpec{/*aabs=*/1, /*arel=*/1e-3}));
+}
+
 class ElementwiseTest : public CuDnnFusionExecutionTest,
                         public ::testing::WithParamInterface<
                             std::tuple<PrimitiveType, HloOpcode, float>> {};
