@@ -26,6 +26,7 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
 	--profile=/tf/pkg/profile.json.gz \
 	--keep_going \
 	--test_env=TF_TESTS_PER_GPU=1 \
+    --repo_env=TF_ROCM_AMDGPU_TARGETS=gfx908,gfx90a,gfx945
 	--action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
 	--action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
 	--test_output=errors \
