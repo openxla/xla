@@ -909,7 +909,6 @@ ENTRY Test {
 }
 
 TEST_F(CuDnnFusionExecutionTest, ConvDgradWithNHWCLayoutExecutesCorrectly) {
-  // TODO: needs to be fixed here because a reverse of filter is missing
   const std::string kHloReference = R"(
 ENTRY main {
   zero = f32[] constant(0)
