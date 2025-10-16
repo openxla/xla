@@ -182,6 +182,12 @@ inline std::optional<fe::DataType_t> GetComputeDataType(
 
 // Extracts dimensions and strides from HLO tensors in the format expected by
 // cuDNN.
+struct Result {
+  std::vector<int64_t> sizes;
+  std::vector<int64_t> strides;
+  std::optional<std::vector<std::pair<int64_t, int64_t>>> slices;
+};
+
 class GemmDimensionAdapter {
   explicit GemmDimensionAdapter(const HloInstruction& dot,
                                 TritonFusionAnalysis analysis)
@@ -212,12 +218,6 @@ class GemmDimensionAdapter {
                         TritonFusionAnalysis::Execute(computation));
     return GemmDimensionAdapter{*dot, std::move(analysis)};
   }
-
-  struct Result {
-    std::vector<int64_t> sizes;
-    std::vector<int64_t> strides;
-    std::optional<std::vector<std::pair<int64_t, int64_t>>> slices;
-  };
 
   std::optional<Result> DimensionsAndStrides(
       const HloInstruction& hlo, const TritonFusionAnalysis::Scope scope) {
@@ -361,18 +361,13 @@ class GemmDimensionAdapter {
 
 class ConvDimensionAdapter {
   explicit ConvDimensionAdapter(const HloInstruction& conv,
-                                std::string conv_type,
+                                CuDnnFusionConfig_Kind conv_kind,
                                 ConvolutionDimensionNumbers dums)
-      : conv_(conv), conv_type_(conv_type), dums_(dums) {}
+      : conv_(conv), conv_kind_(conv_kind), dums_(dums) {}
 
  public:
   const HloInstruction& conv_;
-  std::string conv_type_;
-
-  struct Result {
-    std::vector<int64_t> sizes;
-    std::vector<int64_t> strides;
-  };
+  CuDnnFusionConfig_Kind conv_kind_;
 
   static absl::StatusOr<std::optional<ConvDimensionAdapter>> Create(
       const HloFusionInstruction& fusion, const HloComputation& computation) {
@@ -388,19 +383,19 @@ class ConvDimensionAdapter {
                         fusion.backend_config<GpuBackendConfig>());
     const FusionBackendConfig& fusion_backend_config =
         gpu_config.fusion_backend_config();
-    if (!fusion_backend_config.has_cudnn_fusion_config() ||
-        fusion_backend_config.cudnn_fusion_config().name().empty()) {
+    if (!fusion_backend_config.has_cudnn_fusion_config()) {
       VLOG(3) << "Can't find cudnn fusion config for cudnn conv fusion.";
       return std::nullopt;
     }
-    std::string conv_type = fusion_backend_config.cudnn_fusion_config().name();
+    CuDnnFusionConfig_Kind conv_kind =
+        fusion_backend_config.cudnn_fusion_config().kind();
 
     const ConvolutionDimensionNumbers& dnums =
         DynCast<HloConvolutionInstruction>(maybe_conv)
             ->convolution_dimension_numbers();
     // for fprop, we do nothing, copy directly
     ConvolutionDimensionNumbers dnums_for_layout = dnums;
-    if (conv_type == "conv_wgrad") {
+    if (conv_kind == CuDnnFusionConfig::CONV_WGRAD) {
       dnums_for_layout.set_input_batch_dimension(
           dnums.input_feature_dimension());
       dnums_for_layout.set_input_feature_dimension(
@@ -413,7 +408,7 @@ class ConvDimensionAdapter {
           dnums.kernel_output_feature_dimension());
       dnums_for_layout.set_kernel_output_feature_dimension(
           dnums.kernel_input_feature_dimension());
-    } else if (conv_type == "conv_dgrad") {
+    } else if (conv_kind == CuDnnFusionConfig::CONV_DGRAD) {
       dnums_for_layout.set_kernel_input_feature_dimension(
           dnums.kernel_output_feature_dimension());
       dnums_for_layout.set_kernel_output_feature_dimension(
@@ -421,22 +416,22 @@ class ConvDimensionAdapter {
     }
 
     // make sure input/kernel/output has the same layout
-    CHECK(dnums_for_layout.input_batch_dimension() ==
-              dnums_for_layout.kernel_output_feature_dimension() &&
-          dnums_for_layout.kernel_output_feature_dimension() ==
-              dnums_for_layout.output_batch_dimension());
-    CHECK(dnums_for_layout.input_feature_dimension() ==
-              dnums_for_layout.kernel_input_feature_dimension() &&
-          dnums_for_layout.kernel_input_feature_dimension() ==
-              dnums_for_layout.output_feature_dimension());
+    TF_RET_CHECK(dnums_for_layout.input_batch_dimension() ==
+                     dnums_for_layout.kernel_output_feature_dimension() &&
+                 dnums_for_layout.kernel_output_feature_dimension() ==
+                     dnums_for_layout.output_batch_dimension());
+    TF_RET_CHECK(dnums_for_layout.input_feature_dimension() ==
+                     dnums_for_layout.kernel_input_feature_dimension() &&
+                 dnums_for_layout.kernel_input_feature_dimension() ==
+                     dnums_for_layout.output_feature_dimension());
     for (auto i = 0; i < dnums_for_layout.input_spatial_dimensions_size();
-         i++) {
-      CHECK(dnums_for_layout.input_spatial_dimensions(i) ==
-                dnums_for_layout.kernel_spatial_dimensions(i) &&
-            dnums_for_layout.kernel_spatial_dimensions(i) ==
-                dnums_for_layout.output_spatial_dimensions(i));
+         ++i) {
+      TF_RET_CHECK(dnums_for_layout.input_spatial_dimensions(i) ==
+                       dnums_for_layout.kernel_spatial_dimensions(i) &&
+                   dnums_for_layout.kernel_spatial_dimensions(i) ==
+                       dnums_for_layout.output_spatial_dimensions(i));
     }
-    return ConvDimensionAdapter{*maybe_conv, conv_type, dnums_for_layout};
+    return ConvDimensionAdapter{*maybe_conv, conv_kind, dnums_for_layout};
   }
 
   std::optional<Result> DimensionsAndStrides(const HloInstruction& hlo) {
@@ -457,7 +452,7 @@ class ConvDimensionAdapter {
     result.sizes.push_back(logical_dims[dums_.input_feature_dimension()]);
     result.strides.push_back(logical_strides[dums_.input_batch_dimension()]);
     result.strides.push_back(logical_strides[dums_.input_feature_dimension()]);
-    for (auto i = 0; i < dums_.input_spatial_dimensions_size(); i++) {
+    for (auto i = 0; i < dums_.input_spatial_dimensions_size(); ++i) {
       result.sizes.push_back(logical_dims[dums_.input_spatial_dimensions(i)]);
       result.strides.push_back(
           logical_strides[dums_.input_spatial_dimensions(i)]);
@@ -541,14 +536,38 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
   absl::flat_hash_map<const HloInstruction*,
                       std::shared_ptr<graph::Tensor_attributes>>
       hlo_to_cudnn;
-  TF_ASSIGN_OR_RETURN(std::optional<GemmDimensionAdapter> adapter,
+  TF_ASSIGN_OR_RETURN(std::optional<GemmDimensionAdapter> gemm_adapter,
                       GemmDimensionAdapter::Create(computation));
   TF_ASSIGN_OR_RETURN(std::optional<ConvDimensionAdapter> conv_adapter,
                       ConvDimensionAdapter::Create(fusion, computation));
-  if (!adapter.has_value() && !conv_adapter.has_value()) {
+  if (!gemm_adapter.has_value() && !conv_adapter.has_value()) {
     VLOG(3) << "No dot or conv found inside cudnn fusion.";
     return std::nullopt;
   }
+
+  auto add_parameter = [&](const HloInstruction& parameter,
+                           const Result& dims) {
+    const std::optional<fe::DataType_t> data_type =
+        ToCudnnDataType(parameter.shape().element_type());
+    if (!data_type.has_value()) {
+      VLOG(3) << "Unsupported data type.";
+      return false;
+    }
+    hlo_to_cudnn[&parameter] = graph.tensor(
+        graph::Tensor_attributes()
+            .set_dim(dims.sizes)
+            .set_stride(dims.strides)
+            .set_data_type(*data_type)
+            .set_name(std::string(parameter.name()))
+            .set_uid(se::gpu::CuDnnTensorUID(parameter.parameter_number())));
+    if (dims.slices.has_value()) {
+      hlo_to_cudnn[&parameter] = graph.slice(
+          hlo_to_cudnn[&parameter],
+          graph::Slice_attributes().set_slices(dims.slices.value()));
+    }
+    return true;
+  };
+
   if (conv_adapter.has_value()) {
     for (const HloInstruction* operand : conv_adapter->conv_.operands()) {
       if (!HloPredicateIsOp<HloOpcode::kParameter>(operand)) {
@@ -560,61 +579,34 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
          computation.parameter_instructions()) {
       // for now, we assume all parameters have same layout even if they are not
       // inputs to conv, for example, bias add after conv.
-      const std::optional<fe::DataType_t> data_type =
-          ToCudnnDataType(parameter->shape().element_type());
-      if (!data_type.has_value()) {
-        VLOG(3) << "Unsupported data type.";
+      const std::optional<Result> dims =
+          conv_adapter->DimensionsAndStrides(*parameter);
+      VLOG(3) << "parameter: " << parameter->ToString() << "\n";
+      if (!dims.has_value()) {
+        VLOG(3) << "Unsupported dimensions.";
         return std::nullopt;
       }
-      const std::optional<ConvDimensionAdapter::Result> dims =
-          conv_adapter->DimensionsAndStrides(*parameter);
-      hlo_to_cudnn[parameter] = graph.tensor(
-          graph::Tensor_attributes()
-              .set_dim(dims->sizes)
-              .set_stride(dims->strides)
-              .set_data_type(*data_type)
-              .set_name(std::string(parameter->name()))
-              .set_uid(se::gpu::CuDnnTensorUID(parameter->parameter_number())));
+      if (!add_parameter(*parameter, *dims)) {
+        return std::nullopt;
+      }
     }
   } else {
     // dot and scale dot
-    auto add_parameter = [&](const HloInstruction& parameter,
-                             const GemmDimensionAdapter::Result& dims) {
-      const std::optional<fe::DataType_t> data_type =
-          ToCudnnDataType(parameter.shape().element_type());
-      if (!data_type.has_value()) {
-        VLOG(3) << "Unsupported data type.";
-        return false;
-      }
-      hlo_to_cudnn[&parameter] = graph.tensor(
-          graph::Tensor_attributes()
-              .set_dim(dims.sizes)
-              .set_stride(dims.strides)
-              .set_data_type(*data_type)
-              .set_name(std::string(parameter.name()))
-              .set_uid(se::gpu::CuDnnTensorUID(parameter.parameter_number())));
-      if (dims.slices.has_value()) {
-        hlo_to_cudnn[&parameter] = graph.slice(
-            hlo_to_cudnn[&parameter],
-            graph::Slice_attributes().set_slices(dims.slices.value()));
-      }
-      return true;
-    };
     for (const TritonFusionAnalysis::Scope scope :
          {TritonFusionAnalysis::Scope::LHS,
           TritonFusionAnalysis::Scope::LHS_SCALE,
           TritonFusionAnalysis::Scope::RHS,
           TritonFusionAnalysis::Scope::RHS_SCALE,
           TritonFusionAnalysis::Scope::OUTPUT}) {
-      if (!adapter->analysis_.is_scaled_dot() &&
+      if (!gemm_adapter->analysis_.is_scaled_dot() &&
           (scope == TritonFusionAnalysis::Scope::LHS_SCALE ||
            scope == TritonFusionAnalysis::Scope::RHS_SCALE)) {
         continue;
       }
       for (const HloInstruction* parameter :
-           adapter->analysis_.ScopeParameters(scope)) {
-        const std::optional<GemmDimensionAdapter::Result> dims =
-            adapter->DimensionsAndStrides(*parameter, scope);
+           gemm_adapter->analysis_.ScopeParameters(scope)) {
+        const std::optional<Result> dims =
+            gemm_adapter->DimensionsAndStrides(*parameter, scope);
         VLOG(3) << "parameter: " << parameter->ToString() << "\n";
         if (!dims.has_value()) {
           VLOG(3) << "Unsupported dimensions.";
@@ -694,13 +686,13 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
           // the cuDNN graph.
           if (hlo->operand(0)->opcode() == HloOpcode::kBroadcast) {
             const std::optional<TritonFusionAnalysis::Scope> scope =
-                adapter->analysis_.QueryInstructionScope(*hlo);
+                gemm_adapter->analysis_.QueryInstructionScope(*hlo);
             if (!scope.has_value()) {
               LOG(FATAL) << "No scope for instruction: "
                          << hlo->ToShortString();
             }
-            const std::optional<GemmDimensionAdapter::Result> dims =
-                adapter->DimensionsAndStrides(*hlo, *scope);
+            const std::optional<Result> dims =
+                gemm_adapter->DimensionsAndStrides(*hlo, *scope);
             if (!dims.has_value()) {
               VLOG(3) << "Unsupported hlo for querying dimensions: "
                       << hlo->ToShortString();
@@ -774,48 +766,42 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
         stride.push_back(dim.stride());
         dilation.push_back(dim.window_dilation());
       }
-      // get compute type
       const auto compute_dtype =
           GetComputeDataType(hlo->shape().element_type());
       if (!compute_dtype.has_value()) {
         return std::nullopt;
       }
 
-      // lower to different conv based on conv_type set in cudnn fusion backend
+      // lower to different conv based on conv_kind set in cudnn fusion backend
       // config
-      if (conv_adapter->conv_type_ == "conv_fprop") {
-        auto conv_attr = graph::Conv_fprop_attributes()
-                             .set_pre_padding(pre_padding)
-                             .set_post_padding(post_padding)
-                             .set_stride(stride)
-                             .set_dilation(dilation)
-                             .set_compute_data_type(compute_dtype.value());
-        hlo_to_cudnn[hlo] = graph.conv_fprop(operand(0), operand(1), conv_attr);
-      } else if (conv_adapter->conv_type_ == "conv_dgrad") {
-        auto conv_attr = graph::Conv_dgrad_attributes()
-                             .set_pre_padding(pre_padding)
-                             .set_post_padding(post_padding)
-                             .set_stride(stride)
-                             .set_dilation(dilation)
-                             .set_compute_data_type(compute_dtype.value());
-        hlo_to_cudnn[hlo] = graph.conv_dgrad(operand(0), operand(1), conv_attr);
-      } else if (conv_adapter->conv_type_ == "conv_wgrad") {
-        auto conv_attr = graph::Conv_wgrad_attributes()
-                             .set_pre_padding(pre_padding)
-                             .set_post_padding(post_padding)
-                             .set_stride(stride)
-                             .set_dilation(dilation)
-                             .set_compute_data_type(compute_dtype.value());
+      auto set_conv_attr = [&](auto conv_attr) {
+        return conv_attr.set_pre_padding(pre_padding)
+            .set_post_padding(post_padding)
+            .set_stride(stride)
+            .set_dilation(dilation)
+            .set_compute_data_type(compute_dtype.value());
+      };
+      if (conv_adapter->conv_kind_ == CuDnnFusionConfig::CONV_FPROP) {
+        hlo_to_cudnn[hlo] =
+            graph.conv_fprop(operand(0), operand(1),
+                             set_conv_attr(graph::Conv_fprop_attributes()));
+      } else if (conv_adapter->conv_kind_ == CuDnnFusionConfig::CONV_DGRAD) {
+        hlo_to_cudnn[hlo] =
+            graph.conv_dgrad(operand(0), operand(1),
+                             set_conv_attr(graph::Conv_dgrad_attributes()));
+      } else if (conv_adapter->conv_kind_ == CuDnnFusionConfig::CONV_WGRAD) {
         // cudnn frontend accepts operand in the order of dout, input, but xla
         // uses reverse order
-        hlo_to_cudnn[hlo] = graph.conv_wgrad(operand(1), operand(0), conv_attr);
+        hlo_to_cudnn[hlo] =
+            graph.conv_wgrad(operand(1), operand(0),
+                             set_conv_attr(graph::Conv_wgrad_attributes()));
       } else {
         VLOG(3) << "Unimplemented conv type.";
         return std::nullopt;
       }
       // cuDNN requires output dims to be set for conv dgrad and wgrad, it is
       // not required for fprop but we do it anyway for simplicity
-      const std::optional<ConvDimensionAdapter::Result> dims =
+      const std::optional<Result> dims =
           conv_adapter->DimensionsAndStrides(*hlo);
       hlo_to_cudnn[hlo]->set_dim(dims->sizes);
     } else {
@@ -842,23 +828,21 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
     output = instructions.back()->operand(0);
   }
 
-  if (conv_adapter.has_value()) {
-    hlo_to_cudnn[output]->set_output(true).set_uid(
-        se::gpu::CuDnnTensorUID(fusion.operand_count()));
-  } else {
-    const std::optional<GemmDimensionAdapter::Result> dims =
-        adapter->DimensionsAndStrides(*output,
-                                      TritonFusionAnalysis::Scope::OUTPUT);
-    if (!dims.has_value()) {
-      VLOG(3) << "Unsupported dimensions.";
-      return std::nullopt;
-    }
-    hlo_to_cudnn[output]
-        ->set_output(true)
-        .set_dim(dims->sizes)
-        .set_stride(dims->strides)
-        .set_uid(se::gpu::CuDnnTensorUID(fusion.operand_count()));
+  std::optional<Result> dims =
+      conv_adapter.has_value()
+          ? conv_adapter->DimensionsAndStrides(*output)
+          : gemm_adapter->DimensionsAndStrides(
+                *output, TritonFusionAnalysis::Scope::OUTPUT);
+  if (!dims.has_value()) {
+    VLOG(3) << "Unsupported dimensions.";
+    return std::nullopt;
   }
+  hlo_to_cudnn[output]
+      ->set_output(true)
+      .set_dim(dims->sizes)
+      .set_stride(dims->strides)
+      .set_uid(se::gpu::CuDnnTensorUID(fusion.operand_count()));
+
   if (!fusion.GetModule()->config().debug_options().xla_dump_to().empty()) {
     json dump;
     graph.serialize(dump);
