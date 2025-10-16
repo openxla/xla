@@ -43,8 +43,8 @@ namespace gpu {
 namespace {
 
 struct CommunicationMetadata {
-  absl::flat_hash_map<int64_t, size_t> node_to_participant_count;
-  int num_devices_per_host;
+  absl::flat_hash_map<int64_t, size_t> partition_to_participant_count;
+  int num_devices_per_partition;
   int64_t replica_count;
 };
 
@@ -66,8 +66,8 @@ bool SameParticipantCounts(const absl::flat_hash_map<int64_t, size_t>& lhs,
 }
 
 absl::StatusOr<CommunicationMetadata> CommunicationContext(
-    const HloChannelInstruction& instr, int num_devices_per_host) {
-  absl::flat_hash_map<int64_t, size_t> node_to_participant_count;
+    const HloChannelInstruction& instr, int partition_size) {
+  absl::flat_hash_map<int64_t, size_t> partition_to_participant_count;
 
   if (auto* collective =
           dynamic_cast<const HloCollectiveInstruction*>(&instr)) {
@@ -75,26 +75,26 @@ absl::StatusOr<CommunicationMetadata> CommunicationContext(
          collective->device_list().replica_groups()) {
       absl::flat_hash_map<int64_t, size_t> buffer;
       for (int64_t rank : replica_group.replica_ids()) {
-        int64_t node_id = rank / num_devices_per_host;
-        buffer[node_id]++;
+        int64_t partition_id = rank / partition_size;
+        buffer[partition_id]++;
       }
-      if (!node_to_participant_count.empty() &&
-          !SameParticipantCounts(buffer, node_to_participant_count)) {
+      if (!partition_to_participant_count.empty() &&
+          !SameParticipantCounts(buffer, partition_to_participant_count)) {
         return absl::FailedPreconditionError(
             absl::StrCat("Non homogenous replica group: ",
                          collective->device_list().ToString()));
       }
-      if (node_to_participant_count.empty()) {
-        node_to_participant_count = buffer;
+      if (partition_to_participant_count.empty()) {
+        partition_to_participant_count = buffer;
       }
     }
   } else if (auto* permute =
                  dynamic_cast<const HloCollectivePermuteInstruction*>(&instr)) {
     for (const auto& [source, target] : permute->source_target_pairs()) {
-      int64_t source_node = source / num_devices_per_host;
-      int64_t target_node = target / num_devices_per_host;
-      node_to_participant_count[source_node]++;
-      node_to_participant_count[target_node]++;
+      int64_t source_partition = source / partition_size;
+      int64_t target_partition = target / partition_size;
+      partition_to_participant_count[source_partition]++;
+      partition_to_participant_count[target_partition]++;
     }
   } else {
     return absl::FailedPreconditionError(
@@ -102,32 +102,33 @@ absl::StatusOr<CommunicationMetadata> CommunicationContext(
         "instruction");
   }
 
-  return CommunicationMetadata{node_to_participant_count, num_devices_per_host,
+  return CommunicationMetadata{partition_to_participant_count, partition_size,
                                instr.GetModule()->config().replica_count()};
 }
 
-bool IsSingleHost(const CommunicationMetadata& pattern) {
-  if (pattern.node_to_participant_count.size() == 1) {
+bool IsSingleSlice(const CommunicationMetadata& pattern) {
+  if (pattern.partition_to_participant_count.size() == 1) {
     return true;
   }
   return pattern.replica_count > 0 &&
-         pattern.node_to_participant_count.empty() &&
-         pattern.replica_count <= pattern.num_devices_per_host;
+         pattern.partition_to_participant_count.empty() &&
+         pattern.replica_count <= pattern.num_devices_per_partition;
 }
 
 bool IsRailAligned(const CommunicationMetadata& pattern) {
-  if (!IsSingleHost(pattern) && pattern.node_to_participant_count.empty()) {
+  if (!IsSingleSlice(pattern) &&
+      pattern.partition_to_participant_count.empty()) {
     return true;
   }
   return absl::c_all_of(
-      pattern.node_to_participant_count, [&pattern](const auto& elem) {
-        const auto& [node_id, participant_count] = elem;
-        return participant_count == pattern.num_devices_per_host;
+      pattern.partition_to_participant_count, [&pattern](const auto& elem) {
+        const auto& [partition_id, participant_count] = elem;
+        return participant_count == pattern.num_devices_per_partition;
       });
 }
 
 bool IsNonRailAligned(const CommunicationMetadata& pattern) {
-  return !IsSingleHost(pattern) && !IsRailAligned(pattern);
+  return !IsSingleSlice(pattern) && !IsRailAligned(pattern);
 }
 
 }  // namespace
@@ -141,16 +142,16 @@ bool IsGPUSyncCollective(const HloInstruction& instr) {
 }
 
 absl::StatusOr<GPUCommunicationType> CommunicationType(
-    int num_devices_per_host, const HloChannelInstruction& instr,
+    int partition_size, const HloChannelInstruction& instr,
     const se::GpuComputeCapability& gpu_version) {
   if (!std::holds_alternative<se::CudaComputeCapability>(gpu_version)) {
     return absl::FailedPreconditionError("Only CUDA is supported.");
   }
 
   TF_ASSIGN_OR_RETURN(CommunicationMetadata comm,
-                      CommunicationContext(instr, num_devices_per_host));
-  if (IsSingleHost(comm)) {
-    return GPUCommunicationType::SINGLE_HOST;
+                      CommunicationContext(instr, partition_size));
+  if (IsSingleSlice(comm)) {
+    return GPUCommunicationType::SINGLE_PARTITION;
   }
   if (IsRailAligned(comm)) {
     return GPUCommunicationType::RAIL_ALIGNED;

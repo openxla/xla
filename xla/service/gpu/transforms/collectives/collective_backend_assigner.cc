@@ -96,10 +96,11 @@ absl::StatusOr<bool> CollectiveBackendAssigner::Run(
               << static_cast<int>(comm_type)
               << " shape_size=" << GetShapeSize(instr->shape())
               << " threshold_in_bytes_=" << threshold_in_bytes_;
-      bool use_nvshmem = (num_visible_devices_per_process_ == 1 ||
-                          comm_type == GPUCommunicationType::SINGLE_HOST) &&
-                         (!IsAllReduceOp(instr) ||
-                          GetShapeSize(instr->shape()) < threshold_in_bytes_);
+      bool use_nvshmem =
+          (num_visible_devices_per_process_ == 1 ||
+           comm_type == GPUCommunicationType::SINGLE_PARTITION) &&
+          (!IsAllReduceOp(instr) ||
+           GetShapeSize(instr->shape()) < threshold_in_bytes_);
       if (!use_nvshmem) {
         continue;
       }
