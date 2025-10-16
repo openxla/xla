@@ -363,12 +363,13 @@ cc_library(
 
 cc_library(
     name = "rocsolver",
-    srcs = glob(["%{rocm_root}/lib/librocsolver*.so*"]),
     hdrs = glob(["%{rocm_root}/include/rocsolver/**"]),
+    data = glob(["%{rocm_root}/lib/librocsolver*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = ["-Wl,-rpath,local_config_rocm/rocm/rocm_dis/lib"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [":rocm_config"],
@@ -388,7 +389,6 @@ cc_library(
 
 cc_library(
     name = "hipsolver",
-    srcs = glob(["%{rocm_root}/lib/libhipsolver*.so*"]),
     hdrs = glob(["%{rocm_root}/include/hipsolver/**"]),
     data = glob(["%{rocm_root}/lib/libhipsolver*.so*"]),
     include_prefix = "rocm",
