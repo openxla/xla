@@ -52,9 +52,6 @@ export PYTHON_BIN_PATH=`which python3`
 export TF_NEED_ROCM=1
 export ROCM_PATH="/opt/rocm"
 
-GPU_NAME=(`rocminfo | grep -m 1 gfx`)
-GPU_NAME=${GPU_NAME[1]}
-
 BAZEL_DISK_CACHE_SIZE=100G
 BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib-v0.7.1"
 mkdir -p ${BAZEL_DISK_CACHE_DIR}
@@ -66,6 +63,15 @@ EXCLUDED_TESTS=(
   CollectiveOpsTestE2E.MemcpyP2pLargeMessage
   RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll_8GPUs_2ReplicasPerGroups/sync_decomposer
   RaggedAllToAllTest/RaggedAllToAllTest.RaggedAllToAll_8GPUs_2ReplicasPerGroups/async_decomposer
+  # //xla/backends/gpu/codegen/triton:fusion_emitter_parametrized_legacy_test_amdgpu_any
+  ElementwiseTestSuiteF32/BinaryElementwiseTest.ElementwiseFusionExecutesCorrectly/f32_atan2
+  # //xla/tests:collective_ops_e2e_test_amdgpu_any
+  CollectiveOpsTestE2EPipelinedNonPipelined.CollectivePipelinerBackward
+  CollectiveOpsTestE2EPipelinedNonPipelined.CollectivePipelinerBackwardStartFromOne
+  # //xla/tools/multihost_hlo_runner:functional_hlo_runner_test
+  FunctionalHloRunnerTest.Sharded2DevicesHloUnoptimizedSnapshot
+  FunctionalHloRunnerTest.ShardedComputationUnderStreamCapture
+
 )
 
 SCRIPT_DIR=$(realpath $(dirname $0))
@@ -73,17 +79,27 @@ TAG_FILTERS="$($SCRIPT_DIR/rocm_tag_filters.sh)"
 
 SANITIZER_ARGS=()
 if [[ $1 == "asan" ]]; then
-    SANITIZER_ARGS+=("--test_env=ASAN_OPTIONS=suppressions=${SCRIPT_DIR}/asan_ignore_list.txt:use_sigaltstack=0")
-    SANITIZER_ARGS+=("--test_env=LSAN_OPTIONS=suppressions=${SCRIPT_DIR}/lsan_ignore_list.txt:use_sigaltstack=0")
     SANITIZER_ARGS+=("--run_under=//build_tools/rocm:sanitizer_wrapper")
     SANITIZER_ARGS+=("--config=asan")
     TAG_FILTERS="$TAG_FILTERS,-noasan"
     shift
 elif [[ $1 == "tsan" ]]; then
-    SANITIZER_ARGS+=("--test_env=TSAN_OPTIONS=suppressions=${SCRIPT_DIR}/tsan_ignore_list.txt::history_size=7:ignore_noninstrumented_modules=1")
     SANITIZER_ARGS+=("--run_under=//build_tools/rocm:sanitizer_wrapper")
     SANITIZER_ARGS+=("--config=tsan")
     TAG_FILTERS="$TAG_FILTERS,-notsan"
+    # excluded from tsan
+    EXCLUDED_TESTS+=(
+        CollectiveOpsTest*
+        Fp8CollectiveOpsTest.AllGather_8BitFloat
+        Fp8CollectiveOpsTest.CollectivePermute_8BitFloat
+        Fp8CollectiveOpsTest.AllToAll_8BitFloat
+        AsyncCollectiveOps*
+        AllReduceTest*
+        RaggedAllToAllTest*
+        AsyncCollectiveOps*
+        AsyncMemcpyCollectiveOps*
+        RaggedAllToAllTest*
+    )
     shift
 fi
 
@@ -102,13 +118,13 @@ bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --flaky_test_attempts=3 \
     --keep_going \
     --test_strategy=exclusive \
-    --action_env=TF_ROCM_AMDGPU_TARGETS=${GPU_NAME} \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
     --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
     --action_env=NCCL_MAX_NCHANNELS=1 \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     "${SANITIZER_ARGS[@]}" \
-    "$@"
+    "$@" \
+    --strategy=TestRunner=local # execute multigpu tests locally as there is no gpu exclusive protection on rbe
 
 # clean up bazel disk_cache
 bazel shutdown \

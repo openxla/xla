@@ -11,7 +11,22 @@ platform(
         "@bazel_tools//tools/cpp:clang",
     ],
     exec_properties = {
-        "container-image": "docker://rocm/tensorflow-build:2.19-jammy-python3.9-rocm6.4.0@sha256:7b42dafbe5401fd84cf951a63f16dd44a84c64a6ba2eeb7675fd0919f03b2bdf",
+        "container-image": "rocm/tensorflow-build@sha256:7cd444ac48657fee2f5087fbda7766266704d3f8fb2299f681952ae4eabed060",
         "OSFamily": "Linux",
+        "Pool": "linux_x64_large",
+    },
+)
+
+platform(
+    name = "linux_x64_gpu",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+        "@bazel_tools//tools/cpp:clang",
+    ],
+    exec_properties = {
+        "container-image": "rocm/tensorflow-build@sha256:7cd444ac48657fee2f5087fbda7766266704d3f8fb2299f681952ae4eabed060",
+        "OSFamily": "Linux",
+        "Pool": "amd_gpu",
     },
 )

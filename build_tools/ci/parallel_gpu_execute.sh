@@ -21,7 +21,7 @@
 # Required environment variables:
 #     TF_GPU_COUNT = Number of GPUs available.
 
-TF_GPU_COUNT=${TF_GPU_COUNT:-4}
+TF_GPU_COUNT=$(lspci | grep -e 'controller' -e 'accelerators' | grep 'AMD/ATI' | wc -l)
 TF_TESTS_PER_GPU=${TF_TESTS_PER_GPU:-8}
 
 # This function is used below in rlocation to check that a path is absolute

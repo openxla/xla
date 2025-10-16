@@ -196,13 +196,19 @@ cc_library(
     ],
 )
 
+rocblas_libs = glob([
+    "%{rocm_root}/lib/librocblas*.so*",
+    "%{rocm_root}/lib/rocblas/**",
+])
+
 cc_library(
     name = "rocblas",
     hdrs = glob(["%{rocm_root}/include/rocblas/**"]),
-    data = glob([
-        "%{rocm_root}/lib/librocblas*.so*",
-        "%{rocm_root}/lib/rocblas/**",
-    ]),
+    data = select({
+        ":build_hermetic": rocblas_libs,
+        ":multiple_rocm_paths": rocblas_libs,
+        "//conditions:default": [],
+    }),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -254,13 +260,19 @@ cc_library(
     deps = [":rocm_config"],
 )
 
+miopen_libs = glob([
+    "%{rocm_root}/share/miopen/**",
+])
+
 cc_library(
     name = "miopen",
     srcs = glob(["%{rocm_root}/lib/libMIOpen*.so*"]),
     hdrs = glob(["%{rocm_root}/include/miopen/**"]),
-    data = glob([
-        "%{rocm_root}/share/miopen/**",
-    ]),
+    data = select({
+        ":build_hermetic": miopen_libs,
+        ":multiple_rocm_paths": miopen_libs,
+        "//conditions:default": [],
+    }),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -334,10 +346,16 @@ cc_library(
     deps = [":rocm_config"],
 )
 
+roctracer_libs = glob(["%{rocm_root}/lib/libroctracer*.so*"])
+
 cc_library(
     name = "roctracer",
     hdrs = glob(["%{rocm_root}/include/roctracer/**"]),
-    data = glob(["%{rocm_root}/lib/libroctracer*.so*"]),
+    data = select({
+        ":build_hermetic": roctracer_libs,
+        ":multiple_rocm_paths": roctracer_libs,
+        "//conditions:default": [],
+    }),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -385,11 +403,19 @@ cc_library(
     deps = [":rocm_config"],
 )
 
+hipsolver_libs = glob([
+    "%{rocm_root}/lib/libhipsolver*.so*",
+])
+
 cc_library(
     name = "hipsolver",
     srcs = glob(["%{rocm_root}/lib/libhipsolver*.so*"]),
     hdrs = glob(["%{rocm_root}/include/hipsolver/**"]),
-    data = glob(["%{rocm_root}/lib/libhipsolver*.so*"]),
+    data = select({
+        ":build_hermetic": hipsolver_libs,
+        ":multiple_rocm_paths": hipsolver_libs,
+        "//conditions:default": [],
+    }),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -399,11 +425,17 @@ cc_library(
     deps = [":rocm_config"],
 )
 
+hipblas_libs = glob(["%{rocm_root}/lib/libhipblas.so*"])
+
 cc_library(
     name = "hipblas",
     srcs = glob(["%{rocm_root}/lib/libhipblas.so*"]),
     hdrs = glob(["%{rocm_root}/include/hipblas/**"]),
-    data = glob(["%{rocm_root}/lib/libhipblas.so*"]),
+    data = select({
+        ":build_hermetic": hipblas_libs,
+        ":multiple_rocm_paths": hipblas_libs,
+        "//conditions:default": [],
+    }),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -428,13 +460,19 @@ cc_library(
     deps = [":rocm_config"],
 )
 
+hipblaslt_libs = glob([
+    "%{rocm_root}/lib/hipblaslt/**",
+    "%{rocm_root}/lib/libhipblaslt.so*",
+])
+
 cc_library(
     name = "hipblaslt",
     hdrs = glob(["%{rocm_root}/include/hipblaslt/**"]),
-    data = glob([
-        "%{rocm_root}/lib/hipblaslt/**",
-        "%{rocm_root}/lib/libhipblaslt.so*",
-    ]),
+    data = select({
+        ":build_hermetic": hipblaslt_libs,
+        ":multiple_rocm_paths": hipblaslt_libs,
+        "//conditions:default": [],
+    }),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
