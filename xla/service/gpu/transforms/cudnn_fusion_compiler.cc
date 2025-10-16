@@ -828,7 +828,7 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
     output = instructions.back()->operand(0);
   }
 
-  std::optional<Result> dims =
+  const std::optional<Result> dims =
       conv_adapter.has_value()
           ? conv_adapter->DimensionsAndStrides(*output)
           : gemm_adapter->DimensionsAndStrides(
@@ -842,7 +842,6 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
       .set_dim(dims->sizes)
       .set_stride(dims->strides)
       .set_uid(se::gpu::CuDnnTensorUID(fusion.operand_count()));
-
   if (!fusion.GetModule()->config().debug_options().xla_dump_to().empty()) {
     json dump;
     graph.serialize(dump);
