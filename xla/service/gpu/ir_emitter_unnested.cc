@@ -2033,8 +2033,7 @@ absl::Status IrEmitterUnnested::EmitCollectivePermute(
           Thunk::ThunkInfo::WithProfileAnnotation(
               instr, ir_emitter_context_->GetNextThunkId()),
           instr, replica_count, partition_count, buffers,
-          ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
-          GetStreamKindForP2P(instr));
+          ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
       GetCollectivesAsyncEvents().try_emplace(instr, thunk->async_events());
       AddThunkToThunkSequence(std::move(thunk));
     } else {
@@ -2042,8 +2041,7 @@ absl::Status IrEmitterUnnested::EmitCollectivePermute(
           Thunk::ThunkInfo::WithProfileAnnotation(
               instr, ir_emitter_context_->GetNextThunkId()),
           instr, replica_count, partition_count, buffers,
-          ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
-          GetStreamKindForP2P(instr));
+          ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
       GetCollectivesAsyncEvents().try_emplace(instr, thunk->async_events());
       AddThunkToThunkSequence(std::move(thunk));
     }
@@ -2170,6 +2168,12 @@ absl::Status IrEmitterUnnested::EmitCollectiveThunk(
         thunk_info, inst, /*buffers=*/std::move(buffers),
         ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
     GetCollectivesAsyncEvents().insert({async_start, thunk->async_events()});
+    const ExecutionStreamAssignment& stream_assignment =
+        ir_emitter_context_->execution_stream_assignment();
+    TF_ASSIGN_OR_RETURN(
+        auto streams,
+        stream_assignment.GetAsyncExecutionStreamIds(async_start));
+    thunk->set_execution_stream_id(streams.destination_stream_id);
     AddThunkToThunkSequence(std::move(thunk));
     return absl::OkStatus();
   }
@@ -2347,22 +2351,12 @@ std::vector<const HloInstruction*> GetRealDependencyInstructions(
 absl::Status IrEmitterUnnested::EmitCollectiveGroupStartThunk(
     const HloInstruction* instr) {
   emit_group_thunks_ = true;
-  std::optional<AsyncStreamKind> stream_kind;
   for (const HloInstruction* nested_instruction :
        instr->async_wrapped_computation()->instructions()) {
     TF_RETURN_IF_ERROR(EmitHloInstruction(nested_instruction));
-    if ((nested_instruction->opcode() == HloOpcode::kSend ||
-         nested_instruction->opcode() == HloOpcode::kRecv) &&
-        !stream_kind.has_value()) {
-      // We only need to modify the stream kind once, since all
-      // send/recv instructions in a group should have the same
-      // stream kind.
-      stream_kind = GetStreamKindForP2P(nested_instruction);
-    }
   }
   auto thunk = std::make_unique<CollectiveGroupThunk>(
       instr, Thunk::Kind::kGroupStart, std::move(scoped_thunk_sequence_),
-      stream_kind.value_or(AsyncStreamKind::kCollective),
       ir_emitter_context_->GetNextThunkId());
   emit_group_thunks_ = false;
 
@@ -2392,16 +2386,11 @@ absl::Status IrEmitterUnnested::EmitCollectiveAsyncDone(
     return absl::OkStatus();
   }
 
-  AsyncStreamKind stream_kind = AsyncStreamKind::kCollective;
-  if (is_send_recv) {
-    stream_kind = GetStreamKindForP2P(start);
-  }
-
   AddThunkToThunkSequence(std::make_unique<CollectiveDoneThunk>(
       kind,
       Thunk::ThunkInfo::WithProfileAnnotation(
           inst, ir_emitter_context_->GetNextThunkId()),
-      async_events_it->second, stream_kind));
+      async_events_it->second));
   return absl::OkStatus();
 }
 
@@ -2425,22 +2414,17 @@ absl::Status IrEmitterUnnested::EmitNvshmemAsyncDone(
     return absl::OkStatus();
   }
 
-  AsyncStreamKind stream_kind = AsyncStreamKind::kCollective;
-  if (is_send_recv) {
-    stream_kind = GetStreamKindForP2P(start);
-  }
-
   if (kind == Thunk::Kind::kNvshmemCollectivePermuteDone) {
     AddThunkToThunkSequence(std::make_unique<NvshmemCollectivePermuteDoneThunk>(
         Thunk::ThunkInfo::WithProfileAnnotation(
             inst, ir_emitter_context_->GetNextThunkId()),
-        async_events_it->second, stream_kind));
+        async_events_it->second));
   } else {
     AddThunkToThunkSequence(std::make_unique<NvshmemCollectiveDoneThunk>(
         kind,
         Thunk::ThunkInfo::WithProfileAnnotation(
             inst, ir_emitter_context_->GetNextThunkId()),
-        async_events_it->second, stream_kind));
+        async_events_it->second));
   }
   return absl::OkStatus();
 }
@@ -2511,6 +2495,12 @@ absl::Status IrEmitterUnnested::EmitNvshmemThunk(
         thunk_info, inst, /*buffers=*/std::move(buffers),
         ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
     GetCollectivesAsyncEvents().insert({async_start, thunk->async_events()});
+    const ExecutionStreamAssignment& stream_assignment =
+        ir_emitter_context_->execution_stream_assignment();
+    TF_ASSIGN_OR_RETURN(
+        ExecutionStreamAssignment::AsyncExecutionStreamIds streams,
+        stream_assignment.GetAsyncExecutionStreamIds(async_start));
+    thunk->set_execution_stream_id(streams.destination_stream_id);
     AddThunkToThunkSequence(std::move(thunk));
     return absl::OkStatus();
   }
