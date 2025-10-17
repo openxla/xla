@@ -16,11 +16,9 @@ The following ops distribute work and/or aggregates results across replicas or d
 * [`CrossReplicaSum`](https://openxla.org/xla/operation_semantics#crossreplicasum) \- Performs [`AllReduce`](https://openxla.org/xla/operation_semantics#allreduce) with a summation computation.  
 * [`ReduceScatter`](https://openxla.org/xla/operation_semantics#reducescatter) \- A collective operation that effectively does an [`AllReduce`](https://openxla.org/xla/operation_semantics#allreduce) and then scatters the result by splitting it into shard blocks and replica groups.
 
-
 ## Reduced Precision
 
 Ops performing truncating low-order mantissa bits and/or exponent bits to emulate lower precision.
- 
 
 * [ReducePrecision](https://openxla.org/xla/operation_semantics#reduceprecision) \- Models the effect of converting floating-point values to a lower-precision format (such as IEEE-FP16) and back to the original format.
 
