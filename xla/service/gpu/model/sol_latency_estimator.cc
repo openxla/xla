@@ -203,12 +203,11 @@ absl::StatusOr<absl::Duration> DispatchEstimation(
   TF_ASSIGN_OR_RETURN(auto num_groups_and_devices,
                       GetReplicaGroupCountAndSize(&instr));
 
-  // Use partition size from module config if available, otherwise fallback to
-  // gpus per node.
-  int64_t partition_size = instr.GetModule()->config().partition_size();
-  if (partition_size <= 0) {
-    partition_size = sol_flags.gpus_per_node;
-  }
+  int64_t partition_size =
+      (sol_flags.partition_size > 0) ? sol_flags.partition_size
+      : (instr.GetModule()->config().partition_size() > 0)
+          ? instr.GetModule()->config().partition_size()  // Auto-detected size
+          : sol_flags.gpus_per_node;
 
   switch (comm) {
     case GPUCommunicationType::RAIL_ALIGNED: {
@@ -317,13 +316,13 @@ SolLatencyEstimator::ComputeCollectiveTime(
         absl::StrCat("Unsupported collective instruction: ", instr.ToString()));
   }
 
-  // Use partition size from module config if available, otherwise fallback to
-  // gpus per node.
   int64_t partition_size =
-      collective_instr->GetModule()->config().partition_size();
-  if (partition_size <= 0) {
-    partition_size = sol_flags.gpus_per_node;
-  }
+      (sol_flags.partition_size > 0) ? sol_flags.partition_size
+      : (collective_instr->GetModule()->config().partition_size() > 0)
+          ? collective_instr->GetModule()
+                ->config()
+                .partition_size()  // Auto-detected size
+          : sol_flags.gpus_per_node;
   TF_ASSIGN_OR_RETURN(
       GPUCommunicationType communication_type,
       CommunicationType(partition_size, *collective_instr,

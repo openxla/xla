@@ -2023,7 +2023,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
     const CompileOptions& options) {
   // TODO rename slice_size to partition_size in CompileOptions
   if (options.slice_size > 0) {
-    module->mutable_config()->set_partition_size(options.slice_size);
+    module->mutable_config().set_partition_size(options.slice_size);
   }
 
   const DebugOptions debug_opts = module->config().debug_options();
