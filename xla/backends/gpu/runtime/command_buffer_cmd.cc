@@ -2415,10 +2415,10 @@ CollectivePermuteCmd::Record(const Thunk::ExecuteParams& execute_params,
                       Thunk::GetGpuCollectives(execute_params));
                       
   TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(collectives, *execute_params.collective_params,
+              GetComm(collectives, *execute_params.collective_params,
                               *execute_params.collective_cliques,
-                              config().replica_groups, config().group_mode,
-                              AsyncStreamKind::kCollective));  // Use constant
+              config().replica_groups, config().group_mode,
+              AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));  // Use constant
 
   return RecordTracedCommand(execute_params, record_params, 
       std::move(record_action), command_buffer,

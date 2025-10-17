@@ -91,8 +91,8 @@ absl::StatusOr<const int64_t> GetCurrentId(
   TF_ASSIGN_OR_RETURN(
       const DeviceAssignment::LogicalID current_logical_id,
       collective_params->device_assn->LogicalIdForDevice(global_device_id));
-  const int64_t current_id =
-      config.group_mode == CollectiveOpGroupMode::kCrossReplica
+  const int64_t current_id = config.group_mode == 
+      CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA
           ? current_logical_id.replica_id
           : current_logical_id.computation_id;
   return current_id;
