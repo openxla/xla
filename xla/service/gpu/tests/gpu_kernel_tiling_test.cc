@@ -428,7 +428,8 @@ ENTRY RowLargeReduce {
   Z = s32[762145,776223]{1,0} add(B, I)
   BB = s32[762145,999,777]{2,1,0} reshape(B)
   CC = s32[] constant(0)
-  ROOT R = s32[762145,999]{1,0} reduce(BB, CC), dimensions={2}, to_apply=reduceOp
+  R = s32[762145,999]{1,0} reduce(BB, CC), dimensions={2}, to_apply=reduceOp
+  ROOT O = s16[762145,999] convert(R)
 }
 )", /*compile_only*/false}, 
    { "MultiRowLargeReduce",
@@ -446,7 +447,8 @@ ENTRY MultiRowLargeReduce {
   Z = s32[262144,262144]{1,0} add(B, I)
   BB = s32[262144,4096,64]{2,1,0} reshape(Z)
   CC = s32[] constant(0)
-  ROOT R = s32[262144,4096]{1,0} reduce(BB, CC), dimensions={2}, to_apply=reduceOp
+  R = s32[262144,4096]{1,0} reduce(BB, CC), dimensions={2}, to_apply=reduceOp
+  ROOT O = s16[262144,4096]{1,0} convert(R)
 }
 )", /*compile_only*/false}, 
    { "MultiRowLargeReduceNonMultipleOf2",
