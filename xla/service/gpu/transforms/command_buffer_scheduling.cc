@@ -248,11 +248,7 @@ static bool IsCommand(const HloCustomCallInstruction* hlo,
             << " into command buffer.";
     return true;
     }
-    // Not all convolution custom calls can be captured, therefore we capture
-    // only those convolutions which are explicitly enabled by the user.
-    if (IsCustomCallToDnnConvolution(*hlo) && 
-        config.enabled_legacy_custom_call_targets.contains(
-              hlo->custom_call_target())) {
+    if (IsCustomCallToDnnConvolution(*hlo)) {
       VLOG(3) << "Recording convolution, target " << hlo->custom_call_target()
               << " into command buffer.";
       return true;

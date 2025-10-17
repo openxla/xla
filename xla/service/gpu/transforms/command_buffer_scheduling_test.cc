@@ -62,9 +62,6 @@ class CommandBufferSchedulingTest : public HloTestBase {
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLASLT);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
     debug_options.set_xla_gpu_graph_min_graph_size(2);
-    // Needed for ConvolutionCustomCallAndCollectivePermute test
-    debug_options.add_legacy_command_buffer_custom_call_targets(
-        "__cudnn$convBiasActivationForward");
     return debug_options;
   }
 

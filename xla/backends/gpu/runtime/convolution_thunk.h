@@ -50,7 +50,11 @@ class ConvolutionThunk : public Thunk {
 
   ConvolutionThunk& operator=(const ConvolutionThunk&) = delete;
 
-  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::Status Initialize(const InitializeParams& params) override;
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    return ExecuteOnStreamInternal(params.stream, params);
+  }
 
   static absl::StatusOr<std::unique_ptr<ConvolutionThunk>> FromProto(
       ThunkInfo thunk_info, const ConvolutionThunkProto& proto,
@@ -65,11 +69,6 @@ class ConvolutionThunk : public Thunk {
                    std::vector<BufferAllocation::Slice> result_slices,
                    BufferAllocation::Slice scratch_slice);
 
-  absl::Status Initialize(const InitializeParams& params) override;
-
-  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
-    return ExecuteOnStreamInternal(params.stream, params);
-  }
  protected:
   // needed for ConvolutionCmd 
   explicit ConvolutionThunk(const ConvolutionThunk& rhs);

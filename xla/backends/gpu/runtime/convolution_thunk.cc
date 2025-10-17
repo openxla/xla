@@ -65,6 +65,7 @@ ConvolutionThunk::ConvolutionThunk(
   operand_buffers_(rhs.operand_buffers_),
   result_buffers_(rhs.result_buffers_),
   scratch_buffer_(rhs.scratch_buffer_),
+  descriptor_(rhs.descriptor_),
   config_(rhs.config_) {} 
 
 ConvolutionThunk::ConvolutionThunk(
