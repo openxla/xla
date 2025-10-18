@@ -48,10 +48,13 @@ class ConvolutionThunk : public Thunk {
       std::vector<BufferAllocation::Slice> result_slices,
       BufferAllocation::Slice scratch_slice);
 
-  ConvolutionThunk(const ConvolutionThunk&) = delete;
   ConvolutionThunk& operator=(const ConvolutionThunk&) = delete;
 
-  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  absl::Status Initialize(const InitializeParams& params) override;
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    return ExecuteOnStreamInternal(params.stream, params);
+  }
 
   static absl::StatusOr<std::unique_ptr<ConvolutionThunk>> FromProto(
       ThunkInfo thunk_info, const ConvolutionThunkProto& proto,
@@ -66,12 +69,19 @@ class ConvolutionThunk : public Thunk {
                    std::vector<BufferAllocation::Slice> result_slices,
                    BufferAllocation::Slice scratch_slice);
 
+ protected:
+  // needed for ConvolutionCmd 
+  explicit ConvolutionThunk(const ConvolutionThunk& rhs);
+
+  GenericConvRunner& GetOrCreateRunner(const se::Stream* stream,
+                                       bool* runner_created = nullptr);
+
+  absl::Status ExecuteOnStreamInternal(se::Stream *stream, 
+                                      const ExecuteParams& params);
+
   std::vector<BufferAllocation::Slice> operand_buffers_;
   std::vector<BufferAllocation::Slice> result_buffers_;
   BufferAllocation::Slice scratch_buffer_;
-  GenericConvRunner& GetOrCreateRunner(const stream_executor::Stream* stream,
-                                       bool* runner_created);
-
   // Technically this is only needed during initialization to create the
   // GpuConvConfig, but the actual GpuConvConfig is hard to serialize. So we
   // keep the descriptor around for serialization purposes.
@@ -79,7 +89,7 @@ class ConvolutionThunk : public Thunk {
   // Convolution config
   const GpuConvConfig config_;
   absl::Mutex mu_;
-  absl::flat_hash_map<const stream_executor::Stream*,
+  absl::flat_hash_map<const se::StreamExecutor*,
                       std::unique_ptr<GenericConvRunner>>
       runner_cache_ ABSL_GUARDED_BY(mu_);
 };
