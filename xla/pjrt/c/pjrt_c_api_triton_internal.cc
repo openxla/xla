@@ -37,10 +37,24 @@ PJRT_Error* PJRT_Triton_Compile(PJRT_Triton_Compile_Args* args) {
                        absl::string_view(args->arch_name, args->arch_name_size),
                        args->num_warps, args->num_ctas, args->num_stages));
 
-  auto* asm_copy = new char[result.asm_text.size()];
-  std::memcpy(asm_copy, result.asm_text.data(), result.asm_text.size());
-  args->out_asm = asm_copy;
-  args->out_asm_size = result.asm_text.size();
+  args->out_asm = nullptr;
+  args->out_asm_size = 0;
+  if (xla::triton::AsmText* ptr =
+          std::get_if<xla::triton::AsmText>(&result.compiled_output)) {
+    auto* asm_copy = new char[ptr->value.size()];
+    std::memcpy(asm_copy, ptr->value.data(), ptr->value.size());
+    args->out_asm = asm_copy;
+    args->out_asm_size = ptr->value.size();
+  }
+  args->out_path = nullptr;
+  args->out_path_size = 0;
+  if (xla::triton::HsacoPath* ptr =
+          std::get_if<xla::triton::HsacoPath>(&result.compiled_output)) {
+    auto* path_copy = new char[ptr->value.size()];
+    std::memcpy(path_copy, ptr->value.data(), ptr->value.size());
+    args->out_path = path_copy;
+    args->out_path_size = ptr->value.size();
+  }
   args->out_smem_bytes = result.smem_bytes;
   args->out_cluster_dim_x = result.cluster_dim_x;
   args->out_cluster_dim_y = result.cluster_dim_y;
