@@ -1956,7 +1956,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
 }
 
 absl::Status CheckAtLeastAmpere(const se::GpuComputeCapability& gpu_cc) {
-  if (auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_cc);
+  if (auto* cuda_cc = gpu_cc.cuda_compute_capability();
       cuda_cc != nullptr && !cuda_cc->IsAtLeastAmpere()) {
     return absl::FailedPreconditionError(
         absl::StrCat("Triton support is only enabled for Ampere GPUs (compute ",
@@ -2000,8 +2000,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     mlir::MLIRContext& mlir_context, bool is_xla_fusion, bool emit_kernel) {
   const auto& gpu_cc = device_info.gpu_compute_capability();
   TF_RETURN_IF_ERROR(CheckAtLeastAmpere(gpu_cc));
-  std::string arch_name =
-      std::visit([](auto& cc) { return cc.ToString(); }, gpu_cc);
+  std::string arch_name = gpu_cc.ToString();
 
   const HloModuleConfig& hlo_config = hlo_module.config();
 
@@ -2092,7 +2091,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
         shared_mem_bytes, device_info.shared_memory_per_block_optin()));
   }
 
-  if (auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_cc);
+  if (auto* cuda_cc = gpu_cc.cuda_compute_capability();
       cuda_cc != nullptr && cuda_cc->IsBlackwell()) {
     // https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-memory
     constexpr int kTensorMemoryColumns = 512;
@@ -2185,8 +2184,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
 
 std::string GetLibdevicePath(const HloModuleConfig& hlo_config,
                              const se::DeviceDescription& device_info) {
-  if (std::holds_alternative<se::CudaComputeCapability>(
-          device_info.gpu_compute_capability())) {
+  if (device_info.gpu_compute_capability().IsCuda()) {
     return nvptx::LibDevicePath(
         hlo_config.debug_options().xla_gpu_cuda_data_dir());
   }
