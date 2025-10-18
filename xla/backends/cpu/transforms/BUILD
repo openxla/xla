@@ -84,6 +84,23 @@ cc_library(
 )
 
 onednn_graph_cc_library(
+    name = "onednn_dot_canonicalizer",
+    srcs = ["onednn_dot_canonicalizer.cc"],
+    hdrs = ["onednn_dot_canonicalizer.h"],
+    deps = [
+        "//xla:status_macros",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service:hlo_creation_utils",
+        "//xla/service:pattern_matcher",
+        "//xla/tsl/mkl:onednn",
+        "@com_google_absl//absl/algorithm:container",
+        "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+onednn_graph_cc_library(
     name = "onednn_matcher",
     hdrs = ["onednn_matcher.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
