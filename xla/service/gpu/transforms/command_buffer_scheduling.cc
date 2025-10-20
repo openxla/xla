@@ -37,7 +37,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "llvm/ADT/STLExtras.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -46,6 +45,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/transforms/simplifiers/computation_canonicalizers.h"
 #include "xla/hlo/utils/hlo_longest_prefix.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -87,10 +88,6 @@ static bool IsParameter(const HloInstruction* hlo) {
   return HloPredicateIsOp<HloOpcode::kParameter>(hlo);
 }
 
-static bool IsGetTupleElement(const HloInstruction* hlo) {
-  return HloPredicateIsOp<HloOpcode::kGetTupleElement>(hlo);
-}
-
 // Returns true if instruction is no-op at run time and doesn't have a
 // corresponding Thunk or Command (metadata only operation).
 static bool IsNoOp(const HloInstruction* hlo) {
@@ -120,7 +117,8 @@ static bool AsyncStartOrDoneCommandIsSupported(
 
   if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
     // We don't currently support dynamic memcpy fusions in command buffers.
-    if (IsDynamicMemcpyFusion(hlo->async_wrapped_instruction())) {
+    if (IsGpuFusionKind(*hlo->async_wrapped_instruction(),
+                        kDynamicMemcpyFusionKind)) {
       return config.enabled_commands.contains(
           DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
     }
@@ -257,13 +255,6 @@ static bool IsCommand(const HloCustomCallInstruction* hlo,
     return false;
   }
 
-  if (config.enabled_legacy_custom_call_targets.contains(
-          hlo->custom_call_target())) {
-    VLOG(3) << "Recording legacy custom call target "
-            << hlo->custom_call_target() << " into command buffer.";
-    return true;
-  }
-
   // Check if FFI handler is compatible with command buffers.
   auto registration = ffi::FindHandler(hlo->custom_call_target(), "gpu");
   return registration.ok()
@@ -280,7 +271,7 @@ static bool IsCommand(const HloInstruction* hlo,
     if (backend_config.kind() == kCuDnnFusionKind) {
       return config.enabled_commands.contains(DebugOptions::CUDNN);
     }
-    if (IsDynamicMemcpyFusion(fusion)) {
+    if (IsGpuFusionKind(*fusion, kDynamicMemcpyFusionKind)) {
       return config.enabled_commands.contains(
           DebugOptions::DYNAMIC_SLICE_COPY_FUSION);
     }
@@ -331,7 +322,7 @@ static bool IsCommand(const HloInstruction* hlo,
     return config.enabled_commands.contains(DebugOptions::FUSION);
   }
 
-  if (auto* sort = DynCast<HloSortInstruction>(hlo)) {
+  if (DynCast<HloSortInstruction>(hlo)) {
     return config.enabled_commands.contains(DebugOptions::FUSION);
   }
 
@@ -384,73 +375,6 @@ static void RemoveTrailingNoOps(HloInstructionSequence& seq) {
       break;
     }
   }
-}
-
-// Moves GetTupleElement instructions to right after the instruction that
-// produces the tuple. Returns whether the computation was changed. This is run
-// before command buffer scheduling.
-//
-// The motivation is to ensure the live range of large elements in the tuple are
-// not extended due to the creation of command buffers. For example, consider
-// the following input HLO to this pass.
-//
-//     x = f32[] parameter(0)
-//     t = (f32[], f32[10000]) custom-call()
-//     ... # Many instructions, none which use t
-//     x_squared = f32[] multiply(x, x)
-//     t0 = f32[] get-tuple-element(t), index=0
-//     y = f32[] add(x_squared, t0)
-//
-// The 10000-element buffer can immediately be freed after the custom-call, as
-// it is unused. However, if `t0` is not moved right after `t`, then the
-// scheudling of command buffers might turn the HLO into the following,
-// extending the live range of the 10000-element buffer as 't' is passed to the
-// command buffer:
-//
-//     command_buffer {
-//       t = (f32[], f32[10000]) paramter(0)
-//       x_squared = f32[] multiply(x, x)
-//       t0 = f32[] get-tuple-element(t), index=0
-//       ROOT y = f32[] add(x_squared, t0)
-//     }
-//
-//     main {
-//       x = f32[] parameter(0)
-//       t = (f32[], f32[10000]) custom-call()
-//       ... # Many instructions, none which use t
-//       ROOT y = f32[] call(t), to_apply=command_buffer
-//     }
-//
-// Moving the GTE right after `t` solves this, as command-buffers never start
-// with a GTE, so it's impossible for a command buffer to contain the GTE but
-// not the custom-call itself.
-static absl::StatusOr<bool> MoveGTEsRightAfterTupleDefinition(
-    HloComputation* computation) {
-  HloInstructionSequence new_sequence;
-  HloSchedule& schedule = computation->parent()->schedule();
-  const HloInstructionSequence sequence =
-      schedule.GetOrCreateSequence(computation);
-
-  absl::flat_hash_set<HloInstruction*> moved_gtes;
-
-  for (HloInstruction* inst : sequence.instructions()) {
-    if (!moved_gtes.contains(inst)) {
-      new_sequence.push_back(inst);
-    }
-    if (!inst->shape().IsTuple()) {
-      continue;
-    }
-    for (HloInstruction* user : inst->users()) {
-      if (IsGetTupleElement(user) && !user->HasControlDependencies()) {
-        new_sequence.push_back(user);
-        moved_gtes.insert(user);
-      }
-    }
-  }
-
-  bool changed = new_sequence != sequence;
-  schedule.set_sequence(computation, std::move(new_sequence));
-  return changed;
 }
 
 //===----------------------------------------------------------------------===//
@@ -626,51 +550,6 @@ CommandBufferScheduling::CollectCommandBufferSequences(
   // Don't forget to collect the final command sequence.
   collect_current_seq();
   return sequences;
-}
-
-// This function moves kParameter and kConstant instructions in a computation to
-// the beginning of the computation. This simplifies the construction of command
-// buffer computations because we don't need to deal with parameters and
-// constants that have users outside of a command buffer.
-// Returns true if there is a change in the order of instructions, false
-// otherwise.
-absl::StatusOr<bool> CommandBufferScheduling::MoveParametersAndConstantsToFront(
-    HloComputation* computation) {
-  HloInstructionSequence new_sequence;
-  HloSchedule& schedule = computation->parent()->schedule();
-  HloInstructionSequence& sequence = schedule.GetOrCreateSequence(computation);
-
-  for (HloInstruction* inst : sequence.instructions()) {
-    if (IsParameter(inst) || IsConstant(inst)) {
-      new_sequence.push_back(inst);
-
-      // Because we move instruction to the front of the computation we can't
-      // have any control predecessors, however silently dropping them is unsafe
-      // as we can have transitive dependencies that define schedule order, so
-      // we forward control predecessors to all users.
-      for (HloInstruction* control_predecessor : inst->control_predecessors()) {
-        for (HloInstruction* user : inst->users()) {
-          TF_RETURN_IF_ERROR(control_predecessor->AddControlDependencyTo(user));
-        }
-      }
-      TF_RETURN_IF_ERROR(inst->DropAllControlDeps());
-    }
-  }
-
-  for (HloInstruction* inst : sequence.instructions()) {
-    if (!IsParameter(inst) && !IsConstant(inst)) {
-      new_sequence.push_back(inst);
-    }
-  }
-
-  schedule.set_sequence(computation, new_sequence);
-  for (auto [old_i, new_i] :
-       llvm::zip(sequence.instructions(), new_sequence.instructions())) {
-    if (old_i != new_i) {
-      return true;
-    }
-  }
-  return false;
 }
 
 //===----------------------------------------------------------------------===//
@@ -934,15 +813,7 @@ absl::StatusOr<bool> CommandBufferScheduling::Run(
     commands.insert(static_cast<DebugOptions::CommandBufferCmdType>(cmd_type));
   }
 
-  absl::flat_hash_set<std::string> legacy_custom_call_targets;
-  for (const auto& target :
-       debug_options.legacy_command_buffer_custom_call_targets()) {
-    legacy_custom_call_targets.insert(target);
-  }
-
-  CommandBufferConfig config{std::move(commands),
-                             std::move(legacy_custom_call_targets),
-                             device_description_};
+  CommandBufferConfig config{std::move(commands), device_description_};
 
   // Erase command buffer cmd types that are not supported by the gpu runtime.
   static constexpr auto kRequireConditionals = {DebugOptions::CONDITIONAL,
@@ -973,20 +844,19 @@ absl::StatusOr<bool> CommandBufferScheduling::Run(
   };
 
   // Check if CUDA/ROCM driver supports required features.
-  auto erase_cuda = [&](const se::CudaComputeCapability& cuda_comp) {
+  if (auto* cuda_comp = device_description_.gpu_compute_capability()
+                            .cuda_compute_capability()) {
     if (std::min(device_description_.runtime_version(),
                  device_description_.driver_version()) <
         se::SemanticVersion{12, 3, 0}) {
       erase(kRequireTracing);       // cuStreamBeginCaptureToGraph
       erase(kRequireConditionals);  // on-device control flow
     }
-  };
-  auto erase_rocm = [&](const se::RocmComputeCapability& rocm_comp) {
+  } else if (const se::RocmComputeCapability* rocm_comp =
+                 device_description_.gpu_compute_capability()
+                     .rocm_compute_capability()) {
     erase(kRequireConditionals);  // on-device control flow
-  };
-
-  std::visit(absl::Overload(erase_cuda, erase_rocm),
-             device_description_.gpu_compute_capability());
+  }
 
   auto order = module->MakeComputationPostOrder();
   std::reverse(order.begin(), order.end());
@@ -1006,9 +876,45 @@ absl::StatusOr<bool> CommandBufferScheduling::Run(
       continue;
     }
 
-    TF_ASSIGN_OR_RETURN(bool changed_, MoveParametersAndConstantsToFront(comp));
+    TF_ASSIGN_OR_RETURN(bool changed_,
+                        MoveParametersAndConstantsToFront(*comp));
     changed |= changed_;
-    TF_ASSIGN_OR_RETURN(changed_, MoveGTEsRightAfterTupleDefinition(comp));
+    // The motivation for MoveGTEsRightAfterTupleDefinition is to ensure the
+    // live range of large elements in the tuple are not extended due to the
+    // creation of command buffers. For example, consider the following input
+    // HLO to this pass.
+    //
+    //     x = f32[] parameter(0)
+    //     t = (f32[], f32[10000]) custom-call()
+    //     ... # Many instructions, none which use t
+    //     x_squared = f32[] multiply(x, x)
+    //     t0 = f32[] get-tuple-element(t), index=0
+    //     y = f32[] add(x_squared, t0)
+    //
+    // The 10000-element buffer can immediately be freed after the custom-call,
+    // as it is unused. However, if `t0` is not moved right after `t`, then the
+    // scheudling of command buffers might turn the HLO into the following,
+    // extending the live range of the 10000-element buffer as 't' is passed to
+    // the command buffer:
+    //
+    //     command_buffer {
+    //       t = (f32[], f32[10000]) paramter(0)
+    //       x_squared = f32[] multiply(x, x)
+    //       t0 = f32[] get-tuple-element(t), index=0
+    //       ROOT y = f32[] add(x_squared, t0)
+    //     }
+    //
+    //     main {
+    //       x = f32[] parameter(0)
+    //       t = (f32[], f32[10000]) custom-call()
+    //       ... # Many instructions, none which use t
+    //       ROOT y = f32[] call(t), to_apply=command_buffer
+    //     }
+    //
+    // Moving the GTE right after `t` solves this, as command-buffers never
+    // start with a GTE, so it's impossible for a command buffer to contain the
+    // GTE but not the custom-call itself.
+    TF_ASSIGN_OR_RETURN(changed_, MoveGTEsRightAfterTupleDefinition(*comp));
     changed |= changed_;
 
     std::vector<HloInstructionSequence> sequences =

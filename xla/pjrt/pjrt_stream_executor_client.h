@@ -412,6 +412,11 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
       const xla::Shape& device_shape,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer) override;
 
+  absl::StatusOr<std::pair<tsl::RCReference<PjRtDeviceEventPromise>,
+                           tsl::RCReference<PjRtDeviceEvent>>>
+  CreateLinkedEventPromise(PjRtMemorySpace* memory_space,
+                           absl::string_view debug_info) override;
+
   void WaitForAllocation(se::Stream* stream,
                          const CommonPjRtRawBuffer& raw_buffer);
 
@@ -550,7 +555,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
 absl::StatusOr<DeviceAssignment> DevicesToDeviceAssignment(
     absl::Span<const std::vector<PjRtDevice*>> devices);
 
-class PjRtStreamExecutorBuffer : public CommonPjRtBuffer {
+class PjRtStreamExecutorBuffer : public CommonPjRtBufferImpl {
  public:
   class ScopedHold : public CommonPjRtBuffer::ScopedHold {
    public:
@@ -595,30 +600,6 @@ class PjRtStreamExecutorBuffer : public CommonPjRtBuffer {
   PjRtStreamExecutorBuffer& operator=(const PjRtStreamExecutorBuffer&) = delete;
   PjRtStreamExecutorBuffer& operator=(PjRtStreamExecutorBuffer&&) = delete;
 
-  const Shape& on_device_shape() const override { return on_device_shape_; }
-
-  absl::StatusOr<Shape> logical_on_device_shape() override;
-  PjRtMemorySpace* memory_space() const override { return memory_space_; }
-  PjRtStreamExecutorDevice* device() const override { return device_; }
-  PjRtPlatformId platform_id() const { return client_->platform_id(); }
-  absl::string_view platform_name() const { return client_->platform_name(); }
-  PjRtStreamExecutorClient* client() const override { return client_; }
-  bool IsEmptyTuple() const {
-    return on_device_shape_.IsTuple() &&
-           on_device_shape_.tuple_shapes().size() == 0;
-  }
-
-  absl::StatusOr<std::unique_ptr<ExternalReference>> AcquireExternalReference()
-      override;
-
-  absl::StatusOr<std::unique_ptr<ExternalReference>>
-  ReleaseDeviceMemoryOwnership(bool wait_for_operations_to_complete) override;
-
-  using PjRtBuffer::ToLiteralSync;
-  Future<> ToLiteral(MutableLiteralBase* literal) override;
-  Future<> LazyToLiteral(
-      absl::AnyInvocable<Future<MutableLiteralBase*>() &&> generator) override;
-
   absl::StatusOr<size_t> GetOnDeviceSizeInBytes() const override;
 
   Future<> CopyRawToHost(void* dst, int64_t offset,
@@ -650,9 +631,6 @@ class PjRtStreamExecutorBuffer : public CommonPjRtBuffer {
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override;
-
-  void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
-                          RemoteSendCallback on_done) override;
 
   Future<> GetReadyFuture() override;
 
@@ -703,12 +681,6 @@ class PjRtStreamExecutorBuffer : public CommonPjRtBuffer {
                      const TrackedDeviceBuffer& src_device_buffer);
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToDeviceMemorySpace(
       PjRtDevice* dst_device, PjRtMemorySpace* dst_memory_space = nullptr);
-
-  Future<> ToLiteralHelper(Future<MutableLiteralBase*> literal);
-
-  PjRtStreamExecutorClient* const client_;
-  const Shape on_device_shape_;
-  PjRtStreamExecutorDevice* const device_;
 };
 
 // Allocates the device buffers for a buffer that will be used as the

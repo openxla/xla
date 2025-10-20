@@ -107,7 +107,8 @@ class BulkTransportInterface {
     // There may be some delay between Send() and when the message
     // is actually sent. on_send gets called when the message actually
     // gets sent.
-    absl::AnyInvocable<void(int bond_id, size_t size) &&> on_send;
+    absl::AnyInvocable<void(absl::StatusOr<int> bond_id, size_t size) &&>
+        on_send;
   };
 
   // Schedules a send over a BulkTransportInterface connection.
@@ -212,6 +213,9 @@ class PullTable {
   // Test-only implementation of PullTable::Entry for a list of strings.
   static tsl::RCReference<PullTable::Entry> MakeStringEntry(
       std::vector<std::string> buffers);
+
+  // Clears all entries.
+  void Reset();
 
  private:
   absl::Mutex mu_;

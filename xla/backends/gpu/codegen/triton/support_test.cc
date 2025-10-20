@@ -93,6 +93,7 @@ bool DoesOpSupportType(HloOpcode opcode, PrimitiveType type) {
       return pu::IsFloatingPointType(type) || pu::IsComplexType(type);
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAtanh:
     case HloOpcode::kSinh:
     case HloOpcode::kAsin:
@@ -270,7 +271,7 @@ class TritonSupportTest : public TritonSupportTestBase {
     auto run_triton_codegen = [&]() {
       return TritonWrapper("test_fn", &ti.TritonFusion(), cc, dev_info,
                            block_level_parameters, &llvm_module_,
-                           mlir_context_);
+                           symbolic_expr_context_);
     };
 
     if (IsTritonSupportedInstruction(ti.Instruction(), cc)) {
@@ -299,6 +300,20 @@ class TritonSupportTest : public TritonSupportTestBase {
         ::testing::Not(::testing::HasSubstr("Sanitizer:")));
   }
 };
+
+TEST_F(TritonSupportTest, IsTritonSupportedComputationSkipsRootTuple) {
+  const std::string kHlo = R"(
+  HloModule m
+  ENTRY main {
+    parameter_0 = f32[10] parameter(0)
+    abs = f32[10] abs(parameter_0)
+    negate = f32[10] negate(abs)
+    ROOT res = (f32[10], f32[10]) tuple(abs, negate)
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_TRUE(IsTritonSupportedComputation(
+      *module->entry_computation(), se::CudaComputeCapability::Hopper()));
+}
 
 class TritonSupportTestWithTypeAndOpcodeAndDeviceParam
     : public TritonSupportTest,
@@ -450,6 +465,7 @@ constexpr std::array kTestedOpsUnaryElementwise = {
     HloOpcode::kAcos,
     HloOpcode::kAcosh,
     HloOpcode::kAsin,
+    HloOpcode::kAsinh,
     HloOpcode::kAtanh,
     HloOpcode::kCbrt,
     HloOpcode::kCeil,
@@ -2343,7 +2359,7 @@ ENTRY triton_computation {
   lhs_scale = f8e8m0fnu[16, 1] parameter(1)
   rhs = $0[32, 16] parameter(2)
   rhs_scale = f8e8m0fnu[1, 16] parameter(3)
-  ROOT dot = f32[16, 16] scaled-dot(lhs, lhs_scale, rhs, rhs_scale),
+  ROOT dot = f32[16, 16] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
       lhs_contracting_dims={1},
       rhs_contracting_dims={0}
 }

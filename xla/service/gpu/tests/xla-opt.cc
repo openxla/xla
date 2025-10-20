@@ -27,12 +27,14 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/codegen/emitters/ir/xla_dialect.h"
 #include "xla/codegen/emitters/transforms/passes.h"
+#include "xla/codegen/xtile/ir/xtile_dialect.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "third_party/triton/bin/RegisterTritonDialects.h"
@@ -47,8 +49,6 @@ struct TritonPipelineOptions
   Option<std::string> target{*this, "target", llvm::cl::init("8.0")};
   Option<bool> rewrite_int4{*this, "rewrite-int4", llvm::cl::init(true)};
   Option<bool> allow_tma{*this, "allow-tma", llvm::cl::init(false)};
-  Option<bool> convert_unsupported_types{*this, "convert-unsupported-types",
-                                         llvm::cl::init(true)};
   Option<int> num_warps{*this, "num-warps", llvm::cl::init(4)};
   Option<int> num_ctas{*this, "num-ctas", llvm::cl::init(1)};
   Option<int> num_stages{*this, "num-stages", llvm::cl::init(3)};
@@ -71,8 +71,7 @@ mlir::PassPipelineRegistration<TritonPipelineOptions>
             gpu_cc = rocm_cc;
           }
           xla::gpu::CreateTritonXlaPipeline(&pm, gpu_cc, options.rewrite_int4,
-                                            options.allow_tma,
-                                            options.convert_unsupported_types);
+                                            options.allow_tma);
           xla::gpu::CreateTritonPipeline(&pm, gpu_cc, options.num_warps,
                                          options.num_ctas, options.num_stages,
                                          cluster_info);
@@ -80,7 +79,7 @@ mlir::PassPipelineRegistration<TritonPipelineOptions>
 
 }  // namespace
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   mlir::DialectRegistry registry;
   mlir::registerAllExtensions(registry);
   registerBuiltinDialectTranslation(registry);
@@ -88,8 +87,10 @@ int main(int argc, char **argv) {
   mlir::LLVM::registerInlinerInterface(registry);
   mlir::func::registerInlinerExtension(registry);
   registerTritonDialects(registry);  // This registers all passes as well.
-  registry.insert<mlir::func::FuncDialect, mlir::tensor::TensorDialect,
-                  mlir::triton::xla::XlaTritonDialect, xla::XlaDialect>();
+  registry
+      .insert<mlir::func::FuncDialect, mlir::tensor::TensorDialect,
+              mlir::triton::xla::XlaTritonDialect, xla::XlaDialect,
+              xla::xtile::XTileDialect, mlir::stablehlo::StablehloDialect>();
   mlir::triton::xla::registerTritonXlaTransformsPasses();
   xla::emitters::registerTransformsPasses();
   xla::gpu::registerGpuFusionTransformsPasses();

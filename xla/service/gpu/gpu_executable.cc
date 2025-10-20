@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_checksum_tracing_pass.h"
 #include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
+#include "xla/core/collectives/clique_key.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -179,10 +180,12 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
     pipeline.AddPass(std::make_unique<ThunkChecksumTracingPass>());
   }
   if (debug_options.xla_gpu_experimental_enable_command_buffer_on_thunks()) {
-    pipeline.AddPass(std::make_unique<CommandBufferConversionPass>());
+    pipeline.AddPass(std::make_unique<CommandBufferConversionPass>(
+        hlo_module ? hlo_module->name() : "Anonymous"));
   }
-  TF_ASSIGN_OR_RETURN(bool changed, pipeline.Run(root_thunk, debug_options,
-                                                 device_info, allocator));
+  TF_ASSIGN_OR_RETURN(bool changed,
+                      pipeline.Run(root_thunk, debug_options, hlo_module,
+                                   device_info, allocator));
   if (changed) {
     VLOG(3) << "Thunk passes changed the thunk tree.";
     if (hlo_module && DumpingEnabledForHloModule(*hlo_module)) {
@@ -192,6 +195,14 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
           root_thunk->ToString(/*indent=*/0));
     }
   }
+
+  if (hlo_module && DumpingEnabledForHloModule(*hlo_module)) {
+    ThunkMetadataListProto metadata_list_proto =
+        GetMetadataListProtoFromThunkGraph(*root_thunk);
+    DumpPerModuleProtobufToFile(*hlo_module, metadata_list_proto, debug_options,
+                                "thunk_metadata");
+  }
+
   return absl::OkStatus();
 }
 
@@ -363,16 +374,25 @@ absl::Status ExecuteThunksImpl(
   Thunk::ExecutionStreamIdMap additional_execution_streams;
   std::vector<StreamPool::Ptr> additional_streams;
   if (!execution_stream_ids.empty()) {
-    TF_ASSIGN_OR_RETURN(additional_streams, run_options->BorrowStreams(
-                                                executor->device_ordinal(),
-                                                execution_stream_ids.size()));
-    int64_t i = 0;
-    for (ExecutionStreamId stream_id : execution_stream_ids) {
-      additional_execution_streams[stream_id] = additional_streams.at(i).get();
-      i++;
+    if (run_options->HasStreamBorrower()) {
+      TF_ASSIGN_OR_RETURN(additional_streams, run_options->BorrowStreams(
+                                                  executor->device_ordinal(),
+                                                  execution_stream_ids.size()));
+      int64_t i = 0;
+      for (ExecutionStreamId stream_id : execution_stream_ids) {
+        additional_execution_streams[stream_id] =
+            additional_streams.at(i).get();
+        i++;
+      }
+      VLOG(2) << "Using " << additional_execution_streams.size()
+              << " additional compute streams.";
+    } else {
+      VLOG(2) << "No stream borrower created. "
+              << "Assigning the default stream to all parallel computes.";
+      for (ExecutionStreamId stream_id : execution_stream_ids) {
+        additional_execution_streams[stream_id] = main_stream;
+      }
     }
-    VLOG(2) << "Using " << additional_execution_streams.size()
-            << " additional compute streams.";
   }
 
   tsl::profiler::TraceMe hlo_module_activity(
@@ -402,6 +422,14 @@ absl::Status ExecuteThunksImpl(
     tsl::profiler::TraceMe trace_prepare("Thunks::Prepare");
     TF_RETURN_IF_ERROR(
         thunk_sequence.Prepare(prepare_params, resource_requests));
+  }
+
+  std::vector<std::unique_ptr<CliqueKey>>* clique_keys =
+      run_options->run_options().clique_keys();
+  if (clique_keys != nullptr) {
+    for (const GpuCliqueKey& clique_key : resource_requests.CliqueKeys()) {
+      clique_keys->push_back(std::make_unique<GpuCliqueKey>(clique_key));
+    }
   }
 
   // Acquire collective cliques requested by thunks.

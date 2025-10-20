@@ -34,10 +34,10 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
-#include "xla/backends/gpu/runtime/thunk_buffer.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
@@ -50,23 +50,29 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/statusor.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
+
+using tsl::profiler::TraceMe;
+using tsl::profiler::TraceMeEncode;
+using tsl::profiler::TraceMeLevel;
 
 namespace xla {
 namespace gpu {
 
-std::vector<ThunkBuffer> ThunkBuffersFromKernelArguments(
+Thunk::BufferUses BufferUseFromKernelArguments(
     absl::Span<const BufferAllocation::Slice> args,
     const std::vector<bool>& written) {
-  std::vector<ThunkBuffer> buffers;
+  Thunk::BufferUses buffers;
   buffers.reserve(args.size());
   for (int i = 0; i < args.size(); ++i) {
-    buffers.push_back(ThunkBuffer{
-        /*slice=*/args[i],
-        // We assume that any buffer is either an input or an output of the
-        // kernel, and inout buffers are represented as 2 separate arguments.
-        /*is_content_defined_on_input=*/!written[i],
-        /*is_content_defined_on_output=*/written[i],
-    });
+    // We assume that any buffer is either an input or an output of the
+    // kernel, and inout buffers are represented as 2 separate arguments.
+    if (written[i]) {
+      buffers.push_back(BufferUse::Write(args[i]));
+    } else {
+      buffers.push_back(BufferUse::Read(args[i]));
+    }
   }
   return buffers;
 }
@@ -223,43 +229,71 @@ static void PrintBufferContents(
 }
 
 absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
+  TraceMe trace(
+      [] { return TraceMeEncode("KernelThunk::ExecuteOnStream", {}); },
+      /*level=*/TraceMeLevel::kVerbose);
+
   // Load the kernel.
   se::StreamExecutor* executor = params.stream->parent();
   se::Kernel* kernel = nullptr;
 
-  TF_ASSIGN_OR_RETURN(
-      se::Stream * stream,
-      GetStreamForExecution(Thunk::execution_stream_id(), params));
+  se::Stream* stream = nullptr;
+  {
+    TraceMe trace(
+        [] {
+          return TraceMeEncode(
+              "KernelThunk::ExecuteOnStream/GetStreamForExecution", {});
+        },
+        /*level=*/TraceMeLevel::kVerbose);
+    TF_ASSIGN_OR_RETURN(
+        stream, GetStreamForExecution(Thunk::execution_stream_id(), params));
+  }
 
   {
+    TraceMe trace(
+        [] { return TraceMeEncode("KernelThunk::ExecuteOnStream/mutex", {}); },
+        /*level=*/TraceMeLevel::kVerbose);
     absl::MutexLock lock(mutex_);
+    TraceMe trace_find(
+        [] {
+          return TraceMeEncode("KernelThunk::ExecuteOnStream/mutex/find", {});
+        },
+        /*level=*/TraceMeLevel::kVerbose);
     auto it = kernel_cache_.find(executor);
     CHECK(it != kernel_cache_.end())
         << "Initialize() not called for StreamExecutor " << executor;
     kernel = it->second.get();
   }
 
-  int device_ordinal = executor->device_ordinal();
-  VLOG(3) << "[" << device_ordinal << "] Launching " << kernel->name();
   absl::InlinedVector<se::KernelArgument, 4> kernel_args;
-  for (const auto& [idx, arg] : llvm::enumerate(args_)) {
-    se::DeviceMemoryBase buf = params.buffer_allocations->GetDeviceAddress(arg);
-    VLOG(3) << "[" << device_ordinal << "] Arg: alloc #" << arg.index()
-            << ", offset: " << arg.offset() << ": " << buf.opaque() << " ("
-            << buf.size() << "B)";
+  {
+    TraceMe trace(
+        [] {
+          return TraceMeEncode("KernelThunk::ExecuteOnStream/kernel_args", {});
+        },
+        /*level=*/TraceMeLevel::kVerbose);
+    int device_ordinal = executor->device_ordinal();
+    VLOG(3) << "[" << device_ordinal << "] Launching " << kernel->name();
+    for (const auto& [idx, arg] : llvm::enumerate(args_)) {
+      se::DeviceMemoryBase buf =
+          params.buffer_allocations->GetDeviceAddress(arg);
+      VLOG(3) << "[" << device_ordinal << "] Arg: alloc #" << arg.index()
+              << ", offset: " << arg.offset() << ": " << buf.opaque() << " ("
+              << buf.size() << "B)";
 
-    if (auto it = tma_metadata_.arg_index_to_tma_info.find(idx);
-        it != tma_metadata_.arg_index_to_tma_info.end()) {
-      // TMA descriptor argument.
-      const se::gpu::TmaDescriptor& tma_desc = it->second;
-      TF_ASSIGN_OR_RETURN(se::TensorMap tensor_map,
-                          executor->CreateTensorMap(tma_desc, buf.opaque()));
-      VLOG(3) << "[" << device_ordinal << "]  Using TensorMap for arg #" << idx
-              << ": " << tma_desc.ToString();
-      kernel_args.push_back(std::move(tensor_map));
-    } else {
-      // Buffer argument.
-      kernel_args.push_back(buf);
+      if (auto it = tma_metadata_.arg_index_to_tma_info.find(idx);
+          it != tma_metadata_.arg_index_to_tma_info.end()) {
+        // TMA descriptor argument.
+        const se::gpu::TmaDescriptor& tma_desc = it->second;
+        TF_ASSIGN_OR_RETURN(se::TensorMap tensor_map,
+                            executor->CreateTensorMap(tma_desc, buf.opaque()));
+        VLOG(3) << "[" << device_ordinal << "]  Using TensorMap for arg #"
+                << idx << ": " << tma_desc.ToString();
+        kernel_args.push_back(std::move(tensor_map));
+      } else {
+        // Buffer argument.
+        kernel_args.push_back(buf);
+      }
     }
   }
 
@@ -273,8 +307,8 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
       launch_dimensions_, cluster_dim_, stream);
 }
 
-std::vector<ThunkBuffer> KernelThunk::GetBuffers() const {
-  return ThunkBuffersFromKernelArguments(absl::MakeConstSpan(args_), written_);
+Thunk::BufferUses KernelThunk::buffer_uses() const {
+  return BufferUseFromKernelArguments(absl::MakeConstSpan(args_), written_);
 }
 
 //===----------------------------------------------------------------------===//
@@ -345,8 +379,8 @@ absl::Status CustomKernelThunk::ExecuteOnStream(const ExecuteParams& params) {
                         custom_kernel_.cluster_dims(), params.stream, args);
 }
 
-std::vector<ThunkBuffer> CustomKernelThunk::GetBuffers() const {
-  return ThunkBuffersFromKernelArguments(absl::MakeConstSpan(args_), written_);
+Thunk::BufferUses CustomKernelThunk::buffer_uses() const {
+  return BufferUseFromKernelArguments(absl::MakeConstSpan(args_), written_);
 }
 
 }  // namespace gpu

@@ -12,6 +12,8 @@ lit_test_suite(
         [
             "acos.mlir",
             "acosh.mlir",
+            "asin.mlir",
+            "asinh.mlir",
             "add.mlir",
             "atanh.mlir",
             "attributes.mlir",
@@ -19,6 +21,7 @@ lit_test_suite(
             "case.mlir",
             "composite.mlir",
             "cosh.mlir",
+            "sinh.mlir",
             "dynamic.mlir",
             "export-with-layouts.mlir",
             "export.mlir",

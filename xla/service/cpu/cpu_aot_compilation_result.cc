@@ -29,6 +29,8 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/cpu/buffer_allocation_info.h"
+#include "xla/backends/cpu/buffer_allocation_info_util.h"
 #include "xla/backends/cpu/constant_allocation.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/thunk.h"
@@ -41,7 +43,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/compiler.h"
-#include "xla/service/cpu/buffer_info_util.h"
 #include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/cpu/executable.pb.h"
 #include "xla/service/executable.h"
@@ -55,7 +56,6 @@ limitations under the License.
 #include "xla/util.h"
 
 namespace xla::cpu {
-using BufferInfo = cpu_function_runtime::BufferInfo;
 
 CpuAotCompilationOptions::CpuAotCompilationOptions(
     std::string triple, std::string cpu_name, std::string features,
@@ -86,12 +86,12 @@ CpuAotCompilationResult::Create(
   TF_ASSIGN_OR_RETURN(ThunkSequenceProto thunk_proto,
                       thunk_sequence_serdes.ToProto(thunks));
 
-  std::vector<cpu_function_runtime::BufferInfo> buffer_infos;
+  std::vector<cpu::BufferAllocationInfo> buffer_allocation_infos;
   std::optional<size_t> temp_allocation_index;
 
   if (buffer_assignment) {
-    buffer_infos =
-        CreateBufferInfosFromBufferAssignment(*hlo_module, *buffer_assignment);
+    buffer_allocation_infos =
+        CreateBufferAllocationInfos(*hlo_module, *buffer_assignment);
 
     // Find temp allocation index if it exists
     for (const BufferAllocation& allocation :
@@ -108,7 +108,7 @@ CpuAotCompilationResult::Create(
   return absl::WrapUnique(new CpuAotCompilationResult(
       hlo_module, buffer_assignment, function_name, std::move(obj_files),
       std::move(symbols), thunk_proto, std::move(temp_allocation_index),
-      std::move(buffer_infos), std::move(function_library),
+      std::move(buffer_allocation_infos), std::move(function_library),
       std::move(hlo_profile_printer_data)));
 }
 
@@ -117,18 +117,18 @@ CpuAotCompilationResult::CpuAotCompilationResult(
     absl::string_view function_name, std::vector<ObjFileProto> obj_files,
     std::vector<SymbolProto> symbols, const ThunkSequenceProto& thunks,
     std::optional<size_t> temp_allocation_index,
-    std::vector<cpu_function_runtime::BufferInfo> buffer_infos,
+    std::vector<BufferAllocationInfo> buffer_allocation_infos,
     std::unique_ptr<FunctionLibrary> function_library,
     std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data)
     : temp_allocation_index_(temp_allocation_index),
-      buffer_infos_(std::move(buffer_infos)),
+      buffer_allocation_infos_(std::move(buffer_allocation_infos)),
       function_library_(std::move(function_library)),
       hlo_profile_printer_data_(std::move(hlo_profile_printer_data)) {
   *proto_.mutable_hlo_module()->mutable_hlo_module() = hlo_module->ToProto();
   *proto_.mutable_hlo_module()->mutable_config() =
       hlo_module->config().ToProto();
   *proto_.mutable_buffer_assignment() = buffer_assignment->ToProto();
-  proto_.set_entry_function_name(std::string(function_name));
+  proto_.set_entry_function_name(function_name);
   for (ObjFileProto& obj_file : obj_files) {
     *proto_.add_object_files() = std::move(obj_file);
   }

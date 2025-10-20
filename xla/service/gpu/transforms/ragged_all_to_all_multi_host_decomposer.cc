@@ -16,15 +16,19 @@ limitations under the License.
 #include "xla/service/gpu/transforms/ragged_all_to_all_multi_host_decomposer.h"
 
 #include <cstdint>
+#include <iterator>
+#include <optional>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/hlo/ir/collective_device_list.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -32,6 +36,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/replica_group.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
 #include "xla/shape.h"
 #include "xla/tsl/platform/errors.h"
@@ -41,6 +47,7 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+using hlo_query::NextChannelId;
 
 // Exchanges the metadata between the hosts and computes the intra-host
 // metadata.
@@ -51,16 +58,20 @@ namespace gpu {
 HloInstruction* GetIntraHostMetadata(
     HloRaggedAllToAllInstruction* ragged_all_to_all,
     HloInstruction* metadata_operand, HloComputation* computation,
-    const std::vector<ReplicaGroup>& replica_groups,
-    int64_t num_updates_per_replica, int64_t fast_interconnect_slice_size,
-    int64_t num_hosts, bool correct_offsets) {
+    absl::Span<ReplicaGroup const> replica_groups, int64_t num_hosts,
+    int64_t num_devices_in_replica, bool correct_offsets) {
+  int64_t num_devices_in_replica_per_host = num_devices_in_replica / num_hosts;
+
+  int64_t num_updates_per_replica =
+      metadata_operand->shape().dimensions(0) / num_devices_in_replica;
+
   Shape new_metadata_shape = ShapeUtil::MakeShape(
       metadata_operand->shape().element_type(),
-      {num_hosts, fast_interconnect_slice_size, num_updates_per_replica});
+      {num_hosts, num_devices_in_replica_per_host, num_updates_per_replica});
 
   Shape new_metadata_transposed_shape = ShapeUtil::MakeShape(
       metadata_operand->shape().element_type(),
-      {fast_interconnect_slice_size, num_hosts, num_updates_per_replica});
+      {num_devices_in_replica_per_host, num_hosts, num_updates_per_replica});
 
   HloInstruction* new_input_offsets = computation->AddInstruction(
       HloInstruction::CreateReshape(new_metadata_shape, metadata_operand));
@@ -71,7 +82,9 @@ HloInstruction* GetIntraHostMetadata(
           /*operands=*/{new_input_offsets},
           /*device_list=*/CollectiveDeviceList(replica_groups),
           /*constrain_layout=*/false,
-          /*channel_id=*/ragged_all_to_all->channel_id(),
+          /*channel_id=*/ragged_all_to_all->channel_id().has_value()
+              ? std::make_optional(NextChannelId(*computation->parent()))
+              : std::nullopt,
           /*split_dimension=*/0));
 
   if (correct_offsets) {
@@ -124,11 +137,6 @@ absl::StatusOr<bool> DecomposeRaggedAllToAll(
 
   auto replica_groups = ragged_all_to_all->replica_groups();
 
-  // TODO(b/445380264): Support multiple replica groups.
-  if (replica_groups.size() > 1) {
-    return false;
-  }
-
   // Replica groups can be empty in collective instruction. Empty replica groups
   // mean that all devices are participating in the collective. This semantics
   // is hard to handle in an HLO pass, because we don't have enough information
@@ -139,18 +147,7 @@ absl::StatusOr<bool> DecomposeRaggedAllToAll(
     return false;
   }
 
-  const auto& replica_ids = replica_groups[0].replica_ids();
-
-  for (int i = 0; i < replica_ids.size(); ++i) {
-    if (i != replica_ids[i]) {
-      return false;
-    }
-  }
-
-  HloInstruction* input_offsets = ragged_all_to_all->mutable_operand(2);
-
-  int64_t num_updates_per_replica =
-      input_offsets->shape().dimensions(0) / replica_ids.size();
+  int64_t num_devices_in_replica = replica_groups[0].replica_ids_size();
 
   int64_t num_participating_devices = 0;
   for (auto& replica_group : replica_groups) {
@@ -170,18 +167,49 @@ absl::StatusOr<bool> DecomposeRaggedAllToAll(
     return false;
   }
 
-  std::vector<ReplicaGroup> inter_host_replica_groups(
-      fast_interconnect_slice_size);
-  std::vector<ReplicaGroup> intra_host_replica_groups(num_hosts);
+  // Decompose the replica groups into inter-host and intra-host replica groups.
+  // For example, if the original replica groups were:
+  //   {{0, 2, 4, 6, 8, 10, 12, 14}, {1, 3, 5, 7, 9, 11, 13, 15}}
+  // Then the inter-host replica groups would be:
+  //   {{0, 8}, {2, 10}, {4, 12}, {6, 14}, {1, 9}, {3, 11}, {5, 13}, {7, 15}}}
+  // And the intra-host replica groups would be:
+  //   {{0, 2, 4, 6}, {8, 10, 12, 14}, {1, 3, 5, 7}, {9, 11, 13, 15}}
+  absl::InlinedVector<ReplicaGroup, 8> intra_host_replica_groups;
+  absl::InlinedVector<ReplicaGroup, 8> inter_host_replica_groups;
 
-  for (int i = 0; i < fast_interconnect_slice_size; ++i) {
-    inter_host_replica_groups[i].add_replica_ids(i);
-    inter_host_replica_groups[i].add_replica_ids(fast_interconnect_slice_size +
-                                                 i);
+  for (const auto& replica_group : replica_groups) {
+    absl::InlinedVector<int64_t, 8> replicas_per_host(num_hosts);
 
-    intra_host_replica_groups[0].add_replica_ids(i);
-    intra_host_replica_groups[1].add_replica_ids(fast_interconnect_slice_size +
-                                                 i);
+    absl::InlinedVector<ReplicaGroup, 8> intra_host_replica_group_split(
+        num_hosts);
+    for (int64_t replica_id : replica_group.replica_ids()) {
+      int64_t host_id = replica_id / fast_interconnect_slice_size;
+
+      intra_host_replica_group_split[host_id].add_replica_ids(replica_id);
+      replicas_per_host[host_id]++;
+    }
+
+    // Check that each group has the same number of replicas per host.
+    if (!absl::c_all_of(replicas_per_host,
+                        [&](int64_t v) { return v == replicas_per_host[0]; })) {
+      return false;
+    }
+
+    absl::c_copy(intra_host_replica_group_split,
+                 std::back_inserter(intra_host_replica_groups));
+
+    for (int64_t i = 0;
+         i < intra_host_replica_group_split[0].replica_ids_size(); ++i) {
+      ReplicaGroup inter_host_replica_group;
+
+      inter_host_replica_group.mutable_replica_ids()->Reserve(num_hosts);
+      for (int64_t host_id = 0; host_id < num_hosts; ++host_id) {
+        inter_host_replica_group.add_replica_ids(
+            intra_host_replica_group_split[host_id].replica_ids(i));
+      }
+
+      inter_host_replica_groups.push_back(inter_host_replica_group);
+    }
   }
 
   std::vector<HloInstruction*> intra_host_metadata;
@@ -192,6 +220,13 @@ absl::StatusOr<bool> DecomposeRaggedAllToAll(
   new_input_shape.set_dimensions(
       0, num_hosts * input_operand->shape().dimensions(0));
 
+  // The collective can run in two modes: cross-replica and cross-partition. If
+  // the original `ragged-all-to-all` has a channel id set, then it's a
+  // cross-partition collective. In that case `all-gather` needs a channel_id
+  // and `use_global_device_ids=true`.
+  // Otherwise, when `ragged-all-to-all` has no channel id, it's a cross-replica
+  // collective. In that case `all-gather` doesn't need a `channel_id` and
+  // `use_global_device_ids` should be set to false.
   HloInstruction* all_gather_input =
       computation->AddInstruction(HloInstruction::CreateAllGather(
           /*shape=*/new_input_shape,
@@ -199,14 +234,17 @@ absl::StatusOr<bool> DecomposeRaggedAllToAll(
           /*all_gather_dimension=*/0,
           /*device_list=*/CollectiveDeviceList(inter_host_replica_groups),
           /*constrain_layout=*/false,
-          /*channel_id=*/ragged_all_to_all->channel_id(),
-          /*use_global_device_ids=*/false));
+          /*channel_id=*/ragged_all_to_all->channel_id().has_value()
+              ? std::make_optional(NextChannelId(*computation->parent()))
+              : std::nullopt,
+          /*use_global_device_ids=*/
+          ragged_all_to_all->channel_id().has_value()));
 
   for (int i = 2; i < 6; ++i) {
     intra_host_metadata.push_back(GetIntraHostMetadata(
         ragged_all_to_all, ragged_all_to_all->mutable_operand(i), computation,
-        inter_host_replica_groups, num_updates_per_replica,
-        fast_interconnect_slice_size, num_hosts, /*correct_offsets=*/i == 2));
+        inter_host_replica_groups, num_hosts, num_devices_in_replica,
+        /*correct_offsets=*/i == 2));
   }
 
   HloInstruction* new_ragged_all_to_all =

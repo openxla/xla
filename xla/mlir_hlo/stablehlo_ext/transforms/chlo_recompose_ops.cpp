@@ -312,6 +312,54 @@ struct CoshOpRecomposePattern
   }
 };
 
+struct SinhOpRecomposePattern
+    : public OpRewritePattern<stablehlo::CompositeOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(stablehlo::CompositeOp op,
+                                PatternRewriter& rewriter) const override {
+    if (op.getName() != "chlo.sinh") {
+      return rewriter.notifyMatchFailure(op, "not a chlo.sinh");
+    }
+    if (op.getVersion() != 1) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported version for chlo.cosh composite");
+    }
+    return recomposeChloOpFromCompositeOp<chlo::SinhOp>(op, rewriter);
+  }
+};
+
+struct AsinOpRecomposePattern
+    : public OpRewritePattern<stablehlo::CompositeOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(stablehlo::CompositeOp op,
+                                PatternRewriter& rewriter) const override {
+    if (op.getName() != "chlo.asin") {
+      return rewriter.notifyMatchFailure(op, "not a chlo.asin");
+    }
+    if (op.getVersion() != 1) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported version for chlo.asin composite");
+    }
+    return recomposeChloOpFromCompositeOp<chlo::AsinOp>(op, rewriter);
+  }
+};
+
+struct AsinhOpRecomposePattern
+    : public OpRewritePattern<stablehlo::CompositeOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(stablehlo::CompositeOp op,
+                                PatternRewriter& rewriter) const override {
+    if (op.getName() != "chlo.asinh") {
+      return rewriter.notifyMatchFailure(op, "not a chlo.asinh");
+    }
+    if (op.getVersion() != 1) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported version for chlo.asinh composite");
+    }
+    return recomposeChloOpFromCompositeOp<chlo::AsinhOp>(op, rewriter);
+  }
+};
+
 struct ErfOpRecomposePattern : public OpRewritePattern<stablehlo::CompositeOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(stablehlo::CompositeOp op,
@@ -441,6 +489,36 @@ struct CoshOpCustomCallRecomposePattern
   }
 };
 
+struct SinhOpCustomCallRecomposePattern
+    : public OpRewritePattern<stablehlo::CustomCallOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(stablehlo::CustomCallOp op,
+                                PatternRewriter& rewriter) const override {
+    return recomposeChloOpFromCustomCall<chlo::SinhOp>(
+        op, {"mhlo.sinh", "chlo.sinh"}, rewriter);
+  }
+};
+
+struct AsinOpCustomCallRecomposePattern
+    : public OpRewritePattern<stablehlo::CustomCallOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(stablehlo::CustomCallOp op,
+                                PatternRewriter& rewriter) const override {
+    return recomposeChloOpFromCustomCall<chlo::AsinOp>(
+        op, {"mhlo.asin", "chlo.asin"}, rewriter);
+  }
+};
+
+struct AsinhOpCustomCallRecomposePattern
+    : public OpRewritePattern<stablehlo::CustomCallOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(stablehlo::CustomCallOp op,
+                                PatternRewriter& rewriter) const override {
+    return recomposeChloOpFromCustomCall<chlo::AsinhOp>(
+        op, {"mhlo.asinh", "chlo.asinh"}, rewriter);
+  }
+};
+
 }  // namespace
 
 struct ChloRecomposeOpsPass
@@ -462,9 +540,12 @@ struct ChloRecomposeOpsPass
     // CustomCall Patterns
     patterns.add<
       AcosOpCustomCallRecomposePattern,
+      AsinOpCustomCallRecomposePattern,
+      AsinhOpCustomCallRecomposePattern,
       AcoshOpCustomCallRecomposePattern,
       AtanhOpCustomCallRecomposePattern,
       CoshOpCustomCallRecomposePattern,
+      SinhOpCustomCallRecomposePattern,
       ErfOpCustomCallRecomposePattern,
       RaggedDotOpCustomCallRecomposePattern,
       TanOpCustomCallRecomposePattern,
@@ -473,9 +554,12 @@ struct ChloRecomposeOpsPass
     // Composite Patterns
     patterns.add<
       AcosOpRecomposePattern,
+      AsinOpRecomposePattern,
+      AsinhOpRecomposePattern,
       AcoshOpRecomposePattern,
       AtanhOpRecomposePattern,
       CoshOpRecomposePattern,
+      SinhOpRecomposePattern,
       ErfOpRecomposePattern,
       RaggedDotOpRecomposePattern,
       TopKOpRecomposePattern>(ctx);

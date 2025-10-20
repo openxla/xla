@@ -34,13 +34,13 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/literal.h"
@@ -813,9 +813,8 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
 
   SpmdBuilder* builder() { return &b_; }
 
-  virtual absl::StatusOr<bool> DoPartition(
-      HloComputation* computation, const HloSharding& root_sharding,
-      const SpmdPartitionerOptions& options);
+  virtual absl::StatusOr<bool> DoPartition(HloComputation* computation,
+                                           const HloSharding& root_sharding);
 
   virtual double GetComputationTimeInMilliSec(HloInstruction* hlo) {
     return 0.0;
@@ -875,8 +874,7 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   // Performs code motion for windowed dot-general loops in
   // windowed_dot_general_loops_. Invoked after the visitor finishes traversing
   // the graph.
-  absl::Status DoCodeMotionForWindowedDotGeneralLoops(
-      HloComputation* computation, const SpmdPartitionerOptions& options);
+  absl::Status DoCodeMotionForWindowedDotGeneralLoops();
 
   bool changed_;
   HloModule* module_;

@@ -232,9 +232,13 @@ xla_test(
     srcs = ["functional_hlo_runner_test.cc"],
     backend_tags = {
         "gpu": [
-            "multi_gpu_h100",
+            "multi_gpu",
             "no_oss",
             "nomsan",
+        ],
+        "nvgpu_any": [
+            "broken",
+            "no_oss",
         ],
     },
     backends = [
@@ -247,6 +251,7 @@ xla_test(
         ":create_client",
         ":functional_hlo_runner",
         ":hlo_input_output_format",
+        ":profiler_interface",
         "//xla:debug_options_flags",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
@@ -259,7 +264,6 @@ xla_test(
         "//xla/service:computation_layout",
         "//xla/service:hlo_proto_cc",
         "//xla/tests:xla_test_backend_predicates",
-        "//xla/tools/multihost_hlo_runner:profiler_interface",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
@@ -323,10 +327,10 @@ tsl_pybind_extension(
         "@tsl//tsl/platform:statusor",
     ] + if_cuda_or_rocm([
         "//xla/service:gpu_plugin",
-        "//xla/backends/profiler/gpu:cupti_tracer",
         "//xla/backends/profiler/gpu:device_tracer",
     ]) + if_cuda([
         "//xla/stream_executor:cuda_platform",
+        "//xla/backends/profiler/gpu:cupti_tracer",
     ] + if_google(
         [
             "//third_party/py/jax/jaxlib/cuda:cuda_gpu_kernels",  # fixdeps: keep

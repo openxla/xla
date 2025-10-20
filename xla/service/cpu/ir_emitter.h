@@ -344,8 +344,6 @@ class IrEmitter : public DfsHloVisitorWithDefault,
       const BufferAllocation::Slice& slice, const Shape& shape);
   absl::Status HandleOneDnnMatMulCalls(HloInstruction* hlo,
                                        std::string runtime_symbol_name);
-  absl::Status HandleOneDnnSoftmax(HloInstruction* hlo);
-  absl::Status HandleOneDnnLayerNorm(HloInstruction* hlo);
 #endif  // XLA_ONEDNN
   // Private helper to initialize an IR function for the computation.
   void InitializeIrFunction(const std::string& function_name);
@@ -864,7 +862,8 @@ void EmitTransferElements(llvm::Value* target, llvm::Value* source,
                           llvm::Module* module, llvm::IRBuilderBase& b);
 
 // Decoupled implementation of IrEmitter::EmitFastConcatenate.
-absl::Status EmitFastConcatenate(
+// Returns true if the concatenate was parallelized.
+absl::StatusOr<bool> EmitFastConcatenate(
     const HloInstruction* instr,
     absl::Span<const llvm_ir::IrArray> source_arrays,
     const llvm_ir::IrArray& target_array, llvm::Module* module,

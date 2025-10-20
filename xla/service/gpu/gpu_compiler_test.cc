@@ -121,7 +121,7 @@ class GpuCompilerTest : public HloTestBase {
     std::unique_ptr<GpuAliasInfo> alias_info =
         gpu_compiler->GetAliasInfo(gpu_device_info);
     TF_RETURN_IF_ERROR(ScheduleGpuModule(module, 4, gpu_device_info,
-                                         gpu_compiler->mlir_context(),
+                                         gpu_compiler->symbolic_expr_context(),
                                          alias_info.get())
                            .status());
     return gpu_compiler->RunPostSchedulingPipelines(
@@ -833,7 +833,7 @@ ENTRY main {
                      .rocm_compute_capability();
 
   const std::string triton_keep_types = absl::Substitute(
-      R"(CHECK: fusion($0{{[^)]*}}, $1{{[^)]*}}){{.*}}"kind":"__triton_gemm")",
+      R"(CHECK: fusion($0{{[^)]*}}, $1{{[^)]*}}){{.*}}"kind":"{{__triton_gemm|__triton_nested_gemm_fusion}}")",
       lhs_name, rhs_name);
   const std::string cublaslt_keep_types = absl::Substitute(
       R"(CHECK: custom-call($0{{[^)]*}}, $1{{[^)]*}}){{.*}}custom_call_target="__cublas$$lt$$matmul$$f8")",
@@ -1041,10 +1041,9 @@ ENTRY e {
                                               int expected_result) {
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                             ParseAndReturnVerifiedModule(hlo));
-    auto module_group = std::make_unique<HloModuleGroup>(std::move(module));
     TF_ASSERT_OK_AND_ASSIGN(
         std::vector<std::unique_ptr<AotCompilationResult>> aot_results,
-        compiler->CompileAheadOfTime(std::move(module_group), aot_options));
+        compiler->CompileAheadOfTime(std::move(module), aot_options));
 
     TF_ASSERT_OK_AND_ASSIGN(std::string serialized_aot_result,
                             aot_results[0]->SerializeAsString());

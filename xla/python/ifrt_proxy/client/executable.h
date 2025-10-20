@@ -77,6 +77,7 @@ class LoadedExecutable final
     return absl::UnimplementedError("Not implemented");
   }
   absl::StatusOr<std::string> Serialize() const override;
+  absl::StatusOr<std::string> GetHumanReadableProgramText() const override;
   xla::ifrt::UserContextRef user_context() const override {
     return user_context_;
   }
@@ -166,6 +167,14 @@ class LoadedExecutable final
   mutable absl::Mutex cost_analysis_mu_;
   mutable std::optional<absl::StatusOr<xla::ifrt::AttributeMap>>
       cost_analysis_response_ ABSL_GUARDED_BY(cost_analysis_mu_);
+
+  // The cached value of `GetHumanReadableProgramText()`. The value is obtained
+  // from the proxy-server the first time that the user invokes
+  // `GetHumanReadableProgramText()`, and is cached afterwards.
+  mutable absl::Mutex human_readable_program_text_mu_;
+  mutable std::optional<absl::StatusOr<std::string>>
+      human_readable_program_text_
+          ABSL_GUARDED_BY(human_readable_program_text_mu_);
 };
 
 }  // namespace proxy

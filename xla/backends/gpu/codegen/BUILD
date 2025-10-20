@@ -152,6 +152,7 @@ cc_library(
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:buffer_assignment",
         "//xla/service:call_graph",
+        "//xla/service:call_inliner",
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "//xla/service:hlo_proto_cc",
@@ -189,6 +190,10 @@ xla_test(
     backend_tags = {
         "gpu": [
             "multi_gpu",
+            "no_oss",
+        ],
+        "b200": [
+            "broken",
             "no_oss",
         ],
     },
@@ -249,6 +254,7 @@ cc_library(
         "//xla/service/gpu:ir_emitter_context",
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:target_util",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/service/llvm_ir:ir_array",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_description",
@@ -264,6 +270,7 @@ cc_library(
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:TensorDialect",
     ],
 )
 
@@ -295,8 +302,8 @@ cc_library(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emission_utils",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@llvm-project//mlir:IR",
     ],
 )

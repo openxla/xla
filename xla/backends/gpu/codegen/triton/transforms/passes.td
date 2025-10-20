@@ -190,4 +190,38 @@ def TritonXLAUnswitchLoopsPass :
   let constructor = "CreateTritonXLAUnswitchLoopsPass()";
 }
 
+def TritonXLALowerXTilePass :
+   Pass<"triton-xla-lower-xtile", "mlir::ModuleOp"> {
+  let summary = "Lowers xtile ops to Triton ops.";
+
+  let dependentDialects = [
+    "mlir::func::FuncDialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::triton::xla::XlaTritonDialect",
+    "triton::TritonDialect",
+  ];
+
+  let constructor = "CreateTritonXLALowerXTilePass()";
+}
+
+def StableHLOLowerToTritonPass
+    : Pass<"stablehlo-lower-to-triton", "mlir::ModuleOp"> {
+  let summary = "Lowers StableHLO operations to their Triton equivalent.";
+  let dependentDialects = [
+    "stablehlo::StablehloDialect",
+    "triton::TritonDialect"
+  ];
+  let constructor = "CreateStableHLOLowerToTritonPass()";
+}
+
+def TensorLowerToTritonPass
+    : Pass<"tensor-lower-to-triton", "mlir::ModuleOp"> {
+  let summary = "Lowers tensor operations to their Triton equivalent.";
+  let dependentDialects = [
+    "tensor::TensorDialect",
+    "triton::TritonDialect"
+  ];
+  let constructor = "CreateTensorLowerToTritonPass()";
+}
+
 #endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_PASSES_TD_

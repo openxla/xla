@@ -259,6 +259,7 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kAllToAll);
     CASE(kAllToAllDone);
     CASE(kAllToAllStart);
+    CASE(kBuffersDebugChecksum);
     CASE(kCholesky);
     CASE(kCollectiveBroadcast);
     CASE(kCollectiveBroadcastDone);
@@ -424,6 +425,22 @@ absl::StatusOr<ThunkProto> Thunk::ToProto() const {
   return absl::UnimplementedError(absl::StrFormat(
       "Proto serialization for thunk of type %s is not implemented",
       typeid(*this).name()));
+}
+
+ThunkMetadataProto Thunk::ToMetadataProto() const {
+  ThunkMetadataProto metadata_proto;
+  *metadata_proto.mutable_thunk_info() = thunk_info_.ToProto();
+  metadata_proto.set_thunk_kind(KindToString(kind_));
+  return metadata_proto;
+}
+
+ThunkMetadataListProto GetMetadataListProtoFromThunkGraph(
+    const Thunk& root_thunk) {
+  ThunkMetadataListProto metadata_list_proto;
+  root_thunk.ForAllThunks([&metadata_list_proto](const Thunk* thunk) {
+    *metadata_list_proto.add_thunk_metadata() = thunk->ToMetadataProto();
+  });
+  return metadata_list_proto;
 }
 
 absl::StatusOr<GpuCollectives* absl_nonnull> Thunk::GetGpuCollectives(

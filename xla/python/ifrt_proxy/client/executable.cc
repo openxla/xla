@@ -650,6 +650,43 @@ absl::StatusOr<xla::ifrt::AttributeMap> LoadedExecutable::GetCostAnalysis()
   return *cost_analysis_response_;
 }
 
+absl::StatusOr<std::string> LoadedExecutable::GetHumanReadableProgramText()
+    const {
+  if (rpc_helper_->protocol_version() <
+      protocol_version::kLoadedExecutableGetHumanReadableProgramText) {
+    return absl::UnimplementedError(
+        "LoadedExecutable::GetHumanReadableProgramText() is unimplemented by "
+        "IFRT proxy");
+  }
+
+  absl::MutexLock l(human_readable_program_text_mu_);
+  if (!human_readable_program_text_.has_value()) {
+    auto req =
+        std::make_unique<LoadedExecutableHumanReadableProgramTextRequest>();
+    req->set_loaded_executable_handle(handle_);
+
+    absl::StatusOr<
+        std::shared_ptr<LoadedExecutableHumanReadableProgramTextResponse>>
+        response =
+            rpc_helper_
+                ->LoadedExecutableHumanReadableProgramText(std::move(req))
+                .Await();
+
+    if (!response.ok()) {
+      // Connection-related error, so log the error.
+      LOG(ERROR) << "LoadedExecutableHumanReadableProgramText: Got "
+                 << response.status();
+      human_readable_program_text_ = response.status();
+    } else if ((*response)->has_human_readable_program_text()) {
+      human_readable_program_text_ = (*response)->human_readable_program_text();
+    } else {
+      human_readable_program_text_ =
+          tsl::StatusFromProto((*response)->status());
+    }
+  }
+  return *human_readable_program_text_;
+}
+
 absl::StatusOr<xla::ifrt::LoadedExecutable::ExecuteResult>
 LoadedExecutable::Execute(absl::Span<xla::ifrt::ArrayRef> args,
                           const ExecuteOptions& options,

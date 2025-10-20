@@ -15,6 +15,7 @@ limitations under the License.
 #include "xla/hlo/translate/mhlo_to_hlo/translate.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -42,6 +43,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/hlo/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
 #include "xla/hlo/translate/mhlo_to_hlo/type_to_shape.h"
 #include "xla/hlo/translate/register.h"
@@ -102,6 +104,15 @@ absl::Status ConvertMlirHloToHloViaBuilder(
   for (mlir::BlockArgument& arg : block.getArguments()) {
     auto num = arg.getArgNumber();
     xla::Shape shape = xla::TypeToShape(arg.getType());
+
+    std::optional<OriginalValueProto> original_value_proto;
+    if (auto original_value_attr = main.getArgAttrOfType<mlir::StringAttr>(
+            num, xla::kMhloOriginalValueAttr)) {
+      original_value_proto =
+          xla::ConvertOriginalValue(original_value_attr.getValue());
+    }
+    xla::XlaScopedOriginalValueAssignment original_value_assignment(
+        &builder, original_value_proto);
     XlaOp argop =
         xla::Parameter(&builder, num, shape, absl::StrCat("Arg_", num));
     xla_params.push_back(argop);
@@ -139,6 +150,7 @@ absl::Status ConvertMlirHloToHloViaBuilder(
       }
     }
   }
+
   auto hlo_module = computation.proto();
   mlir::StringRef module_name = module.getName() ? *module.getName() : "main";
   hlo_module.set_name(module_name.str());

@@ -266,6 +266,33 @@ struct CoshOpToCustomCallPattern : public OpRewritePattern<chlo::CoshOp> {
   }
 };
 
+struct SinhOpToCustomCallPattern : public OpRewritePattern<chlo::SinhOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(chlo::SinhOp op,
+                                PatternRewriter& rewriter) const override {
+    return wrapChloOperationInCustomCall(rewriter, op, "mhlo.sinh",
+                                         /*version=*/1);
+  }
+};
+
+struct AsinOpToCustomCallPattern : public OpRewritePattern<chlo::AsinOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(chlo::AsinOp op,
+                                PatternRewriter& rewriter) const override {
+    return wrapChloOperationInCustomCall(rewriter, op, "mhlo.asin",
+                                         /*version=*/1);
+  }
+};
+
+struct AsinhOpToCustomCallPattern : public OpRewritePattern<chlo::AsinhOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(chlo::AsinhOp op,
+                                PatternRewriter& rewriter) const override {
+    return wrapChloOperationInCustomCall(rewriter, op, "mhlo.asinh",
+                                         /*version=*/1);
+  }
+};
+
 ///////
 // CHLO to CompositeOp Patterns
 ///////
@@ -341,6 +368,30 @@ struct CoshOpToCompositePattern : public OpRewritePattern<chlo::CoshOp> {
   }
 };
 
+struct SinhOpToCompositePattern : public OpRewritePattern<chlo::SinhOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(chlo::SinhOp op,
+                                PatternRewriter& rewriter) const override {
+    return wrapChloOpInComposite(op, /*version=*/1, rewriter);
+  }
+};
+
+struct AsinOpToCompositePattern : public OpRewritePattern<chlo::AsinOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(chlo::AsinOp op,
+                                PatternRewriter& rewriter) const override {
+    return wrapChloOpInComposite(op, /*version=*/1, rewriter);
+  }
+};
+
+struct AsinhOpToCompositePattern : public OpRewritePattern<chlo::AsinhOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(chlo::AsinhOp op,
+                                PatternRewriter& rewriter) const override {
+    return wrapChloOpInComposite(op, /*version=*/1, rewriter);
+  }
+};
+
 }  // namespace
 
 struct ChloPreserveHighLevelOpsPass
@@ -365,18 +416,24 @@ struct ChloPreserveHighLevelOpsPass
       // Deprecated CustomCall encoding.
       patterns.add<
         AcosOpToCustomCallPattern,
+        AsinOpToCustomCallPattern,
+        AsinhOpToCustomCallPattern,
         AcoshOpToCustomCallPattern,
         AtanhOpToCustomCallPattern,
         CoshOpToCustomCallPattern,
+        SinhOpToCustomCallPattern,
         ErfOpToCustomCallPattern,
         RaggedDotOpToCustomCallPattern,
         TopKOpToCustomCallPattern>(ctx);
     } else {
       patterns.add<
         AcosOpToCompositePattern,
+        AsinOpToCompositePattern,
+        AsinhOpToCompositePattern,
         AcoshOpToCompositePattern,
         AtanhOpToCompositePattern,
         CoshOpToCompositePattern,
+        SinhOpToCompositePattern,
         ErfOpToCompositePattern,
         RaggedDotOpToCompositePattern,
         TopKOpToCompositePattern>(ctx);

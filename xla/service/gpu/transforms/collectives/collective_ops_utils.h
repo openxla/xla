@@ -16,21 +16,25 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_TRANSFORMS_COLLECTIVES_COLLECTIVE_OPS_UTILS_H_
 #define XLA_SERVICE_GPU_TRANSFORMS_COLLECTIVES_COLLECTIVE_OPS_UTILS_H_
 
-#include <cstdint>
-
 #include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla {
 namespace gpu {
 
 enum class GPUCommunicationType {
+  // The communication type could not be determined.
   UNDEFINED = 0,
+  // Communication involves devices from multiple hosts, and every host
+  // involved in the communication pattern has all of its devices participating.
   RAIL_ALIGNED = 1,
+  // Communication involves devices from multiple hosts, but at least one of
+  // the involved hosts has only a subset of its devices participating.
   NON_RAIL_ALIGNED = 2,
+  // All devices participating in the collective operation reside on the same
+  // host machine.
   SINGLE_HOST = 3
 };
 
@@ -41,19 +45,6 @@ absl::StatusOr<GPUCommunicationType> CommunicationType(
 
 // Returns true if instruction is a synchronous collective op.
 bool IsGPUSyncCollective(const HloInstruction& instr);
-
-enum class GPUTopologyType {
-  UNKNOWN = 0,
-  SINGLE_HOST = 1,
-  MULTI_HOST = 2,
-};
-
-// Returns true if heuristic collective combining is enabled.
-// Heuristic collective combining enables more aggressive optimizations based
-// on the platform and HLO's topology.
-bool EnableHeuristicCollectiveCombining(
-    const HloModuleConfig& config,
-    const se::DeviceDescription& device_description, int64_t nvlink_slice_size);
 
 }  // namespace gpu
 }  // namespace xla

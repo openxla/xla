@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/ExtensibleRTTI.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/device.h"
@@ -126,6 +128,9 @@ class PjRtExecutable final
 
   absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
   GetOutputLayouts() const override {
+    // TODO(hyeontaek): Return `output_layouts_` instead, which can distinguish
+    // between default and custom layouts, once the users of
+    // `GetOutputLayouts()` understand `nullptr` elements.
     DCHECK(this);
     return pjrt_executable_->GetOutputLayouts();
   }
@@ -268,6 +273,15 @@ class PjRtLoadedExecutable final
 
   absl::StatusOr<std::string> Serialize() const override;
 
+  absl::StatusOr<std::string> GetHumanReadableProgramText() const override {
+    TF_ASSIGN_OR_RETURN(auto hlo_modules,
+                        pjrt_loaded_executable_->GetHloModules());
+    return absl::StrJoin(hlo_modules, "\n\n",
+                         [](std::string* out, const auto& hlo_module) {
+                           absl::StrAppend(out, hlo_module->ToString());
+                         });
+  }
+
   int num_devices() const override {
     DCHECK(this);
     return pjrt_loaded_executable_->num_replicas() *
@@ -325,6 +339,8 @@ class PjRtLoadedExecutable final
       absl::Span<const xla::DimensionVector> result_dimensions,
       const std::optional<xla::HloSharding>& result_hlo_sharding,
       const std::optional<std::vector<absl::string_view>>& result_memory_kinds,
+      const std::optional<std::vector<std::shared_ptr<const xla::PjRtLayout>>>&
+          output_layouts,
       std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks,
       DeviceListRef executable_devices);
 
@@ -337,7 +353,9 @@ class PjRtLoadedExecutable final
       std::vector<PjRtHostSendAndRecvLoadedHostCallback*>
           host_send_recv_callbacks,
       std::vector<DType> output_dtypes, std::vector<Shape> output_shapes,
-      std::vector<ShardingRef> output_shardings);
+      std::vector<ShardingRef> output_shardings,
+      std::optional<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
+          output_layouts);
 
   PjRtClient* client_;
   std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable_;
@@ -356,6 +374,8 @@ class PjRtLoadedExecutable final
   std::vector<DType> output_dtypes_;
   std::vector<Shape> output_shapes_;
   std::vector<ShardingRef> output_shardings_;
+  std::optional<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
+      output_layouts_;
   const xla::ifrt::UserContextRef user_context_;
 };
 

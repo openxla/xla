@@ -113,7 +113,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/ir/hlo_module_group.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
@@ -173,7 +172,6 @@ limitations under the License.
 #include "xla/service/conditional_simplifier.h"
 #include "xla/service/conditional_to_select.h"
 #include "xla/service/copy_insertion.h"
-#include "xla/service/cpu/buffer_info_util.h"
 #include "xla/service/cpu/conv_canonicalization.h"
 #include "xla/service/cpu/cpu_aot_compilation_result.h"
 #include "xla/service/cpu/cpu_aot_loader.h"
@@ -338,7 +336,7 @@ ModuleComputationsTransitivelyContainCustomCall(const HloModule& module) {
 namespace cpu {
 
 inline bool IsOneDnnCompatible(bool is_aot_compile) {
-#ifdef ENABLE_ONEDNN_ASYNC
+#if defined(XLA_ONEDNN) && defined(ENABLE_ONEDNN_ASYNC)
   return !is_aot_compile;
 #endif
   return false;
@@ -354,16 +352,14 @@ CpuCompiler::CpuCompiler() {
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<Executable>>> CpuCompiler::Compile(
-    std::unique_ptr<HloModuleGroup> module_group,
-    std::vector<std::vector<se::StreamExecutor*>> stream_execs,
+    std::unique_ptr<HloModule> hlo_module,
+    std::vector<se::StreamExecutor*> stream_execs,
     const CompileOptions& options) {
-  for (const std::vector<se::StreamExecutor*>& se_vector : stream_execs) {
-    if (se_vector.size() != 1) {
-      return Unimplemented(
-          "Model partitioning not implemented for the CPU compiler");
-    }
+  if (stream_execs.size() != 1) {
+    return Unimplemented(
+        "Model partitioning not implemented for the CPU compiler");
   }
-  return LLVMCompiler::Compile(std::move(module_group), stream_execs, options);
+  return LLVMCompiler::Compile(std::move(hlo_module), stream_execs, options);
 }
 
 /* static */ void CpuCompiler::InitializeLLVMTarget() {
@@ -474,7 +470,7 @@ void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
 
 std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
     absl::string_view name, HloModule* module, bool is_fusion_emitters,
-    bool is_onednn_compatible) {
+    bool use_onednn_custom_call) {
   // Run the following passes to a fixed point.
   auto pipeline =
       std::make_unique<HloPassFix<HloPassPipeline>>(std::string(name));
@@ -488,7 +484,7 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
       !module->config().debug_options().xla_cpu_enable_fast_min_max());
   options.set_supports_non_canonical_dots(false);
   options.set_executing_on_cpu(true);
-  options.set_enable_onednn_support(is_onednn_compatible);
+  options.set_enable_onednn_support(use_onednn_custom_call);
   options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
   pipeline->AddPass<AlgebraicSimplifier>(options);
   pipeline->AddPass<SortSimplifier>();
@@ -543,7 +539,6 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   const bool is_fusion_emitters =
       module->config().debug_options().xla_cpu_use_fusion_emitters();
   bool use_shardy_partitioner = module->config().use_shardy_partitioner();
-  bool is_onednn_compatible = IsOneDnnCompatible(is_aot_compile);
   bool flatten_before_fusion = !options::FlattenAfterFusion(module->config());
 
   if (num_partitions > 1) {
@@ -634,10 +629,14 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     if (!call_library_for_dot(*instr)) {
       return true;
     }
+    bool use_cost_model = module->config()
+                              .debug_options()
+                              .xla_cpu_experimental_xnn_graph_fusion_mode() !=
+                          DebugOptions::XNN_GRAPH_FUSION_MODE_BYPASS_COST_MODEL;
     return !IsDotSupportedByXnn(instr->dot_dimension_numbers(),
                                 instr->operand(0)->shape(),
                                 instr->operand(1)->shape(), instr->shape(),
-                                target_machine_features)
+                                target_machine_features, use_cost_model)
                 .value_or(false);
   };
 
@@ -679,15 +678,13 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<DotDecomposer>();
 
   // Rewrite to custom calls with target as oneDNN library calls.
-#ifdef XLA_ONEDNN
-  // This pass is not supported in the thunk runtime yet.
-  bool is_thunk_runtime = true;
   bool use_onednn_custom_call =
       module->config()
           .debug_options()
           .xla_cpu_experimental_onednn_custom_call() &&
-      is_onednn_compatible;
-  if (use_onednn_custom_call && !is_thunk_runtime) {
+      IsOneDnnCompatible(is_aot_compile);
+#ifdef XLA_ONEDNN
+  if (use_onednn_custom_call) {
     // Placing OneDnnOpsRewriter here to match the flax patterns
     // TODO: Decide where would be the appropriate place for this pass to make
     // it more generic
@@ -708,7 +705,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
                                target_machine_features);
 #ifdef XLA_ONEDNN
   OneDnnFloatSupport onednn_bf16_support(BF16);
-  if (is_onednn_compatible) {
+  if (use_onednn_custom_call) {
     pipeline.AddPass<FloatNormalization>(&onednn_bf16_support);
   } else {
     pipeline.AddPass<FloatNormalization>(&bf16_support);
@@ -805,7 +802,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   }
 
   pipeline.AddPass(CreateSimplificationPipeline(
-      "simplification", module, is_fusion_emitters, is_onednn_compatible));
+      "simplification", module, is_fusion_emitters, use_onednn_custom_call));
 
   // Scatter expander is sandwiched between two simplification pipelines to
   // enable constant folding with the original scatter instructions (which is
@@ -823,7 +820,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
 
   pipeline.AddPass(CreateSimplificationPipeline(
       "post_scatter_expansion_simplification", module, is_fusion_emitters,
-      is_onednn_compatible));
+      use_onednn_custom_call));
 
   pipeline.AddPass<BitcastDtypesExpander>();
 
@@ -879,7 +876,6 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     const CompileOptions& compile_options) {
   const auto& debug_options = module->config().debug_options();
   const bool is_fusion_emitters = debug_options.xla_cpu_use_fusion_emitters();
-  bool is_onednn_compatible = IsOneDnnCompatible(is_aot_compile);
   bool flatten_after_fusion = options::FlattenAfterFusion(module->config());
   HloPassPipeline pipeline("HLO passes after layout assignment");
 
@@ -903,11 +899,11 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
           ? module->config().intra_op_parallelism_threads()
           : tsl::port::NumSchedulableCPUs();
 
-#ifdef XLA_ONEDNN
-  // AOT compiled code runs in single thread.
   bool use_onednn_custom_call =
       debug_options.xla_cpu_experimental_onednn_custom_call() &&
-      is_onednn_compatible;
+      IsOneDnnCompatible(is_aot_compile);
+
+#ifdef XLA_ONEDNN
   if (use_onednn_custom_call) {
     // Run SimplifyFPConversions pass to simplify the BF16 pattern and make it
     // easier to match.
@@ -915,8 +911,11 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     if (debug_options.xla_allow_excess_precision()) {
       pipeline.AddPass<SimplifyFPConversions>();
     }
-    pipeline.AddPass<OneDnnContractionRewriter>(max_parallelism,
-                                                compile_options.thread_pool);
+    bool use_onednn_graph =
+        debug_options.xla_cpu_use_onednn() &&
+        (!debug_options.xla_cpu_experimental_onednn_fusion_type().empty());
+    pipeline.AddPass<OneDnnContractionRewriter>(
+        max_parallelism, compile_options.thread_pool, use_onednn_graph);
     // Run SimplifyFPConversions pass again to remove redundant Convert ops
     // that may exist as a result of running OneDnnContractionRewriter pass.
     if (debug_options.xla_allow_excess_precision()) {
@@ -984,7 +983,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   // Run this to a fixed point.
   [&pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
        "simplification after layout assignment"),
-   &module, is_onednn_compatible] {
+   &module, use_onednn_custom_call] {
     AddHloVerifier(
         &pipeline,
         HloVerifierOpts{}.MakeLayoutSensitive().WithInstructionCanChangeLayout(
@@ -999,7 +998,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
         !module->config().debug_options().xla_cpu_enable_fast_min_max());
     options.set_executing_on_cpu(true);
     // oneDNN support is currently enabled only when thunk runtime is turned off
-    options.set_enable_onednn_support(is_onednn_compatible);
+    options.set_enable_onednn_support(use_onednn_custom_call);
     options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
     pipeline.AddPass<AlgebraicSimplifier>(options);
     pipeline.AddPass<HloDCE>();
@@ -2033,44 +2032,12 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
-CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
+CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
                                 const AotCompilationOptions& aot_options) {
-  TF_RET_CHECK(!module_group->empty());
-  std::vector<std::unique_ptr<HloModule>> modules =
-      module_group->ConsumeModules();
-
   auto llvm_options = llvm_ir::ExtractXlaBackendExtraOptions(
-      modules[0]->config().debug_options().xla_backend_extra_options());
-  VlogMaxIsa(modules[0]->config().debug_options().xla_cpu_max_isa());
+      hlo_module->config().debug_options().xla_backend_extra_options());
+  VlogMaxIsa(hlo_module->config().debug_options().xla_cpu_max_isa());
   llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_options);
-
-  // We can pass just one llvm::TargetOptions when we compile the LLVM module,
-  // so we bail if the configs have conflicting flags. At the moment, the only
-  // flags that need to be consistent are for fast-math.
-  for (const auto& fn_and_name :
-       {std::make_pair(&DebugOptions::xla_cpu_enable_fast_math,
-                       "xla_cpu_enable_fast_math"),
-        std::make_pair(&DebugOptions::xla_cpu_fast_math_honor_infs,
-                       "xla_cpu_fast_math_honor_infs"),
-        std::make_pair(&DebugOptions::xla_cpu_fast_math_honor_nans,
-                       "xla_cpu_fast_math_honor_nans")}) {
-    // This only works because each of the method pointers above returns a
-    // bool. Otherwise we'd have to do some template magic.
-    const auto& field_method_ptr = fn_and_name.first;
-    const auto& field_name = fn_and_name.second;
-    bool first_module_val =
-        (modules[0]->config().debug_options().*field_method_ptr)();
-    for (int64_t i = 0; i < modules.size(); ++i) {
-      bool cur_module_val =
-          (modules[i]->config().debug_options().*field_method_ptr)();
-      if (first_module_val != cur_module_val) {
-        return InvalidArgument(
-            "All HLO module configs must have the same value for %s, but "
-            "module 0 and %d have different values (%d vs %d).",
-            field_name, i, first_module_val, cur_module_val);
-      }
-    }
-  }
 
   if (aot_options.PlatformId() != se::host::kHostPlatformId) {
     return InvalidArgument("Incompatible AOT compilation platform");
@@ -2080,7 +2047,7 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
   llvm::Triple triple(llvm::Triple::normalize(options.triple()));
   std::string error;
   const llvm::Target* target =
-      llvm::TargetRegistry::lookupTarget(triple.getTriple(), error);
+      llvm::TargetRegistry::lookupTarget(triple, error);
   if (target == nullptr) {
     return Internal("TargetRegistry::lookupTarget failed: %s", error);
   }
@@ -2116,9 +2083,9 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
       break;
   }
   llvm::CodeGenOptLevel opt_level =
-      IrCompiler::GetCodeGenOptLevel(modules[0]->config());
+      IrCompiler::GetCodeGenOptLevel(hlo_module->config());
   llvm::TargetOptions target_options =
-      CompilerTargetOptions(modules[0]->config());
+      CompilerTargetOptions(hlo_module->config());
   auto target_machine_builder = [&]() {
     return absl::WrapUnique(target->createTargetMachine(
         triple, options.cpu_name(), options.features(), target_options,
@@ -2129,21 +2096,19 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
       target_machine_builder();
 
   std::vector<std::unique_ptr<AotCompilationResult>> results;
-  for (auto& hlo_module : modules) {
-    VLOG(1) << "Compiling ahead-of-time: " << hlo_module->name();
-    if (hlo_module->has_schedule()) {
-      continue;
-    }
-
-    TF_RETURN_IF_ERROR(RunHloPasses(hlo_module.get(), /*is_aot_compile=*/true,
-                                    target_machine.get(),
-                                    /*dummy*/ CompileOptions{}));
-
-    TF_ASSIGN_OR_RETURN(
-        results.emplace_back(),
-        CompileAheadOfTimeThunks(std::move(hlo_module), target_machine_builder,
-                                 options, triple, pic_level, pie_level));
+  VLOG(1) << "Compiling ahead-of-time: " << hlo_module->name();
+  if (hlo_module->has_schedule()) {
+    return results;
   }
+
+  TF_RETURN_IF_ERROR(RunHloPasses(hlo_module.get(), /*is_aot_compile=*/true,
+                                  target_machine.get(),
+                                  /*dummy*/ CompileOptions{}));
+
+  TF_ASSIGN_OR_RETURN(
+      results.emplace_back(),
+      CompileAheadOfTimeThunks(std::move(hlo_module), target_machine_builder,
+                               options, triple, pic_level, pie_level));
 
   VLOG(1) << "Compilation finished";
   return std::move(results);

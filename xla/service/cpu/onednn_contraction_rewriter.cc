@@ -34,6 +34,8 @@ limitations under the License.
 #include "Eigen/Core"
 #include "oneapi/dnnl/dnnl.hpp"
 #include "oneapi/dnnl/dnnl_common.hpp"
+#include "oneapi/dnnl/dnnl_threadpool.hpp"
+#include "xla/backends/cpu/runtime/onednn/onednn_threadpool.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
@@ -58,7 +60,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "xla/tsl/util/onednn_threadpool.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "tsl/platform/cpu_info.h"
@@ -591,9 +592,15 @@ bool OneDnnContractionRewriter::ShouldRewriteConv(
 
 class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
  public:
+  OneDnnContractionRewriteVisitor(bool graph_enabled)
+      : graph_enabled_(graph_enabled) {}
+
   // Matches patterns for possible MatMul fusions that are supported by oneDNN
   // library. Matched HLO instruction(s) are replaced by custom call.
   absl::Status HandleDot(HloInstruction* instr) override {
+    // When oneDNN graph is enabled, dot will be handled via DotLibraryRewriter
+    if (graph_enabled_) return absl::OkStatus();
+
     HloInstruction* dot_instr;
     auto pattern = m::Op(&dot_instr).WithOpcode(HloOpcode::kDot);
     if (!Match(instr, pattern)) {
@@ -1269,6 +1276,9 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     TF_RETURN_IF_ERROR(ReplaceInstruction(dot_instr, replacement_instr));
     return absl::OkStatus();
   }
+
+ private:
+  bool graph_enabled_;
 };
 
 class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
@@ -1293,7 +1303,7 @@ class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
 
 #ifndef ENABLE_ONEDNN_OPENMP
     // Set oneDNN concurrency settings (which is thread-local)
-    tsl::OneDnnThreadPool::set_onednn_max_threads(intra_op_parallelism_);
+    OneDnnThreadPool::set_onednn_max_threads(intra_op_parallelism_);
 #endif
   }
 
@@ -1453,13 +1463,16 @@ class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
 
   void ReorderWeight(const dnnl::memory::desc& src_md, void* src_buf,
                      const dnnl::memory::desc& dst_md, void* dst_buf) {
-    auto onednn_threadpool = CreateOneDnnThreadPool(threadpool_device_.get());
+    auto onednn_threadpool = std::make_unique<OneDnnThreadPool>(
+        threadpool_device_->getPool(), /*is_async=*/true);
     dnnl::engine cpu_engine(dnnl::engine::kind::cpu, 0);
-    auto onednn_stream = MakeOneDnnStream(cpu_engine, onednn_threadpool.get());
+    auto onednn_stream = dnnl::threadpool_interop::make_stream(
+        cpu_engine, onednn_threadpool.get());
     auto src_mem = dnnl::memory(src_md, cpu_engine, src_buf);
     auto dst_mem = dnnl::memory(dst_md, cpu_engine, dst_buf);
     dnnl::reorder reorder_prim{src_mem, dst_mem};
     reorder_prim.execute(onednn_stream, src_mem, dst_mem);
+    // Wait for the reorder to finish before destroying the threadpool.
     onednn_stream.wait();
   }
 
@@ -1522,7 +1535,7 @@ absl::StatusOr<bool> OneDnnContractionRewriter::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   XLA_VLOG_LINES(
       3, "OneDnnContractionRewriter::Run(), before:\n" + module->ToString());
-  OneDnnContractionRewriteVisitor visitor;
+  OneDnnContractionRewriteVisitor visitor(graph_enabled_);
   TF_ASSIGN_OR_RETURN(auto result,
                       visitor.RunOnModule(module, execution_threads));
 

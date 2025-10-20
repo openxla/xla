@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/device_description.h"
@@ -263,7 +264,7 @@ ENTRY e {
 })";
   TF_EXPECT_OK(
       CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_gemm_r", R"(
-CHECK:    tt.func @triton_fn(%[[LHS:.*]]: !tt.ptr<i8> {tt.divisibility = 16 : i32}, %[[RHS:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %[[OUT:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}) {
+CHECK:    func.func @triton_fn(%[[LHS:.*]]: !tt.ptr<i8>, %[[RHS:.*]]: !tt.ptr<f32>, %[[OUT:.*]]: !tt.ptr<f32>) {
 CHECK-DAG:  %[[ZERO_KN:.*]] = arith.constant dense<0.000000e+00> : tensor<32x64xf32>
 CHECK-DAG:  %[[ZERO_MK:.*]] = arith.constant dense<0.000000e+00> : tensor<16x32xf32>
 CHECK-DAG:  %[[ZERO_MN:.*]] = arith.constant dense<0.000000e+00> : tensor<16x64xf32>
@@ -326,7 +327,7 @@ CHECK:      }
 CHECK:      %[[OUT_PTR:.*]] = tt.make_tensor_ptr %[[OUT]], [%[[C80]], %[[SIZE_M]]], [%[[SIZE_M]], %[[C1]]], [%[[C0]], %[[C0]]] {order = array<i32: 1, 0>} : <tensor<16x64xf32>>
 CHECK:      %[[OUT_OFFSET:.*]] = tt.advance %[[OUT_PTR]], [%[[TILE_OFFSET_M_LHS]], %[[TILE_OFFSET_N_RHS]]] : <tensor<16x64xf32>>
 CHECK:      tt.store %[[OUT_OFFSET]], %[[FOR]]#2 {boundaryCheck = array<i32: 1>} : !tt.ptr<tensor<16x64xf32>>
-CHECK:      tt.return
+CHECK:      return
 CHECK:    }
 )"));
 }
@@ -355,7 +356,7 @@ ENTRY e {
 
   TF_EXPECT_OK(
       CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_dot", R"(
-CHECK:    tt.func @triton_fn(%[[LHS:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %[[RHS:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %[[OUT:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}) {
+CHECK:    func.func @triton_fn(%[[LHS:.*]]: !tt.ptr<f32>, %[[RHS:.*]]: !tt.ptr<f32>, %[[OUT:.*]]: !tt.ptr<f32>) {
 CHECK-DAG:  %[[ZERO_KN:.*]] = arith.constant dense<0.000000e+00> : tensor<32x16xf32>
 CHECK-DAG:  %[[ZERO_MK:.*]] = arith.constant dense<0.000000e+00> : tensor<16x32xf32>
 CHECK-DAG:  %[[ZERO_MN:.*]] = arith.constant dense<0.000000e+00> : tensor<16x16xf32>
@@ -416,7 +417,7 @@ CHECK:    }
 CHECK:    %[[OUT_PTR:.*]] = tt.make_tensor_ptr %[[OUT]], [%[[SIZE_M]], %[[C1]]], [%[[C1]], %[[C1]]], [%[[C0]], %[[C0]]] {order = array<i32: 1, 0>} : <tensor<16x16xf32>>
 CHECK:    %[[OUT_OFFSET:.*]] = tt.advance %[[OUT_PTR]], [%[[TILE_OFFSET_M_LHS]], %[[TILE_OFFSET_N_RHS]]] : <tensor<16x16xf32>>
 CHECK:    tt.store %[[OUT_OFFSET]], %[[FOR]]#2 {boundaryCheck = array<i32: 0, 1>} : !tt.ptr<tensor<16x16xf32>>
-CHECK:    tt.return
+CHECK:    return
 CHECK:  }
 )"));
 }
@@ -490,7 +491,7 @@ ENTRY e {
 
   TF_EXPECT_OK(
       CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_gemm", R"(
-CHECK:   tt.func @triton_fn(%[[P0:[^:]*]]: !tt.ptr<f32>
+CHECK:   func.func @triton_fn(%[[P0:[^:]*]]: !tt.ptr<f32>
 CHECK-SAME:                 %[[P1:[^:]*]]: !tt.ptr<f32>
 CHECK-SAME:                 %[[P2:[^:]*]]: !tt.ptr<f32>
 CHECK-DAG: %[[ARG_PTR:.*]] = arith.select %[[CONCAT_COND:.*]], %[[P1]], %[[P2]]
@@ -537,7 +538,7 @@ ENTRY e {
 
   ASSERT_THAT(
       CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_gemm", R"(
-CHECK:     tt.func @triton_fn({{[^,]*}}, %[[DYNAMIC_SLICE_INPUT:[^:]*]]: !tt.ptr<f32> {{[^,]*}}, %[[START_INDEX0_PTR:[^:]*]]: !tt.ptr<i32>
+CHECK:     func.func @triton_fn({{[^,]*}}, %[[DYNAMIC_SLICE_INPUT:[^:]*]]: !tt.ptr<f32>, %[[START_INDEX0_PTR:[^:]*]]: !tt.ptr<i32>
 CHECK-DAG:   %[[C0_i32:.*]] = arith.constant 0 : i32
 CHECK-DAG:   %[[C1_i64:.*]] = arith.constant 1 : i64
 CHECK-DAG:   %[[C2_i64:.*]] = arith.constant 2 : i64
@@ -697,6 +698,7 @@ ENTRY entry {
   llvm::LLVMContext llvm_ctx;
   llvm::Module llvm_module("module", llvm_ctx);
   mlir::MLIRContext mlir_context;
+  SymbolicExprContext symbolic_expr_context(&mlir_context);
 
   auto backend_config_or =
       triton_dot_fusion->backend_config<GpuBackendConfig>();
@@ -721,12 +723,12 @@ ENTRY entry {
   block_level_parameters.num_stages = 4;
   block_level_parameters.num_warps = 8;
 
-  EXPECT_THAT(
-      TritonWrapper("test_fn", triton_dot_fusion, CudaAmpereOrRocm(), dev_info,
-                    block_level_parameters, &llvm_module, mlir_context),
-      absl_testing::StatusIs(
-          tsl::error::RESOURCE_EXHAUSTED,
-          ::testing::HasSubstr("Shared memory size limit exceeded")));
+  EXPECT_THAT(TritonWrapper("test_fn", triton_dot_fusion, CudaAmpereOrRocm(),
+                            dev_info, block_level_parameters, &llvm_module,
+                            symbolic_expr_context),
+              absl_testing::StatusIs(
+                  tsl::error::RESOURCE_EXHAUSTED,
+                  ::testing::HasSubstr("Shared memory size limit exceeded")));
 
   config.set_block_m(64);
   config.set_block_n(128);
@@ -737,7 +739,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(
       const auto result,
       TritonWrapper("test_fn", triton_dot_fusion, CudaAmpereOrRocm(), dev_info,
-                    block_level_parameters, &llvm_module, mlir_context));
+                    block_level_parameters, &llvm_module,
+                    symbolic_expr_context));
   // Use optin shared memory which is > shared_memory_per_block.
   EXPECT_GT(result.shmem_bytes, dev_info.shared_memory_per_block());
 }
@@ -1227,7 +1230,7 @@ ENTRY e {
 })";
   TF_EXPECT_OK(
       CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_gemm_r", R"(
-CHECK:    tt.func @triton_fn
+CHECK:    func.func @triton_fn
 CHECK-DAG:      %[[ZERO:.*]] = arith.constant dense<0>
 CHECK-DAG:      %[[FMIN:.*]] = arith.constant dense<-1.280000e+02>
 CHECK-DAG:      %[[IMIN:.*]] = arith.constant dense<-128>
@@ -1292,6 +1295,7 @@ ENTRY entry {
   llvm::LLVMContext llvm_ctx;
   llvm::Module llvm_module("module", llvm_ctx);
   mlir::MLIRContext mlir_context;
+  SymbolicExprContext symbolic_expr_context(&mlir_context);
 
   auto backend_config_or =
       triton_dot_fusion->backend_config<GpuBackendConfig>();
@@ -1315,12 +1319,12 @@ ENTRY entry {
   block_level_parameters.num_ctas = 1;
   block_level_parameters.num_stages = 1;
   block_level_parameters.num_warps = 2;
-  EXPECT_THAT(
-      TritonWrapper("test_fn", triton_dot_fusion, CudaAmpereOrRocm(), dev_info,
-                    block_level_parameters, &llvm_module, mlir_context),
-      absl_testing::StatusIs(
-          tsl::error::RESOURCE_EXHAUSTED,
-          "Tiling complexity heuristic exceeded: 147456 > 9000"));
+  EXPECT_THAT(TritonWrapper("test_fn", triton_dot_fusion, CudaAmpereOrRocm(),
+                            dev_info, block_level_parameters, &llvm_module,
+                            symbolic_expr_context),
+              absl_testing::StatusIs(
+                  tsl::error::RESOURCE_EXHAUSTED,
+                  "Tiling complexity heuristic exceeded: 147456 > 9000"));
 
   // Succeeds if the tiling is not too complex.
   config.set_block_m(32);
@@ -1330,7 +1334,7 @@ ENTRY entry {
 
   TF_ASSERT_OK(TritonWrapper("test_fn", triton_dot_fusion, CudaAmpereOrRocm(),
                              dev_info, block_level_parameters, &llvm_module,
-                             mlir_context)
+                             symbolic_expr_context)
                    .status());
 }
 
@@ -1868,6 +1872,7 @@ ENTRY e  {
   llvm::LLVMContext llvm_ctx;
   llvm::Module llvm_module("module", llvm_ctx);
   mlir::MLIRContext mlir_context;
+  SymbolicExprContext symbolic_expr_context(&mlir_context);
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto gpu_config, triton_dot_fusion->backend_config<GpuBackendConfig>());
@@ -1880,9 +1885,42 @@ ENTRY e  {
 
   TF_ASSERT_OK(TritonWrapper("test_fn", triton_dot_fusion, GpuComputeComp(),
                              dev_info, block_level_parameters, &llvm_module,
-                             mlir_context)
+                             symbolic_expr_context)
                    .status());
 }
+
+class RhsLayoutParameterizedTritonGemmTest
+    : public TritonGemmTest,
+      public ::testing::WithParamInterface<absl::string_view> {};
+
+TEST_P(RhsLayoutParameterizedTritonGemmTest,
+       BF16WithSmallRHSOuterDimDoesNotCrash) {
+  std::string hlo_text = absl::Substitute(R"(
+  triton_dot {
+    p0 = bf16[64,32] parameter(0)
+    p1 = bf16[32,8]$0 parameter(1)
+    ROOT dot = f32[64,8] dot(p0, p1),
+      lhs_contracting_dims={1},
+      rhs_contracting_dims={0}
+  }
+
+  ENTRY e {
+    p0 = bf16[64,32] parameter(0)
+    p1 = bf16[32,8]$0 parameter(1)
+    ROOT _ = f32[64,8] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+      backend_config={"fusion_backend_config": {kind: "__triton_gemm", triton_gemm_config:
+        {"block_m":64,"block_n":8,"block_k":32,
+        "split_k":1,"num_stages":1,"num_warps":4,
+        "num_ctas":1}}}
+  })",
+                                          GetParam());
+
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-1, /*arel=*/1e-2}));
+}
+
+INSTANTIATE_TEST_SUITE_P(RhsLayoutParameterizedTritonGemmTestSuite,
+                         RhsLayoutParameterizedTritonGemmTest,
+                         ::testing::Values("", "{0, 1}", "{1, 0}"));
 
 TEST_F(TritonGemmTest, BinaryOperationWithSmallInputsIsFused) {
   constexpr absl::string_view kHloText = R"(
@@ -3028,6 +3066,7 @@ ENTRY e {
   llvm::LLVMContext llvm_ctx;
   llvm::Module llvm_module("module", llvm_ctx);
   mlir::MLIRContext mlir_context;
+  SymbolicExprContext symbolic_expr_context(&mlir_context);
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto gpu_config, triton_dot_fusion->backend_config<GpuBackendConfig>());
@@ -3040,7 +3079,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(
       const auto result,
       TritonWrapper("test_fn", triton_dot_fusion, GpuComputeComp(), dev_info,
-                    block_level_parameters, &llvm_module, mlir_context));
+                    block_level_parameters, &llvm_module,
+                    symbolic_expr_context));
   // The config is chosen so that the used memory size is slightly above the
   // 48 kB boundary of standard / optin shared memory so that any GPU that
   // has the optin one should be able to execute the test.

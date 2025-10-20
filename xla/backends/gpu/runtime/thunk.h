@@ -38,13 +38,13 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
-#include "xla/backends/gpu/runtime/thunk_buffer.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -137,6 +137,7 @@ class Thunk {
     kAllToAll,
     kAllToAllDone,
     kAllToAllStart,
+    kBuffersDebugChecksum,
     kCholesky,
     kCollectiveBroadcast,
     kCollectiveBroadcastDone,
@@ -500,12 +501,14 @@ class Thunk {
   // Precondition: Initialize(initialize_params) has been called.
   virtual absl::Status ExecuteOnStream(const ExecuteParams& params) = 0;
 
+  using BufferUses = absl::InlinedVector<BufferUse, 4>;
+
   // Returns all device buffers used by the thunk.
   //
   // Does not propagate buffers from nested thunks.
   //
   // The order of the buffers in returned vector is consistent across calls.
-  virtual std::vector<ThunkBuffer> GetBuffers() const { return {}; }
+  virtual BufferUses buffer_uses() const { return {}; }
 
   static absl::string_view KindToString(Thunk::Kind kind);
 
@@ -552,6 +555,9 @@ class Thunk {
 
   // Serializes the thunk into a `ThunkProto`.
   virtual absl::StatusOr<ThunkProto> ToProto() const;
+
+  // Serializes the metadata of the thunk into a `ThunkMetadataProto`.
+  ThunkMetadataProto ToMetadataProto() const;
 
   // This declares a deserializer callback that `FromProto` Thunk factory
   // functions can use to deserialize sub messages.
@@ -607,6 +613,10 @@ struct ShapedSlice {
 // Returns if the thunk implements a reduction collective (all-reduce or
 // reduce-scatter).
 bool IsReductionCollective(Thunk::Kind kind);
+
+// Returns the metadata from all thunks in the given thunk graph.
+ThunkMetadataListProto GetMetadataListProtoFromThunkGraph(
+    const Thunk& root_thunk);
 
 }  // namespace gpu
 }  // namespace xla

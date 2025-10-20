@@ -24,6 +24,7 @@ load(
     "if_llvm_x86_available",
 )
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla/tsl/xnnpack:build_defs.bzl", "if_ynnpack")
 load(":build_defs.bzl", "runtime_copts")
 
 package(
@@ -171,26 +172,14 @@ cc_library(
 )
 
 cc_library(
-    name = "buffer_info_util",
-    srcs = ["buffer_info_util.cc"],
-    hdrs = ["buffer_info_util.h"],
-    deps = [
-        "//xla:cpu_function_runtime",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:buffer_assignment",
-        "@com_google_absl//absl/types:span",
-    ],
-)
-
-cc_library(
     name = "cpu_compiler_pure",
     srcs = ["cpu_compiler.cc"],
     hdrs = ["cpu_compiler.h"],
     copts = tsl_copts(),
     deps = [
-        ":buffer_info_util",
         ":conv_canonicalization",
         ":cpu_aot_compilation_result",
+        ":cpu_aot_loader",
         ":cpu_executable",
         ":cpu_float_support",
         ":cpu_instruction_fusion",
@@ -334,7 +323,6 @@ cc_library(
         "//xla/service:while_loop_constant_sinking",
         "//xla/service:while_loop_invariant_code_motion",
         "//xla/service:while_loop_simplifier",
-        "//xla/service/cpu:cpu_aot_loader",
         "//xla/service/llvm_ir:llvm_command_line_options",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/spmd:stateful_rng_spmd_partitioner",
@@ -427,11 +415,12 @@ cc_library(
     srcs = ["cpu_aot_compilation_result.cc"],
     hdrs = ["cpu_aot_compilation_result.h"],
     deps = [
-        ":buffer_info_util",
         ":cpu_executable",
         ":executable_proto_cc",
         "//xla:cpu_function_runtime",
         "//xla:util",
+        "//xla/backends/cpu:buffer_allocation_info",
+        "//xla/backends/cpu:buffer_allocation_info_util",
         "//xla/backends/cpu:constant_allocation",
         "//xla/backends/cpu/runtime:function_library",
         "//xla/backends/cpu/runtime:thunk",
@@ -611,9 +600,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
     ] + if_onednn([
         ":onednn_convolution",
-        ":onednn_layer_norm",
         ":onednn_matmul",
-        ":onednn_softmax",
     ]),
 )
 
@@ -931,7 +918,7 @@ cc_library(
     srcs = ["thunk_emitter.cc"],
     hdrs = ["thunk_emitter.h"],
     copts = tsl_copts(),
-    local_defines = if_graph_api(["XLA_ONEDNN_USE_GRAPH_API=1"]),
+    local_defines = if_graph_api(["XLA_ONEDNN_USE_GRAPH_API=1"]) + if_ynnpack(["XLA_YNNPACK"]),
     deps = [
         ":backend_config_proto_cc",
         ":cpu_options",
@@ -1002,6 +989,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "//xla/service:pattern_matcher",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
@@ -1022,6 +1010,10 @@ cc_library(
         "@tsl//tsl/profiler/lib:traceme",
     ] + if_onednn([
         "//xla/backends/cpu/runtime/onednn:onednn_op_thunk",
+    ]) + if_ynnpack([
+        "//xla/backends/cpu:ynn_emitter",
+        "//xla/backends/cpu:ynn_support",
+        "//xla/backends/cpu/runtime/ynnpack:ynn_fusion_thunk",
     ]),
 )
 
@@ -1801,7 +1793,6 @@ onednn_cc_library(
     srcs = ["onednn_layer_norm.cc"],
     hdrs = [
         "onednn_layer_norm.h",
-        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
@@ -1825,7 +1816,6 @@ onednn_cc_library(
     srcs = ["onednn_softmax.cc"],
     hdrs = [
         "onednn_softmax.h",
-        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
@@ -1862,7 +1852,6 @@ onednn_cc_library(
         "onednn_contraction_rewriter.h",
         "onednn_convolution.h",
         "onednn_matmul.h",
-        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = tsl_copts(),
     deps = [
@@ -1879,6 +1868,7 @@ onednn_cc_library(
         "//xla:status_macros",
         "//xla:types",
         "//xla:util",
+        "//xla/backends/cpu/runtime/onednn:onednn_threadpool",
         "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
@@ -2062,6 +2052,7 @@ cc_library(
         "//xla/codegen:mlir_kernel_source",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",

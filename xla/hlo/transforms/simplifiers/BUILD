@@ -113,6 +113,33 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "computation_canonicalizers",
+    srcs = ["computation_canonicalizers.cc"],
+    hdrs = ["computation_canonicalizers.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "computation_canonicalizers_test",
+    srcs = ["computation_canonicalizers_test.cc"],
+    deps = [
+        ":computation_canonicalizers",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 xla_cc_test(
     name = "broadcast_canonicalizer_test",
     srcs = ["broadcast_canonicalizer_test.cc"],
@@ -296,12 +323,11 @@ cc_library(
         "//xla:util",
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_alias_analysis",
-        "//xla/hlo/analysis:tuple_points_to_analysis",
+        "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/service:buffer_value",
         "//xla/service:hlo_value",
-        "//xla/service:logical_buffer",
         "//xla/service/heap_simulator",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
@@ -1599,6 +1625,40 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
+    ],
+)
+
+cc_library(
+    name = "sub_byte_collective_normalization",
+    srcs = ["sub_byte_collective_normalization.cc"],
+    hdrs = ["sub_byte_collective_normalization.h"],
+    deps = [
+        ":hlo_dce",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:collective_op_group_mode",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service:collective_ops_utils",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "sub_byte_collective_normalization_test",
+    srcs = ["sub_byte_collective_normalization_test.cc"],
+    deps = [
+        ":sub_byte_collective_normalization",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/tsl/lib/core:status_test_util",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

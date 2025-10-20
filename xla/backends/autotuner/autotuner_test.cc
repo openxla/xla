@@ -29,6 +29,9 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "google/protobuf/text_format.h"
+#include "xla/autotune_results.pb.h"
+#include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/autotuner_cache_interface.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/profiler.h"
@@ -390,6 +393,43 @@ TEST_F(AutotunerTest, AutotuneModuleWithDuplicateInstructions) {
   EXPECT_THAT(autotuner->Autotune(module.get(), should_autotune), IsOk());
 }
 
+TEST_F(AutotunerTest, AutotuneButOneBackendFails) {
+  auto cache_manager = std::make_unique<MockAutotunerCache>();
+  EXPECT_CALL(*cache_manager, Lookup(_)).WillOnce(Return(std::nullopt));
+  EXPECT_CALL(*cache_manager, Insert(_, _)).WillOnce(Return(absl::OkStatus()));
+
+  std::vector<std::unique_ptr<BackendConfig>> configs;
+  configs.push_back(GetTestConfig("test_config"));
+
+  auto good_backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*good_backend, GetSupportedConfigs)
+      .WillOnce(Return(std::move(configs)));
+  EXPECT_CALL(*good_backend, Compile(_, _))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+  EXPECT_CALL(*good_backend, ApplyConfig(_, ConfigMatcher("test_config")))
+      .Times(1)
+      .WillRepeatedly(Return(absl::OkStatus()));
+  auto bad_backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*bad_backend, GetSupportedConfigs)
+      .WillOnce(Return(absl::InternalError("test error")));
+
+  auto profiler = std::make_unique<MockProfiler>();
+  auto device_description = CreateDummyDeviceDescription();
+  EXPECT_CALL(*profiler, CreateInputBuffers(_))
+      .WillOnce(Return(std::make_unique<InputBuffers>()));
+  EXPECT_CALL(*profiler, Profile(_, _))
+      .WillOnce(Return(ProfileResult({absl::Seconds(1)})));
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(good_backend));
+  backends.push_back(std::move(bad_backend));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto autotuner,
+      Autotuner::Create(std::move(backends), std::move(profiler), config_,
+                        std::move(cache_manager)));
+  auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  EXPECT_THAT(autotuner->Autotune(dummy_instr.get()), absl_testing::IsOk());
+}
+
 TEST_F(AutotunerTest, CacheHit) {
   auto cache_manager = std::make_unique<MockAutotunerCache>();
   AutotunerCacheInterface::Config config;
@@ -469,16 +509,18 @@ TEST_F(AutotunerTest, AutotuneWithBufferCheck) {
 TEST_F(AutotunerTest, AutotuneWithScratchBytesOptimization) {
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.push_back(GetTestConfig("config_more_time_less_scratch"));
-  configs.push_back(GetTestConfig("config_less_time_more_scratch"));
+  configs.push_back(GetTestConfig("config_less_time_less_scratch"));
+  configs.push_back(GetTestConfig("config_least_time_most_scratch"));
   auto backend_1 = std::make_unique<MockCodegenBackend>();
   EXPECT_CALL(*backend_1, GetSupportedConfigs)
       .WillOnce(Return(std::move(configs)));
   EXPECT_CALL(*backend_1, Compile(_, _))
       .WillOnce(Return(std::unique_ptr<Executable>()))
+      .WillOnce(Return(std::unique_ptr<Executable>()))
       .WillOnce(Return(std::unique_ptr<Executable>()));
 
   EXPECT_CALL(*backend_1,
-              ApplyConfig(_, ConfigMatcher("config_more_time_less_scratch")))
+              ApplyConfig(_, ConfigMatcher("config_less_time_less_scratch")))
       .Times(1)
       .WillRepeatedly(Return(absl::OkStatus()));
 
@@ -487,12 +529,17 @@ TEST_F(AutotunerTest, AutotuneWithScratchBytesOptimization) {
       .WillOnce(Return(std::make_unique<InputBuffers>()));
   EXPECT_CALL(*profiler, Profile(_, _))
       .WillOnce(Return(ProfileResult({
-          /*duration=*/absl::Microseconds(2),
+          /*duration=*/absl::Microseconds(5),
           /*output_buffer=*/std::nullopt,
           /*scratch_bytes=*/100,
       })))
       .WillOnce(Return(ProfileResult({
-          /*duration=*/absl::Microseconds(1),
+          /*duration=*/absl::Microseconds(3),
+          /*output_buffer=*/std::nullopt,
+          /*scratch_bytes=*/100,
+      })))
+      .WillOnce(Return(ProfileResult({
+          /*duration=*/absl::Microseconds(2),
           /*output_buffer=*/std::nullopt,
           /*scratch_bytes=*/200,
       })));

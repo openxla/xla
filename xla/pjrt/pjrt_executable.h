@@ -113,7 +113,14 @@ struct CompileOptions {
 
   std::optional<xla::Compiler::TargetConfig> target_config;
 
+  // Allow to modify the input MLIR / XLA program.
+  // This is used to run passes on the MLIR parameter without having to clone it
+  // first, thus saving memory. Additionally, it allows us to deallocate the
+  // MLIR later in the compile, when we don't use it anymore.
+  bool allow_in_place_mlir_modification = false;
+
   // Used to indicate the precision configuration.
+  // TODO(b/450278657): Not serialized into the proto. Should it be?
   PrecisionConfig::Precision matrix_unit_operand_precision =
       PrecisionConfig::DEFAULT;
 
@@ -217,9 +224,8 @@ struct ExecuteOptions {
   // passed in its own PjRtBuffer. May only be true if the executable was
   // compiled with parameter_is_tupled_arguments==true.
   bool arguments_are_tupled = false;
-  // If true, the computation must return a tuple, which will be destructured
-  // into its elements.
-  bool untuple_result = false;
+  // TODO(b/430587318): Remove this deprecated field.
+  bool untuple_result = true;
   // If non-zero, identifies this execution as part of a potentially
   // multi-device launch. This can be used to detect scheduling errors, e.g. if
   // multi-host programs are launched in different orders on different hosts,

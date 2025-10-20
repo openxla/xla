@@ -222,21 +222,6 @@ static absl::StatusOr<CustomCallThunk::CustomCallTarget> ToCustomCallTarget(
         fn(out, in, status);
       };
     case CustomCallApiVersion::API_VERSION_STATUS_RETURNING_UNIFIED:
-#ifdef PLATFORM_GOOGLE
-      return InvalidArgument(
-          "Custom call API version `API_VERSION_STATUS_RETURNING_UNIFIED` "
-          "is not supported by XLA:CPU. Prefer "
-          "https://docs.jax.dev/en/latest/ffi.html. It will be fully removed "
-          "in November 2025. Custom call target: %s",
-          target_name);
-#else
-      LOG(ERROR)
-          << "Custom call API version `API_VERSION_STATUS_RETURNING_UNIFIED` "
-             "is not supported by XLA:CPU. Prefer "
-             "https://docs.jax.dev/en/latest/ffi.html. It will be fully "
-             "removed in November 2025. Custom call target: "
-          << target_name;
-#endif
       using v3_signature =
           void (*)(void* /*out*/, const void** /*in*/, const char* /*opaque*/,
                    size_t /*opaque_len*/, XlaCustomCallStatus* /*status*/);
@@ -412,10 +397,10 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallUntypedAPI(
 CustomCallThunk::BufferUses CustomCallThunk::buffer_uses() const {
   BufferUses buffer_uses;
   for (const auto& argument : op_buffers_.arguments_buffers) {
-    buffer_uses.emplace_back(argument, BufferUse::kRead);
+    buffer_uses.emplace_back(BufferUse::Read(argument));
   }
   for (const auto& result : op_buffers_.results_buffers) {
-    buffer_uses.emplace_back(result, BufferUse::kWrite);
+    buffer_uses.emplace_back(BufferUse::Write(result));
   }
   return buffer_uses;
 }

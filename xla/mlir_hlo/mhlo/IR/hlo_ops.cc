@@ -359,6 +359,7 @@ INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AddOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AcosOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AcoshOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AsinOp)
+INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AsinhOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AndOp)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(Atan2Op)
 INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(AtanhOp)
@@ -5131,6 +5132,7 @@ UNARY_FOLDER_FLOAT(RoundOp, Round)
 UNARY_FOLDER_UPCAST_TO_F64(AcosOp, std::acos, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(AcoshOp, std::acosh, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(AsinOp, std::asin, AnyValue)
+UNARY_FOLDER_UPCAST_TO_F64(AsinhOp, std::asinh, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(AtanhOp, std::atanh, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(CoshOp, std::cosh, AnyValue)
 UNARY_FOLDER_UPCAST_TO_F64(CosineOp, std::cos, AnyValue)
@@ -6611,6 +6613,10 @@ using mlir::hlo::printSameOperandsAndResultType;
 using mlir::hlo::printSelectOpType;
 using mlir::hlo::printTupleOpType;
 using mlir::hlo::printVariadicSameOperandsAndResultType;
+
+using namespace mlir;  // NOLINT
+using mlir::mhlo::AsyncBundleType;
+using mlir::mhlo::TokenType;
 
 #define GET_OP_CLASSES
 #include "mhlo/IR/hlo_ops.cc.inc"

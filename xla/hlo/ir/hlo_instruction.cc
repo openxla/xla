@@ -50,7 +50,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/backend_config.h"
-#include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -64,6 +63,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
 #include "xla/hlo/ir/ptrvec.h"
+#include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/parser/hlo_lexer.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
@@ -1304,6 +1304,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       }
       break;
       case HloOpcode::kAsin:
+      case HloOpcode::kAsinh:
       case HloOpcode::kAcos:
       case HloOpcode::kAcosh:
       case HloOpcode::kAtanh:
@@ -1501,6 +1502,7 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAtanh:
     case HloOpcode::kCos:
     case HloOpcode::kCosh:
@@ -1673,11 +1675,11 @@ HloInstruction::CreateTriangularSolve(const Shape& shape, HloInstruction* a,
 }
 
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateScaledDot(
-    const Shape& shape, HloInstruction* lhs, HloInstruction* lhs_scale,
-    HloInstruction* rhs, HloInstruction* rhs_scale,
+    const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+    HloInstruction* lhs_scale, HloInstruction* rhs_scale,
     const DotDimensionNumbers& dimension_numbers,
     const PrecisionConfig& precision_config) {
-  return std::make_unique<HloScaledDotInstruction>(shape, lhs, lhs_scale, rhs,
+  return std::make_unique<HloScaledDotInstruction>(shape, lhs, rhs, lhs_scale,
                                                    rhs_scale, dimension_numbers,
                                                    precision_config);
 }
@@ -2727,6 +2729,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     // Unary ops.
     case HloOpcode::kAbs:
     case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAtanh:
@@ -2759,6 +2762,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     case HloOpcode::kLogistic:
     case HloOpcode::kSign:
     case HloOpcode::kSin:
+    case HloOpcode::kSinh:
     case HloOpcode::kSqrt:
     case HloOpcode::kCbrt:
     case HloOpcode::kTan:
@@ -3198,6 +3202,7 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAllGatherDone:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kAtan2:
@@ -3834,6 +3839,7 @@ bool HloInstruction::IsOpElementwise(HloOpcode opcode) {
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAtanh:
     case HloOpcode::kRoundNearestAfz:
     case HloOpcode::kRoundNearestEven:
@@ -4538,6 +4544,8 @@ absl::Status HloInstruction::Visit(
       return visitor->HandleAcosh(this);
     case HloOpcode::kAsin:
       return visitor->HandleAsin(this);
+    case HloOpcode::kAsinh:
+      return visitor->HandleAsinh(this);
     case HloOpcode::kAtan2:
       return visitor->HandleAtan2(this);
     case HloOpcode::kAtanh:
@@ -5253,6 +5261,7 @@ bool IsUnaryOpWithResultAccuracy(HloOpcode opcode) {
     opcode == HloOpcode::kAcos ||
     opcode == HloOpcode::kAcosh ||
     opcode == HloOpcode::kAsin ||
+    opcode == HloOpcode::kAsinh ||
     opcode == HloOpcode::kAtanh ||
     opcode == HloOpcode::kCbrt ||
     opcode == HloOpcode::kCos ||

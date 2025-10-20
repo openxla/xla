@@ -151,7 +151,10 @@ BulkTransportInterface::SendMessage BulkTransportInterface::MakeMessage(
   SendMessage result;
   result.data = tmp->data();
   result.size = tmp->size();
-  result.on_send = std::move(on_send);
+  result.on_send = [on_send = std::move(on_send)](absl::StatusOr<int> bond_id,
+                                                  size_t size) mutable {
+    std::move(on_send)(bond_id.value(), size);
+  };
   result.on_done = [tmp = std::move(tmp)]() {};
   return result;
 }
@@ -320,6 +323,25 @@ void PullTable::Handle(tsl::RCReference<ConnectionState> state,
     absl::MutexLock l(mu_);
     auto it = entries_.find(req.uuid());
     entries_.erase(it);
+  }
+}
+
+void PullTable::Reset() {
+  mu_.lock();
+  auto entries = std::move(entries_);
+  auto paused_fetches_by_uuid = std::move(paused_fetches_);
+  mu_.unlock();
+  // Drop entries without the lock held.
+  for (const auto& paused_fetches : paused_fetches_by_uuid) {
+    for (const auto& paused_fetch : paused_fetches.second) {
+      size_t req_id = paused_fetch.base_req_id;
+      for (uint64_t bid : paused_fetch.req.buffer_ids()) {
+        (void)bid;
+        paused_fetch.state->SendError(req_id, 0, 0, true,
+                                      absl::InternalError("PullTable::Reset"));
+        ++req_id;
+      }
+    }
   }
 }
 

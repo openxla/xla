@@ -58,6 +58,8 @@ exports_files(
         "threadpool.cc",
         "threadpool.h",
         "env.h",
+        "numa_hwloc.cc",
+        "numa_noop.cc",
     ],
     visibility = internal_visibility([
         "//tensorflow/core/platform:__subpackages__",
@@ -692,23 +694,14 @@ cc_library(
     alwayslink = 1,
 )
 
-cc_library(
-    name = "threadpool_executor",
-    hdrs = ["threadpool_executor.h"],
-    deps = [
-        ":env",
-        "//xla/tsl/concurrency:executor",
-    ],
-)
-
 tsl_cc_test(
-    name = "threadpool_executor_test",
-    srcs = ["threadpool_executor_test.cc"],
+    name = "threadpool_test",
+    srcs = ["threadpool_test.cc"],
     deps = [
         ":env",
         ":env_impl",
         ":test",
-        ":threadpool_executor",
+        "//xla/tsl/concurrency:executor",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_main",
     ],
@@ -738,6 +731,7 @@ cc_library(
     hdrs = ["types.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "@com_google_absl//absl/base:core_headers",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:bfloat16",
         "@tsl//tsl/platform:ml_dtypes",
@@ -823,14 +817,17 @@ cc_library(
 cc_library(
     name = "resource_loader",
     testonly = 1,
-    srcs = ["resource_loader.cc"],
+    srcs = if_oss(
+        ["//xla/tsl/platform/default:resource_loader.cc"],
+        google_value = ["//xla/tsl/platform/google:resource_loader.cc"],
+    ),
     textual_hdrs = ["resource_loader.h"],
     deps = [
         ":logging",
         ":test",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
-    ],
+    ] + if_oss(["@bazel_tools//tools/cpp/runfiles"]),
 )
 
 cc_library(

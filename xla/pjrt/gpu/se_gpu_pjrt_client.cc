@@ -80,6 +80,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_stream_executor_client.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
+#include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/se_raw_buffer.h"
 #include "xla/pjrt/tracked_device_buffer.h"
 #include "xla/pjrt/worker_thread.h"
@@ -100,6 +101,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service_agent.h"
@@ -131,6 +133,7 @@ limitations under the License.
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "third_party/gpus/cuda/nvml/include/nvml.h"
 #include "xla/service/gpu/model/gpu_collective_performance_model.h"
 #include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 #elif TENSORFLOW_USE_ROCM
@@ -719,7 +722,8 @@ Future<> StreamExecutorGpuClient::CopyRawSubBufferToHost(
     int64_t transfer_size) {
   auto* buffer = tensorflow::down_cast<PjRtStreamExecutorBuffer*>(pjrt_buffer);
   DCHECK(buffer);
-  PjRtStreamExecutorDevice* device = buffer->device();
+  auto* device =
+      tensorflow::down_cast<PjRtStreamExecutorDevice*>(buffer->device());
   LocalDeviceState* local_device = device->local_device_state();
   se::Stream* stream = local_device->GetDeviceToHostStream();
 
@@ -889,8 +893,12 @@ absl::Status StreamExecutorGpuClient::UpdateCompileOptionsInternal(
   return absl::OkStatus();
 }
 
-void StreamExecutorGpuClient::CopyToRemoteDevice(
-    PjRtBuffer* buffer, absl::string_view serialized_descriptor,
+void StreamExecutorGpuClient::ScheduleRemoteSend(
+    PjRtMemorySpace* memory_space,
+    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+    std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events,
+    tsl::RCReference<PjRtDeviceEventPromise> usage_event_promise,
+    Future<std::string> serialized_descriptor,
     PjRtBuffer::RemoteSendCallback on_done) {
   // Get the default GpuCollectives instance.
   absl::StatusOr<Collectives*> collectives =
@@ -901,79 +909,99 @@ void StreamExecutorGpuClient::CopyToRemoteDevice(
   gpu::GpuCollectives* gpu_collectives =
       tsl::down_cast<gpu::GpuCollectives*>(*collectives);
   if (gpu_collectives == nullptr) {
-    on_done(absl::InternalError("Failed to get GPU collectives"),
-            /*sends_were_enqueued=*/false);
+    auto error = absl::InternalError("Failed to get GPU collectives");
+    on_done(error, /*sends_were_enqueued=*/false);
+    usage_event_promise->SetError(error);
+    return;
   }
 
-  // Parse the CliqueId;
-  CliqueId clique_id(serialized_descriptor);
+  BufferSequencingEventRef usage_event =
+      BufferSequencingEvent::Create(this->thread_pool());
 
-  // Get the local device.
-  absl::StatusOr<LocalDeviceState*> local_device =
-      tensorflow::down_cast<PjRtStreamExecutorDevice*>(buffer->device())
-          ->GetLocalDeviceState();
-  if (!local_device.ok()) {
-    on_done(local_device.status(), /*sends_were_enqueued=*/false);
-  }
+  // Keep memory alive until the event is done.
+  usage_event.AndThen([raw_buffer]() {});
 
-  // Get the buffer's shape.
-  absl::StatusOr<Shape> shape = buffer->HostShape();
-  if (!shape.ok()) {
-    on_done(shape.status(), /*sends_were_enqueued=*/false);
-  }
+  serialized_descriptor.OnReady(
+      [this, gpu_collectives = std::move(gpu_collectives),
+       on_done = std::move(on_done),
+       definition_events = std::move(definition_events),
+       memory_space = memory_space, raw_buffer = std::move(raw_buffer),
+       usage_event = usage_event](
+          absl::StatusOr<std::string> serialized_descriptor) mutable {
+        if (!serialized_descriptor.ok()) {
+          on_done(serialized_descriptor.status(),
+                  /*sends_were_enqueued=*/false);
+          SetEventAsError(usage_event, serialized_descriptor.status());
+        }
+        auto events = absl::MakeSpan(definition_events);
+        async_work_runner()->ScheduleWhenReady(
+            events,
+            [this, on_done = std::move(on_done),
+             gpu_collectives = std::move(gpu_collectives),
+             definition_events = std::move(definition_events),
+             raw_buffer = std::move(raw_buffer), usage_event = usage_event,
+             serialized_descriptor =
+                 *std::move(serialized_descriptor)]() mutable {
+              auto status = [&]() {
+                for (const auto& event : definition_events) {
+                  if (auto* status = event->GetErrorIfPresent()) {
+                    return *status;
+                  }
+                }
+                auto* local_device =
+                    tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
+                        raw_buffer.get())
+                        ->local_device();
+                auto* stream = local_device->GetDeviceToDeviceStream();
+                auto mem = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
+                               raw_buffer.get())
+                               ->device_buffer();
+                CliqueId clique_id(serialized_descriptor);
 
-  // Acquire a hold on the buffer.
-  auto* handle = tensorflow::down_cast<PjRtStreamExecutorBuffer*>(buffer);
-  PjRtStreamExecutorBuffer::ScopedHold hold = handle->GetBufferWithUsageHold();
+                // Create a communicator.
+                //
+                // TODO(mwhittaker): The way we are constructing GpuCliqueKeys
+                // is a big hack. This code doesn't know the GlobalDeviceId of
+                // the sending process. Instead, we use two arbitrary
+                // GlobalDeviceIds. This works because NcclCommunicators don't
+                // actually use the GlobalDeviceIds.  Instead, they just need to
+                // the know the number of devices (2 in this case).
+                gpu::GpuCliqueKey clique_key(
+                    /*devices=*/{GlobalDeviceId(0), GlobalDeviceId(1)},
+                    /*num_local_participants=*/1);
+                CliqueIds clique_ids(clique_id);
+                gpu::GpuCollectives::Device collectives_device(
+                    local_device->executor());
+                std::vector<Collectives::DeviceRank> ranks = {
+                    Collectives::DeviceRank(&collectives_device, RankId(1))};
+                gpu::GpuCollectives::Config config;
+                TF_ASSIGN_OR_RETURN(
+                    std::vector<std::unique_ptr<Communicator>> communicators,
+                    gpu_collectives->CreateCommunicators(clique_key, clique_ids,
+                                                         ranks, config));
+                CHECK_EQ(communicators.size(), 1);
+                std::unique_ptr<Communicator> communicator =
+                    std::move(communicators[0]);
 
-  auto send = [gpu_collectives, clique_id, on_done, mem = hold->device_memory(),
-               local_device = *local_device, shape = *shape,
-               dtype = buffer->element_type(),
-               stream = (*local_device)->GetDeviceToDeviceStream()]() mutable {
-    auto f = [&]() -> absl::Status {
-      // Create a communicator.
-      //
-      // TODO(mwhittaker): The way we are constructing GpuCliqueKeys is a big
-      // hack. This code doesn't know the GlobalDeviceId of the sending process.
-      // Instead, we use two arbitrary GlobalDeviceIds. This works because
-      // NcclCommunicators don't actually use the GlobalDeviceIds.  Instead,
-      // they just need to the know the number of devices (2 in this case).
-      gpu::GpuCliqueKey clique_key(
-          /*devices=*/{GlobalDeviceId(0), GlobalDeviceId(1)},
-          /*num_local_participants=*/1);
-      CliqueIds clique_ids(clique_id);
-      gpu::GpuCollectives::Device collectives_device(local_device->executor());
-      std::vector<Collectives::DeviceRank> ranks = {
-          Collectives::DeviceRank(&collectives_device, RankId(1))};
-      gpu::GpuCollectives::Config config;
-      TF_ASSIGN_OR_RETURN(
-          std::vector<std::unique_ptr<Communicator>> communicators,
-          gpu_collectives->CreateCommunicators(clique_key, clique_ids, ranks,
-                                               config));
-      CHECK_EQ(communicators.size(), 1);
-      std::unique_ptr<Communicator> communicator = std::move(communicators[0]);
+                // Send data to the receiver.
+                Future<> send_future = communicator->Send(
+                    mem->mem(), xla::PrimitiveType::U8, mem->mem().size(),
+                    RankId(0), gpu::GpuCollectives::On(*stream));
+                TF_RETURN_IF_ERROR(send_future.Await());
 
-      // Send data to the receiver.
-      Future<> send_future = communicator->Send(
-          mem->mem(), shape.element_type(), ShapeUtil::ElementsIn(shape),
-          RankId(0), gpu::GpuCollectives::On(*stream));
-      TF_RETURN_IF_ERROR(send_future.Await());
+                TF_RETURN_IF_ERROR(
+                    AllocateAndRecordEvent(usage_event, local_device, stream));
 
-      // Keep mem alive until the Send has finished executing. Note that
-      // send_event is fulfilled when the send is enqueued, but not necessarily
-      // executed.
-      TF_RETURN_IF_ERROR(local_device->ThenRelease(stream, mem));
-
-      return absl::OkStatus();
-    };
-
-    if (absl::Status s = f(); !s.ok()) {
-      on_done(s, /*sends_were_enqueued=*/false);
-    } else {
-      on_done(absl::OkStatus(), /*sends_were_enqueued=*/true);
-    }
-  };
-  thread_pool()->Schedule(send);
+                return absl::OkStatus();
+              }();
+              std::move(on_done)(status, /*sends_were_enqueued=*/status.ok());
+              if (!status.ok()) {
+                SetEventAsError(usage_event, status);
+              }
+            });
+      });
+  usage_event_promise->Set(
+      tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(std::move(usage_event)));
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
@@ -1063,8 +1091,8 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
 
       // Receive data from the sender.
       Future<> recv_future = communicator->Recv(
-          mem->mem(), shape.element_type(), ShapeUtil::ElementsIn(shape),
-          RankId(1), gpu::GpuCollectives::On(*stream));
+          mem->mem(), xla::PrimitiveType::U8, mem->mem().size(), RankId(1),
+          gpu::GpuCollectives::On(*stream));
       TF_RETURN_IF_ERROR(recv_future.Await());
 
       // Keep mem alive until the Recv has finished executing. Note that
@@ -1678,26 +1706,29 @@ absl::StatusOr<std::string> GetDeviceFabricInfo(const int device_ordinal) {
     return absl::InternalError("Failed to initialize NVML library.");
   }
 
-  // NVML library is not a part of the CUDA toolkit, so there might be a
-  // situation when user is using CUDA 12.4 an higher, but the host NVML
-  // version doen't have the required functions.
-  if (xla_nvmlDeviceGetHandleByPciBusId_v2 == nullptr ||
-      xla_nvmlDeviceGetGpuFabricInfoV == nullptr) {
-    return absl::InternalError("NVML library doesn't have required functions.");
-  }
-
   char pciBusId[] = "00000000:00:00.0";
   cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), device_ordinal);
   nvmlDevice_t device;
-  auto get_bus_id_status =
-      xla_nvmlDeviceGetHandleByPciBusId_v2(pciBusId, &device);
+
+  nvmlReturn_t get_bus_id_status =
+      nvmlDeviceGetHandleByPciBusId_v2(pciBusId, &device);
+  // NVML library is not a part of the CUDA toolkit, so there might be a
+  // situation when user is using CUDA 12.4 an higher, but the host NVML
+  // version doen't have the required functions.
+  if (get_bus_id_status == NVML_ERROR_FUNCTION_NOT_FOUND) {
+    return absl::InternalError("NVML library doesn't have required functions.");
+  }
   CHECK_EQ(get_bus_id_status, NVML_SUCCESS);
 
   nvmlGpuFabricInfoV_t fabricInfo = {
       .version = nvmlGpuFabricInfo_v2,
       .state = NVML_GPU_FABRIC_STATE_NOT_SUPPORTED};
-  auto get_fabric_info_status =
-      xla_nvmlDeviceGetGpuFabricInfoV(device, &fabricInfo);
+
+  nvmlReturn_t get_fabric_info_status =
+      nvmlDeviceGetGpuFabricInfoV(device, &fabricInfo);
+  if (get_fabric_info_status == NVML_ERROR_FUNCTION_NOT_FOUND) {
+    return absl::InternalError("NVML library doesn't have required functions.");
+  }
   CHECK_EQ(get_fabric_info_status, NVML_SUCCESS);
 
   if (fabricInfo.state == NVML_GPU_FABRIC_STATE_NOT_SUPPORTED) {
@@ -1940,7 +1971,10 @@ StreamExecutorGpuClient::RunAsync(
     buffers_in_result.insert(result_buffer);
 
     p.second = RawSEDeviceMemory::Create(
-        result_buffer, device->local_device_id(), memory_allocator);
+        result_buffer,
+        tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
+            ->local_device_state(),
+        memory_allocator);
   }
 
   TF_RETURN_IF_ERROR(gpu_exec->ExecuteThunks(buffer_allocations, run_options));
