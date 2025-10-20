@@ -36,11 +36,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
-#include "xla/service/cpu/onednn_memory_util.h"
-#include "xla/service/cpu/onednn_util.h"
 #include "xla/service/cpu/runtime_lightweight_check.h"
 #include "xla/shape.h"
-#include "xla/tsl/util/onednn_threadpool.h"
 
 #define EIGEN_USE_THREADS
 

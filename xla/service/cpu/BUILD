@@ -612,10 +612,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:mlir_c_runner_utils",
         "@tsl//tsl/platform:logging",
-    ] + if_onednn([
-        ":onednn_convolution",
-        ":onednn_matmul",
-    ]),
+    ],
 )
 
 cc_library(
@@ -827,7 +824,6 @@ cc_library(
         ":elemental_ir_emitter",
         ":ir_emission_utils",
         ":ir_function",
-        ":onednn_config_proto_cc",
         ":parallel_loop_emitter",
         "//xla:literal",
         "//xla:literal_util",
@@ -875,7 +871,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
         "@llvm-project//mlir:IR",
-    ] + if_onednn([":onednn_memory_util"]),
+    ],
 )
 
 cc_library(
@@ -1712,7 +1708,6 @@ onednn_cc_library(
     srcs = ["onednn_util.cc"],
     hdrs = [
         "onednn_util.h",
-        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
