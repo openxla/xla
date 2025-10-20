@@ -26,11 +26,14 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/algorithm/container.h"
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/overload.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
@@ -44,6 +47,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/ffi/ffi_api.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -56,21 +60,9 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+namespace {
 
 using CommandBufferConfig = CommandBufferConversionPass::CommandBufferConfig;
-
-std::string CommandBufferConversionPass::CommandBufferConfig::ToString() const {
-  std::vector<std::string> cmd_names;
-  cmd_names.reserve(enabled_commands.size());
-  for (auto cmd : enabled_commands) {
-    cmd_names.push_back(DebugOptions::CommandBufferCmdType_Name(cmd));
-  }
-  std::string out;
-  out += "enabled_commands: [" + absl::StrJoin(cmd_names, ", ") + "]";
-  return out;
-}
-
-namespace {
 
 CommandBufferConfig GetCommandBufferConfig(
     const DebugOptions& debug_options,
@@ -108,19 +100,16 @@ CommandBufferConfig GetCommandBufferConfig(
   };
 
   // Check if CUDA/ROCM driver supports required features.
-  auto erase_cuda = [&](const se::CudaComputeCapability& cuda_comp) {
+  if (device_info.gpu_compute_capability().IsCuda()) {
     if (std::min(device_info.runtime_version(), device_info.driver_version()) <
         se::SemanticVersion{12, 3, 0}) {
       erase(kRequireTracing);       // cuStreamBeginCaptureToGraph
       erase(kRequireConditionals);  // on-device control flow
     }
-  };
-  auto erase_rocm = [&](const se::RocmComputeCapability& rocm_comp) {
+  }
+  if (device_info.gpu_compute_capability().IsRocm()) {
     erase(kRequireConditionals);  // on-device control flow
-  };
-
-  std::visit(absl::Overload(erase_cuda, erase_rocm),
-             device_info.gpu_compute_capability());
+  }
 
   return config;
 }
@@ -414,8 +403,18 @@ absl::Status FlushCommandBuffer(
 
 }  // namespace
 
+std::string CommandBufferConversionPass::CommandBufferConfig::ToString() const {
+  auto formatter = [](std::string* out,
+                      DebugOptions::CommandBufferCmdType cmd) {
+    absl::StrAppend(out, DebugOptions::CommandBufferCmdType_Name(cmd));
+  };
+  std::string cmd_names = absl::StrJoin(enabled_commands, ", ", formatter);
+  return absl::StrCat("enabled_commands: [", cmd_names, "]");
+}
+
 absl::StatusOr<bool> CommandBufferConversionPass::Run(
     SequentialThunk* root_thunk, const DebugOptions& debug_options,
+    const HloModule* absl_nullable hlo_module,
     const se::DeviceDescription& device_info,
     ThunkPassBufferAllocator& allocator) {
   tsl::profiler::TraceMe traceme("CommandBufferConversionPass");
@@ -455,11 +454,8 @@ absl::StatusOr<bool> CommandBufferConversionPass::Run(
       if (!region.empty()) {
         // If a valid region is found, add the whole region to the current
         // sequence and continue processing.
-        current_command_buffer_thunks.insert(
-            current_command_buffer_thunks.end(),
-            std::make_move_iterator(region.begin()),
-            std::make_move_iterator(region.end()));
         i += region.size() - 1;
+        absl::c_move(region, std::back_inserter(current_command_buffer_thunks));
         continue;
       }
     } else if (IsConvertible(*thunk.get(), config) && !thunk->IsAsyncDone()) {
@@ -475,16 +471,16 @@ absl::StatusOr<bool> CommandBufferConversionPass::Run(
       auto while_thunk = static_cast<WhileThunk*>(thunk.get());
       TF_ASSIGN_OR_RETURN(bool changed_in_body,
                           Run(while_thunk->body_thunk_sequence(), debug_options,
-                              device_info, allocator));
+                              hlo_module, device_info, allocator));
       changed |= changed_in_body;
     } else if (thunk->kind() == Thunk::kConditional) {
       // If a `ConditionalThunk` itself is not eligible for conversion into a
       // command buffer, we attempt to convert thunks within its branches.
       auto conditional_thunk = static_cast<ConditionalThunk*>(thunk.get());
       for (auto& branch_thunk : conditional_thunk->branch_thunks()) {
-        TF_ASSIGN_OR_RETURN(
-            bool changed_in_branch,
-            Run(branch_thunk.get(), debug_options, device_info, allocator));
+        TF_ASSIGN_OR_RETURN(bool changed_in_branch,
+                            Run(branch_thunk.get(), debug_options, hlo_module,
+                                device_info, allocator));
         changed |= changed_in_branch;
       }
     }

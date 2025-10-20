@@ -134,7 +134,10 @@ cc_library(
     name = "executor",
     hdrs = ["executor.h"],
     compatible_with = get_compatible_with_portable(),
-    deps = ["@com_google_absl//absl/functional:any_invocable"],
+    deps = [
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/functional:any_invocable",
+    ],
 )
 
 cc_library(
@@ -165,6 +168,7 @@ tsl_cc_test(
     deps = [
         ":executor",
         ":future",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",

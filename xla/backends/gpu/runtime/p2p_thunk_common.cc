@@ -98,7 +98,8 @@ P2PConfig GetP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
 
   // All execution instances of a Send/Recv together form a replica group.
   const int64_t num_participants =
-      config.group_mode == CollectiveOpGroupMode::kCrossReplica
+      config.group_mode ==
+              CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA
           ? replica_count
           : partition_count;
   config.replica_groups.emplace_back();

@@ -157,6 +157,46 @@ enum PrimitiveType {
 //   https://www.tensorflow.org/code/tensorflow/compiler/xla/tools/driver.cc
 // )
 
+// There are broadly 4 modes that collective communication ops use to describe
+// which sets of devices are participating with a given device in the operation.
+// These modes are determined by the values of channel_id (optional) and
+// use_global_device_ids (optional). The modes are as follows:
+//
+// kCrossReplica:
+//    implied by: no channel id, use_global_device_ids = false, or
+//                no channel_id, no use_global_device_ids:
+//    replica_groups contain replica_id, group contains all replicas for the
+//    current partition
+//
+// kCrossPartition:
+//    implied by: channel_id is set, no use_global_device_ids:
+//    replica_groups contain partition_id, group contains all partitions for the
+//    current replica.
+//
+// kCrossReplicaAndPartition:
+//    implied by: channel_id is set, use_global_device_ids = false:
+//    replica_groups contain replica_id, group contains all replicas for all
+//    partitions (as opposed to just current partition).
+//
+// kFlattenedID:
+//    implied by: channel_id is set, use_global_device_ids = true:
+//    replica_groups contain flattened-ids, group contains devices that are
+//    listed in the flattened-id list.
+//
+// Rest of the combinations are invalid.
+//
+// Since the actual value of channel_id does not matter, we use a bool argument
+// `has_channel_id`, and optional<bool> for use_global_device_ids.
+// Note that use_global_device_ids true requires channel_id to be set as well.
+// Additionally, if use_global_device_ids = true, replica groups cannot be
+// empty (verified in the HLO verifier).
+enum CollectiveOpGroupMode {
+  COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA = 0;
+  COLLECTIVE_OP_GROUP_MODE_CROSS_PARTITION = 1;
+  COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA_AND_PARTITION = 2;
+  COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID = 3;
+}
+
 // Describes the padding configuration for Pad operation. The padding amount on
 // both edges as well as between the elements are specified for each dimension.
 message PaddingConfig {
@@ -934,7 +974,7 @@ message StatisticsViz {
 //   * All of its elements must be non-negative.
 //   * `device_ids` should not be equal to `iota(product(axis_sizes))`.
 //   * Sorted `device_ids` must be `iota(product(axis_sizes))`.
-message Mesh {
+message MeshProto {
   message MeshAxis {
     string name = 1;
     int64 size = 2;
@@ -949,8 +989,8 @@ message Mesh {
 // axis name to reduce proto size.
 //
 // Constraints:
-// - `axis_index` is a valid index into `mesh.axes`.
-message AxisRef {
+// - `mesh_axis_index` is a valid index into `mesh.axes`.
+message AxisRefProto {
   // When splitting a full axis into n sub-axes, the axis is reshaped into
   // [k_1,...,k_n], and the ith sub-axis can be expressed by the product of
   // all axis sizes to its left `m=prod(k_1,...,k_(i-1))` (aka pre-size) and
@@ -970,7 +1010,7 @@ message AxisRef {
     int64 size = 2;
   }
 
-  int64 axis_index = 1;
+  int64 mesh_axis_index = 1;
   optional SubAxis sub_axis_info = 2;
 }
 
@@ -985,31 +1025,31 @@ message AxisRef {
 // This is corresponding to mlir sharding representation `Sdy_TensorSharding`
 // (https://github.com/openxla/shardy/blob/main/shardy/dialect/sdy/ir/attrs.td)
 // used in Shardy.
-message NamedSharding {
+message NamedShardingProto {
   // Describes how a tensor dimension is sharded using indices into
   // mesh.axes, from major to minor, and a boolean indicating whether
   // the dimension can be further sharded.
   message DimensionSharding {
     // List of axes to shard a tensor dimension on from major to minor. The
     // dimension should have at least one axis if it is closed.
-    repeated AxisRef axes = 1;
+    repeated AxisRefProto axes = 1;
     // If true, this dimension is "closed" and can't be further sharded.
     bool is_closed = 2;
   }
 
   // If this is non-empty, then all the other fields are ignored and this
   // represents a tuple sharding.
-  repeated NamedSharding tuple_shardings = 1;
+  repeated NamedShardingProto tuple_shardings = 1;
 
-  Mesh mesh = 2;
+  MeshProto mesh = 2;
   // The dimension shardings tell us for each dimension of the tensor, along
   // which axes it is sharded from major to minor.
   repeated DimensionSharding dim_shardings = 3;
   // All axes in this list are explicitly replicated.
-  repeated AxisRef replicated_axes = 4;
+  repeated AxisRefProto replicated_axes = 4;
   // A sharding can have unreduced axes, meaning the tensor is unreduced
   // along these axes.
-  repeated AxisRef unreduced_axes = 5;
+  repeated AxisRefProto unreduced_axes = 5;
 
   // This field is used to track the source of this sharding, usually derived
   // from instructions. Multple metadata may be populated if sharding is
@@ -1114,7 +1154,7 @@ message OpSharding {
   // Note that instead of reusing OpSharding's fields like metadata, we have
   // separate fields in NamedSharding to treat it as a standalone message which
   // is more clear and will help in future cleanup.
-  optional NamedSharding named_sharding = 14;
+  optional NamedShardingProto named_sharding = 14;
 }
 // LINT.ThenChange()
 

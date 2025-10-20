@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <variant>
+#include <vector>
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -24,12 +25,20 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/TargetParser/Triple.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -37,7 +46,10 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
+#include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
+#include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
@@ -47,10 +59,15 @@ limitations under the License.
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/tma_metadata.h"
+#include "xla/stream_executor/launch_dim.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/Triton/IR/Types.h"
 
 namespace xla::gpu::triton {
 
@@ -345,13 +362,6 @@ Value Minimum(EmitterLocOpBuilder& b, const se::DeviceDescription& device_info,
       values[0], values[1]);
 }
 
-ScalarOrTensor Splat(EmitterLocOpBuilder& b, ScalarOrTensor value,
-                     ArrayRef<int64_t> shape) {
-  CHECK(!shape.empty());
-  auto type = mlir::RankedTensorType::get(shape, value.getType());
-  return ScalarOrTensor(b.create<mt::SplatOp>(type, value.UnwrapUnsafe()));
-}
-
 bool IsSupportedElementwiseLibdeviceFunction(const HloInstruction& hlo) {
   auto dev_fn_id = GetTargetDeviceFunctionID(hlo.opcode());
   if (!dev_fn_id.has_value()) {
@@ -518,6 +528,110 @@ Value Bitcast(EmitterLocOpBuilder& b, Value value, Type type) {
   auto value_type = value.getType();
   value_type = mlir::dyn_cast<ShapedType>(value_type).clone(type);
   return b.create<mlir::arith::BitcastOp>(value_type, value);
+}
+
+std::vector<llvm::Metadata*> ExtractNvvmAnnotations(
+    llvm::Module* ll_triton_module) {
+  std::vector<llvm::Metadata*> captured_nvvm_annotations;
+  llvm::NamedMDNode* nvvm_annotations =
+      ll_triton_module->getNamedMetadata("nvvm.annotations");
+  if (nvvm_annotations) {
+    for (llvm::MDNode* operand : nvvm_annotations->operands()) {
+      captured_nvvm_annotations.push_back(operand);
+    }
+    ll_triton_module->eraseNamedMetadata(nvvm_annotations);
+  }
+  return captured_nvvm_annotations;
+}
+
+absl::StatusOr<stream_executor::ThreadDim> ExtractThreadDims(
+    mlir::ModuleOp triton_module, mlir::LLVM::LLVMFuncOp func_op) {
+  // Extract the launch information from the Triton module.
+  auto threads_per_warp_attr =
+      triton_module->getAttrOfType<mlir::IntegerAttr>("ttg.threads-per-warp");
+  if (!threads_per_warp_attr) {
+    return absl::InternalError("ttg.threads-per-warp attribute not found.");
+  }
+  auto num_warps_attr =
+      triton_module->getAttrOfType<mlir::IntegerAttr>("ttg.num-warps");
+  if (!num_warps_attr) {
+    return absl::InternalError("ttg.num-warps attribute not found.");
+  }
+  auto total_num_warps_attr =
+      triton_module->getAttrOfType<mlir::IntegerAttr>("ttg.total-num-warps");
+  if (!total_num_warps_attr) {
+    return absl::InternalError("ttg.total-num-warps attribute not found.");
+  }
+  auto reqntid_attr =
+      func_op->getAttrOfType<mlir::DenseI32ArrayAttr>("nvvm.reqntid");
+  if (!reqntid_attr) {
+    return absl::InternalError("nvvm.reqntid attribute not found.");
+  }
+  auto reqntids = reqntid_attr.asArrayRef();
+  if (reqntids.empty()) {
+    return absl::InternalError("nvvm.reqntid attribute is empty.");
+  }
+  if (reqntids.size() > 3) {
+    return absl::InternalError(
+        "nvvm.reqntid attribute has more than 3 dimensions.");
+  }
+
+  // Validate the launch information.
+  if (num_warps_attr.getInt() != total_num_warps_attr.getInt()) {
+    VLOG(6)
+        << "num_warps and total_num_warps are different! This can happen if "
+           "Triton compilation decides to use a different number of warps than "
+           "configured. e.g. auto warp specialization can do that.";
+  }
+  int64_t expected_total_threads = xla::Product<int32_t>(reqntids);
+  int64_t actual_total_threads =
+      total_num_warps_attr.getInt() * threads_per_warp_attr.getInt();
+  if (actual_total_threads != expected_total_threads) {
+    return absl::InternalError(absl::StrCat(
+        "Expected total threads as per reqntid attribute to be ",
+        expected_total_threads, " but got ", actual_total_threads,
+        " as per ttg.total-num-warps and tt.threads-per-warp attributes."));
+  }
+
+  stream_executor::ThreadDim thread_dims(reqntids[0],
+                                         reqntids.size() > 1 ? reqntids[1] : 1,
+                                         reqntids.size() > 2 ? reqntids[2] : 1);
+  return thread_dims;
+}
+
+absl::StatusOr<stream_executor::gpu::TmaMetadata> ExtractTmaMetadata(
+    mlir::LLVM::LLVMFuncOp func_op) {
+  stream_executor::gpu::TmaMetadata tma_metadata;
+  for (auto [idx, arg] : llvm::enumerate(func_op.getArguments())) {
+    if (auto attr =
+            func_op.getArgAttrOfType<mlir::triton::xla::TmaDescriptorAttr>(
+                idx, "tt.tma_descriptor")) {
+      TF_ASSIGN_OR_RETURN(
+          auto tma_desc,
+          CreateTmaDescriptor(attr.getGlobalShape(), attr.getTileShape(),
+                              attr.getTileStrides(), attr.getLayout(),
+                              attr.getElementByteSize(),
+                              attr.getSwizzleMode().getValue()));
+      tma_metadata.arg_index_to_tma_info.insert({idx, tma_desc});
+    }
+  }
+  return tma_metadata;
+}
+
+::mlir::triton::PointerType GetPointerType(mlir::MemRefType memref_type) {
+  int address_space = 0;
+
+  mlir::Attribute memory_space_attr = memref_type.getMemorySpace();
+  if (auto int_memory_space_attr =
+          mlir::dyn_cast_if_present<mlir::IntegerAttr>(memory_space_attr)) {
+    address_space = int_memory_space_attr.getInt();
+  } else if (auto llvm_memory_space_attr = mlir::dyn_cast_if_present<
+                 mlir::LLVM::LLVMAddrSpaceAttrInterface>(memory_space_attr)) {
+    address_space = llvm_memory_space_attr.getAddressSpace();
+  }
+
+  return ::mlir::triton::PointerType::get(memref_type.getElementType(),
+                                          address_space);
 }
 
 }  // namespace xla::gpu::triton

@@ -5,7 +5,7 @@ load("//xla:xla.default.bzl", "xla_cc_test")
 
 # Libraries for performance modeling of HLO.
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_google", "if_oss", "internal_visibility")
+load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
@@ -36,6 +36,7 @@ cc_library(
         "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:latency_hiding_scheduler",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:status",
         "@com_google_absl//absl/log",
@@ -66,6 +67,7 @@ cc_library(
         "//xla/service:latency_hiding_scheduler",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:flag_utils",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/service/gpu/transforms/collectives:collective_ops_utils",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:env",
@@ -77,7 +79,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
-        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -97,6 +98,7 @@ xla_cc_test(
         "//xla/service:hlo_module_config",
         "//xla/service:latency_hiding_scheduler",
         "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:hlo_test_base",
@@ -156,11 +158,6 @@ xla_test(
         "b200",
         "amdgpu_any",
     ],
-    tags =
-        if_oss(
-            # TODO(b/435404154): Reenable once this is fixed.
-            ["no_oss"],
-        ),
     deps = [
         ":analytical_latency_estimator",
         "//xla:shape_util",
@@ -169,6 +166,7 @@ xla_test(
         "//xla/service:latency_hiding_scheduler",
         "//xla/service/gpu:alias_info",
         "//xla/service/gpu:gpu_compiler",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
@@ -226,11 +224,11 @@ cc_library(
         "//xla/hlo/pass:hlo_pass",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_graph_dumper",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -245,6 +243,7 @@ xla_cc_test(
         "//xla/service:hlo_cost_analysis",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
         "@llvm-project//mlir:IR",
@@ -319,6 +318,7 @@ cc_library(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:launch_dimensions",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -327,7 +327,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
-        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -343,6 +342,7 @@ xla_cc_test(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:statusor",
@@ -368,6 +368,7 @@ cc_library(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:launch_dimensions",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:status",
         "@com_google_absl//absl/log",
@@ -375,7 +376,6 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -397,6 +397,7 @@ xla_cc_test(
         "//xla/service:hlo_module_config",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:statusor",
@@ -493,18 +494,29 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:status",
-    ] + if_cuda_is_configured(["@local_config_cuda//cuda:cuda_headers"]),
+    ] + if_cuda_is_configured([
+        "//xla/tsl/cuda:nvml",
+        "@local_config_cuda//cuda:cuda_headers",
+    ]),
 )
 
-xla_cc_test(
+xla_test(
     name = "gpu_collective_performance_model_test",
     srcs = ["gpu_collective_performance_model_test.cc"],
+    backends = ["nvgpu_any"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
+        ":gpu_collective_performance_model",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
-    ],
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+    ]),
 )
 
 cc_library(
@@ -533,6 +545,7 @@ cc_library(
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
@@ -569,6 +582,7 @@ xla_cc_test(
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
@@ -615,6 +629,7 @@ cc_library(
         "//xla/hlo/analysis:interval",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
@@ -640,8 +655,8 @@ xla_cc_test(
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:instruction_fusion",
         "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
-        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/log",
@@ -668,6 +683,7 @@ cc_library(
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service/gpu:gpu_fusible",
         "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/types:span",
@@ -694,6 +710,7 @@ xla_cc_test(
         "//xla/service:hlo_module_config",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
@@ -869,6 +886,7 @@ cc_library(
         "//xla/service/gpu:cublas_cudnn",
         "//xla/service/gpu:gpu_hlo_schedule",
         "//xla/service/gpu:gpu_latency_hiding_scheduler",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
@@ -877,7 +895,6 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -890,6 +907,7 @@ xla_cc_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:statusor",
@@ -1106,6 +1124,7 @@ cc_library(
         "//xla/hlo/utils:hlo_query",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:matmul_utils",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/service/gpu/transforms:nest_gemm_fusion",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:env",

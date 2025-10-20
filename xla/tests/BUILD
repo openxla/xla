@@ -416,10 +416,10 @@ cc_library(
     srcs = ["codegen_test_base.cc"],
     hdrs = ["codegen_test_base.h"],
     deps = [
+        ":hlo_test_base_with_symbolic_expr_context",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",
         "//xla/service:executable",
-        "//xla/tests:hlo_test_base_with_mlir_context",
     ],
 )
 
@@ -1208,8 +1208,8 @@ xla_test(
         "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
+        ":hlo_pjrt_test_base",
         "//xla/service:platform_util",
-        "//xla/tests:hlo_pjrt_test_base",
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
@@ -1290,7 +1290,7 @@ xla_test(
         # TODO(b/445172709): Re-enable once fixed.
         "b200": ["broken"],
     },
-    shard_count = 20,
+    shard_count = 50,
     tags = [
         "optonly",
     ],
@@ -1829,7 +1829,7 @@ xla_test(
     name = "slice_test",
     timeout = "long",
     srcs = ["slice_test.cc"],
-    shard_count = 40,
+    shard_count = 50,
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_test_base",
@@ -2771,7 +2771,7 @@ xla_test(
     srcs = ["collective_ops_e2e_test.cc"],
     backend_tags = {
         "gpu": [
-            "multi_gpu_h100",
+            "multi_gpu",
             "no_oss",
         ],
     },
@@ -3384,14 +3384,26 @@ xla_test(
     srcs = ["sample_file_test.cc"],
     backends = ["gpu"],
     data = ["isolated_convolution.hlo"],
+    tags = [
+        "test_migrated_to_hlo_runner_pjrt",
+    ],
     deps = [
-        ":hlo_test_base",
+        ":hlo_pjrt_test_base",
+        ":hlo_runner_agnostic_reference_mixin",
         ":xla_internal_test_main",  # fixdeps: keep
+        "//xla:error_spec",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:test",
-        "//xla/service:cpu_plugin",  # reference backend
-        "//xla/service:platform_util",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
+        "//xla/service:hlo_module_util",
+        "//xla/service:hlo_runner_interface",
+        "//xla/service:hlo_runner_pjrt",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -3556,7 +3568,7 @@ xla_test(
 xla_test(
     name = "cholesky_test",
     srcs = ["cholesky_test.cc"],
-    shard_count = 10,
+    shard_count = 20,
     tags = [
         "optonly",
     ],
@@ -3800,11 +3812,12 @@ cc_library(
 )
 
 cc_library(
-    name = "hlo_test_base_with_mlir_context",
+    name = "hlo_test_base_with_symbolic_expr_context",
     testonly = True,
-    hdrs = ["hlo_test_base_with_mlir_context.h"],
+    hdrs = ["hlo_test_base_with_symbolic_expr_context.h"],
     deps = [
-        "//xla/tests:hlo_test_base",
+        ":hlo_test_base",
+        "//xla/service/gpu/model/experimental:symbolic_expr",
         "@llvm-project//mlir:IR",
     ],
 )

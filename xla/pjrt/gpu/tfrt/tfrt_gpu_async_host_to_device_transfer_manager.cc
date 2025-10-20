@@ -235,11 +235,7 @@ absl::Status TfrtGpuAsyncHostToDeviceTransferManager::TransferLiteralToBuffer(
     TF_CHECK_OK(transfer_manager->TransferLiteralToDeviceAsync(stream, literal,
                                                                shaped_buffer));
 
-    absl::Status status;
-    {
-      tsl::profiler::TraceMe traceme("BlockHostUntilDone");
-      status = stream->BlockHostUntilDone();
-    }
+    absl::Status status = BlockHostUntilDoneWithHostCallback(stream);
     VLOG(3) << "Finish transfer h2d for literal with shape "
             << literal.shape().ToString() << " on device "
             << device_->DebugString() << " with status " << status;
@@ -339,11 +335,7 @@ TfrtGpuAsyncHostToDeviceTransferManager::TransferRawDataToSubBuffer(
       TF_CHECK_OK(stream->Memcpy(&sub_buffer, host_data_ptr, transfer_size))
           << "Failed to copy data to GPU";
 
-      absl::Status status;
-      {
-        tsl::profiler::TraceMe traceme("BlockHostUntilDone");
-        status = stream->BlockHostUntilDone();
-      }
+      absl::Status status = BlockHostUntilDoneWithHostCallback(stream);
       VLOG(3) << "H2D copy done: " << status;
       CHECK_OK(status) << "Failed to block host until done";
     }

@@ -3755,6 +3755,61 @@ TEST_F(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_8GPUs_SliceSize4) {
   }
 }
 
+TEST_F(RaggedAllToAllMultiHostDecomposerTest,
+       RaggedAllToAll_8GPUs_SliceSize4_2ReplicaGroups) {
+  absl::string_view kModuleReplicatedStr = R"(
+  HloModule module, num_partitions=1
+
+  ENTRY entry {
+    input = f32[512,5,32] parameter(0)
+    output = f32[512,5,32] parameter(1)
+    input_offsets = s32[32] parameter(2)
+    send_sizes = s32[32] parameter(3)
+    output_offsets = s32[32] parameter(4)
+    recv_sizes = s32[32] parameter(5)
+    ROOT ra2a = f32[512,5,32] ragged-all-to-all(input, output,
+      input_offsets, send_sizes, output_offsets, recv_sizes), 
+      replica_groups={{0,2,4,6},{1,3,5,7}}
+  })";
+
+  const int64_t kNumReplicas = 8;
+  const int64_t kNumReplicasPerGroup = 4;
+  const int64_t kNumPartitions = 1;
+  const int64_t kNumUpdatesPerReplica = 8;
+  if (hlo_runner_->device_count() < kNumReplicas * kNumPartitions) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
+                 << " devices (" << hlo_runner_->device_count()
+                 << " available)";
+  }
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas * kNumPartitions);
+
+  config.mutable_debug_options()
+      .set_xla_gpu_unsupported_override_fast_interconnect_slice_size(4);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kModuleReplicatedStr, config));
+
+  Array<int64_t> input_sizes(
+      {kNumReplicas, kNumReplicasPerGroup, kNumUpdatesPerReplica});
+  input_sizes.FillRandomUniform(0, 10);
+
+  TF_ASSERT_OK(CreateRandomTestData(module.get(), input_sizes));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), GetInputLiteralPtrs(),
+                        /*device_assignment=*/nullptr,
+                        /*num_replicas=*/kNumReplicas,
+                        /*run_hlo_passes=*/true));
+  ASSERT_EQ(results.size(), kNumReplicas);
+
+  for (int i = 0; i < kNumReplicas; ++i) {
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected_outputs_[i], results[i]));
+  }
+}
+
 TEST_F(CollectiveOpsTestE2E, MemcpyP2pWhileLoopCorrectness) {
   absl::string_view hlo_string = R"(
 HloModule MemcpyP2pWhileLoopCorrectness, entry_computation_layout={(bf16[128,96]{1,0})->(bf16[32,384]{1,0}, bf16[32,384]{1,0})}, allow_spmd_sharding_propagation_to_output={true,true}, num_partitions=4
@@ -4508,7 +4563,7 @@ TEST_P(AllReduceTest, AsyncAllReduce_8GPUs_2ReplicasPerGroup) {
   }
 }
 
-TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOutputIsCorrect) {
+TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim0OutputIsCorrect) {
   constexpr int kNumReplicas = 2;
   ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
@@ -4541,6 +4596,50 @@ TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOutputIsCorrect) {
                                  {s4(4), s4(5), s4(5), s4(4)},
                                  {s4(0), s4(1), s4(2), s4(3)},
                                  {s4(4), s4(5), s4(5), s4(4)}});
+
+  ASSERT_EQ(result.size(), kNumReplicas);
+  for (int i = 0; i < kNumReplicas; ++i) {
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected_result, result[i]))
+        << "Results differ at replica " << i;
+  }
+}
+
+TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim1OutputIsCorrect) {
+  constexpr int kNumReplicas = 2;
+  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+      << "Test requires at least " << kNumReplicas << " devices ("
+      << hlo_runner_->device_count() << " available)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto unoptimized_module,
+                          ParseAndReturnVerifiedModule(R"(
+    HloModule m, replica_count=2
+
+    e {
+      a = s4[4,2]{1,0:E(4)} constant({{0,1},{2,3},{4,5},{5,4}})
+      b = s4[4,4]{1,0:E(4)} all-gather(a), dimensions={1}
+    })"));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable, hlo_runner_->CreateExecutable(
+                                               std::move(unoptimized_module),
+                                               /*run_hlo_passes=*/true));
+
+  TF_ASSERT_OK_AND_ASSIGN(const HloModule* const module,
+                          hlo_runner_->HloModuleFromWrapped(executable.get()));
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, GmockMatch(m::Fusion(
+                        m::Bitcast(m::AllGatherDone().WithShape(S8, {2, 4})))));
+  EXPECT_THAT(root->fused_expression_root(),
+              GmockMatch(m::Transpose(m::Parameter())));
+
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> result,
+                          ExecuteReplicated(executable.get(), kNumReplicas));
+
+  const Literal expected_result =
+      LiteralUtil::CreateR2<s4>({{s4(0), s4(1), s4(0), s4(1)},
+                                 {s4(2), s4(3), s4(2), s4(3)},
+                                 {s4(4), s4(5), s4(4), s4(5)},
+                                 {s4(5), s4(4), s4(5), s4(4)}});
 
   ASSERT_EQ(result.size(), kNumReplicas);
   for (int i = 0; i < kNumReplicas; ++i) {

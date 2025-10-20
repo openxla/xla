@@ -247,7 +247,8 @@ TEST(CommandBufferConversionPassTest, ConvertsToCommandBufferThunk) {
   // supported in command buffers. The expected transformation is:
   // SequentialThunk(CopyThunk) ->
   // SequentialThunk(CommandBufferThunk(CopyThunk))
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(true));
 
   EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
@@ -286,7 +287,8 @@ TEST(CommandBufferConversionPassTest, PartiallyConvertsToCommandBufferThunk) {
 
   ASSERT_EQ(root_thunk->thunks().size(), 3);
 
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(true));
 
   // Expected transformation: (Copy, Gemm, Copy) -> (CommandBuffer(Copy), Gemm,
@@ -334,7 +336,8 @@ TEST(CommandBufferConversionPassTest, ConvertsAsyncPairToCommandBuffer) {
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   FakeErrorAllocator allocator;
   CommandBufferConversionPass pass("test");
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(true));
 
   // Expected transformation:
@@ -380,7 +383,8 @@ TEST(CommandBufferConversionPassTest,
   CommandBufferConversionPass pass("test");
   // Expected no transformation, because there is a non-convertible thunk in
   // between the asyncs.
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(false));
   EXPECT_THAT(root_thunk->thunks(),
               ThunkKindsAre(Thunk::kAllGatherStart, Thunk::kCopy,
@@ -412,7 +416,8 @@ TEST(CommandBufferConversionPassTest, ConvertCrossedAsyncs) {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
 
   FakeErrorAllocator allocator;
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(true));
 
   // Expected transformation: Convert all 4 thunks into command buffer
@@ -457,7 +462,8 @@ TEST(CommandBufferConversionPassTest, ConvertNestedAsyncs) {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
 
   FakeErrorAllocator allocator;
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(true));
 
   // Expected transformation: Convert all 5 thunks into command buffer
@@ -506,7 +512,8 @@ TEST(CommandBufferConversionPassTest, DontConvertAsyncsIfUnpairedStart) {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
 
   FakeErrorAllocator allocator;
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(true));
 
   // Expected transformation: {Copy, AllGatherStart0, AllGatherStart1,
@@ -563,7 +570,8 @@ TEST(CommandBufferConversionPassTest, ConvertsAsyncPairsMixedWithOtherThunks) {
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   FakeErrorAllocator allocator;
   CommandBufferConversionPass pass("test");
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(true));
 
   // Expected transformation:
@@ -604,7 +612,8 @@ TEST(CommandBufferConversionPassTest, DontConvertIfNotMinGraphSize) {
 
   // The size of the sequence is less than the min graph size, so it should not
   // be converted to a command buffer.
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(false));
   EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCopy));
 }
@@ -640,7 +649,8 @@ TEST(CommandBufferConversionPassTest, ConvertWhileThunk) {
   FakeErrorAllocator allocator;
   ASSERT_EQ(root_thunk->thunks().size(), 1);
 
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(true));
 
   // Expected transformation: (While({Copy}, {Gemm})) ->
@@ -702,7 +712,8 @@ TEST(CommandBufferConversionPassTest,
   FakeErrorAllocator allocator;
   ASSERT_EQ(root_thunk->thunks().size(), 1);
 
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(true));
 
   // Expected transformation is: kConditional({kCopy}, {kAllGatherStart, kCopy})
@@ -752,7 +763,8 @@ TEST(CommandBufferConversionPassTest, ConvertWhileThunkWithAsyncPair) {
   FakeErrorAllocator allocator;
   ASSERT_EQ(root_thunk->thunks().size(), 1);
 
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(true));
 
   // Expected transformation: (While({Copy}, {AllGatherStart, Copy,
@@ -799,7 +811,8 @@ TEST(CommandBufferConversionPassTest, ConvertsCuDnnThunkToCommandBufferThunk) {
 
   // The expected transformation is: SequentialThunk(CuDnnThunk) ->
   // SequentialThunk(CommandBufferThunk(CuDnnThunk))
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(true));
   EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
 
@@ -845,7 +858,8 @@ TEST(CommandBufferConversionPassTest, ConvertTheBodyOfWhileThunk) {
   FakeErrorAllocator allocator;
   ASSERT_EQ(root_thunk->thunks().size(), 1);
 
-  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
               IsOkAndHolds(true));
 
   // While thunk is not converted itself, because it has a non-convertible thunk

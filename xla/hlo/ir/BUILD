@@ -60,6 +60,7 @@ cc_library(
     deps = [
         ":backend_config",
         ":hlo_sharding",
+        ":named_sharding",
         ":ptrvec",
         ":tile_assignment",
         "//xla:array",
@@ -178,11 +179,30 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "mesh_and_axis",
+    hdrs = ["mesh_and_axis.h"],
+    deps = [
+        ":tile_assignment",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
+    name = "named_sharding",
+    hdrs = ["named_sharding.h"],
+    deps = [
+        ":mesh_and_axis",
+        "//xla:xla_data_proto_cc",
+    ],
+)
+
+cc_library(
     name = "hlo_sharding",
     srcs = ["hlo_sharding.cc"],
     hdrs = ["hlo_sharding.h"],
     deps = [
         ":hlo_op_metadata",
+        ":named_sharding",
         ":tile_assignment",
         "//xla:array",
         "//xla:printer",
@@ -361,6 +381,20 @@ cc_library(
 )
 
 xla_cc_test(
+    name = "tile_assignment_test",
+    srcs = ["tile_assignment_test.cc"],
+    deps = [
+        ":tile_assignment",
+        "//xla:array",
+        "//xla:array2d",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_cc_test(
     name = "replica_group_test",
     srcs = ["replica_group_test.cc"],
     deps = [
@@ -391,6 +425,7 @@ cc_library(
     hdrs = ["collective_op_group_mode.h"],
     deps = [
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
