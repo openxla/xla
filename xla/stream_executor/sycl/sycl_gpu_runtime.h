@@ -136,6 +136,72 @@ class SyclStreamPool {
   SyclStreamPool() = delete;
 };
 
+// Timer properties for SYCL device timing operations.
+struct SyclTimerProperties {
+  // Timer frequency in cycles per second (Hz).
+  uint64_t frequency_hz;
+
+  // Bitmask for valid kernel timestamp bits.
+  uint64_t timestamp_mask;
+};
+
+// Returns the timer frequency (Hz) and valid timestamp bitmask for the given
+// device ordinal using the Level Zero backend.
+absl::StatusOr<SyclTimerProperties> SyclGetTimerProperties(int device_ordinal);
+
+// Synchronizes the given SYCL stream by blocking until all previously submitted
+// tasks are complete.
+absl::Status SyclStreamSynchronize(::sycl::queue* stream_handle);
+
+// Retrieves the most recent SYCL event associated with the given stream,
+// if available.
+absl::StatusOr<std::optional<::sycl::event>> SyclGetRecentEventFromStream(
+    ::sycl::queue* stream_handle);
+
+// NOTE: Similar to standard memcpy, all SYCL memcpy functions work
+// only when the source and destination buffers do not overlap. Add support for
+// overlapping copies if needed via a SYCL kernel.
+
+// Copies data from a device buffer to a host buffer using the default SYCL
+// stream for the specified device ordinal. The copy is synchronous and blocks
+// until the operation is complete.
+absl::Status SyclMemcpyDeviceToHost(int device_ordinal, void* dst_host,
+                                    const void* src_device, size_t byte_count);
+
+// Copies data from a host buffer to a device buffer using the default SYCL
+// stream for the specified device ordinal. The copy is synchronous and blocks
+// until the operation is complete.
+absl::Status SyclMemcpyHostToDevice(int device_ordinal, void* dst_device,
+                                    const void* src_host, size_t byte_count);
+
+// Copies data between two device buffers using the default SYCL stream for
+// the specified device ordinal. It supports both intra-device and
+// inter-device transfers. The copy is synchronous and blocks until the
+// operation is complete.
+absl::Status SyclMemcpyDeviceToDevice(int device_ordinal, void* dst_device,
+                                      const void* src_device,
+                                      size_t byte_count);
+
+// Asynchronously copies data from a device buffer to a host buffer using the
+// specified SYCL stream. The operation may return before the copy is complete.
+absl::Status SyclMemcpyDeviceToHostAsync(::sycl::queue* stream_handle,
+                                         void* dst_host, const void* src_device,
+                                         size_t byte_count);
+
+// Asynchronously copies data from a host buffer to a device buffer using the
+// specified SYCL stream. The operation may return before the copy is complete.
+absl::Status SyclMemcpyHostToDeviceAsync(::sycl::queue* stream_handle,
+                                         void* dst_device, const void* src_host,
+                                         size_t byte_count);
+
+// Asynchronously copies data between two device buffers using the specified
+// SYCL stream. It supports both intra-device and inter-device transfers. The
+// operation may return before the copy is complete.
+absl::Status SyclMemcpyDeviceToDeviceAsync(::sycl::queue* stream_handle,
+                                           void* dst_device,
+                                           const void* src_device,
+                                           size_t byte_count);
+
 // Sets the device buffer to a byte value using the default SYCL stream
 // for the specified device ordinal. The operation is synchronous
 // and blocks until the operation is complete.

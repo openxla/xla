@@ -228,6 +228,7 @@ sycl_library(
     ],
     deps = [
         ":sycl_event",
+        ":sycl_gpu_runtime",
         "//xla/stream_executor:event_based_timer",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",

@@ -37,6 +37,64 @@ absl::Status IsValidDeviceOrdinal(int device_ordinal,
   }
 }
 
+// Returns true if the oneAPI version is 2024.2 or newer.
+// oneAPI 2024.2 corresponds to __LIBSYCL_MAJOR_VERSION == 7 and
+// __LIBSYCL_MINOR_VERSION == 2.
+bool IsOneAPIVersionAtLeast2024_2() {
+  return (__LIBSYCL_MAJOR_VERSION >= 7) && (__LIBSYCL_MINOR_VERSION >= 2);
+}
+
+absl::Status MemcpyDeviceToHost(::sycl::queue* stream_handle, void* dst_host,
+                                const void* src_device, size_t byte_count,
+                                bool async = false) {
+  try {
+    ::sycl::event event =
+        stream_handle->memcpy(dst_host, src_device, byte_count);
+    if (!async) {
+      event.wait();
+    }
+  } catch (const ::sycl::exception& e) {
+    return absl::InternalError(
+        "MemcpyDeviceToHost failed: " + std::string(e.what()) +
+        ", file = " + __FILE__ + ", line = " + std::to_string(__LINE__) + ".");
+  }
+  return absl::OkStatus();
+}
+
+absl::Status MemcpyHostToDevice(::sycl::queue* stream_handle, void* dst_device,
+                                const void* src_host, size_t byte_count,
+                                bool async = false) {
+  try {
+    ::sycl::event event =
+        stream_handle->memcpy(dst_device, src_host, byte_count);
+    if (!async) {
+      event.wait();
+    }
+  } catch (const ::sycl::exception& e) {
+    return absl::InternalError(
+        "MemcpyHostToDevice failed: " + std::string(e.what()) +
+        ", file = " + __FILE__ + ", line = " + std::to_string(__LINE__) + ".");
+  }
+  return absl::OkStatus();
+}
+
+absl::Status MemcpyDeviceToDevice(::sycl::queue* stream_handle,
+                                  void* dst_device, const void* src_device,
+                                  size_t byte_count, bool async = false) {
+  try {
+    ::sycl::event event =
+        stream_handle->memcpy(dst_device, src_device, byte_count);
+    if (!async) {
+      event.wait();
+    }
+  } catch (const ::sycl::exception& e) {
+    return absl::InternalError(
+        "MemcpyDeviceToDevice failed: " + std::string(e.what()) +
+        ", file = " + __FILE__ + ", line = " + std::to_string(__LINE__) + ".");
+  }
+  return absl::OkStatus();
+}
+
 absl::Status MemsetDevice(::sycl::queue* stream_handle, void* dst_device,
                           unsigned char value, size_t count,
                           bool async = false) {
@@ -301,6 +359,201 @@ absl::Status SyclStreamPool::DestroyStream(int device_ordinal,
             << stream_pool->size();
     return absl::OkStatus();
   }
+}
+
+absl::StatusOr<SyclTimerProperties> SyclGetTimerProperties(int device_ordinal) {
+  TF_RETURN_IF_ERROR(
+      IsValidDeviceOrdinal(device_ordinal, "SyclGetTimerProperties"));
+  TF_ASSIGN_OR_RETURN(::sycl::device device,
+                      SyclDevicePool::GetDevice(device_ordinal));
+  ze_device_handle_t lz_device_handle =
+      ::sycl::get_native<::sycl::backend::ext_oneapi_level_zero>(device);
+  ze_device_properties_t lz_device_props{
+      // timerResolution will be in cycles/sec (Hz) with this structure type.
+      ZE_STRUCTURE_TYPE_DEVICE_PROPERTIES_1_2,
+  };
+  ze_result_t status =
+      zeDeviceGetProperties(lz_device_handle, &lz_device_props);
+  if (status != ZE_RESULT_SUCCESS) {
+    return absl::InternalError(
+        absl::StrCat("SyclGetTimerProperties: zeDeviceGetProperties failed for "
+                     "device ordinal ",
+                     device_ordinal, " with return code: ", status));
+  } else {
+    uint64_t timer_freq_hz = lz_device_props.timerResolution;
+    uint64_t timestamp_mask =
+        (1ull << lz_device_props.kernelTimestampValidBits) - 1ull;
+    return SyclTimerProperties{timer_freq_hz, timestamp_mask};
+  }
+}
+
+absl::Status SyclStreamSynchronize(::sycl::queue* stream_handle) {
+  if (stream_handle == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclStreamSynchronize: Null stream handle provided.");
+  }
+  try {
+    stream_handle->wait();
+  } catch (const ::sycl::exception& e) {
+    return absl::InternalError(absl::StrCat(
+        "SyclStreamSynchronize: Failed to synchronize stream: ", e.what(),
+        ", file = ", __FILE__, ", line = ", __LINE__));
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<std::optional<::sycl::event>> SyclGetRecentEventFromStream(
+    ::sycl::queue* stream_handle) {
+  if (stream_handle == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclGetRecentEventFromStream: Null stream handle provided.");
+  }
+  try {
+    // Use the new DPC++/SYCL API when oneAPI version is at least 2024.2.
+    std::optional<::sycl::event> event =
+        IsOneAPIVersionAtLeast2024_2()
+            ? stream_handle->ext_oneapi_get_last_event()
+            : stream_handle->ext_oneapi_submit_barrier();
+    return event;
+  } catch (const ::sycl::exception& e) {
+    return absl::InternalError(absl::StrCat(
+        "SyclGetRecentEventFromStream: Failed to get event from stream: ",
+        e.what(), ", file = ", __FILE__, ", line = ", __LINE__));
+  }
+}
+
+absl::Status SyclMemcpyDeviceToHost(int device_ordinal, void* dst_host,
+                                    const void* src_device, size_t byte_count) {
+  if (dst_host == nullptr || src_device == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemcpyDeviceToHost: Null pointer provided for destination or "
+        "source.");
+  }
+  if (byte_count == 0) {
+    LOG(WARNING) << "SyclMemcpyDeviceToHost: Attempting to copy zero bytes, "
+                    "skipping operation.";
+    return absl::OkStatus();
+  }
+  TF_RETURN_IF_ERROR(
+      IsValidDeviceOrdinal(device_ordinal, "SyclMemcpyDeviceToHost"));
+  TF_ASSIGN_OR_RETURN(StreamPtr stream_handle,
+                      SyclStreamPool::GetDefaultStream(device_ordinal));
+  return MemcpyDeviceToHost(stream_handle.get(), dst_host, src_device,
+                            byte_count);
+}
+
+absl::Status SyclMemcpyHostToDevice(int device_ordinal, void* dst_device,
+                                    const void* src_host, size_t byte_count) {
+  if (dst_device == nullptr || src_host == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemcpyHostToDevice: Null pointer provided for destination or "
+        "source.");
+  }
+  if (byte_count == 0) {
+    LOG(WARNING) << "SyclMemcpyHostToDevice: Attempting to copy zero bytes, "
+                    "skipping operation.";
+    return absl::OkStatus();
+  }
+  TF_RETURN_IF_ERROR(
+      IsValidDeviceOrdinal(device_ordinal, "SyclMemcpyHostToDevice"));
+  TF_ASSIGN_OR_RETURN(StreamPtr stream_handle,
+                      SyclStreamPool::GetDefaultStream(device_ordinal));
+  return MemcpyHostToDevice(stream_handle.get(), dst_device, src_host,
+                            byte_count);
+}
+
+absl::Status SyclMemcpyDeviceToDevice(int device_ordinal, void* dst_device,
+                                      const void* src_device,
+                                      size_t byte_count) {
+  if (dst_device == nullptr || src_device == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemcpyDeviceToDevice: Null pointer provided for destination or "
+        "source.");
+  }
+  if (byte_count == 0) {
+    LOG(WARNING) << "SyclMemcpyDeviceToDevice: Attempting to copy zero bytes, "
+                    "skipping operation.";
+    return absl::OkStatus();
+  }
+  TF_RETURN_IF_ERROR(
+      IsValidDeviceOrdinal(device_ordinal, "SyclMemcpyDeviceToDevice"));
+  TF_ASSIGN_OR_RETURN(StreamPtr stream_handle,
+                      SyclStreamPool::GetDefaultStream(device_ordinal));
+  return MemcpyDeviceToDevice(stream_handle.get(), dst_device, src_device,
+                              byte_count);
+}
+
+absl::Status SyclMemcpyDeviceToHostAsync(::sycl::queue* stream_handle,
+                                         void* dst_host, const void* src_device,
+                                         size_t byte_count) {
+  if (dst_host == nullptr || src_device == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemcpyDeviceToHostAsync: Null pointer provided for destination or "
+        "source.");
+  }
+  if (stream_handle == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemcpyDeviceToHostAsync: Null stream handle provided.");
+  }
+  if (byte_count == 0) {
+    LOG(WARNING)
+        << "SyclMemcpyDeviceToHostAsync: Attempting to copy zero bytes, "
+           "skipping operation.";
+    return absl::OkStatus();
+  }
+  ::sycl::usm::alloc dst_alloc_type =
+      get_pointer_type(dst_host, stream_handle->get_context());
+  bool async = (dst_alloc_type == ::sycl::usm::alloc::host);
+  return MemcpyDeviceToHost(stream_handle, dst_host, src_device, byte_count,
+                            async);
+}
+
+absl::Status SyclMemcpyHostToDeviceAsync(::sycl::queue* stream_handle,
+                                         void* dst_device, const void* src_host,
+                                         size_t byte_count) {
+  if (dst_device == nullptr || src_host == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemcpyHostToDeviceAsync: Null pointer provided for destination or "
+        "source.");
+  }
+  if (stream_handle == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemcpyHostToDeviceAsync: Null stream handle provided.");
+  }
+  if (byte_count == 0) {
+    LOG(WARNING)
+        << "SyclMemcpyHostToDeviceAsync: Attempting to copy zero bytes, "
+           "skipping operation.";
+    return absl::OkStatus();
+  }
+  ::sycl::usm::alloc src_alloc_type =
+      get_pointer_type(src_host, stream_handle->get_context());
+  bool async = (src_alloc_type == ::sycl::usm::alloc::host);
+  return MemcpyHostToDevice(stream_handle, dst_device, src_host, byte_count,
+                            async);
+}
+
+absl::Status SyclMemcpyDeviceToDeviceAsync(::sycl::queue* stream_handle,
+                                           void* dst_device,
+                                           const void* src_device,
+                                           size_t byte_count) {
+  if (dst_device == nullptr || src_device == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemcpyDeviceToDeviceAsync: Null pointer provided for destination "
+        "or source.");
+  }
+  if (stream_handle == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemcpyDeviceToDeviceAsync: Null stream handle provided.");
+  }
+  if (byte_count == 0) {
+    LOG(WARNING)
+        << "SyclMemcpyDeviceToDeviceAsync: Attempting to copy zero bytes, "
+           "skipping operation.";
+    return absl::OkStatus();
+  }
+  return MemcpyDeviceToDevice(stream_handle, dst_device, src_device, byte_count,
+                              /*async=*/true);
 }
 
 absl::Status SyclMemsetDevice(int device_ordinal, void* dst_device,
