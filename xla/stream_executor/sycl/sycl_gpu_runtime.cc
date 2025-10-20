@@ -37,6 +37,38 @@ absl::Status IsValidDeviceOrdinal(int device_ordinal,
   }
 }
 
+absl::Status MemsetDevice(::sycl::queue* stream_handle, void* dst_device,
+                          unsigned char value, size_t count,
+                          bool async = false) {
+  try {
+    ::sycl::event event =
+        stream_handle->memset(dst_device, value, count * sizeof(uint8_t));
+    if (!async) {
+      event.wait();
+    }
+  } catch (const ::sycl::exception& e) {
+    return absl::InternalError("MemsetDevice failed: " + std::string(e.what()) +
+                               ", file = " + __FILE__ +
+                               ", line = " + std::to_string(__LINE__) + ".");
+  }
+  return absl::OkStatus();
+}
+
+absl::Status MemfillDevice(::sycl::queue* stream_handle, void* dst_device,
+                           uint32_t value, size_t count, bool async = false) {
+  try {
+    ::sycl::event event = stream_handle->fill(dst_device, value, count);
+    if (!async) {
+      event.wait();
+    }
+  } catch (const ::sycl::exception& e) {
+    return absl::InternalError(
+        "MemfillDevice failed: " + std::string(e.what()) +
+        ", file = " + __FILE__ + ", line = " + std::to_string(__LINE__) + ".");
+  }
+  return absl::OkStatus();
+}
+
 }  // namespace
 
 DevicePool SyclDevicePool::device_pool_;
@@ -269,6 +301,156 @@ absl::Status SyclStreamPool::DestroyStream(int device_ordinal,
             << stream_pool->size();
     return absl::OkStatus();
   }
+}
+
+absl::Status SyclMemsetDevice(int device_ordinal, void* dst_device,
+                              unsigned char value, size_t count) {
+  if (dst_device == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemsetDevice: Null pointer provided for destination.");
+  }
+  if (count == 0) {
+    LOG(WARNING) << "SyclMemsetDevice: Attempting to set zero bytes, "
+                    "skipping operation.";
+    return absl::OkStatus();
+  }
+  TF_RETURN_IF_ERROR(IsValidDeviceOrdinal(device_ordinal, "SyclMemsetDevice"));
+  TF_ASSIGN_OR_RETURN(StreamPtr stream_handle,
+                      SyclStreamPool::GetDefaultStream(device_ordinal));
+  return MemsetDevice(stream_handle.get(), dst_device, value, count);
+}
+
+absl::Status SyclMemsetDeviceAsync(::sycl::queue* stream_handle,
+                                   void* dst_device, unsigned char value,
+                                   size_t count) {
+  if (dst_device == nullptr || stream_handle == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemsetDeviceAsync: Null pointer provided for destination or "
+        "stream handle.");
+  }
+  if (count == 0) {
+    LOG(WARNING) << "SyclMemsetDeviceAsync: Attempting to set zero bytes, "
+                    "skipping operation.";
+    return absl::OkStatus();
+  }
+  return MemsetDevice(stream_handle, dst_device, value, count, /*async=*/true);
+}
+
+absl::Status SyclMemfillDevice(int device_ordinal, void* dst_device,
+                               uint32_t value, size_t count) {
+  if (dst_device == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemfillDevice: Null pointer provided for destination.");
+  }
+  if (count == 0) {
+    LOG(WARNING) << "SyclMemfillDevice: Attempting to fill zero bytes, "
+                    "skipping operation.";
+    return absl::OkStatus();
+  }
+  TF_RETURN_IF_ERROR(IsValidDeviceOrdinal(device_ordinal, "SyclMemfillDevice"));
+  TF_ASSIGN_OR_RETURN(StreamPtr stream_handle,
+                      SyclStreamPool::GetDefaultStream(device_ordinal));
+  return MemfillDevice(stream_handle.get(), dst_device, value, count);
+}
+
+absl::Status SyclMemfillDeviceAsync(::sycl::queue* stream_handle,
+                                    void* dst_device, uint32_t value,
+                                    size_t count) {
+  if (dst_device == nullptr || stream_handle == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemfillDeviceAsync: Null pointer provided for destination or "
+        "stream handle.");
+  }
+  if (count == 0) {
+    LOG(WARNING) << "SyclMemfillDeviceAsync: Attempting to fill zero bytes, "
+                    "skipping operation.";
+    return absl::OkStatus();
+  }
+  return MemfillDevice(stream_handle, dst_device, value, count, /*async=*/true);
+}
+
+// TODO(intel-tf): Need OOM checks for all SYCL memory allocation functions.
+absl::StatusOr<void*> SyclMallocDevice(int device_ordinal, size_t byte_count) {
+  if (byte_count == 0) {
+    LOG(WARNING) << "SyclMallocDevice: Attempting to allocate zero bytes, "
+                    "returning nullptr.";
+    return nullptr;
+  }
+  TF_RETURN_IF_ERROR(IsValidDeviceOrdinal(device_ordinal, "SyclMallocDevice"));
+  TF_ASSIGN_OR_RETURN(StreamPtr stream_handle,
+                      SyclStreamPool::GetDefaultStream(device_ordinal));
+  try {
+    // Use the default stream to allocate memory
+    void* ptr =
+        aligned_alloc_device(/*alignment=*/64, byte_count, *stream_handle);
+    return ptr;
+  } catch (const std::exception& e) {
+    return absl::InternalError(absl::StrCat(
+        "SyclMallocDevice: Failed to allocate device memory: ", e.what(),
+        ", file = ", __FILE__, ", line = ", __LINE__));
+  }
+}
+
+absl::StatusOr<void*> SyclMallocHost(int device_ordinal, size_t byte_count) {
+  if (byte_count == 0) {
+    LOG(WARNING) << "SyclMallocHost: Attempting to allocate zero bytes, "
+                    "returning nullptr.";
+    return nullptr;
+  }
+  TF_RETURN_IF_ERROR(IsValidDeviceOrdinal(device_ordinal, "SyclMallocHost"));
+  TF_ASSIGN_OR_RETURN(StreamPtr stream_handle,
+                      SyclStreamPool::GetDefaultStream(device_ordinal));
+  try {
+    // Use the default stream to allocate memory
+    void* ptr =
+        aligned_alloc_host(/*alignment=*/64, byte_count, *stream_handle);
+    return ptr;
+  } catch (const std::exception& e) {
+    return absl::InternalError(absl::StrCat(
+        "SyclMallocHost: Failed to allocate host memory: ", e.what(),
+        ", file = ", __FILE__, ", line = ", __LINE__));
+  }
+}
+
+absl::StatusOr<void*> SyclMallocShared(int device_ordinal, size_t byte_count) {
+  if (byte_count == 0) {
+    LOG(WARNING) << "SyclMallocShared: Attempting to allocate zero bytes, "
+                    "returning nullptr.";
+    return nullptr;
+  }
+  TF_RETURN_IF_ERROR(IsValidDeviceOrdinal(device_ordinal, "SyclMallocShared"));
+  TF_ASSIGN_OR_RETURN(StreamPtr stream_handle,
+                      SyclStreamPool::GetDefaultStream(device_ordinal));
+  try {
+    // Use the default stream to allocate memory
+    void* ptr =
+        aligned_alloc_shared(/*alignment=*/64, byte_count, *stream_handle);
+    return ptr;
+  } catch (const std::exception& e) {
+    return absl::InternalError(absl::StrCat(
+        "SyclMallocShared: Failed to allocate shared memory: ", e.what(),
+        ", file = ", __FILE__, ", line = ", __LINE__));
+  }
+}
+
+absl::Status SyclFree(int device_ordinal, void*& ptr) {
+  if (ptr == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclFree: Attempting to free a null pointer.");
+  }
+  TF_RETURN_IF_ERROR(IsValidDeviceOrdinal(device_ordinal, "SyclFree"));
+  TF_ASSIGN_OR_RETURN(StreamPtr stream_handle,
+                      SyclStreamPool::GetDefaultStream(device_ordinal));
+  try {
+    // Use the default stream to free memory
+    ::sycl::free(ptr, *stream_handle);
+    ptr = nullptr;
+  } catch (const ::sycl::exception& e) {
+    return absl::InternalError(
+        absl::StrCat("SyclFree: Failed to free memory: ", e.what(),
+                     ", file = ", __FILE__, ", line = ", __LINE__));
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace stream_executor::sycl

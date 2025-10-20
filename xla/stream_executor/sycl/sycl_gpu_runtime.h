@@ -136,5 +136,49 @@ class SyclStreamPool {
   SyclStreamPool() = delete;
 };
 
+// Sets the device buffer to a byte value using the default SYCL stream
+// for the specified device ordinal. The operation is synchronous
+// and blocks until the operation is complete.
+absl::Status SyclMemsetDevice(int device_ordinal, void* dst_device,
+                              unsigned char value, size_t count);
+
+// Asynchronously sets the device buffer to a byte value using the specified
+// SYCL stream. The operation may return before it is complete.
+absl::Status SyclMemsetDeviceAsync(::sycl::queue* stream_handle,
+                                   void* dst_device, unsigned char value,
+                                   size_t count);
+
+// Sets the device buffer to an unsigned 32-bit value using the default SYCL
+// stream for the specified device ordinal. The operation is synchronous and
+// blocks until the operation is complete.
+absl::Status SyclMemfillDevice(int device_ordinal, void* dst_device,
+                               uint32_t value, size_t count);
+
+// Asynchronously sets the device buffer to an unsigned 32-bit value using the
+// specified SYCL stream. The operation may return before it is complete.
+absl::Status SyclMemfillDeviceAsync(::sycl::queue* stream_handle,
+                                    void* dst_device, uint32_t value,
+                                    size_t count);
+
+// Allocates a block of memory on the given device ordinal using the default
+// stream for that device. The memory is aligned to 64 bytes.
+absl::StatusOr<void*> SyclMallocDevice(int device_ordinal, size_t byte_count);
+
+// Allocates a block of host-accessible memory on the given device ordinal
+// using the default stream for that device. The memory is aligned to 64 bytes.
+absl::StatusOr<void*> SyclMallocHost(int device_ordinal, size_t byte_count);
+
+// Allocates a block of shared memory that is accessible by both the host and
+// the specified device ordinal, using the default stream for that device. The
+// memory is aligned to 64 bytes.
+absl::StatusOr<void*> SyclMallocShared(int device_ordinal, size_t byte_count);
+
+// Frees a previously allocated block of memory on the specified device ordinal
+// using the default stream for that device. After successful deallocation, the
+// pointer is set to nullptr.
+// This function is thread-safe only for different pointers. Concurrent calls
+// to free the same pointer requires synchronization by the caller.
+absl::Status SyclFree(int device_ordinal, void*& ptr);
+
 }  // namespace stream_executor::sycl
 #endif  // XLA_STREAM_EXECUTOR_SYCL_SYCL_GPU_RUNTIME_H_
