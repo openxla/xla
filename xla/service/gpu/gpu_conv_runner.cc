@@ -38,9 +38,10 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/lazy_op_runner.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/ml_dtypes.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -67,9 +68,6 @@ absl::Status RunGpuConvUnfused(const GpuConvParams& params, se::Stream* stream,
                     params.config->conv_result_scale);
   }
 
-  TF_ASSIGN_OR_RETURN(se::dnn::ConvolutionKind kind,
-                      GetDNNConvKindFromCudnnConvKind(params.config->kind));
-
   TF_ASSIGN_OR_RETURN(
       se::dnn::DataType input_type,
       GetDNNDataTypeFromPrimitiveType(params.config->input_type));
@@ -86,7 +84,7 @@ absl::Status RunGpuConvUnfused(const GpuConvParams& params, se::Stream* stream,
     lazy_runner = &*local_runner;
   }
 
-  se::dnn::ConvOp::Config config{kind,
+  se::dnn::ConvOp::Config config{CudnnConvKindToProto(params.config->kind),
                                  input_type,
                                  output_type,
                                  params.config->input_descriptor,
@@ -112,9 +110,6 @@ absl::Status RunGpuConvGraph(const GpuConvParams& params, se::Stream* stream,
                     params.config->conv_result_scale);
   }
 
-  TF_ASSIGN_OR_RETURN(se::dnn::ConvolutionKind kind,
-                      GetDNNConvKindFromCudnnConvKind(params.config->kind));
-
   TF_ASSIGN_OR_RETURN(
       se::dnn::DataType input_type,
       GetDNNDataTypeFromPrimitiveType(params.config->input_type));
@@ -131,7 +126,7 @@ absl::Status RunGpuConvGraph(const GpuConvParams& params, se::Stream* stream,
     lazy_runner = &*local_runner;
   }
 
-  se::dnn::GraphConvOp::Config config{kind,
+  se::dnn::GraphConvOp::Config config{CudnnConvKindToProto(params.config->kind),
                                       input_type,
                                       output_type,
                                       params.config->input_descriptor,

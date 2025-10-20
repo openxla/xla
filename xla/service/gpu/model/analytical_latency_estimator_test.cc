@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/gpu/alias_info.h"
@@ -39,6 +40,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/casts.h"
 
@@ -119,6 +121,12 @@ TEST_F(AnalyticalLatencyHidingSchedulerTest, TestAnalyticalLatencyEstimator) {
       if (!c.IsAtLeast(se::CudaComputeCapability::kPascal)) {
         GTEST_SKIP() << "This test is for Pascal+ GPUs.";
       }
+      if (c.major == 12 && c.minor == 1) {
+        // Skip this test for Spark. Because of the AllReduce, the test uses
+        // gpu_collective_performance_model, which only makes sense in a
+        // datacenter network setting.
+        GTEST_SKIP() << "This test is for datacenter GPUs.";
+      }
     } else if (!std::is_same_v<stream_executor::RocmComputeCapability, cc>) {
       GTEST_SKIP() << "This test is for Pascal+ GPUs.";
     }
@@ -162,11 +170,12 @@ ENTRY entry {
   HloSchedule& module_schedule = hlo_module->schedule();
   EXPECT_TRUE(hlo_module->has_entry_computation());
 
+  auto mlir_context = std::make_unique<mlir::MLIRContext>();
   auto scheduler_config = GetDefaultSchedulerConfig();
   auto latency_estimator = std::make_unique<AnalyticalLatencyEstimator>(
       scheduler_config, std::make_unique<ApproximateLatencyEstimator>(),
       dev_info, HloCostAnalysis::DefaultShapeSize,
-      hlo_module->entry_computation());
+      hlo_module->entry_computation(), mlir_context.get());
   auto alias_info = GetAliasInfo();
   EXPECT_TRUE(RunScheduler(hlo_module.get(), scheduler_config, alias_info.get(),
                            std::move(latency_estimator))

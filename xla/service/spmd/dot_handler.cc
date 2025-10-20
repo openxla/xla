@@ -37,12 +37,14 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "xla/array.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
@@ -136,7 +138,7 @@ std::pair<Shape, Shape> GetPerGroupBaseShape(
 class CreateShardedDotFunctor final
     : public CreateShardedFunctorBase<PartitionedHlo> {
  public:
-  CreateShardedDotFunctor(HloDotInstruction* dot) : dot_(dot) {}
+  explicit CreateShardedDotFunctor(HloDotInstruction* dot) : dot_(dot) {}
 
   // Implements the creation of sharded dots.
   absl::StatusOr<HloInstruction*> CreateSharded(
@@ -343,19 +345,17 @@ bool RequiresTransposeSharding(
 bool should_enable_windowed_einsum_with_threshold(
     const SpmdPartitionerOptions& options, const HloInstruction* lhs,
     const HloInstruction* rhs, int64_t operand_or_output_shape_size) {
-  if (options.total_bytes_windowed_einsum_threshold != std::nullopt) {
+  if (options.total_bytes_windowed_einsum_threshold) {
     if (lhs == nullptr || rhs == nullptr) {
       return false;
     }
     int64_t total_operand_bytes = (ShapeUtil::ByteSizeOf(rhs->shape()) +
                                    ShapeUtil::ByteSizeOf(lhs->shape()));
-    int64_t operand_bytes_threshold =
-        options.total_bytes_windowed_einsum_threshold.value();
-    return total_operand_bytes >= operand_bytes_threshold;
-  } else {
-    return operand_or_output_shape_size >=
-           options.threshold_for_windowed_einsum_mib * 1024 * 1024;
+    return total_operand_bytes >=
+           *options.total_bytes_windowed_einsum_threshold;
   }
+  return operand_or_output_shape_size >=
+         options.threshold_for_windowed_einsum_mib * 1024 * 1024;
 }
 
 template <typename CreateShardedFunctor>
@@ -1949,9 +1949,9 @@ absl::StatusOr<HloInstruction*> PartitionBaseCase(
     }
   }
 
-  std::optional<WindowedEinsumConfig> e_config = std::nullopt;
   // Disable windowed einsums for block-scaled dot.
   if constexpr (std::is_same_v<PartitionedHloMaybeMX, PartitionedHlo>) {
+    std::optional<WindowedEinsumConfig> e_config = std::nullopt;
     if (!should_skip_windowed_einsum) {
       e_config = GetWindowedEinsumConfiguration<CreateShardedFunctor>(
           num_partitions, output_lhs_non_contracting_partitions,
@@ -1971,33 +1971,25 @@ absl::StatusOr<HloInstruction*> PartitionBaseCase(
     }
     if (e_config) {
       int64_t loop_partitions = 1;
-      for (int64_t dim : e_config->windowing_dims) {
-        loop_partitions *= lhs_sharding.tile_assignment().dim(dim);
-      }
       if (e_config->windowing_dims.empty()) {
         loop_partitions = num_partitions;
-      }
-      if (e_config) {
-        int64_t loop_partitions = 1;
+      } else {
+        CHECK_EQ(e_config->windowed_op, WindowedEinsumOperand::LHS);
         for (int64_t dim : e_config->windowing_dims) {
           loop_partitions *= lhs_sharding.tile_assignment().dim(dim);
         }
-        if (e_config->windowing_dims.empty()) {
-          loop_partitions = num_partitions;
-        }
-
-        VLOG(2) << "Emit windowed dot.";
-        return EmitWindowedDotGeneral(
-            lhs, rhs, output_base_shape, output_sharding, dims_mapping,
-            num_partitions, loop_partitions, create_sharded_dot, conv_window,
-            module, original_hlo, options, b, windowed_dot_general_loops,
-            *e_config, indices_map, lhs_sharding_transposed_to_match_output,
-            rhs_sharding_transposed_to_match_output,
-            rhs_sharding_transposed_to_match_lhs,
-            lhs_sharding_transposed_to_match_rhs,
-            output_sharding_transposed_to_match_rhs,
-            output_sharding_transposed_to_match_lhs);
       }
+
+      return EmitWindowedDotGeneral(
+          lhs, rhs, output_base_shape, output_sharding, dims_mapping,
+          num_partitions, loop_partitions, create_sharded_dot, conv_window,
+          module, original_hlo, options, b, windowed_dot_general_loops,
+          *e_config, indices_map, lhs_sharding_transposed_to_match_output,
+          rhs_sharding_transposed_to_match_output,
+          rhs_sharding_transposed_to_match_lhs,
+          lhs_sharding_transposed_to_match_rhs,
+          output_sharding_transposed_to_match_rhs,
+          output_sharding_transposed_to_match_lhs);
     }
   }
 
@@ -4100,7 +4092,7 @@ absl::StatusOr<HloInstruction*> PartitionDotRemovingOutputPartialReplication(
     const SpmdPartitionerOptions& options, SpmdBuilder* b,
     std::vector<SpmdPartitioningVisitor::WindowedDotGeneralLoop>*
         windowed_dot_general_loops,
-    bool require_matching_devices_to_group, SpmdPartitioningVisitor* visitor) {
+    SpmdPartitioningVisitor* visitor) {
   if (lhs.sharding().IsReplicated() && rhs.sharding().IsReplicated() &&
       output_sharding.ReplicateOnLastTileDim()) {
     auto grouped_output = hlo_sharding_util::GroupShardingOnDims(
@@ -4214,8 +4206,7 @@ absl::StatusOr<HloInstruction*> PartitionDot(
       PartitionDotRemovingOutputPartialReplication(
           lhs, rhs, output_base_shape, output_sharding, dims_mapping,
           num_partitions, create_sharded_dot, conv_window, module, original_hlo,
-          options, b, windowed_dot_general_loops,
-          require_matching_devices_to_group, visitor));
+          options, b, windowed_dot_general_loops, visitor));
   if (partitioned_dot) {
     return partitioned_dot;
   }
@@ -4582,7 +4573,7 @@ bool CheckOperandsRecursive(
 // Later optimization passes (TpuPadSliceMover) will merge the dynamic slice
 // with the input nodes (broadcast).
 absl::Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
-    HloInstruction* loop, const SpmdPartitionerOptions& options) {
+    HloInstruction* loop) {
   CHECK_EQ(loop->user_count(), 1);
   // There should be a single direct user of the while loop, which is the
   // gte for element 2, i.e., the dot output.
@@ -5040,8 +5031,7 @@ absl::Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
 
 }  // namespace
 
-absl::Status SpmdPartitioningVisitor::DoCodeMotionForWindowedDotGeneralLoops(
-    HloComputation* computation, const SpmdPartitionerOptions& options) {
+absl::Status SpmdPartitioningVisitor::DoCodeMotionForWindowedDotGeneralLoops() {
   for (auto& loop : windowed_dot_general_loops_) {
     if (loop.windowed_in_contracting_dims || loop.windowed_in_batch_dims ||
         loop.operands_sharded_at_contracting_dims) {
@@ -5061,7 +5051,7 @@ absl::Status SpmdPartitioningVisitor::DoCodeMotionForWindowedDotGeneralLoops(
       // into the loop could help reduce memory.
       TF_RETURN_IF_ERROR(
           MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
-              loop.while_loop, options));
+              loop.while_loop));
     }
   }
   return absl::OkStatus();

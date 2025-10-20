@@ -241,7 +241,7 @@ TEST(CommandBufferConversionPassTest, ConvertsToCommandBufferThunk) {
 
   ASSERT_EQ(root_thunk->thunks().size(), 1);
 
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass{"test"};
 
   // CopyThunk should be converted to a CommandBufferThunk, because it is
   // supported in command buffers. The expected transformation is:
@@ -263,7 +263,7 @@ TEST(CommandBufferConversionPassTest, ConvertsToCommandBufferThunk) {
 }
 
 TEST(CommandBufferConversionPassTest, PartiallyConvertsToCommandBufferThunk) {
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass{"test"};
 
   std::vector<std::unique_ptr<Thunk>> thunks;
 
@@ -333,7 +333,7 @@ TEST(CommandBufferConversionPassTest, ConvertsAsyncPairToCommandBuffer) {
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   FakeErrorAllocator allocator;
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass("test");
   ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
               IsOkAndHolds(true));
 
@@ -377,7 +377,7 @@ TEST(CommandBufferConversionPassTest,
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   FakeErrorAllocator allocator;
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass("test");
   // Expected no transformation, because there is a non-convertible thunk in
   // between the asyncs.
   ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
@@ -406,7 +406,7 @@ TEST(CommandBufferConversionPassTest, ConvertCrossedAsyncs) {
   ASSERT_EQ(root_thunk->thunks().size(), 4);
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass{"test"};
   DebugOptions debug_options;
   debug_options.clear_xla_gpu_enable_command_buffer();
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
@@ -449,7 +449,7 @@ TEST(CommandBufferConversionPassTest, ConvertNestedAsyncs) {
   ASSERT_EQ(root_thunk->thunks().size(), 5);
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass{"test"};
   DebugOptions debug_options;
   debug_options.clear_xla_gpu_enable_command_buffer();
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
@@ -499,7 +499,7 @@ TEST(CommandBufferConversionPassTest, DontConvertAsyncsIfUnpairedStart) {
   ASSERT_EQ(root_thunk->thunks().size(), 5);
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass{"test"};
   DebugOptions debug_options;
   debug_options.clear_xla_gpu_enable_command_buffer();
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
@@ -562,7 +562,7 @@ TEST(CommandBufferConversionPassTest, ConvertsAsyncPairsMixedWithOtherThunks) {
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   FakeErrorAllocator allocator;
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass("test");
   ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, device_info, allocator),
               IsOkAndHolds(true));
 
@@ -600,7 +600,7 @@ TEST(CommandBufferConversionPassTest, DontConvertIfNotMinGraphSize) {
 
   ASSERT_EQ(root_thunk->thunks().size(), 1);
 
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass{"test"};
 
   // The size of the sequence is less than the min graph size, so it should not
   // be converted to a command buffer.
@@ -610,7 +610,7 @@ TEST(CommandBufferConversionPassTest, DontConvertIfNotMinGraphSize) {
 }
 
 TEST(CommandBufferConversionPassTest, ConvertWhileThunk) {
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass{"test"};
 
   std::vector<std::unique_ptr<Thunk>> thunks;
 
@@ -668,7 +668,7 @@ TEST(CommandBufferConversionPassTest,
   // Check that if a branch of a conditional thunk is not convertible, the
   // conditional thunk is not convertible either, but the branches are attempted
   // to be converted independently.
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass("test");
 
   std::vector<std::unique_ptr<Thunk>> thunks;
 
@@ -719,7 +719,7 @@ TEST(CommandBufferConversionPassTest,
 }
 
 TEST(CommandBufferConversionPassTest, ConvertWhileThunkWithAsyncPair) {
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass{"test"};
 
   std::vector<std::unique_ptr<Thunk>> thunks;
 
@@ -795,7 +795,7 @@ TEST(CommandBufferConversionPassTest, ConvertsCuDnnThunkToCommandBufferThunk) {
 
   ASSERT_EQ(root_thunk->thunks().size(), 1);
 
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass{"test"};
 
   // The expected transformation is: SequentialThunk(CuDnnThunk) ->
   // SequentialThunk(CommandBufferThunk(CuDnnThunk))
@@ -811,7 +811,7 @@ TEST(CommandBufferConversionPassTest, ConvertsCuDnnThunkToCommandBufferThunk) {
   EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kCuDnn));
 }
 TEST(CommandBufferConversionPassTest, ConvertTheBodyOfWhileThunk) {
-  CommandBufferConversionPass pass;
+  CommandBufferConversionPass pass{"test"};
 
   std::vector<std::unique_ptr<Thunk>> thunks;
 

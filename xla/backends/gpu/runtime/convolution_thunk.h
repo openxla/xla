@@ -24,13 +24,14 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/gpu_conv_runner.h"
 #include "xla/stream_executor/dnn.h"
-#include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/stream.h"
 
 namespace xla {
 namespace gpu {
@@ -44,10 +45,11 @@ class ConvolutionThunk : public Thunk {
   // Constructs a thunk for launching a DNN convolution.
   //
   // operand_slices should be in the same order as cudnn_call->operands().
-  ConvolutionThunk(ThunkInfo thunk_info, GpuConvConfig config,
-                   std::vector<BufferAllocation::Slice> operand_slices,
-                   std::vector<BufferAllocation::Slice> result_slices,
-                   BufferAllocation::Slice scratch_slice);
+  static absl::StatusOr<std::unique_ptr<ConvolutionThunk>> Create(
+      ThunkInfo thunk_info, GpuConvDescriptor descriptor,
+      std::vector<BufferAllocation::Slice> operand_slices,
+      std::vector<BufferAllocation::Slice> result_slices,
+      BufferAllocation::Slice scratch_slice);
 
   ConvolutionThunk(const ConvolutionThunk&) = delete;
   ConvolutionThunk& operator=(const ConvolutionThunk&) = delete;
@@ -55,6 +57,11 @@ class ConvolutionThunk : public Thunk {
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
  private:
+  ConvolutionThunk(ThunkInfo thunk_info, GpuConvConfig config,
+                   std::vector<BufferAllocation::Slice> operand_slices,
+                   std::vector<BufferAllocation::Slice> result_slices,
+                   BufferAllocation::Slice scratch_slice);
+
   std::vector<BufferAllocation::Slice> operand_buffers_;
   std::vector<BufferAllocation::Slice> result_buffers_;
   BufferAllocation::Slice scratch_buffer_;
