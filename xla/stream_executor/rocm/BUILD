@@ -2,7 +2,6 @@
 
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
-    "if_rocm_hipblaslt",
     "rocm_library",
 )
 load("//xla:xla.default.bzl", "xla_cc_test")
