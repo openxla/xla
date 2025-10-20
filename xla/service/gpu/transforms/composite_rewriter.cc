@@ -143,6 +143,15 @@ absl::StatusOr<bool> CompositeRewriter::RewriteComputation(
     const HloInstruction* lhs_scale = call->operand(2);
     const HloInstruction* rhs_scale = call->operand(3);
 
+    auto is_supported_type = [](PrimitiveType type) {
+      return type == BF16 || type == F8E4M3FN || type == F8E5M2;
+    };
+
+    if (!is_supported_type(lhs->shape().element_type()) ||
+        !is_supported_type(rhs->shape().element_type())) {
+      continue;
+    }
+
     if (lhs->shape().element_type() != BF16) {
       int64_t contracting_dim =
           dot_dimension_numbers.lhs_contracting_dimensions(0);
