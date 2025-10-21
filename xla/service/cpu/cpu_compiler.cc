@@ -684,6 +684,9 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
           .debug_options()
           .xla_cpu_experimental_onednn_custom_call() &&
       IsOneDnnCompatible(is_aot_compile);
+  bool use_onednn_graph =
+      module->config().debug_options().xla_cpu_use_onednn() &&
+      IsOneDnnCompatible(is_aot_compile);
 #ifdef XLA_ONEDNN
   if (use_onednn_custom_call) {
     // Placing OneDnnOpsRewriter here to match the flax patterns
@@ -706,7 +709,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
                                target_machine_features);
 #ifdef XLA_ONEDNN
   OneDnnFloatSupport onednn_bf16_support(BF16);
-  if (use_onednn_custom_call) {
+  if (use_onednn_custom_call || use_onednn_graph) {
     pipeline.AddPass<FloatNormalization>(&onednn_bf16_support);
   } else {
     pipeline.AddPass<FloatNormalization>(&bf16_support);
