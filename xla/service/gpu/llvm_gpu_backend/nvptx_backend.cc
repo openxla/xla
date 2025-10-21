@@ -247,11 +247,14 @@ std::string GetSmName(se::CudaComputeCapability compute_capability) {
       {12, 1}, {12, 0}, {11, 0}, {10, 3}, {10, 0}, {9, 0}, {8, 9}, {8, 7},
       {8, 6},  {8, 0},  {7, 5},  {7, 2},  {7, 0},  {6, 2}, {6, 1}, {6, 0},
       {5, 3},  {5, 2},  {5, 0},  {3, 7},  {3, 5},  {3, 2}, {3, 0}};
-  auto target_compute_capability = kSupportedVersions[0];
+  // Initialize to the least supported version, which acts as a safe fallback
+  auto target_compute_capability =
+      kSupportedVersions[std::size(kSupportedVersions) - 1];
+
   for (const auto& v : kSupportedVersions) {
-    target_compute_capability = v;
-    if (gpu_compute_capability.SupportsAllFeaturesOf(
-            target_compute_capability)) {
+    if (gpu_compute_capability.SupportsAllFeaturesOf(v)) {
+      // Found the most advanced supported capability
+      target_compute_capability = v;
       break;
     }
   }
