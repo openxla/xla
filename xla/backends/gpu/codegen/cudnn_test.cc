@@ -895,7 +895,11 @@ ENTRY Test {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-5}));
 }
 
-TEST_F(CuDnnFusionExecutionTest, DISABLED_ConvWgradWithNHWCLayoutExecutesCorrectly) {
+TEST_F(CuDnnFusionExecutionTest, ConvWgradWithNHWCLayoutExecutesCorrectly) {
+  if (get_cuda_cc().IsAtLeastBlackwell()) {
+    // TODO(b/445172709): Re-enable once fixed.
+    GTEST_SKIP();
+  }
   EXPECT_TRUE(RunAndCompare(R"(
 fusion {
   zero = f32[] constant(0)
