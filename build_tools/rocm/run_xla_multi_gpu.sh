@@ -53,20 +53,9 @@ echo ""
 echo "Bazel will use ${N_BUILD_JOBS} concurrent build job(s) and ${N_TEST_JOBS} concurrent test job(s) for gpu ${AMD_GPU_GFX_ID}."
 echo ""
 
-# First positional argument (if any) specifies the ROCM_INSTALL_DIR
-if [[ -n $1 ]]; then
-    ROCM_INSTALL_DIR=$1
-else
-    if [[ -z "${ROCM_PATH}" ]]; then
-        ROCM_INSTALL_DIR=/opt/rocm/
-    else
-        ROCM_INSTALL_DIR=$ROCM_PATH
-    fi
-fi
-
 export PYTHON_BIN_PATH=`which python3`
 export TF_NEED_ROCM=1
-export ROCM_PATH=$ROCM_INSTALL_DIR
+export ROCM_PATH=/opt/rocm/
 TAGS_FILTER="-requires-gpu-nvidia,-oss_excluded,-oss_serial"
 UNSUPPORTED_GPU_TAGS="$(echo -requires-gpu-sm{60,70,80,86,89,90}{,-only})"
 TAGS_FILTER="${TAGS_FILTER},${UNSUPPORTED_GPU_TAGS// /,}"
@@ -75,7 +64,7 @@ bazel \
     test \
     --define xnn_enable_avxvnniint8=false \
     --define xnn_enable_avx512fp16=false \
-    --config=rocm_gcc \
+    --config=rocm_ci \
     --build_tag_filters=${TAGS_FILTER} \
     --test_tag_filters=${TAGS_FILTER} \
     --test_timeout=920,2400,7200,9600 \
