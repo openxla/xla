@@ -164,6 +164,7 @@ xla_test(
 cuda_library(
     name = "cuda_test",
     testonly = 1,
+    tags = ["cuda-only"],
     srcs = ["cuda_test.cu.cc"],
     hdrs = ["cuda_test.h"],
     visibility = ["//visibility:public"],
