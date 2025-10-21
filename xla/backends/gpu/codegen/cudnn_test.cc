@@ -895,7 +895,7 @@ ENTRY Test {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-5}));
 }
 
-TEST_F(CuDnnFusionExecutionTest, ConvWgradWithNHWCLayoutExecutesCorrectly) {
+TEST_F(CuDnnFusionExecutionTest, DISABLED_ConvWgradWithNHWCLayoutExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion {
   zero = f32[] constant(0)

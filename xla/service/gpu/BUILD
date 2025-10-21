@@ -1915,6 +1915,10 @@ cc_library(
 xla_test(
     name = "gpu_compiler_test",
     srcs = ["gpu_compiler_test.cc"],
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once nvbug 5552596 is fixed.
+        "b200": ["broken"],
+    },
     backends = ["gpu"],
     data = ["gpu_compiler_test_autotune_db.textproto"],
     deps = [
