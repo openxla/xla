@@ -1,5 +1,4 @@
 # Test-related settings.
-try-import /usertools/rocm.bazelrc
 
 build:rocm_dev --remote_upload_local_results=false
 build:rocm_dev --remote_cache="https://wardite.cluster.engflow.com"
