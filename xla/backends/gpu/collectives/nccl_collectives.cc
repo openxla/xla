@@ -105,7 +105,8 @@ NcclCollectives::GetCliqueIdCallback(const CliqueIdCallback* clique_id_callback,
   return local_callback;
 }
 
-static ncclConfig_t AsNcclConfig(const GpuCollectives::Config& config) {
+static ncclConfig_t AsNcclConfig(const GpuCollectives::Config& config,
+                                 const se::StreamExecutor* stream_executor) {
   ncclConfig_t comm_config = NCCL_CONFIG_INITIALIZER;
   comm_config.blocking = config.blocking_communicators ? 1 : 0;
 #if !defined(TENSORFLOW_USE_ROCM) || TF_ROCM_VERSION > 50700
@@ -114,6 +115,16 @@ static ncclConfig_t AsNcclConfig(const GpuCollectives::Config& config) {
   if (config.max_nchannels > 0) {
     VLOG(1) << "Maximum number of channels is set to: " << comm_config.maxCTAs;
     comm_config.maxCTAs = config.max_nchannels;
+  } else if (stream_executor->GetDeviceDescription()
+                 .cuda_compute_capability()
+                 .IsAtLeastBlackwell()) {
+#if (NCCL_VERSION_CODE >= 22800)
+    // Future NCCL versions will reduce the default max number of channels on
+    // Blackwell to 16. We need to manually set it to 32 here to avoid surprise
+    // perf regressions.
+    VLOG(1) << "Setting max number of channels to 32 on Blackwell.";
+    comm_config.maxCTAs = 32;
+#endif  // NCCL_VERSION_CODE >= 22800
   }
   return comm_config;
 }
@@ -154,7 +165,6 @@ NcclCollectives::CreateCommunicators(const CliqueKey& clique_key,
         "async_execution is false. Non-blocking communicators require "
         "asynchronous execution.");
   }
-  ncclConfig_t comm_config = AsNcclConfig(gpu_config);
 
   // make_comm returns a new ncclComm_t.
   auto make_comm = [&](int i) -> absl::StatusOr<ncclComm_t> {
@@ -165,6 +175,10 @@ NcclCollectives::CreateCommunicators(const CliqueKey& clique_key,
     auto* device = tsl::down_cast<GpuCollectives::Device*>(ranks[i].device);
     TF_RET_CHECK(device != nullptr);
     auto activate_context = device->stream_executor()->Activate();
+
+    ncclConfig_t comm_config =
+        AsNcclConfig(gpu_config, device->stream_executor());
+
     TF_ASSIGN_OR_RETURN(auto nccl_unique_id, AsNcclUniqueId(clique_ids->at(0)));
     ncclComm_t comm;
     XLA_NCCL_RETURN_IF_ERROR(
@@ -201,7 +215,8 @@ absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
 NcclCollectives::SplitCommunicators(absl::Span<const Communicator* const> comms,
                                     int32_t color,
                                     absl::Span<const RankId> keys,
-                                    const Collectives::Config& config) {
+                                    const Collectives::Config& config,
+                                    absl::Span<const DeviceRank> ranks) {
   auto rank_formatter = [](std::string* str, RankId rank) {
     absl::StrAppend(str, rank.value());
   };
@@ -218,10 +233,15 @@ NcclCollectives::SplitCommunicators(absl::Span<const Communicator* const> comms,
 
   const auto& gpu_config =
       tsl::down_cast<const GpuCollectives::Config&>(config);
-  ncclConfig_t comm_config = AsNcclConfig(gpu_config);
 
 #if !defined(TENSORFLOW_USE_ROCM) || TF_ROCM_VERSION >= 60000
   auto make_comm = [&](int i) -> absl::StatusOr<ncclComm_t> {
+    auto* device = tsl::down_cast<GpuCollectives::Device*>(ranks[i].device);
+    TF_RET_CHECK(device != nullptr);
+
+    ncclConfig_t comm_config =
+        AsNcclConfig(gpu_config, device->stream_executor());
+
     VLOG(1) << "Split NCCL communicator " << comms[i] << " with color " << color
             << " and key " << keys[i];
     ncclComm_t split_comm;
