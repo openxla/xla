@@ -72,7 +72,7 @@ using OneDnnContractionVariant =
     std::variant<PrimitiveTrait<kOnednnConvConfig>,
                  PrimitiveTrait<kOnednnMatmulConfig>>;
 
-template <BackendConfigOneofCase config>
+template <BackendConfig::BackendConfigOneofCase config>
 struct PrimitiveTrait<config, OneDnnFusionConfig*> {
   static OneDnnFusionConfig* GetTransformationConfig(
       typename PrimitiveTrait<config>::pointer_type kernel_config) {
@@ -80,7 +80,7 @@ struct PrimitiveTrait<config, OneDnnFusionConfig*> {
   }
 };
 
-template <BackendConfigOneofCase config>
+template <BackendConfig::BackendConfigOneofCase config>
 struct PrimitiveTrait<config, OneDnnOptimizationConfig*> {
   static OneDnnOptimizationConfig* GetTransformationConfig(
       typename PrimitiveTrait<config>::pointer_type kernel_config) {

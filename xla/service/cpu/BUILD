@@ -1705,6 +1705,7 @@ onednn_cc_library(
     deps = [
         ":backend_config_proto_cc",
         ":onednn_config_proto_cc",
+        ":runtime_lightweight_check",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/tsl/mkl:onednn",
