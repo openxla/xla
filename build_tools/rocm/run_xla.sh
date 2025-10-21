@@ -49,7 +49,7 @@ if [ ! -d /tf/pkg ]; then
 fi
 
 bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
-    --config=rocm_gcc \
+    --config=rocm_ci \
     --config=xla_sgpu \
     --build_tag_filters=$TAG_FILTERS \
     --test_tag_filters=$TAG_FILTERS \
