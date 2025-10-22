@@ -51,10 +51,10 @@ def tf_has_tag(kwargs, tag):
 
 def tf_exec_properties(kwargs):
     if is_rocm_configured():
+        if tf_has_tag(kwargs, "multi_gpu"):
+            return MULTI_GPU_TEST_PROPERTIES
         if tf_has_tag(kwargs, "gpu"):
             return SINGLE_GPU_TEST_PROPERTIES
-        elif tf_has_tag(kwargs, "multi-gpu"):
-            return MULTI_GPU_TEST_PROPERTIES
     elif tf_has_tag(kwargs, "remote-gpu"):
         return GPU_TEST_PROPERTIES
     return {}
