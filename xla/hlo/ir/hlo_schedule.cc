@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_schedule.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <ostream>
 #include <queue>
@@ -46,7 +47,9 @@ limitations under the License.
 namespace xla {
 
 /* static */ absl::StatusOr<HloSchedule> HloSchedule::CreateFromProto(
-    const HloModule* module, const HloScheduleProto& proto) {
+    const HloModule* module, const HloScheduleProto& proto,
+    const absl::flat_hash_map<int64_t, absl::flat_hash_map<int64_t, int64_t>>*
+        computation_id_to_instruction_id_remap) {
   absl::flat_hash_map<int64_t, const HloComputation*> id_to_computation;
   for (const HloComputation* computation : module->computations()) {
     id_to_computation[computation->unique_id()] = computation;
@@ -71,14 +74,31 @@ namespace xla {
 
     HloInstructionSequence& sequence =
         schedule.GetOrCreateSequence(computation);
+    if (computation_id_to_instruction_id_remap != nullptr) {
+      TF_RET_CHECK(
+          computation_id_to_instruction_id_remap->contains(computation_id))
+          << "Computation id " << computation_id
+          << " not found in computation_id_to_instruction_id_remap";
+    }
+
     for (const int64_t instruction_id : id_sequence.second.instruction_ids()) {
+      int64_t corrected_instruction_id = instruction_id;
+      if (computation_id_to_instruction_id_remap != nullptr) {
+        TF_RET_CHECK(computation_id_to_instruction_id_remap->at(computation_id)
+                         .contains(instruction_id))
+            << "Instruction id " << instruction_id
+            << " not found in its computation's proto_id_to_instruction_id_map";
+        corrected_instruction_id =
+            computation_id_to_instruction_id_remap->at(computation_id)
+                .at(instruction_id);
+      }
       int64_t complete_unique_id = HloInstruction::CalculateUniqueId(
-          computation->unique_id(), instruction_id);
+          computation->unique_id(), corrected_instruction_id);
       auto instr_it = id_to_instruction.find(complete_unique_id);
       TF_RET_CHECK(instr_it != id_to_instruction.end())
           << "No instruction exists in HLO computation " << computation->name()
-          << " with unique id " << instruction_id << " (complete unique id "
-          << complete_unique_id << ")";
+          << " with unique id " << corrected_instruction_id
+          << " (complete unique id " << complete_unique_id << ")";
       sequence.push_back(instr_it->second);
     }
   }
@@ -323,7 +343,25 @@ absl::Status HloSchedule::Verify() const {
        sequence_num_by_execution_threads) {
     std::vector<HloComputation*> nonfusion_computations =
         module_->MakeNonfusionComputations({thread_name});
-    TF_RET_CHECK(nonfusion_computations.size() == sequence_size)
+
+    // TODO(dasenov): Replace with std::erase_if after XLA uses C++20.
+    auto remove_it = std::remove_if(nonfusion_computations.begin(),
+                                    nonfusion_computations.end(),
+                                    [](const HloComputation* computation) {
+                                      return computation->IsDeadComputation();
+                                    });
+    nonfusion_computations.erase(remove_it, nonfusion_computations.end());
+
+    // It's possible to have more sequences than non_fusion_computations.
+    // This is because in some cases computations that have schedules are
+    // actually dead. The important thing to check is that each live non-fusion
+    // computation has a sequence.
+    //
+    // TODO(b/418034360): Consider strenghtening this check to equality. That
+    // would require cleaning up dead computations and/or recomputing the
+    // schedule in a number of tests. In its present state (using less or equal)
+    // this check is subsumed by the next one.
+    TF_RET_CHECK(nonfusion_computations.size() <= sequence_size)
         << "For thread " << thread_name << ", schedule has " << sequence_size
         << " sequences, but module has " << nonfusion_computations.size()
         << " non-fusion computations for thread " << thread_name;

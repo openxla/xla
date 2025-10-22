@@ -61,13 +61,22 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Extension_Base, next);
 // Version
 //===----------------------------------------------------------------------===//
 
+// XLA FFI provides a stable binary API for registering custom calls with
+// XLA runtime. XLA runtime guarantees that old API version are supported for
+// at least 12 months, after that point FFI library has to be recompiled with
+// latest XLA FFI headers to support new features. We don't plan to break ABI
+// compatibility, unless it's absolutely necessary to enable new features that
+// can't be implemented in a backward compatible way.
+//
+// The range of supported API versions is defined in `xla/ffi/ffi_api.cc`.
+
 // Incremented when an ABI-incompatible change is made to the interface.
 //
 // Major changes include:
 // * Deleting a method or argument
 // * Changing the type of an argument
 // * Rearranging fields in the XLA_FFI_Api or argument structs
-#define XLA_FFI_API_MAJOR 1
+#define XLA_FFI_API_MAJOR 0
 
 // Incremented when the interface is updated in a way that is potentially
 // ABI-compatible with older versions, if supported by the caller and/or
@@ -82,7 +91,7 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Extension_Base, next);
 // Minor changes include:
 // * Adding a new field to the XLA_FFI_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define XLA_FFI_API_MINOR 0
+#define XLA_FFI_API_MINOR 2
 
 struct XLA_FFI_Api_Version {
   size_t struct_size;
@@ -485,7 +494,7 @@ typedef XLA_FFI_Error* XLA_FFI_Handler_Register(
 
 #define XLA_FFI_UNKNOWN_TYPE_ID XLA_FFI_TypeId{0}
 
-struct XLA_FFI_TypeId_Register_Args {
+struct XLA_FFI_Type_Register_Args {
   size_t struct_size;
   XLA_FFI_Extension_Base* extension_start;
 
@@ -494,14 +503,13 @@ struct XLA_FFI_TypeId_Register_Args {
   XLA_FFI_TypeInfo* type_info;
 };
 
-XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_TypeId_Register_Args, type_id);
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Type_Register_Args, type_id);
 
 // Registers user type `name` with XLA. If type id is `XLA_FFI_UNKNOWN_TYPE_ID`,
 // XLA will assign a unique type id and return it in `type_id` out argument,
 // otherwise XLA will verify that type id is unique and matches the type id of
 // the type registered with the same `name` earlier.
-typedef XLA_FFI_Error* XLA_FFI_TypeId_Register(
-    XLA_FFI_TypeId_Register_Args* args);
+typedef XLA_FFI_Error* XLA_FFI_Type_Register(XLA_FFI_Type_Register_Args* args);
 
 //===----------------------------------------------------------------------===//
 // ExecutionContext
@@ -745,7 +753,7 @@ struct XLA_FFI_Api {
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_Error_Destroy);
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_Handler_Register);
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_Stream_Get);
-  _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_TypeId_Register);
+  _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_Type_Register);
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_ExecutionContext_Get);
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_State_Set);
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_State_Get);

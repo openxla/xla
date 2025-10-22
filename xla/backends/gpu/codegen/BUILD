@@ -79,10 +79,6 @@ cc_library(
 xla_test(
     name = "cudnn_test",
     srcs = ["cudnn_test.cc"],
-    backend_tags = {
-        # TODO(b/445172709): Re-enable once fixed.
-        "b200": ["broken"],
-    },
     backends = ["gpu"],
     tags = ["cuda-only"],
     deps = [
@@ -222,7 +218,10 @@ xla_test(
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu/transforms:dynamic_slice_fusion_rewriter",
         "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",

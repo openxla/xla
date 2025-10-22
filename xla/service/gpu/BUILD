@@ -332,6 +332,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
     ],
 )
 
@@ -1916,7 +1917,7 @@ xla_test(
     name = "gpu_compiler_test",
     srcs = ["gpu_compiler_test.cc"],
     backend_tags = {
-        # TODO(b/445172709): Re-enable once fixed.
+        # TODO(b/445172709): Re-enable once nvbug 5552596 is fixed.
         "b200": ["broken"],
     },
     backends = ["gpu"],
@@ -3093,10 +3094,6 @@ xla_cc_test(
 xla_test(
     name = "determinism_test",
     srcs = ["determinism_test.cc"],
-    backend_tags = {
-        # TODO(b/445172709): Re-enable once fixed.
-        "b200": ["broken"],
-    },
     backends = ["gpu"],
     deps = [
         "//xla:literal",

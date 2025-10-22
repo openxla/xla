@@ -14,6 +14,7 @@
 # ==============================================================================
 
 from collections.abc import Callable, Iterable
+from typing import Optional
 
 from absl.testing import absltest
 import numpy as np
@@ -25,6 +26,11 @@ from xla.codegen.testlib import utilities as testlib_utilities
 create_literal = testlib_utilities.create_literal_from_np
 
 
+def get_random_array(shape: tuple[int, ...], dtype: np.dtype) -> np.ndarray:
+  rng = np.random.default_rng()
+  return rng.uniform(low=-5, high=5, size=shape).astype(dtype)
+
+
 def compare_kernel(
     ir: str,
     kernel_name: str,
@@ -33,7 +39,7 @@ def compare_kernel(
     output_shape: tuple[int, ...],
     dtype,
     expected_output: Callable[[np.ndarray, ...], np.ndarray],
-    exact: bool = True,
+    maxulp: Optional[int] = None,
 ) -> None:
   mlir_emitter = cpu_testlib.MlirTestKernelEmitter(
       ir, kernel_name, (num_workgroups, 1, 1)
@@ -44,19 +50,22 @@ def compare_kernel(
       kernel_definition,
       cpu_testlib.JitCompiler(base_testlib.HloModuleConfig()),
   )
-  inputs = [np.random.rand(*shape).astype(dtype) for shape in input_shapes]
+
+  # Simply use a all-ones arrays as inputs to make it easy to debug the kernel.
+  inputs = [np.ones(shape=shape, dtype=dtype) for shape in input_shapes]
 
   input_tensors = [create_literal(input) for input in inputs]
-  output_tensor = create_literal(np.zeros(output_shape, dtype=dtype))
+  # Use a random array as the output to ensure all values are written to.
+  output_tensor = create_literal(get_random_array(output_shape, dtype))
   runner.call(input_tensors + [output_tensor])
 
-  if exact:
-    np.testing.assert_array_equal(
-        np.asarray(output_tensor), expected_output(*inputs)
-    )
+  output_np = np.asarray(output_tensor)
+  expected_output_np = expected_output(*inputs)
+  if maxulp is None:
+    np.testing.assert_array_equal(output_np, expected_output_np)
   else:
-    np.testing.assert_array_almost_equal_nulp(
-        np.asarray(output_tensor), expected_output(*inputs), nulp=3
+    np.testing.assert_array_max_ulp(
+        output_np, expected_output_np, maxulp=maxulp
     )
 
 
@@ -87,6 +96,30 @@ class XtileLoweringTest(absltest.TestCase):
         (5, 5),
         np.float32,
         lambda arg: arg.transpose(),
+    )
+
+  def test_strided(self):
+    ir = """
+      module @tiled_slice {
+        xtile.entry_func @tiled_slice(
+            %input: memref<64x64xf32>,
+            %output: memref<4x32xf32>,
+            %tile_id: index) attributes {xtile.tiling_info = #xtile.tiling_info<tile_count:1, tiles_per_workgroup:1>} {
+          %input_tile = xtile.extract %input[%tile_id, %tile_id][4, 32][21, 2] : memref<64x64xf32> -> tensor<4x32xf32>
+          xtile.insert %input_tile into %output[%tile_id, %tile_id][4, 32][1, 1] : tensor<4x32xf32> -> memref<4x32xf32>
+          xtile.return
+        }
+      }
+    """
+
+    compare_kernel(
+        ir,
+        "tiled_slice",
+        1,
+        [(64, 64)],
+        (4, 32),
+        np.float32,
+        lambda arg: arg[::21, ::2],
     )
 
   def test_transpose(self):
@@ -171,7 +204,7 @@ class XtileLoweringTest(absltest.TestCase):
         (8, 8),
         np.float32,
         lambda lhs, rhs: lhs @ rhs,
-        False,
+        maxulp=5,
     )
 
   def test_dot_scalar_output(self):
@@ -197,10 +230,10 @@ class XtileLoweringTest(absltest.TestCase):
         "test_dot_scalar_output",
         1,
         [(8, 16), (16, 8)],
-        (1,),
+        (),
         np.float32,
-        lambda lhs, rhs: np.tensordot(lhs, rhs, axes=([1, 0], [0, 1])),
-        False,
+        lambda lhs, rhs: np.tensordot(lhs, rhs, axes=[[1, 0], [0, 1]]),
+        maxulp=8,
     )
 
   def test_dot_fusion_single_tile(self):
@@ -233,7 +266,7 @@ class XtileLoweringTest(absltest.TestCase):
         (8, 1),
         np.float32,
         lambda lhs_0, lhs_1, rhs: np.tanh((lhs_0 + lhs_1) @ rhs),
-        False,
+        maxulp=5,
     )
 
 

@@ -571,9 +571,7 @@ GpuCompiler::GpuCompiler(se::Platform::Id platform_id,
 namespace {
 // Adds the HloVerifier for GPU to the given pipeline.
 void AddHloVerifier(HloPassPipeline* pipeline,
-                    bool verify_unique_channel_ids = false,
                     HloVerifierOpts&& opts = {}, bool debug_only = false) {
-  opts.verify_unique_channel_ids = verify_unique_channel_ids;
   opts.verify_no_collective_deadlocks = true;
   std::unique_ptr<TargetVerifierMetadata> verifier_metadata =
       std::make_unique<CpuGpuVerifierMetadata>(std::move(opts));
@@ -746,7 +744,7 @@ absl::Status RunOptimizationPasses(
       gpu_target_config.device_description.gpu_compute_capability();
 
   HloPassPipeline pipeline("optimization");
-  AddHloVerifier(&pipeline, !debug_options.xla_ignore_channel_id());
+  AddHloVerifier(&pipeline);
   if (debug_options.xla_detect_unstable_reductions() !=
       DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_NONE) {
     pipeline.AddPass<UnstableReductionDetector>();
@@ -767,8 +765,9 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<DotDecomposer>();
 
   HloPredicate upcaster_filter = [&](const HloInstruction* instr) {
-    const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
-        &gpu_target_config.device_description.gpu_compute_capability());
+    const auto* cuda_cc =
+        gpu_target_config.device_description.gpu_compute_capability()
+            .cuda_compute_capability();
     if (cuda_cc != nullptr &&
         !cuda_cc->IsAtLeast(se::CudaComputeCapability::kVolta)) {
       return true;
@@ -902,8 +901,7 @@ absl::Status RunOptimizationPasses(
   // point.
   [&, &pipeline =
           pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification")] {
-    AddHloVerifier(&pipeline, !debug_options.xla_ignore_channel_id(),
-                   HloVerifierOpts{}, /*debug_only=*/true);
+    AddHloVerifier(&pipeline, HloVerifierOpts{}, /*debug_only=*/true);
 
     // BatchNormExpander can create zero-sized ops, so zero-sized HLO
     // elimination has to come after that pass.
@@ -1771,8 +1769,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     se::GpuComputeCapability gpu_version =
         gpu_target_config.device_description.gpu_compute_capability();
     pipeline.AddPass<AlgorithmChecker>(gpu_version);
-    const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_version);
-    const auto* rocm_cc = std::get_if<se::RocmComputeCapability>(&gpu_version);
+    const auto* cuda_cc = gpu_version.cuda_compute_capability();
+    const auto* rocm_cc = gpu_version.rocm_compute_capability();
 
     // Make sure that dots have at least 1 contracting dimension in the
     // operands. Needs to happen shortly before the dot rewrite, as otherwise
@@ -1856,7 +1854,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   }
 
   HloPassPipeline pipeline("post-layout_assignment");
-  AddHloVerifier(&pipeline, !debug_options.xla_ignore_channel_id(),
+  AddHloVerifier(&pipeline,
                  HloVerifierOpts{}
                      .MakeLayoutSensitive()
                      .WithInstructionCanChangeLayout(
@@ -1963,7 +1961,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                                  LayoutAssignment::InstructionCanChangeLayout)
                              .VerifyBroadcastDimensionsOrder()
                              .VerifyReshapeIsBitcast();
-  opts.verify_unique_channel_ids = !debug_options.xla_ignore_channel_id();
   pipeline.AddPass<HloVerifier>(
       std::make_unique<DefaultVerifierMetadata>(std::move(opts)),
       "end-of-post-layout_assignment");
@@ -3025,8 +3022,8 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     pipeline.AddPass<FusionWrapper>(gpu_device_info);
   }
 
-  const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
-      &gpu_device_info.gpu_compute_capability());
+  const auto* cuda_cc =
+      gpu_device_info.gpu_compute_capability().cuda_compute_capability();
   if (cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) {
     // This needs to run after every pass affecting fusions. The last passes
     // that create new fusions are FusionWrapper and StreamAttributeAnnotator.
@@ -3056,7 +3053,6 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
   if (module->config().debug_options().xla_gpu_pgle_accuracy_checker() ==
       DebugOptions::PGLE_STRICTNESS_LEVEL_ERROR) {
     AddHloVerifier(&main_pipeline,
-                   module->config().debug_options().xla_ignore_channel_id(),
                    HloVerifierOpts{}.VerifyInstructionNameUnchanged());
   }
   return main_pipeline.Run(module, {HloInstruction::kMainExecutionThread})
