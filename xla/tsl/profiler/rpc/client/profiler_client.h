@@ -61,10 +61,17 @@ class RemoteProfilerSession {
 
   absl::string_view GetServiceAddress() const { return service_address_; }
 
+  // Processes a completion event that has been received from the gRPC
+  // completion queue. Updates internal state with the final status and returns
+  // the response. Subsequent calls after the first will yield nullptr and an
+  // error status.
   std::unique_ptr<tensorflow::ProfileResponse> HandleCompletion(
       absl::Status& out_status, void* got_tag, bool ok);
 
  private:
+  // Constructs a new RemoteProfilerSession instance.
+  // client_id is a unique identifier used as a tag for gRPC completion queue
+  // operations.
   explicit RemoteProfilerSession(
       const std::string& service_addr, absl::Time deadline,
       const tensorflow::ProfileRequest& profile_request, int64 client_id);

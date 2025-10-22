@@ -136,7 +136,7 @@ std::unique_ptr<ProfileResponse> RemoteProfilerSession::HandleCompletion(
     absl::Status& out_status, void* got_tag, bool ok) {
   VLOG(2) << "Received completion event for client " << this->client_id_
           << " at " << this->service_address_;
-  if (!ok || got_tag == nullptr) {
+  if (!ok) {
     out_status =
         absl::InternalError("Missing or invalid event from completion queue.");
     return nullptr;

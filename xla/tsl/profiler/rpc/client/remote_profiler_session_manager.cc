@@ -110,34 +110,29 @@ RemoteProfilerSessionManager::WaitForCompletion() {
       clients_.size());
 
   for (int32_t req_cnt = 0; req_cnt < clients_.size(); ++req_cnt) {
-    int64 got_tag = -1;
+    void* got_tag = nullptr;
     bool ok = false;
-    bool success = cq_.Next(reinterpret_cast<void**>(&got_tag), &ok);
+    bool success = cq_.Next(&got_tag, &ok);
+
     if (!success) {
       LOG(ERROR) << "Completion queue drained after processing " << req_cnt
-                << " of " << clients_.size() << " clients";
+                 << " of " << clients_.size() << " clients";
       break;
     }
     if (!ok) {
-      if (got_tag != -1) {
-        int64 client_id = *(reinterpret_cast<int64*>(got_tag));
-        remote_responses[req_cnt].status = absl::InternalError(absl::StrCat(
-            "Missing or invalid event from completion queue.", client_id));
-        LOG(ERROR) << "Missing or invalid event from completion queue."
-                   << client_id;
-        continue;
-      } else {
-        remote_responses[req_cnt].status = absl::InternalError(
-            "Missing or invalid event from completion queue without a tag.");
-        LOG(ERROR)
-            << "Missing or invalid event from completion queue without a tag.";
-        continue;
-      }
+      remote_responses[req_cnt].status = absl::InternalError(absl::StrCat(
+          "Missing or invalid event from completion queue, got_tag: ",
+          reinterpret_cast<int64>(got_tag),
+          " got_tag:0 means either nullptr or a client_id:0"));
+      LOG(ERROR) << "Missing or invalid event from completion queue, got_tag: "
+                 << reinterpret_cast<int64>(got_tag)
+                 << ". got_tag:0 means either nullptr or a client_id:0";
+      continue;
     }
-    auto* client = clients_[got_tag].get();
-    remote_responses[req_cnt].profile_response =
-        client->HandleCompletion(remote_responses[req_cnt].status,
-                                 reinterpret_cast<void*>(&got_tag), ok);
+    int64 client_id = reinterpret_cast<int64>(got_tag);
+    auto* client = clients_[client_id].get();
+    remote_responses[req_cnt].profile_response = client->HandleCompletion(
+        remote_responses[req_cnt].status, got_tag, true);
     remote_responses[req_cnt].service_address =
         std::string(client->GetServiceAddress());
   }
