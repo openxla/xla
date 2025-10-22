@@ -946,67 +946,83 @@ absl::Status PjRtCApiClient::DmaUnmap(void* data) {
   return absl::OkStatus();
 }
 
-PJRT_Transfers_CrossHostRecvNotifierInfo CppCrossHostRecvNotifierToC(
-    const PJRT_Api* c_api, xla::PjRtCrossHostRecvNotifier cpp_notifier) {
-  auto notifier_function = new PjRtCApiClient::CrossHostRecvNotifierFunction(
-      [cpp_notifier = std::move(cpp_notifier), c_api](
-          PJRT_Error* error, const char** serialized_descriptors,
-          size_t* descriptors_sizes, size_t num_descriptors) {
-        if (error != nullptr) {
-          absl::Status state = ::pjrt::PjrtErrorToStatus(error, c_api);
-          return cpp_notifier(std::move(state));
-        }
-        xla::PjRtCrossHostRecvState state;
-        state.descriptors.reserve(num_descriptors);
-        for (int i = 0; i < num_descriptors; ++i) {
-          xla::PjRtCrossHostRecvDescriptors descriptors;
-          descriptors.serialized_descriptors.push_back(
-              std::string(serialized_descriptors[i], descriptors_sizes[i]));
-          state.descriptors.push_back(std::move(descriptors));
-        }
+std::vector<Future<>> PjRtCApiClient::CrossHostSendBuffers(
+    const std::vector<PjRtBuffer*> buffers,
+    const std::vector<PjRtGlobalDeviceId>& dst_global_device_ids,
+    CrossHostTransferKey transfer_key) {
+  // Get C API extension.
+  const PJRT_Api* c_api = pjrt_c_api();
+  PJRT_CrossHostTransfers_Extension* extension =
+      FindExtension<PJRT_CrossHostTransfers_Extension>(
+          PJRT_Extension_Type::PJRT_Extension_Type_CrossHostTransfers);
+  if (extension == nullptr) {
+    absl::Status error = absl::UnimplementedError(
+        "CrossHostSendBuffers is not implemented in this PJRT plugin.");
+    std::vector<Future<>> futures;
+    futures.reserve(buffers.size());
+    for (int i = 0; i < buffers.size(); ++i) {
+      futures.push_back(Future<>(error));
+    }
+    return futures;
+  }
 
-        // TODO(emilyaf): Support cancellation.
-        xla::PjRtCrossHostSendCancelNotifier cancel_notifier =
-            [](absl::string_view, absl::Status,
-               std::function<void(absl::Status)>) {
-              LOG(FATAL) << "MakeCrossHostReceiveBuffers: Cancellation is not "
-                            "supported in PJRT C API.";
-            };
-        state.cancel_notifier = cancel_notifier;
-        return cpp_notifier(std::move(state));
-      });
-  return PJRT_Transfers_CrossHostRecvNotifierInfo{
-      /*user_arg=*/notifier_function,
-      /*notifier=*/
-      [](PJRT_Error* error, const char** serialized_descriptors,
-         size_t* descriptors_sizes, size_t num_descriptors, void* user_arg) {
-        PjRtCApiClient::CrossHostRecvNotifierFunction* notifier_fn =
-            reinterpret_cast<PjRtCApiClient::CrossHostRecvNotifierFunction*>(
-                user_arg);
-        (*notifier_fn)(error, serialized_descriptors, descriptors_sizes,
-                       num_descriptors);
-        delete notifier_fn;
-      }};
+  // Form inputs.
+  PJRT_Transfers_PJRT_Client_CrossHostSendBuffers_Args args;
+  args.struct_size =
+      PJRT_Transfers_PJRT_Client_CrossHostSendBuffers_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.client = c_client_.get();
+  args.num_buffers = buffers.size();
+
+  std::vector<PJRT_Buffer*> c_buffers;
+  c_buffers.reserve(buffers.size());
+  for (PjRtBuffer* buffer : buffers) {
+    c_buffers.push_back(
+        tensorflow::down_cast<const PjRtCApiBuffer*>(buffer)->c_buffer());
+  }
+
+  args.buffers = c_buffers.data();
+  args.dst_global_device_ids = dst_global_device_ids.data();
+  args.transfer_key = transfer_key;
+
+  auto send_events = std::vector<PJRT_Event*>(args.num_buffers);
+  args.send_events = send_events.data();
+
+  extension->PJRT_Transfers_PJRT_Client_CrossHostSendBuffers(&args);
+
+  std::vector<Future<>> send_futures;
+  for (int i = 0; i < args.num_buffers; ++i) {
+    send_futures.push_back(
+        pjrt::ConvertCEventToCppFuture(args.send_events[i], c_api));
+  }
+
+  return send_futures;
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
-PjRtCApiClient::MakeCrossHostReceiveBuffers(
-    absl::Span<const Shape> shapes, PjRtDevice* device,
-    PjRtCrossHostRecvNotifier notifier) {
+PjRtCApiClient::CrossHostReceiveBuffers(
+    absl::Span<const xla::Shape> shapes, xla::PjRtDevice* device,
+    const std::vector<PjRtGlobalDeviceId>& src_global_device_ids,
+    CrossHostTransferKey transfer_key) {
+  // Get C API extension.
   const PJRT_Api* c_api = pjrt_c_api();
   PJRT_CrossHostTransfers_Extension* extension =
       FindExtension<PJRT_CrossHostTransfers_Extension>(
           PJRT_Extension_Type::PJRT_Extension_Type_CrossHostTransfers);
   if (extension == nullptr) {
     return absl::UnimplementedError(
-        "MakeCrossHostReceiveBuffers is not implemented in this PJRT plugin.");
+        "CrossHostReceiveBuffers is not implemented in this PJRT plugin.");
   }
-  PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args args;
+
+  // Form inputs.
+  PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args args;
   args.struct_size =
-      PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args_STRUCT_SIZE;
+      PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.client = c_client_.get();
+
   args.num_shapes = shapes.size();
+
   std::vector<size_t> shape_num_dims;
   shape_num_dims.reserve(shapes.size());
   std::vector<PJRT_Buffer_MemoryLayout*> layout_list;
@@ -1031,22 +1047,26 @@ PjRtCApiClient::MakeCrossHostReceiveBuffers(
     //   layout_list.push_back(&(c_layout_data.c_layout));
     layout_list.push_back(nullptr);
   }
+
   args.shape_num_dims = shape_num_dims.data();
   args.num_dims = num_dims.data();
   args.element_types = element_type_list.data();
   args.layouts = layout_list.data();
 
-  args.notifier = CppCrossHostRecvNotifierToC(c_api, std::move(notifier));
   args.device = tensorflow::down_cast<PjRtCApiDevice*>(device)->c_device();
+  args.src_global_device_ids = src_global_device_ids.data();
+  args.transfer_key = transfer_key;
 
   std::vector<PJRT_Buffer*> temp_buffers(shapes.size());
   args.buffers = temp_buffers.data();
+
   RETURN_STATUS_IF_PJRT_ERROR(
-      extension->PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers(&args),
+      extension->PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers(&args),
       c_api);
+
   std::vector<std::unique_ptr<PjRtBuffer>> buffers;
-  buffers.reserve(args.num_buffers);
-  for (int i = 0; i < args.num_buffers; ++i) {
+  buffers.reserve(args.num_shapes);
+  for (int i = 0; i < args.num_shapes; ++i) {
     buffers.emplace_back(std::unique_ptr<PjRtBuffer>(
         std::make_unique<PjRtCApiBuffer>(this, args.buffers[i])));
   }
@@ -2994,29 +3014,6 @@ PjRtCApiBuffer::AcquireExternalReference() {
       opaque_device_memory_data_pointer_args.device_memory_ptr;
   return std::make_unique<PjRtCApiExternalReference>(client_, this,
                                                      device_memory_ptr);
-}
-
-void PjRtCApiBuffer::CopyToRemoteDevice(
-    Future<std::string> serialized_descriptor, RemoteSendCallback on_done) {
-  PJRT_CrossHostTransfers_Extension* extension =
-      client_->FindExtension<PJRT_CrossHostTransfers_Extension>(
-          PJRT_Extension_Type::PJRT_Extension_Type_CrossHostTransfers);
-  if (extension == nullptr) {
-    LOG(FATAL) << "PjRtBuffer::CopyToRemoteDevice: Cross host transfers "
-                  "extension not found in PJRT plugin.";
-  }
-  PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args args;
-  args.struct_size =
-      PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args_STRUCT_SIZE;
-  args.extension_start = nullptr;
-  args.buffer = c_buffer();
-  // TODO(emilyaf): Support async instead of awaiting here.
-  absl::StatusOr<std::string> descriptor = serialized_descriptor.Await();
-  CHECK_OK(descriptor) << "Failed to copy buffer to remote device: "
-                       << descriptor.status();
-  args.serialized_descriptor = descriptor->c_str();
-  args.serialized_descriptor_size = descriptor->size();
-  extension->PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice(&args);
 }
 
 PjRtCApiExternalReference::~PjRtCApiExternalReference() {

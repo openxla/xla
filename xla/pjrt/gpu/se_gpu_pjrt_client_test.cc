@@ -2689,6 +2689,285 @@ TEST(StreamExecutorGpuClientTest, MultipleDeviceShareDmaMapping) {
   TF_EXPECT_OK(client->DmaUnmap(host_dma_ptr.get()));
 }
 
+TEST(StreamExecutorGpuClientTest, FailedCrossHostSendArgsSizeMismatch) {
+  // Create the client.
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+
+  // Create a buffer to try to send.
+  std::vector<int32_t> data(256);
+  std::iota(data.begin(), data.end(), 1);
+
+  Shape shape = ShapeUtil::MakeShape(S32, {256});
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          *client->addressable_devices()[0]->default_memory_space(),
+          /*device_layout=*/nullptr));
+
+  // Try to send some data, giving an extra dst_global_device_id.
+  std::vector<Future<>> send_futures = client->CrossHostSendBuffers(
+      {buffer.get()}, {PjRtGlobalDeviceId(1), PjRtGlobalDeviceId(2)},
+      CrossHostTransferKey(0));
+
+  EXPECT_EQ(send_futures.size(), 1);
+
+  EXPECT_THAT(
+      send_futures[0].Await(),
+      absl_testing::StatusIs(
+          absl::StatusCode::kInternal,
+          ::testing::StrEq("CrossHostSendBuffers: dst_global_device_ids "
+                           "must be the same size as buffers.")));
+}
+
+TEST(StreamExecutorGpuClientTest, FailedCrossHostSendMoreThanOneBuffer) {
+  // Create the client.
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+
+  // Create a buffer to try to send.
+  std::vector<int32_t> data(256);
+  std::iota(data.begin(), data.end(), 1);
+
+  Shape shape = ShapeUtil::MakeShape(S32, {256});
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          *client->addressable_devices()[0]->default_memory_space(),
+          /*device_layout=*/nullptr));
+
+  // Try to send some data, giving more than one buffer.
+  std::vector<Future<>> send_futures = client->CrossHostSendBuffers(
+      {buffer.get(), buffer.get()},
+      {PjRtGlobalDeviceId(1), PjRtGlobalDeviceId(2)}, CrossHostTransferKey(0));
+
+  EXPECT_EQ(send_futures.size(), 2);
+
+  for (auto& send_future : send_futures) {
+    EXPECT_THAT(
+        send_future.Await(),
+        absl_testing::StatusIs(
+            absl::StatusCode::kUnimplemented,
+            ::testing::StrEq("CrossHostSendBuffers currently only supports one "
+                             "buffer, but got 2")));
+  }
+}
+
+TEST(StreamExecutorGpuClientTest, FailedCrossHostReceiveBadNumShapes) {
+  // Create the client.
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+
+  // Create a shape we will use for this set of tests.
+  Shape shape = ShapeUtil::MakeShape(S32, {256});
+
+  // Check InvalidArgument status when we give 0 shapes.
+  std::vector<Shape> no_shapes;
+  absl::StatusOr no_shapes_status_or = client->CrossHostReceiveBuffers(
+      /*shapes=*/absl::MakeSpan(no_shapes),
+      /*device=*/client->addressable_devices()[0],
+      /*src_global_device_ids=*/{},
+      /*transfer_key=*/CrossHostTransferKey(0));
+
+  EXPECT_THAT(no_shapes_status_or.status(),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInvalidArgument,
+                  ::testing::StrEq(
+                      "shapes parameter empty in CrossHostReceiveBuffers")));
+
+  // Check InvalidArgument status when we give > 1 shape.
+  std::vector<Shape> two_shapes = {shape, shape};
+  absl::StatusOr two_shapes_status_or = client->CrossHostReceiveBuffers(
+      /*shapes=*/absl::MakeSpan(two_shapes),
+      /*device=*/client->addressable_devices()[0],
+      /*src_global_device_ids=*/{PjRtGlobalDeviceId(0), PjRtGlobalDeviceId(1)},
+      /*transfer_key=*/CrossHostTransferKey(0));
+
+  EXPECT_THAT(two_shapes_status_or.status(),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kUnimplemented,
+                  ::testing::StrEq("CrossHostReceiveBuffers currently only "
+                                   "supports one shape, but got 2")));
+}
+
+TEST(StreamExecutorGpuClientTest, FailedCrossHostReceiveArgsSizeMismatch) {
+  // Create the client.
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+
+  // Create shapes to receive.
+  std::vector<Shape> shapes = {ShapeUtil::MakeShape(S32, {256})};
+
+  // Check InvalidArgument status when shapes.size() !=
+  // src_global_device_ids.size().
+  absl::StatusOr mismatch_status_or = client->CrossHostReceiveBuffers(
+      /*shapes=*/absl::MakeSpan(shapes),
+      /*device=*/client->addressable_devices()[0],
+      /*src_global_device_ids=*/{},
+      /*transfer_key=*/CrossHostTransferKey(0));
+
+  EXPECT_THAT(
+      mismatch_status_or.status(),
+      absl_testing::StatusIs(
+          absl::StatusCode::kInvalidArgument,
+          ::testing::StrEq("shapes and src_global_device_ids parameters to "
+                           "CrossHostReceiveBuffers must have the same length, "
+                           "but got 1 and 0")));
+}
+
+TEST(StreamExecutorGpuClientTest, SuccessfulCrossHostTransfer) {
+  tsl::SubProcess sender;
+  tsl::SubProcess receiver;
+
+  std::vector<std::string> sender_argv;
+  sender_argv.push_back("successful_cross_host_transfer_test");
+  sender_argv.push_back("--test_to_run=SuccessfulCrossHostTransferHelper");
+  sender_argv.push_back("--cross_host_test_role=sender");
+
+  std::vector<std::string> receiver_argv;
+  receiver_argv.push_back("successful_cross_host_transfer_test");
+  receiver_argv.push_back("--test_to_run=SuccessfulCrossHostTransferHelper");
+  receiver_argv.push_back("--cross_host_test_role=receiver");
+
+  sender.SetProgram("/proc/self/exe", sender_argv);
+  sender.SetChannelAction(tsl::CHAN_STDOUT, tsl::ACTION_PIPE);
+  sender.SetChannelAction(tsl::CHAN_STDERR, tsl::ACTION_PIPE);
+
+  receiver.SetProgram("/proc/self/exe", receiver_argv);
+  receiver.SetChannelAction(tsl::CHAN_STDOUT, tsl::ACTION_PIPE);
+  receiver.SetChannelAction(tsl::CHAN_STDERR, tsl::ACTION_PIPE);
+
+  ASSERT_TRUE(sender.Start());
+  ASSERT_TRUE(receiver.Start());
+
+  std::string sender_stdout, sender_stderr;
+  std::string receiver_stdout, receiver_stderr;
+
+  int sender_status =
+      sender.Communicate(nullptr, &sender_stdout, &sender_stderr);
+  int receiver_status =
+      receiver.Communicate(nullptr, &receiver_stdout, &receiver_stderr);
+
+  EXPECT_EQ(sender_status, 0) << "sender stdout:\n"
+                              << sender_stdout << "\nsender stderr:\n"
+                              << sender_stderr;
+  EXPECT_EQ(receiver_status, 0) << "receiver stdout:\n"
+                                << receiver_stdout << "\nreceiver stderr:\n"
+                                << receiver_stderr;
+}
+
+absl::Status SuccessfulCrossHostTransferTestBody(bool is_sender) {
+  std::string log_prefix = is_sender ? "sender" : "receiver";
+
+  // Sender creates a coordination service on so both processes can find each
+  // other via the distributed runtime (port chosen arbitrarily).
+  std::unique_ptr<xla::DistributedRuntimeService> service;
+  if (is_sender) {
+    LOG(INFO) << log_prefix << ": creating coordination service";
+    TF_ASSIGN_OR_RETURN(
+        service, xla::GetDistributedRuntimeService(
+                     "127.0.0.1:12347",
+                     xla::CoordinationServiceImpl::Options{.num_nodes = 2}));
+    LOG(INFO) << log_prefix << ": created service";
+  }
+
+  // Connect to the coordination service.
+  int32_t node_id = is_sender ? 0 : 1;
+  xla::DistributedRuntimeClient::Options distributed_options;
+  distributed_options.node_id = node_id;
+  distributed_options.init_timeout = absl::Seconds(120);
+  auto distributed_client =
+      GetDistributedRuntimeClient("127.0.0.1:12347", distributed_options);
+
+  LOG(INFO) << log_prefix << ": connecting distributed client";
+  TF_QCHECK_OK(distributed_client->Connect());
+  LOG(INFO) << log_prefix << ": distributed client connected";
+
+  // Create the GPU client.
+  GpuClientOptions options = DefaultOptions();
+  options.node_id = node_id;
+  options.num_nodes = 2;
+  options.kv_store =
+      GetDistributedKeyValueStore(distributed_client, /*key_prefix=*/"cross:");
+  options.allowed_devices = {node_id};
+
+  LOG(INFO) << log_prefix << ": creating PjRtClient";
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtClient> client,
+                      GetStreamExecutorGpuClient(options));
+  LOG(INFO) << log_prefix << ": PjRtClient created";
+
+  // Sender logic.
+  if (is_sender) {
+    // Create the data to send.
+    std::vector<int32_t> data(256);
+    std::iota(data.begin(), data.end(), 1);
+
+    Shape shape = ShapeUtil::MakeShape(S32, {256});
+
+    LOG(INFO) << log_prefix << ": creating buffer";
+    TF_ASSIGN_OR_RETURN(
+        std::unique_ptr<PjRtBuffer> buffer,
+        client->BufferFromHostBuffer(
+            data.data(), shape.element_type(), shape.dimensions(),
+            /*byte_strides=*/std::nullopt,
+            PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+            *client->addressable_devices()[0]->default_memory_space(),
+            /*device_layout=*/nullptr));
+
+    LOG(INFO) << log_prefix << ": waiting for buffer ready";
+    TF_RETURN_IF_ERROR(buffer->GetReadyFuture().Await());
+    LOG(INFO) << log_prefix << ": buffer ready";
+
+    // Send some data.
+    LOG(INFO) << log_prefix << ": issuing CrossHostSendBuffers";
+    std::vector<Future<>> send_futures = client->CrossHostSendBuffers(
+        {buffer.get()}, {PjRtGlobalDeviceId(1)}, CrossHostTransferKey(0));
+    EXPECT_EQ(send_futures.size(), 1);
+    TF_RETURN_IF_ERROR(send_futures[0].Await());
+    LOG(INFO) << log_prefix << ": send completed";
+  }
+
+  // Receiver logic.
+  else {
+    // Receive some data.
+    std::vector<Shape> shapes = {ShapeUtil::MakeShape(S32, {256})};
+
+    LOG(INFO) << log_prefix << ": calling CrossHostReceiveBuffers";
+    TF_ASSIGN_OR_RETURN(
+        std::vector<std::unique_ptr<PjRtBuffer>> receive_buffers,
+        client->CrossHostReceiveBuffers(
+            /*shapes=*/absl::MakeSpan(shapes),
+            /*device=*/client->addressable_devices()[0],
+            /*src_global_device_ids=*/{PjRtGlobalDeviceId(0)},
+            /*transfer_key=*/CrossHostTransferKey(0)));
+    LOG(INFO) << log_prefix
+              << ": CrossHostReceiveBuffers returned, waiting for ready";
+
+    // Verify we received the expected data.
+    EXPECT_EQ(receive_buffers.size(), 1);
+    TF_RETURN_IF_ERROR(receive_buffers[0]->GetReadyFuture().Await());
+    LOG(INFO) << log_prefix << ": buffer ready, converting to literal";
+
+    TF_ASSIGN_OR_RETURN(std::shared_ptr<xla::Literal> recv_literal,
+                        receive_buffers[0]->ToLiteralSync());
+    std::vector<int32_t> expected_data(256);
+    std::iota(expected_data.begin(), expected_data.end(), 1);
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR1<int32_t>(expected_data), *recv_literal));
+    LOG(INFO) << log_prefix << ": verification complete";
+  }
+
+  return absl::OkStatus();
+}
+
 TEST(StreamExecutorGpuClientTest, RawBuffer) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(DefaultOptions()));
@@ -2947,6 +3226,7 @@ TEST_P(ShardedAutotuningTest, ShardedAutotuningWorks) {
       std::vector<std::string> argv;
       argv.reserve(6);
       argv.push_back("sharded_autotuning_test");
+      argv.push_back("--test_to_run=ShardedAutotuningWorksHelper");
       argv.push_back(absl::StrFormat("--node_id=%d", node_id));
       argv.push_back(absl::StrFormat("--use_xla_computation=%d",
                                      param.use_xla_computation));
@@ -3101,13 +3381,29 @@ INSTANTIATE_TEST_SUITE_P(
 }  // namespace xla
 
 int main(int argc, char* argv[]) {
-  // Save name of binary so that it may invoke itself.
+  // Populated by a command line flag. Will be either
+  // 'ShardedAutotuningWorksHelper', 'SuccessfulCrossHostTransferHelper', or
+  // empty. If empty, all tests are run. Otherwise, the test body for
+  // 'ShardedAutotuningWorks' or 'SuccessfulCrossHostTransfer' will be run.
+  std::string test_to_run;
+
+  // Variables used by ShardedAutotuningWorks.
   int node_id = -1;
   int num_active_nodes = -1;
   int num_nodes_using_cache = -1;
   std::string cache_dir;
   bool use_xla_computation = false;
+
+  // Variables used by SuccessfulCrossHostTransfer.
+  std::string cross_host_test_role;
+
   std::vector<tsl::Flag> flag_list = {
+      tsl::Flag("test_to_run", &test_to_run,
+                "Which test(s) to execute. Allowed values: '' (runs "
+                "all tests), 'ShardedAutotuningWorksHelper' or "
+                "'SuccessfulCrossHostTransferHelper'."),
+
+      // Flags for ShardedAutotuningWorks.
       tsl::Flag("node_id", &node_id,
                 "Node ID for ShardedAutotuningWorks test."),
       tsl::Flag("num_active_nodes", &num_active_nodes,
@@ -3118,12 +3414,22 @@ int main(int argc, char* argv[]) {
                 "Test parameter for ShardedAutotuningWorks."),
       tsl::Flag("use_xla_computation", &use_xla_computation,
                 "Test parameter for ShardedAutotuningWorks."),
-  };
+
+      // Flags for SuccessfulCrossHostTransfer.
+      tsl::Flag("cross_host_test_role", &cross_host_test_role,
+                "Test parameter for SuccessfulCrossHostTransfer; either "
+                "'sender' or 'receiver'.")};
+
   xla::AppendDebugOptionsFlags(&flag_list);
   std::string usage = tsl::Flags::Usage(argv[0], flag_list);
   tsl::Flags::Parse(&argc, argv, flag_list);
-  testing::InitGoogleTest(&argc, argv);
-  if (node_id >= 0) {
+
+  if (test_to_run.empty()) {
+    testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+  }
+
+  if (test_to_run == "ShardedAutotuningWorksHelper") {
     absl::Status result = xla::ShardedAutotuningWorksTestBody(
         node_id, num_active_nodes, num_nodes_using_cache, cache_dir,
         use_xla_computation);
@@ -3132,5 +3438,23 @@ int main(int argc, char* argv[]) {
     }
     return result.raw_code();
   }
-  return RUN_ALL_TESTS();
+
+  else if (test_to_run == "SuccessfulCrossHostTransferHelper") {
+    absl::Status s;
+    if (cross_host_test_role == "sender") {
+      s = xla::SuccessfulCrossHostTransferTestBody(/*is_sender=*/true);
+    } else if (cross_host_test_role == "receiver") {
+      s = xla::SuccessfulCrossHostTransferTestBody(/*is_sender=*/false);
+    } else {
+      LOG(ERROR) << "cross_host_test_role must be 'sender' or 'receiver'.";
+      return 1;
+    }
+    if (!s.ok()) LOG(ERROR) << s;
+    return s.raw_code();
+  }
+
+  else {
+    LOG(ERROR) << "Unrecognized multiprocess test name " << test_to_run << ".";
+    return 1;
+  }
 }

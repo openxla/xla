@@ -268,12 +268,6 @@ class InterpreterLiteralWrapperBuffer final : public PjRtBuffer {
         "InterpreterLiteralWrapperBuffer.");
   }
 
-  void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
-                          RemoteSendCallback on_done) override {
-    LOG(ERROR) << "InterpreterLiteralWrapperBuffer::CopyToRemoteDevice was "
-                  "called but is not implemented.";
-  }
-
   Future<> GetReadyFuture() override { return Future<>(absl::OkStatus()); }
 
   bool IsOnCpu() const override { return true; }

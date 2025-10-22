@@ -33,38 +33,13 @@ limitations under the License.
 
 namespace pjrt {
 
-namespace {
-static xla::PjRtCrossHostRecvNotifier CCrossHostRecvNotifierToCpp(
-    const PJRT_Transfers_CrossHostRecvNotifierInfo& c_notifier) {
-  return [user_arg = c_notifier.user_arg, notifier = c_notifier.notifier](
-             absl::StatusOr<xla::PjRtCrossHostRecvState> recv_state) {
-    if (!recv_state.ok()) {
-      auto error = new PJRT_Error{recv_state.status()};
-      return notifier(error, nullptr, nullptr, 0, user_arg);
-    }
-    auto& descriptors = recv_state->descriptors;
-    std::vector<size_t> descriptors_sizes;
-    descriptors_sizes.reserve(descriptors.size());
-    std::vector<const char*> serialized_descriptors;
-    serialized_descriptors.reserve(descriptors.size());
-    for (int i = 0; i < descriptors.size(); ++i) {
-      serialized_descriptors.push_back(
-          descriptors[i].serialized_descriptors.front().c_str());
-      descriptors_sizes.push_back(
-          descriptors[i].serialized_descriptors.front().size());
-    }
-    return notifier(nullptr, serialized_descriptors.data(),
-                    descriptors_sizes.data(), descriptors.size(), user_arg);
-  };
-}
-}  // namespace
-
-PJRT_Error* PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers(
-    PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args* args) {
+PJRT_Error* PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers(
+    PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
-      "PJRT_Client_MakeCrossHostReceiveBuffers_Args",
-      PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args_STRUCT_SIZE,
+      "PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args",
+      PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args_STRUCT_SIZE,
       args->struct_size));
+
   std::vector<xla::Shape> shapes;
   shapes.reserve(args->num_shapes);
   for (int i = 0; i < args->num_shapes; ++i) {
@@ -74,29 +49,47 @@ PJRT_Error* PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers(
                                  args->shape_num_dims[i], args->layouts[i]));
     shapes.push_back(std::move(shape));
   }
-  xla::PjRtCrossHostRecvNotifier notifier =
-      CCrossHostRecvNotifierToCpp(args->notifier);
+
+  std::vector<xla::PjRtGlobalDeviceId> src_global_device_ids;
+  src_global_device_ids.reserve(args->num_shapes);
+  for (int i = 0; i < args->num_shapes; ++i) {
+    src_global_device_ids.push_back(args->src_global_device_ids[i]);
+  }
+
   PJRT_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<xla::PjRtBuffer>> buffers,
-      args->client->client->MakeCrossHostReceiveBuffers(
-          absl::MakeSpan(shapes), args->device->device, std::move(notifier)));
-  args->num_buffers = buffers.size();
+      args->client->client->CrossHostReceiveBuffers(
+          absl::MakeSpan(shapes), args->device->device, src_global_device_ids,
+          args->transfer_key));
+
   for (int i = 0; i < buffers.size(); ++i) {
     args->buffers[i] = new PJRT_Buffer{std::move(buffers[i]), args->client};
   }
   return nullptr;
 }
 
-void PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice(
-    PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args* args) {
-  std::string serialized_descriptor = std::string(
-      args->serialized_descriptor, args->serialized_descriptor_size);
-  xla::Future<std::string> descriptor_future(std::move(serialized_descriptor));
+PJRT_Error* PJRT_Transfers_PJRT_Client_CrossHostSendBuffers(
+    PJRT_Transfers_PJRT_Client_CrossHostSendBuffers_Args* args) {
+  std::vector<xla::PjRtBuffer*> buffers;
+  buffers.reserve(args->num_buffers);
+  for (int i = 0; i < args->num_buffers; ++i) {
+    buffers.push_back(args->buffers[i]->buffer.get());
+  }
 
-  // TODO(emilyaf): Support on_done callback.
-  xla::PjRtBuffer::RemoteSendCallback on_done =
-      [](absl::Status status, bool sends_were_enqueued) { CHECK_OK(status); };
-  args->buffer->buffer->CopyToRemoteDevice(descriptor_future, on_done);
+  std::vector<xla::PjRtGlobalDeviceId> dst_global_device_ids;
+  dst_global_device_ids.reserve(args->num_buffers);
+  for (int i = 0; i < args->num_buffers; ++i) {
+    dst_global_device_ids.push_back(args->dst_global_device_ids[i]);
+  }
+
+  std::vector<tsl::Future<>> send_futures =
+      args->client->client->CrossHostSendBuffers(buffers, dst_global_device_ids,
+                                                 args->transfer_key);
+
+  for (int i = 0; i < buffers.size(); ++i) {
+    args->send_events[i] = new PJRT_Event{std::move(send_futures[i])};
+  }
+  return nullptr;
 }
 
 PJRT_CrossHostTransfers_Extension CreateCrossHostTransfersExtension(
@@ -107,10 +100,10 @@ PJRT_CrossHostTransfers_Extension CreateCrossHostTransfersExtension(
           /*type=*/PJRT_Extension_Type_CrossHostTransfers,
           /*next=*/next,
       },
-      /*PJRT_CrossHostTransfers_PJRT_Client_MakeCrossHostReceiveBuffers=*/
-      PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers,
-      /*PJRT_CrossHostTransfers_PJRT_Buffer_CopyToRemoteDevice=*/
-      PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice};
+      /*PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers=*/
+      PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers,
+      /*PJRT_Transfers_PJRT_Client_CrossHostSendBuffers=*/
+      PJRT_Transfers_PJRT_Client_CrossHostSendBuffers};
 }
 
 }  // namespace pjrt

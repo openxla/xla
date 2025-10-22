@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/lib/gtl/int_type.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
@@ -258,43 +259,6 @@ class PjRtDevice {
   }
 };
 
-// Helper struct for cross host transfers, returned by the callback from a call
-// to PjRtBuffer::MakeCrossHostReceiveBuffers or
-// PjRtBuffer::MakeCrossHostReceiveBuffersForGather.
-struct PjRtCrossHostRecvDescriptors {
-  // There is one serialized_descriptor per sub-buffer being gathered (i.e. a
-  // single descriptor if the buffer is returned from a call to
-  // MakeCrossHostReceiveBuffers). The descriptor should be transmitted to the
-  // sender(s) and passed to a call to src_buffer->CopyToRemoteDevice.
-  absl::InlinedVector<std::string, 1> serialized_descriptors;
-};
-// Function that the client should call at the receiver if it needs to cancel a
-// cross-host send, for example because the buffer that the remote host wanted
-// to send is not available. The serialized descriptor should match one of the
-// descriptors returned in a PjRtCrossHostRecvDescriptors. on_canceled will be
-// called once cancellation is complete and indicates whether cancellation was
-// successful or not.
-//
-// For each serialized_descriptor provided in a PjRtCrossHostRecvDescriptors,
-// *either* the sending host must successfully complete a CopyToRemoteDevice
-// for that descriptor, *or* the receiving host must cancel. If there is a
-// duplicate (e.g., both send and cancel) then the system will be left in an
-// undefined state. If there is no send or cancellation then the system will
-// hang indefinitely.
-using PjRtCrossHostSendCancelNotifier = std::function<void(
-    absl::string_view serialized_descriptor, absl::Status reason,
-    std::function<void(absl::Status)> on_canceled)>;
-// State asynchronously returned by MakeCrossHostReceiveBuffers. "descriptors"
-// will match the returned PjRtBuffer objects 1:1. Specifically, each PjRtBuffer
-// returned by MakeCrossHostReceiveBuffers will have one
-// PjRtCrossHostRecvDescriptors object containing it descriptor(s).
-struct PjRtCrossHostRecvState {
-  std::vector<PjRtCrossHostRecvDescriptors> descriptors;
-  PjRtCrossHostSendCancelNotifier cancel_notifier;
-};
-using PjRtCrossHostRecvNotifier =
-    std::function<void(absl::StatusOr<PjRtCrossHostRecvState>)>;
-
 // A sized chunk of host data. The host data can be either in host layout or in
 // device layout, and it can be one part of the entire buffer. The PjRt
 // implementations can customize how the memory is allocated and deallocated.
@@ -442,6 +406,9 @@ struct PjRtPluginAttributes {
   absl::flat_hash_map<std::string, PjRtValueType> attributes;
 };
 
+// Each cross-host transfer is associated with a unique CrossHostTransferKey.
+TSL_LIB_GTL_DEFINE_INT_TYPE(CrossHostTransferKey, int64_t);
+
 // Encapsulates the state of Python session with XLA.
 //
 // It is the responsibility of the client of this API to keep the PjRtClient
@@ -459,18 +426,15 @@ struct PjRtPluginAttributes {
 // made via native device networking (as opposed to the user program fetching
 // the buffer and sending it using its own networking code), the caller can
 // use:
-//   DstHost: dst_client->MakeCrossHostReceiveBuffers(...)
-//   DstHost: [...]
-//   DstHost: gets callback containing PjRtCrossHostRecvDescriptors
-//   DstHost: sends cross-host recv serialized descriptors to SrcHost
-//   SrcHost: src_buffer->CopyToRemoteDevice(serialized_descriptors)
+//   DstHost: dst_client->CrossHostReceiveBuffers(...)
+//   SrcHost: src_client->CrossHostSendBuffers(...)
 //
 // Note that in the cross-host case, the dst_client may call
-// MakeCrossHostReceiveBuffers before the action that produces src_buffer has
+// CrossHostReceiveBuffers before the action that produces src_buffer has
 // been enqueued at SrcHost.
 //
 // On some platforms, device-to-device transfers consume scarce hardware
-// resources. If dst_client->MakeCrossHostReceiveBuffers immediately claimed
+// resources. If dst_client->CrossHostReceiveBuffers immediately claimed
 // those resources, then there would be a risk of system-wide deadlock, if the
 // resources claimed by the recv prevented other transfers that are necessary
 // to generate src_buffer from acquiring enough resources to proceed.
@@ -964,32 +928,6 @@ class PjRtClient {
   virtual absl::StatusOr<std::uintptr_t> UnsafeBufferPointer(
       PjRtBuffer* buffer);
 
-  // Returns a vector of PjRtBuffers that can be used to receive
-  // cross host transfers using `client` on `device'. Asynchronously calls
-  // `notifier` once receive descriptors are ready to be communicated to the
-  // sender. `shapes` must be the exact shapes, with identical layouts,
-  // corresponding to the buffers that will be sent. When resources for the
-  // transfer are available, notifier will be called with a vector of
-  // PjRtCrossHostRecvDescriptors structs, one for each shape in `shapes`. Each
-  // struct contains an opaque string that should be transmitted to the sending
-  // host and used in a call to CopyToRemoteDevice. None of the recv buffers
-  // will become ready until *all* of the sends have completed.
-  //
-  // If MakeCrossHostReceiveBuffers returns an error, then `notifier` will not
-  // be called. Otherwise `notifier` will be called exactly once. In the case
-  // where `notifier` is called with an error status, then the PjRtBuffers
-  // returned by MakeCrossHostReceiveBuffers will never yield data.
-  //
-  // See note on semantics of cross-device copies in the class definition
-  // comment for PjRtClient.
-  virtual absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
-  MakeCrossHostReceiveBuffers(absl::Span<const Shape> shapes,
-                              PjRtDevice* device,
-                              PjRtCrossHostRecvNotifier notifier) {
-    return absl::UnimplementedError(
-        "MakeCrossHostReceiveBuffers is not implemented.");
-  }
-
   // Return the PjRtHostMemoryForDeviceManager for this client. It can be
   // nullptr if the implementation does not provide one.
   virtual PjRtHostMemoryForDeviceManager* GetPjRtHostMemoryForDeviceManager()
@@ -1009,6 +947,39 @@ class PjRtClient {
   virtual absl::Status DmaUnmap(void* data) {
     return absl::UnimplementedError(absl::StrFormat(
         "DmaUnmap not supported on platform %s", platform_name()));
+  }
+
+  virtual std::vector<Future<>> CrossHostSendBuffers(
+      const std::vector<PjRtBuffer*> buffers,
+      const std::vector<PjRtGlobalDeviceId>& dst_global_device_ids,
+      CrossHostTransferKey transfer_key) {
+    absl::Status error = absl::InternalError(
+        "Cross-host data transfers are not supported by this client.");
+
+    std::vector<Future<>> futures;
+    futures.reserve(buffers.size());
+
+    for (size_t i = 0; i < buffers.size(); ++i) {
+      futures.emplace_back(error);
+    }
+
+    return futures;
+  }
+
+  // Places buffers from a cross-host send onto device.
+  virtual absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+  CrossHostReceiveBuffers(
+      absl::Span<const xla::Shape> shapes, xla::PjRtDevice* device,
+      const std::vector<PjRtGlobalDeviceId>& src_global_device_ids,
+      CrossHostTransferKey transfer_key) {
+    return absl::UnimplementedError(
+        "Cross-process data transfers are not supported.");
+  }
+
+  virtual absl::Status CancelCrossHostTransfer(
+      CrossHostTransferKey transfer_key) {
+    return absl::UnimplementedError(
+        "Cross-process data transfer cancellation is not supported.");
   }
 
  private:
@@ -1260,40 +1231,6 @@ class PjRtBuffer {
   // comment for PjRtClient.
   virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) = 0;
-
-  // Prepares to send a copy of the buffer to a remote device. The destination
-  // device is encoded in `serialized_descriptor`, which must be fulfilled by
-  // the result of call to MakeCrossHostReceiveBuffers on the remote host's
-  // destination device. MakeCrossHostReceiveBuffers takes an array of shapes to
-  // construct the destination buffers, and a callback supplies an array
-  // containing both the destination buffers, and a serialized descriptor for
-  // each buffer. For each destination buffer there should be a matching call to
-  // src->CopyToRemoteDevice on a remote host for a src buffer of the
-  // corresponding shape. If `serialized_descriptor` is fulfilled with a non-Ok
-  // status, then the transfer is canceled, otherwise it must be the string
-  // returned by the MakeCrossHostReceiveBuffers callback corresponding to the
-  // destination buffer.
-  //
-  // When the send either completes or fails, `on_done` will be called. If
-  // `status` is Ok then it is guaranteed that sends_were_enqueued==true.
-  // Otherwise, if sends_were_enqueued==false then the sender should contact
-  // the receiver out of band to request cancellation of the transfer. If
-  // !status.ok() and sends_were_enqueued==true then it is not possible to
-  // determine whether the transfer succeeded and the system is in an
-  // undefined state. This undefined state almost certainly indicates an
-  // unrecoverable hardware error. Note that in some error cases, `on_done` may
-  // be called before `serialized_descriptor` is fulfilled.
-  //
-  // Some implementations of this method may immediately block on the
-  // `serialized_descriptor` future (and not return until that future has been
-  // fulfilled).
-  //
-  // See note on semantics of cross-device copies in the class definition
-  // comment for PjRtClient.
-  using RemoteSendCallback =
-      std::function<void(absl::Status status, bool sends_were_enqueued)>;
-  virtual void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
-                                  RemoteSendCallback on_done) = 0;
 
   // Donates 'this' and returns a new buffer that is ready only when both 'this'
   // and 'dependency' are ready.
