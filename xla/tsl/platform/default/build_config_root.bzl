@@ -19,11 +19,11 @@ GPU_TEST_PROPERTIES = {
     "Pool": "gpu-pool",
 }
 
-SINGLE_GPU_TEST_PROPERTIES = {
+ROCM_SINGLE_GPU_TEST_PROPERTIES = {
     "Pool": "linux_x64_gpu",
 }
 
-MULTI_GPU_TEST_PROPERTIES = {
+ROCM_MULTI_GPU_TEST_PROPERTIES = {
     "Pool": "linux_x64_multigpu",
 }
 
@@ -52,9 +52,9 @@ def tf_has_tag(kwargs, tag):
 def tf_exec_properties(kwargs):
     if is_rocm_configured():
         if tf_has_tag(kwargs, "multi_gpu"):
-            return MULTI_GPU_TEST_PROPERTIES
+            return ROCM_MULTI_GPU_TEST_PROPERTIES
         if tf_has_tag(kwargs, "gpu"):
-            return SINGLE_GPU_TEST_PROPERTIES
+            return ROCM_SINGLE_GPU_TEST_PROPERTIES
     elif tf_has_tag(kwargs, "remote-gpu"):
         return GPU_TEST_PROPERTIES
     return {}
