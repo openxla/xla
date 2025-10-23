@@ -575,22 +575,22 @@ std::vector<RocmTracerEvent> RocmTraceCollectorImpl::ApiActivityInfoExchange() {
     api_event.stream_id = item.stream_id;
     switch (api_event.type) {
       case RocmTracerEventType::Kernel:
+        api_event.kernel_info = item.kernel_info;
+        aggregated_events.push_back(api_event);
+        break;
       case RocmTracerEventType::Memset:
       case RocmTracerEventType::MemoryAlloc:
       case RocmTracerEventType::MemoryFree:
-      case RocmTracerEventType::Synchronization: {
+      case RocmTracerEventType::Synchronization:
         aggregated_events.push_back(api_event);
         break;
-      }
       case RocmTracerEventType::MemcpyD2H:
       case RocmTracerEventType::MemcpyH2D:
       case RocmTracerEventType::MemcpyD2D:
-      case RocmTracerEventType::MemcpyOther: {
-        // api_event.memcpy_info.destination = item.device_id;
+      case RocmTracerEventType::MemcpyOther:
         api_event.memcpy_info = item.memcpy_info;
         aggregated_events.push_back(api_event);
         break;
-      }
       default:
         OnEventsDropped("Missing API-Activity information exchange. Dropped!",
                         api_event.correlation_id);
@@ -610,6 +610,7 @@ std::vector<RocmTracerEvent> RocmTraceCollectorImpl::ApiActivityInfoExchange() {
 
     if (api_event == api_events_map_.end()) {
       api_event = auxiliary_api_events_map_.find(activity_event.correlation_id);
+
       if (api_event == auxiliary_api_events_map_.end()) {
         OnEventsDropped(
             "An event from activity was discarded."
@@ -619,26 +620,21 @@ std::vector<RocmTracerEvent> RocmTraceCollectorImpl::ApiActivityInfoExchange() {
         continue;
       }
     }
-    const auto& item = iact->second.front();
-    api_event.device_id = item.device_id;
-    api_event.stream_id = item.stream_id;
+
     switch (activity_event.type) {
       case RocmTracerEventType::Kernel:
-        api_event.kernel_info = item.kernel_info;
-        aggregated_events.push_back(api_event);
+        activity_event.kernel_info = api_event->second.kernel_info;
+        PrintRocmTracerEvent(activity_event,
+                             ". activity event from api_event.");
+        aggregated_events.push_back(activity_event);
         break;
-      case RocmTracerEventType::Memset:
-      case RocmTracerEventType::MemoryAlloc:
-      case RocmTracerEventType::MemoryFree:
-      case RocmTracerEventType::Synchronization:
-        aggregated_events.push_back(api_event);
-        break;
+
       case RocmTracerEventType::MemcpyD2H:
       case RocmTracerEventType::MemcpyH2D:
       case RocmTracerEventType::MemcpyD2D:
       case RocmTracerEventType::MemcpyOther:
-        api_event.memcpy_info = item.memcpy_info;
-        aggregated_events.push_back(api_event);
+        // activity_event.memcpy_info = api_event->second.memcpy_info;
+        aggregated_events.push_back(activity_event);
         break;
       case RocmTracerEventType::Memset:
         activity_event.memset_info = api_event->second.memset_info;

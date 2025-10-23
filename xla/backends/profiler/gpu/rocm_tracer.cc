@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/node_hash_map.h"
 #include "absl/strings/str_format.h"
+#include "tsl/platform/abi.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
 
 // for rocprofiler-sdk
