@@ -585,8 +585,7 @@ absl::Status RunLatencyHidingSchedulerPasses(
   // If overlap limit is set to be greater than 1 and the default t-short size
   // estimator is used we will tell LHS to extend async-done intervals as much
   // as possible to start collectives as early as possible.
-  if (config.parallel_collective_overlap_limit > 1 &&
-      typeid(*estimator) == typeid(GpuLatencyEstimator)) {
+  if (config.parallel_collective_overlap_limit > 1) {
     config.prioritize_compute_over_async_start = true;
   }
   auto async_tracker = std::make_unique<GpuAsyncTracker>(config);

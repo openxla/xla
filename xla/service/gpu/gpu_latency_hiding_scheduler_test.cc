@@ -1087,8 +1087,8 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest, ParallelThreadsShouldBeScheduled) {
 }
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest,
-  MultipleParallelAsyncsExtendedOverAllComputes) {
-absl::string_view kHloModule = R"(
+       MultipleParallelAsyncsExtendedOverAllComputes) {
+  absl::string_view kHloModule = R"(
 HloModule m
 reduce {
 x = f32[] parameter(0)
@@ -1116,45 +1116,45 @@ mul_0 = f32[2] multiply(p4, p5)
 ROOT _ = (f32[], f32[2], f32[1], f32[2], f32[2], f32[2]) tuple(ar_1, ar_3, rs_1, add_0, div_0, mul_0)
 }
 )";
-absl::string_view kFdoProfile = "";
+  absl::string_view kFdoProfile = "";
 
-auto config = GetModuleConfig(kFdoProfile);
-TF_ASSERT_OK_AND_ASSIGN(auto module,
-                     ParseAndReturnVerifiedModule(kHloModule, config));
+  auto config = GetModuleConfig(kFdoProfile);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHloModule, config));
 
-TF_EXPECT_OK(ScheduleModule(module.get(), /*num_parallel_resources=*/16));
-auto schedule = module->schedule();
-std::vector<HloInstruction*> instruction_sequence =
- schedule.sequence(module->entry_computation()).instructions();
-// With a lot of parallel resources and default latency estimator,
-// LHS will try to extend all asyncs as much as possible.
-// We expect all computes to be wrapped within all async start-done
-// intervals.
-EXPECT_TRUE(GetIndexByName(instruction_sequence, "add_0") >
-             GetIndexByName(instruction_sequence, "ar_0") &&
-         GetIndexByName(instruction_sequence, "add_0") >
-             GetIndexByName(instruction_sequence, "rs_0") &&
-         GetIndexByName(instruction_sequence, "add_0") <
-             GetIndexByName(instruction_sequence, "ar_1") &&
-         GetIndexByName(instruction_sequence, "add_0") <
-             GetIndexByName(instruction_sequence, "rs_1"));
+  TF_EXPECT_OK(ScheduleModule(module.get(), /*num_parallel_resources=*/16));
+  auto schedule = module->schedule();
+  std::vector<HloInstruction*> instruction_sequence =
+      schedule.sequence(module->entry_computation()).instructions();
+  // With a lot of parallel resources and default latency estimator,
+  // LHS will try to extend all asyncs as much as possible.
+  // We expect all computes to be wrapped within all async start-done
+  // intervals.
+  EXPECT_TRUE(GetIndexByName(instruction_sequence, "add_0") >
+                  GetIndexByName(instruction_sequence, "ar_0") &&
+              GetIndexByName(instruction_sequence, "add_0") >
+                  GetIndexByName(instruction_sequence, "rs_0") &&
+              GetIndexByName(instruction_sequence, "add_0") <
+                  GetIndexByName(instruction_sequence, "ar_1") &&
+              GetIndexByName(instruction_sequence, "add_0") <
+                  GetIndexByName(instruction_sequence, "rs_1"));
 
-EXPECT_TRUE(GetIndexByName(instruction_sequence, "div_0") >
-             GetIndexByName(instruction_sequence, "ar_0") &&
-         GetIndexByName(instruction_sequence, "div_0") >
-             GetIndexByName(instruction_sequence, "rs_0") &&
-         GetIndexByName(instruction_sequence, "div_0") <
-             GetIndexByName(instruction_sequence, "ar_1") &&
-         GetIndexByName(instruction_sequence, "div_0") <
-             GetIndexByName(instruction_sequence, "rs_1"));
-EXPECT_TRUE(GetIndexByName(instruction_sequence, "mul_0") >
-             GetIndexByName(instruction_sequence, "ar_0") &&
-         GetIndexByName(instruction_sequence, "mul_0") >
-             GetIndexByName(instruction_sequence, "rs_0") &&
-         GetIndexByName(instruction_sequence, "mul_0") <
-             GetIndexByName(instruction_sequence, "ar_1") &&
-         GetIndexByName(instruction_sequence, "mul_0") <
-             GetIndexByName(instruction_sequence, "rs_1"));
+  EXPECT_TRUE(GetIndexByName(instruction_sequence, "div_0") >
+                  GetIndexByName(instruction_sequence, "ar_0") &&
+              GetIndexByName(instruction_sequence, "div_0") >
+                  GetIndexByName(instruction_sequence, "rs_0") &&
+              GetIndexByName(instruction_sequence, "div_0") <
+                  GetIndexByName(instruction_sequence, "ar_1") &&
+              GetIndexByName(instruction_sequence, "div_0") <
+                  GetIndexByName(instruction_sequence, "rs_1"));
+  EXPECT_TRUE(GetIndexByName(instruction_sequence, "mul_0") >
+                  GetIndexByName(instruction_sequence, "ar_0") &&
+              GetIndexByName(instruction_sequence, "mul_0") >
+                  GetIndexByName(instruction_sequence, "rs_0") &&
+              GetIndexByName(instruction_sequence, "mul_0") <
+                  GetIndexByName(instruction_sequence, "ar_1") &&
+              GetIndexByName(instruction_sequence, "mul_0") <
+                  GetIndexByName(instruction_sequence, "rs_1"));
 }
 
 }  // namespace
