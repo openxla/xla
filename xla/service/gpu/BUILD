@@ -24,6 +24,10 @@ load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
+load(
+    "@local_config_sycl//sycl:build_defs.bzl",
+    "if_sycl_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -380,6 +384,22 @@ cc_library(
 )
 
 cc_library(
+    name = "ptx_custom_kernel_emitter_sycl",
+    srcs = ["custom_kernel_emitter_sycl_stub.cc"],
+    hdrs = ["custom_kernel_emitter.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":ir_emitter_context",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
     name = "ptx_custom_kernel_emitter",
     hdrs = ["custom_kernel_emitter.h"],
     tags = ["gpu"],
@@ -387,6 +407,8 @@ cc_library(
         ":ptx_custom_kernel_emitter_cuda",
     ]) + if_rocm_is_configured([
         ":ptx_custom_kernel_emitter_rocm",
+    ]) + if_sycl_is_configured([
+        ":ptx_custom_kernel_emitter_sycl",
     ]) + [
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/status:statusor",
