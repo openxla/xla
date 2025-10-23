@@ -50,6 +50,13 @@ def tf_has_tag(kwargs, tag):
     return ("tags" in kwargs and kwargs["tags"] != None and tag in kwargs["tags"])
 
 def tf_exec_properties(kwargs):
+    """Gets execution_properties for TensorFlow GPU tests based on the provided tags.
+
+    Args:
+      kwargs: all arguments of the xla test target
+    Returns:
+        execution_properties with the execution pool names for rbe.
+    """
     if is_rocm_configured():
         if tf_has_tag(kwargs, "multi_gpu"):
             return ROCM_MULTI_GPU_TEST_PROPERTIES
