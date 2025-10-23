@@ -71,7 +71,6 @@ EXCLUDED_TESTS=(
   # //xla/tools/multihost_hlo_runner:functional_hlo_runner_test
   FunctionalHloRunnerTest.Sharded2DevicesHloUnoptimizedSnapshot
   FunctionalHloRunnerTest.ShardedComputationUnderStreamCapture
-
 )
 
 SCRIPT_DIR=$(realpath $(dirname $0))
