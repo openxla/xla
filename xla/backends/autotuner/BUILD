@@ -57,6 +57,7 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_protobuf//:any_cc_proto",
         "@com_google_protobuf//:protobuf",
+        "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:path",
