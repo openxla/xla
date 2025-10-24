@@ -1921,6 +1921,29 @@ TEST_F(GemmFusionAutotunerEnableTma,
   EXPECT_TRUE(RunAndCompare(std::move(module),
                             ErrorSpec{/*aabs=*/5e-3, /*arel=*/5e-3}));
 }
+
+TEST_F(GemmFusionAutotunerTest, AutotuneWithMultiStreamInput) {
+  const char* hlo_string = R"(
+    HloModule test_module
+    fusion_computation {
+      p0 = f32[128,128] parameter(0)
+      p1 = f32[128,128] parameter(1)
+      ROOT dot = f32[128,128] dot(p0, p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}, backend_config={"operation_queue_id":"131"}
+    }
+    ENTRY entry_computation {
+      p0 = f32[128,128] parameter(0)
+      p1 = f32[128,128] parameter(1)
+      ROOT fusion = f32[128,128] fusion(p0, p1), kind=kCustom, calls=fusion_computation, backend_config={"operation_queue_id":"131","fusion_backend_config":{"kind":"__triton_gemm"}}
+    }
+  )";
+
+  CheckTritonAutotuning(hlo_string, R"(
+// CHECK: ENTRY
+// CHECK: fusion
+// CHECK-SAME: kind=kCustom
+// CHECK-SAME: "operation_queue_id":"131"
+)");
+}
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

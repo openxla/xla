@@ -273,6 +273,23 @@ HloCostAnalysis::Options PriorityFusionOptions() {
   return {.count_multiple_input_accesses = true};
 }
 
+// Clear stream IDs that reference streams in the original execution context,
+// which don't exist in the extracted module's execution context.
+void ClearMultiStreamAttributes(HloModule* module) {
+  for (HloComputation* comp : module->computations()) {
+    for (HloInstruction* instr : comp->instructions()) {
+      if (instr->has_backend_config()) {
+        auto gpu_config = instr->backend_config<GpuBackendConfig>();
+        if (gpu_config.ok()) {
+          gpu_config->set_operation_queue_id(0);
+          gpu_config->clear_wait_on_operation_queues();
+          (void)instr->set_backend_config(*gpu_config);
+        }
+      }
+    }
+  }
+}
+
 absl::StatusOr<std::unique_ptr<HloModule>> TritonGemmAutotuneExtractor(
     const TritonGemmConfig& config,
     const se::DeviceDescription& gpu_device_info,
@@ -287,6 +304,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonGemmAutotuneExtractor(
         false);
   }
   new_module->mutable_config().set_debug_options(debug_opts);
+  ClearMultiStreamAttributes(new_module.get());
 
   HloComputation* entry_computation = new_module->entry_computation();
   HloInstruction* cloned_dot_fusion = entry_computation->root_instruction();
@@ -335,6 +353,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> CublasGemmAutotuneExtractor(
   std::unique_ptr<HloModule> new_module =
       ExtractComputationIntoNewModule(*fusion_computation);
   new_module->mutable_config().set_debug_options(debug_opts);
+  ClearMultiStreamAttributes(new_module.get());
 
   auto* dot = hlo_query::GetFirstInstructionWithOpcode(
       *new_module->entry_computation(), HloOpcode::kDot);
@@ -391,6 +410,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> CustomFusionKernelAutotuneExtractor(
   std::unique_ptr<HloModule> new_module =
       ExtractComputationIntoNewModule(*fusion_computation);
   new_module->mutable_config().set_debug_options(debug_opts);
+  ClearMultiStreamAttributes(new_module.get());
 
   CustomKernelFusionRewriter rewriter(&config.GetDeviceDescription());
   PriorityFusion fusion_pass(
@@ -415,6 +435,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> FusionExtractor(
   tsl::profiler::TraceMe traceme("FusionExtractor");
   std::unique_ptr<HloModule> module = ExtractInstructionIntoNewModule(fusion);
   module->mutable_config().set_debug_options(debug_opts);
+  ClearMultiStreamAttributes(module.get());
   return module;
 }
 
