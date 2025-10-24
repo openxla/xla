@@ -36,5 +36,5 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     --action_env=XLA_FLAGS="--xla_gpu_enable_llvm_module_compilation_parallelism=true --xla_gpu_force_compilation_parallelism=16" \
     --test_output=errors \
     --local_test_jobs=2 \
-    --run_under=//build_tools/rocm:sync_wrapper \
+    --run_under=//build_tools/rocm:parallel_gpu_execute \
     //xla/...

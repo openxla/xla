@@ -55,31 +55,21 @@ filegroup(
 )
 
 genrule(
-    name = "sync_wrapper_script",
-    outs = ["wrapper.sh"],
+    name = "san_wrapper_script",
+    srcs = [":sanitizer_ignore_lists"],
+    outs = ["san_wrapper.sh"],
     cmd = """
       echo '#!/bin/bash' > $@
-      echo 'set -e' >> $@
-      echo 'mkdir -p /var/lock' >> $@
-      echo 'exec {lock_fd}>/var/lock/gpulock || exit 1' >> $@
-      echo 'flock "$$lock_fd"' >> $@
-      echo '"$$@"' >> $@
-      echo 'flock -u "$$lock_fd"' >> $@
+      echo 'exec "$$@"' >> $@
       chmod +x $@
     """,
-)
-
-sh_binary(
-    name = "sync_wrapper",
-    srcs = [":sync_wrapper_script"],
-    visibility = ["//visibility:public"],
 )
 
 # this wrapper ensures the test target
 # take into account any changes in the ignore list files
 sh_binary(
     name = "sanitizer_wrapper",
-    srcs = [":sync_wrapper_script"],
+    srcs = [":san_wrapper_script"],
     data = [":sanitizer_ignore_lists"],
     visibility = ["//visibility:public"],
 )
