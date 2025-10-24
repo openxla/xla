@@ -49,9 +49,10 @@ def tf_cuda_tests_tags():
 def tf_has_tag(kwargs, tag):
     return ("tags" in kwargs and kwargs["tags"] != None and tag in kwargs["tags"])
 
-def tf_append_exec_tags(tags):
+def tf_append_exec_tags(kwargs):
+    tags = kwargs.pop("tags", [])
     if is_rocm_configured():
-        # force local execution for multi_gpu tests in rocm
+        # Force local execution for multi_gpu tests on ROCm
         return tags + ["local", "exclusive"] if "multi_gpu" in tags else tags
     return tags
 

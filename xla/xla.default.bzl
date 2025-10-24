@@ -74,7 +74,6 @@ def xla_cc_binary(deps = [], copts = tsl_copts(), **kwargs):
 def xla_cc_test(
         name,
         deps = [],
-        tags = [],
         **kwargs):
     """A wrapper around strict_cc_test that adds XLA-specific dependencies.
 
@@ -86,12 +85,11 @@ def xla_cc_test(
       deps: The dependencies of the test.
       **kwargs: Other arguments to pass to the test.
     """
-
     strict_cc_test(
         name = name,
         deps = deps + _XLA_SHARED_OBJECT_SENSITIVE_DEPS,
         exec_properties = tf_exec_properties(kwargs),
-        tags = tags + tf_append_exec_tags(tags),
+        tags = tf_append_exec_tags(kwargs),
         **kwargs
     )
 
