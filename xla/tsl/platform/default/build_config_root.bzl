@@ -20,6 +20,7 @@ GPU_TEST_PROPERTIES = {
 }
 
 ROCM_SINGLE_GPU_TEST_PROPERTIES = {
+    "no-remote": "1",
     "Pool": "linux_x64_gpu",
 }
 
