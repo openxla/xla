@@ -52,7 +52,7 @@ def tf_has_tag(kwargs, tag):
 def tf_append_exec_tags(tags):
     if is_rocm_configured():
         # force local execution for multi_gpu tests in rocm
-        return tags + ["local"] if "multi_gpu" in tags else tags
+        return tags + ["local", "exclusive"] if "multi_gpu" in tags else tags
     return tags
 
 def tf_exec_properties(kwargs):
