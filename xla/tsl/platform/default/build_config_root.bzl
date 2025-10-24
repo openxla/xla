@@ -49,6 +49,12 @@ def tf_cuda_tests_tags():
 def tf_has_tag(kwargs, tag):
     return ("tags" in kwargs and kwargs["tags"] != None and tag in kwargs["tags"])
 
+def tf_append_exec_tags(tags):
+    if is_rocm_configured():
+        # force local execution for multi_gpu tests in rocm
+        return tags + ["local"] if "multi_gpu" in tags else tags
+    return tags
+
 def tf_exec_properties(kwargs):
     """Gets execution_properties for TensorFlow GPU tests based on the provided tags.
 

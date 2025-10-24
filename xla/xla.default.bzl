@@ -17,6 +17,7 @@ load(
 )
 load(
     "//xla/tsl/platform:build_config_root.bzl",
+    "tf_append_exec_tags",
     "tf_exec_properties",
 )
 load("//xla/tsl/platform/default:build_config.bzl", "strict_cc_test")
@@ -73,6 +74,7 @@ def xla_cc_binary(deps = [], copts = tsl_copts(), **kwargs):
 def xla_cc_test(
         name,
         deps = [],
+        tags = [],
         **kwargs):
     """A wrapper around strict_cc_test that adds XLA-specific dependencies.
 
@@ -89,6 +91,7 @@ def xla_cc_test(
         name = name,
         deps = deps + _XLA_SHARED_OBJECT_SENSITIVE_DEPS,
         exec_properties = tf_exec_properties(kwargs),
+        tags = tags + tf_append_exec_tags(tags),
         **kwargs
     )
 
