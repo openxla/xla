@@ -94,7 +94,10 @@ TEST(CudaCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
         .set_uid(3);
     return graph;
   }());
-  TF_ASSERT_OK(graph.Prepare(dnn_support, NumericOptions{}));
+  TF_ASSERT_OK(graph.Prepare(dnn_support,
+                             NumericOptions{/*require_determinism=*/false,
+                                            /*allow_tf32=*/true,
+                                            /*require_command_buffer=*/true}));
   TF_ASSERT_OK(graph.Build(dnn_support, /*plan_id=*/std::nullopt));
   EXPECT_THAT(graph.SupportsExplicitCommandBufferConstruction(),
               absl_testing::IsOkAndHolds(true));

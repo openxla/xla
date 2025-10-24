@@ -632,8 +632,9 @@ absl::Status RunGemm(const GemmConfig& config, se::DeviceMemoryBase lhs_buffer,
 
   se::NumericOptions numeric_options{
       deterministic_ops,
-      /*allow_tf32=*/IsTf32Allowed(config.precision_algorithm,
-                                   config.compute_precision)};
+      /*allow_tf32=*/
+      IsTf32Allowed(config.precision_algorithm, config.compute_precision),
+      /*require_command_buffer=*/false};
 
   if (!algorithm) {
     algorithm = config.algorithm;

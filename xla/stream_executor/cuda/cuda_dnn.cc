@@ -31,6 +31,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/base/optimization.h"
@@ -49,10 +50,10 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend/graph_interface.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend/graph_properties.h"
-#include "Eigen/Core"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
@@ -76,7 +77,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/util/env_var.h"
-#include "tsl/platform/tensor_float_32_utils.h"
 
 // clang-format off
 #include "third_party/gpus/cuda/include/library_types.h"
@@ -4243,7 +4243,8 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
   CudnnGraph cudnnGraph(std::move(graph));
   TF_RETURN_IF_ERROR(cudnnGraph.Prepare(
       dnn_support, NumericOptions{/*require_determinism=*/false,
-                                  /*allow_tf32=*/true}));
+                                  /*allow_tf32=*/true,
+                                  /*require_command_buffer=*/false}));
   TF_RETURN_IF_ERROR(cudnnGraph.Build(dnn_support, /*plan_id=*/std::nullopt));
 
   VLOG(4) << "\b flash attention operation graph: " << cudnnGraph.Graph();
@@ -4389,7 +4390,8 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
   CudnnGraph cudnnGraph(std::move(graph));
   TF_RETURN_IF_ERROR(cudnnGraph.Prepare(
       dnn_support, NumericOptions{/*require_determinism=*/false,
-                                  /*allow_tf32=*/true}));
+                                  /*allow_tf32=*/true,
+                                  /*require_command_buffer=*/false}));
   TF_RETURN_IF_ERROR(cudnnGraph.Build(dnn_support, /*plan_id=*/std::nullopt));
 
   VLOG(4) << "\b workspace size:" << cudnnGraph.Graph().get_workspace_size();
@@ -4578,7 +4580,8 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardF8OperationGraph(
   CudnnGraph cudnnGraph(std::move(graph));
   TF_RETURN_IF_ERROR(cudnnGraph.Prepare(
       dnn_support, NumericOptions{/*require_determinism=*/false,
-                                  /*allow_tf32=*/true}));
+                                  /*allow_tf32=*/true,
+                                  /*require_command_buffer=*/false}));
   TF_RETURN_IF_ERROR(cudnnGraph.Build(dnn_support, /*plan_id=*/std::nullopt));
 
   VLOG(4) << "\b workspace size:" << cudnnGraph.Graph().get_workspace_size();
@@ -4684,7 +4687,8 @@ absl::StatusOr<CudnnGraph> GetCudnnBlockScaledDotOperationGraph(
   CudnnGraph cudnnGraph(std::move(graph));
   TF_RETURN_IF_ERROR(cudnnGraph.Prepare(
       dnn_support, NumericOptions{/*require_determinism=*/false,
-                                  /*allow_tf32=*/true}));
+                                  /*allow_tf32=*/true,
+                                  /*require_command_buffer=*/false}));
   TF_RETURN_IF_ERROR(cudnnGraph.Build(dnn_support, /*plan_id=*/std::nullopt));
 
   VLOG(4) << "\b workspace size:" << cudnnGraph.Graph().get_workspace_size();
@@ -4972,9 +4976,10 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
   }
 
   CudnnGraph cudnnGraph(std::move(graph));
-  TF_RETURN_IF_ERROR(
-      cudnnGraph.Prepare(dnn_support, NumericOptions{force_deterministic,
-                                                     /*allow_tf32=*/true}));
+  TF_RETURN_IF_ERROR(cudnnGraph.Prepare(
+      dnn_support, NumericOptions{force_deterministic,
+                                  /*allow_tf32=*/true,
+                                  /*require_command_buffer=*/false}));
   TF_RETURN_IF_ERROR(cudnnGraph.Build(dnn_support, /*plan_id=*/std::nullopt));
 
   VLOG(4) << "\b flash attention operation backward graph: "
@@ -6859,12 +6864,16 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport& dnn_support,
                       cudnn_support.cudnn_->GetCompilationHandle());
   RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.validate());
   RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.build_operation_graph(cudnn_handle));
+  RETURN_IF_CUDNN_FRONTEND_ERROR(
+      graph_.create_execution_plans({cudnn_frontend::HeurMode_t::A}));
   if (numeric_options.require_determinism) {
     graph_.deselect_numeric_notes(
         {cudnn_frontend::NumericalNote_t::NONDETERMINISTIC});
   }
-  RETURN_IF_CUDNN_FRONTEND_ERROR(
-      graph_.create_execution_plans({cudnn_frontend::HeurMode_t::A}));
+  if (numeric_options.require_command_buffer) {
+    graph_.select_behavior_notes(
+        {cudnn_frontend::BehaviorNote_t::SUPPORTS_CUDA_GRAPH_NATIVE_API});
+  }
   RETURN_CUDNN_FRONTEND_STATUS(graph_.check_support(cudnn_handle));
 }
 

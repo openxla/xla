@@ -284,7 +284,8 @@ GetConvolutionCustomCallConfigs(const HloCustomCallInstruction* instr,
       instr->precision_config().operand_precision(),
       [](int precision) { return precision <= PrecisionConfig::HIGH; });
   const se::NumericOptions numeric_options{
-      RequireDeterminism(instr->GetModule()->config()), allow_tf32};
+      RequireDeterminism(instr->GetModule()->config()), allow_tf32,
+      /*require_command_buffer=*/false};
 
   // Try to get algorithms without fallback first, as fallback algorithms can be
   // very slow.
