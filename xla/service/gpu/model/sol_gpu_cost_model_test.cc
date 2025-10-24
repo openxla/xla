@@ -97,9 +97,9 @@ INSTANTIATE_TEST_SUITE_P(SolGPUCostModelTests, SolGPUCostModelTest,
                              {SolGPUCostModel::CollectiveType::kAllToAll,
                               /*num_nodes=*/1, absl::Microseconds(100)},
                              {SolGPUCostModel::CollectiveType::kAllToAll,
-                              /*num_nodes=*/2, absl::Microseconds(1705)},
+                              /*num_nodes=*/2, absl::Microseconds(1745)},
                              {SolGPUCostModel::CollectiveType::kAllToAll,
-                              /*num_nodes=*/4, absl::Microseconds(4902)},
+                              /*num_nodes=*/4, absl::Microseconds(4966)},
                          }));
 
 TEST(SolGPUCostModelGetConfigTest, ConfigForHopper) {
