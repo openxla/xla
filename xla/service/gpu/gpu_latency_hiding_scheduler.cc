@@ -390,8 +390,9 @@ void GpuAsyncTrackerBase::PostProcessScheduleGraph(
       auto gpu_config = inst->backend_config<GpuBackendConfig>();
       if (gpu_config.ok()) {
         HloGraphNode& node = schedule_graph->GetNode(inst);
-        node.SetForceDelay(gpu_config->force_earliest_schedule());
-        VLOG(5) << "Setting force delay for instruction: " << inst->ToString();
+        node.SetForceEarly(gpu_config->force_earliest_schedule());
+        VLOG(5) << "Setting force early for instruction: " << inst->ToString()
+                << " to " << gpu_config->force_earliest_schedule();
       }
     }
   }
