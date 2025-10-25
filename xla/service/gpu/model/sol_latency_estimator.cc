@@ -203,10 +203,16 @@ absl::StatusOr<absl::Duration> DispatchEstimation(
   TF_ASSIGN_OR_RETURN(auto num_groups_and_devices,
                       GetReplicaGroupCountAndSize(&instr));
 
+  int64_t partition_size =
+      (sol_flags.partition_size > 0) ? sol_flags.partition_size
+      : (instr.GetModule()->config().partition_size() > 0)
+          ? instr.GetModule()->config().partition_size()  // Auto-detected size
+          : sol_flags.gpus_per_node;
+
   switch (comm) {
     case GPUCommunicationType::RAIL_ALIGNED: {
       return DCNCollectiveDuration(
-          num_groups_and_devices->second / sol_flags.gpus_per_node,
+          num_groups_and_devices->second / partition_size,
           /*num_communicators=*/num_groups_and_devices->first, instr,
           gpu_device_info, sol_flags, analysis, symbolic_expr_context);
     }
@@ -216,10 +222,11 @@ absl::StatusOr<absl::Duration> DispatchEstimation(
           /*num_communicators=*/num_groups_and_devices->first, instr,
           gpu_device_info, sol_flags, analysis, symbolic_expr_context);
     }
-    case GPUCommunicationType::SINGLE_HOST: {
+    case GPUCommunicationType::SINGLE_PARTITION: {
       if (collective_interpolator == nullptr) {
         return absl::InvalidArgumentError(
-            "Collective interpolator is required for single host collectives");
+            "Collective interpolator is required for single partition "
+            "collectives");
       }
       return collective_interpolator->EstimatedRuntime(instr);
     }
@@ -309,9 +316,16 @@ SolLatencyEstimator::ComputeCollectiveTime(
         absl::StrCat("Unsupported collective instruction: ", instr.ToString()));
   }
 
+  int64_t partition_size =
+      (sol_flags.partition_size > 0) ? sol_flags.partition_size
+      : (collective_instr->GetModule()->config().partition_size() > 0)
+          ? collective_instr->GetModule()
+                ->config()
+                .partition_size()  // Auto-detected size
+          : sol_flags.gpus_per_node;
   TF_ASSIGN_OR_RETURN(
       GPUCommunicationType communication_type,
-      CommunicationType(sol_flags.gpus_per_node, *collective_instr,
+      CommunicationType(partition_size, *collective_instr,
                         gpu_device_info.gpu_compute_capability()));
   TF_ASSIGN_OR_RETURN(
       absl::Duration result,
