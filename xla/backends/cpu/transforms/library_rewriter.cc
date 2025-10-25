@@ -243,7 +243,17 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
   // This queue only tracks original HLO instructions in the parent computation,
   // not any new instructions created during the fusion process.
   std::queue<std::pair<HloInstruction*, FusionDirection>> frontier;
-  AddFusionCandidates(fusion, fusion, FusionDirection::kBoth, frontier);
+
+  // TODO(intel-tf): Restrict fusion direction for oneDNN till future
+  // release of oneDNN library with both fusion direction support.
+  AddFusionCandidates(fusion, fusion,
+                      (lib->fusion_kind() == kOneDnnFusionKind)
+                          ? FusionDirection::kDown
+                          : FusionDirection::kBoth,
+                      frontier);
+
+  // Track the number of operations added to the fusion.
+  int fused_op_count = 0;
 
   // BFS and fuse as many neighbors as possible.
   while (!frontier.empty()) {
@@ -257,11 +267,24 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
     // If `instr` is another fusion of the same library type, fuse it.
     // We don't need to add its neighbors to the frontier because anything that
     // can be fused would have already been fused into `instr`.
-    if (IsCustomFusionWithKind(instr, lib->fusion_kind())) {
+    // TODO(intel-tf): Check if merge fusions are beneficial for oneDNN.
+    if (lib->fusion_kind() != kOneDnnFusionKind &&
+        IsCustomFusionWithKind(instr, lib->fusion_kind())) {
       TF_ASSIGN_OR_RETURN(fusion,
                           MergeFusionInstructions(
                               fusion, Cast<HloFusionInstruction>(instr), dir));
       continue;
+    }
+
+    if (lib->fusion_kind() == kOneDnnFusionKind &&
+        instr->opcode() == HloOpcode::kDot) {
+      VLOG(4) << "  Only one dot op is allowed in oneDNN fusion";
+      break;
+    }
+
+    if (lib->ReachedMaxFusionSize(fused_op_count)) {
+      VLOG(4) << "  Reached max fusion size: " << fused_op_count;
+      break;
     }
 
     // Skip this instruction if it can't be fused.
@@ -280,6 +303,7 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
                         GrowFusion(fusion, instr, dir));
     TF_RETURN_IF_ERROR(
         InsertConvertIfNecessary(new_instr, lib->LibraryOpOutputType(instr)));
+    fused_op_count++;
   }
   return absl::OkStatus();
 }
