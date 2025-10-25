@@ -48,7 +48,7 @@ SendThunk::SendThunk(ThunkInfo thunk_info, const HloSendInstruction* instr,
                      int64_t replica_count, int64_t partition_count,
                      const Buffer& buffer)
     : CollectiveThunk(Thunk::kSend, thunk_info,
-                      /*is_sync=*/false, GetStreamKindForP2P(instr)),
+                      /*is_sync=*/false, /*is_p2p=*/true),
       config_(GetP2PConfigForSendRecv(instr, instr->operand(0)->shape(),
                                       replica_count, partition_count)),
       buffer_(buffer),
@@ -56,7 +56,9 @@ SendThunk::SendThunk(ThunkInfo thunk_info, const HloSendInstruction* instr,
                                   P2PConfig::ValidationKind::kConditional
                               ? new ExecutionCounters()
                               : nullptr),
-      hlo_name_(instr->name()) {}
+      hlo_name_(instr->name()) {
+  stream_id_override_ = xla::gpu::GetStreamIdOverride(instr);
+}
 
 absl::Status SendThunk::Initialize(const InitializeParams& params) {
   TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
@@ -114,7 +116,7 @@ absl::StatusOr<bool> SendThunk::RunCollective(const ExecuteParams& params,
                                                                        : true;
     if (config_.validation_kind == P2PConfig::ValidationKind::kConditional) {
       se::StreamExecutor* executor = params.stream->parent();
-      TF_ASSIGN_OR_RETURN(int64_t* counter,
+      TF_ASSIGN_OR_RETURN(int64_t * counter,
                           execution_counters_->GetCounter(
                               executor, params.collective_params->run_id));
       auto it = config_.source_target_to_bounds.find(
