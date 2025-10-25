@@ -22,6 +22,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/tsl/platform/errors.h"
 
 namespace xla {
@@ -75,8 +76,12 @@ absl::StatusOr<bool> MoveParametersAndConstantsToFront(
   HloSchedule& schedule = computation.parent()->schedule();
   HloInstructionSequence& sequence = schedule.GetOrCreateSequence(&computation);
 
+  auto should_move = [](const HloInstruction& inst) {
+    return hlo_query::IsEffectiveParameter(inst) || IsConstant(&inst);
+  };
+
   for (HloInstruction* inst : sequence.instructions()) {
-    if (IsParameter(inst) || IsConstant(inst)) {
+    if (should_move(*inst)) {
       new_sequence.push_back(inst);
 
       // Because we move instruction to the front of the computation we can't
@@ -93,7 +98,7 @@ absl::StatusOr<bool> MoveParametersAndConstantsToFront(
   }
 
   for (HloInstruction* inst : sequence.instructions()) {
-    if (!IsParameter(inst) && !IsConstant(inst)) {
+    if (!should_move(*inst)) {
       new_sequence.push_back(inst);
     }
   }

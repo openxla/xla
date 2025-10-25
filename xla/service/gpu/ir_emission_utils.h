@@ -117,6 +117,8 @@ inline constexpr int64_t kNumShmemBanks = 32;
 // The bitwidth of a shared memory bank.
 inline constexpr int64_t kBankBitwidth = 32;
 
+inline constexpr absl::string_view kL2Prefetch = "l2_prefetch";
+
 // The name of the custom fusion config for dynamic slice fusion with static
 // slices, such that the offset can be computed at compile time.
 inline constexpr absl::string_view
@@ -156,6 +158,7 @@ bool IsCustomCallToPtxKernel(const HloInstruction& hlo);
 
 // Returns true if instruction is a Mosaic GPU collective instruction.
 bool IsCollectiveMosaicGpuInstruction(const HloInstruction& hlo);
+bool IsL2PrefetchCustomCall(const HloInstruction&);
 
 // Cholesky decomposition. Takes a (batched) matrix as input, and returns a
 // tuple of (result, workspace, info), where result is the result of the

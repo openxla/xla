@@ -119,6 +119,7 @@ cc_library(
     hdrs = ["computation_canonicalizers.h"],
     deps = [
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
         "//xla/tsl/platform:errors",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
