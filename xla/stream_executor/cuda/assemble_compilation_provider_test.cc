@@ -43,12 +43,10 @@ TEST(AssembleCompilationProviderTest,
      CandidateCudaRootsConsidersCUDA_HOME) {
   const std::string cuda_home = "/my/cuda/home";
   tsl::setenv("CUDA_HOME", cuda_home.c_str(), 1);
-  auto roots = tsl::CandidateCudaRoots();
-  if (roots.empty()) {
-    GTEST_SKIP() << "Test only when any root is set";
+  if (!tsl::kIsOpenSource) {
+    GTEST_SKIP() << "CUDA_HOME is only being considered in the OSS build of XLA.";
   }
-  EXPECT_THAT(std::find(roots.begin(), roots.end(), cuda_home),
-              Ne(roots.end()));
+  EXPECT_THAT(tsl::CandidateCudaRoots(), ::testing::Contains(cuda_home));
 }
 
 TEST(AssembleCompilationProviderTest,
