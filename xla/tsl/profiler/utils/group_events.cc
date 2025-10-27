@@ -92,12 +92,21 @@ struct GroupingEventStats {
   std::optional<uint64_t> producer_id;
   std::optional<int> consumer_type;
   std::optional<uint64_t> consumer_id;
+  // The pid of the producer/consumer to enable inter-process connections.
+  std::optional<int32_t> pid;
   std::optional<int> root_level;
   bool is_async = false;
 };
 
 GroupingEventStats::GroupingEventStats(const XEventVisitor& event) {
   std::optional<int64_t> step_id;
+  // Default to the plane's pid.
+  std::optional<int32_t> plane_pid = std::nullopt;
+  if (auto pid_stat = event.Plane().GetStat(StatType::kProcessId);
+      pid_stat.has_value()) {
+    plane_pid = static_cast<int32_t>(pid_stat->IntValue());
+    pid = plane_pid;
+  }
   event.ForEachStat([&](const XStatVisitor& stat) {
     if (!stat.Type().has_value()) return;
     switch (*stat.Type()) {
@@ -113,6 +122,10 @@ GroupingEventStats::GroupingEventStats(const XEventVisitor& event) {
       case StatType::kConsumerId:
         consumer_id = stat.IntOrUintValue();
         break;
+      case StatType::kConsumerPid:
+        // Only consumers should be able to change the pid.
+        pid = static_cast<int32_t>(stat.IntValue());
+        break;
       case StatType::kIsRoot:
         root_level = stat.IntValue();
         break;
@@ -126,6 +139,10 @@ GroupingEventStats::GroupingEventStats(const XEventVisitor& event) {
         break;
     }
   });
+  // A producer should always have the same pid as the plane unless this isn't a
+  // subprocess trace.
+  DCHECK(!producer_type.has_value() || !plane_pid.has_value() ||
+         !pid.has_value() || plane_pid == pid);
   if (!root_level.has_value() && IsLegacyRootEvent(event)) {
     root_level = 1;
   }
@@ -134,30 +151,47 @@ GroupingEventStats::GroupingEventStats(const XEventVisitor& event) {
 void SetContextGroup(const GroupingEventStats& stats, EventNode* event,
                      ContextGroupMap* context_groups) {
   if (stats.producer_type.has_value() && stats.producer_id.has_value()) {
-    ((*context_groups)[*stats.producer_type][*stats.producer_id])
-        .producers.push_back(event);
+    if (stats.pid.has_value()) {
+      ((*context_groups)[*stats.producer_type][*stats.producer_id])
+          .pid_context_groups[*stats.pid]
+          .producers.push_back(event);
+    } else {
+      ((*context_groups)[*stats.producer_type][*stats.producer_id])
+          .no_pid_context_group.producers.push_back(event);
+    }
   }
   if (stats.consumer_type.has_value() && stats.consumer_id.has_value()) {
-    ((*context_groups)[*stats.consumer_type][*stats.consumer_id])
-        .consumers.push_back(event);
+    if (stats.pid.has_value()) {
+      ((*context_groups)[*stats.consumer_type][*stats.consumer_id])
+          .pid_context_groups[*stats.pid]
+          .consumers.push_back(event);
+    } else {
+      ((*context_groups)[*stats.consumer_type][*stats.consumer_id])
+          .no_pid_context_group.consumers.push_back(event);
+    }
   }
 }
 
 void ConnectContextGroups(const ContextGroupMap& context_groups) {
-  for (auto& [type, id_group] : context_groups) {
-    for (auto& [id, group] : id_group) {
-      if (group.producers.size() >= 64 && group.consumers.size() >= 64) {
-        LOG_EVERY_N(WARNING, 1000)
-            << "type: " << type << " id: " << id
-            << " producers:" << group.producers.size() << " : "
-            << " consumers:" << group.consumers.size() << " : ";
-        continue;
-      }
-
-      for (EventNode* parent : group.producers) {
-        for (EventNode* child : group.consumers) {
-          parent->AddChild(child);
+  for (auto& [context_type, id_group_map] : context_groups) {
+    for (auto& [context_id, pid_group] : id_group_map) {
+      auto connect_group = [type = context_type,
+                            id = context_id](const ContextGroup& group) {
+        if (group.producers.size() >= 64 && group.consumers.size() >= 64) {
+          LOG_EVERY_N(WARNING, 1000) << "type:" << type << " context_id:" << id
+                                     << " producers:" << group.producers.size()
+                                     << " consumers:" << group.consumers.size();
+          return;
         }
+        for (EventNode* parent : group.producers) {
+          for (EventNode* child : group.consumers) {
+            parent->AddChild(child);
+          }
+        }
+      };
+      connect_group(pid_group.no_pid_context_group);
+      for (auto& [pid, group] : pid_group.pid_context_groups) {
+        connect_group(group);
       }
     }
   }
