@@ -94,6 +94,7 @@ cc_library(
     deps = [
         ":rocm_headers_includes",
         ":rocm_rpath",
+        ":hip_runtime_deps",
     ],
 )
 
@@ -207,6 +208,29 @@ cc_library(
     ],
 )
 
+# Used by dso to bring minimal runtime deps
+cc_library(
+    name = "hip_runtime_deps",
+    hdrs = glob(["%{rocm_root}/include/hip/**"]),
+    data = glob([
+        "%{rocm_root}/lib/libamdhip*.so",
+        "%{rocm_root}/lib/libhiprtc.so*",
+        "%{rocm_root}/lib/libhiprtc-builtins.so*",
+    ]),
+    include_prefix = "rocm",
+    includes = [
+        "%{rocm_root}/include",
+    ],
+    linkopts = ["-Wl,-rpath,local_config_rocm/rocm/rocm_dis/lib"],
+    strip_include_prefix = "%{rocm_root}",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":rocm_config",
+        ":rocprofiler_register",
+        ":system_libs",
+    ],
+)
+
 cc_library(
     name = "rocblas",
     hdrs = glob(["%{rocm_root}/include/rocblas/**"]),
@@ -282,8 +306,8 @@ cc_library(
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [
-        ":rocm_config",
         ":rocm-core",
+        ":rocm_config",
     ],
 )
 
@@ -408,9 +432,9 @@ cc_library(
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = ["-Wl,-rpath,local_config_rocm/rocm/rocm_dis/lib"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
-    linkopts = ["-Wl,-rpath,local_config_rocm/rocm/rocm_dis/lib"],
     deps = [
         ":hipblas-common",
         ":rocm_config",
@@ -428,7 +452,6 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [":rocm_config"],
 )
-
 
 cc_library(
     name = "rocm-core",
