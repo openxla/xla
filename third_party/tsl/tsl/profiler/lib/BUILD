@@ -358,6 +358,7 @@ cc_library(
         ":traceme_encode",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
+        "@xla//xla/tsl/platform:env",
         "@xla//xla/tsl/platform:types",
     ],
 )
