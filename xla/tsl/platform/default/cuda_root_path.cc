@@ -66,11 +66,13 @@ std::vector<std::string> CandidateCudaRoots() {
   }
 
   const char* cuda_home = getenv("CUDA_HOME");
-  if (cuda_home)
+  if (cuda_home) {
     roots.emplace_back(cuda_home);
+  }
   std::string cuda_toolkit_path = TF_CUDA_TOOLKIT_PATH;
-  if (!cuda_toolkit_path.empty())
+  if (!cuda_toolkit_path.empty()) {
     roots.push_back(std::move(cuda_toolkit_path));
+  }
   roots.emplace_back(std::string("/usr/local/cuda"));
   roots.emplace_back(std::string("/opt/cuda"));
 
@@ -108,12 +110,15 @@ std::vector<std::string> CandidateCudaRoots() {
     // $CONDA_PREFIX/lib/python3.12/site-packages/pkg_name, so if we want
     // to add $CONDA_PREFIX to the candidate roots dirs we need to add
     // ../../../..
-    for (auto path : {"../../../..", "../../../../.."})
+    for (auto path : {"../../../..", "../../../../.."}) {
       roots.emplace_back(io::JoinPath(dir, path));
+    }
   }
 #endif  // defined(PLATFORM_POSIX) && !defined(__APPLE__)
 
-  for (auto root : roots) VLOG(3) << "CUDA root = " << root;
+  for (auto root : roots) {
+    VLOG(3) << "CUDA root = " << root;
+  }
   return roots;
 #else   // !defined(PLATFORM_GOOGLE)
   return {};
