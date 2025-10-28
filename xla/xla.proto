@@ -774,6 +774,8 @@ message DebugOptions {
   //   coll.2-done = collective(coll.2-start)
   optional int32 xla_gpu_experimental_parallel_collective_overlap_limit = 336;
 
+  optional int32 xla_gpu_experimental_parallel_async_compute_limit = 455;
+
   optional PipelineParallelismOptLevel
       xla_gpu_experimental_pipeline_parallelism_opt_level = 351;
 
@@ -1403,7 +1405,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 455
+  // Next id: 456
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
