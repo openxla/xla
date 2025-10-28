@@ -1257,24 +1257,6 @@ class ReadySetLt {
     return std::nullopt;
   }
 
-  inline bool DelayMoveToHostAsyncStartCandidateCondition(
-      DefaultSchedulerCore::ScheduleCandidate& a,
-      const HloGraphNode* a_node) const {
-    bool is_send_host_dus = false;
-    if (a_node->GetOpcode() == HloOpcode::kAsyncStart) {
-      if (a_node->GetInstr().async_wrapped_instruction()->opcode() == HloOpcode::kFusion) {
-        auto fused_instrs = a_node->GetInstr().async_wrapped_instruction()->fused_instructions();
-        for (auto instr : fused_instrs) {
-          if (instr->opcode() == HloOpcode::kDynamicUpdateSlice) {
-            is_send_host_dus = true;
-          }
-        }
-      }
-    }
-    return !is_send_host_dus;
-  }
-
-
   // The comparison here implements the priority for the nodes in the ready
   // set. The function compares a and b in a series of prioritized
   // comparisons. As soon as it finds one that is not equal, it stops.  If
@@ -1350,13 +1332,6 @@ class ReadySetLt {
     // those that are closer rather than ones that are further away.
     CMP_EXPLICIT(ShouldScheduleAsyncDone(a, an), ShouldScheduleAsyncDone(b, bn),
                  "kScheduleDone");
-
-    // Delay MoveToHostAsyncStart as late as possible
-    // to achieve better overlapping with computation.
-    CMP_EXPLICIT(DelayMoveToHostAsyncStartCandidateCondition(a, an),
-                 DelayMoveToHostAsyncStartCandidateCondition(b, bn),
-                 "kDelayMoveToHostAsyncStart");
-
 
     // The following rule targets the async ops using resources that should
     // be released right after the op's estimated time cost has past. It
