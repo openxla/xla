@@ -1101,15 +1101,17 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest, DelayMoveToHostAsyncStart) {
 
   absl::string_view kFdoProfile = "";
   auto config = GetModuleConfig(kFdoProfile);
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloModule, config));
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHloModule, config));
 
   TF_EXPECT_OK(ScheduleModule(module.get()));
   auto schedule = module->schedule();
   std::vector<HloInstruction*> instruction_sequence =
       schedule.sequence(module->entry_computation()).instructions();
 
-  EXPECT_TRUE(GetIndexByName(instruction_sequence, "dynamic-update-slice-start.18") <
-              GetIndexByName(instruction_sequence, "all-to-all-start.4"));
+  EXPECT_TRUE(
+      GetIndexByName(instruction_sequence, "dynamic-update-slice-start.18") <
+      GetIndexByName(instruction_sequence, "all-to-all-start.4"));
 }
 
 }  // namespace
