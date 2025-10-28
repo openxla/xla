@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/c_api.h"
+#include "xla/ffi/attribute_map.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/execution_state.h"
@@ -213,10 +214,13 @@ TEST(FfiTest, RunId) {
   CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
   auto call_frame = builder.Build();
 
-  auto handler = Ffi::Bind().Ctx<RunId>().To([&](RunId run_id) {
-    EXPECT_EQ(run_id.ToInt(), 42);
-    return absl::OkStatus();
-  });
+  auto handler = Ffi::Bind().Ctx<RunId>().Ctx().To(
+      [&](RunId run_id, Context context) -> absl::Status {
+        EXPECT_EQ(run_id.ToInt(), 42);
+        TF_ASSIGN_OR_RETURN(RunId run_id_from_context, context.get<RunId>());
+        EXPECT_EQ(run_id_from_context.ToInt(), 42);
+        return absl::OkStatus();
+      });
 
   CallOptions options;
   options.run_id = RunId{42};
@@ -409,10 +413,10 @@ TEST(FfiTest, AttrsAsDictionary) {
 }
 
 TEST(FfiTest, DictionaryAttr) {
-  CallFrameBuilder::AttributesMap dict0;
+  AttributesMap dict0;
   dict0.try_emplace("i32", 42);
 
-  CallFrameBuilder::AttributesMap dict1;
+  AttributesMap dict1;
   dict1.try_emplace("f32", 42.0f);
 
   CallFrameBuilder::AttributesBuilder attrs;
@@ -455,7 +459,7 @@ TEST(FfiTest, DictionaryAttr) {
 }
 
 TEST(FfiTest, StructAttr) {
-  CallFrameBuilder::AttributesMap dict;
+  AttributesMap dict;
   dict.try_emplace("i32", 42);
   dict.try_emplace("f32", 42.0f);
 
@@ -1136,13 +1140,6 @@ struct CtxBinding<TestStream> {
 TEST(FfiTest, PlatformStream) {
   // We only check that it compiles.
   (void)Ffi::BindTo(+[](TestStream stream) { return absl::OkStatus(); });
-}
-
-TEST(FfiTest, BindFfiInternals) {
-  (void)Ffi::Bind().Ctx<FfiApi>().Ctx<FfiExecutionContext>().To(
-      +[](const XLA_FFI_Api* api, XLA_FFI_ExecutionContext* ctx) {
-        return absl::OkStatus();
-      });
 }
 
 //===----------------------------------------------------------------------===//

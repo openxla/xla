@@ -406,6 +406,8 @@ cc_library(
         ":onednn_contraction_rewriter",
         ":onednn_float_support",
         ":onednn_ops_rewriter",
+    ]) + if_ynnpack([
+        "//xla/backends/cpu:ynn_support",
     ]),
 )
 
@@ -550,6 +552,8 @@ xla_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:TargetParser",
+        "@tsl//tsl/platform:casts",
     ],
 )
 

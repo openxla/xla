@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.pb.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/ffi/attribute_map.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -570,7 +571,7 @@ TEST_F(DynamicSliceThunkTest, SlicedMemcpy) {
       seq.emplace_back(),
       CustomCallThunk::Create(Thunk::ThunkInfo(), "__xla_test$$memcpy",
                               registration.bundle, operands, results,
-                              /*attributes=*/CustomCallThunk::AttributesMap(),
+                              /*attributes=*/ffi::AttributesMap(),
                               /*called_computation=*/nullptr));
 
   // Wrapping dynamic slice thunk around the custom call thunk.
@@ -731,7 +732,7 @@ TEST_F(DynamicSliceThunkTest, SlicedOutputMemcpy) {
       seq.emplace_back(),
       CustomCallThunk::Create(Thunk::ThunkInfo(), "__xla_test$$memcpy",
                               registration.bundle, operands, results,
-                              /*attributes=*/CustomCallThunk::AttributesMap(),
+                              /*attributes=*/ffi::AttributesMap(),
                               /*called_computation=*/nullptr));
 
   // Wrapping dynamic slice thunk around the custom call thunk.
@@ -1451,7 +1452,7 @@ TEST_F(DynamicSliceThunkTest, SlicedMemcpyOOB) {
       seq.emplace_back(),
       CustomCallThunk::Create(Thunk::ThunkInfo(), "__xla_test$$memcpy",
                               registration.bundle, operands, results,
-                              /*attributes=*/CustomCallThunk::AttributesMap(),
+                              /*attributes=*/ffi::AttributesMap(),
                               /*called_computation=*/nullptr));
 
   // Wrapping dynamic slice thunk around the custom call thunk.

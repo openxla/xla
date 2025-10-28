@@ -257,6 +257,10 @@ limitations under the License.
 #include "xla/service/cpu/onednn_ops_rewriter.h"
 #endif  // XLA_ONEDNN
 
+#ifdef XLA_YNNPACK
+#include "xla/backends/cpu/ynn_support.h"
+#endif  // XLA_YNNPACK
+
 namespace xla {
 namespace {
 
@@ -529,6 +533,49 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
   return pipeline;
 }
 
+auto LibrarySupportsDot(HloModule* module,
+                        TargetMachineFeatures* target_machine_features) {
+  // TODO(b/406806134): Stop calling XNNPACK from regular Dot thunks. All XNN
+  // Dots should be wrapped in an `__xnn_fusion` fusion region and processed in
+  // `XnnFusionThunk`.
+  const bool xnnpack_enabled =
+      module->config().debug_options().xla_cpu_use_xnnpack();
+  const auto xnn_graph_fusion_mode =
+      module->config()
+          .debug_options()
+          .xla_cpu_experimental_xnn_graph_fusion_mode();
+  const bool xnnpack_use_cost_model =
+      xnn_graph_fusion_mode !=
+      DebugOptions::XNN_GRAPH_FUSION_MODE_BYPASS_COST_MODEL;
+  const bool xnnpack_dot_enabled =
+      xnnpack_enabled &&
+      xnn_graph_fusion_mode != DebugOptions::XNN_GRAPH_FUSION_MODE_DISABLED;
+  const bool ynnpack_dot_enabled = absl::c_linear_search(
+      module->config().debug_options().xla_cpu_experimental_ynn_fusion_type(),
+      DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT);
+  return [=](const HloInstruction& instr) {
+#ifdef XLA_YNNPACK
+    if (ynnpack_dot_enabled &&
+        IsDotSupportedByYnn(instr.dot_dimension_numbers(),
+                            instr.operand(0)->shape(),
+                            instr.operand(1)->shape(), instr.shape())
+            .value_or(false)) {
+      return true;
+    }
+#endif  // XLA_YNNPACK
+
+    if (xnnpack_dot_enabled &&
+        IsDotSupportedByXnn(instr.dot_dimension_numbers(),
+                            instr.operand(0)->shape(),
+                            instr.operand(1)->shape(), instr.shape(),
+                            target_machine_features, xnnpack_use_cost_model)
+            .value_or(false)) {
+      return true;
+    }
+    return false;
+  };
+}
+
 }  // namespace
 
 absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
@@ -610,33 +657,14 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // If XNNPACK is enabled, we only need to upcast dots that XnnDotThunk does
   // not support. `upcaster_filter` returns false if the instruction shouldn't
   // be processed.
-  // TODO(b/406806134): Stop calling XNNPACK from regular Dot thunks. All XNN
-  // Dots should be wrapped in an `__xnn_fusion` fusion region and processed in
-  // `XnnFusionThunk`.
-  bool xnnpack_enabled = module->config().debug_options().xla_cpu_use_xnnpack();
-  auto call_library_for_dot = [&](const HloInstruction& instr) {
-    if (!xnnpack_enabled) return false;
-    DotImplementationStrategy strategy = GetDotImplementationStrategy(
-        module->config(), instr, *target_machine_features,
-        /*allow_runtime_calls=*/true);
-    return strategy == DotImplementationStrategy::kEigen;
-  };
+  auto library_supports_dot =
+      LibrarySupportsDot(module, target_machine_features);
+
   HloPredicate upcaster_filter = [&](const HloInstruction* instr) {
     if (instr->opcode() != HloOpcode::kDot) {
       return true;
     }
-    if (!call_library_for_dot(*instr)) {
-      return true;
-    }
-    bool use_cost_model = module->config()
-                              .debug_options()
-                              .xla_cpu_experimental_xnn_graph_fusion_mode() !=
-                          DebugOptions::XNN_GRAPH_FUSION_MODE_BYPASS_COST_MODEL;
-    return !IsDotSupportedByXnn(instr->dot_dimension_numbers(),
-                                instr->operand(0)->shape(),
-                                instr->operand(1)->shape(), instr->shape(),
-                                target_machine_features, use_cost_model)
-                .value_or(false);
+    return !library_supports_dot(*instr);
   };
 
   // xla::cpu::GetDotImplementationStrategy (used by call_library_for_dot)
@@ -700,8 +728,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // Convert BF16 and F8 operations to F32 and F16 respectively so that the CPU
   // backend can support BF16/F8 operations without directly implementing a
   // BF16/F8 lowering for most ops.
-  CpuFloatSupport bf16_support(BF16, call_library_for_dot,
-                               target_machine_features);
+  CpuFloatSupport bf16_support(BF16, library_supports_dot);
 #ifdef XLA_ONEDNN
   OneDnnFloatSupport onednn_bf16_support(BF16);
   if (use_onednn_custom_call) {
@@ -1940,13 +1967,20 @@ CpuCompiler::CompileCpuExecutable(
   TF_ASSIGN_OR_RETURN(std::vector<ConstantAllocation> constants,
                       CreateConstantAllocations(*assignment));
 
+  TargetMachineOptionsProto target_machine_options_proto;
+  target_machine_options_proto.set_triple(
+      target_machine->getTargetTriple().getTriple());
+  target_machine_options_proto.set_cpu(target_machine->getTargetCPU());
+  target_machine_options_proto.set_features(
+      target_machine->getTargetFeatureString());
+
   TF_ASSIGN_OR_RETURN(
       auto cpu_executable,
-      CpuExecutable::Create(std::move(function_library), std::move(assignment),
-                            std::move(module), std::move(thunks),
-                            std::move(constants),
-                            std::move(hlo_profile_printer_data),
-                            std::move(hlo_profile_index_map)));
+      CpuExecutable::Create(
+          std::move(function_library), std::move(assignment), std::move(module),
+          std::move(thunks), std::move(constants),
+          std::move(hlo_profile_printer_data), std::move(hlo_profile_index_map),
+          std::move(target_machine_options_proto)));
 
   // Save object files to be able to export them to AOT compilation
   // result.
@@ -2183,7 +2217,8 @@ CpuCompiler::CompileAheadOfTimeThunks(
       cpu_executable->module_name(), std::move(obj_files),
       cpu_executable->get_compiled_symbols_proto(), thunk_sequence,
       std::move(*cpu_executable).consume_function_library(),
-      std::move(executable_hlo_profile_printer_data));
+      std::move(executable_hlo_profile_printer_data),
+      cpu_executable->target_machine_options());
 }
 
 se::Platform::Id CpuCompiler::PlatformId() const {
@@ -2233,7 +2268,8 @@ absl::StatusOr<std::unique_ptr<AotCompilationResult>> CpuCompiler::Export(
       cpu_executable->module_name(), std::move(obj_files),
       std::move(compiled_symbols_proto), *thunk_sequence,
       std::move(function_library),
-      std::move(executable_hlo_profile_printer_data));
+      std::move(executable_hlo_profile_printer_data),
+      cpu_executable->target_machine_options());
 }
 
 absl::StatusOr<std::unique_ptr<AotCompilationResult>>

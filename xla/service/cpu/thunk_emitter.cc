@@ -1091,13 +1091,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
               .xla_cpu_experimental_ynn_fusion_type(),
           DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT);
       if (use_ynn) {
-        // TODO(ashaposhnikov): Replace IsDotSupportedByXnn with
-        // IsDotSupportedByYnn.
         TF_ASSIGN_OR_RETURN(
             auto is_dot_supported,
-            IsDotSupportedByXnn(dnums, lhs->shape(), rhs->shape(),
-                                instruction->shape(), &target_machine_features_,
-                                /*use_cost_model=*/false));
+            IsDotSupportedByYnn(dnums, lhs->shape(), rhs->shape(),
+                                instruction->shape()));
         if (is_dot_supported) {
           return EmitYnnFusionThunk(instruction);
         }
@@ -1558,7 +1555,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitYnnFusionThunk(
     const HloDotInstruction* dot = Cast<HloDotInstruction>(instruction);
     // TODO(ashaposhnikov): Revisit this if we ever get a reliable way
     // to determine that RHS is constant.
-    bool capture_rhs = false;
+    bool capture_rhs = HloPredicateIsOp<HloOpcode::kParameter>(dot->operand(1));
     // Construct YNNPACK subgraph builder from the dot instruction.
     TF_ASSIGN_OR_RETURN(builder, EmitYnnDotBuilder(dot, capture_rhs));
     static constexpr int64_t kCapturedIds[1] = {1};

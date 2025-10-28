@@ -112,15 +112,6 @@ class TritonTest : public GpuCodegenTest {
     return device_desc().gpu_compute_capability();
   }
 
-  stream_executor::GpuComputeCapability CudaAmpereOrRocm() {
-    if (GpuComputeCapability().IsRocm()) {
-      return stream_executor::GpuComputeCapability{
-          device_desc().rocm_compute_capability()};
-    }
-    return stream_executor::GpuComputeCapability{
-        se::CudaComputeCapability::Ampere()};
-  }
-
   // Returns the module, its fusion computation and associated block level
   // parameters from an HLO module text whose entry computation contains a
   // single GEMM fusion.
@@ -268,8 +259,8 @@ ENTRY e {
                                  module_and_metadata.block_level_parameters,
                                  R"(
 CHECK: %[[LOAD:.*]] = xtile.extract {{.*}} -> tensor<16x16xi8>
-CHECK: %[[TRUNCI:.*]] = arith.trunci %[[LOAD]] : tensor<16x16xi8> to tensor<16x16xi1>
-CHECK: %{{.*}} = arith.andi %[[TRUNCI]], %{{.*}} : tensor<16x16xi1>
+CHECK: %[[CMPI:.*]] = arith.cmpi ne, %[[LOAD]], {{.*}} : tensor<16x16xi8>
+CHECK: %{{.*}} = arith.andi %[[CMPI]], %{{.*}} : tensor<16x16xi1>
 )"));
 }
 

@@ -192,6 +192,7 @@ cc_library(
         "%{rocm_root}/lib/libamdhip*.so*",
         "%{rocm_root}/lib/libhiprtc.so*",
         "%{rocm_root}/lib/libhiprtc-builtins.so*",
+        "%{rocm_root}/lib/libamd_comgr.so*",
     ]),
     hdrs = glob(["%{rocm_root}/include/hip/**"]),
     include_prefix = "rocm",
@@ -204,6 +205,7 @@ cc_library(
         ":rocm_config",
         ":rocprofiler_register",
         ":system_libs",
+        ":amd_comgr",
     ],
 )
 
