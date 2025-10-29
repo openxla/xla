@@ -836,6 +836,8 @@ _ENVIRONS = [
     _TF_ROCM_AMDGPU_TARGETS,
     _OS,
     _ROCM_VERSION,
+    _TF_ROCM_RBE_DOCKER_IMAGE,
+    _TF_ROCM_MULTIPLE_PATHS,
 ]
 
 remote_rocm_configure = repository_rule(
