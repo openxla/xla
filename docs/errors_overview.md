@@ -4,8 +4,8 @@ XLA errors are categorized into different XLA error sources. Each source has
 a list of an additional context other than the error message, which will be
 attached to each error within the category.
 
-🚧 Please note that this standarization effort is a work in progress so not all
-error messages will have an attached error code yet.
+🚧 Note that this standarization effort is a work in progress so not all error
+messages will have an attached error code yet.
 
 An example error log might look like:
 
