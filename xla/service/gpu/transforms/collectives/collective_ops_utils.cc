@@ -106,7 +106,7 @@ absl::StatusOr<CommunicationMetadata> CommunicationContext(
                                instr.GetModule()->config().replica_count()};
 }
 
-bool IsSingleSlice(const CommunicationMetadata& pattern) {
+bool IsSinglePartition(const CommunicationMetadata& pattern) {
   if (pattern.partition_to_participant_count.size() == 1) {
     return true;
   }
@@ -116,7 +116,7 @@ bool IsSingleSlice(const CommunicationMetadata& pattern) {
 }
 
 bool IsRailAligned(const CommunicationMetadata& pattern) {
-  if (!IsSingleSlice(pattern) &&
+  if (!IsSinglePartition(pattern) &&
       pattern.partition_to_participant_count.empty()) {
     return true;
   }
@@ -128,7 +128,7 @@ bool IsRailAligned(const CommunicationMetadata& pattern) {
 }
 
 bool IsNonRailAligned(const CommunicationMetadata& pattern) {
-  return !IsSingleSlice(pattern) && !IsRailAligned(pattern);
+  return !IsSinglePartition(pattern) && !IsRailAligned(pattern);
 }
 
 }  // namespace
@@ -150,7 +150,7 @@ absl::StatusOr<GPUCommunicationType> CommunicationType(
 
   TF_ASSIGN_OR_RETURN(CommunicationMetadata comm,
                       CommunicationContext(instr, partition_size));
-  if (IsSingleSlice(comm)) {
+  if (IsSinglePartition(comm)) {
     return GPUCommunicationType::SINGLE_PARTITION;
   }
   if (IsRailAligned(comm)) {
