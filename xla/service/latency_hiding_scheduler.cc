@@ -1311,11 +1311,27 @@ class ReadySetLt {
     return std::nullopt;
   }
 
-  inline bool DelayAsyncStartCandidateCondition(
+  inline std::optional<bool> DelayAsyncStartCandidateCondition(
       DefaultSchedulerCore::ScheduleCandidate& a,
-      const HloGraphNode* a_node) const {
-    return !(a_node->DoesReleaseAnyResource() &&
-             !IsResourceConstrained(a, a_node));
+      DefaultSchedulerCore::ScheduleCandidate& b, const HloGraphNode* a_node,
+      const HloGraphNode* b_node, const char** reason) const {
+    bool a_has_async_resource =
+        a_node->DoesReleaseAnyResource() && !IsResourceConstrained(a, a_node);
+    bool b_has_async_resource =
+        b_node->DoesReleaseAnyResource() && !IsResourceConstrained(b, b_node);
+
+    CMP_EXPLICIT(!a_has_async_resource, !b_has_async_resource,
+                 "kDelayAsyncStartForCompute");
+    if (a_has_async_resource && b_has_async_resource) {
+      // If 2 nodes are both async nodes, we prioritize the one
+      // with more depth to free up more computes to overlap
+      // with the one with less depth which can be launched
+      // early
+      CMP_EXPLICIT(a_node->GetDepth() > b_node->GetDepth(),
+                   b_node->GetDepth() > a_node->GetDepth(),
+                   "kDelayAsyncStartForDepth");
+    }
+    return std::nullopt;
   }
 
   // The comparison here implements the priority for the nodes in the ready
@@ -1431,9 +1447,10 @@ class ReadySetLt {
         sched_state_.config.prioritize_compute_over_async_start) {
       // If an instruction releasing a resource is not resource constrained,
       // delay it as much as possible.
-      CMP_EXPLICIT(DelayAsyncStartCandidateCondition(a, an),
-                   DelayAsyncStartCandidateCondition(b, bn),
-                   "kDelayAsyncStart");
+      if (auto value =
+              DelayAsyncStartCandidateCondition(a, b, an, bn, reason)) {
+        return *value;
+      }
     }
 
     auto a_readytime = an->GetReadyTime();
