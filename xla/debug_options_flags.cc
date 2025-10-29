@@ -443,7 +443,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_dot_merger_threshold_mb(32);
   opts.set_xla_enable_fast_math(false);
   opts.set_xla_gpu_experimental_parallel_collective_overlap_limit(1);
-  opts.set_xla_gpu_experimental_parallel_async_compute_limit(2);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
   opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(false);
@@ -2388,14 +2387,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
               set_xla_gpu_experimental_parallel_collective_overlap_limit),
       debug_options->xla_gpu_experimental_parallel_collective_overlap_limit(),
       "This controls how many in-flight collectives "
-      "latency hiding scheduler can schedule."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_parallel_async_compute_limit",
-      int32_setter_for(
-          &DebugOptions::
-              set_xla_gpu_experimental_parallel_async_compute_limit),
-      debug_options->xla_gpu_experimental_parallel_async_compute_limit(),
-      "This controls how many in-flight asynchronous computations "
       "latency hiding scheduler can schedule."));
   flag_list->push_back(tsl::Flag(
       "xla_pjrt_allow_auto_layout_in_hlo",
