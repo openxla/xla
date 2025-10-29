@@ -191,12 +191,12 @@ absl::StatusOr<absl::Duration> DCNCollectiveDuration(
 
 int64_t GetPartitionSize(const HloInstruction& instr,
                          const SolGPUCostModel::Config& sol_flags) {
-  return (sol_flags.partition_size > 0) ? sol_flags.partition_size
-         : (instr.GetModule()->config().partition_size() > 0)
-             ? instr.GetModule()
-                   ->config()
-                   .partition_size()  // Auto-detected size
-             : sol_flags.gpus_per_node;
+  if (sol_flags.partition_size > 0) {
+    return sol_flags.partition_size;
+  } else if (instr.GetModule()->config().partition_size() > 0) {
+    return instr.GetModule()->config().partition_size();
+  }
+  return sol_flags.gpus_per_node;
 }
 
 absl::StatusOr<absl::Duration> DispatchEstimation(
