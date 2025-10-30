@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/path.h"
+#include "xla/tsl/util/env_var.h"
 
 namespace stream_executor::gpu {
 
@@ -571,7 +572,18 @@ absl::Status GpuCommandBuffer::Finalize() {
   // Maybe dump created GPU graph to a dot file for debugging.
   if (state_ == State::kCreate &&
       (VLOG_IS_ON(10) || (VLOG_IS_ON(9) && mode_ == Mode::kPrimary))) {
-    std::string path = tsl::io::GetTempFilename(/*extension=*/"dot");
+    std::string path;
+    std::string dump_dir;
+    if (!tsl::ReadStringFromEnvVar("COMMAND_BUFFER_DUMP_DIR", "", &dump_dir)
+             .ok() ||
+        dump_dir.empty()) {
+      path = tsl::io::GetTempFilename(/*extension=*/"dot");
+    } else {
+      path = tsl::io::JoinPath(
+          dump_dir,
+          absl::StrCat("command_buffer_", tsl::Env::Default()->GetProcessId(),
+                       "_", tsl::Env::Default()->NowNanos(), ".dot"));
+    }
     TF_RETURN_IF_ERROR(WriteGraphToDotFile(path));
     if (VLOG_IS_ON(100) || (VLOG_IS_ON(90) && mode_ == Mode::kPrimary)) {
       std::string dot_file_contents;
