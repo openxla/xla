@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/tsl/platform/status.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "triton/Dialect/Triton/IR/Types.h"
 
 namespace xla::gpu::triton {
 
@@ -193,9 +194,6 @@ inline mlir::Value OnesLike(EmitterLocOpBuilder& b, mlir::Value x) {
 
 bool IsFp8Type(mlir::Type t);
 
-ScalarOrTensor Splat(EmitterLocOpBuilder& b, ScalarOrTensor value,
-                     llvm::ArrayRef<int64_t> shape);
-
 // Triton type conversions.
 mlir::Value Cast(EmitterLocOpBuilder& b, mlir::Value value,
                  mlir::Type dst_element_ty);
@@ -232,6 +230,10 @@ absl::StatusOr<stream_executor::gpu::TmaMetadata> ExtractTmaMetadata(
 // Extracts thread dimensions from Triton module attributes.
 absl::StatusOr<stream_executor::ThreadDim> ExtractThreadDims(
     mlir::ModuleOp triton_module, mlir::LLVM::LLVMFuncOp func_op);
+
+// Returns the triton pointer type with global memory space and the given
+// element type.
+::mlir::triton::PointerType GetGlobalPointerType(mlir::Type element_type);
 
 }  // namespace xla::gpu::triton
 

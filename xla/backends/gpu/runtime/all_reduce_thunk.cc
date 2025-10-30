@@ -39,7 +39,6 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
@@ -112,7 +111,8 @@ absl::Status RunAllReduce(ReductionKind reduction_kind,
 AllReduceReduceScatterThunkBase::AllReduceReduceScatterThunkBase(
     Thunk::Kind kind, ThunkInfo thunk_info, AllReduceConfig config,
     std::vector<Buffer> buffers, bool is_sync)
-    : CollectiveThunk(kind, thunk_info, is_sync, AsyncStreamKind::kCollective),
+    : CollectiveThunk(kind, thunk_info, is_sync,
+                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
       config_(std::move(config)),
       buffers_(std::move(buffers)) {
   CHECK_EQ(config_.config.operand_count, buffers_.size());

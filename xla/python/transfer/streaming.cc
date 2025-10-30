@@ -36,7 +36,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/pjrt/pjrt_future.h"
+#include "xla/future.h"
 #include "xla/python/transfer/transfer_socket.pb.h"
 #include "xla/tsl/concurrency/ref_count.h"
 
@@ -151,7 +151,10 @@ BulkTransportInterface::SendMessage BulkTransportInterface::MakeMessage(
   SendMessage result;
   result.data = tmp->data();
   result.size = tmp->size();
-  result.on_send = std::move(on_send);
+  result.on_send = [on_send = std::move(on_send)](absl::StatusOr<int> bond_id,
+                                                  size_t size) mutable {
+    std::move(on_send)(bond_id.value(), size);
+  };
   result.on_done = [tmp = std::move(tmp)]() {};
   return result;
 }

@@ -43,7 +43,9 @@ def TritonXLASqueezeDimsPass : Pass<"triton-xla-squeeze-dims", "mlir::ModuleOp">
   }];
   let dependentDialects = [
     "::mlir::triton::xla::XlaTritonDialect",
-    "triton::TritonDialect"
+    "::mlir::triton::TritonDialect",
+    "::xla::xtile::XTileDialect",
+    "::mlir::memref::MemRefDialect",
   ];
   let options = [
     Option<"finalize_", "finalize", "bool", "true",
@@ -58,7 +60,8 @@ def TritonXLAFoldTransposePass : Pass<"triton-xla-fold-transpose", "mlir::Module
     This pass tries to remove transposes by folding them into loads.
   }];
   let dependentDialects = [
-    "::mlir::triton::xla::XlaTritonDialect"
+    "::mlir::triton::xla::XlaTritonDialect",
+    "::mlir::memref::MemRefDialect",
   ];
   let constructor = "CreateTritonXLAFoldTransposePass()";
 }
@@ -188,6 +191,20 @@ def TritonXLAUnswitchLoopsPass :
   ];
 
   let constructor = "CreateTritonXLAUnswitchLoopsPass()";
+}
+
+def TritonXLALowerXTilePass :
+   Pass<"triton-xla-lower-xtile", "mlir::ModuleOp"> {
+  let summary = "Lowers xtile ops to Triton ops.";
+
+  let dependentDialects = [
+    "mlir::func::FuncDialect",
+    "mlir::memref::MemRefDialect",
+    "mlir::triton::xla::XlaTritonDialect",
+    "triton::TritonDialect",
+  ];
+
+  let constructor = "CreateTritonXLALowerXTilePass()";
 }
 
 def StableHLOLowerToTritonPass

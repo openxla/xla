@@ -111,7 +111,7 @@ TEST_F(CommunicationTypeTest, DetectsSingleHost16Devices) {
               IsOkAndHolds(GPUCommunicationType::SINGLE_PARTITION));
 }
 
-TEST_F(CommunicationTypeTest, DetectRailAlignedAllDevices) {
+TEST_F(CommunicationTypeTest, DetectWorldLevelAllDevices) {
   absl::string_view kHlo = R"(
     HloModule m, num_partitions=16
 
@@ -131,10 +131,10 @@ TEST_F(CommunicationTypeTest, DetectRailAlignedAllDevices) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_WORLD_LEVEL));
 }
 
-TEST_F(CommunicationTypeTest, DetectRailAlignedHalfMesh) {
+TEST_F(CommunicationTypeTest, DetectWorldLevelHalfMesh) {
   absl::string_view kHlo = R"(
     HloModule m, num_partitions=32
 
@@ -157,10 +157,10 @@ TEST_F(CommunicationTypeTest, DetectRailAlignedHalfMesh) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_WORLD_LEVEL));
 }
 
-TEST_F(CommunicationTypeTest, DetectNonRailAligned) {
+TEST_F(CommunicationTypeTest, DetectNonWorldLevel) {
   absl::string_view kHlo = R"(
     HloModule m, num_partitions=16
 
@@ -180,7 +180,7 @@ TEST_F(CommunicationTypeTest, DetectNonRailAligned) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::NON_RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL));
 }
 
 TEST_F(CommunicationTypeTest, DetectsSingleHost16DevicesForEmptyReplicaGroups) {
@@ -204,7 +204,7 @@ TEST_F(CommunicationTypeTest, DetectsSingleHost16DevicesForEmptyReplicaGroups) {
               IsOkAndHolds(GPUCommunicationType::SINGLE_PARTITION));
 }
 
-TEST_F(CommunicationTypeTest, DetectsRailAligned8DevicesForEmptyReplicaGroups) {
+TEST_F(CommunicationTypeTest, DetectWorldLevel8DevicesForEmptyReplicaGroups) {
   absl::string_view kHlo = R"(
     HloModule m, replica_count=16
 
@@ -222,10 +222,10 @@ TEST_F(CommunicationTypeTest, DetectsRailAligned8DevicesForEmptyReplicaGroups) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_WORLD_LEVEL));
 }
 
-TEST_F(CommunicationTypeTest, DetectsNonRailAligned16Devices) {
+TEST_F(CommunicationTypeTest, DetectNonWorldLevel16Devices) {
   absl::string_view kHlo = R"(
     HloModule m, replica_count=16
 
@@ -243,7 +243,7 @@ TEST_F(CommunicationTypeTest, DetectsNonRailAligned16Devices) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::NON_RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL));
 }
 
 TEST_F(CommunicationTypeTest, DetectsSingleHostCollectivePermute) {
@@ -266,7 +266,7 @@ TEST_F(CommunicationTypeTest, DetectsSingleHostCollectivePermute) {
               IsOkAndHolds(GPUCommunicationType::SINGLE_PARTITION));
 }
 
-TEST_F(CommunicationTypeTest, DetectsNonRailAlignedCollectivePermute) {
+TEST_F(CommunicationTypeTest, DetectNonWorldLevelCollectivePermute) {
   absl::string_view kHlo = R"(
     HloModule m, num_partitions=16
 
@@ -284,10 +284,10 @@ TEST_F(CommunicationTypeTest, DetectsNonRailAlignedCollectivePermute) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::NON_RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL));
 }
 
-TEST_F(CommunicationTypeTest, DetectsRailAlignedCollectivePermute) {
+TEST_F(CommunicationTypeTest, DetectWorldLevelCollectivePermute) {
   absl::string_view kHlo = R"(
     HloModule m, num_partitions=16
 
@@ -304,7 +304,7 @@ TEST_F(CommunicationTypeTest, DetectsRailAlignedCollectivePermute) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_WORLD_LEVEL));
 }
 
 TEST_F(CommunicationTypeTest, DetectsSinglePartitionMultiHost) {
@@ -353,7 +353,7 @@ TEST_F(CommunicationTypeTest, DetectsMultiPartitionWith8DevicePartitions) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*partition_size=*/32, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_WORLD_LEVEL));
 }
 
 TEST_F(CommunicationTypeTest, DetectsMultiPartitionNonRailAligned) {
@@ -380,7 +380,7 @@ TEST_F(CommunicationTypeTest, DetectsMultiPartitionNonRailAligned) {
   // devices)
   EXPECT_THAT(CommunicationType(/*partition_size=*/36, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::NON_RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL));
 }
 
 TEST_F(CommunicationTypeTest, DetectsSinglePartitionSubset) {
@@ -429,7 +429,7 @@ TEST_F(CommunicationTypeTest, DetectsRailAlignedMultiPartition) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*partition_size=*/64, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_WORLD_LEVEL));
 }
 
 }  // namespace

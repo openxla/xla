@@ -60,6 +60,7 @@ cc_library(
     deps = [
         ":backend_config",
         ":hlo_sharding",
+        ":named_sharding",
         ":ptrvec",
         ":tile_assignment",
         "//xla:array",
@@ -178,11 +179,36 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "mesh_and_axis",
+    srcs = ["mesh_and_axis.cc"],
+    hdrs = ["mesh_and_axis.h"],
+    deps = [
+        ":tile_assignment",
+        "//xla:array",
+        "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
+    name = "named_sharding",
+    hdrs = ["named_sharding.h"],
+    deps = [
+        ":mesh_and_axis",
+        "//xla:xla_data_proto_cc",
+    ],
+)
+
+cc_library(
     name = "hlo_sharding",
     srcs = ["hlo_sharding.cc"],
     hdrs = ["hlo_sharding.h"],
     deps = [
         ":hlo_op_metadata",
+        ":named_sharding",
         ":tile_assignment",
         "//xla:array",
         "//xla:printer",
@@ -226,15 +252,23 @@ xla_cc_test(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:alias_info",
+        "//xla/hlo/analysis:hlo_ordering",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/utils:hlo_query",
+        "//xla/service:buffer_assignment",
+        "//xla/service:buffer_value",
         "//xla/service:hlo_module_config",
+        "//xla/service:hlo_proto_util",
+        "//xla/service:logical_buffer",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
@@ -251,9 +285,11 @@ cc_library(
         "//xla:util",
         "//xla/tsl/platform:errors",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
+        "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:human_readable_json",
         "@tsl//tsl/platform:protobuf",
     ],
@@ -387,6 +423,22 @@ xla_cc_test(
 )
 
 xla_cc_test(
+    name = "mesh_and_axis_test",
+    srcs = ["mesh_and_axis_test.cc"],
+    deps = [
+        ":mesh_and_axis",
+        ":tile_assignment",
+        "//xla:array",
+        "//xla:array2d",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+xla_cc_test(
     name = "hlo_casting_utils_test",
     srcs = ["hlo_casting_utils_test.cc"],
     deps = [
@@ -405,6 +457,7 @@ cc_library(
     hdrs = ["collective_op_group_mode.h"],
     deps = [
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",

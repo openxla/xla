@@ -393,6 +393,38 @@ TEST_F(AutotunerTest, AutotuneModuleWithDuplicateInstructions) {
   EXPECT_THAT(autotuner->Autotune(module.get(), should_autotune), IsOk());
 }
 
+TEST_F(AutotunerTest, AutotuneButOneBackendFails) {
+  auto cache_manager = std::make_unique<MockAutotunerCache>();
+  EXPECT_CALL(*cache_manager, Lookup(_)).WillOnce(Return(std::nullopt));
+  EXPECT_CALL(*cache_manager, Insert(_, _)).WillOnce(Return(absl::OkStatus()));
+
+  std::vector<std::unique_ptr<BackendConfig>> configs;
+  configs.push_back(GetTestConfig("test_config"));
+
+  auto good_backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*good_backend, GetSupportedConfigs)
+      .WillOnce(Return(std::move(configs)));
+  EXPECT_CALL(*good_backend, Compile(_, _))
+      .WillOnce(Return(std::unique_ptr<Executable>()));
+  EXPECT_CALL(*good_backend, ApplyConfig(_, ConfigMatcher("test_config")))
+      .Times(1)
+      .WillRepeatedly(Return(absl::OkStatus()));
+  auto bad_backend = std::make_unique<MockCodegenBackend>();
+  EXPECT_CALL(*bad_backend, GetSupportedConfigs)
+      .WillOnce(Return(absl::InternalError("test error")));
+
+  auto profiler = std::make_unique<MockProfiler>();
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::move(good_backend));
+  backends.push_back(std::move(bad_backend));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto autotuner,
+      Autotuner::Create(std::move(backends), std::move(profiler), config_,
+                        std::move(cache_manager)));
+  auto dummy_instr = HloInstruction::CreateConstant(LiteralUtil::CreateR0(1));
+  EXPECT_THAT(autotuner->Autotune(dummy_instr.get()), absl_testing::IsOk());
+}
+
 TEST_F(AutotunerTest, CacheHit) {
   auto cache_manager = std::make_unique<MockAutotunerCache>();
   AutotunerCacheInterface::Config config;
@@ -471,13 +503,15 @@ TEST_F(AutotunerTest, AutotuneWithBufferCheck) {
 
 TEST_F(AutotunerTest, AutotuneWithScratchBytesOptimization) {
   std::vector<std::unique_ptr<BackendConfig>> configs;
-  configs.push_back(GetTestConfig("config_more_time_less_scratch"));
+  configs.push_back(GetTestConfig("config_most_time_less_scratch"));
   configs.push_back(GetTestConfig("config_less_time_less_scratch"));
   configs.push_back(GetTestConfig("config_least_time_most_scratch"));
+  configs.push_back(GetTestConfig("config_more_time_less_scratch"));
   auto backend_1 = std::make_unique<MockCodegenBackend>();
   EXPECT_CALL(*backend_1, GetSupportedConfigs)
       .WillOnce(Return(std::move(configs)));
   EXPECT_CALL(*backend_1, Compile(_, _))
+      .WillOnce(Return(std::unique_ptr<Executable>()))
       .WillOnce(Return(std::unique_ptr<Executable>()))
       .WillOnce(Return(std::unique_ptr<Executable>()))
       .WillOnce(Return(std::unique_ptr<Executable>()));
@@ -492,7 +526,7 @@ TEST_F(AutotunerTest, AutotuneWithScratchBytesOptimization) {
       .WillOnce(Return(std::make_unique<InputBuffers>()));
   EXPECT_CALL(*profiler, Profile(_, _))
       .WillOnce(Return(ProfileResult({
-          /*duration=*/absl::Microseconds(5),
+          /*duration=*/absl::Microseconds(7),
           /*output_buffer=*/std::nullopt,
           /*scratch_bytes=*/100,
       })))
@@ -505,12 +539,17 @@ TEST_F(AutotunerTest, AutotuneWithScratchBytesOptimization) {
           /*duration=*/absl::Microseconds(2),
           /*output_buffer=*/std::nullopt,
           /*scratch_bytes=*/200,
+      })))
+      .WillOnce(Return(ProfileResult({
+          /*duration=*/absl::Microseconds(6),
+          /*output_buffer=*/std::nullopt,
+          /*scratch_bytes=*/100,
       })));
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend_1));
   config_.optimize_scratch_bytes = true;
-  config_.scratch_bytes_window_size_us = 2;
+  config_.scratch_bytes_window_size_us = 8;
   TF_ASSERT_OK_AND_ASSIGN(
       auto autotuner,
       Autotuner::Create(std::move(backends), std::move(profiler), config_,
@@ -604,11 +643,13 @@ TEST_F(AutotunerTest, ExcludeCublasConfig) {
   config_.exclude_cublas_config = true;
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.push_back(GetTestConfig("test_config_1"));
+  configs.push_back(GetTestConfig("test_config_2"));
 
   auto backend = std::make_unique<MockCodegenBackend>();
   EXPECT_CALL(*backend, GetSupportedConfigs(_))
       .WillOnce(Return(std::move(configs)));
   EXPECT_CALL(*backend, Compile(_, _))
+      .WillOnce(Return(std::unique_ptr<Executable>()))
       .WillOnce(Return(std::unique_ptr<Executable>()));
   EXPECT_CALL(*backend, name()).WillRepeatedly(Return("cublas"));
   std::vector<std::unique_ptr<CodegenBackend>> backends;
@@ -618,7 +659,8 @@ TEST_F(AutotunerTest, ExcludeCublasConfig) {
   EXPECT_CALL(*profiler, CreateInputBuffers(_))
       .WillOnce(Return(std::make_unique<InputBuffers>()));
   EXPECT_CALL(*profiler, Profile(_, _))
-      .WillOnce(Return(ProfileResult({absl::Seconds(1)})));
+      .WillOnce(Return(ProfileResult({absl::Seconds(1)})))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2)})));
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto autotuner, Autotuner::Create(std::move(backends),
@@ -649,11 +691,6 @@ TEST_F(AutotunerTest, SelectFirstConfig) {
   backends.push_back(std::move(backend));
 
   auto profiler = std::make_unique<MockProfiler>();
-  EXPECT_CALL(*profiler, CreateInputBuffers(_))
-      .WillOnce(Return(std::make_unique<InputBuffers>()));
-  EXPECT_CALL(*profiler, Profile(_, _))
-      .WillOnce(Return(ProfileResult({absl::Seconds(2)})))
-      .WillOnce(Return(ProfileResult({absl::Seconds(1)})));
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto autotuner, Autotuner::Create(std::move(backends),

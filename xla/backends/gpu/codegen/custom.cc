@@ -878,7 +878,7 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
   // For XLA FFI handlers we decode opaque backend config into attributes map
   // at IR emission time, so that we do not need to parse MLIR at run time.
   // For FFI handlers backend config must be a compatible MLIR dictionary.
-  CustomCallThunk::AttributesMap attributes;
+  ffi::AttributesMap attributes;
 
   // For information about this calling convention, see
   // xla/g3doc/custom_call.md.
@@ -1333,7 +1333,7 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
           Thunk::ThunkInfo::WithProfileAnnotation(
               instr, ir_emitter_context.GetNextThunkId()),
           /*async_events=*/async_events,
-          /*async_stream_kind=*/AsyncStreamKind::kCollective);
+          /*async_stream_kind=*/AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
       seq.emplace_back(std::move(collective_done_thunk));
     }
   } else {

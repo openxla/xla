@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/ffi/api/c_api.h"
+#include "xla/ffi/attribute_map.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/runtime/buffer_use.h"
@@ -869,6 +870,10 @@ class WhileCmd : public CommandBufferCmd {
   absl::Status Initialize(const Thunk::InitializeParams& params,
                           StateManager& state) override;
 
+  absl::Status Prepare(
+      const Thunk::PrepareParams& params,
+      Thunk::ResourceRequestsInterface& resource_requests) override;
+
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,
@@ -985,7 +990,7 @@ class CuDnnCmd : public TracedCommandBufferCmd {
 class CustomCallCmd : public CommandBufferCmd {
  public:
   using CustomCallTarget = CustomCallThunk::CustomCallTarget;
-  using AttributesMap = CustomCallThunk::AttributesMap;
+  using AttributesMap = ffi::AttributesMap;
 
   // This is a legacy custom call API that is discouraged, and will be
   // deprecated once XLA:FFI mechanism is ready.
@@ -1240,7 +1245,7 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
 
   bool requires_initialization() override;
 
-  bool support_loop_unroll() override { return false; }
+  bool support_loop_unroll() override { return true; }
 
   bool IsNestedCommandBuffer() const final { return true; }
 
@@ -1294,7 +1299,7 @@ class DynamicSliceCopyFusionCmd : public CommandBufferCmd {
 
   bool force_update() override { return offsets_.depends_on_loop; }
 
-  bool support_loop_unroll() override { return false; }
+  bool support_loop_unroll() override { return true; }
 
   BufferUseVector buffers() const override;
 

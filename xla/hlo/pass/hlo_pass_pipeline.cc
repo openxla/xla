@@ -53,14 +53,6 @@ void RecordPassStartMetadata(HloModule& module, const std::string& pass_name,
   TF_CHECK_OK(module.metadata()->set_current_pass_pipeline_name(pipeline_name));
 }
 
-void RecordPassStartMetadata(HloModuleGroup& module_group,
-                             const std::string& pass_name,
-                             const std::string& pipeline_name) {
-  for (HloModule* module : module_group.modules()) {
-    RecordPassStartMetadata(*module, pass_name, pipeline_name);
-  }
-}
-
 absl::Status AttemptRecordPassEndMetadata(HloModule& module,
                                           const std::string& pass_name,
                                           bool module_changed) {
@@ -187,6 +179,7 @@ absl::StatusOr<bool> HloPassPipeline::RunPassesInternal(
       hash_before = absl::HashOf(*hlo);
       VLOG(2) << "  Module hash " << hash_before.value();
     }
+    VLOG(2) << "  Number of instructions: " << hlo->instruction_count();
     tsl::profiler::TraceMe traceme(pass->name());
     if (!pass->IsPassPipeline()) {
       compilation_stats_->StartPass(pass_name);

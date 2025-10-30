@@ -93,6 +93,7 @@ bool DoesOpSupportType(HloOpcode opcode, PrimitiveType type) {
       return pu::IsFloatingPointType(type) || pu::IsComplexType(type);
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAtanh:
     case HloOpcode::kSinh:
     case HloOpcode::kAsin:
@@ -264,9 +265,8 @@ class TritonSupportTest : public TritonSupportTestBase {
     BlockLevelParameters block_level_parameters =
         FromOutputTileSizes(std::move(output_tile_sizes));
     const se::DeviceDescription dev_info =
-        std::holds_alternative<se::CudaComputeCapability>(cc)
-            ? TestGpuDeviceInfo::RTXA6000DeviceInfo(cc)
-            : TestGpuDeviceInfo::AMDMI210DeviceInfo();
+        cc.IsCuda() ? TestGpuDeviceInfo::RTXA6000DeviceInfo(cc)
+                    : TestGpuDeviceInfo::AMDMI210DeviceInfo();
     auto run_triton_codegen = [&]() {
       return TritonWrapper("test_fn", &ti.TritonFusion(), cc, dev_info,
                            block_level_parameters, &llvm_module_,
@@ -299,6 +299,20 @@ class TritonSupportTest : public TritonSupportTestBase {
         ::testing::Not(::testing::HasSubstr("Sanitizer:")));
   }
 };
+
+TEST_F(TritonSupportTest, IsTritonSupportedComputationSkipsRootTuple) {
+  const std::string kHlo = R"(
+  HloModule m
+  ENTRY main {
+    parameter_0 = f32[10] parameter(0)
+    abs = f32[10] abs(parameter_0)
+    negate = f32[10] negate(abs)
+    ROOT res = (f32[10], f32[10]) tuple(abs, negate)
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_TRUE(IsTritonSupportedComputation(
+      *module->entry_computation(), se::CudaComputeCapability::Hopper()));
+}
 
 class TritonSupportTestWithTypeAndOpcodeAndDeviceParam
     : public TritonSupportTest,
@@ -450,6 +464,7 @@ constexpr std::array kTestedOpsUnaryElementwise = {
     HloOpcode::kAcos,
     HloOpcode::kAcosh,
     HloOpcode::kAsin,
+    HloOpcode::kAsinh,
     HloOpcode::kAtanh,
     HloOpcode::kCbrt,
     HloOpcode::kCeil,
@@ -526,8 +541,7 @@ ENTRY triton_computation {
 
   bool crashes_on_failure = false;
   if (data_type_in != data_type_out && any_is(PrimitiveType::F8E4M3FN) &&
-      std::holds_alternative<se::CudaComputeCapability>(cc) &&
-      !std::get<se::CudaComputeCapability>(cc).IsAtLeastHopper()) {
+      cc.IsCuda() && !cc.cuda_compute_capability()->IsAtLeastHopper()) {
     crashes_on_failure |= any_is(F16) || any_is(BF16) || any_is(F32);
 
     // Crashes due to unsupported/unspecified rounding mode.
@@ -1853,7 +1867,7 @@ TEST_P(DotTypesTest, Dot) {
 
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
   if (input_type == F8E4M3FN || result_type == F8E4M3FN) {
-    if (auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&cc);
+    if (auto* cuda_cc = cc.cuda_compute_capability();
         cuda_cc && !cuda_cc->IsAtLeastHopper()) {
       // Hits llvm::report_fatal_error during Triton compilation.
       fail_mode = ExpectedFailMode::kFailOrCrash;

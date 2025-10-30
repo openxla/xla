@@ -23,13 +23,11 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_set.h"
-#include "absl/functional/overload.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -48,7 +46,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/platform/errors.h"
@@ -100,19 +97,16 @@ CommandBufferConfig GetCommandBufferConfig(
   };
 
   // Check if CUDA/ROCM driver supports required features.
-  auto erase_cuda = [&](const se::CudaComputeCapability& cuda_comp) {
+  if (device_info.gpu_compute_capability().IsCuda()) {
     if (std::min(device_info.runtime_version(), device_info.driver_version()) <
         se::SemanticVersion{12, 3, 0}) {
       erase(kRequireTracing);       // cuStreamBeginCaptureToGraph
       erase(kRequireConditionals);  // on-device control flow
     }
-  };
-  auto erase_rocm = [&](const se::RocmComputeCapability& rocm_comp) {
+  }
+  if (device_info.gpu_compute_capability().IsRocm()) {
     erase(kRequireConditionals);  // on-device control flow
-  };
-
-  std::visit(absl::Overload(erase_cuda, erase_rocm),
-             device_info.gpu_compute_capability());
+  }
 
   return config;
 }
@@ -209,7 +203,7 @@ bool IsConvertible(const CustomCallThunk& custom_call_thunk,
   absl::StatusOr<ffi::HandlerRegistration> registration =
       ffi::FindHandler(target_name, "gpu");
   return registration.ok()
-             ? ffi::IsCommandBufferCompatible(registration->traits)
+             ? ffi::IsCommandBufferCompatible(registration->metadata)
              : false;
 }
 

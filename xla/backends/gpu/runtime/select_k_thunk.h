@@ -17,15 +17,16 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_RUNTIME_SELECT_K_THUNK_H_
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
-#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/types.h"  // IWYU pragma: keep
 
@@ -62,6 +63,10 @@ class SelectKThunk : public Thunk {
   }
 
   absl::StatusOr<ThunkProto> ToProto() const override;
+
+  static absl::StatusOr<std::unique_ptr<SelectKThunk>> FromProto(
+      ThunkInfo thunk_info, const SelectKThunkProto& proto,
+      absl::Span<const BufferAllocation> buffer_allocations);
 
  private:
   std::uint32_t batch_size_;

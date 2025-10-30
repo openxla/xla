@@ -41,13 +41,10 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
         "//xla/service:shaped_buffer",
-        "//xla/stream_executor:device_description",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:proto_utils",
-        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
@@ -131,6 +128,9 @@ cc_library(
         ":autotuner_cache_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
     ],
 )
 

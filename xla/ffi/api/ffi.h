@@ -437,7 +437,7 @@ class CountDownPromise {
     assert(state_->count.load() >= count && "Invalid count down value");
 
     if (XLA_FFI_PREDICT_FALSE(!error.success())) {
-      const std::lock_guard<std::mutex> lock(state_->mutex);
+      std::lock_guard<std::mutex> lock(state_->mutex);  // NOLINT
       state_->is_error.store(true, std::memory_order_release);
       state_->error = error;
     }
@@ -448,7 +448,7 @@ class CountDownPromise {
       bool is_error = state_->is_error.load(std::memory_order_acquire);
       if (XLA_FFI_PREDICT_FALSE(is_error)) {
         auto take_error = [&] {
-          const std::lock_guard<std::mutex> lock(state_->mutex);
+          std::lock_guard<std::mutex> lock(state_->mutex);  // NOLINT
           return state_->error;
         };
         state_->promise.SetError(take_error());
@@ -476,7 +476,7 @@ class CountDownPromise {
     std::atomic<int64_t> count;
     std::atomic<bool> is_error;
 
-    std::mutex mutex;
+    std::mutex mutex;  // NOLINT
     Error error;
   };
 
@@ -748,6 +748,12 @@ using Token = BufferR0<DataType::TOKEN>;  // NOLINT
 namespace internal {
 
 template <DataType dtype, size_t rank>
+XLA_FFI_ATTRIBUTE_ALWAYS_INLINE bool IsaBuffer(XLA_FFI_Buffer* buf) {
+  return static_cast<DataType>(buf->dtype) == dtype &&
+         (rank == internal::kDynamicRank || buf->rank == rank);
+}
+
+template <DataType dtype, size_t rank>
 XLA_FFI_ATTRIBUTE_ALWAYS_INLINE std::optional<Buffer<dtype, rank>> DecodeBuffer(
     XLA_FFI_Buffer* buf, DiagnosticEngine& diagnostic) {
   if (auto buf_dtype = static_cast<DataType>(buf->dtype);
@@ -821,6 +827,11 @@ inline std::ostream& operator<<(std::ostream& os, const XLA_FFI_ArgType type) {
 template <>
 struct ArgDecoding<AnyBuffer> {
   XLA_FFI_ATTRIBUTE_ALWAYS_INLINE
+  static bool Isa(XLA_FFI_ArgType type, void* arg) {
+    return type == XLA_FFI_ArgType_BUFFER;
+  }
+
+  XLA_FFI_ATTRIBUTE_ALWAYS_INLINE
   static std::optional<AnyBuffer> Decode(XLA_FFI_ArgType type, void* arg,
                                          DiagnosticEngine& diagnostic) {
     if (XLA_FFI_PREDICT_FALSE(type != XLA_FFI_ArgType_BUFFER)) {
@@ -833,6 +844,13 @@ struct ArgDecoding<AnyBuffer> {
 
 template <DataType dtype, size_t rank>
 struct ArgDecoding<Buffer<dtype, rank>> {
+  XLA_FFI_ATTRIBUTE_ALWAYS_INLINE
+  static bool Isa(XLA_FFI_ArgType type, void* arg) {
+    return type == XLA_FFI_ArgType_BUFFER &&
+           internal::IsaBuffer<dtype, rank>(
+               reinterpret_cast<XLA_FFI_Buffer*>(arg));
+  }
+
   XLA_FFI_ATTRIBUTE_ALWAYS_INLINE
   static std::optional<Buffer<dtype, rank>> Decode(
       XLA_FFI_ArgType type, void* arg, DiagnosticEngine& diagnostic) {
@@ -896,6 +914,11 @@ inline std::ostream& operator<<(std::ostream& os, const XLA_FFI_RetType type) {
 template <>
 struct RetDecoding<AnyBuffer> {
   XLA_FFI_ATTRIBUTE_ALWAYS_INLINE
+  static bool Isa(XLA_FFI_RetType type, void* ret) {
+    return type == XLA_FFI_RetType_BUFFER;
+  }
+
+  XLA_FFI_ATTRIBUTE_ALWAYS_INLINE
   static std::optional<Result<AnyBuffer>> Decode(XLA_FFI_RetType type,
                                                  void* ret,
                                                  DiagnosticEngine& diagnostic) {
@@ -909,6 +932,13 @@ struct RetDecoding<AnyBuffer> {
 
 template <DataType dtype, size_t rank>
 struct RetDecoding<Buffer<dtype, rank>> {
+  XLA_FFI_ATTRIBUTE_ALWAYS_INLINE
+  static bool Isa(XLA_FFI_RetType type, void* ret) {
+    return type == XLA_FFI_RetType_BUFFER &&
+           internal::IsaBuffer<dtype, rank>(
+               reinterpret_cast<XLA_FFI_Buffer*>(ret));
+  }
+
   XLA_FFI_ATTRIBUTE_ALWAYS_INLINE
   static std::optional<Result<Buffer<dtype, rank>>> Decode(
       XLA_FFI_RetType type, void* ret, DiagnosticEngine& diagnostic) {
@@ -1001,6 +1031,11 @@ template <>
 struct AttrDecoding<std::string_view> {
   using Type = std::string_view;
 
+  XLA_FFI_ATTRIBUTE_ALWAYS_INLINE static bool Isa(XLA_FFI_AttrType type,
+                                                  void* attr) {
+    return type == XLA_FFI_AttrType_STRING;
+  }
+
   XLA_FFI_ATTRIBUTE_ALWAYS_INLINE static std::optional<std::string_view> Decode(
       XLA_FFI_AttrType type, void* attr, DiagnosticEngine& diagnostic) {
     if (XLA_FFI_PREDICT_FALSE(type != XLA_FFI_AttrType_STRING)) {
@@ -1047,8 +1082,8 @@ class Dictionary : public internal::DictionaryBase {
   template <typename T>
   ErrorOr<T> get(std::string_view name) const {
     DiagnosticEngine diagnostic;
-    std::optional<T> value = internal::DictionaryBase::get<T>(name, diagnostic);
-    if (!value.has_value()) {
+    auto value = internal::DictionaryBase::get<T>(name, diagnostic);
+    if (XLA_FFI_PREDICT_FALSE(!value.has_value())) {
       return Unexpected(Error::Internal(diagnostic.Result()));
     }
     return *value;
@@ -1076,6 +1111,38 @@ struct AttrDecoding<Dictionary> {
              << XLA_FFI_AttrType_DICTIONARY << " but got " << type;
     }
     return Dictionary(reinterpret_cast<XLA_FFI_Attrs*>(attr));
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Type-safe wrapper for accessing context.
+//===----------------------------------------------------------------------===//
+
+class Context : public internal::ContextBase {
+ public:
+  using internal::ContextBase::ContextBase;
+
+  template <typename T>
+  ErrorOr<typename CtxDecoding<T>::Type> get() const {
+    DiagnosticEngine diagnostic;
+    auto value = internal::ContextBase::get<T>(diagnostic);
+    if (XLA_FFI_PREDICT_FALSE(!value.has_value())) {
+      return Unexpected(Error::Internal(diagnostic.Result()));
+    }
+    return *value;
+  }
+};
+
+// Context decoding for catch-all `Context` type.
+template <>
+struct CtxDecoding<Context> {
+  using Type = Context;
+
+  XLA_FFI_ATTRIBUTE_ALWAYS_INLINE
+  static std::optional<Context> Decode(const XLA_FFI_Api* api,
+                                       XLA_FFI_ExecutionContext* ctx,
+                                       DiagnosticEngine&) {
+    return Context(api, ctx);
   }
 };
 
@@ -1433,65 +1500,33 @@ inline ThreadPool::ThreadPool(const XLA_FFI_Api* api,
     : api_(api), ctx_(ctx), diagnostic_(diagnostic) {}
 
 //===----------------------------------------------------------------------===//
-// Context decoding for FFI internals
-//===----------------------------------------------------------------------===//
-
-struct FfiApi {};
-struct FfiExecutionContext {};
-
-template <>
-struct CtxDecoding<FfiApi> {
-  using Type = const XLA_FFI_Api*;
-
-  XLA_FFI_ATTRIBUTE_ALWAYS_INLINE static std::optional<Type> Decode(
-      const XLA_FFI_Api* api, XLA_FFI_ExecutionContext* ctx,
-      DiagnosticEngine& diagnostic) {
-    return api;
-  }
-};
-
-template <>
-struct CtxDecoding<FfiExecutionContext> {
-  using Type = XLA_FFI_ExecutionContext*;
-
-  XLA_FFI_ATTRIBUTE_ALWAYS_INLINE static std::optional<Type> Decode(
-      const XLA_FFI_Api* api, XLA_FFI_ExecutionContext* ctx,
-      DiagnosticEngine& diagnostic) {
-    return ctx;
-  }
-};
-
-//===----------------------------------------------------------------------===//
 // Type Registration
 //===----------------------------------------------------------------------===//
 
 template <typename T>
-XLA_FFI_TypeInfo TypeInfo() {
-  return XLA_FFI_TypeInfo{[](void* ptr) { delete static_cast<T*>(ptr); }};
+inline constexpr XLA_FFI_TypeInfo MakeTypeInfo() {
+  return XLA_FFI_TypeInfo{
+      XLA_FFI_TypeInfo_STRUCT_SIZE,
+      /*extension_start=*/nullptr,
+      /*deleter=*/[](void* ptr) { delete static_cast<T*>(ptr); },
+  };
 }
 
-#define XLA_FFI_REGISTER_TYPE_WITH_INFO(API, NAME, TYPE_ID, TYPE_INFO) \
-  XLA_FFI_REGISTER_TYPE_WITH_INFO_(API, NAME, TYPE_ID, TYPE_INFO, __COUNTER__)
-#define XLA_FFI_REGISTER_TYPE_WITH_INFO_(API, NAME, TYPE_ID, TYPE_INFO, N) \
-  XLA_FFI_REGISTER_TYPE_WITH_INFO__(API, NAME, TYPE_ID, TYPE_INFO, N)
-#define XLA_FFI_REGISTER_TYPE_WITH_INFO__(API, NAME, TYPE_ID, TYPE_INFO, N)    \
+// TODO(ezhulenev): Remove this once everyone migrates to MakeTypeInfo.
+template <typename T>
+inline constexpr XLA_FFI_TypeInfo TypeInfo() {
+  return MakeTypeInfo<T>();
+}
+
+#define XLA_FFI_REGISTER_TYPE(API, NAME, TYPE_ID, TYPE_INFO) \
+  XLA_FFI_REGISTER_TYPE_(API, NAME, TYPE_ID, TYPE_INFO, __COUNTER__)
+#define XLA_FFI_REGISTER_TYPE_(API, NAME, TYPE_ID, TYPE_INFO, N) \
+  XLA_FFI_REGISTER_TYPE__(API, NAME, TYPE_ID, TYPE_INFO, N)
+#define XLA_FFI_REGISTER_TYPE__(API, NAME, TYPE_ID, TYPE_INFO, N)              \
   XLA_FFI_ATTRIBUTE_UNUSED static const XLA_FFI_Error*                         \
       xla_ffi_type_##N##_registered_ = [] {                                    \
         return ::xla::ffi::Ffi::RegisterTypeId(API, NAME, TYPE_ID, TYPE_INFO); \
       }()
-
-#define XLA_FFI_REGISTER_TYPE_X(x, API, NAME, TYPE_ID, TYPE_INFO, FUNC, ...) \
-  FUNC
-
-// Registers external type with XLA runtime and assigns it a unique type id.
-//
-// This is a trick to define macro with optional parameters.
-// Source: https://stackoverflow.com/a/8814003
-#define XLA_FFI_REGISTER_TYPE(API, NAME, TYPE_ID, ...)                  \
-  XLA_FFI_REGISTER_TYPE_X(                                              \
-      , API, NAME, TYPE_ID, ##__VA_ARGS__,                              \
-      XLA_FFI_REGISTER_TYPE_WITH_INFO(API, NAME, TYPE_ID, __VA_ARGS__), \
-      XLA_FFI_REGISTER_TYPE_WITH_INFO(API, NAME, TYPE_ID, {nullptr}))
 
 //===----------------------------------------------------------------------===//
 // UserData

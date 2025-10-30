@@ -1540,8 +1540,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
         });
   }
 
-  auto* cpu_executable =
-      tsl::down_cast<cpu::CpuExecutable*>(cpu_executable_.get());
+  auto cpu_executable =
+      tsl::down_pointer_cast<cpu::CpuExecutable>(cpu_executable_);
   // `buffer_alloc` and `buffer_alloc_and_copy` are used to do real memory
   // allocation and copy work.
   BufferAlloc buffer_alloc;
@@ -1676,6 +1676,12 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
                             cpu::Thunk::XnnParams::Create(&run_options));
       }
 
+      std::optional<cpu::Thunk::YnnParams> ynn_params;
+      if (cpu_executable->has_ynn_fusions()) {
+        TF_ASSIGN_OR_RETURN(ynn_params,
+                            cpu::Thunk::YnnParams::Create(&run_options));
+      }
+
       cpu::ThreadPoolTaskRunner task_runner(
           run_options.intra_op_thread_pool()->getPool());
 
@@ -1688,6 +1694,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
           &collective_params,
           &custom_call_execute_params,
           xnn_params ? &*xnn_params : nullptr,
+          ynn_params ? &*ynn_params : nullptr,
           run_options.run_id().ToInt(),
           run_options.device_ordinal(),
       };
@@ -1748,7 +1755,6 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
          buffer_alloc_and_copy = std::move(buffer_alloc_and_copy),
          buffer_table = std::move(buffer_table),
          run_options = std::move(run_options),
-         cpu_executable_copy = cpu_executable_,
          device_assignment = std::move(device_assignment),
          cpu_run_options = std::move(cpu_run_options),
          compute_reservation = std::move(compute_reservation),
@@ -1814,6 +1820,12 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
               xnn_params = cpu::Thunk::XnnParams::Create(&run_options);
             }
 
+            absl::StatusOr<std::optional<cpu::Thunk::YnnParams>> ynn_params(
+                std::nullopt);
+            if (cpu_executable->has_ynn_fusions()) {
+              ynn_params = cpu::Thunk::YnnParams::Create(&run_options);
+            }
+
             cpu::ThreadPoolTaskRunner task_runner(
                 run_options.intra_op_thread_pool()->getPool());
 
@@ -1827,6 +1839,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
                   &*collective_params,
                   &*custom_call_params,
                   *xnn_params ? &**xnn_params : nullptr,
+                  *ynn_params ? &**ynn_params : nullptr,
                   run_options.run_id().ToInt(),
                   run_options.device_ordinal(),
               };

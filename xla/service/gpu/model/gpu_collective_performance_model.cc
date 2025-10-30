@@ -112,9 +112,6 @@ struct CudaBandwidthSettings {
   static constexpr double kSm80NvlinkBandwidth = 20.0;
   static constexpr double kSm90NvlinkBandwidth = 20.0;
 
-  // PCIE bandwidth for PCI Gen3 x16
-  static constexpr double kPciBandwidth = 12.0;
-
   // Discount factor for ring algorithm
   static constexpr double kRingAlgorithmDiscountFactor = 0.92;
 
@@ -210,9 +207,6 @@ struct RocmBandwidthSettings {
   static constexpr double kMi100InfinityFabricBandwidth = 37.5;
   static constexpr double kMi200InfinityFabricBandwidth = 75.0;
   static constexpr double kMi300InfinityFabricBandwidth = 112.0;
-
-  // PCIe bandwidth for PCI Gen4 x16 (approximate)
-  static constexpr double kPciBandwidth = 32.0;
 
   // Discount factor for ring algorithm (based on ROCm NCCL implementation)
   static constexpr double kRingAlgorithmDiscountFactor = 0.90;
@@ -321,10 +315,11 @@ absl::Duration ComputeAllreduceTimeImpl(
       std::max(num_devices, GetMinNumberOfChannels(CollectiveAlgo::RING));
   int64_t num_channels =
       std::max(min_nchannels, GetNcclMaxNumChannels(CollectiveAlgo::RING));
-  int default_threads =
-      (bw_intra_node * num_channels <= bandwidth_settings.kPciBandwidth)
-          ? 256
-          : bandwidth_settings.kLL128NumThreads;
+  int64_t pcie_bandwidth_gbps =
+      gpu_device_info.pcie_bandwidth() / 1024 / 1024 / 1024;
+  int default_threads = (bw_intra_node * num_channels <= pcie_bandwidth_gbps)
+                            ? 256
+                            : bandwidth_settings.kLL128NumThreads;
 
   int warp_size = gpu_device_info.threads_per_warp();
   int num_threads =
@@ -380,87 +375,25 @@ RocmBandwidthSettings CreateSettings(
 
 }  // namespace
 
-/*static*/ bool GpuPerformanceWithCollectiveModel::InitNvml() {
-#if GOOGLE_CUDA && (defined(PLATFORM_POSIX) || defined(PLATFORM_GOOGLE))
-  void* libhandle = dlopen("libnvidia-ml.so.1", RTLD_NOW);
-  CHECK(libhandle != nullptr) << "Failed to open libnvidia-ml.so.1";
-
-  struct SymbolEntry {
-    void** functor;
-    char const* name;
-  };
-
-  std::vector<SymbolEntry> symbols = {
-      {(void**)&xla_nvmlInit, "nvmlInit_v2"},
-      {(void**)&xla_nvmlShutdown, "nvmlShutdown"},
-      {(void**)&xla_nvmlDeviceGetHandleByIndex, "nvmlDeviceGetHandleByIndex"},
-      {(void**)&xla_nvmlDeviceGetNvLinkCapability,
-       "nvmlDeviceGetNvLinkCapability"},
-      {(void**)&xla_nvmlSystemGetNVMLVersion, "nvmlSystemGetNVMLVersion"},
-  };
-
-#if GOOGLE_CUDA && CUDA_VERSION >= 12040 && !defined(PLATFORM_GOOGLE)
-  // Some hosts might still have older driver version(b/414617899).
-  symbols.push_back({(void**)&xla_nvmlDeviceGetHandleByPciBusId_v2,
-                     "nvmlDeviceGetHandleByPciBusId_v2"});
-  symbols.push_back({(void**)&xla_nvmlDeviceGetGpuFabricInfoV,
-                     "nvmlDeviceGetGpuFabricInfoV"});
-#endif  // CUDA_VERSION >= 12040
-  for (SymbolEntry se : symbols) {
-    *se.functor = dlsym(libhandle, se.name);
-    if (*se.functor == nullptr) {
-      const char* dlsym_error = dlerror();
-      if (dlsym_error) {
-        VLOG(0) << "Failed to load symbol " << se.name << ": " << dlsym_error;
-        VLOG(0) << "This is likely caused by insufficient CUDA driver version. "
-                   "Please upgrade CUDA driver to 550 or higher.";
-      }
-    }
-  }
-  nvmlReturn_t init_result = xla_nvmlInit();
-  return init_result == NVML_SUCCESS;
-#elif TENSORFLOW_USE_ROCM
-  return true;
-#else
-  return false;
-#endif  // GOOGLE_CUDA
-}
-
-/*static*/ bool GpuPerformanceWithCollectiveModel::ShutdownNvml() {
-#if GOOGLE_CUDA
-  nvmlReturn_t shutdown_result = xla_nvmlShutdown();
-  return shutdown_result == NVML_SUCCESS;
-#elif TENSORFLOW_USE_ROCM
-  return true;
-#else
-  return false;
-#endif  // GOOGLE_CUDA
-}
-
 /*static*/ uint32_t
 GpuPerformanceWithCollectiveModel::CheckIfNvlinkSupportsP2P() {
 #if GOOGLE_CUDA
   // We will use nvml library to detect nvlink capability
   // to see if it supports p2p communication.
-  // We first load libnvidia-ml.so and assign symbols to function pointers
-  // to avoid linking errors.
   // Then gpu 0 will be used to query for nvlink capability, note that
   // we only look at link 0 of gpu 0 since all other links are assumed
   // to have the same capability.
-  CHECK(InitNvml()) << "NVML init failed.";
   nvmlDevice_t nvml_device;
-  nvmlReturn_t get_device_result =
-      xla_nvmlDeviceGetHandleByIndex(0, &nvml_device);
+  nvmlReturn_t get_device_result = nvmlDeviceGetHandleByIndex(0, &nvml_device);
   CHECK(get_device_result == NVML_SUCCESS);
 
   uint32_t supported_p2p = 0;
 
-  nvmlReturn_t nvlink_cap_result = xla_nvmlDeviceGetNvLinkCapability(
+  nvmlReturn_t nvlink_cap_result = nvmlDeviceGetNvLinkCapability(
       nvml_device, /*nvlink link number*/ 0, NVML_NVLINK_CAP_P2P_SUPPORTED,
       &supported_p2p);
   CHECK(nvlink_cap_result == NVML_SUCCESS ||
         nvlink_cap_result == NVML_ERROR_NOT_SUPPORTED);
-  CHECK(ShutdownNvml()) << "NVML shutdown failed.";
   return supported_p2p;
 #else
   return 0;
@@ -473,11 +406,15 @@ GpuPerformanceWithCollectiveModel::ComputeAllreduceTime(
     const se::DeviceDescription& gpu_device_info) {
   // We use nccl group call to launch multiple allreduces so launch overhead
   // only occurs once.
-  const auto visitor = [&](const auto& cc) {
+  if (auto ptr =
+          gpu_device_info.gpu_compute_capability().cuda_compute_capability()) {
     return ComputeAllreduceTimeImpl(instr, cost_analysis, gpu_device_info,
-                                    CreateSettings(cc));
-  };
-  return std::visit(visitor, gpu_device_info.gpu_compute_capability());
+                                    CreateSettings(*ptr));
+  }
+  return ComputeAllreduceTimeImpl(
+      instr, cost_analysis, gpu_device_info,
+      CreateSettings(
+          *gpu_device_info.gpu_compute_capability().rocm_compute_capability()));
 }
 
 /*static*/ absl::Duration

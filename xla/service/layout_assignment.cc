@@ -309,7 +309,7 @@ absl::Status LayoutAssignment::SetBufferLayout(const Layout& layout,
           << buffer_constraint->ToString();
   PushAddedConstraints(buffer_constraint.get());
   const HloInstruction* instruction = buffer.instruction();
-  if (dynamic_cast<const HloCallableInstruction*>(instruction) != nullptr) {
+  if (HloCallableInstruction::ClassOf(instruction)) {
     // Check and propagate via output-operand aliasing
     VLOG(3) << "Propagating aliasing:" << instruction->ToString() << "\n";
     for (const std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>&
@@ -2861,6 +2861,7 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAdd:
     case HloOpcode::kAddDependency:
     case HloOpcode::kAnd:

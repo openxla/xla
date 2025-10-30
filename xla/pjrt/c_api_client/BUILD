@@ -20,7 +20,7 @@ package_group(
         "//third_party/gxlang/...",
         "//third_party/openxla_pjrt_plugin/...",
         "//third_party/py/jax/...",
-        "//third_party/torch_tpu/...",
+        "//third_party/py/torch_tpu/...",
     ],
 )
 
@@ -55,7 +55,6 @@ cc_library(
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_executable",
-        "//xla/pjrt:pjrt_future",
         "//xla/pjrt:pjrt_layout",
         "//xla/pjrt:string_utils",
         "//xla/pjrt/c:pjrt_c_api_ffi_extension_hdrs",

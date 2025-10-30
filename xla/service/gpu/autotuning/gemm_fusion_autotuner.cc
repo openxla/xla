@@ -41,9 +41,11 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "google/protobuf/text_format.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/gpu/runtime/buffer_comparator.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -74,7 +76,6 @@ limitations under the License.
 #include "xla/service/gpu/kernels/custom_kernel_fusion.h"
 #include "xla/service/gpu/kernels/custom_kernel_fusion_pattern.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/gpu/split_k_gemm_rewriter.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/transforms/custom_kernel_fusion_rewriter.h"
@@ -778,6 +779,12 @@ bool GemmFusionAutotunerImpl::IsAutotuningEnabled() const {
          !debug_options_.xla_gpu_deterministic_ops();
 }
 
+bool GemmFusionAutotunerImpl::IsWarpSpecializationAvailable() const {
+  auto compute_capability = config_.GetGpuComputeCapability();
+  return compute_capability.IsCuda() &&
+         compute_capability.cuda_compute_capability()->IsAtLeastBlackwell();
+}
+
 static std::vector<BackendConfig> GenerateCustomKernelFusionConfigs(
     const HloFusionInstruction& fusion,
     se::DeviceDescription device_description) {
@@ -973,6 +980,16 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
   bool autotune_tma = debug_options_.xla_gpu_experimental_enable_triton_tma() &&
                       stream_executor::gpu::IsTmaAvailableForDevice(
                           config_.GetDeviceDescription());
+  bool autotune_warp_specialization =
+      debug_options_.xla_gpu_experimental_enable_triton_warp_specialization() &&
+      IsWarpSpecializationAvailable();
+  if (autotune_warp_specialization && !autotune_tma) {
+    return absl::InvalidArgumentError(
+        "Warp specialization is requested, but TMA is not enabled. If you wish "
+        "to enable warp specialization, set both "
+        "`xla_gpu_experimental_enable_triton_tma` and "
+        "`xla_gpu_experimental_enable_triton_warp_specialization` to true.");
+  }
   TritonDotFusionSearchSpace search_space(config_.GetDeviceDescription(), &dot);
   VLOG(1) << "Generating configs from search space: "
           << search_space.ToString();
@@ -982,7 +999,8 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
       /*force_contracting_split=*/autotune_contracting_split
           ? std::nullopt
           : std::make_optional(1),
-      /*autotune_tma=*/autotune_tma);
+      /*autotune_tma=*/autotune_tma,
+      /*autotune_warp_specialization=*/autotune_warp_specialization);
 
   // TODO(b/421858850): Restricting configs for dots from broadcasts is a
   // temporary solution. We should remove this once we have a fix for the error.
@@ -1067,8 +1085,7 @@ GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
       if (code == absl::StatusCode::kInternal ||
           code == absl::StatusCode::kFailedPrecondition ||
           code == absl::StatusCode::kUnimplemented ||
-          (debug_options_.xla_gpu_exhaustive_tiling_search() &&
-           code == absl::StatusCode::kInvalidArgument)) {
+          code == absl::StatusCode::kInvalidArgument) {
         VLOG(5) << "Compilation failed with status " << executable_or.status()
                 << " that is ignored";
         return nullptr;

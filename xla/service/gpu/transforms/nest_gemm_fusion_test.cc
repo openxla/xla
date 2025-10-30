@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -75,7 +75,7 @@ class NestGemmFusionTest : public HloHardwareIndependentTestBase {
  protected:
   const se::DeviceDescription device_description_{
       TestGpuDeviceInfo::RTXA6000DeviceInfo(
-          se::CudaComputeCapability::Ampere())};
+          se::GpuComputeCapability{se::CudaComputeCapability::Ampere()})};
   mlir::MLIRContext mlir_context_;
   SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 
@@ -192,7 +192,8 @@ ENTRY e {
               GmockMatch(match::Concatenate(match::Fusion(), match::Fusion())));
 }
 
-TEST_F(NestGemmFusionTest, UnsupportedComputationsAreNotChanged) {
+// TODO(b/393299275): update test to use a unsupported operation.
+TEST_F(NestGemmFusionTest, DISABLED_UnsupportedComputationsAreNotChanged) {
   // Fusions other than kTritonNestedGemmFusionKind are not supported.
   // In this case pass should only change the supported fusions.
   absl::string_view hlo = R"(

@@ -315,8 +315,9 @@ class alignas(kInstructionTypeMask + 1) HloInstruction {
   // Creates an instruction from the given proto. Arguments:
   //
   //   proto: the proto to convert from.
-  //   instruction_map: a map from local instruction id to HloInstruction*. This
-  //     map must contain all operands of the newly constructed instruction.
+  //   instruction_map: a map from local instruction id (as defined in the
+  //     proto) to HloInstruction*. This map must contain all operands of the
+  //     newly constructed instruction.
   //   computation_map: a map from computation id to HloComputation*. This map
   //     must contain all computations which the newly constructed instruction
   //     calls.
@@ -1887,6 +1888,13 @@ class alignas(kInstructionTypeMask + 1) HloInstruction {
     return static_cast<int32_t>(unique_id & 0xFFFFFFFF);
   }
 
+  // Returns the parent ID of the instruction by extracting it from the more
+  // general unique ID. The method does not differentiate between a parentless
+  // unique id and a unique id with a parent id of 0.
+  static int32_t CalculateParentId(int64_t unique_id) {
+    return static_cast<int32_t>(unique_id >> 32);
+  }
+
   bool has_backend_config() const { return !backend_config_.empty(); }
 
   void clear_backend_config() { backend_config_ = BackendConfigWrapper(); }
@@ -2027,6 +2035,16 @@ class alignas(kInstructionTypeMask + 1) HloInstruction {
     ConfigProto proto;
     TF_RETURN_IF_ERROR(backend_config_.GetProto(&proto));
     return proto;
+  }
+
+  // Applies a function `fn` to the underlying backend config proto. The
+  // function receives a mutable pointer to a proto of type `ConfigProto`.
+  //
+  // If the proto is not already parsed, it will return an error.
+  template <typename ConfigProto, EnableIfProto<ConfigProto>* = nullptr>
+  absl::Status MutateBackendConfig(
+      const std::function<absl::Status(ConfigProto*)>& fn) {
+    return backend_config_.ApplyFnOnProto(fn);
   }
 
   absl::Status set_backend_config(const tsl::protobuf::Message& proto) {

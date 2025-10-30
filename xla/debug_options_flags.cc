@@ -274,6 +274,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_detailed_logging(true);
   opts.set_xla_enable_dumping(true);
 
+  opts.set_xla_gpu_enable_dynamic_slice_fusion(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_shared_constants(true);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
@@ -325,6 +326,10 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   // default value of the command line flag in `MakeDebugOptionsFlags`.
   opts.add_xla_gpu_unsupported_generic_triton_emitter_features(
       DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
+  opts.add_xla_gpu_unsupported_generic_triton_emitter_features(
+      DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_GEMM_SHAPES);
+  opts.add_xla_gpu_unsupported_generic_triton_emitter_features(
+      DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_OPS_IN_GEMM_FUSION);
   opts.set_xla_gpu_unsupported_enable_triton_multi_output_fusion(true);
   opts.set_xla_gpu_enable_cudnn_int8x32_convolution_reordering(true);
   opts.set_xla_gpu_triton_gemm_any(true);
@@ -384,6 +389,14 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   // on V100 and H100 GPUs. See openxla/xla #9319 for details.
   const int64_t kDefaultMinGemmRewriteSize = 100;
   opts.set_xla_gpu_gemm_rewrite_size_threshold(kDefaultMinGemmRewriteSize);
+
+#ifdef HAS_SUPPORT_FOR_EMBEDDED_LIB_DEVICE
+  opts.set_xla_gpu_use_embeded_device_lib(true);
+#endif
+
+#ifdef HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY
+  opts.set_xla_gpu_use_inprocess_lld(true);
+#endif
 
   opts.set_xla_gpu_use_memcpy_local_p2p(false);
 
@@ -1096,13 +1109,28 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::LibraryFusionType_Parse,
           debug_options->mutable_xla_cpu_experimental_xnn_fusion_type()),
       "",
-      "Comma-separated list of XNN fusion types to be enabled.; "
+      "Comma-separated list of XNN fusion types to be enabled; "
       "no whitespace around commas. Two ways to pass values:\n"
       "  1. Exact type names. This overwrites the default setting.\n"
       "  2. '+' or '-' prefix: This adds or removes a fusion type "
       "from the default list. Cannot be mixed with the overwrite "
       "mode. Every item must have the sign prefix.\n"
       "Available fusion types: dot, eltwise, and reduce.\n"
+      "The default list is currently empty."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_experimental_ynn_fusion_type",
+      SetterForRepeatedEnum<DebugOptions::LibraryFusionType>(
+          "xla_cpu_experimental_ynn_fusion_type",
+          /*enum_prefix=*/"LIBRARY_FUSION_TYPE_",
+          &DebugOptions::LibraryFusionType_Parse,
+          debug_options->mutable_xla_cpu_experimental_ynn_fusion_type()),
+      "",
+      "Comma-separated list of YNN fusion types to be enabled; "
+      "no whitespace around commas. Two ways to pass values:\n"
+      "  1. Exact type names. This overwrites the default setting.\n"
+      "  2. '+' or '-' prefix: This adds or removes a fusion type "
+      "from the default list. Cannot be mixed with the overwrite "
+      "mode. Every item must have the sign prefix.\n"
       "The default list is currently empty."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_experimental_xnn_graph_fusion_mode",
@@ -2587,6 +2615,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_keep_shardings_after_spmd),
       debug_options->xla_keep_shardings_after_spmd(),
       "If true, keep shardings after SPMD."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_checksum_tracing_on_thunks",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_checksum_tracing_on_thunks),
+      debug_options->xla_gpu_experimental_enable_checksum_tracing_on_thunks(),
+      "Enables an experimental feature to record checksums of selected thunk "
+      "inputs/outputs."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

@@ -9,10 +9,10 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "3ea1041deb46cf4f927dd994e32acd8c436f7997b12a9558e85dee6a5a89e35c",
-    strip_prefix = "rules_ml_toolchain-0fccc2447ef3bec3d75046a60a1895f053424727",
+    sha256 = "5a9586022d8e9bdf7d5a7a36ec0232dc3a795ae6344ee3a3625b9fd290436669",
+    strip_prefix = "rules_ml_toolchain-08019214a1acf479496692743366faa6fdea9e61",
     urls = [
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/0fccc2447ef3bec3d75046a60a1895f053424727.tar.gz",
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/08019214a1acf479496692743366faa6fdea9e61.tar.gz",
     ],
 )
 
@@ -152,3 +152,8 @@ load(
 nvshmem_redist_init_repository(
     nvshmem_redistributions = NVSHMEM_REDISTRIBUTIONS,
 )
+
+# This is used for building nightly PJRT wheels.
+load("//build_tools/pjrt_wheels:nightly.bzl", "nightly_timestamp_repo")
+
+nightly_timestamp_repo(name = "nightly_timestamp")

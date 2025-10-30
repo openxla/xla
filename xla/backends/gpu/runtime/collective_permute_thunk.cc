@@ -34,7 +34,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
-#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -43,9 +42,9 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/executable_run_options.h"
+#include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -71,7 +70,8 @@ absl::StatusOr<const int64_t> GetCurrentId(
       const DeviceAssignment::LogicalID current_logical_id,
       collective_params->device_assn->LogicalIdForDevice(global_device_id));
   const int64_t current_id =
-      config.config.group_mode == CollectiveOpGroupMode::kCrossReplica
+      config.config.group_mode ==
+              CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA
           ? current_logical_id.replica_id
           : current_logical_id.computation_id;
   return current_id;
@@ -129,7 +129,8 @@ CollectivePermuteStartThunk::CollectivePermuteStartThunk(
   // With a collective permute, all execution instances together form one
   // replica group.
   const int64_t num_participants =
-      config.group_mode == CollectiveOpGroupMode::kCrossReplica
+      config.group_mode ==
+              CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA
           ? replica_count
           : partition_count;
   config.replica_groups.emplace_back();

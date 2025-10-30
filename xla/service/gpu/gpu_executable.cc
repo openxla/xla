@@ -45,8 +45,9 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
-#include "xla/backends/gpu/runtime/thunk_checksum_tracing_pass.h"
+#include "xla/backends/gpu/runtime/thunk_buffer_debug_pass.h"
 #include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
+#include "xla/core/collectives/clique_key.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -176,7 +177,7 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
                                    ThunkPassBufferAllocator& allocator) {
   ThunkPassPipeline pipeline("thunk-passes");
   if (debug_options.xla_gpu_experimental_enable_checksum_tracing_on_thunks()) {
-    pipeline.AddPass(std::make_unique<ThunkChecksumTracingPass>());
+    pipeline.AddPass(std::make_unique<ThunkBufferDebugPass>());
   }
   if (debug_options.xla_gpu_experimental_enable_command_buffer_on_thunks()) {
     pipeline.AddPass(std::make_unique<CommandBufferConversionPass>(
@@ -248,8 +249,7 @@ GpuExecutable::GpuExecutable(
       constants_(std::move(params.constants)),
       output_info_(std::move(params.output_info)),
       enable_debug_info_manager_(params.enable_debug_info_manager) {
-  if (std::holds_alternative<stream_executor::RocmComputeCapability>(
-          gpu_version_)) {
+  if (gpu_version_.IsRocm()) {
     // ROCm uses hsaco hashes to distinguish between modules.
     // Bad things happen if multiple modules with identical code are loaded.
     binary_.resize(binary_.size() + 16);
@@ -278,18 +278,15 @@ absl::Status GpuExecutable::CheckCompatibilityWithServiceExecutableRunOptions(
     auto cc = main_stream->GetRocmComputeCapability();
     std::string stream_arch = cc.gcn_arch_name();
     std::string gpu_exec_arch =
-        std::get<se::RocmComputeCapability>(gpu_version_).gcn_arch_name();
+        gpu_version_.rocm_compute_capability()->gcn_arch_name();
     TF_RET_CHECK(stream_arch == gpu_exec_arch)
         << "AMDGPU GCN ISA version mismatch; expected {" << gpu_exec_arch
         << ", but was " << stream_arch;
   } else if (platform_id == stream_executor::cuda::kCudaPlatformId) {
-    se::GpuComputeCapability cc = main_stream->GetCudaComputeCapability();
-    TF_RET_CHECK(std::get<se::CudaComputeCapability>(cc) ==
-                 std::get<se::CudaComputeCapability>(gpu_version_))
-        << "Compute capability mismatch; expected {"
-        << std::get<se::CudaComputeCapability>(gpu_version_).ToString()
-        << "}, but was {" << std::get<se::CudaComputeCapability>(cc).ToString()
-        << "}";
+    se::CudaComputeCapability cc = main_stream->GetCudaComputeCapability();
+    TF_RET_CHECK(cc == *gpu_version_.cuda_compute_capability())
+        << "Compute capability mismatch; expected {" << gpu_version_.ToString()
+        << "}, but was {" << cc.ToString() << "}";
   } else if (platform_id == stream_executor::sycl::kSyclPlatformId) {
     // TODO: Add check.
   } else {
@@ -421,6 +418,14 @@ absl::Status ExecuteThunksImpl(
     tsl::profiler::TraceMe trace_prepare("Thunks::Prepare");
     TF_RETURN_IF_ERROR(
         thunk_sequence.Prepare(prepare_params, resource_requests));
+  }
+
+  std::vector<std::unique_ptr<CliqueKey>>* clique_keys =
+      run_options->run_options().clique_keys();
+  if (clique_keys != nullptr) {
+    for (const GpuCliqueKey& clique_key : resource_requests.CliqueKeys()) {
+      clique_keys->push_back(std::make_unique<GpuCliqueKey>(clique_key));
+    }
   }
 
   // Acquire collective cliques requested by thunks.

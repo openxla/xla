@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/time/time.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -36,7 +37,6 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/flag_utils.h"
 #include "xla/service/gpu/model/collective_interpolator.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/gpu_performance_model.h"
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
@@ -215,13 +215,13 @@ absl::StatusOr<absl::Duration> DispatchEstimation(
   int64_t partition_size = GetPartitionSize(instr, sol_flags);
 
   switch (comm) {
-    case GPUCommunicationType::RAIL_ALIGNED: {
+    case GPUCommunicationType::MULTI_HOST_WORLD_LEVEL: {
       return DCNCollectiveDuration(
           num_groups_and_devices->second / partition_size,
           /*num_communicators=*/num_groups_and_devices->first, instr,
           gpu_device_info, sol_flags, analysis, symbolic_expr_context);
     }
-    case GPUCommunicationType::NON_RAIL_ALIGNED: {
+    case GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL: {
       return DCNCollectiveDuration(
           num_groups_and_devices->second,
           /*num_communicators=*/num_groups_and_devices->first, instr,

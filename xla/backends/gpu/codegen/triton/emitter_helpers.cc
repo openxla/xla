@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/Triton/IR/Types.h"
 
 namespace xla::gpu::triton {
 
@@ -235,6 +236,11 @@ Value Cast(EmitterLocOpBuilder& b, Value value, Type dst_element_ty) {
       }
       return b.create<ma::ExtSIOp>(dst_ty, value);
     }
+    // int => bool is always value != 0.
+    if (dst_element_ty.isInteger(1)) {
+      return b.create<ma::CmpIOp>(ma::CmpIPredicate::ne, value,
+                                  ZerosLike(b, value));
+    }
     return b.create<ma::TruncIOp>(dst_ty, value);
   }
   // int => float
@@ -360,13 +366,6 @@ Value Minimum(EmitterLocOpBuilder& b, const se::DeviceDescription& device_info,
       values[0], values[1]);
 }
 
-ScalarOrTensor Splat(EmitterLocOpBuilder& b, ScalarOrTensor value,
-                     ArrayRef<int64_t> shape) {
-  CHECK(!shape.empty());
-  auto type = mlir::RankedTensorType::get(shape, value.getType());
-  return ScalarOrTensor(b.create<mt::SplatOp>(type, value.UnwrapUnsafe()));
-}
-
 bool IsSupportedElementwiseLibdeviceFunction(const HloInstruction& hlo) {
   auto dev_fn_id = GetTargetDeviceFunctionID(hlo.opcode());
   if (!dev_fn_id.has_value()) {
@@ -394,8 +393,7 @@ absl::StatusOr<Value> EmitElementwiseLibdeviceFunction(
         absl::StrCat("Unsupported elementwise operation ", hlo.ToString()));
   }
   llvm::Triple triple("nvptx64-unknown-unknown");
-  if (std::holds_alternative<se::RocmComputeCapability>(
-          device_info.gpu_compute_capability())) {
+  if (device_info.gpu_compute_capability().IsRocm()) {
     triple.setTriple("amdgcn-unknown-unknown");
   }
   llvm::SmallVector<Value, 2> casted_inputs;
@@ -621,6 +619,10 @@ absl::StatusOr<stream_executor::gpu::TmaMetadata> ExtractTmaMetadata(
     }
   }
   return tma_metadata;
+}
+
+mt::PointerType GetGlobalPointerType(mlir::Type element_type) {
+  return mlir::cast<mt::PointerType>(mt::getPointerTypeToElement(element_type));
 }
 
 }  // namespace xla::gpu::triton

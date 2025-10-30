@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -133,6 +132,14 @@ void CollectiveGroupThunk::ForAllThunksMutable(
   fn(this);
   for (const std::unique_ptr<Thunk>& thunk : thunks_) {
     thunk->ForAllThunksMutable(fn);
+  }
+}
+
+void CollectiveGroupThunk::TransformAllNestedThunks(
+    absl::FunctionRef<std::unique_ptr<Thunk>(std::unique_ptr<Thunk>)> fn) {
+  for (std::unique_ptr<Thunk>& thunk : thunks_) {
+    thunk->TransformAllNestedThunks(fn);
+    thunk = fn(std::move(thunk));
   }
 }
 

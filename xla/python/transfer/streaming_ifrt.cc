@@ -30,9 +30,9 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/future.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/python/transfer/streaming.h"
 #include "xla/python/transfer/transfer_socket.pb.h"
@@ -116,7 +116,6 @@ PremappedCopierState::PremappedCopierState(
       max_num_parallel_copies_(max_num_parallel_copies),
       xfer_size_(xfer_size) {
   max_copies_ = scratch->size() / xfer_size_;
-  max_copies_ = std::min(max_copies_, size_t(8));
   available_copy_offsets_.reserve(max_copies_);
   for (size_t i = 0; i < max_copies_; ++i) {
     available_copy_offsets_.push_back(reinterpret_cast<char*>(scratch->data()) +
@@ -180,7 +179,9 @@ void PremappedCopierState::StartWorkUnlocked(const WorkList& work_list) {
             --num_parallel_copies_;
             work_item->is_ready = true;
             work_item->result_status = s;
-            FlushReadyWorkItemsInOrder();
+            if (!currently_flushing_) {
+              FlushReadyWorkItemsInOrder();
+            }
             work_list2 = FindWorkLocked();
           }
           StartWorkUnlocked(work_list2);
@@ -194,14 +195,20 @@ void PremappedCopierState::FlushReadyWorkItemsInOrder() {
     if (!work_item->is_ready) {
       return;
     }
+    if (!work_item->result_status.ok()) {
+      available_copy_offsets_.push_back(work_item->dest_buffer);
+    }
+    currently_flushing_ = true;
+    mu_.unlock();
     if (work_item->result_status.ok()) {
       std::move(work_item->on_done)(this, work_item->dest_buffer,
                                     work_item->work);
     } else {
       std::move(work_item->on_done)(this, work_item->result_status,
                                     work_item->work);
-      available_copy_offsets_.push_back(work_item->dest_buffer);
     }
+    mu_.lock();
+    currently_flushing_ = false;
     work_queue_.pop_front();
     ++base_seq_id_;
   }

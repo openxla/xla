@@ -28,7 +28,6 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
-#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
@@ -57,6 +56,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {
@@ -158,7 +158,7 @@ std::unique_ptr<CollectiveDoneThunk> CreateAllGatherDoneThunk(
       static_cast<const AllGatherStartThunk*>(start_thunk)->async_events();
   return std::make_unique<CollectiveDoneThunk>(
       Thunk::kAllGatherDone, Thunk::ThunkInfo(), std::move(async_events),
-      AsyncStreamKind::kCollective);
+      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
 }
 
 std::unique_ptr<WhileThunk> CreateWhileThunk(

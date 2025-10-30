@@ -825,8 +825,7 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
       BufferAllocation::Slice b_scale,
       GetAllocationSliceForHlo(instr->operand(a_scale_index + 1)));
 
-  bool is_cuda = std::holds_alternative<stream_executor::CudaComputeCapability>(
-      ir_emitter_context_->gpu_compute_capability());
+  bool is_cuda = ir_emitter_context_->gpu_compute_capability().IsCuda();
   bool is_fp8 = instr->shape().tuple_shapes(0).element_type() == F8E4M3FN ||
                 instr->shape().tuple_shapes(0).element_type() == F8E5M2;
   // cublasLT requires c_scale/d_scale to be null when C/D is not
@@ -1200,7 +1199,7 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
   // attributes map at IR emission time, so that we do not need to
   // parse MLIR at run time. For FFI handlers backend config must be
   // a compatible MLIR dictionary.
-  CustomCallThunk::AttributesMap attributes;
+  ffi::AttributesMap attributes;
 
   auto backend_config = instr->backend_config<GpuBackendConfig>();
   if (!backend_config.ok()) {
@@ -1402,8 +1401,7 @@ absl::Status IrEmitterUnnested::EmitTopKCustomCall(
                           GetDefaultBufferAlignment(), instr));
 
   auto dtype = data_shape.element_type();
-  bool is_cuda = std::holds_alternative<stream_executor::CudaComputeCapability>(
-      ir_emitter_context_->gpu_compute_capability());
+  bool is_cuda = ir_emitter_context_->gpu_compute_capability().IsCuda();
   if (is_cuda && instr->GetModule()
                      ->config()
                      .debug_options()
@@ -2362,7 +2360,7 @@ absl::Status IrEmitterUnnested::EmitCollectiveGroupStartThunk(
   }
   auto thunk = std::make_unique<CollectiveGroupThunk>(
       instr, Thunk::Kind::kGroupStart, std::move(scoped_thunk_sequence_),
-      stream_kind.value_or(AsyncStreamKind::kCollective),
+      stream_kind.value_or(AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
       ir_emitter_context_->GetNextThunkId());
   emit_group_thunks_ = false;
 
@@ -2392,7 +2390,7 @@ absl::Status IrEmitterUnnested::EmitCollectiveAsyncDone(
     return absl::OkStatus();
   }
 
-  AsyncStreamKind stream_kind = AsyncStreamKind::kCollective;
+  AsyncStreamKind stream_kind = AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE;
   if (is_send_recv) {
     stream_kind = GetStreamKindForP2P(start);
   }
@@ -2425,7 +2423,7 @@ absl::Status IrEmitterUnnested::EmitNvshmemAsyncDone(
     return absl::OkStatus();
   }
 
-  AsyncStreamKind stream_kind = AsyncStreamKind::kCollective;
+  AsyncStreamKind stream_kind = AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE;
   if (is_send_recv) {
     stream_kind = GetStreamKindForP2P(start);
   }

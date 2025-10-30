@@ -29,7 +29,6 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
-#include "xla/cpu_function_runtime.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/buffer_assignment.h"
@@ -107,7 +106,9 @@ class CpuAotCompilationResult : public AotCompilationResult {
       absl::string_view function_name, std::vector<ObjFileProto> obj_files,
       std::vector<SymbolProto> symbols, const ThunkSequence& thunks,
       std::unique_ptr<FunctionLibrary> function_library,
-      std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data);
+      std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
+      TargetMachineOptionsProto target_machine_options =
+          TargetMachineOptionsProto());
 
   ~CpuAotCompilationResult() override = default;
 
@@ -148,10 +149,6 @@ class CpuAotCompilationResult : public AotCompilationResult {
     return temp_allocation_index_;
   }
 
-  const std::vector<cpu_function_runtime::BufferInfo>& buffer_infos() const {
-    return buffer_infos_;
-  }
-
   absl::Span<const BufferAllocationInfo> buffer_allocation_infos() const {
     return buffer_allocation_infos_;
   }
@@ -188,10 +185,10 @@ class CpuAotCompilationResult : public AotCompilationResult {
       absl::string_view function_name, std::vector<ObjFileProto> obj_files,
       std::vector<SymbolProto> symbols, const ThunkSequenceProto& thunks,
       std::optional<size_t> temp_allocation_index,
-      std::vector<cpu_function_runtime::BufferInfo> buffer_infos,
       std::vector<BufferAllocationInfo> buffer_allocation_infos,
       std::unique_ptr<FunctionLibrary> function_library,
-      std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data);
+      std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
+      TargetMachineOptionsProto target_machine_options);
 
   explicit CpuAotCompilationResult(
       CompilationResultProto proto, std::unique_ptr<HloModule> module,
@@ -203,7 +200,6 @@ class CpuAotCompilationResult : public AotCompilationResult {
   CompilationResultProto proto_;
   std::unique_ptr<HloModule> module_;
   std::optional<size_t> temp_allocation_index_;
-  std::vector<cpu_function_runtime::BufferInfo> buffer_infos_;
   std::vector<BufferAllocationInfo> buffer_allocation_infos_;
 
   std::unique_ptr<FunctionLibrary> function_library_;

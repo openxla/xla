@@ -67,6 +67,7 @@ limitations under the License.
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -77,7 +78,6 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/transforms/map_mhlo_to_scalar_op.h"
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
@@ -88,7 +88,6 @@ namespace xla {
 namespace emitters {
 namespace {
 
-using gpu::SymbolicExprContext;
 using llvm::SmallVector;
 using llvm::SmallVectorImpl;
 using mlir::Block;
@@ -1045,6 +1044,8 @@ absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
       return MapElementwiseOp<mhlo::AcoshOp>(arg_types, operands, builder);
     case HloOpcode::kAsin:
       return MapElementwiseOp<mhlo::AsinOp>(arg_types, operands, builder);
+    case HloOpcode::kAsinh:
+      return MapElementwiseOp<mhlo::AsinhOp>(arg_types, operands, builder);
     case HloOpcode::kAdd:
       if (element_type == PRED) {
         return MapElementwiseOp<mhlo::OrOp>(arg_types, operands, builder);

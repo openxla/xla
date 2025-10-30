@@ -137,6 +137,8 @@ class Thunk {
     kAllToAll,
     kAllToAllDone,
     kAllToAllStart,
+    kBuffersDebugChecksum,
+    kBuffersDebugNanCount,
     kCholesky,
     kCollectiveBroadcast,
     kCollectiveBroadcastDone,
@@ -192,7 +194,6 @@ class Thunk {
     kReduceScatterDone,
     kReduceScatterStart,
     kReplicaId,
-    kSdc,
     kSelectK,
     kSend,
     kSendDone,
@@ -536,6 +537,11 @@ class Thunk {
 
   // Invokes `fn` with this thunk and all nested thunks.
   virtual void ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn);
+
+  // Recursively replaces all nested thunks with the result of applying `fn` to
+  // them.
+  virtual void TransformAllNestedThunks(
+      absl::FunctionRef<std::unique_ptr<Thunk>(std::unique_ptr<Thunk>)> fn) {}
 
   // A helper function to get the `GpuCollectives*` pointer from the
   // CollectiveExecuteParams.

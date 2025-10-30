@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -69,8 +70,8 @@ absl::StatusOr<CommunicationMetadata> CommunicationContext(
     const HloChannelInstruction& instr, int partition_size) {
   absl::flat_hash_map<int64_t, size_t> partition_to_participant_count;
 
-  if (auto* collective =
-          dynamic_cast<const HloCollectiveInstruction*>(&instr)) {
+  if (const HloCollectiveInstruction* collective =
+          DynCast<HloCollectiveInstruction>(&instr)) {
     for (const ReplicaGroup& replica_group :
          collective->device_list().replica_groups()) {
       absl::flat_hash_map<int64_t, size_t> buffer;
@@ -88,9 +89,10 @@ absl::StatusOr<CommunicationMetadata> CommunicationContext(
         partition_to_participant_count = buffer;
       }
     }
-  } else if (auto* permute =
-                 dynamic_cast<const HloCollectivePermuteInstruction*>(&instr)) {
-    for (const auto& [source, target] : permute->source_target_pairs()) {
+  } else if (const HloCollectivePermuteInstruction* collective_permute =
+                 DynCast<HloCollectivePermuteInstruction>(&instr)) {
+    for (const auto& [source, target] :
+         collective_permute->source_target_pairs()) {
       int64_t source_partition = source / partition_size;
       int64_t target_partition = target / partition_size;
       partition_to_participant_count[source_partition]++;
@@ -115,7 +117,7 @@ bool IsSinglePartition(const CommunicationMetadata& pattern) {
          pattern.replica_count <= pattern.num_devices_per_partition;
 }
 
-bool IsRailAligned(const CommunicationMetadata& pattern) {
+bool IsWorldLevelCommunication(const CommunicationMetadata& pattern) {
   if (!IsSinglePartition(pattern) &&
       pattern.partition_to_participant_count.empty()) {
     return true;
@@ -127,8 +129,8 @@ bool IsRailAligned(const CommunicationMetadata& pattern) {
       });
 }
 
-bool IsNonRailAligned(const CommunicationMetadata& pattern) {
-  return !IsSinglePartition(pattern) && !IsRailAligned(pattern);
+bool IsNonWorldLevelCommunication(const CommunicationMetadata& pattern) {
+  return !IsSinglePartition(pattern) && !IsWorldLevelCommunication(pattern);
 }
 
 }  // namespace
@@ -144,7 +146,7 @@ bool IsGPUSyncCollective(const HloInstruction& instr) {
 absl::StatusOr<GPUCommunicationType> CommunicationType(
     int partition_size, const HloChannelInstruction& instr,
     const se::GpuComputeCapability& gpu_version) {
-  if (!std::holds_alternative<se::CudaComputeCapability>(gpu_version)) {
+  if (!gpu_version.IsCuda()) {
     return absl::FailedPreconditionError("Only CUDA is supported.");
   }
 
@@ -153,11 +155,11 @@ absl::StatusOr<GPUCommunicationType> CommunicationType(
   if (IsSinglePartition(comm)) {
     return GPUCommunicationType::SINGLE_PARTITION;
   }
-  if (IsRailAligned(comm)) {
-    return GPUCommunicationType::RAIL_ALIGNED;
+  if (IsWorldLevelCommunication(comm)) {
+    return GPUCommunicationType::MULTI_HOST_WORLD_LEVEL;
   }
-  if (IsNonRailAligned(comm)) {
-    return GPUCommunicationType::NON_RAIL_ALIGNED;
+  if (IsNonWorldLevelCommunication(comm)) {
+    return GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL;
   }
 
   return GPUCommunicationType::UNDEFINED;
