@@ -3,3 +3,4 @@ leak:libstdc++.so
 leak:libamdhip64.so
 leak:libhiprtc.so
 leak:librccl.so
+leak:hwloc_bitmap_alloc

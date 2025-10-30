@@ -27,17 +27,17 @@ N_BUILD_JOBS=$(grep -c ^processor /proc/cpuinfo)
 rocm-smi -i
 STATUS=$?
 if [ $STATUS -ne 0 ]; then TF_GPU_COUNT=1; else
-   TF_GPU_COUNT=$(rocm-smi -i|grep 'Device ID' |grep 'GPU' |wc -l)
+    TF_GPU_COUNT=$(rocm-smi -i | grep 'Device ID' | grep 'GPU' | wc -l)
 fi
 TF_TESTS_PER_GPU=1
 N_TEST_JOBS=$(expr ${TF_GPU_COUNT} \* ${TF_TESTS_PER_GPU})
-amdgpuname=(`rocminfo | grep gfx | head -n 1`)
+amdgpuname=($(rocminfo | grep gfx | head -n 1))
 AMD_GPU_GFX_ID=${amdgpuname[1]}
 echo ""
 echo "Bazel will use ${N_BUILD_JOBS} concurrent build job(s) and ${N_TEST_JOBS} concurrent test job(s) for gpu ${AMD_GPU_GFX_ID}."
 echo ""
 
-export PYTHON_BIN_PATH=`which python3`
+export PYTHON_BIN_PATH=$(which python3)
 export TF_NEED_ROCM=1
 export ROCM_PATH="/opt/rocm"
 
@@ -99,12 +99,13 @@ BAZEL_DISK_CACHE_SIZE=100G
 BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib-v0.7.1"
 mkdir -p ${BAZEL_DISK_CACHE_DIR}
 if [ ! -d /tf/pkg ]; then
-	mkdir -p /tf/pkg
+    mkdir -p /tf/pkg
 fi
 
 SCRIPT_DIR=$(realpath $(dirname $0))
 TAG_FILTERS=$($SCRIPT_DIR/rocm_tag_filters.sh),-multigpu,-multi_gpu_h100,requires-gpu-amd,-skip_rocprofiler_sdk,-no_oss,-oss_excluded,-oss_serial
 
+RBE_OPTIONS=()
 SANITIZER_ARGS=()
 if [[ $1 == "asan" ]]; then
     SANITIZER_ARGS+=("--config=asan")
@@ -120,6 +121,12 @@ elif [[ $1 == "tsan" ]]; then
         # //xla/backends/gpu/runtime:host_execute_thunk_test_amdgpu_any
         HostExecuteStartThunkTest*
         HostExecuteDoneThunkTest*
+    )
+
+    #  tsan tests appear to be flaky in rbe due to the heavy load
+    #  force them to run locally
+    RBE_OPTIONS+=(
+         --strategy=TestRunner=local
     )
     shift
 fi
@@ -139,6 +146,7 @@ bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --flaky_test_attempts=3 \
     --keep_going \
     --local_test_jobs=${N_TEST_JOBS} \
+    --repo_env=TF_ROCM_AMDGPU_TARGETS=gfx908,gfx90a,gfx942,gfx1100 \
     --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
     --action_env=XLA_FLAGS="--xla_gpu_enable_llvm_module_compilation_parallelism=true --xla_gpu_force_compilation_parallelism=16" \
     --run_under=//build_tools/ci:parallel_gpu_execute \
@@ -146,9 +154,10 @@ bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --test_env=MIOPEN_FIND_MODE=1 \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     "${SANITIZER_ARGS[@]}" \
-    "$@"
+    "$@" \
+    "${RBE_OPTIONS[@]}"
 
 # clean up bazel disk_cache
 bazel shutdown \
-  --disk_cache=${BAZEL_DISK_CACHE_DIR} \
-  --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE}
+    --disk_cache=${BAZEL_DISK_CACHE_DIR} \
+    --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE}

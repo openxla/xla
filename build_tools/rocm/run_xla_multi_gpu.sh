@@ -76,6 +76,7 @@ EXCLUDED_TESTS=(
 SCRIPT_DIR=$(realpath $(dirname $0))
 TAG_FILTERS="$($SCRIPT_DIR/rocm_tag_filters.sh)"
 
+RBE_OPTIONS=()
 SANITIZER_ARGS=()
 if [[ $1 == "asan" ]]; then
     SANITIZER_ARGS+=("--run_under=//build_tools/rocm:sanitizer_wrapper")
@@ -99,6 +100,12 @@ elif [[ $1 == "tsan" ]]; then
         AsyncMemcpyCollectiveOps*
         RaggedAllToAllTest*
     )
+
+    #  tsan tests appear to be flaky in rbe due to the heavy load
+    #  force them to run locally
+    RBE_OPTIONS+=(
+         --strategy=TestRunner=local
+    )
     shift
 fi
 
@@ -116,14 +123,15 @@ bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
     --test_output=errors \
     --flaky_test_attempts=3 \
     --keep_going \
-    --test_strategy=exclusive \
+    --run_under=//build_tools/rocm:exclusive_local_wrapper \
+    --repo_env=TF_ROCM_AMDGPU_TARGETS=gfx908,gfx90a,gfx942,gfx1100 \
     --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
     --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
     --action_env=NCCL_MAX_NCHANNELS=1 \
     --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
     "${SANITIZER_ARGS[@]}" \
     "$@" \
-    --strategy=TestRunner=local # execute multigpu tests locally as there is no gpu exclusive protection on rbe
+    "${RBE_OPTIONS[@]}"
 
 # clean up bazel disk_cache
 bazel shutdown \

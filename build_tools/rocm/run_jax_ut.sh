@@ -16,6 +16,10 @@ python build/build.py build \
 # TODO: run the tests when they are green
 bazel build \
     --config=rocm \
+    --disk_cache=/tf/disk_cache/jaxlib-v0.7.1 \
+    --remote_cache="grpcs://wardite.cluster.engflow.com" \
+    --tls_client_certificate="/tf/certificates/ci-cert.crt" \
+    --tls_client_key="/tf/certificates/ci-cert.key" \
     --build_tag_filters=cpu,gpu,-tpu,-config-cuda-only \
     --test_tag_filters=cpu,gpu,-tpu,-config-cuda-only \
     --action_env=TF_ROCM_AMDGPU_TARGETS=gfx908,gfx90a,gfx942 \

@@ -232,6 +232,8 @@ xla_test(
     backend_tags = {
         "gpu": [
             "multi_gpu_h100",
+            "multi_gpu",
+            "local",
             "no_oss",
             "nomsan",
         ],

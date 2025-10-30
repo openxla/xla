@@ -34,12 +34,16 @@ filegroup(
 )
 
 genrule(
-    name = "san_wrapper_script",
-    srcs = [":sanitizer_ignore_lists"],
-    outs = ["san_wrapper.sh"],
+    name = "exclusive_wrapper_script",
+    outs = ["exclusive_wrapper.sh"],
     cmd = """
       echo '#!/bin/bash' > $@
-      echo 'exec "$$@"' >> $@
+      echo 'exec {lock_fd}>/var/lock/gpulock || exit 1' >> $@
+      echo 'flock "$$lock_fd"' >> $@
+      echo '"$$@"' >> $@
+      echo 'return_code=$$?' >> $@
+      echo 'flock -u "$$lock_fd"' >> $@
+      echo 'exit $$return_code' >> $@
       chmod +x $@
     """,
 )
@@ -47,8 +51,16 @@ genrule(
 # this wrapper ensures the test target
 # take into account any changes in the ignore list files
 sh_binary(
+    name = "exclusive_local_wrapper",
+    srcs = [":exclusive_wrapper_script"],
+    visibility = ["//visibility:public"],
+)
+
+# this wrapper ensures the test target
+# take into account any changes in the ignore list files
+sh_binary(
     name = "sanitizer_wrapper",
-    srcs = [":san_wrapper_script"],
+    srcs = [":exclusive_wrapper_script"],
     data = [":sanitizer_ignore_lists"],
     visibility = ["//visibility:public"],
 )

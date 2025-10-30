@@ -11,7 +11,8 @@ platform(
         "@bazel_tools//tools/cpp:clang",
     ],
     exec_properties = {
-        "container-image": "rocm/tensorflow-build@sha256:7cd444ac48657fee2f5087fbda7766266704d3f8fb2299f681952ae4eabed060",
+        # rocm/tensorflow-build:2.18-jammy-python3.9-rocm7.0.2
+        "container-image": "docker://rocm/tensorflow-build@sha256:a2672ff2510b369b4a5f034272a518dc93c2e492894e3befaeef19649632ccaa",
         "OSFamily": "Linux",
     },
 )
@@ -24,7 +25,8 @@ platform(
         "@bazel_tools//tools/cpp:clang",
     ],
     exec_properties = {
-        "container-image": "rocm/tensorflow-build@sha256:7cd444ac48657fee2f5087fbda7766266704d3f8fb2299f681952ae4eabed060",
+        # rocm/tensorflow-build:2.18-jammy-python3.9-rocm7.0.2
+        "container-image": "docker://rocm/tensorflow-build@sha256:a2672ff2510b369b4a5f034272a518dc93c2e492894e3befaeef19649632ccaa",
         "OSFamily": "Linux",
         "Pool": "linux_x64_gpu",
     },

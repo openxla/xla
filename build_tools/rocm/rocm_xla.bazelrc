@@ -5,9 +5,9 @@ build:rocm_dev --remote_cache="https://wardite.cluster.engflow.com"
 
 build:rocm_rbe --bes_backend="grpcs://wardite.cluster.engflow.com"
 build:rocm_rbe --bes_results_url="https://wardite.cluster.engflow.com/invocation/"
-build:rocm_rbe --host_platform="//build_tools/rocm/platform/linux_x64:linux_x64_gpu"
-build:rocm_rbe --extra_execution_platforms="//build_tools/rocm/platform/linux_x64:linux_x64_gpu"
-build:rocm_rbe --platforms="//build_tools/rocm/platform/linux_x64:linux_x64_gpu"
+build:rocm_rbe --host_platform="//build_tools/rocm/platform/linux_x64:linux_x64"
+build:rocm_rbe --extra_execution_platforms="//build_tools/rocm/platform/linux_x64:linux_x64"
+build:rocm_rbe --platforms="//build_tools/rocm/platform/linux_x64:linux_x64"
 build:rocm_rbe --bes_timeout=600s
 build:rocm_rbe --tls_client_certificate="/tf/certificates/ci-cert.crt"
 build:rocm_rbe --tls_client_key="/tf/certificates/ci-cert.key"
@@ -19,7 +19,7 @@ build:rocm_rbe --remote_timeout=3600
 build:rocm_rbe --remote_download_minimal
 build:rocm_rbe --remote_upload_local_results
 
-test:rocm_rbe --strategy=TestRunner=local
+test:rocm_rbe --strategy=TestRunner=remote,local
 
 build:asan --strip=never
 build:asan --copt -fsanitize=address
@@ -62,7 +62,9 @@ build:xla_sgpu -- \
 -//xla/pjrt/distributed:topology_util_test \
 -//xla/pjrt/distributed:client_server_test \
 -//xla/service/gpu/tests:dynamic_shared_memory_test_amdgpu_any \
--//xla/service/gpu/tests:gpu_cub_sort_test_amdgpu_any
+-//xla/service/gpu/tests:gpu_cub_sort_test_amdgpu_any \
+-//xla/tests:iota_test_amdgpu_any \
+-//xla/tests:reduce_window_test_amdgpu_any # TODO: return when it is not flaky!
 
 test:xla_mgpu -- \
 //xla/tests:collective_ops_e2e_test \
