@@ -87,7 +87,7 @@ def verify_build_defines(params):
         )
 
 def find_cc(repository_ctx):
-    """Find theRBE_DOCKER_IMAGE"""
+    """Find the C++ compiler."""
 
     target_cc_name = "clang"
     cc_name = target_cc_name
