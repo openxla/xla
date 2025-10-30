@@ -29,7 +29,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/cuda/cuda_blas_lt.h"
-#include "xla/stream_executor/numeric_options.h"
+#include "xla/stream_executor/engine_options.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -102,8 +102,7 @@ class CUDABlas : public blas::BlasSupport {
       const DeviceMemorySlice<T> &a_array, int lda,
       const DeviceMemorySlice<T> &b_array, int ldb, Scalar beta,
       const DeviceMemorySlice<T> &c_array, int ldc, int batch_count,
-      const NumericOptions &numeric_options,
-      ScratchAllocator *scratch_allocator);
+      const EngineOptions &engine_options, ScratchAllocator *scratch_allocator);
 
   // Guards the cuBLAS handle for this device.
   mutable absl::Mutex mu_;

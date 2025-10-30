@@ -13,21 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ------------------------------------------------------------------------------*/
 
-#ifndef XLA_STREAM_EXECUTOR_NUMERIC_OPTIONS_H_
-#define XLA_STREAM_EXECUTOR_NUMERIC_OPTIONS_H_
+#ifndef XLA_STREAM_EXECUTOR_ENGINE_OPTIONS_H_
+#define XLA_STREAM_EXECUTOR_ENGINE_OPTIONS_H_
 
 namespace stream_executor {
 
-// Options (used when calling math libraries) that specify the numeric
-// behavior of operations like matrix multiplications and convolutions.
-struct NumericOptions {
-  NumericOptions(bool require_determinism, bool allow_tf32,
-                 bool require_command_buffer)
+// Options (used when calling math libraries) that specify the behavior of
+// operations like matrix multiplications and convolutions.
+struct EngineOptions {
+  EngineOptions(bool require_determinism, bool allow_tf32,
+                bool require_command_buffer)
       : require_determinism(require_determinism),
         allow_tf32(allow_tf32),
         require_command_buffer(require_command_buffer) {}
 
-  NumericOptions()
+  EngineOptions()
       : require_determinism(false),
         allow_tf32(true),
         require_command_buffer(false) {}
@@ -43,4 +43,5 @@ struct NumericOptions {
 
 }  // namespace stream_executor
 
-#endif  // XLA_STREAM_EXECUTOR_NUMERIC_OPTIONS_H_
+#endif  // XLA_STREAM_EXECUTOR_ENGINE_OPTIONS_H_
+
