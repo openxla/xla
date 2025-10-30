@@ -378,7 +378,6 @@ Build(
     type_=BuildType.XLA_LINUX_X86_GPU_ONEAPI_GITHUB_ACTIONS,
     repo="openxla/xla",
     configs=(
-        "warnings",
         "nonccl",
         "rbe_linux_cpu",
         "sycl",
