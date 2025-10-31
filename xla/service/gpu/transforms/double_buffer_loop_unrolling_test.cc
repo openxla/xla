@@ -42,7 +42,6 @@ namespace xla {
 namespace gpu {
 namespace {
 
-
 int64_t CountInstructions(HloComputation& computation, HloOpcode opcode) {
   int64_t count = 0;
   hlo_query::ForEachInstructionWithOpcode(
