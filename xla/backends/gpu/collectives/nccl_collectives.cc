@@ -117,7 +117,7 @@ static ncclConfig_t AsNcclConfig(const GpuCollectives::Config& config,
     comm_config.maxCTAs = config.max_nchannels;
   } else if (stream_executor->GetDeviceDescription()
                  .cuda_compute_capability()
-                 .IsAtLeastBlackwell()) {
+                 .IsBlackwell()) {
 #if (NCCL_VERSION_CODE >= 22800)
     // Future NCCL versions will reduce the default max number of channels on
     // Blackwell to 16. We need to manually set it to 32 here to avoid surprise
