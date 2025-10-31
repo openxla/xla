@@ -61,6 +61,8 @@ limitations under the License.
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Dialect/Vector/Transforms/Passes.h"
+#include "mlir/Dialect/Vector/Transforms/VectorRewritePatterns.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -84,9 +86,10 @@ limitations under the License.
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/pass_pipelines.h"
 #include "xla/codegen/emitters/transforms/passes.h"
-#include "xla/codegen/llvm_ir_kernel_source.h"
+#include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
 #include "xla/codegen/trace_pass_instrumentation.h"
+#include "xla/codegen/xtile/ir/transforms/passes.h"
 #include "xla/codegen/xtile/ir/xtile_dialect.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/mlir/tools/mlir_replay/public/compiler_trace.pb.h"
@@ -244,17 +247,26 @@ static void AddTiledOptimizationPasses(mlir::OpPassManager& pm) {
 // The input IR is from the xtile dialect which uses tensors that are converted
 // first to the vector dialect and then to LLVM.
 static void AddTiledLoweringPasses(mlir::OpPassManager& pm) {
-  pm.addPass(CreateXTileToVectorPass());
-  pm.addPass(CreateElementalTensorToVectorPass());
   pm.addPass(CreateShloToVectorPass());
+  pm.addPass(CreateXTileToVectorPass());
+  pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(CreateRewriteDynamicVectorExtractPass());
+  pm.addPass(CreateElementalTensorToVectorPass());
   pm.addPass(CreateLowerXTileEntryPass());
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::vector::createLowerVectorMultiReductionPass(
+          mlir::vector::VectorMultiReductionLowering::InnerParallel));
   pm.addPass(CreateTensorOpsToVectorPass());
   pm.addPass(cpu::createLowerToLLVMPass());
   pm.addPass(mlir::createConvertVectorToSCFPass(
       mlir::VectorTransferToSCFOptions().enableFullUnroll(false)));
-  pm.addPass(mlir::createConvertVectorToLLVMPass());
+  mlir::ConvertVectorToLLVMPassOptions options;
+  options.vectorTransposeLowering =
+      mlir::vector::VectorTransposeLowering::Shuffle1D;
+  pm.addPass(mlir::createConvertVectorToLLVMPass(options));
 
   pm.addPass(mlir::createConvertComplexToStandardPass());
+  pm.addPass(mlir::memref::createExpandStridedMetadataPass());
 
   AddGenericLoweringPasses(pm);
 }
@@ -300,6 +312,7 @@ FusionCompiler::FusionCompiler(mlir::MLIRContext* context, Options options,
                           options_.fast_min_max);
 
   // Tiled passes.
+  tiled_pass_manager_.addPass(xtile::createVerifyLegalXTileOpsPass());
   AddTiledOptimizationPasses(tiled_pass_manager_);
   if (hooks_.post_optimization) {
     tiled_pass_manager_.addPass(
@@ -397,12 +410,12 @@ absl::StatusOr<std::unique_ptr<llvm::Module>> FusionCompiler::Compile(
 }
 
 // Compile a MLIR kernel source to a LLVM kernel source.
-absl::StatusOr<LlvmIrKernelSource> FusionCompiler::Compile(
+absl::StatusOr<LlvmKernelSource> FusionCompiler::Compile(
     MlirKernelSource mlir_kernel_source) {
   auto llvm_context = std::make_unique<llvm::LLVMContext>();
   TF_ASSIGN_OR_RETURN(std::unique_ptr<llvm::Module> llvm_module,
                       Compile(*llvm_context, mlir_kernel_source.module()));
-  return LlvmIrKernelSource(std::move(llvm_context), std::move(llvm_module));
+  return LlvmKernelSource(std::move(llvm_context), std::move(llvm_module));
 }
 
 std::unique_ptr<mlir::MLIRContext> FusionCompiler::CreateContext() {

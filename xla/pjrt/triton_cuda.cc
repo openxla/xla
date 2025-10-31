@@ -93,7 +93,6 @@ absl::StatusOr<std::unique_ptr<llvm::TargetMachine>> CreateTargetMachine(
   if (enable_fp_fusion) {
     opt.AllowFPOpFusion = llvm::FPOpFusion::Fast;
   }
-  opt.UnsafeFPMath = false;
   opt.NoInfsFPMath = false;
   opt.NoNaNsFPMath = true;
   opt.TrapUnreachable = true;
@@ -233,8 +232,9 @@ absl::StatusOr<CompilationResult> Compile(absl::string_view module,
   TF_ASSIGN_OR_RETURN(
       auto cuda_cc,
       stream_executor::CudaComputeCapability::FromString(arch_name));
-  xla::gpu::CreateTritonPipeline(&pm, cuda_cc, num_warps, num_ctas, num_stages,
-                                 cluster_info);
+  xla::gpu::CreateTritonPipeline(&pm,
+                                 stream_executor::GpuComputeCapability(cuda_cc),
+                                 num_warps, num_ctas, num_stages, cluster_info);
   if (failed(pm.run(*module_op))) {
     return absl::InternalError("Failed to compile Triton IR to LLVM IR");
   }

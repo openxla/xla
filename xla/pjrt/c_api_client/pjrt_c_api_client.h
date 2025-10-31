@@ -50,7 +50,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/service/computation_placer.h"
@@ -590,6 +589,9 @@ class PjRtCApiExecutable : public PjRtExecutable {
   absl::StatusOr<std::vector<std::vector<DimensionVector>>>
   GetOutputDimensions() const override;
 
+  absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
+  GetOutputLayouts() const override;
+
   absl::StatusOr<std::vector<std::vector<absl::string_view>>>
   GetOutputMemoryKinds() const override;
 
@@ -669,6 +671,11 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
   absl::StatusOr<std::vector<std::vector<DimensionVector>>>
   GetOutputDimensions() const override {
     return executable_->GetOutputDimensions();
+  }
+
+  absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
+  GetOutputLayouts() const override {
+    return executable_->GetOutputLayouts();
   }
 
   absl::StatusOr<std::vector<std::vector<absl::string_view>>>

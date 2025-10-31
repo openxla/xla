@@ -324,7 +324,7 @@ absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
   Shape c_matrix_shape = c_shape;
   // hipBlasLt does not yet support the C matrix to be BF16 for fp8 matmul
   // with fp8 output. Thus only do this for CUDA side.
-  if (std::holds_alternative<se::CudaComputeCapability>(gpu_version) &&
+  if (gpu_version.IsCuda() &&
       primitive_util::IsF8Type(lhs_shape.element_type()) &&
       primitive_util::IsF8Type(output_shape.element_type()) && (beta == 0.0)) {
     // By default, if c is not present (i.e., beta is 0), c_shape will be the
@@ -806,10 +806,10 @@ absl::StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
   TF_RET_CHECK(proto.num_warps() > 0);
   TF_RET_CHECK(proto.num_ctas() > 0);
 
-  return TritonGemmConfig(proto.block_m(), proto.block_n(), proto.block_k(),
-                          proto.split_k(), proto.num_stages(),
-                          proto.num_warps(), proto.num_ctas(),
-                          proto.is_tma_allowed());
+  return TritonGemmConfig(
+      proto.block_m(), proto.block_n(), proto.block_k(), proto.split_k(),
+      proto.num_stages(), proto.num_warps(), proto.num_ctas(),
+      proto.is_tma_allowed(), proto.is_warp_specialization_allowed());
 }
 
 AutotuneResult::TritonGemmKey TritonGemmConfig::ToProto() const {
@@ -822,15 +822,17 @@ AutotuneResult::TritonGemmKey TritonGemmConfig::ToProto() const {
   key.set_num_warps(num_warps);
   key.set_num_ctas(num_ctas);
   key.set_is_tma_allowed(is_tma_allowed);
+  key.set_is_warp_specialization_allowed(is_warp_specialization_allowed);
   return key;
 }
 
 std::string TritonGemmConfig::ToString() const {
-  return absl::StrCat("{block_m:", block_m, ",block_n:", block_n,
-                      ",block_k:", block_k, ",split_k:", split_k,
-                      ",num_stages:", num_stages, ",num_warps:", num_warps,
-                      ",num_ctas:", num_ctas,
-                      ",is_tma_allowed:", is_tma_allowed, "}");
+  return absl::StrCat(
+      "{block_m:", block_m, ",block_n:", block_n, ",block_k:", block_k,
+      ",split_k:", split_k, ",num_stages:", num_stages,
+      ",num_warps:", num_warps, ",num_ctas:", num_ctas,
+      ",is_tma_allowed:", is_tma_allowed,
+      ",is_warp_specialization_allowed:", is_warp_specialization_allowed, "}");
 }
 
 absl::StatusOr<bool> IsMatrixMultiplicationTooSmallForRewriting(

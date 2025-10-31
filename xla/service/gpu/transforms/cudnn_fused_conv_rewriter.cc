@@ -97,10 +97,6 @@ bool IsNonDepthwiseConvCustomCall(const HloInstruction* instr) {
   return IsConvCustomCall(instr) && !IsConvDepthwise(instr);
 }
 
-bool IsROCm(se::GpuComputeCapability cc) {
-  return std::holds_alternative<se::RocmComputeCapability>(cc);
-}
-
 // elu, relu6, and leaky-relu activations are supported in cudnn via the
 // "runtime fusion" engine, which JIT compiles C++ code.  This can be slow to
 // compile, so we guard it with a debug option.
@@ -112,7 +108,7 @@ bool IsROCm(se::GpuComputeCapability cc) {
 // due to apparent bugs in cudnn 8.9.0.  See debug_options_flags.cc for details.
 bool ShouldUseCudnnRuntimeFusion(const DebugOptions& debug_opts,
                                  se::GpuComputeCapability cc) {
-  const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&cc);
+  const auto* cuda_cc = cc.cuda_compute_capability();
   if (cuda_cc != nullptr)
     return debug_opts.xla_gpu_use_runtime_fusion() && cuda_cc->IsAtLeast(7, 5);
   else
@@ -1454,7 +1450,7 @@ absl::StatusOr<bool> FuseConvertToF16(HloComputation* comp) {
 
 absl::StatusOr<bool> FuseConvertToS8(HloComputation* comp,
                                      se::GpuComputeCapability cc) {
-  if (IsROCm(cc)) return false;
+  if (cc.IsRocm()) return false;
   bool changed = false;
   for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
     HloInstruction* gte = nullptr;
@@ -1696,10 +1692,10 @@ absl::StatusOr<bool> CudnnFusedConvRewriter::Run(
     bool changed = false;
     // Rewrite FP8 convolutions and supported adjacent pointwise ops into a
     // ForwardGraph Custom Call.
-    if (!IsROCm(compute_capability_)) {
-      auto cc = std::get<se::CudaComputeCapability>(compute_capability_);
+    if (!compute_capability_.IsRocm()) {
+      auto* cc = compute_capability_.cuda_compute_capability();
       TF_ASSIGN_OR_RETURN(
-          changed, F8GraphConv(comp, cc, dnn_version_, toolkit_version_));
+          changed, F8GraphConv(comp, *cc, dnn_version_, toolkit_version_));
       if (changed) {
         return changed;
       }

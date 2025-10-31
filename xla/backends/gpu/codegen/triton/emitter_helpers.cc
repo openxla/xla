@@ -33,9 +33,9 @@ limitations under the License.
 #include "llvm/Support/MathExtras.h"
 #include "llvm/TargetParser/Triple.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -237,6 +237,11 @@ Value Cast(EmitterLocOpBuilder& b, Value value, Type dst_element_ty) {
       }
       return b.create<ma::ExtSIOp>(dst_ty, value);
     }
+    // int => bool is always value != 0.
+    if (dst_element_ty.isInteger(1)) {
+      return b.create<ma::CmpIOp>(ma::CmpIPredicate::ne, value,
+                                  ZerosLike(b, value));
+    }
     return b.create<ma::TruncIOp>(dst_ty, value);
   }
   // int => float
@@ -389,8 +394,7 @@ absl::StatusOr<Value> EmitElementwiseLibdeviceFunction(
         absl::StrCat("Unsupported elementwise operation ", hlo.ToString()));
   }
   llvm::Triple triple("nvptx64-unknown-unknown");
-  if (std::holds_alternative<se::RocmComputeCapability>(
-          device_info.gpu_compute_capability())) {
+  if (device_info.gpu_compute_capability().IsRocm()) {
     triple.setTriple("amdgcn-unknown-unknown");
   }
   llvm::SmallVector<Value, 2> casted_inputs;
@@ -498,7 +502,7 @@ absl::StatusOr<Value> EmitElementwise(EmitterLocOpBuilder& b,
                   mh::ComparisonDirection::NE),
           inputs[1], inputs[2]);
     case HloOpcode::kReducePrecision:
-      return mh::reducePrecision<mt::BitcastOp>(
+      return mh::reducePrecision<mlir::tensor::BitcastOp>(
           b.getLoc(), inputs[0], hlo.exponent_bits(), hlo.mantissa_bits(), &b);
     default:
       return absl::InvalidArgumentError(
@@ -618,20 +622,8 @@ absl::StatusOr<stream_executor::gpu::TmaMetadata> ExtractTmaMetadata(
   return tma_metadata;
 }
 
-::mlir::triton::PointerType GetPointerType(mlir::MemRefType memref_type) {
-  int address_space = 0;
-
-  mlir::Attribute memory_space_attr = memref_type.getMemorySpace();
-  if (auto int_memory_space_attr =
-          mlir::dyn_cast_if_present<mlir::IntegerAttr>(memory_space_attr)) {
-    address_space = int_memory_space_attr.getInt();
-  } else if (auto llvm_memory_space_attr = mlir::dyn_cast_if_present<
-                 mlir::LLVM::LLVMAddrSpaceAttrInterface>(memory_space_attr)) {
-    address_space = llvm_memory_space_attr.getAddressSpace();
-  }
-
-  return ::mlir::triton::PointerType::get(memref_type.getElementType(),
-                                          address_space);
+mt::PointerType GetGlobalPointerType(mlir::Type element_type) {
+  return mlir::cast<mt::PointerType>(mt::getPointerTypeToElement(element_type));
 }
 
 }  // namespace xla::gpu::triton

@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <memory>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/log/check.h"
@@ -33,7 +32,6 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/lazy_op_runner.h"
-#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
@@ -105,10 +103,10 @@ absl::Status ConvolutionThunk::ExecuteOnStream(const ExecuteParams& params) {
   RunConvOptions opts;
   opts.runner_cache = &GetOrCreateRunner(params.stream, &runner_created);
 
-  if (runner_created && std::holds_alternative<se::RocmComputeCapability>(
-                            params.stream->parent()
-                                ->GetDeviceDescription()
-                                .gpu_compute_capability())) {
+  if (runner_created && params.stream->parent()
+                            ->GetDeviceDescription()
+                            .gpu_compute_capability()
+                            .IsRocm()) {
     TF_ASSIGN_OR_RETURN(
         GpuConvParams conv_params,
         GetGpuConvParams(config_, operand_se_buffers, result_se_buffers));

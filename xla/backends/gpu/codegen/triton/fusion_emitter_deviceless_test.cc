@@ -24,6 +24,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/triton/fusion_emitter.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/testlib/filecheck.h"
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/status_matchers.h"
@@ -158,14 +158,91 @@ ENTRY entry {
   block_level_parameters.output_tile_sizes = {{1, 1}};
   block_level_parameters.num_warps = 0;
 
-  EXPECT_THAT(TritonWrapper("test_fn", triton_fusion,
-                            se::CudaComputeCapability::Hopper(), dev_info,
-                            block_level_parameters, &llvm_module,
-                            symbolic_expr_context),
+  EXPECT_THAT(TritonWrapper(
+                  "test_fn", triton_fusion,
+                  se::GpuComputeCapability{se::CudaComputeCapability::Hopper()},
+                  dev_info, block_level_parameters, &llvm_module,
+                  symbolic_expr_context),
               absl_testing::StatusIs(
                   absl::StatusCode::kFailedPrecondition,
                   ::testing::HasSubstr(
                       "(num_warps, num_ctas, num_stages) must be positive")));
+}
+
+TEST_F(TritonEmitterDevicelessTest,
+       BitcastReshapeDifferentTotalSizeRegressionTest) {
+  // This is a regression test for a bug where indexing analysis would fail to
+  // correctly preserve trivial dimensions, causing symbolic tile analysis to
+  // produce an incorrect reshape.
+  const std::string kHloText = R"(
+parameter0 {
+  p0 = bf16[1,5,4] parameter(0)
+  convert = f32[1,5,4] convert(p0)
+  slice = f32[1,5,2] slice(convert), slice={[0:1], [0:5], [2:4]}
+  ROOT bitcast = f32[5,2] bitcast(slice)
+}
+
+parameter1 {
+  ROOT p0 = f32[5,20]{0,1} parameter(0)
+}
+
+fusion {
+  p0 = bf16[1,5,4] parameter(0)
+  p1 = f32[5,20]{0,1} parameter(1)
+  fusion0 = f32[5,2] fusion(p0), kind=kCustom, calls=parameter0,
+    backend_config={"fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion",
+      "block_level_fusion_config":{
+        "num_warps":"2",
+        "output_tiles":[{"sizes":["16","16"]}],
+        "num_ctas":1,
+        "num_stages":1,
+        "is_tma_allowed":false}}}
+  fusion1 = f32[5,20]{0,1} fusion(p1), kind=kCustom, calls=parameter1,
+    backend_config={"fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion",
+      "block_level_fusion_config":{
+        "num_warps":"2",
+        "output_tiles":[{"sizes":["16","16"]}],
+        "num_ctas":1,
+        "num_stages":1,
+        "is_tma_allowed":false}}}
+  ROOT dot = f32[2,20] dot(fusion0, fusion1),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+}
+
+ENTRY entry {
+  p0 = bf16[1,5,4] parameter(0)
+  p1 = f32[5,20]{0,1} parameter(1)
+  ROOT root = f32[2,20] fusion(p0, p1), kind=kCustom, calls=fusion,
+    backend_config={"fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion",
+      "block_level_fusion_config":{
+        "num_warps":"2",
+        "output_tiles":[{"sizes":["16","16"]}],
+        "num_ctas":1,
+        "num_stages":1,
+        "is_tma_allowed":false}}}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(kHloText));
+  const HloFusionInstruction* triton_fusion = Cast<HloFusionInstruction>(
+      hlo_module->entry_computation()->root_instruction());
+  const se::DeviceDescription dev_info =
+      TestGpuDeviceInfo::RTXA6000DeviceInfo();
+  llvm::LLVMContext llvm_ctx;
+  llvm::Module llvm_module("module", llvm_ctx);
+  mlir::MLIRContext mlir_context;
+  SymbolicExprContext symbolic_expr_context(&mlir_context);
+
+  EXPECT_OK(
+      CreateTritonModule("test_fn", triton_fusion, dev_info,
+                         BlockLevelParameters::FromBlockLevelFusionConfig(
+                             triton_fusion->backend_config<GpuBackendConfig>()
+                                 ->fusion_backend_config()
+                                 .block_level_fusion_config()),
+                         symbolic_expr_context));
 }
 
 TEST_F(WarpSpecializationTritonEmitterTest,
@@ -186,7 +263,8 @@ fdot {
     "fusion_backend_config":{
       "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
         "output_tiles":[{"sizes":["128", "64"]}],
-        "is_tma_allowed":"1"
+        "is_tma_allowed":"1",
+        "is_warp_specialization_allowed":"1"
       }
     }
   }
@@ -194,7 +272,8 @@ fdot {
     "fusion_backend_config":{
       "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
         "output_tiles":[{"sizes":["64", "128"]}],
-        "is_tma_allowed":"1"
+        "is_tma_allowed":"1",
+        "is_warp_specialization_allowed":"1"
       }
     }
   }
@@ -215,7 +294,8 @@ ENTRY entry {
           "num_warps":"8",
           "num_ctas":"1",
           "num_stages":"1",
-          "is_tma_allowed":"1"}}}
+          "is_tma_allowed":"1",
+          "is_warp_specialization_allowed":"1"}}}
 })";
 
   // Check that we extract the launch configuration correctly when warp

@@ -168,6 +168,7 @@ cc_library(
     name = "gpu_executor_header",
     hdrs = ["gpu_executor.h"],
     deps = [
+        "//xla/stream_executor:device_memory",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_common",
         "//xla/stream_executor:stream_executor_h",
@@ -966,6 +967,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":buffer_debug_log",
+        "//xla/backends/gpu/runtime:buffer_debug_log_proto_cc",
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
         "//xla/backends/gpu/runtime:thunk_buffer_id",
         "//xla/backends/gpu/runtime:thunk_id",
@@ -989,6 +991,18 @@ cc_library(
     name = "buffer_debug_xor_checksum_kernel",
     hdrs = ["buffer_debug_xor_checksum_kernel.h"],
     deps = [
+        "//xla/backends/gpu/runtime:buffer_debug_log_structs",
+        "//xla/backends/gpu/runtime:thunk_buffer_id",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:kernel",
+    ],
+)
+
+cc_library(
+    name = "buffer_debug_nan_count_kernel",
+    hdrs = ["buffer_debug_nan_count_kernel.h"],
+    deps = [
+        "//xla:types",
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
         "//xla/backends/gpu/runtime:thunk_buffer_id",
         "//xla/stream_executor:device_memory",

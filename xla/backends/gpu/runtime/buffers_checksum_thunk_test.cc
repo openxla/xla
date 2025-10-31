@@ -45,7 +45,7 @@ namespace {
 
 namespace se = stream_executor;
 
-using ::stream_executor::cuda::BufferDebugLog;
+using ::stream_executor::gpu::BufferDebugLog;
 using ::testing::UnorderedElementsAre;
 
 class BuffersDebugChecksumThunkTest : public ::testing::Test {
@@ -133,11 +133,11 @@ TEST_F(BuffersDebugChecksumThunkTest, CalculatesChecksums) {
       UnorderedElementsAre(
           BufferDebugLogEntry{
               /*entry_id=*/ThunkBufferId::Create(ThunkId(123), 4).value(),
-              /*checksum=*/12341234,
+              /*value=*/12341234,
           },
           BufferDebugLogEntry{
               /*entry_id=*/ThunkBufferId::Create(ThunkId(456), 8).value(),
-              /*checksum=*/56785678,
+              /*value=*/56785678,
           }));
 }
 

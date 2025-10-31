@@ -239,7 +239,6 @@ ENTRY %Add.6 (a.1: f32[], b.2: f32[]) -> (f32[], f32[]) {
                           CompileExecutable(kAddProgram, *client));
 
   ExecuteOptions options;
-  options.untuple_result = true;
   TF_ASSERT_OK_AND_ASSIGN(
       auto result,
       executable->Execute({{buffer.get(), buffer.get()}}, /*options=*/options));
@@ -1440,7 +1439,6 @@ TEST(TfrtGpuClientTest, ExecutePinnedHostOutputTupleTest) {
   // Untuple the result so that we get separate buffers.
   // This is how JAX invokes XLA.
   ExecuteOptions execute_options;
-  execute_options.untuple_result = true;
   TF_ASSERT_OK_AND_ASSIGN(
       auto result, executable->Execute({{input.get()}}, execute_options));
 
@@ -1708,9 +1706,9 @@ TEST(TfrtGpuClientTest, DeviceAttributes) {
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::se::DeviceDescription> desc,
                             platform->DescriptionForDevice(0));
     stream_executor::GpuComputeCapability cc = desc->gpu_compute_capability();
-    auto nvcc = std::get<stream_executor::CudaComputeCapability>(cc);
+    auto* nvcc = cc.cuda_compute_capability();
     std::string expected_compute_capability =
-        absl::StrCat(nvcc.major, ".", nvcc.minor);
+        absl::StrCat(nvcc->major, ".", nvcc->minor);
     EXPECT_EQ(compute_capability, expected_compute_capability);
 
     // Attribute `coords`.

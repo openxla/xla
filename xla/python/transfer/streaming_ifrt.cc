@@ -30,9 +30,9 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/future.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/python/transfer/streaming.h"
 #include "xla/python/transfer/transfer_socket.pb.h"
@@ -116,7 +116,6 @@ PremappedCopierState::PremappedCopierState(
       max_num_parallel_copies_(max_num_parallel_copies),
       xfer_size_(xfer_size) {
   max_copies_ = scratch->size() / xfer_size_;
-  max_copies_ = std::min(max_copies_, size_t(8));
   available_copy_offsets_.reserve(max_copies_);
   for (size_t i = 0; i < max_copies_; ++i) {
     available_copy_offsets_.push_back(reinterpret_cast<char*>(scratch->data()) +

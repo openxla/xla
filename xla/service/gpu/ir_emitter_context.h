@@ -1,4 +1,4 @@
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 /* Copyright 2017 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -99,16 +99,6 @@ class IrEmitterContext {
   }
   const se::GpuComputeCapability& gpu_compute_capability() const {
     return gpu_device_info_.gpu_compute_capability();
-  }
-  se::CudaComputeCapability cuda_compute_capability() const {
-    auto* cc =
-        std::get_if<se::CudaComputeCapability>(&gpu_compute_capability());
-    return cc != nullptr ? *cc : se::CudaComputeCapability();
-  }
-  se::RocmComputeCapability rocm_compute_capability() const {
-    auto* cc =
-        std::get_if<se::RocmComputeCapability>(&gpu_compute_capability());
-    return cc != nullptr ? *cc : se::RocmComputeCapability();
   }
 
   // TODO: b/451959933 - Add nullability annotation to be explicit about this

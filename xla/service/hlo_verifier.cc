@@ -218,41 +218,22 @@ absl::Status ShapeVerifier::HandleRaggedDot(HloInstruction* ragged_dot) {
 absl::StatusOr<bool> IsNoOpScale(const HloInstruction* dot,
                                  const HloInstruction* operand,
                                  const HloInstruction* scale_operand) {
-  // It should be a constant scalar.
-  if (!ShapeUtil::IsScalar(scale_operand->shape()) ||
-      scale_operand->opcode() != HloOpcode::kConstant) {
+  // It should have the same type as the operand, and the shape should have the
+  // same rank as the operand but with dim sizes equal to 1.
+  const Shape& shape = scale_operand->shape();
+  if (shape.element_type() != operand->shape().element_type()) {
     return false;
   }
-  // If the scale operand is a constant, it must be a scalar of the same type
-  // as the operand.
-  if (scale_operand->shape().element_type() !=
-      operand->shape().element_type()) {
-    return absl::FailedPreconditionError(absl::StrFormat(
-        "Dummy scale operand '%s' has a different type than operand '%s'. %s "
-        "vs %s in %s",
-        scale_operand->name(), operand->name(),
-        PrimitiveType_Name(scale_operand->shape().element_type()),
-        PrimitiveType_Name(operand->shape().element_type()), dot->ToString()));
+  if (operand->shape().element_type() != BF16) {
+    return false;
   }
-  auto constant = Cast<HloConstantInstruction>(scale_operand);
-
-  // If the element type is float, the scale must be 1.0.
-  if (primitive_util::IsFloatingPointType(operand->shape().element_type())) {
-    if (!constant->literal().IsAllFloat(1.0)) {
-      return absl::FailedPreconditionError(absl::StrFormat(
-          "Dummy scale operand %s of %s is not a scalar with value 1.0",
-          scale_operand->name(), dot->ToString()));
-    }
-    return true;  // Dummy constant scale equal to 1.0 with float type found.
-  }
-
-  // If the element type is not float, the scale must be 1.
-  if (!constant->literal().IsAll(1)) {
-    return absl::FailedPreconditionError(absl::StrFormat(
-        "Dummy scale operand %s of %s is not a constant with value 1",
-        scale_operand->name(), dot->ToString()));
-  }
-  return true;  // Dummy constant scale equal to 1 with integer type found.
+  // It might be enough to check the types only but for now let's check the
+  // shape as well.
+  return std::all_of(shape.dimensions().begin(), shape.dimensions().end(),
+                     [](int64_t dim) { return dim == 1; }) &&
+         std::any_of(operand->shape().dimensions().begin(),
+                     operand->shape().dimensions().end(),
+                     [](int64_t dim) { return dim != 1; });
 }
 
 absl::Status ScalesShapeVerifier(
@@ -290,9 +271,10 @@ absl::Status ScalesShapeVerifier(
   for (int i = 0; i < operand_dims.size(); ++i) {
     if (operand_dims[i] % scale_operand_dims[i]) {
       return absl::FailedPreconditionError(absl::StrFormat(
-          "Dimension %d of operand %s should be a multiple of dimension "
-          "%d of scale operand %s in %s",
-          i, operand->name(), i, scale_operand->name(), dot->ToString()));
+          "Dimension %d of operand \n%s\n should be a multiple of dimension "
+          "%d of scale operand \n%s\n in %s",
+          i, operand->ToString(), i, scale_operand->ToString(),
+          dot->ToString()));
     }
   }
   return absl::OkStatus();
@@ -1915,6 +1897,9 @@ absl::Status CheckMixedPrecisionOperands(const HloInstruction* instruction) {
     case HloOpcode::kAsyncDone:
     case HloOpcode::kAsyncUpdate:
     case HloOpcode::kAsyncStart:
+    case HloOpcode::kCollectivePermute:
+    case HloOpcode::kCollectivePermuteStart:
+    case HloOpcode::kCollectivePermuteDone:
     case HloOpcode::kCopyDone:
     case HloOpcode::kCopyStart:
     case HloOpcode::kCustomCall:
@@ -2883,7 +2868,7 @@ absl::Status VerifyLayoutConstrainedAllReduce(const HloModule& module) {
 
 namespace {
 std::string FormatShapeIndexValidationError(
-    absl::string_view instruction_name,
+    const HloInstruction* instruction,
     const absl::flat_hash_set<ShapeIndex>& shape_leaf_indices,
     const absl::flat_hash_set<ShapeIndex>& ov_leaf_indices) {
   std::vector<ShapeIndex> shape_only;
@@ -2907,7 +2892,8 @@ std::string FormatShapeIndexValidationError(
       "Mismatched tuple structure in original_value for "
       "instruction %s. Leaf indices in shape and original_value "
       "do not match.\nIn shape only: {%s}\nIn original_value only: {%s}",
-      instruction_name, absl::StrJoin(shape_only, ", ", shape_index_formatter),
+      instruction->ToString(),
+      absl::StrJoin(shape_only, ", ", shape_index_formatter),
       absl::StrJoin(ov_only, ", ", shape_index_formatter));
 }
 
@@ -2936,9 +2922,9 @@ absl::Status VerifyOriginalValue(const HloModule& module) {
         }
 
         if (shape_leaf_indices != ov_leaf_indices) {
-          return Internal("%s", FormatShapeIndexValidationError(
-                                    instruction->name(), shape_leaf_indices,
-                                    ov_leaf_indices));
+          return Internal(
+              "%s", FormatShapeIndexValidationError(
+                        instruction, shape_leaf_indices, ov_leaf_indices));
         }
       }
     }
@@ -3224,7 +3210,7 @@ int64_t CountWriters(const HloInstruction* inst,
 int64_t CountWritersInUser(const HloInstruction* inst,
                            absl::Span<const int64_t> shape_index,
                            const HloInstruction* user) {
-  if (dynamic_cast<const HloCallableInstruction*>(user) ||
+  if (HloCallableInstruction::ClassOf(user) ||
       user->opcode() == HloOpcode::kWhile ||
       user->opcode() == HloOpcode::kConditional) {
     // For HloCallableInstruction, we may overcount here if we will allow

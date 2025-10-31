@@ -71,6 +71,7 @@ limitations under the License.
 #include "xla/core/host_offloading/hlo_host_device_type_call_wrapper.h"
 #include "xla/core/host_offloading/host_compute_asyncifier.h"
 #include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -193,7 +194,6 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/gpu/model/collective_ptable_stats_collection.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/gpu/model/gpu_cost_model_stats_collection.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/matmul_ptable_stats_collection.h"
@@ -368,15 +368,8 @@ DeviceOrDevicelessConfig GetDeviceConfig(
     return DeviceOrDevicelessConfig{
         DeviceConfig{stream_exec, options.device_allocator}};
   }
-  se::DeviceDescription device_description =
-      gpu_target_config.device_description;
-  device_description.set_dnn_version(
-      {static_cast<unsigned>(
-           gpu_target_config.dnn_version_info.major_version()),
-       static_cast<unsigned>(
-           gpu_target_config.dnn_version_info.minor_version()),
-       static_cast<unsigned>(gpu_target_config.dnn_version_info.patch())});
-  return DeviceOrDevicelessConfig{DevicelessConfig{device_description}};
+  return DeviceOrDevicelessConfig{
+      DevicelessConfig{gpu_target_config.device_description}};
 }
 
 se::GpuComputeCapability GetGpuVersion(const se::StreamExecutor* stream_exec) {
@@ -572,10 +565,8 @@ GpuCompiler::GpuCompiler(se::Platform::Id platform_id,
 
 namespace {
 // Adds the HloVerifier for GPU to the given pipeline.
-void AddHloVerifier(HloPassPipeline* pipeline,
-                    bool verify_unique_channel_ids = false,
-                    HloVerifierOpts&& opts = {}, bool debug_only = false) {
-  opts.verify_unique_channel_ids = verify_unique_channel_ids;
+void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
+                    bool debug_only = false) {
   opts.verify_no_collective_deadlocks = true;
   std::unique_ptr<TargetVerifierMetadata> verifier_metadata =
       std::make_unique<CpuGpuVerifierMetadata>(std::move(opts));
@@ -748,7 +739,7 @@ absl::Status RunOptimizationPasses(
       gpu_target_config.device_description.gpu_compute_capability();
 
   HloPassPipeline pipeline("optimization");
-  AddHloVerifier(&pipeline, !debug_options.xla_ignore_channel_id());
+  AddHloVerifier(&pipeline);
   if (debug_options.xla_detect_unstable_reductions() !=
       DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_NONE) {
     pipeline.AddPass<UnstableReductionDetector>();
@@ -769,8 +760,9 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<DotDecomposer>();
 
   HloPredicate upcaster_filter = [&](const HloInstruction* instr) {
-    const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
-        &gpu_target_config.device_description.gpu_compute_capability());
+    const auto* cuda_cc =
+        gpu_target_config.device_description.gpu_compute_capability()
+            .cuda_compute_capability();
     if (cuda_cc != nullptr &&
         !cuda_cc->IsAtLeast(se::CudaComputeCapability::kVolta)) {
       return true;
@@ -904,8 +896,7 @@ absl::Status RunOptimizationPasses(
   // point.
   [&, &pipeline =
           pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification")] {
-    AddHloVerifier(&pipeline, !debug_options.xla_ignore_channel_id(),
-                   HloVerifierOpts{}, /*debug_only=*/true);
+    AddHloVerifier(&pipeline, HloVerifierOpts{}, /*debug_only=*/true);
 
     // BatchNormExpander can create zero-sized ops, so zero-sized HLO
     // elimination has to come after that pass.
@@ -1539,6 +1530,7 @@ AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
   }
 
   switch (mode) {
+    case AlgebraicSimplifierMode::kAfterSimplifyFPConversions:
     case AlgebraicSimplifierMode::kPostFusionSimplification:
     case AlgebraicSimplifierMode::kLayoutNormalization:
     case AlgebraicSimplifierMode::kPostLayoutAssignment:
@@ -1824,8 +1816,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     se::GpuComputeCapability gpu_version =
         gpu_target_config.device_description.gpu_compute_capability();
     pipeline.AddPass<AlgorithmChecker>(gpu_version);
-    const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_version);
-    const auto* rocm_cc = std::get_if<se::RocmComputeCapability>(&gpu_version);
+    const auto* cuda_cc = gpu_version.cuda_compute_capability();
+    const auto* rocm_cc = gpu_version.rocm_compute_capability();
 
     // Make sure that dots have at least 1 contracting dimension in the
     // operands. Needs to happen shortly before the dot rewrite, as otherwise
@@ -1909,7 +1901,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   }
 
   HloPassPipeline pipeline("post-layout_assignment");
-  AddHloVerifier(&pipeline, !debug_options.xla_ignore_channel_id(),
+  AddHloVerifier(&pipeline,
                  HloVerifierOpts{}
                      .MakeLayoutSensitive()
                      .WithInstructionCanChangeLayout(
@@ -1996,7 +1988,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         pipeline.AddPass<HloPassPipeline>(
             "remove-no-op-reduce-precision-algebraic-simplifier");
     AlgebraicSimplifierOptions options = GetAlgebraicSimplifierOptions(
-        AlgebraicSimplifierMode::kPostFusionSimplification, debug_options,
+        AlgebraicSimplifierMode::kAfterSimplifyFPConversions, debug_options,
         gpu_target_config.platform_name == "ROCM");
     remove_no_op_reduce_precision_pipeline
         .AddPass<HloPassFix<GpuAlgebraicSimplifier>>(options, gpu_version);
@@ -2016,7 +2008,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                                  LayoutAssignment::InstructionCanChangeLayout)
                              .VerifyBroadcastDimensionsOrder()
                              .VerifyReshapeIsBitcast();
-  opts.verify_unique_channel_ids = !debug_options.xla_ignore_channel_id();
   pipeline.AddPass<HloVerifier>(
       std::make_unique<DefaultVerifierMetadata>(std::move(opts)),
       "end-of-post-layout_assignment");
@@ -3078,8 +3069,8 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     pipeline.AddPass<FusionWrapper>(gpu_device_info);
   }
 
-  const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(
-      &gpu_device_info.gpu_compute_capability());
+  const auto* cuda_cc =
+      gpu_device_info.gpu_compute_capability().cuda_compute_capability();
   if (cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) {
     // This needs to run after every pass affecting fusions. The last passes
     // that create new fusions are FusionWrapper and StreamAttributeAnnotator.
@@ -3109,7 +3100,6 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
   if (module->config().debug_options().xla_gpu_pgle_accuracy_checker() ==
       DebugOptions::PGLE_STRICTNESS_LEVEL_ERROR) {
     AddHloVerifier(&main_pipeline,
-                   module->config().debug_options().xla_ignore_channel_id(),
                    HloVerifierOpts{}.VerifyInstructionNameUnchanged());
   }
   return main_pipeline.Run(module, {HloInstruction::kMainExecutionThread})
