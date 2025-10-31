@@ -744,12 +744,16 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
     std::string hlo_string_ref =
         GetModuleFlash_Attention_CuDNN_BMM1_Bias_Softmax_BMM2_HloString_BF16();
 
-    std::string f32_bias_hlo_string =
-        absl::StrReplaceAll(hlo_string, {{"$bias_type", "f32"}});
-    std::string f32_bias_hlo_string_ref =
-        absl::StrReplaceAll(hlo_string_ref, {{"$bias_type", "f32"}});
-    EXPECT_TRUE(RunAndCompareTwoModules(
-        f32_bias_hlo_string, f32_bias_hlo_string_ref, ErrorSpec{1e-3, 1e-5}));
+    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) >=
+        se::dnn::VersionInfo(9, 13, 0)) {
+      // fp32 bias is supported to cudnn 9.13 and above
+      std::string f32_bias_hlo_string =
+          absl::StrReplaceAll(hlo_string, {{"$bias_type", "f32"}});
+      std::string f32_bias_hlo_string_ref =
+          absl::StrReplaceAll(hlo_string_ref, {{"$bias_type", "f32"}});
+      EXPECT_TRUE(RunAndCompareTwoModules(
+          f32_bias_hlo_string, f32_bias_hlo_string_ref, ErrorSpec{1e-3, 1e-5}));
+    }
 
     std::string bf16_bias_hlo_string =
         absl::StrReplaceAll(hlo_string, {{"$bias_type", "bf16"}});
