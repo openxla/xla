@@ -2806,7 +2806,10 @@ xla_test(
         ],
     },
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
+    tags = [
+        "test_migrated_to_hlo_runner_pjrt",
+        "local",
+    ],
     deps = [
         ":hlo_pjrt_test_base",
         ":literal_test_util",
