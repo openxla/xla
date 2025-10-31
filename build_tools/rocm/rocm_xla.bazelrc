@@ -18,6 +18,7 @@ build:rocm_rbe --jobs=200
 build:rocm_rbe --remote_timeout=3600
 build:rocm_rbe --remote_download_minimal
 build:rocm_rbe --remote_upload_local_results
+build:rocm_rbe --grpc_keepalive_time=30s
 
 test:rocm_rbe --strategy=TestRunner=remote,local
 
