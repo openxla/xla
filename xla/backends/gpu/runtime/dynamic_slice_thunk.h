@@ -114,7 +114,7 @@ class DynamicSliceThunk : public Thunk {
   DynamicSliceThunk(
       ThunkInfo thunk_info, std::unique_ptr<ThunkSequence> embedded_thunk,
       std::vector<std::optional<BufferAllocation::Slice>> arguments,
-      std::vector<std::unique_ptr<BufferAllocation>> fake_allocations,
+      std::vector<BufferAllocation> fake_allocations,
       std::vector<std::optional<std::vector<Offset>>> offsets,
       std::vector<std::optional<Shape>> orig_shapes,
       std::vector<std::optional<Shape>> sliced_shapes,
@@ -150,8 +150,7 @@ class DynamicSliceThunk : public Thunk {
     return arguments_;
   }
 
-  const std::vector<std::unique_ptr<BufferAllocation>>& get_fake_allocations()
-      const {
+  const std::vector<BufferAllocation>& get_fake_allocations() const {
     return fake_allocations_;
   }
 
@@ -187,10 +186,12 @@ class DynamicSliceThunk : public Thunk {
   // replaced during execution in `ExecuteOnStream` with the actual (dynamic)
   // slices. We have to create these outside of this method to manage their
   // lifetime correctly.
+  // `deserializer`: The deserializer is used to deserialize the embedded thunk.
   static absl::StatusOr<std::unique_ptr<DynamicSliceThunk>> FromProto(
       ThunkInfo thunk_info, const DynamicSliceThunkProto& proto,
       absl::Span<const BufferAllocation> buffer_allocations,
-      absl::Span<const BufferAllocation> fake_allocations);
+      absl::Span<const BufferAllocation> fake_allocations,
+      const Deserializer& deserializer);
 
   std::optional<const OffsetAsFunctionOfIndvarModulesMetadata*>
   get_offset_function() const {
@@ -204,7 +205,7 @@ class DynamicSliceThunk : public Thunk {
  private:
   std::unique_ptr<SequentialThunk> embedded_thunk_;
   std::vector<std::optional<BufferAllocation::Slice>> arguments_;
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations_;
+  std::vector<BufferAllocation> fake_allocations_;
   std::vector<std::optional<std::vector<Offset>>> offsets_;
   std::vector<std::optional<Shape>> orig_shapes_;
   std::vector<std::optional<Shape>> sliced_shapes_;

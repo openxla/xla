@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk_proto_deserialization.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
@@ -108,11 +109,18 @@ void CheckProtoRoundTrip(const DynamicSliceThunk& thunk,
           BufferAllocation(i, arguments[i].value().allocation()->size(), 0));
     }
   }
+
+  Thunk::Deserializer deserializer =
+      [&buffer_allocations](const ThunkProto& thunk_proto)
+      -> absl::StatusOr<std::unique_ptr<Thunk>> {
+    return DeserializeThunkProto(thunk_proto, buffer_allocations);
+  };
   TF_ASSERT_OK_AND_ASSIGN(
       auto thunk_from_proto,
       DynamicSliceThunk::FromProto(Thunk::ThunkInfo(), proto,
                                    /*buffer_allocations=*/buffer_allocations,
-                                   /*fake_allocations=*/fake_allocations_span));
+                                   /*fake_allocations=*/fake_allocations_span,
+                                   deserializer));
   TF_ASSERT_OK_AND_ASSIGN(auto proto_roundtrip, thunk_from_proto->ToProto());
   auto dynamic_slice_thunk_proto_roundtrip =
       proto_roundtrip.dynamic_slice_thunk();
@@ -161,28 +169,24 @@ absl::StatusOr<std::unique_ptr<DynamicSliceThunk>> CreateSlicedGemmThunk(
   int64_t out_length = sizeof(float) * 1 * 1;
   int64_t offset_length = sizeof(int64_t);
   // Preparing buffer allocation slices for thunk creations.
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations;
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/0, rhs_length, /*color=*/0));
-  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+  std::vector<BufferAllocation> fake_allocations;
+  fake_allocations.reserve(4);
+
+  fake_allocations.emplace_back(/*index=*/0, rhs_length, /*color=*/0);
+  BufferAllocation::Slice slice_lhs_fake(&fake_allocations.back(), 0,
                                          rhs_length);
 
   auto alloc_lhs =
       std::make_unique<BufferAllocation>(/*index=*/0, lhs_length, /*color=*/0);
   BufferAllocation::Slice slice_lhs(alloc_lhs.get(), 0, lhs_length);
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/1, rhs_length, /*color=*/0));
-  BufferAllocation::Slice slice_rhs(fake_allocations.back().get(), 0,
-                                    rhs_length);
+  fake_allocations.emplace_back(/*index=*/1, rhs_length, /*color=*/0);
+  BufferAllocation::Slice slice_rhs(&fake_allocations.back(), 0, rhs_length);
 
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
-  BufferAllocation::Slice slice_out(fake_allocations.back().get(), 0,
-                                    out_length);
+  fake_allocations.emplace_back(/*index=*/2, out_length, /*color=*/0);
+  BufferAllocation::Slice slice_out(&fake_allocations.back(), 0, out_length);
 
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/3, 1024 * 1024, /*color=*/0));
-  BufferAllocation::Slice slice_workspace(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/3, 1024 * 1024, /*color=*/0);
+  BufferAllocation::Slice slice_workspace(&fake_allocations.back(), 0,
                                           1024 * 1024);
 
   auto alloc_lhs_offset_0 = std::make_unique<BufferAllocation>(
@@ -323,14 +327,13 @@ CreateMultipleSlicedOperandsGemmThunk(
   int64_t offset_length = sizeof(int64_t);
   int64_t slice_length = sizeof(float) * 3;
   // Preparing buffer allocation slices for thunk creations.
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations;
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/0, slice_length, /*color=*/0));
-  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+  std::vector<BufferAllocation> fake_allocations;
+  fake_allocations.reserve(4);
+  fake_allocations.emplace_back(/*index=*/0, slice_length, /*color=*/0);
+  BufferAllocation::Slice slice_lhs_fake(&fake_allocations.back(), 0,
                                          slice_length);
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/1, slice_length, /*color=*/0));
-  BufferAllocation::Slice slice_rhs_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/1, slice_length, /*color=*/0);
+  BufferAllocation::Slice slice_rhs_fake(&fake_allocations.back(), 0,
                                          slice_length);
   auto alloc_lhs =
       std::make_unique<BufferAllocation>(/*index=*/0, length, /*color=*/0);
@@ -338,13 +341,10 @@ CreateMultipleSlicedOperandsGemmThunk(
   auto alloc_rhs =
       std::make_unique<BufferAllocation>(/*index=*/1, length, /*color=*/0);
   BufferAllocation::Slice slice_rhs(alloc_rhs.get(), 0, length);
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
-  BufferAllocation::Slice slice_out(fake_allocations.back().get(), 0,
-                                    out_length);
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/3, 1024 * 1024, /*color=*/0));
-  BufferAllocation::Slice slice_workspace(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/2, out_length, /*color=*/0);
+  BufferAllocation::Slice slice_out(&fake_allocations.back(), 0, out_length);
+  fake_allocations.emplace_back(/*index=*/3, 1024 * 1024, /*color=*/0);
+  BufferAllocation::Slice slice_workspace(&fake_allocations.back(), 0,
                                           1024 * 1024);
   auto alloc_lhs_offset_0 = std::make_unique<BufferAllocation>(
       /*index=*/4, offset_length, /*color=*/0);
@@ -540,21 +540,19 @@ TEST_F(DynamicSliceThunkTest, SlicedMemcpy) {
   // Prepare embedded and dynamic slice thunks.
 
   // Preparing buffer allocation slices for thunk creations.
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(2);
+  std::vector<BufferAllocation> fake_allocations;
+  fake_allocations.reserve(2);
 
   // Fake slices for embedded thunk creation.
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/0, slice_length, /*color=*/0));
-  BufferAllocation::Slice slice_src_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/0, slice_length, /*color=*/0);
+  BufferAllocation::Slice slice_src_fake(&fake_allocations.back(), 0,
                                          slice_length);
 
   BufferAllocation alloc_src(/*index=*/0, src_length, /*color=*/0);
   BufferAllocation::Slice slice_src(&alloc_src, 0, src_length);
 
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/1, dst_length, /*color=*/0));
-  BufferAllocation::Slice slice_dst(fake_allocations.back().get(), 0,
-                                    dst_length);
+  fake_allocations.emplace_back(/*index=*/1, dst_length, /*color=*/0);
+  BufferAllocation::Slice slice_dst(&fake_allocations.back(), 0, dst_length);
 
   BufferAllocation alloc_offset_0(/*index=*/2, offset_length, /*color=*/0);
   BufferAllocation::Slice slice_offset_0(&alloc_offset_0, 0, offset_length);
@@ -678,17 +676,16 @@ TEST_F(DynamicSliceThunkTest, SlicedOutputMemcpy) {
   // Prepare embedded and dynamic slice thunks.
 
   // Preparing buffer allocation slices for thunk creations.
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(2);
+  std::vector<BufferAllocation> fake_allocations;
+  fake_allocations.reserve(2);
 
   // Fake slices for embedded thunk creation.
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/0, slice_length, /*color=*/0));
-  BufferAllocation::Slice slice_src_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/0, slice_length, /*color=*/0);
+  BufferAllocation::Slice slice_src_fake(&fake_allocations.back(), 0,
                                          slice_length);
 
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/1, slice_length, /*color=*/0));
-  BufferAllocation::Slice slice_dst_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/1, slice_length, /*color=*/0);
+  BufferAllocation::Slice slice_dst_fake(&fake_allocations.back(), 0,
                                          slice_length);
 
   BufferAllocation alloc_src(/*index=*/0, src_length, /*color=*/0);
@@ -868,22 +865,19 @@ CreateSlicedGemmArbitraryArgumentOrderThunk(
   int64_t offset_length = sizeof(int64_t);
 
   // Preparing buffer allocation slices for thunk creations.
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations;
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/0, rhs_length, /*color=*/0));
-  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+  std::vector<BufferAllocation> fake_allocations;
+  fake_allocations.reserve(4);
+  fake_allocations.emplace_back(/*index=*/0, rhs_length, /*color=*/0);
+  BufferAllocation::Slice slice_lhs_fake(&fake_allocations.back(), 0,
                                          rhs_length);
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/1, rhs_length, /*color=*/0));
-  BufferAllocation::Slice slice_rhs_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/1, rhs_length, /*color=*/0);
+  BufferAllocation::Slice slice_rhs_fake(&fake_allocations.back(), 0,
                                          rhs_length);
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
-  BufferAllocation::Slice slice_out_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/2, out_length, /*color=*/0);
+  BufferAllocation::Slice slice_out_fake(&fake_allocations.back(), 0,
                                          out_length);
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/3, 1024 * 1024, /*color=*/0));
-  BufferAllocation::Slice slice_workspace_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/3, 1024 * 1024, /*color=*/0);
+  BufferAllocation::Slice slice_workspace_fake(&fake_allocations.back(), 0,
                                                1024 * 1024);
 
   auto alloc_lhs =
@@ -1043,22 +1037,19 @@ CreateSlicedGemmArbitraryNumberOfArgumentsThunk(
   int64_t offset_length = sizeof(int64_t);
 
   // Preparing buffer allocation slices for thunk creations.
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations;
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/0, rhs_length, /*color=*/0));
-  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+  std::vector<BufferAllocation> fake_allocations;
+  fake_allocations.reserve(4);
+  fake_allocations.emplace_back(/*index=*/0, rhs_length, /*color=*/0);
+  BufferAllocation::Slice slice_lhs_fake(&fake_allocations.back(), 0,
                                          rhs_length);
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/1, rhs_length, /*color=*/0));
-  BufferAllocation::Slice slice_rhs_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/1, rhs_length, /*color=*/0);
+  BufferAllocation::Slice slice_rhs_fake(&fake_allocations.back(), 0,
                                          rhs_length);
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
-  BufferAllocation::Slice slice_out_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/2, out_length, /*color=*/0);
+  BufferAllocation::Slice slice_out_fake(&fake_allocations.back(), 0,
                                          out_length);
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/3, 1024 * 1024, /*color=*/0));
-  BufferAllocation::Slice slice_workspace_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/3, 1024 * 1024, /*color=*/0);
+  BufferAllocation::Slice slice_workspace_fake(&fake_allocations.back(), 0,
                                                1024 * 1024);
 
   auto alloc_lhs =
@@ -1220,29 +1211,24 @@ CreateSlicedTupledOperandGemmThunk(
   int64_t offset_length = sizeof(int64_t);
 
   // Preparing buffer allocation slices for thunk creations.
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations;
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/0, rhs_length, /*color=*/0));
-  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+  std::vector<BufferAllocation> fake_allocations;
+  fake_allocations.reserve(4);
+  fake_allocations.emplace_back(/*index=*/0, rhs_length, /*color=*/0);
+  BufferAllocation::Slice slice_lhs_fake(&fake_allocations.back(), 0,
                                          rhs_length);
 
   auto alloc_lhs = std::make_unique<BufferAllocation>(
       /*index=*/0, 3 * lhs_length, /*color=*/0);
   BufferAllocation::Slice slice_lhs(alloc_lhs.get(), lhs_length, lhs_length);
 
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/1, rhs_length, /*color=*/0));
-  BufferAllocation::Slice slice_rhs(fake_allocations.back().get(), 0,
-                                    rhs_length);
+  fake_allocations.emplace_back(/*index=*/1, rhs_length, /*color=*/0);
+  BufferAllocation::Slice slice_rhs(&fake_allocations.back(), 0, rhs_length);
 
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
-  BufferAllocation::Slice slice_out(fake_allocations.back().get(), 0,
-                                    out_length);
+  fake_allocations.emplace_back(/*index=*/2, out_length, /*color=*/0);
+  BufferAllocation::Slice slice_out(&fake_allocations.back(), 0, out_length);
 
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/3, 1024 * 1024, /*color=*/0));
-  BufferAllocation::Slice slice_workspace(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/3, 1024 * 1024, /*color=*/0);
+  BufferAllocation::Slice slice_workspace(&fake_allocations.back(), 0,
                                           1024 * 1024);
 
   auto alloc_lhs_offset_0 = std::make_unique<BufferAllocation>(
@@ -1398,17 +1384,16 @@ TEST_F(DynamicSliceThunkTest, SlicedMemcpyOOB) {
   // Prepare embedded and dynamic slice thunks.
 
   // Preparing buffer allocation slices for thunk creations.
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(2);
+  std::vector<BufferAllocation> fake_allocations;
+  fake_allocations.reserve(2);
 
   // Fake slices for embedded thunk creation.
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/0, slice_length, /*color=*/0));
-  BufferAllocation::Slice slice_src_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/0, slice_length, /*color=*/0);
+  BufferAllocation::Slice slice_src_fake(&fake_allocations.back(), 0,
                                          slice_length);
 
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/1, slice_length, /*color=*/0));
-  BufferAllocation::Slice slice_dst_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/1, slice_length, /*color=*/0);
+  BufferAllocation::Slice slice_dst_fake(&fake_allocations.back(), 0,
                                          slice_length);
 
   BufferAllocation alloc_src(/*index=*/0, src_length, /*color=*/0);
@@ -1591,25 +1576,22 @@ CreateSlicedOperandsSameBufferGemmThunk(
   int64_t offset_length = sizeof(int64_t);
 
   // Preparing buffer allocation slices for thunk creations.
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations;
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/0, rhs_length, /*color=*/0));
-  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+  std::vector<BufferAllocation> fake_allocations;
+  fake_allocations.reserve(4);
+  fake_allocations.emplace_back(/*index=*/0, rhs_length, /*color=*/0);
+  BufferAllocation::Slice slice_lhs_fake(&fake_allocations.back(), 0,
                                          rhs_length);
 
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/1, rhs_length, /*color=*/0));
-  BufferAllocation::Slice slice_rhs_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/1, rhs_length, /*color=*/0);
+  BufferAllocation::Slice slice_rhs_fake(&fake_allocations.back(), 0,
                                          rhs_length);
 
-  fake_allocations.push_back(
-      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
-  BufferAllocation::Slice slice_out_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/2, out_length, /*color=*/0);
+  BufferAllocation::Slice slice_out_fake(&fake_allocations.back(), 0,
                                          out_length);
 
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/3, 1024 * 1024, /*color=*/0));
-  BufferAllocation::Slice slice_workspace_fake(fake_allocations.back().get(), 0,
+  fake_allocations.emplace_back(/*index=*/3, 1024 * 1024, /*color=*/0);
+  BufferAllocation::Slice slice_workspace_fake(&fake_allocations.back(), 0,
                                                1024 * 1024);
 
   auto alloc = std::make_unique<BufferAllocation>(
@@ -1804,11 +1786,11 @@ CreateHostInductionVariableAndOffsetEvaluationThunk(
   int64_t out_length = sizeof(float) * 1 * 1;
 
   // Preparing buffer allocation slices for thunk creations.
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations;
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/0, /*size=*/rhs_length, /*color=*/0));
+  std::vector<BufferAllocation> fake_allocations;
+  fake_allocations.reserve(4);
+  fake_allocations.emplace_back(/*index=*/0, /*size=*/rhs_length, /*color=*/0);
   BufferAllocation::Slice slice_lhs_fake(
-      /*allocation=*/fake_allocations.back().get(), /*offset=*/0,
+      /*allocation=*/&fake_allocations.back(), /*offset=*/0,
       /*size=*/rhs_length);
 
   auto alloc_lhs = std::make_unique<BufferAllocation>(
@@ -1816,22 +1798,19 @@ CreateHostInductionVariableAndOffsetEvaluationThunk(
   BufferAllocation::Slice slice_lhs(alloc_lhs.get(), /*offset=*/0,
                                     /*size=*/lhs_length);
 
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/1, /*size=*/rhs_length, /*color=*/0));
+  fake_allocations.emplace_back(/*index=*/1, /*size=*/rhs_length, /*color=*/0);
   BufferAllocation::Slice slice_rhs(
-      /*allocation=*/fake_allocations.back().get(), /*offset=*/0,
+      /*allocation=*/&fake_allocations.back(), /*offset=*/0,
       /*size=*/rhs_length);
 
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/2, /*size=*/out_length, /*color=*/0));
+  fake_allocations.emplace_back(/*index=*/2, /*size=*/out_length, /*color=*/0);
   BufferAllocation::Slice slice_out(
-      /*allocation=*/fake_allocations.back().get(), /*offset=*/0,
+      /*allocation=*/&fake_allocations.back(), /*offset=*/0,
       /*size=*/out_length);
 
-  fake_allocations.push_back(std::make_unique<BufferAllocation>(
-      /*index=*/3, /*size=*/1024 * 1024, /*color=*/0));
+  fake_allocations.emplace_back(/*index=*/3, /*size=*/1024 * 1024, /*color=*/0);
   BufferAllocation::Slice slice_workspace(
-      /*allocation=*/fake_allocations.back().get(), /*offset=*/0,
+      /*allocation=*/&fake_allocations.back(), /*offset=*/0,
       /*size=*/1024 * 1024);
 
   backing_allocations.push_back(std::move(alloc_lhs));

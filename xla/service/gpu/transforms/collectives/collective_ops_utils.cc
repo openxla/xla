@@ -18,11 +18,12 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -43,7 +44,24 @@ namespace xla {
 namespace gpu {
 namespace {
 
-struct CommunicationMetadata {
+// Computes a map from source node ID to a set of target node IDs for a
+// collective-permute instruction. A node ID is computed by dividing the device
+// (replica) ID by the number of devices per host.
+absl::flat_hash_map<int64_t, absl::flat_hash_set<int64_t>>
+GetSourceToTargetsNodeMap(const HloCollectivePermuteInstruction& instr,
+                          int num_devices_per_host) {
+  absl::flat_hash_map<int64_t, absl::flat_hash_set<int64_t>>
+      source_to_targets_node_map;
+  for (const auto& [source, target] : instr.source_target_pairs()) {
+    int64_t source_node = source / num_devices_per_host;
+    int64_t target_node = target / num_devices_per_host;
+    source_to_targets_node_map[source_node].insert(target_node);
+  }
+  return source_to_targets_node_map;
+}
+
+struct CollectiveMetadata {
+  // map for ops with `replica_groups`, e.g. all-gather.
   absl::flat_hash_map<int64_t, size_t> partition_to_participant_count;
   int num_devices_per_partition;
   int64_t replica_count;
@@ -66,49 +84,31 @@ bool SameParticipantCounts(const absl::flat_hash_map<int64_t, size_t>& lhs,
   return lhs_counts == rhs_counts;
 }
 
-absl::StatusOr<CommunicationMetadata> CommunicationContext(
-    const HloChannelInstruction& instr, int partition_size) {
+absl::StatusOr<CollectiveMetadata> CommunicationContext(
+    const HloCollectiveInstruction& instr, int partition_size) {
   absl::flat_hash_map<int64_t, size_t> partition_to_participant_count;
 
-  if (const HloCollectiveInstruction* collective =
-          DynCast<HloCollectiveInstruction>(&instr)) {
-    for (const ReplicaGroup& replica_group :
-         collective->device_list().replica_groups()) {
-      absl::flat_hash_map<int64_t, size_t> buffer;
-      for (int64_t rank : replica_group.replica_ids()) {
-        int64_t partition_id = rank / partition_size;
-        buffer[partition_id]++;
-      }
-      if (!partition_to_participant_count.empty() &&
-          !SameParticipantCounts(buffer, partition_to_participant_count)) {
-        return absl::FailedPreconditionError(
-            absl::StrCat("Non homogenous replica group: ",
-                         collective->device_list().ToString()));
-      }
-      if (partition_to_participant_count.empty()) {
-        partition_to_participant_count = buffer;
-      }
+  for (const ReplicaGroup& replica_group :
+       instr.device_list().replica_groups()) {
+    absl::flat_hash_map<int64_t, size_t> buffer;
+    for (int64_t rank : replica_group.replica_ids()) {
+      int64_t partition_id = rank / partition_size;
+      buffer[partition_id]++;
     }
-  } else if (const HloCollectivePermuteInstruction* collective_permute =
-                 DynCast<HloCollectivePermuteInstruction>(&instr)) {
-    for (const auto& [source, target] :
-         collective_permute->source_target_pairs()) {
-      int64_t source_partition = source / partition_size;
-      int64_t target_partition = target / partition_size;
-      partition_to_participant_count[source_partition]++;
-      partition_to_participant_count[target_partition]++;
+    if (!partition_to_participant_count.empty() &&
+        !SameParticipantCounts(buffer, partition_to_participant_count)) {
+      return absl::FailedPreconditionError(absl::StrCat(
+          "Non homogenous replica group: ", instr.device_list().ToString()));
     }
-  } else {
-    return absl::FailedPreconditionError(
-        "Cannot determine communication context for non-collective channel "
-        "instruction");
+    if (partition_to_participant_count.empty()) {
+      partition_to_participant_count = buffer;
+    }
   }
-
-  return CommunicationMetadata{partition_to_participant_count, partition_size,
-                               instr.GetModule()->config().replica_count()};
+  return CollectiveMetadata{partition_to_participant_count, partition_size,
+                            instr.GetModule()->config().replica_count()};
 }
 
-bool IsSinglePartition(const CommunicationMetadata& pattern) {
+bool IsSinglePartition(const CollectiveMetadata& pattern) {
   if (pattern.partition_to_participant_count.size() == 1) {
     return true;
   }
@@ -117,7 +117,7 @@ bool IsSinglePartition(const CommunicationMetadata& pattern) {
          pattern.replica_count <= pattern.num_devices_per_partition;
 }
 
-bool IsWorldLevelCommunication(const CommunicationMetadata& pattern) {
+bool IsWorldLevelCommunication(const CollectiveMetadata& pattern) {
   if (!IsSinglePartition(pattern) &&
       pattern.partition_to_participant_count.empty()) {
     return true;
@@ -129,7 +129,7 @@ bool IsWorldLevelCommunication(const CommunicationMetadata& pattern) {
       });
 }
 
-bool IsNonWorldLevelCommunication(const CommunicationMetadata& pattern) {
+bool IsNonWorldLevelCommunication(const CollectiveMetadata& pattern) {
   return !IsSinglePartition(pattern) && !IsWorldLevelCommunication(pattern);
 }
 
@@ -150,16 +150,37 @@ absl::StatusOr<GPUCommunicationType> CommunicationType(
     return absl::FailedPreconditionError("Only CUDA is supported.");
   }
 
-  TF_ASSIGN_OR_RETURN(CommunicationMetadata comm,
-                      CommunicationContext(instr, partition_size));
-  if (IsSinglePartition(comm)) {
+  if (const auto* collective = DynCast<HloCollectiveInstruction>(&instr)) {
+    TF_ASSIGN_OR_RETURN(CollectiveMetadata comm,
+                        CommunicationContext(*collective, partition_size));
+    if (IsSinglePartition(comm)) {
+      return GPUCommunicationType::SINGLE_PARTITION;
+    }
+    if (IsWorldLevelCommunication(comm)) {
+      return GPUCommunicationType::MULTI_HOST_WORLD_LEVEL;
+    }
+    if (IsNonWorldLevelCommunication(comm)) {
+      return GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL;
+    }
+  } else if (const auto* collective_permute =
+                 DynCast<HloCollectivePermuteInstruction>(&instr)) {
+    const auto source_to_targets_node_map =
+        GetSourceToTargetsNodeMap(*collective_permute, partition_size);
+    for (const auto& [source_node, target_node_set] :
+         source_to_targets_node_map) {
+      if (target_node_set.size() > 1) {
+        return GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL;
+      }
+      CHECK_EQ(target_node_set.size(), 1);
+      if (source_node != *target_node_set.begin()) {
+        return GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL;
+      }
+    }
     return GPUCommunicationType::SINGLE_PARTITION;
-  }
-  if (IsWorldLevelCommunication(comm)) {
-    return GPUCommunicationType::MULTI_HOST_WORLD_LEVEL;
-  }
-  if (IsNonWorldLevelCommunication(comm)) {
-    return GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL;
+  } else {
+    return absl::FailedPreconditionError(
+        "Cannot determine communication type for non-collective channel "
+        "instruction");
   }
 
   return GPUCommunicationType::UNDEFINED;

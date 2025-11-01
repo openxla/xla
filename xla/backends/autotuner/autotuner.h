@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/profiler.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/executable.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/tsl/platform/threadpool.h"
@@ -81,6 +82,9 @@ struct AutotuneConfig {
   // Note: If cache is provided, the cached config will be used instead of the
   // default config.
   bool use_default_config = false;
+  // If true, dump the autotuned instructions to the modules's xla_dump_to or
+  // to stdout if not set.
+  bool dump_hlos = false;
 };
 
 class Autotuner {
@@ -102,6 +106,13 @@ class Autotuner {
   // ignored.
   absl::Status Autotune(HloModule* module,
                         const InstructionFilterFn& should_autotune);
+
+  // Same as above, but also takes a sharding KV store which helps to shard
+  // the autotuning work across multiple processes.
+  // This is used for distributed autotuning.
+  absl::Status Autotune(HloModule* module,
+                        const InstructionFilterFn& should_autotune,
+                        MultiProcessKeyValueStore& sharding_kv_store);
 
  private:
   using InstructionsByFingerprint =
@@ -197,6 +208,8 @@ class Autotuner {
   void LogConfigResults(const HloInstruction& instr,
                         const std::vector<ConfigResult>& results);
   absl::Status DumpLogsToFile();
+  // Dumps HLO before and after applying the config.
+  absl::Status DumpHlo(HloInstruction* instr, const Config& config);
 
   std::vector<std::unique_ptr<CodegenBackend>> codegen_backends_;
   std::unique_ptr<Profiler> profiler_;
@@ -204,6 +217,7 @@ class Autotuner {
   std::unique_ptr<AutotunerCacheInterface> cache_;
   tsl::thread::ThreadPool* thread_pool_;
   AutotuningLogs logs_;
+  int dump_counter_ = 0;
 };
 }  // namespace xla
 

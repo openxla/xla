@@ -1690,7 +1690,8 @@ tf_proto_library(
     srcs = ["backend_config.proto"],
     protodeps = [
         ":onednn_config_proto",
-        "//xla/backends/cpu:xnnpack_config_proto",
+        "//xla/backends/cpu:xnn_fusion_options_proto",
+        "//xla/backends/cpu:ynn_fusion_options_proto",
     ],
 )
 
@@ -2177,6 +2178,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
