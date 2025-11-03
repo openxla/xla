@@ -11,7 +11,7 @@ N-dimensional array holding elements of some uniform type (such as 32-bit
 float). Throughout the documentation, *array* is used to denote an
 arbitrary-dimensional array. For convenience, special cases have more specific
 and familiar names; for example a *vector* is a 1-dimensional array and a
-*matrix* is a 2-dimensional array.
+*matrix* is a 2-dimensional array. Memory spaces used by HLO are described in the [Memory Locations](#memory-space-identifiers) section.
 
 ## Abs
 
@@ -3380,6 +3380,19 @@ in detail on the [broadcasting page](broadcasting.md).
 
 For StableHLO information see
 [StableHLO - maximum](https://openxla.org/stablehlo/spec#maximum).
+
+## Memory Space Identifiers
+
+In HLO, each array may be annotated with a memory space identifier, written as S(n).
+
+* S(0) (often omitted) denotes device high bandwidth memory (HBM).
+* S(1) represents on device virtual memory (VMEM).
+* S(2), S(3), etc., correspond to additional device specific memory spaces.
+* S(5) indicates host memory.
+
+Identifiers beyond those listed are implementation defined and may vary by backend.
+
+For more information see [Shapes and layouts](https://openxla.org/xla/shapes) and [Tiling](https://openxla.org/xla/tiled_layout).
 
 ## Min
 
