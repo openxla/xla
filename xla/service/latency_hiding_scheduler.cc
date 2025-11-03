@@ -1332,7 +1332,6 @@ class ReadySetLt {
     // those that are closer rather than ones that are further away.
     CMP_EXPLICIT(ShouldScheduleAsyncDone(a, an), ShouldScheduleAsyncDone(b, bn),
                  "kScheduleDone");
-
     // The following rule targets the async ops using resources that should
     // be released right after the op's estimated time cost has past. It
     // prevents increasing the overlaps of such async ops more than
