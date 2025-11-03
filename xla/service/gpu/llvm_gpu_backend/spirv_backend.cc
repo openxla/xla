@@ -73,6 +73,12 @@ std::vector<std::string> GetSPIRVBackendOptions(
 absl::StatusOr<std::string> CompileToSPIRV(
     llvm::Module* module, stream_executor::GpuComputeCapability gpu_version,
     const DebugOptions& debug_options) {
+  // LLVM SPIR-V backend can not translate empty module. Return empty
+  // spirv-binary for empty llvm module.
+  if (module && module->empty() && module->global_empty() &&
+      module->alias_empty() && module->named_metadata_empty()) {
+    return std::string();
+  }
   static absl::once_flag backend_init_flag;
   absl::call_once(backend_init_flag, SPIRVBackendInit);
   auto llvm_opts = GetSPIRVBackendOptions(debug_options);

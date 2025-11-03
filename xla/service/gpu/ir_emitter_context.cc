@@ -76,9 +76,11 @@ void IrEmitterContext::emit_constant(int64_t num_elements,
                                                 content.span().size()));
   }();
 
-  // Explicitly set global addrspace for SPIR backend.
+  // Explicitly set global addrspace for SPIR-V backend.
   int addrspace =
-      llvm::Triple(llvm_module_constants()->getTargetTriple()).isSPIR() ? 1 : 0;
+      llvm::Triple(llvm_module_constants()->getTargetTriple()).isSPIROrSPIRV()
+          ? 1
+          : 0;
   // These globals will be looked up by name by GpuExecutable so we need to
   // give them an external linkage.  Not all of their uses are visible in
   // the LLVM IR so we can't give then a linkage that merely preserves their
