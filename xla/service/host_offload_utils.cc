@@ -24,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/btree_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -303,13 +304,17 @@ bool IsHostOffloadingInstruction(const HloInstruction* instr) {
   if (instr->IsCustomCall("MoveToHost")) {
     // Check if MoveToHost is used by DynamicUpdateSlice (forward pattern)
     std::vector<const HloInstruction*> to_check = {instr};
-    std::set<const HloInstruction*> visited;
+    absl::btree_set<const HloInstruction*> visited;
 
     while (!to_check.empty()) {
       const HloInstruction* current = to_check.back();
       to_check.pop_back();
 
-      if (visited.insert(current).second) {
+      auto [_, inserted] = visited.insert(current);
+      if (inserted) {
+        if (current->user_count() == 0) {
+          continue;
+        }
         for (const HloInstruction* user : current->users()) {
           if (!user) {
             continue;
@@ -328,13 +333,17 @@ bool IsHostOffloadingInstruction(const HloInstruction* instr) {
   } else if (instr->IsCustomCall("MoveToDevice")) {
     // Check if MoveToDevice uses DynamicSlice (backward pattern)
     std::vector<const HloInstruction*> to_check = {instr};
-    std::set<const HloInstruction*> visited;
+    absl::btree_set<const HloInstruction*> visited;
 
     while (!to_check.empty()) {
       const HloInstruction* current = to_check.back();
       to_check.pop_back();
 
-      if (visited.insert(current).second) {
+      auto [_, inserted] = visited.insert(current);
+      if (inserted) {
+        if (current->operand_count() == 0) {
+          continue;
+        }
         for (const HloInstruction* operand : current->operands()) {
           if (!operand) {
             continue;
