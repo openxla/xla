@@ -24,6 +24,8 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/base/attributes.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/strings/ascii.h"
 #include "xla/stream_executor/sycl/sycl_status.h"
 #include "xla/tsl/platform/statusor.h"
@@ -75,7 +77,7 @@ class SyclDevicePool {
 
 using StreamPtr = std::shared_ptr<::sycl::queue>;
 using StreamPool = std::vector<StreamPtr>;
-using StreamPoolMap = std::unordered_map<int, StreamPool>;
+using StreamPoolMap = absl::flat_hash_map<int /*device_ordinal*/, StreamPool>;
 
 // TODO(intel-tf): kMaxStreamsPerDevice is the maximum number of streams that
 // can be created per device via GetOrCreateStream when multiple streams are
@@ -151,12 +153,13 @@ absl::StatusOr<SyclTimerProperties> SyclGetTimerProperties(int device_ordinal);
 
 // Synchronizes the given SYCL stream by blocking until all previously submitted
 // tasks are complete.
-absl::Status SyclStreamSynchronize(::sycl::queue* stream_handle);
+absl::Status SyclStreamSynchronize(::sycl::queue* stream_handle)
+    ABSL_ATTRIBUTE_NONNULL(1);
 
 // Retrieves the most recent SYCL event associated with the given stream,
 // if available.
 absl::StatusOr<std::optional<::sycl::event>> SyclGetRecentEventFromStream(
-    ::sycl::queue* stream_handle);
+    ::sycl::queue* stream_handle) ABSL_ATTRIBUTE_NONNULL(1);
 
 // NOTE: Similar to standard memcpy, all SYCL memcpy functions work
 // only when the source and destination buffers do not overlap. Add support for
@@ -186,13 +189,15 @@ absl::Status SyclMemcpyDeviceToDevice(int device_ordinal, void* dst_device,
 // specified SYCL stream. The operation may return before the copy is complete.
 absl::Status SyclMemcpyDeviceToHostAsync(::sycl::queue* stream_handle,
                                          void* dst_host, const void* src_device,
-                                         size_t byte_count);
+                                         size_t byte_count)
+    ABSL_ATTRIBUTE_NONNULL(1);
 
 // Asynchronously copies data from a host buffer to a device buffer using the
 // specified SYCL stream. The operation may return before the copy is complete.
 absl::Status SyclMemcpyHostToDeviceAsync(::sycl::queue* stream_handle,
                                          void* dst_device, const void* src_host,
-                                         size_t byte_count);
+                                         size_t byte_count)
+    ABSL_ATTRIBUTE_NONNULL(1);
 
 // Asynchronously copies data between two device buffers using the specified
 // SYCL stream. It supports both intra-device and inter-device transfers. The
@@ -200,7 +205,8 @@ absl::Status SyclMemcpyHostToDeviceAsync(::sycl::queue* stream_handle,
 absl::Status SyclMemcpyDeviceToDeviceAsync(::sycl::queue* stream_handle,
                                            void* dst_device,
                                            const void* src_device,
-                                           size_t byte_count);
+                                           size_t byte_count)
+    ABSL_ATTRIBUTE_NONNULL(1);
 
 // Sets the device buffer to a byte value using the default SYCL stream
 // for the specified device ordinal. The operation is synchronous
@@ -212,7 +218,7 @@ absl::Status SyclMemsetDevice(int device_ordinal, void* dst_device,
 // SYCL stream. The operation may return before it is complete.
 absl::Status SyclMemsetDeviceAsync(::sycl::queue* stream_handle,
                                    void* dst_device, unsigned char value,
-                                   size_t count);
+                                   size_t count) ABSL_ATTRIBUTE_NONNULL(1);
 
 // Sets the device buffer to an unsigned 32-bit value using the default SYCL
 // stream for the specified device ordinal. The operation is synchronous and
@@ -224,7 +230,7 @@ absl::Status SyclMemfillDevice(int device_ordinal, void* dst_device,
 // specified SYCL stream. The operation may return before it is complete.
 absl::Status SyclMemfillDeviceAsync(::sycl::queue* stream_handle,
                                     void* dst_device, uint32_t value,
-                                    size_t count);
+                                    size_t count) ABSL_ATTRIBUTE_NONNULL(1);
 
 // Allocates a block of memory on the given device ordinal using the default
 // stream for that device. The memory is aligned to 64 bytes.

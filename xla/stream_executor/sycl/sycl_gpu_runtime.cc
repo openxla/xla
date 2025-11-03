@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <cassert>
 #include <iostream>
-#include <unordered_map>
 
 #include "absl/base/call_once.h"
 #include "absl/synchronization/mutex.h"
@@ -31,10 +30,9 @@ absl::Status IsValidDeviceOrdinal(int device_ordinal,
   TF_ASSIGN_OR_RETURN(int device_count, SyclDevicePool::GetDeviceCount());
   if (device_ordinal >= 0 && device_ordinal < device_count) {
     return absl::OkStatus();
-  } else {
-    return absl::InvalidArgumentError(absl::StrCat(
-        function_name, ": Invalid device ordinal: ", device_ordinal));
   }
+  return absl::InvalidArgumentError(absl::StrCat(
+      function_name, ": Invalid device ordinal: ", device_ordinal));
 }
 
 // Returns true if the oneAPI version is 2024.2 or newer.
@@ -183,10 +181,9 @@ absl::StatusOr<int> SyclDevicePool::GetDeviceOrdinal(
   auto it = std::find(device_pool_.begin(), device_pool_.end(), device);
   if (it != device_pool_.end()) {
     return static_cast<int>(it - device_pool_.begin());
-  } else {
-    return absl::InternalError(
-        "SyclDevicePool::GetDeviceOrdinal failed, got invalid device");
   }
+  return absl::InternalError(
+      "SyclDevicePool::GetDeviceOrdinal failed, got invalid device");
 }
 
 absl::StatusOr<::sycl::device> SyclDevicePool::GetDevice(int device_ordinal) {
@@ -199,18 +196,16 @@ absl::StatusOr<::sycl::device> SyclDevicePool::GetDevice(int device_ordinal) {
 StreamPoolMap SyclStreamPool::stream_pool_map_;
 absl::Mutex SyclStreamPool::stream_pool_mu_(absl::kConstInit);
 
-static const ::sycl::async_handler SyclAsyncHandler =
-    [](::sycl::exception_list ex_list) {
-      for (auto& e : ex_list) {
-        try {
-          std::rethrow_exception(e);
-        } catch (::sycl::exception& e) {
-          LOG(ERROR) << "SYCL exception: " << e.what()
-                     << ", file = " << __FILE__ << ", line = " << __LINE__
-                     << ".";
-        }
-      }
-    };
+void SyclAsyncHandler(::sycl::exception_list ex_list) {
+  for (auto& e : ex_list) {
+    try {
+      std::rethrow_exception(e);
+    } catch (::sycl::exception& e) {
+      LOG(ERROR) << "SYCL exception: " << e.what() << ", file = " << __FILE__
+                 << ", line = " << __LINE__ << ".";
+    }
+  }
+}
 
 absl::StatusOr<StreamPool*> SyclStreamPool::InitStreamPool(int device_ordinal) {
   {
@@ -276,34 +271,33 @@ absl::StatusOr<StreamPtr> SyclStreamPool::GetOrCreateStream(
           << ", enable_multiple_streams: " << enable_multiple_streams;
   if (!enable_multiple_streams) {
     return SyclStreamPool::GetDefaultStream(device_ordinal);
-  } else {
-    TF_RETURN_IF_ERROR(IsValidDeviceOrdinal(
-        device_ordinal, "SyclStreamPool::GetOrCreateStream"));
-    TF_ASSIGN_OR_RETURN(StreamPool * stream_pool,
-                        SyclStreamPool::InitStreamPool(device_ordinal));
-    // If multiple streams are enabled, create a new stream and add it
-    // to the pool, unless the pool has reached kMaxStreamsPerDevice.
-    absl::MutexLock write_lock(&stream_pool_mu_);
-    if (stream_pool->size() >= kMaxStreamsPerDevice) {
-      VLOG(2) << "Stream pool size for device ordinal " << device_ordinal
-              << " exceeds the maximum limit of " << kMaxStreamsPerDevice;
-      return absl::ResourceExhaustedError(
-          absl::StrCat("SyclStreamPool::GetOrCreateStream: Maximum number of "
-                       "streams reached for device ordinal ",
-                       device_ordinal, "."));
-    }
-    VLOG(2) << "Stream pool size for device ordinal " << device_ordinal << ": "
-            << stream_pool->size();
-    ::sycl::property_list prop_list{::sycl::property::queue::enable_profiling(),
-                                    ::sycl::property::queue::in_order()};
-    TF_ASSIGN_OR_RETURN(::sycl::device sycl_device,
-                        SyclDevicePool::GetDevice(device_ordinal));
-    TF_ASSIGN_OR_RETURN(::sycl::context sycl_context,
-                        SyclDevicePool::GetDeviceContext());
-    stream_pool->push_back(std::make_shared<::sycl::queue>(
-        sycl_context, sycl_device, SyclAsyncHandler, prop_list));
-    return stream_pool->back();
   }
+  TF_RETURN_IF_ERROR(IsValidDeviceOrdinal(device_ordinal,
+                                          "SyclStreamPool::GetOrCreateStream"));
+  TF_ASSIGN_OR_RETURN(StreamPool * stream_pool,
+                      SyclStreamPool::InitStreamPool(device_ordinal));
+  // If multiple streams are enabled, create a new stream and add it
+  // to the pool, unless the pool has reached kMaxStreamsPerDevice.
+  absl::MutexLock write_lock(&stream_pool_mu_);
+  if (stream_pool->size() >= kMaxStreamsPerDevice) {
+    VLOG(2) << "Stream pool size for device ordinal " << device_ordinal
+            << " exceeds the maximum limit of " << kMaxStreamsPerDevice;
+    return absl::ResourceExhaustedError(
+        absl::StrCat("SyclStreamPool::GetOrCreateStream: Maximum number of "
+                     "streams reached for device ordinal ",
+                     device_ordinal, "."));
+  }
+  VLOG(2) << "Stream pool size for device ordinal " << device_ordinal << ": "
+          << stream_pool->size();
+  ::sycl::property_list prop_list{::sycl::property::queue::enable_profiling(),
+                                  ::sycl::property::queue::in_order()};
+  TF_ASSIGN_OR_RETURN(::sycl::device sycl_device,
+                      SyclDevicePool::GetDevice(device_ordinal));
+  TF_ASSIGN_OR_RETURN(::sycl::context sycl_context,
+                      SyclDevicePool::GetDeviceContext());
+  stream_pool->push_back(std::make_shared<::sycl::queue>(
+      sycl_context, sycl_device, SyclAsyncHandler, prop_list));
+  return stream_pool->back();
 }
 
 absl::Status SyclStreamPool::SynchronizeStreamPool(int device_ordinal) {
@@ -349,16 +343,14 @@ absl::Status SyclStreamPool::DestroyStream(int device_ordinal,
     return absl::NotFoundError(absl::StrCat(
         "SyclStreamPool::DestroyStream: Stream handle for device ordinal ",
         device_ordinal, " not found in the pool."));
-  } else {
-    // Remove the stream from the pool and reset the handle.
-    // The stream pool remains, but may become empty.
-    stream_pool->erase(it);
-    stream_handle.reset();
-    VLOG(2) << "Successfully destroyed stream for device ordinal "
-            << device_ordinal << ", stream pool size is "
-            << stream_pool->size();
-    return absl::OkStatus();
   }
+  // Remove the stream from the pool and reset the handle.
+  // The stream pool remains, but may become empty.
+  stream_pool->erase(it);
+  stream_handle.reset();
+  VLOG(2) << "Successfully destroyed stream for device ordinal "
+          << device_ordinal << ", stream pool size is " << stream_pool->size();
+  return absl::OkStatus();
 }
 
 absl::StatusOr<SyclTimerProperties> SyclGetTimerProperties(int device_ordinal) {
@@ -379,12 +371,11 @@ absl::StatusOr<SyclTimerProperties> SyclGetTimerProperties(int device_ordinal) {
         absl::StrCat("SyclGetTimerProperties: zeDeviceGetProperties failed for "
                      "device ordinal ",
                      device_ordinal, " with return code: ", status));
-  } else {
-    uint64_t timer_freq_hz = lz_device_props.timerResolution;
-    uint64_t timestamp_mask =
-        (1ull << lz_device_props.kernelTimestampValidBits) - 1ull;
-    return SyclTimerProperties{timer_freq_hz, timestamp_mask};
   }
+  uint64_t timer_freq_hz = lz_device_props.timerResolution;
+  uint64_t timestamp_mask =
+      (1ull << lz_device_props.kernelTimestampValidBits) - 1ull;
+  return SyclTimerProperties{timer_freq_hz, timestamp_mask};
 }
 
 absl::Status SyclStreamSynchronize(::sycl::queue* stream_handle) {
@@ -502,7 +493,7 @@ absl::Status SyclMemcpyDeviceToHostAsync(::sycl::queue* stream_handle,
     return absl::OkStatus();
   }
   ::sycl::usm::alloc dst_alloc_type =
-      get_pointer_type(dst_host, stream_handle->get_context());
+      ::sycl::get_pointer_type(dst_host, stream_handle->get_context());
   bool async = (dst_alloc_type == ::sycl::usm::alloc::host);
   return MemcpyDeviceToHost(stream_handle, dst_host, src_device, byte_count,
                             async);
@@ -527,7 +518,7 @@ absl::Status SyclMemcpyHostToDeviceAsync(::sycl::queue* stream_handle,
     return absl::OkStatus();
   }
   ::sycl::usm::alloc src_alloc_type =
-      get_pointer_type(src_host, stream_handle->get_context());
+      ::sycl::get_pointer_type(src_host, stream_handle->get_context());
   bool async = (src_alloc_type == ::sycl::usm::alloc::host);
   return MemcpyHostToDevice(stream_handle, dst_device, src_host, byte_count,
                             async);
@@ -634,8 +625,8 @@ absl::StatusOr<void*> SyclMallocDevice(int device_ordinal, size_t byte_count) {
                       SyclStreamPool::GetDefaultStream(device_ordinal));
   try {
     // Use the default stream to allocate memory
-    void* ptr =
-        aligned_alloc_device(/*alignment=*/64, byte_count, *stream_handle);
+    void* ptr = ::sycl::aligned_alloc_device(/*alignment=*/64, byte_count,
+                                             *stream_handle);
     return ptr;
   } catch (const std::exception& e) {
     return absl::InternalError(absl::StrCat(
@@ -655,8 +646,8 @@ absl::StatusOr<void*> SyclMallocHost(int device_ordinal, size_t byte_count) {
                       SyclStreamPool::GetDefaultStream(device_ordinal));
   try {
     // Use the default stream to allocate memory
-    void* ptr =
-        aligned_alloc_host(/*alignment=*/64, byte_count, *stream_handle);
+    void* ptr = ::sycl::aligned_alloc_host(/*alignment=*/64, byte_count,
+                                           *stream_handle);
     return ptr;
   } catch (const std::exception& e) {
     return absl::InternalError(absl::StrCat(
@@ -676,8 +667,8 @@ absl::StatusOr<void*> SyclMallocShared(int device_ordinal, size_t byte_count) {
                       SyclStreamPool::GetDefaultStream(device_ordinal));
   try {
     // Use the default stream to allocate memory
-    void* ptr =
-        aligned_alloc_shared(/*alignment=*/64, byte_count, *stream_handle);
+    void* ptr = ::sycl::aligned_alloc_shared(/*alignment=*/64, byte_count,
+                                             *stream_handle);
     return ptr;
   } catch (const std::exception& e) {
     return absl::InternalError(absl::StrCat(

@@ -265,6 +265,8 @@ sycl_library(
     deps = [
         ":sycl_status",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -279,6 +281,7 @@ xla_test(
     ],
     deps = [
         ":sycl_gpu_runtime",
+        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],
