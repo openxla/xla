@@ -1140,6 +1140,9 @@ class ShapeUtil {
   // value, ByteSizeOfPrimitiveType - therefore `unpacked`.
   static absl::Status UnpackedByteStrides(const Shape& shape,
                                           absl::Span<int64_t> strides);
+  ABSL_DEPRECATE_AND_INLINE()
+  static absl::Status ByteStrides(const Shape& shape,
+                                  absl::Span<int64_t> strides);
   // Same as above but returns the stride array, or std::nullopt if error.
   static std::optional<absl::InlinedVector<int64_t, 4>> UnpackedByteStrides(
       const Shape& shape);

@@ -2216,6 +2216,12 @@ absl::Status ShapeUtil::UnpackedByteStrides(const Shape& shape,
 }
 
 /*static*/
+absl::Status ShapeUtil::ByteStrides(const Shape& shape,
+                                    absl::Span<int64_t> strides) {
+  return UnpackedByteStrides(shape, strides);
+}
+
+/*static*/
 std::optional<absl::InlinedVector<int64_t, 4>> ShapeUtil::UnpackedByteStrides(
     const Shape& shape) {
   absl::InlinedVector<int64_t, 4> strides(shape.dimensions().size());
