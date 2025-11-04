@@ -348,7 +348,7 @@ message DebugOptions {
 
   // Limits the thunk buffer debug instrumentation to specific thunks.
   optional ThunkBufferDebugFilter
-      xla_gpu_experimental_thunk_buffer_debug_filter = 423;
+      xla_gpu_experimental_thunk_buffer_debug_filter = 424;
 
   // If true, every time an HLO module is run, we will dump an
   // HloUnoptimizedSnapshot (essentially, a serialized unoptimizedmodule plus
@@ -485,6 +485,8 @@ message DebugOptions {
   // compilation, possibly multiple times per process. This only works on CUDA.
   optional string xla_gpu_dump_autotune_results_to = 222;
 
+  // The flag is being generalized to dump all autotuned instructions as we
+  // combine the autotuner passes into a single pass.
   optional bool xla_gpu_dump_autotuned_gemm_fusions = 232;
 
   // Whether to dump llvm ir when compiling to ptx.
@@ -656,6 +658,9 @@ message DebugOptions {
   // If true, enable heuristic based collective combining.
   optional bool xla_gpu_experimental_enable_heuristic_collective_combining =
       366;
+
+  // If true, enable buffer nan counter on thunks.
+  optional bool xla_gpu_experimental_enable_nan_counter_on_thunks = 423;
 
   // Enable NCCL symmetric buffers.
   optional bool xla_gpu_experimental_enable_nccl_symmetric_buffers = 406;
@@ -1388,7 +1393,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 424
+  // Next id: 425
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1606,7 +1611,7 @@ message ExecutionOptions {
 // Serialization of HloModuleConfig. See the C++ class definition for
 // descriptions of each field.
 // There are no guarantees of backwards or forwards compatibility.
-// Next id: 42.
+// Next id: 43.
 message HloModuleConfigProto {
   enum FusionConfigCollection {
     OFF = 0;       // Do not collect configuration.
@@ -1671,6 +1676,8 @@ message HloModuleConfigProto {
   bool use_shardy_partitioner = 34;
   ShardingConfigProto sharding_config = 38;
   ScheduleConfigProto schedule_config = 41;
+  // Number of devices in a fast-interconnect domain.
+  int64 partition_size = 42;
 }
 
 message HloModuleProtoWithConfig {

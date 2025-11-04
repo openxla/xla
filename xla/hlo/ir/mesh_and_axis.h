@@ -75,6 +75,8 @@ class Mesh {
            axes_names_ == other.axes_names_;
   }
 
+  bool operator!=(const Mesh& other) const { return !(*this == other); }
+
   std::string ToString() const {
     std::string mesh_str = "@mesh";
     // Add the mesh axes names and sizes.
@@ -97,8 +99,6 @@ class Mesh {
     return mesh_str;
   }
 
-  bool operator!=(const Mesh& other) const { return !(*this == other); }
-
   bool DeviceAssignmentEquals(const Mesh& other) const {
     return device_assignment_ == other.device_assignment_;
   }
@@ -109,6 +109,12 @@ class Mesh {
 
   TileAssignment device_assignment() const { return device_assignment_; }
   std::vector<std::string> axis_names() const { return axes_names_; }
+  absl::Span<const int64_t> axis_sizes() const {
+    return device_assignment_.dimensions();
+  }
+  int64_t axis_size(int64_t axis_index) const {
+    return device_assignment_.dim(axis_index);
+  }
 
  private:
   // Dimensions of the `device_assignment_` array correspond to the axes of the
@@ -127,6 +133,7 @@ class AxisRef {
   struct SubAxis {
     int64_t pre_size;
     int64_t size;
+    int64_t next_pre_size() const { return pre_size * size; }
   };
 
   // Index corresponding to axis in the mesh. It should be a valid index into
@@ -160,6 +167,8 @@ class AxisRef {
     return true;
   }
 
+  bool operator!=(const xla::AxisRef& other) const { return !(*this == other); }
+
   std::string ToString(const Mesh& mesh) const {
     CHECK_GE(mesh_axis_index_, 0);
     CHECK_LT(mesh_axis_index_, mesh.axis_names().size());
@@ -171,11 +180,11 @@ class AxisRef {
     return axis_str;
   }
 
-  bool operator!=(const xla::AxisRef& other) const { return !(*this == other); }
-
   AxisRefProto ToProto() const;
 
   static AxisRef FromProto(const AxisRefProto& proto);
+
+  bool CanCoexist(const AxisRef& other) const;
 
   int64_t mesh_axis_index() const { return mesh_axis_index_; }
   std::optional<SubAxis> sub_axis_info() const { return sub_axis_info_; }

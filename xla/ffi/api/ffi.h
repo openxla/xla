@@ -53,7 +53,8 @@ namespace xla::ffi {
 
 // All user data types that are passed via the execution context or state must
 // be registered with the XLA FFI ahead of time to get unique type id.
-using TypeId = XLA_FFI_TypeId;  // NOLINT
+using TypeId = XLA_FFI_TypeId;      // NOLINT
+using TypeInfo = XLA_FFI_TypeInfo;  // NOLINT
 
 enum class DataType : uint8_t {
   INVALID = XLA_FFI_DataType_INVALID,
@@ -1080,6 +1081,16 @@ class Dictionary : public internal::DictionaryBase {
   using internal::DictionaryBase::DictionaryBase;
 
   template <typename T>
+  ErrorOr<T> get(const Iterator& it) const {
+    DiagnosticEngine diagnostic;
+    auto value = internal::DictionaryBase::get<T>(it, diagnostic);
+    if (XLA_FFI_PREDICT_FALSE(!value.has_value())) {
+      return Unexpected(Error::Internal(diagnostic.Result()));
+    }
+    return *value;
+  }
+
+  template <typename T>
   ErrorOr<T> get(std::string_view name) const {
     DiagnosticEngine diagnostic;
     auto value = internal::DictionaryBase::get<T>(name, diagnostic);
@@ -1510,12 +1521,6 @@ inline constexpr XLA_FFI_TypeInfo MakeTypeInfo() {
       /*extension_start=*/nullptr,
       /*deleter=*/[](void* ptr) { delete static_cast<T*>(ptr); },
   };
-}
-
-// TODO(ezhulenev): Remove this once everyone migrates to MakeTypeInfo.
-template <typename T>
-inline constexpr XLA_FFI_TypeInfo TypeInfo() {
-  return MakeTypeInfo<T>();
 }
 
 #define XLA_FFI_REGISTER_TYPE(API, NAME, TYPE_ID, TYPE_INFO) \

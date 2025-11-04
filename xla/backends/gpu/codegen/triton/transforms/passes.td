@@ -211,8 +211,9 @@ def StableHLOLowerToTritonPass
     : Pass<"stablehlo-lower-to-triton", "mlir::ModuleOp"> {
   let summary = "Lowers StableHLO operations to their Triton equivalent.";
   let dependentDialects = [
-    "stablehlo::StablehloDialect",
-    "triton::TritonDialect"
+    "::mlir::stablehlo::StablehloDialect",
+    "::mlir::triton::TritonDialect",
+    "::xla::xtile::XTileDialect",
   ];
   let constructor = "CreateStableHLOLowerToTritonPass()";
 }
@@ -225,6 +226,21 @@ def TensorLowerToTritonPass
     "triton::TritonDialect"
   ];
   let constructor = "CreateTensorLowerToTritonPass()";
+}
+
+def TritonXLAMathToLibdevicePass
+    : Pass<"triton-xla-math-to-libdevice", "mlir::ModuleOp"> {
+  let summary = "Lowers math operations to tt.extern_elementwise calls to their libdevice equivalent.";
+  let dependentDialects = [
+    "tensor::TensorDialect",
+    "triton::TritonDialect"
+  ];
+  let options = [
+    Option<"libdevice_path_", "libdevice_path", "std::string", "",
+           "Path to the libdevice library.">,
+    Option<"triple_string_", "triple", "std::string", "",
+           "Device triple string.">,
+  ];
 }
 
 #endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_PASSES_TD_

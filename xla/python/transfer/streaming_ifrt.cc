@@ -170,7 +170,8 @@ PremappedCopierState::WorkList PremappedCopierState::FindWorkLocked() {
 void PremappedCopierState::StartWorkUnlocked(const WorkList& work_list) {
   for (WorkQueueItem* work_item : work_list) {
     auto& wu = work_item->work;
-    wu.copy_fn(work_item->dest_buffer, wu.offset, wu.size)
+    auto copy_fn = std::move(wu.copy_fn);
+    std::move(copy_fn)(work_item->dest_buffer, wu.offset, wu.size)
         .OnReady([this, this_shared = shared_from_this(),
                   work_item](absl::Status s) {
           WorkList work_list2;
@@ -200,12 +201,13 @@ void PremappedCopierState::FlushReadyWorkItemsInOrder() {
     }
     currently_flushing_ = true;
     mu_.unlock();
-    if (work_item->result_status.ok()) {
-      std::move(work_item->on_done)(this, work_item->dest_buffer,
-                                    work_item->work);
-    } else {
-      std::move(work_item->on_done)(this, work_item->result_status,
-                                    work_item->work);
+    {
+      auto on_done_fn = std::move(work_item->on_done);
+      if (work_item->result_status.ok()) {
+        std::move(on_done_fn)(this, work_item->dest_buffer, work_item->work);
+      } else {
+        std::move(on_done_fn)(this, work_item->result_status, work_item->work);
+      }
     }
     mu_.lock();
     currently_flushing_ = false;
