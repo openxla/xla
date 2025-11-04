@@ -69,6 +69,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
@@ -112,6 +113,7 @@ limitations under the License.
 #include "xla/codegen/xtile/ir/xtile_dialect.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -130,7 +132,6 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_libdevice_path.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/gpu/model/triton_emitter_constraints.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/service/hlo_module_config.h"
@@ -412,14 +413,22 @@ absl::StatusOr<ScalarOrTensor> EmitReduce(
                                                      neutral.UnwrapUnsafe()));
   }
 
-  ttir::ReduceOp reduction =
-      b.create<ttir::ReduceOp>(input.UnwrapUnsafe(), reduction_dimension);
+  Value init_value = b.create<mlir::tensor::FromElementsOp>(
+      mlir::RankedTensorType::get(
+          /*shape=*/{}, values[tiled_hlo_reduce.operand(1)].getType()),
+      values[tiled_hlo_reduce.operand(1)].UnwrapScalar());
+
+  stablehlo::ReduceOp reduction = b.create<stablehlo::ReduceOp>(
+      input.UnwrapTensor(), init_value, reduction_dimension);
   {
     TF_ASSIGN_OR_RETURN(Type result_ty,
                         TritonType(b, hlo_reduce.shape().element_type()));
+    result_ty = mlir::RankedTensorType::get({}, result_ty);
+
     mlir::Location loc = b.getLoc();
     mlir::Block* reducer = b.createBlock(&reduction->getRegion(0), {},
                                          {result_ty, result_ty}, {loc, loc});
+    b.setInsertionPointToStart(reducer);
 
     HloComputation* reduction_computation = hlo_reduce.to_apply();
 
@@ -430,10 +439,20 @@ absl::StatusOr<ScalarOrTensor> EmitReduce(
       if (instr->opcode() == HloOpcode::kParameter) {
         int parameter_number = instr->parameter_number();
         TF_RET_CHECK(parameter_number < 2);
-        TF_RET_CHECK(region_values
-                         .insert({instr, ScalarOrTensor(reducer->getArgument(
-                                             parameter_number))})
-                         .second);
+        auto argument = mlir::cast<mlir::TypedValue<mlir::RankedTensorType>>(
+            reducer->getArgument(parameter_number));
+
+        if (!argument) {
+          return Internal("Expected reducer argument to be a tensor.");
+        }
+
+        // Emit extract op so that the reducer can be lowered to triton, as the
+        // triton reducer can only work with scalars.
+        auto extracted_argument =
+            ScalarOrTensor(b.create<mlir::tensor::ExtractOp>(
+                                argument.getType().getElementType(), argument)
+                               .getResult());
+        TF_RET_CHECK(region_values.insert({instr, extracted_argument}).second);
       } else {
         to_emit.push_back(instr);
       }
@@ -441,16 +460,25 @@ absl::StatusOr<ScalarOrTensor> EmitReduce(
 
     TF_RET_CHECK(!to_emit.empty());
 
-    b.setInsertionPointToStart(reducer);
     TF_ASSIGN_OR_RETURN(
         ScalarOrTensor result,
         EmitScope(b, libdevice_path, device_info, /*analysis=*/nullptr, to_emit,
                   region_values));
-    b.create<ttir::ReduceReturnOp>(SmallVector<Value>({result.UnwrapUnsafe()}));
+    // Emit from_elements op so that the reducer can be lowered to triton, as
+    // the triton reducer can only work with scalars.
+    auto result_as_scalar = b.create<mlir::tensor::FromElementsOp>(
+        result_ty, result.UnwrapUnsafe());
+    b.create<stablehlo::ReturnOp>(SmallVector<Value>({result_as_scalar}));
     b.setInsertionPointAfter(reduction);
   }
 
-  return ScalarOrTensor(reduction.getResult().front());
+  auto result = reduction.getResult(0);
+  if (mlir::cast<ShapedType>(result.getType()).getRank() == 0) {
+    result = b.create<mlir::tensor::ExtractOp>(
+        mlir::cast<ShapedType>(result.getType()).getElementType(), result);
+  }
+
+  return ScalarOrTensor(result);
 }
 
 // Emit code corresponding to a fusion instruction somehow nested within the
@@ -579,37 +607,14 @@ SmallVector<Value> GetRuntimeValues(
 // Reshapes a non-0D tensor of shape [1, 1, 1, ...] to a scalar.
 ScalarOrTensor ReshapeTensorToScalar(EmitterLocOpBuilder b, Value input) {
   auto element_type = mlir::cast<ShapedType>(input.getType()).getElementType();
+  auto shaped_type = mlir::cast<ShapedType>(input.getType());
 
-  // First, reshape to a 1D tensor if not already the case. This is needed
-  // because triton::ReduceOp can only reduce 1 dimension at a time.
-  auto single_dim_tensor = input;
-  if (mlir::cast<ShapedType>(input.getType()).getRank() > 1) {
-    Type output_tensor_type = mlir::RankedTensorType::get({1}, element_type);
-    single_dim_tensor = b.create<ttir::ReshapeOp>(output_tensor_type, input,
-                                                  /*allow_reorder=*/true);
-  }
+  SmallVector<Value> zero_indices;
+  zero_indices.assign(shaped_type.getRank(),
+                      b.create<mlir::arith::ConstantIndexOp>(0));
 
-  // Second, reduce to a scalar.
-  ttir::ReduceOp reduction =
-      b.create<ttir::ReduceOp>(single_dim_tensor, /*axis*/ 0);
-
-  mlir::Location loc = b.getLoc();
-  mlir::Block* reducer = b.createBlock(
-      &reduction->getRegion(0), /*insertPt=*/{},
-      /*argTypes=*/{element_type, element_type}, /*locs=*/{loc, loc});
-
-  b.setInsertionPointToStart(reducer);
-  Value result = mlir::isa<mlir::IntegerType>(element_type)
-                     ? b.create<arith::AddIOp>(reducer->getArgument(0),
-                                               reducer->getArgument(1))
-                           .getResult()
-                     : b.create<arith::AddFOp>(reducer->getArgument(0),
-                                               reducer->getArgument(1))
-                           .getResult();
-  b.create<ttir::ReduceReturnOp>(SmallVector<Value>({result}));
-  b.setInsertionPointAfter(reduction);
-
-  return ScalarOrTensor(reduction.getResult().front());
+  return ScalarOrTensor(
+      b.create<mlir::tensor::ExtractOp>(element_type, input, zero_indices));
 }
 
 absl::StatusOr<ScalarOrTensor> EmitTiledReshape(EmitterLocOpBuilder b,
@@ -646,11 +651,8 @@ absl::StatusOr<ScalarOrTensor> EmitTiledReshape(EmitterLocOpBuilder b,
                      absl::StrJoin(output_tensor_type.getShape(), "x")));
   }
 
-  // Conservatively prevent Triton from reordering elements within the tile.
-  // TODO(b/353637689): see if this restriction can be lifted.
-  bool allow_reorder = false;
-  auto reshape = b.create<ttir::ReshapeOp>(output_tensor_type,
-                                           input.UnwrapUnsafe(), allow_reorder);
+  auto reshape =
+      b.create<stablehlo::ReshapeOp>(output_tensor_type, input.UnwrapUnsafe());
   return ScalarOrTensor(reshape.getResult());
 }
 
@@ -750,8 +752,9 @@ absl::StatusOr<std::vector<ScalarOrTensor>> EmitTiledComputation(
     EmitterLocOpBuilder b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info,
     const HloFusionInstruction* fusion,
-    const TiledHloComputation& tiled_computation, mlir::FunctionOpInterface fn,
-    Value pid,
+    const TiledHloComputation& tiled_computation,
+    const BlockLevelParameters& block_level_parameters,
+    mlir::FunctionOpInterface fn, Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values);
 
 // Returns the number of iterations of the loop over the contracting
@@ -938,8 +941,9 @@ absl::StatusOr<ScalarOrTensor> EmitDot(
     EmitterLocOpBuilder b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info,
     const HloFusionInstruction* fusion,
-    const TiledHloInstruction& tiled_hlo_dot, mlir::FunctionOpInterface fn,
-    Value pid,
+    const TiledHloInstruction& tiled_hlo_dot,
+    const BlockLevelParameters& block_level_parameters,
+    mlir::FunctionOpInterface fn, Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values) {
   // We expect to get a tiled HLO in form:
   //
@@ -1021,10 +1025,7 @@ absl::StatusOr<ScalarOrTensor> EmitDot(
       /*upperBound=*/MakeIndex(b, loop_iteration_count),
       /*step=*/MakeIndex(b, 1), accumulator);
 
-  if (fusion->GetModule()
-          ->config()
-          .debug_options()
-          .xla_gpu_experimental_enable_triton_warp_specialization()) {
+  if (block_level_parameters.is_warp_specialization_allowed) {
     for_op->setAttr("tt.warp_specialize", b.getBoolAttr(true));
   }
 
@@ -1045,8 +1046,8 @@ absl::StatusOr<ScalarOrTensor> EmitDot(
           EmitTiledComputation(
               b, libdevice_path, device_info,
               ::xla::Cast<HloFusionInstruction>(tiled_fusion_operand->hlo()),
-              *tiled_fusion_operand->called_computation(), fn,
-              computation_index, values));
+              *tiled_fusion_operand->called_computation(),
+              block_level_parameters, fn, computation_index, values));
       if (result.size() != 1) {
         return absl::InternalError(absl::StrCat(
             "Expected nested fusion computation to emit a single value, got ",
@@ -1109,8 +1110,9 @@ absl::StatusOr<ScalarOrTensor> EmitScaledDot(
     EmitterLocOpBuilder b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info,
     const HloFusionInstruction* fusion,
-    const TiledHloInstruction& tiled_hlo_dot, mlir::FunctionOpInterface fn,
-    Value pid,
+    const TiledHloInstruction& tiled_hlo_dot,
+    const BlockLevelParameters& block_level_parameters,
+    mlir::FunctionOpInterface fn, Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values) {
   VLOG(2) << "EmitScaledDot: " << tiled_hlo_dot.ToString();
   const HloScaledDotInstruction& scaled_dot =
@@ -1155,6 +1157,8 @@ absl::StatusOr<ScalarOrTensor> EmitScaledDot(
       {IndexingMap::Variable{{0, loop_iteration_count - 1}, "k"}},
       /*rt_vars=*/{}};
 
+  // TODO(b/449668102): Consider adding warp specialization support for scaled
+  // dot. At the moment, there are no benchmarks that use scaled dot.
   auto for_op = b.create<mlir::scf::ForOp>(
       /*lowerBound=*/MakeIndex(b, 0),
       /*upperBound=*/MakeIndex(b, loop_iteration_count),
@@ -1176,8 +1180,8 @@ absl::StatusOr<ScalarOrTensor> EmitScaledDot(
           EmitTiledComputation(
               b, libdevice_path, device_info,
               ::xla::Cast<HloFusionInstruction>(tiled_fusion_operand->hlo()),
-              *tiled_fusion_operand->called_computation(), fn,
-              computation_index, values));
+              *tiled_fusion_operand->called_computation(),
+              block_level_parameters, fn, computation_index, values));
       if (result.size() != 1) {
         return absl::InternalError(absl::StrCat(
             "Expected nested fusion computation to emit a single value, got ",
@@ -1261,8 +1265,9 @@ absl::StatusOr<ScalarOrTensor> EmitConcatenate(
     EmitterLocOpBuilder b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info,
     const HloFusionInstruction* fusion,
-    const TiledHloInstruction& tiled_concatenate, mlir::FunctionOpInterface fn,
-    Value pid,
+    const TiledHloInstruction& tiled_concatenate,
+    const BlockLevelParameters& block_level_parameters,
+    mlir::FunctionOpInterface fn, Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values) {
   const int64_t concatenate_dimension =
       tiled_concatenate.hlo()->concatenate_dimension();
@@ -1355,7 +1360,8 @@ absl::StatusOr<ScalarOrTensor> EmitConcatenate(
         EmitTiledComputation(
             b, libdevice_path, device_info,
             ::xla::Cast<HloFusionInstruction>(tiled_fusion_operand->hlo()),
-            *tiled_fusion_operand->called_computation(), fn, pid, values));
+            *tiled_fusion_operand->called_computation(), block_level_parameters,
+            fn, pid, values));
     CHECK_EQ(result.size(), 1);
     b.create<mlir::scf::YieldOp>(result.front().UnwrapTensor());
   }
@@ -1435,6 +1441,7 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
     EmitterLocOpBuilder b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info,
     const HloFusionInstruction* fusion, const TiledHloInstruction& tiled_hlo,
+    const BlockLevelParameters& block_level_parameters,
     mlir::FunctionOpInterface fn, Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values) {
   const HloInstruction* hlo = tiled_hlo.hlo();
@@ -1484,7 +1491,7 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
 
   if (hlo->opcode() == HloOpcode::kConcatenate) {
     return EmitConcatenate(b, libdevice_path, device_info, fusion, tiled_hlo,
-                           fn, pid, values);
+                           block_level_parameters, fn, pid, values);
   }
 
   if (hlo->opcode() == HloOpcode::kPad) {
@@ -1492,13 +1499,13 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
   }
 
   if (hlo->opcode() == HloOpcode::kDot) {
-    return EmitDot(b, libdevice_path, device_info, fusion, tiled_hlo, fn, pid,
-                   values);
+    return EmitDot(b, libdevice_path, device_info, fusion, tiled_hlo,
+                   block_level_parameters, fn, pid, values);
   }
 
   if (hlo->opcode() == HloOpcode::kScaledDot) {
-    return EmitScaledDot(b, libdevice_path, device_info, fusion, tiled_hlo, fn,
-                         pid, values);
+    return EmitScaledDot(b, libdevice_path, device_info, fusion, tiled_hlo,
+                         block_level_parameters, fn, pid, values);
   }
 
   if (hlo->opcode() == HloOpcode::kConstant) {
@@ -1575,8 +1582,9 @@ absl::StatusOr<std::vector<ScalarOrTensor>> EmitTiledComputation(
     EmitterLocOpBuilder b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info,
     const HloFusionInstruction* fusion,
-    const TiledHloComputation& tiled_computation, mlir::FunctionOpInterface fn,
-    Value pid,
+    const TiledHloComputation& tiled_computation,
+    const BlockLevelParameters& block_level_parameters,
+    mlir::FunctionOpInterface fn, Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, ScalarOrTensor>& values) {
   VLOG(2) << "EmitTiledComputation: " << tiled_computation.ToString();
   for (const TiledHloInstruction* tiled_hlo :
@@ -1601,10 +1609,10 @@ absl::StatusOr<std::vector<ScalarOrTensor>> EmitTiledComputation(
       VLOG(1) << "Skipping nested fusion: " << hlo->ToString();
       continue;
     }
-    TF_ASSIGN_OR_RETURN(
-        ScalarOrTensor result,
-        EmitTiledHloInstruction(b, libdevice_path, device_info, fusion,
-                                *tiled_hlo, fn, pid, values));
+    TF_ASSIGN_OR_RETURN(ScalarOrTensor result,
+                        EmitTiledHloInstruction(
+                            b, libdevice_path, device_info, fusion, *tiled_hlo,
+                            block_level_parameters, fn, pid, values));
     TF_RET_CHECK(values.insert({tiled_hlo, result}).second) << hlo->ToString();
     VLOG(8) << "Emitted " << hlo->ToString(HloPrintOptions::ShortParsable());
   }
@@ -1840,7 +1848,8 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
   TF_ASSIGN_OR_RETURN(
       auto results,
       EmitTiledComputation(b, libdevice_path, device_info, fusion,
-                           tiled_hlo_computation, fn, tile_id, values));
+                           tiled_hlo_computation, block_level_parameters, fn,
+                           tile_id, values));
 
   for (auto [root, result, arg] :
        llvm::zip(tiled_hlo_computation.GetRoots(), results,

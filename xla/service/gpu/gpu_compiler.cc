@@ -70,6 +70,7 @@ limitations under the License.
 #include "xla/core/host_offloading/hlo_host_device_type_call_wrapper.h"
 #include "xla/core/host_offloading/host_compute_asyncifier.h"
 #include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -191,7 +192,6 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/gpu/model/collective_ptable_stats_collection.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/gpu/model/gpu_cost_model_stats_collection.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/matmul_ptable_stats_collection.h"
@@ -366,15 +366,8 @@ DeviceOrDevicelessConfig GetDeviceConfig(
     return DeviceOrDevicelessConfig{
         DeviceConfig{stream_exec, options.device_allocator}};
   }
-  se::DeviceDescription device_description =
-      gpu_target_config.device_description;
-  device_description.set_dnn_version(
-      {static_cast<unsigned>(
-           gpu_target_config.dnn_version_info.major_version()),
-       static_cast<unsigned>(
-           gpu_target_config.dnn_version_info.minor_version()),
-       static_cast<unsigned>(gpu_target_config.dnn_version_info.patch())});
-  return DeviceOrDevicelessConfig{DevicelessConfig{device_description}};
+  return DeviceOrDevicelessConfig{
+      DevicelessConfig{gpu_target_config.device_description}};
 }
 
 se::GpuComputeCapability GetGpuVersion(const se::StreamExecutor* stream_exec) {
@@ -570,8 +563,8 @@ GpuCompiler::GpuCompiler(se::Platform::Id platform_id,
 
 namespace {
 // Adds the HloVerifier for GPU to the given pipeline.
-void AddHloVerifier(HloPassPipeline* pipeline,
-                    HloVerifierOpts&& opts = {}, bool debug_only = false) {
+void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
+                    bool debug_only = false) {
   opts.verify_no_collective_deadlocks = true;
   std::unique_ptr<TargetVerifierMetadata> verifier_metadata =
       std::make_unique<CpuGpuVerifierMetadata>(std::move(opts));
@@ -1484,6 +1477,7 @@ AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
   }
 
   switch (mode) {
+    case AlgebraicSimplifierMode::kAfterSimplifyFPConversions:
     case AlgebraicSimplifierMode::kPostFusionSimplification:
     case AlgebraicSimplifierMode::kLayoutNormalization:
     case AlgebraicSimplifierMode::kPostLayoutAssignment:
@@ -1941,7 +1935,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         pipeline.AddPass<HloPassPipeline>(
             "remove-no-op-reduce-precision-algebraic-simplifier");
     AlgebraicSimplifierOptions options = GetAlgebraicSimplifierOptions(
-        AlgebraicSimplifierMode::kPostFusionSimplification, debug_options,
+        AlgebraicSimplifierMode::kAfterSimplifyFPConversions, debug_options,
         gpu_target_config.platform_name == "ROCM");
     remove_no_op_reduce_precision_pipeline
         .AddPass<HloPassFix<GpuAlgebraicSimplifier>>(options, gpu_version);

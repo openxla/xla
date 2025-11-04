@@ -79,6 +79,8 @@ cc_library(
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/hlo/builder:xla_computation",
+        "//xla/pjrt:abstract_tracked_device_buffer",
+        "//xla/pjrt:common_pjrt_client",
         "//xla/pjrt:device_event",
         "//xla/pjrt:event_pool",
         "//xla/pjrt:host_memory_spaces",
@@ -173,7 +175,6 @@ cc_library(
         "//xla/service/gpu:stream_executor_util",
     ]) + if_cuda([
         # keep sorted
-        "//xla/service/gpu/model:gpu_collective_performance_model",
         "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
         "//xla/stream_executor/gpu:gpu_stream",
         "@local_config_cuda//cuda:cuda_headers",

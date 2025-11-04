@@ -179,6 +179,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@jsoncpp_git//:jsoncpp",
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:path",

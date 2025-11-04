@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_CUDA_CUDA_EXECUTOR_H_
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -66,8 +67,7 @@ class CudaExecutor : public GpuExecutor {
   absl::Status Init() override;
   bool SynchronizeAllActivity() override;
   absl::StatusOr<DeviceMemoryBase> GetMemoryRange(
-      const DeviceMemoryBase& location) override;
-
+      const DeviceMemoryBase& location) const override;
   absl::StatusOr<std::unique_ptr<EventBasedTimer>> CreateEventBasedTimer(
       Stream* stream, bool use_delay_kernel) override;
   absl::StatusOr<DeviceMemoryBase> GetSymbol(
@@ -138,6 +138,11 @@ class CudaExecutor : public GpuExecutor {
   absl::StatusOr<std::unique_ptr<MemoryAllocator>> CreateMemoryAllocator(
       MemoryType type) override;
 
+  // Returns the granularity which is the minimum unit of memory that can be
+  // allocated with VMM API. In order to map the memory slices to multicast
+  // object, the offset of the slices should be aligned with this granularity.
+  absl::StatusOr<size_t> GetVmmGranularity() const;
+
   // RAII wrapper for a VMM memory handle.
   class VmmMemoryHandle {
    public:
@@ -167,13 +172,13 @@ class CudaExecutor : public GpuExecutor {
 
     absl::Status SubscribeDevice(int device_number) override;
 
-    absl::StatusOr<void*> MapMemory(void* device_ptr,
-                                    GpuExecutor* gpu_executor) override;
+    absl::StatusOr<void*> MapMemory(const DeviceMemoryBase& location,
+                                    const GpuExecutor* gpu_executor) override;
 
    private:
     friend class CudaExecutor;
     absl::Status Initialize(uint64_t size, int num_devices,
-                            GpuExecutor* gpu_executor);
+                            const GpuExecutor* gpu_executor);
     CUmemGenericAllocationHandle handle_;
     uint64_t padded_size_;
     uint64_t granularity_;
@@ -185,12 +190,14 @@ class CudaExecutor : public GpuExecutor {
   };
 
   absl::StatusOr<std::unique_ptr<MulticastMemory>> CreateMulticastMemory(
-      uint64_t size, int num_devices) override;
+      uint64_t size, int num_devices) const override;
 
   // Returns a handle to the given memory if it was allocated with VMM API.
-  absl::StatusOr<VmmMemoryHandle> RetainVmmMemoryHandle(void* ptr);
+  absl::StatusOr<VmmMemoryHandle> RetainVmmMemoryHandle(void* ptr) const;
 
-  bool is_multicast_supported() const { return is_multicast_supported_; }
+  bool is_multicast_supported() const override {
+    return is_multicast_supported_;
+  }
 
  private:
   absl::Status VmmDeallocateMemory(void* ptr);

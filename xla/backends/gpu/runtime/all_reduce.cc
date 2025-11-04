@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 
-#include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -58,6 +57,7 @@ class TagRegistry {
  public:
   static constexpr auto kOneShot = Impl<AllReduceStrategy::kOneShot>{};
   static constexpr auto kTwoShot = Impl<AllReduceStrategy::kTwoShot>{};
+  static constexpr auto kMultimem = Impl<AllReduceStrategy::kMultimem>{};
 };
 
 // Static set of supported kernel tags.
@@ -182,7 +182,8 @@ bool IsAllReduceKernelSupported(int64_t num_ranks, int64_t num_elements,
     return false;
   }
   const int64_t alignment_requirement =
-      all_reduce_strategy == AllReduceStrategy::kOneShot
+      all_reduce_strategy == AllReduceStrategy::kOneShot ||
+              all_reduce_strategy == AllReduceStrategy::kMultimem
           ? se::gpu::kNumElementsPerThread
           : se::gpu::kNumElementsPerThread * num_ranks;
 
@@ -232,6 +233,8 @@ absl::Status RunAllReduceKernel(
         return launch_kernel_impl(tag_registry.kOneShot);
       case AllReduceStrategy::kTwoShot:
         return launch_kernel_impl(tag_registry.kTwoShot);
+      case AllReduceStrategy::kMultimem:
+        return launch_kernel_impl(tag_registry.kMultimem);
     }
   };
 

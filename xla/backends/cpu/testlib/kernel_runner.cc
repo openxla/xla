@@ -16,12 +16,12 @@ limitations under the License.
 #include "xla/backends/cpu/testlib/kernel_runner.h"
 
 #include <memory>
-#include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Module.h"
@@ -37,9 +37,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/kernel_c_api.h"
 #include "xla/codegen/kernel_definition.h"
 #include "xla/codegen/kernel_spec.h"
-#include "xla/codegen/llvm_ir_kernel_source.h"
-#include "xla/codegen/llvm_kernel_definition.h"
-#include "xla/codegen/mlir_kernel_definition.h"
+#include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
 #include "xla/runtime/work_group.h"
 #include "xla/service/cpu/cpu_options.h"
@@ -53,16 +51,15 @@ limitations under the License.
 namespace xla::cpu {
 
 absl::StatusOr<KernelRunner> KernelRunner::Create(
-    LlvmKernelDefinition kernel_definition, JitCompiler compiler) {
-  auto [spec, source] = std::move(kernel_definition).ReleaseStorage();
-
-  auto thread_safe_module = std::move(source).thread_safe_module();
+    KernelDefinition<LlvmKernelSource> kernel, JitCompiler compiler) {
+  auto spec = kernel.spec();
+  auto thread_safe_module = std::move(kernel).TakeSource().thread_safe_module();
   SetModuleMemoryRegionName(*thread_safe_module.getModuleUnlocked(),
                             "kernel_runner_test");
 
   TF_RETURN_IF_ERROR(compiler.AddModule(std::move(thread_safe_module)));
 
-  const std::string& kernel_name = spec.name();
+  absl::string_view kernel_name = spec.name();
   TF_ASSIGN_OR_RETURN(std::unique_ptr<FunctionLibrary> library,
                       std::move(compiler).Compile(
                           {FunctionLibrary::Sym<XLA_CPU_Kernel>(kernel_name)}));
@@ -75,13 +72,12 @@ absl::StatusOr<KernelRunner> KernelRunner::Create(
 }
 
 absl::StatusOr<KernelRunner> KernelRunner::Create(
-    MlirKernelDefinition kernel_definition, JitCompiler compiler) {
-  auto [spec, source] = std::move(kernel_definition).ReleaseStorage();
+    KernelDefinition<MlirKernelSource> kernel, JitCompiler compiler) {
+  auto spec = kernel.spec();
+  auto source = std::move(kernel).TakeSource();
+  TF_ASSIGN_OR_RETURN(LlvmKernelSource llvm_kernel_source, LowerToLlvm(source));
 
-  TF_ASSIGN_OR_RETURN(LlvmIrKernelSource llvm_kernel_source,
-                      LowerToLlvm(source));
-
-  return Create(LlvmKernelDefinition(spec, std::move(llvm_kernel_source)),
+  return Create(KernelDefinition(spec, std::move(llvm_kernel_source)),
                 std::move(compiler));
 }
 
@@ -139,7 +135,7 @@ absl::StatusOr<JitCompiler> KernelRunner::CreateJitCompiler(
                              std::move(ir_compiler));
 }
 
-absl::StatusOr<LlvmIrKernelSource> LowerToLlvm(
+absl::StatusOr<LlvmKernelSource> LowerToLlvm(
     MlirKernelSource& mlir_kernel_source) {
   auto llvm_context = std::make_unique<llvm::LLVMContext>();
 
@@ -153,7 +149,7 @@ absl::StatusOr<LlvmIrKernelSource> LowerToLlvm(
       std::unique_ptr<llvm::Module> llvm_module,
       fusion_compiler.Compile(*llvm_context, mlir_kernel_source.module()));
 
-  return LlvmIrKernelSource(std::move(llvm_context), std::move(llvm_module));
+  return LlvmKernelSource(std::move(llvm_context), std::move(llvm_module));
 }
 
 }  // namespace xla::cpu

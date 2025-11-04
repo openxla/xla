@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo_runner_interface.h"
@@ -137,11 +137,6 @@ absl::StatusOr<std::vector<Layout>> FlattenedParameterLayouts(
 
 absl::StatusOr<ExecuteOptions> GenerateExecuteOptions(const HloModule& module) {
   ExecuteOptions execute_options;
-
-  // PjRt requires untuple_result if the output is a tuple.
-  if (module.result_shape().IsTuple()) {
-    execute_options.untuple_result = true;
-  }
   return execute_options;
 }
 
@@ -567,7 +562,6 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
                       HloRunnerPjRtExecutable::TryUnwrap(*this, executable));
 
   xla::ExecuteOptions execute_options;
-  execute_options.untuple_result = true;
   return ExecuteReplicatedImpl(
       [&](absl::Span<const std::vector<PjRtBuffer*>> argument_buffer_slices)
           -> absl::StatusOr<
@@ -631,7 +625,6 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
                            args = argument_buffer_slices[i], device_ptr]() {
               std::optional<Future<>> returned_future = {};
               xla::ExecuteOptions options;
-              options.untuple_result = true;
               per_replica_results[i] = pjrt_executable->ExecuteSharded(
                   args, device_ptr, options,
                   /*returned_future=*/returned_future,

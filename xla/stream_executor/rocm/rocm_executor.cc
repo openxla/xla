@@ -522,7 +522,7 @@ bool RocmExecutor::UnloadModule(ModuleHandle module_handle) {
 }
 
 absl::StatusOr<DeviceMemoryBase> RocmExecutor::GetMemoryRange(
-    const DeviceMemoryBase& location) {
+    const DeviceMemoryBase& location) const {
   hipDeviceptr_t device_pointer;
   size_t size;
   hipError_t result = wrap::hipMemGetAddressRange(
@@ -1120,6 +1120,9 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
 
     desc.set_l2_cache_size(prop.l2CacheSize);
   }
+
+  // PCIe bandwidth for PCI Gen4 x16 (approximate)
+  desc.set_pcie_bandwidth(32LL * 1024 * 1024 * 1024);
 
   {
     auto ecc_enabled_or = IsEccEnabled(device);

@@ -274,6 +274,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_detailed_logging(true);
   opts.set_xla_enable_dumping(true);
 
+  opts.set_xla_gpu_enable_dynamic_slice_fusion(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_shared_constants(true);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
@@ -388,6 +389,14 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   // on V100 and H100 GPUs. See openxla/xla #9319 for details.
   const int64_t kDefaultMinGemmRewriteSize = 100;
   opts.set_xla_gpu_gemm_rewrite_size_threshold(kDefaultMinGemmRewriteSize);
+
+#ifdef HAS_SUPPORT_FOR_EMBEDDED_LIB_DEVICE
+  opts.set_xla_gpu_use_embeded_device_lib(true);
+#endif
+
+#ifdef HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY
+  opts.set_xla_gpu_use_inprocess_lld(true);
+#endif
 
   opts.set_xla_gpu_use_memcpy_local_p2p(false);
 
@@ -765,7 +774,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         DebugOptions::WhileLoopUnrolling unroll_strategy;
         bool parsed = DebugOptions::WhileLoopUnrolling_Parse(
             absl::AsciiStrToUpper(input), &unroll_strategy);
-        if (!parsed) return false;
+        if (!parsed) {
+          return false;
+        }
         debug_options->set_xla_gpu_enable_while_loop_unrolling(unroll_strategy);
         return true;
       };
@@ -876,6 +887,35 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         debug_options->set_xla_detect_unstable_reductions(detection_mode);
         return true;
       };
+
+  // Custom "sub-parser" for
+  // xla_gpu_experimental_thunk_buffer_debug_filter_by_thunk_id_ranges.
+  auto setter_for_thunk_buffer_debug_filter_by_thunk_id =
+      [debug_options](const std::string& value) {
+        for (const auto& range_str : absl::StrSplit(value, ',')) {
+          IntRangeInclusive* range =
+              debug_options
+                  ->mutable_xla_gpu_experimental_thunk_buffer_debug_filter()
+                  ->add_thunk_id_ranges();
+          if (!details::ParseIntRangeInclusive(range_str, *range)) {
+            return false;
+          }
+        }
+        return true;
+      };
+
+  // Custom "sub-parser" for
+  // xla_gpu_experimental_thunk_buffer_debug_filter_by_profile_annotation_re.
+  auto setter_for_thunk_buffer_debug_filter_by_profile_annotation =
+      [debug_options](const std::string& value) {
+        for (const auto& regex_str : absl::StrSplit(value, ',')) {
+          debug_options
+              ->mutable_xla_gpu_experimental_thunk_buffer_debug_filter()
+              ->add_profile_annotation_regexes(regex_str);
+        }
+        return true;
+      };
+
   // Don't use an initializer list for initializing the vector; this would
   // create a temporary copy, and exceeds the stack space when compiling with
   // certain configurations.
@@ -1100,13 +1140,28 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::LibraryFusionType_Parse,
           debug_options->mutable_xla_cpu_experimental_xnn_fusion_type()),
       "",
-      "Comma-separated list of XNN fusion types to be enabled.; "
+      "Comma-separated list of XNN fusion types to be enabled; "
       "no whitespace around commas. Two ways to pass values:\n"
       "  1. Exact type names. This overwrites the default setting.\n"
       "  2. '+' or '-' prefix: This adds or removes a fusion type "
       "from the default list. Cannot be mixed with the overwrite "
       "mode. Every item must have the sign prefix.\n"
       "Available fusion types: dot, eltwise, and reduce.\n"
+      "The default list is currently empty."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_experimental_ynn_fusion_type",
+      SetterForRepeatedEnum<DebugOptions::LibraryFusionType>(
+          "xla_cpu_experimental_ynn_fusion_type",
+          /*enum_prefix=*/"LIBRARY_FUSION_TYPE_",
+          &DebugOptions::LibraryFusionType_Parse,
+          debug_options->mutable_xla_cpu_experimental_ynn_fusion_type()),
+      "",
+      "Comma-separated list of YNN fusion types to be enabled; "
+      "no whitespace around commas. Two ways to pass values:\n"
+      "  1. Exact type names. This overwrites the default setting.\n"
+      "  2. '+' or '-' prefix: This adds or removes a fusion type "
+      "from the default list. Cannot be mixed with the overwrite "
+      "mode. Every item must have the sign prefix.\n"
       "The default list is currently empty."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_experimental_xnn_graph_fusion_mode",
@@ -2599,6 +2654,18 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_checksum_tracing_on_thunks(),
       "Enables an experimental feature to record checksums of selected thunk "
       "inputs/outputs."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_thunk_buffer_debug_filter_by_thunk_id_ranges",
+      setter_for_thunk_buffer_debug_filter_by_thunk_id, "(none)",
+      "Limits the thunk buffer debug instrumentation to thunks with IDs "
+      "matching one or more ranges defined as a single integer, min:max "
+      "(inclusive), or half-open min:/:max."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_thunk_buffer_debug_filter_by_profile_annotation_re",
+      setter_for_thunk_buffer_debug_filter_by_profile_annotation, "(none)",
+      "Limits the thunk buffer debug instrumentation to thunks with profile "
+      "annotations matching one or more regexes passed as comma-separated "
+      "string."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

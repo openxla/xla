@@ -1072,17 +1072,19 @@ absl::Status IrEmitterUnnested::EmitCubDeviceRadixSort(
   TF_ASSIGN_OR_RETURN(xla::SortOptions options,
                       instr->backend_config<xla::SortOptions>());
   const Shape& operand_shape = instr->operand(0)->shape();
-  auto thunk = std::make_unique<CubSortThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(
-          instr, ir_emitter_context_->GetNextThunkId()),
-      operand_shape.element_type(),
-      instr->operand_count() == 2
-          ? std::optional(instr->operand(1)->shape().element_type())
-          : std::nullopt,
-      operands, results, scratch, options.descending(),
-      Product(operand_shape.dimensions()) /
-          operand_shape.dimensions(operand_shape.dimensions().size() - 1),
-      ir_emitter_context_->platform_name());
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<CubSortThunk> thunk,
+      CubSortThunk::Create(
+          Thunk::ThunkInfo::WithProfileAnnotation(
+              instr, ir_emitter_context_->GetNextThunkId()),
+          operand_shape.element_type(),
+          instr->operand_count() == 2
+              ? std::optional(instr->operand(1)->shape().element_type())
+              : std::nullopt,
+          operands, results, scratch, options.descending(),
+          Product(operand_shape.dimensions()) /
+              operand_shape.dimensions(operand_shape.dimensions().size() - 1),
+          ir_emitter_context_->platform_name()));
   AddThunkToThunkSequence(std::move(thunk));
   return absl::OkStatus();
 }
@@ -1199,7 +1201,7 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
   // attributes map at IR emission time, so that we do not need to
   // parse MLIR at run time. For FFI handlers backend config must be
   // a compatible MLIR dictionary.
-  CustomCallThunk::AttributesMap attributes;
+  ffi::AttributesMap attributes;
 
   auto backend_config = instr->backend_config<GpuBackendConfig>();
   if (!backend_config.ok()) {

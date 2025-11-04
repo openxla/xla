@@ -222,7 +222,8 @@ static constexpr uintptr_t kInstructionTypeMask = 0b111;
 // HLO is pure (mostly).  It has no concept of mutable state.  Instead, data
 // values are produced by one HLO and flow into consumers across dependency
 // edges.
-class HloInstruction {
+// Alignment must be explicitly specified due to ARM 32 platforms.
+class alignas(kInstructionTypeMask + 1) HloInstruction {
  public:
   // A fusion node computes the same value a call to its fusion computation
   // would compute.  However, the choice of fusion kind dictates codegen
@@ -2034,6 +2035,16 @@ class HloInstruction {
     ConfigProto proto;
     TF_RETURN_IF_ERROR(backend_config_.GetProto(&proto));
     return proto;
+  }
+
+  // Applies a function `fn` to the underlying backend config proto. The
+  // function receives a mutable pointer to a proto of type `ConfigProto`.
+  //
+  // If the proto is not already parsed, it will return an error.
+  template <typename ConfigProto, EnableIfProto<ConfigProto>* = nullptr>
+  absl::Status MutateBackendConfig(
+      const std::function<absl::Status(ConfigProto*)>& fn) {
+    return backend_config_.ApplyFnOnProto(fn);
   }
 
   absl::Status set_backend_config(const tsl::protobuf::Message& proto) {

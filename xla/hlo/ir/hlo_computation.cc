@@ -239,6 +239,28 @@ void HloComputation::ClearCalledComputations() {
   CHECK(callee_computations_.empty());
 }
 
+void HloComputation::SetInstruction(HloInstruction* instruction,
+                                    InstructionType type) {
+  static_assert(alignof(HloInstruction) == kInstructionTypeMask + 1,
+                "HloInstruction should be aligned as a QWORD");
+
+  DCHECK(type != InstructionType::kUnset)
+      << "Set instruction must be called with a valid type, not kUnset.";
+  DCHECK(instruction_type() == InstructionType::kUnset ||
+         instruction_type() == type)
+      << "Unexpected instruction type. Current type is "
+      << static_cast<int>(instruction_type()) << " and it cannot be reset to "
+      << static_cast<int>(type);
+
+  // If `instruction` is nullptr, we need to preserve the existing type.
+  if (instruction == nullptr) {
+    type = instruction_type();
+  }
+
+  instruction_and_type_ =
+      reinterpret_cast<uintptr_t>(instruction) | static_cast<uintptr_t>(type);
+}
+
 HloInstruction* HloComputation::AddInstruction(
     std::unique_ptr<HloInstruction> instruction, absl::string_view new_name) {
   CHECK(instruction->opcode() != HloOpcode::kParameter)
@@ -1422,6 +1444,10 @@ HloComputation::CreateFromProto(
       new HloComputation(proto.name(), parameter_count, &instructions, root,
                          /*preserve_instruction_ids=*/true));
   computation->SetUniqueIdHelper(proto.id());
+  if (proto.is_fusion_computation()) {
+    computation->instruction_and_type_ =
+        static_cast<uintptr_t>(InstructionType::kFusion);
+  }
   if (!proto.execution_thread().empty()) {
     computation->SetExecutionThread(proto.execution_thread());
   }
@@ -1938,7 +1964,7 @@ void SortClonedInstructions(
       continue;
     }
     ++num_mapped_instructions;
-    if (!dynamic_cast<const HloParameterInstruction*>(instruction.get())) {
+    if (!HloParameterInstruction::ClassOf(instruction.get())) {
       continue;
     }
     mapped_index_of_last_parameter_plus_one = num_mapped_instructions;
@@ -1946,7 +1972,7 @@ void SortClonedInstructions(
   auto unmapped_ptr_index =
       [num_mapped_instructions,
        mapped_index_of_last_parameter_plus_one](const HloInstruction* i) {
-        if (dynamic_cast<const HloParameterInstruction*>(i)) {
+        if (HloParameterInstruction::ClassOf(i)) {
           if (num_mapped_instructions > 0 &&
               mapped_index_of_last_parameter_plus_one > 0) {
             return mapped_index_of_last_parameter_plus_one - 1;

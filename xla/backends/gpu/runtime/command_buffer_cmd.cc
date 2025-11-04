@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
+#include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/execution_graph.h"
@@ -2370,7 +2371,7 @@ CommandBufferCmd::BufferUseVector CollectiveBroadcastCmd::buffers() const {
 DynamicSliceFusionCmd::DynamicSliceFusionCmd(
     CommandBufferCmdExecutor embedded_commands,
     std::vector<std::optional<BufferAllocation::Slice>> arguments,
-    std::vector<std::unique_ptr<BufferAllocation>> fake_allocations,
+    std::vector<BufferAllocation> fake_allocations,
     std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>> offsets,
     std::vector<std::optional<Shape>> orig_shapes,
     std::vector<std::optional<Shape>> sliced_shapes,

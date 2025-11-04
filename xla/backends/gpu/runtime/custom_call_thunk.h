@@ -21,17 +21,22 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/c_api.h"
+#include "xla/ffi/attribute_map.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/execution_state.h"
+#include "xla/ffi/ffi.h"
+#include "xla/ffi/ffi_api.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/runtime/object_pool.h"
 #include "xla/service/custom_call_status.h"
@@ -55,12 +60,20 @@ namespace gpu {
 // compiler is allowed to create.
 class CustomCallThunk : public Thunk {
  public:
+  // An owning equivalent of XLA_FFI_Handler_Bundle that allows using lambdas
+  // with captures.
+  //
+  // The members can be initialized with xla::ffi::Ffi::Bind().To(...).
+  struct OwnedHandlerBundle {
+    std::unique_ptr<xla::ffi::Ffi> initialize;
+    std::unique_ptr<xla::ffi::Ffi> instantiate;
+    std::unique_ptr<xla::ffi::Ffi> prepare;
+    std::unique_ptr<xla::ffi::Ffi> execute;
+  };
+
   using CustomCallTarget =
       std::function<void(stream_executor::Stream*, void**, const char*, size_t,
                          XlaCustomCallStatus*)>;
-
-  using Attribute = ffi::CallFrameBuilder::Attribute;
-  using AttributesMap = ffi::CallFrameBuilder::AttributesMap;
 
   // Creates a serializable custom call thunk. The callback is resolved using
   // the legacy CustomCall registry. For new code please use XLA FFI instead.
@@ -84,7 +97,8 @@ class CustomCallThunk : public Thunk {
   static absl::StatusOr<std::unique_ptr<CustomCallThunk>> Create(
       ThunkInfo thunk_info, std::string target_name,
       std::vector<std::optional<ShapedSlice>> operands,
-      std::vector<std::optional<ShapedSlice>> results, AttributesMap attributes,
+      std::vector<std::optional<ShapedSlice>> results,
+      xla::ffi::AttributesMap attributes,
       const HloComputation* called_computation,
       absl::string_view platform_name);
 
@@ -95,7 +109,18 @@ class CustomCallThunk : public Thunk {
       ThunkInfo thunk_info, std::string target_name,
       XLA_FFI_Handler_Bundle bundle,
       std::vector<std::optional<ShapedSlice>> operands,
-      std::vector<std::optional<ShapedSlice>> results, AttributesMap attributes,
+      std::vector<std::optional<ShapedSlice>> results,
+      xla::ffi::AttributesMap attributes,
+      const HloComputation* called_computation);
+
+  // Creates a custom call thunk from a bundle of handlers created with
+  // xla::ffi::Bind(). Any pointer or reference lambda captures must be valid
+  // for the lifetime of the thunk.
+  static absl::StatusOr<std::unique_ptr<CustomCallThunk>> Create(
+      ThunkInfo thunk_info, std::string target_name, OwnedHandlerBundle bundle,
+      std::vector<std::optional<ShapedSlice>> operands,
+      std::vector<std::optional<ShapedSlice>> results,
+      xla::ffi::AttributesMap attributes,
       const HloComputation* called_computation);
 
   absl::Status Prepare(const PrepareParams& params,
@@ -105,7 +130,14 @@ class CustomCallThunk : public Thunk {
 
   const std::string& target_name() const { return target_name_; }
   CustomCallTarget call_target() const { return call_target_; }
-  std::optional<XLA_FFI_Handler_Bundle> bundle() const { return bundle_; }
+  std::optional<XLA_FFI_Handler_Bundle> bundle() const {
+    if (!bundle_.has_value()) {
+      return std::nullopt;
+    }
+    const XLA_FFI_Handler_Bundle* c_bundle =
+        std::get_if<XLA_FFI_Handler_Bundle>(&bundle_.value());
+    return c_bundle ? std::make_optional(*c_bundle) : std::nullopt;
+  }
   std::optional<ffi::CallFrame> call_frame() const {
     return call_frame_ ? std::make_optional(call_frame_->Copy()) : std::nullopt;
   }
@@ -126,18 +158,33 @@ class CustomCallThunk : public Thunk {
                   std::string opaque, CustomCallTarget call_target,
                   const std::optional<CustomCallApiVersion>& api_version);
 
-  CustomCallThunk(ThunkInfo thunk_info, std::string target_name,
-                  XLA_FFI_Handler_Bundle bundle,
-                  std::vector<std::optional<ShapedSlice>> operands,
-                  std::vector<std::optional<ShapedSlice>> results,
-                  ffi::CallFrame call_frame, AttributesMap attributes,
-                  std::unique_ptr<ffi::ExecutionState> execution_state,
-                  const HloComputation* called_computation);
+  CustomCallThunk(
+      ThunkInfo thunk_info, std::string target_name,
+      std::variant<XLA_FFI_Handler_Bundle, OwnedHandlerBundle> bundle,
+      std::vector<std::optional<ShapedSlice>> operands,
+      std::vector<std::optional<ShapedSlice>> results,
+      ffi::CallFrame call_frame, xla::ffi::AttributesMap attributes,
+      std::unique_ptr<ffi::ExecutionState> execution_state,
+      const HloComputation* called_computation);
 
   absl::Status ExecuteCustomCall(const ExecuteParams& params);
 
+  absl::StatusOr<ObjectPool<xla::ffi::CallFrame>::BorrowedObject>
+  BuildCallFrame(const BufferAllocations* absl_nullable buffer_allocations);
+
+  xla::ffi::CallOptions BuildCallOptions(
+      RunId run_id, se::Stream* absl_nullable stream,
+      const BufferAllocations* absl_nullable buffer_allocations,
+      const ffi::ExecutionContext* absl_nonnull execution_context);
+
   absl::Status ExecuteFfiHandler(RunId run_id, XLA_FFI_Handler* handler,
                                  XLA_FFI_ExecutionStage stage,
+                                 se::Stream* stream,
+                                 const ffi::ExecutionContext* execution_context,
+                                 const BufferAllocations* buffer_allocations);
+
+  absl::Status ExecuteFfiHandler(RunId run_id, xla::ffi::Ffi& handler,
+                                 xla::ffi::ExecutionStage stage,
                                  se::Stream* stream,
                                  const ffi::ExecutionContext* execution_context,
                                  const BufferAllocations* buffer_allocations);
@@ -159,8 +206,9 @@ class CustomCallThunk : public Thunk {
   // XLA FFI provides a right type safe mechanism for registering external
   // functions with XLA runtime. It's under construction, and still misses
   // a lot of features. Long term it will replace legacy custom calls.
-  std::optional<XLA_FFI_Handler_Bundle> bundle_;
-  std::optional<AttributesMap> attributes_;
+  std::optional<std::variant<XLA_FFI_Handler_Bundle, OwnedHandlerBundle>>
+      bundle_;
+  std::optional<xla::ffi::AttributesMap> attributes_;
 
   // Reference call frame pre-initialized at construction time.
   std::optional<ffi::CallFrame> call_frame_;
