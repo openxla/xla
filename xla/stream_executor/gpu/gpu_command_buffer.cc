@@ -41,6 +41,8 @@ limitations under the License.
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/service/dump.h"
+#include "xla/debug_options_flags.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -571,14 +573,10 @@ absl::Status GpuCommandBuffer::Finalize() {
   // Maybe dump created GPU graph to a dot file for debugging.
   if (state_ == State::kCreate &&
       (VLOG_IS_ON(10) || (VLOG_IS_ON(9) && mode_ == Mode::kPrimary))) {
-    std::string path = tsl::io::GetTempFilename(/*extension=*/"dot");
-    TF_RETURN_IF_ERROR(WriteGraphToDotFile(path));
-    if (VLOG_IS_ON(100) || (VLOG_IS_ON(90) && mode_ == Mode::kPrimary)) {
-      std::string dot_file_contents;
-      TF_RETURN_IF_ERROR(
-          tsl::ReadFileToString(tsl::Env::Default(), path, &dot_file_contents));
-      VLOG(90) << "Contents of " << path << " is:\n" << dot_file_contents;
-    }
+    xla::DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+    std::string contents = ToString();
+    std::string filename = absl::StrFormat("gpu_command_buffer_%p.dot", this);
+    xla::DumpToFileInDir(debug_options, filename, contents);
   }
 
   size_t num_commands = commands_.size();
