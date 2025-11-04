@@ -836,9 +836,9 @@ std::string CudaCommandBuffer::ToString() const {
   std::string path = tsl::io::GetTempFilename(/*extension=*/"dot");
 #if CUDA_VERSION >= 12000
   int flags = CU_GRAPH_DEBUG_DOT_FLAGS_VERBOSE;
-  auto dot_print_status = cuda::ToStatus(
-      cuGraphDebugDotPrint(graph_, path.c_str(), flags),
-      "Failed to print gpu graph debug file");
+  auto dot_print_status =
+      cuda::ToStatus(cuGraphDebugDotPrint(graph_, path.c_str(), flags),
+                     "Failed to print gpu graph debug file");
   if (!dot_print_status.ok()) {
     return std::string(dot_print_status.message());
   }
