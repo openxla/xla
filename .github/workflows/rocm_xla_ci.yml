@@ -1,0 +1,41 @@
+name: OpenXLA Upstream CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+
+    runs-on: ubuntu-22.04
+    env:
+      DOCKER_IMAGE: 'rocm/tensorflow-build@sha256:e4024d20eb9cfbf33dba739d5ecb962f6d32b6d768e3d51556386b3e50a780e'
+      CONTAINER_NAME: builder-${{ github.run_id }}
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Start Docker container
+        run: |
+          docker run -d -t --name ${{ env.CONTAINER_NAME }} \
+            --ipc=host \
+            --pid=host \
+            --shm-size=16G \
+            --group-add=video \
+            --cap-add=SYS_PTRACE \
+            --network=host \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ${{ env.DOCKER_IMAGE }} \
+            bash
+
+      - name: Run build and test shell script
+        run: |
+          docker exec ${{ env.CONTAINER_NAME }} bash -c "build_tools/rocm/run_xla_ci_build.sh --config=rocm_ci --config=rocm_rbe //xla/..."
+
+      - name: Teardown Docker container
+        if: always()
+        run: docker rm -f ${{ env.CONTAINER_NAME }}
