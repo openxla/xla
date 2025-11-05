@@ -332,7 +332,7 @@ def _find_libs(repository_ctx, rocm_config, miopen_path, rccl_path, bash_bin):
             ("hipsolver", repo_path),
             ("hipblas", repo_path),
             ("hipblaslt", repo_path),
-	    ("rocprofiler-sdk", rep_path),
+	        ("rocprofiler-sdk", repo_path),
         ]
     ]
     if int(rocm_config.rocm_version_number) >= 40500:
