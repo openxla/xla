@@ -7,20 +7,14 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 #
 # A hermetic build system is designed to produce completely reproducible builds for C++.
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
-#http_archive(
-   # name = "rules_ml_toolchain",
-   # sha256 = "4133c6c2045de5d7a133f6fc008ee6bd613af778f12143d09003e908dd541d8c",
-   # strip_prefix = "rules_ml_toolchain-d8d8f49297a1e74fcceffc9ef6c7f8da9b0a0c53",
-    #urls = [
-     #   "https://github.com/google-ml-infra/rules_ml_toolchain/archive/d8d8f49297a1e74fcceffc9ef6c7f8da9b0a0c53.tar.gz",
-   # ],
-# )
-
-load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
-git_repository(
+# Temporary change to test rbe build (Not a part of PR)
+http_archive(
     name = "rules_ml_toolchain",
-    remote = "https://github.com/Intel-tensorflow/rules_ml_toolchain.git",
-    branch = "mraunak/fix_rbe_build",
+    sha256 = "db95121d478f2bbec91aa5d637ac891485c8ef8efc05fd46b80c290e213e2bfb",
+    strip_prefix = "rules_ml_toolchain-17dd8ed984bed4cbbac522102d58069eab063f02",
+    urls = [
+        "https://github.com/Intel-tensorflow/rules_ml_toolchain/archive/17dd8ed984bed4cbbac522102d58069eab063f02.tar.gz",
+    ],
 )
 
 load(
