@@ -12,7 +12,7 @@ jobs:
 
     runs-on: ubuntu-22.04
     env:
-      DOCKER_IMAGE: 'rocm/tensorflow-build@sha256:e4024d20eb9cfbf33dba739d5ecb962f6d32b6d768e3d51556386b3e50a780e'
+      DOCKER_IMAGE: 'rocm/tensorflow-build@sha256:a2672ff2510b369b4a5f034272a518dc93c2e492894e3befaeef19649632ccaa'
       CONTAINER_NAME: builder-${{ github.run_id }}
     steps:
       - name: Check out repository code
