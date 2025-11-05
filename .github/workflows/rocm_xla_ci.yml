@@ -1,4 +1,4 @@
-name: OpenXLA Upstream CI
+name: ROCm OpenXLA Upstream CI
 
 on:
   pull_request:
