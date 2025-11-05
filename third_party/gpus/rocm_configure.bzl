@@ -319,20 +319,17 @@ def _find_libs(repository_ctx, rocm_config, miopen_path, rccl_path, bash_bin):
     libs_paths = [
         (name, _rocm_lib_paths(repository_ctx, name, path))
         for name, path in [
-            ("amdhip64", repo_path),
-            ("rocblas", repo_path),
-            ("hiprand", repo_path),
-            ("MIOpen", repo_path),
-            ("rccl", repo_path),
-            ("hipsparse", repo_path),
-            ("roctracer64", repo_path),
-            ("rocsolver", repo_path),
-            ("hipfft", repo_path),
-            ("rocrand", repo_path),
-            ("hipsolver", repo_path),
-            ("hipblas", repo_path),
-            ("hipblaslt", repo_path),
-	        ("rocprofiler-sdk", repo_path),
+            ("amdhip64", rocm_config.rocm_toolkit_path),
+            ("rocblas", rocm_config.rocm_toolkit_path),
+            ("hiprand", rocm_config.rocm_toolkit_path),
+            ("MIOpen", miopen_path),
+            ("rccl", rccl_path),
+            ("hipsparse", rocm_config.rocm_toolkit_path),
+            ("roctracer64", rocm_config.rocm_toolkit_path),
+            ("rocsolver", rocm_config.rocm_toolkit_path),
+            ("hipfft", rocm_config.rocm_toolkit_path),
+            ("rocrand", rocm_config.rocm_toolkit_path),
+            ("rocprofiler-sdk", rocm_config.rocm_toolkit_path),
         ]
     ]
     if int(rocm_config.rocm_version_number) >= 40500:
