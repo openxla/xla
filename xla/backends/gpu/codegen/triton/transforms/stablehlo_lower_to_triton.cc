@@ -18,12 +18,17 @@ limitations under the License.
 #include <utility>
 
 #include "absl/log/check.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
@@ -33,6 +38,7 @@ limitations under the License.
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
+#include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace mlir::triton::xla {
@@ -111,11 +117,9 @@ class LowerBroadcastInDim
 
     if (input_shape.empty()) {
       auto broadcast_dim_input = op.getOperand();
-      auto broadcast_dim_input_element_type =
-          broadcast_dim_input.getType().getElementType();
 
-      auto extracted = rewriter.create<mlir::tensor::ExtractOp>(
-          op.getLoc(), broadcast_dim_input_element_type, broadcast_dim_input);
+      auto extracted = ::xla::xtile::ToScalarOp::create(rewriter, op.getLoc(),
+                                                        broadcast_dim_input);
 
       rewriter.replaceOpWithNewOp<ttir::SplatOp>(op, op.getResult().getType(),
                                                  extracted);
@@ -142,14 +146,130 @@ class LowerBroadcastInDim
   }
 };
 
+class LowerReduce : public mlir::OpRewritePattern<stablehlo::ReduceOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+ private:
+  mlir::LogicalResult matchAndRewrite(
+      stablehlo::ReduceOp op, mlir::PatternRewriter& rewriter) const override {
+    if (mlir::failed(VerifyOpIsCompatibleWithTritonReduce(op, rewriter))) {
+      return mlir::failure();
+    }
+
+    int32_t axis = op.getDimensions()[0];
+
+    // In case shlo returns a 0 rank tensor triton needs to return a scalar as
+    // triton doesn't support 0 rank tensors.
+    SmallVector<Type> adjusted_result_types;
+    adjusted_result_types.reserve(op.getNumResults());
+    for (auto result : op.getResults()) {
+      auto shaped_type = cast<mlir::ShapedType>(result.getType());
+      if (shaped_type.getRank() == 0) {
+        adjusted_result_types.push_back(shaped_type.getElementType());
+      } else {
+        adjusted_result_types.push_back(shaped_type);
+      }
+    }
+
+    auto triton_reduce_op = ttir::ReduceOp::create(
+        rewriter, op.getLoc(), adjusted_result_types, op.getInputs(), axis);
+    Region& triton_reduce_region = triton_reduce_op.getCombineOp();
+
+    mlir::Block& old_block = op.getBody().front();
+    llvm::SmallVector<Type> arg_types;
+    llvm::SmallVector<mlir::Location> arg_locs;
+    for (auto old_arg_type : old_block.getArgumentTypes()) {
+      arg_types.push_back(
+          llvm::cast<ShapedType>(old_arg_type).getElementType());
+      arg_locs.push_back(op.getLoc());
+    }
+    rewriter.createBlock(&triton_reduce_region, triton_reduce_region.begin(),
+                         arg_types, arg_locs);
+
+    mlir::IRMapping mapping;
+    Block& triton_reduce_region_block = triton_reduce_region.front();
+    rewriter.setInsertionPointToStart(&triton_reduce_region_block);
+    for (auto [old_arg, new_arg] :
+         llvm::zip(old_block.getArguments(),
+                   triton_reduce_region_block.getArguments())) {
+      auto to_tensor_op =
+          ::xla::xtile::ToTensorOp::create(rewriter, op.getLoc(), new_arg);
+      mapping.map(old_arg, to_tensor_op);
+    }
+
+    for (mlir::Operation& op : old_block.without_terminator()) {
+      rewriter.clone(op, mapping);
+    }
+
+    SmallVector<Value> return_operands;
+    for (Value operand : old_block.getTerminator()->getOperands()) {
+      return_operands.push_back(::xla::xtile::ToScalarOp::create(
+          rewriter, op->getLoc(), mapping.lookup(operand)));
+    }
+    ttir::ReduceReturnOp::create(rewriter, op.getLoc(), return_operands);
+
+    // Replace usages of the original op results. If the original result was a
+    // 0-rank tensor, we need to wrap the scalar result of tt.reduce in a
+    // tensor.to_tensor op.
+    rewriter.setInsertionPointAfter(triton_reduce_op);
+    llvm::SmallVector<Value> new_results;
+    for (const auto& triton_result : triton_reduce_op.getResults()) {
+      if (mlir::isa<mlir::ShapedType>(triton_result.getType())) {
+        new_results.push_back(triton_result);
+      } else {
+        new_results.push_back(::xla::xtile::ToTensorOp::create(
+            rewriter, op.getLoc(), triton_result));
+      }
+    }
+
+    rewriter.replaceOp(op, new_results);
+    return mlir::success();
+  }
+
+  // Verifies that the stablehlo reduce op can be lowered to a triton reduce
+  // op.
+  // This checks that proper emitting of `tensor.from_elements` and
+  // `tensor.extract` on reducer inputs and outputs has happened. It also checks
+  // that `tensor.extract` was emitted on the result of the reduce operation if
+  // the result is a zero rank tensor.
+  mlir::LogicalResult VerifyOpIsCompatibleWithTritonReduce(
+      stablehlo::ReduceOp op, mlir::PatternRewriter& rewriter) const {
+    // Check that the reduction is along a single dimension.
+    auto dimensions = op.getDimensions();
+    if (dimensions.size() != 1) {
+      return rewriter.notifyMatchFailure(
+          op->getLoc(), "tt.reduce only supports single dimension reductions.");
+    }
+
+    return mlir::success();
+  }
+};
+
+class LowerReshape : public mlir::OpRewritePattern<stablehlo::ReshapeOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+ private:
+  mlir::LogicalResult matchAndRewrite(
+      stablehlo::ReshapeOp op, mlir::PatternRewriter& rewriter) const override {
+    // Conservatively prevent Triton from reordering elements within the tile.
+    // TODO(b/353637689): see if this restriction can be lifted.
+    bool allow_reorder = false;
+    rewriter.replaceOpWithNewOp<ttir::ReshapeOp>(
+        op, op.getResult().getType(), op.getOperand(), allow_reorder);
+    return mlir::success();
+  }
+};
+
 class StableHLOLowerToTritonPass
     : public impl::StableHLOLowerToTritonPassBase<StableHLOLowerToTritonPass> {
  public:
   void runOnOperation() override {
     mlir::MLIRContext* mlir_context = &getContext();
     mlir::RewritePatternSet patterns(mlir_context);
-    patterns.add<LowerTranspose, LowerIotaToMakeRange, LowerBroadcastInDim>(
-        mlir_context);
+    patterns.add<LowerTranspose, LowerIotaToMakeRange, LowerBroadcastInDim,
+                 LowerReduce, LowerReshape>(mlir_context);
 
     if (mlir::failed(
             mlir::applyPatternsGreedily(getOperation(), std::move(patterns)))) {

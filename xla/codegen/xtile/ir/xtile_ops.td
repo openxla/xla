@@ -87,7 +87,11 @@ def EntryFuncOp : XTile_Op<"entry_func", [
                        TypeAttrOf<FunctionType>:$function_type,
                        OptionalAttr<DictArrayAttr>:$arg_attrs,
                        OptionalAttr<XTile_TilingInfoAttr>:$tile_info,
-                       OptionalAttr<DictArrayAttr>:$res_attrs
+                       OptionalAttr<DictArrayAttr>:$res_attrs,
+                       // The number of arguments that are opaque to tiling
+                       // infrastructure and hence do not correspond to a memref
+                       // argument.
+                       DefaultValuedAttr<I32Attr, "0">:$num_opaque_args
   );
 
   // The entry function has no return values.
@@ -106,7 +110,13 @@ def EntryFuncOp : XTile_Op<"entry_func", [
     // Helper Methods
     //===------------------------------------------------------------------===//
     mlir::ValueRange getBufferArgs() {
-      return getBody().getArguments().drop_back();
+      // +1 for the tile id argument.
+      return getBody().getArguments().drop_back(getNumOpaqueArgs() + 1);
+    }
+
+    mlir::ValueRange getOpaqueArgs() {
+      return getBody().getArguments().take_back(getNumOpaqueArgs() + 1)
+          .drop_back();
     }
 
     mlir::Value getTileId() {
@@ -200,6 +210,28 @@ def InsertTileOp : XTile_Op<"insert", [TiledBufferInterface]> {
   }];
 
   let hasVerifier = 1;
+}
+
+// TODO(willfroom): Revisit if/where these are needed after the migration of the
+// triton emitter to support 0D tensors is complete.
+def ToScalarOp : XTile_Op<"to_scalar", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "Converts a 0D tensor to a scalar";
+  let arguments = (ins 0DTensorOf<[AnyType]>:$input);
+  let results = (outs AnyType:$output);
+
+  let assemblyFormat = "$input `:` type($input) attr-dict";
+
+  let hasFolder = 1;
+}
+
+def ToTensorOp : XTile_Op<"to_tensor", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "Converts a scalar to a 0D tensor";
+  let arguments = (ins AnyType:$input);
+  let results = (outs 0DTensorOf<[AnyType]>:$output);
+
+  let assemblyFormat = "$input `:` type($input) attr-dict";
+
+  let hasFolder = 1;
 }
 
 #endif // XLA_CODEGEN_XTILE_IR_XTILE_OPS

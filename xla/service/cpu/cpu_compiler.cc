@@ -105,7 +105,6 @@ limitations under the License.
 #include "xla/backends/cpu/xnn_support.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
-#include "xla/hlo/analysis/indexed_array_analysis.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -616,10 +615,14 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
         /*update_domain=*/false,
         /*composites_to_preserve=*/absl::flat_hash_set<std::string>{},
         /*uniquify_channel_ids=*/false,
-        /*should_inline=*/
-        [](const xla::CallGraph& call_graph, xla::HloInstruction* instruction) {
-          return absl::StrContains(instruction->to_apply()->name(),
-                                   sdy::kInlineableManualComputationFuncName);
+        /*override_policy=*/
+        [](const xla::CallGraph& call_graph,
+           const xla::HloInstruction* instruction) {
+          if (absl::StrContains(instruction->to_apply()->name(),
+                                sdy::kInlineableManualComputationFuncName)) {
+            return CallInliner::InlineOverridePolicy::kAllowInline;
+          }
+          return CallInliner::InlineOverridePolicy::kProhibitInline;
         });
     TF_RETURN_IF_ERROR(spmd_pipeline.Run(module).status());
   } else {
@@ -866,7 +869,6 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<TopkRewriter>([](const HloSortInstruction* sort, int64_t) {
     return sort->operand(0)->shape().element_type() == F32;
   });
-  pipeline.AddPass<IndexedArrayAnalysisPrinterPass>();
   pipeline.AddPass<TransposeFolding>(
       [&](const HloInstruction& dot, int64_t operand) -> absl::StatusOr<bool> {
         if (DotImplementationCanHandleTranspose(dot, *target_machine_features,
@@ -1990,8 +1992,20 @@ CpuCompiler::CompileCpuExecutable(
   target_machine_options_proto.set_triple(
       target_machine->getTargetTriple().getTriple());
   target_machine_options_proto.set_cpu(target_machine->getTargetCPU());
+
+  // TODO(basioli): Target machine features are returning an empty string at the
+  // moment so for now we are using the host CPU features. This should be
+  // updated to use the target machine features of the target we are actually
+  // compiling for as we might want to support cross-compilation.
+  auto host_machine_features = llvm::sys::getHostCPUFeatures();
+  std::vector<absl::string_view> enabled_features;
+  for (const auto& feature : host_machine_features) {
+    if (feature.getValue()) {
+      enabled_features.push_back(feature.getKey());
+    }
+  }
   target_machine_options_proto.set_features(
-      target_machine->getTargetFeatureString());
+      absl::StrJoin(enabled_features, ","));
 
   TF_ASSIGN_OR_RETURN(
       auto cpu_executable,

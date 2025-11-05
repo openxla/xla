@@ -20,12 +20,47 @@ limitations under the License.
 #include <cstdint>
 #include <string>
 
+#include "absl/log/check.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 
 namespace xla {
+
+// SymbolicMap abstracts away the fact that dimensions and symbols are both
+// implemented as SymbolicExpr variables. These free functions provide a way to
+// work with them without a SymbolicMap instance.
+inline SymbolicExpr CreateDimExpr(SymbolicExprContext* context,
+                                  unsigned dim_id) {
+  return context->CreateVariable(dim_id);
+}
+
+inline SymbolicExpr CreateSymbolExpr(SymbolicExprContext* context,
+                                     unsigned symbol_id, int64_t num_dims) {
+  return context->CreateVariable(symbol_id + num_dims);
+}
+
+inline bool IsDimension(SymbolicExpr expr, int64_t num_dims) {
+  return expr.GetType() == SymbolicExprType::kVariable &&
+         expr.GetValue() < num_dims;
+}
+
+inline bool IsSymbol(SymbolicExpr expr, int64_t num_dims) {
+  return expr.GetType() == SymbolicExprType::kVariable &&
+         expr.GetValue() >= num_dims;
+}
+
+inline int64_t GetDimensionIndex(SymbolicExpr expr, int64_t num_dims) {
+  CHECK(IsDimension(expr, num_dims));
+  return expr.GetValue();
+}
+
+inline int64_t GetSymbolIndex(SymbolicExpr expr, int64_t num_dims) {
+  CHECK(IsSymbol(expr, num_dims));
+  return expr.GetValue() - num_dims;
+}
 
 // Maps a set of input variables to a set of output SymbolicExpr trees.
 class SymbolicMap {
@@ -39,10 +74,10 @@ class SymbolicMap {
   int64_t GetNumDims() const { return num_dimensions_; }
   int64_t GetNumSymbols() const { return num_symbols_; }
   SymbolicExpr GetDimExpression(unsigned idx) const {
-    return ctx_->CreateVariable(idx);
+    return CreateDimExpr(ctx_, idx);
   }
   SymbolicExpr GetSymbolExpression(unsigned idx) const {
-    return ctx_->CreateVariable(num_dimensions_ + idx);
+    return CreateSymbolExpr(ctx_, idx, num_dimensions_);
   }
   int64_t GetNumResults() const { return exprs_.size(); }
   const llvm::SmallVector<SymbolicExpr>& GetResults() const { return exprs_; }
@@ -95,6 +130,18 @@ class SymbolicMap {
   bool operator==(const SymbolicMap& other) const;
   bool operator!=(const SymbolicMap& other) const { return !(*this == other); }
 
+  template <typename H>
+  friend H AbslHashValue(H h, const SymbolicMap& map) {
+    return H::combine(std::move(h), map.num_dimensions_, map.num_symbols_,
+                      map.exprs_);
+  }
+
+  friend ::llvm::hash_code hash_value(const SymbolicMap& map) {
+    return ::llvm::hash_combine(
+        map.num_dimensions_, map.num_symbols_,
+        ::llvm::hash_combine_range(map.exprs_.begin(), map.exprs_.end()));
+  }
+
   template <typename Sink>
   friend void AbslStringify(Sink& sink, const SymbolicMap& map) {
     sink.Append(map.ToString());
@@ -127,6 +174,11 @@ SymbolicMap CompressDims(const SymbolicMap& map,
 // Expressions are updated to use the new symbol indices.
 SymbolicMap CompressSymbols(const SymbolicMap& map,
                             const llvm::SmallBitVector& unused_symbols);
+
+template <typename H>
+H AbslHashValue(H h, const llvm::SmallVector<SymbolicExpr>& vec) {
+  return H::combine(std::move(h), absl::MakeSpan(vec));
+}
 
 }  // namespace xla
 

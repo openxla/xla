@@ -179,8 +179,78 @@ ENTRY e {
       this, *module->GetComputationWithName("broadcast_in_dim_fusion"),
       block_level_parameters,
       R"(
-CHECK: %[[RES_FROM_ELEMENTS:.*]] = tensor.from_elements %[[ARG:.*]] : tensor<f32>
-CHECK: %[[RES:.*]] = stablehlo.broadcast_in_dim %[[RES_FROM_ELEMENTS]], dims = [] : (tensor<f32>) -> tensor<16x32x8xf32>
+CHECK: %[[RES:.*]] = stablehlo.broadcast_in_dim %[[ARG:.*]], dims = [] : (tensor<f32>) -> tensor<16x32x8xf32>
+)"));
+}
+
+TEST_F(XTileDialectTest, HloReduceIsLoweredToStableHloReduce) {
+  constexpr absl::string_view kHloText = R"(
+HloModule t
+
+add {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT add = f32[] add(a, b)
+}
+
+reduce_fusion {
+  p0 = f32[150,160] parameter(0)
+  const = f32[] constant(0.0)
+  ROOT broadcast = f32[160] reduce(p0, const), dimensions={0}, to_apply=add
+}
+
+ENTRY e {
+  p0 = f32[150,160] parameter(0)
+  ROOT custom-call = f32[160] fusion(p0), kind=kCustom,
+    calls=reduce_fusion,
+    backend_config={"fusion_backend_config": {kind: "__triton"}}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHloText));
+
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{16}};
+
+  TF_EXPECT_OK(CreateXTileIrAndFileCheck(
+      this, *module->GetComputationWithName("reduce_fusion"),
+      block_level_parameters,
+      R"(
+CHECK: %[[REDUCE_INPUT:.*]] = arith.select {{.*}}
+CHECK: %[[INIT_VALUE_TO_TENSOR:.*]] = xtile.to_tensor %{{.*}} : f32
+CHECK: %[[RES:.*]] = stablehlo.reduce(%[[REDUCE_INPUT]] init: %[[INIT_VALUE_TO_TENSOR]]) across dimensions = [0] : (tensor<256x16xf32>, tensor<f32>) -> tensor<16xf32>
+CHECK: reducer(%[[ARG_0:.*]]: tensor<f32>, %[[ARG_1:.*]]: tensor<f32>)  {
+CHECK:   %[[SUM:.*]] = arith.addf %[[ARG_0]], %[[ARG_1]] : tensor<f32>
+CHECK:   stablehlo.return %[[SUM]] : tensor<f32>
+CHECK: }
+)"));
+}
+
+TEST_F(XTileDialectTest, HloReshapeIsLoweredToStableHloReshape) {
+  constexpr absl::string_view kHloText = R"(
+HloModule t, is_scheduled=true
+
+reshape_fusion {
+  p0 = s32[150] parameter(0)
+  ROOT reshape = s32[15, 10] reshape(p0)
+}
+
+ENTRY e {
+  p0 = s32[150] parameter(0)
+  ROOT custom-call = s32[15, 10] fusion(p0), kind=kCustom,
+    calls=reshape_fusion,
+    backend_config={"fusion_backend_config": {kind: "__triton"}}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHloText));
+
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{1, 16}};
+
+  TF_EXPECT_OK(CreateXTileIrAndFileCheck(
+      this, *module->GetComputationWithName("reshape_fusion"),
+      block_level_parameters,
+      R"(
+CHECK: %[[RES:.*]] = stablehlo.reshape %[[ARG:.*]] : (tensor<16xi32>) -> tensor<1x16xi32>
 )"));
 }
 

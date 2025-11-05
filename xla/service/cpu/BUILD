@@ -4,7 +4,6 @@
 load(
     "//third_party/compute_library:build_defs.bzl",
     "acl_deps",
-    "if_enable_acl",
 )
 load(
     "//xla:xla.default.bzl",
@@ -60,9 +59,7 @@ filegroup(
     srcs = [
         # Single-threaded support.
         "runtime_custom_call_status.cc",
-        "runtime_fp16.cc",
         "runtime_key_value_sort.cc",
-        "runtime_pow.cc",
         "runtime_single_threaded_conv2d.cc",
         "runtime_single_threaded_conv3d.cc",
         "runtime_single_threaded_matmul_c128.cc",
@@ -95,9 +92,7 @@ filegroup(
     srcs = [
         # Single-threaded support.
         "runtime_custom_call_status.h",
-        "runtime_fp16.h",
         "runtime_key_value_sort.h",
-        "runtime_pow.h",
         "runtime_single_threaded_conv2d.h",
         "runtime_single_threaded_conv3d.h",
         "runtime_single_threaded_matmul.h",
@@ -229,7 +224,6 @@ cc_library(
         "//xla/backends/cpu/transforms/collectives:all_reduce_combiner",
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_ordering",
-        "//xla/hlo/analysis:indexed_array_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_module_group",
         "//xla/hlo/pass:hlo_pass",
@@ -539,7 +533,6 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/ir:hlo_module_group",
         "//xla/service:compiler",
         "//xla/service:executable",
         "//xla/service:hlo_runner",
@@ -552,6 +545,7 @@ xla_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
         "@tsl//tsl/platform:casts",
     ],
@@ -569,29 +563,14 @@ tf_proto_library(
 
 cc_library(
     name = "runtime_symbol_generator",
-    srcs = [
-        "runtime_symbol_generator.cc",
-        "windows_compatibility.cc",
-        "windows_compatibility.h",
-    ],
+    srcs = ["runtime_symbol_generator.cc"],
     hdrs = ["runtime_symbol_generator.h"],
-    copts = if_enable_acl(["-DXLA_CPU_USE_ACL=1"]) + tsl_copts(),
+    copts = tsl_copts(),
     deps = [
-        ":cpu_runtime",
-        ":runtime_conv2d",
-        ":runtime_conv2d_acl",
-        ":runtime_conv3d",
-        ":runtime_custom_call_status",
-        ":runtime_fp16",
-        ":runtime_key_value_sort",
-        ":runtime_matmul",
-        ":runtime_matmul_acl",
-        ":runtime_pow",
-        ":runtime_single_threaded_conv2d",
-        ":runtime_single_threaded_conv3d",
-        ":runtime_single_threaded_matmul",
-        ":runtime_topk",
-        "//xla/service:custom_call_target_registry",
+        "//xla/backends/cpu/codegen:builtin_fp16",
+        "//xla/backends/cpu/codegen:builtin_pow",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Core",
@@ -599,11 +578,7 @@ cc_library(
         "@llvm-project//llvm:OrcShared",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:mlir_c_runner_utils",
-        "@tsl//tsl/platform:logging",
-    ] + if_onednn([
-        ":onednn_convolution",
-        ":onednn_matmul",
-    ]),
+    ],
 )
 
 cc_library(
@@ -611,30 +586,6 @@ cc_library(
     hdrs = ["runtime_lightweight_check.h"],
     compatible_with = get_compatible_with_portable(),
     copts = runtime_copts(),
-)
-
-cc_library(
-    name = "runtime_fp16",
-    srcs = [
-        "runtime_fp16.cc",
-    ],
-    hdrs = [
-        "runtime_fp16.h",
-    ],
-    copts = runtime_copts(),
-    deps = ["@com_google_absl//absl/base:core_headers"],
-)
-
-cc_library(
-    name = "runtime_pow",
-    srcs = [
-        "runtime_pow.cc",
-    ],
-    hdrs = [
-        "runtime_pow.h",
-    ],
-    copts = runtime_copts(),
-    deps = ["@com_google_absl//absl/base:core_headers"],
 )
 
 cc_library(
@@ -1691,7 +1642,8 @@ tf_proto_library(
     srcs = ["backend_config.proto"],
     protodeps = [
         ":onednn_config_proto",
-        "//xla/backends/cpu:xnnpack_config_proto",
+        "//xla/backends/cpu:xnn_fusion_options_proto",
+        "//xla/backends/cpu:ynn_fusion_options_proto",
     ],
 )
 
@@ -2177,9 +2129,12 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:ir_headers",
     ] + if_llvm_aarch64_available([
         "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep

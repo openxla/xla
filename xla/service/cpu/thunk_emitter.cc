@@ -1553,9 +1553,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitYnnFusionThunk(
   absl::Span<const int64_t> captured_arguments_ids;
   if (instruction->opcode() == HloOpcode::kDot) {
     const HloDotInstruction* dot = Cast<HloDotInstruction>(instruction);
-    // TODO(ashaposhnikov): Revisit this if we ever get a reliable way
-    // to determine that RHS is constant.
-    bool capture_rhs = HloPredicateIsOp<HloOpcode::kParameter>(dot->operand(1));
+    // TODO(b/455903737): If we know the RHS is a constant, we should capture it
+    // here.
+    bool capture_rhs = false;
     // Construct YNNPACK subgraph builder from the dot instruction.
     TF_ASSIGN_OR_RETURN(builder, EmitYnnDotBuilder(dot, capture_rhs));
     static constexpr int64_t kCapturedIds[1] = {1};
@@ -1571,8 +1571,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitYnnFusionThunk(
   }
 
   return ThunkSequence::Of<YnnFusionThunk>(
-      YnnFusionThunk::Options{}, ThunkInfo(instruction), std::move(arguments),
-      std::move(results),
+      YnnFusionThunk::Options{}, ThunkInfo(instruction), instruction,
+      std::move(arguments), std::move(results),
       [b = std::move(builder)](auto, auto, auto arg_buffers) mutable {
         return b(arg_buffers);
       },

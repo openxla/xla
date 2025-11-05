@@ -15,17 +15,19 @@ limitations under the License.
 
 #include "xla/service/cpu/runtime_symbol_generator.h"
 
+#ifdef _MSC_VER
+#include <math.h>
+#endif  // _MSC_VER
+
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <optional>
 #include <string>
 #include <utility>
 
-#include "absl/functional/any_invocable.h"
-#include "absl/strings/string_view.h"
+#include "absl/base/no_destructor.h"
+#include "absl/container/flat_hash_map.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ExecutionEngine/JITSymbol.h"
 #include "llvm/ExecutionEngine/Orc/AbsoluteSymbols.h"
@@ -35,74 +37,49 @@ limitations under the License.
 #include "llvm/ExecutionEngine/Orc/Shared/ExecutorSymbolDef.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Support/Error.h"
-#include "mlir/ExecutionEngine/CRunnerUtils.h"
-#include "xla/service/cpu/cpu_runtime.h"
-#include "xla/service/cpu/runtime_conv2d.h"
-#include "xla/service/cpu/runtime_conv2d_acl.h"
-#include "xla/service/cpu/runtime_conv3d.h"
-#include "xla/service/cpu/runtime_custom_call_status.h"
-#include "xla/service/cpu/runtime_fp16.h"
-#include "xla/service/cpu/runtime_key_value_sort.h"
-#include "xla/service/cpu/runtime_matmul.h"
-#include "xla/service/cpu/runtime_matmul_acl.h"
-#include "xla/service/cpu/runtime_pow.h"
-#include "xla/service/cpu/runtime_single_threaded_conv2d.h"
-#include "xla/service/cpu/runtime_single_threaded_conv3d.h"
-#include "xla/service/cpu/runtime_single_threaded_matmul.h"
-#include "xla/service/cpu/runtime_topk.h"
-#include "xla/service/cpu/windows_compatibility.h"
-#include "xla/service/custom_call_target_registry.h"
-#include "tsl/platform/logging.h"
-
-#ifdef XLA_ONEDNN
-#include "xla/service/cpu/onednn_convolution.h"
-#include "xla/service/cpu/onednn_matmul.h"
-#endif  // XLA_ONEDNN
+#include "xla/backends/cpu/codegen/builtin_fp16.h"
+#include "xla/backends/cpu/codegen/builtin_pow.h"
 
 namespace xla::cpu {
 
-RuntimeSymbolGenerator::RuntimeSymbolGenerator(llvm::DataLayout data_layout)
-    : data_layout_(std::move(data_layout)) {}
+//===----------------------------------------------------------------------===//
+// A global static registry of builtin symbols available to XLA:CPU executables.
+//===----------------------------------------------------------------------===//
 
-llvm::Error RuntimeSymbolGenerator::tryToGenerate(
-    llvm::orc::LookupState&, llvm::orc::LookupKind kind,
-    llvm::orc::JITDylib& jit_dylib, llvm::orc::JITDylibLookupFlags,
-    const llvm::orc::SymbolLookupSet& names) {
-  llvm::orc::SymbolMap symbols;
-  symbols.reserve(names.size());
+using Registry = absl::flat_hash_map<std::string, llvm::orc::ExecutorSymbolDef>;
 
-  for (const auto& [name, flags] : names) {
-    if (auto symbol = ResolveRuntimeSymbol(*name)) {
-      symbols[name] = *symbol;
-    }
-  }
+// Create a new registry of builtin runtime symbols by looking up the addresses
+// of the symbols in the current process. Defined below.
+static Registry CreateRegistry();
 
-  cantFail(jit_dylib.define(llvm::orc::absoluteSymbols(std::move(symbols))));
-  return llvm::Error::success();
+// Returns a global static registry of builtin runtime symbols.
+static const Registry& StaticRegistry() {
+  static absl::NoDestructor<Registry> registry(CreateRegistry());
+  return *registry;
 }
 
-std::optional<llvm::orc::ExecutorSymbolDef>
-RuntimeSymbolGenerator::ResolveRuntimeSymbol(llvm::StringRef name) {
-  void* fn_addr = nullptr;
-  if (name.size() > 1 && name.front() == data_layout_.getGlobalPrefix()) {
+static std::optional<llvm::orc::ExecutorSymbolDef> ResolveBuiltinSymbol(
+    const llvm::DataLayout& data_layout, llvm::StringRef name) {
+  const Registry& registry = StaticRegistry();
+
+  if (name.size() > 1 && name.front() == data_layout.getGlobalPrefix()) {
     // On Mac OS X, 'name' may have a leading underscore prefix, even though the
     // registered name may not.
     std::string stripped_name(name.begin() + 1, name.end());
-    fn_addr = CustomCallTargetRegistry::Global()->Lookup(stripped_name, "Host");
+    if (registry.contains(stripped_name)) {
+      return registry.at(stripped_name);
+    }
   } else {
-    fn_addr = CustomCallTargetRegistry::Global()->Lookup(name.str(), "Host");
+    if (registry.contains(name)) {
+      return registry.at(name.str());
+    }
   }
 
-  // We register runtime symbols as weak, because during concurrent compilation
-  // different threads may race to register their symbols in the same dylib and
-  // we get spurious "symbol already defined" errors.
-  return llvm::orc::ExecutorSymbolDef{
-      llvm::orc::ExecutorAddr(reinterpret_cast<uint64_t>(fn_addr)),
-      llvm::JITSymbolFlags::Weak};
+  return std::nullopt;
 }
 
 //===----------------------------------------------------------------------===//
-// Register XLA:CPU runtime symbols with the CustomCallTargetRegistry.
+// Create builtin runtime symbols registry for the current process.
 //===----------------------------------------------------------------------===//
 
 #if defined(PLATFORM_WINDOWS)
@@ -127,88 +104,60 @@ float __extendhfsf2(uint16_t a);
 
 }  // extern "C"
 
-#define REGISTER_CPU_RUNTIME_SYMBOL(base_name)                               \
-  do {                                                                       \
-    auto* function_address =                                                 \
-        reinterpret_cast<void*>(__xla_cpu_runtime_##base_name);              \
-    registry->Register(xla::cpu::runtime::k##base_name##SymbolName,          \
-                       function_address, "Host");                            \
-    CHECK_EQ(absl::string_view(xla::cpu::runtime::k##base_name##SymbolName), \
-             "__xla_cpu_runtime_" #base_name);                               \
-  } while (false)
+// MSVC does not have sincos[f].
+#ifdef _MSC_VER
+
+static void sincos(double x, double* sinv, double* cosv) {
+  *sinv = sin(x);
+  *cosv = cos(x);
+}
+
+static void sincosf(float x, float* sinv, float* cosv) {
+  *sinv = sinf(x);
+  *cosv = cosf(x);
+}
+
+#endif  // _MSC_VER
+
+template <typename R, typename... Args>
+static llvm::orc::ExecutorSymbolDef SymbolDef(R (*func)(Args...)) {
+  // We register runtime symbols as weak, because during concurrent compilation
+  // different threads may race to register their symbols in the same dylib and
+  // we get spurious "symbol already defined" errors.
+  return llvm::orc::ExecutorSymbolDef{
+      llvm::orc::ExecutorAddr(reinterpret_cast<uint64_t>(func)),
+      llvm::JITSymbolFlags::Weak};
+}
 
 // Register both the f32 (float) and f64 (double) versions of a libm symbol.
 // Unfortunately the double versions are overloaded on some systems, e.g.
 // Mac so we need an explicit cast. This requires passing the function signature
 // for that case.
-#define REGISTER_LIBM_SYMBOL(name, double_sig)                                 \
-  do {                                                                         \
-    registry->Register(#name "f", reinterpret_cast<void*>(name##f), "Host");   \
-    registry->Register(#name,                                                  \
-                       reinterpret_cast<void*>(static_cast<double_sig>(name)), \
-                       "Host");                                                \
-  } while (false)
+#define REGISTER_LIBM_SYMBOL(name, double_sig) \
+  registry[#name "f"] = SymbolDef(name##f);    \
+  registry[#name] = SymbolDef(static_cast<double_sig>(name));
 
-static bool RegisterKnownJITSymbols() {
-  xla::CustomCallTargetRegistry* registry =
-      xla::CustomCallTargetRegistry::Global();
-  registry->Register("printf", reinterpret_cast<void*>(&printf), "Host");
-  registry->Register("puts", reinterpret_cast<void*>(&puts), "Host");
+static Registry CreateRegistry() {
+  Registry registry;
 
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenConv2DF16);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenConv2DF32);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenConv3DF16);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenConv3DF32);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenMatMulF16);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenMatMulF32);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenMatMulF64);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenMatMulC64);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenMatMulC128);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenMatMulS32);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenBatchMatMulF32);
-  REGISTER_CPU_RUNTIME_SYMBOL(ACLMatMulF32);
-  REGISTER_CPU_RUNTIME_SYMBOL(ACLBatchMatMulF32);
-  REGISTER_CPU_RUNTIME_SYMBOL(ACLConv2DF32);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedConv2DF16);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedConv2DF32);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedConv3DF16);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedConv3DF32);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF8E4M3FN);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF8E5M2);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF16);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF32);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF64);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulC64);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulC128);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulS32);
-  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulU8);
-  REGISTER_CPU_RUNTIME_SYMBOL(StatusIsSuccess);
-  REGISTER_CPU_RUNTIME_SYMBOL(KeyValueSort);
-  REGISTER_CPU_RUNTIME_SYMBOL(TopKF32);
-#ifdef XLA_ONEDNN
-  REGISTER_CPU_RUNTIME_SYMBOL(OneDnnMatMul);
-  REGISTER_CPU_RUNTIME_SYMBOL(OneDnnMatMulReorder);
-#endif  // XLA_ONEDNN
+  // Some platforms have overloaded memcpy, memmove, and memset, so we need to
+  // specify the signature type to get the address of the specific function.
+  registry["memcpy"] =
+      SymbolDef(static_cast<void* (*)(void*, const void*, size_t)>(memcpy));
+  registry["memmove"] =
+      SymbolDef(static_cast<void* (*)(void*, const void*, size_t)>(memmove));
+  registry["memset"] =
+      SymbolDef(static_cast<void* (*)(void*, int, size_t)>(memset));
 
-  registry->Register("__gnu_f2h_ieee", reinterpret_cast<void*>(__gnu_f2h_ieee),
-                     "Host");
-  registry->Register("__gnu_h2f_ieee", reinterpret_cast<void*>(__gnu_h2f_ieee),
-                     "Host");
-  registry->Register("__truncdfhf2", reinterpret_cast<void*>(__truncdfhf2),
-                     "Host");
-  registry->Register("__truncdfbf2", reinterpret_cast<void*>(__truncdfbf2),
-                     "Host");
-  registry->Register("__truncsfbf2", reinterpret_cast<void*>(__truncsfbf2),
-                     "Host");
+  registry["__gnu_f2h_ieee"] = SymbolDef(__gnu_f2h_ieee);
+  registry["__gnu_h2f_ieee"] = SymbolDef(__gnu_h2f_ieee);
 
-#ifdef __APPLE__
-  registry->Register("__truncsfhf2", reinterpret_cast<void*>(__truncsfhf2),
-                     "Host");
-  registry->Register("__extendhfsf2", reinterpret_cast<void*>(__extendhfsf2),
-                     "Host");
-#endif  // __APPLE__
-  registry->Register("__powisf2", reinterpret_cast<void*>(__powisf2), "Host");
-  registry->Register("__powidf2", reinterpret_cast<void*>(__powidf2), "Host");
+  registry["__truncdfhf2"] = SymbolDef(__truncdfhf2);
+  registry["__truncdfbf2"] = SymbolDef(__truncdfbf2);
+  registry["__truncsfbf2"] = SymbolDef(__truncsfbf2);
+
+  registry["__powisf2"] = SymbolDef(__powisf2);
+  registry["__powidf2"] = SymbolDef(__powidf2);
 
   REGISTER_LIBM_SYMBOL(acos, double (*)(double));
   REGISTER_LIBM_SYMBOL(acosh, double (*)(double));
@@ -239,15 +188,15 @@ static bool RegisterKnownJITSymbols() {
   REGISTER_LIBM_SYMBOL(ilogb, int (*)(double));
   REGISTER_LIBM_SYMBOL(ldexp, double (*)(double, int));
   REGISTER_LIBM_SYMBOL(lgamma, double (*)(double));
-  REGISTER_LIBM_SYMBOL(llrint, long long (*)(double));   // NOLINT(runtime/int)
-  REGISTER_LIBM_SYMBOL(llround, long long (*)(double));  // NOLINT(runtime/int)
+  REGISTER_LIBM_SYMBOL(llrint, long long (*)(double));   // NOLINT
+  REGISTER_LIBM_SYMBOL(llround, long long (*)(double));  // NOLINT
   REGISTER_LIBM_SYMBOL(log, double (*)(double));
   REGISTER_LIBM_SYMBOL(log10, double (*)(double));
   REGISTER_LIBM_SYMBOL(log1p, double (*)(double));
   REGISTER_LIBM_SYMBOL(log2, double (*)(double));
   REGISTER_LIBM_SYMBOL(logb, double (*)(double));
-  REGISTER_LIBM_SYMBOL(lrint, long (*)(double));   // NOLINT(runtime/int)
-  REGISTER_LIBM_SYMBOL(lround, long (*)(double));  // NOLINT(runtime/int)
+  REGISTER_LIBM_SYMBOL(lrint, long (*)(double));   // NOLINT
+  REGISTER_LIBM_SYMBOL(lround, long (*)(double));  // NOLINT
   REGISTER_LIBM_SYMBOL(modf, double (*)(double, double*));
   REGISTER_LIBM_SYMBOL(nan, double (*)(const char*));
   REGISTER_LIBM_SYMBOL(nearbyint, double (*)(double));
@@ -258,19 +207,9 @@ static bool RegisterKnownJITSymbols() {
   REGISTER_LIBM_SYMBOL(remquo, double (*)(double, double, int*));
   REGISTER_LIBM_SYMBOL(rint, double (*)(double));
   REGISTER_LIBM_SYMBOL(round, double (*)(double));
-  REGISTER_LIBM_SYMBOL(scalbln,
-                       double (*)(double, long));  // NOLINT(runtime/int)
+  REGISTER_LIBM_SYMBOL(scalbln, double (*)(double, long));  // NOLINT
   REGISTER_LIBM_SYMBOL(scalbn, double (*)(double, int));
   REGISTER_LIBM_SYMBOL(sin, double (*)(double));
-#ifdef __APPLE__
-  REGISTER_LIBM_SYMBOL(__sincos, void (*)(double, double*, double*));
-  registry->Register("__sincosf_stret",
-                     reinterpret_cast<void*>(__sincosf_stret), "Host");
-  registry->Register("__sincos_stret", reinterpret_cast<void*>(__sincos_stret),
-                     "Host");
-#else
-  REGISTER_LIBM_SYMBOL(sincos, void (*)(double, double*, double*));
-#endif
   REGISTER_LIBM_SYMBOL(sinh, double (*)(double));
   REGISTER_LIBM_SYMBOL(sqrt, double (*)(double));
   REGISTER_LIBM_SYMBOL(tan, double (*)(double));
@@ -278,41 +217,57 @@ static bool RegisterKnownJITSymbols() {
   REGISTER_LIBM_SYMBOL(tgamma, double (*)(double));
   REGISTER_LIBM_SYMBOL(trunc, double (*)(double));
 
-  registry->Register("memcpy", reinterpret_cast<void*>(memcpy), "Host");
-  registry->Register("memmove", reinterpret_cast<void*>(memmove), "Host");
-  registry->Register("memset", reinterpret_cast<void*>(memset), "Host");
-
-  // Used by MLIR lowering.
-  registry->Register("malloc", reinterpret_cast<void*>(malloc), "Host");
-  registry->Register("calloc", reinterpret_cast<void*>(calloc), "Host");
-  registry->Register("free", reinterpret_cast<void*>(free), "Host");
-#ifndef _WIN32
-  // TODO(b/246980307): fails to link on windows because it's marked dllimport.
-  registry->Register("memrefCopy", reinterpret_cast<void*>(memrefCopy), "Host");
+#ifdef __APPLE__
+  REGISTER_LIBM_SYMBOL(__sincos, void (*)(double, double*, double*));
+  registry["__sincosf_stret"] = SymbolDef(__sincosf_stret);
+  registry["__sincos_stret"] = SymbolDef(__sincos_stret);
+#else
+  REGISTER_LIBM_SYMBOL(sincos, void (*)(double, double*, double*));
 #endif
+
+#undef REGISTER_LIBM_SYMBOL
 
 #ifdef __APPLE__
-  registry->Register("__bzero", reinterpret_cast<void*>(bzero), "Host");
-  registry->Register("bzero", reinterpret_cast<void*>(bzero), "Host");
-  registry->Register("memset_pattern16",
-                     reinterpret_cast<void*>(memset_pattern16), "Host");
-#endif
-
-#ifdef MEMORY_SANITIZER
-  registry->Register("__msan_unpoison",
-                     reinterpret_cast<void*>(__msan_unpoison), "Host");
+  registry["__truncsfhf2"] = SymbolDef(__truncsfhf2);
+  registry["__extendhfsf2"] = SymbolDef(__extendhfsf2);
+  registry["__bzero"] = SymbolDef(bzero);
+  registry["bzero"] = SymbolDef(bzero);
+  registry["memset_pattern16"] = SymbolDef(memset_pattern16);
 #endif
 
 #if defined(PLATFORM_WINDOWS)
-  registry->Register("__chkstk", reinterpret_cast<void*>(__chkstk), "Host");
+  registry["__chkstk"] = SymbolDef(__chkstk);
 #endif
 
-  return true;
+#ifdef MEMORY_SANITIZER
+  registry["__msan_unpoison"] = SymbolDef(__msan_unpoison);
+#endif
+
+  return registry;
 }
 
-#undef REGISTER_CPU_RUNTIME_SYMBOL
-#undef REGISTER_LIBM_SYMBOL
+//===----------------------------------------------------------------------===//
+// RuntimeSymbolGenerator
+//===----------------------------------------------------------------------===//
 
-static bool unused = RegisterKnownJITSymbols();
+RuntimeSymbolGenerator::RuntimeSymbolGenerator(llvm::DataLayout data_layout)
+    : data_layout_(std::move(data_layout)) {}
+
+llvm::Error RuntimeSymbolGenerator::tryToGenerate(
+    llvm::orc::LookupState&, llvm::orc::LookupKind kind,
+    llvm::orc::JITDylib& jit_dylib, llvm::orc::JITDylibLookupFlags,
+    const llvm::orc::SymbolLookupSet& names) {
+  llvm::orc::SymbolMap symbols;
+  symbols.reserve(names.size());
+
+  for (const auto& [name, flags] : names) {
+    if (auto symbol = ResolveBuiltinSymbol(data_layout_, *name)) {
+      symbols[name] = *symbol;
+    }
+  }
+
+  cantFail(jit_dylib.define(llvm::orc::absoluteSymbols(std::move(symbols))));
+  return llvm::Error::success();
+}
 
 }  // namespace xla::cpu

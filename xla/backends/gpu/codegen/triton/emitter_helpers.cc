@@ -35,6 +35,7 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -377,6 +378,8 @@ bool IsSupportedElementwiseLibdeviceFunction(const HloInstruction& hlo) {
          output_type == PrimitiveType::F32 || output_type == PrimitiveType::F64;
 }
 
+// TODO(willfroom): Remove this (and associated functions) once the legacy
+// matmul is removed.
 absl::StatusOr<Value> EmitElementwiseLibdeviceFunction(
     EmitterLocOpBuilder& b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info, const HloInstruction& hlo,
@@ -418,14 +421,9 @@ absl::StatusOr<Value> EmitElementwiseLibdeviceFunction(
 }
 
 absl::StatusOr<Value> EmitElementwise(EmitterLocOpBuilder& b,
-                                      absl::string_view libdevice_path,
                                       const se::DeviceDescription& device_info,
                                       const HloInstruction& hlo,
                                       ValueRange inputs) {
-  if (IsSupportedElementwiseLibdeviceFunction(hlo)) {
-    return EmitElementwiseLibdeviceFunction(b, libdevice_path, device_info, hlo,
-                                            inputs);
-  }
   const bool is_integer =
       mlir::isa<mlir::IntegerType>(getElementTypeOrSelf(inputs[0].getType()));
 
@@ -456,7 +454,7 @@ absl::StatusOr<Value> EmitElementwise(EmitterLocOpBuilder& b,
       if (is_integer) {
         // XLA add semantics for predicates is equal to bitwise OR, while Arith
         // defines it differently. Replace add with or in this case.
-        if (inputs[0].getType().isInteger(1)) {
+        if (getElementTypeOrSelf(inputs[0]).isInteger(1)) {
           return b.create<ma::OrIOp>(inputs[0], inputs[1]);
         }
         return b.create<ma::AddIOp>(inputs[0], inputs[1]);
@@ -501,8 +499,52 @@ absl::StatusOr<Value> EmitElementwise(EmitterLocOpBuilder& b,
                   mh::ComparisonDirection::NE),
           inputs[1], inputs[2]);
     case HloOpcode::kReducePrecision:
-      return mh::reducePrecision<mt::BitcastOp>(
+      return mh::reducePrecision<mlir::tensor::BitcastOp>(
           b.getLoc(), inputs[0], hlo.exponent_bits(), hlo.mantissa_bits(), &b);
+    case HloOpcode::kAcos:
+      return b.create<mm::AcosOp>(inputs[0]);
+    case HloOpcode::kAcosh:
+      return b.create<mm::AcoshOp>(inputs[0]);
+    case HloOpcode::kAsin:
+      return b.create<mm::AsinOp>(inputs[0]);
+    case HloOpcode::kAsinh:
+      return b.create<mm::AsinhOp>(inputs[0]);
+    case HloOpcode::kAtan2:
+      return b.create<mm::Atan2Op>(inputs[0], inputs[1]);
+    case HloOpcode::kAtanh:
+      return b.create<mm::AtanhOp>(inputs[0]);
+    case HloOpcode::kCos:
+      return b.create<mm::CosOp>(inputs[0]);
+    case HloOpcode::kCosh:
+      return b.create<mm::CoshOp>(inputs[0]);
+    case HloOpcode::kExp:
+      return b.create<mm::ExpOp>(inputs[0]);
+    case HloOpcode::kErf:
+      return b.create<mm::ErfOp>(inputs[0]);
+    case HloOpcode::kExpm1:
+      return b.create<mm::ExpM1Op>(inputs[0]);
+    case HloOpcode::kLog:
+      return b.create<mm::LogOp>(inputs[0]);
+    case HloOpcode::kLog1p:
+      return b.create<mm::Log1pOp>(inputs[0]);
+    case HloOpcode::kPower:
+      return b.create<mm::PowFOp>(inputs[0], inputs[1]);
+    case HloOpcode::kRemainder:
+      return b.create<ma::RemFOp>(inputs[0], inputs[1]);
+    case HloOpcode::kRsqrt:
+      return b.create<mm::RsqrtOp>(inputs[0]);
+    case HloOpcode::kSin:
+      return b.create<mm::SinOp>(inputs[0]);
+    case HloOpcode::kSinh:
+      return b.create<mm::SinhOp>(inputs[0]);
+    case HloOpcode::kSqrt:
+      return b.create<mm::SqrtOp>(inputs[0]);
+    case HloOpcode::kTan:
+      return b.create<mm::TanOp>(inputs[0]);
+    case HloOpcode::kTanh:
+      return b.create<mm::TanhOp>(inputs[0]);
+    case HloOpcode::kCbrt:
+      return b.create<mm::CbrtOp>(inputs[0]);
     default:
       return absl::InvalidArgumentError(
           absl::StrCat("Unsupported elementwise operation ", hlo.ToString()));

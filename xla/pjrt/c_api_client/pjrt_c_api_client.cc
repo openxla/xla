@@ -2344,7 +2344,7 @@ static absl::StatusOr<PJRT_ExecuteContext*> ForwardExecuteContext(
         PJRT_FFI_UserData_Add_Args_STRUCT_SIZE,
         nullptr,
         create_args.context,
-        PJRT_FFI_UserData{type_id.value(), data, /*deleter=*/nullptr},
+        PJRT_FFI_UserData{type_id.value(), data},
     };
     RETURN_STATUS_IF_PJRT_ERROR(ffi_extension->user_data_add(&add_args), c_api);
     return absl::OkStatus();
@@ -2866,8 +2866,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiBuffer::CopyToMemorySpace(
     TF_ASSIGN_OR_RETURN(std::shared_ptr<Literal> literal, ToLiteralSync());
     absl::InlinedVector<int64_t, 4> byte_strides(
         literal->shape().dimensions().size());
-    TF_RETURN_IF_ERROR(
-        ShapeUtil::ByteStrides(literal->shape(), absl::MakeSpan(byte_strides)));
+    TF_RETURN_IF_ERROR(ShapeUtil::UnpackedByteStrides(
+        literal->shape(), absl::MakeSpan(byte_strides)));
     // Avoid use-after-free on `literal` due to unsequenced move and use.
     Literal* literal_pointer = literal.get();
     return dst_memory->client()->BufferFromHostBuffer(
@@ -2958,6 +2958,7 @@ void PjRtCApiBuffer::MakePromiseTrackEvent() {
 }
 
 Future<> PjRtCApiBuffer::GetReadyFuture() {
+  absl::MutexLock l(mu_);
   if (readiness_promise_ == nullptr) {
     auto [promise, future] = Future<>::MakePromise();
     readiness_promise_ = std::move(promise).ToShared();

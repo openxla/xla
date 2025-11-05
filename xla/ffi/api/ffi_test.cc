@@ -912,6 +912,17 @@ TEST(FfiTest, AutoBindingDictionary) {
     EXPECT_EQ(*attrs.get<int32_t>("i32"), 42);
     EXPECT_EQ(*attrs.get<float>("f32"), 42.0f);
 
+    auto it = attrs.begin();
+    EXPECT_EQ(*it, "f32");
+    EXPECT_TRUE(attrs.isa<float>(it));
+    EXPECT_EQ(*attrs.get<float>(it), 42.0f);
+
+    EXPECT_EQ(*++it, "i32");
+    EXPECT_TRUE(attrs.isa<int32_t>(it));
+    EXPECT_EQ(*attrs.get<int32_t>(it), 42);
+
+    EXPECT_EQ(++it, attrs.end());
+
     return Error::Success();
   });
 
@@ -1290,14 +1301,20 @@ struct MyDataWithExplicitTypeId {
 
 // Rely on XLA to assign unique type id for the type.
 TypeId MyDataWithAutoTypeId::id = XLA_FFI_UNKNOWN_TYPE_ID;
+static constexpr auto kMyDataWithAutoTypeIdTypeInfo =
+    MakeTypeInfo<MyDataWithAutoTypeId>();
+
 XLA_FFI_REGISTER_TYPE(GetXlaFfiApi(), "my_data_auto", &MyDataWithAutoTypeId::id,
-                      TypeInfo<MyDataWithAutoTypeId>());
+                      &kMyDataWithAutoTypeIdTypeInfo);
 
 // Provide explicit type id and rely on XLA to check that it's unique.
 TypeId MyDataWithExplicitTypeId::id = {42};
+static constexpr auto kMyDataWithExplicitTypeIdTypeInfo =
+    MakeTypeInfo<MyDataWithExplicitTypeId>();
+
 XLA_FFI_REGISTER_TYPE(GetXlaFfiApi(), "my_data_explicit",
                       &MyDataWithExplicitTypeId::id,
-                      TypeInfo<MyDataWithExplicitTypeId>());
+                      &kMyDataWithExplicitTypeIdTypeInfo);
 
 TEST(FfiTest, UserData) {
   MyDataWithAutoTypeId data0{"foo"};
@@ -1342,8 +1359,9 @@ struct MyState {
 };
 
 TypeId MyState::id = {};  // zero-initialize type id
-XLA_FFI_REGISTER_TYPE(GetXlaFfiApi(), "state", &MyState::id,
-                      TypeInfo<MyState>());
+static constexpr auto kMyStateTypeInfo = MakeTypeInfo<MyState>();
+
+XLA_FFI_REGISTER_TYPE(GetXlaFfiApi(), "state", &MyState::id, &kMyStateTypeInfo);
 
 TEST(FfiTest, StatefulHandler) {
   ExecutionState execution_state;

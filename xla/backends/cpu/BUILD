@@ -111,8 +111,8 @@ onednn_graph_cc_library(
 )
 
 tf_proto_library(
-    name = "xnnpack_config_proto",
-    srcs = ["xnnpack_config.proto"],
+    name = "xnn_fusion_options_proto",
+    srcs = ["xnn_fusion_options.proto"],
 )
 
 cc_library(
@@ -219,6 +219,11 @@ xla_cc_test(
     ],
 )
 
+tf_proto_library(
+    name = "ynn_fusion_options_proto",
+    srcs = ["ynn_fusion_options.proto"],
+)
+
 cc_library(
     name = "ynn_support",
     srcs = ["ynn_support.cc"],
@@ -227,6 +232,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/backends/cpu/runtime:dot_lib",
         "//xla/backends/cpu/runtime/ynnpack:ynn_interop",
         "//xla/hlo/ir:hlo",

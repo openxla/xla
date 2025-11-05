@@ -119,11 +119,11 @@ class AllocatedRawSEDeviceMemory : public RawSEDeviceMemory {
   size_t sync_point_ = std::numeric_limits<size_t>::max();
 };
 
-tsl::RCReference<RawSEDeviceMemory> RawSEDeviceMemory::Create(
+tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::Create(
     se::DeviceMemoryBase value, LocalDeviceState* local_device,
     se::DeviceMemoryAllocator* allocator) {
-  return tsl::MakeRef<AllocatedRawSEDeviceMemory>(value, local_device,
-                                                  allocator);
+  return tsl::MakeAvailableAsyncValueRef<AllocatedRawSEDeviceMemory>(
+      value, local_device, allocator);
 }
 
 class ForeignRawSEDeviceMemory : public RawSEDeviceMemory {
@@ -143,11 +143,11 @@ class ForeignRawSEDeviceMemory : public RawSEDeviceMemory {
   absl::AnyInvocable<void() &&> on_delete_callback_;
 };
 
-tsl::RCReference<RawSEDeviceMemory> RawSEDeviceMemory::CreateForeign(
+tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::CreateForeign(
     se::DeviceMemoryBase value,
     absl::AnyInvocable<void() &&> on_delete_callback) {
-  return tsl::MakeRef<ForeignRawSEDeviceMemory>(value,
-                                                std::move(on_delete_callback));
+  return tsl::MakeAvailableAsyncValueRef<ForeignRawSEDeviceMemory>(
+      value, std::move(on_delete_callback));
 }
 
 ShapedBuffer TrackedDeviceBuffer::AsShapedBuffer(
@@ -167,7 +167,7 @@ ShapedBuffer TrackedDeviceBuffer::AsShapedBuffer(
 }
 
 TrackedDeviceBuffer::TrackedDeviceBuffer(
-    PjRtDevice* device, tsl::RCReference<RawSEDeviceMemory> device_memory,
+    PjRtDevice* device, tsl::AsyncValueRef<RawSEDeviceMemory> device_memory,
     absl::Span<const BufferSequencingEventRef> definition_events)
     : device_(device),
       device_memory_(std::move(device_memory)),
@@ -178,7 +178,7 @@ TrackedDeviceBuffer::TrackedDeviceBuffer(
 TrackedDeviceBuffer::~TrackedDeviceBuffer() = default;
 
 void TrackedDeviceBuffer::ReleaseDeviceMemory() {
-  device_memory_ = tsl::RCReference<RawSEDeviceMemory>();
+  device_memory_ = tsl::AsyncValueRef<RawSEDeviceMemory>();
 }
 
 void TrackedDeviceBuffer::ConfirmDonation() {
@@ -316,6 +316,16 @@ tsl::RCReference<CommonPjRtRawBuffer> TrackedDeviceBuffer::GetRawBuffer(
           memory_space->devices()[0])
           ->local_device_state(),
       device_memory_);
+}
+
+absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>>
+TrackedDeviceBuffer::GetDefinitionEvent(PjRtMemorySpace* memory_space) {
+  if (definition_events_.size() != 1) {
+    return absl::InternalError(
+        "GetMergedDefinitionEvent only supported on TPU for buffers with "
+        "exactly 1 definition event.");
+  }
+  return tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(definition_events_[0]);
 }
 
 void TrackedDeviceBuffer::AddUsageEvent(

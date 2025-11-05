@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
 #include "xla/error_spec.h"
@@ -112,9 +113,16 @@ Type CheckStatus(absl::StatusOr<Type> result) {
   return *result;
 }
 
-class CollectiveOpsTestE2E : public HloHardwareIndependentTestBase {
+bool IsAsync(const HloInstruction* inst) {
+  return !inst->backend_config<gpu::GpuBackendConfig>()
+              .value()
+              .collective_backend_config()
+              .is_sync();
+}
+
+class CollectiveOpsE2ETestBase : public HloHardwareIndependentTestBase {
  public:
-  CollectiveOpsTestE2E() {
+  CollectiveOpsE2ETestBase() {
     se::Platform* platform = CheckStatus(PlatformUtil::GetPlatform("GPU"));
     se::Platform* reference_platform =
         CheckStatus(PlatformUtil::GetPlatform("GPU"));
@@ -144,54 +152,6 @@ class CollectiveOpsTestE2E : public HloHardwareIndependentTestBase {
                                                  std::move(allocators)));
     reference_hlo_runner_ = std::make_unique<HloRunner>(
         reference_platform, /*intra_op_parallelism_threads=*/0);
-
-    replacements_[kF8E4M3DatatypePlaceholder] =
-        Capability().IsCuda() ? "f8e4m3fn" : "f8e4m3fnuz";
-    replacements_[kF8E5M2DatatypePlaceholder] =
-        Capability().IsCuda() ? "f8e5m2" : "f8e5m2fnuz";
-  }
-
-  const se::GpuComputeCapability& Capability() {
-    return hlo_runner_->backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .gpu_compute_capability();
-  }
-
-  bool HasFp8Support() {
-    if (Capability().IsCuda()) {
-      return Capability().cuda_compute_capability()->IsAtLeast(8, 9);
-    }
-    return Capability().rocm_compute_capability()->has_fp8_support() &&
-           GetDebugOptionsForTest().xla_gpu_enable_cublaslt();
-  }
-
-  void CollectiveOpsVerifyF8Matmul(absl::string_view hlo_text,
-                                   const DebugOptions& options) {
-    if (!HasFp8Support()) {
-      return;
-    }
-    const int64_t kNumReplicas = 1;
-    const int64_t kNumPartitions = 4;
-
-    HloModuleConfig config =
-        GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
-    config.set_debug_options(options);
-    config.set_num_partitions(kNumPartitions);
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_text, config));
-
-    TF_ASSERT_OK_AND_ASSIGN(auto executable, hlo_runner_->CreateExecutable(
-                                                 std::move(module),
-                                                 /*run_hlo_passes=*/true));
-    TF_ASSERT_OK_AND_ASSIGN(
-        const HloModule* const hlo_module,
-        hlo_runner_->HloModuleFromWrapped(executable.get()));
-    std::vector<HloInstruction*> gemm_ops =
-        FindInstructions(hlo_module, HloOpcode::kCustomCall);
-    for (HloInstruction* gemm_op : gemm_ops) {
-      EXPECT_EQ(gemm_op->custom_call_target(), "__cublas$lt$matmul$f8");
-    }
   }
 
   // TODO(b/449655621) Use absl::AnyInvocable instead of std::function.
@@ -263,17 +223,65 @@ class CollectiveOpsTestE2E : public HloHardwareIndependentTestBase {
         num_replicas, /*run_hlo_passes=*/false, &device_assignment);
   }
 
-  bool IsAsync(const HloInstruction* inst) {
-    return !inst->backend_config<gpu::GpuBackendConfig>()
-                .value()
-                .collective_backend_config()
-                .is_sync();
+ protected:
+  std::unique_ptr<HloRunner> hlo_runner_;
+  std::unique_ptr<HloRunner> reference_hlo_runner_;
+};
+
+class CollectiveOpsTestE2E : public CollectiveOpsE2ETestBase {
+ public:
+  CollectiveOpsTestE2E() {
+    replacements_[kF8E4M3DatatypePlaceholder] =
+        Capability().IsCuda() ? "f8e4m3fn" : "f8e4m3fnuz";
+    replacements_[kF8E5M2DatatypePlaceholder] =
+        Capability().IsCuda() ? "f8e5m2" : "f8e5m2fnuz";
+  }
+
+  const se::GpuComputeCapability& Capability() {
+    return hlo_runner_->backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .gpu_compute_capability();
+  }
+
+  bool HasFp8Support() {
+    if (Capability().IsCuda()) {
+      return Capability().cuda_compute_capability()->IsAtLeast(8, 9);
+    }
+    return Capability().rocm_compute_capability()->has_fp8_support() &&
+           GetDebugOptionsForTest().xla_gpu_enable_cublaslt();
+  }
+
+  void CollectiveOpsVerifyF8Matmul(absl::string_view hlo_text,
+                                   const DebugOptions& options) {
+    if (!HasFp8Support()) {
+      return;
+    }
+    const int64_t kNumReplicas = 1;
+    const int64_t kNumPartitions = 4;
+
+    HloModuleConfig config =
+        GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+    config.set_debug_options(options);
+    config.set_num_partitions(kNumPartitions);
+    TF_ASSERT_OK_AND_ASSIGN(auto module,
+                            ParseAndReturnVerifiedModule(hlo_text, config));
+
+    TF_ASSERT_OK_AND_ASSIGN(auto executable, hlo_runner_->CreateExecutable(
+                                                 std::move(module),
+                                                 /*run_hlo_passes=*/true));
+    TF_ASSERT_OK_AND_ASSIGN(
+        const HloModule* const hlo_module,
+        hlo_runner_->HloModuleFromWrapped(executable.get()));
+    std::vector<HloInstruction*> gemm_ops =
+        FindInstructions(hlo_module, HloOpcode::kCustomCall);
+    for (HloInstruction* gemm_op : gemm_ops) {
+      EXPECT_EQ(gemm_op->custom_call_target(), "__cublas$lt$matmul$f8");
+    }
   }
 
  protected:
   absl::flat_hash_map<absl::string_view, absl::string_view> replacements_;
-  std::unique_ptr<HloRunner> hlo_runner_;
-  std::unique_ptr<HloRunner> reference_hlo_runner_;
 
  private:
   static constexpr const char* kF8E4M3DatatypePlaceholder{"<<F8E4M3>>"};
@@ -287,7 +295,7 @@ class CollectiveOpsTestE2E : public HloHardwareIndependentTestBase {
 // E2E test for collectives with flags set. Has constructor arguments specifying
 // whether to enable/disable async collectives, and to set the memcpy_local_p2p
 // flag. Subclasses pass in constructor arguments based on GetParam().
-class CollectiveOpsWithFlagsBase : public CollectiveOpsTestE2E {
+class CollectiveOpsWithFlagsBase : public CollectiveOpsE2ETestBase {
  public:
   CollectiveOpsWithFlagsBase(bool enable_async, bool enable_p2p_memcpy)
       : enable_async_(enable_async), enable_p2p_memcpy_(enable_p2p_memcpy) {
@@ -3557,7 +3565,9 @@ INSTANTIATE_TEST_SUITE_P(
                           RaggedAllToAllImplTypeName(std::get<1>(info.param)));
     });
 
-class RaggedAllToAllMultiHostDecomposerTest : public RaggedAllToAllTestBase {
+class RaggedAllToAllMultiHostDecomposerTest
+    : public RaggedAllToAllTestBase,
+      public ::testing::WithParamInterface<std::tuple<int64_t, int64_t>> {
  public:
   RaggedAllToAllMultiHostDecomposerTest()
       : RaggedAllToAllTestBase(/*enable_async=*/false,
@@ -3575,21 +3585,25 @@ class RaggedAllToAllMultiHostDecomposerTest : public RaggedAllToAllTestBase {
   }
 };
 
-TEST_F(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_2GPUs_SliceSize1) {
-  absl::string_view kModuleReplicatedStr = R"(
+TEST_P(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_2GPUs_SliceSize1) {
+  auto [num_input_rows, num_output_rows] = GetParam();
+
+  std::string kModuleReplicatedStr =
+      absl::Substitute(R"(
   HloModule module, num_partitions=1
 
   ENTRY entry {
-    input = f32[512,5,32] parameter(0)
-    output = f32[512,5,32] parameter(1)
+    input = f32[$0,5,32] parameter(0)
+    output = f32[$1,5,32] parameter(1)
     input_offsets = s32[32] parameter(2)
     send_sizes = s32[32] parameter(3)
     output_offsets = s32[32] parameter(4)
     recv_sizes = s32[32] parameter(5)
-    ROOT ra2a = f32[512,5,32] ragged-all-to-all(input, output,
-      input_offsets, send_sizes, output_offsets, recv_sizes), 
+    ROOT ra2a = f32[$1,5,32] ragged-all-to-all(input, output,
+      input_offsets, send_sizes, output_offsets, recv_sizes),
       replica_groups={{0,1}}
-  })";
+  })",
+                       num_input_rows, num_output_rows);
 
   const int64_t kNumReplicas = 2;
   const int64_t kNumPartitions = 1;
@@ -3626,21 +3640,25 @@ TEST_F(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_2GPUs_SliceSize1) {
   }
 }
 
-TEST_F(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_8GPUs_SliceSize4) {
-  absl::string_view kModuleReplicatedStr = R"(
+TEST_P(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_8GPUs_SliceSize4) {
+  auto [num_input_rows, num_output_rows] = GetParam();
+
+  std::string kModuleReplicatedStr =
+      absl::Substitute(R"(
   HloModule module, num_partitions=1
 
   ENTRY entry {
-    input = f32[512,5,32] parameter(0)
-    output = f32[512,5,32] parameter(1)
+    input = f32[$0,5,32] parameter(0)
+    output = f32[$1,5,32] parameter(1)
     input_offsets = s32[32] parameter(2)
     send_sizes = s32[32] parameter(3)
     output_offsets = s32[32] parameter(4)
     recv_sizes = s32[32] parameter(5)
-    ROOT ra2a = f32[512,5,32] ragged-all-to-all(input, output,
-      input_offsets, send_sizes, output_offsets, recv_sizes), 
+    ROOT ra2a = f32[$1,5,32] ragged-all-to-all(input, output,
+      input_offsets, send_sizes, output_offsets, recv_sizes),
       replica_groups={{0,1,2,3,4,5,6,7}}
-  })";
+  })",
+                       num_input_rows, num_output_rows);
 
   const int64_t kNumReplicas = 8;
   const int64_t kNumPartitions = 1;
@@ -3662,7 +3680,7 @@ TEST_F(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_8GPUs_SliceSize4) {
 
   Array<int64_t> input_sizes(
       {kNumReplicas, kNumReplicas, kNumUpdatesPerReplica});
-  input_sizes.FillRandomUniform(0, 10);
+  input_sizes.FillRandomUniform(0, 16);
 
   TF_ASSERT_OK(CreateRandomTestData(module.get(), input_sizes));
 
@@ -3679,22 +3697,26 @@ TEST_F(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_8GPUs_SliceSize4) {
   }
 }
 
-TEST_F(RaggedAllToAllMultiHostDecomposerTest,
+TEST_P(RaggedAllToAllMultiHostDecomposerTest,
        RaggedAllToAll_8GPUs_SliceSize4_2ReplicaGroups) {
-  absl::string_view kModuleReplicatedStr = R"(
+  auto [num_input_rows, num_output_rows] = GetParam();
+
+  std::string kModuleReplicatedStr =
+      absl::Substitute(R"(
   HloModule module, num_partitions=1
 
   ENTRY entry {
-    input = f32[512,5,32] parameter(0)
-    output = f32[512,5,32] parameter(1)
+    input = f32[$0,5,32] parameter(0)
+    output = f32[$1,5,32] parameter(1)
     input_offsets = s32[32] parameter(2)
     send_sizes = s32[32] parameter(3)
     output_offsets = s32[32] parameter(4)
     recv_sizes = s32[32] parameter(5)
-    ROOT ra2a = f32[512,5,32] ragged-all-to-all(input, output,
-      input_offsets, send_sizes, output_offsets, recv_sizes), 
+    ROOT ra2a = f32[$1,5,32] ragged-all-to-all(input, output,
+      input_offsets, send_sizes, output_offsets, recv_sizes),
       replica_groups={{0,2,4,6},{1,3,5,7}}
-  })";
+  })",
+                       num_input_rows, num_output_rows);
 
   const int64_t kNumReplicas = 8;
   const int64_t kNumReplicasPerGroup = 4;
@@ -3733,6 +3755,19 @@ TEST_F(RaggedAllToAllMultiHostDecomposerTest,
     EXPECT_TRUE(LiteralTestUtil::Equal(expected_outputs_[i], results[i]));
   }
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    RaggedAllToAllMultiHostDecomposerTest,
+    RaggedAllToAllMultiHostDecomposerTest,
+    ::testing::Values(std::make_tuple(512, 4096), std::make_tuple(4096, 512)),
+    [](const ::testing::TestParamInfo<std::tuple<int64_t, int64_t>>& info) {
+      if (std::get<0>(info.param) > std::get<1>(info.param)) {
+        return absl::StrCat("combine_", std::get<0>(info.param), "_",
+                            std::get<1>(info.param));
+      }
+      return absl::StrCat("dispatch_", std::get<0>(info.param), "_",
+                          std::get<1>(info.param));
+    });
 
 TEST_F(CollectiveOpsTestE2E, MemcpyP2pWhileLoopCorrectness) {
   absl::string_view hlo_string = R"(

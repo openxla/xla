@@ -22,13 +22,16 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/log.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/str_split.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
+#include "llvm/TargetParser/Host.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/backends/cpu/codegen/execution_engine.h"
 #include "xla/backends/cpu/codegen/ir_compiler.h"
@@ -182,6 +185,34 @@ CpuAotLoader::LoadAotCompilationResult(
   if (triple.getArchName() != expected_triple.getArchName()) {
     return Internal("Target arch mismatch expected %s got %s.",
                     expected_triple.getArchName(), triple.getArchName());
+  }
+
+  llvm::StringMap<bool> host_machine_features = llvm::sys::getHostCPUFeatures();
+  auto compile_machine_features =
+      absl::StrSplit(aot_result_proto.target_machine_options().features(), ',');
+  // Convert the supported features to a vector of strings.
+  std::vector<std::string> host_machine_features_vector;
+  for (const auto& [feature, supported] : host_machine_features) {
+    if (supported) {
+      host_machine_features_vector.push_back(feature.str());
+    }
+  }
+
+  for (const absl::string_view feature : compile_machine_features) {
+    if (!host_machine_features.contains(feature) ||
+        !host_machine_features[feature]) {
+      // TODO: b/457415427 - Turn this warning into an error once a mechanism
+      // for passing target machine features to the CPU compiler is implemented.
+      LOG(ERROR)
+          << "Loading XLA:CPU AOT result. Target machine feature " << feature
+          << " is not  supported on the host machine. Machine type used for "
+             "XLA:CPU compilation doesn't match the machine type for "
+             "execution. Compile machine features: ["
+          << absl::StrJoin(compile_machine_features, ",")
+          << "] vs host machine features: ["
+          << absl::StrJoin(host_machine_features_vector, ",") << "]"
+          << ". This could lead to execution errors such as SIGILL.";
+    }
   }
 
   std::vector<SymbolProto> compiled_symbols_proto;

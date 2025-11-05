@@ -88,11 +88,11 @@ class Parser {
   int64_t ParseNumber(std::string& error_msg) {
     size_t num_len = 0;
     if (!remaining_str_.empty() &&
-        (isdigit(remaining_str_[0]) || remaining_str_[0] == '-')) {
+        (absl::ascii_isdigit(remaining_str_[0]) || remaining_str_[0] == '-')) {
       num_len = 1;
     }
     while (num_len < remaining_str_.size() &&
-           isdigit(remaining_str_[num_len])) {
+           absl::ascii_isdigit(remaining_str_[num_len])) {
       num_len++;
     }
     CHECK(num_len > 0) << error_msg;
@@ -557,6 +557,12 @@ SymbolicExprContext* SymbolicExpr::GetContext() const { return impl_->ctx_; }
 
 SymbolicExprType SymbolicExpr::GetType() const { return impl_->type_; }
 
+bool SymbolicExpr::IsBinaryOp() const {
+  auto type = GetType();
+  return type != SymbolicExprType::kConstant &&
+         type != SymbolicExprType::kVariable;
+}
+
 SymbolicExpr SymbolicExpr::GetLHS() const { return impl_->lhs_; }
 
 SymbolicExpr SymbolicExpr::GetRHS() const { return impl_->rhs_; }
@@ -732,12 +738,11 @@ SymbolicExpr SymbolicExpr::Replace(
     return it->second;
   }
 
-  SymbolicExprType type = GetType();
-  if (type == SymbolicExprType::kConstant ||
-      type == SymbolicExprType::kVariable) {
+  if (!IsBinaryOp()) {
     return *this;
   }
 
+  SymbolicExprType type = GetType();
   SymbolicExpr lhs = GetLHS();
   SymbolicExpr rhs = GetRHS();
   SymbolicExpr new_lhs = lhs.Replace(replacements);
@@ -779,12 +784,11 @@ SymbolicExpr SymbolicExpr::Canonicalize() const {
     return *this;
   }
 
-  SymbolicExprType type = GetType();
-  if (type == SymbolicExprType::kConstant ||
-      type == SymbolicExprType::kVariable) {
+  if (!IsBinaryOp()) {
     return *this;
   }
 
+  SymbolicExprType type = GetType();
   SymbolicExpr lhs = this->GetLHS().Canonicalize();
   SymbolicExpr rhs = this->GetRHS().Canonicalize();
 

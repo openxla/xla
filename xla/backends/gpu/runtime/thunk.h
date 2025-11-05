@@ -538,6 +538,11 @@ class Thunk {
   // Invokes `fn` with this thunk and all nested thunks.
   virtual void ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn);
 
+  // Recursively replaces all nested thunks with the result of applying `fn` to
+  // them.
+  virtual void TransformAllNestedThunks(
+      absl::FunctionRef<std::unique_ptr<Thunk>(std::unique_ptr<Thunk>)> fn) {}
+
   // A helper function to get the `GpuCollectives*` pointer from the
   // CollectiveExecuteParams.
   static absl::StatusOr<GpuCollectives* absl_nonnull> GetGpuCollectives(
@@ -565,6 +570,10 @@ class Thunk {
   using Deserializer =
       absl::AnyInvocable<absl::StatusOr<std::unique_ptr<Thunk>>(
           const ThunkProto&) const>;
+
+  using DeserializerWithCustomAllocations =
+      absl::AnyInvocable<absl::StatusOr<std::unique_ptr<Thunk>>(
+          const ThunkProto&, absl::Span<const BufferAllocation>) const>;
 
   void add_control_predecessor(const Thunk* control_predecessor) {
     control_predecessors_.push_back(control_predecessor);
@@ -598,18 +607,6 @@ class Thunk {
 using ThunkSequence = std::vector<std::unique_ptr<Thunk>>;
 
 std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);
-
-// A struct that defines a shaped slice, i.e., a BufferAllocation::Slice and its
-// shape.
-struct ShapedSlice {
-  BufferAllocation::Slice slice;
-  Shape shape;
-
-  static absl::StatusOr<ShapedSlice> FromProto(
-      const ShapedSliceProto& proto,
-      absl::Span<const BufferAllocation> buffer_allocations);
-  absl::StatusOr<ShapedSliceProto> ToProto() const;
-};
 
 // Returns if the thunk implements a reduction collective (all-reduce or
 // reduce-scatter).

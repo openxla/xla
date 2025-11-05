@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/cpu/ynn_support.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <tuple>
 
 #include "ynnpack/include/ynnpack.h"
@@ -153,10 +154,14 @@ absl::StatusOr<bool> IsDotSupportedByYnn(
   static const absl::NoDestructor<absl::flat_hash_set<
       std::tuple<PrimitiveType, PrimitiveType, PrimitiveType>>>
       kAllowedTypes({
-          {F32, F32, F32},
+          // TODO(b/452693819): We plan to enable this in stages, starting with
+          // int8, and enable f32 later.
+          // {F32, F32, F32},
           // TODO(b/449998002): We don't have fast fp16 kernels yet.
           // {F16, F16, F32},
-          {BF16, BF16, F32},
+          // TODO(b/452693819): We plan to enable this in stages, starting with
+          // int8, and enable bf16 later.
+          // {BF16, BF16, F32},
           {S8, S8, S32},
           {U8, S8, S32},
           // TODO(b/441600372): We don't have fast int4 kernels yet. Even the
@@ -236,6 +241,14 @@ bool IsReduceOpSupportedByYnn(const HloInstruction* hlo) {
                                             match::Minimum())
                    .WithBinaryOperandsAnyOrder(match::Parameter(0),
                                                match::Parameter(1)));
+}
+
+uint32_t YnnFlags(const DebugOptions& debug_options) {
+  uint32_t flags = 0;
+  if (!debug_options.xla_cpu_enable_platform_dependent_math()) {
+    flags |= YNN_FLAG_CONSISTENT_ARITHMETIC;
+  }
+  return flags;
 }
 
 }  // namespace xla::cpu
