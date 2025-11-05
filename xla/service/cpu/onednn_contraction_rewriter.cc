@@ -401,6 +401,9 @@ absl::StatusOr<Shape> AdjustAddendShape(const HloInstruction* contraction,
   // deleted from the new_shape.
   auto instr_shape = contraction->shape();
   int64_t rank_difference = 0;
+  // Since the absl APIs return unsigned dimension sizes, compute the rank
+  // difference only when LHS > RHS. Performing an unconditional subtraction
+  // could cause an unsigned underflow.
   if (new_shape.dimensions().size() > instr_shape.dimensions().size()) {
     rank_difference =
         new_shape.dimensions().size() - instr_shape.dimensions().size();
