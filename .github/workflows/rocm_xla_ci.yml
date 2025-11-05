@@ -1,4 +1,4 @@
-name: ROCm OpenXLA Upstream CI
+name: ROCm OpenXla CI
 
 on:
   pull_request:
@@ -7,35 +7,25 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-and-test:
-
-    runs-on: ubuntu-22.04
-    env:
-      DOCKER_IMAGE: 'rocm/tensorflow-build@sha256:a2672ff2510b369b4a5f034272a518dc93c2e492894e3befaeef19649632ccaa'
-      CONTAINER_NAME: builder-${{ github.run_id }}
+  test-and-analyze-xla-1:
+    runs-on: linux-x86-n2-128
+    container:
+      image: rocm/tensorflow-build@sha256:a2672ff2510b369b4a5f034272a518dc93c2e492894e3befaeef19649632ccaa
+      options:
+        --ipc=host
+        --shm-size=16G
+        --cap-add=SYS_PTRACE
+        --security-opt=seccomp=unconfined
     steps:
-      - name: Check out repository code
-        uses: actions/checkout@v4
-
-      - name: Start Docker container
+      - uses: actions/checkout@v4
+      - name: Test XLA
         run: |
-          docker run -d -t --name ${{ env.CONTAINER_NAME }} \
-            --ipc=host \
-            --pid=host \
-            --shm-size=16G \
-            --group-add=video \
-            --cap-add=SYS_PTRACE \
-            --network=host \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ${{ env.DOCKER_IMAGE }} \
-            bash
-
-      - name: Run build and test shell script
-        run: |
-          docker exec ${{ env.CONTAINER_NAME }} bash -c "build_tools/rocm/run_xla_ci_build.sh --config=rocm_ci --config=rocm_rbe //xla/..."
-
-      - name: Teardown Docker container
-        if: always()
-        run: docker rm -f ${{ env.CONTAINER_NAME }}
+          build_tools/rocm/run_xla_ci_build.sh \
+            --config=rocm_ci \
+            --config=rocm_rbe \
+            //xla/...
