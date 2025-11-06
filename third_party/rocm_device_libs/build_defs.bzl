@@ -55,7 +55,7 @@ def bitcode_library(
         extra_flags = " ".join(file_specific_flags.get(filename, []))
         native.genrule(
             name = "compile_" + basename,
-            srcs = [src] + hdrs + include_paths + [clang_includes, clang_header],
+            srcs = [src] + hdrs + [clang_includes, clang_header],
             outs = [out],
             cmd = "$(location {}) -I$$(dirname $(location {}))  {} {} {} -emit-llvm -c $(location {}) -o $@".format(
                 clang_tool,
