@@ -1,3 +1,4 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
@@ -78,6 +79,21 @@ config_setting(
     name = "libnvjitlink_support_enabled",
     flag_values = {
         ":enable_libnvjitlink_support": "True",
+    },
+)
+
+bool_flag(
+    name = "enable_subprocess_compilation_support",
+    build_setting_default = if_google(
+        False,
+        oss_value = True,
+    ),
+)
+
+config_setting(
+    name = "subprocess_compilation_support_enabled",
+    flag_values = {
+        ":enable_subprocess_compilation_support": "True",
     },
 )
 
@@ -1120,6 +1136,7 @@ cc_library(
         ":ptx_compiler",
         ":ptx_compiler_support",
         ":subprocess_compilation",
+        ":subprocess_compilation_support",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/gpu:gpu_asm_opts",
         "//xla/tsl/platform:logging",
@@ -1128,11 +1145,15 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:path",
-    ],
+    ] + select({
+        ":subprocess_compilation_support_enabled": [":subprocess_compilation"],
+        "//conditions:default": [],
+    }),
 )
 
 cc_library(
@@ -1261,9 +1282,7 @@ cuda_library(
         ":cuda_status",
         "//xla/tsl/platform:errors",
         "@com_google_absl//absl/status",
-        "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cuda_runtime",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1600,23 +1619,49 @@ cc_library(
 )
 
 cc_library(
+    name = "subprocess_compilation_support",
+    srcs = ["subprocess_compilation_support.cc"],
+    hdrs = ["subprocess_compilation_support.h"],
+    local_defines = select({
+        ":subprocess_compilation_support_enabled": [
+            "SUBPROCESS_COMPILATION_SUPPORT=true",
+        ],
+        "//conditions:default": [
+            "SUBPROCESS_COMPILATION_SUPPORT=false",
+        ],
+    }),
+)
+
+cc_library(
     name = "subprocess_compilation",
     srcs = ["subprocess_compilation.cc"],
     hdrs = ["subprocess_compilation.h"],
-    data = if_google(
-        google_value = [
-            "@local_config_cuda//cuda:runtime_fatbinary",
-            "@local_config_cuda//cuda:runtime_nvlink",
-            "@local_config_cuda//cuda:runtime_ptxas",
-        ],
-        oss_value = if_cuda_tools(
-            [
-                "@local_config_cuda//cuda:runtime_fatbinary",
+    data = select({
+        ":subprocess_compilation_support_enabled": if_google(
+            google_value = [
                 "@local_config_cuda//cuda:runtime_nvlink",
                 "@local_config_cuda//cuda:runtime_ptxas",
+                "@local_config_cuda//cuda:runtime_fatbinary",
             ],
+            oss_value = if_cuda_tools(
+                [
+                    "@local_config_cuda//cuda:runtime_nvlink",
+                    "@local_config_cuda//cuda:runtime_ptxas",
+                    "@local_config_cuda//cuda:runtime_fatbinary",
+                ],
+            ),
         ),
-    ),
+        "//conditions:default": if_google(
+            google_value = [
+                "@local_config_cuda//cuda:runtime_fatbinary",
+            ],
+            oss_value = if_cuda_tools(
+                [
+                    "@local_config_cuda//cuda:runtime_fatbinary",
+                ],
+            ),
+        ),
+    }),
     local_defines = if_windows(["PLATFORM_WINDOWS"]),
     visibility = internal_visibility([
         "//third_party/py/jax:__subpackages__",
@@ -1696,6 +1741,7 @@ xla_cc_test(
         ":cubin_or_ptx_image",
         ":cuda_compute_capability",
         ":subprocess_compilation",
+        ":subprocess_compilation_support",
         "//xla/stream_executor/gpu:gpu_asm_opts",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:status_matchers",
@@ -1845,6 +1891,7 @@ cc_library(
         ":ptx_compiler_support",
         ":subprocess_compilation",
         ":subprocess_compilation_provider",
+        ":subprocess_compilation_support",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
@@ -2129,6 +2176,7 @@ cc_library(
         ":ptx_compiler_support",
         ":subprocess_compilation",
         ":subprocess_compilation_provider",
+        ":subprocess_compilation_support",
         "//xla:xla_proto_cc",
         "//xla/stream_executor:semantic_version",
         "//xla/tsl/platform:errors",
@@ -2159,10 +2207,11 @@ xla_cc_test(
         ":cuda_platform",
         ":nvjitlink_support",
         ":ptx_compiler_support",
+        ":subprocess_compilation_support",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:cuda_root_path",
@@ -2523,4 +2572,12 @@ cuda_library(
         "@com_google_absl//absl/base",
     ],
     alwayslink = 1,
+)
+
+bzl_library(
+    name = "build_defs_bzl",
+    srcs = ["build_defs.bzl"],
+    parse_tests = False,
+    visibility = ["//visibility:private"],
+    deps = ["//xla/tsl:package_groups_bzl"],
 )
