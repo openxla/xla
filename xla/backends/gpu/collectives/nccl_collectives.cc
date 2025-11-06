@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
