@@ -827,6 +827,10 @@ class ShapeUtil {
   // Drops any degenerate dimensions (i.e. dimensions of size 1)
   static Shape DropDegenerateDimensions(const Shape& shape);
 
+  // Permutes the dimensions of `shape` without changing the layout, if present.
+  static Shape PermuteDimensionsIgnoringLayout(
+      absl::Span<const int64_t> permutation, const Shape& shape);
+
   // Permutes the dimensions by the given permutation, so
   // return_value.dimensions[i] = argument.dimensions[permutation[i]].
   //
@@ -1132,10 +1136,17 @@ class ShapeUtil {
 
   // Computes byte strides of an array shape `shape`. `shape` must have a
   // layout. Ignores tiling. `strides` must have size equal to the number of
-  // dimensions of `shape`.
+  // dimensions of `shape`. Ignores element_size_in_bits - uses its default
+  // value, ByteSizeOfPrimitiveType - therefore `unpacked`.
+  static absl::Status UnpackedByteStrides(const Shape& shape,
+                                          absl::Span<int64_t> strides);
+  ABSL_DEPRECATE_AND_INLINE()
   static absl::Status ByteStrides(const Shape& shape,
                                   absl::Span<int64_t> strides);
   // Same as above but returns the stride array, or std::nullopt if error.
+  static std::optional<absl::InlinedVector<int64_t, 4>> UnpackedByteStrides(
+      const Shape& shape);
+  // Same as above but returns std::nullopt if elements are not byte-aligned.
   static std::optional<absl::InlinedVector<int64_t, 4>> ByteStrides(
       const Shape& shape);
 

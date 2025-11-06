@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -63,12 +64,11 @@ bool IsTritonSupportedDataType(PrimitiveType type,
       return true;
     case F8E5M2:
     case F8E4M3FN:
-      return std::holds_alternative<se::CudaComputeCapability>(gpu_version);
+      return gpu_version.IsCuda();
     case BF16:
-      return std::holds_alternative<se::CudaComputeCapability>(gpu_version) ||
-             (std::holds_alternative<se::RocmComputeCapability>(gpu_version) &&
-              std::get<se::RocmComputeCapability>(gpu_version)
-                  .has_bf16_dtype_support());
+      return gpu_version.IsCuda() ||
+             (gpu_version.IsRocm() &&
+              gpu_version.rocm_compute_capability()->has_bf16_dtype_support());
     default:
       return false;
   }
@@ -110,6 +110,7 @@ absl::flat_hash_set<HloOpcode> TritonSupportedUnaryElementwiseOps(
         HloOpcode::kAcos,
         HloOpcode::kAcosh,
         HloOpcode::kAsin,
+        HloOpcode::kAsinh,
         HloOpcode::kAtanh,
         HloOpcode::kCbrt,
         HloOpcode::kCeil,
@@ -155,8 +156,8 @@ CodegenDecision IsTritonSupportedConversion(
   };
 
   if (input != output && any_is(PrimitiveType::F8E4M3FN) &&
-      std::holds_alternative<se::CudaComputeCapability>(gpu_version) &&
-      !std::get<se::CudaComputeCapability>(gpu_version).IsAtLeastHopper()) {
+      gpu_version.IsCuda() &&
+      !gpu_version.cuda_compute_capability()->IsAtLeastHopper()) {
     return error_message();
   }
 
@@ -290,18 +291,11 @@ CodegenDecision CanTritonHandleReduce(
 }
 
 bool IsInTritonNestedGemmFusion(const HloInstruction& hlo) {
-  const HloComputation* computation = hlo.parent();
-  if (!computation->IsFusionComputation()) {
+  if (!hlo.parent()->IsFusionComputation()) {
     return false;
   }
-  absl::StatusOr<GpuBackendConfig> backend_config =
-      computation->FusionInstruction()->backend_config<GpuBackendConfig>();
-  if (!backend_config.ok()) {
-    return false;
-  }
-  absl::string_view fusion_kind =
-      backend_config.value().fusion_backend_config().kind();
-  return fusion_kind == kTritonNestedGemmFusionKind;
+  return IsGpuFusionKind(*hlo.parent()->FusionInstruction(),
+                         kTritonNestedGemmFusionKind);
 }
 
 absl::Status CheckSupportedCheckDotDimensions(const HloDotInstruction& dot) {
@@ -349,7 +343,7 @@ CodegenDecision AreTypesSupportedByAlgUnsetDot(
   }
 
   if (input_type == F8E4M3FN || result_type == F8E4M3FN) {
-    if (auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_version);
+    if (auto* cuda_cc = gpu_version.cuda_compute_capability();
         cuda_cc && !cuda_cc->IsAtLeastHopper()) {
       return CodegenDecision::Forbid(
           "Dot operation for F8E4M3FN is not supported before Hopper.");
@@ -421,7 +415,7 @@ CodegenDecision AreDotAlgorithmInputAndOutputConversionsSupported(
 
   if (algorithm == PrecisionConfig::ALG_DOT_F64_F64_F64 &&
       primitive_util::BitWidth(lhs_type) < 32 &&
-      !std::get<se::CudaComputeCapability>(gpu_version).IsAtLeastBlackwell()) {
+      !gpu_version.cuda_compute_capability()->IsAtLeastBlackwell()) {
     return forbid("Unsupported BF16 on GPUs before Blackwell");
   }
 
@@ -729,9 +723,9 @@ bool IsTritonUnsupportedOpcode(HloOpcode opcode) {
 absl::Status EnsureTritonSupportsComputeCapability(
     const se::GpuComputeCapability& gpu_compute_capability) {
   auto cuda_compute_capability =
-      std::get_if<se::CudaComputeCapability>(&gpu_compute_capability);
+      gpu_compute_capability.cuda_compute_capability();
   auto rocm_compute_capability =
-      std::get_if<se::RocmComputeCapability>(&gpu_compute_capability);
+      gpu_compute_capability.rocm_compute_capability();
   if (!cuda_compute_capability && !rocm_compute_capability) {
     return absl::FailedPreconditionError(
         "Triton support is only enabled for CUDA and ROCm GPUs.");
@@ -763,6 +757,14 @@ CodegenDecision IsTritonSupportedComputation(
     const se::GpuComputeCapability& gpu_compute_capability) {
   VLOG(3) << "IsTritonSupportedComputation: " << computation.ToString();
   for (const auto* instruction : computation.instructions()) {
+    // TODO(b/452478982): This check can be removed if we support Tuple ops
+    // generally.
+    if (instruction == computation.root_instruction() &&
+        instruction->opcode() == HloOpcode::kTuple) {
+      // While Tuple is not generally supported by Triton codegen, it is
+      // supported for fusion roots.
+      continue;
+    }
     if (CodegenDecision can_codegen =
             IsTritonSupportedInstruction(*instruction, gpu_compute_capability);
         !can_codegen) {

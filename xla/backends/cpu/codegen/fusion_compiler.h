@@ -28,7 +28,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/PassManager.h"
-#include "xla/codegen/llvm_ir_kernel_source.h"
+#include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
 
 namespace xla::cpu {
@@ -57,8 +57,7 @@ class FusionCompiler {
   absl::StatusOr<std::unique_ptr<llvm::Module>> Compile(
       llvm::LLVMContext& llvm_context, mlir::ModuleOp mlir_module);
   // Compile a MLIR kernel source to a LLVM kernel source.
-  absl::StatusOr<LlvmIrKernelSource> Compile(
-      MlirKernelSource mlir_kernel_source);
+  absl::StatusOr<LlvmKernelSource> Compile(MlirKernelSource mlir_kernel_source);
 
   // Create a new MLIR context for the compiler with the required dialects for
   // compiling an XLA:CPU fusion.
@@ -67,11 +66,11 @@ class FusionCompiler {
  private:
   Options options_;
   CompilationHooks hooks_;
-  // Pass manager that holds the optimization & loop transformation passes.
-  mlir::PassManager optimization_pass_manager_;
-  // Pass manager that holds the passes responsible for lowering the module from
-  // MLIR to LLVM.
-  mlir::PassManager lowering_pass_manager_;
+  // We have 2 distinct pipelines for scalar and tiled kernels, this is
+  // because they differ slightly in their semantics, ideally these would be
+  // unified but this is a larger change.
+  mlir::PassManager scalar_pass_manager_;
+  mlir::PassManager tiled_pass_manager_;
 };
 
 }  // namespace xla::cpu

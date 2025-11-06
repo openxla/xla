@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -261,7 +262,7 @@ bool InlineComposites(
 
 // Introduces a specific attribute so that the frontend has the direct
 // control over inlining specific calls.
-bool InlineInstruction(HloInstruction* instruction) {
+bool FrontendAttributesAllowInlining(HloInstruction* instruction) {
   auto it = instruction->frontend_attributes().map().find("inlineable");
   if (it != instruction->frontend_attributes().map().end()) {
     return it->second == "true";
@@ -324,11 +325,6 @@ bool CallInliner::IsInlineableCallOp(HloInstruction* instruction) const {
   if (!prerequisite) {
     return false;
   }
-  if (!InlineInstruction(instruction)) {
-    // Always prioritize user's explicit requests after fulfilling the
-    // prerequisites.
-    return false;
-  }
   if (instruction->GetModule()->config().use_shardy_partitioner() &&
       (absl::StrContains(instruction->to_apply()->name(), "shmap_body") ||
        absl::StrContains(instruction->to_apply()->name(),
@@ -351,16 +347,30 @@ bool CallInliner::IsInlineableCallOp(HloInstruction* instruction) const {
 
 bool CallInliner::ShouldInline(const CallGraph& call_graph,
                                HloInstruction* instruction) const {
+  // Check this is an inlineable call op (but not frontend attributes)
   if (!IsInlineableCallOp(instruction)) {
     return false;
   }
 
-  if (should_inline_.has_value()) {
-    if (!(*should_inline_)(call_graph, instruction)) {
+  // Check the override policy, if any.
+  InlineOverridePolicy policy = InlineOverridePolicy::kAllowInline;
+  if (override_policy_.has_value()) {
+    policy = (*override_policy_)(call_graph, instruction);
+  }
+
+  // If the policy is to never inline, we're done.
+  if (policy == InlineOverridePolicy::kProhibitInline) {
+    return false;
+  }
+
+  // If the policy is to ignore frontend attributes, do so.
+  if (policy != InlineOverridePolicy::kAllowIgnoreFrontendAttributes) {
+    if (!FrontendAttributesAllowInlining(instruction)) {
       return false;
     }
   }
 
+  // If we're only inlining calls with a single call site, check that.
   if (single_call_site_) {
     return call_graph.GetNode(instruction->to_apply())
                .caller_callsites()
@@ -421,13 +431,13 @@ absl::StatusOr<bool> CallInliner::InlineAndLegalize(
   }
   if (did_node_mutate && uniquify_channel_ids_) {
     for (HloInstruction* instruction : computation->instructions()) {
-      if (!dynamic_cast<HloChannelInstruction*>(instruction)) {
+      if (!HloChannelInstruction::ClassOf(instruction)) {
         continue;
       }
       // Channel IDs for host transfers are part of the ABI, and can never be
       // uniquified.
       HloSendRecvInstruction* send_recv =
-          dynamic_cast<HloSendRecvInstruction*>(instruction);
+          DynCast<HloSendRecvInstruction>(instruction);
       if (send_recv && send_recv->is_host_transfer()) {
         continue;
       }
@@ -448,7 +458,7 @@ absl::StatusOr<bool> CallInliner::RunWithInlineMap(
     for (HloComputation* computation : module->computations()) {
       for (HloInstruction* instruction : computation->instructions()) {
         HloChannelInstruction* channel_instruction =
-            dynamic_cast<HloChannelInstruction*>(instruction);
+            DynCast<HloChannelInstruction>(instruction);
         if (channel_instruction &&
             channel_instruction->channel_id().has_value()) {
           next_unique_channel_id_ =
@@ -495,7 +505,7 @@ absl::StatusOr<bool> CallInliner::RunWithInlineMap(
   return did_mutate;
 }
 
-absl::StatusOr<bool> CallInliner::Run(
+absl::StatusOr<bool> CallInliner::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   return RunWithInlineMap(module, std::nullopt, execution_threads);
@@ -506,7 +516,7 @@ bool IsInlineableComputation(HloComputation* computation) {
     bool prerequisite = instruction->opcode() == HloOpcode::kCall &&
                         !instruction->has_backend_config() &&
                         !instruction->parent()->IsAsyncComputation();
-    if (!prerequisite || !InlineInstruction(instruction)) {
+    if (!prerequisite || (!FrontendAttributesAllowInlining(instruction))) {
       return false;
     }
     return true;

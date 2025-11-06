@@ -35,7 +35,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
-#include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/communicator.h"
@@ -48,9 +47,9 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
@@ -81,7 +80,7 @@ AllToAllStartThunk::AllToAllStartThunk(
     std::vector<CollectiveThunk::Buffer> buffers, bool p2p_memcpy_enabled)
     : CollectiveThunk(Thunk::kAllToAllStart, thunk_info,
                       IsGPUSyncCollective(*instr),
-                      AsyncStreamKind::kCollective),
+                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
       config_(GetAllToAllConfig(instr)),
       buffers_(std::move(buffers)),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {
@@ -248,7 +247,7 @@ absl::StatusOr<bool> AllToAllStartThunk::RunCollective(
 
 AsyncStreamKind AllToAllStartThunk::GetAsyncStreamKind() const {
   if (is_local() && p2p_memcpy_enabled_) {
-    return AsyncStreamKind::kMemCpyP2P;
+    return AsyncStreamKind::ASYNC_STREAM_KIND_MEMCPYP2P;
   }
   return CollectiveThunk::GetAsyncStreamKind();
 }

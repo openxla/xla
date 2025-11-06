@@ -51,9 +51,14 @@ _TF_ROCM_CONFIG_REPO = "TF_ROCM_CONFIG_REPO"
 _DISTRIBUTION_PATH = "rocm/rocm_dist"
 _OS = "OS"
 _ROCM_VERSION = "ROCM_VERSION"
+_TMPDIR = "TMPDIR"
 
 _DEFAULT_ROCM_TOOLKIT_PATH = "/opt/rocm"
 _TF_ROCM_MULTIPLE_PATHS = "TF_ROCM_MULTIPLE_PATHS"
+_TF_ROCM_RBE_DOCKER_IMAGE = "TF_ROCM_RBE_DOCKER_IMAGE"
+
+# rocm/tensorflow-build:latest-jammy-python3.11-rocm7.0.2
+_DEFAULT_TF_ROCM_RBE_DOCKER_IMAGE = "rocm/tensorflow-build@sha256:a2672ff2510b369b4a5f034272a518dc93c2e492894e3befaeef19649632ccaa"
 _LLVM_PATH = "LLVM_PATH"
 
 def verify_build_defines(params):
@@ -329,6 +334,7 @@ def _find_libs(repository_ctx, rocm_config, miopen_path, rccl_path, bash_bin):
             ("rocsolver", rocm_config.rocm_toolkit_path),
             ("hipfft", rocm_config.rocm_toolkit_path),
             ("rocrand", rocm_config.rocm_toolkit_path),
+            ("rocprofiler-sdk", rocm_config.rocm_toolkit_path),
         ]
     ]
     if int(rocm_config.rocm_version_number) >= 40500:
@@ -482,24 +488,6 @@ def _norm_path(path):
         path = path[:-1]
     return path
 
-def _genrule(src_dir, genrule_name, command, outs):
-    """Returns a string with a genrule.
-
-    Genrule executes the given command and produces the given outputs.
-    """
-    return (
-        "genrule(\n" +
-        '    name = "' +
-        genrule_name + '",\n' +
-        "    outs = [\n" +
-        outs +
-        "\n    ],\n" +
-        '    cmd = """\n' +
-        command +
-        '\n   """,\n' +
-        ")\n"
-    )
-
 def _flag_enabled(repository_ctx, flag_name):
     return get_host_environ(repository_ctx, flag_name) == "1"
 
@@ -638,6 +626,7 @@ def _create_local_rocm_repository(repository_ctx):
     repository_dict = {
         "%{rocm_root}": rocm_toolkit_path,
         "%{rocm_toolkit_path}": str(repository_ctx.path(rocm_config.rocm_toolkit_path)),
+        "%{rocm_rbe_docker_image}": repository_ctx.os.environ.get(_TF_ROCM_RBE_DOCKER_IMAGE, _DEFAULT_TF_ROCM_RBE_DOCKER_IMAGE),
     }
 
     is_rocm_clang = _use_rocm_clang(repository_ctx)
@@ -732,6 +721,11 @@ def _create_local_rocm_repository(repository_ctx):
             "%{gcc_host_compiler_path}": str(cc),
             "%{rocm_amdgpu_targets}": ",".join(
                 ["\"%s\"" % c for c in rocm_config.amdgpu_targets],
+            ),
+            "%{tmpdir}": get_host_environ(
+                repository_ctx,
+                _TMPDIR,
+                "",
             ),
         },
     )
@@ -856,6 +850,8 @@ _ENVIRONS = [
     _TF_ROCM_AMDGPU_TARGETS,
     _OS,
     _ROCM_VERSION,
+    _TF_ROCM_RBE_DOCKER_IMAGE,
+    _TF_ROCM_MULTIPLE_PATHS,
 ]
 
 remote_rocm_configure = repository_rule(

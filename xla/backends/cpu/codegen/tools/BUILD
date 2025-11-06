@@ -4,6 +4,7 @@ load(
     "//xla/tsl/platform:build_config_root.bzl",
     "if_llvm_aarch64_available",
     "if_llvm_powerpc_available",
+    "if_llvm_riscv_available",
     "if_llvm_system_z_available",
     "if_llvm_x86_available",
 )
@@ -38,6 +39,8 @@ cc_library(
         "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
     ]) + if_llvm_powerpc_available([
         "@llvm-project//llvm:PowerPCCodeGen",  # fixdeps: keep
+    ]) + if_llvm_riscv_available([
+        "@llvm-project//llvm:RISCVCodeGen",  # fixdeps: keep
     ]) + if_llvm_system_z_available([
         "@llvm-project//llvm:SystemZCodeGen",  # fixdeps: keep
     ]) + if_llvm_x86_available([
@@ -79,10 +82,10 @@ xla_cc_binary(
     deps = [
         "//xla/backends/cpu/codegen:fusion_compiler",
         "//xla/backends/cpu/codegen:fusion_emitter",
-        "//xla/codegen:mlir_kernel_definition",
+        "//xla/codegen:mlir_kernel_source",
         "//xla/codegen/tools:test_lib",
+        "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
-        "//xla/service/gpu/model/experimental:symbolic_expr",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",

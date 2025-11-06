@@ -6,7 +6,10 @@ This is just to keep the current build compatible with both WORKSPACE and Bzlmod
 
 _PY_VERSION_BZL = """
 HERMETIC_PYTHON_VERSION = "{version}"
+HERMETIC_PYTHON_VERSION_KIND = "{py_kind}"
 USE_PYWRAP_RULES = {use_pywrap_rules}
+# TODO(pcloudy): Figure out how to support requirements_lock in Bzlmod.
+REQUIREMENTS = "//:requirements.txt"
 """
 
 def _python_version_repo_impl(repository_ctx):
@@ -19,6 +22,7 @@ def _python_version_repo_impl(repository_ctx):
         "py_version.bzl",
         _PY_VERSION_BZL.format(
             version = version,
+            py_kind = "",  # TODO(pcloudy): introduce this value properly.
             use_pywrap_rules = use_pywrap_rules,
         ),
     )
@@ -27,6 +31,7 @@ python_version_repo = repository_rule(
     implementation = _python_version_repo_impl,
     environ = [
         "HERMETIC_PYTHON_VERSION",
+        "HERMETIC_PYTHON_VERSION_KIND",
         "USE_PYWRAP_RULES",
     ],
 )

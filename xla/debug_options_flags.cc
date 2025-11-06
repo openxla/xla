@@ -213,6 +213,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_use_xnnpack(true);
   opts.set_xla_cpu_experimental_xnn_graph_fusion_mode(
       DebugOptions::XNN_GRAPH_FUSION_MODE_DISABLED);
+  opts.add_xla_cpu_experimental_ynn_fusion_type(
+      DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT);
   opts.set_xla_cpu_parallel_codegen_split_count(32);
   opts.set_xla_cpu_copy_insertion_use_region_analysis(false);
   opts.set_xla_cpu_enable_concurrency_optimized_scheduler(true);
@@ -222,6 +224,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_emitter_verification_level(0);
 
   opts.set_xla_cpu_enable_fast_math(false);
+  opts.set_xla_cpu_enable_platform_dependent_math(true);
   // Disable forms of fast math that have caused users problems in the past.
   opts.set_xla_cpu_fast_math_honor_nans(true);
   opts.set_xla_cpu_fast_math_honor_infs(true);
@@ -274,6 +277,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_detailed_logging(true);
   opts.set_xla_enable_dumping(true);
 
+  opts.set_xla_gpu_enable_dynamic_slice_fusion(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_shared_constants(true);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
@@ -325,6 +329,10 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   // default value of the command line flag in `MakeDebugOptionsFlags`.
   opts.add_xla_gpu_unsupported_generic_triton_emitter_features(
       DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
+  opts.add_xla_gpu_unsupported_generic_triton_emitter_features(
+      DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_GEMM_SHAPES);
+  opts.add_xla_gpu_unsupported_generic_triton_emitter_features(
+      DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_OPS_IN_GEMM_FUSION);
   opts.set_xla_gpu_unsupported_enable_triton_multi_output_fusion(true);
   opts.set_xla_gpu_enable_cudnn_int8x32_convolution_reordering(true);
   opts.set_xla_gpu_triton_gemm_any(true);
@@ -384,6 +392,14 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   // on V100 and H100 GPUs. See openxla/xla #9319 for details.
   const int64_t kDefaultMinGemmRewriteSize = 100;
   opts.set_xla_gpu_gemm_rewrite_size_threshold(kDefaultMinGemmRewriteSize);
+
+#ifdef HAS_SUPPORT_FOR_EMBEDDED_LIB_DEVICE
+  opts.set_xla_gpu_use_embeded_device_lib(true);
+#endif
+
+#ifdef HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY
+  opts.set_xla_gpu_use_inprocess_lld(true);
+#endif
 
   opts.set_xla_gpu_use_memcpy_local_p2p(false);
 
@@ -447,6 +463,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_unsupported_crash_on_hlo_pass_noop_change(false);
   opts.set_xla_gpu_experimental_enable_split_k_rewrite(false);
   opts.set_xla_gpu_experimental_enable_triton_tma(false);
+  opts.set_xla_gpu_experimental_enable_triton_warp_specialization(false);
   opts.set_xla_gpu_experimental_enable_command_buffer_on_thunks(true);
   opts.set_xla_detect_unstable_reductions(
       DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_NONE);
@@ -457,6 +474,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_collective_call_terminate_timeout_seconds(40);
 
   opts.set_xla_keep_shardings_after_spmd(false);
+  opts.set_xla_gpu_experimental_enable_checksum_tracing_on_thunks(false);
+  opts.set_xla_gpu_detect_nan(DebugOptions::NAN_CHECK_DETECTION_MODE_NONE);
   return opts;
 }
 
@@ -760,7 +779,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         DebugOptions::WhileLoopUnrolling unroll_strategy;
         bool parsed = DebugOptions::WhileLoopUnrolling_Parse(
             absl::AsciiStrToUpper(input), &unroll_strategy);
-        if (!parsed) return false;
+        if (!parsed) {
+          return false;
+        }
         debug_options->set_xla_gpu_enable_while_loop_unrolling(unroll_strategy);
         return true;
       };
@@ -871,6 +892,35 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         debug_options->set_xla_detect_unstable_reductions(detection_mode);
         return true;
       };
+
+  // Custom "sub-parser" for
+  // xla_gpu_experimental_thunk_buffer_debug_filter_by_thunk_id_ranges.
+  auto setter_for_thunk_buffer_debug_filter_by_thunk_id =
+      [debug_options](const std::string& value) {
+        for (const auto& range_str : absl::StrSplit(value, ',')) {
+          IntRangeInclusive* range =
+              debug_options
+                  ->mutable_xla_gpu_experimental_thunk_buffer_debug_filter()
+                  ->add_thunk_id_ranges();
+          if (!details::ParseIntRangeInclusive(range_str, *range)) {
+            return false;
+          }
+        }
+        return true;
+      };
+
+  // Custom "sub-parser" for
+  // xla_gpu_experimental_thunk_buffer_debug_filter_by_profile_annotation_re.
+  auto setter_for_thunk_buffer_debug_filter_by_profile_annotation =
+      [debug_options](const std::string& value) {
+        for (const auto& regex_str : absl::StrSplit(value, ',')) {
+          debug_options
+              ->mutable_xla_gpu_experimental_thunk_buffer_debug_filter()
+              ->add_profile_annotation_regexes(regex_str);
+        }
+        return true;
+      };
+
   // Don't use an initializer list for initializing the vector; this would
   // create a temporary copy, and exceeds the stack space when compiling with
   // certain configurations.
@@ -880,6 +930,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_cpu_enable_fast_math(),
       "Enable unsafe fast-math optimizations in the CPU compiler; this may "
       "produce faster code at the expense of some accuracy."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_enable_platform_dependent_math",
+      bool_setter_for(
+          &DebugOptions::set_xla_cpu_enable_platform_dependent_math),
+      debug_options->xla_cpu_enable_platform_dependent_math(),
+      "Enable platform dependent math in the CPU compiler; this may "
+      "produce faster code at the expense of consistent results across CPUs."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_fast_math_honor_nans",
       bool_setter_for(&DebugOptions::set_xla_cpu_fast_math_honor_nans),
@@ -1095,13 +1152,28 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::LibraryFusionType_Parse,
           debug_options->mutable_xla_cpu_experimental_xnn_fusion_type()),
       "",
-      "Comma-separated list of XNN fusion types to be enabled.; "
+      "Comma-separated list of XNN fusion types to be enabled; "
       "no whitespace around commas. Two ways to pass values:\n"
       "  1. Exact type names. This overwrites the default setting.\n"
       "  2. '+' or '-' prefix: This adds or removes a fusion type "
       "from the default list. Cannot be mixed with the overwrite "
       "mode. Every item must have the sign prefix.\n"
       "Available fusion types: dot, eltwise, and reduce.\n"
+      "The default list is currently empty."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_experimental_ynn_fusion_type",
+      SetterForRepeatedEnum<DebugOptions::LibraryFusionType>(
+          "xla_cpu_experimental_ynn_fusion_type",
+          /*enum_prefix=*/"LIBRARY_FUSION_TYPE_",
+          &DebugOptions::LibraryFusionType_Parse,
+          debug_options->mutable_xla_cpu_experimental_ynn_fusion_type()),
+      "",
+      "Comma-separated list of YNN fusion types to be enabled; "
+      "no whitespace around commas. Two ways to pass values:\n"
+      "  1. Exact type names. This overwrites the default setting.\n"
+      "  2. '+' or '-' prefix: This adds or removes a fusion type "
+      "from the default list. Cannot be mixed with the overwrite "
+      "mode. Every item must have the sign prefix.\n"
       "The default list is currently empty."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_experimental_xnn_graph_fusion_mode",
@@ -1281,6 +1353,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_gpu_experimental_dump_fdo_profiles(),
                 "Dumps FDO profiles as text to the directory specified "
                 "by --xla_dump_to."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_dump_gpu_executable",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_dump_gpu_executable),
+      debug_options->xla_gpu_experimental_dump_gpu_executable(),
+      "Dump the serialized GPU executables to 'gpu_executable_proto' suffixed "
+      "files, in the directory specified by `xla_dump_to`. No-op if "
+      "`xla_dump_to` isn't set, or during autotuning compilations."));
   flag_list->push_back(
       tsl::Flag("xla_dump_hlo_as_dot",
                 bool_setter_for(&DebugOptions::set_xla_dump_hlo_as_dot),
@@ -2526,6 +2606,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_triton_tma(),
       "Enable Triton's TMA loads/stores for arguments where applicable."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_triton_warp_specialization",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_triton_warp_specialization),
+      debug_options->xla_gpu_experimental_enable_triton_warp_specialization(),
+      "Enable Triton's auto warp specialization feature where applicable."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_command_buffer_on_thunks",
       bool_setter_for(
           &DebugOptions::
@@ -2579,6 +2666,51 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_keep_shardings_after_spmd),
       debug_options->xla_keep_shardings_after_spmd(),
       "If true, keep shardings after SPMD."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_checksum_tracing_on_thunks",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_checksum_tracing_on_thunks),
+      debug_options->xla_gpu_experimental_enable_checksum_tracing_on_thunks(),
+      "Enables an experimental feature to record checksums of selected thunk "
+      "inputs/outputs."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_thunk_buffer_debug_filter_by_thunk_id_ranges",
+      setter_for_thunk_buffer_debug_filter_by_thunk_id, "(none)",
+      "Limits the thunk buffer debug instrumentation to thunks with IDs "
+      "matching one or more ranges defined as a single integer, min:max "
+      "(inclusive), or half-open min:/:max."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_thunk_buffer_debug_filter_by_profile_annotation_re",
+      setter_for_thunk_buffer_debug_filter_by_profile_annotation, "(none)",
+      "Limits the thunk buffer debug instrumentation to thunks with profile "
+      "annotations matching one or more regexes passed as comma-separated "
+      "string."));
+
+  auto setter_for_xla_gpu_detect_nan =
+      [debug_options](const std::string& value) {
+        DebugOptions::NaNCheckDetectionMode detection_mode;
+        if (value == "none") {
+          detection_mode = DebugOptions::NAN_CHECK_DETECTION_MODE_NONE;
+        } else if (value == "warning") {
+          detection_mode = DebugOptions::NAN_CHECK_DETECTION_MODE_WARNING;
+        } else if (value == "fail") {
+          detection_mode = DebugOptions::NAN_CHECK_DETECTION_MODE_FAIL;
+        } else {
+          return false;
+        }
+        debug_options->set_xla_gpu_detect_nan(detection_mode);
+        return true;
+      };
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_detect_nan", setter_for_xla_gpu_detect_nan,
+      DebugOptions::NaNCheckDetectionMode_Name(
+          debug_options->xla_gpu_detect_nan()),
+      "Controls the behavior of the NaN detector pass that checks for presence "
+      "of NaN values in kernel outputs. Acceptable values are: 'none', "
+      "'warning', and 'fail'. 'none' is the default. If other than 'none' "
+      "value is provided, additional thunks will be added to detect and "
+      "warn or fail the execution if NaNs are detected."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

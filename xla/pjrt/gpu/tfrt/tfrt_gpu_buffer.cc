@@ -148,10 +148,7 @@ absl::StatusOr<Shape> TfrtGpuBuffer::logical_on_device_shape() {
     auto stream = device_->stream();
     TF_RETURN_IF_ERROR(transfer_manager->ReadDynamicShapes(
         stream, &shaped_buffer, &ret_shape));
-    {
-      tsl::profiler::TraceMe traceme("BlockHostUntilDone");
-      TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
-    }
+    TF_RETURN_IF_ERROR(BlockHostUntilDoneWithHostCallback(stream));
     return ret_shape;
   };
 
@@ -372,7 +369,7 @@ Future<> TfrtGpuBuffer::ToLiteralHelper(Future<MutableLiteralBase*> literal) {
           if (on_device_shape.layout() != literal_layout) {
             absl::InlinedVector<int64_t, 4> byte_strides(
                 on_device_shape.dimensions().size());
-            absl::Status s = ShapeUtil::ByteStrides(
+            absl::Status s = ShapeUtil::UnpackedByteStrides(
                 on_device_shape, absl::MakeSpan(byte_strides));
             if (!s.ok()) {
               promise.Set(s);
@@ -479,15 +476,19 @@ Future<> TfrtGpuBuffer::ToLiteralHelper(Future<MutableLiteralBase*> literal) {
                 buffer_ptr, device_buffer->buffer()->buffer(), byte_size))
                 << "stream->Memcpy failed copying from GPU to host";
 
-            absl::Status status;
-            {
-              tsl::profiler::TraceMe traceme("BlockHostUntilDone");
-              status = d2h_stream->BlockHostUntilDone();
-            }
+            absl::Status status =
+                BlockHostUntilDoneWithHostCallback(d2h_stream);
             VLOG(3) << "D2H copy done. " << status;
             if (!status.ok()) {
-              VLOG(3) << "stream->BlockHostUntilDone failed: " << status;
+              VLOG(3) << "stream BlockHostUntilDoneWithHostCallback failed: "
+                      << status;
               promise.Set(status);
+              return;
+            }
+
+            tsl::BlockUntilReady(device_buffer->ready_event());
+            if (device_buffer->ready_event().IsError()) {
+              promise.Set(device_buffer->ready_event().GetError());
               return;
             }
           }
@@ -624,10 +625,11 @@ Future<> TfrtGpuBuffer::CopyRawToHostFuture(Future<void*> dst_future,
       return;
     }
 
-    status = d2h_stream->BlockHostUntilDone();
+    status = BlockHostUntilDoneWithHostCallback(d2h_stream);
 
     if (!status.ok()) {
-      LOG(ERROR) << "d2h_stream->BlockHostUntilDone() failed: " << status;
+      LOG(ERROR) << "d2h_stream BlockHostUntilDoneWithHostCallback failed: "
+                 << status;
       promise.Set(status);
       return;
     }
@@ -743,8 +745,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::CopyToMemorySpace(
     Literal* literal_pointer = literal.get();
     absl::InlinedVector<int64_t, 4> byte_strides(
         literal->shape().dimensions().size());
-    TF_RETURN_IF_ERROR(
-        ShapeUtil::ByteStrides(literal->shape(), absl::MakeSpan(byte_strides)));
+    TF_RETURN_IF_ERROR(ShapeUtil::UnpackedByteStrides(
+        literal->shape(), absl::MakeSpan(byte_strides)));
     return dst_device->client()->BufferFromHostBuffer(
         literal_pointer->untyped_data(),
         literal_pointer->shape().element_type(),
@@ -830,10 +832,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::CopyToMemorySpace(
           dst_definition_event.SetError(status);
           return;
         }
-        {
-          tsl::profiler::TraceMe traceme("BlockHostUntilDone");
-          status = stream->BlockHostUntilDone();
-        }
+
+        status = BlockHostUntilDoneWithHostCallback(stream);
         if (status.ok()) {
           VLOG(3) << "D2D copy done. dst: " << dst.opaque();
           dst_definition_event.SetStateConcrete();

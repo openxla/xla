@@ -109,6 +109,7 @@ cc_library(
     srcs = ["gpu_clique_key.cc"],
     hdrs = ["gpu_clique_key.h"],
     deps = [
+        "//xla:xla_data_proto_cc",
         "//xla/core/collectives:clique_key",
         "//xla/service:global_device_id",
         "//xla/tsl/lib/gtl:int_type",
@@ -516,12 +517,18 @@ xla_test(
 xla_test(
     name = "nvshmem_collectives_test",
     srcs = ["nvshmem_collectives_test.cc"],
-    backend_tags = {"gpu": [
-        "multi_gpu_h100",
-        "no_oss",
-        "noasan",
-        "nomsan",
-    ]},
+    backend_tags = {
+        "gpu": [
+            "multi_gpu",
+            "no_oss",
+            "noasan",
+            "nomsan",
+        ],
+        "nvgpu_any": [
+            "broken",
+            "no_oss",
+        ],
+    },
     backends = ["gpu"],
     env = {
         "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",

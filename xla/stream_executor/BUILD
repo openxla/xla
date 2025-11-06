@@ -68,6 +68,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
     ],
 )
@@ -318,8 +319,8 @@ cc_library(
 )
 
 cc_library(
-    name = "numeric_options",
-    hdrs = ["numeric_options.h"],
+    name = "engine_options",
+    hdrs = ["engine_options.h"],
 )
 
 cc_library(
@@ -345,7 +346,7 @@ cc_library(
         ":blas_proto_cc",
         ":data_type",
         ":device_memory",
-        ":numeric_options",
+        ":engine_options",
         ":scratch_allocator",
         ":stream",
         "//xla/tsl/protobuf:dnn_proto_cc",
@@ -366,7 +367,7 @@ cc_library(
         ":data_type",
         ":device_description_proto_cc",
         ":device_memory",
-        ":numeric_options",
+        ":engine_options",
         ":scratch_allocator",
         ":stream",
         "//xla:util",
@@ -610,6 +611,26 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "kernel_args_packed_vector",
+    hdrs = ["kernel_args_packed_vector.h"],
+    deps = [
+        ":kernel",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "kernel_args_packed_vector_test",
+    srcs = ["kernel_args_packed_vector_test.cc"],
+    deps = [
+        ":kernel_args_packed_vector",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -924,6 +945,9 @@ xla_cc_test(
     deps = [
         ":device_description",
         ":semantic_version",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],
 )

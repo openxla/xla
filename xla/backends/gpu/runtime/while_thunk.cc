@@ -61,6 +61,8 @@ static std::list<RunningLoop>& RunningLoops() {
   return loops;
 }
 
+bool WhileThunk::RunningWhileThunkLoop() { return RunningLoops().size() > 0; }
+
 absl::StatusOr<int64_t> WhileThunk::CurrentLoopIteration(int64_t depth) {
   if (depth >= RunningLoops().size()) {
     return absl::InvalidArgumentError(absl::StrFormat(
@@ -195,6 +197,16 @@ void WhileThunk::ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn) {
   fn(this);
   condition_thunk_sequence_->ForAllThunksMutable(fn);
   body_thunk_sequence_->ForAllThunksMutable(fn);
+}
+
+void WhileThunk::TransformAllNestedThunks(
+    absl::FunctionRef<std::unique_ptr<Thunk>(std::unique_ptr<Thunk>)> fn) {
+  condition_thunk_sequence_->TransformAllNestedThunks(fn);
+  condition_thunk_sequence_ =
+      SequentialThunk::FromThunk(fn(std::move(condition_thunk_sequence_)));
+  body_thunk_sequence_->TransformAllNestedThunks(fn);
+  body_thunk_sequence_ =
+      SequentialThunk::FromThunk(fn(std::move(body_thunk_sequence_)));
 }
 
 std::string WhileThunk::ToString(int indent) const {

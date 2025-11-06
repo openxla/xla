@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/cublas.h"
 #include "xla/backends/gpu/autotuner/cublaslt.h"
 #include "xla/backends/gpu/autotuner/custom_kernel.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -39,8 +40,8 @@ limitations under the License.
 #include "xla/service/call_inliner.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/gpu/transforms/custom_kernel_fusion_rewriter.h"
 #include "xla/service/gpu/transforms/dot_algorithm_rewriter.h"
 #include "xla/service/gpu/transforms/gemm_rewriter.h"
@@ -84,21 +85,27 @@ absl::Status FissionToCublas(HloModule* hlo_module,
       .mutable_debug_options()
       .set_xla_gpu_enable_cublaslt(rewrite_to_cublaslt);
 
-  HloInstruction* dot = hlo_query::GetFirstInstructionWithOpcode(
-      *hlo_module->entry_computation(), HloOpcode::kDot);
-
-  if (dot == nullptr) {
-    return absl::InvalidArgumentError(
-        "No dot instruction found in the fusion.");
+  HloInstruction* dot = nullptr;
+  bool has_dot = false;
+  for (HloComputation* computation : hlo_module->computations()) {
+    dot =
+        hlo_query::GetFirstInstructionWithOpcode(*computation, HloOpcode::kDot);
+    if (dot != nullptr) {
+      // Substitute algorithms, which are not supported by cuBLAS for the check,
+      // but don't use cuBlas in the end. This assumes that the substituting
+      // algorithm has result which are close enough for the check in this file.
+      if (dot->precision_config().algorithm() ==
+          PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3) {
+        dot->mutable_precision_config()->set_algorithm(
+            PrecisionConfig::ALG_DOT_F32_F32_F32);
+      }
+      has_dot = true;
+    }
   }
 
-  // Substitute algorithms, which are not supported by cuBLAS for the check, but
-  // don't use cuBlas in the end. This assumes that the substituting algorithm
-  // has result which are close enough for the check in this file.
-  if (dot->precision_config().algorithm() ==
-      PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3) {
-    dot->mutable_precision_config()->set_algorithm(
-        PrecisionConfig::ALG_DOT_F32_F32_F32);
+  if (!has_dot) {
+    return absl::InvalidArgumentError(
+        "Fission to cuBLAS failed because no dot instruction found.");
   }
 
   bool is_rewritten_to_cublas_custom_call = false;
@@ -199,12 +206,7 @@ bool IsCustomKernel(const HloComputation* computation) {
     return false;
   }
 
-  if (!gpu_backend_config->has_fusion_backend_config()) {
-    return false;
-  }
-
-  return gpu_backend_config->fusion_backend_config().kind() ==
-         kCustomFusionKind;
+  return IsGpuFusionKind(*instruction, kCustomFusionKind);
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>

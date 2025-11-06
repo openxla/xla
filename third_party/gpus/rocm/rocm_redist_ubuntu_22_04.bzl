@@ -142,6 +142,18 @@ rocm_redist_ubuntu_22_04 = {
                 sha256 = "da49a66ca3e6ee8b9491777c2b5170b6020e8308371e26b869d7af81bc50f571",
             ),
             struct(
+                url = "https://repo.radeon.com/rocm/apt/6.4.1/pool/main/r/rocprofiler-sdk/rocprofiler-sdk_0.6.0-83~22.04_amd64.deb",
+                sha256 = "9890bc2ddbf563edbb50fc8d227a56da462a8bcdd08dbc2f549c924b89c42a59",
+            ),
+            struct(
+                url = "https://repo.radeon.com/rocm/apt/6.4.1/pool/main/r/rocprofiler-sdk-roctx/rocprofiler-sdk-roctx_0.6.0-83~22.04_amd64.deb",
+                sha256 = "87eddf255f80bbe3c371e0a087a1045ec82766903077de2fb708ed1958ab62fb",
+            ),
+            struct(
+                url = "https://repo.radeon.com/rocm/apt/6.4.1/pool/main/h/hsa-rocr-dev/hsa-rocr-dev_1.15.0.60401-83~22.04_amd64.deb",
+                sha256 = "e1221293f8a5501ef01324c381e61d76a5d2e0f11032e4d33766dc53efc75813",
+            ),
+            struct(
                 url = "https://repo.radeon.com/rocm/apt/6.4.1/pool/main/r/rocrand6.4.1/rocrand6.4.1_3.3.0.60401-83~22.04_amd64.deb",
                 sha256 = "ebc85dfef24a03afc28671e3df47519f520bedd08643ef5957dd5b08e15dc1f1",
             ),

@@ -26,7 +26,6 @@ limitations under the License.
 #include <string>
 #include <tuple>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -73,7 +72,6 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
 #include "xla/backends/gpu/codegen/triton/fusion_emitter.h"
-#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
@@ -113,6 +111,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/select_k_thunk.h"
 #include "xla/backends/gpu/runtime/send_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
+#include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/topk.h"
 #include "xla/backends/gpu/runtime/triangular_solve_thunk.h"
@@ -169,7 +168,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
@@ -825,8 +823,7 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
       BufferAllocation::Slice b_scale,
       GetAllocationSliceForHlo(instr->operand(a_scale_index + 1)));
 
-  bool is_cuda = std::holds_alternative<stream_executor::CudaComputeCapability>(
-      ir_emitter_context_->gpu_compute_capability());
+  bool is_cuda = ir_emitter_context_->gpu_compute_capability().IsCuda();
   bool is_fp8 = instr->shape().tuple_shapes(0).element_type() == F8E4M3FN ||
                 instr->shape().tuple_shapes(0).element_type() == F8E5M2;
   // cublasLT requires c_scale/d_scale to be null when C/D is not
@@ -1073,17 +1070,19 @@ absl::Status IrEmitterUnnested::EmitCubDeviceRadixSort(
   TF_ASSIGN_OR_RETURN(xla::SortOptions options,
                       instr->backend_config<xla::SortOptions>());
   const Shape& operand_shape = instr->operand(0)->shape();
-  auto thunk = std::make_unique<CubSortThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(
-          instr, ir_emitter_context_->GetNextThunkId()),
-      operand_shape.element_type(),
-      instr->operand_count() == 2
-          ? std::optional(instr->operand(1)->shape().element_type())
-          : std::nullopt,
-      operands, results, scratch, options.descending(),
-      Product(operand_shape.dimensions()) /
-          operand_shape.dimensions(operand_shape.dimensions().size() - 1),
-      ir_emitter_context_->platform_name());
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<CubSortThunk> thunk,
+      CubSortThunk::Create(
+          Thunk::ThunkInfo::WithProfileAnnotation(
+              instr, ir_emitter_context_->GetNextThunkId()),
+          operand_shape.element_type(),
+          instr->operand_count() == 2
+              ? std::optional(instr->operand(1)->shape().element_type())
+              : std::nullopt,
+          operands, results, scratch, options.descending(),
+          Product(operand_shape.dimensions()) /
+              operand_shape.dimensions(operand_shape.dimensions().size() - 1),
+          ir_emitter_context_->platform_name()));
   AddThunkToThunkSequence(std::move(thunk));
   return absl::OkStatus();
 }
@@ -1161,7 +1160,7 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
   bool is_ffi_custom_call =
       instr->api_version() == CustomCallApiVersion::API_VERSION_TYPED_FFI;
 
-  using Slices = std::vector<std::optional<ShapedSlice>>;
+  using Slices = std::vector<NullableShapedSlice>;
 
   Slices operands;
   for (auto* operand : instr->operands()) {
@@ -1200,7 +1199,7 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
   // attributes map at IR emission time, so that we do not need to
   // parse MLIR at run time. For FFI handlers backend config must be
   // a compatible MLIR dictionary.
-  CustomCallThunk::AttributesMap attributes;
+  ffi::AttributesMap attributes;
 
   auto backend_config = instr->backend_config<GpuBackendConfig>();
   if (!backend_config.ok()) {
@@ -1402,8 +1401,7 @@ absl::Status IrEmitterUnnested::EmitTopKCustomCall(
                           GetDefaultBufferAlignment(), instr));
 
   auto dtype = data_shape.element_type();
-  bool is_cuda = std::holds_alternative<stream_executor::CudaComputeCapability>(
-      ir_emitter_context_->gpu_compute_capability());
+  bool is_cuda = ir_emitter_context_->gpu_compute_capability().IsCuda();
   if (is_cuda && instr->GetModule()
                      ->config()
                      .debug_options()
@@ -1423,10 +1421,11 @@ absl::Status IrEmitterUnnested::EmitTopKCustomCall(
     VLOG(3) << "EmitTopKCustomCall: dtype=" << dtype << ", n=" << n
             << ", k=" << k << ", use_raft_select_k=" << use_raft_select_k;
 
+    Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
+        instr, ir_emitter_context_->GetNextThunkId());
     if (use_raft_select_k) {
       AddThunkToThunkSequence(std::make_unique<SelectKThunk>(
-          instr, batch_size, n, k, dtype, kernel_arguments,
-          ir_emitter_context_->GetNextThunkId()));
+          std::move(thunk_info), batch_size, n, k, dtype, kernel_arguments));
       return absl::OkStatus();
     }
   }
@@ -2361,7 +2360,7 @@ absl::Status IrEmitterUnnested::EmitCollectiveGroupStartThunk(
   }
   auto thunk = std::make_unique<CollectiveGroupThunk>(
       instr, Thunk::Kind::kGroupStart, std::move(scoped_thunk_sequence_),
-      stream_kind.value_or(AsyncStreamKind::kCollective),
+      stream_kind.value_or(AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
       ir_emitter_context_->GetNextThunkId());
   emit_group_thunks_ = false;
 
@@ -2391,7 +2390,7 @@ absl::Status IrEmitterUnnested::EmitCollectiveAsyncDone(
     return absl::OkStatus();
   }
 
-  AsyncStreamKind stream_kind = AsyncStreamKind::kCollective;
+  AsyncStreamKind stream_kind = AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE;
   if (is_send_recv) {
     stream_kind = GetStreamKindForP2P(start);
   }
@@ -2424,7 +2423,7 @@ absl::Status IrEmitterUnnested::EmitNvshmemAsyncDone(
     return absl::OkStatus();
   }
 
-  AsyncStreamKind stream_kind = AsyncStreamKind::kCollective;
+  AsyncStreamKind stream_kind = AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE;
   if (is_send_recv) {
     stream_kind = GetStreamKindForP2P(start);
   }

@@ -58,6 +58,8 @@ exports_files(
         "threadpool.cc",
         "threadpool.h",
         "env.h",
+        "numa_hwloc.cc",
+        "numa_noop.cc",
     ],
     visibility = internal_visibility([
         "//tensorflow/core/platform:__subpackages__",
@@ -488,6 +490,7 @@ cc_library(
     ],
     deps = [
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:absl_log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/log:globals",
         "@com_google_absl//absl/log:vlog_is_on",
@@ -729,6 +732,7 @@ cc_library(
     hdrs = ["types.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "@com_google_absl//absl/base:core_headers",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:bfloat16",
         "@tsl//tsl/platform:ml_dtypes",

@@ -4,6 +4,7 @@
 load(
     "//xla:xla.default.bzl",
     "xla_cc_test",
+    "xla_py_proto_library",
 )
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load(
@@ -29,6 +30,11 @@ tf_proto_library(
     name = "memory_space_assignment_proto",
     srcs = ["memory_space_assignment.proto"],
     make_default_target_header_only = True,
+)
+
+xla_py_proto_library(
+    name = "memory_space_assignment_proto_py_pb2",
+    deps = [":memory_space_assignment_proto"],
 )
 
 cc_library(
@@ -216,8 +222,12 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_googlesource_code_re2//:re2",
+        "@highwayhash",
+        "@highwayhash//:arch_specific",
+        "@highwayhash//:hh_types",
         "@tsl//tsl/platform:statusor",
     ],
 )

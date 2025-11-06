@@ -36,8 +36,10 @@ limitations under the License.
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/literal_util.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/launch_dimensions.h"
@@ -60,8 +62,11 @@ namespace xla::gpu {
 namespace {
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
+using ::testing::Pair;
+using ::testing::Pointee;
 using ::testing::Property;
 using ::testing::SizeIs;
+using ::testing::UnorderedElementsAre;
 using ::tsl::proto_testing::EqualsProto;
 
 TEST(GpuExecutableTest, OuputInfoToAndFromProto) {
@@ -145,7 +150,7 @@ TEST(GpuExecutableTest, RunThunkPasses) {
     params.module_name = absl::StrCat("test_module", execution_count++);
     se::DeviceDescription device_description;
     device_description.set_gpu_compute_capability(
-        se::CudaComputeCapability::Volta());
+        se::GpuComputeCapability{se::CudaComputeCapability::Volta()});
     device_description.set_driver_version({12, 3, 0});
     device_description.set_runtime_version({12, 3, 0});
     params.device_description = device_description;
@@ -301,9 +306,42 @@ TEST(GpuExecutableTest, MlirAllocationsArePreferred) {
 }
 
 TEST(GpuExecutableTest, ThunkChecksumPassAddsAllocation) {
+  BufferAllocation alloc(0, 1024, 0);
+  BufferAllocation::Slice slice(&alloc, 0, 1024);
+
+  // Set up a thunk graph with a kernel that has some buffers that should be
+  // checked, otherwise the pass is a no-op and doesn't need to allocate.
+  auto make_test_thunk_sequence = [&]() {
+    Thunk::ThunkInfo thunk_info;
+    ThunkSequence thunk_sequence;
+    thunk_sequence.push_back(std::make_unique<KernelThunk>(
+        thunk_info,
+        /*kernel_name=*/"test_kernel",
+        /*kernel_arguments=*/
+        emitters::KernelArguments({
+            emitters::KernelArgument(
+                ShapeUtil::MakeShape(F32, /*dimensions=*/{16}), slice),
+        }),
+        /*launch_dimensions=*/LaunchDimensions(),
+        /*cluster_dim=*/std::nullopt,
+        /*shmem_bytes=*/0,
+        /*tma_metadata=*/se::gpu::TmaMetadata()));
+    return thunk_sequence;
+  };
+  auto make_test_hlo_module = []() {
+    HloComputation::Builder builder("test_computation");
+    HloInstruction* root = builder.AddInstruction(
+        HloInstruction::CreateConstant(LiteralUtil::CreateR0(1)));
+    auto hlo_module =
+        std::make_unique<HloModule>("test_module", HloModuleConfig());
+    hlo_module->AddEntryComputation(builder.Build(/*root_instruction=*/root));
+    return hlo_module;
+  };
+
   GpuExecutable::Params params_without_pass;
-  params_without_pass.executable =
-      std::make_unique<SequentialThunk>(Thunk::ThunkInfo{}, ThunkSequence{});
+  params_without_pass.debug_module = make_test_hlo_module();
+  params_without_pass.executable = std::make_unique<SequentialThunk>(
+      Thunk::ThunkInfo{}, make_test_thunk_sequence());
 
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuExecutable> executable_without_pass,
@@ -312,8 +350,9 @@ TEST(GpuExecutableTest, ThunkChecksumPassAddsAllocation) {
       executable_without_pass->GetAllocations().size();
 
   GpuExecutable::Params params_with_pass;
-  params_with_pass.executable =
-      std::make_unique<SequentialThunk>(Thunk::ThunkInfo{}, ThunkSequence{});
+  params_with_pass.debug_module = make_test_hlo_module();
+  params_with_pass.executable = std::make_unique<SequentialThunk>(
+      Thunk::ThunkInfo{}, make_test_thunk_sequence());
   params_with_pass.debug_options
       .set_xla_gpu_experimental_enable_checksum_tracing_on_thunks(true);
 
@@ -359,7 +398,7 @@ TEST(GpuExecutableTest, DumpsMetadataListProto) {
     params.module_name = absl::StrCat("test_module", execution_count++);
     se::DeviceDescription device_description;
     device_description.set_gpu_compute_capability(
-        se::CudaComputeCapability::Volta());
+        se::GpuComputeCapability{se::CudaComputeCapability::Volta()});
     device_description.set_driver_version({12, 3, 0});
     device_description.set_runtime_version({12, 3, 0});
     params.device_description = device_description;
@@ -395,6 +434,57 @@ TEST(GpuExecutableTest, DumpsMetadataListProto) {
                   thunk_kind: "kCopy"
                 }
               )pb"));
+}
+
+TEST(GpuExecutableTest, ProtoConversion) {
+  se::DeviceDescription device_description;
+  device_description.set_gpu_compute_capability(
+      se::GpuComputeCapability{se::CudaComputeCapability::Volta()});
+  device_description.set_driver_version({12, 3, 0});
+  device_description.set_runtime_version({12, 3, 0});
+
+  Thunk::ThunkInfo thunk_info;
+  thunk_info.thunk_id = 123;
+
+  ThunkSequence thunk_sequence;
+  thunk_sequence.push_back(std::make_unique<KernelThunk>(
+      thunk_info,
+      /*kernel_name=*/"test_kernel", emitters::KernelArguments({}),
+      LaunchDimensions(),
+      /*cluster_dim=*/std::nullopt,
+      /*shmem_bytes=*/0, se::gpu::TmaMetadata()));
+
+  GpuExecutable::Params params;
+  params.asm_text = "test_asm_text";
+  params.binary = {1, 2, 3};
+  params.dnn_compiled_graphs = {{"test_dnn_compiled_graph", "test_json"}};
+
+  thunk_info.thunk_id = 456;
+  params.executable =
+      std::make_unique<SequentialThunk>(thunk_info, std::move(thunk_sequence));
+  params.device_description = device_description;
+
+  params.module_name = "test_module";
+  params.enable_debug_info_manager = false;
+  params.mlir_allocations = {BufferAllocation(0, 1024, 0)};
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> reference_executable,
+                          GpuExecutable::Create(std::move(params)));
+  TF_ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto,
+                          reference_executable->ToProto());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> reconstructed_executable,
+      GpuExecutable::FromProto(proto, device_description, "TEST_PLATFORM"));
+  EXPECT_THAT(reconstructed_executable->text(), "test_asm_text");
+  EXPECT_THAT(reconstructed_executable->binary(), ElementsAre(1, 2, 3));
+  EXPECT_THAT(
+      reconstructed_executable->dnn_compiled_graphs(),
+      UnorderedElementsAre(Pair("test_dnn_compiled_graph", "test_json")));
+  EXPECT_THAT(reconstructed_executable->GetThunk().thunks(),
+              ElementsAre(Pointee(Property(&Thunk::kind, Thunk::kKernel))));
+  EXPECT_THAT(reconstructed_executable->GetAllocations(),
+              ElementsAre(Pointee(Property(&BufferAllocation::size, 1024))));
+  EXPECT_THAT(reconstructed_executable->name(), "test_module");
 }
 
 }  // namespace

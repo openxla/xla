@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_EXECUTOR_H_
 #define XLA_STREAM_EXECUTOR_CUDA_CUDA_EXECUTOR_H_
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -65,8 +67,7 @@ class CudaExecutor : public GpuExecutor {
   absl::Status Init() override;
   bool SynchronizeAllActivity() override;
   absl::StatusOr<DeviceMemoryBase> GetMemoryRange(
-      const DeviceMemoryBase& location) override;
-
+      const DeviceMemoryBase& location) const override;
   absl::StatusOr<std::unique_ptr<EventBasedTimer>> CreateEventBasedTimer(
       Stream* stream, bool use_delay_kernel) override;
   absl::StatusOr<DeviceMemoryBase> GetSymbol(
@@ -137,6 +138,11 @@ class CudaExecutor : public GpuExecutor {
   absl::StatusOr<std::unique_ptr<MemoryAllocator>> CreateMemoryAllocator(
       MemoryType type) override;
 
+  // Returns the granularity which is the minimum unit of memory that can be
+  // allocated with VMM API. In order to map the memory slices to multicast
+  // object, the offset of the slices should be aligned with this granularity.
+  absl::StatusOr<size_t> GetVmmGranularity() const;
+
   // RAII wrapper for a VMM memory handle.
   class VmmMemoryHandle {
    public:
@@ -154,8 +160,44 @@ class CudaExecutor : public GpuExecutor {
     uint64_t handle_;
   };
 
+  class CudaMulticastMemory : public MulticastMemory {
+   public:
+    CudaMulticastMemory()
+        : handle_(0),
+          padded_size_(0),
+          granularity_(0),
+          num_devices_(0),
+          subscribed_devices_(0) {}
+    ~CudaMulticastMemory() override;
+
+    absl::Status SubscribeDevice(int device_number) override;
+
+    absl::StatusOr<void*> MapMemory(const DeviceMemoryBase& location,
+                                    const GpuExecutor* gpu_executor) override;
+
+   private:
+    friend class CudaExecutor;
+    absl::Status Initialize(uint64_t size, int num_devices,
+                            const GpuExecutor* gpu_executor);
+    CUmemGenericAllocationHandle handle_;
+    uint64_t padded_size_;
+    uint64_t granularity_;
+    int num_devices_;
+    std::atomic<int> subscribed_devices_;
+    absl::flat_hash_map<int, CUdeviceptr> mapped_devices_
+        ABSL_GUARDED_BY(mapped_devices_mu_);
+    absl::Mutex mapped_devices_mu_;
+  };
+
+  absl::StatusOr<std::unique_ptr<MulticastMemory>> CreateMulticastMemory(
+      uint64_t size, int num_devices) const override;
+
   // Returns a handle to the given memory if it was allocated with VMM API.
-  absl::StatusOr<VmmMemoryHandle> RetainVmmMemoryHandle(void* ptr);
+  absl::StatusOr<VmmMemoryHandle> RetainVmmMemoryHandle(void* ptr) const;
+
+  bool is_multicast_supported() const override {
+    return is_multicast_supported_;
+  }
 
  private:
   absl::Status VmmDeallocateMemory(void* ptr);
@@ -179,6 +221,8 @@ class CudaExecutor : public GpuExecutor {
   bool is_vmm_supported_ = false;
 
   bool is_rdma_supported_ = false;
+
+  bool is_multicast_supported_ = false;
 
   // Guards the in-memory-module mapping.
   absl::Mutex in_memory_modules_mu_;

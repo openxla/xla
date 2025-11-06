@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
+#include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/debug_options_flags.h"
@@ -63,6 +64,7 @@ limitations under the License.
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
+#include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/execution_graph.h"
@@ -1493,6 +1495,14 @@ absl::Status WhileCmd::Initialize(const Thunk::InitializeParams& params,
   return absl::OkStatus();
 }
 
+absl::Status WhileCmd::Prepare(
+    const Thunk::PrepareParams& params,
+    Thunk::ResourceRequestsInterface& resource_requests) {
+  TF_RETURN_IF_ERROR(cond_commands_.Prepare(params, resource_requests));
+  TF_RETURN_IF_ERROR(body_commands_.Prepare(params, resource_requests));
+  return absl::OkStatus();
+}
+
 absl::StatusOr<const se::CommandBuffer::Command*> WhileCmd::Record(
     const Thunk::ExecuteParams& execute_params,
     const RecordParams& record_params, RecordAction record_action,
@@ -1824,7 +1834,7 @@ namespace {
 // Records each buffer associated with each slice into the provided vector.
 // Returns an error if any of the slices is missing a buffer allocation.
 absl::Status GetBuffers(const Thunk::ExecuteParams& execute_params,
-                        absl::Span<const std::optional<ShapedSlice>> slices,
+                        absl::Span<const NullableShapedSlice> slices,
                         std::vector<void*>& buffers, absl::string_view label) {
   for (int i = 0; i < slices.size(); ++i) {
     if (!slices[i].has_value()) {
@@ -1907,7 +1917,7 @@ CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
   arguments.reserve(operands_.size());
 
   for (int i = 0; i < operands_.size(); ++i) {
-    const std::optional<ShapedSlice>& slice = operands_[i];
+    const NullableShapedSlice& slice = operands_[i];
     if (!slice.has_value()) {
       arguments.push_back(se::DeviceMemoryBase{});
       continue;
@@ -1924,7 +1934,7 @@ CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
   results.reserve(results_.size());
 
   for (int i = 0; i < results_.size(); ++i) {
-    const std::optional<ShapedSlice>& slice = results_[i];
+    const NullableShapedSlice& slice = results_[i];
     if (!slice.has_value()) {
       results.push_back(se::DeviceMemoryBase{});
       continue;
@@ -2004,7 +2014,7 @@ absl::Status CollectiveCmd::Prepare(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(collectives, *params.collective_params,
                       config().replica_groups, config().group_mode,
-                      AsyncStreamKind::kCollective));
+                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
   return resource_requests.AddClique(clique_key);
 }
 
@@ -2078,11 +2088,12 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllReduceCmd::Record(
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
                       Thunk::GetGpuCollectives(execute_params));
 
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(collectives, *execute_params.collective_params,
-                              *execute_params.collective_cliques,
-                              config().replica_groups, config().group_mode,
-                              AsyncStreamKind::kCollective));  // Use constant
+  TF_ASSIGN_OR_RETURN(
+      CommunicatorHandle comm_handle,
+      GetComm(collectives, *execute_params.collective_params,
+              *execute_params.collective_cliques, config().replica_groups,
+              config().group_mode,
+              AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));  // Use constant
 
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
@@ -2143,11 +2154,12 @@ absl::StatusOr<const se::CommandBuffer::Command*> ReduceScatterCmd::Record(
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
                       Thunk::GetGpuCollectives(execute_params));
 
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(collectives, *execute_params.collective_params,
-                              *execute_params.collective_cliques,
-                              config().replica_groups, config().group_mode,
-                              AsyncStreamKind::kCollective));  // Use constant
+  TF_ASSIGN_OR_RETURN(
+      CommunicatorHandle comm_handle,
+      GetComm(collectives, *execute_params.collective_params,
+              *execute_params.collective_cliques, config().replica_groups,
+              config().group_mode,
+              AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));  // Use constant
 
   return RecordTracedCommand(execute_params, record_params, record_action,
                              command_buffer, [&](se::Stream* stream) {
@@ -2208,11 +2220,12 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllToAllCmd::Record(
 
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
                       Thunk::GetGpuCollectives(execute_params));
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(collectives, *execute_params.collective_params,
-                              *execute_params.collective_cliques,
-                              config().replica_groups, config().group_mode,
-                              AsyncStreamKind::kCollective));  // Use constant
+  TF_ASSIGN_OR_RETURN(
+      CommunicatorHandle comm_handle,
+      GetComm(collectives, *execute_params.collective_params,
+              *execute_params.collective_cliques, config().replica_groups,
+              config().group_mode,
+              AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));  // Use constant
 
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
@@ -2270,11 +2283,12 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllGatherCmd::Record(
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
                       Thunk::GetGpuCollectives(execute_params));
 
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(collectives, *execute_params.collective_params,
-                              *execute_params.collective_cliques,
-                              config().replica_groups, config().group_mode,
-                              AsyncStreamKind::kCollective));  // Use constant
+  TF_ASSIGN_OR_RETURN(
+      CommunicatorHandle comm_handle,
+      GetComm(collectives, *execute_params.collective_params,
+              *execute_params.collective_cliques, config().replica_groups,
+              config().group_mode,
+              AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));  // Use constant
 
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
@@ -2333,11 +2347,12 @@ CollectiveBroadcastCmd::Record(const Thunk::ExecuteParams& execute_params,
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
                       Thunk::GetGpuCollectives(execute_params));
 
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(collectives, *execute_params.collective_params,
-                              *execute_params.collective_cliques,
-                              config().replica_groups, config().group_mode,
-                              AsyncStreamKind::kCollective));  // Use constant
+  TF_ASSIGN_OR_RETURN(
+      CommunicatorHandle comm_handle,
+      GetComm(collectives, *execute_params.collective_params,
+              *execute_params.collective_cliques, config().replica_groups,
+              config().group_mode,
+              AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));  // Use constant
 
   return RecordTracedCommand(execute_params, record_params,
                              std::move(record_action), command_buffer,
@@ -2363,7 +2378,7 @@ CommandBufferCmd::BufferUseVector CollectiveBroadcastCmd::buffers() const {
 DynamicSliceFusionCmd::DynamicSliceFusionCmd(
     CommandBufferCmdExecutor embedded_commands,
     std::vector<std::optional<BufferAllocation::Slice>> arguments,
-    std::vector<std::unique_ptr<BufferAllocation>> fake_allocations,
+    std::vector<BufferAllocation> fake_allocations,
     std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>> offsets,
     std::vector<std::optional<Shape>> orig_shapes,
     std::vector<std::optional<Shape>> sliced_shapes,
@@ -2717,8 +2732,12 @@ DynamicSliceCopyFusionCmd::Record(const Thunk::ExecuteParams& execute_params,
       [&](const se::CommandBuffer::Command* command) {
         int64_t iteration_index = 0;
         if (offsets_.depends_on_loop) {
-          TF_ASSIGN_OR_RETURN(iteration_index,
-                              WhileThunk::CurrentLoopIteration());
+          if (WhileThunk::RunningWhileThunkLoop()) {
+            TF_ASSIGN_OR_RETURN(iteration_index,
+                                WhileThunk::CurrentLoopIteration());
+          } else {
+            iteration_index = record_params.unroll_iteration;
+          }
         }
         int64_t src_offset = offsets_.src_offsets[iteration_index];
         int64_t dst_offset = offsets_.dst_offsets[iteration_index];

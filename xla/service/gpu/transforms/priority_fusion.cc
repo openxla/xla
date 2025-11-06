@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/hlo_dfs_reachability.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instruction_utils.h"
@@ -57,7 +58,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/gpu_indexing_performance_model.h"
@@ -1127,7 +1127,7 @@ FusionDecision PriorityFusion::CanFuseConstant(const HloInstruction* constant,
   return FusionDecision::Allow();
 }
 
-absl::StatusOr<bool> PriorityFusion::Run(
+absl::StatusOr<bool> PriorityFusion::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool dump_enabled =

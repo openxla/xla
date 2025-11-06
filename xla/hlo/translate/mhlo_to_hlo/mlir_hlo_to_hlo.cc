@@ -136,6 +136,9 @@ using ::tsl::uint8;
 constexpr char kAggregateToTopk[] = "aggregate_to_topk";
 constexpr char kApiVersion[] = "api_version";
 constexpr char kApproxTopK[] = "ApproxTopK";
+constexpr char kSparseActivationsUnstack[] = "SparseActivationsUnstack";
+constexpr char kSparseActivationsUnstackInterleaved[] =
+    "SparseActivationsUnstackInterleaved";
 constexpr char kBackendConfig[] = "backend_config";
 constexpr char kCallTargetName[] = "call_target_name";
 constexpr char kCalledComputations[] = "called_computations";
@@ -168,6 +171,11 @@ T Unwrap(T t) {
 template <typename T>
 T* Unwrap(const std::unique_ptr<T>& t) {
   return t.get();
+}
+
+constexpr bool CustomCallOpReturnTuple(absl::string_view name) {
+  return name == kSparseActivationsUnstack ||
+         name == kSparseActivationsUnstackInterleaved;
 }
 
 static mlir::LogicalResult GetXlaOp(
@@ -1315,7 +1323,6 @@ void BuildGetTupleElementsForTupleResults(
     mlir::Operation* op, xla::XlaOp tuple, xla::XlaBuilder* builder,
     llvm::DenseMap<mlir::Value, xla::XlaOp>& values,
     unsigned num_implicit_results = 0) {
-
   const std::optional<xla::OpSharding>& sharding = builder->sharding();
   if (sharding.has_value()) {
     bool is_tuple_sharding = sharding->type() == xla::OpSharding::TUPLE;
@@ -2354,7 +2361,7 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
       auto name = attr.getName();
       return name == kCallTargetName || name == kBackendConfig ||
              name == kApiVersion || name == kCalledComputations ||
-             name == kHasSideEffect;
+             name == kHasSideEffect || name == xla::kMhloFrontendAttributes;
     };
     for (const auto& attr : op->getAttrs()) {
       if (!isSupportedAttrName(attr))
@@ -2658,6 +2665,11 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
     }
     result_shape = xla::ShapeUtil::MakeTupleShape(subshapes);
   }
+  bool return_tuple = false;
+  if (!result_shape.IsTuple() && CustomCallOpReturnTuple(call_target_name)) {
+    return_tuple = true;
+    result_shape = xla::ShapeUtil::MakeTupleShape({result_shape});
+  }
 
   xla::XlaOp custom_call;
   if (op.getCalledComputations().size() == 1 && op.getOperandLayouts() &&
@@ -2705,7 +2717,7 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
         custom_call_schedule, *xla_api_version);
   }
 
-  if (op->getNumResults() == 1) {
+  if (op->getNumResults() == 1 && !return_tuple) {
     value_map[op.getResult(0)] = custom_call;
   } else {
     BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
@@ -4071,7 +4083,7 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
       auto name = attr.getName();
       return name == kCallTargetName || name == kBackendConfig ||
              name == kApiVersion || name == kCalledComputations ||
-             name == kHasSideEffect;
+             name == kHasSideEffect || name == xla::kMhloFrontendAttributes;
     };
     for (const auto& attr : op->getAttrs()) {
       if (!isSupportedAttrName(attr))
@@ -4364,6 +4376,11 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
     }
     result_shape = xla::ShapeUtil::MakeTupleShape(subshapes);
   }
+  bool return_tuple = false;
+  if (!result_shape.IsTuple() && CustomCallOpReturnTuple(call_target_name)) {
+    return_tuple = true;
+    result_shape = xla::ShapeUtil::MakeTupleShape({result_shape});
+  }
 
   xla::XlaOp custom_call;
   if (op.getCalledComputations().size() == 1 && op.getOperandLayouts() &&
@@ -4409,8 +4426,17 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
         *custom_call_schedule, *xla_api_version);
   }
 
-  if (op->getNumResults() == 1) {
+  if (op->getNumResults() == 1 && !return_tuple) {
     value_map[op.getResult(0)] = custom_call;
+  } else if (op.getCallTargetName() ==
+                 xla::sdy::kGlobalToLocalShapeCallTargetName ||
+             op.getCallTargetName() ==
+                 xla::sdy::kLocalToGlobalShapeCallTargetName) {
+    // We will convert HLO to StableHLO in the ShardyXLA pipeline. These
+    // get-tuple-elements does not need to hold the frontend attributes.
+    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+        ctx.builder, xla::FrontendAttributes());
+    BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   } else {
     BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   }
@@ -5205,6 +5231,28 @@ LogicalResult ExportElementwiseXlaOp(Op op, OpLoweringContext ctx) {
   }
   value_map[op] =
       OpFunc(operand, /*result_accuracy=*/std::nullopt, /*expand=*/false);
+  return success();
+}
+
+LogicalResult ExportXlaOp(AsinOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+  xla::XlaOp operand;
+  if (failed(GetXlaOp(op.getOperand(), value_map, &operand, op))) {
+    return failure();
+  }
+  value_map[op] =
+      xla::Asin(operand, /*result_accuracy=*/std::nullopt, /*expand=*/false);
+  return success();
+}
+
+LogicalResult ExportXlaOp(AsinhOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+  xla::XlaOp operand;
+  if (failed(GetXlaOp(op.getOperand(), value_map, &operand, op))) {
+    return failure();
+  }
+  value_map[op] =
+      xla::Asinh(operand, /*result_accuracy=*/std::nullopt, /*expand=*/false);
   return success();
 }
 

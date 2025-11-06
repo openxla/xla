@@ -23,7 +23,10 @@ package_group(
 
 filegroup(
     name = "xla_cpu_runtime_hdrs",
-    srcs = ["alignment.h"],
+    srcs = [
+        "alignment.h",
+        "buffer_allocation_info.h",
+    ],
     visibility = internal_visibility([":friends"]),
 )
 
@@ -38,18 +41,22 @@ cc_library(
     name = "buffer_allocation_info",
     hdrs = ["buffer_allocation_info.h"],
     visibility = internal_visibility([":friends"]),
-    deps = [
-        "//xla:xla_data_proto_cc",
-        "@com_google_absl//absl/log:check",
-    ],
 )
 
-xla_cc_test(
-    name = "buffer_allocation_info_test",
-    srcs = ["buffer_allocation_info_test.cc"],
+cc_library(
+    name = "buffer_allocation_info_util",
+    srcs = ["buffer_allocation_info_util.cc"],
+    hdrs = ["buffer_allocation_info_util.h"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":buffer_allocation_info",
-        "@com_google_googletest//:gtest_main",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:buffer_assignment",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -104,8 +111,8 @@ onednn_graph_cc_library(
 )
 
 tf_proto_library(
-    name = "xnnpack_config_proto",
-    srcs = ["xnnpack_config.proto"],
+    name = "xnn_fusion_options_proto",
+    srcs = ["xnn_fusion_options.proto"],
 )
 
 cc_library(
@@ -123,6 +130,32 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@XNNPACK",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "ynn_emitter",
+    srcs = ["ynn_emitter.cc"],
+    hdrs = ["ynn_emitter.h"],
+    deps = [
+        ":ynn_support",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu/runtime:dot_lib",
+        "//xla/backends/cpu/runtime/ynnpack:ynn_interop",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_memory",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
+        "@XNNPACK//ynnpack",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status:statusor",
@@ -183,6 +216,36 @@ xla_cc_test(
         "@XNNPACK",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+tf_proto_library(
+    name = "ynn_fusion_options_proto",
+    srcs = ["ynn_fusion_options.proto"],
+)
+
+cc_library(
+    name = "ynn_support",
+    srcs = ["ynn_support.cc"],
+    hdrs = ["ynn_support.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/backends/cpu/runtime:dot_lib",
+        "//xla/backends/cpu/runtime/ynnpack:ynn_interop",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
+        "//xla/tsl/platform:statusor",
+        "@XNNPACK//ynnpack",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 

@@ -30,13 +30,13 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
 #include "xla/backends/gpu/codegen/triton/fusion.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -156,7 +156,7 @@ LaunchDimensions GpuPerformanceModelBase::EstimateFusionLaunchDimensions(
   // launch dimensions only for SoftMax fusions.
   if (const auto* triton_emitter =
           dynamic_cast<const TritonFusion*>(emitter.get())) {
-    if (auto launch_config = triton_emitter->launch_config()) {
+    if (auto launch_config = triton_emitter->GetLaunchConfig()) {
       return launch_config->launch_dimensions;
     }
   }

@@ -850,8 +850,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
   absl::InlinedVector<int64_t, 4> tmp_strides;
   if (!byte_strides) {
     tmp_strides.resize(dims.size());
-    TF_RETURN_IF_ERROR(
-        ShapeUtil::ByteStrides(device_shape, absl::MakeSpan(tmp_strides)));
+    TF_RETURN_IF_ERROR(ShapeUtil::UnpackedByteStrides(
+        device_shape, absl::MakeSpan(tmp_strides)));
     byte_strides = tmp_strides;
   }
 
@@ -868,8 +868,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
 
   absl::InlinedVector<int64_t, 4> shape_strides(
       device_shape.dimensions().size());
-  TF_RETURN_IF_ERROR(
-      ShapeUtil::ByteStrides(device_shape, absl::MakeSpan(shape_strides)));
+  TF_RETURN_IF_ERROR(ShapeUtil::UnpackedByteStrides(
+      device_shape, absl::MakeSpan(shape_strides)));
   bool host_and_device_strides_equal =
       (byte_size == 0 || *byte_strides == shape_strides);
 
@@ -978,10 +978,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
       return;
     }
 
-    {
-      tsl::profiler::TraceMe traceme("BlockHostUntilDone");
-      status = stream->BlockHostUntilDone();
-    }
+    status = BlockHostUntilDoneWithHostCallback(stream);
     VLOG(3) << "H2D copy done. " << status;
 
     if (status.ok()) {
@@ -1114,11 +1111,7 @@ TfrtGpuClient::BufferFromHostLiteral(const LiteralSlice& literal,
         TF_CHECK_OK(transfer_manager->TransferLiteralToDeviceAsync(
             stream, literal, shaped_buffer));
 
-        absl::Status status;
-        {
-          tsl::profiler::TraceMe traceme("BlockHostUntilDone");
-          status = stream->BlockHostUntilDone();
-        }
+        absl::Status status = BlockHostUntilDoneWithHostCallback(stream);
         CHECK_OK(status) << "Failed to block host until done";
         VLOG(3) << "BufferFromHostLiteral done for device_buffer: "
                 << device_buffer;

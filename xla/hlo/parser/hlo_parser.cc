@@ -121,6 +121,7 @@ bool CanInferShape(HloOpcode code) {
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAdd:
     case HloOpcode::kAddDependency:
     case HloOpcode::kAfterAll:
@@ -1651,6 +1652,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAtanh:
     case HloOpcode::kExpm1:
     case HloOpcode::kLog:
@@ -2294,7 +2296,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         return nullptr;
       }
 
-      if (dynamic_cast<const HloChannelInstruction*>(operands[0]) != nullptr) {
+      if (HloChannelInstruction::ClassOf(operands[0])) {
         if (channel_id != operands[0]->channel_id()) {
           return nullptr;
         }
@@ -2331,7 +2333,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         return nullptr;
       }
 
-      if (dynamic_cast<const HloChannelInstruction*>(operands[0]) != nullptr) {
+      if (DynCast<const HloChannelInstruction>(operands[0]) != nullptr) {
         if (channel_id != operands[0]->channel_id()) {
           return nullptr;
         }

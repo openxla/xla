@@ -997,7 +997,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
             proto.operand_shapes_with_layout();
         operand_shapes.reserve(operand_shapes_with_layout.size());
         for (const ShapeProto& shape_proto : operand_shapes_with_layout) {
-          operand_shapes.emplace_back(shape_proto);
+          TF_ASSIGN_OR_RETURN(Shape shape, Shape::FromProto(shape_proto));
+          operand_shapes.emplace_back(std::move(shape));
         }
         TF_RET_CHECK(proto.called_computation_ids_size() <= 1);
         if (proto.called_computation_ids_size() == 1) {
@@ -1304,6 +1305,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       }
       break;
       case HloOpcode::kAsin:
+      case HloOpcode::kAsinh:
       case HloOpcode::kAcos:
       case HloOpcode::kAcosh:
       case HloOpcode::kAtanh:
@@ -1501,6 +1503,7 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAtanh:
     case HloOpcode::kCos:
     case HloOpcode::kCosh:
@@ -2727,6 +2730,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     // Unary ops.
     case HloOpcode::kAbs:
     case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAtanh:
@@ -3199,6 +3203,7 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAllGatherDone:
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kAtan2:
@@ -3835,6 +3840,7 @@ bool HloInstruction::IsOpElementwise(HloOpcode opcode) {
     case HloOpcode::kAcos:
     case HloOpcode::kAcosh:
     case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAtanh:
     case HloOpcode::kRoundNearestAfz:
     case HloOpcode::kRoundNearestEven:
@@ -4539,6 +4545,8 @@ absl::Status HloInstruction::Visit(
       return visitor->HandleAcosh(this);
     case HloOpcode::kAsin:
       return visitor->HandleAsin(this);
+    case HloOpcode::kAsinh:
+      return visitor->HandleAsinh(this);
     case HloOpcode::kAtan2:
       return visitor->HandleAtan2(this);
     case HloOpcode::kAtanh:
@@ -5254,6 +5262,7 @@ bool IsUnaryOpWithResultAccuracy(HloOpcode opcode) {
     opcode == HloOpcode::kAcos ||
     opcode == HloOpcode::kAcosh ||
     opcode == HloOpcode::kAsin ||
+    opcode == HloOpcode::kAsinh ||
     opcode == HloOpcode::kAtanh ||
     opcode == HloOpcode::kCbrt ||
     opcode == HloOpcode::kCos ||
@@ -6034,7 +6043,13 @@ void HloInstruction::set_output_to_operand_aliasing(
 }
 
 std::shared_ptr<OriginalValue> HloInstruction::original_value() const {
-  return original_value_;
+  if (original_value_ != nullptr || opcode_ != HloOpcode::kGetTupleElement) {
+    return original_value_;
+  }
+  const HloInstruction* tuple = operand(0);
+  return tuple->opcode() == HloOpcode::kTuple
+             ? tuple->operand(tuple_index())->original_value()
+             : nullptr;
 }
 
 void HloInstruction::set_original_value(

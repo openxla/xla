@@ -29,11 +29,11 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_compiler.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/latency_hiding_scheduler.h"
@@ -116,24 +116,21 @@ class AnalyticalLatencyHidingSchedulerTest : public GpuCodegenTest {
 
 TEST_F(AnalyticalLatencyHidingSchedulerTest, TestAnalyticalLatencyEstimator) {
   auto gpu_compute_capability = GetGpuComputeCapability();
-  auto visitor = [](const auto& c) {
-    using cc = std::remove_const_t<std::remove_reference_t<decltype(c)>>;
-    if constexpr (std::is_same_v<stream_executor::CudaComputeCapability, cc>) {
-      if (!c.IsAtLeast(se::CudaComputeCapability::kPascal)) {
-        GTEST_SKIP() << "This test is for Pascal+ GPUs.";
-      }
-      if (c.major == 12 && c.minor == 1) {
-        // Skip this test for Spark. Because of the AllReduce, the test uses
-        // gpu_collective_performance_model, which only makes sense in a
-        // datacenter network setting.
-        GTEST_SKIP() << "This test is for datacenter GPUs.";
-      }
-    } else if (!std::is_same_v<stream_executor::RocmComputeCapability, cc>) {
-      GTEST_SKIP() << "This test is for Pascal+ GPUs.";
-    }
-  };
+  if (gpu_compute_capability.IsRocm()) {
+    GTEST_SKIP() << "This test is for Pascal+ GPUs.";
+  }
 
-  std::visit(visitor, gpu_compute_capability);
+  auto* c = gpu_compute_capability.cuda_compute_capability();
+  if (!c->IsAtLeast(se::CudaComputeCapability::kPascal)) {
+    GTEST_SKIP() << "This test is for Pascal+ GPUs.";
+  }
+  if (c->major == 12 && c->minor == 1) {
+    // Skip this test for Spark. Because of the AllReduce, the test uses
+    // gpu_collective_performance_model, which only makes sense in a
+    // datacenter network setting.
+    GTEST_SKIP() << "This test is for datacenter GPUs.";
+  }
+
   const se::DeviceDescription dev_info =
       backend().default_stream_executor()->GetDeviceDescription();
 
