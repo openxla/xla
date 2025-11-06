@@ -124,8 +124,8 @@ static void MakeLLIR(mlir::OpPassManager* pm,
                      int num_stages) {
   const int custom_lds_size = 0;
   // The `createTritonGPUAllocateWarpGroups` pass is not implemented in the
-  // upstream Triton, but is necessary for `ExtractThreadDims` in emitter helpers. 
-  // It adds the `ttg.total-num-warps` attribute.
+  // upstream Triton, but is necessary for `ExtractThreadDims` in emitter
+  // helpers. It adds the `ttg.total-num-warps` attribute.
   pm->addPass(mt::gpu::createTritonGPUAllocateWarpGroups());
   pm->addPass(mlir::triton::AMD::createOptimizeLDSUsagePass(
       rocm_cc.gfx_version(), custom_lds_size));
