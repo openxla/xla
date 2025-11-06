@@ -19,6 +19,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla {
@@ -34,17 +35,20 @@ enum class GPUCommunicationType {
   // the involved hosts has only a subset of its devices participating.
   MULTI_HOST_NON_WORLD_LEVEL = 2,
   // All devices participating in the collective operation reside on the same
-  // host machine.
-  SINGLE_HOST = 3
+  // fast-interconnect domain.
+  SINGLE_PARTITION = 3
 };
 
 // Returns the type of communication pattern for a channel instruction.
 absl::StatusOr<GPUCommunicationType> CommunicationType(
-    int num_devices_per_host, const HloChannelInstruction& instr,
+    int partition_size, const HloChannelInstruction& instr,
     const se::GpuComputeCapability& gpu_version);
 
 // Returns true if instruction is a synchronous collective op.
 bool IsGPUSyncCollective(const HloInstruction& instr);
+
+// Returns true if all devices are within the same NVLink domain (slice).
+bool IsIntraNVLinkDomain(const HloModuleConfig& config, int64_t slice_size);
 
 }  // namespace gpu
 }  // namespace xla

@@ -1,4 +1,4 @@
-/* Copyright 2018 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,10 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_CPU_RUNTIME_FP16_H_
-#define XLA_SERVICE_CPU_RUNTIME_FP16_H_
-
-#include <stdint.h>
+#ifndef XLA_BACKENDS_CPU_CODEGEN_BUILTIN_FP16_H_
+#define XLA_BACKENDS_CPU_CODEGEN_BUILTIN_FP16_H_
 
 // _Float16 always gets us the correct ABI type, so use that if available.
 // AArch64 GCC defines __FLT16_MANT_DIG__ even when _Float16 is not available.
@@ -43,4 +41,4 @@ extern "C" float __gnu_h2f_ieee(XlaF16ABIType);
 // Converts an F64 value to a F16.
 extern "C" XlaF16ABIType __truncdfhf2(double);
 
-#endif  // XLA_SERVICE_CPU_RUNTIME_FP16_H_
+#endif  // XLA_BACKENDS_CPU_CODEGEN_BUILTIN_FP16_H_

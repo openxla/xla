@@ -20,11 +20,11 @@ GPU_TEST_PROPERTIES = {
 }
 
 ROCM_SINGLE_GPU_TEST_PROPERTIES = {
-    "Pool": "linux_x64_gpu",
+    "test.Pool": "linux_x64_gpu",
 }
 
 ROCM_MULTI_GPU_TEST_PROPERTIES = {
-    "Pool": "linux_x64_multigpu",
+    "test.Pool": "linux_x64_multigpu",
 }
 
 def tf_gpu_tests_tags():
@@ -141,6 +141,12 @@ def if_llvm_hexagon_available(then, otherwise = []):
 def if_llvm_powerpc_available(then, otherwise = []):
     return select({
         str(Label("//xla/tsl:ppc64le_or_cross")): then,
+        "//conditions:default": otherwise,
+    })
+
+def if_llvm_riscv_available(then, otherwise = []):
+    return select({
+        str(Label("//xla/tsl:riscv64_or_cross")): then,
         "//conditions:default": otherwise,
     })
 

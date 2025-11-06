@@ -307,6 +307,7 @@ cc_library(
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_cost_analysis",
         "//xla/tsl/framework:allocator",
+        "//xla/tsl/lib/gtl:int_type",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:coordination_service_proto_cc",
@@ -350,6 +351,7 @@ cc_library(
     deps = [
         ":pjrt_client",
         ":pjrt_compiler",
+        "//xla:literal",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu:alignment",
@@ -358,6 +360,7 @@ cc_library(
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:test",
         "//xla/tests:literal_test_util",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",

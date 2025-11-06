@@ -73,6 +73,8 @@ AutotuneConfig GetAutotuneConfig(const DebugOptions& debug_options,
 
   autotune_config.expect_all_instructions_in_cache =
       debug_options.xla_gpu_require_complete_aot_autotune_results();
+  autotune_config.dump_hlos =
+      debug_options.xla_gpu_dump_autotuned_gemm_fusions();
 
   return autotune_config;
 }
@@ -119,7 +121,7 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
       debug_options.xla_gpu_shard_autotuning()));
 }
 
-absl::StatusOr<bool> AutotunerPass::Run(
+absl::StatusOr<bool> AutotunerPass::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(1) << "Running Autotuner Pass";

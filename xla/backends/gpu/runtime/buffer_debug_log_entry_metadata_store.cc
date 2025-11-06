@@ -63,9 +63,7 @@ BufferDebugLogProto BufferDebugLogEntryMetadataStore::EntriesToProto(
 
   BufferDebugLogProto proto;
   for (const BufferDebugLogEntry& entry : entries) {
-    // TODO: b/447080910 - simplify once entry_id is a BufferDebugLogEntryId.
-    std::optional<Metadata> metadata =
-        GetEntryMetadataLocked(BufferDebugLogEntryId{entry.entry_id.value()});
+    std::optional<Metadata> metadata = GetEntryMetadataLocked(entry.entry_id);
     if (!metadata.has_value()) {
       continue;
     }
@@ -76,6 +74,7 @@ BufferDebugLogProto BufferDebugLogEntryMetadataStore::EntriesToProto(
     entry_proto->set_execution_id(metadata->execution_id);
     entry_proto->set_is_input_buffer(metadata->is_input);
     entry_proto->set_checksum(entry.value);
+    entry_proto->set_check_type(metadata->check_type);
   }
   return proto;
 }

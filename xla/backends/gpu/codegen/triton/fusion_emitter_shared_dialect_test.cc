@@ -179,8 +179,7 @@ ENTRY e {
       this, *module->GetComputationWithName("broadcast_in_dim_fusion"),
       block_level_parameters,
       R"(
-CHECK: %[[RES_FROM_ELEMENTS:.*]] = tensor.from_elements %[[ARG:.*]] : tensor<f32>
-CHECK: %[[RES:.*]] = stablehlo.broadcast_in_dim %[[RES_FROM_ELEMENTS]], dims = [] : (tensor<f32>) -> tensor<16x32x8xf32>
+CHECK: %[[RES:.*]] = stablehlo.broadcast_in_dim %[[ARG:.*]], dims = [] : (tensor<f32>) -> tensor<16x32x8xf32>
 )"));
 }
 
@@ -216,15 +215,12 @@ ENTRY e {
       this, *module->GetComputationWithName("reduce_fusion"),
       block_level_parameters,
       R"(
+CHECK: %[[INIT:.*]] = arith.constant dense<0.000000e+00> : tensor<f32>
 CHECK: %[[REDUCE_INPUT:.*]] = arith.select {{.*}}
-CHECK: %[[INIT_VALUE_FROM_ELEMENTS:.*]] = tensor.from_elements %{{.*}} : tensor<f32>
-CHECK: %[[RES:.*]] = stablehlo.reduce(%[[REDUCE_INPUT]] init: %[[INIT_VALUE_FROM_ELEMENTS]]) across dimensions = [0] : (tensor<256x16xf32>, tensor<f32>) -> tensor<16xf32>
+CHECK: %[[RES:.*]] = stablehlo.reduce(%[[REDUCE_INPUT]] init: %[[INIT]]) across dimensions = [0] : (tensor<256x16xf32>, tensor<f32>) -> tensor<16xf32>
 CHECK: reducer(%[[ARG_0:.*]]: tensor<f32>, %[[ARG_1:.*]]: tensor<f32>)  {
-CHECK:   %[[EXTRACTED_0:.*]] = tensor.extract %[[ARG_0]][] : tensor<f32>
-CHECK:   %[[EXTRACTED_1:.*]] = tensor.extract %[[ARG_1]][] : tensor<f32>
-CHECK:   %[[SUM:.*]] = arith.addf %[[EXTRACTED_0]], %[[EXTRACTED_1]] : f32
-CHECK:   %[[FROM_ELEMENTS:.*]] = tensor.from_elements %[[SUM]] : tensor<f32>
-CHECK:   stablehlo.return %[[FROM_ELEMENTS]] : tensor<f32>
+CHECK:   %[[SUM:.*]] = arith.addf %[[ARG_0]], %[[ARG_1]] : tensor<f32>
+CHECK:   stablehlo.return %[[SUM]] : tensor<f32>
 CHECK: }
 )"));
 }

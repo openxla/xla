@@ -132,6 +132,7 @@ PjRtStreamExecutorRawBuffer::CopyRawHostToDeviceAndReturnEvent(
     const void* src, int64_t offset, int64_t transfer_size) {
   se::Stream* stream = local_device_->host_to_device_stream();
   auto device_event = BufferSequencingEvent::Create(client_->thread_pool());
+  device_event.AndThen([device_buffer = device_buffer_]() {});
   client_->thread_pool()->Schedule([client = client_, device_event,
                                     local_device = local_device_, stream, src,
                                     offset, transfer_size,
@@ -191,6 +192,7 @@ PjRtStreamExecutorRawBuffer::CopyRawDeviceToHostAndReturnEvent(
     void* dst, int64_t offset, int64_t transfer_size) {
   se::Stream* stream = local_device_->GetDeviceToHostStream();
   auto device_event = BufferSequencingEvent::Create(client_->thread_pool());
+  device_event.AndThen([device_buffer = device_buffer_]() {});
   client_->thread_pool()->Schedule([client = client_, device_event,
                                     local_device = local_device_, stream, dst,
                                     offset, transfer_size,
@@ -299,7 +301,7 @@ void PjRtStreamExecutorRawBuffer::CopyToLiteralAsync(
           if (on_device_shape.layout() != literal_layout) {
             absl::InlinedVector<int64_t, 4> byte_strides(
                 on_device_shape.dimensions().size());
-            absl::Status s = ShapeUtil::ByteStrides(
+            absl::Status s = ShapeUtil::UnpackedByteStrides(
                 on_device_shape, absl::MakeSpan(byte_strides));
             if (!s.ok()) {
               promise.Set(s);

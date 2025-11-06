@@ -214,6 +214,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_use_xnnpack(true);
   opts.set_xla_cpu_experimental_xnn_graph_fusion_mode(
       DebugOptions::XNN_GRAPH_FUSION_MODE_DISABLED);
+  opts.add_xla_cpu_experimental_ynn_fusion_type(
+      DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT);
   opts.set_xla_cpu_parallel_codegen_split_count(32);
   opts.set_xla_cpu_copy_insertion_use_region_analysis(false);
   opts.set_xla_cpu_enable_concurrency_optimized_scheduler(true);
@@ -223,6 +225,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_emitter_verification_level(0);
 
   opts.set_xla_cpu_enable_fast_math(false);
+  opts.set_xla_cpu_enable_platform_dependent_math(true);
   // Disable forms of fast math that have caused users problems in the past.
   opts.set_xla_cpu_fast_math_honor_nans(true);
   opts.set_xla_cpu_fast_math_honor_infs(true);
@@ -473,6 +476,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_collective_call_terminate_timeout_seconds(40);
 
   opts.set_xla_keep_shardings_after_spmd(false);
+  opts.set_xla_gpu_experimental_enable_checksum_tracing_on_thunks(false);
+  opts.set_xla_gpu_detect_nan(DebugOptions::NAN_CHECK_DETECTION_MODE_NONE);
   return opts;
 }
 
@@ -928,6 +933,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Enable unsafe fast-math optimizations in the CPU compiler; this may "
       "produce faster code at the expense of some accuracy."));
   flag_list->push_back(tsl::Flag(
+      "xla_cpu_enable_platform_dependent_math",
+      bool_setter_for(
+          &DebugOptions::set_xla_cpu_enable_platform_dependent_math),
+      debug_options->xla_cpu_enable_platform_dependent_math(),
+      "Enable platform dependent math in the CPU compiler; this may "
+      "produce faster code at the expense of consistent results across CPUs."));
+  flag_list->push_back(tsl::Flag(
       "xla_cpu_fast_math_honor_nans",
       bool_setter_for(&DebugOptions::set_xla_cpu_fast_math_honor_nans),
       debug_options->xla_cpu_fast_math_honor_nans(),
@@ -1343,6 +1355,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_gpu_experimental_dump_fdo_profiles(),
                 "Dumps FDO profiles as text to the directory specified "
                 "by --xla_dump_to."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_dump_gpu_executable",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_dump_gpu_executable),
+      debug_options->xla_gpu_experimental_dump_gpu_executable(),
+      "Dump the serialized GPU executables to 'gpu_executable_proto' suffixed "
+      "files, in the directory specified by `xla_dump_to`. No-op if "
+      "`xla_dump_to` isn't set, or during autotuning compilations."));
   flag_list->push_back(
       tsl::Flag("xla_dump_hlo_as_dot",
                 bool_setter_for(&DebugOptions::set_xla_dump_hlo_as_dot),
@@ -2674,6 +2694,31 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Limits the thunk buffer debug instrumentation to thunks with profile "
       "annotations matching one or more regexes passed as comma-separated "
       "string."));
+
+  auto setter_for_xla_gpu_detect_nan =
+      [debug_options](const std::string& value) {
+        DebugOptions::NaNCheckDetectionMode detection_mode;
+        if (value == "none") {
+          detection_mode = DebugOptions::NAN_CHECK_DETECTION_MODE_NONE;
+        } else if (value == "warning") {
+          detection_mode = DebugOptions::NAN_CHECK_DETECTION_MODE_WARNING;
+        } else if (value == "fail") {
+          detection_mode = DebugOptions::NAN_CHECK_DETECTION_MODE_FAIL;
+        } else {
+          return false;
+        }
+        debug_options->set_xla_gpu_detect_nan(detection_mode);
+        return true;
+      };
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_detect_nan", setter_for_xla_gpu_detect_nan,
+      DebugOptions::NaNCheckDetectionMode_Name(
+          debug_options->xla_gpu_detect_nan()),
+      "Controls the behavior of the NaN detector pass that checks for presence "
+      "of NaN values in kernel outputs. Acceptable values are: 'none', "
+      "'warning', and 'fail'. 'none' is the default. If other than 'none' "
+      "value is provided, additional thunks will be added to detect and "
+      "warn or fail the execution if NaNs are detected."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

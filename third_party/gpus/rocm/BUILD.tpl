@@ -369,6 +369,19 @@ cc_library(
 )
 
 cc_library(
+    name = "rocprofiler-sdk",
+    srcs = glob(["%{rocm_root}/lib/librocprofiler-sdk*.so*"]),
+    hdrs = glob(["%{rocm_root}/include/rocprofiler-sdk/**"]),
+    include_prefix = "rocm",
+    includes = [
+        "%{rocm_root}/include/",
+    ],
+    strip_include_prefix = "%{rocm_root}",
+    visibility = ["//visibility:public"],
+    deps = [":rocm_config"],
+)
+
+cc_library(
     name = "rocsolver",
     hdrs = glob(["%{rocm_root}/include/rocsolver/**"]),
     data = glob(["%{rocm_root}/lib/librocsolver*.so*"]),
@@ -561,4 +574,17 @@ filegroup(
     name = "all_files",
     srcs = glob(["%{rocm_root}/**"]),
     visibility = ["//visibility:public"],
+)
+
+platform(
+    name = "linux_x64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+        "@bazel_tools//tools/cpp:clang",
+    ],
+    exec_properties = {
+        "container-image": "docker://%{rocm_rbe_docker_image}",
+        "OSFamily": "Linux",
+    },
 )

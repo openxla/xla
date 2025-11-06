@@ -13,24 +13,29 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_CPU_RUNTIME_SYMBOL_GENERATOR_H_
-#define XLA_SERVICE_CPU_RUNTIME_SYMBOL_GENERATOR_H_
+#ifndef XLA_BACKENDS_CPU_CODEGEN_BUILTIN_DEFINITION_GENERATOR_H_
+#define XLA_BACKENDS_CPU_CODEGEN_BUILTIN_DEFINITION_GENERATOR_H_
 
-#include <optional>
-
-#include "llvm/ADT/StringRef.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
-#include "llvm/ExecutionEngine/Orc/Shared/ExecutorSymbolDef.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Support/Error.h"
 
 namespace xla::cpu {
 
-// Generates symbol definitions for XLA runtime symbols, which are linked into
-// the compiled XLA kernels.
-class RuntimeSymbolGenerator : public llvm::orc::DefinitionGenerator {
+// Generates symbol definitions for builtin XLA runtime symbols, which are
+// looked up at run time in the parent process:
+//
+//   - libc symbols (e.g. memcpy, memmove, memset)
+//   - libm symbols (e.g. sin, cos, etc.)
+//   - compiler-rt symbols (e.g. __msan_unpoison)
+//   - custom XLA symbols (e.g. __truncsfbf2)
+//
+// We keep the list of definitions short, and prefer to compile math functions
+// into generated XLA:CPU executables via intrinsics, as it allows the LLVM
+// optimizer to inline them and optimize across function call boundaries.
+class BuiltinDefinitionGenerator : public llvm::orc::DefinitionGenerator {
  public:
-  explicit RuntimeSymbolGenerator(llvm::DataLayout data_layout);
+  explicit BuiltinDefinitionGenerator(llvm::DataLayout data_layout);
 
   llvm::Error tryToGenerate(llvm::orc::LookupState&, llvm::orc::LookupKind,
                             llvm::orc::JITDylib& jit_dylib,
@@ -38,12 +43,9 @@ class RuntimeSymbolGenerator : public llvm::orc::DefinitionGenerator {
                             const llvm::orc::SymbolLookupSet& names) final;
 
  private:
-  std::optional<llvm::orc::ExecutorSymbolDef> ResolveRuntimeSymbol(
-      llvm::StringRef name);
-
   llvm::DataLayout data_layout_;
 };
 
 }  // namespace xla::cpu
 
-#endif  // XLA_SERVICE_CPU_RUNTIME_SYMBOL_GENERATOR_H_
+#endif  // XLA_BACKENDS_CPU_CODEGEN_BUILTIN_DEFINITION_GENERATOR_H_

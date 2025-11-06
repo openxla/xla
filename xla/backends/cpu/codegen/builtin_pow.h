@@ -1,4 +1,4 @@
-/* Copyright 2020 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,25 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/cpu/runtime_pow.h"
+#ifndef XLA_BACKENDS_CPU_CODEGEN_BUILTIN_POW_H_
+#define XLA_BACKENDS_CPU_CODEGEN_BUILTIN_POW_H_
 
-#include <cstdint>
+#include <stdint.h>
 
-#include "absl/base/attributes.h"
+// Raises F32 value a to the power of b.
+extern "C" float __powisf2(float a, int32_t b);
 
-template <typename T>
-static T Powi(T a, int32_t b) {
-  const bool recip = b < 0;
-  T r = 1;
-  while (true) {
-    if (b & 1) r *= a;
-    b /= 2;
-    if (b == 0) break;
-    a *= a;
-  }
-  return recip ? 1 / r : r;
-}
+// Raises F64 value a to the power of b.
+extern "C" double __powidf2(double a, int32_t b);
 
-float ABSL_ATTRIBUTE_WEAK __powisf2(float a, int32_t b) { return Powi(a, b); }
-
-double ABSL_ATTRIBUTE_WEAK __powidf2(double a, int32_t b) { return Powi(a, b); }
+#endif  // XLA_BACKENDS_CPU_CODEGEN_BUILTIN_POW_H_

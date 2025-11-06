@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.pb.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
+#include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_proto_deserialization.h"
 #include "xla/ffi/attribute_map.h"
@@ -114,7 +115,9 @@ void CheckProtoRoundTrip(const DynamicSliceThunk& thunk,
       [](const ThunkProto& thunk_proto,
          absl::Span<const BufferAllocation> fake_allocations_span)
       -> absl::StatusOr<std::unique_ptr<Thunk>> {
-    return DeserializeThunkProto(thunk_proto, fake_allocations_span);
+    return DeserializeThunkProto(thunk_proto, fake_allocations_span,
+                                 /*hlo_module*/ nullptr,
+                                 /*platform_name=*/"TEST_PLATFORM");
   };
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -573,9 +576,9 @@ TEST_F(DynamicSliceThunkTest, SlicedMemcpy) {
       auto registration,
       xla::ffi::FindHandler("__xla_test$$memcpy", GetPlatformName()));
 
-  std::vector<std::optional<ShapedSlice>> operands{ShapedSlice{
+  std::vector<NullableShapedSlice> operands{ShapedSlice{
       slice_src_fake, ShapeUtil::MakeShape(PrimitiveType::S32, {8, 8})}};
-  std::vector<std::optional<ShapedSlice>> results{
+  std::vector<NullableShapedSlice> results{
       ShapedSlice{slice_dst, ShapeUtil::MakeShape(PrimitiveType::S32, {8, 8})}};
 
   // Creating embedded custom call thunk.
@@ -733,9 +736,9 @@ TEST_F(DynamicSliceThunkTest, SlicedOutputMemcpy) {
       auto registration,
       xla::ffi::FindHandler("__xla_test$$memcpy", GetPlatformName()));
 
-  std::vector<std::optional<ShapedSlice>> operands{ShapedSlice{
+  std::vector<NullableShapedSlice> operands{ShapedSlice{
       slice_src_fake, ShapeUtil::MakeShape(PrimitiveType::S32, {2, 2})}};
-  std::vector<std::optional<ShapedSlice>> results{ShapedSlice{
+  std::vector<NullableShapedSlice> results{ShapedSlice{
       slice_dst_fake, ShapeUtil::MakeShape(PrimitiveType::S32, {2, 2})}};
 
   // Creating embedded custom call thunk.
@@ -1441,9 +1444,9 @@ TEST_F(DynamicSliceThunkTest, SlicedMemcpyOOB) {
       auto registration,
       xla::ffi::FindHandler("__xla_test$$memcpy", GetPlatformName()));
 
-  std::vector<std::optional<ShapedSlice>> operands{ShapedSlice{
+  std::vector<NullableShapedSlice> operands{ShapedSlice{
       slice_src_fake, ShapeUtil::MakeShape(PrimitiveType::S32, {2, 2})}};
-  std::vector<std::optional<ShapedSlice>> results{ShapedSlice{
+  std::vector<NullableShapedSlice> results{ShapedSlice{
       slice_dst_fake, ShapeUtil::MakeShape(PrimitiveType::S32, {2, 2})}};
 
   // Creating embedded custom call thunk.
