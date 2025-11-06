@@ -105,20 +105,23 @@ NcclCollectives::GetCliqueIdCallback(const CliqueIdCallback* clique_id_callback,
   return local_callback;
 }
 
-static ncclConfig_t AsNcclConfig(const GpuCollectives::Config& config,
-                                 const se::StreamExecutor* stream_executor) {
+static absl::StatusOr<ncclConfig_t> AsNcclConfig(
+    const GpuCollectives::Config& config,
+    const se::StreamExecutor* stream_executor) {
   ncclConfig_t comm_config = NCCL_CONFIG_INITIALIZER;
   comm_config.blocking = config.blocking_communicators ? 1 : 0;
 #if !defined(TENSORFLOW_USE_ROCM) || TF_ROCM_VERSION > 50700
   comm_config.splitShare = config.split_share;
 #endif
+  int nccl_version;
+  XLA_NCCL_RETURN_IF_ERROR(ncclGetVersion(&nccl_version));
   if (config.max_nchannels > 0) {
     VLOG(1) << "Maximum number of channels is set to: " << comm_config.maxCTAs;
     comm_config.maxCTAs = config.max_nchannels;
   } else if (stream_executor->GetDeviceDescription()
                  .cuda_compute_capability()
                  .IsBlackwell() &&
-             NCCL_VERSION_CODE >= NCCL_VERSION(2, 28, 0)) {
+             nccl_version >= NCCL_VERSION(2, 28, 0)) {
     // Future NCCL versions will reduce the default max number of channels on
     // Blackwell to 16. We need to manually set it to 32 here to avoid surprise
     // perf regressions.
@@ -175,8 +178,8 @@ NcclCollectives::CreateCommunicators(const CliqueKey& clique_key,
     TF_RET_CHECK(device != nullptr);
     auto activate_context = device->stream_executor()->Activate();
 
-    ncclConfig_t comm_config =
-        AsNcclConfig(gpu_config, device->stream_executor());
+    TF_ASSIGN_OR_RETURN(ncclConfig_t comm_config,
+                        AsNcclConfig(gpu_config, device->stream_executor()));
 
     TF_ASSIGN_OR_RETURN(auto nccl_unique_id, AsNcclUniqueId(clique_ids->at(0)));
     ncclComm_t comm;
@@ -238,8 +241,8 @@ NcclCollectives::SplitCommunicators(absl::Span<const Communicator* const> comms,
     auto* device = tsl::down_cast<GpuCollectives::Device*>(ranks[i].device);
     TF_RET_CHECK(device != nullptr);
 
-    ncclConfig_t comm_config =
-        AsNcclConfig(gpu_config, device->stream_executor());
+    TF_ASSIGN_OR_RETURN(ncclConfig_t comm_config,
+                        AsNcclConfig(gpu_config, device->stream_executor()));
 
     VLOG(1) << "Split NCCL communicator " << comms[i] << " with color " << color
             << " and key " << keys[i];
