@@ -33,7 +33,7 @@ def bitcode_library(
     include_paths = dict([(paths.dirname(h), None) for h in hdrs]).keys()
 
     #TODO(rocm): Maybe compute this in cmd not to pass dirs as srcs
-    includes = " ".join(["-I$(location {})".format(inc) for inc in include_paths])
+    includes = " ".join(["-I{}".format(paths.dirname(inc)) for inc in include_paths])
     flags = ("-fcolor-diagnostics -Werror -Wno-error=atomic-alignment -x cl -Xclang " +
              "-cl-std=CL2.0 --target=amdgcn-amd-amdhsa -fvisibility=hidden -fomit-frame-pointer " +
              "-Xclang -finclude-default-header -Xclang -fexperimental-strict-floating-point " +
