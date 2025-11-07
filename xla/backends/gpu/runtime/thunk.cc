@@ -125,7 +125,8 @@ absl::StatusOr<Thunk::CollectiveExecuteParams>
 Thunk::CollectiveExecuteParams::Create(
     const ServiceExecutableRunOptions& run_options,
     absl::Span<se::Stream* const> async_streams, int64_t local_device_ordinal,
-    int64_t collective_max_nchannels, int64_t p2p_max_nchannels) {
+    int64_t collective_max_nchannels, int64_t p2p_max_nchannels,
+    bool collective_use_minimal_resource) {
   const GpuExecutableRunOptions* gpu_options =
       run_options.run_options().gpu_executable_run_options();
 
@@ -153,7 +154,7 @@ Thunk::CollectiveExecuteParams::Create(
       run_options.run_options().run_id(), async_streams, local_device_ordinal,
       global_device_id, run_options.run_options().device_assignment(),
       device_id_map, clique_id_callback, incarnations, collective_max_nchannels,
-      p2p_max_nchannels);
+      p2p_max_nchannels, collective_use_minimal_resource);
 }
 
 Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
@@ -163,7 +164,8 @@ Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
     const GlobalDeviceIdMap* global_device_id_map,
     const CliqueIdCallback* nccl_clique_id_callback,
     const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations,
-    int64_t collective_max_nchannels, int64_t p2p_max_nchannels)
+    int64_t collective_max_nchannels, int64_t p2p_max_nchannels,
+    bool collective_use_minimal_resource)
     : collectives(collectives),
       executor(executor),
       run_id(run_id),
@@ -175,7 +177,8 @@ Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
       nccl_clique_id_callback(nccl_clique_id_callback),
       incarnations(incarnations),
       collective_max_nchannels(collective_max_nchannels),
-      p2p_max_nchannels(p2p_max_nchannels) {}
+      p2p_max_nchannels(p2p_max_nchannels),
+      collective_use_minimal_resource(collective_use_minimal_resource) {}
 
 //===----------------------------------------------------------------------===//
 // Thunk::ExecuteParams
@@ -442,7 +445,7 @@ ThunkMetadataListProto GetMetadataListProtoFromThunkGraph(
   return metadata_list_proto;
 }
 
-absl::StatusOr<GpuCollectives* absl_nonnull> Thunk::GetGpuCollectives(
+absl::StatusOr<GpuCollectives * absl_nonnull> Thunk::GetGpuCollectives(
     CollectiveExecuteParams const& params) {
   if (params.collectives == nullptr) {
     return Internal("Collectives API is not provided");
@@ -457,7 +460,6 @@ ThunkInfoProto Thunk::ThunkInfo::ToProto() const {
   proto.set_thunk_id(thunk_id.value());
   return proto;
 }
-
 
 }  // namespace gpu
 }  // namespace xla
