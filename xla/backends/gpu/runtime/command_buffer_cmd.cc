@@ -2010,11 +2010,10 @@ absl::Status CollectiveCmd::Prepare(
     Thunk::ResourceRequestsInterface& resource_requests) {
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
                       Thunk::GetGpuCollectives(params));
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetGpuCliqueKey(collectives, *params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                      GetGpuCliqueKey(collectives, *params.collective_params,
+                                      config().replica_groups,
+                                      config().group_mode, IsP2PCollective()));
   return resource_requests.AddClique(clique_key);
 }
 
@@ -2092,8 +2091,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllReduceCmd::Record(
       CommunicatorHandle comm_handle,
       GetComm(collectives, *execute_params.collective_params,
               *execute_params.collective_cliques, config().replica_groups,
-              config().group_mode,
-              AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));  // Use constant
+              config().group_mode, IsP2PCollective()));
 
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
@@ -2158,8 +2156,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> ReduceScatterCmd::Record(
       CommunicatorHandle comm_handle,
       GetComm(collectives, *execute_params.collective_params,
               *execute_params.collective_cliques, config().replica_groups,
-              config().group_mode,
-              AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));  // Use constant
+              config().group_mode, false));
 
   return RecordTracedCommand(execute_params, record_params, record_action,
                              command_buffer, [&](se::Stream* stream) {
@@ -2224,8 +2221,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllToAllCmd::Record(
       CommunicatorHandle comm_handle,
       GetComm(collectives, *execute_params.collective_params,
               *execute_params.collective_cliques, config().replica_groups,
-              config().group_mode,
-              AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));  // Use constant
+              config().group_mode, IsP2PCollective()));
 
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
@@ -2287,8 +2283,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllGatherCmd::Record(
       CommunicatorHandle comm_handle,
       GetComm(collectives, *execute_params.collective_params,
               *execute_params.collective_cliques, config().replica_groups,
-              config().group_mode,
-              AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));  // Use constant
+              config().group_mode, IsP2PCollective()));
 
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
@@ -2351,8 +2346,7 @@ CollectiveBroadcastCmd::Record(const Thunk::ExecuteParams& execute_params,
       CommunicatorHandle comm_handle,
       GetComm(collectives, *execute_params.collective_params,
               *execute_params.collective_cliques, config().replica_groups,
-              config().group_mode,
-              AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));  // Use constant
+              config().group_mode, IsP2PCollective()));
 
   return RecordTracedCommand(execute_params, record_params,
                              std::move(record_action), command_buffer,

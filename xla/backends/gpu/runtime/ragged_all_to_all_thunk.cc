@@ -406,8 +406,7 @@ RaggedAllToAllStartThunk::RaggedAllToAllStartThunk(
     ThunkInfo thunk_info, const HloRaggedAllToAllInstruction* instr,
     std::vector<CollectiveThunk::Buffer> buffers, bool p2p_memcpy_enabled)
     : CollectiveThunk(Thunk::kRaggedAllToAllStart, thunk_info,
-                      IsGPUSyncCollective(*instr),
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
+                      IsGPUSyncCollective(*instr), false),
       config_(GetRaggedAllToAllConfig(instr)),
       buffers_(std::move(buffers)),
       p2p_memcpy_enabled_(p2p_memcpy_enabled),

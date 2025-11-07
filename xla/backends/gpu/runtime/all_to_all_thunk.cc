@@ -79,8 +79,7 @@ AllToAllStartThunk::AllToAllStartThunk(
     ThunkInfo thunk_info, const HloAllToAllInstruction* instr,
     std::vector<CollectiveThunk::Buffer> buffers, bool p2p_memcpy_enabled)
     : CollectiveThunk(Thunk::kAllToAllStart, thunk_info,
-                      IsGPUSyncCollective(*instr),
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
+                      IsGPUSyncCollective(*instr), false),
       config_(GetAllToAllConfig(instr)),
       buffers_(std::move(buffers)),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {
@@ -123,12 +122,11 @@ absl::Status AllToAllStartThunk::Initialize(const InitializeParams& params) {
   if (is_local() && p2p_memcpy_enabled_) {
     TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
                         GetGpuCollectives(params));
-    AsyncStreamKind stream_kind = GetAsyncStreamKind();
     TF_ASSIGN_OR_RETURN(
         CommunicatorHandle comm_handle,
         GetComm(collectives, *params.collective_params,
                 *params.collective_cliques, config().replica_groups,
-                config().group_mode, stream_kind));
+                config().group_mode, IsP2PCollective()));
     TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm_handle.comm->NumRanks());
     se::StreamExecutor* executor = params.executor;
     {
@@ -245,11 +243,13 @@ absl::StatusOr<bool> AllToAllStartThunk::RunCollective(
   return true;
 }
 
-AsyncStreamKind AllToAllStartThunk::GetAsyncStreamKind() const {
+const std::optional<ExecutionStreamId> AllToAllStartThunk::GetStreamIdOverride()
+    const {
   if (is_local() && p2p_memcpy_enabled_) {
-    return AsyncStreamKind::ASYNC_STREAM_KIND_MEMCPYP2P;
+    // TODO: Remove this specialized value when it is safe to do so.
+    return ExecutionStreamId(3);
   }
-  return CollectiveThunk::GetAsyncStreamKind();
+  return std::nullopt;
 }
 
 bool AllToAllStartThunk::is_local() const {
