@@ -1620,6 +1620,7 @@ cc_library(
         ":flag_utils",
         ":fusion_dispatch_pipeline",
         ":fusion_pipeline",
+        ":gpu_aot_compilation_result",
         ":gpu_constants",
         ":gpu_executable",
         ":gpu_executable_proto_cc",
@@ -2007,7 +2008,6 @@ cc_library(
     visibility = [],
     deps = [
         ":executable_proto_cc",
-        ":gpu_executable",
         ":gpu_latency_hiding_scheduler",
         ":ir_emission_utils",
         "//xla:util",
@@ -2032,6 +2032,7 @@ cc_library(
     deps = [
         ":gpu_executable",
         ":gpu_executable_proto_cc",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",
         "//xla/service:executable",
@@ -2359,6 +2360,7 @@ xla_cc_test(
         ":amdgpu_compiler_impl",
     ]) + [
         ":gpu_transfer_manager",
+        "//xla:literal",
         "//xla:literal_util",
         "//xla/backends/gpu/codegen/triton:support",
         "//xla/hlo/ir:hlo",
@@ -2374,8 +2376,11 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:statusor",
     ],
