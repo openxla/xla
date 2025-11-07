@@ -1,4 +1,8 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
+load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_is_configured",
+)
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal", "xla_py_proto_library")
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -455,8 +459,8 @@ xla_test(
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:dnn",
+        "//xla/stream_executor:engine_options",
         "//xla/stream_executor:kernel_spec",
-        "//xla/stream_executor:numeric_options",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
@@ -666,6 +670,7 @@ cc_library(
     hdrs = ["cub_sort_thunk.h"],
     deps = [
         ":thunk",
+        ":thunk_proto_cc",
         "//xla:executable_run_options",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -688,7 +693,35 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
     ],
+)
+
+xla_cc_test(
+    name = "cub_sort_thunk_test",
+    srcs = ["cub_sort_thunk_test.cc"],
+    tags = ["gpu"],
+    deps = [
+        ":cub_sort_thunk",
+        ":thunk",
+        ":thunk_proto_cc",
+        "//xla/ffi",
+        "//xla/ffi:ffi_api",
+        "//xla/service:buffer_assignment",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/util/proto:parse_text_proto",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:all_runtime",
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor/rocm:all_runtime",
+    ]),
 )
 
 cc_library(
@@ -2544,6 +2577,7 @@ cc_library(
         ":convolution_reorder_thunk",
         ":convolution_thunk",
         ":copy_thunk",
+        ":cub_sort_thunk",
         ":cudnn_thunk",
         ":custom_call_thunk",
         ":dynamic_slice_thunk",
@@ -2967,7 +3001,7 @@ cc_library(
         ":buffer_debug_log_entry_metadata_store",
         ":buffer_debug_log_structs",
         ":buffers_checksum_thunk",
-        ":buffers_nan_count_thunk",
+        ":buffers_float_check_thunk",
         ":custom_call_thunk",
         ":sequential_thunk",
         ":thunk",
@@ -3005,7 +3039,7 @@ xla_cc_test(
     srcs = ["thunk_buffer_debug_pass_test.cc"],
     deps = [
         ":buffers_checksum_thunk",
-        ":buffers_nan_count_thunk",
+        ":buffers_float_check_thunk",
         ":conditional_thunk",
         ":custom_call_thunk",
         ":sequential_thunk",
@@ -3131,9 +3165,9 @@ xla_test(
 )
 
 cc_library(
-    name = "buffers_nan_count_thunk",
-    srcs = ["buffers_nan_count_thunk.cc"],
-    hdrs = ["buffers_nan_count_thunk.h"],
+    name = "buffers_float_check_thunk",
+    srcs = ["buffers_float_check_thunk.cc"],
+    hdrs = ["buffers_float_check_thunk.h"],
     deps = [
         ":buffer_debug_log_entry_metadata_store",
         ":buffer_debug_log_structs",
@@ -3146,8 +3180,8 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/cuda:cuda_platform_id",
+        "//xla/stream_executor/gpu:buffer_debug_float_check_kernel",
         "//xla/stream_executor/gpu:buffer_debug_log",
-        "//xla/stream_executor/gpu:buffer_debug_nan_count_kernel",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
@@ -3156,13 +3190,13 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
     ] + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:buffer_debug_nan_count_kernel_cuda",
+        "//xla/stream_executor/cuda:buffer_debug_float_check_kernel_cuda",
     ]),
 )
 
 xla_test(
-    name = "buffers_nan_count_thunk_test",
-    srcs = ["buffers_nan_count_thunk_test.cc"],
+    name = "buffers_float_check_thunk_test",
+    srcs = ["buffers_float_check_thunk_test.cc"],
     backends = ["gpu"],
     tags = [
         "cuda-only",
@@ -3171,7 +3205,7 @@ xla_test(
     deps = [
         ":buffer_debug_log_entry_metadata_store",
         ":buffer_debug_log_structs",
-        ":buffers_nan_count_thunk",
+        ":buffers_float_check_thunk",
         ":thunk",
         ":thunk_id",
         "//xla:types",
@@ -3223,6 +3257,7 @@ cc_library(
         ":thunk_id",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
     ],

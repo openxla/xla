@@ -4,7 +4,7 @@ after the TF 2.4 branch cut has passed.
 """
 
 load(
-    "@xla//xla/tsl/platform:rules_cc.bzl",
+    "//xla/tsl/platform:rules_cc.bzl",
     "cc_binary",
 )
 
@@ -33,9 +33,9 @@ def dict_add(*dictionaries):
 
 def select_os_specific(L, M, W):
     return select({
-        "@xla//xla/tsl:linux_x86_64": L,
-        "@xla//xla/tsl:macos": M,
-        "@xla//xla/tsl:windows": W,
+        Label("//xla/tsl:linux_x86_64"): L,
+        Label("//xla/tsl:macos"): M,
+        Label("//xla/tsl:windows"): W,
         "//conditions:default": L,
     })
 

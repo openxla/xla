@@ -83,11 +83,6 @@ namespace mh = ::mlir::mhlo;
 namespace mm = ::mlir::math;
 namespace mt = ::mlir::triton;
 
-ScalarOrTensor::ScalarOrTensor(mlir::Value value) : value_(value) {
-  CHECK(IsScalar() || UnwrapTensor().getType().getRank() > 0)
-      << "0D tensors are not supported by Triton";
-}
-
 SmallVector<int64_t> GetPaddedTileSizes(ArrayRef<int64_t> tile_sizes) {
   SmallVector<int64_t> result;
   result.reserve(tile_sizes.size());
@@ -260,20 +255,18 @@ Value Cast(EmitterLocOpBuilder& b, Value value, Type dst_element_ty) {
     }
     // The current logic handles signed integer types only. Additional handling
     // is needed for unsigned integer types.
-    auto cst_int = [&](int64_t x) {
+    auto cst_int = [&](int64_t x) -> Value {
       if (auto src_shaped_ty = mlir::dyn_cast<ShapedType>(src_ty)) {
-        return CreateConst(b, dst_element_ty, x, src_shaped_ty.getShape())
-            .UnwrapUnsafe();
+        return CreateConst(b, dst_element_ty, x, src_shaped_ty.getShape());
       } else {
-        return CreateConst(b, dst_element_ty, x).UnwrapUnsafe();
+        return CreateConst(b, dst_element_ty, x);
       }
     };
-    auto cst_float = [&](int64_t x) {
+    auto cst_float = [&](int64_t x) -> Value {
       if (auto src_shaped_ty = mlir::dyn_cast<ShapedType>(src_ty)) {
-        return CreateConst(b, src_fp_element_ty, x, src_shaped_ty.getShape())
-            .UnwrapUnsafe();
+        return CreateConst(b, src_fp_element_ty, x, src_shaped_ty.getShape());
       } else {
-        return CreateConst(b, src_fp_element_ty, x).UnwrapUnsafe();
+        return CreateConst(b, src_fp_element_ty, x);
       }
     };
     auto fptosi = b.create<ma::FPToSIOp>(dst_ty, value);
@@ -551,8 +544,8 @@ absl::StatusOr<Value> EmitElementwise(EmitterLocOpBuilder& b,
   }
 }
 
-absl::StatusOr<ScalarOrTensor> EmitConstant(EmitterLocOpBuilder& b,
-                                            const HloInstruction& constant) {
+absl::StatusOr<mlir::TypedValue<mlir::RankedTensorType>> EmitConstant(
+    EmitterLocOpBuilder& b, const HloInstruction& constant) {
   TF_ASSIGN_OR_RETURN(Type ty, TritonType(b, constant.shape().element_type()));
   llvm::SmallVector<int64_t> shape{constant.shape().dimensions().begin(),
                                    constant.shape().dimensions().end()};

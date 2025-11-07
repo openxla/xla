@@ -634,6 +634,15 @@ message DebugOptions {
   // Dump FDO profiles in a binary format to a separate file.
   optional bool xla_gpu_experimental_dump_fdo_profiles = 338;
 
+  // Dump the serialized GPU executables to 'gpu_executable' suffixed
+  // files in the directory specified by `xla_dump_to`.
+  // No-op if `xla_dump_to` isn't set, or during autotuning compilations.
+  //
+  // The dumped files are serialized `xla.ExecutableAndOptionsProto` messages,
+  // which contain the binary serialized `xla.gpu.GpuExecutableProto`, in the
+  // `serialized_executable` field.
+  optional bool xla_gpu_experimental_dump_gpu_executable = 427;
+
   // Enable windowed einsum(collective matmul) rewrite for all-to-all + gemm
   // This feature is still experimental and effective only
   // xla_gpu_multi_streamed_windowed_einsum is set to true.
@@ -663,9 +672,6 @@ message DebugOptions {
   // If true, enable heuristic based collective combining.
   optional bool xla_gpu_experimental_enable_heuristic_collective_combining =
       366;
-
-  // If true, enable buffer nan counter on thunks.
-  optional bool xla_gpu_experimental_enable_nan_counter_on_thunks = 423;
 
   // Enable NCCL symmetric buffers.
   optional bool xla_gpu_experimental_enable_nccl_symmetric_buffers = 406;
@@ -986,6 +992,7 @@ message DebugOptions {
   reserved 385;  // xla_gpu_experimental_enable_dynamic_dot_search_space
   reserved "xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms";
   reserved 367;
+  reserved 423;  // xla_gpu_experimental_enable_checksum_tracing_on_thunks
 
   //--------------------------------------------------------------------------//
   // XLA:TPU options.
@@ -1305,6 +1312,14 @@ message DebugOptions {
   // Whether to enable checks for unstable reductions in computations.
   optional UnstableReductionDetectionMode xla_detect_unstable_reductions = 403;
 
+  enum NaNCheckDetectionMode {
+    NAN_CHECK_DETECTION_MODE_NONE = 0;
+    NAN_CHECK_DETECTION_MODE_WARNING = 1;
+    NAN_CHECK_DETECTION_MODE_FAIL = 2;
+  }
+  // Whether to enable checks for NaN values in computations.
+  optional NaNCheckDetectionMode xla_gpu_detect_nan = 426;
+
   reserved 275;  // was xla_gpu_enable_mlir_emitters
   reserved 281;  // was xla_gpu_max_mlir_kernels
   reserved 282;  // was xla_gpu_skip_mlir_kernels
@@ -1398,7 +1413,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 426
+  // Next id: 428
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

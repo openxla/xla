@@ -1,10 +1,11 @@
 load("//xla:py_strict.bzl", "py_strict_test")
 load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
-load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
     "if_llvm_aarch64_available",
     "if_llvm_powerpc_available",
+    "if_llvm_riscv_available",
     "if_llvm_system_z_available",
     "if_llvm_x86_available",
 )
@@ -20,6 +21,26 @@ package_group(
     name = "friends",
     includes = [
         "//xla:friends",
+    ],
+)
+
+cc_library(
+    name = "builtin_definition_generator",
+    srcs = ["builtin_definition_generator.cc"],
+    hdrs = ["builtin_definition_generator.h"],
+    copts = tsl_copts(),
+    deps = [
+        ":builtin_fp16",
+        ":builtin_pow",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:OrcJIT",
+        "@llvm-project//llvm:OrcShared",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:mlir_c_runner_utils",
     ],
 )
 
@@ -145,6 +166,8 @@ xla_cc_test(
         "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
     ]) + if_llvm_powerpc_available([
         "@llvm-project//llvm:PowerPCCodeGen",  # fixdeps: keep
+    ]) + if_llvm_riscv_available([
+        "@llvm-project//llvm:RISCVCodeGen",  # fixdeps: keep
     ]) + if_llvm_system_z_available([
         "@llvm-project//llvm:SystemZCodeGen",  # fixdeps: keep
     ]) + if_llvm_x86_available([
@@ -189,6 +212,8 @@ cc_library(
         "@llvm-project//mlir:AffineToStandard",
         "@llvm-project//mlir:AffineTransforms",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:ArithTransforms",
+        "@llvm-project//mlir:BufferizationTransforms",
         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
         "@llvm-project//mlir:ComplexToStandard",
         "@llvm-project//mlir:ControlFlowDialect",
@@ -207,8 +232,10 @@ cc_library(
         "@llvm-project//mlir:ReconcileUnrealizedCasts",
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:SCFToControlFlow",
+        "@llvm-project//mlir:SCFTransforms",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
+        "@llvm-project//mlir:TensorTransforms",
         "@llvm-project//mlir:ToLLVMIRTranslation",
         "@llvm-project//mlir:Transforms",
         "@llvm-project//mlir:UBToLLVM",
@@ -267,6 +294,8 @@ cc_library(
         "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
     ]) + if_llvm_powerpc_available([
         "@llvm-project//llvm:PowerPCCodeGen",  # fixdeps: keep
+    ]) + if_llvm_riscv_available([
+        "@llvm-project//llvm:RISCVCodeGen",  # fixdeps: keep
     ]) + if_llvm_system_z_available([
         "@llvm-project//llvm:SystemZCodeGen",  # fixdeps: keep
     ]) + if_llvm_x86_available([
@@ -649,7 +678,6 @@ cc_library(
         "//xla/codegen:hlo_fusion_spec",
         "//xla/codegen:ir_emission_utils",
         "//xla/codegen:kernel_definition",
-        "//xla/codegen:kernel_spec",
         "//xla/codegen:mlir_kernel_source",
         "//xla/codegen/emitters:concatenate_kernel_emitter",
         "//xla/codegen/emitters:dynamic_update_slice_kernel_emitter",
@@ -666,7 +694,6 @@ cc_library(
         "//xla/runtime:work_tile_size",
         "//xla/service:buffer_assignment",
         "//xla/service/cpu:backend_config_proto_cc",
-        "//xla/service/gpu:ir_emission_utils",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:inlined_vector",

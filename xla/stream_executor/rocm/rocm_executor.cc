@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/read_numa_node.h"
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/kernel_metadata.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -1074,6 +1075,20 @@ absl::StatusOr<std::unique_ptr<CommandBuffer>>
 RocmExecutor::CreateCommandBuffer(CommandBuffer::Mode mode) {
   VLOG(2) << "Create ROCm command buffer (ROCm graph)";
   return RocmCommandBuffer::Create(mode, this);
+}
+
+int RocmExecutor::GetGpuStreamPriority(StreamPriority priority) {
+  if (priority == StreamPriority::Default) {
+    return 0;
+  }
+  std::unique_ptr<ActivateContext> activation = Activate();
+  int lowest, highest;
+  auto status = wrap::hipDeviceGetStreamPriorityRange(&lowest, &highest);
+  if (status != hipSuccess) {
+    LOG(ERROR) << "Failed to get stream priority range: " << ToString(status);
+    return 0;
+  }
+  return priority == StreamPriority::Highest ? highest : lowest;
 }
 
 absl::StatusOr<std::unique_ptr<DeviceDescription>>

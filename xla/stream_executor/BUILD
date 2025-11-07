@@ -319,8 +319,8 @@ cc_library(
 )
 
 cc_library(
-    name = "numeric_options",
-    hdrs = ["numeric_options.h"],
+    name = "engine_options",
+    hdrs = ["engine_options.h"],
 )
 
 cc_library(
@@ -346,7 +346,7 @@ cc_library(
         ":blas_proto_cc",
         ":data_type",
         ":device_memory",
-        ":numeric_options",
+        ":engine_options",
         ":scratch_allocator",
         ":stream",
         "//xla/tsl/protobuf:dnn_proto_cc",
@@ -367,7 +367,7 @@ cc_library(
         ":data_type",
         ":device_description_proto_cc",
         ":device_memory",
-        ":numeric_options",
+        ":engine_options",
         ":scratch_allocator",
         ":stream",
         "//xla:util",
@@ -581,11 +581,26 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "kernel_metadata",
+    hdrs = ["kernel_metadata.h"],
+)
+
+xla_cc_test(
+    name = "kernel_metadata_test",
+    srcs = ["kernel_metadata_test.cc"],
+    deps = [
+        ":kernel_metadata",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "kernel",
     srcs = ["kernel.cc"],
     hdrs = ["kernel.h"],
     deps = [
         ":device_memory",
+        ":kernel_metadata",
         ":launch_dim",
         ":stream",
         "@com_google_absl//absl/base:core_headers",
@@ -611,6 +626,26 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "kernel_args_packed_vector",
+    hdrs = ["kernel_args_packed_vector.h"],
+    deps = [
+        ":kernel",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "kernel_args_packed_vector_test",
+    srcs = ["kernel_args_packed_vector_test.cc"],
+    deps = [
+        ":kernel_args_packed_vector",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -840,6 +875,7 @@ xla_cc_test(
     deps = [
         ":device_memory",
         ":kernel",
+        ":kernel_metadata",
         ":platform",
         ":platform_manager",
         ":stream_executor_h",

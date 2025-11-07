@@ -21,7 +21,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda/atomic"
 #include "xla/backends/gpu/runtime/buffer_debug_log_structs.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"
-#include "xla/stream_executor/gpu/buffer_debug_nan_count_kernel.h"
+#include "xla/stream_executor/gpu/buffer_debug_float_check_kernel.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/tsl/platform/logging.h"
@@ -123,10 +123,10 @@ __device__ void ReduceSum(const T* input, uint64_t input_size,
 // - Only a single thread block is supported.
 // - Block dimensions must be a power of 2.
 template <typename T>
-__global__ void AppendNanCount(xla::gpu::BufferDebugLogEntryId entry_id,
-                               const T* input, uint64_t input_size_in_bytes,
-                               xla::gpu::BufferDebugLogHeader* log_header,
-                               xla::gpu::BufferDebugLogEntry* log_entries) {
+__global__ void AppendFloatCheck(xla::gpu::BufferDebugLogEntryId entry_id,
+                                 const T* input, uint64_t input_size_in_bytes,
+                                 xla::gpu::BufferDebugLogHeader* log_header,
+                                 xla::gpu::BufferDebugLogEntry* log_entries) {
   const uint32_t block_size = blockDim.x * blockDim.y * blockDim.z;
   const uint64_t input_size = input_size_in_bytes / sizeof(T);
   uint32_t nan_count = 0;
@@ -195,28 +195,24 @@ __global__ void AppendNanCount(xla::gpu::BufferDebugLogEntryId entry_id,
   }
 }
 
-absl::StatusOr<se::KernelLoaderSpec> GetNanCountF32KernelSpec() {
+se::KernelLoaderSpec GetFloatCheckF32KernelSpec(int arity) {
   return se::KernelLoaderSpec::CreateInProcessSymbolSpec(
-      absl::bit_cast<void*>(&AppendNanCount<float>),
-      "BufferDebugNanCountF32Kernel",
-      /*arity=*/5);
+      absl::bit_cast<void*>(&AppendFloatCheck<float>),
+      "BufferDebugFloatCheckF32Kernel", arity);
 }
 
-absl::StatusOr<se::KernelLoaderSpec> GetNanCountBf16KernelSpec() {
+se::KernelLoaderSpec GetFloatCheckBf16KernelSpec(int arity) {
   return se::KernelLoaderSpec::CreateInProcessSymbolSpec(
-      absl::bit_cast<void*>(&AppendNanCount<__nv_bfloat16>),
-      "BufferDebugNanCountBf16Kernel",
-      /*arity=*/5);
+      absl::bit_cast<void*>(&AppendFloatCheck<__nv_bfloat16>),
+      "BufferDebugFloatCheckBf16Kernel", arity);
 }
 
 }  // namespace
 
 GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
-    BufferDebugNanCountF32Kernel, se::gpu::BufferDebugNanCountF32Kernel,
-    se::cuda::kCudaPlatformId,
-    ([](size_t _arity) { return GetNanCountF32KernelSpec().value(); }));
+    BufferDebugFloatCheckF32Kernel, se::gpu::BufferDebugFloatCheckF32Kernel,
+    se::cuda::kCudaPlatformId, GetFloatCheckF32KernelSpec);
 
 GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
-    BufferDebugNanCountBf16Kernel, se::gpu::BufferDebugNanCountBf16Kernel,
-    se::cuda::kCudaPlatformId,
-    ([](size_t _arity) { return GetNanCountBf16KernelSpec().value(); }));
+    BufferDebugFloatCheckBf16Kernel, se::gpu::BufferDebugFloatCheckBf16Kernel,
+    se::cuda::kCudaPlatformId, GetFloatCheckBf16KernelSpec);

@@ -2032,7 +2032,7 @@ ENTRY main {
 // CHECK-SAME: %[[OUT:.*]]: memref<49xf32>
 
 // CHECK: %[[EXTRACT:.*]] = xtile.extract %[[IN]]{{.*}}
-// CHECK: %[[PAD_VALUE:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK: %[[PAD_VALUE:.*]] = arith.constant dense<1.000000e+00> : tensor<f32>
 // CHECK: %[[TILE_OFFSET:.*]] = xla.apply_indexing
 // CHECK: %[[IOTA_VAL:.*]] = stablehlo.iota dim = 0 : tensor<32xi32>
 // CHECK: %[[IOTA:.*]] = stablehlo.broadcast_in_dim %[[IOTA_VAL]], dims = [0] : (tensor<32xi32>) -> tensor<32xi32>
@@ -2042,8 +2042,7 @@ ENTRY main {
 // CHECK: %[[TO_TENSOR_THRESHOLD:.*]] = xtile.to_tensor %[[THRESHOLD]]
 // CHECK: %[[THRESHOLD_SPLAT:.*]] = stablehlo.broadcast_in_dim %[[TO_TENSOR_THRESHOLD]], dims = []
 // CHECK: %[[MASK:.*]] = arith.cmpi slt, %[[IOTA]], %[[THRESHOLD_SPLAT]]
-// CHECK: %[[TO_TENSOR_PAD_VALUE:.*]] = xtile.to_tensor %[[PAD_VALUE]]
-// CHECK: %[[PAD_SPLAT:.*]] = stablehlo.broadcast_in_dim %[[TO_TENSOR_PAD_VALUE]], dims = []
+// CHECK: %[[PAD_SPLAT:.*]] = stablehlo.broadcast_in_dim %[[PAD_VALUE]], dims = []
 // CHECK: %[[SELECT:.*]] = arith.select %[[MASK]], %[[EXTRACT]], %[[PAD_SPLAT]]
 
 // CHECK:   xtile.insert %[[SELECT]] into %[[OUT]]
@@ -3083,8 +3082,7 @@ ENTRY entry_computation {
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
       CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
-CHECK:     tensor.extract %{{.*}}[%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}] : tensor<1x1x1x1xf32>
-CHECK:     tensor.extract %{{.*}}[%{{.*}}] : tensor<1xf32>
+CHECK:     stablehlo.reshape {{.*}} : (tensor<1x1x1x1xf32>) -> tensor<f32>
 CHECK:     xtile.insert {{.*}} : tensor<f32>
 )"));
 
@@ -4787,6 +4785,12 @@ class TritonScaledDotGemmTest
     debug_options.set_xla_gpu_cublas_fallback(false);
     debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
         DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_DISABLE_LEGACY_GEMM);
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_OPS_IN_GEMM_FUSION);
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_GEMM_SHAPES);
     return debug_options;
   }
 };
@@ -4885,7 +4889,7 @@ ENTRY e {
     calls=triton_dot,
     backend_config={
       "fusion_backend_config": {
-        kind: "__triton_scaled_dot_fusion",
+        kind: "__triton_nested_gemm_fusion",
         "block_level_fusion_config":{
           "output_tiles":[{"sizes":["128", "256"]}],
           "num_warps":"4",
@@ -4911,16 +4915,8 @@ ENTRY e {
   auto expected_triton_ir = absl::StrReplaceAll(
       kExpectedTritonIrTmpl, {{"$triton_type", params.expected_triton_type}});
   EXPECT_THAT(
-      CreateTritonIrAndFileCheck(*module->GetComputationWithName("triton_dot"),
-                                 /*block_level_parameters=*/
-                                 {
-                                     {{128, 256}},
-                                     4,
-                                     1,
-                                     1,
-                                     true,
-                                 },
-                                 expected_triton_ir),
+      CreateTritonIrAndFileCheckForDot(
+          *module->GetComputationWithName("triton_dot"), expected_triton_ir),
       absl_testing::IsOk());
   if (GetCudaComputeCapability().IsAtLeastBlackwell()) {
     CompileAndOptionallyVerifyPtx(
@@ -5049,16 +5045,8 @@ ENTRY e {
       CHECK: tensor<128x16xf8E4M3FN>, tensor<16x4xi8>
       CHECK: -> tensor<16x16xf32>
   )";
-  EXPECT_THAT(CreateTritonIrAndFileCheck(*scaled_dot_computation,
-                                         /*block_level_parameters=*/
-                                         {
-                                             {{1, 16, 16}},
-                                             4,
-                                             1,
-                                             1,
-                                             false,
-                                         },
-                                         kExpectedTritonIr),
+  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(*scaled_dot_computation,
+                                               kExpectedTritonIr),
               absl_testing::IsOk());
 
   EXPECT_TRUE(RunAndCompareNoHloPasses(
@@ -5106,16 +5094,8 @@ ENTRY e {
       CHECK: tensor<128x16xf8E4M3FN>, tensor<16x4xi8>
       CHECK: -> tensor<16x16xf32>
   )";
-  EXPECT_THAT(CreateTritonIrAndFileCheck(*scaled_dot_computation,
-                                         /*block_level_parameters=*/
-                                         {
-                                             {{1, 16, 16}},
-                                             4,
-                                             1,
-                                             1,
-                                             false,
-                                         },
-                                         kExpectedTritonIr),
+  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(*scaled_dot_computation,
+                                               kExpectedTritonIr),
               absl_testing::IsOk());
 
   EXPECT_TRUE(RunAndCompareNoHloPasses(
@@ -5179,16 +5159,8 @@ ENTRY e {
       CHECK: tensor<128x16xf8E4M3FN>, tensor<16x4xi8>
       CHECK: -> tensor<16x16xf32>
   )";
-  EXPECT_THAT(CreateTritonIrAndFileCheck(*scaled_dot_computation,
-                                         /*block_level_parameters=*/
-                                         {
-                                             {{1, 16, 16}},
-                                             4,
-                                             1,
-                                             1,
-                                             false,
-                                         },
-                                         kExpectedTritonIr),
+  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(*scaled_dot_computation,
+                                               kExpectedTritonIr),
               absl_testing::IsOk());
 
   EXPECT_TRUE(RunAndCompareNoHloPasses(

@@ -80,6 +80,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/kernel_metadata.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -1767,6 +1768,35 @@ absl::StatusOr<MemoryType> CudaExecutor::GetPointerMemorySpace(
       return absl::InternalError(
           absl::StrCat("unknown memory space provided by CUDA API: ", value));
   }
+}
+
+int CudaExecutor::GetGpuStreamPriority(StreamPriority priority) {
+  if (priority == StreamPriority::Default) {
+    return 0;
+  }
+
+  absl::call_once(stream_priority_once_, [this]() {
+    std::unique_ptr<ActivateContext> activation = Activate();
+    int lowest = 0;
+    int highest = 0;
+    absl::Status status =
+        cuda::ToStatus(cuCtxGetStreamPriorityRange(&lowest, &highest));
+    if (!status.ok()) {
+      LOG(ERROR) << "Could not query stream priority range. Returning default "
+                    "priority.";
+      stream_priority_query_ok_ = false;
+      return;
+    }
+    stream_priority_lowest_ = lowest;
+    stream_priority_highest_ = highest;
+    stream_priority_query_ok_ = true;
+  });
+
+  if (!stream_priority_query_ok_) {
+    return 0;
+  }
+  return priority == StreamPriority::Highest ? stream_priority_highest_
+                                             : stream_priority_lowest_;
 }
 
 absl::StatusOr<const CudaKernel*> CudaExecutor::GetCudaKernel(

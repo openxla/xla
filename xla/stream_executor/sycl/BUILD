@@ -12,7 +12,7 @@ load(
     "stream_executor_friends",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
+load("//xla/tsl:tsl.bzl", "if_oss", "internal_visibility", "tsl_copts")
 load("//xla/tsl/platform:build_config_root.bzl", "if_static")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -82,7 +82,7 @@ cc_library(
 
 cc_library(
     name = "sycl_rpath",
-    linkopts = ["-Wl,-rpath,../local_config_sycl/sycl/sycl/lib"],
+    linkopts = if_oss(["-Wl,-rpath,../local_config_sycl/sycl/sycl/lib"]),
 )
 
 cc_library(
@@ -130,11 +130,7 @@ cc_library(
     name = "sycl_solver_context",
     srcs = ["sycl_solver_context.cc"],
     hdrs = ["sycl_solver_context.h"],
-    tags = [
-        "gpu",
-        "manual",
-        "oneapi-only",
-    ],
+    tags = ["gpu"],
     deps = [
         ":sycl_platform_id",
         "//xla:xla_data_proto_cc",
@@ -157,8 +153,16 @@ sycl_library(
         "oneapi-only",
     ],
     deps = [
+        "//xla/stream_executor:kernel",
+        "//xla/stream_executor:kernel_metadata",
+        "//xla/stream_executor:launch_dim",
+        "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
     ],
 )
