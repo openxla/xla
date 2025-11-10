@@ -5565,7 +5565,9 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
       RunOptimizer(module.get(), /*last_run=*/false, 0,
                    /*pipeline_use_tree=*/true,
                    /*process_different_sized_ops=*/true,
+                   /*direction=*/
                    collective_pipeliner_utils::PipeliningDirection::kForward,
+                   /*should_process=*/
                    host_offload_utils::IsHostOffloadingInstruction)
           .value());
   XLA_VLOG_LINES(1, "After forward pipelining:\n" + module->ToString());
@@ -5574,7 +5576,9 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
       RunOptimizer(module.get(), /*last_run=*/true, 0,
                    /*pipeline_use_tree=*/true,
                    /*process_different_sized_ops=*/true,
+                   /*direction=*/
                    collective_pipeliner_utils::PipeliningDirection::kBackward,
+                   /*should_process=*/
                    host_offload_utils::IsHostOffloadingInstruction)
           .value());
   XLA_VLOG_LINES(1, "After backward pipelining:\n" + module->ToString());
@@ -5587,15 +5591,16 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
   }
   ASSERT_EQ(while_loops.size(), 2) << "Expected 2 while loops in the module";
 
-  std::set<std::set<int64_t>> expected_dynamic_sets = {{5, 0}, {8, 0}};
-  std::set<std::set<int64_t>> actual_dynamic_sets;
+  absl::flat_hash_set<absl::flat_hash_set<int64_t>> expected_dynamic_sets = {
+      {5, 0}, {8, 0}};
+  absl::flat_hash_set<absl::flat_hash_set<int64_t>> actual_dynamic_sets;
 
   for (auto* while_loop : while_loops) {
     TF_ASSERT_OK_AND_ASSIGN(
         WhileLoopBackendConfig config,
         while_loop->backend_config<WhileLoopBackendConfig>());
 
-    std::set<int64_t> dynamic_indices(
+    absl::flat_hash_set<int64_t> dynamic_indices(
         config.dynamic_variable_tuple_indices().begin(),
         config.dynamic_variable_tuple_indices().end());
     actual_dynamic_sets.insert(dynamic_indices);
