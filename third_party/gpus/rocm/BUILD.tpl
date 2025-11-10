@@ -140,7 +140,7 @@ cc_library(
     name = "rocm_rpath",
     linkopts = select({
         ":build_hermetic": [
-            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib:external/local_config_rocm/rocm",
         ],
         ":multiple_rocm_paths": [
             "-Wl,-rpath=%{rocm_lib_paths}",
@@ -200,7 +200,6 @@ cc_library(
             "%{rocm_root}/lib/libamdhip*.so*",
             "%{rocm_root}/lib/libhiprtc.so*",
             "%{rocm_root}/lib/libhiprtc-builtins.so*",
-            "%{rocm_root}/lib/libamd_comgr.so*",
         ],
         exclude = [
             # exclude files like libamdhip64.so.7.1.25445-7484b05b13 -> misplaced
@@ -217,6 +216,7 @@ cc_library(
     deps = [
         ":amd_comgr",
         ":rocm_config",
+        ":rocm_rpath",
         ":rocprofiler_register",
         ":system_libs",
     ],
@@ -322,6 +322,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":rocm_config",
+        ":roctracer",
         ":system_libs",
     ],
 )
@@ -371,11 +372,11 @@ cc_library(
 
 cc_library(
     name = "roctracer",
-    hdrs = glob(["%{rocm_root}/include/roctracer/**"]),
-    data = glob([
+    srcs = glob([
         "%{rocm_root}/lib/libroctracer*.so*",
         "%{rocm_root}/lib/libroctx64.so*",
     ]),
+    hdrs = glob(["%{rocm_root}/include/roctracer/**"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -524,17 +525,76 @@ cc_library(
 )
 
 cc_library(
+    name = "llvm_static",
+    srcs = glob(["%{rocm_root}/llvm/lib/libLLVM*.a"]),
+    alwayslink = True,
+)
+
+genrule(
+    name = "hide_llvm_map",
+    outs = ["hide_llvm.map"],
+    cmd = """
+      echo '{' > $@
+             echo 'global:' >> $@
+             echo '_init;' >> $@
+             echo '_fini;' >> $@
+             echo 'local:' >> $@
+             echo '*LLVM*;' >> $@
+             echo '*llvm*;' >> $@
+             echo '*clang*;' >> $@
+             echo '*mlir*;' >> $@
+             echo '*;' >> $@
+      echo '};' >> $@
+    """,
+)
+
+cc_binary(
+    name = "libLLVM.so.22.0git",
+    data = [
+        ":hide_llvm_map",
+    ],
+    linkopts = [
+        "-Wl,--whole-archive",
+        # Bazel will expand the static archives; if not, list explicitly via cc_library
+        "-Wl,--no-whole-archive",
+        "-Wl,--exclude-libs,ALL",
+        "-Wl,-Bsymbolic",
+        "-Wl,-Bsymbolic-functions",
+        "-Wl,--version-script=$(location :hide_llvm_map)",
+        "-Wl,-soname,libLLVM.so.22.0git",
+    ],
+    linkshared = 1,
+    linkstatic = 1,
+    deps = [":llvm_static"],
+)
+
+cc_library(
+    name = "llvm_lib",
+    srcs = [":libLLVM.so.22.0git"],
+)
+
+cc_library(
     name = "amd_comgr",
-    srcs = glob([
-        "%{rocm_root}/lib/libamd_comgr.so*",
-    ]),
+    srcs = glob(
+        [
+            "%{rocm_root}/lib/libamd_comgr.so*",
+            "%{rocm_root}/lib/libamd_comgr_loader.so*",
+        ],
+        exclude = [
+            # exclude files like libamdhip64.so.7.1.25445-7484b05b13 -> misplaced
+            "%{rocm_root}/**/*.so.*.*",
+        ],
+    ),
     hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
     ],
     strip_include_prefix = "%{rocm_root}",
-    deps = [":rocm_config"],
+    deps = [
+        ":llvm_lib",
+        ":rocm_config",
+    ],
 )
 
 cc_library(
@@ -558,13 +618,10 @@ cc_library(
 cc_library(
     name = "system_libs",
     srcs = glob([
-        "rocm_dist/usr/lib/**/libelf.so*",
-        "rocm_dist/usr/lib/**/libdrm.so*",
-        "rocm_dist/usr/lib/**/libnuma.so*",
-        "rocm_dist/usr/lib/**/libdrm_amdgpu.so*",
+        "%{rocm_root}/lib/rocm_sysdeps/lib/*.so*",
     ]),
     data = glob([
-        "rocm_dist/usr/**",
+        "%{rocm_root}/lib/rocm_sysdeps/share/**",
     ]),
 )
 
