@@ -291,12 +291,16 @@ absl::StatusOr<bool> TritonEmitterConstraints::ParametersSatisfyConstraints(
   // 2. Poor instruction cache utilization
   // 3. Terrible memory access patterns
   // 4. High kernel launch overhead
-  if (absl::c_any_of(tile_size_maps_, [&](const auto& tile_size_map) {
-        return NumberOfElementsInPaddedTile(tile_size_map, tile_parameters) <
-               kMinReasonableTileSize;
-      })) {
-    VLOG(2) << "Found a tile with fewer than " << kMinReasonableTileSize
-            << " elements. Bailing out.";
+  //
+  // We check the root tile sizes (not intermediate tiles in the fusion).
+  int64_t root_tile_product = 1;
+  for (int64_t size : tile_parameters) {
+    root_tile_product *= size;
+  }
+  if (root_tile_product < kMinReasonableTileSize) {
+    VLOG(2) << "Root tile size product (" << root_tile_product
+            << ") is smaller than minimum reasonable size ("
+            << kMinReasonableTileSize << "). Bailing out.";
     return false;
   }
 
