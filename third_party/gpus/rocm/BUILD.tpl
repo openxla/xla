@@ -163,11 +163,18 @@ cc_library(
 
 cc_library(
     name = "rocm_hip",
-    srcs = glob([
-        "%{rocm_root}/lib/libamdhip*.so",
-        "%{rocm_root}/lib/libhiprtc.so",
-        "%{rocm_root}/lib/libhiprtc-builtins.so",
-    ]),
+    srcs = glob(
+        [
+            "%{rocm_root}/lib/libamdhip*.so*",
+            "%{rocm_root}/lib/libhiprtc.so*",
+            "%{rocm_root}/lib/libhiprtc-builtins.so*",
+            "%{rocm_root}/lib/libamd_comgr.so*",
+        ],
+        exclude = [
+            # exclude files like libamdhip64.so.7.1.25445-7484b05b13 -> misplaced
+            "%{rocm_root}/**/*.so.*.*",
+        ],
+    ),
     hdrs = glob(["%{rocm_root}/include/hip/**"]),
     include_prefix = "rocm",
     includes = [
@@ -188,12 +195,18 @@ cc_library(
 # Used by jax_rocm_plugin to minimally link to hip runtime.
 cc_library(
     name = "hip_runtime",
-    srcs = glob([
-        "%{rocm_root}/lib/libamdhip*.so",
-        "%{rocm_root}/lib/libhiprtc.so",
-        "%{rocm_root}/lib/libhiprtc-builtins.so",
-        "%{rocm_root}/lib/libamd_comgr.so",
-    ]),
+    srcs = glob(
+        [
+            "%{rocm_root}/lib/libamdhip*.so*",
+            "%{rocm_root}/lib/libhiprtc.so*",
+            "%{rocm_root}/lib/libhiprtc-builtins.so*",
+            "%{rocm_root}/lib/libamd_comgr.so*",
+        ],
+        exclude = [
+            # exclude files like libamdhip64.so.7.1.25445-7484b05b13 -> misplaced
+            "%{rocm_root}/**/*.so.*.*",
+        ],
+    ),
     hdrs = glob(["%{rocm_root}/include/hip/**"]),
     include_prefix = "rocm",
     includes = [
