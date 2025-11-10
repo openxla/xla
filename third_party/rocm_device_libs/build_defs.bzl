@@ -56,6 +56,7 @@ def _bitcode_library_impl(ctx):
                 outputs = [out],
                 arguments = args,
                 progress_message = "Compiling {} → bitcode".format(src.basename),
+                mnemonic = "RocmBitCodeCompile",
             )
 
         elif src.path.endswith(".ll"):
@@ -70,6 +71,7 @@ def _bitcode_library_impl(ctx):
         outputs = [prelink_out],
         arguments = [f.path for f in bc_outputs] + ["-o", prelink_out.path],
         progress_message = "Linking {} bitcode files".format(ctx.label.name),
+        mnemonic = "RocmBitCodeLink",
     )
 
     # Internalize symbols (llvm-link + -internalize)
@@ -80,6 +82,7 @@ def _bitcode_library_impl(ctx):
         outputs = [internalize_out],
         arguments = ["-internalize", "-only-needed", prelink_out.path, "-o", internalize_out.path],
         progress_message = "Internalizing symbols for {}".format(ctx.label.name),
+        mnemonic = "RocmBitCodeInternalizingSymbols",
     )
 
     # Strip unnecessary metadata
@@ -90,6 +93,7 @@ def _bitcode_library_impl(ctx):
         outputs = [strip_out],
         arguments = ["-passes=strip", "-o", strip_out.path, internalize_out.path],
         progress_message = "Stripping {}".format(ctx.label.name),
+        mnemonic = "RocmBitCodeStripping",
     )
 
     # Final preparation of bitcode (custom prepare_builtins tool)
@@ -100,6 +104,7 @@ def _bitcode_library_impl(ctx):
         outputs = [final_bc],
         arguments = [strip_out.path, "-o", final_bc.path],
         progress_message = "Preparing final bitcode for {}".format(ctx.label.name),
+        mnemonic = "RocmBitCodeFinalize",
     )
 
     return [
