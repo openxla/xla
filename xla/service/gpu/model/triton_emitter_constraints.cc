@@ -70,6 +70,11 @@ constexpr int64_t kMaxTensorNumElements = 1048576;
 // Also for MMA instruction we don't want tiles greater than 256.
 constexpr int64_t kMaxMMADimSize = 256;
 
+// Filter by checking the product of tile dimensions - a tile with
+// product < 16 elements cannot saturate even half a warp and will have
+// terrible performance characteristics on GPUs.
+constexpr int64_t kMinReasonableTileSize = 16;
+
 llvm::SmallVector<int64_t> GetPaddedTileSizes(
     llvm::SmallVector<int64_t> tile_sizes) {
   llvm::SmallVector<int64_t> result;
@@ -280,6 +285,21 @@ bool NumberOfBlocksFitsOnDeviceGrid(const Shape& output_shape,
 
 absl::StatusOr<bool> TritonEmitterConstraints::ParametersSatisfyConstraints(
     absl::Span<const int64_t> tile_parameters) const {
+  // Filter out pathologically small tiles that lead to poor performance.
+  // Tiles with very small dimensions (especially [1,1]) cause:
+  // 1. Massive number of thread blocks overwhelming the Triton scheduler
+  // 2. Poor instruction cache utilization
+  // 3. Terrible memory access patterns
+  // 4. High kernel launch overhead
+  if (absl::c_any_of(tile_size_maps_, [&](const auto& tile_size_map) {
+        return NumberOfElementsInPaddedTile(tile_size_map, tile_parameters) <
+               kMinReasonableTileSize;
+      })) {
+    VLOG(2) << "Found a tile with fewer than " << kMinReasonableTileSize
+            << " elements. Bailing out.";
+    return false;
+  }
+
   // Verify that the tile sizes are not too big.
   if (absl::c_any_of(tile_size_maps_, [&](const auto& tile_size_map) {
         return NumberOfElementsInPaddedTile(tile_size_map, tile_parameters) >
