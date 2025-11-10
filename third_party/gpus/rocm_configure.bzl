@@ -541,6 +541,11 @@ def _setup_rocm_distro_dir(repository_ctx):
         redist = rocm_redist[rocm_distro]
         repository_ctx.file("rocm/.index")
         _download_package(repository_ctx, redist)
+        if redist.rocm_device_lib_path:
+            repository_ctx.symlink(
+                "{}/{}".format(_DISTRIBUTION_PATH, redist.rocm_device_lib_path),
+                "{}/{}".format(_DISTRIBUTION_PATH, "amdgcn"),
+            )
         return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH, "")
     elif multiple_paths:
         paths_list = multiple_paths.split(":")
