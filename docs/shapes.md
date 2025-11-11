@@ -1,11 +1,36 @@
 # Shapes and layout
 
+## Structure of an XLA Op
+
+Consider an example Op:
+
+```
+%fusion.3 = bf16[32,32,4096]{2,1,0:T(8,128)(2,1)S(1)} fusion(bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)} %fusion.32), kind=kCustom, calls=%all-reduce-scatter.3
+```
+
+This consists on the following main components:
+
+* Op Name: `fusion.3`
+  * A dot or fusion op is a set of operations containing at most 1 matrix multiplication and possibly a bunch of related pointwise VPU-ops.
+* Shape: `bf16[32,32,4096]`
+  * This is the output shape of the op. Here the dtype is bf16 (2 bytes per parameter) and the shape is `[32,32,4096]`. More details in the following sections.
+* Layout (with Tiling): `{2,1,0:T(8,128)(2,1)}`
+  * This describes how the array is stored in memory. More details in the following sections.
+  * `2,1,0` denotes the order of the axes in memory (column major, row major, etc.).
+  * `T(8,128)(2,1)` denotes the tiling & padding used. Learn more in [Tiled Layout](tiled_layout.md).
+* Memory location: `S(1)`
+  * `S(1)` denotes this array lives in VMEM. More details at the end of page.
+* Arguments:`bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)} %fusion.32`
+  * This op has one input, a bf16 array called `fusion.32` with a particular shape (as well as layout, tiling, and memory location): ` bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)}`. This tells us what function feeds into this one.
+
+## Shapes
+
 The XLA `ShapeProto` proto
 ([xla_data.proto](https://github.com/openxla/xla/tree/main/xla/xla_data.proto))
 describes the number of dimensions, size, and data type of an N-dimensional
 array (*array* in short).
 
-## Terminology, notation, and conventions
+### Terminology, notation, and conventions
 
 NOTE: in the past, XLA has used the term "rank" to mean the number of dimensions
 of an array. We have stopped this usage as it's inconsistent with the matrix
@@ -137,3 +162,12 @@ index for each dimension. Linear indices are a single `int64` value which
 indexes into the buffer holding the array. See `shape_util.h` and
 `layout_util.h` in the same directory for utilities that simplify creation and
 manipulation of shapes and layouts.
+
+## Memory Space Identifiers
+
+In HLO, each array may be annotated with a memory space identifier, written as S(n).
+
+* `S(0)` (often omitted) denotes device high bandwidth memory (HBM).
+* `S(1)` represents on device virtual memory (VMEM).
+* `S(2)`, `S(3)`, etc., correspond to additional device specific memory spaces.
+* `S(5)` indicates host memory.
