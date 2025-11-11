@@ -13,6 +13,8 @@ arbitrary-dimensional array. For convenience, special cases have more specific
 and familiar names; for example a *vector* is a 1-dimensional array and a
 *matrix* is a 2-dimensional array.
 
+Learn more about the structure of an Op in [_Shapes and layout_](shapes.md) and [_Tiled Layout_](tiled_layout.md).
+
 ## Abs
 
 See also
