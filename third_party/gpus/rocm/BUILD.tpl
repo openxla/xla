@@ -542,6 +542,7 @@ cc_library(
     deps = [
         ":rocm_config",
         ":rocm_rpath",
+        ":system_libs",
     ],
 )
 
