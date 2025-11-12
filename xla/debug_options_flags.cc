@@ -103,7 +103,8 @@ absl::StatusOr<std::vector<RepeatedFlagModifier>> ParseRepeatedEnumModifiers(
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
+                                   T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -477,8 +478,15 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_keep_shardings_after_spmd(false);
   opts.set_xla_gpu_experimental_enable_checksum_tracing_on_thunks(false);
+<<<<<<< HEAD
   opts.set_xla_gpu_detect_nan(DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_gpu_detect_inf(DebugOptions::DETECTION_MODE_NONE);
+=======
+  opts.set_xla_gpu_detect_nan(DebugOptions::NAN_CHECK_DETECTION_MODE_NONE);
+
+  // maximum number of events to be traced, default to 4M
+  opts.set_xla_gpu_rocm_max_trace_events(4 * 1024 * 1024);
+>>>>>>> 9c560a62d1 (update with a flag to configure maximum number of trace events)
   return opts;
 }
 
@@ -2707,6 +2715,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_experimental_enable_fusion_autotuner),
       debug_options->xla_gpu_experimental_enable_fusion_autotuner(),
       "Enable autotuning between the native & triton fusion emitters."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_rocm_max_trace_events",
+      int64_setter_for(&DebugOptions::set_xla_gpu_rocm_max_trace_events),
+      debug_options->xla_gpu_rocm_max_trace_events(),
+      "Maximum number of ROCm trace events (applies to callback/activity/"
+      "annotation). Set as high as memory allows; up to 1e9."));
 
   auto setter_for_xla_gpu_detect_nan =
       [debug_options, detection_mode](const std::string& value) {
