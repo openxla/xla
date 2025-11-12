@@ -537,7 +537,12 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
-    linkopts = ["-lamd_comgr_loader"],
+    linkopts = select({
+        ":build_hermetic": [
+            "-lamd_comgr_loader",
+        ],
+        "//conditions:default": [],
+    }),
     strip_include_prefix = "%{rocm_root}",
     deps = [
         ":rocm_config",
