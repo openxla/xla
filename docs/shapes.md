@@ -2,26 +2,30 @@
 
 ## Structure of an XLA Op
 
-Consider an example Op:
+Consider an example HLO:
 
 ```
-%fusion.3 = bf16[32,32,4096]{2,1,0:T(8,128)(2,1)S(1)} fusion(bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)} %fusion.32), kind=kCustom, calls=%all-reduce-scatter.3
+%fusion.3 = bf16[32,32,4096]{2,1,0:T(8,128)(2,1)S(1)}
+            fusion(bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)} %fusion.32),
+            kind=kCustom, calls=%all-reduce-scatter.3
 ```
 
-This consists on the following main components:
+This consists on the following components:
 
-* Op Name: `fusion.3`
-  * A dot or fusion op is a set of operations containing at most 1 matrix multiplication and possibly a bunch of related pointwise VPU-ops.
+* Op Name: `%fusion.3`
+  * This is the unique name for the operation. Here, the name indicates this is a fusion operation (which combines multiple operations into a single kernel). Learn more about other ops in [Operation Semantics](operation_semantics.md).
 * Shape: `bf16[32,32,4096]`
-  * This is the output shape of the op. Here the dtype is bf16 (2 bytes per parameter) and the shape is `[32,32,4096]`. More details in the following sections.
+  * This is the output shape of the op. Here the dtype is bf16 (2 bytes per parameter) and the shape is `[32,32,4096]`. The following sections have more details about Shape.
 * Layout (with Tiling): `{2,1,0:T(8,128)(2,1)}`
-  * This describes how the array is stored in memory. More details in the following sections.
-  * `2,1,0` denotes the order of the axes in memory (column major, row major, etc.).
-  * `T(8,128)(2,1)` denotes the tiling & padding used. Learn more in [Tiled Layout](tiled_layout.md).
-* Memory location: `S(1)`
-  * `S(1)` denotes this array lives in VMEM. More details at the end of page.
-* Arguments:`bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)} %fusion.32`
+  * This describes how the array is stored in memory. `2,1,0` denotes the order of the axes in memory (column major, row major, etc.) and `T(8,128)(2,1)` denotes the tiling & padding used. The following sections have more details about Layout, you can also learn more in [Tiled Layout](tiled_layout.md).
+  * This is optional. If not specified, there is no tiling and the dimensions are assumed to be ordered from most-major to most-minor.
+* Memory location (memory space identifier): `S(1)`
+  * This denotes the memory space/location where the array is stored. `S(1)` denotes this array lives in VMEM (on a TPU). More [memory space identifiers are listed below](#memory-space-identifiers).
+* Arguments: `bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)} %fusion.32`
   * This op has one input, a bf16 array called `fusion.32` with a particular shape (as well as layout, tiling, and memory location): ` bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)}`. This tells us what function feeds into this one.
+* Attributes:
+  * `kind=kCustom`: This describes the "kind" of fusion operation, `kCustom` denotes this is a custom or composite operation.
+  * `calls=%all-reduce-scatter.3` : This describes the computation that will be called for this fusion operation.
 
 ## Shapes
 
