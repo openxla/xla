@@ -525,23 +525,21 @@ cc_library(
 
 cc_library(
     name = "amd_comgr",
-    srcs = glob(
-        [
-            "%{rocm_root}/lib/libamd_comgr.so*",
-            "%{rocm_root}/lib/libamd_comgr_loader.so*",
-            "%{rocm_root}/lib/llvm/lib/libLLVM.so*",
-        ],
-        exclude = [
-            "%{rocm_root}/**/*.so.*.*",
-        ],
-    ),
     hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
+    data = glob([
+        "%{rocm_root}/lib/libamd_comgr_loader.so*",
+        "%{rocm_root}/lib/libLLVM.so*",
+        "%{rocm_root}/lib/libamd_comgr.so*",
+    ]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
     ],
     strip_include_prefix = "%{rocm_root}",
-    deps = [":rocm_config"],
+    deps = [
+        ":rocm_config",
+        ":rocm_rpath",
+    ],
 )
 
 cc_library(
