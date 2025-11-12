@@ -141,6 +141,7 @@ cc_library(
     linkopts = select({
         ":build_hermetic": [
             "-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib",
+            "-Lexternal/local_config_rocm/rocm/%{rocm_root}/lib",
         ],
         ":multiple_rocm_paths": [
             "-Wl,-rpath=%{rocm_lib_paths}",
@@ -226,6 +227,7 @@ cc_library(
     hdrs = glob(["%{rocm_root}/include/rocblas/**"]),
     data = glob([
         "%{rocm_root}/lib/librocblas*.so*",
+        "%{rocm_root}/lib/librocroller*.so*",
         "%{rocm_root}/lib/rocblas/**",
     ]),
     include_prefix = "rocm",
@@ -528,13 +530,14 @@ cc_library(
     hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
     data = glob([
         "%{rocm_root}/lib/libamd_comgr_loader.so*",
-        "%{rocm_root}/lib/libLLVM.so*",
         "%{rocm_root}/lib/libamd_comgr.so*",
+        "%{rocm_root}/lib/libLLVM.so*",
     ]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
     ],
+    linkopts = ["-lamd_comgr_loader"],
     strip_include_prefix = "%{rocm_root}",
     deps = [
         ":rocm_config",
