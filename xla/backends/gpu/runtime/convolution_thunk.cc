@@ -107,13 +107,6 @@ absl::Status ConvolutionThunk::Initialize(const InitializeParams& params) {
     result_se_buffers.push_back(buffer_allocations.GetDeviceAddress(buffer));
   }
 
-  se::DeviceMemoryBase scratch =
-      buffer_allocations.GetDeviceAddress(scratch_buffer_);
-
-  bool runner_created = false;
-  RunConvOptions opts;
-  opts.runner_cache = &GetOrCreateRunner(params.stream, &runner_created);
-
   if (runner_created && params.stream->parent()
                             ->GetDeviceDescription()
                             .gpu_compute_capability()
