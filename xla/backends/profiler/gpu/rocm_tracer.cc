@@ -131,7 +131,7 @@ bool RocmTracer::IsAvailable() const {
 
 void RocmTracer::Enable(const RocmTracerOptions& options,
                         RocmTraceCollector* collector) {
-  absl::MutexLock lock(&collector_mutex_);
+  absl::MutexLock lock(collector_mutex_);
   if (collector_ != nullptr) {
     LOG(WARNING) << "ROCM tracer is already running!";
     return;
