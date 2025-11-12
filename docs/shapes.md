@@ -13,7 +13,7 @@ Consider an example HLO:
 This consists on the following components:
 
 * Op Name: `%fusion.3`
-  * This is the unique name for the operation. Here, the name indicates this is a fusion operation (which combines multiple operations into a single kernel). Learn more about other ops in [Operation Semantics](operation_semantics.md).
+  * This is the unique name for the operation. Here, the name indicates this is a fusion operation (which combines multiple operations into a single kernel). The `%` sign is part of the name, and may or may not be present in all operations. Learn about other Ops in [Operation Semantics](operation_semantics.md).
 * Shape: `bf16[32,32,4096]`
   * This is the output shape of the op. Here the dtype is bf16 (2 bytes per parameter) and the shape is `[32,32,4096]`. The following sections have more details about Shape.
 * Layout (with Tiling): `{2,1,0:T(8,128)(2,1)}`
