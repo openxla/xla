@@ -1432,6 +1432,9 @@ message DebugOptions {
   // interpretation of these values is left to the backend.
   map<string, string> xla_backend_extra_options = 500;
 
+  // rocm max trace events
+  int64 xla_gpu_rocm_max_trace_events = 505;
+
   // Reserved tags were xla_hlo_dump_as_graphdef, xla_dump_to,
   // xla_gpu_use_horizontal_fusion,
   // xla_gpu_unsafe_fallback_to_driver_on_ptxas_error,
