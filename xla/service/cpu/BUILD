@@ -52,7 +52,6 @@ filegroup(
     name = "runtime_srcs",
     srcs = [
         # Single-threaded support.
-        "runtime_custom_call_status.cc",
         "runtime_key_value_sort.cc",
         "runtime_single_threaded_conv2d.cc",
         "runtime_single_threaded_conv3d.cc",
@@ -85,7 +84,6 @@ filegroup(
     name = "runtime_hdrs",
     srcs = [
         # Single-threaded support.
-        "runtime_custom_call_status.h",
         "runtime_key_value_sort.h",
         "runtime_single_threaded_conv2d.h",
         "runtime_single_threaded_conv3d.h",
@@ -1080,18 +1078,6 @@ cc_library(
 )
 
 cc_library(
-    name = "runtime_custom_call_status",
-    srcs = ["runtime_custom_call_status.cc"],
-    hdrs = ["runtime_custom_call_status.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla/service:custom_call_status_internal",
-        "@com_google_absl//absl/base:core_headers",
-    ],
-)
-
-cc_library(
     name = "runtime_matmul",
     srcs = [
         "runtime_matmul_c128.cc",
@@ -1221,30 +1207,6 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
-    ],
-)
-
-xla_cc_test(
-    name = "cpu_runtime_test",
-    srcs = ["cpu_runtime_test.cc"],
-    shard_count = 10,
-    tags = ["optonly"],
-    deps = [
-        ":cpu_runtime",
-        ":runtime_custom_call_status",
-        ":runtime_matmul",
-        ":runtime_single_threaded_matmul",
-        "//xla:array2d",
-        "//xla:executable_run_options",
-        "//xla:types",
-        "//xla/client:local_client",
-        "//xla/service:custom_call_status_internal",
-        "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/strings:str_format",
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:test",
     ],
 )
 

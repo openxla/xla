@@ -13,29 +13,29 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <memory>
 #include <optional>
 #include <utility>
 
+#include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/ValueRange.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "xla/backends/gpu/codegen/triton/transforms/passes.h"
-#include "xla/codegen/xtile/ir/xtile_ops.h"
+#include "xla/codegen/xtile/ir/transforms/passes.h"  // IWYU pragma: keep
 
-namespace mlir::triton::xla {
+namespace xla::xtile {
 
-#define GEN_PASS_DEF_TRITONXLACONVERT0DTENSORTOSCALARPASS
-#include "xla/backends/gpu/codegen/triton/transforms/passes.h.inc"
+#define GEN_PASS_DEF_CONVERTELEMENTWISE0DTENSORTOSCALARPASS
+#include "xla/codegen/xtile/ir/transforms/passes.h.inc"
 
 namespace {
 
@@ -53,10 +53,16 @@ struct ElementwiseConverter
       return rewriter.notifyMatchFailure(op, "failed to convert type");
     }
 
-    mlir::Operation* new_op = Operation::create(
-        op->getLoc(), op->getName(), new_result_types, operands, op->getAttrs(),
-        op->getPropertiesStorage(), op->getSuccessors(), op->getNumRegions());
-    rewriter.replaceOp(op, rewriter.insert(new_op));
+    mlir::IRMapping mapping;
+    mapping.map(op->getOperands(), operands);
+    mlir::Operation* new_op = rewriter.clone(*op, mapping);
+
+    for (auto [results, new_type] :
+         llvm::zip(new_op->getResults(), new_result_types)) {
+      results.setType(new_type);
+    }
+
+    rewriter.replaceOp(op, new_op);
     return mlir::success();
   }
 };
@@ -85,9 +91,9 @@ struct ConstantConversionPattern
   }
 };
 
-struct TritonXLAConvert0DTensorToScalarPass
-    : public impl::TritonXLAConvert0DTensorToScalarPassBase<
-          TritonXLAConvert0DTensorToScalarPass> {
+struct ConvertElementwise0DTensorToScalarPass
+    : public impl::ConvertElementwise0DTensorToScalarPassBase<
+          ConvertElementwise0DTensorToScalarPass> {
   void runOnOperation() override {
     mlir::TypeConverter type_converter;
     type_converter.addConversion([](mlir::Type type) { return type; });
@@ -105,7 +111,8 @@ struct TritonXLAConvert0DTensorToScalarPass
           if (inputs.size() != 1) {
             return nullptr;
           }
-          return ::xla::xtile::ToTensorOp::create(builder, loc, inputs.front());
+          return mlir::tensor::FromElementsOp::create(builder, loc, result_type,
+                                                      inputs.front());
         });
 
     type_converter.addTargetMaterialization(
@@ -114,7 +121,7 @@ struct TritonXLAConvert0DTensorToScalarPass
           if (inputs.size() != 1) {
             return nullptr;
           }
-          return ::xla::xtile::ToScalarOp::create(builder, loc, inputs.front());
+          return mlir::tensor::ExtractOp::create(builder, loc, inputs.front());
         });
 
     mlir::ConversionTarget target(getContext());
@@ -140,14 +147,11 @@ struct TritonXLAConvert0DTensorToScalarPass
     if (mlir::failed(mlir::applyPartialConversion(getOperation(), target,
                                                   std::move(patterns)))) {
       signalPassFailure();
+      return;
     }
   }
 };
 
 }  // namespace
 
-std::unique_ptr<mlir::Pass> CreateTritonXLAConvert0DTensorToScalarPass() {
-  return std::make_unique<TritonXLAConvert0DTensorToScalarPass>();
-}
-
-}  // namespace mlir::triton::xla
+}  // namespace xla::xtile

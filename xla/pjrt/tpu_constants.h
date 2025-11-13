@@ -1,4 +1,4 @@
-/* Copyright 2021 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,13 +12,16 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "xla/service/cpu/runtime_custom_call_status.h"
 
-#include "absl/base/attributes.h"
-#include "xla/service/custom_call_status_internal.h"
+#ifndef XLA_PJRT_TPU_CONSTANTS_H_
+#define XLA_PJRT_TPU_CONSTANTS_H_
 
-ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY bool __xla_cpu_runtime_StatusIsSuccess(
-    const void* status_ptr) {
-  auto status = static_cast<const XlaCustomCallStatus*>(status_ptr);
-  return !xla::CustomCallStatusGetMessage(status).has_value();
-}
+#include "absl/strings/string_view.h"
+
+namespace xla {
+
+inline constexpr absl::string_view kTpuHbmMemorySpaceKind = "device";
+
+}  // namespace xla
+
+#endif  // XLA_PJRT_TPU_CONSTANTS_H_

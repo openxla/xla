@@ -133,8 +133,8 @@ TEST_F(SymbolicMapTest, ReplaceDimsAndSymbols) {
   SymbolicExpr c3 = ctx.CreateConstant(30);
 
   SymbolicMap replaced_basic = sample_map.ReplaceDimsAndSymbols(
-      {c10, c2}, {c3, d0}, sample_map.GetNumDims(), sample_map.GetNumSymbols());
-  EXPECT_THAT(replaced_basic.GetResults(), ElementsAre(c10 + c3, c2 * d0));
+      {d1, c2}, {c3, d0}, sample_map.GetNumDims(), sample_map.GetNumSymbols());
+  EXPECT_THAT(replaced_basic.GetResults(), ElementsAre(d1 + c3, c2 * d0));
 
   SymbolicMap map_empty = SymbolicMap::Get(&ctx, 0, 0, {});
   SymbolicMap replaced_empty = map_empty.ReplaceDimsAndSymbols({}, {}, 0, 0);
@@ -350,6 +350,29 @@ TEST_F(SymbolicMapTest, CompressSymbols) {
   unused_symbols[2] = true;
   EXPECT_DEATH(CompressSymbols(map, unused_symbols),
                "Attempting to compress a used symbol: 2");
+}
+
+TEST_F(SymbolicMapTest, EqualityWithDifferentContexts) {
+  mlir::MLIRContext mlir_context2;
+  SymbolicExprContext ctx2(&mlir_context2);
+  // ctx2 and ctx3 will have the same MLIRContext, and thus the same
+  // StorageUniquer, so they should be considered equal.
+  SymbolicExprContext ctx3(&mlir_context2);
+
+  SymbolicExpr d0_ctx1 = CreateDimExpr(&ctx, 0);
+  SymbolicExpr d0_ctx2 = CreateDimExpr(&ctx2, 0);
+  SymbolicExpr d0_ctx3 = CreateDimExpr(&ctx3, 0);
+
+  SymbolicMap map1 = SymbolicMap::Get(&ctx, 1, 0, {d0_ctx1});
+  SymbolicMap map2 = SymbolicMap::Get(&ctx2, 1, 0, {d0_ctx2});
+  SymbolicMap map3 = SymbolicMap::Get(&ctx3, 1, 0, {d0_ctx3});
+
+  // Maps with different contexts should not be equal.
+  EXPECT_TRUE(map1 != map2);
+
+  // Maps with the same UniquerStorage and expressions should be equal even if
+  // they have different SymbolicExprContexts.
+  EXPECT_TRUE(map2 == map3);
 }
 
 TEST_F(SymbolicMapTest, Hashing) {

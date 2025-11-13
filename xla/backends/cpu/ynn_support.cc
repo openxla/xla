@@ -197,6 +197,13 @@ absl::StatusOr<bool> IsDotSupportedByYnn(
     return false;
   }
 
+  if (std::max({dot_canonical_dims.m, dot_canonical_dims.k,
+                dot_canonical_dims.n}) < 8) {
+    // If this dot is small, our overhead is probably too significant.
+    // TODO(b/458529782): This is here as a workaround for an unrelated bug.
+    return false;
+  }
+
   // YNNPACK supports transposing the inputs efficiently if possible (they will
   // fuse with dot packing), but we don't currently support generating the
   // necessary transposes.
@@ -239,6 +246,26 @@ bool IsReduceOpSupportedByYnn(const HloInstruction* hlo) {
                                             match::Minimum())
                    .WithBinaryOperandsAnyOrder(match::Parameter(0),
                                                match::Parameter(1)));
+}
+
+bool IsReduceOpOffloadedToYnn(const HloInstruction* hlo) {
+  if (!IsReduceOpSupportedByYnn(hlo)) {
+    return false;
+  }
+  const HloInstruction* input = hlo->operand(0);
+  if (ShapeUtil::ElementsIn(input->shape()) < 32 * 1024) {
+    return false;
+  }
+  switch (input->opcode()) {
+    case HloOpcode::kMultiply:
+    case HloOpcode::kBroadcast:
+    case HloOpcode::kSlice:
+    case HloOpcode::kConcatenate:
+      return false;
+    default: {
+      return true;
+    }
+  }
 }
 
 uint32_t YnnFlags(const DebugOptions& debug_options) {

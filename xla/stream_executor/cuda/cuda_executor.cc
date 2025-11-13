@@ -30,6 +30,7 @@ limitations under the License.
 #include <variant>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/call_once.h"
 #include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
@@ -80,6 +81,9 @@ limitations under the License.
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/kernel_args.h"
+#include "xla/stream_executor/kernel_argument_packing_spec.h"
+#include "xla/stream_executor/kernel_metadata.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -691,29 +695,38 @@ absl::StatusOr<CUmulticastObjectProp> CreateMulticastObjectProperties(
   return multicast_properties;
 }
 
-absl::StatusOr<int64_t> GetDevicePcieBandwidth(int device_ordinal) {
-  nvmlDevice_t nvml_device;
-  nvmlReturn_t result =
-      nvmlDeviceGetHandleByIndex(device_ordinal, &nvml_device);
-  if (result != NVML_SUCCESS) {
-    return absl::InternalError(
-        absl::StrCat("nvmlDeviceGetHandleByIndex failed with ", result));
+absl::Status ToStatus(nvmlReturn_t result) {
+  if (result == NVML_SUCCESS) {
+    return absl::OkStatus();
   }
+  // NVML library is not a part of the CUDA toolkit, so there might be a
+  // situation when user is using newer CUDA, but the host NVML
+  // version doen't have the required functions.
+  if (result == NVML_ERROR_FUNCTION_NOT_FOUND) {
+    return absl::InternalError("NVML library doesn't have required functions.");
+  }
+  return absl::InternalError(absl::StrFormat("Nvml call failed with %d(%s).",
+                                             result, nvmlErrorString(result)));
+}
 
+// CUDA and Nvml can have different device ordering.
+absl::StatusOr<nvmlDevice_t> GetNvmlDevice(const std::string& pci_bus_id) {
+  nvmlDevice_t device;
+  TF_RETURN_IF_ERROR(
+      ToStatus(nvmlDeviceGetHandleByPciBusId_v2(pci_bus_id.c_str(), &device)));
+  return device;
+}
+
+absl::StatusOr<int64_t> GetDevicePcieBandwidth(nvmlDevice_t nvml_device) {
   // nvmlDeviceGetPcieSpeed returns wrong information. Verified with
   // nvbandwidth.
   unsigned int link_gen, link_width;
-  result = nvmlDeviceGetCurrPcieLinkGeneration(nvml_device, &link_gen);
-  if (result != NVML_SUCCESS) {
-    return absl::InternalError(absl::StrCat(
-        "nvmlDeviceGetCurrPcieLinkGeneration failed with ", result));
-  }
+  nvmlReturn_t result =
+      nvmlDeviceGetCurrPcieLinkGeneration(nvml_device, &link_gen);
+  TF_RETURN_IF_ERROR(ToStatus(result));
 
   result = nvmlDeviceGetCurrPcieLinkWidth(nvml_device, &link_width);
-  if (result != NVML_SUCCESS) {
-    return absl::InternalError(
-        absl::StrCat("nvmlDeviceGetCurrPcieLinkWidth failed with ", result));
-  }
+  TF_RETURN_IF_ERROR(ToStatus(result));
 
   // PCIe v1 single lane speed. 0.25 GB/s
   int64_t lane_speed = 0.25 * 1024 * 1024 * 1024;
@@ -722,6 +735,75 @@ absl::StatusOr<int64_t> GetDevicePcieBandwidth(int device_ordinal) {
   }
 
   return lane_speed * link_width;
+}
+
+absl::StatusOr<int> GetNumberOfActiveP2PNvlinks(nvmlDevice_t nvml_device) {
+  int p2p_links = 0;
+
+  constexpr int kBlackwellNvLinkCount = 18;
+  for (unsigned int i = 0; i < kBlackwellNvLinkCount; i++) {
+    nvmlEnableState_t is_active = NVML_FEATURE_DISABLED;
+    nvmlReturn_t result = nvmlDeviceGetNvLinkState(nvml_device, i, &is_active);
+    if (result == NVML_ERROR_NOT_SUPPORTED) {
+      break;
+    }
+    TF_RETURN_IF_ERROR(ToStatus(result));
+    if (is_active == NVML_FEATURE_DISABLED) {
+      break;
+    }
+
+    uint32_t supported_p2p = 0;
+    result = nvmlDeviceGetNvLinkCapability(
+        nvml_device, i, NVML_NVLINK_CAP_P2P_SUPPORTED, &supported_p2p);
+    if (result != NVML_ERROR_NOT_SUPPORTED) {
+      TF_RETURN_IF_ERROR(ToStatus(result));
+    }
+    if (supported_p2p) {
+      ++p2p_links;
+    }
+  }
+  return p2p_links;
+}
+
+struct FabricInfo {
+  std::string cluster_uuid;
+  std::string clique_id;
+};
+
+absl::StatusOr<FabricInfo> GetDeviceFabricInfo(nvmlDevice_t device) {
+#if CUDA_VERSION >= 12040
+  nvmlGpuFabricInfoV_t fabricInfo{nvmlGpuFabricInfo_v2};
+  fabricInfo.state = NVML_GPU_FABRIC_STATE_NOT_SUPPORTED;
+
+  nvmlReturn_t result = nvmlDeviceGetGpuFabricInfoV(device, &fabricInfo);
+  TF_RETURN_IF_ERROR(ToStatus(result));
+
+  if (fabricInfo.state == NVML_GPU_FABRIC_STATE_NOT_SUPPORTED) {
+    std::string error_message =
+        "NVML doesn't support extracting fabric info or NVLink is not used by "
+        "the device.";
+    VLOG(2) << error_message;
+    return absl::InternalError(error_message);
+  }
+
+  static_assert(sizeof(fabricInfo.clusterUuid) == 16);
+  std::string uuid_str = absl::StrFormat(
+      "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+      fabricInfo.clusterUuid[0], fabricInfo.clusterUuid[1],
+      fabricInfo.clusterUuid[2], fabricInfo.clusterUuid[3],
+      fabricInfo.clusterUuid[4], fabricInfo.clusterUuid[5],
+      fabricInfo.clusterUuid[6], fabricInfo.clusterUuid[7],
+      fabricInfo.clusterUuid[8], fabricInfo.clusterUuid[9],
+      fabricInfo.clusterUuid[10], fabricInfo.clusterUuid[11],
+      fabricInfo.clusterUuid[12], fabricInfo.clusterUuid[13],
+      fabricInfo.clusterUuid[14], fabricInfo.clusterUuid[15]);
+
+  return FabricInfo{uuid_str, absl::StrCat(fabricInfo.cliqueId)};
+#else   // CUDA_VERSION >= 12040
+  std::string error_message = "NVML usage is not supported";
+  VLOG(2) << error_message;
+  return absl::InternalError(error_message);
+#endif  // CUDA_VERSION >= 12040
 }
 
 }  // namespace
@@ -1083,6 +1165,7 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
     VLOG(2) << "[" << device_ordinal() << "] Resolve CUDA kernel "
             << kernel_name << " from symbol pointer: " << symbol;
     cudaFunction_t func;
+    std::unique_ptr<ActivateContext> scoped_activation = Activate();
     TF_RETURN_IF_ERROR(cuda::ToStatus(
         cudaGetFuncBySymbol(&func, symbol),
         absl::StrFormat("[%d] Failed call to cudaGetFuncBySymbol",
@@ -1111,7 +1194,23 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
   TF_ASSIGN_OR_RETURN(KernelMetadata kernel_metadata,
                       cuda_kernel->GetKernelMetadata());
   cuda_kernel->set_metadata(kernel_metadata);
-  cuda_kernel->set_args_packing(spec.kernel_args_packing());
+  if (std::holds_alternative<KernelLoaderSpec::KernelArgsPackingFunc>(
+          spec.kernel_args_packing())) {
+    cuda_kernel->set_args_packing(
+        std::get<KernelLoaderSpec::KernelArgsPackingFunc>(
+            spec.kernel_args_packing()));
+  } else {
+    const auto& packing_spec =
+        std::get<KernelArgumentsPackingSpec>(spec.kernel_args_packing());
+    cuda_kernel->set_args_packing([packing_spec](const Kernel& kernel,
+                                                 const KernelArgs& args) {
+      const auto& mem_args =
+          stream_executor::Cast<stream_executor::KernelArgsDeviceMemoryArray>(
+              &args);
+      return packing_spec.BuildArguments(mem_args->device_memory_args(),
+                                         args.number_of_shared_bytes());
+    });
+  }
   return std::move(cuda_kernel);
 }
 
@@ -1620,10 +1719,10 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   });
   cudnn_version_ready.WaitForNotification();
 
-  {
-    std::string pci_bus_id = GetPCIBusID(device);
-    desc.set_pci_bus_id(pci_bus_id);
+  std::string pci_bus_id = GetPCIBusID(device);
+  desc.set_pci_bus_id(pci_bus_id);
 
+  {
     // Read the NUMA node corresponding to the PCI bus ID out of sysfs.
     std::optional<int> numa_node = ReadNumaNode(pci_bus_id, device_ordinal);
     // If the kernel reports -1, adjust to 0; leave as -1 if no value could be
@@ -1676,16 +1775,34 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
                               int64_t{mem_bus_width_bits.value()} / 8);
   }
 
-  {
-    absl::StatusOr<int64_t> status_or_bandwidth =
-        GetDevicePcieBandwidth(device_ordinal);
-    if (status_or_bandwidth.ok()) {
-      desc.set_pcie_bandwidth(*status_or_bandwidth);
+  if (absl::StatusOr<nvmlDevice_t> device = GetNvmlDevice(pci_bus_id);
+      device.ok()) {
+    absl::StatusOr<int64_t> bandwidth = GetDevicePcieBandwidth(*device);
+    if (bandwidth.ok()) {
+      desc.set_pcie_bandwidth(*bandwidth);
     } else {
-      LOG(ERROR) << status_or_bandwidth.status().message()
+      LOG(ERROR) << bandwidth.status().message()
                  << " Assuming PCIe gen 3 x16 bandwidth.";
-      status_or_bandwidth = 16LL * 1024 * 1024 * 1024;
+      bandwidth = 16LL * 1024 * 1024 * 1024;
     }
+
+    absl::StatusOr<int64_t> p2p_link_count =
+        GetNumberOfActiveP2PNvlinks(*device);
+    DeviceInterconnectInfo info;
+    if (p2p_link_count.ok()) {
+      info.active_links = *p2p_link_count;
+    } else {
+      LOG(ERROR) << p2p_link_count;
+    }
+    absl::StatusOr<FabricInfo> fabric_info = GetDeviceFabricInfo(*device);
+    if (fabric_info.ok()) {
+      info.cluster_uuid = fabric_info->cluster_uuid;
+      info.clique_id = fabric_info->clique_id;
+    } else {
+      LOG(WARNING) << "GPU interconnect information not available: "
+                   << fabric_info.status();
+    }
+    desc.set_device_interconnect_info(info);
   }
 
   {
@@ -1767,6 +1884,35 @@ absl::StatusOr<MemoryType> CudaExecutor::GetPointerMemorySpace(
       return absl::InternalError(
           absl::StrCat("unknown memory space provided by CUDA API: ", value));
   }
+}
+
+int CudaExecutor::GetGpuStreamPriority(StreamPriority priority) {
+  if (priority == StreamPriority::Default) {
+    return 0;
+  }
+
+  absl::call_once(stream_priority_once_, [this]() {
+    std::unique_ptr<ActivateContext> activation = Activate();
+    int lowest = 0;
+    int highest = 0;
+    absl::Status status =
+        cuda::ToStatus(cuCtxGetStreamPriorityRange(&lowest, &highest));
+    if (!status.ok()) {
+      LOG(ERROR) << "Could not query stream priority range. Returning default "
+                    "priority.";
+      stream_priority_query_ok_ = false;
+      return;
+    }
+    stream_priority_lowest_ = lowest;
+    stream_priority_highest_ = highest;
+    stream_priority_query_ok_ = true;
+  });
+
+  if (!stream_priority_query_ok_) {
+    return 0;
+  }
+  return priority == StreamPriority::Highest ? stream_priority_highest_
+                                             : stream_priority_lowest_;
 }
 
 absl::StatusOr<const CudaKernel*> CudaExecutor::GetCudaKernel(

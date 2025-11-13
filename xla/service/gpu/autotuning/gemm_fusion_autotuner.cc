@@ -343,6 +343,17 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonGemmAutotuneExtractor(
 
   NestGemmFusion nest_gemm_fusion(gpu_device_info, symbolic_expr_context);
   TF_RETURN_IF_ERROR(nest_gemm_fusion.Run(new_module.get()).status());
+  bool is_legacy_gemm_disabled = absl::c_contains(
+      debug_opts.xla_gpu_unsupported_generic_triton_emitter_features(),
+      DebugOptions::GENERIC_TRITON_EMITTER_DISABLE_LEGACY_GEMM);
+  bool is_triton_gemm_fusion =
+      IsGpuFusionKind(*new_module->entry_computation()->root_instruction(),
+                      kTritonGemmFusionKind);
+  if (is_legacy_gemm_disabled && is_triton_gemm_fusion) {
+    return absl::InternalError(
+        absl::StrCat("Unexpected ", kTritonGemmFusionKind,
+                     " fusion: ", new_module->ToString()));
+  }
   return new_module;
 }
 
@@ -676,26 +687,6 @@ std::string GetSelectedGemmBackendAsString(const HloModule* module) {
   return "";
 }
 
-bool HasBroadcastProducer(const HloInstruction& instr) {
-  return HloBfsFindIf({&instr},
-                      [](const HloInstruction* node) {
-                        return node->opcode() == HloOpcode::kBroadcast;
-                      })
-      .has_value();
-}
-
-// CUDA_ERROR_MISALIGNED_ADDRESS errors are happening for some cases when
-// pipelining stages are > 2. The pattern observed is that these happen in the
-// presence of a broadcast.
-void RestrictTmaConfigs(std::vector<TritonGemmConfig>& configs) {
-  configs.erase(std::remove_if(configs.begin(), configs.end(),
-                               [&](const TritonGemmConfig& config) {
-                                 return config.is_tma_allowed &&
-                                        config.num_stages > 2;
-                               }),
-                configs.end());
-}
-
 }  // anonymous namespace
 
 absl::Status GemmFusionAutotunerRewriterVisitor::HandleFusion(
@@ -970,12 +961,7 @@ absl::StatusOr<std::vector<TritonGemmConfig>>
 GemmFusionAutotunerImpl::GenerateTritonConfigs(
     const HloScaledDotInstruction& dot) {
   tsl::profiler::TraceMe traceme("GenerateTritonConfigs");
-  // TODO(b/421858850): Restricting configs for dots from broadcasts is a
-  // temporary solution. We should remove this once we have a fix for the error.
   auto configs = GetDefaultTritonConfigs();
-  if (HasBroadcastProducer(dot)) {
-    RestrictTmaConfigs(configs);
-  }
 
   if (!IsAutotuningEnabled()) {
     // Keep the first config, which likely does not spill registers.
@@ -1023,18 +1009,10 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
       /*autotune_tma=*/autotune_tma,
       /*autotune_warp_specialization=*/autotune_warp_specialization);
 
-  // TODO(b/421858850): Restricting configs for dots from broadcasts is a
-  // temporary solution. We should remove this once we have a fix for the error.
-  auto default_configs = GetDefaultTritonConfigs();
-  if (HasBroadcastProducer(dot)) {
-    RestrictTmaConfigs(configs);
-    RestrictTmaConfigs(default_configs);
-  }
-
   if (!debug_options_.xla_gpu_exhaustive_tiling_search()) {
     VLOG(1) << "Restricting configs to the default set.";
-    configs =
-        search_space.OptimizeConfigSet(configs, /*hints=*/default_configs);
+    configs = search_space.OptimizeConfigSet(
+        configs, /*hints=*/GetDefaultTritonConfigs());
   }
   if (!IsAutotuningEnabled()) {
     // Keep the first config, which likely does not spill registers.

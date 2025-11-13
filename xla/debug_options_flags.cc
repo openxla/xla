@@ -21,6 +21,7 @@ limitations under the License.
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -276,6 +277,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_multiheap_size_constraint_per_heap(-1);
   opts.set_xla_detailed_logging(true);
   opts.set_xla_enable_dumping(true);
+  opts.set_xla_enable_enzyme_comms_opt(false);
 
   opts.set_xla_gpu_enable_dynamic_slice_fusion(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
@@ -454,6 +456,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
   opts.set_xla_gpu_experimental_use_autotuner_pass(false);
+  opts.set_xla_gpu_experimental_enable_fusion_autotuner(false);
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_fix_max_iterations(false);
   opts.set_xla_hlo_pass_fix_detect_cycles(false);
@@ -465,8 +468,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_triton_tma(false);
   opts.set_xla_gpu_experimental_enable_triton_warp_specialization(false);
   opts.set_xla_gpu_experimental_enable_command_buffer_on_thunks(true);
-  opts.set_xla_detect_unstable_reductions(
-      DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_NONE);
+  opts.set_xla_detect_unstable_reductions(DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_gpu_experimental_scaled_dot_with_triton(false);
   opts.set_xla_gpu_experimental_use_raft_select_k(false);
 
@@ -475,7 +477,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_keep_shardings_after_spmd(false);
   opts.set_xla_gpu_experimental_enable_checksum_tracing_on_thunks(false);
-  opts.set_xla_gpu_detect_nan(DebugOptions::NAN_CHECK_DETECTION_MODE_NONE);
+  opts.set_xla_gpu_detect_nan(DebugOptions::DETECTION_MODE_NONE);
+  opts.set_xla_gpu_detect_inf(DebugOptions::DETECTION_MODE_NONE);
   return opts;
 }
 
@@ -876,21 +879,27 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
   };
 
   // Custom "sub-parser" for xla_gpu_experimental_autotune_cache_mode.
+  auto detection_mode = [](DebugOptions* debug_options,
+                           const std::string& value)
+      -> std::optional<DebugOptions::DetectionMode> {
+    if (value == "none") {
+      return DebugOptions::DETECTION_MODE_NONE;
+    }
+    if (value == "warning") {
+      return DebugOptions::DETECTION_MODE_WARNING;
+    }
+    if (value == "fail") {
+      return DebugOptions::DETECTION_MODE_FAIL;
+    }
+    return std::nullopt;
+  };
   auto setter_for_xla_detect_unstable_reductions =
-      [debug_options](const std::string& value) {
-        DebugOptions::UnstableReductionDetectionMode detection_mode;
-        if (value == "none") {
-          detection_mode = DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_NONE;
-        } else if (value == "warning") {
-          detection_mode =
-              DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_WARNING;
-        } else if (value == "fail") {
-          detection_mode = DebugOptions::UNSTABLE_REDUCTION_DETECTION_MODE_FAIL;
-        } else {
-          return false;
+      [debug_options, detection_mode](const std::string& value) {
+        if (auto mode = detection_mode(debug_options, value)) {
+          debug_options->set_xla_detect_unstable_reductions(mode.value());
+          return true;
         }
-        debug_options->set_xla_detect_unstable_reductions(detection_mode);
-        return true;
+        return false;
       };
 
   // Custom "sub-parser" for
@@ -1936,6 +1945,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Experimental optimizations for SPMD-based pipeline parallelism on "
       "GPU."));
   flag_list->push_back(tsl::Flag(
+      "xla_enable_enzyme_comms_opt",
+      bool_setter_for(&DebugOptions::set_xla_enable_enzyme_comms_opt),
+      debug_options->xla_enable_enzyme_comms_opt(),
+      "Enable communication optimization patterns specified in Enzyme. More "
+      "details in http://shortn/_jXJ2VFoyMN."));
+  flag_list->push_back(tsl::Flag(
       "xla_partitioning_algorithm", setter_for_xla_partitioning_algorithm,
       DebugOptions::PartitioningAlgorithm_Name(
           debug_options->xla_partitioning_algorithm()),
@@ -2630,7 +2645,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
   flag_list->push_back(
       tsl::Flag("xla_detect_unstable_reductions",
                 setter_for_xla_detect_unstable_reductions,
-                DebugOptions::UnstableReductionDetectionMode_Name(
+                DebugOptions::DetectionMode_Name(
                     debug_options->xla_detect_unstable_reductions()),
                 "Controls the behavior of the unstable reduction detector pass "
                 "that checks for unstable reductions in HLO computations. "
@@ -2686,31 +2701,46 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Limits the thunk buffer debug instrumentation to thunks with profile "
       "annotations matching one or more regexes passed as comma-separated "
       "string."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_fusion_autotuner",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_enable_fusion_autotuner),
+      debug_options->xla_gpu_experimental_enable_fusion_autotuner(),
+      "Enable autotuning between the native & triton fusion emitters."));
 
   auto setter_for_xla_gpu_detect_nan =
-      [debug_options](const std::string& value) {
-        DebugOptions::NaNCheckDetectionMode detection_mode;
-        if (value == "none") {
-          detection_mode = DebugOptions::NAN_CHECK_DETECTION_MODE_NONE;
-        } else if (value == "warning") {
-          detection_mode = DebugOptions::NAN_CHECK_DETECTION_MODE_WARNING;
-        } else if (value == "fail") {
-          detection_mode = DebugOptions::NAN_CHECK_DETECTION_MODE_FAIL;
-        } else {
-          return false;
+      [debug_options, detection_mode](const std::string& value) {
+        if (auto mode = detection_mode(debug_options, value)) {
+          debug_options->set_xla_gpu_detect_nan(mode.value());
+          return true;
         }
-        debug_options->set_xla_gpu_detect_nan(detection_mode);
-        return true;
+        return false;
       };
+
   flag_list->push_back(tsl::Flag(
       "xla_gpu_detect_nan", setter_for_xla_gpu_detect_nan,
-      DebugOptions::NaNCheckDetectionMode_Name(
-          debug_options->xla_gpu_detect_nan()),
+      DebugOptions::DetectionMode_Name(debug_options->xla_gpu_detect_nan()),
       "Controls the behavior of the NaN detector pass that checks for presence "
       "of NaN values in kernel outputs. Acceptable values are: 'none', "
       "'warning', and 'fail'. 'none' is the default. If other than 'none' "
       "value is provided, additional thunks will be added to detect and "
       "warn or fail the execution if NaNs are detected."));
+  auto setter_for_xla_gpu_detect_inf =
+      [debug_options, detection_mode](const std::string& value) {
+        if (auto mode = detection_mode(debug_options, value)) {
+          debug_options->set_xla_gpu_detect_inf(mode.value());
+          return true;
+        }
+        return false;
+      };
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_detect_inf", setter_for_xla_gpu_detect_inf,
+      DebugOptions::DetectionMode_Name(debug_options->xla_gpu_detect_inf()),
+      "Controls the behavior of the Inf detector pass that checks for presence "
+      "of Inf values in kernel outputs. Acceptable values are: 'none', "
+      "'warning', and 'fail'. 'none' is the default. If other than 'none' "
+      "value is provided, additional thunks will be added to detect and "
+      "warn or fail the execution if Infs are detected."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

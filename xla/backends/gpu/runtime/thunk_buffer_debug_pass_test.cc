@@ -440,8 +440,7 @@ TEST_F(ThunkBufferDebugPassTest, RecursivelyInsertsBuffersDebugChecksumThunks) {
 TEST_F(ThunkBufferDebugPassTest, InsertsBuffersDebugFloatCheckThunks) {
   static constexpr ThunkId kTestThunkId = ThunkId(123);
   DebugOptions debug_options;
-  debug_options.set_xla_gpu_detect_nan(
-      DebugOptions::NAN_CHECK_DETECTION_MODE_WARNING);
+  debug_options.set_xla_gpu_detect_nan(DebugOptions::DETECTION_MODE_WARNING);
   se::DeviceDescription device_info;
   FakeThunkPassBufferAllocator allocator;
   // The callbacks created by ThunkBufferDebugPass require a HloModule with
@@ -501,12 +500,12 @@ TEST_F(ThunkBufferDebugPassTest, InsertsBuffersDebugFloatCheckThunks) {
   const CustomCallThunk& buffer_debug_init_thunk =
       static_cast<const CustomCallThunk&>(*new_thunks[0]);
   EXPECT_EQ(buffer_debug_init_thunk.target_name(),
-            "xla_gpu_buffer_debug_log_init");
+            "xla_gpu_buffer_debug_float_check_init");
 
   const CustomCallThunk& buffer_debug_dump_thunk =
       static_cast<const CustomCallThunk&>(*new_thunks[2]);
   EXPECT_EQ(buffer_debug_dump_thunk.target_name(),
-            "xla_gpu_buffer_debug_log_dump");
+            "xla_gpu_buffer_debug_float_check");
 
   const std::vector<std::unique_ptr<Thunk>>& sub_thunks =
       static_cast<const SequentialThunk&>(*new_thunks[1]).thunks();

@@ -509,9 +509,20 @@ std::unique_ptr<HloPassFix<HloPassPipeline>> CreateSimplificationPipeline(
                             .debug_options()
                             .xla_cpu_experimental_ynn_fusion_type(),
                         DebugOptions::LIBRARY_FUSION_TYPE_REDUCE)) {
-    // Needs to happen after algebraic simplifier.
     pipeline->AddPass<TreeReductionRewriter>();
   }
+
+#ifdef XLA_YNNPACK
+  if (absl::c_contains(module->config()
+                           .debug_options()
+                           .xla_cpu_experimental_ynn_fusion_type(),
+                       DebugOptions::LIBRARY_FUSION_TYPE_REDUCE)) {
+    pipeline->AddPass<TreeReductionRewriter>(
+        /*reduce_window_size=*/32, [](const HloInstruction* hlo) {
+          return !IsReduceOpOffloadedToYnn(hlo);
+        });
+  }
+#endif
 
   // BatchNormExpander can create zero-sized ops, so zero-sized HLO
   // elimination has to come after that pass.
@@ -750,8 +761,11 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // BF16/F8 lowering for most ops.
   CpuFloatSupport bf16_support(BF16, call_library_for_dot);
 #ifdef XLA_ONEDNN
+  bool use_onednn_graph =
+      module->config().debug_options().xla_cpu_use_onednn() &&
+      IsOneDnnCompatible(is_aot_compile);
   OneDnnFloatSupport onednn_bf16_support(BF16);
-  if (use_onednn_custom_call) {
+  if (use_onednn_custom_call || use_onednn_graph) {
     pipeline.AddPass<FloatNormalization>(&onednn_bf16_support);
   } else {
     pipeline.AddPass<FloatNormalization>(&bf16_support);

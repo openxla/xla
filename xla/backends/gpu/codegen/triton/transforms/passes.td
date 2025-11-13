@@ -28,6 +28,8 @@ def TritonXLAExtractInsertToTritonPass : Pass<"triton-xla-extract-insert-to-trit
   let options = [
     Option<"allow_tma_", "allow_tma", "bool", "false",
            "Whether to permit lowering to TMA.">,
+    Option<"num_stages_", "num_stages", "int", "1",
+           "Number of stages for pipelining.">,
   ];
   let dependentDialects = [
     "triton::TritonDialect",
@@ -241,14 +243,6 @@ def TritonXLAMathToLibdevicePass
            "Path to the libdevice library.">,
     Option<"triple_string_", "triple", "std::string", "",
            "Device triple string.">,
-  ];
-}
-
-def TritonXLAConvert0DTensorToScalarPass
-    : Pass<"triton-xla-convert-0d-tensor-to-scalar", "mlir::ModuleOp"> {
-  let summary = "Lowers 0D tensors to scalars.";
-  let dependentDialects = [
-    "::xla::xtile::XTileDialect",
   ];
 }
 

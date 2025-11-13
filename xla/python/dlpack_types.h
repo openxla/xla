@@ -1,4 +1,4 @@
-/* Copyright 2021 The OpenXLA Authors.
+/* Copyright 2025 The JAX Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,15 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_CPU_RUNTIME_CUSTOM_CALL_STATUS_H_
-#define XLA_SERVICE_CPU_RUNTIME_CUSTOM_CALL_STATUS_H_
+#ifndef XLA_PYTHON_DLPACK_TYPES_H_
+#define XLA_PYTHON_DLPACK_TYPES_H_
 
-extern "C" {
+#include "absl/status/statusor.h"
+#include "include/dlpack/dlpack.h"
+#include "xla/xla_data.pb.h"
 
-// Returns true iff the given 'XlaCustomCallStatus' is in a success state, so
-// that generated code can return early if a CustomCall fails.
-extern bool __xla_cpu_runtime_StatusIsSuccess(
-    const void* /* XlaCustomCallStatus* */ status_ptr);
-}
+namespace xla {
 
-#endif  // XLA_SERVICE_CPU_RUNTIME_CUSTOM_CALL_STATUS_H_
+absl::StatusOr<DLDataType> PrimitiveTypeToDLDataType(PrimitiveType type);
+absl::StatusOr<PrimitiveType> DLDataTypeToPrimitiveType(DLDataType type);
+
+}  // namespace xla
+
+#endif  // XLA_PYTHON_DLPACK_TYPES_H_
