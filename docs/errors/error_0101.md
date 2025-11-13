@@ -45,7 +45,7 @@ is now occupied with more data buffers.
     memory usage.
 - Reduce program’s memory requirements for temporaries:
   - Reduce programs memory usage for temporaries by using the `tpu_shared_memory_percent`
-    flag. Please note that this might negatively affect performance.
+    flag. Note that this might negatively affect performance.
 - Optimize Execution Strategy/Reduce Serving load:
   - Manage Program Loading: If you are JIT-compiling multiple functions, be aware that
     each function can result in a program being loaded. Try to structure your workload
