@@ -556,6 +556,9 @@ message DebugOptions {
   // Enable NCCL user buffers.
   optional bool xla_gpu_enable_nccl_user_buffers = 267;
 
+  // Disable native NCCL ncclAlltoAll API for all-to-all collectives.
+  optional bool xla_gpu_disable_nccl_alltoall_api = 428;
+
   optional bool xla_gpu_enable_pipelined_all_gather = 227;
 
   optional bool xla_gpu_enable_pipelined_all_reduce = 217;

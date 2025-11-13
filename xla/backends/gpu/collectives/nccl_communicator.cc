@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
+#include "xla/debug_options_flags.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
@@ -683,6 +684,61 @@ absl::Status NcclCommunicator::LaunchAllToAll(
 
   TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
 
+  // Try using native ncclAlltoAll if available.
+  // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/colls.html#ncclalltoall
+  // Can be disabled by setting --xla_gpu_disable_nccl_alltoall_api=true.
+  bool can_use_native_alltoall =
+      !GetDebugOptionsFromFlags().xla_gpu_disable_nccl_alltoall_api();
+
+  size_t element_size = primitive_util::ByteWidth(dtype);
+
+  // Non-contiguous buffers are not supported by native ncclAlltoAll.
+  for (size_t i = 1; i < send_buffers.size(); ++i) {
+    if (reinterpret_cast<uintptr_t>(send_buffers[i].opaque()) !=
+            reinterpret_cast<uintptr_t>(send_buffers[i - 1].opaque()) +
+                count * element_size ||
+        reinterpret_cast<uintptr_t>(recv_buffers[i].opaque()) !=
+            reinterpret_cast<uintptr_t>(recv_buffers[i - 1].opaque()) +
+                count * element_size) {
+      can_use_native_alltoall = false;
+      break;
+    }
+  }
+
+  // In-place operation is not supported by native ncclAlltoAll.
+  if (can_use_native_alltoall) {
+    for (size_t i = 0; i < send_buffers.size(); ++i) {
+      if (send_buffers[i].opaque() == recv_buffers[i].opaque()) {
+        can_use_native_alltoall = false;
+        break;
+      }
+    }
+  }
+
+  if (can_use_native_alltoall) {
+#if NCCL_VERSION_CODE >= 22800  // ncclAlltoAll requires NCCL 2.28+
+    LOG(INFO) << absl::StreamFormat(
+        "[%d] NCCL AllToAll: Using native ncclAlltoAll API",
+        stream->parent()->device_ordinal());
+    TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(
+        ncclAlltoAll(send_buffers[0].opaque(), recv_buffers[0].opaque(),
+                     ToNcclCount(dtype, count), nccl_dtype, comm_,
+                     se::gpu::AsGpuStreamValue(stream))));
+    if (group_nesting_level_ == 0) {
+      TF_RETURN_IF_ERROR(PollUntilDone());
+    }
+    return absl::OkStatus();
+#else
+    VLOG(1) << absl::StreamFormat(
+        "[%d] NCCL AllToAll: ncclAlltoAll requires NCCL 2.28+, "
+        "falling back to Send/Recv (current NCCL version: %d)",
+        stream->parent()->device_ordinal(), NCCL_VERSION_CODE);
+#endif
+  }
+
+  // Fall back to Send/Recv for in-place, non-contiguous, or old NCCL version.
+  VLOG(2) << absl::StreamFormat("[%d] NCCL AllToAll: Using Send/Recv fallback",
+                                stream->parent()->device_ordinal());
   TF_RETURN_IF_ERROR(GroupStart());
   for (size_t i = 0; i < send_buffers.size(); ++i) {
     se::DeviceMemoryBase send_buffer = send_buffers[i];

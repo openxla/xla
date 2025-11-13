@@ -1167,6 +1167,107 @@ TEST_P(MemcpyCollectiveOps, AllToAll8Gpus) {
   }
 }
 
+// Test native ncclAlltoAll API with contiguous buffers (split dimension)
+TEST_P(AsyncCollectiveOps, AllToAllNativeApi_SplitDim_4GPUs) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+  ENTRY test_computation {
+    id = u32[] replica-id()
+    c10 = u32[] constant(10)
+    id_x_10 = u32[] multiply(id, c10)
+    broadcast = u32[8] broadcast(id_x_10), dimensions={}
+    iota = u32[8] iota(), iota_dimension=0
+    data = u32[8] add(broadcast, iota)
+    ROOT a2a = u32[8] all-to-all(data), dimensions={0}
+  }
+  )";
+  const int64_t kNumReplicas = 4;
+  if (hlo_runner_->device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices";
+  }
+
+  // Enable native ncclAlltoAll API for this test
+  HloModuleConfig config = GetModuleConfigForTest(kNumReplicas);
+  DebugOptions debug_opts = GetDebugOptionsForTest();
+  debug_opts.set_xla_gpu_disable_nccl_alltoall_api(false);
+  config.set_debug_options(debug_opts);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto executable, hlo_runner_->CreateExecutable(std::move(module), true));
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                          ExecuteReplicated(executable.get(), kNumReplicas));
+
+  // Rank 0: input=[0,1,2,3,4,5,6,7] → sends [0,1] to rank0, [2,3] to rank1,
+  // etc. After A2A, rank 0 receives: [0,1] from rank0, [10,11] from rank1,
+  // [20,21] from rank2, [30,31] from rank3
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 1, 10, 11, 20, 21, 30, 31},
+                                           results[0]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({2, 3, 12, 13, 22, 23, 32, 33},
+                                           results[1]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({4, 5, 14, 15, 24, 25, 34, 35},
+                                           results[2]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({6, 7, 16, 17, 26, 27, 36, 37},
+                                           results[3]);
+}
+
+// Test native ncclAlltoAll API with non-split dimension (tuple)
+TEST_P(AsyncCollectiveOps, AllToAllNativeApi_NoSplitDim_4GPUs) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+  ENTRY test_computation {
+    id = u32[] replica-id()
+    c10 = u32[] constant(10)
+    id_x_10 = u32[] multiply(id, c10)
+    b1 = u32[2] broadcast(id_x_10), dimensions={}
+    iota1 = u32[2] iota(), iota_dimension=0
+    data1 = u32[2] add(b1, iota1)
+    c100 = u32[] constant(100)
+    id_x_100 = u32[] multiply(id, c100)
+    b2 = u32[2] broadcast(id_x_100), dimensions={}
+    iota2 = u32[2] iota(), iota_dimension=0
+    data2 = u32[2] add(b2, iota2)
+    a2a = (u32[2], u32[2], u32[2], u32[2]) all-to-all(data1, data2, data1, data2)
+    gte0 = u32[2] get-tuple-element(a2a), index=0
+    gte1 = u32[2] get-tuple-element(a2a), index=1
+    gte2 = u32[2] get-tuple-element(a2a), index=2
+    gte3 = u32[2] get-tuple-element(a2a), index=3
+    ROOT concat = u32[8] concatenate(gte0, gte1, gte2, gte3), dimensions={0}
+  }
+  )";
+  const int64_t kNumReplicas = 4;
+  if (hlo_runner_->device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices";
+  }
+
+  // Enable native ncclAlltoAll API for this test
+  HloModuleConfig config = GetModuleConfigForTest(kNumReplicas);
+  DebugOptions debug_opts = GetDebugOptionsForTest();
+  debug_opts.set_xla_gpu_disable_nccl_alltoall_api(false);
+  config.set_debug_options(debug_opts);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto executable, hlo_runner_->CreateExecutable(std::move(module), true));
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                          ExecuteReplicated(executable.get(), kNumReplicas));
+
+  // Non-split all-to-all: operand i goes to rank i, each rank receives operand
+  // 0 from all ranks Rank 0 sends operand 0 (data1=[0,1]) to rank 0, receives
+  // operand 0 from all ranks Output: [operand0_from_rank0, operand1_from_rank0,
+  // operand2_from_rank0, operand3_from_rank0]
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 1, 10, 11, 20, 21, 30, 31},
+                                           results[0]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 1, 100, 101, 200, 201, 300, 301},
+                                           results[1]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 1, 10, 11, 20, 21, 30, 31},
+                                           results[2]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({0, 1, 100, 101, 200, 201, 300, 301},
+                                           results[3]);
+}
+
 TEST_P(AsyncCollectiveOps, MatmulReplicated) {
   // collective_permute = f32[16,32]{1,0} collective-permute(x_unscaled),
   // source_target_pairs={{0,1}, {1,2}, {2,3}, {3,0}}
