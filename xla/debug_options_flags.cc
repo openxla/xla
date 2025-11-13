@@ -479,15 +479,15 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_keep_shardings_after_spmd(false);
   opts.set_xla_gpu_experimental_enable_checksum_tracing_on_thunks(false);
-<<<<<<< HEAD
+
   opts.set_xla_gpu_detect_nan(DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_gpu_detect_inf(DebugOptions::DETECTION_MODE_NONE);
-=======
+
   opts.set_xla_gpu_detect_nan(DebugOptions::NAN_CHECK_DETECTION_MODE_NONE);
 
   // maximum number of events to be traced, default to 4M
   opts.set_xla_gpu_rocm_max_trace_events(4 * 1024 * 1024);
->>>>>>> 9c560a62d1 (update with a flag to configure maximum number of trace events)
+
   return opts;
 }
 
