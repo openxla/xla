@@ -10,8 +10,8 @@
   * `ROCM_PATH`: The path to the ROCm toolkit. Default is `/opt/rocm`.
   * `TF_ROCM_AMDGPU_TARGETS`: The AMDGPU targets.
   * `TF_ROCM_RBE_DOCKER_IMAGE`: Docker image to be used in rbe worker to execute the action
-  * `F_ROCM_RBE_SINGLE_GPU_POOL`: The name of the rbe pool used to execute single gpu tests
-  * `F_ROCM_RBE_MULTI_GPU_POOL`: The name of the rbe pool used to execute multi gpu tests
+  * `TF_ROCM_RBE_SINGLE_GPU_POOL`: The name of the rbe pool used to execute single gpu tests
+  * `TF_ROCM_RBE_MULTI_GPU_POOL`: The name of the rbe pool used to execute multi gpu tests
 """
 
 load(
