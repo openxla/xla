@@ -5,8 +5,6 @@ rocm_redist = {
         rocm_device_lib_path = "llvm/amdgcn",
         required_softlinks = [
             struct(src = "llvm/amdgcn", dest = "amdgcn"),
-            struct(src = "lib/llvm/lib/libLLVM.so", dest = "lib/libLLVM.so"),
-            struct(src = "lib/llvm/lib/libLLVM.so.22.0git", dest = "lib/libLLVM.so.22.0git"),
         ],
     ),
     "rocm_7.10.0_gfx94X": struct(
@@ -14,8 +12,6 @@ rocm_redist = {
         sha256 = "486dbf647bcf9b78f21d7477f43addc7b2075b1a322a119045db9cdc5eb98380",
         required_softlinks = [
             struct(src = "llvm/amdgcn", dest = "amdgcn"),
-            struct(src = "lib/llvm/lib/libLLVM.so", dest = "lib/libLLVM.so"),
-            struct(src = "lib/llvm/lib/libLLVM.so.22.0git", dest = "lib/libLLVM.so.22.0git"),
         ],
     ),
 }
