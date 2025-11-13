@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
-#include "xla/service/gpu/executable.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -276,6 +275,15 @@ class GpuCompiler : public LLVMCompiler {
       const DebugOptions& debug_options) {
     return Unimplemented("LinkModules is not implemented.");
   }
+
+  // New AOT compilation as part of the AOT split project.
+  absl::StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
+  NewCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
+                        const AotCompilationOptions& options);
+  // Legacy AOT compilation.
+  absl::StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
+  LegacyCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
+                           const AotCompilationOptions& options);
 
   se::Platform::Id platform_id_;
 

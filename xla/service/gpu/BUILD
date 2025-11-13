@@ -123,7 +123,6 @@ cc_library(
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -766,6 +765,7 @@ cc_library(
         "//xla/backends/gpu/runtime:thunk_buffer_debug_pass",
         "//xla/backends/gpu/runtime:thunk_pass_pipeline",
         "//xla/backends/gpu/runtime:thunk_proto_deserialization",
+        "//xla/client:executable_build_options",
         "//xla/core/collectives:clique_key",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
@@ -796,7 +796,6 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -846,6 +845,7 @@ xla_cc_test(
         "//xla/backends/gpu/runtime:kernel_thunk",
         "//xla/backends/gpu/runtime:sequential_thunk",
         "//xla/backends/gpu/runtime:thunk",
+        "//xla/client:executable_build_options",
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_ordering",
@@ -868,6 +868,7 @@ xla_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
+        "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:path",
     ],
 )
@@ -1181,7 +1182,6 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:gpu_blas_lt",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -1422,8 +1422,8 @@ cc_library(
 )
 
 tf_proto_library(
-    name = "executable_proto",
-    srcs = ["executable.proto"],
+    name = "kernel_reuse_cache_proto",
+    srcs = ["kernel_reuse_cache.proto"],
     protodeps = [
         "//xla/service:hlo_proto",
         "//xla:xla_proto",
@@ -1507,13 +1507,13 @@ cc_library(
     tags = ["gpu"],
     deps = [
         ":alias_info",
-        ":executable_proto_cc",
         ":execution_stream_assignment",
         ":gpu_constants",
         ":gpu_executable",
         ":gpu_memory_space_assignment",
         ":ir_emitter_context",
         ":ir_emitter_unnested",
+        ":kernel_reuse_cache_proto_cc",
         ":metrics",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -1636,11 +1636,11 @@ cc_library(
         ":compile_module_to_llvm_ir",
         ":conv_layout_normalization",
         ":cublas_cudnn",
-        ":executable_proto_cc",
         ":execution_stream_assignment",
         ":flag_utils",
         ":fusion_dispatch_pipeline",
         ":fusion_pipeline",
+        ":gpu_aot_compilation_result",
         ":gpu_constants",
         ":gpu_executable",
         ":gpu_executable_proto_cc",
@@ -2028,8 +2028,7 @@ cc_library(
     # gpu_compiler.
     visibility = [],
     deps = [
-        ":executable_proto_cc",
-        ":gpu_executable",
+        ":gpu_executable_proto_cc",
         ":gpu_latency_hiding_scheduler",
         ":ir_emission_utils",
         "//xla:util",
@@ -2054,6 +2053,7 @@ cc_library(
     deps = [
         ":gpu_executable",
         ":gpu_executable_proto_cc",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",
         "//xla/service:executable",
@@ -2379,6 +2379,7 @@ xla_cc_test(
         ":amdgpu_compiler_impl",
     ]) + [
         ":gpu_transfer_manager",
+        "//xla:literal",
         "//xla:literal_util",
         "//xla/backends/gpu/codegen/triton:support",
         "//xla/hlo/ir:hlo",
@@ -2394,8 +2395,11 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",  # build_cleaner: keep
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:statusor",
     ],
@@ -2536,6 +2540,7 @@ cc_library(
         ":backend_configs_cc",
         ":flag_utils",
         ":gpu_latency_hiding_scheduler",
+        ":hlo_fusion_analysis",
         ":ir_emission_utils",
         "//xla:shape_util",
         "//xla:util",
@@ -2551,7 +2556,6 @@ cc_library(
         "//xla/service:legalize_scheduling_annotations",
         "//xla/service:p2p_schedule_preparation",
         "//xla/service:profile_guided_latency_estimator",
-        "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu/model:analytical_latency_estimator",
         "//xla/service/gpu/model:gpu_hlo_cost_analysis",
         "//xla/service/gpu/model:sol_latency_estimator",
@@ -2922,7 +2926,6 @@ cc_library(
         "//xla:shape_util",
         "//xla:side_effect_util",
         "//xla:util",
-        "//xla/codegen:ir_emission_utils",
         "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_instruction_utils",
@@ -3071,7 +3074,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -3186,7 +3188,8 @@ cc_library(
     srcs = ["kernel_reuse_cache.cc"],
     hdrs = ["kernel_reuse_cache.h"],
     deps = [
-        ":executable_proto_cc",
+        ":gpu_executable_proto_cc",
+        ":kernel_reuse_cache_proto_cc",
         ":launch_dimensions",
         "//xla:status_macros",
         "//xla:util",
@@ -3208,7 +3211,6 @@ xla_cc_test(
     name = "kernel_reuse_cache_test",
     srcs = ["kernel_reuse_cache_test.cc"],
     deps = [
-        ":executable_proto_cc",
         ":kernel_reuse_cache",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
@@ -3468,7 +3470,6 @@ cc_library(
     ]),
     deps = [
         ":intel_gpu_compiler_impl",
-        "//xla/service:compiler",
         "//xla/stream_executor/sycl:sycl_platform_id",
     ],
     alwayslink = True,  # Contains compiler registration
@@ -3494,8 +3495,10 @@ cc_library(
     deps = [
         ":gpu_compiler",
         ":target_constants",
+        "//xla:debug_options_flags",
         "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/ir:hlo",
+        "//xla/service:dump",
         "//xla/service/gpu/llvm_gpu_backend:spirv_backend",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream_executor_h",

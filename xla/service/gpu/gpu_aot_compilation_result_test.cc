@@ -127,7 +127,7 @@ TEST_F(GpuAotCompilationResultTest, CreateAndSerialize) {
 
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuAotCompilationResult> result,
-      GpuAotCompilationResult::Create(reference_executable));
+      GpuAotCompilationResult::FromProto(reference_executable));
   TF_ASSERT_OK_AND_ASSIGN(std::string serialized_result,
                           result->SerializeAsString());
   GpuExecutableProto deserialized_executable;
@@ -142,7 +142,7 @@ TEST_F(GpuAotCompilationResultTest, LoadExecutable) {
                           CreateGpuExecutableProto());
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuAotCompilationResult> result,
-      GpuAotCompilationResult::Create(reference_executable));
+      GpuAotCompilationResult::FromProto(reference_executable));
 
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Executable> executable,
@@ -155,8 +155,12 @@ TEST_F(GpuAotCompilationResultTest, LoadExecutable) {
                           gpu_executable->ToProto());
   // HLO module is re-created from proto, and will have a new ID, so we clear
   // it for comparison purposes.
-  executable_proto.mutable_hlo_module()->mutable_hlo_module()->clear_id();
-  reference_executable.mutable_hlo_module()->mutable_hlo_module()->clear_id();
+  executable_proto.mutable_hlo_module_with_config()
+      ->mutable_hlo_module()
+      ->clear_id();
+  reference_executable.mutable_hlo_module_with_config()
+      ->mutable_hlo_module()
+      ->clear_id();
   EXPECT_THAT(executable_proto, EqualsProto(reference_executable));
 }
 

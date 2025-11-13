@@ -1177,6 +1177,7 @@ cc_library(
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
@@ -1523,6 +1524,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/client:executable_build_options",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
@@ -5741,7 +5743,6 @@ xla_cc_binary(
     ] + if_cuda_or_rocm_is_configured([
         # keep sorted
         ":gpu_plugin",
-        "//xla/service/gpu:executable_proto_cc",
         "//xla/service/gpu:gpu_compiler",
         "//xla/stream_executor/gpu:gpu_init",
     ]) + if_cuda_is_configured([
