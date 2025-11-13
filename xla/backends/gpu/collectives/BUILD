@@ -487,7 +487,7 @@ xla_test(
         "no-oneapi",
         # TODO(b/435404154): Reenable once this is fixed.
         "no_oss",
-    ] + if_rocm_is_configured(["multi_gpu"]),
+    ],
     visibility = ["//visibility:private"],
     deps = [
         ":gpu_collectives",
