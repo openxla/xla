@@ -58,8 +58,7 @@ TEST(RocmExecutorTest, CreateDeviceDescription) {
   EXPECT_THAT(result->device_vendor(), "Advanced Micro Devices, Inc");
 
   EXPECT_THAT(
-      std::get_if<RocmComputeCapability>(&result->gpu_compute_capability())
-          ->gcn_arch_name(),
+      result->gpu_compute_capability().rocm_compute_capability()->gcn_arch_name(),
       Not(IsEmpty()));
 }
 
