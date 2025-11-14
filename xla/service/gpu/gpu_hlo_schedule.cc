@@ -556,13 +556,13 @@ LegalizeSchedulingAnnotations::Config SchedulingAnnotationsConfig() {
   return annotation_config;
 }
 
-// Delay MoveToHostAsyncStart as late as possible
+// Delays MoveToHostAsyncStart as late as possible
 // to achieve better overlapping with computation.
 std::optional<DefaultSchedulerCore::CandidateResult>
 DelayMoveToHostAsyncStartCandidateCondition(
     DefaultSchedulerCore::ScheduleCandidate& a,
     DefaultSchedulerCore::ScheduleCandidate& b) {
-  auto is_send_host_dua_fn =
+  auto is_send_host_dus_fn =
       [=](DefaultSchedulerCore::ScheduleCandidate& a) -> bool {
     bool is_send_host_dus = false;
     if (a.node->GetOpcode() == HloOpcode::kAsyncStart) {
@@ -574,6 +574,7 @@ DelayMoveToHostAsyncStartCandidateCondition(
         for (auto instr : fused_instrs) {
           if (instr->opcode() == HloOpcode::kDynamicUpdateSlice) {
             is_send_host_dus = true;
+            break;
           }
         }
       }
@@ -582,7 +583,7 @@ DelayMoveToHostAsyncStartCandidateCondition(
   };
 
   if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
-          !is_send_host_dua_fn(a), a, !is_send_host_dua_fn(b), b,
+          !is_send_host_dus_fn(a), a, !is_send_host_dus_fn(b), b,
           "kDelayMoveToHostAsyncStart")) {
     return value;
   }
