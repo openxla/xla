@@ -774,6 +774,11 @@ message DebugOptions {
   //   coll.2-done = collective(coll.2-start)
   optional int32 xla_gpu_experimental_parallel_collective_overlap_limit = 336;
 
+  // This controls the limitation of async-compute resource.
+  // This provides ample flexibility for control, enabling more asynchronous
+  // computations to execute concurrently. In host-offloading experiments,
+  // increasing this value effectively overlaps device-to-host (D2H) transfers
+  // with other computations, resulting in improved performance.
   optional int32 xla_gpu_experimental_parallel_async_compute_limit = 455;
 
   optional PipelineParallelismOptLevel
