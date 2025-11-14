@@ -286,7 +286,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_nvshmem(false);
   opts.set_xla_gpu_enable_nccl_comm_splitting(true);
   opts.set_xla_gpu_nccl_init_max_rank_per_root_ratio(0);
-  opts.set_xla_gpu_disable_nccl_alltoall_api(true);
 
   opts.set_xla_gpu_temp_buffer_use_separate_color(false);
   opts.set_xla_gpu_require_exclusive_lock(false);
@@ -1804,13 +1803,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_enable_nccl_comm_splitting(),
       "Enables NCCL communicator splitting which allows sharing NCCL resources "
       "between different NCCL cliques."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_disable_nccl_alltoall_api",
-      bool_setter_for(&DebugOptions::set_xla_gpu_disable_nccl_alltoall_api),
-      debug_options->xla_gpu_disable_nccl_alltoall_api(),
-      "Disables native NCCL ncclAlltoAll API for all-to-all collectives. "
-      "When false, uses native ncclAlltoAll API when buffers are contiguous "
-      "and out-of-place. Requires NCCL 2.28+."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_nccl_init_max_rank_per_root_ratio",
       int64_setter_for(

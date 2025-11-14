@@ -1168,7 +1168,7 @@ TEST_P(MemcpyCollectiveOps, AllToAll8Gpus) {
 }
 
 // Test native ncclAlltoAll API with contiguous buffers (split dimension)
-TEST_P(AsyncCollectiveOps, AllToAllNativeApi_SplitDim_4GPUs) {
+TEST_P(AsyncCollectiveOps, ncclAlltoAllSplitDim) {
   const absl::string_view kModuleStr = R"(
   HloModule test
   ENTRY test_computation {
@@ -1186,16 +1186,8 @@ TEST_P(AsyncCollectiveOps, AllToAllNativeApi_SplitDim_4GPUs) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices";
   }
 
-  // Enable native ncclAlltoAll API for this test
-  HloModuleConfig config = GetModuleConfigForTest(kNumReplicas);
-  DebugOptions debug_opts = GetDebugOptionsForTest();
-  debug_opts.set_xla_gpu_disable_nccl_alltoall_api(false);
-  config.set_debug_options(debug_opts);
-
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr, config));
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto executable, hlo_runner_->CreateExecutable(std::move(module), true));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(kModuleStr, kNumReplicas));
   TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
                           ExecuteReplicated(executable.get(), kNumReplicas));
 
@@ -1213,7 +1205,7 @@ TEST_P(AsyncCollectiveOps, AllToAllNativeApi_SplitDim_4GPUs) {
 }
 
 // Test native ncclAlltoAll API with non-split dimension (tuple)
-TEST_P(AsyncCollectiveOps, AllToAllNativeApi_NoSplitDim_4GPUs) {
+TEST_P(AsyncCollectiveOps, ncclAlltoAllNoSplitDim) {
   const absl::string_view kModuleStr = R"(
   HloModule test
   ENTRY test_computation {
@@ -1241,16 +1233,8 @@ TEST_P(AsyncCollectiveOps, AllToAllNativeApi_NoSplitDim_4GPUs) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices";
   }
 
-  // Enable native ncclAlltoAll API for this test
-  HloModuleConfig config = GetModuleConfigForTest(kNumReplicas);
-  DebugOptions debug_opts = GetDebugOptionsForTest();
-  debug_opts.set_xla_gpu_disable_nccl_alltoall_api(false);
-  config.set_debug_options(debug_opts);
-
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr, config));
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto executable, hlo_runner_->CreateExecutable(std::move(module), true));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(kModuleStr, kNumReplicas));
   TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
                           ExecuteReplicated(executable.get(), kNumReplicas));
 

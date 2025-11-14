@@ -26,7 +26,6 @@ limitations under the License.
 
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
-#include "xla/debug_options_flags.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
@@ -686,9 +685,7 @@ absl::Status NcclCommunicator::LaunchAllToAll(
 
   // Try using native ncclAlltoAll if available.
   // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/colls.html#ncclalltoall
-  // Can be disabled by setting --xla_gpu_disable_nccl_alltoall_api=true.
-  bool can_use_native_alltoall =
-      !GetDebugOptionsFromFlags().xla_gpu_disable_nccl_alltoall_api();
+  bool can_use_native_alltoall = true;
 
   size_t element_size = primitive_util::ByteWidth(dtype);
 
