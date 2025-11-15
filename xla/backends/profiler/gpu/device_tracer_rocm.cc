@@ -15,6 +15,8 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+// to access debug options to set up max number of events
+#include "xla/debug_options_flags.h"
 
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -71,17 +73,25 @@ class GpuTracer : public profiler::ProfilerInterface {
 
 RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
   RocmTracerOptions options;
-  options.max_annotation_strings = 1024 * 1024;
+  options.max_annotation_strings = 4 * 1024 * 1024;
   return options;
 }
 
-RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
-    uint32_t num_gpus) {
+RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(uint32_t num_gpus) {
   RocmTraceCollectorOptions options;
-  options.max_callback_api_events = 2 * 1024 * 1024;
-  options.max_activity_api_events = 2 * 1024 * 1024;
-  options.max_annotation_strings = 1024 * 1024;
   options.num_gpus = num_gpus;
+
+  const auto& dbg = xla::GetDebugOptionsFromFlags();
+  int64_t max_events = dbg.xla_gpu_rocm_max_trace_events();
+  LOG(INFO) << "max number of events to be trace from flag = " << max_events;
+  if (max_events <= 0) max_events = 4*1024*1024;
+  if (max_events > 1'000'000'000LL) max_events = 1'000'000'000LL;
+
+  LOG(INFO) << "maximum number of events to be traced = " << max_events;
+
+  options.max_callback_api_events = max_events;
+  options.max_activity_api_events = max_events;
+  options.max_annotation_strings  = max_events;
   return options;
 }
 
