@@ -194,6 +194,8 @@ class RocmComputeCapability {
 
   bool has_nanoo_fp8_support() const { return gfx9_mi300(); }
 
+  bool has_hipblaslt_mx_support() const { return gfx9_mi350(); }
+
   /// \brief Invalid gfx id for default gcn_arch_name_ value and testing
   static constexpr absl::string_view kInvalidGfx = "gfx000";
 
