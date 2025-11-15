@@ -176,6 +176,7 @@ cc_library(
     srcs = [
         "port.cc",
         "//xla/tsl/platform:numa_noop.cc",
+        "//xla/tsl/platform:snappy.cc",
         "@tsl//tsl/platform:cpu_info.cc",
     ],
     hdrs = [
@@ -195,6 +196,7 @@ cc_library(
         "nobuilder",
     ],
     deps = [
+        "//xla/tsl/lib/strings:resize_uninitialized",
         "//xla/tsl/platform:byte_order",
         "//xla/tsl/platform:dynamic_annotations",
         "//xla/tsl/platform:logging",
