@@ -83,14 +83,12 @@ bool IsNopInstruction(const HloInstruction& hlo) {
 
 bool IsAsyncComputeStartOp(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kAsyncStart &&
-         !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode()) &&
-         hlo.async_execution_thread() != hlo.parent()->execution_thread();
+         !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode());
 }
 
 bool IsAsyncComputeDoneOp(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kAsyncDone &&
-         !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode()) &&
-         hlo.async_execution_thread() != hlo.parent()->execution_thread();
+         !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode());
 }
 
 // Returns the pipeline stream for a P2P instruction recorded in a frontend
