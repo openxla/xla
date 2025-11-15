@@ -1748,6 +1748,51 @@ CommandBufferCmd::BufferUseVector CublasLtCmd::buffers() const {
 }
 
 //===----------------------------------------------------------------------===//
+// ConvolutionCmd
+//===----------------------------------------------------------------------===//
+
+ConvolutionCmd::ConvolutionCmd(
+    const ConvolutionThunk& conv_thunk)
+    : TracedCommandBufferCmd(CommandBufferCmdType::kConvolutionCmd),
+      ConvolutionThunk(conv_thunk) {}
+
+absl::Status ConvolutionCmd::Initialize(const Thunk::InitializeParams& params,
+                                     StateManager& state) {
+  // This shall populate runner cache, unless not yet created
+  TF_RETURN_IF_ERROR(ConvolutionThunk::Initialize(params));
+  return absl::OkStatus();
+}
+
+absl::StatusOr<const se::CommandBuffer::Command*> ConvolutionCmd::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& record_params, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
+  
+  VLOG(5) << "ConvolutionCmd";
+
+  return RecordTracedCommand(
+      execute_params, record_params, std::move(record_action), command_buffer,
+      [&](se::Stream* stream) {
+        return ExecuteOnStreamInternal(stream, execute_params);
+      });
+}
+
+CommandBufferCmd::BufferUseVector ConvolutionCmd::buffers() const {
+  
+  BufferUseVector buffer_usage;
+  buffer_usage.reserve(operand_buffers_.size() + result_buffers_.size() + 1);
+
+  for (BufferAllocation::Slice buffer : operand_buffers_) {
+    buffer_usage.push_back({buffer, MemoryAccess::kRead});
+  }
+  for (BufferAllocation::Slice buffer : result_buffers_) {
+    buffer_usage.push_back({buffer, MemoryAccess::kWrite});
+  }
+  buffer_usage.push_back({scratch_buffer_, MemoryAccess::kWrite});
+  return buffer_usage;
+}
+
+//===----------------------------------------------------------------------===//
 // CuDnnCmd
 //===----------------------------------------------------------------------===//
 
