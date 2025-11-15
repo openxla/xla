@@ -1,0 +1,31 @@
+name: ROCm OpenXla CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-analyze-xla-1:
+    runs-on: linux-x86-n2-128
+    container:
+      image: rocm/tensorflow-build@sha256:a2672ff2510b369b4a5f034272a518dc93c2e492894e3befaeef19649632ccaa
+      options:
+        --ipc=host
+        --shm-size=16G
+        --cap-add=SYS_PTRACE
+        --security-opt=seccomp=unconfined
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test XLA
+        run: |
+          build_tools/rocm/run_xla_ci_build.sh \
+            --config=rocm_ci \
+            --config=rocm_rbe \
+            //xla/...
