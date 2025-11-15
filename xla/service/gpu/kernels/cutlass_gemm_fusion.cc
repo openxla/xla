@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/service/gpu/kernels/custom_kernel_fusion_pattern.h"
 #include "xla/service/gpu/kernels/cutlass_gemm.h"
 #include "xla/service/gpu/kernels/cutlass_gemm_custom_kernel.h"
+#include "xla/service/gpu/kernels/gemm_fusion_helpers.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
@@ -102,61 +103,7 @@ struct GemmWithDynamicSlice {
   HloInstruction* update_slice = nullptr;  // update result slice
 };
 
-// Returns OK if dot instruction is a simple 2D row-major gemm.
-absl::Status MatchRowMajorGemm(HloDotInstruction* dot) {
-  if (dot->operand(0)->shape().dimensions().size() != 2 ||
-      dot->operand(1)->shape().dimensions().size() != 2) {
-    return absl::InternalError("operands must have rank 2");
-  }
-
-  if (dot->shape().layout().minor_to_major().back() != 0) {
-    return absl::InternalError("The dot result must have row major layout.");
-  }
-
-  auto& dot_dims = dot->dot_dimension_numbers();
-
-  if (dot_dims.lhs_contracting_dimensions().size() != 1) {
-    return absl::InternalError("Lhs contracting dimensions must be of size 1.");
-  }
-
-  if (dot_dims.rhs_contracting_dimensions().size() != 1) {
-    return absl::InternalError("Rhs contracting dimensions must be of size 1.");
-  }
-
-  if (dot->operand(0)->shape().layout().minor_to_major(0) !=
-      dot_dims.lhs_contracting_dimensions()[0]) {
-    return absl::InternalError(
-        "Lhs contracting dimension should be along the minor axis (elements "
-        "that are stored contiguous in memory).");
-  }
-
-  if (dot->operand(1)->shape().layout().minor_to_major(1) !=
-      dot_dims.rhs_contracting_dimensions()[0]) {
-    return absl::InternalError(
-        "Rhs contracting dimension should be along the major axis (elements "
-        "that are NOT stored contiguous in memory).");
-  }
-
-  return absl::OkStatus();
-}
 }  // namespace
-
-// Return OK if dot instruction is a simple gemm with all operands and result
-// having the same data type.
-static absl::Status MatchSimpleGemm(
-    HloDotInstruction* dot, absl::Span<const PrimitiveType> support_dtypes) {
-  TF_RETURN_IF_ERROR(MatchRowMajorGemm(dot));
-
-  for (PrimitiveType dtype : support_dtypes) {
-    if (dot->operand(0)->shape().element_type() == dtype &&
-        dot->operand(1)->shape().element_type() == dtype &&
-        dot->shape().element_type() == dtype) {
-      return absl::OkStatus();
-    }
-  }
-
-  return absl::InternalError("unsupported operands type");
-}
 
 // Returns matched GEMM with one or both the operands upcasted to the
 // accumulator data type with an HLO convert instruction.
