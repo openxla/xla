@@ -336,12 +336,12 @@ TEST_F(CommandBufferSchedulingTest, AllReduceStartFollowedByBitcast) {
     CHECK: %command_buffer ([[P0:.+]]: s32[4]) -> s32[4] {
     CHECK:   %[[P0]] = s32[4]{0} parameter(0)
     CHECK:   %[[START:.+]] = s32[4]{0} all-reduce-start(%[[P0]])
-    CHECK:   %[[BITCAST:.+]] = s32[4]{0} bitcast(%[[P0]])
     CHECK:   ROOT %[[DONE:.+]] = s32[4]{0} all-reduce-done(%[[START]])
     CHECK: }
 
     CHECK: ENTRY %main (a: s32[4]) -> s32[4] {
     CHECK:   %[[A:.+]] = s32[4]{0} parameter(0)
+    CHECK:   %[[BITCAST:.+]] = s32[4]{0} bitcast(%[[A]])
     CHECK:   ROOT %[[CALL:.+]] = s32[4]{0} call(%[[A]]),
     CHECK:     to_apply=%command_buffer
     CHECK: })";
@@ -1373,6 +1373,51 @@ ENTRY e {
 
   const std::string kExpected = R"(
 ; CHECK: to_apply=%command_buffer
+})";
+
+  RunAndFilecheckHloRewrite(kHloText, CommandBufferScheduling(device_desc()),
+                            kExpected, [](HloModule* module) {
+                              EXPECT_TRUE(module->has_schedule());
+                              TF_CHECK_OK(module->schedule().Verify());
+                            });
+}
+
+TEST_F(CommandBufferSchedulingTestNoMinSize, L2PrefetchGraphCaptureWorks) {
+  const std::string kHloText = R"(
+HloModule m, is_scheduled=true
+
+f {
+  a = s8[10000] parameter(0)
+  b = s8[10000] negate(a)
+}
+
+%l2_prefetch {
+  %p = s8[10000] parameter(0)
+  %custom-call = () custom-call(%p), custom_call_target="l2_prefetch",
+    custom_call_has_side_effect=true,
+    frontend_attributes={prefetch_num_blocks="10"}
+}
+
+g {
+  a = s8[10000] parameter(0)
+  b = s8[10000] negate(a)
+}
+
+entry {
+  a = s8[10000] parameter(0)
+  b = s8[10000] parameter(1)
+  fs = ((s8[10000]), s8[10000], s8[0]) fusion-start(a), kind=kLoop, calls=f
+  p = () fusion(b), kind=kCustom, calls=%l2_prefetch,
+   control-predecessors={fs}, backend_config={"fusion_backend_config":{"kind":"l2_prefetch"}}
+  fd = s8[10000] fusion-done(fs)
+  g = s8[10000] fusion(b), kind=kLoop, calls=g
+  t = tuple(fd, g)
+})";
+
+  const std::string kExpected = R"(
+; CHECK: %command_buffer
+; CHECK: calls=%l2_prefetch
+; CHECK: entry
 })";
 
   RunAndFilecheckHloRewrite(kHloText, CommandBufferScheduling(device_desc()),
