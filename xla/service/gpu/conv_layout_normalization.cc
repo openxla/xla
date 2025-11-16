@@ -20,18 +20,21 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/statusor.h"
+#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/utils/hlo_query.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -181,6 +184,130 @@ absl::StatusOr<std::optional<HloInstruction*>> UpdateLayoutForCudnnConvolution(
   return bc_to_orig;
 }
 
+absl::StatusOr<std::optional<HloInstruction*>>
+UpdateLayoutForCudnnConvolutionFusion(HloFusionInstruction* hlo) {
+  const HloComputation& computation = *hlo->fused_instructions_computation();
+  HloInstruction* conv = hlo_query::GetFirstInstructionWithOpcode(
+      computation, HloOpcode::kConvolution);
+  const ConvolutionDimensionNumbers& dim_numbers =
+      conv->convolution_dimension_numbers();
+
+  const Shape& input_shape = conv->mutable_operand(0)->shape();
+  const Shape& filter_shape = conv->mutable_operand(1)->shape();
+  const Shape& output_shape = conv->shape();
+
+  auto MaybeBitcast = [](HloInstruction* hlo,
+                         const Shape& original_shape) -> HloInstruction* {
+    return hlo->shape() == original_shape ? hlo
+                                          : MakeBitcastHlo(hlo, original_shape);
+  };
+
+  bool performed_normalization = false;
+  // Normalize fusion instrcution shape if needed
+  Shape normalized_shape;
+  if (hlo->shape().IsTuple()) {
+    std::vector<Shape> new_tuple_shape;
+    for (const Shape& tuple_shape : hlo->shape().tuple_shapes()) {
+      new_tuple_shape.emplace_back(
+          ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
+              tuple_shape));
+    }
+    normalized_shape = ShapeUtil::MakeTupleShape(new_tuple_shape);
+  } else {
+    normalized_shape =
+        ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
+            hlo->shape());
+  }
+  performed_normalization |= normalized_shape != hlo->shape();
+
+  // Normalize fusion instrcution operand shape if needed
+  std::vector<HloInstruction*> normalized_operands;
+  for (int idx = 0; idx < hlo->operand_count(); idx++) {
+    HloInstruction* operand = hlo->mutable_operand(idx);
+    Shape normalized_operand_shape =
+        ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
+            operand->shape());
+    performed_normalization |= normalized_operand_shape != operand->shape();
+    normalized_operands.emplace_back(
+        MaybeBitcast(operand, normalized_operand_shape));
+  }
+  // No normalized required, don't do anything
+  if (!performed_normalization) {
+    return std::nullopt;
+  }
+
+  // Dimension number needs to change accordingly after layout normalization
+  auto transpose_dim = [&](int64_t dim, const Shape& unnormalized_shape) {
+    return unnormalized_shape.dimensions().size() -
+           FindIndex(unnormalized_shape.layout().minor_to_major(), dim) - 1;
+  };
+
+  auto transpose_dims = [&](tsl::protobuf::RepeatedField<int64_t>& dims,
+                            const Shape& unnormalized_shape) {
+    for (auto& dim : dims) {
+      dim = transpose_dim(dim, unnormalized_shape);
+    }
+  };
+  ConvolutionDimensionNumbers new_dim_numbers = dim_numbers;
+  new_dim_numbers.set_input_batch_dimension(
+      transpose_dim(dim_numbers.input_batch_dimension(), input_shape));
+  new_dim_numbers.set_input_feature_dimension(
+      transpose_dim(dim_numbers.input_feature_dimension(), input_shape));
+  transpose_dims(*new_dim_numbers.mutable_input_spatial_dimensions(),
+                 input_shape);
+
+  new_dim_numbers.set_kernel_input_feature_dimension(transpose_dim(
+      dim_numbers.kernel_input_feature_dimension(), filter_shape));
+  new_dim_numbers.set_kernel_output_feature_dimension(transpose_dim(
+      dim_numbers.kernel_output_feature_dimension(), filter_shape));
+  transpose_dims(*new_dim_numbers.mutable_kernel_spatial_dimensions(),
+                 filter_shape);
+
+  new_dim_numbers.set_output_batch_dimension(
+      transpose_dim(dim_numbers.output_batch_dimension(), output_shape));
+  new_dim_numbers.set_output_feature_dimension(
+      transpose_dim(dim_numbers.output_feature_dimension(), output_shape));
+  transpose_dims(*new_dim_numbers.mutable_output_spatial_dimensions(),
+                 output_shape);
+  std::cerr << "!!\n" << new_dim_numbers.DebugString() << "\n";
+  conv->set_convolution_dimension_numbers(new_dim_numbers);
+
+  // Normalize instructions inside fusion computation
+  for (HloInstruction* instr : hlo->fused_instructions()) {
+    if (instr->shape().IsTuple()) {
+      for (int i = 0; i < instr->shape().tuple_shapes().size(); ++i) {
+        *instr->mutable_shape()->mutable_tuple_shapes(i) =
+            ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
+                instr->shape().tuple_shapes(i));
+      }
+    } else {
+      *instr->mutable_shape() =
+          ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
+              instr->shape());
+    }
+  }
+
+  HloInstruction* normalized_hlo = hlo->parent()->AddInstruction(
+      hlo->CloneWithNewOperands(normalized_shape, normalized_operands));
+
+  HloInstruction* bc_to_orig;
+  if (normalized_hlo->shape().IsTuple()) {
+    std::vector<HloInstruction*> tuple_elements(
+        normalized_hlo->shape().tuple_shapes().size());
+
+    for (int i = 0; i < normalized_hlo->shape().tuple_shapes().size(); ++i) {
+      TF_ASSIGN_OR_RETURN(HloInstruction * normalized_out,
+                          MakeGetTupleElementHlo(normalized_hlo, i));
+      tuple_elements[i] =
+          MaybeBitcast(normalized_out, hlo->shape().tuple_shapes(i));
+    }
+    bc_to_orig = MaybeMakeTuple(tuple_elements);
+  } else {
+    bc_to_orig = MaybeBitcast(normalized_hlo, hlo->shape());
+  }
+
+  return bc_to_orig;
+}
 }  // namespace
 
 absl::StatusOr<std::optional<HloInstruction*>> NormalizeLayoutForGpuCustomCalls(
@@ -188,6 +315,21 @@ absl::StatusOr<std::optional<HloInstruction*>> NormalizeLayoutForGpuCustomCalls(
   if (IsCustomCallToDnnConvolution(*hlo)) {
     TF_ASSIGN_OR_RETURN(std::optional<HloInstruction*> bc_to_orig,
                         UpdateLayoutForCudnnConvolution(hlo));
+    return bc_to_orig;
+  }
+  return std::nullopt;
+}
+
+absl::StatusOr<std::optional<HloInstruction*>>
+NormalizeLayoutForGpuCustomFusions(HloFusionInstruction* hlo) {
+  TF_ASSIGN_OR_RETURN(auto gpu_config, hlo->backend_config<GpuBackendConfig>());
+  const FusionBackendConfig& backend_config =
+      gpu_config.fusion_backend_config();
+  if (backend_config.kind() == kCuDnnFusionKind &&
+      backend_config.has_cudnn_fusion_config() &&
+      backend_config.cudnn_fusion_config().has_kind()) {
+    TF_ASSIGN_OR_RETURN(std::optional<HloInstruction*> bc_to_orig,
+                        UpdateLayoutForCudnnConvolutionFusion(hlo));
     return bc_to_orig;
   }
   return std::nullopt;

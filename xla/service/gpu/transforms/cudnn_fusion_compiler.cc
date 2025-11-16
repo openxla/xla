@@ -444,6 +444,14 @@ class ConvDimensionAdapter {
   }
 
   std::optional<Result> DimensionsAndStrides(const HloInstruction& hlo) {
+    if (ShapeUtil::IsScalar(hlo.shape())) {
+      Result result;
+      result.sizes =
+          std::vector<int64_t>(dums_.input_spatial_dimensions_size() + 2, 1);
+      result.strides =
+          std::vector<int64_t>(dums_.input_spatial_dimensions_size() + 2, 1);
+      return result;
+    }
     // placeholder FP32 data type here, it is not used
     auto desc = se::dnn::TensorDescriptor::For(
         se::dnn::DataType::kFloat, hlo.shape().dimensions(),
@@ -489,6 +497,8 @@ HandleConstantHloToCudnnGraph(const HloInstruction& hlo, graph::Graph& graph) {
   }
   PrimitiveType constant_type = hlo.shape().element_type();
   switch (constant_type) {
+    case F16:
+      return LiteralToCudnnTensor<F16, __half>(hlo, graph);
     case BF16:
       return LiteralToCudnnTensor<BF16, __nv_bfloat16>(hlo, graph);
     case F32:
@@ -531,6 +541,37 @@ HandleClampToCudnnGraph(
                              .set_mode(fe::PointwiseMode_t::MAX)
                              .set_compute_data_type(compute_dtype);
   return graph.pointwise(min_tensor, hlo_to_cudnn[hlo.operand(0)], max_attrs);
+}
+
+std::optional<std::shared_ptr<graph::Tensor_attributes>>
+HandleExpMinusOneToCudnnGraph(
+    const HloInstruction& hlo, graph::Graph& graph,
+    absl::flat_hash_map<const HloInstruction*,
+                        std::shared_ptr<graph::Tensor_attributes>>
+        hlo_to_cudnn,
+    fe::DataType_t compute_dtype) {
+  CHECK(hlo.opcode() == HloOpcode::kExpm1)
+      << "HLO is not a Exp-minus-one: " << hlo.ToShortString();
+  CHECK(hlo.operands().size() == 1)
+      << "Exp-minus-one requires to have 1 operand: " << hlo.ToShortString();
+  // exp-minus-one = exp(value) - 1;
+  const auto exp_attrs = graph::Pointwise_attributes()
+                             .set_mode(fe::PointwiseMode_t::EXP)
+                             .set_compute_data_type(compute_dtype);
+  std::shared_ptr<graph::Tensor_attributes> exp_tensor =
+      graph.pointwise(hlo_to_cudnn[hlo.operand(0)], exp_attrs);
+  const std::optional<fe::DataType_t> data_type =
+      ToCudnnDataType(hlo.shape().element_type());
+  if (!data_type.has_value()) {
+    VLOG(3) << "Unimplemented data type: "
+            << PrimitiveType_Name(hlo.shape().element_type());
+    return std::nullopt;
+  }
+  exp_tensor->set_data_type(*data_type).set_name(std::string(hlo.name()));
+  const auto minus_attrs = graph::Pointwise_attributes()
+                               .set_mode(fe::PointwiseMode_t::SUB)
+                               .set_compute_data_type(compute_dtype);
+  return graph.pointwise(exp_tensor, graph.tensor(1), minus_attrs);
 }
 
 // Traverses fusion computations and creates cuDNN graphs out of them.
@@ -581,12 +622,6 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
   };
 
   if (conv_adapter.has_value()) {
-    for (const HloInstruction* operand : conv_adapter->conv_.operands()) {
-      if (!HloPredicateIsOp<HloOpcode::kParameter>(operand)) {
-        VLOG(3) << "Conv operands are expected to be parameters.";
-        return std::nullopt;
-      }
-    }
     for (const HloInstruction* parameter :
          computation.parameter_instructions()) {
       // for now, we assume all parameters have same layout even if they are not
@@ -680,6 +715,13 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
           return std::nullopt;
         }
         hlo_to_cudnn[hlo] = clamp.value();
+      } else if (HloPredicateIsOp<HloOpcode::kExpm1>(hlo)) {
+        const auto expm1 = HandleExpMinusOneToCudnnGraph(
+            *hlo, graph, hlo_to_cudnn, compute_dtype.value());
+        if (!expm1.has_value()) {
+          return std::nullopt;
+        }
+        hlo_to_cudnn[hlo] = expm1.value();
       } else {
         const auto mode = GetElementwiseMode(*hlo);
         if (!mode.has_value()) {
