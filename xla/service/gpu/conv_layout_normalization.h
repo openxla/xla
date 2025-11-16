@@ -27,7 +27,8 @@ namespace gpu {
 
 absl::StatusOr<std::optional<HloInstruction*>> NormalizeLayoutForGpuCustomCalls(
     HloCustomCallInstruction*);
-
+absl::StatusOr<std::optional<HloInstruction*>>
+NormalizeLayoutForGpuCustomFusions(HloFusionInstruction*);
 }  // end namespace gpu
 }  // end namespace xla
 

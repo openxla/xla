@@ -230,6 +230,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/collectives/gpu_collective_combiner_utils.h"
 #include "xla/service/gpu/transforms/collectives/reduce_scatter_combiner.h"
 #include "xla/service/gpu/transforms/composite_rewriter.h"
+#include "xla/service/gpu/transforms/conv_fusion_rewriter.h"
 #include "xla/service/gpu/transforms/conv_rewriter.h"
 #include "xla/service/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/service/gpu/transforms/cudnn_custom_call_converter.h"
@@ -1368,7 +1369,7 @@ absl::Status RunLayoutNormalizationPasses(
   layout_normalization_pipeline.AddPass<ReshapeDecomposer>();
   layout_normalization_pipeline.AddPass<HloPassFix<MoveCopyToUsers>>();
   layout_normalization_pipeline.AddPass<LayoutNormalization>(
-      &NormalizeLayoutForGpuCustomCalls);
+      &NormalizeLayoutForGpuCustomCalls, &NormalizeLayoutForGpuCustomFusions);
   // The LayoutAssignment pass may leave behind kCopy instructions which are
   // duplicate or NOPs, so remove them with algebraic simplification and CSE.
   layout_normalization_pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(
@@ -1843,7 +1844,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
     pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
-    pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
+    pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls,
+                                          &NormalizeLayoutForGpuCustomFusions);
     // Remove any redundant operations (such as bitcasts) introduced by layout
     // normalization.
     pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(simplifier_options,
@@ -1916,7 +1918,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
   pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
-  pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
+  pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls,
+                                        &NormalizeLayoutForGpuCustomFusions);
 
   // Layout normalization will create scatters that are not simplified and
   // also have unsorted update_window_dims.

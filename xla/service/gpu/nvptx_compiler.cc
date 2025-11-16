@@ -41,6 +41,9 @@ limitations under the License.
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/autotuner/block_level_emitter.h"
 #include "xla/backends/gpu/autotuner/cublas.h"
@@ -83,6 +86,7 @@ limitations under the License.
 #include "xla/service/gpu/target_constants.h"
 #include "xla/service/gpu/transforms/algebraic_simplifier.h"
 #include "xla/service/gpu/transforms/block_scaling_rewriter.h"
+#include "xla/service/gpu/transforms/conv_fusion_rewriter.h"
 #include "xla/service/gpu/transforms/conv_padding_legalization.h"
 #include "xla/service/gpu/transforms/conv_rewriter.h"
 #include "xla/service/gpu/transforms/cublas_pad_for_gemms.h"
@@ -115,9 +119,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {
@@ -200,11 +201,17 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
   if (!hlo_module->config()
            .debug_options()
            .xla_gpu_experimental_disable_binary_libraries()) {
-    pipeline.AddPass<ConvRewriter>(gpu_version, dnn_version);
-    pipeline.AddPass<CudnnFusedConvRewriter>(*cuda_compute_capability,
-                                             dnn_version, toolkit_version);
-    pipeline.AddPass<ConvPaddingLegalization>();
-    pipeline.AddPass<CudnnPadForConvolutions>(*cuda_compute_capability);
+    if (hlo_module->config()
+            .debug_options()
+            .xla_gpu_experimental_enable_conv_fusion()) {
+      pipeline.AddPass<ConvFusionRewriter>(gpu_version, dnn_version);
+    } else {
+      pipeline.AddPass<ConvRewriter>(gpu_version, dnn_version);
+      pipeline.AddPass<CudnnFusedConvRewriter>(*cuda_compute_capability,
+                                               dnn_version, toolkit_version);
+      pipeline.AddPass<ConvPaddingLegalization>();
+      pipeline.AddPass<CudnnPadForConvolutions>(*cuda_compute_capability);
+    }
   }
   // The conv padding/vectorization passes which we need to get rid of.  They
   // also leave behind unnecessary tuple/get-tuple-element pairs that
