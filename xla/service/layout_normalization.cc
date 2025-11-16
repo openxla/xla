@@ -71,9 +71,11 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
  public:
   explicit LayoutNormalizationVisitor(
       LayoutNormalization* normalization,
-      const CustomCallTransformer& custom_call_transformer = nullptr)
+      const CustomCallTransformer& custom_call_transformer = nullptr,
+      const CustomFusionTransformer& custom_fusion_transformer = nullptr)
       : normalization_(normalization),
-        custom_call_transformer_(custom_call_transformer) {}
+        custom_call_transformer_(custom_call_transformer),
+        custom_fusion_transformer_(custom_fusion_transformer) {}
   bool ShouldProcessNode(HloInstruction* hlo) override {
     // Skip `hlo` if it already has a default layout and the operands have a
     // default layout as well.
@@ -717,6 +719,20 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     return DefaultAction(hlo);
   }
 
+  absl::Status HandleFusion(HloInstruction* hlo) override {
+    if (custom_fusion_transformer_) {
+      TF_ASSIGN_OR_RETURN(
+          std::optional<HloInstruction*> transformed_custom_fusion,
+          custom_fusion_transformer_(Cast<HloFusionInstruction>(hlo)));
+      if (transformed_custom_fusion) {
+        SetVisited(*(*transformed_custom_fusion)->operand(0));
+        TF_RETURN_IF_ERROR(ReplaceInstruction(hlo, *transformed_custom_fusion));
+        return absl::OkStatus();
+      }
+    }
+    return DefaultAction(hlo);
+  }
+
   // Pushes down bitcast across the ternary select operation: same logic as
   // HandleElementwiseBinary.
   absl::Status HandleSelect(HloInstruction* hlo) override {
@@ -882,6 +898,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
 
   LayoutNormalization* normalization_;
   CustomCallTransformer custom_call_transformer_;
+  CustomFusionTransformer custom_fusion_transformer_;
 };
 
 }  // end namespace
@@ -889,8 +906,9 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
 absl::StatusOr<bool> LayoutNormalization::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  return LayoutNormalizationVisitor{this, custom_call_transformer_}.RunOnModule(
-      module, execution_threads);
+  return LayoutNormalizationVisitor{this, custom_call_transformer_,
+                                    custom_fusion_transformer_}
+      .RunOnModule(module, execution_threads);
 }
 
 }  // end namespace xla
