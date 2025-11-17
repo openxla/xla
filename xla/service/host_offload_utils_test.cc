@@ -143,7 +143,8 @@ ENTRY main {
   dynamic_update_slice = f32[2,2048,2048] dynamic-update-slice(broadcast, custom_call, index_param, constant_s32_0, constant_s32_0)
   ROOT result = f32[2,2048,2048] copy(dynamic_update_slice)
 }
-)", "custom_call", true);
+)",
+                        "custom_call", true);
 }
 
 TEST_F(HostOffloadUtilsTest, IsMoveToHostNotWithDynamicUpdateSliceTest) {
@@ -154,7 +155,8 @@ ENTRY main {
   custom_call = f32[1,2048,2048] custom-call(data_param), custom_call_target="MoveToHost"
   ROOT result = f32[1,2048,2048] copy(custom_call)
 }
-)", "custom_call", false);
+)",
+                        "custom_call", false);
 }
 
 TEST_F(HostOffloadUtilsTest, IsMoveToDeviceWithDynamicSliceTest) {
@@ -167,7 +169,8 @@ ENTRY main {
   dynamic_slice = f32[1,2048,2048] dynamic-slice(data_param, index_param, constant_s32_0, constant_s32_0), dynamic_slice_sizes={1,2048,2048}
   ROOT custom_call = f32[1,2048,2048] custom-call(dynamic_slice), custom_call_target="MoveToDevice"
 }
-)", "custom_call", true);
+)",
+                         "custom_call", true);
 }
 
 TEST_F(HostOffloadUtilsTest, IsMoveToDeviceNotWithDynamicSliceTest) {
@@ -177,10 +180,12 @@ ENTRY main {
   data_param = f32[1,2048,2048] parameter(0)
   ROOT custom_call = f32[1,2048,2048] custom-call(data_param), custom_call_target="MoveToDevice"
 }
-)", "custom_call", false);
+)",
+                         "custom_call", false);
 }
 
-TEST_F(HostOffloadUtilsTest, IsMoveToHostWithDynamicUpdateSliceThroughReshapeTest) {
+TEST_F(HostOffloadUtilsTest,
+       IsMoveToHostWithDynamicUpdateSliceThroughReshapeTest) {
   TestMoveToHostWithDus(R"(
 HloModule my_module
 ENTRY main {
@@ -194,7 +199,8 @@ ENTRY main {
   dynamic_update_slice = f32[2,2048,2048] dynamic-update-slice(broadcast, reshape, index_param, constant_s32_0, constant_s32_0)
   ROOT result = f32[2,2048,2048] copy(dynamic_update_slice)
 }
-)", "custom_call", true);
+)",
+                        "custom_call", true);
 }
 
 TEST_F(HostOffloadUtilsTest, IsMoveToDeviceWithDynamicSliceThroughReshapeTest) {
@@ -208,7 +214,8 @@ ENTRY main {
   reshape = f32[2048,2048] reshape(dynamic_slice)
   ROOT custom_call = f32[2048,2048] custom-call(reshape), custom_call_target="MoveToDevice"
 }
-)", "custom_call", true);
+)",
+                         "custom_call", true);
 }
 
 }  // namespace
