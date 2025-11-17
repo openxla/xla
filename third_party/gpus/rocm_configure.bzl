@@ -512,24 +512,21 @@ def _get_file_name(url):
     return url[last_slash_index + 1:]
 
 def _download_package(repository_ctx, pkg):
-    file_name = _get_file_name(pkg.url)
+    file_name = _get_file_name(pkg["url"])
 
-    repository_ctx.report_progress("Downloading and extracting {}, expected hash is {}".format(pkg.url, pkg.sha256))  # buildifier: disable=print
+    repository_ctx.report_progress("Downloading and extracting {}, expected hash is {}".format(pkg["url"], pkg["sha256"]))  # buildifier: disable=print
     repository_ctx.download_and_extract(
-        url = pkg.url,
-        output = "{}/{}".format(_DISTRIBUTION_PATH, pkg.root),
-        stripPrefix = pkg.strip_prefix,
-        sha256 = pkg.sha256,
-        type = "zip" if pkg.url.endswith(".whl") else ""
+        url = pkg["url"],
+        output = _DISTRIBUTION_PATH,
+        sha256 = pkg["sha256"],
+        type = "zip" if pkg["url"].endswith(".whl") else "",
     )
 
-    if pkg.sub_package:
-        print("Extracting to :" + pkg.sub_package.root)
-        repository_ctx.report_progress("Extracting {}".format(pkg.sub_package.archive))  # buildifier: disable=print
+    if pkg.get("sub_package", None):
+        repository_ctx.report_progress("Extracting {}".format(pkg["sub_package"]))  # buildifier: disable=print
         repository_ctx.extract(
-            archive = "{}/{}".format(_DISTRIBUTION_PATH, pkg.sub_package.archive),
-            output = "{}/{}".format(_DISTRIBUTION_PATH, pkg.sub_package.root),
-            stripPrefix = pkg.sub_package.strip_prefix,
+            archive = "{}/{}".format(_DISTRIBUTION_PATH, pkg["sub_package"]),
+            output = _DISTRIBUTION_PATH,
         )
 
     repository_ctx.delete(file_name)
