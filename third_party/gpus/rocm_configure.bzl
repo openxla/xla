@@ -549,8 +549,8 @@ def _setup_rocm_distro_dir(repository_ctx):
 
         for entry in redist.required_softlinks:
             repository_ctx.symlink(
-                "{}/{}".format(_DISTRIBUTION_PATH, entry.src),
-                "{}/{}".format(_DISTRIBUTION_PATH, entry.dest),
+                "{}/{}".format(_DISTRIBUTION_PATH, entry.target),
+                "{}/{}".format(_DISTRIBUTION_PATH, entry.link),
             )
         return _get_rocm_config(repository_ctx, bash_bin, _canonical_path("{}/{}".format(_DISTRIBUTION_PATH, redist.rocm_root)), "")
     elif multiple_paths:

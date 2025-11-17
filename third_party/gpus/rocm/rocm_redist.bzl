@@ -6,7 +6,7 @@ rocm_redist = {
                 "sha256": "a9270cac210e02f60a7f180e6a4d2264436cdcce61167440e6e16effb729a8ea",
             },
         ],
-        required_softlinks = [struct(src = "llvm/amdgcn", dest = "amdgcn")],
+        required_softlinks = [struct(target = "llvm/amdgcn", link = "amdgcn")],
         rocm_root = "",
     ),
     "rocm_7.10.0_gfx94X": struct(
@@ -16,7 +16,7 @@ rocm_redist = {
                 "sha256": "486dbf647bcf9b78f21d7477f43addc7b2075b1a322a119045db9cdc5eb98380",
             },
         ],
-        required_softlinks = [struct(src = "llvm/amdgcn", dest = "amdgcn")],
+        required_softlinks = [struct(target = "llvm/amdgcn", link = "amdgcn")],
         rocm_root = "",
     ),
     "rocm_7.10.0_gfx94X_whl": struct(
@@ -35,7 +35,7 @@ rocm_redist = {
                 "sub_package": "rocm_sdk_devel/_devel.tar",
             },
         ],
-        required_softlinks = [struct(src = "_rocm_sdk_devel/llvm/amdgcn", dest = "_rocm_sdk_devel/amdgcn")],
+        required_softlinks = [struct(target = "_rocm_sdk_devel/llvm/amdgcn", link = "_rocm_sdk_devel/amdgcn")],
         rocm_root = "_rocm_sdk_devel",
     ),
 }
