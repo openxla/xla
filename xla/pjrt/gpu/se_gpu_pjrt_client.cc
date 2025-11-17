@@ -211,7 +211,6 @@ StreamExecutorGpuClient::StreamExecutorGpuClient(
     bool should_stage_host_to_device_transfers,
     std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options,
     std::shared_ptr<KeyValueStoreInterface> kv_store,
-    std::shared_ptr<DistributedRuntimeClient> distributed_client,
     bool abort_collectives_on_failure,
     std::shared_ptr<const GpuTopology> gpu_topology,
     std::optional<int> num_nodes)
@@ -222,8 +221,7 @@ StreamExecutorGpuClient::StreamExecutorGpuClient(
           should_stage_host_to_device_transfers, std::move(gpu_run_options)),
       num_nodes_(num_nodes),
       abort_collectives_on_failure_(abort_collectives_on_failure),
-      kv_store_(std::move(kv_store)),
-      distributed_client_(std::move(distributed_client)) {
+      kv_store_(std::move(kv_store)) {
   if (gpu_topology != nullptr) {
     topology_.emplace(tsl::Fingerprint64(platform_name), platform_name,
                       std::move(gpu_topology),
@@ -315,33 +313,6 @@ StreamExecutorGpuClient::GetLatestIncarnations(const ExecuteOptions& options) {
       // The task might be dead.
       LOG(WARNING) << "Incarnation for task " << task_id << " not found";
       continue;
-    }
-    device_incarnations[device_id] = it->second;
-  }
-  return device_incarnations;
-}
-
-// Map every device to its incarnation based on the current state of
-// distributed_client_.
-absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
-StreamExecutorGpuClient::GetLatestIncarnations() {
-  if (!distributed_client_)
-    return FailedPrecondition(
-        "GetLatestIncarnations called without a distributed runtime client.");
-
-  TF_ASSIGN_OR_RETURN(tsl::CoordinationServiceAgent * agent,
-                      distributed_client_->GetCoordinationServiceAgent());
-  absl::flat_hash_map<int, IncarnationId> process_incarnations =
-      agent->Incarnations();
-
-  absl::flat_hash_map<GlobalDeviceId, IncarnationId> device_incarnations;
-  for (const PjRtDevice* device : devices()) {
-    int task_id = device->process_index();
-    GlobalDeviceId device_id(device->global_device_id().value());
-
-    auto it = process_incarnations.find(task_id);
-    if (it == process_incarnations.end()) {
-      return FailedPrecondition("Incarnation for task %d not found", task_id);
     }
     device_incarnations[device_id] = it->second;
   }
@@ -536,42 +507,21 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
       tsl::down_cast<gpu::GpuCommunicator*>(*maybe_communicator)};
 }
 
-// Create a GpuCliqueKey labeling a cross-host data transfer.
-gpu::GpuCliqueKey MakeCrossHostGpuCliqueKey(
-    GlobalDeviceId src_device_id, GlobalDeviceId dst_device_id,
-    std::optional<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
-        device_incarnations) {
-  std::vector<IncarnationId> clique_incarnations = {};
-  if (device_incarnations.has_value()) {
-    clique_incarnations = {(*device_incarnations)[src_device_id],
-                           (*device_incarnations)[dst_device_id]};
-  }
-  return gpu::GpuCliqueKey(
-      /*devices=*/{src_device_id, dst_device_id},
-      /*num_local_participants=*/1,
-      /*is_p2p=*/true,
-      /*participant_groups=*/{},
-      /*root_device=*/GlobalDeviceId(-1),
-      /*device_incarnations=*/std::move(clique_incarnations));
-}
-
 // Create a `PreparedSend` object bundling together state needed to perform a
 // send.
 absl::StatusOr<PreparedSend> PrepareSend(
-    StreamExecutorGpuClient* client,
-    std::optional<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
-        device_incarnations,
-    gpu::GpuCollectives* gpu_collectives, se::Stream* stream,
-    PjRtBuffer* buffer, PjRtGlobalDeviceId dst_global_device_id,
-    CrossHostTransferKey transfer_key,
+    StreamExecutorGpuClient* client, gpu::GpuCollectives* gpu_collectives,
+    se::Stream* stream, PjRtBuffer* buffer,
+    PjRtGlobalDeviceId dst_global_device_id, CrossHostTransferKey transfer_key,
     gpu::AcquiredCliquesMap& acquired_cliques_map,
     std::shared_ptr<Future<>::Promise> promise) {
-  // Form the GPU clique key for this send.
-  gpu::GpuCliqueKey clique_key = MakeCrossHostGpuCliqueKey(
-      /*src_device_id=*/GlobalDeviceId(
-          buffer->device()->global_device_id().value()),
-      /*dst_device_id=*/GlobalDeviceId(dst_global_device_id.value()),
-      device_incarnations);
+  // Form the GPU clique key.
+  // TODO(asrao, mwhittaker): Supply correct incarnations when creating the
+  // clique key.
+  gpu::GpuCliqueKey clique_key = gpu::GpuCliqueKey(
+      /*devices=*/{GlobalDeviceId(buffer->device()->global_device_id().value()),
+                   GlobalDeviceId(dst_global_device_id.value())},
+      /*num_local_participants=*/1);
 
   // Get the clique and communicator for the send.
   TF_ASSIGN_OR_RETURN(
@@ -620,18 +570,17 @@ absl::StatusOr<PreparedSend> PrepareSend(
 // Create a `PreparedReceive` object bundling together state needed to perform a
 // receive.
 absl::StatusOr<PreparedReceive> PrepareReceive(
-    StreamExecutorGpuClient* client,
-    std::optional<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
-        device_incarnations,
-    gpu::GpuCollectives* gpu_collectives, se::Stream* stream,
-    PjRtDevice* device, PjRtMemorySpace* memory_space,
+    StreamExecutorGpuClient* client, gpu::GpuCollectives* gpu_collectives,
+    se::Stream* stream, PjRtDevice* device, PjRtMemorySpace* memory_space,
     PjRtGlobalDeviceId src_global_device_id, CrossHostTransferKey transfer_key,
     Shape shape, gpu::AcquiredCliquesMap& acquired_cliques_map) {
-  // Form the GPU clique key for this receive.
-  gpu::GpuCliqueKey clique_key = MakeCrossHostGpuCliqueKey(
-      /*src_device_id=*/GlobalDeviceId(src_global_device_id.value()),
-      /*dst_device_id=*/GlobalDeviceId(device->global_device_id().value()),
-      device_incarnations);
+  // Form the GPU clique key.
+  // TODO(asrao, mwhittaker): Supply correct incarnations when creating the
+  // clique key.
+  gpu::GpuCliqueKey clique_key = gpu::GpuCliqueKey(
+      /*devices=*/{GlobalDeviceId(src_global_device_id.value()),
+                   GlobalDeviceId(device->global_device_id().value())},
+      /*num_local_participants=*/1);
 
   // Get the clique and communicator for the receive.
   TF_ASSIGN_OR_RETURN(
@@ -796,17 +745,10 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
     gpu::GpuCollectives* gpu_collectives = gpu::GpuCollectives::Default();
 
     gpu::AcquiredCliquesMap acquired_cliques_map;
-    std::optional<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
-        device_incarnations = std::nullopt;
-    if (distributed_client_) {
-      TF_ASSIGN_OR_RETURN(device_incarnations, GetLatestIncarnations());
-    }
-
     for (int i = 0; i < buffers.size(); ++i) {
-      absl::StatusOr<PreparedSend> prepared_send =
-          PrepareSend(this, device_incarnations, gpu_collectives, stream,
-                      buffers[i], dst_global_device_ids[i], transfer_keys[i],
-                      acquired_cliques_map, promises[i]);
+      absl::StatusOr<PreparedSend> prepared_send = PrepareSend(
+          this, gpu_collectives, stream, buffers[i], dst_global_device_ids[i],
+          transfer_keys[i], acquired_cliques_map, promises[i]);
 
       if (!prepared_send.ok()) {
         for (PreparedSend& prev_prepared_send : prepared_sends)
@@ -994,17 +936,11 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
     gpu::GpuCollectives* gpu_collectives = gpu::GpuCollectives::Default();
 
     gpu::AcquiredCliquesMap acquired_cliques_map;
-    std::optional<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
-        device_incarnations = std::nullopt;
-    if (distributed_client_) {
-      TF_ASSIGN_OR_RETURN(device_incarnations, GetLatestIncarnations());
-    }
-
     for (int i = 0; i < shapes.size(); ++i) {
       absl::StatusOr<PreparedReceive> prepared_receive =
-          PrepareReceive(this, device_incarnations, gpu_collectives, stream,
-                         device, memory_space, src_global_device_ids[i],
-                         transfer_keys[i], shapes[i], acquired_cliques_map);
+          PrepareReceive(this, gpu_collectives, stream, device, memory_space,
+                         src_global_device_ids[i], transfer_keys[i], shapes[i],
+                         acquired_cliques_map);
 
       if (!prepared_receive.ok()) {
         for (PreparedReceive& prev_prepared_receive : prepared_receives)
@@ -1842,9 +1778,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       pjrt_platform_name, xla_client, std::move(device_topology_pair.first),
       options.node_id, std::move(allocator), std::move(host_memory_allocator),
       options.should_stage_host_to_device_transfers, std::move(gpu_run_options),
-      std::move(kv_store), std::move(options.distributed_runtime_client),
-      options.abort_collectives_on_failure, std::move(gpu_topology),
-      options.num_nodes);
+      std::move(kv_store), options.abort_collectives_on_failure,
+      std::move(gpu_topology), options.num_nodes);
 }
 
 std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(

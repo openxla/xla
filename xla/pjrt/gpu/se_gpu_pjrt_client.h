@@ -115,7 +115,6 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       bool should_stage_host_to_device_transfers,
       std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options,
       std::shared_ptr<KeyValueStoreInterface> kv_store,
-      std::shared_ptr<DistributedRuntimeClient> distributed_client,
       bool abort_collectives_on_failure,
       std::shared_ptr<const GpuTopology> gpu_topology,
       std::optional<int> num_nodes);
@@ -202,14 +201,10 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   absl::flat_hash_map<GlobalDeviceId, IncarnationId> GetLatestIncarnations(
       const ExecuteOptions& options);
 
-  absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
-  GetLatestIncarnations();
-
   std::optional<int> num_nodes_;
   const bool abort_collectives_on_failure_ = false;
   std::optional<xla::StreamExecutorGpuTopologyDescription> topology_;
   std::shared_ptr<KeyValueStoreInterface> kv_store_;
-  std::shared_ptr<DistributedRuntimeClient> distributed_client_;
 
   // Helpers for cross host transfers.
   absl::Duration cross_host_transfer_timeout_ = absl::Minutes(3);
