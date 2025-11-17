@@ -11,6 +11,7 @@
   * `TF_ROCM_AMDGPU_TARGETS`: The AMDGPU targets.
 """
 
+load("@bazel_skylib//lib:paths.bzl", "paths")
 load(
     "//third_party/gpus/rocm:rocm_redist.bzl",
     "rocm_redist",
@@ -502,6 +503,10 @@ def _compute_rocm_extra_copts(repository_ctx, amdgpu_targets):
                            amdgpu_target for amdgpu_target in amdgpu_targets]
     return str(amdgpu_target_flags)
 
+def _canonical_path(p):
+    parts = [x for x in p.split("/") if x != ""]
+    return paths.join(*parts)
+
 def _get_file_name(url):
     last_slash_index = url.rfind("/")
     return url[last_slash_index + 1:]
@@ -515,7 +520,7 @@ def _download_package(repository_ctx, pkg):
         output = "{}/{}".format(_DISTRIBUTION_PATH, pkg.root),
         stripPrefix = pkg.strip_prefix,
         sha256 = pkg.sha256,
-        type = "zip" if pkg.url.endswith(".whl") else None
+        type = "zip" if pkg.url.endswith(".whl") else ""
     )
 
     if pkg.sub_package:
@@ -544,12 +549,13 @@ def _setup_rocm_distro_dir(repository_ctx):
         repository_ctx.file("rocm/.index")
         for pkg in redist.packages:
             _download_package(repository_ctx, pkg)
-            for entry in redist.required_softlinks:
-                repository_ctx.symlink(
-                    "{}/{}".format(_DISTRIBUTION_PATH, entry.src),
-                    "{}/{}".format(_DISTRIBUTION_PATH, entry.dest),
-                )
-        return _get_rocm_config(repository_ctx, bash_bin, "{}/{}".format(_DISTRIBUTION_PATH, redist.rocm_root), "")
+
+        for entry in redist.required_softlinks:
+            repository_ctx.symlink(
+                "{}/{}".format(_DISTRIBUTION_PATH, entry.src),
+                "{}/{}".format(_DISTRIBUTION_PATH, entry.dest),
+            )
+        return _get_rocm_config(repository_ctx, bash_bin, _canonical_path("{}/{}".format(_DISTRIBUTION_PATH, redist.rocm_root)), "")
     elif multiple_paths:
         paths_list = multiple_paths.split(":")
         for rocm_custom_path in paths_list:

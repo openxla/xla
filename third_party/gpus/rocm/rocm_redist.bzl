@@ -53,7 +53,7 @@ rocm_redist = {
                 root = "",
             ),
         ],
-        required_softlinks = [],
+        required_softlinks = [struct(src = "_rocm_sdk_devel/llvm/amdgcn", dest = "_rocm_sdk_devel/amdgcn")],
         rocm_root = "_rocm_sdk_devel",
     ),
 }
