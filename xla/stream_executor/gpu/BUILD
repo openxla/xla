@@ -586,6 +586,7 @@ xla_test(
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:kernel",
+        "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
@@ -597,13 +598,13 @@ xla_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/util/proto:parse_text_proto",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -956,6 +957,7 @@ cc_library(
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:stream",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
@@ -995,8 +997,8 @@ cc_library(
 )
 
 cc_library(
-    name = "buffer_debug_nan_count_kernel",
-    hdrs = ["buffer_debug_nan_count_kernel.h"],
+    name = "buffer_debug_float_check_kernel",
+    hdrs = ["buffer_debug_float_check_kernel.h"],
     deps = [
         "//xla:types",
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
@@ -1013,5 +1015,21 @@ cc_library(
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:kernel",
+    ],
+)
+
+cc_library(
+    name = "kernel_serialization_check",
+    testonly = True,
+    srcs = ["kernel_serialization_check.cc"],
+    hdrs = ["kernel_serialization_check.h"],
+    deps = [
+        "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor:kernel_symbol_registry",
+        "//xla/stream_executor:platform",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_for_library",
     ],
 )

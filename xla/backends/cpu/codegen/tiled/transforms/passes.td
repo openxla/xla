@@ -15,17 +15,6 @@ limitations under the License.
 
 include "mlir/Pass/PassBase.td"
 
-def XTileToVectorPass : Pass<"xtile-cpu-xtile-to-vector", "mlir::ModuleOp"> {
-  let summary = "Lowering xtile ops to vector ops";
-
-  let constructor = "CreateXTileToVectorPass()";
-
-  let dependentDialects = [
-    "mlir::vector::VectorDialect",
-    "xla::xtile::XTileDialect",
-  ];
-}
-
 def LowerXTileEntryPass : Pass<"xtile-cpu-lower-xtile-entry", "mlir::ModuleOp"> {
   let summary = "Lowers the entry function into the form required by the CPU runtime";
 
@@ -47,6 +36,7 @@ def ShloToVectorPass : Pass<"xtile-cpu-shlo-to-vector", "mlir::ModuleOp"> {
 
   let dependentDialects = [
     "mlir::arith::ArithDialect",
+    "mlir::bufferization::BufferizationDialect",
     "mlir::memref::MemRefDialect",
     "mlir::scf::SCFDialect",
     "mlir::stablehlo::StablehloDialect",
@@ -55,16 +45,13 @@ def ShloToVectorPass : Pass<"xtile-cpu-shlo-to-vector", "mlir::ModuleOp"> {
   ];
 }
 
-def ElementalTensorToVectorPass : Pass<"xtile-cpu-elemental-tensor-to-vector",
+def LinalgElementwiseToVectorPass : Pass<"xtile-cpu-linalg-elementwise-to-vector",
                                        "mlir::ModuleOp"> {
-  let summary = "Lowering arith & math ops with tensor types to vector types";
+  let summary = "Convert elementwise linalg ops to vector ops";
 
-  let constructor = "CreateElementalTensorToVectorPass()";
+  let constructor = "CreateLinalgElementwiseToVectorPass()";
 
   let dependentDialects = [
-    "mlir::arith::ArithDialect",
-    "mlir::math::MathDialect",
-    "mlir::tensor::TensorDialect",
     "mlir::vector::VectorDialect",
   ];
 }
@@ -80,14 +67,13 @@ def TensorOpsToVectorPass : Pass<"xtile-cpu-tensor-ops-to-vector",
   ];
 }
 
-def RewriteDynamicVectorExtractPass : Pass<"xtile-cpu-rewrite-dynamic-vector-extract",
-                                 "mlir::ModuleOp"> {
-  let summary = "Rewrite vector.extracts with dynamic indices.";
 
-  let constructor = "CreateRewriteDynamicVectorExtractPass()";
+def MemrefCopyToLoopsPass : Pass<"xtile-cpu-memref-copy-to-loops",
+                                 "mlir::ModuleOp"> {
+  let summary = "Rewrite mmeref.copy to loops.";
 
   let dependentDialects = [
-    "::mlir::vector::VectorDialect",
+    "::mlir::scf::SCFDialect",
     "::mlir::memref::MemRefDialect",
   ];
 }

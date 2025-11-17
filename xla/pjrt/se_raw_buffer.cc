@@ -18,7 +18,6 @@ limitations under the License.
 #include <cstdint>
 #include <cstring>
 #include <memory>
-#include <optional>
 #include <utility>
 
 #include "absl/algorithm/container.h"
@@ -319,7 +318,7 @@ void PjRtStreamExecutorRawBuffer::CopyToLiteralAsync(
             options.permutation = permutation;
             options.input_layout = TransposePlan::Striding{byte_strides};
             {
-              absl::MutexLock lock(&client->transpose_mu_);
+              absl::MutexLock lock(client->transpose_mu_);
               absl::StatusOr<std::shared_ptr<TransposePlan>> t =
                   client->transpose_cache_.GetOrCreate(options);
               if (!t.ok()) {

@@ -1,10 +1,3 @@
-# Description:
-#    LLVM-based CPU backend for XLA.
-
-load(
-    "//third_party/compute_library:build_defs.bzl",
-    "acl_deps",
-)
 load(
     "//xla:xla.default.bzl",
     "xla_cc_test",
@@ -59,8 +52,6 @@ filegroup(
     name = "runtime_srcs",
     srcs = [
         # Single-threaded support.
-        "runtime_custom_call_status.cc",
-        "runtime_key_value_sort.cc",
         "runtime_single_threaded_conv2d.cc",
         "runtime_single_threaded_conv3d.cc",
         "runtime_single_threaded_matmul_c128.cc",
@@ -72,7 +63,6 @@ filegroup(
         "runtime_single_threaded_matmul_f64.cc",
         "runtime_single_threaded_matmul_s32.cc",
         "runtime_single_threaded_matmul_u8.cc",
-        "runtime_topk.cc",
         # Multi-threaded support.
         "runtime_conv2d.cc",
         "runtime_conv3d.cc",
@@ -92,12 +82,9 @@ filegroup(
     name = "runtime_hdrs",
     srcs = [
         # Single-threaded support.
-        "runtime_custom_call_status.h",
-        "runtime_key_value_sort.h",
         "runtime_single_threaded_conv2d.h",
         "runtime_single_threaded_conv3d.h",
         "runtime_single_threaded_matmul.h",
-        "runtime_topk.h",
         # Multi-threaded support.
         "runtime_conv2d.h",
         "runtime_conv3d.h",
@@ -1063,7 +1050,7 @@ cc_library(
     deps = [
         ":runtime_lightweight_check",
         "//xla:executable_run_options",
-        "//xla/backends/cpu/runtime:convolution_thunk_internal",
+        "//xla/backends/cpu/runtime:convolution_lib",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",  # build_cleaner: keep
         "@eigen_archive//:eigen3",
@@ -1079,22 +1066,10 @@ cc_library(
     deps = [
         ":runtime_lightweight_check",
         "//xla:executable_run_options",
-        "//xla/backends/cpu/runtime:convolution_thunk_internal",
+        "//xla/backends/cpu/runtime:convolution_lib",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",  # build_cleaner: keep
         "@eigen_archive//:eigen3",
-    ],
-)
-
-cc_library(
-    name = "runtime_custom_call_status",
-    srcs = ["runtime_custom_call_status.cc"],
-    hdrs = ["runtime_custom_call_status.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla/service:custom_call_status_internal",
-        "@com_google_absl//absl/base:core_headers",
     ],
 )
 
@@ -1124,53 +1099,13 @@ cc_library(
 )
 
 cc_library(
-    name = "runtime_matmul_acl",
-    srcs = ["runtime_matmul_acl.cc"],
-    hdrs = ["runtime_matmul_acl.h"],
-    copts = tsl_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        ":runtime_lightweight_check",
-        ":runtime_matmul",
-        "//xla:executable_run_options",
-        "//xla/tsl/platform:dynamic_annotations",
-        "@com_google_absl//absl/base",
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:types",
-    ] + acl_deps(),
-)
-
-cc_library(
-    name = "runtime_conv2d_acl",
-    srcs = [
-        "runtime_conv2d_acl.cc",
-    ],
-    hdrs = ["runtime_conv2d_acl.h"],
-    copts = tsl_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        ":runtime_conv2d",
-        ":runtime_lightweight_check",
-        ":runtime_single_threaded_conv2d",
-        "//xla:executable_run_options",
-        "//xla/tsl/framework/convolution:eigen_helpers",
-        "//xla/tsl/platform:dynamic_annotations",
-        "@com_google_absl//absl/base",
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:types",
-    ] + acl_deps(),
-)
-
-cc_library(
     name = "runtime_single_threaded_conv2d",
     srcs = ["runtime_single_threaded_conv2d.cc"],
     hdrs = ["runtime_single_threaded_conv2d.h"],
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        "//xla/backends/cpu/runtime:convolution_thunk_internal",
+        "//xla/backends/cpu/runtime:convolution_lib",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",  # build_cleaner: keep
         "@eigen_archive//:eigen3",
@@ -1184,7 +1119,7 @@ cc_library(
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        "//xla/backends/cpu/runtime:convolution_thunk_internal",
+        "//xla/backends/cpu/runtime:convolution_lib",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",  # build_cleaner: keep
         "@eigen_archive//:eigen3",
@@ -1247,53 +1182,7 @@ cc_library(
 
 cc_library(
     name = "runtime_key_value_sort",
-    srcs = ["runtime_key_value_sort.cc"],
-    hdrs = ["runtime_key_value_sort.h"],
-    copts = runtime_copts(),
     visibility = ["//visibility:public"],
-    deps = [
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:dynamic_annotations",
-        "@eigen_archive//:eigen3",
-    ],
-)
-
-cc_library(
-    name = "runtime_topk",
-    srcs = ["runtime_topk.cc"],
-    hdrs = ["runtime_topk.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:dynamic_annotations",
-    ],
-)
-
-xla_cc_test(
-    name = "cpu_runtime_test",
-    srcs = ["cpu_runtime_test.cc"],
-    shard_count = 10,
-    tags = ["optonly"],
-    deps = [
-        ":cpu_runtime",
-        ":runtime_custom_call_status",
-        ":runtime_matmul",
-        ":runtime_matmul_acl",
-        ":runtime_single_threaded_matmul",
-        "//xla:array2d",
-        "//xla:executable_run_options",
-        "//xla:types",
-        "//xla/client:local_client",
-        "//xla/service:custom_call_status_internal",
-        "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/strings:str_format",
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:test",
-    ],
 )
 
 xla_cc_test(

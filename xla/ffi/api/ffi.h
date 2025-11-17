@@ -1230,7 +1230,6 @@ struct ResultEncoding<ExecutionStage::kInstantiate,
       args.ctx = ctx;
       args.type_id = &T::id;
       args.state = state.value().release();
-      args.deleter = +[](void* state) { delete reinterpret_cast<T*>(state); };
       return api->XLA_FFI_State_Set(&args);
     }
 
@@ -1515,7 +1514,7 @@ inline ThreadPool::ThreadPool(const XLA_FFI_Api* api,
 //===----------------------------------------------------------------------===//
 
 template <typename T>
-inline constexpr XLA_FFI_TypeInfo MakeTypeInfo() {
+constexpr XLA_FFI_TypeInfo MakeTypeInfo() {
   return XLA_FFI_TypeInfo{
       XLA_FFI_TypeInfo_STRUCT_SIZE,
       /*extension_start=*/nullptr,
@@ -1528,7 +1527,7 @@ inline constexpr XLA_FFI_TypeInfo MakeTypeInfo() {
 #define XLA_FFI_REGISTER_TYPE_(API, NAME, TYPE_ID, TYPE_INFO, N) \
   XLA_FFI_REGISTER_TYPE__(API, NAME, TYPE_ID, TYPE_INFO, N)
 #define XLA_FFI_REGISTER_TYPE__(API, NAME, TYPE_ID, TYPE_INFO, N)              \
-  XLA_FFI_ATTRIBUTE_UNUSED static const XLA_FFI_Error*                         \
+  [[maybe_unused]] static const XLA_FFI_Error*                                 \
       xla_ffi_type_##N##_registered_ = [] {                                    \
         return ::xla::ffi::Ffi::RegisterTypeId(API, NAME, TYPE_ID, TYPE_INFO); \
       }()

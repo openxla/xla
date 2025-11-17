@@ -314,6 +314,7 @@ cc_library(
     deps = [
         ":cord",
         ":platform",
+        ":refcount",
         ":stringpiece",
     ],
 )
@@ -687,6 +688,7 @@ cc_library(
     ],
     deps = tf_windows_aware_platform_deps("platform_port") + [
         ":platform",
+        "@com_google_absl//absl/base:core_headers",
         "@xla//xla/tsl/platform:byte_order",
         "@xla//xla/tsl/platform:dynamic_annotations",
         "@xla//xla/tsl/platform:types",
@@ -1086,10 +1088,9 @@ tsl_cc_test(
     srcs = ["path_test.cc"],
     deps = [
         ":path",
-        ":stringpiece",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:env",
-        "@xla//xla/tsl/platform:env_impl",
         "@xla//xla/tsl/platform:test",
     ],
 )

@@ -22,11 +22,11 @@ limitations under the License.
 #include <string>
 #include <tuple>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -154,11 +154,10 @@ class CollectiveOpsE2ETestBase : public HloHardwareIndependentTestBase {
         reference_platform, /*intra_op_parallelism_threads=*/0);
   }
 
-  // TODO(b/449655621) Use absl::AnyInvocable instead of std::function.
   absl::StatusOr<std::vector<Literal>> ExecuteReplicated(
-      const std::function<OpaqueExecutable*(int64_t)> executable_provider,
-      const std::function<int64_t(int64_t)> argument_count_provider,
-      const std::function<const Literal*(int64_t, int64_t)> argument_provider,
+      absl::AnyInvocable<OpaqueExecutable*(int64_t)> executable_provider,
+      absl::AnyInvocable<int64_t(int64_t)> argument_count_provider,
+      absl::AnyInvocable<const Literal*(int64_t, int64_t)> argument_provider,
       const int64_t num_replicas, const bool run_hlo_passes,
       DeviceAssignment* const device_assignment) {
     // TODO(b/441865120): Use designated initializers this once XLA moves to
@@ -1508,8 +1507,9 @@ TEST_F(CollectiveOpsTestE2E, HostMemoryOffloadingWithDonation) {
 // E2E tests comparing the results of sharded and unsharded execution.
 class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsTestE2E {
  public:
-  void CollectiveOpsCompareShardedUnsharded(const std::string& hlo_text,
-                                            const int64_t num_partitions = 2) {
+  void CollectiveOpsCompareShardedUnsharded(
+      const std::string& hlo_text, const int64_t num_partitions = 2,
+      bool enable_enzyme_comms_opt = false) {
     const int64_t num_replicas = 1;
     if (hlo_runner_->device_count() < num_replicas * num_partitions) {
       GTEST_SKIP() << "Test requires at least " << num_replicas * num_partitions
@@ -1521,8 +1521,9 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsTestE2E {
                             ExecuteUnsharded(hlo_text));
     ASSERT_EQ(ref_results.size(), 1);
 
-    TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
-                            ExecuteSharded(hlo_text, num_partitions));
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<Literal> results,
+        ExecuteSharded(hlo_text, num_partitions, enable_enzyme_comms_opt));
     ASSERT_EQ(results.size(), num_partitions);
 
     ErrorSpec error_spec{1e-4, 1e-4};
@@ -1568,12 +1569,16 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsTestE2E {
 
   // Execute the sharded case.
   absl::StatusOr<std::vector<Literal>> ExecuteSharded(
-      const std::string& hlo_text, int64_t num_partitions) {
+      const std::string& hlo_text, int64_t num_partitions,
+      bool enable_enzyme_comms_opt = false) {
     HloModuleConfig config = GetModuleConfigForTest();
     DebugOptions opts = GetDebugOptionsForTest();
     opts.set_xla_gpu_enable_triton_gemm(false);
     config.set_debug_options(opts);
     config.set_num_partitions(num_partitions);
+    if (enable_enzyme_comms_opt) {
+      config.mutable_debug_options().set_xla_enable_enzyme_comms_opt(true);
+    }
     TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
                         ParseAndReturnVerifiedModule(hlo_text, config));
     const int64_t num_params = module->entry_computation()->num_parameters();
@@ -1732,7 +1737,11 @@ TEST_F(CollectiveOpsTestE2EShardedUnsharded,
       %c3 = s32[] constant(3)
       ROOT %dynamic-update-slice = s32[16] dynamic-update-slice(%input, %update, %c3), sharding={devices=[4]<=[4]}
     })";
-  CollectiveOpsCompareShardedUnsharded(hlo_text, /*num_partitions=*/4);
+  CollectiveOpsCompareShardedUnsharded(hlo_text, /*num_partitions=*/4,
+                                       /*enable_enzyme_comms_opt=*/true);
+  // This test should pass regardless if enzyme comms opt is enabled or not.
+  CollectiveOpsCompareShardedUnsharded(hlo_text, /*num_partitions=*/4,
+                                       /*enable_enzyme_comms_opt=*/false);
 }
 
 TEST_F(CollectiveOpsTestE2EShardedUnsharded, DotBatchAndNonContracting) {

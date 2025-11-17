@@ -278,6 +278,8 @@ cc_library(
     deps = [
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:stringpiece",
     ],

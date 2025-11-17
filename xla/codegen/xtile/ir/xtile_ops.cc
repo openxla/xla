@@ -198,55 +198,45 @@ mlir::TypedValue<mlir::RankedTensorType> InsertTileOp::getTile() {
 
 mlir::LogicalResult InsertTileOp::verify() { return VerifyBufferOp(*this); }
 
-mlir::LogicalResult ToScalarOp::inferReturnTypes(
-    mlir::MLIRContext* context, ::std::optional<mlir::Location> location,
-    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
-    mlir::OpaqueProperties properties, mlir::RegionRange regions,
-    ::llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
-  if (operands.size() != 1) {
-    return mlir::failure();
+llvm::SmallVector<int64_t> MaskOp::getMaskedDimensions() {
+  llvm::SmallVector<int64_t> masked_dimensions;
+
+  int64_t idx = 0;
+  for (const auto [bound_size, tensor_size] :
+       llvm::zip(getBounds(), getType().getShape())) {
+    if (bound_size < tensor_size) {
+      masked_dimensions.push_back(idx);
+    }
+    ++idx;
   }
 
-  auto tensor_type =
-      mlir::dyn_cast<mlir::RankedTensorType>(operands[0].getType());
-  if (!tensor_type) {
-    return mlir::failure();
+  return masked_dimensions;
+}
+
+mlir::LogicalResult MaskOp::verify() {
+  mlir::ArrayRef<int64_t> tensor_shape = getType().getShape();
+  mlir::ArrayRef<int64_t> bounds = getBounds();
+
+  if (tensor_shape.size() != bounds.size()) {
+    return emitOpError() << "tensor rank: " << tensor_shape.size()
+                         << " does not match mask bounds rank: "
+                         << bounds.size();
   }
 
-  if (tensor_type.getRank() != 0) {
-    return mlir::failure();
+  for (const auto [bound_size, tensor_size] : llvm::zip(bounds, tensor_shape)) {
+    if (bound_size > tensor_size) {
+      return emitOpError()
+             << "mask bound not less than or equal to the tensor size";
+    }
   }
 
-  inferredReturnTypes.push_back(tensor_type.getElementType());
   return mlir::success();
 }
 
-mlir::OpFoldResult ToScalarOp::fold(FoldAdaptor adaptor) {
-  if (auto to_tensor = getOperand().getDefiningOp<ToTensorOp>()) {
-    // to_scalar(to_tensor(x)) -> x
-    return to_tensor.getOperand();
-  }
-
-  return {};
-}
-
-mlir::LogicalResult ToTensorOp::inferReturnTypes(
-    mlir::MLIRContext* context, ::std::optional<mlir::Location> location,
-    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
-    mlir::OpaqueProperties properties, mlir::RegionRange regions,
-    ::llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
-  if (operands.size() != 1) {
-    return mlir::failure();
-  }
-  inferredReturnTypes.push_back(
-      mlir::RankedTensorType::get({}, operands[0].getType()));
-  return mlir::success();
-}
-
-mlir::OpFoldResult ToTensorOp::fold(FoldAdaptor adaptor) {
-  if (auto to_scalar = getOperand().getDefiningOp<ToScalarOp>()) {
-    // to_tensor(to_scalar(x)) -> x
-    return to_scalar.getOperand();
+mlir::OpFoldResult MaskOp::fold(FoldAdaptor) {
+  if (getMaskedDimensions().empty()) {
+    // If none of the dimensions are masked then the op is a nop.
+    return getSource();
   }
 
   return {};

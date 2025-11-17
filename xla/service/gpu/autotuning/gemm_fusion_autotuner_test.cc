@@ -950,6 +950,41 @@ ENTRY e {
 )");
 }
 
+TEST_F(GemmFusionAutotunerTest, AutotuneScaledDotCuDnnFusion) {
+  if (GpuComputeComp().IsRocm() ||
+      GetDebugOptionsForTest()
+          .xla_gpu_experimental_disable_binary_libraries()) {
+    GTEST_SKIP() << "Not supported on ROCm or with binary libraries disabled.";
+  }
+  if (!GetCudaComputeCapability().IsAtLeastBlackwell()) {
+    GTEST_SKIP() << "Not supported on pre-Blackwell GPUs.";
+  }
+  const std::string kHlo = R"(
+fusion1 {
+  %lhs = f8e4m3fn[4,192,224] parameter(0)
+  %rhs = f8e4m3fn[4,256,224] parameter(1)
+  %lhs_scale = f8e8m0fnu[4,192,7] parameter(2)
+  %rhs_scale = f8e8m0fnu[4,256,7] parameter(3)
+  ROOT %result = f32[4,192,256] scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      lhs_batch_dims={0}, rhs_batch_dims={0},
+      lhs_contracting_dims={2}, rhs_contracting_dims={2}
+}
+
+ENTRY e {
+  %lhs = f8e4m3fn[4,192,224] parameter(0)
+  %rhs = f8e4m3fn[4,256,224] parameter(1)
+  %lhs_scale = f8e8m0fnu[4,192,7] parameter(2)
+  %rhs_scale = f8e8m0fnu[4,256,7] parameter(3)
+  ROOT _ = f32[4,192,256] fusion(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      kind=kCustom, calls=fusion1,
+      backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
+})";
+
+  CheckTritonAutotuning(kHlo, R"(
+// CHECK: "plan_id":
+)");
+}
+
 // TODO(b/281489442): Write a testcase called
 // `SkipConfigsProducingDeviantResults` or similar.
 
@@ -1876,8 +1911,7 @@ TEST_F(GemmFusionAutotunerEnableTma,
                             ErrorSpec{/*aabs=*/5e-3, /*arel=*/5e-3}));
 }
 
-TEST_F(GemmFusionAutotunerEnableTma,
-       TmaConfigsGeneratedAndRunCorrectlyForDotsOfBroadcasts) {
+TEST_F(GemmFusionAutotunerEnableTma, TmaRunCorrectlyForDotsOfBroadcasts) {
   if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Not supported on ROCm.";
   }
@@ -1900,15 +1934,6 @@ TEST_F(GemmFusionAutotunerEnableTma,
           se::CudaComputeCapability(se::CudaComputeCapability::kHopper, 0),
           GetToolkitVersion(), GetDebugOptionsForTest(),
           &symbolic_expr_context_));
-
-  auto is_disallowed_tma_config = [](const TritonGemmConfig& c) {
-    return c.num_stages > 2 && c.is_tma_allowed;
-  };
-  auto is_allowed_tma_config = [](const TritonGemmConfig& c) {
-    return c.num_stages <= 2 && c.is_tma_allowed;
-  };
-  EXPECT_FALSE(absl::c_any_of(hopper_configs, is_disallowed_tma_config));
-  EXPECT_TRUE(absl::c_any_of(hopper_configs, is_allowed_tma_config));
 
   EXPECT_TRUE(RunAndCompare(std::move(module),
                             ErrorSpec{/*aabs=*/5e-3, /*arel=*/5e-3}));

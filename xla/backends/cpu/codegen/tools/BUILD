@@ -82,7 +82,6 @@ xla_cc_binary(
     deps = [
         "//xla/backends/cpu/codegen:fusion_compiler",
         "//xla/backends/cpu/codegen:fusion_emitter",
-        "//xla/codegen:mlir_kernel_source",
         "//xla/codegen/tools:test_lib",
         "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
@@ -91,5 +90,25 @@ xla_cc_binary(
         "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+xla_cc_binary(
+    name = "fusion_compiler_opt",
+    srcs = ["fusion_compiler_opt.cc"],
+    deps = [
+        "//xla/backends/cpu/codegen:fusion_compiler",
+        "//xla/backends/cpu/codegen/emitters/transforms:passes",
+        "//xla/backends/cpu/codegen/tiled/transforms:passes",
+        "//xla/codegen/emitters/transforms:convert_pure_call_ops_pass",
+        "//xla/codegen/xtile/ir/transforms:passes",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AllPassesAndDialects",
+        "@llvm-project//mlir:FuncExtensions",
+        "@llvm-project//mlir:LLVMIRTransforms",
+        "@llvm-project//mlir:MlirOptLib",
+        "@llvm-project//mlir:RegisterAllPasses",  # buildcleaner: keep
+        "@llvm-project//mlir:Support",
+        "@stablehlo//:linalg_passes",
     ],
 )
