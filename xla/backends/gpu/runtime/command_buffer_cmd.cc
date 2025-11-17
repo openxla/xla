@@ -2416,7 +2416,7 @@ CollectivePermuteCmd::Record(const Thunk::ExecuteParams& execute_params,
   }
 
   TF_ASSIGN_OR_RETURN(const int64_t current_id,
-                      GetCurrentId(execute_params.collective_params, config()));
+            GetCollectiveCurrentId(execute_params.collective_params, config()));
 
   const P2PConfig::SourceTargetMapEntry source_target =
       P2PConfig::GetSourceTarget(id_to_source_target_, current_id);

@@ -82,20 +82,6 @@ bool IsLocalPeerTransfer(const P2PConfig::SourceTargetMapEntry& source_target,
 
 }  // namespace
 
-absl::StatusOr<const int64_t> GetCurrentId(
-    Thunk::CollectiveExecuteParams* collective_params,
-    const CollectiveConfig& config) {
-  GlobalDeviceId global_device_id = collective_params->global_device_id;
-  TF_ASSIGN_OR_RETURN(
-      const DeviceAssignment::LogicalID current_logical_id,
-      collective_params->device_assn->LogicalIdForDevice(global_device_id));
-  const int64_t current_id = config.group_mode == 
-      CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA
-          ? current_logical_id.replica_id
-          : current_logical_id.computation_id;
-  return current_id;
-}
-
 CollectivePermuteStartThunk::CollectivePermuteStartThunk(
     ThunkInfo thunk_info, const HloCollectivePermuteInstruction* instr,
     int64_t replica_count, int64_t partition_count,

@@ -134,10 +134,6 @@ protected:
   int64_t device_count_;
 };
 
-absl::StatusOr<const int64_t> GetCurrentId(
-    Thunk::CollectiveExecuteParams* collective_params,
-    const CollectiveConfig& config);
-
 absl::Status RunCollectivePermute(
     P2PConfig::SourceTargetMapEntry source_target,
     std::vector<DeviceBufferPair>& buffers, se::Stream& stream,
