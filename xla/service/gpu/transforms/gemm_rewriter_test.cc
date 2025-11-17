@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.h"
+#include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/gpu/transforms/gemm_rewriter_test_lib.h"
 #include "xla/service/hlo_module_config.h"
@@ -44,6 +45,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -56,6 +58,14 @@ namespace gpu {
 namespace {
 
 namespace m = ::xla::match;
+
+// Helper function to check cuDNN version for F64/C64/C128 support.
+bool IsAtLeastCuDnnVersion(se::StreamExecutor* executor, int major, int minor) {
+  const se::dnn::VersionInfo version = GetDnnVersionInfoOrDefault(executor);
+  return (version.major_version() == major &&
+          version.minor_version() >= minor) ||
+         version.major_version() > major;
+}
 
 using GemmRewriteTest = GemmRewriteTestBase;
 
@@ -1193,6 +1203,9 @@ TEST_P(ParameterizedGemmRewriteTest, GemmTypeCombinationCheck) {
     GTEST_SKIP() << "DoBlasGemmWithAlgorithm is not yet implemented on ROCm";
   }
 
+  bool has_cudnn_914 =
+      IsAtLeastCuDnnVersion(backend().default_stream_executor(), 9, 14);
+
   std::vector<std::tuple<absl::string_view, absl::string_view, bool>>
       type_combinations = {{"s8", "s8", true},
                            {"s32", "s32", true},
@@ -1222,10 +1235,10 @@ TEST_P(ParameterizedGemmRewriteTest, GemmTypeCombinationCheck) {
             {"s32", "f32", false},  {"s32", "f64", false},
             {"s32", "c64", false},  {"s32", "c128", false},
 
-            {"f16", "bf16", false}, {"f16", "f64", false},
+            {"f16", "bf16", true},  {"f16", "f64", false},
             {"f16", "c64", false},  {"f16", "c128", false},
 
-            {"bf16", "f16", false}, {"bf16", "f64", false},
+            {"bf16", "f16", true},  {"bf16", "f64", false},
             {"bf16", "c64", false}, {"bf16", "c128", false},
 
             {"f32", "f64", false},  {"f32", "c64", false},
@@ -1237,7 +1250,6 @@ TEST_P(ParameterizedGemmRewriteTest, GemmTypeCombinationCheck) {
                              more_type_combinations.begin(),
                              more_type_combinations.end());
   }
-
   for (const auto& type_combination : type_combinations) {
     absl::flat_hash_map<absl::string_view, absl::string_view> replacements;
     replacements["<<ABType>>"] = std::get<0>(type_combination);
@@ -1252,6 +1264,14 @@ TEST_P(ParameterizedGemmRewriteTest, GemmTypeCombinationCheck) {
   }
     )";
     const auto hlo_text = absl::StrReplaceAll(hlo_template, replacements);
+
+    // Skip test case if it requires cuDNN 9.14+ but we don't have it
+    if (!has_cudnn_914 && (std::get<1>(type_combination) == "f64" ||
+                           std::get<1>(type_combination) == "c64" ||
+                           std::get<1>(type_combination) == "c128")) {
+      continue;  // Skip this type combination
+    }
+
     if (std::get<2>(type_combination)) {
       EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
     } else {
