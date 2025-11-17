@@ -5568,7 +5568,7 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
                    /*direction=*/
                    collective_pipeliner_utils::PipeliningDirection::kForward,
                    /*should_process=*/
-                   host_offload_utils::IsHostOffloadingInstruction)
+                   host_offload_utils::IsMoveToHostWithDynamicUpdateSlice)
           .value());
   XLA_VLOG_LINES(1, "After forward pipelining:\n" + module->ToString());
 
@@ -5579,7 +5579,7 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
                    /*direction=*/
                    collective_pipeliner_utils::PipeliningDirection::kBackward,
                    /*should_process=*/
-                   host_offload_utils::IsHostOffloadingInstruction)
+                   host_offload_utils::IsMoveToDeviceWithDynamicSlice)
           .value());
   XLA_VLOG_LINES(1, "After backward pipelining:\n" + module->ToString());
 

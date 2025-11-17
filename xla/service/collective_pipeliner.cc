@@ -1682,8 +1682,15 @@ absl::Status MarkDynamicVariables(HloInstruction* while_loop) {
     return absl::OkStatus();
   }
 
-  if (!host_offload_utils::HasHostOffloadingOperations(
-          while_loop->while_body())) {
+  bool has_host_offloading = false;
+  for (const HloInstruction* instr : while_loop->while_body()->instructions()) {
+    if (host_offload_utils::IsMoveToHostWithDynamicUpdateSlice(instr) ||
+        host_offload_utils::IsMoveToDeviceWithDynamicSlice(instr)) {
+      has_host_offloading = true;
+      break;
+    }
+  }
+  if (!has_host_offloading) {
     return absl::OkStatus();
   }
 

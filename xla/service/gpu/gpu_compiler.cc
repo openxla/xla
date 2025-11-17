@@ -1110,7 +1110,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         collective_pipeliner_utils::PipeliningDirection::kForward,
-        /*should_process=*/host_offload_utils::IsHostOffloadingInstruction,
+        /*should_process=*/host_offload_utils::IsMoveToHostWithDynamicUpdateSlice,
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
@@ -1135,7 +1135,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         collective_pipeliner_utils::PipeliningDirection::kBackward,
-        /*should_process=*/host_offload_utils::IsHostOffloadingInstruction,
+        /*should_process=*/host_offload_utils::IsMoveToDeviceWithDynamicSlice,
         /*acceptable_formatting=*/HloPredicateTrue,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,

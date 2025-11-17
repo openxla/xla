@@ -296,66 +296,31 @@ void SetHostComputeFrontendAttribute(HloInstruction& host_instruction) {
   host_instruction.set_frontend_attributes(frontend_attributes);
 }
 
-bool IsHostOffloadingInstruction(const HloInstruction* instr) {
-  if (!instr) {
+bool IsMoveToHostWithDynamicUpdateSlice(const HloInstruction* instr) {
+  if (!instr->IsCustomCall(kMoveToHostCustomCallTarget)) {
     return false;
   }
 
-  if (instr->IsCustomCall("MoveToHost")) {
-    // Check if MoveToHost is used by DynamicUpdateSlice (forward pattern)
-    std::vector<const HloInstruction*> to_check = {instr};
-    absl::btree_set<const HloInstruction*> visited;
+  std::vector<const HloInstruction*> to_check = {instr};
+  absl::btree_set<const HloInstruction*> visited;
 
-    while (!to_check.empty()) {
-      const HloInstruction* current = to_check.back();
-      to_check.pop_back();
+  while (!to_check.empty()) {
+    const HloInstruction* current = to_check.back();
+    to_check.pop_back();
 
-      auto [_, inserted] = visited.insert(current);
-      if (inserted) {
-        if (current->user_count() == 0) {
-          continue;
-        }
-        for (const HloInstruction* user : current->users()) {
-          if (!user) {
-            continue;
-          }
-          if (user->opcode() == HloOpcode::kDynamicUpdateSlice) {
-            return true;
-          }
-          if (user->opcode() == HloOpcode::kReshape ||
-              user->opcode() == HloOpcode::kBroadcast ||
-              user->opcode() == HloOpcode::kTranspose) {
-            to_check.push_back(user);
-          }
-        }
+    auto [_, inserted] = visited.insert(current);
+    if (inserted) {
+      if (current->user_count() == 0) {
+        continue;
       }
-    }
-  } else if (instr->IsCustomCall("MoveToDevice")) {
-    // Check if MoveToDevice uses DynamicSlice (backward pattern)
-    std::vector<const HloInstruction*> to_check = {instr};
-    absl::btree_set<const HloInstruction*> visited;
-
-    while (!to_check.empty()) {
-      const HloInstruction* current = to_check.back();
-      to_check.pop_back();
-
-      auto [_, inserted] = visited.insert(current);
-      if (inserted) {
-        if (current->operand_count() == 0) {
-          continue;
+      for (const HloInstruction* user : current->users()) {
+        if (user->opcode() == HloOpcode::kDynamicUpdateSlice) {
+          return true;
         }
-        for (const HloInstruction* operand : current->operands()) {
-          if (!operand) {
-            continue;
-          }
-          if (operand->opcode() == HloOpcode::kDynamicSlice) {
-            return true;
-          }
-          if (operand->opcode() == HloOpcode::kReshape ||
-              operand->opcode() == HloOpcode::kBroadcast ||
-              operand->opcode() == HloOpcode::kTranspose) {
-            to_check.push_back(operand);
-          }
+        if (user->opcode() == HloOpcode::kReshape ||
+            user->opcode() == HloOpcode::kBroadcast ||
+            user->opcode() == HloOpcode::kTranspose) {
+          to_check.push_back(user);
         }
       }
     }
@@ -363,14 +328,33 @@ bool IsHostOffloadingInstruction(const HloInstruction* instr) {
   return false;
 }
 
-bool HasHostOffloadingOperations(const HloComputation* computation) {
-  if (!computation) {
+bool IsMoveToDeviceWithDynamicSlice(const HloInstruction* instr) {
+  if (!instr->IsCustomCall(kMoveToDeviceCustomCallTarget)) {
     return false;
   }
 
-  for (const HloInstruction* instr : computation->instructions()) {
-    if (IsHostOffloadingInstruction(instr)) {
-      return true;
+  std::vector<const HloInstruction*> to_check = {instr};
+  absl::btree_set<const HloInstruction*> visited;
+
+  while (!to_check.empty()) {
+    const HloInstruction* current = to_check.back();
+    to_check.pop_back();
+
+    auto [_, inserted] = visited.insert(current);
+    if (inserted) {
+      if (current->operand_count() == 0) {
+        continue;
+      }
+      for (const HloInstruction* operand : current->operands()) {
+        if (operand->opcode() == HloOpcode::kDynamicSlice) {
+          return true;
+        }
+        if (operand->opcode() == HloOpcode::kReshape ||
+            operand->opcode() == HloOpcode::kBroadcast ||
+            operand->opcode() == HloOpcode::kTranspose) {
+          to_check.push_back(operand);
+        }
+      }
     }
   }
   return false;
