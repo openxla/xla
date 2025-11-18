@@ -12,7 +12,7 @@ cuda_label = "cuda" + cuda_major_version if cuda_major_version else "null"
 # If we're not, the rc number is an empty string
 # Note that PEP 440 supports both of these at the same time, but
 # our CI will never set both.
-wheel_version = "0.0.0" + XLA_RC_NUMBER + XLA_NIGHTLY_TIMESTAMP
+wheel_version = "0.0.1" + XLA_RC_NUMBER + XLA_NIGHTLY_TIMESTAMP
 
 wheel_platform = select({
     "//conditions:default": "manylinux_2_27_x86_64",
