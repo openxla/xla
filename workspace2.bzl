@@ -403,6 +403,14 @@ def _tf_repositories():
     )
 
     tf_http_archive(
+        name = "ck_archive",
+        build_file = "//third_party:ck.BUILD",
+        sha256 = "ef77dca1de16e1f560855677b00e5d79fe8e32b5eebc712e211c9d0ecfd99d16",
+        strip_prefix = "composable_kernel-rocm-6.4.3",
+        urls = tf_mirror_urls("https://github.com/ROCm/composable_kernel/archive/refs/tags/rocm-6.4.3.zip"),
+    )
+
+    tf_http_archive(
         name = "nccl_archive",
         build_file = "//third_party/nccl:archive.BUILD",
         patch_file = ["//third_party/nccl:archive.patch"],
