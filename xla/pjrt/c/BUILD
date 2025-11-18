@@ -421,7 +421,10 @@ cc_library(
     name = "pjrt_c_api_gpu_internal",
     srcs = ["pjrt_c_api_gpu_internal.cc"],
     hdrs = ["pjrt_c_api_gpu_internal.h"],
-    local_defines = if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
+    local_defines = (
+        if_cuda_is_configured(["GOOGLE_CUDA=1"]) +
+        if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"])
+    ),
     visibility = ["//visibility:public"],
     deps = [
         ":pjrt_c_api_custom_partitioner_extension_hdrs",
@@ -466,7 +469,10 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
-    ],
+    ]+ if_cuda_is_configured([
+        # keep sorted
+        "@local_config_cuda//cuda:cuda_headers",
+    ]),
 )
 
 cc_library(
