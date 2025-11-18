@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
-#include "xla/service/gpu/executable.pb.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
@@ -136,8 +135,7 @@ class GpuOptProvider : public CompiledOptProvider {
     se::GpuComputeCapability gpu_compute_capability;
     if (device_description.ok()) {
       gpu_compute_capability = device_description->gpu_compute_capability();
-      if (std::holds_alternative<se::CudaComputeCapability>(
-              gpu_compute_capability)) {
+      if (gpu_compute_capability.IsCuda()) {
         alias_info_ =
             std::make_unique<gpu::NVPTXAliasInfo>(*device_description);
       } else {
@@ -213,11 +211,12 @@ class GpuOptProvider : public CompiledOptProvider {
     std::unique_ptr<gpu::GpuAliasInfo> alias_info =
         gpu_compiler->GetAliasInfo(device_description);
     if (!optimized_module->has_schedule()) {
-      TF_ASSIGN_OR_RETURN(gpu::ScheduleMetadata schedule_metadata,
-                          gpu::ScheduleGpuModule(
-                              optimized_module, gpu_compiler->GetPointerSize(),
-                              device_description, gpu_compiler->mlir_context(),
-                              alias_info.get()));
+      TF_ASSIGN_OR_RETURN(
+          gpu::ScheduleMetadata schedule_metadata,
+          gpu::ScheduleGpuModule(
+              optimized_module, gpu_compiler->GetPointerSize(),
+              device_description, gpu_compiler->symbolic_expr_context(),
+              alias_info.get()));
       TF_RETURN_IF_ERROR(gpu_compiler->RunPostSchedulingPipelines(
           optimized_module, schedule_metadata.scheduler_mem_limit,
           device_description, alias_info.get()));

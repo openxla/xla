@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/alias_info.h"
@@ -48,10 +49,11 @@ class CollectiveCombinerAnnotatorTest : public HloHardwareIndependentTestBase {
     GpuAliasInfo alias_info(device_info);
     return RunHloPass(
         CollectiveCombinerAnnotator(std::move(device_info), &alias_info,
-                                    pointer_size, &mlir_context_),
+                                    pointer_size, &symbolic_expr_context_),
         module);
   }
   mlir::MLIRContext mlir_context_;
+  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 TEST_F(CollectiveCombinerAnnotatorTest, SynchronousCollectivesNoOverlap) {

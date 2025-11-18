@@ -137,6 +137,8 @@ cc_library(
         "gpu_command_buffer.h",
     ],
     deps = [
+        "//xla:debug_options_flags",
+        "//xla/service:dump",
         "//xla/stream_executor:bit_pattern",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_memory",
@@ -168,6 +170,7 @@ cc_library(
     name = "gpu_executor_header",
     hdrs = ["gpu_executor.h"],
     deps = [
+        "//xla/stream_executor:device_memory",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_common",
         "//xla/stream_executor:stream_executor_h",
@@ -583,6 +586,7 @@ xla_test(
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:kernel",
+        "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
@@ -594,13 +598,13 @@ xla_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/util/proto:parse_text_proto",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -711,6 +715,7 @@ xla_test(
         "//xla/tools/hlo_opt:gpu_specs/a100_sxm_40.txtpb",
         "//xla/tools/hlo_opt:gpu_specs/a100_sxm_80.txtpb",
         "//xla/tools/hlo_opt:gpu_specs/a6000.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/b200.txtpb",
         "//xla/tools/hlo_opt:gpu_specs/h100_pcie.txtpb",
         "//xla/tools/hlo_opt:gpu_specs/h100_sxm.txtpb",
         "//xla/tools/hlo_opt:gpu_specs/mi200.txtpb",
@@ -938,5 +943,93 @@ xla_cc_test(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "buffer_debug_log",
+    srcs = ["buffer_debug_log.cc"],
+    hdrs = ["buffer_debug_log.h"],
+    deps = [
+        "//xla/backends/gpu/runtime:buffer_debug_log_proto_cc",
+        "//xla/backends/gpu/runtime:buffer_debug_log_structs",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:stream",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+xla_test(
+    name = "buffer_debug_log_test",
+    srcs = ["buffer_debug_log_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":buffer_debug_log",
+        "//xla/backends/gpu/runtime:buffer_debug_log_proto_cc",
+        "//xla/backends/gpu/runtime:buffer_debug_log_structs",
+        "//xla/backends/gpu/runtime:thunk_id",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:stream_executor_memory_allocator",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "buffer_debug_xor_checksum_kernel",
+    hdrs = ["buffer_debug_xor_checksum_kernel.h"],
+    deps = [
+        "//xla/backends/gpu/runtime:buffer_debug_log_structs",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:kernel",
+    ],
+)
+
+cc_library(
+    name = "buffer_debug_float_check_kernel",
+    hdrs = ["buffer_debug_float_check_kernel.h"],
+    deps = [
+        "//xla:types",
+        "//xla/backends/gpu/runtime:buffer_debug_log_structs",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:kernel",
+    ],
+)
+
+cc_library(
+    name = "prefix_sum_kernel",
+    hdrs = ["prefix_sum_kernel.h"],
+    deps = [
+        "//xla:types",
+        "//xla/backends/gpu/runtime:buffer_debug_log_structs",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:kernel",
+    ],
+)
+
+cc_library(
+    name = "kernel_serialization_check",
+    testonly = True,
+    srcs = ["kernel_serialization_check.cc"],
+    hdrs = ["kernel_serialization_check.h"],
+    deps = [
+        "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor:kernel_symbol_registry",
+        "//xla/stream_executor:platform",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_for_library",
     ],
 )

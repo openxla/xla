@@ -310,7 +310,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
   auto root_shape = roots.front().shape();
 
   LaunchDimensions launch_dimensions =
-      EstimateFusionLaunchDimensions(fusion_analysis, mlir_context_);
+      EstimateFusionLaunchDimensions(fusion_analysis, symbolic_expr_context_);
 
   int64_t num_blocks = launch_dimensions.num_blocks();
 
@@ -318,7 +318,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
   // operands. For each instruction, tells which elements of the instructions
   // result will be used to compute one result element of the fusion.
   auto grouped_fusion_indexing = ComputeGroupedOutputToInputIndexing(
-      fusion_adaptor, roots[0], mlir_context_);
+      fusion_adaptor, roots[0], symbolic_expr_context_);
 
   int64_t flops = 0;
   int64_t bytes_read = 0;
@@ -571,7 +571,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledFusion(
   // TODO(b/332714755): Add caching for SymbolicTileAnalysis.
   SymbolicTileAnalysisOrError analysis_or_error =
       SymbolicTileAnalysis::AnalyzeFusion(
-          fusion_adaptor, mlir_context_,
+          fusion_adaptor, symbolic_expr_context_,
           /*emitter_specific_constraints_builder=*/nullptr);
   if (const auto* fusion_decision =
           std::get_if<FusionDecision>(&analysis_or_error)) {
@@ -601,7 +601,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTriton(
   const auto& fusion_analysis =
       (consumer == nullptr) ? fusion_analysis_cache_->Get(*producer)
                             : fusion_analysis_cache_->Get(*producer, *consumer);
-  auto launch_config = TritonFusion(fusion_analysis).launch_config();
+  auto launch_config = TritonFusion(fusion_analysis).GetLaunchConfig();
 
   if (!launch_config.has_value()) {
     return absl::InvalidArgumentError(
@@ -638,7 +638,7 @@ GpuPerformanceModelWithIndexingAnalysis::TryFindBestTilingForFusion(
     const HloFusionAdaptor& fusion_adaptor) {
   SymbolicTileAnalysisOrError analysis_or_error =
       SymbolicTileAnalysis::AnalyzeFusion(
-          fusion_adaptor, mlir_context_,
+          fusion_adaptor, symbolic_expr_context_,
           TritonEmitterConstraints::GetBuilder(*device_info_));
 
   if (const auto* fusion_decision =

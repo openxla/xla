@@ -134,7 +134,10 @@ cc_library(
     name = "executor",
     hdrs = ["executor.h"],
     compatible_with = get_compatible_with_portable(),
-    deps = ["@com_google_absl//absl/functional:any_invocable"],
+    deps = [
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/functional:any_invocable",
+    ],
 )
 
 cc_library(
@@ -149,6 +152,7 @@ cc_library(
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/functional:bind_front",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/meta:type_traits",
@@ -165,6 +169,7 @@ tsl_cc_test(
     deps = [
         ":executor",
         ":future",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",

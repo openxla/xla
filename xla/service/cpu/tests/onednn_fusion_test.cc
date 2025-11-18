@@ -24,13 +24,15 @@ limitations under the License.
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/platform/test.h"
+#include "tsl/platform/cpu_info.h"
 
 namespace xla::cpu {
 namespace {
 
 inline constexpr bool IsOneDnnGraphEnabled() {
 #if defined(XLA_ONEDNN_USE_GRAPH_API)
-  return true;
+  // Some Aarch64 CPUs have failures. Only test on x86 for now.
+  return tsl::port::IsX86CPU();
 #endif  // XLA_ONEDNN_USE_GRAPH_API
   return false;
 }

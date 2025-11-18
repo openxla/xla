@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -75,10 +76,11 @@ class PriorityFusionTest : public HloHardwareIndependentTestBase {
 
   se::DeviceDescription device_info_ = TestGpuDeviceInfo::RTXA6000DeviceInfo();
   mlir::MLIRContext mlir_context_;
+  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
   PriorityFusion priority_fusion_{
       /*thread_pool=*/nullptr, device_info_,
       GpuHloCostAnalysis::Options{.count_multiple_input_accesses = true},
-      &mlir_context_};
+      &symbolic_expr_context_};
 };
 
 TEST_F(PriorityFusionTest, FuseWithSharedArgument) {
@@ -1375,7 +1377,7 @@ TEST_F(PriorityFusionWithTritonEnabledTest,
   GpuHloCostAnalysis::Options options;
   options.count_multiple_input_accesses = true;
   PriorityFusion priority_fusion_with_thread_pool{
-      /*thread_pool=*/&pool, device_info_, options, &mlir_context_};
+      /*thread_pool=*/&pool, device_info_, options, &symbolic_expr_context_};
   EXPECT_THAT(priority_fusion_with_thread_pool.Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   HloInstruction* root = module->entry_computation()->root_instruction();

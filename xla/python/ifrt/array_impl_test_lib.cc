@@ -302,10 +302,6 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferDefaultLayout) {
   for (Memory* const memory : device->Memories()) {
     SCOPED_TRACE(absl::StrCat(memory->Kind()));
 
-    TF_ASSERT_OK_AND_ASSIGN(auto default_layout,
-                            client->GetDefaultPjRtLayout(
-                                dtype, shape.dims(), device, memory->Kind()));
-
     TF_ASSERT_OK_AND_ASSIGN(
         auto array,
         client->MakeArrayFromHostBuffer(
@@ -316,7 +312,14 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferDefaultLayout) {
     TF_ASSERT_OK(array->GetReadyFuture().Await());
 
     TF_ASSERT_OK_AND_ASSIGN(auto layout, array->pjrt_layout());
-    EXPECT_EQ(*layout, *default_layout);
+    // `layout` should be either nullptr or a concrete default layout.
+    if (layout != nullptr) {
+      TF_ASSERT_OK_AND_ASSIGN(auto default_layout,
+                              client->GetDefaultPjRtLayout(
+                                  dtype, shape.dims(), device, memory->Kind()));
+
+      EXPECT_EQ(*layout, *default_layout);
+    }
   }
 }
 
@@ -459,7 +462,7 @@ TEST(ArrayImplTest, MakeArrayFromHostBufferReplicated) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto single_device_arrays,
                           array->DisassembleIntoSingleDeviceArrays(
-                              ArrayCopySemantics::kAlwaysCopy,
+                              ArrayCopySemantics::kReuseInput,
                               SingleDeviceShardSemantics::kAddressableShards));
   ASSERT_EQ(single_device_arrays.size(), devices.size());
   for (int i = 0; i < single_device_arrays.size(); ++i) {
@@ -544,7 +547,7 @@ TEST(ArrayImplTest, MakeArraysFromHostBufferShardsAndCopyToHostBuffer) {
     TF_ASSERT_OK_AND_ASSIGN(
         auto single_device_arrays,
         arrays[i]->DisassembleIntoSingleDeviceArrays(
-            ArrayCopySemantics::kAlwaysCopy,
+            ArrayCopySemantics::kReuseInput,
             SingleDeviceShardSemantics::kAddressableShards));
     ASSERT_EQ(single_device_arrays.size(), devices.size());
     for (int j = 0; j < single_device_arrays.size(); ++j) {
@@ -711,6 +714,7 @@ TEST(ArrayImplTest, MakeArraysFromHostBufferShardsWithLayout) {
 
   TF_ASSERT_OK(array->GetReadyFuture().Await());
   TF_ASSERT_OK_AND_ASSIGN(auto result_layout, array->pjrt_layout());
+  ASSERT_NE(result_layout, nullptr);
   EXPECT_EQ(*result_layout, *layout);
 }
 
@@ -841,7 +845,7 @@ TEST(ArrayImplTest,
     TF_ASSERT_OK_AND_ASSIGN(
         auto single_device_arrays,
         arrays[i]->DisassembleIntoSingleDeviceArrays(
-            ArrayCopySemantics::kAlwaysCopy,
+            ArrayCopySemantics::kReuseInput,
             SingleDeviceShardSemantics::kAddressableShards));
     ASSERT_EQ(single_device_arrays.size(), devices.size());
     for (int j = 0; j < single_device_arrays.size(); ++j) {
@@ -900,7 +904,7 @@ TEST(ArrayImplTest, HostBufferRoundTripAllMemoryKinds) {
     std::vector<float> new_data(6);
     tsl::Future<> future = array->CopyToHostBuffer(
         static_cast<void*>(new_data.data()), /*byte_strides=*/std::nullopt,
-        ArrayCopySemantics::kReuseInput);
+        ArrayCopySemantics::kAlwaysCopy);
     TF_ASSERT_OK(future.Await());
     EXPECT_THAT(new_data, ElementsAreArray(data));
   }
@@ -1120,7 +1124,7 @@ TEST(ArrayImplTest, AssembleAndDisassembleArray) {
     TF_ASSERT_OK_AND_ASSIGN(
         auto single_device_arrays,
         assembled_array->DisassembleIntoSingleDeviceArrays(
-            ArrayCopySemantics::kAlwaysCopy,
+            ArrayCopySemantics::kReuseInput,
             SingleDeviceShardSemantics::kAddressableShards));
 
     ASSERT_THAT(single_device_arrays, SizeIs(2));
@@ -1176,7 +1180,7 @@ TEST(ArrayImplTest, AssembleAndDisassembleSingleDeviceArray) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto single_device_arrays,
                           assembled_array->DisassembleIntoSingleDeviceArrays(
-                              ArrayCopySemantics::kAlwaysCopy,
+                              ArrayCopySemantics::kReuseInput,
                               SingleDeviceShardSemantics::kAddressableShards));
 
   ASSERT_THAT(single_device_arrays, SizeIs(1));
@@ -1272,7 +1276,7 @@ TEST(ArrayImplTest, AssembleAndDisassembleNonAddressableArray) {
     TF_ASSERT_OK_AND_ASSIGN(
         auto single_device_arrays,
         assembled_array->DisassembleIntoSingleDeviceArrays(
-            ArrayCopySemantics::kAlwaysCopy,
+            ArrayCopySemantics::kReuseInput,
             SingleDeviceShardSemantics::kAddressableShards));
 
     ASSERT_THAT(single_device_arrays, SizeIs(0));
@@ -1347,7 +1351,7 @@ TEST(ArrayImplTest, CopyToDifferentDevice) {
 
     TF_ASSERT_OK_AND_ASSIGN(
         auto shards, arrays[i]->DisassembleIntoSingleDeviceArrays(
-                         ArrayCopySemantics::kAlwaysCopy,
+                         ArrayCopySemantics::kReuseInput,
                          SingleDeviceShardSemantics::kAddressableShards));
     for (const auto& shard : shards) {
       std::vector<float> out_data(6);
@@ -1449,11 +1453,14 @@ TEST(ArrayImplTest, CopyPreservesDefaultLayouts) {
       TF_ASSERT_OK(array->GetReadyFuture().Await());
 
       TF_ASSERT_OK_AND_ASSIGN(auto src_layout, array->pjrt_layout());
-      TF_ASSERT_OK_AND_ASSIGN(
-          auto src_default_layout,
-          client->GetDefaultPjRtLayout(dtype, shape.dims(), device,
-                                       src_memory->Kind()));
-      EXPECT_EQ(*src_layout, *src_default_layout);
+      // `layout` should be either nullptr or a concrete default layout.
+      if (src_layout != nullptr) {
+        TF_ASSERT_OK_AND_ASSIGN(
+            auto src_default_layout,
+            client->GetDefaultPjRtLayout(dtype, shape.dims(), device,
+                                         src_memory->Kind()));
+        EXPECT_EQ(*src_layout, *src_default_layout);
+      }
 
       TF_ASSERT_OK_AND_ASSIGN(
           auto new_arrays, client->CopyArrays(absl::MakeSpan(&array, 1),
@@ -1461,11 +1468,14 @@ TEST(ArrayImplTest, CopyPreservesDefaultLayouts) {
                                               ArrayCopySemantics::kAlwaysCopy));
       ASSERT_THAT(new_arrays, SizeIs(1));
       TF_ASSERT_OK_AND_ASSIGN(auto dst_layout, new_arrays[0]->pjrt_layout());
-      TF_ASSERT_OK_AND_ASSIGN(
-          auto dst_default_layout,
-          client->GetDefaultPjRtLayout(dtype, shape.dims(), device,
-                                       dst_memory->Kind()));
-      EXPECT_EQ(*dst_layout, *dst_default_layout);
+      // `layout` should be either nullptr or a concrete default layout.
+      if (dst_layout != nullptr) {
+        TF_ASSERT_OK_AND_ASSIGN(
+            auto dst_default_layout,
+            client->GetDefaultPjRtLayout(dtype, shape.dims(), device,
+                                         dst_memory->Kind()));
+        EXPECT_EQ(*dst_layout, *dst_default_layout);
+      }
     }
   }
 }

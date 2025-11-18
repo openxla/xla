@@ -1509,10 +1509,10 @@ absl::StatusOr<bool> RunOnComputation(
 }  // anonymous namespace
 
 CudnnNormRewriter::CudnnNormRewriter(
-    se::CudaComputeCapability cuda_compute_capability)
+    const se::CudaComputeCapability& cuda_compute_capability)
     : cuda_compute_capability_(cuda_compute_capability) {}
 
-absl::StatusOr<bool> CudnnNormRewriter::Run(
+absl::StatusOr<bool> CudnnNormRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;

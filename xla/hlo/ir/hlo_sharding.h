@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/tile_assignment.h"  // IWYU pragma: export
 #include "xla/printer.h"
 #include "xla/shape.h"
@@ -55,7 +56,11 @@ class HloSharding {
 
   // Creates a trivial sharding that replicates a maximal tile across all
   // devices.
-  static HloSharding Replicate(absl::Span<const OpMetadata> metadata = {}) {
+  static HloSharding Replicate(absl::Span<const OpMetadata> metadata = {},
+                               bool use_named_sharding = false) {
+    if (use_named_sharding) {
+      return HloSharding(NamedSharding::Replicate(metadata));
+    }
     return HloSharding(/*manual=*/false, /*replicated=*/true, /*unknown=*/false,
                        /*unreduced=*/false, metadata);
   }
@@ -80,7 +85,8 @@ class HloSharding {
   // Creates a sharding that emulates device placement; a tile shape equal to
   // the input shape (one tile) assigned to a single device.
   static HloSharding AssignDevice(int64_t device_id,
-                                  absl::Span<const OpMetadata> metadata = {});
+                                  absl::Span<const OpMetadata> metadata = {},
+                                  bool use_named_sharding = false);
 
   // Creates a new sharding which splits a shape into tiles amongst the devices
   // specified by `tile_assignment`.
@@ -187,26 +193,35 @@ class HloSharding {
   absl::Status Validate(const Shape& shape,
                         std::optional<int64_t> num_devices = {}) const;
 
+  // Returns true if the sharding is represented using `NamedSharding` format.
+  bool UseNamedShardingLeaf() const {
+    DCHECK(!IsTuple());
+    return named_sharding_.has_value();
+  }
+
   // Returns true if the sharding has tuple type.
   bool IsTuple() const { return tuple_; }
 
   // Returns true if the sharding is trivial: replicate on all devices.
   bool IsReplicated() const {
     if (!IsTuple()) {
-      return replicated_;
+      return IsReplicatedLeaf();
     }
     return absl::c_all_of(
         tuple_elements_, [](const HloSharding& s) { return s.IsReplicated(); });
   }
   bool IsReplicatedLeaf() const {
     DCHECK(!IsTuple());
+    if (UseNamedShardingLeaf()) {
+      return named_sharding_->IsReplicated();
+    }
     return replicated_;
   }
 
   // Returns true if the tile size is the same as the input size.
   bool IsTileMaximal() const {
     if (!IsTuple()) {
-      return maximal_;
+      return IsTileMaximalLeaf();
     }
     return absl::c_all_of(tuple_elements_, [](const HloSharding& s) {
       return s.IsTileMaximal();
@@ -214,32 +229,44 @@ class HloSharding {
   }
   bool IsTileMaximalLeaf() const {
     DCHECK(!IsTuple());
+    if (UseNamedShardingLeaf()) {
+      return named_sharding_->IsTileMaximal();
+    }
     return maximal_;
   }
 
   // Returns whether the sharding represents manual partitioning.
   bool IsManual() const {
     if (!IsTuple()) {
-      return manual_;
+      return IsManualLeaf();
     }
     return absl::c_all_of(tuple_elements_,
                           [](const HloSharding& s) { return s.IsManual(); });
   }
   bool IsManualLeaf() const {
     DCHECK(!IsTuple());
+    if (UseNamedShardingLeaf()) {
+      // ManualSharding is represented by separate ManualComputationOp in named
+      // sharding format.
+      return false;
+    }
     return manual_;
   }
 
   // Returns whether the sharding represents a placeholder sharding.
   bool IsUnknown() const {
     if (!IsTuple()) {
-      return unknown_;
+      return IsUnknownLeaf();
     }
     return absl::c_all_of(tuple_elements_,
                           [](const HloSharding& s) { return s.IsUnknown(); });
   }
   bool IsUnknownLeaf() const {
     DCHECK(!IsTuple());
+    if (UseNamedShardingLeaf()) {
+      // There is no Unknown sharding type in named sharding format.
+      return false;
+    }
     return unknown_;
   }
 
@@ -257,6 +284,11 @@ class HloSharding {
 
   bool IsShardGroup() const {
     if (!IsTuple()) {
+      if (UseNamedShardingLeaf()) {
+        // Sharding groups are represented by separate ShardingGroup op in named
+        // sharding format.
+        return false;
+      }
       return shard_group_.shard_group_id != -1 &&
              (shard_group_.shard_like || shard_group_.shard_as);
     }
@@ -268,6 +300,11 @@ class HloSharding {
 
   bool IsShardAs() const {
     if (!IsTuple()) {
+      if (UseNamedShardingLeaf()) {
+        // Sharding groups are represented by separate ShardingGroup op in named
+        // sharding format.
+        return false;
+      }
       return shard_group_.shard_group_id != -1 && shard_group_.shard_as;
     }
     return !tuple_elements_.empty() &&
@@ -277,6 +314,11 @@ class HloSharding {
 
   bool IsShardLike() const {
     if (!IsTuple()) {
+      if (UseNamedShardingLeaf()) {
+        // Sharding groups are represented by separate ShardingGroup op in named
+        // sharding format.
+        return false;
+      }
       return shard_group_.shard_group_id != -1 && shard_group_.shard_like;
     }
     return !tuple_elements_.empty() &&
@@ -446,7 +488,8 @@ class HloSharding {
            tuple_elements_ == other.tuple_elements_ &&
            replicate_on_last_tile_dim_ == other.replicate_on_last_tile_dim_ &&
            subgroup_types_ == other.subgroup_types_ &&
-           shard_group_ == other.shard_group_;
+           shard_group_ == other.shard_group_ &&
+           named_sharding_ == other.named_sharding_;
   }
   bool operator!=(const HloSharding& other) const { return !(*this == other); }
 
@@ -634,7 +677,8 @@ class HloSharding {
         manual_(manual),
         unknown_(unknown),
         unreduced_(unreduced),
-        replicate_on_last_tile_dim_(false) {}
+        replicate_on_last_tile_dim_(false),
+        named_sharding_(std::nullopt) {}
   // device_id values:
   // -2: magic number to mean unassigned device, used by spatial partitioning
   // -1: the id of the host
@@ -650,7 +694,8 @@ class HloSharding {
         manual_(false),
         unknown_(false),
         unreduced_(false),
-        replicate_on_last_tile_dim_(false) {}
+        replicate_on_last_tile_dim_(false),
+        named_sharding_(std::nullopt) {}
   explicit HloSharding(TileAssignment tile_assignment,
                        bool replicate_on_last_tile_dim,
                        absl::Span<const OpMetadata> metadata = {})
@@ -662,7 +707,8 @@ class HloSharding {
         manual_(false),
         unknown_(false),
         unreduced_(false),
-        replicate_on_last_tile_dim_(replicate_on_last_tile_dim) {}
+        replicate_on_last_tile_dim_(replicate_on_last_tile_dim),
+        named_sharding_(std::nullopt) {}
   explicit HloSharding(TileAssignment tile_assignment,
                        absl::Span<const OpSharding::Type> subgroup_types,
                        absl::Span<const OpMetadata> metadata = {})
@@ -675,7 +721,8 @@ class HloSharding {
         manual_(false),
         unknown_(false),
         unreduced_(false),
-        replicate_on_last_tile_dim_(false) {}
+        replicate_on_last_tile_dim_(false),
+        named_sharding_(std::nullopt) {}
   explicit HloSharding(std::vector<HloSharding> tuple_shardings)
       : tuple_elements_(std::move(tuple_shardings)),
         replicated_(false),
@@ -684,7 +731,17 @@ class HloSharding {
         manual_(false),
         unknown_(false),
         unreduced_(false),
-        replicate_on_last_tile_dim_(false) {}
+        replicate_on_last_tile_dim_(false),
+        named_sharding_(std::nullopt) {}
+  explicit HloSharding(NamedSharding named_sharding)
+      : replicated_(false),
+        maximal_(false),
+        tuple_(false),
+        manual_(false),
+        unknown_(false),
+        unreduced_(false),
+        replicate_on_last_tile_dim_(false),
+        named_sharding_(std::move(named_sharding)) {}
 
   // Test-only constructor for sharding format code coverage. Copies the
   // original sharding with provided tile assignment.
@@ -699,7 +756,8 @@ class HloSharding {
         manual_(other.manual_),
         unknown_(other.unknown_),
         unreduced_(other.unreduced_),
-        replicate_on_last_tile_dim_(other.replicate_on_last_tile_dim_) {
+        replicate_on_last_tile_dim_(other.replicate_on_last_tile_dim_),
+        named_sharding_(std::nullopt) {
     CHECK(tile_assignment_ == other.tile_assignment_)
         << tile_assignment_.ToString() << " v.s. "
         << other.tile_assignment_.ToString();
@@ -717,6 +775,8 @@ class HloSharding {
   // Internal helper to validate a non-tuple (leaf) sharding.
   absl::Status ValidateNonTuple(const Shape& shape,
                                 std::optional<int64_t> num_devices) const;
+
+  const TileAssignment& TileAgnosticDeviceAssignment() const;
 
   // This field is only used if replicated_ is false. If maximal_ is true, then
   // the field contains a rank 1 array with a single element, which is the
@@ -767,6 +827,23 @@ class HloSharding {
   // within the same shard group (i.e. under the same shard_group_id) will be
   // sharded alike or exactly the same as each other.
   ShardGroup shard_group_ = NotShardGroup();
+
+  // Optional field to migrate HloSharding to new NamedSharding representation.
+  // If this field is populated, all other fields in HloSharding should be empty
+  // or else are ignored. This is to facilitate migration from the old sharding
+  // format.
+  //
+  // Note that for tuple NamedShardings, we reuse HloSharding's tuple_elements_
+  // field. If named sharding format is enabled each element in tuple_elements_
+  // will be an HloSharding, which itself can be a tuple or should only have
+  // named_sharding_ populated. This approach is taken to maintain backward
+  // compatibility with the existing `tuple_elements()` method, which provides a
+  // modifiable reference to a `std::vector<HloSharding>`.
+  //
+  // Note that instead of reusing HloSharding's fields like metadata, we have
+  // separate fields in NamedSharding to treat it as a standalone message which
+  // is more clear and will help in future cleanup.
+  std::optional<NamedSharding> named_sharding_;
 };
 
 std::ostream& operator<<(std::ostream& out, const HloSharding& sharding);

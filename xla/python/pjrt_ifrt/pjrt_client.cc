@@ -44,6 +44,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
+#include "xla/future.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
@@ -54,7 +55,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
@@ -725,6 +725,17 @@ const char kKeyPrefix[] = "ifrt_cross_host_transfer_";
 char PjRtCompatibleClient::ID = 0;
 char PjRtClient::ID = 0;
 
+absl::StatusOr<tsl::RCReference<PjRtCompatibleArray>>
+PjRtCompatibleClient::CreatePjRtArray(std::shared_ptr<PjRtBuffer> pjrt_buffer) {
+  return CreatePjRtArray(std::move(pjrt_buffer), /*has_custom_layout=*/true);
+}
+
+absl::StatusOr<tsl::RCReference<PjRtCompatibleArray>>
+PjRtCompatibleClient::CreatePjRtArray(Shape shape, PjRtBuffers pjrt_buffers) {
+  return CreatePjRtArray(std::move(shape), std::move(pjrt_buffers),
+                         /*has_custom_layout=*/true);
+}
+
 absl::StatusOr<std::unique_ptr<PjRtClient>> PjRtClient::Create(
     PjRtClient::CreateOptions options) {
   auto client =
@@ -955,16 +966,21 @@ absl::StatusOr<DeviceListRef> PjRtClient::MakeDeviceList(
 const AttributeMap& PjRtClient::Attributes() const { return attributes_; }
 
 absl::StatusOr<tsl::RCReference<PjRtCompatibleArray>>
-PjRtClient::CreatePjRtArray(std::shared_ptr<PjRtBuffer> pjrt_buffer) {
-  TF_ASSIGN_OR_RETURN(auto array,
-                      PjRtArray::Create(this, std::move(pjrt_buffer)));
+PjRtClient::CreatePjRtArray(std::shared_ptr<PjRtBuffer> pjrt_buffer,
+                            bool has_custom_layout) {
+  TF_ASSIGN_OR_RETURN(
+      auto array,
+      PjRtArray::Create(this, std::move(pjrt_buffer), has_custom_layout));
   return tsl::RCReference<PjRtCompatibleArray>(std::move(array));
 }
 
 absl::StatusOr<tsl::RCReference<PjRtCompatibleArray>>
-PjRtClient::CreatePjRtArray(Shape shape, PjRtBuffers pjrt_buffers) {
+PjRtClient::CreatePjRtArray(Shape shape, PjRtBuffers pjrt_buffers,
+                            bool has_custom_layout) {
+  std::shared_ptr<const xla::PjRtLayout> layout;
   TF_ASSIGN_OR_RETURN(auto array, PjRtArray::Create(this, std::move(shape),
-                                                    std::move(pjrt_buffers)));
+                                                    std::move(pjrt_buffers),
+                                                    has_custom_layout));
   return tsl::RCReference<PjRtCompatibleArray>(std::move(array));
 }
 
@@ -1055,7 +1071,8 @@ absl::StatusOr<ArrayRef> PjRtClient::MakeArrayFromHostBuffer(
     }
     buffers.push_back(std::move(buffer));
   }
-  auto layout = buffers.front()->layout();
+  // `MakeArrayFromHostBuffer` only creates buffers with a default layout.
+  std::shared_ptr<const xla::PjRtLayout> layout = nullptr;
   return PjRtArray::Create(this, dtype, std::move(shape), std::move(sharding),
                            std::move(buffers), std::move(layout));
 }
@@ -1121,12 +1138,11 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::MakeErrorArrays(
               error, xla_shape,
               tensorflow::down_cast<PjRtMemory*>(memory)->pjrt_memory()));
     }
-    auto layout = buffers.front()->layout();
     TF_ASSIGN_OR_RETURN(
         arrays.emplace_back(),
         PjRtArray::Create(this, array_spec.dtype, std::move(shard_shape),
                           array_spec.sharding, std::move(buffers),
-                          std::move(layout)));
+                          array_spec.layout));
   }
   return arrays;
 }
@@ -1211,16 +1227,8 @@ absl::StatusOr<ArrayRef> PjRtClient::AssembleArrayFromSingleDeviceArrays(
   }
   // TODO(emilyaf): Remove the following logic once layout is plumbed through.
   std::shared_ptr<const xla::PjRtLayout> layout;
-  if (dtype.kind() == DType::kToken) {
-    layout = std::make_shared<xla::PjRtLayout>(xla::Layout());
-  } else if (buffers.empty()) {
-    TF_ASSIGN_OR_RETURN(auto shard_shape, sharding->GetShardShape(shape));
-    TF_ASSIGN_OR_RETURN(
-        layout, GetDefaultPjRtLayout(dtype, shard_shape.dims(),
-                                     sharding->devices()->devices().front(),
-                                     sharding->memory_kind()));
-  } else {
-    layout = buffers.front()->layout();
+  if (!arrays.empty()) {
+    TF_ASSIGN_OR_RETURN(layout, arrays.front()->pjrt_layout());
   }
   return PjRtArray::Create(this, dtype, std::move(shape), std::move(sharding),
                            std::move(buffers), std::move(layout));
@@ -1623,19 +1631,41 @@ absl::StatusOr<std::shared_ptr<Topology>> PjRtClient::GetTopologyForDevices(
 absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>>
 PjRtClient::GetDefaultPjRtLayout(DType dtype, absl::Span<const int64_t> dims,
                                  Device* device, MemoryKind memory_kind) const {
-  static MemoryKind kUnpinnedHostMemoryKind(UnpinnedHostMemorySpace::kKind);
-  if (memory_kind == kUnpinnedHostMemoryKind) {
-    return std::make_shared<xla::PjRtLayout>(
-        LayoutUtil::MakeDescendingLayout(dims.size()));
+  // PjRt-IFRT devices are currently homogeneous. The cache key omits device
+  // information.
+  // TODO(hyeontaek): Add device-specific information (e.g., `device->Kind()`)
+  // once PjRt-IFRT supports heterogeneous devices.
+  auto key = std::make_tuple(
+      dtype, std::vector<int64_t>(dims.begin(), dims.end()), memory_kind);
+  {
+    absl::MutexLock lock(default_layout_cache_mu_);
+    if (auto it = default_layout_cache_.find(key);
+        it != default_layout_cache_.end()) {
+      return it->second;
+    }
   }
-  TF_ASSIGN_OR_RETURN(PrimitiveType element_type, ToPrimitiveType(dtype));
-  if (element_type == PrimitiveType::TOKEN) {
-    return std::make_shared<PjRtLayout>(
-        LayoutUtil::MakeDescendingLayout(dims.size()));
+
+  auto layout =
+      [&]() -> absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> {
+    static MemoryKind kUnpinnedHostMemoryKind(UnpinnedHostMemorySpace::kKind);
+    if (memory_kind == kUnpinnedHostMemoryKind) {
+      return std::make_shared<xla::PjRtLayout>(
+          LayoutUtil::MakeDescendingLayout(dims.size()));
+    }
+    TF_ASSIGN_OR_RETURN(PrimitiveType element_type, ToPrimitiveType(dtype));
+    if (element_type == PrimitiveType::TOKEN) {
+      return std::make_shared<PjRtLayout>(
+          LayoutUtil::MakeDescendingLayout(dims.size()));
+    }
+    TF_ASSIGN_OR_RETURN(xla::Layout layout,
+                        pjrt_client_->GetDefaultLayout(element_type, dims));
+    return std::make_shared<xla::PjRtLayout>(std::move(layout));
+  }();
+  {
+    absl::MutexLock lock(default_layout_cache_mu_);
+    default_layout_cache_.insert({std::move(key), layout});
   }
-  TF_ASSIGN_OR_RETURN(xla::Layout layout,
-                      pjrt_client_->GetDefaultLayout(element_type, dims));
-  return std::make_shared<xla::PjRtLayout>(std::move(layout));
+  return layout;
 }
 
 absl::Status PjRtClient::TransferToInfeed(PjRtDevice* device,

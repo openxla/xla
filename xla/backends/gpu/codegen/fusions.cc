@@ -19,7 +19,6 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/string_view.h"
-#include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/copy.h"
 #include "xla/backends/gpu/codegen/cudnn.h"
 #include "xla/backends/gpu/codegen/custom.h"
@@ -32,6 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/triton/fusion.h"
 #include "xla/codegen/ir_emission_utils.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
@@ -77,8 +77,8 @@ bool HloFusionInfo::CanEmitDynamicUpdateSliceInPlace() const {
   return ret.ok() && *ret;
 }
 
-std::unique_ptr<FusionInterface> GetFusionEmitter(const FusionInfo& fusion_info,
-                                                  mlir::MLIRContext* ctx) {
+std::unique_ptr<FusionInterface> GetFusionEmitter(
+    const FusionInfo& fusion_info, SymbolicExprContext* symbolic_expr_context) {
   const auto& analysis = fusion_info.analysis();
   const FusionBackendConfig& backend_config = analysis.fusion_backend_config();
 
@@ -109,16 +109,16 @@ std::unique_ptr<FusionInterface> GetFusionEmitter(const FusionInfo& fusion_info,
           fusion_info.CanEmitDynamicUpdateSliceInPlace()) {
         return std::make_unique<InPlaceDynamicUpdateSliceFusion>(analysis);
       }
-      return std::make_unique<LoopFusion>(analysis, ctx);
+      return std::make_unique<LoopFusion>(analysis, symbolic_expr_context);
     }
     case HloFusionAnalysis::EmitterFusionKind::kReduction: {
-      return CreateReductionFusion(analysis);
+      return CreateReductionFusion(analysis, symbolic_expr_context);
     }
     case HloFusionAnalysis::EmitterFusionKind::kScatter: {
-      return CreateScatterFusion(analysis);
+      return CreateScatterFusion(analysis, symbolic_expr_context);
     }
     case HloFusionAnalysis::EmitterFusionKind::kTranspose: {
-      return CreateTransposeFusion(analysis);
+      return CreateTransposeFusion(analysis, symbolic_expr_context);
     }
     case HloFusionAnalysis::EmitterFusionKind::kConcatenate: {
       return std::make_unique<ConcatenateFusion>(analysis);

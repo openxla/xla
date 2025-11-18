@@ -20,11 +20,13 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "mlir/IR/MLIRContext.h"
@@ -33,6 +35,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/sort_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/codegen/kernel_spec.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -68,6 +71,9 @@ class ThunkEmitter {
   };
 
   struct EmittedKernel {
+    EmittedKernel(absl::string_view name, llvm::orc::ThreadSafeModule module)
+        : kernel_name(name), module(std::move(module)) {}
+
     std::string kernel_name;
     llvm::orc::ThreadSafeModule module;
   };
@@ -216,6 +222,9 @@ class ThunkEmitter {
   absl::StatusOr<ThunkSequence> EmitXnnFusionThunk(
       const HloInstruction* instruction);
 
+  absl::StatusOr<ThunkSequence> EmitYnnFusionThunk(
+      const HloInstruction* instruction);
+
   absl::StatusOr<ThunkSequence> EmitOneDnnFusionThunk(
       const HloInstruction* instruction);
 
@@ -265,6 +274,7 @@ class ThunkEmitter {
   std::vector<EmittedKernel> kernels_;
 
   std::unique_ptr<mlir::MLIRContext> mlir_context_;
+  SymbolicExprContext symbolic_expr_context_{mlir_context_.get()};
   FusionCompiler fusion_compiler_;
 
   absl::flat_hash_map<std::string, KernelSpec> kernel_spec_cache_;

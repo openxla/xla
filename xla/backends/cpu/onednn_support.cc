@@ -22,7 +22,7 @@ limitations under the License.
 #include "oneapi/dnnl/dnnl_graph.hpp"
 #include "tsl/platform/cpu_info.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
-#include "xla/backends/cpu/runtime/dot_lib.h"
+#include "xla/backends/cpu/runtime/dot_dims.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -84,9 +84,9 @@ absl::StatusOr<bool> IsDotSupportedByOneDnn(
   }
 
   // NOLINTNEXTLINE: Use dnnl.hpp for DNNL_MAX_NDIMS for now.
-  if (lhs_shape.dimensions_size() > DNNL_MAX_NDIMS ||
-      rhs_shape.dimensions_size() > DNNL_MAX_NDIMS ||
-      lhs_shape.dimensions_size() != rhs_shape.dimensions_size()) {
+  if (lhs_shape.dimensions().size() > DNNL_MAX_NDIMS ||
+      rhs_shape.dimensions().size() > DNNL_MAX_NDIMS ||
+      lhs_shape.dimensions().size() != rhs_shape.dimensions().size()) {
     return false;
   }
 

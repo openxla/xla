@@ -28,8 +28,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "mlir/IR/MLIRContext.h"
 #include "xla/autotuning.pb.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -79,26 +79,30 @@ class GemmFusionAutotuner : public HloModulePass {
                                const se::SemanticVersion& toolkit_version,
                                tsl::thread::ThreadPool* thread_pool,
                                const MultiProcessKeyValueStore& key_value_store,
-                               mlir::MLIRContext* mlir_context)
+                               SymbolicExprContext* symbolic_expr_context)
       : config_(config),
         toolkit_version_(toolkit_version),
         thread_pool_(thread_pool),
         key_value_store_(key_value_store),
-        mlir_context_(mlir_context) {}
+        symbolic_expr_context_(symbolic_expr_context) {}
 
   absl::string_view name() const override { return "gemm-fusion-autotuner"; }
 
-  using HloPassInterface::Run;
-  absl::StatusOr<bool> Run(
+ protected:
+  absl::StatusOr<bool> RunImpl(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+
+  absl::StatusOr<bool> RunViaNewInfra(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads);
 
  private:
   AutotuneConfig config_;
   se::SemanticVersion toolkit_version_;
   tsl::thread::ThreadPool* thread_pool_;
   MultiProcessKeyValueStore key_value_store_;
-  mlir::MLIRContext* mlir_context_;
+  SymbolicExprContext* symbolic_expr_context_;
 };
 
 class GemmFusionAutotunerImpl {
@@ -107,12 +111,12 @@ class GemmFusionAutotunerImpl {
       AutotuneConfig& config,
       const stream_executor::SemanticVersion& toolkit_version,
       DebugOptions debug_options, tsl::thread::ThreadPool* thread_pool,
-      mlir::MLIRContext* mlir_context)
+      SymbolicExprContext* symbolic_expr_context)
       : config_(std::move(config)),
         toolkit_version_(toolkit_version),
         debug_options_(std::move(debug_options)),
         thread_pool_(thread_pool),
-        mlir_context_(mlir_context) {}
+        symbolic_expr_context_(symbolic_expr_context) {}
 
   struct CuBlasConfig {
     bool operator<(const CuBlasConfig& other) const;
@@ -164,6 +168,7 @@ class GemmFusionAutotunerImpl {
   // Helper methods.
   const AutotuneConfig& GetConfig() const { return config_; }
   bool IsAutotuningEnabled() const;
+  bool IsWarpSpecializationAvailable() const;
 
   static const int64_t BLAS_GEMM_DEFAULT;
 
@@ -201,13 +206,6 @@ class GemmFusionAutotunerImpl {
     return config_.GetGpuComputeCapability();
   }
 
-  bool isRocm() const {
-    return std::holds_alternative<se::RocmComputeCapability>(
-        GetComputeCapability());
-  }
-
-  bool IsFusionKind(const HloInstruction& hlo, absl::string_view kind);
-
   bool AddLibConfigs(const HloFusionInstruction& fusion,
                      const HloDotInstruction* dot,
                      std::vector<BackendConfig>& configs);
@@ -219,7 +217,7 @@ class GemmFusionAutotunerImpl {
   DebugOptions debug_options_;
   tsl::thread::ThreadPool* thread_pool_;
   std::vector<TritonGemmConfig> triton_configs_;
-  mlir::MLIRContext* mlir_context_;
+  SymbolicExprContext* symbolic_expr_context_;
 };
 
 }  // namespace gpu

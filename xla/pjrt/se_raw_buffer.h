@@ -20,9 +20,9 @@ limitations under the License.
 #include <cstdint>
 #include <utility>
 
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/future.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/tracked_device_buffer.h"
@@ -34,7 +34,7 @@ class PjRtStreamExecutorDeviceEvent : public PjRtDeviceEvent {
  public:
   explicit PjRtStreamExecutorDeviceEvent(
       tsl::AsyncValueRef<BufferSequencingEvent> event,
-      const char* callee_type = "CpuTrackedDeviceEvent",
+      const char* callee_type = "PjRtStreamExecutorDeviceEvent",
       const char* callee_method = "Unknown")
       : event_(std::move(event)),
         callee_type_(callee_type),
@@ -56,12 +56,46 @@ class PjRtStreamExecutorDeviceEvent : public PjRtDeviceEvent {
   const char* callee_method_;
 };
 
+class PjRtStreamExecutorDeviceEventPromise : public PjRtDeviceEventPromise {
+ public:
+  PjRtStreamExecutorDeviceEventPromise(PjRtMemorySpace* memory_space,
+                                       LocalDeviceState* local_device,
+                                       tsl::thread::ThreadPool* thread_pool);
+
+  tsl::AsyncValue* async_value() const override {
+    return event_.GetAsyncValue();
+  }
+
+  void Set(tsl::RCReference<PjRtDeviceEvent> event) override;
+
+  void SetError(absl::Status s) override {
+    av_->SetError(s);
+    event_.SetError(std::move(s));
+  }
+
+  void SetFromSEEvent(BufferSequencingEventRef event);
+
+  void SetReady() override;
+
+  const tsl::AsyncValueRef<BufferSequencingEvent>& event() const {
+    return event_;
+  }
+
+  tsl::RCReference<tsl::IndirectAsyncValue>& av() { return av_; }
+
+ private:
+  PjRtMemorySpace* memory_space_;
+  LocalDeviceState* local_device_;
+  tsl::RCReference<tsl::IndirectAsyncValue> av_;
+  tsl::AsyncValueRef<BufferSequencingEvent> event_;
+};
+
 class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBuffer {
  public:
-  PjRtStreamExecutorRawBuffer(PjRtStreamExecutorClient* client,
-                              PjRtMemorySpace* memory_space,
-                              LocalDeviceState* local_device,
-                              tsl::RCReference<RawSEDeviceMemory> device_buffer)
+  PjRtStreamExecutorRawBuffer(
+      PjRtStreamExecutorClient* client, PjRtMemorySpace* memory_space,
+      LocalDeviceState* local_device,
+      tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer)
       : client_(client),
         memory_space_(memory_space),
         local_device_(local_device),
@@ -71,7 +105,7 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBuffer {
 
   LocalDeviceState* local_device() const { return local_device_; }
 
-  const tsl::RCReference<RawSEDeviceMemory>& device_buffer() const {
+  const tsl::AsyncValueRef<RawSEDeviceMemory>& device_buffer() const {
     return device_buffer_;
   }
 
@@ -117,7 +151,7 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBuffer {
   PjRtStreamExecutorClient* client_;
   PjRtMemorySpace* memory_space_;
   LocalDeviceState* local_device_;
-  tsl::RCReference<RawSEDeviceMemory> device_buffer_;
+  tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer_;
 };
 
 }  // namespace xla

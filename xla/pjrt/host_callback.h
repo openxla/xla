@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/pjrt/pjrt_future.h"
 #include "xla/shape.h"
 #include "tsl/platform/logging.h"
 
@@ -47,9 +46,17 @@ namespace xla {
 
 bool ThisThreadIsInsideHostCallback();
 
-void EnterHostCallback();
+ABSL_DEPRECATED("Use HostCallbackScope") void EnterHostCallback();
 
-void LeaveHostCallback();
+ABSL_DEPRECATED("Use HostCallbackScope") void LeaveHostCallback();
+
+class HostCallbackScope {
+ public:
+  HostCallbackScope();
+  ~HostCallbackScope();
+  HostCallbackScope(const HostCallbackScope& o) = delete;
+  HostCallbackScope& operator=(const HostCallbackScope& o) = delete;
+};
 
 // A thread-safe queue for passing PjRtChunk objects for e.g. from Send ops to
 // Recv ops.
@@ -57,7 +64,7 @@ class ThreadSafePjRtChunkQueue {
  public:
   // Push a PjRtChunk into the queue.
   void Push(PjRtChunk chunk) {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     if (promises_.empty()) {
       queue_.push_back(std::move(chunk));
       return;
@@ -69,7 +76,7 @@ class ThreadSafePjRtChunkQueue {
 
   // Pop a PjRtChunk future from the queue.
   Future<PjRtChunk> Pop() {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     if (queue_.empty()) {
       auto [promise, future] = Future<PjRtChunk>::MakePromise();
       promises_.push_back(std::move(promise));
@@ -175,6 +182,8 @@ CreateHostCallbackStateAndAppendSendRecvCallbacks(
 
 struct FfiLoadedHostCallbacks {
   static ffi::TypeId id;
+  static ffi::TypeInfo info;
+
   void** callbacks;
   uint32_t num_callbacks;
 };

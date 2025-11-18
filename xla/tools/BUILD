@@ -311,6 +311,7 @@ xla_cc_binary(
         ":hlo_extractor",
         "//xla:debug_options_flags",
         "//xla:shape_util",
+        "//xla:util",
         "//xla/client:client_library",
         "//xla/client:local_client",
         "//xla/hlo/ir:hlo",
@@ -324,19 +325,23 @@ xla_cc_binary(
         "//xla/service:platform_util",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tools/platform:xprof_loader",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:subprocess",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
@@ -389,6 +394,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_protobuf//:protobuf",
         "@com_googlesource_code_re2//:re2",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
@@ -720,6 +726,7 @@ xla_test(
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@com_google_protobuf//:protobuf",
     ],
 )
 
@@ -732,6 +739,7 @@ cc_library(
     ],
     deps = [
         ":matmul_perf_table_gen",
+        "//xla:xla_data_proto_cc",
         "//xla/service/gpu/model:hlo_op_profile_proto_cc",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
@@ -886,7 +894,7 @@ xla_cc_binary(
 )
 
 xla_test(
-    name = "matmul_perf_table_gen_run",
+    name = "matmul_perf_table_gen_run_test",
     timeout = "eternal",
     srcs = ["matmul_perf_table_gen_run.cc"],
     # TODO(b/372714955): Fix the memory leak.
@@ -1133,6 +1141,7 @@ xla_cc_binary(
     deps = [
         ":hlo_module_loader",
         "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:command_line_flags",

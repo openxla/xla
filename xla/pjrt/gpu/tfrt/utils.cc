@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "unsupported/Eigen/CXX11/Tensor"
@@ -458,10 +459,7 @@ SendDeviceMemoryFunction ConvertSendCallbacksToSendFunction(
       }
 
       // Wait for the data to be available on the host.
-      {
-        tsl::profiler::TraceMe traceme("BlockHostUntilDone");
-        status = stream->BlockHostUntilDone();
-      }
+      status = BlockHostUntilDoneWithHostCallback(stream);
       VLOG(3) << "D2H copy done. " << status;
       if (!status.ok()) {
         done_event.SetError(absl::InternalError(absl::StrFormat(
@@ -706,7 +704,8 @@ using DeviceTopologyPair =
 
 absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     absl::string_view platform_name, LocalClient* xla_client, int node_id,
-    int num_nodes, gpu::GpuExecutableRunOptions* gpu_executable_run_options,
+    int max_inflight_computations, int num_nodes,
+    gpu::GpuExecutableRunOptions* gpu_executable_run_options,
     std::shared_ptr<KeyValueStoreInterface> kv_store, bool enable_mock_nccl,
     std::optional<absl::string_view> mock_gpu_topology,
     std::optional<int> partition_index,
@@ -728,13 +727,13 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   auto make_compute_capability_string =
       [](const stream_executor::DeviceDescription* desc) -> std::string {
     stream_executor::GpuComputeCapability cc = desc->gpu_compute_capability();
-    if (std::holds_alternative<stream_executor::CudaComputeCapability>(cc)) {
-      auto nvcc = std::get<stream_executor::CudaComputeCapability>(cc);
-      return absl::StrCat(nvcc.major, ".", nvcc.minor);
+    if (cc.IsCuda()) {
+      auto* nvcc = cc.cuda_compute_capability();
+      return absl::StrCat(nvcc->major, ".", nvcc->minor);
     }
-    if (std::holds_alternative<stream_executor::RocmComputeCapability>(cc)) {
-      auto rocmcc = std::get<stream_executor::RocmComputeCapability>(cc);
-      return rocmcc.gfx_version();
+    if (cc.IsRocm()) {
+      auto* rocmcc = cc.rocm_compute_capability();
+      return rocmcc->gfx_version();
     }
     return "unknown";
   };
@@ -856,7 +855,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
       options.process_index = node.node_id();
       options.process_index_in_partition = curr_process_index_in_partition;
       options.partition_index = device_proto.partition_index();
-      options.max_inflight_computations = 8;
+      options.max_inflight_computations = max_inflight_computations;
       options.platform_version = device_proto.name();
       options.device_vendor = device_proto.vendor();
       options.compute_capability = device_proto.compute_capability();
@@ -955,6 +954,21 @@ GetLatestIncarnations(
     device_incarnations[device_id] = it->second;
   }
   return device_incarnations;
+}
+
+absl::Status BlockHostUntilDoneWithHostCallback(se::Stream* stream) {
+  absl::Notification event;
+
+  tsl::profiler::TraceMe traceme("BlockHostUntilDoneWithHostCallback");
+  auto status = stream->DoHostCallback([&event]() {
+    tsl::profiler::TraceMe traceme(
+        "BlockHostUntilDoneWithHostCallback::Callback");
+    event.Notify();
+  });
+
+  event.WaitForNotification();
+
+  return status;
 }
 
 }  // namespace xla

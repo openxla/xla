@@ -27,10 +27,10 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
-#include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
 #include "xla/backends/gpu/codegen/triton/fusion.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
@@ -143,9 +143,10 @@ void GpuPerformanceModelCache::Invalidate(const HloInstruction& instruction) {
 
 /*static*/
 LaunchDimensions GpuPerformanceModelBase::EstimateFusionLaunchDimensions(
-    const HloFusionAnalysis& fusion_analysis, mlir::MLIRContext* ctx) {
-  auto emitter =
-      GetFusionEmitter(PreBufferAssignmentFusionInfo{fusion_analysis}, ctx);
+    const HloFusionAnalysis& fusion_analysis,
+    SymbolicExprContext* symbolic_expr_context) {
+  auto emitter = GetFusionEmitter(
+      PreBufferAssignmentFusionInfo{fusion_analysis}, symbolic_expr_context);
   if (const auto* kernel_emitter =
           dynamic_cast<const KernelFusionInterface*>(emitter.get())) {
     return kernel_emitter->launch_dimensions();
@@ -155,7 +156,7 @@ LaunchDimensions GpuPerformanceModelBase::EstimateFusionLaunchDimensions(
   // launch dimensions only for SoftMax fusions.
   if (const auto* triton_emitter =
           dynamic_cast<const TritonFusion*>(emitter.get())) {
-    if (auto launch_config = triton_emitter->launch_config()) {
+    if (auto launch_config = triton_emitter->GetLaunchConfig()) {
       return launch_config->launch_dimensions;
     }
   }

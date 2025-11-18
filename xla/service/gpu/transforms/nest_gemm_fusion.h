@@ -19,7 +19,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "mlir/IR/MLIRContext.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
@@ -47,19 +47,20 @@ namespace xla::gpu {
 class NestGemmFusion : public HloModulePass {
  public:
   explicit NestGemmFusion(const se::DeviceDescription& device_description,
-                          mlir::MLIRContext* mlir_context)
-      : device_description_(device_description), mlir_context_(mlir_context) {}
+                          SymbolicExprContext* symbolic_expr_context)
+      : device_description_(device_description),
+        symbolic_expr_context_(symbolic_expr_context) {}
 
   absl::string_view name() const override { return "nest_gemm_fusion"; }
 
-  using HloPassInterface::Run;
-  absl::StatusOr<bool> Run(
+ protected:
+  absl::StatusOr<bool> RunImpl(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
   const se::DeviceDescription device_description_;
-  mlir::MLIRContext* mlir_context_;
+  SymbolicExprContext* symbolic_expr_context_;
   absl::StatusOr<bool> RunOnModule(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads);
@@ -77,7 +78,8 @@ namespace detail {
 // function can be removed once `GpuDotFusionCostModel::EstimateRunTimeForDotOp`
 // is implemented.
 absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
-    HloInstruction* dot, const TritonGemmConfig& config, mlir::MLIRContext* ctx,
+    HloInstruction* dot, const TritonGemmConfig& config,
+    SymbolicExprContext* symbolic_expr_context,
     const se::DeviceDescription& device_description);
 
 }  // namespace detail

@@ -17,7 +17,6 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -33,6 +32,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
 #include "xla/error_spec.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -75,8 +75,7 @@ class TritonTest : public GpuCodegenTest {
     return device_desc().gpu_compute_capability();
   }
   stream_executor::GpuComputeCapability CudaAmpereOrRocm() {
-    if (std::holds_alternative<stream_executor::RocmComputeCapability>(
-            GpuComputeComp())) {
+    if (GpuComputeComp().IsRocm()) {
       return stream_executor::GpuComputeCapability{
           device_desc().rocm_compute_capability()};
     } else {
@@ -84,6 +83,13 @@ class TritonTest : public GpuCodegenTest {
           stream_executor::CudaComputeCapability{
               stream_executor::CudaComputeCapability::kAmpere, 0}};
     }
+  }
+
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
+    // This is a legacy test, we are testing the old emitter.
+    debug_options.clear_xla_gpu_unsupported_generic_triton_emitter_features();
+    return debug_options;
   }
 
  protected:
@@ -104,7 +110,6 @@ class TritonGemmTest : public TritonTest {
     debug_options.set_xla_gpu_enable_split_k_autotuning(false);
     // Always rewrite Gemms with Triton regardless of size.
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);
-    debug_options.clear_xla_gpu_unsupported_generic_triton_emitter_features();
     return debug_options;
   }
 
@@ -263,7 +268,10 @@ ENTRY e {
 })";
   TF_EXPECT_OK(
       CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_gemm_r", R"(
-CHECK:    tt.func @triton_fn(%[[LHS:.*]]: !tt.ptr<i8> {tt.divisibility = 16 : i32}, %[[RHS:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %[[OUT:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}) {
+CHECK:    xtile.entry_func @triton_fn(
+CHECK-SAME:   %[[LHS_MEMREF:.*]]: memref<80x115xi8>
+CHECK-SAME:   %[[RHS_MEMREF:.*]]: memref<137x115xf32>
+CHECK-SAME:   %[[OUT_MEMREF:.*]]: memref<80x137xf32>
 CHECK-DAG:  %[[ZERO_KN:.*]] = arith.constant dense<0.000000e+00> : tensor<32x64xf32>
 CHECK-DAG:  %[[ZERO_MK:.*]] = arith.constant dense<0.000000e+00> : tensor<16x32xf32>
 CHECK-DAG:  %[[ZERO_MN:.*]] = arith.constant dense<0.000000e+00> : tensor<16x64xf32>
@@ -288,9 +296,11 @@ CHECK:      %[[PID_M:.*]] = arith.remsi %[[PID_NC]], %[[GROUP_SIZE]]
 CHECK:      %[[TILE_INDEX_M:.*]] = arith.addi %[[FIRST_PID_M]], %[[PID_M]] : i32
 CHECK:      %[[TMP:.*]] = arith.remsi %[[PID_NC]], %[[WIDTH]] : i32
 CHECK:      %[[TILE_INDEX_N:.*]] = arith.divsi %[[TMP]], %[[GROUP_SIZE]] : i32
+CHECK:      %[[LHS:.*]] = triton_xla.memref_to_ptr %[[LHS_MEMREF]]
 CHECK:      %[[TILE_OFFSET_M_LHS:.*]] = arith.muli %[[TILE_INDEX_M]], %[[TILE_SIZE_M]]
 CHECK:      %[[LHS_PTR:.*]] = tt.make_tensor_ptr %[[LHS]]
 CHECK:      %[[LHS_TILE_PTR:.*]] = tt.advance %[[LHS_PTR]], [%[[TILE_OFFSET_M_LHS]], %[[C0]]]
+CHECK:      %[[RHS:.*]] = triton_xla.memref_to_ptr %[[RHS_MEMREF]]
 CHECK:      %[[TILE_OFFSET_N_RHS:.*]] = arith.muli %[[TILE_INDEX_N]], %[[TILE_SIZE_N]]
 CHECK:      %[[RHS_PTR:.*]] = tt.make_tensor_ptr %[[RHS]]
 CHECK:      %[[RHS_TILE_PTR:.*]] = tt.advance %[[RHS_PTR]], [%[[C0]], %[[TILE_OFFSET_N_RHS]]]
@@ -323,10 +333,11 @@ CHECK:        scf.yield %[[RHS_TILE]] : tensor<32x64xf32>
 CHECK:        %[[ACC_NEXT:.*]] = tt.dot %[[LHS_MASK_IF_STMT]], %[[RHS_MASK_IF_STMT]], %[[ACC]]
 CHECK:        scf.yield %[[LHS_ITER_PTR_NEXT]], %[[RHS_ITER_PTR_NEXT]], %[[ACC_NEXT]] : !tt.ptr<tensor<16x32xi8>>, !tt.ptr<tensor<32x64xf32>>, tensor<16x64xf32>
 CHECK:      }
+CHECK:      %[[OUT:.*]] = triton_xla.memref_to_ptr %[[OUT_MEMREF]]
 CHECK:      %[[OUT_PTR:.*]] = tt.make_tensor_ptr %[[OUT]], [%[[C80]], %[[SIZE_M]]], [%[[SIZE_M]], %[[C1]]], [%[[C0]], %[[C0]]] {order = array<i32: 1, 0>} : <tensor<16x64xf32>>
 CHECK:      %[[OUT_OFFSET:.*]] = tt.advance %[[OUT_PTR]], [%[[TILE_OFFSET_M_LHS]], %[[TILE_OFFSET_N_RHS]]] : <tensor<16x64xf32>>
 CHECK:      tt.store %[[OUT_OFFSET]], %[[FOR]]#2 {boundaryCheck = array<i32: 1>} : !tt.ptr<tensor<16x64xf32>>
-CHECK:      tt.return
+CHECK:      xtile.return
 CHECK:    }
 )"));
 }
@@ -355,7 +366,10 @@ ENTRY e {
 
   TF_EXPECT_OK(
       CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_dot", R"(
-CHECK:    tt.func @triton_fn(%[[LHS:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %[[RHS:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %[[OUT:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}) {
+CHECK:    xtile.entry_func @triton_fn(
+CHECK-SAME:   %[[LHS_MEMREF:.*]]: memref<137x115xf32>
+CHECK-SAME:   %[[RHS_MEMREF:.*]]: memref<1x115xf32>
+CHECK-SAME:   %[[OUT_MEMREF:.*]]: memref<137x1xf32>
 CHECK-DAG:  %[[ZERO_KN:.*]] = arith.constant dense<0.000000e+00> : tensor<32x16xf32>
 CHECK-DAG:  %[[ZERO_MK:.*]] = arith.constant dense<0.000000e+00> : tensor<16x32xf32>
 CHECK-DAG:  %[[ZERO_MN:.*]] = arith.constant dense<0.000000e+00> : tensor<16x16xf32>
@@ -378,9 +392,11 @@ CHECK:    %[[PID_M:.*]] = arith.remsi %[[PID_NC]], %[[GROUP_SIZE]]
 CHECK:    %[[TILE_INDEX_M:.*]] = arith.addi %[[FIRST_PID_M]], %[[PID_M]]
 CHECK:    %[[TMP:.*]] = arith.remsi %[[PID_NC]], %[[C8]]
 CHECK:    %[[TILE_INDEX_N:.*]] = arith.divsi %[[TMP]], %[[GROUP_SIZE]]
+CHECK:    %[[LHS:.*]] = triton_xla.memref_to_ptr %[[LHS_MEMREF]]
 CHECK:    %[[TILE_OFFSET_M_LHS:.*]] = arith.muli %[[TILE_INDEX_M]], %[[TILE_SIZE_M]]
 CHECK:    %[[LHS_PTR:.*]] = tt.make_tensor_ptr %[[LHS]]
 CHECK:    %[[LHS_TILE_PTR:.*]] = tt.advance %[[LHS_PTR]], [%[[TILE_OFFSET_M_LHS]], %[[C0]]]
+CHECK:    %[[RHS:.*]] = triton_xla.memref_to_ptr %[[RHS_MEMREF]]
 CHECK:    %[[TILE_OFFSET_N_RHS:.*]] = arith.muli %[[TILE_INDEX_N]], %[[TILE_SIZE_M]]
 CHECK:    %[[RHS_PTR:.*]] = tt.make_tensor_ptr %[[RHS]]
 CHECK:    %[[RHS_TILE_PTR:.*]] = tt.advance %[[RHS_PTR]], [%[[C0]], %[[TILE_OFFSET_N_RHS]]]
@@ -413,10 +429,11 @@ CHECK:      %[[ACC_NEXT:.*]] = tt.dot %[[LHS_MASK_IF_STMT]], %[[RHS_MASK_IF_STMT
 CHECK:      scf.yield %[[LHS_ITER_PTR_NEXT]], %[[RHS_ITER_PTR_NEXT]], %[[ACC_NEXT]] : !tt.ptr<tensor<16x32xf32>>, !tt.ptr<tensor<32x16xf32>>, tensor<16x16xf32>
 CHECK:    }
 
+CHECK:    %[[OUT:.*]] = triton_xla.memref_to_ptr %[[OUT_MEMREF]]
 CHECK:    %[[OUT_PTR:.*]] = tt.make_tensor_ptr %[[OUT]], [%[[SIZE_M]], %[[C1]]], [%[[C1]], %[[C1]]], [%[[C0]], %[[C0]]] {order = array<i32: 1, 0>} : <tensor<16x16xf32>>
 CHECK:    %[[OUT_OFFSET:.*]] = tt.advance %[[OUT_PTR]], [%[[TILE_OFFSET_M_LHS]], %[[TILE_OFFSET_N_RHS]]] : <tensor<16x16xf32>>
 CHECK:    tt.store %[[OUT_OFFSET]], %[[FOR]]#2 {boundaryCheck = array<i32: 0, 1>} : !tt.ptr<tensor<16x16xf32>>
-CHECK:    tt.return
+CHECK:    xtile.return
 CHECK:  }
 )"));
 }
@@ -456,9 +473,10 @@ ENTRY e {
 )";
   TF_EXPECT_OK(CreateTritonIrAndFileCheckForDot(this, kHloText,
                                                 "triton_gemm_computation", R"(
+CHECK: %[[CST:.*]] = arith.constant dense<0>
 CHECK: %[[LOAD:.*]] = tt.load %{{.*}} {{.*}} : !tt.ptr<tensor<16x16xi8>>
-CHECK: %[[TRUNCI:.*]] = arith.trunci %[[LOAD]] : tensor<16x16xi8> to tensor<16x16xi1>
-CHECK: %{{.*}} = arith.andi %[[TRUNCI]], %{{.*}} : tensor<16x16xi1>
+CHECK: %[[CMPI:.*]] = arith.cmpi ne, %[[LOAD]], %[[CST]] : tensor<16x16xi8>
+CHECK: %{{.*}} = arith.andi %[[CMPI]], %{{.*}} : tensor<16x16xi1>
 )"));
 }
 
@@ -490,10 +508,12 @@ ENTRY e {
 
   TF_EXPECT_OK(
       CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_gemm", R"(
-CHECK:   tt.func @triton_fn(%[[P0:[^:]*]]: !tt.ptr<f32>
-CHECK-SAME:                 %[[P1:[^:]*]]: !tt.ptr<f32>
-CHECK-SAME:                 %[[P2:[^:]*]]: !tt.ptr<f32>
-CHECK-DAG: %[[ARG_PTR:.*]] = arith.select %[[CONCAT_COND:.*]], %[[P1]], %[[P2]]
+CHECK:   xtile.entry_func @triton_fn(%[[P0:[^:]*]]: memref<2x3x10xf32>
+CHECK-SAME:                          %[[P1:[^:]*]]: memref<2x10x128xf32>
+CHECK-SAME:                          %[[P2:[^:]*]]: memref<2x10x256xf32>
+CHECK-DAG: %[[P1_PTR:.*]] = triton_xla.memref_to_ptr %[[P1]]
+CHECK-DAG: %[[P2_PTR:.*]] = triton_xla.memref_to_ptr %[[P2]]
+CHECK-DAG: %[[ARG_PTR:.*]] = arith.select %[[CONCAT_COND:.*]], %[[P1_PTR]], %[[P2_PTR]]
 CHECK-DAG: %[[BATCH_STRIDE_P1:.*]] = arith.constant 1280
 CHECK-DAG: %[[BATCH_STRIDE_P2:.*]] = arith.constant 2560
 CHECK-DAG: %[[BATCH_STRIDE:.*]] = arith.select %[[CONCAT_COND_2:.*]], %[[BATCH_STRIDE_P1]], %[[BATCH_STRIDE_P2]]
@@ -537,13 +557,17 @@ ENTRY e {
 
   ASSERT_THAT(
       CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_gemm", R"(
-CHECK:     tt.func @triton_fn({{[^,]*}}, %[[DYNAMIC_SLICE_INPUT:[^:]*]]: !tt.ptr<f32> {{[^,]*}}, %[[START_INDEX0_PTR:[^:]*]]: !tt.ptr<i32>
+CHECK:     xtile.entry_func @triton_fn(
+CHECK-SAME: {{[^,]*}}, %[[DYNAMIC_SLICE_INPUT_MEMREF:[^:]*]]: memref<4x5x2xf32>
+CHECK-SAME: {{[^,]*}}, %[[START_INDEX0_MEMREF:[^:]*]]: memref<i32>
 CHECK-DAG:   %[[C0_i32:.*]] = arith.constant 0 : i32
 CHECK-DAG:   %[[C1_i64:.*]] = arith.constant 1 : i64
 CHECK-DAG:   %[[C2_i64:.*]] = arith.constant 2 : i64
 CHECK-DAG:   %[[C3_i32:.*]] = arith.constant 3 : i32
 CHECK-DAG:   %[[C5_i32:.*]] = arith.constant 5 : i32
 CHECK-DAG:   %[[C5_i64:.*]] = arith.constant 5 : i64
+CHECK-DAG:   %[[DYNAMIC_SLICE_INPUT:.*]] = triton_xla.memref_to_ptr %[[DYNAMIC_SLICE_INPUT_MEMREF]]
+CHECK-DAG:   %[[START_INDEX0_PTR:.*]] = triton_xla.memref_to_ptr %[[START_INDEX0_MEMREF]]
 CHECK-DAG:   %[[START_INDEX0:.*]] = tt.load %[[START_INDEX0_PTR]] : !tt.ptr<i32>
 CHECK-DAG:   %[[SEMI_CLAMPED_START_INDEX0:.*]] = arith.maxsi %[[START_INDEX0]], %[[C0_i32]] : i32
 CHECK-DAG:   %[[CLAMPED_START_INDEX0:.*]] = arith.minsi %[[SEMI_CLAMPED_START_INDEX0]], %[[C3_i32]] : i32
@@ -667,7 +691,7 @@ CHECK: mma
 }
 
 TEST_F(TritonGemmTest, FailIfTooMuchShmem) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "GEMM padding requirements for ROCM not included yet.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -697,6 +721,7 @@ ENTRY entry {
   llvm::LLVMContext llvm_ctx;
   llvm::Module llvm_module("module", llvm_ctx);
   mlir::MLIRContext mlir_context;
+  SymbolicExprContext symbolic_expr_context(&mlir_context);
 
   auto backend_config_or =
       triton_dot_fusion->backend_config<GpuBackendConfig>();
@@ -721,12 +746,12 @@ ENTRY entry {
   block_level_parameters.num_stages = 4;
   block_level_parameters.num_warps = 8;
 
-  EXPECT_THAT(
-      TritonWrapper("test_fn", triton_dot_fusion, CudaAmpereOrRocm(), dev_info,
-                    block_level_parameters, &llvm_module, mlir_context),
-      absl_testing::StatusIs(
-          tsl::error::RESOURCE_EXHAUSTED,
-          ::testing::HasSubstr("Shared memory size limit exceeded")));
+  EXPECT_THAT(TritonWrapper("test_fn", triton_dot_fusion, CudaAmpereOrRocm(),
+                            dev_info, block_level_parameters, &llvm_module,
+                            symbolic_expr_context),
+              absl_testing::StatusIs(
+                  tsl::error::RESOURCE_EXHAUSTED,
+                  ::testing::HasSubstr("Shared memory size limit exceeded")));
 
   config.set_block_m(64);
   config.set_block_n(128);
@@ -737,7 +762,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(
       const auto result,
       TritonWrapper("test_fn", triton_dot_fusion, CudaAmpereOrRocm(), dev_info,
-                    block_level_parameters, &llvm_module, mlir_context));
+                    block_level_parameters, &llvm_module,
+                    symbolic_expr_context));
   // Use optin shared memory which is > shared_memory_per_block.
   EXPECT_GT(result.shmem_bytes, dev_info.shared_memory_per_block());
 }
@@ -1183,7 +1209,7 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmTestWithoutTritonGemmAny, SkipU8) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "GEMM padding requirements for ROCM not included yet.";
   }
   const std::string hlo_text = R"(
@@ -1227,7 +1253,7 @@ ENTRY e {
 })";
   TF_EXPECT_OK(
       CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_gemm_r", R"(
-CHECK:    tt.func @triton_fn
+CHECK:    xtile.entry_func @triton_fn
 CHECK-DAG:      %[[ZERO:.*]] = arith.constant dense<0>
 CHECK-DAG:      %[[FMIN:.*]] = arith.constant dense<-1.280000e+02>
 CHECK-DAG:      %[[IMIN:.*]] = arith.constant dense<-128>
@@ -1244,7 +1270,7 @@ CHECK:          %[[RES3:.*]] = arith.select %[[CMP3]], %[[ZERO]], %[[RES2]]
 }
 
 TEST_F(TritonGemmTestWithoutTritonGemmAny, SkipF32F32) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "GEMM padding requirements for ROCM not included yet.";
   }
   const std::string hlo_text = R"(
@@ -1292,6 +1318,7 @@ ENTRY entry {
   llvm::LLVMContext llvm_ctx;
   llvm::Module llvm_module("module", llvm_ctx);
   mlir::MLIRContext mlir_context;
+  SymbolicExprContext symbolic_expr_context(&mlir_context);
 
   auto backend_config_or =
       triton_dot_fusion->backend_config<GpuBackendConfig>();
@@ -1315,12 +1342,12 @@ ENTRY entry {
   block_level_parameters.num_ctas = 1;
   block_level_parameters.num_stages = 1;
   block_level_parameters.num_warps = 2;
-  EXPECT_THAT(
-      TritonWrapper("test_fn", triton_dot_fusion, CudaAmpereOrRocm(), dev_info,
-                    block_level_parameters, &llvm_module, mlir_context),
-      absl_testing::StatusIs(
-          tsl::error::RESOURCE_EXHAUSTED,
-          "Tiling complexity heuristic exceeded: 147456 > 9000"));
+  EXPECT_THAT(TritonWrapper("test_fn", triton_dot_fusion, CudaAmpereOrRocm(),
+                            dev_info, block_level_parameters, &llvm_module,
+                            symbolic_expr_context),
+              absl_testing::StatusIs(
+                  tsl::error::RESOURCE_EXHAUSTED,
+                  "Tiling complexity heuristic exceeded: 147456 > 9000"));
 
   // Succeeds if the tiling is not too complex.
   config.set_block_m(32);
@@ -1330,7 +1357,7 @@ ENTRY entry {
 
   TF_ASSERT_OK(TritonWrapper("test_fn", triton_dot_fusion, CudaAmpereOrRocm(),
                              dev_info, block_level_parameters, &llvm_module,
-                             mlir_context)
+                             symbolic_expr_context)
                    .status());
 }
 
@@ -1392,7 +1419,7 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmTest, SingleElementTileIsHandled) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Not using autotuner on ROCM yet.";
   }
   MatchOptimizedHlo(R"(
@@ -1493,7 +1520,7 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmTest, DoAddConstantToScalarAndBroadcastThat) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Not using autotuner on ROCM yet.";
   }
   const std::string hlo_text = R"(
@@ -1538,7 +1565,9 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
 }
 
-TEST_F(TritonGemmTest, DynamicSliceIsSupportedInLhsEndToEnd) {
+// Dynamic slice is not supported by the generic Triton emitter yet and disabled
+// in the triton gemm fusion pass.
+TEST_F(TritonGemmTest, DISABLED_DynamicSliceIsSupportedInLhsEndToEnd) {
   // The select is used to restrict the start index to values that make sense.
   // If it was constant, then the dynamic-slice would be optimized to slice. It
   // is not strictly needed, because we also support clamping the indices.
@@ -1803,7 +1832,7 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmTest, DoNotFuseConcatenationOfSplitNonContractingDimension) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Not using autotuner on ROCM yet.";
   }
   if (!SupportsBF16(GpuComputeComp())) {
@@ -1868,6 +1897,7 @@ ENTRY e  {
   llvm::LLVMContext llvm_ctx;
   llvm::Module llvm_module("module", llvm_ctx);
   mlir::MLIRContext mlir_context;
+  SymbolicExprContext symbolic_expr_context(&mlir_context);
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto gpu_config, triton_dot_fusion->backend_config<GpuBackendConfig>());
@@ -1880,9 +1910,42 @@ ENTRY e  {
 
   TF_ASSERT_OK(TritonWrapper("test_fn", triton_dot_fusion, GpuComputeComp(),
                              dev_info, block_level_parameters, &llvm_module,
-                             mlir_context)
+                             symbolic_expr_context)
                    .status());
 }
+
+class RhsLayoutParameterizedTritonGemmTest
+    : public TritonGemmTest,
+      public ::testing::WithParamInterface<absl::string_view> {};
+
+TEST_P(RhsLayoutParameterizedTritonGemmTest,
+       BF16WithSmallRHSOuterDimDoesNotCrash) {
+  std::string hlo_text = absl::Substitute(R"(
+  triton_dot {
+    p0 = bf16[64,32] parameter(0)
+    p1 = bf16[32,8]$0 parameter(1)
+    ROOT dot = f32[64,8] dot(p0, p1),
+      lhs_contracting_dims={1},
+      rhs_contracting_dims={0}
+  }
+
+  ENTRY e {
+    p0 = bf16[64,32] parameter(0)
+    p1 = bf16[32,8]$0 parameter(1)
+    ROOT _ = f32[64,8] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+      backend_config={"fusion_backend_config": {kind: "__triton_gemm", triton_gemm_config:
+        {"block_m":64,"block_n":8,"block_k":32,
+        "split_k":1,"num_stages":1,"num_warps":4,
+        "num_ctas":1}}}
+  })",
+                                          GetParam());
+
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-1, /*arel=*/1e-2}));
+}
+
+INSTANTIATE_TEST_SUITE_P(RhsLayoutParameterizedTritonGemmTestSuite,
+                         RhsLayoutParameterizedTritonGemmTest,
+                         ::testing::Values("", "{0, 1}", "{1, 0}"));
 
 TEST_F(TritonGemmTest, BinaryOperationWithSmallInputsIsFused) {
   constexpr absl::string_view kHloText = R"(
@@ -2660,7 +2723,7 @@ TEST_F(TritonGemmTest, SplitLHSInputOutputIsFused) {
   if (!SupportsBF16(GpuComputeComp())) {
     GTEST_SKIP() << "BF16 not supported.";
   }
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Skipped until corresponding issue on ROCm is fixed.";
   }
 
@@ -2991,7 +3054,7 @@ ENTRY e {
 }
 
 TEST_F(CompareTest, UsingOptinSharedMemoryOnAmpereProducesSameResult) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "No Optin Shared Memory on AMD.";
   }
   const se::DeviceDescription dev_info =
@@ -3028,6 +3091,7 @@ ENTRY e {
   llvm::LLVMContext llvm_ctx;
   llvm::Module llvm_module("module", llvm_ctx);
   mlir::MLIRContext mlir_context;
+  SymbolicExprContext symbolic_expr_context(&mlir_context);
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto gpu_config, triton_dot_fusion->backend_config<GpuBackendConfig>());
@@ -3040,7 +3104,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(
       const auto result,
       TritonWrapper("test_fn", triton_dot_fusion, GpuComputeComp(), dev_info,
-                    block_level_parameters, &llvm_module, mlir_context));
+                    block_level_parameters, &llvm_module,
+                    symbolic_expr_context));
   // The config is chosen so that the used memory size is slightly above the
   // 48 kB boundary of standard / optin shared memory so that any GPU that
   // has the optin one should be able to execute the test.
@@ -4205,7 +4270,7 @@ CHECK: wgmma.mma_async.sync.aligned.m64n16k16.f32.bf16.bf16
 // when gemm autotuner is not present in pipeline,
 // (which is currently the case on rocm).
 TEST_F(TritonGemmTest, TestNoAutotuner) {
-  if (std::holds_alternative<se::CudaComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsCuda()) {
     GTEST_SKIP() << "Autotuner is always in pipeline on Cuda.";
   }
   constexpr absl::string_view kHloText = R"(

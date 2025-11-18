@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla {
@@ -32,7 +33,8 @@ namespace gpu {
 // Converts compatible sequences of Thunks into CommandBufferThunks.
 class CommandBufferConversionPass : public ThunkPassInterface {
  public:
-  CommandBufferConversionPass() = default;
+  explicit CommandBufferConversionPass(absl::string_view module_name = "")
+      : module_name_(module_name) {}
 
   absl::string_view name() const override {
     return "command-buffer-conversion";
@@ -40,6 +42,7 @@ class CommandBufferConversionPass : public ThunkPassInterface {
 
   absl::StatusOr<bool> Run(SequentialThunk* root_thunk,
                            const DebugOptions& debug_options,
+                           const HloModule* absl_nullable hlo_module,
                            const se::DeviceDescription& device_info,
                            ThunkPassBufferAllocator& allocator) override;
   struct CommandBufferConfig {
@@ -47,7 +50,11 @@ class CommandBufferConversionPass : public ThunkPassInterface {
     // remove that flag and enable all supported commands by default.
     absl::flat_hash_set<DebugOptions::CommandBufferCmdType> enabled_commands;
     const se::DeviceDescription& device_description;
+    std::string ToString() const;
   };
+
+ private:
+  std::string module_name_;
 };
 
 }  // namespace gpu

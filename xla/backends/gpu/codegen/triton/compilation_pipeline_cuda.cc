@@ -102,6 +102,7 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
     pm->addPass(
         mt::gpu::createTritonGPUAutomaticWarpSpecialization({num_stages}));
     pm->addPass(mt::gpu::createTritonGPUPipeline({num_stages}));
+    pm->addPass(mt::gpu::createTritonGPUOptimizePartitionWarps());
     pm->addPass(mt::gpu::createTritonGPUCombineTensorSelectAndIf());
     pm->addPass(mt::gpu::createTritonGPUHoistTMEMAlloc({true}));
     pm->addPass(ttng::createTritonNvidiaGPURemoveTMEMTokensPass());
@@ -115,15 +116,15 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
       mt::gpu::createTritonGPUOptimizeDotOperands({cuda_cc.IsAtLeastAmpere()}));
   pm->addPass(mt::gpu::createTritonGPUCoalesceAsyncCopy());
   pm->addPass(ttng::createTritonNvidiaGPUOptimizeTMemLayoutsPass());
+  if (cuda_cc.IsAtLeastHopper()) {
+    pm->addPass(ttng::createTritonNvidiaGPUTMALoweringPass());
+  }
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm->addPass(ttng::createTritonNvidiaGPUInterleaveTMemPass());
   pm->addPass(mt::gpu::createTritonGPUReduceDataDuplication());
   pm->addPass(mt::gpu::createTritonGPUReorderInstructions());
   pm->addPass(mt::createTritonLoopAwareCSE());
   pm->addPass(mlir::createSymbolDCEPass());
-  if (cuda_cc.IsAtLeastHopper()) {
-    pm->addPass(ttng::createTritonNvidiaGPUTMALoweringPass());
-  }
   pm->addPass(ttng::createTritonGPUFenceInsertion({cuda_cc_as_int}));
   pm->addPass(ttng::createTritonNvidiaGPUMMALoweringPass());
   pm->addPass(mlir::createSCCPPass());

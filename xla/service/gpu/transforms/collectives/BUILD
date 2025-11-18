@@ -105,7 +105,9 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -134,6 +136,7 @@ cc_library(
     srcs = ["gpu_collective_combiner_utils.cc"],
     hdrs = ["gpu_collective_combiner_utils.h"],
     deps = [
+        ":collective_ops_utils",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:collective_ops_utils",
@@ -301,6 +304,7 @@ cc_library(
         ":collective_ops_utils",
         ":convert_async_collectives_to_sync",
         "//xla:util",
+        "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
@@ -316,7 +320,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -325,6 +328,7 @@ xla_cc_test(
     srcs = ["collective_combiner_annotator_test.cc"],
     deps = [
         ":collective_combiner_annotator",
+        "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:hlo_module_config",
@@ -594,7 +598,6 @@ cc_library(
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:collective_ops_utils",
-        "//xla/service:collective_permute_cycle",
         "//xla/service:source_target_pairs",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/tsl/platform:errors",

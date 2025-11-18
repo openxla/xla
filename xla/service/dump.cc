@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -44,6 +45,8 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/Transforms/LocationSnapshot.h"
+#include "google/protobuf/descriptor.h"
+#include "google/protobuf/text_format.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -63,7 +66,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/platform.h"
-#include "tsl/platform/protobuf.h"
 #include "tsl/platform/regexp.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 
@@ -777,6 +779,25 @@ void DumpPerModuleProtobufToFile(const HloModule& module,
   DumpProtobufToFile(proto, debug_options, filename, std::move(text_formatter));
 }
 
+void DumpPerExecutionProtobufToFile(
+    const HloModule& module, const tsl::protobuf::Message& proto,
+    const DebugOptions& debug_options, absl::string_view name,
+    absl::AnyInvocable<
+        absl::StatusOr<std::string>(tsl::Env*, const tsl::protobuf::Message&)>
+        text_formatter) {
+  int64_t execution_count = 0;
+  {
+    static auto& module_id_to_execution_count ABSL_GUARDED_BY(mu) =
+        *new absl::flat_hash_map<int64_t, int64_t>();
+    absl::MutexLock lock(mu);
+    execution_count = module_id_to_execution_count[module.unique_id()]++;
+  }
+
+  const std::string filename = FilenameFor(
+      module, name, absl::StrFormat("execution_%04d", execution_count));
+  DumpProtobufToFile(proto, debug_options, filename, std::move(text_formatter));
+}
+
 std::string GetRepeatedValueAsString(
     const tsl::protobuf::Reflection* reflection,
     const DebugOptions& debug_options,
@@ -1156,6 +1177,8 @@ void DumpHloUnoptimizedSnapshotIfEnabled(
       return;
     }
     tsl::WritableFileCopyingOutputStream output_stream(file.get());
+    // TODO - b/457711066: Add missing include once capybara can re-write the
+    // dependency correctly.
     tsl::protobuf::io::CopyingOutputStreamAdaptor adaptor(&output_stream);
     if (!SerializeHloUnoptimizedSnapshot(hlo_snapshot, &adaptor).ok()) {
       LOG(ERROR) << "Failed to serialize HLO unoptimized snapshot proto";

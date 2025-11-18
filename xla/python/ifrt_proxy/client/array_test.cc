@@ -25,6 +25,7 @@
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "google/protobuf/text_format.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
@@ -161,13 +162,11 @@ TEST_F(ArrayTest, FullyReplicatedShard) {
 }
 
 TEST_F(ArrayTest, GetDefaultPjRtLayoutSuccess) {
-  ON_CALL(*mock_client_, GetDefaultPjRtLayout).WillByDefault(Return(kLayout1));
-
   auto array = tsl::MakeRef<Array>(
       mock_client_.get(), rpc_helper_, DType(DType::Kind::kBF16), Shape({}),
       sharding_, ArrayHandle{1234}, /*layout=*/nullptr);
   TF_ASSERT_OK_AND_ASSIGN(auto layout_1, array->pjrt_layout());
-  EXPECT_EQ(*layout_1, *kLayout1);
+  EXPECT_EQ(layout_1, nullptr);
 }
 
 TEST_F(ArrayTest, GetCustomLayoutSuccess) {
@@ -175,6 +174,7 @@ TEST_F(ArrayTest, GetCustomLayoutSuccess) {
                                    DType(DType::Kind::kBF16), Shape({}),
                                    sharding_, ArrayHandle{1234}, kLayout1);
   TF_ASSERT_OK_AND_ASSIGN(auto layout_1, array->pjrt_layout());
+  ASSERT_NE(layout_1, nullptr);
   EXPECT_EQ(*layout_1, *kLayout1);
 }
 
@@ -218,8 +218,10 @@ TEST_F(ArrayTest, MakeArraysFromHostBufferShardsSuccess) {
       xla::ifrt::Client::HostBufferSemantics::kImmutableOnlyDuringCall);
   TF_ASSERT_OK(result.status());
   TF_ASSERT_OK_AND_ASSIGN(auto layout_1, result.value().at(0)->pjrt_layout());
+  ASSERT_NE(layout_1, nullptr);
   EXPECT_EQ(*layout_1, *kLayout1);
   TF_ASSERT_OK_AND_ASSIGN(auto layout_2, result.value().at(1)->pjrt_layout());
+  ASSERT_NE(layout_2, nullptr);
   EXPECT_EQ(*layout_2, *kLayout2);
 }
 
@@ -241,6 +243,7 @@ TEST_F(ArrayTest, MakeErrorArraysSuccess) {
                                        absl::MakeSpan(specs));
   TF_ASSERT_OK(result.status());
   TF_ASSERT_OK_AND_ASSIGN(auto layout, result.value().at(0)->pjrt_layout());
+  ASSERT_NE(layout, nullptr);
   EXPECT_EQ(*layout, *kLayout1);
 }
 
@@ -270,6 +273,7 @@ TEST_F(ArrayTest, AssembleArrayFromSingleDeviceArraysSuccess) {
       SingleDeviceShardSemantics::kAllShards);
   TF_ASSERT_OK(result.status());
   TF_ASSERT_OK_AND_ASSIGN(auto layout, result.value()->pjrt_layout());
+  ASSERT_NE(layout, nullptr);
   EXPECT_EQ(*layout, *kLayout1);
 }
 
@@ -300,7 +304,7 @@ TEST_F(ArrayTest, AssembleArrayFromSingleDeviceArraysDefaultPjRtLayoutSuccess) {
       SingleDeviceShardSemantics::kAllShards);
   TF_ASSERT_OK(result.status());
   TF_ASSERT_OK_AND_ASSIGN(auto layout, result.value()->pjrt_layout());
-  EXPECT_EQ(*layout, *kLayout1);
+  EXPECT_EQ(layout, nullptr);
 }
 
 TEST_F(ArrayTest, RemapArraysSuccess) {
@@ -345,8 +349,10 @@ TEST_F(ArrayTest, RemapArraysSuccess) {
 
   TF_ASSERT_OK(result.status());
   TF_ASSERT_OK_AND_ASSIGN(auto layout_1, result.value().at(0)->pjrt_layout());
+  ASSERT_NE(layout_1, nullptr);
   EXPECT_EQ(*layout_1, *kLayout2);
   TF_ASSERT_OK_AND_ASSIGN(auto layout_2, result.value().at(1)->pjrt_layout());
+  ASSERT_NE(layout_2, nullptr);
   EXPECT_EQ(*layout_2, *kLayout1);
 }
 

@@ -220,6 +220,7 @@ cc_library(
         "@xla//xla/tsl:linux_aarch64": ["-lrt"],
         "@xla//xla/tsl:linux_x86_64": ["-lrt"],
         "@xla//xla/tsl:linux_ppc64le": ["-lrt"],
+        "@xla//xla/tsl:linux_riscv64": ["-lrt"],
         "//conditions:default": [],
     }),
     textual_hdrs = _TEXTUAL_HDRS_LIST,

@@ -53,6 +53,8 @@ bool IsExpensiveToUnroll(mlir::Operation* op) {
       mlir::func::CallOp,
       mlir::math::AcosOp,
       mlir::math::AcoshOp,
+      mlir::math::AsinOp,
+      mlir::math::AsinhOp,
       mlir::math::AtanhOp,
       mlir::math::SinhOp,
       mlir::scf::ForOp

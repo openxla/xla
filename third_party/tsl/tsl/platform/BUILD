@@ -158,11 +158,11 @@ cc_library(
     srcs = ["numbers.cc"],
     hdrs = ["numbers.h"],
     deps = [
-        ":str_util",
         ":stringpiece",
         ":stringprintf",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:macros",
         "@xla//xla/tsl/platform:types",
@@ -314,6 +314,7 @@ cc_library(
     deps = [
         ":cord",
         ":platform",
+        ":refcount",
         ":stringpiece",
     ],
 )
@@ -453,7 +454,6 @@ filegroup(
         "str_util.h",
         "strcat.h",
         "stringpiece.h",
-        "stringprintf.cc",
         "stringprintf.h",
         "thread_annotations.h",
         "threadpool.h",
@@ -688,6 +688,7 @@ cc_library(
     ],
     deps = tf_windows_aware_platform_deps("platform_port") + [
         ":platform",
+        "@com_google_absl//absl/base:core_headers",
         "@xla//xla/tsl/platform:byte_order",
         "@xla//xla/tsl/platform:dynamic_annotations",
         "@xla//xla/tsl/platform:types",
@@ -791,11 +792,10 @@ cc_library(
 
 cc_library(
     name = "stringprintf",
-    srcs = ["stringprintf.cc"],
     hdrs = ["stringprintf.h"],
     deps = [
-        "@xla//xla/tsl/platform:macros",
-        "@xla//xla/tsl/platform:types",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )
 
@@ -1038,6 +1038,7 @@ cc_library(
     deps = [
         ":str_util",
         ":stringpiece",
+        "@com_google_absl//absl/strings",
         "@xla//xla/tsl/platform:macros",
     ],
 )
@@ -1087,10 +1088,9 @@ tsl_cc_test(
     srcs = ["path_test.cc"],
     deps = [
         ":path",
-        ":stringpiece",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:env",
-        "@xla//xla/tsl/platform:env_impl",
         "@xla//xla/tsl/platform:test",
     ],
 )

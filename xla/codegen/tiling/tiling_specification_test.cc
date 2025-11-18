@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -53,13 +54,15 @@ class TilingSpecificationTest : public HloHardwareIndependentTestBase {
             *module->entry_computation()
                  ->root_instruction()
                  ->fused_instructions_computation(),
-            &mlir_context_, /*emitter_specific_constraints_builder=*/nullptr);
+            &symbolic_expr_context_,
+            /*emitter_specific_constraints_builder=*/nullptr);
 
     CHECK(std::holds_alternative<SymbolicTileAnalysis>(analysis_or_error));
     return std::get<SymbolicTileAnalysis>(std::move(analysis_or_error));
   }
 
   mlir::MLIRContext mlir_context_;
+  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 TEST_F(TilingSpecificationTest, TilingSpecificationDerivesOutputParameters) {

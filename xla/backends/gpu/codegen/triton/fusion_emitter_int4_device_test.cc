@@ -29,6 +29,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/autotuning.pb.h"
 #include "xla/error_spec.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -106,12 +107,14 @@ class TritonTest : public GpuCodegenTest {
             .mutable_debug_options()
             .mutable_xla_gpu_unsupported_generic_triton_emitter_features();
     emitter_opts->Add(DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
+    emitter_opts->Add(DebugOptions::GENERIC_TRITON_EMITTER_DISABLE_LEGACY_GEMM);
     emitter_opts->Add(
         DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_OPS_IN_GEMM_FUSION);
     emitter_opts->Add(
         DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_GEMM_SHAPES);
     absl::StatusOr<bool> nested_or =
-        NestGemmFusion(device_desc(), &mlir_context_).Run(module.get());
+        NestGemmFusion(device_desc(), &symbolic_expr_context_)
+            .Run(module.get());
     if (!nested_or.ok()) {
       return ::testing::AssertionFailure() << nested_or.status().message();
     }
@@ -152,6 +155,7 @@ class TritonTest : public GpuCodegenTest {
     return backend().default_stream_executor()->GetDeviceDescription();
   }
   mlir::MLIRContext mlir_context_;
+  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 // The following tests are for the channel and subchannel dequantization

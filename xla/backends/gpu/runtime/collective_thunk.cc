@@ -20,13 +20,11 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
-#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -43,6 +41,7 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/debug_options_flags.h"
+#include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
@@ -163,14 +162,15 @@ bool CollectiveConfig::IsDegenerate(int64_t replica_count,
       });
 
   switch (group_mode) {
-    case CollectiveOpGroupMode::kCrossReplica:
+    case CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA:
       return all_groups_singleton || (groups_empty && replica_count == 1);
-    case CollectiveOpGroupMode::kCrossPartition:
+    case CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_PARTITION:
       return all_groups_singleton || (groups_empty && partition_count == 1);
-    case CollectiveOpGroupMode::kCrossReplicaAndPartition:
+    case CollectiveOpGroupMode::
+        COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA_AND_PARTITION:
       return (all_groups_singleton && partition_count == 1) ||
              (groups_empty && replica_count == 1 && partition_count == 1);
-    case CollectiveOpGroupMode::kFlattenedID:
+    case CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID:
       CHECK(!groups_empty)
           << "replica groups cannot be empty if use_global_device_ids = true";
       return all_groups_singleton;
@@ -255,10 +255,14 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
         "using a tool designed for only one device like run_hlo_module.");
   }
 
+  // Get the list of all devices that are participating in the collective
+  // operation.
   TF_ASSIGN_OR_RETURN(
       std::vector<GlobalDeviceId> participants,
       GetParticipatingDevices(global_device_id, *params.device_assn,
                               replica_groups, group_mode));
+
+  // Get grouping of participating devices.
   std::vector<std::vector<GlobalDeviceId>> participant_groups;
   if (use_nccl) {
     // If splitting is enabled, participating groups must match in order for a
@@ -279,6 +283,13 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
           "environment configuration.");
     }
   }
+
+  // Remove trivial group that contains all participants, as we do not want to
+  // create two sets of communicator handles for these cases.
+  if (participant_groups.size() == 1 && participant_groups[0] == participants) {
+    participant_groups.clear();
+  }
+
   int64_t num_local_participants =
       GetNumLocalParticipants(params, participants);
 
@@ -305,7 +316,8 @@ absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(
                       CollectiveThunk::GetGpuCollectives(params));
   return GetGpuCliqueKey(collectives, params, collective_config.replica_groups,
                          collective_config.group_mode,
-                         AsyncStreamKind::kCollective, use_nccl);
+                         AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE,
+                         use_nccl);
 }
 
 absl::StatusOr<CommunicatorHandle> GetComm(
@@ -485,7 +497,8 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     auto rendezvous_key = FirstCallRendezvousKey{std::move(clique_key)};
     auto rendezvous_name = absl::StrFormat(
-        "first call to collective operation %d; run_id=%ld", config().op_id,
+        "first call to collective operation %d; kind=%s; run_id=%ld",
+        config().op_id, Thunk::KindToString(kind()),
         params.collective_params->run_id.ToInt());
 
     const xla::DebugOptions debug_options = xla::GetDebugOptionsFromFlags();

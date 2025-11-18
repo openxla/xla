@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/emitters/ir/xla_cpu_ops.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/layout_util.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
@@ -227,8 +228,10 @@ Value LinearizeIndex(Location loc, ShapedType type, ValueRange indices,
   }
   auto linear_shape =
       ShapeUtil::MakeShape(U8, {ShapeUtil::ElementsIn(byte_shape)});
+  // TODO(b/446856820): Get SymbolicExprContext from a different source..
+  SymbolicExprContext symbolic_expr_context(rewriter.getContext());
   auto linearized_map =
-      GetBitcastMap(byte_shape, linear_shape, rewriter.getContext());
+      GetBitcastMap(byte_shape, linear_shape, &symbolic_expr_context);
   mlir::SmallVector<Value> result;
   rewriter.createOrFold<ApplyIndexingOp>(result, loc, indices, ValueRange{},
                                          linearized_map);

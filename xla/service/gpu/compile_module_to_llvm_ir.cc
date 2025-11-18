@@ -48,6 +48,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/buffer_assignment.h"
@@ -145,16 +146,14 @@ CompileModuleResults InitializeResults(const HloModule* hlo_module,
 }
 
 std::string GetDumpName(const se::DeviceDescription& device_desc) {
-  struct GetCcStr {
-    std::string operator()(const se::CudaComputeCapability& cc) const {
-      return absl::StrCat("sm_", cc.ToString());
-    }
-    std::string operator()(const se::RocmComputeCapability& cc) const {
-      return cc.gfx_version();
-    }
-  };
-  std::string prefix =
-      std::visit(GetCcStr(), device_desc.gpu_compute_capability());
+  std::string prefix;
+  if (auto* cc =
+          device_desc.gpu_compute_capability().cuda_compute_capability()) {
+    prefix = absl::StrCat("sm_", cc->ToString());
+  } else if (auto* cc = device_desc.gpu_compute_capability()
+                            .rocm_compute_capability()) {
+    prefix = cc->gfx_version();
+  }
   return absl::StrCat(prefix, "_gpu_", kAfterOptimizationsDumpName);
 }
 
@@ -309,6 +308,8 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
           << ": " << hlo_module->GetFingerprint128();
 
   std::unique_ptr<mlir::MLIRContext> mlir_context = CreateMlirContext();
+  auto symbolic_expr_context =
+      std::make_unique<SymbolicExprContext>(mlir_context.get());
   IrEmitterContext ir_emitter_context(
       hlo_module, results.buffer_assignment.get(),
       results.execution_stream_assignment.get(), platform->Name(), device_desc,

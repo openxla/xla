@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/SHA256.h"
+#include "google/protobuf/text_format.h"
 #include "xla/backends/autotuner/autotuner_cache.pb.h"
 #include "xla/backends/autotuner/autotuner_cache_interface.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -65,12 +66,11 @@ FileBasedAutotunerCache::FileBasedAutotunerCache(
 std::string FileBasedAutotunerCache::DeviceDescriptionToString(
     const se::DeviceDescription& device_desc) {
   std::string compute_capability;
-  if (auto* ccc = std::get_if<se::CudaComputeCapability>(
-          &device_desc.gpu_compute_capability())) {
+  if (auto* ccc =
+          device_desc.gpu_compute_capability().cuda_compute_capability()) {
     compute_capability = absl::StrCat("CUDA: ", ccc->major, ".", ccc->minor);
   } else {
-    auto* rcc = std::get_if<se::RocmComputeCapability>(
-        &device_desc.gpu_compute_capability());
+    auto* rcc = device_desc.gpu_compute_capability().rocm_compute_capability();
     compute_capability = absl::StrCat("ROCM: ", rcc->gfx_version());
   }
 

@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/escaping.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -132,14 +133,6 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
       return false;
   }
 }
-const char* const kCusolverCholeskyCallTarget = "__cusolver$cholesky";
-
-bool IsCustomCallToCusolver(const HloInstruction& hlo) {
-  if (hlo.opcode() != HloOpcode::kCustomCall) {
-    return false;
-  }
-  return hlo.custom_call_target() == kCusolverCholeskyCallTarget;
-}
 
 bool IsCustomCallToTopK(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kCustomCall &&
@@ -149,6 +142,13 @@ bool IsCustomCallToTopK(const HloInstruction& hlo) {
 bool IsCustomCallToPtxKernel(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kCustomCall &&
          hlo.custom_call_target() == "__gpu$xla.gpu.ptx";
+}
+
+bool IsCollectiveMosaicGpuInstruction(const HloInstruction& hlo) {
+  return hlo.opcode() == HloOpcode::kCustomCall &&
+         (hlo.custom_call_target() == "mosaic_gpu" ||
+          hlo.custom_call_target() == "mosaic_gpu_v2") &&
+         absl::StrContains(hlo.raw_backend_config_string(), "nvshmem");
 }
 
 static bool IsContiguousSlice(
@@ -547,14 +547,6 @@ bool IsDynamicSliceFusion(const HloInstruction* instr) {
   std::optional<std::string> name = GetCustomFusionConfigName(instr);
   return name == kDynamicSliceFusionWithStaticAddressComputationConfigName ||
          name == kDynamicSliceFusionWithDynamicAddressComputationConfigName;
-}
-
-bool IsDynamicMemcpyFusion(const HloInstruction* instr) {
-  absl::StatusOr<GpuBackendConfig> backend_config =
-      instr->backend_config<GpuBackendConfig>();
-  return backend_config.ok() &&
-         backend_config->fusion_backend_config().kind() ==
-             kDynamicMemcpyFusionKind;
 }
 
 namespace {
