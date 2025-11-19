@@ -1084,6 +1084,7 @@ xla_test(
         "@tsl//tsl/platform:test_benchmark",
     ] + if_rocm_is_configured([
         # keep sorted
+        "@local_config_rocm//rocm:rocm_config",
         "@local_config_rocm//rocm:rocm_headers",
     ]),
 )
@@ -1141,6 +1142,7 @@ xla_test(
         "@tsl//tsl/platform:test_benchmark",
     ] + if_rocm_is_configured([
         # keep sorted
+        "@local_config_rocm//rocm:rocm_config",
         "@local_config_rocm//rocm:rocm_headers",
     ]),
 )
@@ -1197,6 +1199,7 @@ xla_test(
         "@tsl//tsl/platform:ml_dtypes",
     ] + if_rocm_is_configured([
         # keep sorted
+        "@local_config_rocm//rocm:rocm_config",
         "@local_config_rocm//rocm:rocm_headers",
     ]),
 )
@@ -1368,6 +1371,7 @@ xla_test(
         "@tsl//tsl/platform:test_benchmark",
     ] + if_rocm_is_configured([
         # keep sorted
+        "@local_config_rocm//rocm:rocm_config",
         "@local_config_rocm//rocm:rocm_headers",
     ]),
 )
