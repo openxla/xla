@@ -160,24 +160,6 @@ bool DoesComputationFitInRegisters(
     if (!DoesTileFitsInRegisters(padded_tile_size, device_info)) {
       return false;
     }
-
-    // Check for pathologically small tiles on reduce root operations.
-    // Reductions need sufficient parallelism for efficient warp utilization.
-    // This is especially problematic when the output shape is also large,
-    // leading to very low GPU occupancy and register spilling.
-    if (padded_tile_size < 16 && root->hlo()->opcode() == HloOpcode::kReduce) {
-      int64_t output_elements = ShapeUtil::ElementsIn(root->hlo()->shape());
-      // Only reject if output is large enough that we should expect better
-      // tiling. Small outputs (< 1024 elements) might legitimately need small
-      // tiles.
-      if (output_elements >= 1024) {
-        VLOG(2) << "Pathologically small tile (" << padded_tile_size
-                << " elements) for reduce root " << root->hlo()->name()
-                << " with " << output_elements << " output elements"
-                << ". Cannot saturate even half a warp (need >= 16 elements).";
-        return false;
-      }
-    }
   }
 
   // Check that the largest tile fits in registers.
