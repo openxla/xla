@@ -52,18 +52,25 @@ def LinalgElementwiseToVectorPass : Pass<"xtile-cpu-linalg-elementwise-to-vector
   let constructor = "CreateLinalgElementwiseToVectorPass()";
 
   let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect",
     "mlir::vector::VectorDialect",
   ];
 }
 
-def TensorOpsToVectorPass : Pass<"xtile-cpu-tensor-ops-to-vector",
+def TensorOpsToBufferizablePass : Pass<"xtile-cpu-tensor-ops-to-bufferizable",
                                  "mlir::ModuleOp"> {
-  let summary = "Lowering tensor dialect ops to vector ops";
+  let summary = "Lowering tensor dialect ops to bufferizable ops";
 
-  let constructor = "CreateTensorOpsToVectorPass()";
+  let description = [{
+    Some tensor ops such as bitcast are not directly bufferizable. This pass
+    lowers such ops to ops that have bufferization support.
+  }];
+
+  let constructor = "CreateTensorOpsToBufferizablePass()";
 
   let dependentDialects = [
-    "mlir::vector::VectorDialect",
+    "mlir::arith::ArithDialect",
   ];
 }
 

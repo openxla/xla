@@ -317,7 +317,13 @@ static void AddTiledOptimizationPasses(mlir::OpPassManager& pm) {
   pm.addNestedPass<mlir::func::FuncOp>(
       mlir::vector::createLowerVectorMultiReductionPass(
           mlir::vector::VectorMultiReductionLowering::InnerParallel));
-  pm.addPass(CreateTensorOpsToVectorPass());
+  pm.addPass(CreateTensorOpsToBufferizablePass());
+
+  mlir::stablehlo::StablehloLegalizeToLinalgPassOptions
+      stablehlo_to_linalg_options;
+  stablehlo_to_linalg_options.enablePrimitiveOps = true;
+  pm.addPass(mlir::stablehlo::createStablehloLegalizeToLinalgPass());
+  pm.addPass(xtile::createConvertElementwise0DTensorToScalarPass());
 
   pm.addPass(mlir::createConvertElementwiseToLinalgPass());
   pm.addPass(CreateFuseElementwisePass());
@@ -325,6 +331,9 @@ static void AddTiledOptimizationPasses(mlir::OpPassManager& pm) {
   AddBufferizationPasses(pm);
 
   pm.addPass(CreateLinalgElementwiseToVectorPass());
+
+  pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(mlir::createCSEPass());
 }
 
 // Lowering passes for the tiled emitter.
@@ -342,6 +351,8 @@ static void AddTiledLoweringPasses(mlir::OpPassManager& pm, bool fast_min_max) {
 
   pm.addPass(mlir::createConvertComplexToStandardPass());
   pm.addPass(mlir::memref::createExpandStridedMetadataPass());
+
+  pm.addPass(emitters::CreateSafeIntegerArithmeticPass());
 
   AddGenericLoweringPasses(pm, fast_min_max);
 }
