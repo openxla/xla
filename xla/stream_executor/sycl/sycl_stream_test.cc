@@ -30,6 +30,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/kernel_thunk.h"
+#include "xla/service/gpu/gpu_executable.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/sycl/sycl_event.h"
@@ -54,20 +56,6 @@ class SyclStreamTest : public xla::LlvmIrGenTestBase {
  public:
   // TODO(intel-tf): Use SyclExecutor once it is implemented.
   StreamExecutor* executor_;
-
-  // Parses the given HLO IR and compiles it into an Executable.
-  absl::StatusOr<std::unique_ptr<xla::Executable>> CompileHloToExecutable(
-      absl::string_view hlo_ir) {
-    xla::HloModuleConfig config;
-    config.set_debug_options(GetDebugOptionsForTest());
-    TF_ASSIGN_OR_RETURN(std::unique_ptr<xla::HloModule> hlo_module,
-                        xla::ParseAndReturnUnverifiedModule(hlo_ir, config));
-
-    TF_ASSIGN_OR_RETURN(std::unique_ptr<xla::Executable> exec,
-                        CompileToExecutable(std::move(hlo_module),
-                                            /*run_optimization_passes=*/true));
-    return exec;
-  }
 
  private:
   void SetUp() override {
@@ -234,43 +222,6 @@ TEST_F(SyclStreamTest, DoHostCallbackAndBlockHostUntilDone) {
   EXPECT_TRUE(callback_called);
 }
 
-TEST_F(SyclStreamTest, KernelName_NonEmpty) {
-  // Multiply is lowered to a custom kernel, so a kernel name is expected.
-  absl::string_view hlo_ir = R"(
-    ENTRY e {
-      p0 = u32[4] parameter(0)
-      p1 = u32[4] parameter(1)
-      ROOT res = u32[4] multiply(p0, p1)
-    })";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::Executable> exec,
-                          CompileHloToExecutable(hlo_ir));
-  auto* gpu_exec = static_cast<GpuExecutable*>(exec.get());
-  ASSERT_NE(gpu_exec, nullptr);
-
-  std::string kernel_name =
-      SyclStream::GetKernelNameFromGpuExecutable(gpu_exec);
-  ASSERT_EQ(kernel_name, "wrapped_multiply");
-}
-
-TEST_F(SyclStreamTest, KernelName_Empty) {
-  // Copy is lowered into a memcpy operation, which does not generate a kernel.
-  absl::string_view hlo_ir = R"(
-    ENTRY e {
-      p0 = u32[4] parameter(0)
-      ROOT res = u32[4] copy(p0)
-    })";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::Executable> exec,
-                          CompileHloToExecutable(hlo_ir));
-  auto* gpu_exec = static_cast<GpuExecutable*>(exec.get());
-  ASSERT_NE(gpu_exec, nullptr);
-
-  std::string kernel_name =
-      SyclStream::GetKernelNameFromGpuExecutable(gpu_exec);
-  ASSERT_EQ(kernel_name, "");
-}
-
 TEST_F(SyclStreamTest, LaunchKernel) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
                           SyclStream::Create(executor_,
@@ -281,7 +232,6 @@ TEST_F(SyclStreamTest, LaunchKernel) {
       TypedKernelFactory<DeviceMemory<int32_t>, DeviceMemory<int32_t>,
                          DeviceMemory<int32_t>>;
 
-  // Add is lowered to a custom kernel, so a kernel name is expected.
   absl::string_view hlo_ir = R"(
     ENTRY e {
       p0 = u32[4] parameter(0)
@@ -289,14 +239,30 @@ TEST_F(SyclStreamTest, LaunchKernel) {
       ROOT res = u32[4] add(p0, p1)
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::Executable> exec,
-                          CompileHloToExecutable(hlo_ir));
-  auto* gpu_exec = static_cast<GpuExecutable*>(exec.get());
+  xla::HloModuleConfig config;
+  config.set_debug_options(GetDebugOptionsForTest());
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> hlo_module,
+                          xla::ParseAndReturnUnverifiedModule(hlo_ir, config));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::Executable> exec,
+      CompileToExecutable(std::move(hlo_module),
+                          /*run_optimization_passes=*/true));
+
+  auto* gpu_exec = static_cast<xla::gpu::GpuExecutable*>(exec.get());
   ASSERT_NE(gpu_exec, nullptr);
 
-  std::string kernel_name =
-      SyclStream::GetKernelNameFromGpuExecutable(gpu_exec);
-  ASSERT_EQ(kernel_name, "wrapped_add");
+  const xla::gpu::SequentialThunk& seq_thunk = gpu_exec->GetThunk();
+  EXPECT_EQ(seq_thunk.thunks().size(), 1);
+
+  const xla::gpu::Thunk* thunk = seq_thunk.thunks().at(0).get();
+  ASSERT_NE(thunk, nullptr);
+  EXPECT_EQ(thunk->kind(), xla::gpu::Thunk::Kind::kKernel);
+
+  const auto* kernel_thunk = dynamic_cast<const xla::gpu::KernelThunk*>(thunk);
+  ASSERT_NE(kernel_thunk, nullptr);
+
+  std::string kernel_name = kernel_thunk->kernel_name();
 
   std::vector<uint8_t> spirv_binary(gpu_exec->binary());
 

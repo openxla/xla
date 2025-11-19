@@ -136,8 +136,6 @@ sycl_library(
     deps = [
         ":sycl_context",
         ":sycl_event",
-        "//xla/backends/gpu/runtime:kernel_thunk",
-        "//xla/service/gpu:gpu_executable",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:event",
         "//xla/stream_executor:event_based_timer",
@@ -161,6 +159,8 @@ xla_test(
         ":sycl_event",
         ":sycl_platform_id",
         ":sycl_stream",
+        "//xla/backends/gpu/runtime:kernel_thunk",
+        "//xla/service/gpu:gpu_executable",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:typed_kernel_factory",

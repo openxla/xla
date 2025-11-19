@@ -18,7 +18,6 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "xla/service/gpu/gpu_executable.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/event_based_timer.h"
@@ -28,8 +27,6 @@ limitations under the License.
 #include "xla/stream_executor/sycl/sycl_event.h"
 
 namespace stream_executor::sycl {
-
-using GpuExecutable = xla::gpu::GpuExecutable;
 
 class SyclStream : public StreamCommon {
  public:
@@ -100,8 +97,6 @@ class SyclStream : public StreamCommon {
   ~SyclStream() override;
 
   ::sycl::queue* stream_handle() const { return stream_handle_.get(); }
-
-  static std::string GetKernelNameFromGpuExecutable(GpuExecutable* gpu_exec);
 
  private:
   SyclStream(StreamExecutor* executor, SyclEvent completed_event,

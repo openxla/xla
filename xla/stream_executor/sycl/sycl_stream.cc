@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/sycl/sycl_stream.h"
 
-#include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/tsl/platform/logging.h"
 
 namespace stream_executor::sycl {
@@ -298,35 +297,6 @@ SyclStream::~SyclStream() {
             << " for device " << executor_->device_ordinal();
     stream_handle_ = nullptr;
   }
-}
-
-std::string SyclStream::GetKernelNameFromGpuExecutable(
-    GpuExecutable* gpu_exec) {
-  if (gpu_exec == nullptr) {
-    LOG(WARNING)
-        << "GetKernelNameFromGpuExecutable: GpuExecutable pointer is null. "
-        << "Returning empty string.";
-    return "";
-  }
-  const xla::gpu::SequentialThunk& seq_thunk = gpu_exec->GetThunk();
-  std::string kernel_name = "";
-  // Extract the kernel name from the first KernelThunk in the sequence.
-  for (const auto& thunk_ptr : seq_thunk.thunks()) {
-    const xla::gpu::Thunk* thunk = thunk_ptr.get();
-    if (thunk->kind() == xla::gpu::Thunk::Kind::kKernel) {
-      const auto* kernel_thunk =
-          dynamic_cast<const xla::gpu::KernelThunk*>(thunk);
-      if (kernel_thunk != nullptr) {
-        kernel_name = kernel_thunk->kernel_name();
-        break;
-      }
-    }
-  }
-  if (kernel_name.empty()) {
-    LOG(WARNING) << "GetKernelNameFromGpuExecutable: No kernel name found in "
-                 << "GpuExecutable. Returning empty string.";
-  }
-  return kernel_name;
 }
 
 absl::Status SyclStream::RecordCompletedEvent() {
