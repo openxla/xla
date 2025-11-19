@@ -42,6 +42,7 @@ cc_library(
     deps = [
         ":stringpiece",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:macros",
         "@xla//xla/tsl/platform:status",
@@ -66,6 +67,7 @@ cc_library(
     deps = [
         ":stringpiece",
         ":tstring",
+        "@com_google_absl//absl/strings:string_view",
         "@xla//xla/tsl/platform:byte_order",
         "@xla//xla/tsl/platform:types",
     ],
@@ -908,6 +910,7 @@ cc_library(
     deps = [
         ":raw_coding",
         ":stringpiece",
+        "@com_google_absl//absl/strings:string_view",
         "@xla//xla/tsl/platform:macros",
         "@xla//xla/tsl/platform:types",
     ],

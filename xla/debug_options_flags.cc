@@ -457,7 +457,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
   opts.set_xla_gpu_experimental_use_autotuner_pass(false);
   opts.set_xla_gpu_experimental_enable_fusion_autotuner(true);
-  opts.set_xla_gpu_experimental_allow_unroll_factor_eight(false);
+  opts.set_xla_gpu_experimental_allow_unroll_factor_eight(true);
   opts.set_xla_gpu_experimental_pack_dot_operands_along_k_dimension(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_fix_max_iterations(false);
   opts.set_xla_hlo_pass_fix_detect_cycles(false);
@@ -478,6 +478,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_keep_shardings_after_spmd(false);
   opts.set_xla_gpu_experimental_enable_checksum_tracing_on_thunks(false);
+  opts.set_xla_gpu_experimental_enable_buffer_saver_on_thunks(false);
   opts.set_xla_gpu_detect_nan(DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_gpu_detect_inf(DebugOptions::DETECTION_MODE_NONE);
   return opts;
@@ -2696,6 +2697,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_checksum_tracing_on_thunks(),
       "Enables an experimental feature to record checksums of selected thunk "
       "inputs/outputs."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_buffer_saver_on_thunks",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_buffer_saver_on_thunks),
+      debug_options->xla_gpu_experimental_enable_buffer_saver_on_thunks(),
+      "When provided, enables an experimental feature to save results of "
+      "selected thunks."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_thunk_buffer_debug_filter_by_thunk_id_ranges",
       setter_for_thunk_buffer_debug_filter_by_thunk_id, "(none)",
