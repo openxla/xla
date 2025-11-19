@@ -19,6 +19,11 @@ package(
     licenses = ["notice"],
 )
 
+
+exports_files([
+    "sh_test_with_runfiles.py",
+])
+
 exports_files([
     "lit.cfg.py",
 ] + if_google(["lit_google_cfg.py"]))
