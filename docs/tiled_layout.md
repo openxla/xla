@@ -185,10 +185,9 @@ This section shows examples of popular XLA formats.
    across the most minor dimension, so collecting two 16 bit values to get 32
    bits from the same column is much more efficient than doing it in the more
    obvious fashion of taking two 16 bit values from the same row.
-5. **TPU 8 bit tile format** - On Pufferfish we need to support int8 arrays.
-   The format here is very similar to the 16 bit format, the difference is just
-   that we need to collect together 4 elements to get 32 bits instead of just
-   the two, so the tiling becomes `(8,128)(4,1)`.
+5. **TPU 8 bit tile format** - The format here is very similar to the 16 bit
+   format, the difference is just that we need to collect together 4 elements
+   to get 32 bits instead of just the two, so the tiling becomes `(8,128)(4,1)`.
 6. **TPU 1 bit tile format** - TPUs currently use 1 byte for one boolean value,
    i.e. the size in bytes of the PRED element type is 1. It would be less
    wasteful to use a tiling by `(32,128)(32,1)` and use only 1 bit per element.
