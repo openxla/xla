@@ -52,9 +52,6 @@ filegroup(
     name = "runtime_srcs",
     srcs = [
         # Single-threaded support.
-        "runtime_key_value_sort.cc",
-        "runtime_single_threaded_conv2d.cc",
-        "runtime_single_threaded_conv3d.cc",
         "runtime_single_threaded_matmul_c128.cc",
         "runtime_single_threaded_matmul_c64.cc",
         "runtime_single_threaded_matmul_common.h",
@@ -64,10 +61,7 @@ filegroup(
         "runtime_single_threaded_matmul_f64.cc",
         "runtime_single_threaded_matmul_s32.cc",
         "runtime_single_threaded_matmul_u8.cc",
-        "runtime_topk.cc",
         # Multi-threaded support.
-        "runtime_conv2d.cc",
-        "runtime_conv3d.cc",
         "runtime_matmul_c128.cc",
         "runtime_matmul_c64.cc",
         "runtime_matmul_common.h",
@@ -84,14 +78,8 @@ filegroup(
     name = "runtime_hdrs",
     srcs = [
         # Single-threaded support.
-        "runtime_key_value_sort.h",
-        "runtime_single_threaded_conv2d.h",
-        "runtime_single_threaded_conv3d.h",
         "runtime_single_threaded_matmul.h",
-        "runtime_topk.h",
         # Multi-threaded support.
-        "runtime_conv2d.h",
-        "runtime_conv3d.h",
         "runtime_lightweight_check.h",
         "runtime_matmul.h",
         "//xla/backends/cpu/runtime:runtime_hdrs",
@@ -196,6 +184,7 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/backends/cpu:alignment",
         "//xla/backends/cpu:constant_allocation",
+        "//xla/backends/cpu:target_machine_options",
         "//xla/backends/cpu:xnn_support",
         "//xla/backends/cpu/codegen:builtin_definition_generator",
         "//xla/backends/cpu/codegen:compiled_function_library",
@@ -410,6 +399,7 @@ cc_library(
         "//xla/backends/cpu:buffer_allocation_info",
         "//xla/backends/cpu:buffer_allocation_info_util",
         "//xla/backends/cpu:constant_allocation",
+        "//xla/backends/cpu:target_machine_options",
         "//xla/backends/cpu/runtime:function_library",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:thunk_proto_cc",
@@ -524,8 +514,11 @@ xla_test(
     deps = [
         ":cpu_aot_compilation_result",
         ":test_header_helper",
+        "//xla:debug_options_flags",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla/backends/cpu:target_machine_options",
+        "//xla/backends/cpu/codegen:cpu_features",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",
         "//xla/service:executable",
@@ -538,6 +531,7 @@ xla_test(
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
@@ -567,7 +561,6 @@ cc_library(
     srcs = ["cpu_executable.cc"],
     hdrs = ["cpu_executable.h"],
     deps = [
-        ":cpu_runtime",
         ":executable_proto_cc",
         "//xla:executable_run_options",
         "//xla:shape_tree",
@@ -576,6 +569,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu:constant_allocation",
+        "//xla/backends/cpu:target_machine_options",
         "//xla/backends/cpu/runtime:buffer_allocations",
         "//xla/backends/cpu/runtime:function_library",
         "//xla/backends/cpu/runtime:thread_pool_task_runner",
@@ -692,6 +686,7 @@ xla_cc_test(
         ":target_machine_features_stub",
         "//xla:shape_util",
         "//xla/backends/cpu:alignment",
+        "//xla/backends/cpu:target_machine_options",
         "//xla/backends/cpu/codegen:builtin_definition_generator",
         "//xla/backends/cpu/codegen:cpu_features",
         "//xla/backends/cpu/codegen:execution_engine",
@@ -1047,34 +1042,10 @@ cc_library(
 
 cc_library(
     name = "runtime_conv2d",
-    srcs = ["runtime_conv2d.cc"],
-    hdrs = ["runtime_conv2d.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        ":runtime_lightweight_check",
-        "//xla:executable_run_options",
-        "//xla/backends/cpu/runtime:convolution_thunk_internal",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/synchronization",  # build_cleaner: keep
-        "@eigen_archive//:eigen3",
-    ],
 )
 
 cc_library(
     name = "runtime_conv3d",
-    srcs = ["runtime_conv3d.cc"],
-    hdrs = ["runtime_conv3d.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        ":runtime_lightweight_check",
-        "//xla:executable_run_options",
-        "//xla/backends/cpu/runtime:convolution_thunk_internal",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/synchronization",  # build_cleaner: keep
-        "@eigen_archive//:eigen3",
-    ],
 )
 
 cc_library(
@@ -1104,30 +1075,10 @@ cc_library(
 
 cc_library(
     name = "runtime_single_threaded_conv2d",
-    srcs = ["runtime_single_threaded_conv2d.cc"],
-    hdrs = ["runtime_single_threaded_conv2d.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla/backends/cpu/runtime:convolution_thunk_internal",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/synchronization",  # build_cleaner: keep
-        "@eigen_archive//:eigen3",
-    ],
 )
 
 cc_library(
     name = "runtime_single_threaded_conv3d",
-    srcs = ["runtime_single_threaded_conv3d.cc"],
-    hdrs = ["runtime_single_threaded_conv3d.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla/backends/cpu/runtime:convolution_thunk_internal",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/synchronization",  # build_cleaner: keep
-        "@eigen_archive//:eigen3",
-    ],
 )
 
 cc_library(
@@ -1186,28 +1137,7 @@ cc_library(
 
 cc_library(
     name = "runtime_key_value_sort",
-    srcs = ["runtime_key_value_sort.cc"],
-    hdrs = ["runtime_key_value_sort.h"],
-    copts = runtime_copts(),
     visibility = ["//visibility:public"],
-    deps = [
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:dynamic_annotations",
-        "@eigen_archive//:eigen3",
-    ],
-)
-
-cc_library(
-    name = "runtime_topk",
-    srcs = ["runtime_topk.cc"],
-    hdrs = ["runtime_topk.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:dynamic_annotations",
-    ],
 )
 
 xla_cc_test(
@@ -2010,6 +1940,7 @@ cc_library(
         ":cpu_aot_compilation_result",
         ":executable_proto_cc",
         "//xla:util",
+        "//xla/backends/cpu:target_machine_options",
         "//xla/backends/cpu/codegen:builtin_definition_generator",
         "//xla/backends/cpu/codegen:cpu_features",
         "//xla/backends/cpu/codegen:execution_engine",

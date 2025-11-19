@@ -1,1627 +1,1681 @@
 diff --git a/third_party/llvm/generated.patch b/third_party/llvm/generated.patch
-index 509398d..a6f7fe5 100644
+index bc36ca5..db59929 100644
 --- a/third_party/llvm/generated.patch
 +++ b/third_party/llvm/generated.patch
-@@ -1 +1,89 @@
- Auto generated patch. Do not edit or delete it, even if empty.
-+diff -ruN --strip-trailing-cr a/llvm/lib/Target/BPF/BPFAsmPrinter.cpp b/llvm/lib/Target/BPF/BPFAsmPrinter.cpp
-+--- a/llvm/lib/Target/BPF/BPFAsmPrinter.cpp
-++++ b/llvm/lib/Target/BPF/BPFAsmPrinter.cpp
-+@@ -176,10 +176,6 @@
-+         if (const GlobalValue *GV = Op.getGlobal())
-+           if (GV->getName() == BPF_TRAP)
-+             SawTrapCall = true;
-+-      } else if (Op.isSymbol()) {
-+-        if (const MCSymbol *Sym = Op.getMCSymbol())
-+-          if (Sym->getName() == BPF_TRAP)
-+-            SawTrapCall = true;
-+       }
-+     }
-+   }
-+diff -ruN --strip-trailing-cr a/llvm/test/Analysis/CostModel/AArch64/sincos.ll b/llvm/test/Analysis/CostModel/AArch64/sincos.ll
-+--- a/llvm/test/Analysis/CostModel/AArch64/sincos.ll
-++++ b/llvm/test/Analysis/CostModel/AArch64/sincos.ll
-+@@ -38,14 +38,14 @@
-+ ;
-+ ; SINCOS_STRET-LABEL: 'sincos'
-+ ; SINCOS_STRET:  Cost Model: Found an estimated cost of 1 for instruction: %f16 = call { half, half } @llvm.sincos.f16(half poison)
-+-; SINCOS_STRET:  Cost Model: Found an estimated cost of 2 for instruction: %f32 = call { float, float } @llvm.sincos.f32(float poison)
-+-; SINCOS_STRET:  Cost Model: Found an estimated cost of 2 for instruction: %f64 = call { double, double } @llvm.sincos.f64(double poison)
-++; SINCOS_STRET:  Cost Model: Found an estimated cost of 10 for instruction: %f32 = call { float, float } @llvm.sincos.f32(float poison)
-++; SINCOS_STRET:  Cost Model: Found an estimated cost of 10 for instruction: %f64 = call { double, double } @llvm.sincos.f64(double poison)
-+ ; SINCOS_STRET:  Cost Model: Found an estimated cost of 10 for instruction: %f128 = call { fp128, fp128 } @llvm.sincos.f128(fp128 poison)
-+ ; SINCOS_STRET:  Cost Model: Found an estimated cost of 36 for instruction: %v8f16 = call { <8 x half>, <8 x half> } @llvm.sincos.v8f16(<8 x half> poison)
-+-; SINCOS_STRET:  Cost Model: Found an estimated cost of 20 for instruction: %v4f32 = call { <4 x float>, <4 x float> } @llvm.sincos.v4f32(<4 x float> poison)
-+-; SINCOS_STRET:  Cost Model: Found an estimated cost of 8 for instruction: %v2f64 = call { <2 x double>, <2 x double> } @llvm.sincos.v2f64(<2 x double> poison)
-++; SINCOS_STRET:  Cost Model: Found an estimated cost of 52 for instruction: %v4f32 = call { <4 x float>, <4 x float> } @llvm.sincos.v4f32(<4 x float> poison)
-++; SINCOS_STRET:  Cost Model: Found an estimated cost of 24 for instruction: %v2f64 = call { <2 x double>, <2 x double> } @llvm.sincos.v2f64(<2 x double> poison)
-+ ; SINCOS_STRET:  Cost Model: Found an estimated cost of 10 for instruction: %v1f128 = call { <1 x fp128>, <1 x fp128> } @llvm.sincos.v1f128(<1 x fp128> poison)
-+-; SINCOS_STRET:  Cost Model: Found an estimated cost of 40 for instruction: %v8f32 = call { <8 x float>, <8 x float> } @llvm.sincos.v8f32(<8 x float> poison)
-++; SINCOS_STRET:  Cost Model: Found an estimated cost of 104 for instruction: %v8f32 = call { <8 x float>, <8 x float> } @llvm.sincos.v8f32(<8 x float> poison)
-+ ; SINCOS_STRET:  Cost Model: Invalid cost for instruction: %nxv8f16 = call { <vscale x 8 x half>, <vscale x 8 x half> } @llvm.sincos.nxv8f16(<vscale x 8 x half> poison)
-+ ; SINCOS_STRET:  Cost Model: Invalid cost for instruction: %nxv4f32 = call { <vscale x 4 x float>, <vscale x 4 x float> } @llvm.sincos.nxv4f32(<vscale x 4 x float> poison)
-+ ; SINCOS_STRET:  Cost Model: Invalid cost for instruction: %nxv2f64 = call { <vscale x 2 x double>, <vscale x 2 x double> } @llvm.sincos.nxv2f64(<vscale x 2 x double> poison)
-+diff -ruN --strip-trailing-cr a/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp b/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
-+--- a/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
-++++ b/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
-+@@ -2568,11 +2568,6 @@
-+     auto trailingReassocs = ArrayRef<int64_t>(reassoc).drop_front();
-+     auto stride = SaturatedInteger::wrap(resultStrides[resultStrideIndex--]);
-+     for (int64_t idx : llvm::reverse(trailingReassocs)) {
-+-      // Dimensions of size 1 should be skipped, because their strides are
-+-      // meaningless and could have any arbitrary value.
-+-      if (srcShape[idx - 1] == 1)
-+-        continue;
-+-
-+       stride = stride * SaturatedInteger::wrap(srcShape[idx]);
+@@ -48,6 +48,451 @@ diff -ruN --strip-trailing-cr a/llvm/lib/Passes/PassBuilderPipelines.cpp b/llvm/
+  
+  static cl::opt<bool>
+      EnableHotColdSplit("hot-cold-split",
++diff -ruN --strip-trailing-cr a/llvm/lib/Transforms/Scalar/IndVarSimplify.cpp b/llvm/lib/Transforms/Scalar/IndVarSimplify.cpp
++--- a/llvm/lib/Transforms/Scalar/IndVarSimplify.cpp
+++++ b/llvm/lib/Transforms/Scalar/IndVarSimplify.cpp
++@@ -162,6 +162,8 @@
++                                  const SCEV *ExitCount,
++                                  PHINode *IndVar, SCEVExpander &Rewriter);
 + 
-+       // Both source and result stride must have the same static value. In that
-+@@ -2587,6 +2582,11 @@
-+       if (strict && (stride.saturated || srcStride.saturated))
-+         return failure();
-+ 
-++      // Dimensions of size 1 should be skipped, because their strides are
-++      // meaningless and could have any arbitrary value.
-++      if (srcShape[idx - 1] == 1)
-++        continue;
+++  bool sinkUnusedInvariants(Loop *L);
 ++
-+       if (!stride.saturated && !srcStride.saturated && stride != srcStride)
-+         return failure();
-+     }
-+diff -ruN --strip-trailing-cr a/mlir/test/Dialect/MemRef/ops.mlir b/mlir/test/Dialect/MemRef/ops.mlir
-+--- a/mlir/test/Dialect/MemRef/ops.mlir
-++++ b/mlir/test/Dialect/MemRef/ops.mlir
-+@@ -440,8 +440,7 @@
-+          %arg4: index,
-+          %arg5: index,
-+          %arg6: index,
-+-         %arg7: memref<4x?x4xf32>,
-+-         %arg8: memref<1x1x18x?xsi8, strided<[?, ?, ?, 1], offset: ?>>) {
-++         %arg7: memref<4x?x4xf32>) {
-+ //       CHECK:   memref.collapse_shape {{.*}} {{\[}}[0, 1], [2]]
-+ //  CHECK-SAME:     memref<?x?x?xf32> into memref<?x?xf32>
-+   %0 = memref.collapse_shape %arg0 [[0, 1], [2]] :
-+@@ -490,10 +489,6 @@
-+ //       CHECK:   memref.expand_shape {{.*}} {{\[}}[0, 1], [2], [3, 4]]
-+   %4 = memref.expand_shape %arg7 [[0, 1], [2], [3, 4]] output_shape [2, 2, %arg4, 2, 2]
-+         : memref<4x?x4xf32> into memref<2x2x?x2x2xf32>
-+-
-+-//       CHECK:   memref.collapse_shape {{.*}} {{\[}}[0, 1], [2], [3]]
-+-//  CHECK-SAME:     memref<1x1x18x?xsi8, strided<[?, ?, ?, 1], offset: ?>> into memref<1x18x?xsi8, strided<[?, ?, 1], offset: ?>>
-+-  %5 = memref.collapse_shape %arg8 [[0, 1], [2], [3]] : memref<1x1x18x?xsi8, strided<[?, ?, ?, 1], offset: ?>> into memref<1x18x?xsi8, strided<[?, ?, 1], offset: ?>>
-+   return
++ public:
++   IndVarSimplify(LoopInfo *LI, ScalarEvolution *SE, DominatorTree *DT,
++                  const DataLayout &DL, TargetLibraryInfo *TLI,
++@@ -1077,6 +1079,85 @@
++   return true;
 + }
 + 
+++//===----------------------------------------------------------------------===//
+++//  sinkUnusedInvariants. A late subpass to cleanup loop preheaders.
+++//===----------------------------------------------------------------------===//
+++
+++/// If there's a single exit block, sink any loop-invariant values that
+++/// were defined in the preheader but not used inside the loop into the
+++/// exit block to reduce register pressure in the loop.
+++bool IndVarSimplify::sinkUnusedInvariants(Loop *L) {
+++  BasicBlock *ExitBlock = L->getExitBlock();
+++  if (!ExitBlock) return false;
+++
+++  BasicBlock *Preheader = L->getLoopPreheader();
+++  if (!Preheader) return false;
+++
+++  bool MadeAnyChanges = false;
+++  for (Instruction &I : llvm::make_early_inc_range(llvm::reverse(*Preheader))) {
+++
+++    // Skip BB Terminator.
+++    if (Preheader->getTerminator() == &I)
+++      continue;
+++
+++    // New instructions were inserted at the end of the preheader.
+++    if (isa<PHINode>(I))
+++      break;
+++
+++    // Don't move instructions which might have side effects, since the side
+++    // effects need to complete before instructions inside the loop.  Also don't
+++    // move instructions which might read memory, since the loop may modify
+++    // memory. Note that it's okay if the instruction might have undefined
+++    // behavior: LoopSimplify guarantees that the preheader dominates the exit
+++    // block.
+++    if (I.mayHaveSideEffects() || I.mayReadFromMemory())
+++      continue;
+++
+++    // Skip debug or pseudo instructions.
+++    if (I.isDebugOrPseudoInst())
+++      continue;
+++
+++    // Skip eh pad instructions.
+++    if (I.isEHPad())
+++      continue;
+++
+++    // Don't sink alloca: we never want to sink static alloca's out of the
+++    // entry block, and correctly sinking dynamic alloca's requires
+++    // checks for stacksave/stackrestore intrinsics.
+++    // FIXME: Refactor this check somehow?
+++    if (isa<AllocaInst>(&I))
+++      continue;
+++
+++    // Determine if there is a use in or before the loop (direct or
+++    // otherwise).
+++    bool UsedInLoop = false;
+++    for (Use &U : I.uses()) {
+++      Instruction *User = cast<Instruction>(U.getUser());
+++      BasicBlock *UseBB = User->getParent();
+++      if (PHINode *P = dyn_cast<PHINode>(User)) {
+++        unsigned i =
+++          PHINode::getIncomingValueNumForOperand(U.getOperandNo());
+++        UseBB = P->getIncomingBlock(i);
+++      }
+++      if (UseBB == Preheader || L->contains(UseBB)) {
+++        UsedInLoop = true;
+++        break;
+++      }
+++    }
+++
+++    // If there is, the def must remain in the preheader.
+++    if (UsedInLoop)
+++      continue;
+++
+++    // Otherwise, sink it to the exit block.
+++    I.moveBefore(ExitBlock->getFirstInsertionPt());
+++    SE->forgetValue(&I);
+++    MadeAnyChanges = true;
+++  }
+++
+++  return MadeAnyChanges;
+++}
+++
++ static void replaceExitCond(BranchInst *BI, Value *NewCond,
++                             SmallVectorImpl<WeakTrackingVH> &DeadInsts) {
++   auto *OldCond = BI->getCondition();
++@@ -1984,6 +2065,10 @@
++ 
++   // The Rewriter may not be used from this point on.
++ 
+++  // Loop-invariant instructions in the preheader that aren't used in the
+++  // loop may be sunk below the loop to reduce register pressure.
+++  Changed |= sinkUnusedInvariants(L);
+++
++   // rewriteFirstIterationLoopExitValues does not rely on the computation of
++   // trip count and therefore can further simplify exit values in addition to
++   // rewriteLoopExitValues.
++diff -ruN --strip-trailing-cr a/llvm/lib/Transforms/Scalar/LICM.cpp b/llvm/lib/Transforms/Scalar/LICM.cpp
++--- a/llvm/lib/Transforms/Scalar/LICM.cpp
+++++ b/llvm/lib/Transforms/Scalar/LICM.cpp
++@@ -211,15 +211,9 @@
++ static void eraseInstruction(Instruction &I, ICFLoopSafetyInfo &SafetyInfo,
++                              MemorySSAUpdater &MSSAU);
++ 
++-static void moveInstructionBefore(
++-    Instruction &I, BasicBlock::iterator Dest, ICFLoopSafetyInfo &SafetyInfo,
++-    MemorySSAUpdater &MSSAU, ScalarEvolution *SE,
++-    MemorySSA::InsertionPlace Point = MemorySSA::BeforeTerminator);
++-
++-static bool sinkUnusedInvariantsFromPreheaderToExit(
++-    Loop *L, AAResults *AA, ICFLoopSafetyInfo *SafetyInfo,
++-    MemorySSAUpdater &MSSAU, ScalarEvolution *SE, DominatorTree *DT,
++-    SinkAndHoistLICMFlags &SinkFlags, OptimizationRemarkEmitter *ORE);
+++static void moveInstructionBefore(Instruction &I, BasicBlock::iterator Dest,
+++                                  ICFLoopSafetyInfo &SafetyInfo,
+++                                  MemorySSAUpdater &MSSAU, ScalarEvolution *SE);
++ 
++ static void foreachMemoryAccess(MemorySSA *MSSA, Loop *L,
++                                 function_ref<void(Instruction *)> Fn);
++@@ -477,12 +471,6 @@
++                                     TLI, TTI, L, MSSAU, &SafetyInfo, Flags, ORE)
++             : sinkRegion(DT->getNode(L->getHeader()), AA, LI, DT, TLI, TTI, L,
++                          MSSAU, &SafetyInfo, Flags, ORE);
++-
++-  // sink pre-header defs that are unused in-loop into the unique exit to reduce
++-  // pressure.
++-  Changed |= sinkUnusedInvariantsFromPreheaderToExit(L, AA, &SafetyInfo, MSSAU,
++-                                                     SE, DT, Flags, ORE);
++-
++   Flags.setIsSink(false);
++   if (Preheader)
++     Changed |= hoistRegion(DT->getNode(L->getHeader()), AA, LI, DT, AC, TLI, L,
++@@ -1468,80 +1456,19 @@
++ 
++ static void moveInstructionBefore(Instruction &I, BasicBlock::iterator Dest,
++                                   ICFLoopSafetyInfo &SafetyInfo,
++-                                  MemorySSAUpdater &MSSAU, ScalarEvolution *SE,
++-                                  MemorySSA::InsertionPlace Point) {
+++                                  MemorySSAUpdater &MSSAU,
+++                                  ScalarEvolution *SE) {
++   SafetyInfo.removeInstruction(&I);
++   SafetyInfo.insertInstructionTo(&I, Dest->getParent());
++   I.moveBefore(*Dest->getParent(), Dest);
++   if (MemoryUseOrDef *OldMemAcc = cast_or_null<MemoryUseOrDef>(
++           MSSAU.getMemorySSA()->getMemoryAccess(&I)))
++-    MSSAU.moveToPlace(OldMemAcc, Dest->getParent(), Point);
+++    MSSAU.moveToPlace(OldMemAcc, Dest->getParent(),
+++                      MemorySSA::BeforeTerminator);
++   if (SE)
++     SE->forgetBlockAndLoopDispositions(&I);
++ }
++ 
++-// If there's a single exit block, sink any loop-invariant values that were
++-// defined in the preheader but not used inside the loop into the exit block
++-// to reduce register pressure in the loop.
++-static bool sinkUnusedInvariantsFromPreheaderToExit(
++-    Loop *L, AAResults *AA, ICFLoopSafetyInfo *SafetyInfo,
++-    MemorySSAUpdater &MSSAU, ScalarEvolution *SE, DominatorTree *DT,
++-    SinkAndHoistLICMFlags &SinkFlags, OptimizationRemarkEmitter *ORE) {
++-  BasicBlock *ExitBlock = L->getExitBlock();
++-  if (!ExitBlock)
++-    return false;
++-
++-  BasicBlock *Preheader = L->getLoopPreheader();
++-  if (!Preheader)
++-    return false;
++-
++-  bool MadeAnyChanges = false;
++-
++-  for (Instruction &I : llvm::make_early_inc_range(llvm::reverse(*Preheader))) {
++-
++-    // Skip terminator.
++-    if (Preheader->getTerminator() == &I)
++-      continue;
++-
++-    // New instructions were inserted at the end of the preheader.
++-    if (isa<PHINode>(I))
++-      break;
++-
++-    // Don't move instructions which might have side effects, since the side
++-    // effects need to complete before instructions inside the loop. Note that
++-    // it's okay if the instruction might have undefined behavior: LoopSimplify
++-    // guarantees that the preheader dominates the exit block.
++-    if (I.mayHaveSideEffects())
++-      continue;
++-
++-    if (!canSinkOrHoistInst(I, AA, DT, L, MSSAU, true, SinkFlags, nullptr))
++-      continue;
++-
++-    // Determine if there is a use in or before the loop (direct or
++-    // otherwise).
++-    bool UsedInLoopOrPreheader = false;
++-    for (Use &U : I.uses()) {
++-      auto *UserI = cast<Instruction>(U.getUser());
++-      BasicBlock *UseBB = UserI->getParent();
++-      if (auto *PN = dyn_cast<PHINode>(UserI)) {
++-        UseBB = PN->getIncomingBlock(U);
++-      }
++-      if (UseBB == Preheader || L->contains(UseBB)) {
++-        UsedInLoopOrPreheader = true;
++-        break;
++-      }
++-    }
++-    if (UsedInLoopOrPreheader)
++-      continue;
++-
++-    moveInstructionBefore(I, ExitBlock->getFirstInsertionPt(), *SafetyInfo,
++-                          MSSAU, SE, MemorySSA::Beginning);
++-    MadeAnyChanges = true;
++-  }
++-
++-  return MadeAnyChanges;
++-}
++-
++ static Instruction *sinkThroughTriviallyReplaceablePHI(
++     PHINode *TPN, Instruction *I, LoopInfo *LI,
++     SmallDenseMap<BasicBlock *, Instruction *, 32> &SunkCopies,
++diff -ruN --strip-trailing-cr a/llvm/test/CodeGen/AMDGPU/schedule-amdgpu-trackers.ll b/llvm/test/CodeGen/AMDGPU/schedule-amdgpu-trackers.ll
++--- a/llvm/test/CodeGen/AMDGPU/schedule-amdgpu-trackers.ll
+++++ b/llvm/test/CodeGen/AMDGPU/schedule-amdgpu-trackers.ll
++@@ -73,10 +73,10 @@
++ }
++ 
++ ; CHECK-LABEL: {{^}}excess_soft_clause_reg_pressure:
++-; GFX908:    NumSgprs: 56
++-; GFX908-GCNTRACKERS:    NumSgprs: 56
+++; GFX908:    NumSgprs: 64
+++; GFX908-GCNTRACKERS:    NumSgprs: 64
++ ; GFX908:    NumVgprs: 43
++-; GFX908-GCNTRACKERS:    NumVgprs: 40
+++; GFX908-GCNTRACKERS:    NumVgprs: 39
++ ; GFX908:    Occupancy: 5
++ ; GFX908-GCNTRACKERS:    Occupancy: 6
++ 
++diff -ruN --strip-trailing-cr a/llvm/test/CodeGen/AMDGPU/vgpr-spill-emergency-stack-slot.ll b/llvm/test/CodeGen/AMDGPU/vgpr-spill-emergency-stack-slot.ll
++--- a/llvm/test/CodeGen/AMDGPU/vgpr-spill-emergency-stack-slot.ll
+++++ b/llvm/test/CodeGen/AMDGPU/vgpr-spill-emergency-stack-slot.ll
++@@ -22,6 +22,8 @@
++ ; GFX9-DAG: s_mov_b32 s[[DESC3:[0-9]+]], 0xe00000
++ 
++ ; OFFREG is offset system SGPR
+++; GCN: buffer_store_dword {{v[0-9]+}}, off, s[[[DESC0]]:[[DESC3]]], 0 offset:{{[0-9]+}} ; 4-byte Folded Spill
+++; GCN: buffer_load_dword v{{[0-9]+}}, off, s[[[DESC0]]:[[DESC3]]], 0 offset:{{[0-9]+}} ; 4-byte Folded Reload
++ ; GCN: NumVgprs: 256
++ ; GCN: ScratchSize: 640
++ 
++diff -ruN --strip-trailing-cr a/llvm/test/CodeGen/PowerPC/combine-sext-and-shl-after-isel.ll b/llvm/test/CodeGen/PowerPC/combine-sext-and-shl-after-isel.ll
++--- a/llvm/test/CodeGen/PowerPC/combine-sext-and-shl-after-isel.ll
+++++ b/llvm/test/CodeGen/PowerPC/combine-sext-and-shl-after-isel.ll
++@@ -212,33 +212,37 @@
++ ; CHECK-NEXT:    std r30, 48(r1) # 8-byte Folded Spill
++ ; CHECK-NEXT:    andi. r3, r3, 1
++ ; CHECK-NEXT:    li r3, -1
++-; CHECK-NEXT:    li r4, 0
++ ; CHECK-NEXT:    li r30, 0
++ ; CHECK-NEXT:    crmove 4*cr2+lt, gt
++ ; CHECK-NEXT:    std r29, 40(r1) # 8-byte Folded Spill
++ ; CHECK-NEXT:    b .LBB3_2
+++; CHECK-NEXT:    .p2align 4
++ ; CHECK-NEXT:  .LBB3_1: # %if.end116
++ ; CHECK-NEXT:    #
++ ; CHECK-NEXT:    bl callee
++ ; CHECK-NEXT:    nop
++ ; CHECK-NEXT:    mr r3, r29
++-; CHECK-NEXT:    li r4, 0
++-; CHECK-NEXT:    .p2align 4
++-; CHECK-NEXT:  .LBB3_2: # %while.body5.i
++-; CHECK-NEXT:    #
++-; CHECK-NEXT:    addi r4, r4, -1
++-; CHECK-NEXT:    cmpwi r4, 0
++-; CHECK-NEXT:    bgt cr0, .LBB3_2
++-; CHECK-NEXT:  # %bb.3: # %while.cond12.preheader.i
++-; CHECK-NEXT:    #
+++; CHECK-NEXT:  .LBB3_2: # %cond.end.i.i
+++; CHECK-NEXT:    # =>This Loop Header: Depth=1
+++; CHECK-NEXT:    # Child Loop BB3_3 Depth 2
++ ; CHECK-NEXT:    lwz r29, 0(r3)
+++; CHECK-NEXT:    li r5, 0
+++; CHECK-NEXT:    extsw r4, r29
+++; CHECK-NEXT:    .p2align 5
+++; CHECK-NEXT:  .LBB3_3: # %while.body5.i
+++; CHECK-NEXT:    # Parent Loop BB3_2 Depth=1
+++; CHECK-NEXT:    # => This Inner Loop Header: Depth=2
+++; CHECK-NEXT:    addi r5, r5, -1
+++; CHECK-NEXT:    cmpwi r5, 0
+++; CHECK-NEXT:    bgt cr0, .LBB3_3
+++; CHECK-NEXT:  # %bb.4: # %while.cond12.preheader.i
+++; CHECK-NEXT:    #
++ ; CHECK-NEXT:    bc 12, 4*cr2+lt, .LBB3_1
++-; CHECK-NEXT:  # %bb.4: # %for.cond99.preheader
+++; CHECK-NEXT:  # %bb.5: # %for.cond99.preheader
++ ; CHECK-NEXT:    #
++-; CHECK-NEXT:    extsw r4, r29
++ ; CHECK-NEXT:    ld r5, 0(r3)
++-; CHECK-NEXT:    stw r3, 0(r3)
++ ; CHECK-NEXT:    sldi r4, r4, 2
+++; CHECK-NEXT:    stw r3, 0(r3)
++ ; CHECK-NEXT:    stwx r30, r5, r4
++ ; CHECK-NEXT:    b .LBB3_1
++ ;
++@@ -252,33 +256,37 @@
++ ; CHECK-BE-NEXT:    std r30, 64(r1) # 8-byte Folded Spill
++ ; CHECK-BE-NEXT:    andi. r3, r3, 1
++ ; CHECK-BE-NEXT:    li r3, -1
++-; CHECK-BE-NEXT:    li r4, 0
++ ; CHECK-BE-NEXT:    li r30, 0
++ ; CHECK-BE-NEXT:    crmove 4*cr2+lt, gt
++ ; CHECK-BE-NEXT:    std r29, 56(r1) # 8-byte Folded Spill
++ ; CHECK-BE-NEXT:    b .LBB3_2
+++; CHECK-BE-NEXT:    .p2align 4
++ ; CHECK-BE-NEXT:  .LBB3_1: # %if.end116
++ ; CHECK-BE-NEXT:    #
++ ; CHECK-BE-NEXT:    bl callee
++ ; CHECK-BE-NEXT:    nop
++ ; CHECK-BE-NEXT:    mr r3, r29
++-; CHECK-BE-NEXT:    li r4, 0
++-; CHECK-BE-NEXT:    .p2align 4
++-; CHECK-BE-NEXT:  .LBB3_2: # %while.body5.i
++-; CHECK-BE-NEXT:    #
++-; CHECK-BE-NEXT:    addi r4, r4, -1
++-; CHECK-BE-NEXT:    cmpwi r4, 0
++-; CHECK-BE-NEXT:    bgt cr0, .LBB3_2
++-; CHECK-BE-NEXT:  # %bb.3: # %while.cond12.preheader.i
++-; CHECK-BE-NEXT:    #
+++; CHECK-BE-NEXT:  .LBB3_2: # %cond.end.i.i
+++; CHECK-BE-NEXT:    # =>This Loop Header: Depth=1
+++; CHECK-BE-NEXT:    # Child Loop BB3_3 Depth 2
++ ; CHECK-BE-NEXT:    lwz r29, 0(r3)
+++; CHECK-BE-NEXT:    li r5, 0
+++; CHECK-BE-NEXT:    extsw r4, r29
+++; CHECK-BE-NEXT:    .p2align 5
+++; CHECK-BE-NEXT:  .LBB3_3: # %while.body5.i
+++; CHECK-BE-NEXT:    # Parent Loop BB3_2 Depth=1
+++; CHECK-BE-NEXT:    # => This Inner Loop Header: Depth=2
+++; CHECK-BE-NEXT:    addi r5, r5, -1
+++; CHECK-BE-NEXT:    cmpwi r5, 0
+++; CHECK-BE-NEXT:    bgt cr0, .LBB3_3
+++; CHECK-BE-NEXT:  # %bb.4: # %while.cond12.preheader.i
+++; CHECK-BE-NEXT:    #
++ ; CHECK-BE-NEXT:    bc 12, 4*cr2+lt, .LBB3_1
++-; CHECK-BE-NEXT:  # %bb.4: # %for.cond99.preheader
+++; CHECK-BE-NEXT:  # %bb.5: # %for.cond99.preheader
++ ; CHECK-BE-NEXT:    #
++-; CHECK-BE-NEXT:    extsw r4, r29
++ ; CHECK-BE-NEXT:    ld r5, 0(r3)
++-; CHECK-BE-NEXT:    stw r3, 0(r3)
++ ; CHECK-BE-NEXT:    sldi r4, r4, 2
+++; CHECK-BE-NEXT:    stw r3, 0(r3)
++ ; CHECK-BE-NEXT:    stwx r30, r5, r4
++ ; CHECK-BE-NEXT:    b .LBB3_1
++ ;
++@@ -292,28 +300,32 @@
++ ; CHECK-P9-NEXT:    std r0, 80(r1)
++ ; CHECK-P9-NEXT:    std r30, 48(r1) # 8-byte Folded Spill
++ ; CHECK-P9-NEXT:    li r3, -1
++-; CHECK-P9-NEXT:    li r4, 0
++ ; CHECK-P9-NEXT:    li r30, 0
++ ; CHECK-P9-NEXT:    std r29, 40(r1) # 8-byte Folded Spill
++ ; CHECK-P9-NEXT:    crmove 4*cr2+lt, gt
++ ; CHECK-P9-NEXT:    b .LBB3_2
+++; CHECK-P9-NEXT:    .p2align 4
++ ; CHECK-P9-NEXT:  .LBB3_1: # %if.end116
++ ; CHECK-P9-NEXT:    #
++ ; CHECK-P9-NEXT:    bl callee
++ ; CHECK-P9-NEXT:    nop
++ ; CHECK-P9-NEXT:    mr r3, r29
+++; CHECK-P9-NEXT:  .LBB3_2: # %cond.end.i.i
+++; CHECK-P9-NEXT:    # =>This Loop Header: Depth=1
+++; CHECK-P9-NEXT:    # Child Loop BB3_3 Depth 2
+++; CHECK-P9-NEXT:    lwz r29, 0(r3)
++ ; CHECK-P9-NEXT:    li r4, 0
++-; CHECK-P9-NEXT:    .p2align 4
++-; CHECK-P9-NEXT:  .LBB3_2: # %while.body5.i
++-; CHECK-P9-NEXT:    #
+++; CHECK-P9-NEXT:    .p2align 5
+++; CHECK-P9-NEXT:  .LBB3_3: # %while.body5.i
+++; CHECK-P9-NEXT:    # Parent Loop BB3_2 Depth=1
+++; CHECK-P9-NEXT:    # => This Inner Loop Header: Depth=2
++ ; CHECK-P9-NEXT:    addi r4, r4, -1
++ ; CHECK-P9-NEXT:    cmpwi r4, 0
++-; CHECK-P9-NEXT:    bgt cr0, .LBB3_2
++-; CHECK-P9-NEXT:  # %bb.3: # %while.cond12.preheader.i
+++; CHECK-P9-NEXT:    bgt cr0, .LBB3_3
+++; CHECK-P9-NEXT:  # %bb.4: # %while.cond12.preheader.i
++ ; CHECK-P9-NEXT:    #
++-; CHECK-P9-NEXT:    lwz r29, 0(r3)
++ ; CHECK-P9-NEXT:    bc 12, 4*cr2+lt, .LBB3_1
++-; CHECK-P9-NEXT:  # %bb.4: # %for.cond99.preheader
+++; CHECK-P9-NEXT:  # %bb.5: # %for.cond99.preheader
++ ; CHECK-P9-NEXT:    #
++ ; CHECK-P9-NEXT:    ld r4, 0(r3)
++ ; CHECK-P9-NEXT:    extswsli r5, r29, 2
++@@ -331,28 +343,32 @@
++ ; CHECK-P9-BE-NEXT:    std r0, 96(r1)
++ ; CHECK-P9-BE-NEXT:    std r30, 64(r1) # 8-byte Folded Spill
++ ; CHECK-P9-BE-NEXT:    li r3, -1
++-; CHECK-P9-BE-NEXT:    li r4, 0
++ ; CHECK-P9-BE-NEXT:    li r30, 0
++ ; CHECK-P9-BE-NEXT:    std r29, 56(r1) # 8-byte Folded Spill
++ ; CHECK-P9-BE-NEXT:    crmove 4*cr2+lt, gt
++ ; CHECK-P9-BE-NEXT:    b .LBB3_2
+++; CHECK-P9-BE-NEXT:    .p2align 4
++ ; CHECK-P9-BE-NEXT:  .LBB3_1: # %if.end116
++ ; CHECK-P9-BE-NEXT:    #
++ ; CHECK-P9-BE-NEXT:    bl callee
++ ; CHECK-P9-BE-NEXT:    nop
++ ; CHECK-P9-BE-NEXT:    mr r3, r29
+++; CHECK-P9-BE-NEXT:  .LBB3_2: # %cond.end.i.i
+++; CHECK-P9-BE-NEXT:    # =>This Loop Header: Depth=1
+++; CHECK-P9-BE-NEXT:    # Child Loop BB3_3 Depth 2
+++; CHECK-P9-BE-NEXT:    lwz r29, 0(r3)
++ ; CHECK-P9-BE-NEXT:    li r4, 0
++-; CHECK-P9-BE-NEXT:    .p2align 4
++-; CHECK-P9-BE-NEXT:  .LBB3_2: # %while.body5.i
++-; CHECK-P9-BE-NEXT:    #
+++; CHECK-P9-BE-NEXT:    .p2align 5
+++; CHECK-P9-BE-NEXT:  .LBB3_3: # %while.body5.i
+++; CHECK-P9-BE-NEXT:    # Parent Loop BB3_2 Depth=1
+++; CHECK-P9-BE-NEXT:    # => This Inner Loop Header: Depth=2
++ ; CHECK-P9-BE-NEXT:    addi r4, r4, -1
++ ; CHECK-P9-BE-NEXT:    cmpwi r4, 0
++-; CHECK-P9-BE-NEXT:    bgt cr0, .LBB3_2
++-; CHECK-P9-BE-NEXT:  # %bb.3: # %while.cond12.preheader.i
+++; CHECK-P9-BE-NEXT:    bgt cr0, .LBB3_3
+++; CHECK-P9-BE-NEXT:  # %bb.4: # %while.cond12.preheader.i
++ ; CHECK-P9-BE-NEXT:    #
++-; CHECK-P9-BE-NEXT:    lwz r29, 0(r3)
++ ; CHECK-P9-BE-NEXT:    bc 12, 4*cr2+lt, .LBB3_1
++-; CHECK-P9-BE-NEXT:  # %bb.4: # %for.cond99.preheader
+++; CHECK-P9-BE-NEXT:  # %bb.5: # %for.cond99.preheader
++ ; CHECK-P9-BE-NEXT:    #
++ ; CHECK-P9-BE-NEXT:    ld r4, 0(r3)
++ ; CHECK-P9-BE-NEXT:    extswsli r5, r29, 2
+ diff -ruN --strip-trailing-cr a/llvm/test/Other/new-pm-defaults.ll b/llvm/test/Other/new-pm-defaults.ll
+ --- a/llvm/test/Other/new-pm-defaults.ll
+ +++ b/llvm/test/Other/new-pm-defaults.ll
+@@ -125,3 +570,1209 @@ diff -ruN --strip-trailing-cr a/llvm/test/Other/new-pm-thinlto-prelink-samplepgo
+  ; CHECK-O23SZ-NEXT: Running pass: JumpThreadingPass
+  ; CHECK-O23SZ-NEXT: Running analysis: LazyValueAnalysis
+  ; CHECK-O23SZ-NEXT: Running pass: CorrelatedValuePropagationPass
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/AMDGPU/addrspace-7-doesnt-crash.ll b/llvm/test/Transforms/IndVarSimplify/AMDGPU/addrspace-7-doesnt-crash.ll
++--- a/llvm/test/Transforms/IndVarSimplify/AMDGPU/addrspace-7-doesnt-crash.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/AMDGPU/addrspace-7-doesnt-crash.ll
++@@ -7,11 +7,11 @@
++ ; CHECK-LABEL: define void @f
++ ; CHECK-SAME: (ptr addrspace(7) [[ARG:%.*]]) {
++ ; CHECK-NEXT:  bb:
++-; CHECK-NEXT:    [[SCEVGEP:%.*]] = getelementptr i8, ptr addrspace(7) [[ARG]], i32 8
++ ; CHECK-NEXT:    br label [[BB1:%.*]]
++ ; CHECK:       bb1:
++ ; CHECK-NEXT:    br i1 false, label [[BB2:%.*]], label [[BB1]]
++ ; CHECK:       bb2:
+++; CHECK-NEXT:    [[SCEVGEP:%.*]] = getelementptr i8, ptr addrspace(7) [[ARG]], i32 8
++ ; CHECK-NEXT:    br label [[BB3:%.*]]
++ ; CHECK:       bb3:
++ ; CHECK-NEXT:    [[I4:%.*]] = load i32, ptr addrspace(7) [[SCEVGEP]], align 4
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/ARM/code-size.ll b/llvm/test/Transforms/IndVarSimplify/ARM/code-size.ll
++--- a/llvm/test/Transforms/IndVarSimplify/ARM/code-size.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/ARM/code-size.ll
++@@ -4,31 +4,33 @@
++ 
++ define i32 @remove_loop(i32 %size) #0 {
++ ; CHECK-V8M-LABEL: @remove_loop(
+++; CHECK-V8M-SAME: i32 [[SIZE:%.*]]) #[[ATTR0:[0-9]+]] {
++ ; CHECK-V8M-NEXT:  entry:
++-; CHECK-V8M-NEXT:    [[TMP0:%.*]] = add i32 [[SIZE:%.*]], 31
+++; CHECK-V8M-NEXT:    br label %[[WHILE_COND:.*]]
+++; CHECK-V8M:       while.cond:
+++; CHECK-V8M-NEXT:    br i1 false, label %[[WHILE_COND]], label %[[WHILE_END:.*]]
+++; CHECK-V8M:       while.end:
+++; CHECK-V8M-NEXT:    [[TMP0:%.*]] = add i32 [[SIZE]], 31
++ ; CHECK-V8M-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[SIZE]], i32 31)
++ ; CHECK-V8M-NEXT:    [[TMP1:%.*]] = sub i32 [[TMP0]], [[UMIN]]
++ ; CHECK-V8M-NEXT:    [[TMP2:%.*]] = lshr i32 [[TMP1]], 5
++ ; CHECK-V8M-NEXT:    [[TMP3:%.*]] = shl nuw i32 [[TMP2]], 5
++ ; CHECK-V8M-NEXT:    [[TMP4:%.*]] = sub i32 [[SIZE]], [[TMP3]]
++-; CHECK-V8M-NEXT:    br label [[WHILE_COND:%.*]]
++-; CHECK-V8M:       while.cond:
++-; CHECK-V8M-NEXT:    br i1 false, label [[WHILE_COND]], label [[WHILE_END:%.*]]
++-; CHECK-V8M:       while.end:
++ ; CHECK-V8M-NEXT:    ret i32 [[TMP4]]
++ ;
++ ; CHECK-V8A-LABEL: @remove_loop(
+++; CHECK-V8A-SAME: i32 [[SIZE:%.*]]) #[[ATTR0:[0-9]+]] {
++ ; CHECK-V8A-NEXT:  entry:
++-; CHECK-V8A-NEXT:    [[TMP0:%.*]] = add i32 [[SIZE:%.*]], 31
+++; CHECK-V8A-NEXT:    br label %[[WHILE_COND:.*]]
+++; CHECK-V8A:       while.cond:
+++; CHECK-V8A-NEXT:    br i1 false, label %[[WHILE_COND]], label %[[WHILE_END:.*]]
+++; CHECK-V8A:       while.end:
+++; CHECK-V8A-NEXT:    [[TMP0:%.*]] = add i32 [[SIZE]], 31
++ ; CHECK-V8A-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[SIZE]], i32 31)
++ ; CHECK-V8A-NEXT:    [[TMP1:%.*]] = sub i32 [[TMP0]], [[UMIN]]
++ ; CHECK-V8A-NEXT:    [[TMP2:%.*]] = lshr i32 [[TMP1]], 5
++ ; CHECK-V8A-NEXT:    [[TMP3:%.*]] = shl nuw i32 [[TMP2]], 5
++ ; CHECK-V8A-NEXT:    [[TMP4:%.*]] = sub i32 [[SIZE]], [[TMP3]]
++-; CHECK-V8A-NEXT:    br label [[WHILE_COND:%.*]]
++-; CHECK-V8A:       while.cond:
++-; CHECK-V8A-NEXT:    br i1 false, label [[WHILE_COND]], label [[WHILE_END:%.*]]
++-; CHECK-V8A:       while.end:
++ ; CHECK-V8A-NEXT:    ret i32 [[TMP4]]
++ ;
++ entry:
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/ARM/indvar-unroll-imm-cost.ll b/llvm/test/Transforms/IndVarSimplify/ARM/indvar-unroll-imm-cost.ll
++--- a/llvm/test/Transforms/IndVarSimplify/ARM/indvar-unroll-imm-cost.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/ARM/indvar-unroll-imm-cost.ll
++@@ -77,8 +77,6 @@
++ ; CHECK-NEXT:    [[CMP2780:%.*]] = icmp ugt i32 [[ADD25]], [[J_0_LCSSA]]
++ ; CHECK-NEXT:    br i1 [[CMP2780]], label [[FOR_BODY29_PREHEADER:%.*]], label [[FOR_END40]]
++ ; CHECK:       for.body29.preheader:
++-; CHECK-NEXT:    [[TMP10:%.*]] = sub nsw i32 [[ADD25]], [[J_0_LCSSA]]
++-; CHECK-NEXT:    [[SCEVGEP93:%.*]] = getelementptr i16, ptr [[PSRCB_ADDR_1_LCSSA]], i32 [[TMP10]]
++ ; CHECK-NEXT:    br label [[FOR_BODY29:%.*]]
++ ; CHECK:       for.body29:
++ ; CHECK-NEXT:    [[J_184:%.*]] = phi i32 [ [[INC:%.*]], [[FOR_BODY29]] ], [ [[J_0_LCSSA]], [[FOR_BODY29_PREHEADER]] ]
++@@ -102,6 +100,8 @@
++ ; CHECK-NEXT:    [[EXITCOND:%.*]] = icmp eq i32 [[INC]], [[ADD25]]
++ ; CHECK-NEXT:    br i1 [[EXITCOND]], label [[FOR_END40_LOOPEXIT:%.*]], label [[FOR_BODY29]]
++ ; CHECK:       for.end40.loopexit:
+++; CHECK-NEXT:    [[TMP10:%.*]] = sub nsw i32 [[ADD25]], [[J_0_LCSSA]]
+++; CHECK-NEXT:    [[SCEVGEP93:%.*]] = getelementptr i16, ptr [[PSRCB_ADDR_1_LCSSA]], i32 [[TMP10]]
++ ; CHECK-NEXT:    [[SCEVGEP:%.*]] = getelementptr i16, ptr [[PSRCA_ADDR_1_LCSSA]], i32 [[TMP10]]
++ ; CHECK-NEXT:    [[SCEVGEP94:%.*]] = getelementptr i32, ptr [[PDEST_ADDR_1_LCSSA]], i32 [[TMP10]]
++ ; CHECK-NEXT:    br label [[FOR_END40]]
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/exit-count-select.ll b/llvm/test/Transforms/IndVarSimplify/exit-count-select.ll
++--- a/llvm/test/Transforms/IndVarSimplify/exit-count-select.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/exit-count-select.ll
++@@ -1,5 +1,5 @@
++ ; NOTE: Assertions have been autogenerated by utils/update_test_checks.py
++-; RUN: opt < %s -passes='require<scalar-evolution>,indvars,loop-mssa(licm)' -S | FileCheck %s
+++; RUN: opt < %s -passes=indvars -S | FileCheck %s
++ 
++ define i32 @logical_and_2ops(i32 %n, i32 %m) {
++ ; CHECK-LABEL: @logical_and_2ops(
++@@ -56,10 +56,10 @@
++ ; CHECK:       loop:
++ ; CHECK-NEXT:    br i1 false, label [[LOOP]], label [[EXIT:%.*]]
++ ; CHECK:       exit:
+++; CHECK-NEXT:    [[TMP0:%.*]] = freeze i32 [[K:%.*]]
++ ; CHECK-NEXT:    [[TMP1:%.*]] = freeze i32 [[M:%.*]]
++-; CHECK-NEXT:    [[N:%.*]] = freeze i32 [[K:%.*]]
++-; CHECK-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[TMP1]], i32 [[N]])
++-; CHECK-NEXT:    [[UMIN1:%.*]] = call i32 @llvm.umin.i32(i32 [[UMIN]], i32 [[N1:%.*]])
+++; CHECK-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[TMP0]], i32 [[TMP1]])
+++; CHECK-NEXT:    [[UMIN1:%.*]] = call i32 @llvm.umin.i32(i32 [[UMIN]], i32 [[N:%.*]])
++ ; CHECK-NEXT:    ret i32 [[UMIN1]]
++ ;
++ entry:
++@@ -84,10 +84,10 @@
++ ; CHECK:       loop:
++ ; CHECK-NEXT:    br i1 true, label [[EXIT:%.*]], label [[LOOP]]
++ ; CHECK:       exit:
+++; CHECK-NEXT:    [[TMP0:%.*]] = freeze i32 [[K:%.*]]
++ ; CHECK-NEXT:    [[TMP1:%.*]] = freeze i32 [[M:%.*]]
++-; CHECK-NEXT:    [[N:%.*]] = freeze i32 [[K:%.*]]
++-; CHECK-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[TMP1]], i32 [[N]])
++-; CHECK-NEXT:    [[UMIN1:%.*]] = call i32 @llvm.umin.i32(i32 [[UMIN]], i32 [[N1:%.*]])
+++; CHECK-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[TMP0]], i32 [[TMP1]])
+++; CHECK-NEXT:    [[UMIN1:%.*]] = call i32 @llvm.umin.i32(i32 [[UMIN]], i32 [[N:%.*]])
++ ; CHECK-NEXT:    ret i32 [[UMIN1]]
++ ;
++ entry:
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/finite-exit-comparisons.ll b/llvm/test/Transforms/IndVarSimplify/finite-exit-comparisons.ll
++--- a/llvm/test/Transforms/IndVarSimplify/finite-exit-comparisons.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/finite-exit-comparisons.ll
++@@ -932,9 +932,6 @@
++ define i16 @ult_multiuse_profit(i16 %n.raw, i8 %start) mustprogress {
++ ; CHECK-LABEL: @ult_multiuse_profit(
++ ; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    [[TMP2:%.*]] = add i8 [[START:%.*]], 1
++-; CHECK-NEXT:    [[TMP1:%.*]] = zext i8 [[TMP2]] to i16
++-; CHECK-NEXT:    [[UMAX:%.*]] = call i16 @llvm.umax.i16(i16 [[TMP1]], i16 254)
++ ; CHECK-NEXT:    [[TMP0:%.*]] = trunc i16 254 to i8
++ ; CHECK-NEXT:    br label [[FOR_BODY:%.*]]
++ ; CHECK:       for.body:
++@@ -943,6 +940,9 @@
++ ; CHECK-NEXT:    [[CMP:%.*]] = icmp ult i8 [[IV_NEXT]], [[TMP0]]
++ ; CHECK-NEXT:    br i1 [[CMP]], label [[FOR_BODY]], label [[FOR_END:%.*]]
++ ; CHECK:       for.end:
+++; CHECK-NEXT:    [[TMP1:%.*]] = add i8 [[START:%.*]], 1
+++; CHECK-NEXT:    [[TMP2:%.*]] = zext i8 [[TMP1]] to i16
+++; CHECK-NEXT:    [[UMAX:%.*]] = call i16 @llvm.umax.i16(i16 [[TMP2]], i16 254)
++ ; CHECK-NEXT:    ret i16 [[UMAX]]
++ ;
++ entry:
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/pr116483.ll b/llvm/test/Transforms/IndVarSimplify/pr116483.ll
++--- a/llvm/test/Transforms/IndVarSimplify/pr116483.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/pr116483.ll
++@@ -4,16 +4,16 @@
++ define i32 @test() {
++ ; CHECK-LABEL: define i32 @test() {
++ ; CHECK-NEXT:  [[ENTRY:.*:]]
+++; CHECK-NEXT:    br label %[[LOOP_BODY:.*]]
+++; CHECK:       [[LOOP_BODY]]:
+++; CHECK-NEXT:    br i1 true, label %[[EXIT:.*]], label %[[LOOP_BODY]]
+++; CHECK:       [[EXIT]]:
++ ; CHECK-NEXT:    [[XOR:%.*]] = xor i32 0, 3
++ ; CHECK-NEXT:    [[MUL:%.*]] = mul i32 [[XOR]], 329
++ ; CHECK-NEXT:    [[CONV:%.*]] = trunc i32 [[MUL]] to i16
++ ; CHECK-NEXT:    [[SEXT:%.*]] = shl i16 [[CONV]], 8
++ ; CHECK-NEXT:    [[CONV1:%.*]] = ashr i16 [[SEXT]], 8
++ ; CHECK-NEXT:    [[CONV3:%.*]] = zext i16 [[CONV1]] to i32
++-; CHECK-NEXT:    br label %[[LOOP_BODY:.*]]
++-; CHECK:       [[LOOP_BODY]]:
++-; CHECK-NEXT:    br i1 true, label %[[EXIT:.*]], label %[[LOOP_BODY]]
++-; CHECK:       [[EXIT]]:
++ ; CHECK-NEXT:    ret i32 [[CONV3]]
++ ;
++ entry:
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/pr24783.ll b/llvm/test/Transforms/IndVarSimplify/pr24783.ll
++--- a/llvm/test/Transforms/IndVarSimplify/pr24783.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/pr24783.ll
++@@ -7,11 +7,11 @@
++ define void @f(ptr %end.s, ptr %loc, i32 %p) {
++ ; CHECK-LABEL: @f(
++ ; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    [[END:%.*]] = getelementptr inbounds i32, ptr [[END_S:%.*]], i32 [[P:%.*]]
++ ; CHECK-NEXT:    br label [[WHILE_BODY_I:%.*]]
++ ; CHECK:       while.body.i:
++ ; CHECK-NEXT:    br i1 true, label [[LOOP_EXIT:%.*]], label [[WHILE_BODY_I]]
++ ; CHECK:       loop.exit:
+++; CHECK-NEXT:    [[END:%.*]] = getelementptr inbounds i32, ptr [[END_S:%.*]], i32 [[P:%.*]]
++ ; CHECK-NEXT:    store ptr [[END]], ptr [[LOC:%.*]], align 8
++ ; CHECK-NEXT:    ret void
++ ;
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/pr39673.ll b/llvm/test/Transforms/IndVarSimplify/pr39673.ll
++--- a/llvm/test/Transforms/IndVarSimplify/pr39673.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/pr39673.ll
++@@ -148,7 +148,6 @@
++ define i16 @neg_loop_carried(i16 %arg) {
++ ; CHECK-LABEL: @neg_loop_carried(
++ ; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    [[TMP0:%.*]] = add i16 [[ARG:%.*]], 2
++ ; CHECK-NEXT:    br label [[LOOP1:%.*]]
++ ; CHECK:       loop1:
++ ; CHECK-NEXT:    [[L1:%.*]] = phi i16 [ 0, [[ENTRY:%.*]] ], [ [[L1_ADD:%.*]], [[LOOP1]] ]
++@@ -156,6 +155,7 @@
++ ; CHECK-NEXT:    [[CMP1:%.*]] = icmp ult i16 [[L1_ADD]], 2
++ ; CHECK-NEXT:    br i1 [[CMP1]], label [[LOOP1]], label [[LOOP2_PREHEADER:%.*]]
++ ; CHECK:       loop2.preheader:
+++; CHECK-NEXT:    [[TMP0:%.*]] = add i16 [[ARG:%.*]], 2
++ ; CHECK-NEXT:    br label [[LOOP2:%.*]]
++ ; CHECK:       loop2:
++ ; CHECK-NEXT:    [[K2:%.*]] = phi i16 [ [[K2_ADD:%.*]], [[LOOP2]] ], [ [[TMP0]], [[LOOP2_PREHEADER]] ]
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/pr63763.ll b/llvm/test/Transforms/IndVarSimplify/pr63763.ll
++--- a/llvm/test/Transforms/IndVarSimplify/pr63763.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/pr63763.ll
++@@ -16,13 +16,13 @@
++ ; CHECK-NEXT:    [[CONV2:%.*]] = ashr exact i32 [[SEXT]], 24
++ ; CHECK-NEXT:    [[INVARIANT_OP:%.*]] = sub nsw i32 7, [[CONV2]]
++ ; CHECK-NEXT:    call void @use(i32 [[INVARIANT_OP]])
++-; CHECK-NEXT:    [[SEXT_US:%.*]] = shl i32 [[SEL]], 24
++-; CHECK-NEXT:    [[CONV2_US:%.*]] = ashr exact i32 [[SEXT_US]], 24
++-; CHECK-NEXT:    [[INVARIANT_OP_US:%.*]] = sub nsw i32 7, [[CONV2_US]]
++ ; CHECK-NEXT:    br label [[LOOP:%.*]]
++ ; CHECK:       loop:
++ ; CHECK-NEXT:    br i1 true, label [[EXIT:%.*]], label [[LOOP]]
++ ; CHECK:       exit:
+++; CHECK-NEXT:    [[SEXT_US:%.*]] = shl i32 [[SEL]], 24
+++; CHECK-NEXT:    [[CONV2_US:%.*]] = ashr exact i32 [[SEXT_US]], 24
+++; CHECK-NEXT:    [[INVARIANT_OP_US:%.*]] = sub nsw i32 7, [[CONV2_US]]
++ ; CHECK-NEXT:    ret i32 [[INVARIANT_OP_US]]
++ ;
++ entry:
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/replace-loop-exit-folds.ll b/llvm/test/Transforms/IndVarSimplify/replace-loop-exit-folds.ll
++--- a/llvm/test/Transforms/IndVarSimplify/replace-loop-exit-folds.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/replace-loop-exit-folds.ll
++@@ -4,21 +4,22 @@
++ target datalayout = "e-m:e-p:32:32-i64:64-v128:64:128-a:0:32-n32-S64"
++ 
++ define i32 @remove_loop(i32 %size) {
++-; CHECK-LABEL: @remove_loop(
++-; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    [[TMP0:%.*]] = add i32 [[SIZE:%.*]], 31
+++; CHECK-LABEL: define i32 @remove_loop(
+++; CHECK-SAME: i32 [[SIZE:%.*]]) {
+++; CHECK-NEXT:  [[ENTRY:.*]]:
+++; CHECK-NEXT:    br label %[[WHILE_COND:.*]]
+++; CHECK:       [[WHILE_COND]]:
+++; CHECK-NEXT:    [[SIZE_ADDR_0:%.*]] = phi i32 [ [[SIZE]], %[[ENTRY]] ], [ [[SUB:%.*]], %[[WHILE_COND]] ]
+++; CHECK-NEXT:    [[CMP:%.*]] = icmp ugt i32 [[SIZE_ADDR_0]], 31
+++; CHECK-NEXT:    [[SUB]] = add i32 [[SIZE_ADDR_0]], -32
+++; CHECK-NEXT:    br i1 [[CMP]], label %[[WHILE_COND]], label %[[WHILE_END:.*]]
+++; CHECK:       [[WHILE_END]]:
+++; CHECK-NEXT:    [[TMP0:%.*]] = add i32 [[SIZE]], 31
++ ; CHECK-NEXT:    [[UMIN:%.*]] = call i32 @llvm.umin.i32(i32 [[SIZE]], i32 31)
++ ; CHECK-NEXT:    [[TMP1:%.*]] = sub i32 [[TMP0]], [[UMIN]]
++ ; CHECK-NEXT:    [[TMP2:%.*]] = lshr i32 [[TMP1]], 5
++ ; CHECK-NEXT:    [[TMP3:%.*]] = shl nuw i32 [[TMP2]], 5
++ ; CHECK-NEXT:    [[TMP4:%.*]] = sub i32 [[SIZE]], [[TMP3]]
++-; CHECK-NEXT:    br label [[WHILE_COND:%.*]]
++-; CHECK:       while.cond:
++-; CHECK-NEXT:    [[SIZE_ADDR_0:%.*]] = phi i32 [ [[SIZE]], [[ENTRY:%.*]] ], [ [[SUB:%.*]], [[WHILE_COND]] ]
++-; CHECK-NEXT:    [[CMP:%.*]] = icmp ugt i32 [[SIZE_ADDR_0]], 31
++-; CHECK-NEXT:    [[SUB]] = add i32 [[SIZE_ADDR_0]], -32
++-; CHECK-NEXT:    br i1 [[CMP]], label [[WHILE_COND]], label [[WHILE_END:%.*]]
++-; CHECK:       while.end:
++ ; CHECK-NEXT:    ret i32 [[TMP4]]
++ ;
++ entry:
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/rewrite-loop-exit-values-phi.ll b/llvm/test/Transforms/IndVarSimplify/rewrite-loop-exit-values-phi.ll
++--- a/llvm/test/Transforms/IndVarSimplify/rewrite-loop-exit-values-phi.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/rewrite-loop-exit-values-phi.ll
++@@ -76,10 +76,6 @@
++ ; CHECK-LABEL: @narow_canonical_iv_wide_multiplied_iv(
++ ; CHECK-NEXT:  entry:
++ ; CHECK-NEXT:    [[SMAX:%.*]] = tail call i32 @llvm.smax.i32(i32 [[X:%.*]], i32 1)
++-; CHECK-NEXT:    [[TMP1:%.*]] = zext nneg i32 [[SMAX]] to i64
++-; CHECK-NEXT:    [[TMP2:%.*]] = mul i64 [[Y:%.*]], [[TMP1]]
++-; CHECK-NEXT:    [[TMP3:%.*]] = shl i64 [[TMP2]], 1
++-; CHECK-NEXT:    [[TMP6:%.*]] = add nuw nsw i64 [[TMP3]], 1
++ ; CHECK-NEXT:    br label [[LOOP:%.*]]
++ ; CHECK:       loop:
++ ; CHECK-NEXT:    [[IV:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[IV_NEXT:%.*]], [[LOOP]] ]
++@@ -88,6 +84,10 @@
++ ; CHECK-NEXT:    [[EC:%.*]] = icmp ne i32 [[IV_NEXT]], [[SMAX]]
++ ; CHECK-NEXT:    br i1 [[EC]], label [[LOOP]], label [[EXIT:%.*]]
++ ; CHECK:       exit:
+++; CHECK-NEXT:    [[TMP1:%.*]] = zext nneg i32 [[SMAX]] to i64
+++; CHECK-NEXT:    [[TMP2:%.*]] = mul i64 [[Y:%.*]], [[TMP1]]
+++; CHECK-NEXT:    [[TMP3:%.*]] = shl i64 [[TMP2]], 1
+++; CHECK-NEXT:    [[TMP6:%.*]] = add nuw nsw i64 [[TMP3]], 1
++ ; CHECK-NEXT:    ret i64 [[TMP6]]
++ ;
++ entry:
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/scev-expander-preserve-lcssa.ll b/llvm/test/Transforms/IndVarSimplify/scev-expander-preserve-lcssa.ll
++--- a/llvm/test/Transforms/IndVarSimplify/scev-expander-preserve-lcssa.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/scev-expander-preserve-lcssa.ll
++@@ -23,8 +23,8 @@
++ ; CHECK-NEXT:    br label [[WHILE_COND192:%.*]]
++ ; CHECK:       while.cond192:
++ ; CHECK-NEXT:    switch i8 [[X:%.*]], label [[WHILE_BODY205:%.*]] [
++-; CHECK-NEXT:      i8 59, label [[WHILE_COND215_PREHEADER:%.*]]
++-; CHECK-NEXT:      i8 10, label [[IF_END224_LOOPEXIT1:%.*]]
+++; CHECK-NEXT:    i8 59, label [[WHILE_COND215_PREHEADER:%.*]]
+++; CHECK-NEXT:    i8 10, label [[IF_END224_LOOPEXIT1:%.*]]
++ ; CHECK-NEXT:    ]
++ ; CHECK:       while.cond215.preheader:
++ ; CHECK-NEXT:    br label [[WHILE_COND215:%.*]]
++@@ -103,8 +103,8 @@
++ ; CHECK-NEXT:    br label [[FOR_COND:%.*]]
++ ; CHECK:       for.cond:
++ ; CHECK-NEXT:    switch i16 [[X:%.*]], label [[RETURN_LOOPEXIT1:%.*]] [
++-; CHECK-NEXT:      i16 41, label [[FOR_END:%.*]]
++-; CHECK-NEXT:      i16 43, label [[FOR_COND]]
+++; CHECK-NEXT:    i16 41, label [[FOR_END:%.*]]
+++; CHECK-NEXT:    i16 43, label [[FOR_COND]]
++ ; CHECK-NEXT:    ]
++ ; CHECK:       for.end:
++ ; CHECK-NEXT:    [[I_0_LCSSA2:%.*]] = phi i32 [ 0, [[FOR_COND]] ]
++@@ -336,7 +336,6 @@
++ define void @test5(ptr %header, i32 %conv, i8 %n) {
++ ; CHECK-LABEL: @test5(
++ ; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    [[SHL:%.*]] = shl nuw nsw i32 [[CONV:%.*]], 2
++ ; CHECK-NEXT:    br label [[FOR_BODY:%.*]]
++ ; CHECK:       for.body:
++ ; CHECK-NEXT:    br label [[FOR_INNER:%.*]]
++@@ -359,6 +358,7 @@
++ ; CHECK-NEXT:    br i1 false, label [[FOR_BODY]], label [[WHILE_COND_PREHEADER:%.*]]
++ ; CHECK:       while.cond.preheader:
++ ; CHECK-NEXT:    [[ADD85_LCSSA:%.*]] = phi i32 [ [[ADD85]], [[FOR_INC]] ]
+++; CHECK-NEXT:    [[SHL:%.*]] = shl nuw nsw i32 [[CONV:%.*]], 2
++ ; CHECK-NEXT:    br label [[WHILE_COND:%.*]]
++ ; CHECK:       while.cond:
++ ; CHECK-NEXT:    [[POS_8:%.*]] = phi i32 [ [[INC114:%.*]], [[WHILE_BODY:%.*]] ], [ [[ADD85_LCSSA]], [[WHILE_COND_PREHEADER]] ]
++@@ -427,8 +427,8 @@
++ ; CHECK-NEXT:    br label [[WHILE_COND192:%.*]]
++ ; CHECK:       while.cond192:
++ ; CHECK-NEXT:    switch i8 [[X:%.*]], label [[WHILE_BODY205:%.*]] [
++-; CHECK-NEXT:      i8 59, label [[WHILE_COND215_PREHEADER:%.*]]
++-; CHECK-NEXT:      i8 10, label [[IF_END224:%.*]]
+++; CHECK-NEXT:    i8 59, label [[WHILE_COND215_PREHEADER:%.*]]
+++; CHECK-NEXT:    i8 10, label [[IF_END224:%.*]]
++ ; CHECK-NEXT:    ]
++ ; CHECK:       while.cond215.preheader:
++ ; CHECK-NEXT:    [[I_7_LCSSA:%.*]] = phi i32 [ 0, [[WHILE_COND192]] ]
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/scev-invalidation.ll b/llvm/test/Transforms/IndVarSimplify/scev-invalidation.ll
++--- a/llvm/test/Transforms/IndVarSimplify/scev-invalidation.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/scev-invalidation.ll
++@@ -46,12 +46,12 @@
++ define i32 @test_pr58439(i32 %a) {
++ ; CHECK-LABEL: @test_pr58439(
++ ; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    [[OR:%.*]] = or i32 [[A:%.*]], 1
++ ; CHECK-NEXT:    br label [[LOOP:%.*]]
++ ; CHECK:       loop:
++ ; CHECK-NEXT:    br i1 false, label [[LOOP]], label [[EXIT:%.*]]
++ ; CHECK:       exit:
++ ; CHECK-NEXT:    [[C_EXT_LCSSA:%.*]] = phi i32 [ 0, [[LOOP]] ]
+++; CHECK-NEXT:    [[OR:%.*]] = or i32 [[A:%.*]], 1
++ ; CHECK-NEXT:    [[RES:%.*]] = add i32 [[C_EXT_LCSSA]], [[OR]]
++ ; CHECK-NEXT:    ret i32 [[RES]]
++ ;
++@@ -76,7 +76,6 @@
++ ; CHECK-NEXT:  entry:
++ ; CHECK-NEXT:    br label [[OUTER_HEADER:%.*]]
++ ; CHECK:       outer.header:
++-; CHECK-NEXT:    [[AND:%.*]] = and i32 1, [[INC:%.*]]
++ ; CHECK-NEXT:    br label [[INNER:%.*]]
++ ; CHECK:       inner:
++ ; CHECK-NEXT:    [[C_05_I:%.*]] = phi i32 [ [[INC_I:%.*]], [[INNER]] ], [ 0, [[OUTER_HEADER]] ]
++@@ -87,6 +86,7 @@
++ ; CHECK:       outer.latch:
++ ; CHECK-NEXT:    [[C_05_I_LCSSA:%.*]] = phi i32 [ [[C_05_I]], [[INNER]] ]
++ ; CHECK-NEXT:    [[LCSSA:%.*]] = phi i32 [ 0, [[INNER]] ]
+++; CHECK-NEXT:    [[AND:%.*]] = and i32 1, [[INC:%.*]]
++ ; CHECK-NEXT:    [[TMP0:%.*]] = trunc i32 [[AND]] to i8
++ ; CHECK-NEXT:    [[TMP1:%.*]] = trunc i32 [[C_05_I_LCSSA]] to i8
++ ; CHECK-NEXT:    [[TMP2:%.*]] = sub i8 [[TMP0]], [[TMP1]]
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/sentinel.ll b/llvm/test/Transforms/IndVarSimplify/sentinel.ll
++--- a/llvm/test/Transforms/IndVarSimplify/sentinel.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/sentinel.ll
++@@ -9,19 +9,19 @@
++ ; CHECK-NEXT:  bb:
++ ; CHECK-NEXT:    br label [[BB4:%.*]]
++ ; CHECK:       bb1:
+++; CHECK-NEXT:    [[INDVARS_IV_NEXT:%.*]] = add i32 [[INDVARS_IV:%.*]], 1
+++; CHECK-NEXT:    [[TMP0:%.*]] = add i32 [[TMP6:%.*]], [[INDVARS_IV]]
+++; CHECK-NEXT:    [[TMP1:%.*]] = sub i32 [[TMP0]], [[SMAX:%.*]]
++ ; CHECK-NEXT:    br i1 [[ARG:%.*]], label [[BB2:%.*]], label [[BB4]]
++ ; CHECK:       bb2:
++-; CHECK-NEXT:    [[TMP3:%.*]] = phi i32 [ [[TMP1:%.*]], [[BB1:%.*]] ]
+++; CHECK-NEXT:    [[TMP3:%.*]] = phi i32 [ [[TMP1]], [[BB1:%.*]] ]
++ ; CHECK-NEXT:    ret void
++ ; CHECK:       bb4:
++-; CHECK-NEXT:    [[INDVARS_IV:%.*]] = phi i32 [ [[INDVARS_IV_NEXT:%.*]], [[BB1]] ], [ undef, [[BB:%.*]] ]
++-; CHECK-NEXT:    [[SMAX:%.*]] = call i32 @llvm.smax.i32(i32 [[INDVARS_IV]], i32 36)
++-; CHECK-NEXT:    [[TMP6:%.*]] = invoke i32 @quux() [ "deopt"(i32 0, i32 0, i32 0, i32 180, i32 0, i32 25, i32 0, i32 7, ptr null, i32 7, ptr null, i32 7, ptr null, i32 3, i32 [[INDVARS_IV]], i32 3, i32 undef, i32 7, ptr null, i32 3, i32 undef, i32 3, i32 undef, i32 3, i32 undef, i32 3, i32 undef, i32 4, double undef, i32 7, ptr null, i32 4, i64 undef, i32 7, ptr null, i32 0, ptr addrspace(1) undef, i32 3, i32 undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 7, ptr null) ]
+++; CHECK-NEXT:    [[INDVARS_IV]] = phi i32 [ [[INDVARS_IV_NEXT]], [[BB1]] ], [ undef, [[BB:%.*]] ]
+++; CHECK-NEXT:    [[SMAX]] = call i32 @llvm.smax.i32(i32 [[INDVARS_IV]], i32 36)
+++; CHECK-NEXT:    [[TMP6]] = invoke i32 @quux() [ "deopt"(i32 0, i32 0, i32 0, i32 180, i32 0, i32 25, i32 0, i32 7, ptr null, i32 7, ptr null, i32 7, ptr null, i32 3, i32 [[INDVARS_IV]], i32 3, i32 undef, i32 7, ptr null, i32 3, i32 undef, i32 3, i32 undef, i32 3, i32 undef, i32 3, i32 undef, i32 4, double undef, i32 7, ptr null, i32 4, i64 undef, i32 7, ptr null, i32 0, ptr addrspace(1) undef, i32 3, i32 undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 0, ptr addrspace(1) undef, i32 7, ptr null) ]
++ ; CHECK-NEXT:            to label [[BB7:%.*]] unwind label [[BB15:%.*]]
++ ; CHECK:       bb7:
++-; CHECK-NEXT:    [[INDVARS_IV_NEXT]] = add i32 [[INDVARS_IV]], 1
++-; CHECK-NEXT:    [[TMP0:%.*]] = add i32 [[TMP6]], [[INDVARS_IV]]
++-; CHECK-NEXT:    [[TMP1]] = sub i32 [[TMP0]], [[SMAX]]
++ ; CHECK-NEXT:    br label [[BB9:%.*]]
++ ; CHECK:       bb9:
++ ; CHECK-NEXT:    br i1 true, label [[BB1]], label [[BB9]]
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/sink-alloca.ll b/llvm/test/Transforms/IndVarSimplify/sink-alloca.ll
++--- a/llvm/test/Transforms/IndVarSimplify/sink-alloca.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/sink-alloca.ll
++@@ -0,0 +1,56 @@
+++; RUN: opt < %s -passes=indvars -S | FileCheck %s
+++target datalayout = "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:32:64-f32:32:32-f64:32:64-v64:64:64-v128:128:128-a0:0:64-f80:128:128"
+++target triple = "i386-apple-darwin10.0"
+++
+++; PR4775
+++; Indvars shouldn't sink the alloca out of the entry block, even though
+++; it's not used until after the loop.
+++define i32 @main() nounwind {
+++; CHECK: entry:
+++; CHECK-NEXT: %result.i = alloca i32, align 4
+++entry:
+++  %result.i = alloca i32, align 4                 ; <ptr> [#uses=2]
+++  br label %while.cond
+++
+++while.cond:                                       ; preds = %while.cond, %entry
+++  %call = call i32 @bar() nounwind                ; <i32> [#uses=1]
+++  %tobool = icmp eq i32 %call, 0                  ; <i1> [#uses=1]
+++  br i1 %tobool, label %while.end, label %while.cond
+++
+++while.end:                                        ; preds = %while.cond
+++  store volatile i32 0, ptr %result.i
+++  %tmp.i = load volatile i32, ptr %result.i           ; <i32> [#uses=0]
+++  ret i32 0
+++}
+++declare i32 @bar()
+++
+++; <rdar://problem/10352360>
+++; Indvars shouldn't sink the first alloca between the stacksave and stackrestore
+++; intrinsics.
+++declare ptr @a(...)
+++declare ptr @llvm.stacksave() nounwind
+++declare void @llvm.stackrestore(ptr) nounwind
+++define void @h(i64 %n) nounwind uwtable ssp {
+++; CHECK: entry:
+++; CHECK-NEXT: %vla = alloca ptr
+++; CHECK-NEXT: %savedstack = call ptr @llvm.stacksave.p0()
+++entry:
+++  %vla = alloca ptr, i64 %n, align 16
+++  %savedstack = call ptr @llvm.stacksave() nounwind
+++  %vla.i = alloca ptr, i64 %n, align 16
+++  br label %for.body.i
+++
+++for.body.i:
+++  %indvars.iv37.i = phi i64 [ %indvars.iv.next38.i, %for.body.i ], [ 0, %entry ]
+++  %call.i = call ptr (...) @a() nounwind
+++  %arrayidx.i = getelementptr inbounds ptr, ptr %vla.i, i64 %indvars.iv37.i
+++  store ptr %call.i, ptr %arrayidx.i, align 8
+++  %indvars.iv.next38.i = add i64 %indvars.iv37.i, 1
+++  %exitcond5 = icmp eq i64 %indvars.iv.next38.i, %n
+++  br i1 %exitcond5, label %g.exit, label %for.body.i
+++
+++g.exit:
+++  call void @llvm.stackrestore(ptr %savedstack) nounwind
+++  %call1 = call ptr (...) @a(ptr %vla) nounwind
+++  ret void
+++}
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/sink-from-preheader.ll b/llvm/test/Transforms/IndVarSimplify/sink-from-preheader.ll
++--- a/llvm/test/Transforms/IndVarSimplify/sink-from-preheader.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/sink-from-preheader.ll
++@@ -0,0 +1,32 @@
+++; NOTE: Assertions have been autogenerated by utils/update_test_checks.py
+++; RUN: opt < %s -passes=indvars -indvars-predicate-loops=0 -S | FileCheck %s
+++target datalayout = "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:32:64-f32:32:32-f64:32:64-v64:64:64-v128:128:128-a0:0:64-f80:128:128"
+++target triple = "i386-apple-darwin10.0"
+++
+++; We make sinking here, Changed flag should be set properly.
+++define i32 @test(i32 %a, i32 %b, i32 %N) {
+++; CHECK-LABEL: @test(
+++; CHECK-NEXT:  entry:
+++; CHECK-NEXT:    br label [[LOOP:%.*]]
+++; CHECK:       loop:
+++; CHECK-NEXT:    [[IV:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[IV_NEXT:%.*]], [[LOOP]] ]
+++; CHECK-NEXT:    [[IV_NEXT]] = add nuw nsw i32 [[IV]], 1
+++; CHECK-NEXT:    [[CMP:%.*]] = icmp slt i32 [[IV_NEXT]], [[N:%.*]]
+++; CHECK-NEXT:    br i1 [[CMP]], label [[LOOP]], label [[EXIT:%.*]]
+++; CHECK:       exit:
+++; CHECK-NEXT:    [[ADD:%.*]] = add i32 [[A:%.*]], [[B:%.*]]
+++; CHECK-NEXT:    ret i32 [[ADD]]
+++;
+++entry:
+++  %add = add i32 %a, %b
+++  br label %loop
+++
+++loop:
+++  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ]
+++  %iv.next = add i32 %iv, 1
+++  %cmp = icmp slt i32 %iv.next, %N
+++  br i1 %cmp, label %loop, label %exit
+++
+++exit:
+++  ret i32 %add
+++}
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/sink-trapping.ll b/llvm/test/Transforms/IndVarSimplify/sink-trapping.ll
++--- a/llvm/test/Transforms/IndVarSimplify/sink-trapping.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/sink-trapping.ll
++@@ -0,0 +1,19 @@
+++; RUN: opt < %s -passes=indvars -S | FileCheck %s
+++
+++declare i1 @b()
+++
+++define i32 @a(i32 %x) nounwind {
+++for.body.preheader:
+++    %y = sdiv i32 10, %x
+++	br label %for.body
+++
+++for.body:
+++    %cmp = call i1 @b()
+++	br i1 %cmp, label %for.body, label %for.end.loopexit
+++
+++for.end.loopexit:
+++	ret i32 %y
+++}
+++; CHECK: for.end.loopexit:
+++; CHECK: sdiv
+++; CHECK: ret
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/X86/inner-loop-by-latch-cond.ll b/llvm/test/Transforms/IndVarSimplify/X86/inner-loop-by-latch-cond.ll
++--- a/llvm/test/Transforms/IndVarSimplify/X86/inner-loop-by-latch-cond.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/X86/inner-loop-by-latch-cond.ll
++@@ -14,7 +14,6 @@
++ ; CHECK:       outer_header:
++ ; CHECK-NEXT:    [[INDVARS_IV:%.*]] = phi i64 [ [[INDVARS_IV_NEXT:%.*]], [[OUTER_LATCH:%.*]] ], [ 21, [[ENTRY:%.*]] ]
++ ; CHECK-NEXT:    [[I:%.*]] = phi i64 [ 20, [[ENTRY]] ], [ [[I_NEXT:%.*]], [[OUTER_LATCH]] ]
++-; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i64 [[I]], 1
++ ; CHECK-NEXT:    br label [[INNER_HEADER:%.*]]
++ ; CHECK:       inner_header:
++ ; CHECK-NEXT:    [[J:%.*]] = phi i64 [ 1, [[OUTER_HEADER]] ], [ [[J_NEXT:%.*]], [[INNER_HEADER]] ]
++@@ -23,6 +22,7 @@
++ ; CHECK-NEXT:    [[EXITCOND:%.*]] = icmp ne i64 [[J_NEXT]], [[INDVARS_IV]]
++ ; CHECK-NEXT:    br i1 [[EXITCOND]], label [[INNER_HEADER]], label [[OUTER_LATCH]]
++ ; CHECK:       outer_latch:
+++; CHECK-NEXT:    [[I_NEXT]] = add nuw nsw i64 [[I]], 1
++ ; CHECK-NEXT:    [[COND2:%.*]] = icmp ne i64 [[I_NEXT]], 40
++ ; CHECK-NEXT:    [[INDVARS_IV_NEXT]] = add nuw nsw i64 [[INDVARS_IV]], 1
++ ; CHECK-NEXT:    br i1 [[COND2]], label [[OUTER_HEADER]], label [[RETURN:%.*]]
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/IndVarSimplify/zext-nuw.ll b/llvm/test/Transforms/IndVarSimplify/zext-nuw.ll
++--- a/llvm/test/Transforms/IndVarSimplify/zext-nuw.ll
+++++ b/llvm/test/Transforms/IndVarSimplify/zext-nuw.ll
++@@ -24,13 +24,13 @@
++ ; CHECK-NEXT:    [[X8:%.*]] = icmp ult i32 0, 4
++ ; CHECK-NEXT:    br i1 [[X8]], label [[DOTPREHEADER_LR_PH:%.*]], label [[X22]]
++ ; CHECK:       .preheader.lr.ph:
++-; CHECK-NEXT:    [[SCEVGEP:%.*]] = getelementptr i8, ptr [[K_09]], i64 [[TMP5]]
++ ; CHECK-NEXT:    br label [[DOTPREHEADER:%.*]]
++ ; CHECK:       .preheader:
++ ; CHECK-NEXT:    br label [[X17:%.*]]
++ ; CHECK:       x17:
++ ; CHECK-NEXT:    br i1 false, label [[DOTPREHEADER]], label [[DOT_CRIT_EDGE_8:%.*]]
++ ; CHECK:       ._crit_edge.8:
+++; CHECK-NEXT:    [[SCEVGEP:%.*]] = getelementptr i8, ptr [[K_09]], i64 [[TMP5]]
++ ; CHECK-NEXT:    br label [[X22]]
++ ; CHECK:       x22:
++ ; CHECK-NEXT:    [[K_1_LCSSA:%.*]] = phi ptr [ [[SCEVGEP]], [[DOT_CRIT_EDGE_8]] ], [ [[K_09]], [[DOTPREHEADER4]] ]
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/LICM/scalar-promote.ll b/llvm/test/Transforms/LICM/scalar-promote.ll
++--- a/llvm/test/Transforms/LICM/scalar-promote.ll
+++++ b/llvm/test/Transforms/LICM/scalar-promote.ll
++@@ -43,9 +43,9 @@
++ ; CHECK-LABEL: define void @test2(
++ ; CHECK-SAME: i32 [[I:%.*]]) {
++ ; CHECK-NEXT:  [[ENTRY:.*]]:
+++; CHECK-NEXT:    [[X1:%.*]] = getelementptr i32, ptr @X, i64 1
++ ; CHECK-NEXT:    [[X2:%.*]] = getelementptr i32, ptr @X, i64 1
++-; CHECK-NEXT:    [[X3:%.*]] = getelementptr i32, ptr @X, i64 1
++-; CHECK-NEXT:    [[X1_PROMOTED:%.*]] = load i32, ptr [[X2]], align 4
+++; CHECK-NEXT:    [[X1_PROMOTED:%.*]] = load i32, ptr [[X1]], align 4
++ ; CHECK-NEXT:    br label %[[LOOP:.*]]
++ ; CHECK:       [[LOOP]]:
++ ; CHECK-NEXT:    [[A1:%.*]] = phi i32 [ [[V:%.*]], %[[LOOP]] ], [ [[X1_PROMOTED]], %[[ENTRY]] ]
++@@ -53,7 +53,7 @@
++ ; CHECK-NEXT:    br i1 false, label %[[LOOP]], label %[[EXIT:.*]]
++ ; CHECK:       [[EXIT]]:
++ ; CHECK-NEXT:    [[V_LCSSA:%.*]] = phi i32 [ [[V]], %[[LOOP]] ]
++-; CHECK-NEXT:    store i32 [[V_LCSSA]], ptr [[X2]], align 4
+++; CHECK-NEXT:    store i32 [[V_LCSSA]], ptr [[X1]], align 4
++ ; CHECK-NEXT:    ret void
++ ;
++ Entry:
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/LICM/sink-alloca.ll b/llvm/test/Transforms/LICM/sink-alloca.ll
++--- a/llvm/test/Transforms/LICM/sink-alloca.ll
+++++ b/llvm/test/Transforms/LICM/sink-alloca.ll
++@@ -1,56 +0,0 @@
++-; RUN: opt < %s -passes=licm -verify-memoryssa -S | FileCheck %s
++-target datalayout = "e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:32:64-f32:32:32-f64:32:64-v64:64:64-v128:128:128-a0:0:64-f80:128:128"
++-target triple = "i386-apple-darwin10.0"
++-
++-; PR4775
++-; LICM shouldn't sink the alloca out of the entry block, even though
++-; it's not used until after the loop.
++-define i32 @main() nounwind {
++-; CHECK: entry:
++-; CHECK-NEXT: %result.i = alloca i32, align 4
++-entry:
++-  %result.i = alloca i32, align 4                 ; <ptr> [#uses=2]
++-  br label %while.cond
++-
++-while.cond:                                       ; preds = %while.cond, %entry
++-  %call = call i32 @bar() nounwind                ; <i32> [#uses=1]
++-  %tobool = icmp eq i32 %call, 0                  ; <i1> [#uses=1]
++-  br i1 %tobool, label %while.end, label %while.cond
++-
++-while.end:                                        ; preds = %while.cond
++-  store volatile i32 0, ptr %result.i
++-  %tmp.i = load volatile i32, ptr %result.i           ; <i32> [#uses=0]
++-  ret i32 0
++-}
++-declare i32 @bar()
++-
++-; <rdar://problem/10352360>
++-; LICM shouldn't sink the first alloca between the stacksave and stackrestore
++-; intrinsics.
++-declare ptr @a(...)
++-declare ptr @llvm.stacksave() nounwind
++-declare void @llvm.stackrestore(ptr) nounwind
++-define void @h(i64 %n) nounwind uwtable ssp {
++-; CHECK: entry:
++-; CHECK-NEXT: %vla = alloca ptr
++-; CHECK-NEXT: %savedstack = call ptr @llvm.stacksave.p0()
++-entry:
++-  %vla = alloca ptr, i64 %n, align 16
++-  %savedstack = call ptr @llvm.stacksave() nounwind
++-  %vla.i = alloca ptr, i64 %n, align 16
++-  br label %for.body.i
++-
++-for.body.i:
++-  %indvars.iv37.i = phi i64 [ %indvars.iv.next38.i, %for.body.i ], [ 0, %entry ]
++-  %call.i = call ptr (...) @a() nounwind
++-  %arrayidx.i = getelementptr inbounds ptr, ptr %vla.i, i64 %indvars.iv37.i
++-  store ptr %call.i, ptr %arrayidx.i, align 8
++-  %indvars.iv.next38.i = add i64 %indvars.iv37.i, 1
++-  %exitcond5 = icmp eq i64 %indvars.iv.next38.i, %n
++-  br i1 %exitcond5, label %g.exit, label %for.body.i
++-
++-g.exit:
++-  call void @llvm.stackrestore(ptr %savedstack) nounwind
++-  %call1 = call ptr (...) @a(ptr %vla) nounwind
++-  ret void
++-}
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/LICM/sink-from-preheader.ll b/llvm/test/Transforms/LICM/sink-from-preheader.ll
++--- a/llvm/test/Transforms/LICM/sink-from-preheader.ll
+++++ b/llvm/test/Transforms/LICM/sink-from-preheader.ll
++@@ -1,185 +0,0 @@
++-; NOTE: Assertions have been autogenerated by utils/update_test_checks.py
++-; RUN: opt < %s -passes=licm -verify-memoryssa -S | FileCheck %s
++-
++-; We perform sinking here, Changed flag should be set properly.
++-define i32 @test(i32 %a, i32 %b, i32 %N) {
++-; CHECK-LABEL: @test(
++-; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    br label [[LOOP:%.*]]
++-; CHECK:       loop:
++-; CHECK-NEXT:    [[IV:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[IV_NEXT:%.*]], [[LOOP]] ]
++-; CHECK-NEXT:    [[IV_NEXT]] = add i32 [[IV]], 1
++-; CHECK-NEXT:    [[CMP:%.*]] = icmp slt i32 [[IV_NEXT]], [[N:%.*]]
++-; CHECK-NEXT:    br i1 [[CMP]], label [[LOOP]], label [[EXIT:%.*]]
++-; CHECK:       exit:
++-; CHECK-NEXT:    [[ADD:%.*]] = add i32 [[A:%.*]], [[B:%.*]]
++-; CHECK-NEXT:    ret i32 [[ADD]]
++-;
++-entry:
++-  %add = add i32 %a, %b
++-  br label %loop
++-
++-loop:
++-  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ]
++-  %iv.next = add i32 %iv, 1
++-  %cmp = icmp slt i32 %iv.next, %N
++-  br i1 %cmp, label %loop, label %exit
++-
++-exit:
++-  ret i32 %add
++-}
++-
++-define i32 @test_with_unused_load(i32 %a, ptr %b, i32 %N) {
++-; CHECK-LABEL: @test_with_unused_load(
++-; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    br label [[LOOP:%.*]]
++-; CHECK:       loop:
++-; CHECK-NEXT:    [[IV:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[IV_NEXT:%.*]], [[LOOP]] ]
++-; CHECK-NEXT:    [[IV_NEXT]] = add i32 [[IV]], 1
++-; CHECK-NEXT:    [[CMP:%.*]] = icmp slt i32 [[IV_NEXT]], [[N:%.*]]
++-; CHECK-NEXT:    br i1 [[CMP]], label [[LOOP]], label [[EXIT:%.*]]
++-; CHECK:       exit:
++-; CHECK-NEXT:    [[LOAD:%.*]] = load i32, ptr [[B:%.*]], align 4
++-; CHECK-NEXT:    [[ADD:%.*]] = add i32 [[A:%.*]], [[LOAD]]
++-; CHECK-NEXT:    ret i32 [[ADD]]
++-;
++-entry:
++-  %load = load i32, ptr %b
++-  %add = add i32 %a, %load
++-  br label %loop
++-
++-loop:
++-  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ]
++-  %iv.next = add i32 %iv, 1
++-  %cmp = icmp slt i32 %iv.next, %N
++-  br i1 %cmp, label %loop, label %exit
++-
++-exit:
++-  ret i32 %add
++-}
++-
++-define i32 @test_with_unused_load_modified_store(i32 %a, ptr %b, i32 %N) {
++-; CHECK-LABEL: @test_with_unused_load_modified_store(
++-; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    [[LOAD:%.*]] = load i32, ptr [[B:%.*]], align 4
++-; CHECK-NEXT:    br label [[LOOP:%.*]]
++-; CHECK:       loop:
++-; CHECK-NEXT:    [[IV:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[IV_NEXT:%.*]], [[LOOP]] ]
++-; CHECK-NEXT:    [[IV_NEXT]] = add i32 [[IV]], [[A:%.*]]
++-; CHECK-NEXT:    [[CMP:%.*]] = icmp slt i32 [[IV_NEXT]], [[N:%.*]]
++-; CHECK-NEXT:    br i1 [[CMP]], label [[LOOP]], label [[EXIT:%.*]]
++-; CHECK:       exit:
++-; CHECK-NEXT:    [[SMAX:%.*]] = phi i32 [ [[IV_NEXT]], [[LOOP]] ]
++-; CHECK-NEXT:    store i32 [[SMAX]], ptr [[B]], align 4
++-; CHECK-NEXT:    [[ADD:%.*]] = add i32 [[A]], [[LOAD]]
++-; CHECK-NEXT:    ret i32 [[ADD]]
++-;
++-entry:
++-  %load = load i32, ptr %b
++-  %add = add i32 %a, %load
++-  br label %loop
++-
++-loop:
++-  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ]
++-  %iv.next = add i32 %iv, %a
++-  store i32 %iv.next, ptr %b
++-  %cmp = icmp slt i32 %iv.next, %N
++-  br i1 %cmp, label %loop, label %exit
++-
++-exit:
++-  ret i32 %add
++-}
++-
++-; Volatile loads must not be sunk.
++-define i32 @test_with_volatile_load_no_sink(i32 %a, ptr %b, i32 %N) {
++-; CHECK-LABEL: @test_with_volatile_load_no_sink(
++-; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    [[LD:%.*]] = load volatile i32, ptr [[B:%.*]], align 4
++-; CHECK-NEXT:    br label [[LOOP:%.*]]
++-; CHECK:       loop:
++-; CHECK-NEXT:    [[IV:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[IV_NEXT:%.*]], [[LOOP]] ]
++-; CHECK-NEXT:    [[IV_NEXT]] = add i32 [[IV]], 1
++-; CHECK-NEXT:    [[CMP:%.*]] = icmp slt i32 [[IV_NEXT]], [[N:%.*]]
++-; CHECK-NEXT:    br i1 [[CMP]], label [[LOOP]], label [[EXIT:%.*]]
++-; CHECK:       exit:
++-; CHECK-NEXT:    [[ADD:%.*]] = add i32 [[A:%.*]], [[LD]]
++-; CHECK-NEXT:    ret i32 [[ADD]]
++-;
++-entry:
++-  %ld = load volatile i32, ptr %b, align 4
++-  %add = add i32 %a, %ld
++-  br label %loop
++-
++-loop:
++-  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ]
++-  %iv.next = add i32 %iv, 1
++-  %cmp = icmp slt i32 %iv.next, %N
++-  br i1 %cmp, label %loop, label %exit
++-
++-exit:
++-  ret i32 %add
++-}
++-
++-; Ordered/atomic loads must not be sunk.
++-define i32 @test_with_atomic_load_no_sink(i32 %a, ptr %b, i32 %N) {
++-; CHECK-LABEL: @test_with_atomic_load_no_sink(
++-; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    [[LD:%.*]] = load atomic i32, ptr [[B:%.*]] acquire, align 4
++-; CHECK-NEXT:    br label [[LOOP:%.*]]
++-; CHECK:       loop:
++-; CHECK-NEXT:    [[IV:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[IV_NEXT:%.*]], [[LOOP]] ]
++-; CHECK-NEXT:    [[IV_NEXT]] = add i32 [[IV]], 1
++-; CHECK-NEXT:    [[CMP:%.*]] = icmp slt i32 [[IV_NEXT]], [[N:%.*]]
++-; CHECK-NEXT:    br i1 [[CMP]], label [[LOOP]], label [[EXIT:%.*]]
++-; CHECK:       exit:
++-; CHECK-NEXT:    [[ADD:%.*]] = add i32 [[A:%.*]], [[LD]]
++-; CHECK-NEXT:    ret i32 [[ADD]]
++-;
++-entry:
++-  %ld = load atomic i32, ptr %b acquire, align 4
++-  %add = add i32 %a, %ld
++-  br label %loop
++-
++-loop:
++-  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ]
++-  %iv.next = add i32 %iv, 1
++-  %cmp = icmp slt i32 %iv.next, %N
++-  br i1 %cmp, label %loop, label %exit
++-
++-exit:
++-  ret i32 %add
++-}
++-
++-declare void @clobber(ptr)
++-
++-; Calls that may write memory in the loop should prevent sinking the load.
++-define i32 @test_with_unused_load_clobbered_by_call(i32 %a, ptr %b, i32 %N) {
++-; CHECK-LABEL: @test_with_unused_load_clobbered_by_call(
++-; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    [[LD:%.*]] = load i32, ptr [[B:%.*]], align 4
++-; CHECK-NEXT:    br label [[LOOP:%.*]]
++-; CHECK:       loop:
++-; CHECK-NEXT:    [[IV:%.*]] = phi i32 [ 0, [[ENTRY:%.*]] ], [ [[IV_NEXT:%.*]], [[LOOP]] ]
++-; CHECK-NEXT:    [[IV_NEXT]] = add i32 [[IV]], 1
++-; CHECK-NEXT:    call void @clobber(ptr [[B]])
++-; CHECK-NEXT:    [[CMP:%.*]] = icmp slt i32 [[IV_NEXT]], [[N:%.*]]
++-; CHECK-NEXT:    br i1 [[CMP]], label [[LOOP]], label [[EXIT:%.*]]
++-; CHECK:       exit:
++-; CHECK-NEXT:    [[ADD:%.*]] = add i32 [[A:%.*]], [[LD]]
++-; CHECK-NEXT:    ret i32 [[ADD]]
++-;
++-entry:
++-  %ld = load i32, ptr %b, align 4
++-  %add = add i32 %a, %ld
++-  br label %loop
++-
++-loop:
++-  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ]
++-  %iv.next = add i32 %iv, 1
++-  call void @clobber(ptr %b)
++-  %cmp = icmp slt i32 %iv.next, %N
++-  br i1 %cmp, label %loop, label %exit
++-
++-exit:
++-  ret i32 %add
++-}
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/LICM/sink-trapping.ll b/llvm/test/Transforms/LICM/sink-trapping.ll
++--- a/llvm/test/Transforms/LICM/sink-trapping.ll
+++++ b/llvm/test/Transforms/LICM/sink-trapping.ll
++@@ -1,28 +0,0 @@
++-; NOTE: Assertions have been autogenerated by utils/update_test_checks.py UTC_ARGS: --version 6
++-; RUN: opt < %s -passes=licm -verify-memoryssa -S | FileCheck %s
++-
++-declare i1 @b()
++-
++-define i32 @a(i32 %x) nounwind {
++-; CHECK-LABEL: define i32 @a(
++-; CHECK-SAME: i32 [[X:%.*]]) #[[ATTR0:[0-9]+]] {
++-; CHECK-NEXT:  [[FOR_BODY_PREHEADER:.*:]]
++-; CHECK-NEXT:    br label %[[FOR_BODY:.*]]
++-; CHECK:       [[FOR_BODY]]:
++-; CHECK-NEXT:    [[CMP:%.*]] = call i1 @b()
++-; CHECK-NEXT:    br i1 [[CMP]], label %[[FOR_BODY]], label %[[FOR_END_LOOPEXIT:.*]]
++-; CHECK:       [[FOR_END_LOOPEXIT]]:
++-; CHECK-NEXT:    [[Y:%.*]] = sdiv i32 10, [[X]]
++-; CHECK-NEXT:    ret i32 [[Y]]
++-;
++-for.body.preheader:
++-  %y = sdiv i32 10, %x
++-  br label %for.body
++-
++-for.body:
++-  %cmp = call i1 @b()
++-  br i1 %cmp, label %for.body, label %for.end.loopexit
++-
++-for.end.loopexit:
++-  ret i32 %y
++-}
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/LoopDeletion/invalidate-scev-after-hoisting.ll b/llvm/test/Transforms/LoopDeletion/invalidate-scev-after-hoisting.ll
++--- a/llvm/test/Transforms/LoopDeletion/invalidate-scev-after-hoisting.ll
+++++ b/llvm/test/Transforms/LoopDeletion/invalidate-scev-after-hoisting.ll
++@@ -84,13 +84,13 @@
++ ; CHECK:       inner.2.preheader:
++ ; CHECK-NEXT:    br label [[INNER_3_PH:%.*]]
++ ; CHECK:       inner.3.ph:
++-; CHECK-NEXT:    [[TRUNC:%.*]] = trunc i64 0 to i32
++ ; CHECK-NEXT:    br label [[INNER_3:%.*]]
++ ; CHECK:       inner.3:
++ ; CHECK-NEXT:    [[L:%.*]] = load i32, ptr [[SRC:%.*]], align 4
++ ; CHECK-NEXT:    br i1 false, label [[OUTER_LATCH]], label [[INNER_3]]
++ ; CHECK:       outer.latch:
++ ; CHECK-NEXT:    [[L_LCSSA:%.*]] = phi i32 [ [[L]], [[INNER_3]] ]
+++; CHECK-NEXT:    [[TRUNC:%.*]] = trunc i64 0 to i32
++ ; CHECK-NEXT:    [[OUTER_IV_NEXT]] = add nsw i32 [[L_LCSSA]], [[TRUNC]]
++ ; CHECK-NEXT:    br label [[OUTER_HEADER]]
++ ;
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/LoopDistribute/laa-invalidation.ll b/llvm/test/Transforms/LoopDistribute/laa-invalidation.ll
++--- a/llvm/test/Transforms/LoopDistribute/laa-invalidation.ll
+++++ b/llvm/test/Transforms/LoopDistribute/laa-invalidation.ll
++@@ -4,11 +4,11 @@
++ define void @test_pr50940(ptr %A, ptr %B) {
++ ; CHECK-LABEL: @test_pr50940(
++ ; CHECK-NEXT:  entry:
++-; CHECK-NEXT:    [[UGLYGEP:%.*]] = getelementptr i8, ptr [[A:%.*]], i64 4
++ ; CHECK-NEXT:    br label [[OUTER_HEADER:%.*]]
++ ; CHECK:       outer.header:
++ ; CHECK-NEXT:    br i1 false, label [[OUTER_LATCH:%.*]], label [[INNER_PH:%.*]]
++ ; CHECK:       inner.ph:
+++; CHECK-NEXT:    [[UGLYGEP:%.*]] = getelementptr i8, ptr [[A:%.*]], i64 4
++ ; CHECK-NEXT:    [[GEP_A_3:%.*]] = getelementptr inbounds i16, ptr [[A]], i64 3
++ ; CHECK-NEXT:    br label [[INNER_LVER_CHECK:%.*]]
++ ; CHECK:       inner.lver.check:
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/LoopVectorize/invariant-store-vectorization.ll b/llvm/test/Transforms/LoopVectorize/invariant-store-vectorization.ll
++--- a/llvm/test/Transforms/LoopVectorize/invariant-store-vectorization.ll
+++++ b/llvm/test/Transforms/LoopVectorize/invariant-store-vectorization.ll
++@@ -380,6 +380,7 @@
++ ; CHECK-NEXT:    br i1 [[FOUND_CONFLICT]], label [[SCALAR_PH]], label [[VECTOR_PH:%.*]]
++ ; CHECK:       vector.ph:
++ ; CHECK-NEXT:    [[N_VEC:%.*]] = and i64 [[TMP8]], 8589934588
+++; CHECK-NEXT:    [[IND_END:%.*]] = add nuw nsw i64 [[N_VEC]], [[TMP4]]
++ ; CHECK-NEXT:    [[TMP15:%.*]] = insertelement <4 x i32> <i32 poison, i32 0, i32 0, i32 0>, i32 [[ARRAYIDX5_PROMOTED]], i64 0
++ ; CHECK-NEXT:    [[INVARIANT_GEP:%.*]] = getelementptr i32, ptr [[VAR2]], i64 [[TMP4]]
++ ; CHECK-NEXT:    br label [[VECTOR_BODY:%.*]]
++@@ -395,7 +396,6 @@
++ ; CHECK-NEXT:    br i1 [[TMP18]], label [[MIDDLE_BLOCK:%.*]], label [[VECTOR_BODY]], !llvm.loop [[LOOP26:![0-9]+]]
++ ; CHECK:       middle.block:
++ ; CHECK-NEXT:    [[DOTLCSSA:%.*]] = phi <4 x i32> [ [[TMP17]], [[VECTOR_BODY]] ]
++-; CHECK-NEXT:    [[IND_END:%.*]] = add nuw nsw i64 [[N_VEC]], [[TMP4]]
++ ; CHECK-NEXT:    [[TMP19:%.*]] = call i32 @llvm.vector.reduce.add.v4i32(<4 x i32> [[DOTLCSSA]])
++ ; CHECK-NEXT:    store i32 [[TMP19]], ptr [[ARRAYIDX5]], align 4, !alias.scope [[META27:![0-9]+]], !noalias [[META23]]
++ ; CHECK-NEXT:    [[CMP_N:%.*]] = icmp eq i64 [[TMP8]], [[N_VEC]]
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/PhaseOrdering/AArch64/indvars-vectorization.ll b/llvm/test/Transforms/PhaseOrdering/AArch64/indvars-vectorization.ll
++--- a/llvm/test/Transforms/PhaseOrdering/AArch64/indvars-vectorization.ll
+++++ b/llvm/test/Transforms/PhaseOrdering/AArch64/indvars-vectorization.ll
++@@ -43,6 +43,7 @@
++ ; CHECK-NEXT:    br i1 [[FOUND_CONFLICT]], label [[FOR_BODY_PREHEADER13]], label [[VECTOR_PH:%.*]]
++ ; CHECK:       vector.ph:
++ ; CHECK-NEXT:    [[N_VEC:%.*]] = and i64 [[TMP8]], -8
+++; CHECK-NEXT:    [[IND_END:%.*]] = add i64 [[N_VEC]], [[TMP0]]
++ ; CHECK-NEXT:    br label [[VECTOR_BODY:%.*]]
++ ; CHECK:       vector.body:
++ ; CHECK-NEXT:    [[INDEX:%.*]] = phi i64 [ 0, [[VECTOR_PH]] ], [ [[INDEX_NEXT:%.*]], [[VECTOR_BODY]] ]
++@@ -63,7 +64,6 @@
++ ; CHECK-NEXT:    [[TMP26:%.*]] = icmp eq i64 [[INDEX_NEXT]], [[N_VEC]]
++ ; CHECK-NEXT:    br i1 [[TMP26]], label [[MIDDLE_BLOCK:%.*]], label [[VECTOR_BODY]], !llvm.loop [[LOOP5:![0-9]+]]
++ ; CHECK:       middle.block:
++-; CHECK-NEXT:    [[IND_END:%.*]] = add i64 [[N_VEC]], [[TMP0]]
++ ; CHECK-NEXT:    [[CMP_N:%.*]] = icmp eq i64 [[TMP8]], [[N_VEC]]
++ ; CHECK-NEXT:    br i1 [[CMP_N]], label [[FOR_END]], label [[FOR_BODY_PREHEADER13]]
++ ; CHECK:       for.body.preheader14:
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/PhaseOrdering/AArch64/interleave_vec.ll b/llvm/test/Transforms/PhaseOrdering/AArch64/interleave_vec.ll
++--- a/llvm/test/Transforms/PhaseOrdering/AArch64/interleave_vec.ll
+++++ b/llvm/test/Transforms/PhaseOrdering/AArch64/interleave_vec.ll
++@@ -1040,6 +1040,7 @@
++ ; CHECK-NEXT:    br i1 [[MIN_ITERS_CHECK]], label %[[LOOP_PREHEADER11:.*]], label %[[VECTOR_PH:.*]]
++ ; CHECK:       [[VECTOR_PH]]:
++ ; CHECK-NEXT:    [[N_VEC:%.*]] = and i64 [[TMP3]], 9223372036854775806
+++; CHECK-NEXT:    [[TMP4:%.*]] = mul i64 [[N_VEC]], 5
++ ; CHECK-NEXT:    [[BROADCAST_SPLATINSERT:%.*]] = insertelement <2 x float> poison, float [[A]], i64 0
++ ; CHECK-NEXT:    [[TMP5:%.*]] = shufflevector <2 x float> [[BROADCAST_SPLATINSERT]], <2 x float> poison, <10 x i32> zeroinitializer
++ ; CHECK-NEXT:    br label %[[VECTOR_BODY:.*]]
++@@ -1057,11 +1058,10 @@
++ ; CHECK-NEXT:    [[TMP9:%.*]] = icmp eq i64 [[INDEX_NEXT]], [[N_VEC]]
++ ; CHECK-NEXT:    br i1 [[TMP9]], label %[[MIDDLE_BLOCK:.*]], label %[[VECTOR_BODY]], !llvm.loop [[LOOP9:![0-9]+]]
++ ; CHECK:       [[MIDDLE_BLOCK]]:
++-; CHECK-NEXT:    [[TMP16:%.*]] = mul i64 [[N_VEC]], 5
++ ; CHECK-NEXT:    [[CMP_N:%.*]] = icmp eq i64 [[TMP3]], [[N_VEC]]
++ ; CHECK-NEXT:    br i1 [[CMP_N]], label %[[EXIT]], label %[[LOOP_PREHEADER11]]
++ ; CHECK:       [[LOOP_PREHEADER11]]:
++-; CHECK-NEXT:    [[I1_PH:%.*]] = phi i64 [ 0, %[[LOOP_PREHEADER]] ], [ [[TMP16]], %[[MIDDLE_BLOCK]] ]
+++; CHECK-NEXT:    [[I1_PH:%.*]] = phi i64 [ 0, %[[LOOP_PREHEADER]] ], [ [[TMP4]], %[[MIDDLE_BLOCK]] ]
++ ; CHECK-NEXT:    [[TMP10:%.*]] = insertelement <4 x float> poison, float [[A]], i64 0
++ ; CHECK-NEXT:    [[TMP11:%.*]] = shufflevector <4 x float> [[TMP10]], <4 x float> poison, <4 x i32> zeroinitializer
++ ; CHECK-NEXT:    br label %[[LOOP:.*]]
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/PhaseOrdering/AArch64/std-find.ll b/llvm/test/Transforms/PhaseOrdering/AArch64/std-find.ll
++--- a/llvm/test/Transforms/PhaseOrdering/AArch64/std-find.ll
+++++ b/llvm/test/Transforms/PhaseOrdering/AArch64/std-find.ll
++@@ -8,6 +8,7 @@
++ ; CHECK-SAME: ptr [[FIRST_COERCE:%.*]], i16 noundef signext [[S:%.*]]) local_unnamed_addr #[[ATTR0:[0-9]+]] {
++ ; CHECK-NEXT:  [[ENTRY:.*]]:
++ ; CHECK-NEXT:    call void @llvm.assume(i1 true) [ "align"(ptr [[FIRST_COERCE]], i64 2) ]
+++; CHECK-NEXT:    [[COERCE_VAL_IP:%.*]] = getelementptr i8, ptr [[FIRST_COERCE]], i64 256
++ ; CHECK-NEXT:    [[BROADCAST_SPLATINSERT:%.*]] = insertelement <8 x i16> poison, i16 [[S]], i64 0
++ ; CHECK-NEXT:    [[BROADCAST_SPLAT:%.*]] = shufflevector <8 x i16> [[BROADCAST_SPLATINSERT]], <8 x i16> poison, <8 x i32> zeroinitializer
++ ; CHECK-NEXT:    br label %[[VECTOR_BODY:.*]]
++@@ -25,7 +26,6 @@
++ ; CHECK-NEXT:    [[TMP4:%.*]] = or i1 [[TMP2]], [[TMP3]]
++ ; CHECK-NEXT:    br i1 [[TMP4]], label %[[MIDDLE_SPLIT:.*]], label %[[VECTOR_BODY]], !llvm.loop [[LOOP0:![0-9]+]]
++ ; CHECK:       [[MIDDLE_SPLIT]]:
++-; CHECK-NEXT:    [[COERCE_VAL_IP:%.*]] = getelementptr i8, ptr [[FIRST_COERCE]], i64 256
++ ; CHECK-NEXT:    br i1 [[TMP2]], label %[[VECTOR_EARLY_EXIT:.*]], label %[[RETURN:.*]]
++ ; CHECK:       [[VECTOR_EARLY_EXIT]]:
++ ; CHECK-NEXT:    [[TMP5:%.*]] = tail call i64 @llvm.experimental.cttz.elts.i64.v8i1(<8 x i1> [[TMP0]], i1 true)
++@@ -149,7 +149,8 @@
++ ; CHECK-NEXT:    br i1 [[MIN_ITERS_CHECK]], label %[[LOOP_HEADER_I_PREHEADER2:.*]], label %[[VECTOR_PH:.*]]
++ ; CHECK:       [[VECTOR_PH]]:
++ ; CHECK-NEXT:    [[XTRAITER:%.*]] = and i64 [[TMP3]], -8
++-; CHECK-NEXT:    br label %[[VECTOR_BODY:.*]]
+++; CHECK:         [[TMP9:%.*]] = getelementptr
+++; CHECK-NEXT:         br label %[[VECTOR_BODY:.*]]
++ ; CHECK:       [[VECTOR_BODY]]:
++ ; CHECK-NEXT:    [[INDEX:%.*]] = phi i64 [ 0, %[[VECTOR_PH]] ], [ [[PROL_ITER_NEXT:%.*]], %[[VECTOR_BODY]] ]
++ ; CHECK-NEXT:    [[OFFSET_IDX:%.*]] = shl i64 [[INDEX]], 1
++@@ -164,14 +165,12 @@
++ ; CHECK-NEXT:    [[TMP8:%.*]] = or i1 [[TMP6]], [[PROL_ITER_CMP_NOT]]
++ ; CHECK-NEXT:    br i1 [[TMP8]], label %[[MIDDLE_SPLIT:.*]], label %[[VECTOR_BODY]], !llvm.loop [[LOOP3:![0-9]+]]
++ ; CHECK:       [[MIDDLE_SPLIT]]:
++-; CHECK-NEXT:    [[TMP9:%.*]] = shl i64 [[XTRAITER]], 1
++-; CHECK-NEXT:    [[TMP10:%.*]] = getelementptr i8, ptr [[FIRST]], i64 [[TMP9]]
++ ; CHECK-NEXT:    br i1 [[TMP6]], label %[[VECTOR_EARLY_EXIT:.*]], label %[[MIDDLE_BLOCK:.*]]
++ ; CHECK:       [[MIDDLE_BLOCK]]:
++ ; CHECK-NEXT:    [[CMP_N:%.*]] = icmp eq i64 [[TMP3]], [[XTRAITER]]
++ ; CHECK-NEXT:    br i1 [[CMP_N]], label %[[STD_FIND_GENERIC_IMPL_EXIT]], label %[[LOOP_HEADER_I_PREHEADER2]]
++ ; CHECK:       [[LOOP_HEADER_I_PREHEADER2]]:
++-; CHECK-NEXT:    [[PTR_IV_I_PH:%.*]] = phi ptr [ [[FIRST]], %[[LOOP_HEADER_I_PREHEADER]] ], [ [[TMP10]], %[[MIDDLE_BLOCK]] ]
+++; CHECK-NEXT:    [[PTR_IV_I_PH:%.*]] = phi ptr [ [[FIRST]], %[[LOOP_HEADER_I_PREHEADER]] ], [ [[TMP9]], %[[MIDDLE_BLOCK]] ]
++ ; CHECK-NEXT:    br label %[[LOOP_HEADER_I:.*]]
++ ; CHECK:       [[VECTOR_EARLY_EXIT]]:
++ ; CHECK-NEXT:    [[TMP11:%.*]] = tail call i64 @llvm.experimental.cttz.elts.i64.v8i1(<8 x i1> [[TMP4]], i1 true)
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/PhaseOrdering/ARM/arm_mult_q15.ll b/llvm/test/Transforms/PhaseOrdering/ARM/arm_mult_q15.ll
++--- a/llvm/test/Transforms/PhaseOrdering/ARM/arm_mult_q15.ll
+++++ b/llvm/test/Transforms/PhaseOrdering/ARM/arm_mult_q15.ll
++@@ -18,15 +18,22 @@
++ ; CHECK-NEXT:    br i1 [[MIN_ITERS_CHECK]], label [[WHILE_BODY_PREHEADER15:%.*]], label [[VECTOR_PH:%.*]]
++ ; CHECK:       vector.ph:
++ ; CHECK-NEXT:    [[N_VEC:%.*]] = and i32 [[BLOCKSIZE]], -8
+++; CHECK-NEXT:    [[IND_END:%.*]] = and i32 [[BLOCKSIZE]], 7
+++; CHECK-NEXT:    [[TMP0:%.*]] = shl i32 [[N_VEC]], 1
+++; CHECK-NEXT:    [[IND_END7:%.*]] = getelementptr i8, ptr [[PSRCA:%.*]], i32 [[TMP0]]
+++; CHECK-NEXT:    [[TMP1:%.*]] = shl i32 [[N_VEC]], 1
+++; CHECK-NEXT:    [[IND_END9:%.*]] = getelementptr i8, ptr [[PDST:%.*]], i32 [[TMP1]]
+++; CHECK-NEXT:    [[TMP2:%.*]] = shl i32 [[N_VEC]], 1
+++; CHECK-NEXT:    [[IND_END11:%.*]] = getelementptr i8, ptr [[PSRCB:%.*]], i32 [[TMP2]]
++ ; CHECK-NEXT:    br label [[VECTOR_BODY:%.*]]
++ ; CHECK:       vector.body:
++ ; CHECK-NEXT:    [[INDEX:%.*]] = phi i32 [ 0, [[VECTOR_PH]] ], [ [[INDEX_NEXT:%.*]], [[VECTOR_BODY]] ]
++ ; CHECK-NEXT:    [[OFFSET_IDX:%.*]] = shl i32 [[INDEX]], 1
++-; CHECK-NEXT:    [[NEXT_GEP:%.*]] = getelementptr i8, ptr [[PSRCA:%.*]], i32 [[OFFSET_IDX]]
+++; CHECK-NEXT:    [[NEXT_GEP:%.*]] = getelementptr i8, ptr [[PSRCA]], i32 [[OFFSET_IDX]]
++ ; CHECK-NEXT:    [[OFFSET_IDX13:%.*]] = shl i32 [[INDEX]], 1
++-; CHECK-NEXT:    [[NEXT_GEP14:%.*]] = getelementptr i8, ptr [[PDST:%.*]], i32 [[OFFSET_IDX13]]
+++; CHECK-NEXT:    [[NEXT_GEP14:%.*]] = getelementptr i8, ptr [[PDST]], i32 [[OFFSET_IDX13]]
++ ; CHECK-NEXT:    [[OFFSET_IDX15:%.*]] = shl i32 [[INDEX]], 1
++-; CHECK-NEXT:    [[NEXT_GEP16:%.*]] = getelementptr i8, ptr [[PSRCB:%.*]], i32 [[OFFSET_IDX15]]
+++; CHECK-NEXT:    [[NEXT_GEP16:%.*]] = getelementptr i8, ptr [[PSRCB]], i32 [[OFFSET_IDX15]]
++ ; CHECK-NEXT:    [[WIDE_LOAD:%.*]] = load <8 x i16>, ptr [[NEXT_GEP]], align 2
++ ; CHECK-NEXT:    [[TMP3:%.*]] = sext <8 x i16> [[WIDE_LOAD]] to <8 x i32>
++ ; CHECK-NEXT:    [[WIDE_LOAD17:%.*]] = load <8 x i16>, ptr [[NEXT_GEP16]], align 2
++@@ -40,13 +47,6 @@
++ ; CHECK-NEXT:    [[TMP9:%.*]] = icmp eq i32 [[INDEX_NEXT]], [[N_VEC]]
++ ; CHECK-NEXT:    br i1 [[TMP9]], label [[MIDDLE_BLOCK:%.*]], label [[VECTOR_BODY]], !llvm.loop [[LOOP0:![0-9]+]]
++ ; CHECK:       middle.block:
++-; CHECK-NEXT:    [[IND_END:%.*]] = and i32 [[BLOCKSIZE]], 7
++-; CHECK-NEXT:    [[TMP13:%.*]] = shl i32 [[N_VEC]], 1
++-; CHECK-NEXT:    [[IND_END7:%.*]] = getelementptr i8, ptr [[PSRCA]], i32 [[TMP13]]
++-; CHECK-NEXT:    [[TMP14:%.*]] = shl i32 [[N_VEC]], 1
++-; CHECK-NEXT:    [[IND_END9:%.*]] = getelementptr i8, ptr [[PDST]], i32 [[TMP14]]
++-; CHECK-NEXT:    [[TMP12:%.*]] = shl i32 [[N_VEC]], 1
++-; CHECK-NEXT:    [[IND_END11:%.*]] = getelementptr i8, ptr [[PSRCB]], i32 [[TMP12]]
++ ; CHECK-NEXT:    [[CMP_N:%.*]] = icmp eq i32 [[BLOCKSIZE]], [[N_VEC]]
++ ; CHECK-NEXT:    br i1 [[CMP_N]], label [[WHILE_END]], label [[WHILE_BODY_PREHEADER15]]
++ ; CHECK:       while.body.preheader15:
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/PhaseOrdering/X86/pr48844-br-to-switch-vectorization.ll b/llvm/test/Transforms/PhaseOrdering/X86/pr48844-br-to-switch-vectorization.ll
++--- a/llvm/test/Transforms/PhaseOrdering/X86/pr48844-br-to-switch-vectorization.ll
+++++ b/llvm/test/Transforms/PhaseOrdering/X86/pr48844-br-to-switch-vectorization.ll
++@@ -46,6 +46,7 @@
++ ; AVX2-NEXT:    [[MIN_ITERS_CHECK:%.*]] = icmp ult i64 [[TMP1]], 124
++ ; AVX2-NEXT:    br i1 [[MIN_ITERS_CHECK]], label [[BB12_PREHEADER11:%.*]], label [[VECTOR_PH:%.*]]
++ ; AVX2:       vector.ph:
+++; AVX2-NEXT:    [[N_VEC_REMAINING:%.*]] = and i64 [[TMP3]], 24
++ ; AVX2-NEXT:    [[N_VEC:%.*]] = and i64 [[TMP3]], 9223372036854775776
++ ; AVX2-NEXT:    br label [[VECTOR_BODY:%.*]]
++ ; AVX2:       vector.body:
++@@ -79,7 +80,6 @@
++ ; AVX2-NEXT:    [[TMP20:%.*]] = icmp eq i64 [[INDEX_NEXT]], [[N_VEC]]
++ ; AVX2-NEXT:    br i1 [[TMP20]], label [[MIDDLE_BLOCK:%.*]], label [[VECTOR_BODY]], !llvm.loop [[LOOP0:![0-9]+]]
++ ; AVX2:       middle.block:
++-; AVX2-NEXT:    [[N_VEC_REMAINING:%.*]] = and i64 [[TMP3]], 24
++ ; AVX2-NEXT:    [[CMP_N:%.*]] = icmp eq i64 [[TMP3]], [[N_VEC]]
++ ; AVX2-NEXT:    br i1 [[CMP_N]], label [[EXIT]], label [[VEC_EPILOG_ITER_CHECK:%.*]]
++ ; AVX2:       vec.epilog.iter.check:
++@@ -90,6 +90,8 @@
++ ; AVX2:       vec.epilog.ph:
++ ; AVX2-NEXT:    [[VEC_EPILOG_RESUME_VAL:%.*]] = phi i64 [ [[N_VEC]], [[VEC_EPILOG_ITER_CHECK]] ], [ 0, [[VECTOR_MAIN_LOOP_ITER_CHECK]] ]
++ ; AVX2-NEXT:    [[N_VEC10:%.*]] = and i64 [[TMP3]], 9223372036854775800
+++; AVX2-NEXT:    [[TMP21:%.*]] = shl i64 [[N_VEC10]], 2
+++; AVX2-NEXT:    [[IND_END:%.*]] = getelementptr i8, ptr [[START]], i64 [[TMP21]]
++ ; AVX2-NEXT:    br label [[BB12:%.*]]
++ ; AVX2:       vec.epilog.vector.body:
++ ; AVX2-NEXT:    [[INDEX12:%.*]] = phi i64 [ [[VEC_EPILOG_RESUME_VAL]], [[BB12_PREHEADER11]] ], [ [[INDEX_NEXT16:%.*]], [[BB12]] ]
++@@ -104,8 +106,6 @@
++ ; AVX2-NEXT:    [[TMP25:%.*]] = icmp eq i64 [[INDEX_NEXT16]], [[N_VEC10]]
++ ; AVX2-NEXT:    br i1 [[TMP25]], label [[VEC_EPILOG_MIDDLE_BLOCK:%.*]], label [[BB12]], !llvm.loop [[LOOP4:![0-9]+]]
++ ; AVX2:       vec.epilog.middle.block:
++-; AVX2-NEXT:    [[TMP27:%.*]] = shl i64 [[N_VEC10]], 2
++-; AVX2-NEXT:    [[IND_END:%.*]] = getelementptr i8, ptr [[START]], i64 [[TMP27]]
++ ; AVX2-NEXT:    [[CMP_N17:%.*]] = icmp eq i64 [[TMP3]], [[N_VEC10]]
++ ; AVX2-NEXT:    br i1 [[CMP_N17]], label [[EXIT]], label [[BB12_PREHEADER1]]
++ ; AVX2:       bb12.preheader:
++diff -ruN --strip-trailing-cr a/llvm/test/Transforms/PhaseOrdering/X86/vdiv.ll b/llvm/test/Transforms/PhaseOrdering/X86/vdiv.ll
++--- a/llvm/test/Transforms/PhaseOrdering/X86/vdiv.ll
+++++ b/llvm/test/Transforms/PhaseOrdering/X86/vdiv.ll
++@@ -16,8 +16,8 @@
++ ; CHECK-SAME: ptr writeonly captures(none) [[X:%.*]], ptr readonly captures(none) [[Y:%.*]], double [[A:%.*]], i32 [[N:%.*]]) local_unnamed_addr #[[ATTR0:[0-9]+]] {
++ ; CHECK-NEXT:  [[ENTRY:.*:]]
++ ; CHECK-NEXT:    [[CMP1:%.*]] = icmp sgt i32 [[N]], 0
++-; CHECK-NEXT:    br i1 [[CMP1]], label %[[ITER_CHECK:.*]], label %[[FOR_END:.*]]
++-; CHECK:       [[ITER_CHECK]]:
+++; CHECK-NEXT:    br i1 [[CMP1]], label %[[FOR_BODY_PREHEADER:.*]], label %[[FOR_END:.*]]
+++; CHECK:       [[FOR_BODY_PREHEADER]]:
++ ; CHECK-NEXT:    [[X4:%.*]] = ptrtoint ptr [[X]] to i64
++ ; CHECK-NEXT:    [[Y5:%.*]] = ptrtoint ptr [[Y]] to i64
++ ; CHECK-NEXT:    [[WIDE_TRIP_COUNT:%.*]] = zext nneg i32 [[N]] to i64
++@@ -25,11 +25,12 @@
++ ; CHECK-NEXT:    [[TMP0:%.*]] = sub i64 [[X4]], [[Y5]]
++ ; CHECK-NEXT:    [[DIFF_CHECK:%.*]] = icmp ult i64 [[TMP0]], 128
++ ; CHECK-NEXT:    [[OR_COND:%.*]] = select i1 [[MIN_ITERS_CHECK]], i1 true, i1 [[DIFF_CHECK]]
++-; CHECK-NEXT:    br i1 [[OR_COND]], label %[[FOR_BODY_PREHEADER:.*]], label %[[VECTOR_MAIN_LOOP_ITER_CHECK:.*]]
++-; CHECK:       [[VECTOR_MAIN_LOOP_ITER_CHECK]]:
++-; CHECK-NEXT:    [[MIN_ITERS_CHECK6:%.*]] = icmp ult i32 [[N]], 16
++-; CHECK-NEXT:    br i1 [[MIN_ITERS_CHECK6]], label %[[VEC_EPILOG_PH:.*]], label %[[VECTOR_PH:.*]]
+++; CHECK-NEXT:    br i1 [[OR_COND]], label %[[FOR_BODY_PREHEADER9:.*]], label %[[VECTOR_PH:.*]]
++ ; CHECK:       [[VECTOR_PH]]:
+++; CHECK-NEXT:    [[MIN_ITERS_CHECK6:%.*]] = icmp ult i32 [[N]], 16
+++; CHECK-NEXT:    br i1 [[MIN_ITERS_CHECK6]], label %[[VEC_EPILOG_PH:.*]], label %[[VECTOR_PH1:.*]]
+++; CHECK:       [[VECTOR_PH1]]:
+++; CHECK-NEXT:    [[N_VEC_REMAINING:%.*]] = and i64 [[WIDE_TRIP_COUNT]], 12
++ ; CHECK-NEXT:    [[N_VEC:%.*]] = and i64 [[WIDE_TRIP_COUNT]], 2147483632
++ ; CHECK-NEXT:    [[BROADCAST_SPLATINSERT:%.*]] = insertelement <4 x double> poison, double [[A]], i64 0
++ ; CHECK-NEXT:    [[BROADCAST_SPLAT:%.*]] = shufflevector <4 x double> [[BROADCAST_SPLATINSERT]], <4 x double> poison, <4 x i32> zeroinitializer
++@@ -39,7 +40,7 @@
++ ; CHECK-NEXT:    [[TMP4:%.*]] = fdiv fast <4 x double> splat (double 1.000000e+00), [[BROADCAST_SPLAT]]
++ ; CHECK-NEXT:    br label %[[VECTOR_BODY:.*]]
++ ; CHECK:       [[VECTOR_BODY]]:
++-; CHECK-NEXT:    [[INDEX:%.*]] = phi i64 [ 0, %[[VECTOR_PH]] ], [ [[INDEX_NEXT:%.*]], %[[VECTOR_BODY]] ]
+++; CHECK-NEXT:    [[INDEX:%.*]] = phi i64 [ 0, %[[VECTOR_PH1]] ], [ [[INDEX_NEXT:%.*]], %[[VECTOR_BODY]] ]
++ ; CHECK-NEXT:    [[TMP5:%.*]] = getelementptr inbounds nuw double, ptr [[Y]], i64 [[INDEX]]
++ ; CHECK-NEXT:    [[TMP6:%.*]] = getelementptr inbounds nuw i8, ptr [[TMP5]], i64 32
++ ; CHECK-NEXT:    [[TMP7:%.*]] = getelementptr inbounds nuw i8, ptr [[TMP5]], i64 64
++@@ -64,14 +65,13 @@
++ ; CHECK-NEXT:    [[TMP17:%.*]] = icmp eq i64 [[INDEX_NEXT]], [[N_VEC]]
++ ; CHECK-NEXT:    br i1 [[TMP17]], label %[[MIDDLE_BLOCK:.*]], label %[[VECTOR_BODY]], !llvm.loop [[LOOP7:![0-9]+]]
++ ; CHECK:       [[MIDDLE_BLOCK]]:
++-; CHECK-NEXT:    [[N_VEC_REMAINING:%.*]] = and i64 [[WIDE_TRIP_COUNT]], 12
++ ; CHECK-NEXT:    [[CMP_N:%.*]] = icmp eq i64 [[N_VEC]], [[WIDE_TRIP_COUNT]]
++ ; CHECK-NEXT:    br i1 [[CMP_N]], label %[[FOR_END]], label %[[VEC_EPILOG_ITER_CHECK:.*]]
++ ; CHECK:       [[VEC_EPILOG_ITER_CHECK]]:
++ ; CHECK-NEXT:    [[MIN_EPILOG_ITERS_CHECK:%.*]] = icmp eq i64 [[N_VEC_REMAINING]], 0
++-; CHECK-NEXT:    br i1 [[MIN_EPILOG_ITERS_CHECK]], label %[[FOR_BODY_PREHEADER]], label %[[VEC_EPILOG_PH]], !prof [[PROF10:![0-9]+]]
+++; CHECK-NEXT:    br i1 [[MIN_EPILOG_ITERS_CHECK]], label %[[FOR_BODY_PREHEADER9]], label %[[VEC_EPILOG_PH]]
++ ; CHECK:       [[VEC_EPILOG_PH]]:
++-; CHECK-NEXT:    [[VEC_EPILOG_RESUME_VAL:%.*]] = phi i64 [ [[N_VEC]], %[[VEC_EPILOG_ITER_CHECK]] ], [ 0, %[[VECTOR_MAIN_LOOP_ITER_CHECK]] ]
+++; CHECK-NEXT:    [[VEC_EPILOG_RESUME_VAL:%.*]] = phi i64 [ [[N_VEC]], %[[VEC_EPILOG_ITER_CHECK]] ], [ 0, %[[VECTOR_PH]] ]
++ ; CHECK-NEXT:    [[N_VEC11:%.*]] = and i64 [[WIDE_TRIP_COUNT]], 2147483644
++ ; CHECK-NEXT:    [[BROADCAST_SPLATINSERT14:%.*]] = insertelement <4 x double> poison, double [[A]], i64 0
++ ; CHECK-NEXT:    [[BROADCAST_SPLAT15:%.*]] = shufflevector <4 x double> [[BROADCAST_SPLATINSERT14]], <4 x double> poison, <4 x i32> zeroinitializer
++@@ -86,12 +86,12 @@
++ ; CHECK-NEXT:    store <4 x double> [[TMP40]], ptr [[TMP41]], align 8, !tbaa [[DOUBLE_TBAA3]]
++ ; CHECK-NEXT:    [[INDEX_NEXT16]] = add nuw i64 [[INDEX12]], 4
++ ; CHECK-NEXT:    [[TMP42:%.*]] = icmp eq i64 [[INDEX_NEXT16]], [[N_VEC11]]
++-; CHECK-NEXT:    br i1 [[TMP42]], label %[[VEC_EPILOG_MIDDLE_BLOCK:.*]], label %[[VEC_EPILOG_VECTOR_BODY]], !llvm.loop [[LOOP11:![0-9]+]]
+++; CHECK-NEXT:    br i1 [[TMP42]], label %[[VEC_EPILOG_MIDDLE_BLOCK:.*]], label %[[VEC_EPILOG_VECTOR_BODY]], !llvm.loop [[LOOP10:![0-9]+]]
++ ; CHECK:       [[VEC_EPILOG_MIDDLE_BLOCK]]:
++ ; CHECK-NEXT:    [[CMP_N17:%.*]] = icmp eq i64 [[N_VEC11]], [[WIDE_TRIP_COUNT]]
++-; CHECK-NEXT:    br i1 [[CMP_N17]], label %[[FOR_END]], label %[[FOR_BODY_PREHEADER]]
++-; CHECK:       [[FOR_BODY_PREHEADER]]:
++-; CHECK-NEXT:    [[INDVARS_IV_PH:%.*]] = phi i64 [ 0, %[[ITER_CHECK]] ], [ [[N_VEC]], %[[VEC_EPILOG_ITER_CHECK]] ], [ [[N_VEC11]], %[[VEC_EPILOG_MIDDLE_BLOCK]] ]
+++; CHECK-NEXT:    br i1 [[CMP_N17]], label %[[FOR_END]], label %[[FOR_BODY_PREHEADER9]]
+++; CHECK:       [[FOR_BODY_PREHEADER9]]:
+++; CHECK-NEXT:    [[INDVARS_IV_PH:%.*]] = phi i64 [ 0, %[[FOR_BODY_PREHEADER]] ], [ [[N_VEC]], %[[VEC_EPILOG_ITER_CHECK]] ], [ [[N_VEC11]], %[[VEC_EPILOG_MIDDLE_BLOCK]] ]
++ ; CHECK-NEXT:    [[TMP43:%.*]] = sub nsw i64 [[WIDE_TRIP_COUNT]], [[INDVARS_IV_PH]]
++ ; CHECK-NEXT:    [[XTRAITER:%.*]] = and i64 [[TMP43]], 7
++ ; CHECK-NEXT:    [[LCMP_MOD_NOT:%.*]] = icmp eq i64 [[XTRAITER]], 0
++@@ -110,13 +110,13 @@
++ ; CHECK-NEXT:    [[INDVARS_IV_NEXT_PROL]] = add nuw nsw i64 [[INDVARS_IV_PROL]], 1
++ ; CHECK-NEXT:    [[PROL_ITER_NEXT]] = add i64 [[PROL_ITER]], 1
++ ; CHECK-NEXT:    [[PROL_ITER_CMP_NOT:%.*]] = icmp eq i64 [[PROL_ITER_NEXT]], [[XTRAITER]]
++-; CHECK-NEXT:    br i1 [[PROL_ITER_CMP_NOT]], label %[[FOR_BODY_PROL_LOOPEXIT]], label %[[FOR_BODY_PROL]], !llvm.loop [[LOOP12:![0-9]+]]
+++; CHECK-NEXT:    br i1 [[PROL_ITER_CMP_NOT]], label %[[FOR_BODY_PROL_LOOPEXIT]], label %[[FOR_BODY_PROL]], !llvm.loop [[LOOP11:![0-9]+]]
++ ; CHECK:       [[FOR_BODY_PROL_LOOPEXIT]]:
++-; CHECK-NEXT:    [[INDVARS_IV_UNR:%.*]] = phi i64 [ [[INDVARS_IV_PH]], %[[FOR_BODY_PREHEADER]] ], [ [[INDVARS_IV_NEXT_PROL]], %[[FOR_BODY_PROL]] ]
+++; CHECK-NEXT:    [[INDVARS_IV_UNR:%.*]] = phi i64 [ [[INDVARS_IV_PH]], %[[FOR_BODY_PREHEADER9]] ], [ [[INDVARS_IV_NEXT_PROL]], %[[FOR_BODY_PROL]] ]
++ ; CHECK-NEXT:    [[TMP20:%.*]] = sub nsw i64 [[INDVARS_IV_PH]], [[WIDE_TRIP_COUNT]]
++ ; CHECK-NEXT:    [[TMP21:%.*]] = icmp ugt i64 [[TMP20]], -8
++-; CHECK-NEXT:    br i1 [[TMP21]], label %[[FOR_END]], label %[[FOR_BODY_PREHEADER_NEW:.*]]
++-; CHECK:       [[FOR_BODY_PREHEADER_NEW]]:
+++; CHECK-NEXT:    br i1 [[TMP21]], label %[[FOR_END]], label %[[FOR_BODY_PREHEADER9_NEW:.*]]
+++; CHECK:       [[FOR_BODY_PREHEADER9_NEW]]:
++ ; CHECK-NEXT:    [[TMP22:%.*]] = fdiv fast double 1.000000e+00, [[A]]
++ ; CHECK-NEXT:    [[TMP23:%.*]] = fdiv fast double 1.000000e+00, [[A]]
++ ; CHECK-NEXT:    [[TMP24:%.*]] = fdiv fast double 1.000000e+00, [[A]]
++@@ -127,7 +127,7 @@
++ ; CHECK-NEXT:    [[TMP29:%.*]] = fdiv fast double 1.000000e+00, [[A]]
++ ; CHECK-NEXT:    br label %[[FOR_BODY:.*]]
++ ; CHECK:       [[FOR_BODY]]:
++-; CHECK-NEXT:    [[INDVARS_IV:%.*]] = phi i64 [ [[INDVARS_IV_UNR]], %[[FOR_BODY_PREHEADER_NEW]] ], [ [[INDVARS_IV_NEXT_7:%.*]], %[[FOR_BODY]] ]
+++; CHECK-NEXT:    [[INDVARS_IV:%.*]] = phi i64 [ [[INDVARS_IV_UNR]], %[[FOR_BODY_PREHEADER9_NEW]] ], [ [[INDVARS_IV_NEXT_7:%.*]], %[[FOR_BODY]] ]
++ ; CHECK-NEXT:    [[ARRAYIDX:%.*]] = getelementptr inbounds nuw double, ptr [[Y]], i64 [[INDVARS_IV]]
++ ; CHECK-NEXT:    [[T0:%.*]] = load double, ptr [[ARRAYIDX]], align 8, !tbaa [[DOUBLE_TBAA3]]
++ ; CHECK-NEXT:    [[TMP30:%.*]] = fmul fast double [[T0]], [[TMP22]]
++@@ -177,7 +177,7 @@
++ ; CHECK-NEXT:    store double [[TMP37]], ptr [[ARRAYIDX2_7]], align 8, !tbaa [[DOUBLE_TBAA3]]
++ ; CHECK-NEXT:    [[INDVARS_IV_NEXT_7]] = add nuw nsw i64 [[INDVARS_IV]], 8
++ ; CHECK-NEXT:    [[EXITCOND_NOT_7:%.*]] = icmp eq i64 [[INDVARS_IV_NEXT_7]], [[WIDE_TRIP_COUNT]]
++-; CHECK-NEXT:    br i1 [[EXITCOND_NOT_7]], label %[[FOR_END]], label %[[FOR_BODY]], !llvm.loop [[LOOP14:![0-9]+]]
+++; CHECK-NEXT:    br i1 [[EXITCOND_NOT_7]], label %[[FOR_END]], label %[[FOR_BODY]], !llvm.loop [[LOOP13:![0-9]+]]
++ ; CHECK:       [[FOR_END]]:
++ ; CHECK-NEXT:    ret void
++ ;
++@@ -232,9 +232,8 @@
++ ; CHECK: [[LOOP7]] = distinct !{[[LOOP7]], [[META8:![0-9]+]], [[META9:![0-9]+]]}
++ ; CHECK: [[META8]] = !{!"llvm.loop.isvectorized", i32 1}
++ ; CHECK: [[META9]] = !{!"llvm.loop.unroll.runtime.disable"}
++-; CHECK: [[PROF10]] = !{!"branch_weights", i32 4, i32 12}
++-; CHECK: [[LOOP11]] = distinct !{[[LOOP11]], [[META8]], [[META9]]}
++-; CHECK: [[LOOP12]] = distinct !{[[LOOP12]], [[META13:![0-9]+]]}
++-; CHECK: [[META13]] = !{!"llvm.loop.unroll.disable"}
++-; CHECK: [[LOOP14]] = distinct !{[[LOOP14]], [[META8]]}
+++; CHECK: [[LOOP10]] = distinct !{[[LOOP10]], [[META8]], [[META9]]}
+++; CHECK: [[LOOP11]] = distinct !{[[LOOP11]], [[META12:![0-9]+]]}
+++; CHECK: [[META12]] = !{!"llvm.loop.unroll.disable"}
+++; CHECK: [[LOOP13]] = distinct !{[[LOOP13]], [[META8]]}
++ ;.
 diff --git a/third_party/llvm/workspace.bzl b/third_party/llvm/workspace.bzl
-index 32e6a7a..abdee76 100644
+index 0fec012..5bd8dd9 100644
 --- a/third_party/llvm/workspace.bzl
 +++ b/third_party/llvm/workspace.bzl
 @@ -4,8 +4,8 @@ load("//third_party:repo.bzl", "tf_http_archive")
  
  def repo(name):
      """Imports LLVM."""
--    LLVM_COMMIT = "42a8ff877d47131ecb1280a1cc7e5e3c3bca6952"
--    LLVM_SHA256 = "f768c5c3b987f68318b8ab3dd4530e54988dfe7d6bfb9b7c9c96acf503367d50"
-+    LLVM_COMMIT = "2bc22ea02edda5926f3e53f141def9bf212ac1db"
-+    LLVM_SHA256 = "4a034eda852b3c2d448d38e8661cbac45ae2233a29defeb55913fa5205cd29f7"
+-    LLVM_COMMIT = "9625cf6cc0e3e530ea0bed971d85b363f77c49d8"
+-    LLVM_SHA256 = "48a0479efdde83a02ece6a168094aa14e6f819c829eb61a133ec124089643356"
++    LLVM_COMMIT = "741ba8209c1f9bd5b1a145d9c137f5e18bfffb84"
++    LLVM_SHA256 = "45f2faa4d50e9f333c4130c23f3a712cf42f8f8fec4520207f6514344f8b32b0"
  
      tf_http_archive(
          name = name,
-diff --git a/third_party/stablehlo/temporary.patch b/third_party/stablehlo/temporary.patch
-index 0778daf..a42cbd7 100755
---- a/third_party/stablehlo/temporary.patch
-+++ b/third_party/stablehlo/temporary.patch
-@@ -1,70 +1,130 @@
--diff --ruN a/stablehlo/BUILD.bazel b/stablehlo/BUILD.bazel
----- stablehlo/BUILD.bazel
--+++ stablehlo/BUILD.bazel
--@@ -1105,6 +1105,24 @@
--     tblgen = "@llvm-project//mlir:mlir-tblgen",
--     td_file = "stablehlo/transforms/Passes.td",
--     deps = ["@llvm-project//mlir:PassBaseTdFiles"],
--+)
--+
--+cc_library(
--+    name = "stablehlo_broadcast_lowering",
--+    srcs = [
--+        "stablehlo/transforms/StablehloBroadcastLowering.cpp",
--+    ],
--+    hdrs = [
--+        "stablehlo/transforms/StablehloBroadcastLowering.h",
--+    ],
--+    strip_include_prefix = ".",
--+    deps = [
--+        ":stablehlo_ops",
--+        "@llvm-project//llvm:Support",
--+        "@llvm-project//mlir:IR",
--+        "@llvm-project//mlir:ShapeDialect",
--+        "@llvm-project//mlir:Support",
--+    ],
-- )
-- 
-- cc_library(
-+diff --ruN a/stablehlo/stablehlo/conversions/linalg/tests/miscellaneous.mlir b/stablehlo/stablehlo/conversions/linalg/tests/miscellaneous.mlir
-+--- stablehlo/stablehlo/conversions/linalg/tests/miscellaneous.mlir
-++++ stablehlo/stablehlo/conversions/linalg/tests/miscellaneous.mlir
-+@@ -768,7 +768,7 @@
-+ // CHECK-PRIMITIVE: %[[MAP:.+]] = linalg.map
-+ // CHECK-PRIMITIVE-SAME: ins(%[[ARG0]], %[[ARG1]]
-+ // CHECK-PRIMITIVE-SAME: outs(%[[INIT]] : tensor<?xi1>)
-+-// CHECK-PRIMITIVE-NEXT: (%[[A:.+]]: complex<f32>, %[[B:.+]]: complex<f32>) {
-++// CHECK-PRIMITIVE-NEXT: (%[[A:.+]]: complex<f32>, %[[B:.+]]: complex<f32>, %{{.+}}: i1) {
-+ // CHECK-PRIMITIVE: %[[RE1:.+]] = complex.re %[[A]] : complex<f32>
-+ // CHECK-PRIMITIVE: %[[RE2:.+]] = complex.re %[[B]] : complex<f32>
-+ // CHECK-PRIMITIVE: %[[CMP:.+]] = arith.cmpf oeq, %[[RE1]], %[[RE2]] : f32
-+diff --ruN a/stablehlo/stablehlo/conversions/linalg/tests/pointwise.mlir b/stablehlo/stablehlo/conversions/linalg/tests/pointwise.mlir
-+--- stablehlo/stablehlo/conversions/linalg/tests/pointwise.mlir
-++++ stablehlo/stablehlo/conversions/linalg/tests/pointwise.mlir
-+@@ -714,7 +714,7 @@
-+ // CHECK-PRIMITIVE: linalg.map
-+ // CHECK-PRIMITIVE-SAME: ins(
-+ // CHECK-PRIMITIVE-SAME: outs(
-+-// CHECK-PRIMITIVE-NEXT: (%[[LHS_IN:[a-zA-Z0-9]*]]: bf16, %[[RHS_IN:.*]]: bf16) {
-++// CHECK-PRIMITIVE-NEXT: (%[[LHS_IN:[a-zA-Z0-9]*]]: bf16, %[[RHS_IN:.*]]: bf16, %[[RESULT_OUT:.*]]: i1) {
-+ // CHECK-PRIMITIVE-NEXT:   %[[LHS_INT:.*]] = arith.bitcast %[[LHS_IN]] : bf16 to i16
-+ // CHECK-PRIMITIVE-NEXT:   %[[LHS_CMP:.*]] = arith.cmpi slt, %[[LHS_INT]], %[[C0]] : i16
-+ // CHECK-PRIMITIVE-NEXT:   %[[LHS_SUB:.*]] = arith.subi %[[C32767]], %[[LHS_INT]] : i16
-+@@ -937,7 +937,7 @@
-+ // CHECK-PRIMITIVE-SAME:   ins(%[[LHS]], %[[RHS]] : tensor<2x?xf32>, tensor<2x?xf32>)
-+ // CHECK-PRIMITIVE-SAME:   outs(%[[DST]] : tensor<2x?xf32>)
-+ // CHECK-PRIMITIVE-SAME:   {someattr}
-+-// CHECK-PRIMITIVE:      (%[[LHS_:.*]]: f32, %[[RHS_:.*]]: f32) {
-++// CHECK-PRIMITIVE:      (%[[LHS_:.*]]: f32, %[[RHS_:.*]]: f32, %[[RESULT_OUT:.*]]: f32) {
-+ // CHECK-PRIMITIVE:        %[[RES:.*]] = arith.select %[[PRED_ELEM]], %[[LHS_]], %[[RHS_]] : f32
-+ // CHECK-PRIMITIVE:        linalg.yield %[[RES]]
-+ 
-+@@ -978,7 +978,7 @@
-+ // CHECK-PRIMITIVE-SAME:   ins(%[[LHS]], %[[RHS]] : tensor<2x?xf32>, tensor<2x?xf32>)
-+ // CHECK-PRIMITIVE-SAME:   outs(%[[DST]] : tensor<2x?xf32>)
-+ // CHECK-PRIMITIVE-SAME:   {someattr}
-+-// CHECK-PRIMITIVE:      (%[[LHS_:.*]]: f32, %[[RHS_:.*]]: f32) {
-++// CHECK-PRIMITIVE:      (%[[LHS_:.*]]: f32, %[[RHS_:.*]]: f32, %[[RESULT_OUT:.*]]: f32) {
-+ // CHECK-PRIMITIVE:        linalg.yield %[[LHS_]]
-+ 
-+ // -----
-+@@ -1416,7 +1416,7 @@
-+ 
-+ // CHECK-PRIMITIVE: %[[INIT:.*]] = tensor.empty
-+ // CHECK-PRIMITIVE: %[[RESULT:.*]] = linalg.map ins(%[[LB]], %[[X]], %[[UB]] : tensor<4xf32>, tensor<4xf32>, tensor<4xf32>) outs(%[[INIT]] : tensor<4xf32>)
-+-// CHECK-PRIMITIVE: (%[[SCALAR_LB:.*]]: f32, %[[SCALAR_X:.*]]: f32, %[[SCALAR_UB:.*]]: f32)
-++// CHECK-PRIMITIVE: (%[[SCALAR_LB:.*]]: f32, %[[SCALAR_X:.*]]: f32, %[[SCALAR_UB:.*]]: f32, %[[RESULT_OUT:.*]]: f32)
-+ // CHECK-PRIMITIVE:   %[[MAX:.*]] = arith.maximumf %[[SCALAR_LB]], %[[SCALAR_X]] : f32
-+ // CHECK-PRIMITIVE:   %[[MIN:.*]] = arith.minimumf %[[MAX]], %[[SCALAR_UB]] : f32
-+ // CHECK-PRIMITIVE:   linalg.yield %[[MIN]]
-+@@ -1478,7 +1478,7 @@
-+ // CHECK-PRIMITIVE-DAG: %[[SCALAR_LB:.*]] = tensor.extract %[[LB]]
-+ // CHECK-PRIMITIVE-DAG: %[[SCALAR_UB:.*]] = tensor.extract %[[UB]]
-+ // CHECK-PRIMITIVE: %[[RESULT:.*]] = linalg.map ins(%[[X]] : tensor<?xf32>) outs(%[[INIT]] : tensor<?xf32>)
-+-// CHECK-PRIMITIVE: (%[[SCALAR_X:.*]]: f32)
-++// CHECK-PRIMITIVE: (%[[SCALAR_X:.*]]: f32, %[[RESULT_OUT:.*]]: f32)
-+ // CHECK-PRIMITIVE:   %[[MAX:.*]] = arith.maximumf %[[SCALAR_LB]], %[[SCALAR_X]] : f32
-+ // CHECK-PRIMITIVE:   %[[MIN:.*]] = arith.minimumf %[[MAX]], %[[SCALAR_UB]] : f32
-+ // CHECK-PRIMITIVE:   linalg.yield %[[MIN]]
-+@@ -1554,7 +1554,7 @@
-+   // CHECK:   linalg.yield %[[V_NOT]] : i32
-+   // CHECK-PRIMITIVE: %[[CST_N1:.+]] = arith.constant -1 : i32
-+   // CHECK-PRIMITIVE: linalg.map
-+-  // CHECK-PRIMITIVE:   (%[[IN:.+]]: i32)
-++  // CHECK-PRIMITIVE:   (%[[IN:.+]]: i32, %[[RESULT_OUT:.+]]: i32)
-+   // CHECK-PRIMITIVE:   %[[V_NOT:.+]] = arith.xori %[[IN]], %[[CST_N1]] : i32
-+   // CHECK-PRIMITIVE:   linalg.yield %[[V_NOT]] : i32
-+   %0 = "stablehlo.not"(%arg) : (tensor<2x2xi32>) -> tensor<2x2xi32>
-+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp
-+--- stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp
-++++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp
-+@@ -1748,6 +1748,12 @@
-+ 
-+     rewriter.applySignatureConversion(&region.front(), signatureConverter,
-+                                       getTypeConverter());
-++    auto& blocks = linalgOp.getMapper().getBlocks();
-++    if (blocks.empty()) {
-++      return rewriter.notifyMatchFailure(op, "expected at least one block");
-++    }
-++    blocks.front().addArgument(resultType.getElementType(), loc);
-++
-+     auto result = rewriter.createOrFold<tensor::CastOp>(loc, resultType,
-+                                                         linalgOp.getResults());
-+     rewriter.replaceOp(op, result);
-+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToArith.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToArith.cpp
-+--- stablehlo/stablehlo/conversions/linalg/transforms/StablehloToArith.cpp
-++++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloToArith.cpp
-+@@ -33,6 +33,7 @@
-+ 
-+ template <typename OpTy>
-+ struct ScalarHloToFuncPatterns final : OpConversionPattern<OpTy> {
-++  // NOLINTNEXTLINE(clang-diagnostic-shadow-field)
-+   ScalarHloToFuncPatterns(TypeConverter& typeConverter, MLIRContext* context,
-+                           PatternBenefit benefit = 1)
-+       : OpConversionPattern<OpTy>(typeConverter, context, benefit) {}
-+@@ -51,6 +52,7 @@
-+ template <typename OpTy>
-+ struct ScalarHloToArithmeticPattern final : OpConversionPattern<OpTy> {
-+   ScalarHloToArithmeticPattern(
-++      // NOLINTNEXTLINE(clang-diagnostic-shadow-field)
-+       TypeConverter& typeConverter, MLIRContext* context,
-+       llvm::function_ref<bool(Operation*)> filterFn = nullptr,
-+       PatternBenefit benefit = 1)
-+diff --ruN a/stablehlo/stablehlo/dialect/Base.td b/stablehlo/stablehlo/dialect/Base.td
-+--- stablehlo/stablehlo/dialect/Base.td
-++++ stablehlo/stablehlo/dialect/Base.td
-+@@ -152,7 +152,7 @@
-+     AnyTypeOf<[HLO_PerAxisQuantizedSignedInt, HLO_PerAxisQuantizedUnsignedInt], "per-axis integer quantized">;
-+ 
-+ // Token type.
-+-def HLO_Token : Type<CPred<"::llvm::isa<::mlir::stablehlo::TokenType>($_self)">, "token">;
-++def HLO_Token : Type<CPred<"::llvm::isa<TokenType>($_self)">, "token">;
-+ 
-+ // Any integer tensor types
-+ def HLO_IntTensor : RankedTensorOf<[HLO_Int]>;
- diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.cpp b/stablehlo/stablehlo/dialect/StablehloOps.cpp
- --- stablehlo/stablehlo/dialect/StablehloOps.cpp
- +++ stablehlo/stablehlo/dialect/StablehloOps.cpp
--@@ -3275,12 +3275,12 @@
-- // Entry point for Attribute printing, TableGen generated code will handle the
-- // dispatch to the individual classes.
-- void StablehloDialect::printAttribute(Attribute attr,
---                                      DialectAsmPrinter& os) const {
--+                                      DialectAsmPrinter& printer) const {
--   if (auto type_extensions = dyn_cast<TypeExtensionsAttr>(attr)) {
---    hlo::printTypeExtensions(cast<hlo::BoundedAttrInterface>(attr), os);
--+    hlo::printTypeExtensions(cast<hlo::BoundedAttrInterface>(attr), printer);
--     return;
--   }
---  LogicalResult result = generatedAttributePrinter(attr, os);
--+  LogicalResult result = generatedAttributePrinter(attr, printer);
--   (void)result;
--   assert(succeeded(result));
-- }
--diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.h b/stablehlo/stablehlo/dialect/StablehloOps.h
----- stablehlo/stablehlo/dialect/StablehloOps.h
--+++ stablehlo/stablehlo/dialect/StablehloOps.h
--@@ -93,13 +93,14 @@
--   Type parseType(DialectAsmParser& parser) const override;
-- 
--   // Prints a type registered to this dialect.
---  void printType(Type type, DialectAsmPrinter& os) const override;
--+  void printType(Type type, DialectAsmPrinter& printer) const override;
-- 
--   // Parses an attribute registered to this dialect.
--   Attribute parseAttribute(DialectAsmParser& parser, Type type) const override;
-- 
--   // Prints an attribute registered to this dialect.
---  void printAttribute(Attribute attr, DialectAsmPrinter& os) const override;
--+  void printAttribute(Attribute attr,
--+                      DialectAsmPrinter& printer) const override;
-- 
--   // Get the set dialect version.
--   std::optional<StablehloDialectVersion> getVersion() const;
-+@@ -3164,6 +3164,7 @@
-+ using mlir::hlo::printVariadicOperandWithAttribute;
-+ using mlir::hlo::printVariadicSameOperandsAndResultType;
-+ 
-++using mlir::stablehlo::TokenType;
-+ #define GET_OP_CLASSES
-+ #include "stablehlo/dialect/StablehloOps.cpp.inc"
-+ 
- diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtilTest.cpp b/stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtilTest.cpp
- --- stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtilTest.cpp
- +++ stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtilTest.cpp
-@@ -89,6 +149,71 @@ diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/MlirBuilderTest.cpp b/
-  #include "llvm/Support/raw_ostream.h"
-  #include "mlir/Dialect/Func/IR/FuncOps.h"
-  #include "mlir/IR/BuiltinOps.h"
-+diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.cpp b/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.cpp
-+--- stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.cpp
-++++ stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.cpp
-+@@ -29,9 +29,35 @@
-+ #include "stablehlo/dialect/TypeInference.h"
-+ #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
-+ #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
-++#include "third_party/llvm/llvm-project/mlir/include/mlir/IR/Attributes.h"
-+ 
-+ namespace mlir {
-+ namespace stablehlo {
-++
-++///////////////
-++// Dialect Helpers
-++///////////////
-++
-++MlirOp AttachFrontendAttribute(MlirBuilder& builder, MlirOp op, StringRef name,
-++                               Attribute value) {
-++  constexpr char kFrontendAttrName[] = "mhlo.frontend_attributes";
-++  Operation* mlirOp = unwrap(op).getDefiningOp();
-++  SmallVector<NamedAttribute> attrs;
-++  DictionaryAttr frontendAttr =
-++      mlirOp->getAttrOfType<DictionaryAttr>(kFrontendAttrName);
-++  if (frontendAttr) {
-++    for (NamedAttribute attr : frontendAttr.getValue()) {
-++      // Populate all non-conflicting names.
-++      if (attr.getName() != name) {
-++        attrs.push_back(attr);
-++      }
-++    }
-++  }
-++  attrs.emplace_back(name, value);
-++  mlirOp->setAttr(kFrontendAttrName,
-++                  DictionaryAttr::get(&builder.getContext(), attrs));
-++  return op;
-++}
-+ 
-+ /////////////////
-+ // MANUAL APIs
-+diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.h b/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.h
-+--- stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.h
-++++ stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.h
-+@@ -27,9 +27,22 @@
-+ #include "stablehlo/dialect/StablehloOps.h"
-+ #include "stablehlo/integrations/cpp/builder/AttrTypeBuilderUtil.h"
-+ #include "stablehlo/integrations/cpp/builder/MlirBuilder.h"
-++#include "third_party/llvm/llvm-project/mlir/include/mlir/IR/Attributes.h"
-+ 
-+ namespace mlir {
-+ namespace stablehlo {
-++
-++///////////////
-++// Dialect Helpers
-++///////////////
-++
-++// Appends or overwrites an entry in the `mhlo.frontend_attributes` attribute
-++//
-++// of the given op.
-++// Ex:
-++//   stablehlo.abs %0 { mhlo.frontend_attributes = { "foo" = 123 } }
-++MlirOp AttachFrontendAttribute(MlirBuilder& builder, MlirOp op, StringRef name,
-++                               Attribute value);
-+ 
-+ /////////////////
-+ // MANUAL APIs
- diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilderTest.cpp b/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilderTest.cpp
- --- stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilderTest.cpp
- +++ stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilderTest.cpp
-@@ -101,818 +226,267 @@ diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilderTest.c
-  #include "mlir/IR/BuiltinAttributes.h"
-  #include "mlir/IR/BuiltinOps.h"
-  #include "mlir/IR/DialectRegistry.h"
--diff --ruN a/stablehlo/stablehlo/tests/BUILD.bazel b/stablehlo/stablehlo/tests/BUILD.bazel
----- stablehlo/stablehlo/tests/BUILD.bazel
--+++ stablehlo/stablehlo/tests/BUILD.bazel
--@@ -102,6 +102,8 @@
--     deps = [
--         ":test_utils_inc_gen",
--         "//:stablehlo_assembly_format",
--+        "//:stablehlo_broadcast_lowering",
--+        "//:stablehlo_ops",
--         "@llvm-project//llvm:Support",
--         "@llvm-project//mlir:FuncDialect",
--         "@llvm-project//mlir:IR",
--diff --ruN a/stablehlo/stablehlo/tests/TestUtils.cpp b/stablehlo/stablehlo/tests/TestUtils.cpp
----- stablehlo/stablehlo/tests/TestUtils.cpp
--+++ stablehlo/stablehlo/tests/TestUtils.cpp
--@@ -19,6 +19,7 @@
-- #include <utility>
-- 
-- #include "llvm/ADT/STLExtras.h"
--+#include "llvm/ADT/SmallVector.h"
-- #include "llvm/Support/Casting.h"
-- #include "mlir/Dialect/Func/IR/FuncOps.h"
-- #include "mlir/Dialect/Shape/IR/Shape.h"
--@@ -35,11 +36,35 @@
-- #include "mlir/Support/LLVM.h"
-- #include "mlir/Support/LogicalResult.h"
-- #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
--+#include "stablehlo/dialect/StablehloOps.h"
--+#include "stablehlo/transforms/StablehloBroadcastLowering.h"
--+#include "third_party/llvm/llvm-project/mlir/include/mlir/IR/TypeRange.h"
-- 
-- namespace mlir {
-- namespace hlo {
-- 
-- namespace {
--+
--+struct BroadcastValuesPattern : public RewritePattern {
--+  explicit BroadcastValuesPattern(MLIRContext* context)
--+      : RewritePattern("hlo_test_broadcast.numpy_broadcast", 1, context) {}
--+  LogicalResult matchAndRewrite(Operation* op,
--+                                PatternRewriter& rewriter) const override {
--+    // Process all operands
--+    SmallVector<Value> operands = llvm::to_vector(op->getOperands());
--+    auto broadcastedOperands =
--+        stablehlo::numpyBroadcastIfNeeded(rewriter, operands);
--+    if (failed(broadcastedOperands)) return failure();
--+
--+    // Replace with custom call to avoid pattern reapplication
--+    auto customCall = stablehlo::CustomCallOp::create(
--+        rewriter, op->getLoc(), op->getResultTypes(), *broadcastedOperands);
--+    customCall.setCallTargetName("numpy_broadcasted");
--+    customCall.setHasSideEffect(true);
--+    rewriter.replaceOp(op, customCall);
--+    return success();
--+  }
--+};
-+@@ -1592,5 +1592,57 @@
-+   EXPECT_EQ(expected, debugString(*module));
-+ }
-  
-- struct InferReturnTypesPattern : public RewritePattern {
--   explicit InferReturnTypesPattern(MLIRContext *context)
--@@ -137,36 +162,55 @@
--   }
-- };
-- 
--+#define GEN_PASS_DEF_HLOTESTBROADCASTPASS
-- #define GEN_PASS_DEF_HLOTESTINFERPASS
-- #define GEN_PASS_DEF_HLOTESTSPECULATABILITYPASS
-- #include "stablehlo/tests/TestUtils.h.inc"
-- 
--+struct HloTestBroadcastPass
--+    : public impl::HloTestBroadcastPassBase<HloTestBroadcastPass> {
--+  LogicalResult initialize(MLIRContext* context) override {
--+    RewritePatternSet patterns(context);
--+    patterns.add<BroadcastValuesPattern>(context);
--+    patterns_ = std::move(patterns);
--+    return success();
-++TEST(MlirBuilderTest, FrontendAttributesAppend) {
-++  std::string expected = R"mlir(module {
-++  func.func @main(%arg0: tensor<2xf32>) -> tensor<2xf32> {
-++    %0 = stablehlo.exponential %arg0 {mhlo.frontend_attributes = {bar = "hello", foo = 123 : i32}} : tensor<2xf32>
-++    return %0 : tensor<2xf32>
- +  }
--+
--+  void runOnOperation() override {
--+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns_))))
--+      return signalPassFailure();
-++})mlir";
-++
-++  StablehloModuleBuilder mb;
-++  {
-++    Location funcLoc = fileLineColLoc(mb->getContext(), "main.mlir", 1, 1);
-++    func::FunctionBuilder fb(mb.get(), "main", funcLoc);
-++    auto type = makeTensorType(fb.getContext(), {2}, ElementType::F32);
-++    auto arg0 = func::Argument(fb, type);
-++    auto exp = Exp(arg0);
-++    stablehlo::AttachFrontendAttribute(
-++        fb, exp, "foo", fb.getOpBuilder().getI32IntegerAttr(123));
-++    stablehlo::AttachFrontendAttribute(
-++        fb, exp, "bar", fb.getOpBuilder().getStringAttr("hello"));
-++    func::Return(fb, {exp});
- +  }
- +
--+ private:
--+  FrozenRewritePatternSet patterns_;
--+};
--+
-- struct HloTestInferPass : public impl::HloTestInferPassBase<HloTestInferPass> {
--   LogicalResult initialize(MLIRContext *context) override {
---    RewritePatternSet patterns_(context);
---    patterns_.add<InferReturnTypesPattern>(context);
---    patterns_.add<ReifyReturnTypeShapesPattern>(context);
---    patterns = std::move(patterns_);
--+    RewritePatternSet patterns(context);
--+    patterns.add<InferReturnTypesPattern>(context);
--+    patterns.add<ReifyReturnTypeShapesPattern>(context);
--+    patterns_ = std::move(patterns);
--     return success();
--   }
-- 
--   void runOnOperation() override {
---    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
--+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns_))))
--       return signalPassFailure();
--   }
-- 
--  private:
---  FrozenRewritePatternSet patterns;
--+  FrozenRewritePatternSet patterns_;
-- };
-- 
-- struct HloTestSpeculatabilityPass
--     : public impl::HloTestSpeculatabilityPassBase<HloTestSpeculatabilityPass> {
--   LogicalResult initialize(MLIRContext *context) override {
---    RewritePatternSet patterns_(context);
---    patterns_.add<IsSpeculatablePattern>(context);
---    patterns_.add<IsNotSpeculatablePattern>(context);
---    patterns_.add<IsRecursivelySpeculatablePattern>(context);
---    patterns = std::move(patterns_);
--+    RewritePatternSet patterns(context);
--+    patterns.add<IsSpeculatablePattern>(context);
--+    patterns.add<IsNotSpeculatablePattern>(context);
--+    patterns.add<IsRecursivelySpeculatablePattern>(context);
--+    patterns_ = std::move(patterns);
--     return success();
--   }
-- 
--@@ -175,11 +219,11 @@
--     config.setMaxIterations(1)
--         .setUseTopDownTraversal(true)
--         .setRegionSimplificationLevel(GreedySimplifyRegionLevel::Disabled);
---    (void)applyPatternsGreedily(getOperation(), std::move(patterns));
--+    (void)applyPatternsGreedily(getOperation(), std::move(patterns_));
--   }
-- 
--  private:
---  FrozenRewritePatternSet patterns;
--+  FrozenRewritePatternSet patterns_;
-- };
-- 
-- #define GEN_PASS_REGISTRATION
--diff --ruN a/stablehlo/stablehlo/tests/TestUtils.td b/stablehlo/stablehlo/tests/TestUtils.td
----- stablehlo/stablehlo/tests/TestUtils.td
--+++ stablehlo/stablehlo/tests/TestUtils.td
--@@ -16,6 +16,11 @@
-- 
-- include "mlir/Pass/PassBase.td"
-- 
--+def HloTestBroadcastPass : Pass<"hlo-test-broadcast", "func::FuncOp"> {
--+  let summary = "Uses test ops to invoke BroadcastUtils methods.";
--+  let dependentDialects = ["stablehlo::StablehloDialect"];
--+}
--+
-- def HloTestInferPass : Pass<"hlo-test-infer", "func::FuncOp"> {
--   let summary = "Uses test ops to invoke InferShapedTypeOpInterface methods.";
--   let dependentDialects = ["shape::ShapeDialect"];
--diff --ruN a/stablehlo/stablehlo/tests/ops_broadcasting.mlir b/stablehlo/stablehlo/tests/ops_broadcasting.mlir
----- stablehlo/stablehlo/tests/ops_broadcasting.mlir
--+++ stablehlo/stablehlo/tests/ops_broadcasting.mlir
--@@ -0,0 +1,249 @@
--+// RUN: stablehlo-opt %s --hlo-test-broadcast --split-input-file --allow-unregistered-dialect | FileCheck %s
--+
--+/////////
--+// Scalar broadcast tests.
--+
--+// [] x [1] => [1]
--+// CHECK-LABEL: func @scalar_broadcast_scalar_x_1
--+func.func @scalar_broadcast_scalar_x_1(%arg0: tensor<f64>, %arg1: tensor<1xf64>) -> !stablehlo.token {
--+  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [] : (tensor<f64>) -> tensor<1xf64>
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST]], %arg1)
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<f64>, tensor<1xf64>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// -----
--+
--+// [1] x [] => [1]
--+// CHECK-LABEL: func @scalar_broadcast_1_x_scalar
--+func.func @scalar_broadcast_1_x_scalar(%arg0: tensor<1xf64>, %arg1: tensor<f64>) -> !stablehlo.token {
--+  // CHECK: %[[RHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [] : (tensor<f64>) -> tensor<1xf64>
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %[[RHS_BCAST]])
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<1xf64>, tensor<f64>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// -----
--+
--+// [] x [10] => [10]
--+// CHECK-LABEL: func @scalar_broadcast_scalar_x_10
--+func.func @scalar_broadcast_scalar_x_10(%arg0: tensor<f64>, %arg1: tensor<10xf64>) -> !stablehlo.token {
--+  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [] : (tensor<f64>) -> tensor<10xf64>
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST]], %arg1)
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<f64>, tensor<10xf64>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
-++  OwningOpRef<ModuleOp> module = mb->build();
-++  EXPECT_EQ(expected, debugString(*module));
- +}
- +
--+// -----
--+
--+// [<=10] x [] => [<=10]
--+// CHECK-LABEL: func @scalar_broadcast_b10_x_scalar
--+func.func @scalar_broadcast_b10_x_scalar(%arg0: tensor<?xf64, #stablehlo.bounds<10>>, %arg1: tensor<f64>) -> !stablehlo.token {
--+  // CHECK: %[[RHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [] : (tensor<f64>) -> tensor<10xf64>
--+  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg0, dim = 0
--+  // CHECK: %[[RHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[RHS_BCAST]], %[[DIM_SIZE]], dim = 0
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %[[RHS_BCAST_DYN]])
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<?xf64, #stablehlo.bounds<10>>, tensor<f64>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// -----
--+
--+// [] x [<=10] => [<=10]
--+// CHECK-LABEL: func @scalar_broadcast_scalar_x_b10
--+func.func @scalar_broadcast_scalar_x_b10(%arg0: tensor<f64>, %arg1: tensor<?xf64, #stablehlo.bounds<10>>) -> !stablehlo.token {
--+  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [] : (tensor<f64>) -> tensor<10xf64>
--+  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg1, dim = 0
--+  // CHECK: %[[LHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[LHS_BCAST]], %[[DIM_SIZE]], dim = 0
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST_DYN]], %arg1)
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<f64>, tensor<?xf64, #stablehlo.bounds<10>>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// -----
--+
--+// [] x [1, <=10, 1] => [1, <=10, 1]
--+// CHECK-LABEL: func @scalar_broadcast_scalar_x_1_b10_1
--+func.func @scalar_broadcast_scalar_x_1_b10_1(%arg0: tensor<f64>, %arg1: tensor<1x?x1xf64, #stablehlo.bounds<?, 10, ?>>) -> !stablehlo.token {
--+  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [] : (tensor<f64>) -> tensor<1x10x1xf64>
--+  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg1, dim = 1
--+  // CHECK: %[[LHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[LHS_BCAST]], %[[DIM_SIZE]], dim = 1
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST_DYN]], %arg1)
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<f64>, tensor<1x?x1xf64, #stablehlo.bounds<?, 10, ?>>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// [10, 1, <=5] x [] => [10, 1, <=5]
--+// CHECK-LABEL: func @scalar_broadcast_10_1_b5_x_scalar
--+func.func @scalar_broadcast_10_1_b5_x_scalar(%arg0: tensor<10x1x?xf64, #stablehlo.bounds<?, ?, 5>>, %arg1: tensor<f64>) -> !stablehlo.token {
--+  // CHECK: %[[RHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [] : (tensor<f64>) -> tensor<10x1x5xf64>
--+  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg0, dim = 2
--+  // CHECK: %[[RHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[RHS_BCAST]], %[[DIM_SIZE]], dim = 2
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %[[RHS_BCAST_DYN]])
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<10x1x?xf64, #stablehlo.bounds<?, ?, 5>>, tensor<f64>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+//////
--+// 1-D SCALAR TESTS
--+
--+// [1] x [1] => [1]
--+// [1] x [10] => [1]
--+// [<=10] x [1] => [<=10]
--+// [1] x [<=10] => [<=10]
--+// [1] x [1, <=10, 1] => [1, <=10, 1]
--+
--+
--+// [1] x [1] => [1]
--+// CHECK-LABEL: func @single_dim_scalar_1_x_1
--+func.func @single_dim_scalar_1_x_1(%arg0: tensor<1xf64>, %arg1: tensor<1xf64>) -> !stablehlo.token {
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %arg1)
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<1xf64>, tensor<1xf64>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// -----
--+
--+// [1] x [10] => [10]
--+// CHECK-LABEL: func @single_dim_scalar_1_x_10
--+func.func @single_dim_scalar_1_x_10(%arg0: tensor<1xf64>, %arg1: tensor<10xf64>) -> !stablehlo.token {
--+  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [0] : (tensor<1xf64>) -> tensor<10xf64>
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST]], %arg1)
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<1xf64>, tensor<10xf64>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// -----
--+
--+// [<=10] x [1] => [<=10]
--+// CHECK-LABEL: func @single_dim_scalar_b10_x_1
--+func.func @single_dim_scalar_b10_x_1(%arg0: tensor<?xf64, #stablehlo.bounds<10>>, %arg1: tensor<1xf64>) -> !stablehlo.token {
--+  // CHECK: %[[RHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [0] : (tensor<1xf64>) -> tensor<10xf64>
--+  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg0, dim = 0
--+  // CHECK: %[[RHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[RHS_BCAST]], %[[DIM_SIZE]], dim = 0
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %[[RHS_BCAST_DYN]])
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<?xf64, #stablehlo.bounds<10>>, tensor<1xf64>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// -----
--+
--+// [1] x [<=10] => [<=10]
--+// CHECK-LABEL: func @single_dim_scalar_1_x_b10
--+func.func @single_dim_scalar_1_x_b10(%arg0: tensor<1xf64>, %arg1: tensor<?xf64, #stablehlo.bounds<10>>) -> !stablehlo.token {
--+  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [0] : (tensor<1xf64>) -> tensor<10xf64>
--+  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg1, dim = 0
--+  // CHECK: %[[LHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[LHS_BCAST]], %[[DIM_SIZE]], dim = 0
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST_DYN]], %arg1)
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<1xf64>, tensor<?xf64, #stablehlo.bounds<10>>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// [<=10] x [<=10] => [<=10] // PT layer must ensure these are identical!
--+// CHECK-LABEL: func @single_dim_scalar_b10_x_b10
--+func.func @single_dim_scalar_b10_x_b10(%arg0: tensor<?xf64, #stablehlo.bounds<10>>, %arg1: tensor<?xf64, #stablehlo.bounds<10>>) -> !stablehlo.token {
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %arg1)
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<?xf64, #stablehlo.bounds<10>>, tensor<?xf64, #stablehlo.bounds<10>>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// -----
--+
--+// [1] x [1, <=10, 1] => [1, <=10, 1]
--+// CHECK-LABEL: func @single_dim_scalar_1_x_1_b10_1
--+func.func @single_dim_scalar_1_x_1_b10_1(%arg0: tensor<1xf64>, %arg1: tensor<1x?x1xf64, #stablehlo.bounds<?, 10, ?>>) -> !stablehlo.token {
--+  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [2] : (tensor<1xf64>) -> tensor<1x10x1xf64>
--+  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg1, dim = 1
--+  // CHECK: %[[LHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[LHS_BCAST]], %[[DIM_SIZE]], dim = 1
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST_DYN]], %arg1)
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<1xf64>, tensor<1x?x1xf64, #stablehlo.bounds<?, 10, ?>>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// -----
--+
--+// [10, 1, <=5] x [1] => [10, 1, <=5]
--+// CHECK-LABEL: func @single_dim_scalar_10_1_b5_x_1
--+func.func @single_dim_scalar_10_1_b5_x_1(%arg0: tensor<10x1x?xf64, #stablehlo.bounds<?, ?, 5>>, %arg1: tensor<1xf64>) -> !stablehlo.token {
--+  // CHECK: %[[RHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [2] : (tensor<1xf64>) -> tensor<10x1x5xf64>
--+  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg0, dim = 2
--+  // CHECK: %[[RHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[RHS_BCAST]], %[[DIM_SIZE]], dim = 2
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %[[RHS_BCAST_DYN]])
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<10x1x?xf64, #stablehlo.bounds<?, ?, 5>>, tensor<1xf64>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+
--+//////
--+// N-D Tests
--+
--+// [1, 2] x [1, 2] => [1, 2]
--+// CHECK-LABEL: func @tensor_no_broadcast_match
--+func.func @tensor_no_broadcast_match(%arg0: tensor<1x2xf64>, %arg1: tensor<1x2xf64>) -> !stablehlo.token {
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %arg1)
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<1x2xf64>, tensor<1x2xf64>) ->  !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// [10, 1] x [1, 1] => [10, 1]
--+// CHECK-LABEL: func @tensor_broadcast_10_1_x_1_1
--+func.func @tensor_broadcast_10_1_x_1_1(%arg0: tensor<10x1xf64>, %arg1: tensor<1x1xf64>) -> !stablehlo.token {
--+  // CHECK: %[[RHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [0, 1] : (tensor<1x1xf64>) -> tensor<10x1xf64>
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %[[RHS_BCAST]])
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<10x1xf64>, tensor<1x1xf64>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// -----
--+
--+// [<=10, 1] x [1, 10] => [<=10, 10]
--+// CHECK-LABEL: func @tensor_broadcast_b10_1_x_1_10
--+func.func @tensor_broadcast_b10_1_x_1_10(%arg0: tensor<?x1xf64, #stablehlo.bounds<10, ?>>, %arg1: tensor<1x10xf64>) -> !stablehlo.token {
--+  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [0, 1] : (tensor<?x1xf64, #stablehlo.bounds<10, ?>>) -> tensor<?x10xf64, #stablehlo.bounds<10, ?>>
--+  // CHECK: %[[RHS_BCAST_STATIC:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [0, 1] : (tensor<1x10xf64>) -> tensor<10x10xf64>
--+  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg0, dim = 0
--+  // CHECK: %[[RHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[RHS_BCAST_STATIC]], %[[DIM_SIZE]], dim = 0
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST]], %[[RHS_BCAST_DYN]])
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<?x1xf64, #stablehlo.bounds<10, ?>>, tensor<1x10xf64>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// -----
--+
--+// [<=10, 1] x [1, <=10] => [<=10, <=10]
--+// CHECK-LABEL: func @tensor_broadcast_b10_1_x_1_b10
--+func.func @tensor_broadcast_b10_1_x_1_b10(
--+  %arg0: tensor<?x1xf64, #stablehlo.bounds<10, ?>>,
--+  %arg1: tensor<1x?xf64, #stablehlo.bounds<?, 10>>
--+) -> !stablehlo.token {
--+  // CHECK: %[[LHS_BCAST_STATIC:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [0, 1] : (tensor<?x1xf64, #stablehlo.bounds<10, ?>>) -> tensor<?x10xf64, #stablehlo.bounds<10, ?>>
--+  // CHECK: %[[ARG1_DIM1_SIZE:.+]] = stablehlo.get_dimension_size %arg1, dim = 1
--+  // CHECK: %[[LHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[LHS_BCAST_STATIC]], %[[ARG1_DIM1_SIZE]], dim = 1
--+  // CHECK: %[[RHS_BCAST_STATIC:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [0, 1] : (tensor<1x?xf64, #stablehlo.bounds<?, 10>>) -> tensor<10x?xf64, #stablehlo.bounds<?, 10>>
--+  // CHECK: %[[ARG0_DIM0_SIZE:.+]] = stablehlo.get_dimension_size %arg0, dim = 0
--+  // CHECK: %[[RHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[RHS_BCAST_STATIC]], %[[ARG0_DIM0_SIZE]], dim = 0
--+  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST_DYN]], %[[RHS_BCAST_DYN]])
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (
--+    tensor<?x1xf64, #stablehlo.bounds<10, ?>>,
--+    tensor<1x?xf64, #stablehlo.bounds<?, 10>>
--+  ) -> !stablehlo.token
--+  return %0 : !stablehlo.token
--+}
--+
--+// -----
--+
--+//////
--+// N-ary broadcast tests.
--+
-++TEST(MlirBuilderTest, FrontendAttributesOverwrite) {
-++  std::string expected = R"mlir(module {
-++  func.func @main(%arg0: tensor<2xf32>) -> tensor<2xf32> {
-++    %0 = stablehlo.exponential %arg0 {mhlo.frontend_attributes = {foo = 456 : i32}} : tensor<2xf32>
-++    return %0 : tensor<2xf32>
-++  }
-++})mlir";
-++
-++  StablehloModuleBuilder mb;
-++  {
-++    Location funcLoc = fileLineColLoc(mb->getContext(), "main.mlir", 1, 1);
-++    func::FunctionBuilder fb(mb.get(), "main", funcLoc);
-++    auto type = makeTensorType(fb.getContext(), {2}, ElementType::F32);
-++    auto arg0 = func::Argument(fb, type);
-++    auto exp = Exp(arg0);
-++    stablehlo::AttachFrontendAttribute(
-++        fb, exp, "foo", fb.getOpBuilder().getI32IntegerAttr(123));
-++    stablehlo::AttachFrontendAttribute(
-++        fb, exp, "foo", fb.getOpBuilder().getI32IntegerAttr(456));
-++    func::Return(fb, {exp});
-++  }
- +
--+// [<=10, 1] x [1, <=10] x [1] => [<=10, <=10]
--+// CHECK-LABEL: func @nary_broadcast_b10_1_x_1_b10_x_1
--+func.func @nary_broadcast_b10_1_x_1_b10_x_1(
--+  %arg0: tensor<?x1xf64, #stablehlo.bounds<10, ?>>,
--+  %arg1: tensor<1x?xf64, #stablehlo.bounds<?, 10>>,
--+  %arg2: tensor<1xf64>
--+) -> !stablehlo.token {
--+  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1, %arg2) : (tensor<?x1xf64, #stablehlo.bounds<10, ?>>, tensor<1x?xf64, #stablehlo.bounds<?, 10>>, tensor<1xf64>) -> !stablehlo.token
--+  return %0 : !stablehlo.token
-++  OwningOpRef<ModuleOp> module = mb->build();
-++  EXPECT_EQ(expected, debugString(*module));
- +}
- +
-+ }  // namespace stablehlo
-+ }  // namespace mlir
-+diff --ruN a/stablehlo/stablehlo/reference/InterpreterOps.cpp b/stablehlo/stablehlo/reference/InterpreterOps.cpp
-+--- stablehlo/stablehlo/reference/InterpreterOps.cpp
-++++ stablehlo/stablehlo/reference/InterpreterOps.cpp
-+@@ -46,6 +46,7 @@
-+ #include "stablehlo/reference/ProcessGrid.h"
-+ #include "stablehlo/reference/Value.h"
-+ 
-++using mlir::stablehlo::TokenType;
-+ #define GET_OP_CLASSES
-+ #include "stablehlo/reference/InterpreterOps.cpp.inc"
-+ 
- diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir
- --- stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir
- +++ stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir
--@@ -576,16 +576,19 @@
-- // ReshapeOp
-- 
-- // CHECK-LABEL: func @reshape_fold
---func.func @reshape_fold() -> (tensor<1xi32>, tensor<2x2xi32>) {
---  %c0 = stablehlo.constant dense<2> : tensor<i32>
--+func.func @reshape_fold() -> (tensor<1xf32>, tensor<2x2xi32>, tensor<3x2xcomplex<f32>>) {
--+  %c0 = stablehlo.constant dense<2.0> : tensor<f32>
--   %c1 = stablehlo.constant dense<[1, 2, 3, 4]> : tensor<4xi32>
---  %0 = stablehlo.reshape %c0 : (tensor<i32>) -> tensor<1xi32>
--+  %c2 = stablehlo.constant dense<(1.0,2.0)> : tensor<2x3xcomplex<f32>>
--+  %0 = stablehlo.reshape %c0 : (tensor<f32>) -> tensor<1xf32>
--   %1 = stablehlo.reshape %c1 : (tensor<4xi32>) -> tensor<2x2xi32>
-+@@ -22,21 +22,24 @@
-+ // CHECK-LABEL: func.func @broadcast_in_dim_fold_splat
-+ // CHECK-SAME:   ([[ARG0:%.+]]: tensor<3x3xi32>)
-+ func.func @broadcast_in_dim_fold_splat(%arg0: tensor<3x3xi32>)
-+-  -> (tensor<6xi32>, tensor<3xf32>, tensor<3x3xi32>) {
-++  -> (tensor<6xi32>, tensor<3xf32>, tensor<5xcomplex<f32>>, tensor<3x3xi32>) {
-+   %c0 = stablehlo.constant dense<5> : tensor<i32>
-+   %c1 = stablehlo.constant dense<3.0> : tensor<f32>
-+-  %c2 = stablehlo.constant dense<1> : tensor<1x3xi32>
-++  %c2 = stablehlo.constant dense<(1.0,2.0)> : tensor<complex<f32>>
-++  %c3 = stablehlo.constant dense<1> : tensor<1x3xi32>
-+ 
-+   %0 = stablehlo.broadcast_in_dim %c0, dims = [] : (tensor<i32>) -> tensor<6xi32>
-+   %1 = stablehlo.broadcast_in_dim %c1, dims = [] : (tensor<f32>) -> tensor<3xf32>
-+-  %2 = stablehlo.broadcast_in_dim %c2, dims = [1, 0] : (tensor<1x3xi32>) -> tensor<3x3xi32>
-++  %2 = stablehlo.broadcast_in_dim %c2, dims = [] : (tensor<complex<f32>>) -> tensor<5xcomplex<f32>>
-++  %3 = stablehlo.broadcast_in_dim %c3, dims = [1, 0] : (tensor<1x3xi32>) -> tensor<3x3xi32>
-+ 
-+   // CHECK-DAG:  [[R0:%.+]] = stablehlo.constant dense<5> : tensor<6xi32>
-+   // CHECK-DAG:  [[R1:%.+]] = stablehlo.constant dense<3.000000e+00> : tensor<3xf32>
-+-  // CHECK-DAG:  [[R2:%.+]] = stablehlo.constant dense<1> : tensor<3x3xi32>
- -
---  // CHECK-DAG:  [[CST1:%.+]] = stablehlo.constant dense<2> : tensor<1xi32>
---  // CHECK-DAG:  [[CST2:%.+]] = stablehlo.constant dense<{{\[\[1, 2\], \[3, 4\]\]}}> : tensor<2x2xi32>
---  // CHECK-NEXT: return [[CST1]], [[CST2]]
---  return %0, %1 : tensor<1xi32>, tensor<2x2xi32>
--+  %2 = stablehlo.reshape %c2 : (tensor<2x3xcomplex<f32>>) -> tensor<3x2xcomplex<f32>>
-+-  // CHECK-NEXT: return [[R0]], [[R1]], [[R2]]
-+-  return %0, %1, %2 : tensor<6xi32>, tensor<3xf32>, tensor<3x3xi32>
-++  // CHECK-DAG:  [[R2:%.+]] = stablehlo.constant dense<(1.0{{.*}},2.0{{.*}})> : tensor<5xcomplex<f32>>
-++  // CHECK-DAG:  [[R3:%.+]] = stablehlo.constant dense<1> : tensor<3x3xi32>
- +
--+  // CHECK-DAG:  [[RESULT0:%.+]] = stablehlo.constant dense<2.0{{.*}}> : tensor<1xf32>
--+  // CHECK-DAG:  [[RESULT1:%.+]] = stablehlo.constant dense<{{\[\[1, 2\], \[3, 4\]\]}}> : tensor<2x2xi32>
--+  // CHECK-DAG:  [[RESULT2:%.+]] = stablehlo.constant dense<(1.0{{.*}},2.0{{.*}})> : tensor<3x2xcomplex<f32>>
--+  // CHECK-NEXT: return [[RESULT0]], [[RESULT1]], [[RESULT2]]
--+  return %0, %1, %2 : tensor<1xf32>, tensor<2x2xi32>, tensor<3x2xcomplex<f32>>
-++  // CHECK-NEXT: return [[R0]], [[R1]], [[R2]], [[R3]]
-++  return %0, %1, %2, %3 : tensor<6xi32>, tensor<3xf32>, tensor<5xcomplex<f32>>, tensor<3x3xi32>
-  }
-  
-  // -----
--diff --ruN a/stablehlo/stablehlo/transforms/StablehloBroadcastLowering.cpp b/stablehlo/stablehlo/transforms/StablehloBroadcastLowering.cpp
----- stablehlo/stablehlo/transforms/StablehloBroadcastLowering.cpp
--+++ stablehlo/stablehlo/transforms/StablehloBroadcastLowering.cpp
--@@ -0,0 +1,293 @@
--+/* Copyright 2025 The StableHLO Authors.
--+
--+Licensed under the Apache License, Version 2.0 (the "License");
--+you may not use this file except in compliance with the License.
--+You may obtain a copy of the License at
--+
--+    http://www.apache.org/licenses/LICENSE-2.0
--+
--+Unless required by applicable law or agreed to in writing, software
--+distributed under the License is distributed on an "AS IS" BASIS,
--+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
--+See the License for the specific language governing permissions and
--+limitations under the License.
--+==============================================================================*/
--+
--+#include "stablehlo/transforms/StablehloBroadcastLowering.h"
--+
--+#include <algorithm>
--+#include <cassert>
--+#include <cstddef>
--+#include <cstdint>
--+#include <string>
--+#include <utility>
--+
--+#include "llvm/ADT/STLExtras.h"
--+#include "llvm/Support/Debug.h"
--+#include "llvm/Support/raw_ostream.h"
--+#include "mlir/IR/Builders.h"
--+#include "mlir/IR/BuiltinTypeInterfaces.h"
--+#include "mlir/IR/BuiltinTypes.h"
--+#include "mlir/IR/Diagnostics.h"
--+#include "mlir/IR/Location.h"
--+#include "mlir/IR/Types.h"
--+#include "mlir/IR/Value.h"
--+#include "mlir/Support/LLVM.h"
--+#include "stablehlo/dialect/StablehloOps.h"
--+#include "third_party/llvm/llvm-project/llvm/include/llvm/ADT/Sequence.h"
--+#include "third_party/llvm/llvm-project/llvm/include/llvm/ADT/SmallVector.h"
--+
--+#define DEBUG_TYPE "stablehlo-broadcast-lowering"
--+
--+namespace mlir {
--+namespace stablehlo {
--+
--+/////
--+// Bounded dynamism broadcasting
--+
--+namespace {
--+
--+DimensionInfo getDimensionInfo(Value op, mlir::RankedTensorType tensorType,
--+                               TypeExtensionsAttr encoding,
--+                               int64_t dim) {
--+  if (!encoding || !mlir::ShapedType::isDynamic(tensorType.getDimSize(dim)))
--+    return DimensionInfo{tensorType.getDimSize(dim)};
--+
--+  return DimensionInfo{
--+      encoding.getBounds()[dim],
--+      op,
--+      dim,
--+  };
--+}
--+
--+FailureOr<Dimensions> getDimensions(Value op) {
--+  // Get tensor type
--+  mlir::RankedTensorType tensor_type = dyn_cast<RankedTensorType>(op.getType());
--+  if (!tensor_type)
--+    return emitError(op.getLoc(), "expected ranked tensor type");
--+
--+  auto encoding =
--+      mlir::dyn_cast_if_present<mlir::stablehlo::TypeExtensionsAttr>(
--+          tensor_type.getEncoding());
--+
--+  Dimensions dimensions;
--+  dimensions.reserve(tensor_type.getRank());
--+  for (size_t idx = 0; idx < tensor_type.getRank(); ++idx) {
--+    auto dimInfo = getDimensionInfo(op, tensor_type, encoding, idx);
--+    dimensions.push_back(dimInfo);
--+  }
--+  return dimensions;
--+}
--+
--+FailureOr<Dimensions> getNumpyBroadcastShapeWithBounds(
--+    const Dimensions& a, const Dimensions& b) {
--+  LLVM_DEBUG(llvm::dbgs() << "[getNumpyBroadcastShapeWithBounds] inputs: "
--+                          << toString(a) << " * " << toString(b));
--+  size_t max_rank = std::max(a.size(), b.size());
--+  Dimensions result(max_rank);
--+
--+  // Iterate from right to left (NumPy-style broadcasting)
--+  for (int i = 1; i <= max_rank; ++i) {
--+    size_t a_idx = a.size() - i;
--+    size_t b_idx = b.size() - i;
--+    size_t res_idx = max_rank - i;
--+
--+    // Get DimensionInfo for the current index, padding with size 1 if out of
--+    // bounds.
--+    DimensionInfo dim_a =
--+        (a_idx >= 0 && a_idx < a.size()) ? a[a_idx] : DimensionInfo{1};
--+    DimensionInfo dim_b =
--+        (b_idx >= 0 && b_idx < b.size()) ? b[b_idx] : DimensionInfo{1};
--+
--+    // Short circuit on size 1 dimensions.
--+    if (dim_a.size == 1) {
--+      result[res_idx] = dim_b;
--+      continue;
--+    }
--+    if (dim_b.size == 1) {
--+      result[res_idx] = dim_a;
--+      continue;
--+    }
--+
--+    // If both LHS and RHS are not 1, dim size must match.
--+    if (dim_a.size != dim_b.size) {
--+      return emitError(a[a_idx].boundOp.value().getLoc(),
--+                       "incompatible shapes for broadcasting ")
--+             << dim_a.size << " and " << dim_b.size;
--+    }
--+
--+    // If bounded both must be bounded
--+    if (dim_a.boundOp.has_value() != dim_b.boundOp.has_value()) {
--+      return emitError(a[a_idx].boundOp.value().getLoc(),
--+                       "cannot mix bounded and static dimensions in broadcast");
--+    }
--+
--+    // LHS and RHS match, populate with one of the dimensions.
--+    result[res_idx] = dim_a;
--+  }
--+
--+  LLVM_DEBUG(llvm::dbgs() << "[getNumpyBroadcastShapeWithBounds] result: "
--+                          << toString(result));
--+  return result;
--+}
--+
--+mlir::RankedTensorType getRankedTensorType(const Dimensions& dims,
--+                                           mlir::Type element_type) {
--+  mlir::SmallVector<int64_t> shape;
--+  mlir::SmallVector<int64_t> bounds;
--+  shape.reserve(dims.size());
--+  for (const DimensionInfo& dim : dims) {
--+    if (dim.boundOp.has_value()) {
--+      shape.push_back(mlir::ShapedType::kDynamic);
--+      bounds.push_back(dim.size);
--+    } else {
--+      shape.push_back(dim.size);
--+      bounds.push_back(mlir::ShapedType::kDynamic);
--+    }
--+  }
--+  mlir::stablehlo::TypeExtensionsAttr encoding;
--+  if (!llvm::all_of(
--+          bounds, [](int64_t b) { return b == mlir::ShapedType::kDynamic; })) {
--+    encoding = mlir::stablehlo::TypeExtensionsAttr::get(
--+        element_type.getContext(), bounds);
--+  }
--+  return mlir::RankedTensorType::get(shape, element_type, encoding);
--+}
--+
--+}  // namespace
--+
--+
--+FailureOr<Dimensions> getNumpyBroadcastShape(ArrayRef<Value> ops) {
--+  if (ops.empty()) return failure();
--+
--+  Value first = ops[0];
--+  auto bcastShapeOrFail = getDimensions(first);
--+  if (failed(bcastShapeOrFail)) return failure();
--+  Dimensions bcastShape = std::move(*bcastShapeOrFail);
--+
--+  for (int i = 1; i < ops.size(); ++i) {
--+    Value currOp = ops[i];
--+    auto dims = getDimensions(currOp);
--+    if (failed(dims)) return failure();
--+    auto currBcastShapeOrFail =
--+        getNumpyBroadcastShapeWithBounds(bcastShape, *dims);
--+    if (failed(currBcastShapeOrFail)) return failure();
--+    bcastShape = std::move(*currBcastShapeOrFail);
--+  }
--+  return std::move(bcastShape);
--+}
--+
--+std::string toString(const Dimensions& dims) {
--+  std::string result;
--+  llvm::raw_string_ostream os(result);
--+  os << "tensor<";
--+  llvm::interleave(
--+      dims, os,
--+      [&](const DimensionInfo& dim) {
--+        os << (dim.boundOp.has_value() ? "b" : "") << dim.size;
--+      },
--+      "x");
--+  os << ">";
--+  return result;
-+diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_simplification.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_simplification.mlir
-+--- stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_simplification.mlir
-++++ stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_simplification.mlir
-+@@ -134,6 +134,35 @@
-+   return %0, %5 : tensor<1x3x6xi32>, tensor<3x6x1xi32>
-+ }
-+ 
-++// CHECK-LABEL: func.func @broadcast_in_dim_prefer_nested_reshape
-++// CHECK-SAME:   ([[ARG0:%[^ ]+]]: tensor<3x4xi32>)
-++func.func @broadcast_in_dim_prefer_nested_reshape(%arg0: tensor<3x4xi32>) -> (tensor<2x3x4x3xi32>, tensor<2x3x4x3xi32>) {
-++  // When `broadcast_in_dim(broadcast_in_dim(x))` could be optimized into either
-++  // `broadcast_in_dim(reshape(x))` or `broadcast_in_dim(x)`, we want to select
-++  // the former pattern.
-++  //
-++  // (We accomplish this by blocking the merge-composition pattern if the inner
-++  // op can be replaced with a `reshape`. Simply adding benefit to the
-++  // replace-with-reshape pattern isn't sufficient here because the outermost
-++  // op, which only matches the merge-composition pattern, is traversed first.)
-++
-++  // CHECK-DAG: [[INNER_RESHAPE:%[^ ]+]] = stablehlo.reshape [[ARG0]] : (tensor<3x4xi32>) -> tensor<3x1x4xi32>
-++  // CHECK-DAG: [[BROADCAST_OF_RESHAPE:%[^ ]+]] = stablehlo.broadcast_in_dim [[INNER_RESHAPE]], dims = [1, 0, 2] : (tensor<3x1x4xi32>) -> tensor<2x3x4x3xi32>
-++  %0 = stablehlo.broadcast_in_dim %arg0, dims = [0, 2] : (tensor<3x4xi32>) -> tensor<3x1x4xi32>
-++  %1 = stablehlo.broadcast_in_dim %0, dims = [1, 0, 2] : (tensor<3x1x4xi32>) -> tensor<2x3x4x3xi32>
-++
-++  // When the inner op doesn't qualify for replacement with a `reshape` op,
-++  // however (particularly when it meets some conditions but not others), ensure
-++  // that we allow the merge-composition pattern to match.
-++
-++  // CHECK-DAG: [[MERGED_BROADCAST:%[^ ]+]] = stablehlo.broadcast_in_dim [[ARG0]], dims = [3, 2] : (tensor<3x4xi32>) -> tensor<2x3x4x3xi32>
-++  %2 = stablehlo.broadcast_in_dim %arg0, dims = [2, 1] : (tensor<3x4xi32>) -> tensor<1x4x3xi32>
-++  %3 = stablehlo.broadcast_in_dim %2, dims = [0, 2, 3] : (tensor<1x4x3xi32>) -> tensor<2x3x4x3xi32>
-++
-++  // CHECK-DAG: return [[BROADCAST_OF_RESHAPE]], [[MERGED_BROADCAST]]
-++  return %1, %3 : tensor<2x3x4x3xi32>, tensor<2x3x4x3xi32>
- +}
- +
--+FailureOr<SmallVector<Value>> numpyBroadcastIfNeeded(OpBuilder& builder,
--+                                                     ArrayRef<Value> operands) {
--+  // Figure out the broadcast shape
--+  auto bcastShapeOrFail = getNumpyBroadcastShape(operands);
--+  if (failed(bcastShapeOrFail)) return failure();
--+  Dimensions bcastShape = std::move(*bcastShapeOrFail);
--+
--+  // Apply to all operands
--+  SmallVector<Value> broadcastedOperands;
--+  for (auto operand : operands) {
--+    auto bcastOperand = numpyBroadcastIfNeeded(builder, operand, bcastShape);
--+    if (failed(bcastOperand)) return failure();
--+    broadcastedOperands.push_back(*bcastOperand);
--+  }
--+  return std::move(broadcastedOperands);
-+ // CHECK-LABEL: func.func @broadcast_in_dim_not_identity_broadcasts
-+ func.func @broadcast_in_dim_not_identity_broadcasts(%arg0: tensor<1x2xf32>) -> tensor<2x2xf32> {
-+   // CHECK: stablehlo.broadcast_in_dim
-+@@ -208,6 +237,18 @@
-+   // CHECK-NEXT: return [[C1]], [[C0]], [[C1]], [[C0]], [[R0]], [[R1]], [[R2]], [[R3]]
-+   return %0, %1, %2, %3, %4, %5, %6, %7 :
-+          tensor<i1>, tensor<i1>, tensor<i1>, tensor<i1>, tensor<i1>, tensor<i1>, tensor<i1>, tensor<i1>
- +}
- +
--+FailureOr<Value> numpyBroadcastIfNeeded(OpBuilder& builder, Value input,
--+                                        const Dimensions& shape) {
--+  LLVM_DEBUG(llvm::dbgs() << "[BroadcastIfNeeded] input: " << input
--+                          << " shape: " << toString(shape));
--+  auto loc = input.getLoc();
--+  mlir::RankedTensorType input_type =
--+      dyn_cast<RankedTensorType>(input.getType());
--+  if (!input_type) return emitError(input.getLoc(), "expected tensor type");
--+  mlir::RankedTensorType output_type =
--+      getRankedTensorType(shape, input_type.getElementType());
--+
--+  // Short circuit if no broadcasting is needed.
--+  if (input_type == output_type) return input;
--+
--+  int64_t input_rank = input_type.getRank();
--+  int64_t output_rank = output_type.getRank();
--+  if (input_rank > output_rank)
--+    return emitError(loc, "input rank must be <= output rank, got ")
--+           << input_rank << " vs " << output_rank;
--+
--+  size_t rank_diff = output_rank - input_rank;
--+  SmallVector<int64_t> bcast_dims;
--+  bcast_dims.reserve(input_rank);
--+
--+  auto inputShapeOrFail = getDimensions(input);
--+  if (failed(inputShapeOrFail)) return failure();
--+  Dimensions inputShape = std::move(*inputShapeOrFail);
--+
--+  // Construct broadcast dimensions.
--+  auto broadcastDimensions = llvm::to_vector(
--+      llvm::seq<int64_t>(output_rank - input_rank, output_rank));
--+
--+  // Construct the result type of the broadcast
--+  //  - If input is static and target shape is static, use static shape.
--+  //  - If input has bounded dim, target shape must be bounded, use bounded dim.
--+  //  - If input is not bounded, but target shape is bounded, broadcast to
--+  //    the padded shape then call SetDimensionSize to make dynamic.
--+  auto bcastShape = shape;
--+  for (size_t i = 0; i < input_rank; ++i) {
--+    int64_t input_dim_size = inputShape[i].size;
--+    int64_t result_idx = i + rank_diff;
--+    int64_t result_dim_size = shape[result_idx].size;
--+    if (input_dim_size != 1 && input_dim_size != result_dim_size)
--+      return emitError(loc, "Cannot broadcast input: ")
--+             << input_type << " to target shape " << toString(shape);
--+
--+    if (!inputShape[i].boundOp.has_value() &&
--+        shape[result_idx].boundOp.has_value()) {
--+      // Use padded shape in broadcast.
--+      bcastShape[result_idx] = DimensionInfo{shape[result_idx].size};
--+    }
--+    bcast_dims.push_back(result_idx);
--+  }
--+
--+  // Broadcast to padded size for remaining dimensions.
--+  for (size_t i = input_rank; i < shape.size(); ++i) {
--+    bcastShape[i] = DimensionInfo{shape[i].size};
--+  }
--+
--+  // Insert broadcast ops
--+  mlir::RankedTensorType bcast_type =
--+      getRankedTensorType(bcastShape, input_type.getElementType());
--+  Value bcast_op = stablehlo::BroadcastInDimOp::create(
--+      builder, loc, bcast_type, input, broadcastDimensions);
--+  if (bcast_op.getType() == output_type) return bcast_op;
--+
--+  // Mark the padded broadcast as dynamic where the result is bounded.
--+  // Inserts `GetDimSize(boundOp)->SetDimSize(inputBcast)` for any bounded
--+  // dimensions that required broadcasting.
--+  for (size_t i = 0; i < shape.size(); ++i) {
--+    if (!bcastShape[i].boundOp.has_value() && shape[i].boundOp.has_value()) {
--+      Value boundOp = shape[i].boundOp.value();
--+      auto dim_size = stablehlo::GetDimensionSizeOp::create(
--+          builder, loc, boundOp, shape[i].boundOpDim);
--+      bcast_op = stablehlo::SetDimensionSizeOp::create(builder, loc, bcast_op,
--+                                                       dim_size, i);
--+    }
--+  }
--+  return bcast_op;
-++// CHECK-LABEL: func.func @compare_op_bool_simplify
-++// CHECK-SAME:   ([[ARG0:%.+]]: tensor<i1>)
-++func.func @compare_op_bool_simplify(%arg0: tensor<i1>) -> (tensor<i1>, tensor<i1>) {
-++  %false = stablehlo.constant dense<false> : tensor<i1>
-++  %true = stablehlo.constant dense<true> : tensor<i1>
-++  // CHECK-NOT: stablehlo.compare
-++  %0 = stablehlo.compare NE, %arg0, %false, UNSIGNED : (tensor<i1>, tensor<i1>) -> tensor<i1>
-++  %1 = stablehlo.compare EQ, %arg0, %true, UNSIGNED : (tensor<i1>, tensor<i1>) -> tensor<i1>
-++  // CHECK: return [[ARG0]], [[ARG0]]
-++  func.return %0, %1 : tensor<i1>, tensor<i1>
-+ }
-+ 
-+ // -----
-+@@ -1021,6 +1062,18 @@
-+   // CHECK-NOT: stablehlo.pad
-+   %1 = stablehlo.pad %arg0, %0, low = [0, 0], high = [0, 0], interior = [0, 0] : (tensor<256x1024xbf16>, tensor<bf16>) -> tensor<256x1024xbf16>
-+   return %1 : tensor<256x1024xbf16>
- +}
- +
--+}  // namespace stablehlo
--+}  // namespace mlir
--diff --ruN a/stablehlo/stablehlo/transforms/StablehloBroadcastLowering.h b/stablehlo/stablehlo/transforms/StablehloBroadcastLowering.h
----- stablehlo/stablehlo/transforms/StablehloBroadcastLowering.h
--+++ stablehlo/stablehlo/transforms/StablehloBroadcastLowering.h
--@@ -0,0 +1,68 @@
--+/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
--+   Copyright 2022 The StableHLO Authors.
--+
--+Licensed under the Apache License, Version 2.0 (the "License");
--+you may not use this file except in compliance with the License.
--+You may obtain a copy of the License at
--+
--+    http://www.apache.org/licenses/LICENSE-2.0
--+
--+Unless required by applicable law or agreed to in writing, software
--+distributed under the License is distributed on an "AS IS" BASIS,
--+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
--+See the License for the specific language governing permissions and
--+limitations under the License.
--+==============================================================================*/
--+
--+
--+#ifndef STABLEHLO_TRANSFORMS_OPBROADCASTUTILS_H_
--+#define STABLEHLO_TRANSFORMS_OPBROADCASTUTILS_H_
--+
--+#include <cstdint>
--+#include <optional>
--+#include <string>
--+
--+#include "mlir/IR/Builders.h"
--+#include "mlir/IR/Value.h"
--+#include "mlir/Support/LLVM.h"
--+
--+namespace mlir {
--+namespace stablehlo {
--+
--+///////
--+// Numpy broadcasting with support for bounded dynamism.
--+
--+// Struct that represents a dim size of a tensor and possible dynamic value to
--+// match. If dimension is not dynamic, bound_op is set to std::nullopt. If
--+// dimension is bounded, the resulting dimension should be padded to `size` then
--+// marked dynamic using:
--+//   runtime_size = get_dimension_size(bound_op, dim=bound_op_dim)
--+//   T = set_dimension_size(T, dim=bound_op_dim, runtime_size)
-++// We don't want to delete `pad` ops that move a tensor's values around without
-++// affecting its dimensions.
- +//
--+struct DimensionInfo {
--+  int64_t size;
--+  std::optional<Value> boundOp = std::nullopt;
--+  int64_t boundOpDim = -1;
--+};
--+
--+using Dimensions = SmallVector<DimensionInfo>;
--+std::string toString(const Dimensions& dims);
--+
--+// Returns the common shape these ops would broadcast to, or an error if the
--+// ops are not broadcastable.
--+FailureOr<Dimensions> getNumpyBroadcastShape(ArrayRef<Value> ops);
--+
--+// Apply numpy broadcasting to the given operands, returning an error if any
--+// operands are not broadcastable.
--+FailureOr<SmallVector<Value>> numpyBroadcastIfNeeded(OpBuilder& builder,
--+                                                     ArrayRef<Value> operands);
--+
--+// Apply numpy broadcasting to the given operand, returning an error if the
--+// operand is not broadcastable.
--+FailureOr<Value> numpyBroadcastIfNeeded(OpBuilder& builder, Value input,
--+                                        const Dimensions& shape);
--+
--+}  // namespace stablehlo
--+}  // namespace mlir
-++// CHECK-LABEL: @pad_rotate_tensor_no_dim_change
-++func.func @pad_rotate_tensor_no_dim_change(%arg0: tensor<50x50xf32>) -> tensor<50x50xf32> {
-++  // CHECK: %[[RES:.+]] = stablehlo.pad
-++  // CHECK: return %[[RES]]
-++  %cst = stablehlo.constant dense<0.0> : tensor<f32>
-++  %0 = stablehlo.pad %arg0, %cst, low = [0, -1], high = [0, 1], interior = [0, 0] : (tensor<50x50xf32>, tensor<f32>) -> tensor<50x50xf32>
-++  return %0 : tensor<50x50xf32>
-+ }
-+ 
-+ // -----
-+@@ -1810,6 +1863,15 @@
-+   return %0 : tensor<2x4x1x5xf32>
-+ }
-+ 
-++// CHECK-LABEL: @transpose_of_transpose
-++func.func @transpose_of_transpose(%arg0 : tensor<1x2x3x4xf32>) -> tensor<1x2x3x4xf32> {
-++  %0 = stablehlo.transpose %arg0, dims = [3,2,1,0] : (tensor<1x2x3x4xf32>) -> tensor<4x3x2x1xf32>
-++  %1 = stablehlo.transpose %0, dims = [3,2,1,0] : (tensor<4x3x2x1xf32>) -> tensor<1x2x3x4xf32>
-++  // CHECK-NOT: stablehlo.transpose
-++  // CHECK: return %arg0
-++  return %1 : tensor<1x2x3x4xf32>
-++}
- +
--+#endif  // STABLEHLO_TRANSFORMS_OPBROADCASTUTILS_H_
-+ // -----
-+ 
-+ ////////
-+diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir
-+--- stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir
-++++ stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir
-+@@ -752,7 +752,7 @@
-+     %2 = call @refine_call_callee(%arg0_different_i32, %1) : (tensor<i32>, tensor<?xf32>) -> tensor<?xf32>
-+     return %2 : tensor<?xf32>
-+   }
-+-  // expected-error@+1{{'func.func' op refined with invompatible refinement keys}}
-++  // expected-error@+1{{'func.func' op refined with incompatible refinement keys}}
-+   func.func @refine_call_callee(%arg0: tensor<i32>, %arg1: tensor<?xf32>) -> tensor<?xf32> {
-+     return %arg1 : tensor<?xf32>
-+   }
-+@@ -770,7 +770,7 @@
-+     %2 = call @refine_call_callee(%arg0_different, %1) : (tensor<i32>, tensor<?xf32>) -> tensor<?xf32>
-+     return %2 : tensor<?xf32>
-+   }
-+-  // expected-error@+1{{'func.func' op refined with invompatible refinement keys}}
-++  // expected-error@+1{{'func.func' op refined with incompatible refinement keys}}
-+   func.func @refine_call_callee(%arg0: tensor<i32>, %arg1: tensor<?xf32>) -> tensor<?xf32> {
-+     return %arg1 : tensor<?xf32>
-+   }
-+@@ -789,7 +789,7 @@
-+     %4 = call @refine_call_callee(%arg0_new, %3) : (tensor<i32>, tensor<?xf32>) -> tensor<?xf32>
-+     return %4 : tensor<?xf32>
-+   }
-+-  // expected-error@+1{{'func.func' op refined with invompatible refinement keys}}
-++  // expected-error@+1{{'func.func' op refined with incompatible refinement keys}}
-+   func.func @refine_call_callee(%arg0: tensor<i32>, %arg1: tensor<?xf32>) -> tensor<?xf32> {
-+     return %arg1 : tensor<?xf32>
-+   }
-+diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
-+--- stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
-++++ stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
-+@@ -461,7 +461,7 @@
-+   LogicalResult emitDifferentRefinementContextError(func::FuncOp func,
-+                                                     RefinementKey key,
-+                                                     RefinementKey prevKey) {
-+-    return func.emitOpError() << "refined with invompatible refinement keys:"
-++    return func.emitOpError() << "refined with incompatible refinement keys:"
-+                               << "\n  curr=" << key.toString()
-+                               << "\n  prev=" << prevKey.toString();
-+   }
- diff --ruN a/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp b/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp
- --- stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp
- +++ stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp
--@@ -1108,7 +1108,8 @@
-+@@ -530,10 +530,15 @@
-+   using FoldOpRewritePattern<OpType>::matchAndRewrite;
-+   using FoldOpRewritePattern<OpType>::options;
-+ 
-++  // TODO: Generalize all relevant folder patterns to support complex data
-++  // types, then hard-code `allowComplex` to `true`.
-+   LogicalResult validateShapeFoldDtype(PatternRewriter& rewriter, OpType op,
-+-                                       ShapedType resultType) const {
-++                                       ShapedType resultType,
-++                                       bool allowComplex = false) const {
-+     if (resultType.getElementType().isInteger()) return success();
-+-    if (options.optimizeFloat && isa<FloatType>(resultType.getElementType()))
-++    if (options.optimizeFloat &&
-++        (allowComplex ? isa<FloatType, ComplexType>(resultType.getElementType())
-++                      : isa<FloatType>(resultType.getElementType())))
-+       return success();
-+     return rewriter.notifyMatchFailure(op, "skipping fold of shape op dtype");
-+   }
-+@@ -605,7 +610,8 @@
-                                  PatternRewriter& rewriter) const override {
-      auto resultType = op.getType();
-      if (failed(validateStaticShapeResult(rewriter, op, resultType)) ||
-@@ -921,5 +495,178 @@ diff --ruN a/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFold
- +                                      /*allowComplex=*/true)))
-        return failure();
-  
--     DenseElementsAttr attr;
-+     SplatElementsAttr cstAttr;
-+@@ -825,7 +831,8 @@
-+     RankedTensorType resultType = op.getType();
-+ 
-+     if (failed(validateStaticShapeResult(rewriter, op, resultType)) ||
-+-        failed(validateShapeFoldDtype(rewriter, op, resultType)))
-++        failed(validateShapeFoldDtype(rewriter, op, resultType)) ||
-++        failed(validateElementCountForFold(rewriter, op, resultType)))
-+       return failure();
-+ 
-+     auto operandElemType = getElementTypeOrSelf(operand.getType());
-+@@ -1104,7 +1111,7 @@
-+         failed(validateShapeFoldDtype(rewriter, op, resultType)))
-+       return failure();
-+ 
-+-    DenseIntOrFPElementsAttr attr;
-++    DenseElementsAttr attr;
-+     if (!matchPattern(op.getOperand(), m_Constant(&attr)))
-+       return rewriter.notifyMatchFailure(op, "expected constant operand");
-+     rewriter.replaceOpWithNewOp<ConstantOp>(op, attr.reshape(resultType));
-+diff --ruN a/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplification.cpp b/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplification.cpp
-+--- stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplification.cpp
-++++ stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplification.cpp
-+@@ -1309,10 +1309,20 @@
-+ // TransposeOp
-+ /////////////////////////////////
-+ 
-++DenseI64ArrayAttr getMergedTransposePermutation(OpBuilder& b,
-++                                                ArrayRef<int64_t> childPerm,
-++                                                ArrayRef<int64_t> parentPerm) {
-++  SmallVector<int64_t> mergedPerm;
-++  mergedPerm.reserve(parentPerm.size());
-++  for (int64_t parentIdx : parentPerm) {
-++    mergedPerm.push_back(childPerm[parentIdx]);
-++  }
-++  return b.getDenseI64ArrayAttr(mergedPerm);
-++}
-++
-+ // Pattern: transpose(X, [no_mem_layout_change...]) -> reshape(X)
-+ struct TransposeIsReshape final : SimplifyOpRewritePattern<TransposeOp> {
-+   using SimplifyOpRewritePattern::SimplifyOpRewritePattern;
-+-
-+   LogicalResult matchAndRewrite(TransposeOp op,
-+                                 PatternRewriter& rewriter) const override {
-+     auto input = op.getOperand();
-+diff --ruN a/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplificationPatterns.td b/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplificationPatterns.td
-+--- stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplificationPatterns.td
-++++ stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplificationPatterns.td
-+@@ -43,6 +43,14 @@
-+     CPred<"llvm::cast<ShapedType>($0.getType()).getNumElements() == llvm::cast<ShapedType>($1.getType()).getNumElements()">,
-+     "same number of elements">;
-+ 
-++def BroadcastNotReducibleToReshape : Constraint<
-++    CPred<"llvm::isa<stablehlo::BroadcastInDimOp>($0.getDefiningOp()) && "
-++          "!("
-++            "llvm::is_sorted($0.getDefiningOp<stablehlo::BroadcastInDimOp>().getBroadcastDimensions()) && "
-++            "llvm::cast<ShapedType>($0.getType()).getNumElements() == llvm::cast<ShapedType>($1.getType()).getNumElements()"
-++          ")">,
-++    "is a broadcast_in_dim op that cannot be simplified to a reshape op">;
-++
-+ def OperandsEqual : Constraint<CPred<"$0 == $1">, "operands are equal">;
-+ 
-+ def RankEqual : Constraint<
-+@@ -61,6 +69,10 @@
-+ def AnyZero : AttrConstraint<
-+     CPred<"::mlir::matchPattern($_self, m_AnyAttrOf(m_Zero(), m_AnyZeroFloat()))">,
-+     "is int or float zero">;
-++
-++def ZeroArrayI64 : AttrConstraint<
-++    CPred<"::llvm::all_of(::llvm::cast<DenseI64ArrayAttr>($_self).asArrayRef(), [](int64_t val) { return val == 0; })">,
-++    "is an array of zeros">;
-+ 
-+ def DenseIntElementsAttr : AttrConstraint<
-+     CPred<"llvm::isa<DenseIntElementsAttr>($_self)">,
-+@@ -120,6 +132,8 @@
-+ 
-+ def MergeBroadcastDims : NativeCodeCall<"getMergedBroadcastDimensions($_builder, $0, $1)">;
-+ 
-++def MergePermutations : NativeCodeCall<"getMergedTransposePermutation($_builder, $0, $1)">;
-++
-+ def StableHLO_ConvertOpWithShape : NativeCodeCall<
-+     "$_builder.create<stablehlo::ConvertOp>($_loc, $0.getType(), $1)">;
-+ 
-+@@ -178,18 +192,23 @@
-+ 
-+ // Pattern: broadcast_in_dim(broadcast_in_dim(X, [dimsA...]), [dimsB...])
-+ //       -> broadcast_in_dim(X, merge(dimsA, dimsB))
-++//          [if the nested broadcast can't be simplified to a reshape]
-+ def BroadcastInDimOp_MergeComposition
-+-  : Pat<(StableHLO_BroadcastInDimOp
-+-            (StableHLO_BroadcastInDimOp $operand, $dims_parent), $dims),
-++  : Pat<(StableHLO_BroadcastInDimOp:$outer_op
-++            (StableHLO_BroadcastInDimOp:$inner_op $operand, $inner_dims),
-++            $outer_dims),
-+         (StableHLO_BroadcastInDimOp
-+-            $operand, (MergeBroadcastDims $dims, $dims_parent))>;
-++            $operand, (MergeBroadcastDims $outer_dims, $inner_dims)),
-++        [(BroadcastNotReducibleToReshape $inner_op, $operand)]>;
-+ 
-+ // Pattern: broadcast_in_dim(X, [sorted...]) -> reshape(X, [sorted...])
-+ //          [if same numel]
-+ def BroadcastInDimOp_ReplaceWithReshape
-+   : Pat<(StableHLO_BroadcastInDimOp:$op $operand, SortedDims:$dims),
-+         (StableHLO_ReshapeOpWithShape $op, $operand),
-+-        [(NumberOfElementsEqual $op, $operand)]>;
-++        [(NumberOfElementsEqual $op, $operand)],
-++        [],
-++        (addBenefit 1)>;
-+ 
-+ // Pattern: broadcast_in_dim(X, [dims...]) -> transpose(X, [dims...])
-+ //          [if same numel & rank]
-+@@ -197,6 +216,36 @@
-+   : Pat<(StableHLO_BroadcastInDimOp:$op $operand, $dims),
-+         (StableHLO_TransposeOp $operand, (InvertBroadcastDims $dims)),
-+         [(NumberOfElementsEqual $op, $operand), (RankEqual $op, $operand)]>;
-++
-++////////
-++// CompareOp
-++
-++// The canonical form has the constant operand as the RHS.
-++class StableHLO_ComparisonDirectionValue<string enumStr> :
-++  ConstantAttr<StableHLO_ComparisonDirectionAttr, "::mlir::stablehlo::ComparisonDirection::" # enumStr>;
-++
-++// Pattern: compare(NE, X, False) : i1 -> X
-++def CompareOp_NeBooleanFalse
-++  : Pat<(StableHLO_CompareOp
-++            $lhs,
-++            (StableHLO_ConstantOp:$cst IntZero:$value),
-++            StableHLO_ComparisonDirectionValue<"NE">,
-++            $type),
-++        (replaceWithValue $lhs),
-++        [(HLO_PredTensor $cst)]>;
-++
-++// Pattern: compare(EQ, X, True) : i1 -> X
-++def CompareOp_EqBooleanTrue
-++  : Pat<(StableHLO_CompareOp
-++            $lhs,
-++            (StableHLO_ConstantOp:$cst IntOne:$value),
-++            StableHLO_ComparisonDirectionValue<"EQ">,
-++            $type),
-++        (replaceWithValue $lhs),
-++        [(HLO_PredTensor $cst)]>;
-++
-++// TODO: compare(EQ, X, False) : i1 -> not(X)
-++// TODO: compare(NE, X, True) : i1 -> not(X)
-+ 
-+ ////////
-+ // ConvertOp
-+@@ -424,9 +473,9 @@
-+   : Pat<(StableHLO_PadOp:$pad
-+             $operand,
-+             $padding_value,
-+-            $edge_padding_low,
-+-            $edge_padding_high,
-+-            $interior_padding),
-++            ZeroArrayI64:$edge_padding_low,
-++            ZeroArrayI64:$edge_padding_high,
-++            ZeroArrayI64:$interior_padding),
-+         (replaceWithValue $operand),
-+         [(TypesEqual $pad, $operand)]>;
-+ 
-+@@ -539,6 +588,12 @@
-+   : Pat<(StableHLO_TransposeOp $lhs, IotaDims:$dims),
-+         (replaceWithValue $lhs)>;
-+ 
-++// Pattern: transpose(transpose(X)) -> transpose(X)
-++def TransposeOp_TransposeOfTranspose
-++  : Pat<(StableHLO_TransposeOp
-++          (StableHLO_TransposeOp $child, $child_dims), $dims),
-++        (StableHLO_TransposeOp $child, (MergePermutations $child_dims, $dims))>;
-++
-+ ////////
-+ // GetTupleElementOp
-+ 
- 
-diff --git a/third_party/stablehlo/workspace.bzl b/third_party/stablehlo/workspace.bzl
-index 1c05593..db43355 100644
---- a/third_party/stablehlo/workspace.bzl
-+++ b/third_party/stablehlo/workspace.bzl
-@@ -4,8 +4,8 @@ load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
- 
- def repo():
-     #
--    STABLEHLO_COMMIT = "3f27c53c20b9021ccab8b5f673e2c72e5b9cd6aa"
--    STABLEHLO_SHA256 = "915e05e79d9764c048557a929c64e090ab58a5c7334da2c2650cd6378aa4d166"
-+    STABLEHLO_COMMIT = "baaf7475f8925cb0c5f9580408b3c0385f888487"
-+    STABLEHLO_SHA256 = "c4b96f94d9d4aaa8b2dc88104579aab662aa33d59b79e77a9b75c8e0af3d9461"
-     #
- 
-     tf_http_archive(

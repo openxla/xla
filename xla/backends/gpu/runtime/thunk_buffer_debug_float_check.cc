@@ -25,6 +25,7 @@ limitations under the License.
 
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/functional/bind_front.h"
 #include "absl/log/check.h"
@@ -54,6 +55,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/gpu/buffer_debug_log.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
@@ -187,19 +189,31 @@ absl::Status BufferDebugFloatCheck(
   int non_zero_inf_check_modules_count = 0;
   CHECK_EQ(entries.size(), entries_metadata.size());
 
+  absl::flat_hash_set<std::string> reported_nan_thunks;
+  absl::flat_hash_set<std::string> reported_inf_thunks;
   for (int i = 0; i < entries.size(); ++i) {
     const auto& entry = entries[i];
     const auto& metadata = entries_metadata[i];
     if (!metadata.has_value()) {
-      LOG(WARNING) << "Entry ID " << entry.entry_id
-                   << " for float check not found in metadata";
+      VLOG(1) << "Entry ID " << entry.entry_id
+              << " for float check not found in metadata";
       continue;
     }
     if (metadata->check_type !=
         BufferDebugLogEntryProto::CHECK_TYPE_FLOAT_CHECKS) {
+      VLOG(1) << "Entry ID " << entry.entry_id
+              << " for float check has unsupported check type "
+              << BufferDebugLogEntryProto::CheckType_Name(metadata->check_type);
       continue;
     }
     if (nan_check_enabled && entry.nan_count > 0) {
+      if (reported_nan_thunks.contains(metadata->profile_annotation)) {
+        VLOG(1) << "Skipping entry with non zero nan count " << entry.nan_count
+                << " for thunk " << entry.entry_id << " and execution "
+                << "with metadata: " << metadata->profile_annotation;
+        continue;
+      }
+      reported_nan_thunks.insert(metadata->profile_annotation);
       LOG(ERROR) << "Found entry with non zero nan count " << entry.nan_count
                  << " for thunk " << entry.entry_id << " and execution "
                  << "with metadata: " << metadata->profile_annotation;
@@ -207,10 +221,18 @@ absl::Status BufferDebugFloatCheck(
       LogHloInstructionWithId(hlo_module, metadata->profile_annotation);
     }
     if (inf_check_enabled && entry.inf_count > 0) {
+      if (reported_inf_thunks.contains(metadata->profile_annotation)) {
+        VLOG(1) << "Skipping entry with non zero inf count " << entry.inf_count
+                << " for thunk " << entry.entry_id << " with execution_id "
+                << metadata->execution_id
+                << " and profile annotation: " << metadata->profile_annotation;
+        continue;
+      }
+      reported_inf_thunks.insert(metadata->profile_annotation);
       LOG(ERROR) << "Found entry with non zero inf count " << entry.inf_count
-                 << " for thunk " << entry.entry_id << " and execution "
+                 << " for thunk " << entry.entry_id << " with execution_id "
                  << metadata->execution_id
-                 << "with metadata: " << metadata->profile_annotation;
+                 << " and profile annotation: " << metadata->profile_annotation;
       non_zero_inf_check_modules_count++;
       LogHloInstructionWithId(hlo_module, metadata->profile_annotation);
     }
@@ -304,16 +326,17 @@ absl::Status RunFloatCheckPassInternal(SequentialThunk* root_thunk,
       CreateBufferDebugFloatCheckThunk(metadata_store, log_slice, hlo_module));
 
   ThunkFilter thunk_filter = CreateThunkFilter(debug_options);
-  root_thunk->TransformAllNestedThunks([&](std::unique_ptr<Thunk> thunk) {
-    if (thunk_filter(*thunk) == InstrumentAction::kSkip) {
-      return thunk;
-    }
-    VLOG(1) << "Wrapping with float check thunk";
-    return WrapWithFloatCheckThunk(
-        std::move(thunk), log_slice,
-        /*predecessor_thunk=*/*buffer_debug_init_thunk,
-        /*successor_thunk=*/*buffer_debug_dump_thunk, metadata_store);
-  });
+  TF_RETURN_IF_ERROR(
+      root_thunk->TransformAllNestedThunks([&](std::unique_ptr<Thunk> thunk) {
+        if (thunk_filter(*thunk) == InstrumentAction::kSkip) {
+          return thunk;
+        }
+        VLOG(1) << "Wrapping with float check thunk";
+        return WrapWithFloatCheckThunk(
+            std::move(thunk), log_slice,
+            /*predecessor_thunk=*/*buffer_debug_init_thunk,
+            /*successor_thunk=*/*buffer_debug_dump_thunk, metadata_store);
+      }));
 
   ThunkSequence& thunks = root_thunk->thunks();
   thunks.reserve(thunks.size() + 2);

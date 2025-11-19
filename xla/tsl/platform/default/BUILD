@@ -116,12 +116,12 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
-        "@local_config_tensorrt//:tensorrt_headers",
         "@tsl//tsl/platform:load_library",
         "@tsl//tsl/platform:path",
     ] + if_oss([
         "@nvshmem//:nvshmem_config",
         "@local_config_nccl//:nccl_config",
+        "@local_config_tensorrt//:tensorrt_headers",
     ]) + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_config",
         "@local_config_rocm//rocm:rocm_headers",
@@ -359,6 +359,7 @@ cc_library(
         "//xla/tsl/platform:types",
         "//xla/tsl/platform/profile_utils:profile_utils_cpu_utils",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@snappy",
         "@tsl//tsl/platform",
     ] + select({
