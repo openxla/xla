@@ -155,6 +155,29 @@ class LowerToLLVMPass : public impl::LowerToLLVMPassBase<LowerToLLVMPass> {
                                    std::move(mathPatterns)))) {
       signalPassFailure();
     }
+    
+    // For AMDGPU, fix allocas to use address space 5 (private)
+    // AMDGPU requires allocas in AS5, but MLIR lowering creates them in AS0
+    if (device_spec_.IsAmdGpu()) {
+      getOperation()->walk([](mlir::LLVM::AllocaOp alloca) {
+        auto ptr_type = mlir::cast<mlir::LLVM::LLVMPointerType>(alloca.getResult().getType());
+        // Check if address space is 0 (default/generic)
+        if (ptr_type.getAddressSpace() == 0) {
+          mlir::OpBuilder builder(alloca);
+          // Create new alloca in address space 5
+          auto new_ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext(), 5);
+          auto new_alloca = builder.create<mlir::LLVM::AllocaOp>(
+              alloca.getLoc(),
+              new_ptr_type,
+              alloca.getElemType(),
+              alloca.getArraySize(),
+              alloca.getAlignment().value_or(0));
+          alloca.replaceAllUsesWith(new_alloca.getResult());
+          alloca.erase();
+        }
+      });
+      VLOG(3) << "Fixed AMDGPU allocas to use address space 5";
+    }
   }
 
  private:
