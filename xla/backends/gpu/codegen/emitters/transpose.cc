@@ -631,36 +631,42 @@ PackedTranspose::WriteResult PackedTranspose::EmitWriteToShMemMlir(
   IndexingMap shmem_write_indexing = GetShmemWriteIndexing(mlir_context_);
 
   int64_t shmem_dim = kNumShmemBanks * vector_size_;
-  SmallVector<Value> shmem_tensors;
+
+  // Allocate all shared memory tensors upfront (one per transpose).
+  SmallVector<Value> shmem_inits;
   for (auto* transpose : shmem_transposes_) {
     Type elem_type = emitters::PrimitiveTypeToMlirType(
         transpose->shape().element_type(), builder);
     Value shmem = AllocateSharedOp::create(
         builder, RankedTensorType::get({shmem_dim, shmem_dim}, elem_type));
-
-    auto tids_and_bids = EmitThreadAndBlockIds(builder);
-    Value updated_shmem =
-        emitters::EmitXlaLoopOp(
-            builder, tids_and_bids, shmem, input_indexing,
-            [&](ImplicitLocOpBuilder& nested_b, ValueRange ivs,
-                ValueRange input_indices,
-                ValueRange iter_arg) -> SmallVector<Value> {
-              Value input_element =
-                  emitters::ProvideParameter(root_computation, transpose,
-                                             /*operand_index=*/0, input_indices,
-                                             call_target_provider,
-                                             entry_function, nested_b)
-                      .front();
-              auto shmem_indices = emitters::ApplyIndexing(
-                  shmem_write_indexing, tids_and_bids, ivs, nested_b);
-              return nested_b
-                  .create<mt::InsertOp>(input_element, iter_arg.front(),
-                                        shmem_indices)
-                  ->getResults();
-            })
-            .front();
-    shmem_tensors.push_back(updated_shmem);
+    shmem_inits.push_back(shmem);
   }
+
+  // Create a single loop that writes to all shared memory tensors.
+  auto tids_and_bids = EmitThreadAndBlockIds(builder);
+  SmallVector<Value> shmem_tensors = emitters::EmitXlaLoopOp(
+      builder, tids_and_bids, shmem_inits, input_indexing,
+      [&](ImplicitLocOpBuilder& nested_b, ValueRange ivs,
+          ValueRange input_indices,
+          ValueRange iter_args) -> SmallVector<Value> {
+        SmallVector<Value> updated_shmems;
+        auto shmem_indices = emitters::ApplyIndexing(
+            shmem_write_indexing, tids_and_bids, ivs, nested_b);
+
+        // Process all transposes in a single loop iteration.
+        for (auto [transpose, shmem_tensor] :
+             llvm::zip(shmem_transposes_, iter_args)) {
+          Value input_element =
+              emitters::ProvideParameter(root_computation, transpose,
+                                         /*operand_index=*/0, input_indices,
+                                         call_target_provider, entry_function,
+                                         nested_b)
+                  .front();
+          updated_shmems.push_back(nested_b.create<mt::InsertOp>(
+              input_element, shmem_tensor, shmem_indices));
+        }
+        return updated_shmems;
+      });
 
   // Produce all side outputs and then write them.
   int num_inputs = fusion.fused_instructions_computation()->num_parameters();
