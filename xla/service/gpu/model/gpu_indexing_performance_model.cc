@@ -128,6 +128,22 @@ bool DoesTileFitInRegisters(int64_t tile_size,
                           device_info.registers_per_block_limit();
 }
 
+// Computes and caches the largest tile size in the tiled computation.
+int64_t ComputeLargestTileSize(TiledHloComputation& tiled_hlo_computation) {
+  if (tiled_hlo_computation.GetLargestTileSize().has_value()) {
+    return *tiled_hlo_computation.GetLargestTileSize();
+  }
+
+  int64_t largest_tile_size = 1;
+  for (const TiledHloInstruction* tiled_hlo :
+       tiled_hlo_computation.instructions()) {
+    largest_tile_size =
+        std::max(largest_tile_size, GetPaddedTileSize(tiled_hlo->tile_sizes()));
+  }
+  tiled_hlo_computation.SetLargestTileSize(largest_tile_size);
+  return largest_tile_size;
+}
+
 // Checks if all tiles in the computation fit in registers.
 //
 // There is no way to know for sure if emitted computation will not spill
@@ -162,6 +178,12 @@ bool DoesComputationFitInRegisters(
         return false;
       }
     }
+  }
+
+  // Check that the largest tile fits in registers.
+  int64_t largest_tile_size = *tiled_hlo_computation.GetLargestTileSize();
+  if (!DoesTileFitsInRegisters(largest_tile_size, device_info)) {
+    return false;
   }
 
   for (const TiledHloInstruction* tiled_hlo :
@@ -640,11 +662,7 @@ GpuPerformanceModelWithIndexingAnalysis::GetLaunchDimensionsForTiledFusion(
 
   // Decide on the number of warps to use based on the largest live tile size
   // at any given point within the computation.
-  int64_t largest_live_tile_size = 1;
-  for (const auto& tiled_hlo : tiled_hlo_computation.instructions()) {
-    largest_live_tile_size = std::max(
-        largest_live_tile_size, GetPaddedTileSize(tiled_hlo->tile_sizes()));
-  }
+  int64_t largest_live_tile_size = *tiled_hlo_computation.GetLargestTileSize();
   int64_t num_warps = GetNumWarps(largest_live_tile_size);
 
   return {static_cast<uint64_t>(num_blocks),
@@ -690,6 +708,7 @@ GpuPerformanceModelWithIndexingAnalysis::TryFindBestTilingForFusion(
     }
 
     auto tiled_hlo_computation = std::move(maybe_tiled_hlo_computation.value());
+    ComputeLargestTileSize(tiled_hlo_computation);
     LaunchDimensions launch_dimensions =
         GetLaunchDimensionsForTiledFusion(tiled_hlo_computation, *device_info_);
 
