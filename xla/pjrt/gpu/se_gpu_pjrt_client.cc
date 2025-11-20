@@ -369,13 +369,6 @@ absl::StatusOr<LocalDeviceState*> GetLocalDeviceState(PjRtDevice* device) {
   return pjrt_se_device->GetLocalDeviceState();
 }
 
-// Get the device to device stream for a given PjRtDevice.
-absl::StatusOr<se::Stream*> GetDeviceToDeviceStream(PjRtDevice* device) {
-  TF_ASSIGN_OR_RETURN(LocalDeviceState * local_device,
-                      GetLocalDeviceState(device));
-  return local_device->GetDeviceToDeviceStream();
-}
-
 // Creates a communicator for a cross-host transfer; used by the original
 // cross-host transfers API.
 absl::StatusOr<std::unique_ptr<Communicator>> CreateTransferCommunicator(
@@ -427,7 +420,9 @@ class PreparedSend {
   std::shared_ptr<Future<>::Promise> promise;
 
   ~PreparedSend() {
-    if (!usage_event || usage_event->event()->IsDefined()) return;
+    if (!usage_event || usage_event->event()->IsDefined()) {
+      return;
+    }
     LOG(WARNING) << "PreparedSend destroyed with unfulfilled usage_event";
     client->SetEventAsError(
         usage_event->event(),
@@ -454,7 +449,9 @@ class PreparedReceive {
   AcquiredCliqueAndCommunicator clique_and_communicator;
 
   ~PreparedReceive() {
-    if (!definition_event || definition_event->event()->IsDefined()) return;
+    if (!definition_event || definition_event->event()->IsDefined()) {
+      return;
+    }
     LOG(WARNING)
         << "PreparedReceive destroyed with unfulfilled definition_event";
     client->SetEventAsError(
@@ -473,8 +470,9 @@ class PreparedReceive {
 // Acquire the GPU clique and communicator for a given clique key.
 absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
     StreamExecutorGpuClient* client, gpu::GpuCollectives* gpu_collectives,
-    gpu::GpuCliqueKey clique_key, gpu::AcquiredCliquesMap& acquired_cliques_map,
-    RankId rank_id, se::Stream* stream) {
+    const gpu::GpuCliqueKey& clique_key,
+    gpu::AcquiredCliquesMap& acquired_cliques_map, RankId rank_id,
+    se::Stream* stream) {
   // Get the clique ID callback.
   const ExecuteOptions dummy_execute_options;
   gpu::GpuExecutableRunOptions* dummy_gpu_run_options =
@@ -495,12 +493,12 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
       acquired_cliques_map[clique_key];
 
   // Get the communicator to use for this receive.
-  std::optional<Communicator*> maybe_communicator =
-      (*clique.get())->comm(rank_id);
-  if (!maybe_communicator.has_value())
+  std::optional<Communicator*> maybe_communicator = (*clique)->comm(rank_id);
+  if (!maybe_communicator.has_value()) {
     return absl::InternalError(
         "AcquireCliqueAndCommunicator: Unable to get communicator from "
         "acquired GPU clique.");
+  }
 
   return AcquiredCliqueAndCommunicator{
       std::move(clique),
@@ -623,19 +621,27 @@ absl::StatusOr<PreparedReceive> PrepareReceive(
   };
 }
 
-// Groups Prepared{Send,Receive} structs that have a `.clique_key` attribute.
-template <typename PreparedT>
-static absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedT>>
-GroupByCliqueKey(std::vector<PreparedT>&& prepareds) {
-  absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedT>> grouped;
-  grouped.reserve(prepareds.size());
-  for (auto&& prepared : prepareds) {
-    grouped[prepared.clique_key].push_back(std::move(prepared));
+absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedSend>>
+GroupSendsByCliqueKey(std::vector<PreparedSend>&& prepared_sends) {
+  absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedSend>> grouped;
+  grouped.reserve(prepared_sends.size());
+  for (auto&& prepared_send : prepared_sends) {
+    grouped[prepared_send.clique_key].push_back(std::move(prepared_send));
   }
   return grouped;
 }
 
-static absl::Status FulfillDeviceEvent(
+absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedReceive>>
+GroupReceivesByCliqueKey(std::vector<PreparedReceive>&& prepared_receives) {
+  absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedReceive>> grouped;
+  grouped.reserve(prepared_receives.size());
+  for (auto&& prepared_receive : prepared_receives) {
+    grouped[prepared_receive.clique_key].push_back(std::move(prepared_receive));
+  }
+  return grouped;
+}
+
+absl::Status FulfillDeviceEvent(
     PjRtStreamExecutorClient* client, LocalDeviceState* local_device_state,
     se::Stream* stream,
     tsl::RCReference<PjRtStreamExecutorDeviceEvent> device_event,
@@ -646,7 +652,9 @@ static absl::Status FulfillDeviceEvent(
   }
   absl::Status s = client->AllocateAndRecordEvent(device_event->event(),
                                                   local_device_state, stream);
-  if (!s.ok()) client->SetEventAsError(device_event->event(), s);
+  if (!s.ok()) {
+    client->SetEventAsError(device_event->event(), s);
+  }
   return s;
 }
 }  // namespace
@@ -702,8 +710,9 @@ StreamExecutorGpuClient::CrossHostSendBuffers(
 
   // Group the sends by local device.
   absl::flat_hash_map<PjRtDevice*, std::vector<int>> sends_by_device;
-  for (int i = 0; i < buffers.size(); ++i)
+  for (int i = 0; i < buffers.size(); ++i) {
     sends_by_device[buffers[i]->device()].push_back(i);
+  }
 
   // Execute sends for each local device.
   for (auto& [device, send_idxs] : sends_by_device) {
@@ -757,7 +766,7 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
         return prepared_send.status();
       }
 
-      prepared_sends.push_back(std::move(*prepared_send));
+      prepared_sends.push_back(*std::move(prepared_send));
     }
 
     return absl::OkStatus();
@@ -777,7 +786,9 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
       // Wait until the buffer we want to send is fully materialized.
       for (const auto& event : prepared_send.definition_events) {
         tsl::BlockUntilReady(event.get());
-        if (auto* status = event->GetErrorIfPresent()) return *status;
+        if (auto* status = event->GetErrorIfPresent(); status != nullptr) {
+          return *status;
+        }
       }
       // Launch the send.
       auto mem = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
@@ -800,9 +811,9 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
                                std::move(launch_send_group)]() mutable {
     // Group transfers by GPU clique.
     absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedSend>>
-        grouped_sends = GroupByCliqueKey(std::move(prepared_sends));
+        grouped_sends = GroupSendsByCliqueKey(std::move(prepared_sends));
 
-    for (auto&& [clique_key, curr_sends] : std::move(grouped_sends)) {
+    for (auto& [clique_key, curr_sends] : grouped_sends) {
       // Get the communicator on which we will execute this group of
       // transfers. We assume each clique key is associated with a unique
       // communicator, so we just take the communicator of the first
@@ -950,7 +961,7 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
       }
 
       buffers.push_back(std::move(prepared_receive->buffer));
-      prepared_receives.push_back(std::move(*prepared_receive));
+      prepared_receives.push_back(*std::move(prepared_receive));
     }
 
     return absl::OkStatus();
@@ -987,9 +998,10 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
                                   std::move(launch_receive_group)]() mutable {
     // Group transfers by GPU clique.
     absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedReceive>>
-        grouped_receives = GroupByCliqueKey(std::move(prepared_receives));
+        grouped_receives =
+            GroupReceivesByCliqueKey(std::move(prepared_receives));
 
-    for (auto&& [clique_key, curr_receives] : std::move(grouped_receives)) {
+    for (auto& [clique_key, curr_receives] : grouped_receives) {
       // Get the communicator on which we will execute this group of
       // transfers. We assume each clique key is associated with a unique
       // communicator, so we just take the communicator of the first

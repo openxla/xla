@@ -2939,7 +2939,7 @@ TEST(StreamExecutorGpuClientTest, FailedCrossHostTransferSrcAndDstAddressable) {
 
   // Create a buffer to try to send.
   std::vector<int32_t> data(256);
-  std::iota(data.begin(), data.end(), 1);
+  absl::c_iota(data, 1);
 
   Shape shape = ShapeUtil::MakeShape(S32, {256});
 
@@ -3121,13 +3121,14 @@ absl::Status SuccessfulCrossHostTransferTestBody(bool is_sender,
   // Sender logic.
   if (is_sender) {
     LOG(INFO) << log_prefix << ": creating buffers";
-    std::vector<int32_t> data(256);
-    absl::c_iota(data, 1);
-    Shape shape = ShapeUtil::MakeShape(S32, {256});
 
     // Create the data to send.
+    Shape shape = ShapeUtil::MakeShape(S32, {256});
     std::vector<std::unique_ptr<PjRtBuffer>> buffers;
     for (int i = 0; i < num_arrays; ++i) {
+      std::vector<int32_t> data(256);
+      absl::c_iota(data, 1000 * i);
+
       TF_ASSIGN_OR_RETURN(
           std::unique_ptr<PjRtBuffer> buffer,
           client->BufferFromHostBuffer(
@@ -3166,12 +3167,6 @@ absl::Status SuccessfulCrossHostTransferTestBody(bool is_sender,
     }
   } else {
     // Receiver logic.
-    // Expected data to receive.
-    std::vector<int32_t> expected_data(256);
-    absl::c_iota(expected_data, 1);
-    auto expected_literal = LiteralUtil::CreateR1<int32_t>(expected_data);
-
-    // Receive some data.
     std::vector<Shape> shapes;
     std::vector<PjRtGlobalDeviceId> src_device_ids;
     std::vector<CrossHostTransferKey> transfer_keys;
@@ -3194,6 +3189,10 @@ absl::Status SuccessfulCrossHostTransferTestBody(bool is_sender,
     EXPECT_EQ(receive_buffers.size(), num_arrays);
 
     for (int i = 0; i < num_arrays; ++i) {
+      std::vector<int32_t> expected_data(256);
+      absl::c_iota(expected_data, 1000 * i);
+      auto expected_literal = LiteralUtil::CreateR1<int32_t>(expected_data);
+
       LOG(INFO) << log_prefix << ": waiting for receive " << i
                 << " to complete";
       TF_RETURN_IF_ERROR(receive_buffers[i]->GetReadyFuture().Await());
