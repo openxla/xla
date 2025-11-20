@@ -18,13 +18,12 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <memory>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/container/btree_set.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -302,26 +301,23 @@ bool IsMoveToHostWithDynamicUpdateSlice(const HloInstruction* instr) {
   }
 
   std::vector<const HloInstruction*> to_check = {instr};
-  absl::btree_set<const HloInstruction*> visited;
+  absl::flat_hash_set<const HloInstruction*> visited;
 
   while (!to_check.empty()) {
     const HloInstruction* current = to_check.back();
     to_check.pop_back();
 
     auto [_, inserted] = visited.insert(current);
-    if (inserted) {
-      if (current->user_count() == 0) {
-        continue;
+    if (!inserted) {
+      continue;
+    }
+    for (const HloInstruction* user : current->users()) {
+      if (user->opcode() == HloOpcode::kDynamicUpdateSlice) {
+        return true;
       }
-      for (const HloInstruction* user : current->users()) {
-        if (user->opcode() == HloOpcode::kDynamicUpdateSlice) {
-          return true;
-        }
-        if (user->opcode() == HloOpcode::kReshape ||
-            user->opcode() == HloOpcode::kBroadcast ||
-            user->opcode() == HloOpcode::kTranspose) {
-          to_check.push_back(user);
-        }
+      if (HloPredicateIsOp<HloOpcode::kReshape, HloOpcode::kBroadcast,
+                           HloOpcode::kTranspose>(user)) {
+        to_check.push_back(user);
       }
     }
   }
@@ -334,26 +330,23 @@ bool IsMoveToDeviceWithDynamicSlice(const HloInstruction* instr) {
   }
 
   std::vector<const HloInstruction*> to_check = {instr};
-  absl::btree_set<const HloInstruction*> visited;
+  absl::flat_hash_set<const HloInstruction*> visited;
 
   while (!to_check.empty()) {
     const HloInstruction* current = to_check.back();
     to_check.pop_back();
 
     auto [_, inserted] = visited.insert(current);
-    if (inserted) {
-      if (current->operand_count() == 0) {
-        continue;
+    if (!inserted) {
+      continue;
+    }
+    for (const HloInstruction* operand : current->operands()) {
+      if (operand->opcode() == HloOpcode::kDynamicSlice) {
+        return true;
       }
-      for (const HloInstruction* operand : current->operands()) {
-        if (operand->opcode() == HloOpcode::kDynamicSlice) {
-          return true;
-        }
-        if (operand->opcode() == HloOpcode::kReshape ||
-            operand->opcode() == HloOpcode::kBroadcast ||
-            operand->opcode() == HloOpcode::kTranspose) {
-          to_check.push_back(operand);
-        }
+      if (HloPredicateIsOp<HloOpcode::kReshape, HloOpcode::kBroadcast,
+                           HloOpcode::kTranspose>(operand)) {
+        to_check.push_back(operand);
       }
     }
   }

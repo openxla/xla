@@ -152,6 +152,7 @@ limitations under the License.
 #include "xla/service/collective_pipeliner_utils.h"
 #include "xla/service/collective_utils.h"
 #include "xla/service/compiler.h"
+#include "xla/service/memory_annotations.h"
 #include "xla/service/conditional_simplifier.h"
 #include "xla/service/copy_insertion.h"
 #include "xla/service/cpu/cpu_aot_compilation_result.h"
@@ -964,6 +965,13 @@ absl::Status RunCollectiveOptimizationPasses(
         /*postprocess_backward_peeled_trailing_op=*/{},
         /*should_add_loop_invariant_op_in_chain=*/true,
         /*postprocess_pipelined_ops=*/AppendPipelinedInstruction,
+        /*collective_size_threshold_to_delay_sinking=*/INT64_MAX,
+        /*delay_sinking_large_collectives=*/true,
+        /*should_find_dynamic_slice_operand=*/
+        [](const HloInstruction* instr) {
+          return instr->IsCustomCall(
+              memory_annotations::kMoveToDeviceCustomCallTarget);
+        },
     };
 
     collectives_pipeline.AddPass<CollectivePipeliner>(config_backward);

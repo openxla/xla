@@ -517,7 +517,8 @@ std::optional<std::vector<HloInstruction*>> CollectIndependentOperandChain(
     HloPredicate should_allow_loop_variant_parameter_in_chain,
     const absl::flat_hash_set<const HloInstruction*>&
         loop_invariant_instructions,
-    bool should_add_loop_invariant_op_in_chain) {
+    bool should_add_loop_invariant_op_in_chain,
+    HloPredicate should_find_dynamic_slice_operand) {
   std::vector<HloInstruction*> chain;
   absl::flat_hash_set<const HloInstruction*> visited_set({instr});
   std::vector<std::pair<HloInstruction*, int>> stack(1, {instr, 0});
@@ -531,9 +532,7 @@ std::optional<std::vector<HloInstruction*>> CollectIndependentOperandChain(
                !loop_invariant_params.count(instr);
       };
 
-  // Check if this is a MoveToDevice custom call that follows a dynamic-slice
-  // This is a special case for backward pipelining with host offloading
-  if (instr->IsCustomCall(memory_annotations::kMoveToDeviceCustomCallTarget)) {
+  if (should_find_dynamic_slice_operand(instr)) {
     std::vector<HloInstruction*> to_check = {instr->mutable_operand(0)};
     std::set<HloInstruction*> visited;
 
@@ -632,14 +631,15 @@ std::optional<std::vector<HloInstruction*>> CollectChainsToPushBackwards(
     bool should_allow_control_dependencies,
     const absl::flat_hash_set<const HloInstruction*>&
         loop_invariant_instructions,
-    bool should_add_loop_invariant_op_in_chain) {
+    bool should_add_loop_invariant_op_in_chain,
+    HloPredicate should_find_dynamic_slice_operand) {
   if (instr->HasControlDependencies() && !should_allow_control_dependencies) {
     return std::nullopt;
   }
   return CollectIndependentOperandChain(
       instr, loop_iter, loop_invariant_params,
       should_allow_loop_variant_parameter_in_chain, loop_invariant_instructions,
-      should_add_loop_invariant_op_in_chain);
+      should_add_loop_invariant_op_in_chain, should_find_dynamic_slice_operand);
 }
 
 // Given a dynamic-update-slice find the output index of the loop we feed into.
@@ -939,7 +939,8 @@ class WhileLoopAnalysis {
       HloPredicate should_allow_loop_variant_parameter_in_chain =
           HloPredicateFalse,
       bool should_allow_control_dependencies = false,
-      bool should_add_loop_invariant_op_in_chain = false);
+      bool should_add_loop_invariant_op_in_chain = false,
+      HloPredicate should_find_dynamic_slice_operand = HloPredicateFalse);
   HloInstruction* while_loop_instruction() const { return while_; }
   void ExtractLoopInvariantOps();
 
@@ -1350,7 +1351,8 @@ void WhileLoopAnalysis::CollectCollectivesToMove(
     HloPredicate should_process, HloPredicate acceptable_formatting,
     HloPredicate should_allow_loop_variant_parameter_in_chain,
     bool should_allow_control_dependencies,
-    bool should_add_loop_invariant_op_in_chain) {
+    bool should_add_loop_invariant_op_in_chain,
+    HloPredicate should_find_dynamic_slice_operand) {
   move_infos_.clear();
   HloComputation* while_body = while_->while_body();
   const HloInstruction* loop_parameter =
@@ -1527,7 +1529,8 @@ void WhileLoopAnalysis::CollectCollectivesToMove(
           invariant_loop_parameters_,
           should_allow_loop_variant_parameter_in_chain,
           should_allow_control_dependencies, invariant_loop_instructions_,
-          should_add_loop_invariant_op_in_chain);
+          should_add_loop_invariant_op_in_chain,
+          should_find_dynamic_slice_operand);
       if (!chain_collected.has_value()) {
         VLOG(5) << "Skipping " << instr->name()
                 << " because didn't find compatible slice of parameter";
@@ -1717,7 +1720,7 @@ absl::Status MarkDynamicVariables(HloInstruction* while_loop) {
 
   config.clear_dynamic_variable_tuple_indices();
 
-  absl::flat_hash_set<int64_t> dynamic_slice_indices;
+  std::set<int64_t> dynamic_slice_indices;
 
   for (auto* instr : while_loop->while_body()->instructions()) {
     if (instr->opcode() == HloOpcode::kDynamicUpdateSlice ||
@@ -3429,7 +3432,8 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
         config_.should_process, config_.acceptable_formatting,
         config_.should_allow_loop_variant_parameter_in_chain,
         config_.should_allow_control_dependencies,
-        config_.should_add_loop_invariant_op_in_chain);
+        config_.should_add_loop_invariant_op_in_chain,
+        config_.should_find_dynamic_slice_operand);
     if (loop_analysis->GetMoveInfos().empty()) {
       continue;
     }
