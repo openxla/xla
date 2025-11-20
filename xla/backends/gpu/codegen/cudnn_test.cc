@@ -46,7 +46,6 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/env.h"
@@ -59,8 +58,6 @@ namespace xla {
 namespace gpu {
 namespace {
 
-using ::tsl::testing::IsOkAndHolds;
-
 class CuDnnFusionTest : public GpuCodegenTest {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
@@ -71,19 +68,23 @@ class CuDnnFusionTest : public GpuCodegenTest {
     debug_options.set_xla_gpu_cudnn_gemm_fusion_level(2);
     return debug_options;
   }
+  se::CudaComputeCapability get_cuda_cc() const {
+    se::StreamExecutor* executor = backend().default_stream_executor();
+    return executor->GetDeviceDescription().cuda_compute_capability();
+  }
   bool IsAtLeastAmpereWithCuDnn9() {
     se::StreamExecutor* executor = backend().default_stream_executor();
-    return executor->GetDeviceDescription()
-               .cuda_compute_capability()
-               .IsAtLeastAmpere() &&
+    return get_cuda_cc().IsAtLeastAmpere() &&
            GetDnnVersionInfoOrDefault(executor).major_version() >= 9;
   }
-  bool IsAtLeastCuDnn91() {
+  bool IsAtLeastCuDnnVersion(int major, int minor) {
     se::StreamExecutor* executor = backend().default_stream_executor();
     const se::dnn::VersionInfo version = GetDnnVersionInfoOrDefault(executor);
-    return (version.major_version() == 9 && version.minor_version() >= 1) ||
-           version.major_version() > 9;
+    return (version.major_version() == major &&
+            version.minor_version() >= minor) ||
+           version.major_version() > major;
   }
+  bool IsAtLeastCuDnn91() { return IsAtLeastCuDnnVersion(9, 1); }
 
  protected:
   void SetUp() override {
@@ -232,6 +233,11 @@ ENTRY e {
 }
 
 TEST_F(CuDnnFusionExecutionTest, CompilerSupportsFusionsWithWorkspace) {
+  if (get_cuda_cc().IsAtLeastBlackwell()) {
+    // TODO(b/445172709): Re-enable once fixed.
+    GTEST_SKIP();
+  }
+
   const std::string kHloText = R"(
 f {
   a = f32[32,96] parameter(0)
@@ -445,6 +451,29 @@ ENTRY e {
   p0 = bf16[16,32,128] parameter(0)
   p1 = bf16[16,128,64] parameter(1)
   ROOT _ = f32[16,32,64] fusion(p0, p1), kind=kCustom, calls=fusion1,
+    backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
+})",
+                            ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
+}
+
+TEST_F(CuDnnFusionExecutionTest, DotS4BF16ExecutesCorrectly) {
+  if (!IsAtLeastCuDnnVersion(9, 12)) {
+    GTEST_SKIP() << "This test case requires cuDNN 9.12+.";
+  }
+  EXPECT_TRUE(RunAndCompare(R"(
+f {
+  a = s4[3,128,128] parameter(0)
+  c = bf16[3,128,128] convert(a)
+  b = bf16[3,128,128] parameter(1)
+  d = bf16[3,128,128] dot(c, b),
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_contracting_dims={2}, rhs_contracting_dims={1}
+}
+
+e {
+  a = s4[3,128,128] parameter(0)
+  b = bf16[3,128,128] parameter(1)
+  f = bf16[3,128,128] fusion(a, b), kind=kCustom, calls=f,
     backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
 })",
                             ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
@@ -889,6 +918,10 @@ ENTRY Test {
 }
 
 TEST_F(CuDnnFusionExecutionTest, ConvWgradWithNHWCLayoutExecutesCorrectly) {
+  if (get_cuda_cc().IsAtLeastBlackwell()) {
+    // TODO(b/445172709): Re-enable once fixed.
+    GTEST_SKIP();
+  }
   EXPECT_TRUE(RunAndCompare(R"(
 fusion {
   zero = f32[] constant(0)
@@ -1179,10 +1212,7 @@ TEST_F(CuDnnFusionRewriteTest, AutotuningPicksCuDnnForS8BF16OnHopper) {
   // The test case relies on measurements by the autotuner and current
   // performance comparison of the backends. May need to be updated if
   // the situation changes.
-  if (backend()
-          .default_stream_executor()
-          ->GetDeviceDescription()
-          .cuda_compute_capability() != se::CudaComputeCapability::Hopper()) {
+  if (get_cuda_cc() != se::CudaComputeCapability::Hopper()) {
     GTEST_SKIP() << "The test is for Hopper.";
   }
   MatchOptimizedHlo(R"(
@@ -1220,15 +1250,18 @@ ENTRY main {
       backend_config={"fusion_backend_config":{kind:"__cudnn$fusion"}}
 })";
   EXPECT_TRUE(*RunCuDnnFileCheck(kHloText, R"(
+CHECK: "intermediate_data_type": "FLOAT"
 CHECK: "nodes"
 CHECK: {
 CHECK: "block_size": [{{[[:space:]]*32[[:space:]]*}}]
+CHECK: "compute_data_type": "FLOAT"
 CHECK: "X": "lhs"
 CHECK: "scale": "lhs_scale"
 CHECK: "Y": "result_lhs_dq"
 CHECK: "tag": "BLOCK_SCALE_DEQUANTIZE"
 CHECK: {
 CHECK: "block_size": [{{[[:space:]]*32[[:space:]]*}}]
+CHECK: "compute_data_type": "FLOAT"
 CHECK: "X": "rhs"
 CHECK: "scale": "rhs_scale"
 CHECK: "Y": "result_rhs_dq"

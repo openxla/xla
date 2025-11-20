@@ -45,13 +45,13 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk_executor.h"
 #include "xla/backends/cpu/runtime/xfeed_manager.h"
+#include "xla/backends/cpu/target_machine_options.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/cpu/cpu_runtime.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_status_internal.h"
 #include "xla/service/executable.h"
@@ -89,13 +89,15 @@ absl::StatusOr<std::unique_ptr<CpuExecutable>> CpuExecutable::Create(
     std::unique_ptr<HloModule> hlo_module, ThunkSequence thunks,
     std::vector<ConstantAllocation> constants,
     std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
-    std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map) {
+    std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map,
+    TargetMachineOptions target_machine_options) {
   VLOG(2) << "Create CpuExecutable from a thunk sequence; module="
           << hlo_module->name() << ", constants=" << constants.size();
 
   std::unique_ptr<CpuExecutable> executable(new CpuExecutable(
       std::move(hlo_module), std::move(hlo_profile_printer_data),
-      std::move(hlo_profile_index_map), std::move(assignment)));
+      std::move(hlo_profile_index_map), std::move(assignment),
+      std::move(target_machine_options)));
   executable->function_library_ = std::move(function_library);
 
   ThunkExecutor::Options thunk_executor_options;
@@ -131,10 +133,12 @@ CpuExecutable::CpuExecutable(
     std::unique_ptr<HloModule> hlo_module,
     std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
     std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map,
-    std::unique_ptr<BufferAssignment> assignment)
+    std::unique_ptr<BufferAssignment> assignment,
+    TargetMachineOptions target_machine_options)
     : Executable(std::move(hlo_module), std::move(hlo_profile_printer_data),
                  std::move(hlo_profile_index_map)),
-      assignment_(std::move(assignment)) {
+      assignment_(std::move(assignment)),
+      target_machine_options_(std::move(target_machine_options)) {
   if (assignment_ && has_module()) {
     XlaDebugInfoManager::Get()->RegisterModule(shared_module(), assignment_);
   }
@@ -224,6 +228,16 @@ CpuExecutable::CreateBufferTable(se::DeviceMemoryAllocator* memory_allocator,
   return std::move(buffers);
 }
 
+static int32_t GetDeviceOrdinal(const ExecutableRunOptions* run_options) {
+  if (!run_options) {
+    return 0;
+  }
+  if (run_options->device_ordinal() != -1) {
+    return run_options->device_ordinal();
+  }
+  return run_options->stream()->parent()->device_ordinal();
+}
+
 absl::Status CpuExecutable::ExecuteThunks(
     const ExecutableRunOptions* run_options,
     absl::Span<MaybeOwningDeviceMemory const> buffers) {
@@ -269,7 +283,7 @@ absl::Status CpuExecutable::ExecuteThunks(
   Thunk::ExecuteParams execute_params = {
       &*function_library_,
       &allocations,
-      GetXfeedManager(runtime::GetDeviceOrdinal(run_options)),
+      GetXfeedManager(GetDeviceOrdinal(run_options)),
       intra_op_thread_pool,
       &task_runner,
       &collective_execute_params,

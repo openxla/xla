@@ -41,12 +41,6 @@ cc_library(
     name = "buffer_allocation_info",
     hdrs = ["buffer_allocation_info.h"],
     visibility = internal_visibility([":friends"]),
-    deps = [
-        "//xla:xla_data_proto_cc",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
-    ],
 )
 
 cc_library(
@@ -66,15 +60,6 @@ cc_library(
     ],
 )
 
-xla_cc_test(
-    name = "buffer_allocation_info_test",
-    srcs = ["buffer_allocation_info_test.cc"],
-    deps = [
-        ":buffer_allocation_info",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
 onednn_graph_cc_library(
     name = "onednn_emitter",
     srcs = ["onednn_emitter.cc"],
@@ -86,7 +71,7 @@ onednn_graph_cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/backends/cpu/runtime:dot_lib",
+        "//xla/backends/cpu/runtime:dot_dims",
         "//xla/backends/cpu/runtime/onednn:onednn_interop",
         "//xla/hlo/ir:hlo",
         "//xla/tsl/mkl:onednn",
@@ -116,7 +101,7 @@ onednn_graph_cc_library(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/codegen:target_machine_features",
-        "//xla/backends/cpu/runtime:dot_lib",
+        "//xla/backends/cpu/runtime:dot_dims",
         "//xla/tsl/mkl:onednn",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
@@ -126,8 +111,8 @@ onednn_graph_cc_library(
 )
 
 tf_proto_library(
-    name = "xnnpack_config_proto",
-    srcs = ["xnnpack_config.proto"],
+    name = "xnn_fusion_options_proto",
+    srcs = ["xnn_fusion_options.proto"],
 )
 
 cc_library(
@@ -163,9 +148,11 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/backends/cpu/runtime/xnnpack:xnn_interop",
+        "//xla/backends/cpu/runtime:dot_dims",
         "//xla/backends/cpu/runtime/ynnpack:ynn_interop",
         "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_memory",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@XNNPACK//ynnpack",
@@ -185,7 +172,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/codegen:target_machine_features",
-        "//xla/backends/cpu/runtime:dot_lib",
+        "//xla/backends/cpu/runtime:dot_dims",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Target",
@@ -202,7 +189,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/codegen:target_machine_features",
-        "//xla/backends/cpu/runtime:dot_lib",
+        "//xla/backends/cpu/runtime:dot_dims",
         "//xla/backends/cpu/runtime/xnnpack:xnn_interop",
         "//xla/hlo/ir:hlo",
         "//xla/service:pattern_matcher",
@@ -232,30 +219,9 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
-    name = "ynn_threadpool_test",
-    srcs = ["ynn_threadpool_test.cc"],
-    deps = [
-        ":ynn_threadpool",
-        "//xla/tsl/platform:env",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_library(
-    name = "ynn_threadpool",
-    srcs = ["ynn_threadpool.cc"],
-    hdrs = ["ynn_threadpool.h"],
-    deps = [
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:fixed_array",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/synchronization",
-        "@eigen_archive//:eigen3",
-        "@slinky//slinky/base:thread_pool",
-    ],
+tf_proto_library(
+    name = "ynn_fusion_options_proto",
+    srcs = ["ynn_fusion_options.proto"],
 )
 
 cc_library(
@@ -266,14 +232,13 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/backends/cpu/codegen:target_machine_features",
-        "//xla/backends/cpu/runtime:dot_lib",
+        "//xla:xla_proto_cc",
+        "//xla/backends/cpu/runtime:dot_dims",
         "//xla/backends/cpu/runtime/ynnpack:ynn_interop",
         "//xla/hlo/ir:hlo",
         "//xla/service:pattern_matcher",
         "//xla/tsl/platform:statusor",
         "@XNNPACK//ynnpack",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -281,7 +246,38 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "target_machine_options",
+    srcs = ["target_machine_options.cc"],
+    hdrs = ["target_machine_options.h"],
+    deps = [
+        "//xla:util",
+        "//xla:xla_proto_cc",
+        "//xla/backends/cpu/codegen:cpu_features",
+        "//xla/service/cpu:executable_proto_cc",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
+    ],
+)
+
+xla_cc_test(
+    name = "target_machine_options_test",
+    srcs = ["target_machine_options_test.cc"],
+    deps = [
+        ":target_machine_options",
+        "//xla:xla_proto_cc",
+        "//xla/service/cpu:executable_proto_cc",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

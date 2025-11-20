@@ -27,6 +27,7 @@
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
+#include "google/protobuf/text_format.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
@@ -382,10 +383,12 @@ TEST_P(ClientTest, CopyArraysDefaultLayoutSuccess) {
       client_->CopyArrays(absl::MakeSpan(arrays), std::move(device_list),
                           MemoryKind("mock"), ArrayCopySemantics::kAlwaysCopy));
   ASSERT_THAT(copied_arrays, SizeIs(2));
-  EXPECT_EQ(llvm::cast<Array>(copied_arrays[0].get())->custom_layout(),
-            nullptr);
-  EXPECT_EQ(llvm::cast<Array>(copied_arrays[1].get())->custom_layout(),
-            nullptr);
+  TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<const xla::PjRtLayout> layout_1,
+                          copied_arrays[0].get()->pjrt_layout());
+  EXPECT_EQ(layout_1, nullptr);
+  TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<const xla::PjRtLayout> layout_2,
+                          copied_arrays[1].get()->pjrt_layout());
+  EXPECT_EQ(layout_2, nullptr);
 }
 
 TEST_P(ClientTest, CopyArraysCustomLayoutSuccess) {
@@ -418,12 +421,12 @@ TEST_P(ClientTest, CopyArraysCustomLayoutSuccess) {
       client_->CopyArrays(absl::MakeSpan(arrays), std::move(device_list),
                           MemoryKind("mock"), ArrayCopySemantics::kAlwaysCopy));
   ASSERT_THAT(copied_arrays, SizeIs(2));
-  EXPECT_EQ(
-      llvm::cast<Array>(copied_arrays[0].get())->custom_layout()->ToString(),
-      layout_1_->ToString());
-  EXPECT_EQ(
-      llvm::cast<Array>(copied_arrays[1].get())->custom_layout()->ToString(),
-      layout_2_->ToString());
+  TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<const xla::PjRtLayout> layout_1,
+                          copied_arrays[0].get()->pjrt_layout());
+  EXPECT_EQ(layout_1->ToString(), layout_1_->ToString());
+  TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<const xla::PjRtLayout> layout_2,
+                          copied_arrays[1].get()->pjrt_layout());
+  EXPECT_EQ(layout_2->ToString(), layout_2_->ToString());
 }
 
 TEST_P(ClientTest, GetDefaultDeviceAssignmentSuccess) {

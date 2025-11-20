@@ -14,6 +14,7 @@
 # ==============================================================================
 
 from collections.abc import Callable, Iterable
+from typing import Optional
 
 from absl.testing import absltest
 import numpy as np
@@ -25,15 +26,27 @@ from xla.codegen.testlib import utilities as testlib_utilities
 create_literal = testlib_utilities.create_literal_from_np
 
 
+class InputSpec:
+
+  def __init__(self, shape: tuple[int, ...], input_value):
+    self.shape = shape
+    self.input_value = input_value
+
+
+def get_random_array(shape: tuple[int, ...], dtype: np.dtype) -> np.ndarray:
+  rng = np.random.default_rng()
+  return rng.uniform(low=-5, high=5, size=shape).astype(dtype)
+
+
 def compare_kernel(
     ir: str,
     kernel_name: str,
     num_workgroups: int,
-    input_shapes: Iterable[tuple[int, ...]],
+    input_specs: Iterable[InputSpec],
     output_shape: tuple[int, ...],
     dtype,
     expected_output: Callable[[np.ndarray, ...], np.ndarray],
-    exact: bool = True,
+    maxulp: Optional[int] = None,
 ) -> None:
   mlir_emitter = cpu_testlib.MlirTestKernelEmitter(
       ir, kernel_name, (num_workgroups, 1, 1)
@@ -44,19 +57,28 @@ def compare_kernel(
       kernel_definition,
       cpu_testlib.JitCompiler(base_testlib.HloModuleConfig()),
   )
-  inputs = [np.random.rand(*shape).astype(dtype) for shape in input_shapes]
+
+  # Simply use a all-ones arrays as inputs to make it easy to debug the kernel
+  # unless random inputs are requested.
+  def get_input(spec: InputSpec):
+    if spec.input_value is None:
+      return get_random_array(spec.shape, dtype)
+    return np.full(shape=spec.shape, fill_value=spec.input_value, dtype=dtype)
+
+  inputs = [get_input(spec) for spec in input_specs]
 
   input_tensors = [create_literal(input) for input in inputs]
-  output_tensor = create_literal(np.zeros(output_shape, dtype=dtype))
+  # Use a random array as the output to ensure all values are written to.
+  output_tensor = create_literal(get_random_array(output_shape, dtype))
   runner.call(input_tensors + [output_tensor])
 
-  if exact:
-    np.testing.assert_array_equal(
-        np.asarray(output_tensor), expected_output(*inputs)
-    )
+  output_np = np.asarray(output_tensor)
+  expected_output_np = expected_output(*inputs)
+  if maxulp is None:
+    np.testing.assert_array_equal(output_np, expected_output_np)
   else:
-    np.testing.assert_array_almost_equal_nulp(
-        np.asarray(output_tensor), expected_output(*inputs), nulp=3
+    np.testing.assert_array_max_ulp(
+        output_np, expected_output_np, maxulp=maxulp
     )
 
 
@@ -83,10 +105,34 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "tiled_slice",
         1,
-        [(5, 5)],
+        [InputSpec((5, 5), 1)],
         (5, 5),
         np.float32,
         lambda arg: arg.transpose(),
+    )
+
+  def test_strided(self):
+    ir = """
+      module @tiled_slice {
+        xtile.entry_func @tiled_slice(
+            %input: memref<64x64xf32>,
+            %output: memref<4x32xf32>,
+            %tile_id: index) attributes {xtile.tiling_info = #xtile.tiling_info<tile_count:1, tiles_per_workgroup:1>} {
+          %input_tile = xtile.extract %input[%tile_id, %tile_id][4, 32][21, 2] : memref<64x64xf32> -> tensor<4x32xf32>
+          xtile.insert %input_tile into %output[%tile_id, %tile_id][4, 32][1, 1] : tensor<4x32xf32> -> memref<4x32xf32>
+          xtile.return
+        }
+      }
+    """
+
+    compare_kernel(
+        ir,
+        "tiled_slice",
+        1,
+        [InputSpec((64, 64), 1)],
+        (4, 32),
+        np.float32,
+        lambda arg: arg[::21, ::2],
     )
 
   def test_transpose(self):
@@ -110,7 +156,7 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "tiled_transpose",
         8,
-        [(4096, 4096)],
+        [InputSpec((4096, 4096), 1)],
         (4096, 4096),
         np.float32,
         lambda arg: arg.transpose(),
@@ -139,7 +185,7 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "add_tranpose",
         8,
-        [(4096, 4096)],
+        [InputSpec((4096, 4096), 1)],
         (4096, 4096),
         np.float32,
         lambda arg: arg + arg.transpose(),
@@ -167,11 +213,11 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "dot_single_tile",
         1,
-        [(8, 16), (16, 8)],
+        [InputSpec((8, 16), 1), InputSpec((16, 8), 1)],
         (8, 8),
         np.float32,
         lambda lhs, rhs: lhs @ rhs,
-        False,
+        maxulp=5,
     )
 
   def test_dot_scalar_output(self):
@@ -196,11 +242,11 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "test_dot_scalar_output",
         1,
-        [(8, 16), (16, 8)],
-        (1,),
+        [InputSpec((8, 16), 1), InputSpec((16, 8), 1)],
+        (),
         np.float32,
-        lambda lhs, rhs: np.tensordot(lhs, rhs, axes=([1, 0], [0, 1])),
-        False,
+        lambda lhs, rhs: np.tensordot(lhs, rhs, axes=[[1, 0], [0, 1]]),
+        maxulp=8,
     )
 
   def test_dot_fusion_single_tile(self):
@@ -229,11 +275,199 @@ class XtileLoweringTest(absltest.TestCase):
         ir,
         "dot_fusion_single_tile",
         1,
-        [(8, 16), (8, 16), (16, 1)],
+        [InputSpec((8, 16), 1), InputSpec((8, 16), 1), InputSpec((16, 1), 1)],
         (8, 1),
         np.float32,
         lambda lhs_0, lhs_1, rhs: np.tanh((lhs_0 + lhs_1) @ rhs),
-        False,
+        maxulp=5,
+    )
+
+  def test_reduction_add_inner(self):
+    ir = """
+      module @reduction_add_inner {
+        xtile.entry_func @reduction_add_inner(
+            %input: memref<1024x32xf32>,
+            %init: memref<f32>,
+            %output: memref<1024xf32>,
+            %tile_id: index) attributes {xtile.tiling_info = #xtile.tiling_info<tile_count:128, tiles_per_workgroup:32>} {
+          %c_0 = arith.constant 0 : index
+          %c_8 = arith.constant 8 : index
+          %init_tile = xtile.extract %init[][][] : memref<f32> -> tensor<f32>
+          %index = arith.muli %tile_id, %c_8 : index
+          %input_tile = xtile.extract %input[%index, %c_0][8, 32][1, 1] : memref<1024x32xf32> -> tensor<8x32xf32>
+          %result = stablehlo.reduce(%input_tile init: %init_tile)
+                    across dimensions = [1]
+                    : (tensor<8x32xf32>, tensor<f32>) -> tensor<8xf32>
+            reducer(%arg0: tensor<f32>, %arg1: tensor<f32>) {
+              %add = arith.addf %arg0, %arg1 : tensor<f32>
+              stablehlo.return %add : tensor<f32>
+            }
+          xtile.insert %result into %output[%index][8][1] : tensor<8xf32> -> memref<1024xf32>
+          xtile.return
+        }
+      }
+    """
+
+    compare_kernel(
+        ir,
+        "reduction_add_inner",
+        4,
+        [InputSpec((1024, 32), 1), InputSpec((1,), 0)],
+        (1024,),
+        np.int32,
+        lambda input, init: np.sum(input, axis=1) + init,
+    )
+
+  def test_reduction_add_outer(self):
+    ir = """
+      module @reduction_add_outer {
+        xtile.entry_func @reduction_add_outer(
+            %input: memref<1024x32xf32>,
+            %init: memref<f32>,
+            %output: memref<32xf32>,
+            %tile_id: index) attributes {xtile.tiling_info = #xtile.tiling_info<tile_count:4, tiles_per_workgroup:1>} {
+          %c_0 = arith.constant 0 : index
+          %c_8 = arith.constant 8 : index
+          %init_tile = xtile.extract %init[][][] : memref<f32> -> tensor<f32>
+          %index = arith.muli %tile_id, %c_8 : index
+          %input_tile = xtile.extract %input[%c_0, %index][1024, 8][1, 1] : memref<1024x32xf32> -> tensor<1024x8xf32>
+          %result = stablehlo.reduce(%input_tile init: %init_tile)
+                    across dimensions = [0]
+                    : (tensor<1024x8xf32>, tensor<f32>) -> tensor<8xf32>
+            reducer(%arg0: tensor<f32>, %arg1: tensor<f32>) {
+              %add = arith.addf %arg0, %arg1 : tensor<f32>
+              stablehlo.return %add : tensor<f32>
+            }
+          xtile.insert %result into %output[%index][8][1] : tensor<8xf32> -> memref<32xf32>
+          xtile.return
+        }
+      }
+    """
+
+    compare_kernel(
+        ir,
+        "reduction_add_outer",
+        4,
+        [InputSpec((1024, 32), 1), InputSpec((1,), 0)],
+        (32,),
+        np.float32,
+        lambda input, init: np.sum(input, axis=0),
+    )
+
+  def test_reduction_middle(self):
+    ir = """
+      module @reduction_add_middle {
+        xtile.entry_func @reduction_add_middle(
+            %input: memref<8x4x2xf32>,
+            %init: memref<f32>,
+            %output: memref<8x2xf32>,
+            %tile_id: index) attributes {xtile.tiling_info = #xtile.tiling_info<tile_count:1, tiles_per_workgroup:1>} {
+          %init_val = xtile.extract %init[][][] : memref<f32> -> tensor<f32>
+          %input_tile = xtile.extract %input[%tile_id, %tile_id, %tile_id][8, 4, 2][1, 1, 1] : memref<8x4x2xf32> -> tensor<8x4x2xf32>
+          %result = stablehlo.reduce(%input_tile init: %init_val)
+                    across dimensions = [1]
+                    : (tensor<8x4x2xf32>, tensor<f32>) -> tensor<8x2xf32>
+            reducer(%arg0: tensor<f32>, %arg1: tensor<f32>) {
+              %add = arith.addf %arg0, %arg1 : tensor<f32>
+              stablehlo.return %add : tensor<f32>
+            }
+          xtile.insert %result into %output[%tile_id, %tile_id][8, 2][1, 1] : tensor<8x2xf32> -> memref<8x2xf32>
+          xtile.return
+        }
+      }
+    """
+
+    compare_kernel(
+        ir,
+        "reduction_add_middle",
+        1,
+        [InputSpec((8, 4, 2), 1), InputSpec((1,), 0)],
+        (8, 2),
+        np.float32,
+        lambda input, init: np.sum(input, axis=1),
+    )
+
+  def test_reduction_outer_inner(self):
+    ir = """
+      module @reduction_add_outer_inner {
+        xtile.entry_func @reduction_add_outer_inner(
+            %input: memref<8x4x2xf32>,
+            %init: memref<f32>,
+            %output: memref<4xf32>,
+            %tile_id: index) attributes {xtile.tiling_info = #xtile.tiling_info<tile_count:1, tiles_per_workgroup:1>} {
+          %init_val = xtile.extract %init[][][] : memref<f32> -> tensor<f32>
+          %input_tile = xtile.extract %input[%tile_id, %tile_id, %tile_id][8, 4, 2][1, 1, 1] : memref<8x4x2xf32> -> tensor<8x4x2xf32>
+          %result = stablehlo.reduce(%input_tile init: %init_val)
+                    across dimensions = [0, 2]
+                    : (tensor<8x4x2xf32>, tensor<f32>) -> tensor<4xf32>
+            reducer(%arg0: tensor<f32>, %arg1: tensor<f32>) {
+              %add = arith.addf %arg0, %arg1 : tensor<f32>
+              stablehlo.return %add : tensor<f32>
+            }
+          xtile.insert %result into %output[%tile_id][4][1] : tensor<4xf32> -> memref<4xf32>
+          xtile.return
+        }
+      }
+    """
+
+    compare_kernel(
+        ir,
+        "reduction_add_outer_inner",
+        1,
+        [InputSpec((8, 4, 2), 1), InputSpec((1,), 0)],
+        (4,),
+        np.float32,
+        lambda input, init: np.sum(input, axis=(0, 2)),
+    )
+
+  def test_broadcast_in_dim_inner(self):
+    ir = """
+      module @broadcast_in_dim_inner {
+        xtile.entry_func @broadcast_in_dim_inner(
+            %input: memref<4xf32>,
+            %output: memref<32x4xf32>,
+            %tile_id: index) attributes {xtile.tiling_info = #xtile.tiling_info<tile_count:1, tiles_per_workgroup:1>} {
+          %input_tile = xtile.extract %input[%tile_id][4][1] : memref<4xf32> -> tensor<4xf32>
+          %result = stablehlo.broadcast_in_dim %input_tile, dims = [1] : (tensor<4xf32>) -> tensor<32x4xf32>
+          xtile.insert %result into %output[%tile_id, %tile_id][32,4][1,1] : tensor<32x4xf32> -> memref<32x4xf32>
+          xtile.return
+        }
+      }
+    """
+
+    compare_kernel(
+        ir,
+        "broadcast_in_dim_inner",
+        1,
+        [InputSpec((4,), None)],
+        (32, 4),
+        np.float32,
+        lambda input: np.broadcast_to(input, (32, 4)),
+    )
+
+  def test_broadcast_in_dim_outer(self):
+    ir = """
+      module @broadcast_in_dim_outer {
+        xtile.entry_func @broadcast_in_dim_outer(
+            %input: memref<4xf32>,
+            %output: memref<4x32xf32>,
+            %tile_id: index) attributes {xtile.tiling_info = #xtile.tiling_info<tile_count:1, tiles_per_workgroup:1>} {
+          %input_tile = xtile.extract %input[%tile_id][4][1] : memref<4xf32> -> tensor<4xf32>
+          %result = stablehlo.broadcast_in_dim %input_tile, dims = [0] : (tensor<4xf32>) -> tensor<4x32xf32>
+          xtile.insert %result into %output[%tile_id, %tile_id][4,32][1,1] : tensor<4x32xf32> -> memref<4x32xf32>
+          xtile.return
+        }
+      }
+    """
+
+    compare_kernel(
+        ir,
+        "broadcast_in_dim_outer",
+        1,
+        [InputSpec((4,), None)],
+        (4, 32),
+        np.float32,
+        lambda input: np.transpose(np.broadcast_to(input, (32, 4))),
     )
 
 

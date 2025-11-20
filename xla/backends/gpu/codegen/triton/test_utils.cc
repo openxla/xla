@@ -52,6 +52,8 @@ limitations under the License.
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/model/block_level_parameters.h"
+#include "xla/service/gpu/model/triton_emitter_constraints.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -83,13 +85,11 @@ std::vector<xla::PrimitiveType> AllXlaDataTypes() {
 }
 
 bool SupportsBF16(const stream_executor::GpuComputeCapability& cc) {
-  if (std::holds_alternative<stream_executor::CudaComputeCapability>(cc)) {
-    return std::get<stream_executor::CudaComputeCapability>(cc).IsAtLeast(
+  if (cc.IsCuda()) {
+    return cc.cuda_compute_capability()->IsAtLeast(
         se::CudaComputeCapability::kAmpere);
-  } else if (std::holds_alternative<stream_executor::RocmComputeCapability>(
-                 cc)) {
-    return std::get<stream_executor::RocmComputeCapability>(cc)
-        .has_bf16_dtype_support();
+  } else if (cc.IsRocm()) {
+    return cc.rocm_compute_capability()->has_bf16_dtype_support();
   }
   CHECK(false);
 }
@@ -170,8 +170,12 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateXTileIrAndFileCheck(
   TF_ASSIGN_OR_RETURN(
       mlir::OwningOpRef<mlir::ModuleOp> xtile_dialect_module,
       ir_emitter_triton_internal::EmitXTileModule(
-          "xtile_dialect_fn", fusion, TestGpuDeviceInfo::RTXA6000DeviceInfo(),
-          block_level_parameters, *test->symbolic_expr_context()));
+          "xtile_dialect_fn",
+          TritonEmitterConstraints::GetBuilder(
+              TestGpuDeviceInfo::RTXA6000DeviceInfo()),
+          fusion, block_level_parameters, *test->symbolic_expr_context(),
+          ir_emitter_triton_internal::LegacyMatmulEmitter(
+              TestGpuDeviceInfo::RTXA6000DeviceInfo())));
 
   std::string out;
   llvm::raw_string_ostream os(out);
@@ -189,7 +193,7 @@ absl::Status LowerXTileIrToTritonAndFileCheck(
     const HloFusionInstruction& fusion) {
   TF_RETURN_IF_ERROR(ir_emitter_triton_internal::LowerXTileToTriton(
       xtile_dialect_module, *test->symbolic_expr_context()->GetMLIRContext(),
-      fusion));
+      fusion, TestGpuDeviceInfo::RTXH100SXMDeviceInfo()));
 
   std::string out;
   llvm::raw_string_ostream os(out);
@@ -208,13 +212,20 @@ absl::Status CreateTritonIrAndFileCheckForDot(
                       test->ParseAndReturnVerifiedModule(hlo_text));
   auto* comp = verified_module->GetComputationWithName(triton_fusion_name);
   TF_RET_CHECK(comp != nullptr);
-  return CreateTritonIrAndFileCheck(*comp, /*block_level_parameters=*/{},
-                                    filecheck_pattern);
+  return CreateTritonIrAndFileCheckForDot(*comp, filecheck_pattern);
 }
 
 absl::Status CreateTritonIrAndFileCheckForDot(
     const HloComputation& computation, absl::string_view filecheck_pattern) {
-  return CreateTritonIrAndFileCheck(computation, /*block_level_parameters=*/{},
+  BlockLevelParameters block_level_parameters;
+  if (auto gpu_config =
+          computation.FusionInstruction()->backend_config<GpuBackendConfig>();
+      gpu_config.ok() && gpu_config->has_fusion_backend_config() &&
+      gpu_config->fusion_backend_config().has_block_level_fusion_config()) {
+    block_level_parameters = BlockLevelParameters::FromBlockLevelFusionConfig(
+        gpu_config->fusion_backend_config().block_level_fusion_config());
+  }
+  return CreateTritonIrAndFileCheck(computation, block_level_parameters,
                                     filecheck_pattern);
 }
 
@@ -239,10 +250,10 @@ std::string PrimitiveTypeAndHloOpcodeToString(PrimitiveType data_type,
 
 std::string ComputeCapabilityToString(
     const stream_executor::GpuComputeCapability& cc) {
-  if (auto cuda_cc = std::get_if<se::CudaComputeCapability>(&cc)) {
+  if (auto* cuda_cc = cc.cuda_compute_capability()) {
     return absl::StrReplaceAll(cuda_cc->ToString(), {{".", ""}});
   } else {
-    CHECK(std::holds_alternative<se::RocmComputeCapability>(cc));
+    CHECK(cc.IsRocm());
     return "rocm";
   }
 }

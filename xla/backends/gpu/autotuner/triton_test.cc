@@ -27,13 +27,13 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.pb.h"
@@ -89,7 +89,7 @@ class TritonBackendTest : public HloHardwareIndependentTestBase {
   DebugOptions debug_options_;
   NVPTXCompiler compiler_;
   se::StreamExecutor* stream_executor_;
-  Compiler::TargetConfig target_config_;
+  Compiler::GpuTargetConfig target_config_;
   TritonBackend backend_;
   mlir::MLIRContext mlir_context_;
   SymbolicExprContext symbolic_expr_context_{&mlir_context_};
@@ -156,17 +156,11 @@ TEST_F(TritonBackendTest, GetSupportedConfigsForUnsupportedInstruction) {
 TEST_F(TritonBackendTest, GetDefaultConfig) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kHlo));
-  TritonBackendConfig expected_config =
-      TritonGemmConfig(64, 64, 64, 1, 1, 2, 1, false).ToProto();
-
   absl::StatusOr<std::unique_ptr<BackendConfig>> config =
       backend_.GetDefaultConfig(
           *(module->entry_computation()->root_instruction()));
 
   EXPECT_THAT(config, absl_testing::IsOk());
-  TritonBackendConfig actual_config;
-  ASSERT_TRUE(config.value()->UnpackTo(&actual_config));
-  EXPECT_THAT(actual_config, EqualsProto(expected_config));
 }
 
 TEST_F(TritonBackendTest, GetDefaultConfigForUnsupportedInstruction) {

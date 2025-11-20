@@ -100,8 +100,8 @@ absl::StatusOr<CompileOptionsProto> CompileOptions::ToProto() const {
                env_option_override.second);
   }
 
-  if (target_config.has_value()) {
-    *output.mutable_target_config() = target_config->ToProto();
+  if (gpu_target_config.has_value()) {
+    *output.mutable_target_config() = gpu_target_config->ToProto();
   }
   return output;
 }
@@ -137,8 +137,9 @@ absl::StatusOr<CompileOptions> CompileOptions::FromProto(
                       LoadEnvOptionOverrides(proto.env_option_overrides()));
 
   if (proto.has_target_config()) {
-    TF_ASSIGN_OR_RETURN(output.target_config, Compiler::TargetConfig::FromProto(
-                                                  proto.target_config()));
+    TF_ASSIGN_OR_RETURN(
+        output.gpu_target_config,
+        Compiler::GpuTargetConfig::FromProto(proto.target_config()));
   }
   return output;
 }
@@ -148,8 +149,8 @@ MultiSliceConfig::~MultiSliceConfig() = default;
 absl::StatusOr<ExecuteOptionsProto> ExecuteOptions::ToProto() const {
   ExecuteOptionsProto proto;
 
-  proto.set_arguments_are_tupled(arguments_are_tupled);
-  proto.set_untuple_result(untuple_result);
+  proto.set_arguments_are_tupled(false);
+  proto.set_untuple_result(true);
   proto.set_launch_id(launch_id);
   if (context != nullptr) {
     return absl::UnimplementedError(
@@ -197,8 +198,6 @@ absl::StatusOr<ExecuteOptions> ExecuteOptions::FromProto(
     const ExecuteOptionsProto& proto) {
   ExecuteOptions options;
 
-  options.arguments_are_tupled = proto.arguments_are_tupled();
-  options.untuple_result = proto.untuple_result();
   options.launch_id = proto.launch_id();
   options.strict_shape_checking = proto.strict_shape_checking();
   options.use_major_to_minor_data_layout_for_callbacks =

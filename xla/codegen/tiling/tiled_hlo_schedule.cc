@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/codegen/tiling/tiled_hlo_schedule.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -34,10 +35,10 @@ limitations under the License.
 #include "xla/codegen/tiling/tiling_specification.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -80,7 +81,7 @@ absl::Status ValidateIterationSpace(const IterationSpace& iteration_space,
 
 absl::StatusOr<IndexingMap> MajorToMinorScheduleImpl(
     const IndexingMap& tile_offsets_indexing, IterationSpace iteration_space,
-    gpu::SymbolicExprContext* symbolic_expr_context) {
+    SymbolicExprContext* symbolic_expr_context) {
   mlir::MLIRContext* mlir_context = symbolic_expr_context->GetMLIRContext();
   mlir::AffineExpr program_id = mlir::getAffineDimExpr(0, mlir_context);
 
@@ -114,15 +115,24 @@ absl::StatusOr<IndexingMap> MajorToMinorScheduleImpl(
 }
 }  // namespace
 
+absl::StatusOr<std::unique_ptr<TiledHloSchedule>>
+CreateMajorToMinorTiledHloSchedule(
+    const TilingSpecification& tiling_specification) {
+  // The major-to-minor schedule can just throw away the specification since
+  // it doesn't need to know about any specific of parameters to produce a
+  // schedule.
+  return std::make_unique<MajorToMinorTiledHloSchedule>();
+}
+
 absl::StatusOr<IndexingMap> MajorToMinorTiledHloSchedule::Schedule(
     const IndexingMap& tile_offsets_indexing, IterationSpace iteration_space,
-    gpu::SymbolicExprContext* ctx) const {
+    SymbolicExprContext* ctx) const {
   TF_RETURN_IF_ERROR(
       ValidateIterationSpace(iteration_space, tile_offsets_indexing));
   return MajorToMinorScheduleImpl(tile_offsets_indexing, iteration_space, ctx);
 }
 
-absl::StatusOr<TransposedDotTiledHloSchedule>
+absl::StatusOr<std::unique_ptr<TransposedDotTiledHloSchedule>>
 TransposedDotTiledHloSchedule::Create(
     const TilingSpecification& tiling_specification) {
   const TilingSpecification::ParameterMapping& parameter_mapping =
@@ -191,12 +201,13 @@ TransposedDotTiledHloSchedule::Create(
   TF_ASSIGN_OR_RETURN(int64_t n_dim_id, tiling_specification.ParameterIndex(
                                             dot, n_local_parameter_index));
 
-  return TransposedDotTiledHloSchedule(m_dim_id, n_dim_id);
+  return std::unique_ptr<TransposedDotTiledHloSchedule>(
+      new TransposedDotTiledHloSchedule(m_dim_id, n_dim_id));
 }
 
 absl::StatusOr<IndexingMap> TransposedDotTiledHloSchedule::Schedule(
     const IndexingMap& tile_offsets_indexing, IterationSpace iteration_space,
-    gpu::SymbolicExprContext* ctx) const {
+    SymbolicExprContext* ctx) const {
   TF_RETURN_IF_ERROR(
       ValidateIterationSpace(iteration_space, tile_offsets_indexing));
 

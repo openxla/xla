@@ -51,8 +51,7 @@ limitations under the License.
 
 namespace xla {
 
-// TODO(parkers): Implement PjRtRawBuffer API.
-class RawSEDeviceMemory : public tsl::ReferenceCounted<RawSEDeviceMemory> {
+class RawSEDeviceMemory {
  public:
   explicit RawSEDeviceMemory(se::DeviceMemoryBase value) : value_(value) {}
 
@@ -70,10 +69,10 @@ class RawSEDeviceMemory : public tsl::ReferenceCounted<RawSEDeviceMemory> {
   ShapedBuffer AsShapedBuffer(PjRtDevice* device,
                               const Shape& on_device_shape) const;
 
-  static tsl::RCReference<RawSEDeviceMemory> Create(
+  static tsl::AsyncValueRef<RawSEDeviceMemory> Create(
       se::DeviceMemoryBase value, LocalDeviceState* local_device,
       se::DeviceMemoryAllocator* allocator);
-  static tsl::RCReference<RawSEDeviceMemory> CreateForeign(
+  static tsl::AsyncValueRef<RawSEDeviceMemory> CreateForeign(
       se::DeviceMemoryBase value,
       absl::AnyInvocable<void() &&> on_delete_callback);
 
@@ -104,9 +103,6 @@ class TrackedDeviceBuffer : public AbstractTrackedDeviceBuffer {
     bool reference_held;
   };
 
-  // Builds a ShapedBuffer view onto the buffers of 'tree'.
-  ShapedBuffer AsShapedBuffer(const Shape& on_device_shape) const;
-
   // Adds the owned device buffers in order to 'iterator'. Used to add the
   // buffers to an ExecutionInput. We require but do not verify that 'iterator'
   // when passed in is pointing to a sub-tuple of the ExecutionInput whose
@@ -130,10 +126,6 @@ class TrackedDeviceBuffer : public AbstractTrackedDeviceBuffer {
       ExecutionInput* execution_input,
       se::DeviceMemoryAllocator* allocator) const;
 
-  const tsl::RCReference<RawSEDeviceMemory>& device_memory() const {
-    return device_memory_;
-  }
-
   const absl::InlinedVector<BufferSequencingEventRef, 2>& definition_events()
       const {
     return definition_events_;
@@ -141,10 +133,6 @@ class TrackedDeviceBuffer : public AbstractTrackedDeviceBuffer {
   absl::Span<const StreamAndEvent> usage_events() const {
     return usage_events_;
   }
-
-  // Relinquishes ownership of the buffer's device memory, e.g., after the
-  // buffer is passed to a computation that aliases its inputs to outputs.
-  void ReleaseDeviceMemory();
 
   // Only to be called by ScopedHold to mark a successful donation.
   void ConfirmDonation() override;
@@ -168,21 +156,16 @@ class TrackedDeviceBuffer : public AbstractTrackedDeviceBuffer {
   StreamAndEventContainer LockUseAndTransferUsageEvents();
 
   TrackedDeviceBuffer(
-      PjRtDevice* device, tsl::RCReference<RawSEDeviceMemory> device_memory,
+      PjRtDevice* device, tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
       absl::Span<const BufferSequencingEventRef> definition_events);
   ~TrackedDeviceBuffer() override;
 
   std::vector<tsl::RCReference<tsl::AsyncValue>> GetAsyncValueDefinitionEvents()
       override;
 
-  tsl::RCReference<CommonPjRtRawBuffer> GetRawBuffer(
-      PjRtMemorySpace* memory_space) override;
-
   void AddUsageEvent(tsl::RCReference<PjRtDeviceEvent> event) override;
 
-  void Delete(PjRtMemorySpace* memory_space) override {
-    LOG(FATAL) << "Implement";
-  }
+  void Delete(PjRtMemorySpace* memory_space) override;
 
   absl::Status WaitUntilBufferReadyOnStream(std::intptr_t stream) override {
     for (const BufferSequencingEventRef& event : definition_events()) {
@@ -191,12 +174,17 @@ class TrackedDeviceBuffer : public AbstractTrackedDeviceBuffer {
     return absl::OkStatus();
   }
 
+  absl::StatusOr<std::unique_ptr<AbstractTrackedDeviceBuffer>>
+  CloneWithControlDependency(PjRtMemorySpace* memory_space,
+                             Future<> dependency) override;
+
+  Future<> GetReadyFuture(PjRtMemorySpace* memory_space) override;
+
+  absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> GetDefinitionEvent(
+      PjRtMemorySpace* memory_space) override;
+
  private:
   PjRtDevice* device_;
-
-  // Each host-side buffer may have several buffers on-device.
-  tsl::RCReference<RawSEDeviceMemory> device_memory_;
-
   // Events that are triggered when the content of one or more buffers is ready
   // during multistream execution. May be nullptr, which is used in the
   // single-stream execution case where events are not necessary for buffer

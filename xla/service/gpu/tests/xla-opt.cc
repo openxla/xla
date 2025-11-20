@@ -19,6 +19,7 @@ limitations under the License.
 #include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/InitAllExtensions.h"
 #include "mlir/Pass/PassOptions.h"
@@ -34,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/codegen/emitters/ir/xla_dialect.h"
 #include "xla/codegen/emitters/transforms/passes.h"
+#include "xla/codegen/xtile/ir/xtile_dialect.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "third_party/triton/bin/RegisterTritonDialects.h"
@@ -70,7 +72,8 @@ mlir::PassPipelineRegistration<TritonPipelineOptions>
             gpu_cc = rocm_cc;
           }
           xla::gpu::CreateTritonXlaPipeline(&pm, gpu_cc, options.rewrite_int4,
-                                            options.allow_tma);
+                                            options.allow_tma,
+                                            options.num_stages);
           xla::gpu::CreateTritonPipeline(&pm, gpu_cc, options.num_warps,
                                          options.num_ctas, options.num_stages,
                                          cluster_info);
@@ -88,7 +91,8 @@ int main(int argc, char** argv) {
   registerTritonDialects(registry);  // This registers all passes as well.
   registry.insert<mlir::func::FuncDialect, mlir::tensor::TensorDialect,
                   mlir::triton::xla::XlaTritonDialect, xla::XlaDialect,
-                  mlir::stablehlo::StablehloDialect>();
+                  xla::xtile::XTileDialect, mlir::stablehlo::StablehloDialect,
+                  mlir::memref::MemRefDialect>();
   mlir::triton::xla::registerTritonXlaTransformsPasses();
   xla::emitters::registerTransformsPasses();
   xla::gpu::registerGpuFusionTransformsPasses();

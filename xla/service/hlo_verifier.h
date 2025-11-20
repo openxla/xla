@@ -175,9 +175,6 @@ struct HloVerifierOpts {
   // cloned (".clone" suffix) or rematted (".remat");
   bool verify_instruction_name_unchanged = false;
 
-  // Check if channel instructions all have unique channel ids.
-  bool verify_unique_channel_ids = true;
-
   // Check if a shape has a host memory space color
   bool verify_no_host_memory_space = false;
 
@@ -490,8 +487,8 @@ class HloVerifier : public HloModulePass {
   absl::string_view name() const override { return "hlo-verifier"; }
 
   // Never returns true; no instructions are ever modified by this pass.
-  using HloPassInterface::Run;
-  absl::StatusOr<bool> Run(
+ protected:
+  absl::StatusOr<bool> RunImpl(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 

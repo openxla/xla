@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
-#include "xla/service/gpu/executable.pb.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
@@ -136,8 +135,7 @@ class GpuOptProvider : public CompiledOptProvider {
     se::GpuComputeCapability gpu_compute_capability;
     if (device_description.ok()) {
       gpu_compute_capability = device_description->gpu_compute_capability();
-      if (std::holds_alternative<se::CudaComputeCapability>(
-              gpu_compute_capability)) {
+      if (gpu_compute_capability.IsCuda()) {
         alias_info_ =
             std::make_unique<gpu::NVPTXAliasInfo>(*device_description);
       } else {
@@ -194,7 +192,7 @@ class GpuOptProvider : public CompiledOptProvider {
       const HloModule* module) {
     Compiler::CompileOptions opts;
     TF_ASSIGN_OR_RETURN(
-        Compiler::TargetConfig target_config,
+        Compiler::GpuTargetConfig target_config,
         gpu::GpuCompiler::GetTargetConfig(
             opts, module->config().debug_options(), /*executor=*/nullptr));
     return target_config.device_description;

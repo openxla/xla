@@ -37,12 +37,12 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/layout.h"
 #include "xla/map_util.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/dump.h"
@@ -151,6 +152,18 @@ bool IsCustomCallWithForceDelayAttribute(const HloInstruction* instr) {
          attr.value() == "force_delay";
 }
 
+int GetCustomCallForceDelayPriority(const HloInstruction* instr) {
+  auto attr = instr->get_frontend_attribute("scheduler_delay_priority");
+  if (instr->opcode() == HloOpcode::kCustomCall && attr.has_value()) {
+    int out;
+    CHECK(absl::SimpleAtoi(attr.value(), &out))
+        << "Failed to parse scheduler_delay_priority attribute: "
+        << attr.value();
+    return out;
+  }
+  return 0;
+}
+
 absl::flat_hash_map<int64_t, int64_t>
 GetNumResourcesNeededForAnnotationWithKeepOriginalOrderAttrs(
     const DefaultSchedulerCore::SchedulingState& sched_state,
@@ -208,6 +221,12 @@ int64_t EstimateFragmentationSize(HloModule* module,
     if (!shape.IsArray()) {
       return 0;
     }
+    if (!shape.has_layout()) {
+      return 0;
+    }
+    if (shape.layout().memory_space() != Layout::kDefaultMemorySpace) {
+      return 0;
+    }
     return ShapeUtil::ByteSizeOf(shape);
   };
   auto result =
@@ -226,12 +245,6 @@ CanonicalAsyncOp DefaultGetCanonicalAsyncOp(const HloInstruction& hlo) {
   switch (hlo.opcode()) {
     case HloOpcode::kAsyncStart:
     case HloOpcode::kAsyncDone:
-      if (hlo.async_wrapped_opcode() == HloOpcode::kCall) {
-        return {hlo.opcode(), hlo.async_wrapped_instruction()
-                                  ->called_computations()[0]
-                                  ->root_instruction()
-                                  ->opcode()};
-      }
       return {hlo.opcode(), hlo.async_wrapped_opcode()};
     case HloOpcode::kAllReduceStart:
       return {HloOpcode::kAsyncStart, HloOpcode::kAllReduce};
@@ -353,33 +366,34 @@ bool AsyncTracker::IsSupportedAsyncStart(const HloInstruction& hlo) const {
   return false;
 }
 
+ResourceType AsyncTracker::GetResourceTypeForOp(HloOpcode op) {
+  switch (op) {
+    case HloOpcode::kAllReduce:
+      return ResourceType::kAllReduce;
+    case HloOpcode::kAllGather:
+      return ResourceType::kAllGather;
+    case HloOpcode::kAllToAll:
+      return ResourceType::kAllToAll;
+    case HloOpcode::kRaggedAllToAll:
+      return ResourceType::kRaggedAllToAll;
+    case HloOpcode::kCollectiveBroadcast:
+      return ResourceType::kCollectiveBroadcast;
+    case HloOpcode::kCollectivePermute:
+      return ResourceType::kCollectivePermute;
+    case HloOpcode::kCopy:
+      return ResourceType::kCopy;
+    case HloOpcode::kReduceScatter:
+      return ResourceType::kReduceScatter;
+    default:
+      return ResourceType::kNoResource;
+  }
+}
+
 ResourcesVector AsyncTracker::GetResourcesFromInstructionImpl(
     const HloInstruction& hlo) const {
   CanonicalAsyncOp op = GetCanonicalAsyncOp(hlo);
-  auto get_resource_for_op = [](HloOpcode op) -> ResourceType {
-    switch (op) {
-      case HloOpcode::kAllReduce:
-        return ResourceType::kAllReduce;
-      case HloOpcode::kAllGather:
-        return ResourceType::kAllGather;
-      case HloOpcode::kAllToAll:
-        return ResourceType::kAllToAll;
-      case HloOpcode::kRaggedAllToAll:
-        return ResourceType::kRaggedAllToAll;
-      case HloOpcode::kCollectiveBroadcast:
-        return ResourceType::kCollectiveBroadcast;
-      case HloOpcode::kCollectivePermute:
-        return ResourceType::kCollectivePermute;
-      case HloOpcode::kCopy:
-        return ResourceType::kCopy;
-      case HloOpcode::kReduceScatter:
-        return ResourceType::kReduceScatter;
-      default:
-        return ResourceType::kNoResource;
-    }
-  };
   if (op.outer == HloOpcode::kAsyncStart || op.outer == HloOpcode::kAsyncDone) {
-    ResourceType type = get_resource_for_op(op.inner);
+    ResourceType type = GetResourceTypeForOp(op.inner);
     if (type == ResourceType::kNoResource) {
       return {};
     }
@@ -469,7 +483,7 @@ ResourcesVector AsyncTracker::GetResourcesFromInstructionImpl(
       // kResourceOccupy and a kResourceRelease that follows immediately after.
       ResourcesVector res;
       if (config_.track_sync_op_resource_usage) {
-        ResourceType type = get_resource_for_op(hlo.opcode());
+        ResourceType type = GetResourceTypeForOp(hlo.opcode());
         if (type != ResourceType::kNoResource) {
           res.push_back(std::make_pair(ResourceTypeToIndex(type),
                                        ResourceUsageType::kResourceOccupy));
@@ -1263,8 +1277,13 @@ class ReadySetLt {
     HloGraphNode* bn = b.node;
     // Schedule according to ForceEarly.
     CMP_PROPERTY(GetForceEarly(), "kForceEarly");
-    // Schedule according to ForceDelay first.
+    // Schedule according to ForceDelay, if exactly one of the two instructions
+    // has ForceDelay set.
     CMP_EXPLICIT(!an->GetForceDelay(), !bn->GetForceDelay(), "kForceDelay");
+    // Schedule according to highest ForceDelay first, if both instructions
+    // have ForceDelay set.
+    CMP_EXPLICIT(-an->GetForceDelayPriority(), -bn->GetForceDelayPriority(),
+                 "kForceDelayPriority");
     // Use the preference value (comes from a heuristic) to choose between
     // the two candidates. If two preferences are the same regular LHS logic
     // will run as usual, we take advantage of this fact when initializing
@@ -1806,8 +1825,7 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
           sched_state.ongoing_annotation = -1;
         }
         // Remove this annotation from ready_annotations if it's there.
-        auto it = std::find(sched_state.ready_annotations.begin(),
-                            sched_state.ready_annotations.end(), annotation);
+        auto it = absl::c_find(sched_state.ready_annotations, annotation);
         if (it != sched_state.ready_annotations.end()) {
           sched_state.ready_annotations.erase(it);
         }
@@ -2151,8 +2169,7 @@ absl::Status DefaultSchedulerCore::ScheduleAnnotation(
       continue;
     }
     // Delete the node from the ready set.
-    auto node_it = std::find(sched_state->ready_set.begin(),
-                             sched_state->ready_set.end(), node);
+    auto node_it = absl::c_find(sched_state->ready_set, node);
     TF_RET_CHECK(node_it != sched_state->ready_set.end())
         << "Couldn't find the annotated node in ready set: "
         << node->GetInstr().name();
@@ -2166,9 +2183,26 @@ absl::Status DefaultSchedulerCore::ScheduleAnnotation(
     VLOG(2) << "Scheduled annotated node (" << num_scheduled << "/"
             << annotation_size << "): " << node->GetInstr().name();
   }
-  // Check that we scheduled all the nodes in the annotation.
-  TF_RET_CHECK(num_scheduled == annotation_size - non_ready_instr)
-      << "Couldn't schedule all annotated nodes in one go.";
+  // If for some reason we could not schedule all the instructions in the
+  // annotation in one go, we clear the annotation for the remaining
+  // instruction. Currently this should only happen for async-start
+  // instructions.
+  if (num_scheduled < annotation_size - non_ready_instr) {
+    for (auto* inst :
+         annotation_tracker_->GetInstructions(computation, annotation)) {
+      HloGraphNode& node = sched_state->sched_graph.GetNode(inst);
+      if (!node.IsScheduled()) {
+        TF_RET_CHECK(
+            scheduling_context_->GetAsyncTracker()->IsSupportedAsyncStart(
+                node.GetInstr()));
+        VLOG(2) << "Could not schedule all annotated nodes with annotation ID "
+                << annotation << " in one go; clearing annotation for "
+                << node.GetInstr().name();
+        node.ClearAnnotation();
+        sched_state->nodes_holding_annotations.insert(&node);
+      }
+    }
+  }
   return absl::OkStatus();
 }
 
@@ -2223,8 +2257,7 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
   // was there.
   if (sched_state->config.enable_selective_resources &&
       n->ReleasesSelectiveResource()) {
-    auto it = std::find(sched_state->selective_resource_releasers.begin(),
-                        sched_state->selective_resource_releasers.end(), n);
+    auto it = absl::c_find(sched_state->selective_resource_releasers, n);
     // Perform sanity check node was in selective_resources_releasers.
     if (it == sched_state->selective_resource_releasers.end()) {
       LOG(WARNING) << "Selective resource releasers list does not contain node "
@@ -2596,6 +2629,7 @@ HloScheduleGraph::HloScheduleGraph(
     }
     if (IsCustomCallWithForceDelayAttribute(instr)) {
       n->SetForceDelay(true);
+      n->SetForceDelayPriority(GetCustomCallForceDelayPriority(instr));
     }
   }
 
@@ -3028,8 +3062,7 @@ DefaultSchedulerCore::GetNumResourcesNeededForAnnotation(
         // assuming maximum overlapping, where the resources used by the
         // async-done ops need to be accumulated.
         const HloInstruction* start = instr->operand(0);
-        if (std::find(instrs.begin(), instrs.end(), start) == instrs.end() ||
-            get_max_resources) {
+        if (absl::c_find(instrs, start) == instrs.end() || get_max_resources) {
           num_resources_needed[resource] += usage;
           continue;
         }
@@ -3340,6 +3373,7 @@ LatencyHidingScheduler::LatencyHidingStatistics(
     kSend,
     kRecv,
     kCollectiveBroadcast,
+    kCall,
   };
   auto opcode_to_async_kind = [](HloOpcode opcode) {
     switch (opcode) {
@@ -3361,6 +3395,8 @@ LatencyHidingScheduler::LatencyHidingStatistics(
         return AsyncKind::kSend;
       case HloOpcode::kRecv:
         return AsyncKind::kRecv;
+      case HloOpcode::kCall:
+        return AsyncKind::kCall;
       default:
         return AsyncKind::kNotAsync;
     }
@@ -3474,6 +3510,7 @@ LatencyHidingScheduler::LatencyHidingStatistics(
       wasted_time_per_collective[AsyncKind::kReduceScatter],
       /*send_wasted_cycles=*/wasted_time_per_collective[AsyncKind::kSend],
       /*recv_wasted_cycles=*/wasted_time_per_collective[AsyncKind::kRecv],
+      /*call_wasted_cycles=*/wasted_time_per_collective[AsyncKind::kCall],
       /*total_cycles=*/current_time,
       /*memory_pressure_peak=*/
       memory_pressure_state
@@ -3510,6 +3547,8 @@ std::string LatencyHidingScheduler::SchedulerStatistics::ToString() const {
                   "\n");
   absl::StrAppend(&result, "Wasted cycles for recv: ", this->recv_wasted_cycles,
                   "\n");
+  absl::StrAppend(&result, "Wasted cycles for asynchronous call: ",
+                  this->call_wasted_cycles, "\n");
   absl::StrAppend(&result, "Total cycles: ", this->total_cycles, "\n");
   absl::StrAppend(&result,
                   "Memory pressure peak (bytes): ", this->memory_pressure_peak,
@@ -3529,6 +3568,7 @@ LatencyHidingScheduler::SchedulerStatistics::ToProto() const {
   proto.set_reduce_scatter_wasted_cycles(reduce_scatter_wasted_cycles);
   proto.set_send_wasted_cycles(send_wasted_cycles);
   proto.set_recv_wasted_cycles(recv_wasted_cycles);
+  proto.set_call_wasted_cycles(call_wasted_cycles);
   proto.set_total_wasted_cycles(this->GetTotalWastedCycles());
   proto.set_total_cycles(total_cycles);
   proto.set_memory_pressure_peak(memory_pressure_peak);
@@ -3576,7 +3616,7 @@ LatencyHidingScheduler::ScheduleWithPreferences(
   return std::make_pair(new_schedule, schedule_info);
 }
 
-absl::StatusOr<bool> LatencyHidingScheduler::Run(
+absl::StatusOr<bool> LatencyHidingScheduler::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(5) << "Original module:";
@@ -3597,7 +3637,8 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
       if (scheduling_context_->GetAsyncTracker()->IsSupportedAsyncStart(
               *instr) ||
           scheduling_context_->GetAsyncTracker()->IsSupportedAsyncDone(
-              *instr)) {
+              *instr) ||
+          IsCustomCallWithForceDelayAttribute(instr)) {
         computations_to_schedule_.push_back(computation);
         break;
       }
@@ -3656,9 +3697,8 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
        iter++) {
     LOG(INFO) << "LatencyHidingScheduler current memory usage: "
               << scheduler_core_->GetMemoryPeak() + fragmentation_size
-              << " bytes, does not fit in limit: "
-              << scheduler_core_->GetMemoryLimit()
-              << ". Setting the new limit to "
+              << " bytes, does not fit in initial limit: "
+              << initial_memory_limit << ". Setting the new limit to "
               << static_cast<uint64_t>(scheduler_core_->GetMemoryLimit() * 0.9);
     TF_RETURN_IF_ERROR(scheduler_core_->InitializeScheduler(module));
     scheduler_core_->SetMemoryLimit(scheduler_core_->GetMemoryLimit() * 0.9);

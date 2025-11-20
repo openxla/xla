@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
 #include "xla/pjrt/pjrt_common.h"
+#include "xla/pjrt/pjrt_device_dimensions.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/proto/executable_metadata.pb.h"
@@ -111,7 +112,7 @@ struct CompileOptions {
       std::vector<std::pair<std::string, OptionOverride>>;
   EnvironmentOptionOverrides env_option_overrides;
 
-  std::optional<xla::Compiler::TargetConfig> target_config;
+  std::optional<xla::Compiler::GpuTargetConfig> gpu_target_config;
 
   // Allow to modify the input MLIR / XLA program.
   // This is used to run passes on the MLIR parameter without having to clone it
@@ -147,12 +148,7 @@ struct CompileOptions {
 
 struct LoadOptions {
   // Origin of the subslice of the target topology to run computation on.
-  struct ComputationOrigin {
-    int x = 0;
-    int y = 0;
-    int z = 0;
-  };
-  std::optional<ComputationOrigin> computation_origin;
+  std::optional<xla::PjRtDeviceDimensions> computation_origin;
 
   // multi_slice_config to associate with the executable during load of a multi
   // slice operation.
@@ -219,13 +215,6 @@ struct RecvCallback {
 };
 
 struct ExecuteOptions {
-  // If true, the client must pass a single PjRtBuffer which contains all of
-  // the arguments as a single XLA tuple, otherwise each argument must be
-  // passed in its own PjRtBuffer. May only be true if the executable was
-  // compiled with parameter_is_tupled_arguments==true.
-  bool arguments_are_tupled = false;
-  // TODO(b/430587318): Remove this deprecated field.
-  bool untuple_result = true;
   // If non-zero, identifies this execution as part of a potentially
   // multi-device launch. This can be used to detect scheduling errors, e.g. if
   // multi-host programs are launched in different orders on different hosts,

@@ -29,32 +29,6 @@ limitations under the License.
 
 namespace pjrt {
 
-static PJRT_Error* PJRT_FFI_TypeID_Register(
-    PJRT_FFI_TypeID_Register_Args* args) {
-  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
-      "PJRT_FFI_TypeID_Register_Args",
-      PJRT_FFI_TypeID_Register_Args_STRUCT_SIZE, args->struct_size));
-
-  absl::string_view type_name(args->type_name, args->type_name_size);
-  xla::ffi::TypeRegistry::TypeId type_id(args->type_id);
-
-  if (type_id == xla::ffi::TypeRegistry::kUnknownTypeId) {
-    // If type_id is unknown, we are registering a new type and XLA will assign
-    // a unique type id to it.
-    PJRT_ASSIGN_OR_RETURN(
-        auto assigned_type_id,
-        xla::ffi::TypeRegistry::AssignExternalTypeId(type_name, {}));
-    args->type_id = assigned_type_id.value();
-
-  } else {
-    // If type_id is set, we are relying on the caller-provided unique type id.
-    PJRT_RETURN_IF_ERROR(
-        xla::ffi::TypeRegistry::RegisterExternalTypeId(type_name, type_id, {}));
-  }
-
-  return nullptr;
-}
-
 static PJRT_Error* PJRT_FFI_Type_Register(PJRT_FFI_Type_Register_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_FFI_Type_Register_Args", PJRT_FFI_Type_Register_Args_STRUCT_SIZE,
@@ -95,7 +69,7 @@ static PJRT_Error* PJRT_FFI_UserData_Add(PJRT_FFI_UserData_Add_Args* args) {
 
   xla::ffi::TypeRegistry::TypeId type_id(args->user_data.type_id);
   PJRT_RETURN_IF_ERROR(args->context->execute_context->ffi_context().Insert(
-      type_id, args->user_data.data, args->user_data.deleter));
+      type_id, args->user_data.data));
   return nullptr;
 }
 
@@ -128,10 +102,9 @@ PJRT_FFI_Extension CreateFfiExtension(PJRT_Extension_Base* next) {
           /*type=*/PJRT_Extension_Type::PJRT_Extension_Type_FFI,
           /*next=*/next,
       },
-      /*type_id_register=*/PJRT_FFI_TypeID_Register,
+      /*type_register=*/PJRT_FFI_Type_Register,
       /*user_data_add=*/PJRT_FFI_UserData_Add,
       /*register_handler=*/PJRT_FFI_Register_Handler,
-      /*type_register=*/PJRT_FFI_Type_Register,
   };
 }
 

@@ -70,6 +70,11 @@ class GpuExecutable : public Executable {
     std::string symbol_name;
     DenseDataIntermediate content;
     int allocation_index = -1;
+
+    GpuExecutableProto::ConstantInfoProto ToProto() const;
+
+    static ConstantInfo FromProto(
+        const GpuExecutableProto::ConstantInfoProto& proto);
   };
 
   struct OutputInfo {
@@ -83,8 +88,9 @@ class GpuExecutable : public Executable {
     // would indicate the aliased parameter), and what kind of alias it is.
     std::optional<HloInputOutputAliasConfig::Alias> alias_config;
 
-    OutputInfoProto ToProto() const;
-    static absl::StatusOr<OutputInfo> FromProto(const OutputInfoProto& proto);
+    GpuExecutableProto::OutputInfoProto ToProto() const;
+    static absl::StatusOr<OutputInfo> FromProto(
+        const GpuExecutableProto::OutputInfoProto& proto);
 
     friend bool operator==(const OutputInfo& lhs, const OutputInfo& rhs) {
       return std::tie(lhs.allocation_index, lhs.passthrough,
@@ -187,7 +193,7 @@ class GpuExecutable : public Executable {
 
   const GpuAliasInfo* alias_info() const { return alias_info_.get(); }
 
-  const SequentialThunk& GetThunk() { return *thunks_; }
+  const SequentialThunk& GetThunk() const { return *thunks_; }
 
   absl::Status ExecuteThunks(const BufferAllocations& buffer_allocations,
                              const ServiceExecutableRunOptions* run_options);
@@ -209,6 +215,13 @@ class GpuExecutable : public Executable {
       stream_executor::Stream* stream);
 
   absl::Status VerboseAllocationError(absl::Status s);
+
+  static absl::StatusOr<std::unique_ptr<GpuExecutable>> FromProto(
+      const GpuExecutableProto&,
+      const se::DeviceDescription& device_description,
+      absl::string_view platform);
+
+  absl::StatusOr<GpuExecutableProto> ToProto() const;
 
  private:
   // Use GpuExecutable::Create() to create an instance.

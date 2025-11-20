@@ -154,7 +154,7 @@ class DotSearchSpaceTest : public DefaultDeviceDotSearchSpaceTest {
     device_description_.set_threads_per_warp(32);
     device_description_.set_shared_memory_per_block_optin(227 * 1024);
     device_description_.set_gpu_compute_capability(
-        se::CudaComputeCapability::H100Family());
+        se::CudaComputeCapability::H100Accelerated());
   }
 };
 
@@ -619,6 +619,7 @@ TEST_F(DotSearchSpaceTest, RestrictsSplitKPerNMTile) {
       // Greater than max split K for this tile size.
       make_config(16, 16, 16, 8),
       // Does not have a per-tile split K limit.
+      make_config(16, 32, 16, 1),
       make_config(16, 32, 16, 32),
   };
 

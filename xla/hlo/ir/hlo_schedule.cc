@@ -46,7 +46,9 @@ limitations under the License.
 namespace xla {
 
 /* static */ absl::StatusOr<HloSchedule> HloSchedule::CreateFromProto(
-    const HloModule* module, const HloScheduleProto& proto) {
+    const HloModule* module, const HloScheduleProto& proto,
+    const absl::flat_hash_map<int64_t, absl::flat_hash_map<int64_t, int64_t>>*
+        computation_id_to_instruction_id_remap) {
   absl::flat_hash_map<int64_t, const HloComputation*> id_to_computation;
   for (const HloComputation* computation : module->computations()) {
     id_to_computation[computation->unique_id()] = computation;
@@ -71,14 +73,31 @@ namespace xla {
 
     HloInstructionSequence& sequence =
         schedule.GetOrCreateSequence(computation);
+    if (computation_id_to_instruction_id_remap != nullptr) {
+      TF_RET_CHECK(
+          computation_id_to_instruction_id_remap->contains(computation_id))
+          << "Computation id " << computation_id
+          << " not found in computation_id_to_instruction_id_remap";
+    }
+
     for (const int64_t instruction_id : id_sequence.second.instruction_ids()) {
+      int64_t corrected_instruction_id = instruction_id;
+      if (computation_id_to_instruction_id_remap != nullptr) {
+        TF_RET_CHECK(computation_id_to_instruction_id_remap->at(computation_id)
+                         .contains(instruction_id))
+            << "Instruction id " << instruction_id
+            << " not found in its computation's proto_id_to_instruction_id_map";
+        corrected_instruction_id =
+            computation_id_to_instruction_id_remap->at(computation_id)
+                .at(instruction_id);
+      }
       int64_t complete_unique_id = HloInstruction::CalculateUniqueId(
-          computation->unique_id(), instruction_id);
+          computation->unique_id(), corrected_instruction_id);
       auto instr_it = id_to_instruction.find(complete_unique_id);
       TF_RET_CHECK(instr_it != id_to_instruction.end())
           << "No instruction exists in HLO computation " << computation->name()
-          << " with unique id " << instruction_id << " (complete unique id "
-          << complete_unique_id << ")";
+          << " with unique id " << corrected_instruction_id
+          << " (complete unique id " << complete_unique_id << ")";
       sequence.push_back(instr_it->second);
     }
   }
@@ -336,45 +355,47 @@ absl::Status HloSchedule::Verify() const {
     // For each computation verify the set of instructions is the same and
     // that each dependency and control edge is honored.
     for (const HloComputation* computation : nonfusion_computations) {
-      absl::flat_hash_map<const HloInstruction*, int> instruction_position;
-      int pos = 0;
-      for (const HloInstruction* instruction :
-           sequence(computation).instructions()) {
-        TF_RET_CHECK(instruction_position.insert({instruction, pos}).second)
-            << "Instruction " << instruction->name()
-            << " appears more than once in the schedule";
-        pos++;
-      }
-
-      TF_RET_CHECK(instruction_position.size() ==
-                   computation->instruction_count())
-          << "Schedule for computation " << computation->name() << " has "
-          << instruction_position.size() << " instructions, expected "
-          << computation->instruction_count();
-      for (const HloInstruction* instruction : computation->instructions()) {
-        TF_RET_CHECK(instruction_position.contains(instruction))
-            << "Instruction " << instruction->name() << " is not in schedule";
-      }
-
-      for (const HloInstruction* instruction : computation->instructions()) {
-        for (const HloInstruction* operand : instruction->operands()) {
-          TF_RET_CHECK(instruction_position.at(operand) <
-                       instruction_position.at(instruction))
-              << "Instruction " << instruction->name()
-              << " is not scheduled after its operand " << operand->name();
-        }
-
-        for (const HloInstruction* pred : instruction->control_predecessors()) {
-          TF_RET_CHECK(instruction_position.at(pred) <
-                       instruction_position.at(instruction))
-              << "Instruction " << instruction->name()
-              << " is not scheduled after its control predecessor "
-              << pred->name();
-        }
-      }
+      TF_RETURN_IF_ERROR(Verify(computation));
     }
   }
 
+  return absl::OkStatus();
+}
+
+absl::Status HloSchedule::Verify(const HloComputation* computation) const {
+  absl::flat_hash_map<const HloInstruction*, int> instruction_position;
+  int pos = 0;
+  for (const HloInstruction* instruction :
+       sequence(computation).instructions()) {
+    TF_RET_CHECK(instruction_position.insert({instruction, pos}).second)
+        << "Instruction " << instruction->name()
+        << " appears more than once in the schedule";
+    pos++;
+  }
+  TF_RET_CHECK(instruction_position.size() == computation->instruction_count())
+      << "Schedule for computation " << computation->name() << " has "
+      << instruction_position.size() << " instructions, expected "
+      << computation->instruction_count();
+  for (const HloInstruction* instruction : computation->instructions()) {
+    TF_RET_CHECK(instruction_position.contains(instruction))
+        << "Instruction " << instruction->name() << " is not in schedule";
+  }
+
+  for (const HloInstruction* instruction : computation->instructions()) {
+    for (const HloInstruction* operand : instruction->operands()) {
+      TF_RET_CHECK(instruction_position.at(operand) <
+                   instruction_position.at(instruction))
+          << "Instruction " << instruction->name()
+          << " is not scheduled after its operand " << operand->name();
+    }
+
+    for (const HloInstruction* pred : instruction->control_predecessors()) {
+      TF_RET_CHECK(instruction_position.at(pred) <
+                   instruction_position.at(instruction))
+          << "Instruction " << instruction->name()
+          << " is not scheduled after its control predecessor " << pred->name();
+    }
+  }
   return absl::OkStatus();
 }
 

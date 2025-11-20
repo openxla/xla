@@ -34,7 +34,9 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/legacy_cache.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/compiler.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
@@ -71,6 +73,8 @@ AutotuneConfig GetAutotuneConfig(const DebugOptions& debug_options,
 
   autotune_config.expect_all_instructions_in_cache =
       debug_options.xla_gpu_require_complete_aot_autotune_results();
+  autotune_config.dump_hlos =
+      debug_options.xla_gpu_dump_autotuned_gemm_fusions();
 
   return autotune_config;
 }
@@ -89,8 +93,9 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
     const DebugOptions& debug_options,
     stream_executor::StreamExecutor* stream_executor,
     tsl::thread::ThreadPool* thread_pool, InstructionFilterFn should_autotune,
-    const Compiler::TargetConfig* target_config,
-    se::DeviceMemoryAllocator* allocator, bool optimize_scratch_bytes) {
+    const Compiler::GpuTargetConfig* target_config,
+    se::DeviceMemoryAllocator* allocator, bool optimize_scratch_bytes,
+    MultiProcessKeyValueStore key_value_store) {
   std::unique_ptr<Profiler> profiler = nullptr;
   bool is_deviceless = stream_executor == nullptr;
   AutotuneConfig autotune_config =
@@ -111,16 +116,24 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
       std::unique_ptr<Autotuner> autotuner,
       Autotuner::Create(std::move(backends), std::move(profiler),
                         autotune_config, std::move(cache), thread_pool));
-  return absl::WrapUnique(
-      new AutotunerPass(std::move(autotuner), should_autotune));
+  return absl::WrapUnique(new AutotunerPass(
+      std::move(autotuner), should_autotune, std::move(key_value_store),
+      debug_options.xla_gpu_shard_autotuning()));
 }
 
-absl::StatusOr<bool> AutotunerPass::Run(
+absl::StatusOr<bool> AutotunerPass::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(1) << "Running Autotuner Pass";
 
-  TF_RETURN_IF_ERROR(autotuner_->Autotune(module, should_autotune_));
+  bool shard_autotuning =
+      enable_sharding_ && key_value_store_.process_count > 1;
+  if (shard_autotuning) {
+    TF_RETURN_IF_ERROR(
+        autotuner_->Autotune(module, should_autotune_, key_value_store_));
+  } else {
+    TF_RETURN_IF_ERROR(autotuner_->Autotune(module, should_autotune_));
+  }
   return true;
 }
 

@@ -278,6 +278,8 @@ cc_library(
     deps = [
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:stringpiece",
     ],
@@ -305,11 +307,11 @@ cc_library(
     hdrs = ["command_line_flags.h"],
     deps = [
         "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:types",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:str_util",
-        "@tsl//tsl/platform:stringpiece",
-        "@tsl//tsl/platform:stringprintf",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
     ],
 )
 

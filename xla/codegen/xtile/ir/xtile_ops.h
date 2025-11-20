@@ -20,8 +20,10 @@ limitations under the License.
 #include <utility>
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Bytecode/BytecodeOpInterface.h"  // IWYU pragma: keep
+#include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"  // IWYU pragma: keep
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // IWYU pragma: keep
 #include "mlir/IR/Attributes.h"  // IWYU pragma: keep
 #include "mlir/IR/BuiltinTypes.h"  // IWYU pragma: keep
@@ -37,6 +39,7 @@ limitations under the License.
 #include "xla/hlo/analysis/indexing_map.h"  // IWYU pragma: keep
 
 #define GET_OP_CLASSES
+#include "xla/codegen/xtile/ir/xtile_interface_ops.h.inc"  // IWYU pragma: keep
 #include "xla/codegen/xtile/ir/xtile_ops.h.inc"  // IWYU pragma: keep
 
 #endif  // XLA_CODEGEN_XTILE_IR_XTILE_OPS_H_

@@ -167,10 +167,12 @@ xla_test(
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:literal_test_util",
+        "//xla/tests:test_utils",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -598,6 +600,7 @@ xla_test(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
+    shard_count = 15,
     deps = [
         ":gpu_codegen_test",
         "//xla:error_spec",
@@ -607,7 +610,7 @@ xla_test(
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/service/gpu/transforms:sort_rewriter",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
@@ -627,6 +630,7 @@ lit_test_suite_for_gpus(
             "offload_scan_output.hlo",
             "pad_to_static.hlo",
             "reduce_fold_zero_add.hlo",
+            "reduce-precision.hlo",
             "rng_get_and_update_state.hlo",
             "single_instruction.hlo",
             "slice_to_dynamic.hlo",
@@ -640,7 +644,7 @@ lit_test_suite_for_gpus(
         ],
     ),
     cfg = "//xla:lit.cfg.py",
-    default_tags = tf_gpu_tests_tags(),
+    default_tags = ["gpu"],  # Needs to run in a build with a gpu configured.
     disabled_on_gpus = {
         "v100": [
             "kernel_reuse.hlo",
@@ -687,6 +691,7 @@ lit_test_suite_for_gpus(
 #         "@llvm-project//mlir:FuncExtensions",
 #         "@llvm-project//mlir:LLVMIRTransforms",
 #         "@llvm-project//mlir:LLVMToLLVMIRTranslation",
+#         "@llvm-project//mlir:MemRefDialect",
 #         "@llvm-project//mlir:MlirOptLib",
 #         "@llvm-project//mlir:Pass",
 #         "@llvm-project//mlir:RegisterAllExtensions",  # buildcleaner: keep
@@ -699,6 +704,7 @@ lit_test_suite_for_gpus(
 #         "//xla/backends/gpu/codegen/triton/transforms:passes",
 #         "//xla/codegen/emitters/ir:xla",
 #         "//xla/codegen/emitters/transforms:passes",
+#         "//xla/codegen/xtile/ir:xtile",
 #         "//xla/stream_executor:device_description",
 #         "//xla/stream_executor/cuda:cuda_compute_capability",
 #         "@triton//:AllPassesAndDialects",
@@ -852,6 +858,7 @@ xla_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
