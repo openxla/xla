@@ -163,7 +163,8 @@ using DeviceTopologyPair =
 
 absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     absl::string_view platform_name, LocalClient* xla_client, int node_id,
-    int num_nodes, gpu::GpuExecutableRunOptions* gpu_executable_run_options,
+    int num_nodes, int max_inflight_computations,
+    gpu::GpuExecutableRunOptions* gpu_executable_run_options,
     std::shared_ptr<KeyValueStoreInterface> kv_store, bool enable_mock_nccl,
     std::optional<absl::string_view> mock_gpu_topology,
     std::optional<int> partition_index,
@@ -179,8 +180,7 @@ void EnqueueWorkWhenReady(
     absl::Span<const tsl::RCReference<tsl::AsyncValue>> values,
     absl::AnyInvocable<void()> callee);
 
-absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
-GetLatestIncarnations(
+absl::flat_hash_map<GlobalDeviceId, IncarnationId> GetLatestIncarnations(
     absl::Span<PjRtDevice* const> devices,
     const absl::flat_hash_map<int, IncarnationId>& incarnations);
 

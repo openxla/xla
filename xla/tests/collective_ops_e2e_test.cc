@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -22,11 +23,11 @@ limitations under the License.
 #include <string>
 #include <tuple>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -36,6 +37,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
 #include "xla/error_spec.h"
@@ -47,6 +49,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -62,11 +65,13 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/integrations/device_mem_allocator.h"
+#include "xla/stream_executor/integrations/stream_executor_allocator.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_utils.h"
+#include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/framework/bfc_allocator.h"
 #include "xla/tsl/framework/device_id.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -96,14 +101,24 @@ DeviceAssignment MakeDeviceAssn(int64_t num_replicas) {
 
 std::unique_ptr<tsl::BFCAllocator> CreateAllocator(se::StreamExecutor* executor,
                                                    int64_t device_ordinal,
-                                                   std::string name_suffix,
+                                                   bool is_collective,
                                                    size_t memory_size) {
+  std::string name_suffix = is_collective ? "_collectives_bfc" : "_bfc";
   tsl::BFCAllocator::Options opts;
   opts.allow_growth = false;
+  std::unique_ptr<tsl::SubAllocator> device_mem_allocator;
+  if (is_collective) {
+    device_mem_allocator = std::make_unique<se::StreamExecutorAllocator>(
+        executor->CreateMemoryAllocator(se::MemoryType::kCollective).value(),
+        /*memory_type=*/stream_executor::MemoryType::kCollective,
+        device_ordinal);
+  } else {
+    device_mem_allocator = std::make_unique<se::DeviceMemAllocator>(
+        executor, tsl::PlatformDeviceId(device_ordinal));
+  }
   return std::make_unique<tsl::BFCAllocator>(
-      std::make_unique<se::DeviceMemAllocator>(
-          executor, tsl::PlatformDeviceId(device_ordinal)),
-      memory_size, absl::StrCat("GPU_", device_ordinal, name_suffix), opts);
+      std::move(device_mem_allocator), memory_size,
+      absl::StrCat("GPU_", device_ordinal, name_suffix), opts);
 }
 
 template <typename Type>
@@ -112,9 +127,16 @@ Type CheckStatus(absl::StatusOr<Type> result) {
   return *result;
 }
 
-class CollectiveOpsTestE2E : public HloHardwareIndependentTestBase {
+bool IsAsync(const HloInstruction* inst) {
+  return !inst->backend_config<gpu::GpuBackendConfig>()
+              .value()
+              .collective_backend_config()
+              .is_sync();
+}
+
+class CollectiveOpsE2ETestBase : public HloHardwareIndependentTestBase {
  public:
-  CollectiveOpsTestE2E() {
+  CollectiveOpsE2ETestBase() {
     se::Platform* platform = CheckStatus(PlatformUtil::GetPlatform("GPU"));
     se::Platform* reference_platform =
         CheckStatus(PlatformUtil::GetPlatform("GPU"));
@@ -128,14 +150,15 @@ class CollectiveOpsTestE2E : public HloHardwareIndependentTestBase {
           CheckStatus(platform->ExecutorForDevice(i));
       // Common memory allocator for device i.
       allocators.emplace_back(
-          CreateAllocator(executor, i, "_bfc", common_buffers_size), nullptr, 0,
-          i, platform);
+          CreateAllocator(executor, i, /*is_collective=*/false,
+                          common_buffers_size),
+          nullptr, 0, i, platform);
 
       // Collectives and symmetric memory allocator for device i.
-      allocators.emplace_back(CreateAllocator(executor, i, "_collectives_bfc",
-                                              collectives_buffers_size),
-                              nullptr, (int)gpu::MemorySpaceColor::kCollective,
-                              i, platform);
+      allocators.emplace_back(
+          CreateAllocator(executor, i, /*is_collective=*/true,
+                          collectives_buffers_size),
+          nullptr, (int)gpu::MemorySpaceColor::kCollective, i, platform);
     }
 
     hlo_runner_ = std::make_unique<HloRunner>(
@@ -144,63 +167,12 @@ class CollectiveOpsTestE2E : public HloHardwareIndependentTestBase {
                                                  std::move(allocators)));
     reference_hlo_runner_ = std::make_unique<HloRunner>(
         reference_platform, /*intra_op_parallelism_threads=*/0);
-
-    replacements_[kF8E4M3DatatypePlaceholder] =
-        IsCuda() ? "f8e4m3fn" : "f8e4m3fnuz";
-    replacements_[kF8E5M2DatatypePlaceholder] =
-        IsCuda() ? "f8e5m2" : "f8e5m2fnuz";
   }
 
-  bool IsCuda() { return Capability().IsCuda(); }
-
-  const se::GpuComputeCapability& Capability() {
-    return hlo_runner_->backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .gpu_compute_capability();
-  }
-
-  bool HasFp8Support() {
-    if (IsCuda()) {
-      return Capability().cuda_compute_capability()->IsAtLeast(8, 9);
-    }
-    return Capability().rocm_compute_capability()->has_fp8_support() &&
-           GetDebugOptionsForTest().xla_gpu_enable_cublaslt();
-  }
-
-  void CollectiveOpsVerifyF8Matmul(absl::string_view hlo_text,
-                                   const DebugOptions& options) {
-    if (!HasFp8Support()) {
-      return;
-    }
-    const int64_t kNumReplicas = 1;
-    const int64_t kNumPartitions = 4;
-
-    HloModuleConfig config =
-        GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
-    config.set_debug_options(options);
-    config.set_num_partitions(kNumPartitions);
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_text, config));
-
-    TF_ASSERT_OK_AND_ASSIGN(auto executable, hlo_runner_->CreateExecutable(
-                                                 std::move(module),
-                                                 /*run_hlo_passes=*/true));
-    TF_ASSERT_OK_AND_ASSIGN(
-        const HloModule* const hlo_module,
-        hlo_runner_->HloModuleFromWrapped(executable.get()));
-    std::vector<HloInstruction*> gemm_ops =
-        FindInstructions(hlo_module, HloOpcode::kCustomCall);
-    for (HloInstruction* gemm_op : gemm_ops) {
-      EXPECT_EQ(gemm_op->custom_call_target(), "__cublas$lt$matmul$f8");
-    }
-  }
-
-  // TODO(b/449655621) Use absl::AnyInvocable instead of std::function.
   absl::StatusOr<std::vector<Literal>> ExecuteReplicated(
-      const std::function<OpaqueExecutable*(int64_t)> executable_provider,
-      const std::function<int64_t(int64_t)> argument_count_provider,
-      const std::function<const Literal*(int64_t, int64_t)> argument_provider,
+      absl::AnyInvocable<OpaqueExecutable*(int64_t)> executable_provider,
+      absl::AnyInvocable<int64_t(int64_t)> argument_count_provider,
+      absl::AnyInvocable<const Literal*(int64_t, int64_t)> argument_provider,
       const int64_t num_replicas, const bool run_hlo_passes,
       DeviceAssignment* const device_assignment) {
     // TODO(b/441865120): Use designated initializers this once XLA moves to
@@ -265,17 +237,70 @@ class CollectiveOpsTestE2E : public HloHardwareIndependentTestBase {
         num_replicas, /*run_hlo_passes=*/false, &device_assignment);
   }
 
-  bool IsAsync(const HloInstruction* inst) {
-    return !inst->backend_config<gpu::GpuBackendConfig>()
-                .value()
-                .collective_backend_config()
-                .is_sync();
+  const se::GpuComputeCapability& Capability() {
+    return hlo_runner_->backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .gpu_compute_capability();
+  }
+
+  bool IsHopperAndHigher() {
+    return Capability().IsCuda() &&
+           Capability().cuda_compute_capability()->IsAtLeastHopper();
+  }
+
+ protected:
+  std::unique_ptr<HloRunner> hlo_runner_;
+  std::unique_ptr<HloRunner> reference_hlo_runner_;
+};
+
+class CollectiveOpsTestE2E : public CollectiveOpsE2ETestBase {
+ public:
+  CollectiveOpsTestE2E() {
+    replacements_[kF8E4M3DatatypePlaceholder] =
+        Capability().IsCuda() ? "f8e4m3fn" : "f8e4m3fnuz";
+    replacements_[kF8E5M2DatatypePlaceholder] =
+        Capability().IsCuda() ? "f8e5m2" : "f8e5m2fnuz";
+  }
+
+  bool HasFp8Support() {
+    if (Capability().IsCuda()) {
+      return Capability().cuda_compute_capability()->IsAtLeast(8, 9);
+    }
+    return Capability().rocm_compute_capability()->has_fp8_support() &&
+           GetDebugOptionsForTest().xla_gpu_enable_cublaslt();
+  }
+
+  void CollectiveOpsVerifyF8Matmul(absl::string_view hlo_text,
+                                   const DebugOptions& options) {
+    if (!HasFp8Support()) {
+      return;
+    }
+    const int64_t kNumReplicas = 1;
+    const int64_t kNumPartitions = 4;
+
+    HloModuleConfig config =
+        GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+    config.set_debug_options(options);
+    config.set_num_partitions(kNumPartitions);
+    TF_ASSERT_OK_AND_ASSIGN(auto module,
+                            ParseAndReturnVerifiedModule(hlo_text, config));
+
+    TF_ASSERT_OK_AND_ASSIGN(auto executable, hlo_runner_->CreateExecutable(
+                                                 std::move(module),
+                                                 /*run_hlo_passes=*/true));
+    TF_ASSERT_OK_AND_ASSIGN(
+        const HloModule* const hlo_module,
+        hlo_runner_->HloModuleFromWrapped(executable.get()));
+    std::vector<HloInstruction*> gemm_ops =
+        FindInstructions(hlo_module, HloOpcode::kCustomCall);
+    for (HloInstruction* gemm_op : gemm_ops) {
+      EXPECT_EQ(gemm_op->custom_call_target(), "__cublas$lt$matmul$f8");
+    }
   }
 
  protected:
   absl::flat_hash_map<absl::string_view, absl::string_view> replacements_;
-  std::unique_ptr<HloRunner> hlo_runner_;
-  std::unique_ptr<HloRunner> reference_hlo_runner_;
 
  private:
   static constexpr const char* kF8E4M3DatatypePlaceholder{"<<F8E4M3>>"};
@@ -289,7 +314,7 @@ class CollectiveOpsTestE2E : public HloHardwareIndependentTestBase {
 // E2E test for collectives with flags set. Has constructor arguments specifying
 // whether to enable/disable async collectives, and to set the memcpy_local_p2p
 // flag. Subclasses pass in constructor arguments based on GetParam().
-class CollectiveOpsWithFlagsBase : public CollectiveOpsTestE2E {
+class CollectiveOpsWithFlagsBase : public CollectiveOpsE2ETestBase {
  public:
   CollectiveOpsWithFlagsBase(bool enable_async, bool enable_p2p_memcpy)
       : enable_async_(enable_async), enable_p2p_memcpy_(enable_p2p_memcpy) {
@@ -1502,8 +1527,9 @@ TEST_F(CollectiveOpsTestE2E, HostMemoryOffloadingWithDonation) {
 // E2E tests comparing the results of sharded and unsharded execution.
 class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsTestE2E {
  public:
-  void CollectiveOpsCompareShardedUnsharded(const std::string& hlo_text,
-                                            const int64_t num_partitions = 2) {
+  void CollectiveOpsCompareShardedUnsharded(
+      const std::string& hlo_text, const int64_t num_partitions = 2,
+      bool enable_enzyme_comms_opt = false) {
     const int64_t num_replicas = 1;
     if (hlo_runner_->device_count() < num_replicas * num_partitions) {
       GTEST_SKIP() << "Test requires at least " << num_replicas * num_partitions
@@ -1515,8 +1541,9 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsTestE2E {
                             ExecuteUnsharded(hlo_text));
     ASSERT_EQ(ref_results.size(), 1);
 
-    TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
-                            ExecuteSharded(hlo_text, num_partitions));
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<Literal> results,
+        ExecuteSharded(hlo_text, num_partitions, enable_enzyme_comms_opt));
     ASSERT_EQ(results.size(), num_partitions);
 
     ErrorSpec error_spec{1e-4, 1e-4};
@@ -1562,12 +1589,16 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsTestE2E {
 
   // Execute the sharded case.
   absl::StatusOr<std::vector<Literal>> ExecuteSharded(
-      const std::string& hlo_text, int64_t num_partitions) {
+      const std::string& hlo_text, int64_t num_partitions,
+      bool enable_enzyme_comms_opt = false) {
     HloModuleConfig config = GetModuleConfigForTest();
     DebugOptions opts = GetDebugOptionsForTest();
     opts.set_xla_gpu_enable_triton_gemm(false);
     config.set_debug_options(opts);
     config.set_num_partitions(num_partitions);
+    if (enable_enzyme_comms_opt) {
+      config.mutable_debug_options().set_xla_enable_enzyme_comms_opt(true);
+    }
     TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
                         ParseAndReturnVerifiedModule(hlo_text, config));
     const int64_t num_params = module->entry_computation()->num_parameters();
@@ -1711,6 +1742,50 @@ ENTRY entry {
   ROOT dot = f32[4,16,4]{2,1,0} dot(lhs, rhs), lhs_batch_dims={0}, rhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_contracting_dims={2}, sharding={devices=[1,2,1]<=[2]}
 })";
   CollectiveOpsCompareShardedUnsharded(hlo_text);
+}
+
+// This is an execution test for the example in Option 2 in go/dus-spmd. This
+// test should pass regardless of which DUS SPMD implementation option is used.
+TEST_F(CollectiveOpsTestE2EShardedUnsharded,
+       DusSingleDimensionInPartitionMode) {
+  const std::string hlo_text = R"(
+    HloModule module, entry_computation_layout={(s32[16]{0}, s32[8]{0})->s32[16]{0}}, num_partitions=4
+
+    ENTRY entry {
+      %input = s32[16] parameter(0), sharding={devices=[4]<=[4]}
+      %update = s32[8] parameter(1), sharding={devices=[4]<=[4]}
+      %c3 = s32[] constant(3)
+      ROOT %dynamic-update-slice = s32[16] dynamic-update-slice(%input, %update, %c3), sharding={devices=[4]<=[4]}
+    })";
+  CollectiveOpsCompareShardedUnsharded(hlo_text, /*num_partitions=*/4,
+                                       /*enable_enzyme_comms_opt=*/true);
+  // This test should pass regardless if enzyme comms opt is enabled or not.
+  CollectiveOpsCompareShardedUnsharded(hlo_text, /*num_partitions=*/4,
+                                       /*enable_enzyme_comms_opt=*/false);
+}
+
+TEST_F(CollectiveOpsTestE2EShardedUnsharded,
+       KeepPartitionedNonSlicedDimensionWithConstantIndices) {
+  const std::string hlo_text = R"(
+    HloModule module, entry_computation_layout={(bf16[16,192,192,384]{3,2,1,0}, bf16[16,128,128,384]{3,2,1,0})->bf16[16,224,224,384]{3,2,1,0}}, num_partitions=8
+
+    ENTRY entry {
+      p1 = bf16[16,192,192,384]{3,2,1,0} parameter(0), sharding={replicated}
+      p2 = bf16[16,128,128,384]{3,2,1,0} parameter(1), sharding={replicated}
+      c1 = bf16[16,192,192,384]{3,2,1,0} copy(p1), sharding={devices=[2,2,2,1]<=[8]}
+      c2 = bf16[16,128,128,384]{3,2,1,0} copy(p2), sharding={devices=[2,2,2,1]<=[8]}
+      constant.1163 = bf16[] constant(0), sharding={replicated}
+      constant.1165 = s32[] constant(0), sharding={replicated}
+      pad.179 = bf16[16,224,224,384]{3,2,1,0} pad(c1, constant.1163), padding=0_0x16_16x16_16x0_0, sharding={devices=[2,2,2,1]<=[8]}
+      add.439 = bf16[16,128,128,384]{3,2,1,0} add(c2, c2), sharding={devices=[2,2,2,1]<=[8]}
+      constant.1070 = s32[] constant(48), sharding={replicated}
+      dynamic-update-slice.128 = bf16[16,224,224,384]{3,2,1,0} dynamic-update-slice(pad.179, add.439, constant.1165, constant.1070, constant.1070, /*index=5*/constant.1165), sharding={devices=[2,2,2,1]<=[8]}
+      ROOT c = bf16[16,224,224,384]{3,2,1,0} copy(dynamic-update-slice.128), sharding={devices=[2,2,2,1]<=[8]}
+    })";
+  CollectiveOpsCompareShardedUnsharded(hlo_text, /*num_partitions=*/8,
+                                       /*enable_enzyme_comms_opt=*/true);
+  CollectiveOpsCompareShardedUnsharded(hlo_text, /*num_partitions=*/8,
+                                       /*enable_enzyme_comms_opt=*/false);
 }
 
 TEST_F(CollectiveOpsTestE2EShardedUnsharded, DotBatchAndNonContracting) {
@@ -3543,7 +3618,9 @@ INSTANTIATE_TEST_SUITE_P(
                           RaggedAllToAllImplTypeName(std::get<1>(info.param)));
     });
 
-class RaggedAllToAllMultiHostDecomposerTest : public RaggedAllToAllTestBase {
+class RaggedAllToAllMultiHostDecomposerTest
+    : public RaggedAllToAllTestBase,
+      public ::testing::WithParamInterface<std::tuple<int64_t, int64_t>> {
  public:
   RaggedAllToAllMultiHostDecomposerTest()
       : RaggedAllToAllTestBase(/*enable_async=*/false,
@@ -3561,21 +3638,25 @@ class RaggedAllToAllMultiHostDecomposerTest : public RaggedAllToAllTestBase {
   }
 };
 
-TEST_F(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_2GPUs_SliceSize1) {
-  absl::string_view kModuleReplicatedStr = R"(
+TEST_P(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_2GPUs_SliceSize1) {
+  auto [num_input_rows, num_output_rows] = GetParam();
+
+  std::string kModuleReplicatedStr =
+      absl::Substitute(R"(
   HloModule module, num_partitions=1
 
   ENTRY entry {
-    input = f32[512,5,32] parameter(0)
-    output = f32[512,5,32] parameter(1)
+    input = f32[$0,5,32] parameter(0)
+    output = f32[$1,5,32] parameter(1)
     input_offsets = s32[32] parameter(2)
     send_sizes = s32[32] parameter(3)
     output_offsets = s32[32] parameter(4)
     recv_sizes = s32[32] parameter(5)
-    ROOT ra2a = f32[512,5,32] ragged-all-to-all(input, output,
-      input_offsets, send_sizes, output_offsets, recv_sizes), 
+    ROOT ra2a = f32[$1,5,32] ragged-all-to-all(input, output,
+      input_offsets, send_sizes, output_offsets, recv_sizes),
       replica_groups={{0,1}}
-  })";
+  })",
+                       num_input_rows, num_output_rows);
 
   const int64_t kNumReplicas = 2;
   const int64_t kNumPartitions = 1;
@@ -3612,21 +3693,25 @@ TEST_F(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_2GPUs_SliceSize1) {
   }
 }
 
-TEST_F(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_8GPUs_SliceSize4) {
-  absl::string_view kModuleReplicatedStr = R"(
+TEST_P(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_8GPUs_SliceSize4) {
+  auto [num_input_rows, num_output_rows] = GetParam();
+
+  std::string kModuleReplicatedStr =
+      absl::Substitute(R"(
   HloModule module, num_partitions=1
 
   ENTRY entry {
-    input = f32[512,5,32] parameter(0)
-    output = f32[512,5,32] parameter(1)
+    input = f32[$0,5,32] parameter(0)
+    output = f32[$1,5,32] parameter(1)
     input_offsets = s32[32] parameter(2)
     send_sizes = s32[32] parameter(3)
     output_offsets = s32[32] parameter(4)
     recv_sizes = s32[32] parameter(5)
-    ROOT ra2a = f32[512,5,32] ragged-all-to-all(input, output,
-      input_offsets, send_sizes, output_offsets, recv_sizes), 
+    ROOT ra2a = f32[$1,5,32] ragged-all-to-all(input, output,
+      input_offsets, send_sizes, output_offsets, recv_sizes),
       replica_groups={{0,1,2,3,4,5,6,7}}
-  })";
+  })",
+                       num_input_rows, num_output_rows);
 
   const int64_t kNumReplicas = 8;
   const int64_t kNumPartitions = 1;
@@ -3648,7 +3733,7 @@ TEST_F(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_8GPUs_SliceSize4) {
 
   Array<int64_t> input_sizes(
       {kNumReplicas, kNumReplicas, kNumUpdatesPerReplica});
-  input_sizes.FillRandomUniform(0, 10);
+  input_sizes.FillRandomUniform(0, 16);
 
   TF_ASSERT_OK(CreateRandomTestData(module.get(), input_sizes));
 
@@ -3665,22 +3750,26 @@ TEST_F(RaggedAllToAllMultiHostDecomposerTest, RaggedAllToAll_8GPUs_SliceSize4) {
   }
 }
 
-TEST_F(RaggedAllToAllMultiHostDecomposerTest,
+TEST_P(RaggedAllToAllMultiHostDecomposerTest,
        RaggedAllToAll_8GPUs_SliceSize4_2ReplicaGroups) {
-  absl::string_view kModuleReplicatedStr = R"(
+  auto [num_input_rows, num_output_rows] = GetParam();
+
+  std::string kModuleReplicatedStr =
+      absl::Substitute(R"(
   HloModule module, num_partitions=1
 
   ENTRY entry {
-    input = f32[512,5,32] parameter(0)
-    output = f32[512,5,32] parameter(1)
+    input = f32[$0,5,32] parameter(0)
+    output = f32[$1,5,32] parameter(1)
     input_offsets = s32[32] parameter(2)
     send_sizes = s32[32] parameter(3)
     output_offsets = s32[32] parameter(4)
     recv_sizes = s32[32] parameter(5)
-    ROOT ra2a = f32[512,5,32] ragged-all-to-all(input, output,
-      input_offsets, send_sizes, output_offsets, recv_sizes), 
+    ROOT ra2a = f32[$1,5,32] ragged-all-to-all(input, output,
+      input_offsets, send_sizes, output_offsets, recv_sizes),
       replica_groups={{0,2,4,6},{1,3,5,7}}
-  })";
+  })",
+                       num_input_rows, num_output_rows);
 
   const int64_t kNumReplicas = 8;
   const int64_t kNumReplicasPerGroup = 4;
@@ -3719,6 +3808,19 @@ TEST_F(RaggedAllToAllMultiHostDecomposerTest,
     EXPECT_TRUE(LiteralTestUtil::Equal(expected_outputs_[i], results[i]));
   }
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    RaggedAllToAllMultiHostDecomposerTest,
+    RaggedAllToAllMultiHostDecomposerTest,
+    ::testing::Values(std::make_tuple(512, 4096), std::make_tuple(4096, 512)),
+    [](const ::testing::TestParamInfo<std::tuple<int64_t, int64_t>>& info) {
+      if (std::get<0>(info.param) > std::get<1>(info.param)) {
+        return absl::StrCat("combine_", std::get<0>(info.param), "_",
+                            std::get<1>(info.param));
+      }
+      return absl::StrCat("dispatch_", std::get<0>(info.param), "_",
+                          std::get<1>(info.param));
+    });
 
 TEST_F(CollectiveOpsTestE2E, MemcpyP2pWhileLoopCorrectness) {
   absl::string_view hlo_string = R"(
@@ -4565,6 +4667,171 @@ INSTANTIATE_TEST_SUITE_P(
       return absl::StrCat(GetAsyncTestName(std::get<0>(info.param)), "_",
                           std::get<1>(info.param) ? "one_shot" : "nccl");
     });
+
+class CollectiveMetadataTest : public CollectiveOpsE2ETestBase {
+ protected:
+  void SetUp() override {
+    CollectiveOpsE2ETestBase::SetUp();
+    if (!IsHopperAndHigher()) {
+      GTEST_SKIP() << "Test requires Hopper or newer architecture since it's "
+                      "using a multicast.";
+    }
+  }
+};
+
+TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadata) {
+  constexpr int kNumReplicas = 2;
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> unoptimized_module,
+                          ParseAndReturnVerifiedModule(R"(
+  HloModule test, replica_count=2
+
+  ENTRY test_computation {
+    param_0 = f32[4] parameter(0)
+    param_1 = f32[4] parameter(1)
+    copy_1 = f32[4]{0:S(1)} copy(param_1)
+
+    const_0 = f32[1] constant({10})
+
+    result_tuple = (f32[4], f32[4]{0:S(1)}, f32[1], u64[9]) custom-call(param_0, copy_1, const_0), custom_call_target="CollectiveMetadata", output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {})}
+    ROOT get_tuple_element = u64[9] get-tuple-element(result_tuple), index=3
+  })"));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<OpaqueExecutable> executable,
+      hlo_runner_->CreateExecutable(std::move(unoptimized_module),
+                                    /*run_hlo_passes=*/false));
+  const std::array<Literal, 2> arguments = {
+      LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f, 4.0f}),
+      LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f, 4.0f})};
+  DeviceAssignment device_assignment = MakeDeviceAssn(kNumReplicas);
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> result,
+      ExecuteReplicated(
+          /*executable_provider*/ [&](int64_t) { return executable.get(); },
+          /*argument_count_provider*/ [&](int64_t) { return arguments.size(); },
+          /*argument_provider*/
+          [&](int64_t replica_id, int64_t arg_index) {
+            return &arguments[arg_index];
+          },
+          kNumReplicas,
+          /*run_hlo_passes=*/false, &device_assignment));
+
+  ASSERT_EQ(result.size(), kNumReplicas);
+  Literal first_result = std::move(result[0]);
+  Literal second_result = std::move(result[1]);
+
+  absl::Span<const uint64_t> first_result_data = first_result.data<uint64_t>();
+  absl::Span<const uint64_t> second_result_data =
+      second_result.data<uint64_t>();
+  constexpr int kNumElements = 9;
+  ASSERT_EQ(first_result_data.size(), kNumElements);
+  ASSERT_EQ(second_result_data.size(), kNumElements);
+
+  // Check the rank in the first position.
+  EXPECT_EQ(first_result_data[0], 0);
+  EXPECT_EQ(second_result_data[0], 1);
+
+  // Check pointer to peers in the second position.
+  EXPECT_NE(first_result_data[1], 0);
+  EXPECT_NE(second_result_data[1], 0);
+
+  // Check pointer to multimem metadata in the third position.
+  EXPECT_NE(first_result_data[2], 0);
+  EXPECT_NE(second_result_data[2], 0);
+
+  // Check param_to_peers structure.
+  for (int i = 3; i < kNumElements; ++i) {
+    EXPECT_NE(first_result_data[i], 0);
+    EXPECT_EQ(second_result_data[i], first_result_data[i]);
+  }
+}
+
+TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadataWithReplicaGroup) {
+  constexpr int kNumReplicas = 4;
+  if (hlo_runner_->device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << hlo_runner_->device_count() << " available)";
+  }
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> unoptimized_module,
+                          ParseAndReturnVerifiedModule(R"(
+  HloModule test, replica_count=4
+
+  ENTRY test_computation {
+    param_0 = f32[4] parameter(0)
+    param_1 = f32[4] parameter(1)
+    copy_1 = f32[4]{0:S(1)} copy(param_1)
+
+    result_tuple = (f32[4], f32[4]{0:S(1)}, u64[7]) custom-call(param_0, copy_1), custom_call_target="CollectiveMetadata", output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {})}, backend_config="{\"collective_metadata_backend_config\":{\"collective_devices\": { \"replica_groups\": [{\"replica_ids\": [0,1]}, {\"replica_ids\": [2,3]}]}}}"
+    ROOT get_tuple_element = u64[7] get-tuple-element(result_tuple), index=2
+  })"));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<OpaqueExecutable> executable,
+      hlo_runner_->CreateExecutable(std::move(unoptimized_module),
+                                    /*run_hlo_passes=*/false));
+  const std::array<Literal, 2> arguments = {
+      LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f, 4.0f}),
+      LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f, 4.0f})};
+  DeviceAssignment device_assignment = MakeDeviceAssn(kNumReplicas);
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> result,
+      ExecuteReplicated(
+          /*executable_provider*/ [&](int64_t) { return executable.get(); },
+          /*argument_count_provider*/ [&](int64_t) { return arguments.size(); },
+          /*argument_provider*/
+          [&](int64_t replica_id, int64_t arg_index) {
+            return &arguments[arg_index];
+          },
+          kNumReplicas,
+          /*run_hlo_passes=*/false, &device_assignment));
+
+  ASSERT_EQ(result.size(), kNumReplicas);
+  Literal replica_0_result_0 = std::move(result[0]);
+  Literal replica_0_result_1 = std::move(result[1]);
+  Literal replica_1_result_0 = std::move(result[2]);
+  Literal replica_1_result_1 = std::move(result[3]);
+
+  absl::Span<const uint64_t> replica_0_result_0_data =
+      replica_0_result_0.data<uint64_t>();
+  absl::Span<const uint64_t> replica_0_result_1_data =
+      replica_0_result_1.data<uint64_t>();
+  absl::Span<const uint64_t> replica_1_result_0_data =
+      replica_1_result_0.data<uint64_t>();
+  absl::Span<const uint64_t> replica_1_result_1_data =
+      replica_1_result_1.data<uint64_t>();
+
+  // Check the rank in the first position.
+  constexpr int kNumElements = 7;
+  ASSERT_EQ(replica_0_result_0_data.size(), kNumElements);
+  ASSERT_EQ(replica_0_result_1_data.size(), kNumElements);
+  ASSERT_EQ(replica_1_result_0_data.size(), kNumElements);
+  ASSERT_EQ(replica_1_result_1_data.size(), kNumElements);
+
+  EXPECT_EQ(replica_0_result_0_data[0], 0);
+  EXPECT_EQ(replica_0_result_1_data[0], 1);
+  EXPECT_EQ(replica_1_result_0_data[0], 0);
+  EXPECT_EQ(replica_1_result_1_data[0], 1);
+
+  // Check pointer to peers in the second position.
+  EXPECT_NE(replica_0_result_0_data[1], 0);
+  EXPECT_NE(replica_0_result_1_data[1], 0);
+  EXPECT_NE(replica_1_result_0_data[1], 0);
+  EXPECT_NE(replica_1_result_1_data[1], 0);
+
+  // Check pointer to multimem metadata in the third position.
+  EXPECT_NE(replica_0_result_0_data[2], 0);
+  EXPECT_NE(replica_0_result_1_data[2], 0);
+  EXPECT_NE(replica_1_result_0_data[2], 0);
+  EXPECT_NE(replica_1_result_1_data[2], 0);
+
+  // Check param_to_peers structure.
+  for (int i = 3; i < kNumElements; ++i) {
+    EXPECT_NE(replica_0_result_0_data[i], 0);
+    EXPECT_EQ(replica_0_result_1_data[i], replica_0_result_0_data[i]);
+    EXPECT_NE(replica_1_result_0_data[i], 0);
+    EXPECT_EQ(replica_1_result_1_data[i], replica_1_result_0_data[i]);
+  }
+}
 
 }  // namespace
 }  // namespace xla

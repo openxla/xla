@@ -17,13 +17,12 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_RUNTIME_ALL_REDUCE_THUNK_H_
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "xla/backends/gpu/collectives/gpu_clique_key.h"
-#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/core/collectives/communicator.h"
@@ -39,8 +38,7 @@ struct AllReduceConfig {
   ReductionKind reduction_kind;
 };
 
-template <typename HloInstType>
-AllReduceConfig GetAllReduceConfigInst(HloInstType* inst);
+AllReduceConfig GetAllReduceConfigInst(const HloAllReduceInstructionBase* inst);
 
 // Thunk that performs a NCCL-based All-Reduce or Reduce-Scatter among CUDA
 // GPU-based replicas.
@@ -66,9 +64,11 @@ class AllReduceReduceScatterThunkBase : public CollectiveThunk {
 
 class AllReduceStartThunk : public AllReduceReduceScatterThunkBase {
  public:
-  AllReduceStartThunk(ThunkInfo thunk_info, const HloAllReduceInstruction* inst,
-                      std::vector<Buffer> buffers,
-                      bool p2p_memcpy_enabled = false);
+  AllReduceStartThunk(
+      ThunkInfo thunk_info, const HloAllReduceInstruction* inst,
+      std::vector<Buffer> buffers,
+      std::unique_ptr<CollectiveKernelThunk> collective_kernel_thunk,
+      bool p2p_memcpy_enabled = false);
 
   static const char* GetHloOpName() { return "all-reduce-start"; }
 
@@ -89,7 +89,7 @@ class AllReduceStartThunk : public AllReduceReduceScatterThunkBase {
                                      CommunicatorHandle comm) override;
 
  private:
-  CollectiveKernelThunk collective_kernel_thunk_;
+  std::unique_ptr<CollectiveKernelThunk> collective_kernel_thunk_;
 };
 
 // -----------------------------------------------------------------------------

@@ -2242,6 +2242,43 @@ TEST_F(HloVerifierTest, CollectivePermuteCrossPartitionTargetOOR) {
   EXPECT_THAT(error_message, HasSubstr("must be < 3"));
 }
 
+TEST_F(HloVerifierTest, CollectivePermuteAsyncMixedPrecisionOperandsAllowed) {
+  const char* const kModuleStr = R"(
+    HloModule test
+    ENTRY entry {
+      p0 = f32[128] parameter(0)
+      p1 = bf16[128] parameter(1)
+      permute-start = ((f32[128], bf16[128]), (f32[128], bf16[128])) collective-permute-start(p0, p1),
+        source_target_pairs={{0,1}, {1,0}}, channel_id=1
+      ROOT permute-done = (f32[128], bf16[128]) collective-permute-done(permute-start)
+    }
+    )";
+  HloModuleConfig config;
+  config.set_num_partitions(2);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(kModuleStr, config));
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_TRUE(status.ok());
+}
+
+TEST_F(HloVerifierTest, CollectivePermuteMixedPrecisionOperandsAllowed) {
+  const char* const kModuleStr = R"(
+    HloModule test
+    ENTRY entry {
+      p0 = f32[128] parameter(0)
+      p1 = bf16[128] parameter(1)
+      ROOT permute = (f32[128], bf16[128]) collective-permute(p0, p1),
+        source_target_pairs={{0,1}, {1,0}}, channel_id=1
+    }
+    )";
+  HloModuleConfig config;
+  config.set_num_partitions(2);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(kModuleStr, config));
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_TRUE(status.ok());
+}
+
 TEST_F(HloVerifierTest, FusionMoreOperandsThanParameters) {
   const char* const kModuleStr = R"(
   HloModule test
@@ -3228,7 +3265,30 @@ ENTRY main {
   auto status = verifier().Run(module.get()).status();
   ASSERT_FALSE(status.ok());
   EXPECT_THAT(status.message(),
-              HasSubstr("device 2 > num_devices (2) in tile assignment"));
+              HasSubstr("device 2 >= num_devices (2) in tile assignment"));
+}
+
+TEST_F(HloVerifierTest, NegativeDeviceID) {
+  const char* const hlo = R"(
+HloModule Module
+
+ENTRY main {
+  p = f32[4,2] parameter(0), sharding={maximal device=-1}
+  ROOT r = f32[4,2] copy(p)
+}
+)";
+
+  HloModuleConfig config;
+  config.set_num_partitions(2);
+  config.set_use_spmd_partitioning(true);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo, config));
+  ASSERT_TRUE(module->config().use_spmd_partitioning());
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(),
+              HasSubstr("device -1 is negative in tile assignment"));
 }
 
 TEST_F(HloVerifierTest, InconsistentWhileSharding) {
@@ -4922,10 +4982,10 @@ TEST_F(HloVerifierTest, ScaledDotWithNoScalesFails) {
   static constexpr absl::string_view kScaledDotHloString = R"(
     HloModule module
     ENTRY entry_computation {
-      a = f32[2,10] parameter(0)
-      b = f32[10,2] parameter(1)
-      a_scale = f32[] constant(1)
-      b_scale = f32[] constant(1)
+      a = bf16[2,10] parameter(0)
+      b = bf16[10,2] parameter(1)
+      a_scale = bf16[] constant(1)
+      b_scale = bf16[] constant(1)
       ROOT dot = f32[2,2] scaled-dot(a, b, a_scale, b_scale),
         lhs_contracting_dims={1},
         rhs_contracting_dims={0}

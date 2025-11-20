@@ -140,7 +140,7 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
   // Despite the specialized logic below for Volta, we expect GPUs with Tensor
   // Cores work best using NHWC layouts for cuDNN convolutions---as per
   // https://docs.nvidia.com/deeplearning/performance/dl-performance-convolutional/index.html#tensor-layout.
-  if (auto* cc = std::get_if<se::CudaComputeCapability>(&gpu_version)) {
+  if (auto* cc = gpu_version.cuda_compute_capability()) {
     // TODO(b/383560056): investigate chips below Hopper as well.
     if (cc->IsAtLeast(se::CudaComputeCapability::kHopper)) {
       // With that said, cuDNN's documentation states that NHWC is not supported
@@ -162,20 +162,12 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
     }
   }
 
-  const auto* rocm_compute_capability =
-      std::get_if<se::RocmComputeCapability>(&gpu_version);
-  if (rocm_compute_capability && input_ty == F16) {
-    return kAllNHWC;
-  }
-
-  // If we're not Volta or not fp16/bfloat16, or not conv2D, the decision is
-  // easy: Use NCHW.
   const bool isFloat16 = (input_ty == F16) || (input_ty == BF16);
-  if (std::holds_alternative<se::CudaComputeCapability>(gpu_version)) {
+  if (const auto* cuda_compute_capability =
+          gpu_version.cuda_compute_capability()) {
+    // CUDA:
     // If we're not Volta or not fp16/bfloat16, or not conv2D, the decision is
     // easy: Use NCHW.
-    const auto* cuda_compute_capability =
-        std::get_if<se::CudaComputeCapability>(&gpu_version);
     bool is_volta =
         cuda_compute_capability &&
         cuda_compute_capability->IsAtLeast(se::CudaComputeCapability::kVolta);
@@ -183,13 +175,15 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
         instr->shape().tuple_shapes(0).dimensions().size() != 4) {
       return kAllNCHW;
     }
-  } else if (std::holds_alternative<se::RocmComputeCapability>(gpu_version)) {
+  } else if (auto rocm_compute_capability =
+                 gpu_version.rocm_compute_capability()) {
+    // ROCm:
+    // If we do not have NHWC layout support or not fp16/bfloat16, or not
+    // conv2D, or ROCm NHWC is disabled the decision is to use NCHW.
     bool is_enabled = false;
     TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_USE_ROCM_NHWC",
                                         /*default_val=*/false, &is_enabled));
-    auto rocm_compute_capability =
-        std::get<se::RocmComputeCapability>(gpu_version);
-    if (!isFloat16 || (!rocm_compute_capability.has_nhwc_layout_support()) ||
+    if (!isFloat16 || (!rocm_compute_capability->has_nhwc_layout_support()) ||
         instr->shape().tuple_shapes(0).dimensions().size() != 4 ||
         !is_enabled) {
       return kAllNCHW;
@@ -198,7 +192,7 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
 
   VLOG(2) << "Using heuristic to figure out layouts for " << instr->ToString();
 
-  // For other Volta f16 convolutions, use NHWC.
+  // For other f16 convolutions, use NHWC.
   return kAllNHWC;
 }
 
@@ -451,8 +445,7 @@ absl::Status GpuLayoutAssignment::AddDotBackendConstraints(
                       (rhs.type == PrimitiveType::F8E4M3FN ||
                        rhs.type == PrimitiveType::F8E5M2FNUZ);
 
-  const se::CudaComputeCapability* cc =
-      std::get_if<se::CudaComputeCapability>(&gpu_version_);
+  const se::CudaComputeCapability* cc = gpu_version_.cuda_compute_capability();
   const bool both_operands_require_minor_contraction_dims =
       is_s8_to_s32 || (is_fp8 && !(cc && cc->IsBlackwell()));
 
@@ -569,18 +562,36 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
     } else if (HloPredicateIsOp<HloOpcode::kBitcastConvert>(instruction)) {
       Shape operand_shape = instruction->operand(0)->shape();
       Shape output_shape = instruction->shape();
-      // Make the added or removed dimension the minor most to give the
-      // operation a chance to become a no-op (bitcast).
+
+      // Sets the layouts of the operand and output shapes to make the bitcast a
+      // no-op. The changed dimension is moved to be the most minor one in the
+      // layout of the larger shape, and the layout of the smaller shape is
+      // derived from the larger one.
+      auto assign_layouts = [](Shape* larger_shape, Shape* smaller_shape) {
+        const int changed_dim = larger_shape->dimensions().size() - 1;
+        *larger_shape->mutable_layout() =
+            LayoutUtil::MoveDimToMinor(larger_shape->layout(), changed_dim);
+        *smaller_shape->mutable_layout() =
+            ShapeUtil::DeleteDimension(changed_dim, *larger_shape).layout();
+      };
+
+      bool ranks_differ = true;
       if (operand_shape.dimensions().size() >
           output_shape.dimensions().size()) {
-        *operand_shape.mutable_layout() = LayoutUtil::MoveDimToMinor(
-            operand_shape.layout(), operand_shape.dimensions().size() - 1);
-        TF_RETURN_IF_ERROR(SetOperandLayout(operand_shape, instruction, 0));
+        assign_layouts(&operand_shape, &output_shape);
       } else if (operand_shape.dimensions().size() <
                  output_shape.dimensions().size()) {
-        *output_shape.mutable_layout() = LayoutUtil::MoveDimToMinor(
-            output_shape.layout(), output_shape.dimensions().size() - 1);
-        TF_RETURN_IF_ERROR(SetInstructionLayout(output_shape, instruction));
+        assign_layouts(&output_shape, &operand_shape);
+      } else {
+        ranks_differ = false;
+      }
+
+      if (ranks_differ) {
+        TF_RETURN_IF_ERROR(SetOperandLayout(operand_shape, instruction,
+                                            /*operand_no=*/0,
+                                            /*mandatory=*/true));
+        TF_RETURN_IF_ERROR(SetInstructionLayout(output_shape, instruction,
+                                                /*mandatory=*/true));
       }
     } else if (HloPredicateIsOp<HloOpcode::kTriangularSolve>(instruction)) {
       // TODO(phawkins): Ideally we would relax this constraint. What we

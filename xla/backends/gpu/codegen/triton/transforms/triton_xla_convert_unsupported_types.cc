@@ -15,7 +15,6 @@ limitations under the License.
 #include <utility>
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
@@ -26,7 +25,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
+#include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 
@@ -87,22 +86,25 @@ class TritonXLAConvertUnsupportedTypesPass
 
     auto* ctx = &getContext();
     ConversionTarget target(*ctx);
-    target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp op) {
-      return converter.isSignatureLegal(op.getFunctionType()) &&
-             converter.isLegal(&op.getBody());
-    });
+    target.addDynamicallyLegalOp<::xla::xtile::EntryFuncOp>(
+        [&](::xla::xtile::EntryFuncOp op) {
+          return converter.isSignatureLegal(op.getFunctionType()) &&
+                 converter.isLegal(&op.getBody());
+        });
     target.markUnknownOpDynamicallyLegal(
         [&](Operation* op) { return converter.isLegal(op); });
 
     RewritePatternSet patterns(ctx);
-    patterns.add<GenericOpConversionPattern<ExtractOp>,
-                 GenericOpConversionPattern<InsertOp>,
+    patterns.add<GenericOpConversionPattern<::xla::xtile::ExtractTileOp>,
+                 GenericOpConversionPattern<::xla::xtile::InsertTileOp>,
                  GenericOpConversionPattern<ReshapeOp>,
                  GenericOpConversionPattern<TransOp>,
+                 GenericOpConversionPattern<ExpandDimsOp>,
+                 GenericOpConversionPattern<BroadcastOp>,
                  GenericOpConversionPattern<arith::BitcastOp>>(converter, ctx);
     scf::populateSCFStructuralTypeConversions(converter, patterns);
-    populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(patterns,
-                                                                   converter);
+    populateFunctionOpInterfaceTypeConversionPattern<::xla::xtile::EntryFuncOp>(
+        patterns, converter);
     if (failed(applyPartialConversion(getOperation(), target,
                                       std::move(patterns)))) {
       return signalPassFailure();

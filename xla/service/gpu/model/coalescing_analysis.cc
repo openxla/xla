@@ -24,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
@@ -35,15 +36,16 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
 #include "xla/codegen/tiling/affine_map_evaluator.h"
+#include "xla/codegen/tiling/tiled_hlo_instruction.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/interval.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/layout.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -345,7 +347,7 @@ std::vector<Interval> FindIntervals(
   FindAllIndices(expr, 0, 0, dimension_ranges, symbol_ranges, &dimensions,
                  &symbols, &linear_indices);
 
-  std::sort(linear_indices.begin(), linear_indices.end());
+  absl::c_sort(linear_indices);
   linear_indices.erase(
       std::unique(linear_indices.begin(), linear_indices.end()),
       linear_indices.end());
@@ -503,7 +505,7 @@ bool IsIndexingCoalesced(IndexingMap& thread_x_to_linearized_input,
 std::optional<CoalescingMap> ComputeCoalescingForAllOperands(
     const HloFusionAnalysis& fusion_analysis,
     absl::Span<const HloInstruction* const> operands,
-    gpu::SymbolicExprContext* symbolic_expr_context) {
+    SymbolicExprContext* symbolic_expr_context) {
   auto emitter = GetFusionEmitter(
       PreBufferAssignmentFusionInfo{fusion_analysis}, symbolic_expr_context);
   const auto* fusion_interface =
@@ -569,7 +571,7 @@ CoalescingAnalysis CoalescingAnalysis::Create(
     const HloInstruction* instr,
     absl::Span<const HloInstruction* const> operands,
     const HloFusionAnalysis& fusion_analysis,
-    gpu::SymbolicExprContext* symbolic_expr_context, bool use_heuristic) {
+    SymbolicExprContext* symbolic_expr_context, bool use_heuristic) {
   return Create(/*producer=*/instr, /*consumer=*/nullptr, operands,
                 fusion_analysis, symbolic_expr_context, use_heuristic);
 }
@@ -579,7 +581,7 @@ CoalescingAnalysis CoalescingAnalysis::Create(
     const HloInstruction* producer, const HloInstruction* consumer,
     absl::Span<const HloInstruction* const> operands,
     const HloFusionAnalysis& fusion_analysis,
-    gpu::SymbolicExprContext* symbolic_expr_context, bool use_heuristic) {
+    SymbolicExprContext* symbolic_expr_context, bool use_heuristic) {
   std::optional<CoalescingMap> coalescing_per_operand;
 
   if (!use_heuristic) {

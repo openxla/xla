@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/attributes.h"
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "unsupported/Eigen/CXX11/Tensor"
 #include "oneapi/dnnl/dnnl.hpp"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "xla/service/cpu/onednn_config.pb.h"
 #include "xla/service/cpu/onednn_memory_util.h"
 #include "xla/service/cpu/onednn_util.h"
-#include "xla/service/cpu/runtime_lightweight_check.h"
 #include "xla/shape.h"
 #include "xla/tsl/util/onednn_threadpool.h"
 
@@ -57,7 +57,7 @@ using dnnl::prop_kind;
 using dnnl::stream;
 
 memory::dims GetPrimitiveParameter(
-    const tsl::protobuf::RepeatedField<uint64_t>& field, int offset) {
+    const tsl::protobuf::RepeatedField<uint64_t>& field, int offset = 0) {
   memory::dims param_field(field.begin(), field.end());
   // Subtract the offset so that values are interpreted accurately
   for (int64_t& n : param_field) {
@@ -74,7 +74,7 @@ std::vector<int> ComputePermutations(
   perm_axes[dim1] = 1;
   int index = 2;
   for (uint64_t n : spatial_dims) {
-    perm_axes[n - 1] = index++;
+    perm_axes[n] = index++;
   }
   return perm_axes;
 }
@@ -135,14 +135,13 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
   memory::desc weights_md = ShapeToMemDesc(weight_shape);
   memory::desc output_md = ShapeToMemDesc(output_shape);
 
-  memory::dims strides =
-      GetPrimitiveParameter(conv_config.window().strides(), 1);
+  memory::dims strides = GetPrimitiveParameter(conv_config.window().strides());
   memory::dims pad_left =
-      GetPrimitiveParameter(conv_config.window().pad_left(), 1);
+      GetPrimitiveParameter(conv_config.window().pad_left());
   memory::dims pad_right =
-      GetPrimitiveParameter(conv_config.window().pad_right(), 1);
+      GetPrimitiveParameter(conv_config.window().pad_right());
   memory::dims rhs_dilations =
-      GetPrimitiveParameter(conv_config.window().window_dilations(), 2);
+      GetPrimitiveParameter(conv_config.window().window_dilations(), 1);
 
   uint64_t groups = conv_config.feature_groups();
 
@@ -251,14 +250,13 @@ void ExecuteOneDnnConvolution(absl::Span<MemrefInfoHandler> arguments,
       conv_config.output().data().feature_dim(),
       conv_config.output().data().spatial_dims()));
 
-  memory::dims strides =
-      GetPrimitiveParameter(conv_config.window().strides(), 1);
+  memory::dims strides = GetPrimitiveParameter(conv_config.window().strides());
   memory::dims pad_left =
-      GetPrimitiveParameter(conv_config.window().pad_left(), 1);
+      GetPrimitiveParameter(conv_config.window().pad_left());
   memory::dims pad_right =
-      GetPrimitiveParameter(conv_config.window().pad_right(), 1);
+      GetPrimitiveParameter(conv_config.window().pad_right());
   memory::dims rhs_dilations =
-      GetPrimitiveParameter(conv_config.window().window_dilations(), 2);
+      GetPrimitiveParameter(conv_config.window().window_dilations(), 1);
 
   uint64_t groups = conv_config.feature_groups();
 
@@ -351,12 +349,12 @@ void ExecuteOneDnnConvolution(absl::Span<MemrefInfoHandler> arguments,
       {DNNL_ARG_DST, resources.dst_mem}};
 
   if (conv_config.optimization_config().user_scratchpad()) {
-    XLA_LIGHTWEIGHT_CHECK(results.size() > 1);
+    CHECK_GT(results.size(), 1);
     MemrefInfo scratch_minfo(results[1].get());
 
     size_t required_size = conv_pd->scratchpad_desc().get_size();
     size_t provided_size = scratch_minfo.GetOneDnnDims()[0];  // bytes (u8)
-    XLA_LIGHTWEIGHT_CHECK(required_size <= provided_size);
+    CHECK_LE(required_size, provided_size);
 
     resources.scratch_mem =
         memory(conv_pd->scratchpad_desc(), cpu_engine, scratch_minfo.Data());

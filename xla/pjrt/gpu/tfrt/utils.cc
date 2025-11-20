@@ -285,7 +285,7 @@ std::optional<stream_executor::GpuTargetConfigProto> GetTargetConfigForDevices(
     se::StreamExecutor* executor =
         tensorflow::down_cast<const TfrtGpuDevice*>(device)->executor();
     if (executor != nullptr) {
-      return xla::Compiler::TargetConfig(executor).ToProto();
+      return xla::Compiler::GpuTargetConfig(executor).ToProto();
     }
   }
   return std::nullopt;
@@ -704,7 +704,8 @@ using DeviceTopologyPair =
 
 absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     absl::string_view platform_name, LocalClient* xla_client, int node_id,
-    int num_nodes, gpu::GpuExecutableRunOptions* gpu_executable_run_options,
+    int max_inflight_computations, int num_nodes,
+    gpu::GpuExecutableRunOptions* gpu_executable_run_options,
     std::shared_ptr<KeyValueStoreInterface> kv_store, bool enable_mock_nccl,
     std::optional<absl::string_view> mock_gpu_topology,
     std::optional<int> partition_index,
@@ -854,7 +855,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
       options.process_index = node.node_id();
       options.process_index_in_partition = curr_process_index_in_partition;
       options.partition_index = device_proto.partition_index();
-      options.max_inflight_computations = 8;
+      options.max_inflight_computations = max_inflight_computations;
       options.platform_version = device_proto.name();
       options.device_vendor = device_proto.vendor();
       options.compute_capability = device_proto.compute_capability();
@@ -937,8 +938,7 @@ void EnqueueWorkWhenReady(
   });
 }
 
-absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
-GetLatestIncarnations(
+absl::flat_hash_map<GlobalDeviceId, IncarnationId> GetLatestIncarnations(
     absl::Span<PjRtDevice* const> devices,
     const absl::flat_hash_map<int, IncarnationId>& incarnations) {
   // Map every device to its incarnation.
@@ -947,7 +947,9 @@ GetLatestIncarnations(
     int task_id = device->process_index();
     auto it = incarnations.find(task_id);
     if (it == incarnations.end()) {
-      return FailedPrecondition("Incarnation for task %d not found", task_id);
+      // The task might be dead.
+      LOG(WARNING) << "Incarnation for task " << task_id << " not found";
+      continue;
     }
     GlobalDeviceId device_id(device->global_device_id().value());
     device_incarnations[device_id] = it->second;

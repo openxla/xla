@@ -42,7 +42,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/hlo/testlib/test_helpers.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/transforms/collectives/async_collective_creator.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -63,7 +63,7 @@ constexpr int kMaxConcurrentAsyncCollectivePermutes = 5;
 
 int PositionInVector(absl::Span<HloInstruction* const> vec,
                      const HloInstruction* element) {
-  return std::distance(vec.begin(), std::find(vec.begin(), vec.end(), element));
+  return std::distance(vec.begin(), absl::c_find(vec, element));
 }
 
 bool MaxConcurrentCollectivePermutesBelowThreshold(
@@ -791,6 +791,25 @@ ENTRY entry {
   EXPECT_EQ(cp_start->opcode(), HloOpcode::kCollectivePermuteStart);
   EXPECT_LT(GetIndex(new_instruction_sequence, "add0"),
             GetIndex(new_instruction_sequence, cp_start->name()));
+}
+
+TEST_F(LatencyHidingSchedulerTest, ForceDelayCustomCall) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+ENTRY %module {
+  %p0 = f32[100] parameter(0)
+  %custom-call = f32[100] custom-call(%p0), custom_call_target="foo", frontend_attributes={scheduler_hint="force_delay"}
+  ROOT %copy = f32[100] copy(%custom-call)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  // We expect RunScheduler to return true because of the force_delay attribute,
+  // even though there are no async collectives.
+  auto result = RunScheduler(hlo_module.get());
+  TF_ASSERT_OK(result);
+  EXPECT_TRUE(result.value());
 }
 
 TEST_F(LatencyHidingSchedulerTest, WhileLoopAliasingBug2) {

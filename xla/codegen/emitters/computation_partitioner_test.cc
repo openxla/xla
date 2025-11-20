@@ -25,10 +25,10 @@ limitations under the License.
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 
 namespace xla {
 namespace emitters {
@@ -45,7 +45,7 @@ class ComputationPartitionerTest : public HloHardwareIndependentTestBase {
   }
 
   mlir::MLIRContext mlir_context_;
-  gpu::SymbolicExprContext symbolic_expr_context_;
+  SymbolicExprContext symbolic_expr_context_;
 };
 
 std::string PrintAndErase(mlir::func::FuncOp func) {
@@ -479,6 +479,23 @@ TEST_F(ComputationPartitionerTest, PartitioningIsDeterministic) {
       ROOT select.8499.1 = bf16[1,16,4096]{2,1,0} select(broadcast.59957.1, broadcast.59959.1, bitcast.4104.1)
     }
 )")
+                    .value();
+
+  auto* fusion = module->GetComputationWithName("fused_computation");
+  ASSERT_NE(fusion, nullptr);
+  PartitionedComputation computation(fusion, &symbolic_expr_context_);
+  EXPECT_EQ(computation.subgraphs().size(), 1);
+}
+
+TEST_F(ComputationPartitionerTest, ScaleAndTranslateSamplerE2ETest) {
+  // This is a simple fusion that used to result in a crash.
+  auto module = ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+    ENTRY fused_computation (param_0.1: f32[4,4,2]) -> f32[1,1,1,4,1,4,1,2]  {
+      %param_0.1 = f32[4,4,2]{2,1,0} parameter(0)
+      %bitcast.1 = f32[1,1,1,4,1,4,1,2]{7,5,3,6,4,2,1,0} bitcast(%param_0.1)
+      ROOT %copy.1 = f32[1,1,1,4,1,4,1,2]{7,6,5,4,3,2,1,0} copy(%bitcast.1)
+    })")
                     .value();
 
   auto* fusion = module->GetComputationWithName("fused_computation");

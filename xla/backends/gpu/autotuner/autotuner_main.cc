@@ -36,12 +36,12 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/gpu_profiler.h"
 #include "xla/backends/gpu/autotuner/legacy_cache.h"
 #include "xla/debug_options_flags.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/service/compiler.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/platform.h"
@@ -100,7 +100,7 @@ absl::Status Autotune(HloModule& module, const std::string& cache_dir,
                       xla::Compiler::GetForPlatform(platform));
   se::StreamExecutor* stream_executor = platform->ExecutorForDevice(0).value();
   DebugOptions debug_options = GetDebugOptionsFromFlags();
-  Compiler::TargetConfig target_config(stream_executor);
+  Compiler::GpuTargetConfig target_config(stream_executor);
 
   auto& registry = stream_executor::PlatformObjectRegistry::GetGlobalRegistry();
   TF_ASSIGN_OR_RETURN(const GetCodegenBackends::Type& get_codegen_backends,
@@ -182,7 +182,7 @@ int main(int argc, char* argv[]) {
   auto module = xla::gpu::GetModule(hlo_file);
   CHECK_OK(module.status());
   mlir::MLIRContext mlir_context;
-  xla::gpu::SymbolicExprContext symbolic_expr_context(&mlir_context);
+  xla::SymbolicExprContext symbolic_expr_context(&mlir_context);
   CHECK_OK(xla::gpu::Autotune(*module.value(), cache_dir, autotune_cache_mode,
                               &symbolic_expr_context));
   std::cout << module.value()->ToString() << std::endl;

@@ -372,8 +372,7 @@ absl::Status runShardingPropagation(HloModule* hloModule,
         spanToArrayRef(hloModule->config()
                            .allow_spmd_sharding_propagation_to_parameters()),
         spanToArrayRef(
-            hloModule->config().allow_spmd_sharding_propagation_to_output()),
-        /*importFuncCalls=*/true);
+            hloModule->config().allow_spmd_sharding_propagation_to_output()));
   } else {
     // This branch is in production.
     addSdyRoundTripImportPipeline(pm, /*enableConstantImport=*/true,
@@ -425,7 +424,7 @@ bool eraseInlineableAttrForShardyManualComputations(HloModule* module) {
 
 }  // namespace
 
-absl::StatusOr<bool> ShardyXLA::Run(
+absl::StatusOr<bool> ShardyXLA::RunImpl(
     HloModule* hloModule,
     const absl::flat_hash_set<absl::string_view>& executionThreads) {
   auto moduleFrontendAttrs = hloModule->frontend_attributes().map();
@@ -505,13 +504,11 @@ absl::StatusOr<bool> ShardyXLA::Run(
       std::move(flattenedInputOutputAliasConfig));
   hloModule->set_buffer_donor_config(std::move(flattenedBufferDonorsConfig));
 
-  // Shardy currently propagates shardings to parameters and root
-  // instructions. Hence, we specify `true` for update_output_layout and
-  // update_parameters_layout.
   TF_RETURN_IF_ERROR(
       hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
-          hloModule, /*update_output_layout=*/{true},
-          /*update_parameters_layout=*/{true}));
+          hloModule,
+          hloModule->config().allow_spmd_sharding_propagation_to_output(),
+          hloModule->config().allow_spmd_sharding_propagation_to_parameters()));
 
   // We don't fully replace the HLO module, so it will continue to have the
   // temporary frontend attributes. So clean them up as XLA won't need them.
