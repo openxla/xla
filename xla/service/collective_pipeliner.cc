@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/tuple_points_to_analysis.h"
+#include "xla/hlo/analysis/while_loop_analysis.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -60,6 +61,8 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/collective_pipeliner_utils.h"
 #include "xla/service/constant_value.h"
+#include "xla/service/host_offload_utils.h"
+#include "xla/service/memory_annotations.h"
 #include "xla/service/scheduling_annotations_util.h"
 #include "xla/service/value_range.h"
 #include "xla/shape.h"
@@ -514,7 +517,8 @@ std::optional<std::vector<HloInstruction*>> CollectIndependentOperandChain(
     HloPredicate should_allow_loop_variant_parameter_in_chain,
     const absl::flat_hash_set<const HloInstruction*>&
         loop_invariant_instructions,
-    bool should_add_loop_invariant_op_in_chain) {
+    bool should_add_loop_invariant_op_in_chain,
+    HloPredicate should_find_dynamic_slice_operand) {
   std::vector<HloInstruction*> chain;
   absl::flat_hash_set<const HloInstruction*> visited_set({instr});
   std::vector<std::pair<HloInstruction*, int>> stack(1, {instr, 0});
@@ -527,6 +531,33 @@ std::optional<std::vector<HloInstruction*>> CollectIndependentOperandChain(
         return !IsLoopIterator(instr, loop_iter) &&
                !loop_invariant_params.count(instr);
       };
+
+  if (should_find_dynamic_slice_operand(instr)) {
+    std::vector<HloInstruction*> to_check = {instr->mutable_operand(0)};
+    std::set<HloInstruction*> visited;
+
+    while (!to_check.empty()) {
+      HloInstruction* current = to_check.back();
+      to_check.pop_back();
+
+      if (visited.insert(current).second) {
+        if (current->opcode() == HloOpcode::kDynamicSlice) {
+          if (visited_set.insert(current).second) {
+            stack.emplace_back(current, 0);
+          }
+          break;
+        }
+        if (current->opcode() == HloOpcode::kReshape ||
+            current->opcode() == HloOpcode::kBroadcast ||
+            current->opcode() == HloOpcode::kTranspose) {
+          for (HloInstruction* operand : current->operands()) {
+            to_check.push_back(operand);
+          }
+        }
+      }
+    }
+  }
+
   while (!stack.empty()) {
     auto& curr = stack.back();
     if (curr.second == curr.first->operand_count()) {
@@ -600,14 +631,15 @@ std::optional<std::vector<HloInstruction*>> CollectChainsToPushBackwards(
     bool should_allow_control_dependencies,
     const absl::flat_hash_set<const HloInstruction*>&
         loop_invariant_instructions,
-    bool should_add_loop_invariant_op_in_chain) {
+    bool should_add_loop_invariant_op_in_chain,
+    HloPredicate should_find_dynamic_slice_operand) {
   if (instr->HasControlDependencies() && !should_allow_control_dependencies) {
     return std::nullopt;
   }
   return CollectIndependentOperandChain(
       instr, loop_iter, loop_invariant_params,
       should_allow_loop_variant_parameter_in_chain, loop_invariant_instructions,
-      should_add_loop_invariant_op_in_chain);
+      should_add_loop_invariant_op_in_chain, should_find_dynamic_slice_operand);
 }
 
 // Given a dynamic-update-slice find the output index of the loop we feed into.
@@ -907,7 +939,8 @@ class WhileLoopAnalysis {
       HloPredicate should_allow_loop_variant_parameter_in_chain =
           HloPredicateFalse,
       bool should_allow_control_dependencies = false,
-      bool should_add_loop_invariant_op_in_chain = false);
+      bool should_add_loop_invariant_op_in_chain = false,
+      HloPredicate should_find_dynamic_slice_operand = HloPredicateFalse);
   HloInstruction* while_loop_instruction() const { return while_; }
   void ExtractLoopInvariantOps();
 
@@ -1318,7 +1351,8 @@ void WhileLoopAnalysis::CollectCollectivesToMove(
     HloPredicate should_process, HloPredicate acceptable_formatting,
     HloPredicate should_allow_loop_variant_parameter_in_chain,
     bool should_allow_control_dependencies,
-    bool should_add_loop_invariant_op_in_chain) {
+    bool should_add_loop_invariant_op_in_chain,
+    HloPredicate should_find_dynamic_slice_operand) {
   move_infos_.clear();
   HloComputation* while_body = while_->while_body();
   const HloInstruction* loop_parameter =
@@ -1495,7 +1529,8 @@ void WhileLoopAnalysis::CollectCollectivesToMove(
           invariant_loop_parameters_,
           should_allow_loop_variant_parameter_in_chain,
           should_allow_control_dependencies, invariant_loop_instructions_,
-          should_add_loop_invariant_op_in_chain);
+          should_add_loop_invariant_op_in_chain,
+          should_find_dynamic_slice_operand);
       if (!chain_collected.has_value()) {
         VLOG(5) << "Skipping " << instr->name()
                 << " because didn't find compatible slice of parameter";
@@ -1629,6 +1664,88 @@ HloInstruction* CreateZero(HloComputation* comp, const Shape& shape,
               HloInstruction::CreateConstant(LiteralUtil::Zero(ptype))),
           {}));
   return zero_constant;
+}
+
+// Recursively finds GTE indices used in DS/DUS and marks them as dynamic
+// variables.
+absl::flat_hash_set<int64_t> FindTupleIndicesInOperand(
+    const HloInstruction* operand) {
+  absl::flat_hash_set<int64_t> indices;
+
+  if (operand->opcode() == HloOpcode::kGetTupleElement) {
+    indices.insert(operand->tuple_index());
+  } else if (operand->opcode() == HloOpcode::kCopy &&
+             operand->operand_count() == 1) {
+    auto copy_indices = FindTupleIndicesInOperand(operand->operand(0));
+    indices.insert(copy_indices.begin(), copy_indices.end());
+  } else if (operand->opcode() == HloOpcode::kAdd ||
+             operand->opcode() == HloOpcode::kSubtract ||
+             operand->opcode() == HloOpcode::kMultiply ||
+             operand->opcode() == HloOpcode::kDivide) {
+    for (int i = 0; i < operand->operand_count(); ++i) {
+      auto op_indices = FindTupleIndicesInOperand(operand->operand(i));
+      indices.insert(op_indices.begin(), op_indices.end());
+    }
+  }
+
+  return indices;
+}
+
+// Scans while loop body for DS/DUS, traces their index operands back to GTEs
+// and marks corresponding tuple indices as dynamic variables.
+absl::Status MarkDynamicVariables(HloInstruction* while_loop) {
+  if (while_loop->opcode() != HloOpcode::kWhile) {
+    return absl::OkStatus();
+  }
+
+  if (!while_loop->while_body()) {
+    return absl::OkStatus();
+  }
+
+  bool has_host_offloading = false;
+  for (const HloInstruction* instr : while_loop->while_body()->instructions()) {
+    if (host_offload_utils::IsMoveToHostWithDynamicUpdateSlice(instr) ||
+        host_offload_utils::IsMoveToDeviceWithDynamicSlice(instr)) {
+      has_host_offloading = true;
+      break;
+    }
+  }
+  if (!has_host_offloading) {
+    return absl::OkStatus();
+  }
+
+  WhileLoopBackendConfig config;
+  TF_ASSIGN_OR_RETURN(config,
+                      while_loop->backend_config<WhileLoopBackendConfig>());
+
+  config.clear_dynamic_variable_tuple_indices();
+
+  std::set<int64_t> dynamic_slice_indices;
+
+  for (auto* instr : while_loop->while_body()->instructions()) {
+    if (instr->opcode() == HloOpcode::kDynamicUpdateSlice ||
+        instr->opcode() == HloOpcode::kDynamicSlice) {
+      int first_index_operand =
+          (instr->opcode() == HloOpcode::kDynamicUpdateSlice)
+              ? Cast<HloDynamicUpdateSliceInstruction>(instr)
+                    ->first_index_operand_number()
+              : Cast<HloDynamicSliceInstruction>(instr)
+                    ->first_index_operand_number();
+
+      for (int i = first_index_operand; i < instr->operand_count(); ++i) {
+        auto* index_op = instr->operand(i);
+        auto op_indices = FindTupleIndicesInOperand(index_op);
+        dynamic_slice_indices.insert(op_indices.begin(), op_indices.end());
+      }
+    }
+  }
+
+  for (int64_t tuple_idx : dynamic_slice_indices) {
+    config.add_dynamic_variable_tuple_indices(tuple_idx);
+  }
+
+  TF_RETURN_IF_ERROR(while_loop->set_backend_config(config));
+  return absl::OkStatus();
 }
 
 }  // namespace
@@ -3281,6 +3398,7 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
       if (instruction->opcode() != HloOpcode::kWhile) {
         continue;
       }
+
       if (std::none_of(instruction->while_body()->instructions().begin(),
                        instruction->while_body()->instructions().end(),
                        config_.should_process)) {
@@ -3314,7 +3432,8 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
         config_.should_process, config_.acceptable_formatting,
         config_.should_allow_loop_variant_parameter_in_chain,
         config_.should_allow_control_dependencies,
-        config_.should_add_loop_invariant_op_in_chain);
+        config_.should_add_loop_invariant_op_in_chain,
+        config_.should_find_dynamic_slice_operand);
     if (loop_analysis->GetMoveInfos().empty()) {
       continue;
     }
@@ -3383,6 +3502,16 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
   // Run necessary cleanup to make sure unused code doesn't trigger HloVerifier.
   if (changed) {
     TF_RETURN_IF_ERROR(HloDCE().Run(module, execution_threads).status());
+
+    // Mark dynamic variables after transformation to identify tuple indices
+    // used in DS/DUS. This enables FusionDynamicMemcpyRewriter to optimize
+    // memory access patterns in CollectivePipeliner-transformed loops.
+    for (HloComputation* computation : module->MakeComputationPostOrder()) {
+      for (HloInstruction* instruction :
+           computation->MakeInstructionPostOrder()) {
+        TF_RETURN_IF_ERROR(MarkDynamicVariables(instruction));
+      }
+    }
   }
 
   return changed;
