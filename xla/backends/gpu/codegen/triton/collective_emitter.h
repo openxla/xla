@@ -32,7 +32,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/types.h"  // IWYU pragma: keep
@@ -76,9 +75,8 @@ absl::StatusOr<std::vector<Shape>> GetCollectiveUnmanagedKernelArguments(
 // emitter.
 absl::StatusOr<xtile::TensorValue> EmitCollective(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
-    const TiledHloInstruction& tiled_hlo_reduce,
-    const BlockLevelParameters& block_level_parameters,
-    mlir::FunctionOpInterface fn, mlir::Value pid,
+    const TiledHloInstruction& tiled_hlo_reduce, mlir::FunctionOpInterface fn,
+    mlir::Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, xtile::TensorValue>&
         values);
 

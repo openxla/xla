@@ -51,7 +51,6 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -187,9 +186,8 @@ GetBlockLevelFusionConfigForAllReduce(
 absl::StatusOr<TensorValue> EmitAllReduce(
     mlir::ImplicitLocOpBuilder& b, const HloComputation* computation,
     const HloAllReduceInstruction& all_reduce,
-    const TiledHloInstruction& tiled_hlo_reduce,
-    const BlockLevelParameters& block_level_parameters,
-    mlir::FunctionOpInterface fn, mlir::Value pid,
+    const TiledHloInstruction& tiled_hlo_reduce, mlir::FunctionOpInterface fn,
+    mlir::Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
   const HloInstruction* root_instruction = computation->root_instruction();
   if (root_instruction->opcode() == HloOpcode::kAllReduceDone) {
@@ -453,9 +451,8 @@ absl::StatusOr<int32_t> AddCollectiveMetadataArguments(
 
 absl::StatusOr<TensorValue> EmitCollective(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction* fusion,
-    const TiledHloInstruction& tiled_hlo_reduce,
-    const BlockLevelParameters& block_level_parameters,
-    mlir::FunctionOpInterface fn, mlir::Value pid,
+    const TiledHloInstruction& tiled_hlo_reduce, mlir::FunctionOpInterface fn,
+    mlir::Value pid,
     absl::flat_hash_map<const TiledHloInstruction*, TensorValue>& values) {
   const HloComputation* computation = fusion->fused_instructions_computation();
   const HloInstruction* root = computation->root_instruction();
@@ -464,9 +461,9 @@ absl::StatusOr<TensorValue> EmitCollective(
   }
   switch (root->opcode()) {
     case HloOpcode::kAllReduceStart:
-      return EmitAllReduce(
-          b, computation, *xla::Cast<HloAllReduceInstruction>(root),
-          tiled_hlo_reduce, block_level_parameters, fn, pid, values);
+      return EmitAllReduce(b, computation,
+                           *xla::Cast<HloAllReduceInstruction>(root),
+                           tiled_hlo_reduce, fn, pid, values);
     default:
       return absl::UnimplementedError(
           absl::StrCat("Unsupported collective fusion: ", root->ToString()));
