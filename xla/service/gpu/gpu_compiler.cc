@@ -232,6 +232,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/gemm_rewriter.h"
 #include "xla/service/gpu/transforms/gemv_rewriter.h"
 #include "xla/service/gpu/transforms/layout_assignment.h"
+#include "xla/service/gpu/transforms/memcopy_async_wrapper.h"
 #include "xla/service/gpu/transforms/move_copy_to_users.h"
 #include "xla/service/gpu/transforms/nest_gemm_fusion.h"
 #include "xla/service/gpu/transforms/ragged_all_to_all_canonicalizer.h"
@@ -1204,6 +1205,13 @@ absl::Status RunLayoutNormalizationPasses(
       .status();
 }
 
+absl::Status RunMemcopyAsyncPasses(HloModule* hlo_module) {
+  tsl::profiler::TraceMe traceme("RunMemcopyAsyncPasses");
+  HloPassPipeline pipeline("async-wrapper");
+  pipeline.AddPass<MemcopyAsyncWrapper>();
+  return pipeline.Run(hlo_module).status();
+}
+
 absl::Status RunAsyncDotPasses(HloModule* hlo_module) {
   tsl::profiler::TraceMe traceme("RunAsyncDotPasses");
   HloPassPipeline pipeline("async-wrapper");
@@ -1451,7 +1459,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
 
   TF_RETURN_IF_ERROR(
       RunCollectiveScheduleLinearizerPasses(hlo_module, stream_exec));
-
+  TF_RETURN_IF_ERROR(RunMemcopyAsyncPasses(hlo_module));
   TF_RETURN_IF_ERROR(RunAsyncDotPasses(hlo_module));
   {
     HloPassPipeline pipeline("autotune-fusion-emitters");
