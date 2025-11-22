@@ -54,6 +54,13 @@ limitations under the License.
 #include "llvm/Transforms/Utils/SplitModule.h"
 #include "mlir/Support/LLVM.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/nanort/nanort_client.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
@@ -213,6 +220,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/collectives/reduce_scatter_combiner.h"
 #include "xla/service/gpu/transforms/command_buffer_scheduling.h"
 #include "xla/service/gpu/transforms/composite_rewriter.h"
+#include "xla/service/gpu/transforms/conv_fusion_rewriter.h"
 #include "xla/service/gpu/transforms/conv_rewriter.h"
 #include "xla/service/gpu/transforms/cudnn_custom_call_converter.h"
 #include "xla/service/gpu/transforms/custom_kernel_fusion_rewriter.h"
@@ -301,13 +309,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 #ifdef PLATFORM_GOOGLE
 #include "xla/hlo/experimental/auto_sharding/auto_sharding.h"
@@ -1188,7 +1189,7 @@ absl::Status RunLayoutNormalizationPasses(
   layout_normalization_pipeline.AddPass<ReshapeDecomposer>();
   layout_normalization_pipeline.AddPass<HloPassFix<MoveCopyToUsers>>();
   layout_normalization_pipeline.AddPass<LayoutNormalization>(
-      &NormalizeLayoutForGpuCustomCalls);
+      &NormalizeLayoutForGpuCustomCalls, &NormalizeLayoutForGpuCustomFusions);
   // The LayoutAssignment pass may leave behind kCopy instructions which are
   // duplicate or NOPs, so remove them with algebraic simplification and CSE.
   layout_normalization_pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(
@@ -1629,7 +1630,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
     pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
-    pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
+    pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls,
+                                          &NormalizeLayoutForGpuCustomFusions);
     // Remove any redundant operations (such as bitcasts) introduced by layout
     // normalization.
     pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(simplifier_options,
@@ -1710,7 +1712,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
   pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
-  pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
+  pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls,
+                                        &NormalizeLayoutForGpuCustomFusions);
 
   // Layout normalization will create scatters that are not simplified and
   // also have unsorted update_window_dims.
