@@ -1,11 +1,40 @@
 # Shapes and layout
 
+## Structure of an XLA Op
+
+Consider an example HLO:
+
+```
+%fusion.3 = bf16[32,32,4096]{2,1,0:T(8,128)(2,1)S(1)}
+            fusion(bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)} %fusion.32),
+            kind=kCustom, calls=%all-reduce-scatter.3
+```
+
+This consists on the following components:
+
+* Op Name: `%fusion.3`
+  * This is the unique name for the operation. Here, the name indicates this is a fusion operation (which combines multiple operations into a single kernel). The `%` sign is part of the name, and may or may not be present in all operations. Learn about other Ops in [Operation Semantics](operation_semantics.md).
+* Shape: `bf16[32,32,4096]`
+  * This is the output shape of the op. Here the dtype is bf16 (2 bytes per parameter) and the shape is `[32,32,4096]`. The following sections have more details about Shape.
+* Layout (with Tiling): `{2,1,0:T(8,128)(2,1)}`
+  * This describes how the array is stored in memory. `2,1,0` denotes the order of the axes in memory (column major, row major, etc.) and `T(8,128)(2,1)` denotes the tiling & padding used. The following sections have more details about Layout, you can also learn more in [Tiled Layout](tiled_layout.md).
+  * This is optional. If not specified, there is no tiling and the dimensions are assumed to be ordered from most-major to most-minor.
+* Memory location (memory space identifier): `S(1)`
+  * This denotes the memory space/location where the array is stored. `S(1)` denotes this array lives in VMEM (on a TPU). More [memory space identifiers are listed below](#memory-space-identifiers).
+* Arguments: `bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)} %fusion.32`
+  * This op has one input, a bf16 array called `fusion.32` with a particular shape (as well as layout, tiling, and memory location): ` bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)}`. This tells us what function feeds into this one.
+* Attributes:
+  * `kind=kCustom`: This describes the "kind" of fusion operation, `kCustom` denotes this is a custom or composite operation.
+  * `calls=%all-reduce-scatter.3` : This describes the computation that will be called for this fusion operation.
+
+## Shapes
+
 The XLA `ShapeProto` proto
 ([xla_data.proto](https://github.com/openxla/xla/tree/main/xla/xla_data.proto))
 describes the number of dimensions, size, and data type of an N-dimensional
 array (*array* in short).
 
-## Terminology, notation, and conventions
+### Terminology, notation, and conventions
 
 NOTE: in the past, XLA has used the term "rank" to mean the number of dimensions
 of an array. We have stopped this usage as it's inconsistent with the matrix
@@ -137,3 +166,12 @@ index for each dimension. Linear indices are a single `int64` value which
 indexes into the buffer holding the array. See `shape_util.h` and
 `layout_util.h` in the same directory for utilities that simplify creation and
 manipulation of shapes and layouts.
+
+## Memory Space Identifiers
+
+In HLO, each array may be annotated with a memory space identifier, written as S(n).
+
+* `S(0)` (often omitted) denotes device high bandwidth memory (HBM).
+* `S(1)` represents on device virtual memory (VMEM).
+* `S(2)`, `S(3)`, etc., correspond to additional device specific memory spaces.
+* `S(5)` indicates host memory.
