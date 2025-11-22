@@ -210,6 +210,5 @@ xla_cc_test(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:status_matchers",
     ],
 )
