@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
+#include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
@@ -153,6 +154,8 @@ std::optional<DebugOptions::CommandBufferCmdType> GetCommandBufferCmdType(
       return DebugOptions::CUDNN;
     case Thunk::kCustomCall:
       return DebugOptions::CUSTOM_CALL;
+    case Thunk::kCustomKernel:
+      return DebugOptions::FUSION;
     case Thunk::kCublasLtMatmul:
       return DebugOptions::CUBLASLT;
     case Thunk::kDynamicSlice:
@@ -208,6 +211,13 @@ bool IsConvertible(const CustomCallThunk& custom_call_thunk,
              : false;
 }
 
+// Returns true if the CustomKernelThunk is convertible to a command buffer
+// operation.
+bool IsConvertible(const CustomKernelThunk& custom_kernel_thunk,
+                   const CommandBufferConfig& config) {
+  return custom_kernel_thunk.custom_kernel_name() == "l2_prefetch";
+}
+
 // Returns true if the given Thunk is convertible to a command buffer operation
 // based on the provided `config`.
 bool IsConvertible(const Thunk& thunk, const CommandBufferConfig& config) {
@@ -239,6 +249,11 @@ bool IsConvertible(const Thunk& thunk, const CommandBufferConfig& config) {
   if (thunk.kind() == Thunk::kCustomCall) {
     return IsConvertible(static_cast<const CustomCallThunk&>(thunk), config);
   }
+
+  if (thunk.kind() == Thunk::kCustomKernel) {
+    return IsConvertible(static_cast<const CustomKernelThunk&>(thunk), config);
+  }
+
   return true;
 }
 
