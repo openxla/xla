@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -69,6 +70,16 @@ class TiledHloComputation {
     return Product(num_output_tiles_per_dim());
   }
 
+  // Returns the largest tile size (after padding) across all instructions.
+  // Returns std::nullopt if not yet computed.
+  std::optional<int64_t> GetLargestTileSize() const {
+    return largest_tile_size_;
+  }
+
+  // Sets the largest tile size. This should be called after all instructions
+  // are added.
+  void SetLargestTileSize(int64_t size) { largest_tile_size_ = size; }
+
   // Returns the root instructions of the computation. When a computation has
   // several outputs (i.e. it has a tuple root), the roots are the operands of
   // the root tuple. The roots are order by increasing output index, and point
@@ -99,6 +110,10 @@ class TiledHloComputation {
 
   // Stores the number of output tiles for each dimension.
   llvm::SmallVector<int64_t> num_output_tiles_per_dim_;
+
+  // Stores the largest tile size (after padding) across all instructions.
+  // Cached to avoid recomputation.
+  std::optional<int64_t> largest_tile_size_ = std::nullopt;
 };
 
 }  // namespace xla
