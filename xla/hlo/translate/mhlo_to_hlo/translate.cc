@@ -37,6 +37,7 @@ limitations under the License.
 #include "mlir/Parser/Parser.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -77,7 +78,8 @@ mlir::LogicalResult MlirHloToHloTranslateFunction(mlir::ModuleOp module,
   }
 
   // Print as HloProto with empty BufferAssignment for legacy compatibility.
-  output << MakeHloProto(*statusOrModule.value()).DebugString();
+  output << tsl::LegacyUnredactedDebugString(
+      MakeHloProto(*statusOrModule.value()));
   return mlir::success();
 }
 
