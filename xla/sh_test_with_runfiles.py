@@ -20,10 +20,16 @@ import pathlib
 
 import lit.formats
 
-# Used to symlink bazels runfiles subdirs into the lit tmp test dir
+
 class ShTestWithRunfiles(lit.formats.ShTest):
+    """Used to symlink bazels runfiles subdirs into the lit tmp test dir"""
+
     def execute(self, test, lit_config):
-        runfiles_dir = pathlib.Path(os.environ.get("RUNFILES_DIR")) / "xla"
+        runfiles = os.environ.get("RUNFILES_DIR")
+        if not runfiles:
+            return super().execute(test, lit_config)
+
+        runfiles_dir = pathlib.Path(runfiles) / "xla"
         if not runfiles_dir.is_dir():
             return super().execute(test, lit_config)
 
