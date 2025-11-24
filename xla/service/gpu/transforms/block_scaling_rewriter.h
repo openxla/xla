@@ -25,7 +25,7 @@ limitations under the License.
 
 namespace xla::gpu {
 
-const se::dnn::VersionInfo kCudnnSupportsBlockScaledDot(9, 7);
+const se::dnn::VersionInfo kCudnnSupportsBlockScaledDot(9, 10);
 const se::dnn::VersionInfo kCudnnSupportsBlockScaledDotWithGlobalScale(9, 13);
 
 // This pass converts the block quantize/dequantize operations (represented as
@@ -74,7 +74,7 @@ const se::dnn::VersionInfo kCudnnSupportsBlockScaledDotWithGlobalScale(9, 13);
 class BlockScalingRewriter : public OpExpanderPass {
  public:
   explicit BlockScalingRewriter(se::dnn::VersionInfo cudnn_version)
-      : cudnn_version_(cudnn_version) {};
+      : cudnn_version_(cudnn_version){};
 
   absl::string_view name() const override { return "block-scaling-rewriter"; }
 
