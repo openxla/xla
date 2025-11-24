@@ -63,7 +63,7 @@ absl::StatusOr<std::unique_ptr<xla::PjRtClient>>
 CreatePjRtCpuClientFromTopology(
     const xla::PjRtTopologyDescription& topology_description) {
   xla::CpuClientOptions options;
-  TF_ASSIGN_OR_RETURN(options.cpu_device_count,
+  TF_XLA_ASSIGN_OR_RETURN(options.cpu_device_count,
                       topology_description.CoreCountOfDefaultTypePerProcess());
   CHECK_GE(*options.cpu_device_count, 1);
   auto cpu_topology_description =
@@ -84,10 +84,10 @@ template <typename T>
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> CompileInternal(
     const T& computation, CompileOptions options,
     const PjRtTopologyDescription& topology, PjRtClient* client) {
-  TF_ASSIGN_OR_RETURN(auto cpu_client,
+  TF_XLA_ASSIGN_OR_RETURN(auto cpu_client,
                       CreatePjRtCpuClientFromTopology(topology));
 
-  TF_ASSIGN_OR_RETURN(auto loaded_executable,
+  TF_XLA_ASSIGN_OR_RETURN(auto loaded_executable,
                       cpu_client->CompileAndLoad(computation, options));
 
   return std::make_unique<xla::PjRtExecutableForwarder>(
