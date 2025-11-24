@@ -1,3 +1,5 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
 # Macros for building ROCm code.
 def if_rocm(if_true, if_false = []):
     """Shorthand for select()'ing on whether we're building with ROCm.
@@ -82,4 +84,4 @@ def rocm_library(copts = [], deps = [], **kwargs):
     """Wrapper over cc_library which adds default ROCm options."""
     if "@local_config_rocm//rocm:rocm_headers" not in deps:
       deps.append("@local_config_rocm//rocm:rocm_headers")
-    native.cc_library(copts = rocm_default_copts() + copts, deps = deps, **kwargs)
+    cc_library(copts = rocm_default_copts() + copts, deps = deps, **kwargs)
