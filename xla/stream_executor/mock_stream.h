@@ -82,7 +82,8 @@ class MockStream : public Stream {
   MOCK_METHOD(absl::Status, LaunchKernel,
               (const ThreadDim &thread_dims, const BlockDim &block_dims,
                const std::optional<ClusterDim> &cluster_dims, void *function,
-               absl::string_view name, void **args, int64_t shmem_bytes),
+               absl::string_view name, void **args, int64_t shmem_bytes,
+               bool use_pdl),
               (override));
   MOCK_METHOD(const std::string &, GetName, (), (const, override));
   MOCK_METHOD(void, SetName, (std::string name), (override));
