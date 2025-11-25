@@ -31,6 +31,7 @@ gentbl_cc_library(
 cc_library(
     name = "passes",
     srcs = [
+        "arith_fp8_conversion_to_triton.cc",
         "extract_tma_info_pass.cc",
         "generalize_kernel_signature.cc",
         "int4_passes.cc",
@@ -55,6 +56,7 @@ cc_library(
         ":passes_inc_gen",
         "//xla:permutation_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/codegen/triton:dot_algorithms",
         "//xla/backends/gpu/codegen/triton:emitter_helpers",
         "//xla/backends/gpu/codegen/triton/ir:triton_xla",

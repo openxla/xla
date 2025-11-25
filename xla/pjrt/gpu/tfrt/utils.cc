@@ -640,7 +640,9 @@ absl::StatusOr<std::unique_ptr<tsl::Allocator>> CreateAllocatorForDevice(
       LOG_FIRST_N(INFO, 1) << "Using BFC allocator.";
       return CreateBFCAllocator(executor, allocator_config.memory_fraction,
                                 allocator_config.preallocate,
-                                allocator_config.gpu_system_memory_size);
+                                allocator_config.gpu_system_memory_size,
+                                allocator_config.sub_allocator_alloc_visitors,
+                                allocator_config.sub_allocator_free_visitors);
     case GpuAllocatorConfig::Kind::kPlatform:
       LOG(FATAL) << "Platform allocator should be handled before calling this "
                     "function.";
@@ -938,8 +940,7 @@ void EnqueueWorkWhenReady(
   });
 }
 
-absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
-GetLatestIncarnations(
+absl::flat_hash_map<GlobalDeviceId, IncarnationId> GetLatestIncarnations(
     absl::Span<PjRtDevice* const> devices,
     const absl::flat_hash_map<int, IncarnationId>& incarnations) {
   // Map every device to its incarnation.
@@ -948,7 +949,9 @@ GetLatestIncarnations(
     int task_id = device->process_index();
     auto it = incarnations.find(task_id);
     if (it == incarnations.end()) {
-      return FailedPrecondition("Incarnation for task %d not found", task_id);
+      // The task might be dead.
+      LOG(WARNING) << "Incarnation for task " << task_id << " not found";
+      continue;
     }
     GlobalDeviceId device_id(device->global_device_id().value());
     device_incarnations[device_id] = it->second;

@@ -297,7 +297,7 @@ StreamExecutorGpuClient::CreateBuffersForAsyncHostToDevice(
       shape_specs, std::move(device_layouts), memory_space);
 }
 
-absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
+absl::flat_hash_map<GlobalDeviceId, IncarnationId>
 StreamExecutorGpuClient::GetLatestIncarnations(const ExecuteOptions& options) {
   // Map every device to its incarnation.
   absl::flat_hash_map<GlobalDeviceId, IncarnationId> device_incarnations;
@@ -307,7 +307,9 @@ StreamExecutorGpuClient::GetLatestIncarnations(const ExecuteOptions& options) {
 
     auto it = options.incarnations.find(task_id);
     if (it == options.incarnations.end()) {
-      return FailedPrecondition("Incarnation for task %d not found", task_id);
+      // The task might be dead.
+      LOG(WARNING) << "Incarnation for task " << task_id << " not found";
+      continue;
     }
     device_incarnations[device_id] = it->second;
   }
@@ -316,13 +318,10 @@ StreamExecutorGpuClient::GetLatestIncarnations(const ExecuteOptions& options) {
 
 gpu::GpuExecutableRunOptions* StreamExecutorGpuClient::gpu_run_options(
     const ExecuteOptions& options) {
-  absl::StatusOr<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
-      incarnations = GetLatestIncarnations(options);
-  if (!incarnations.ok()) {
-    VLOG(1) << "Unable to set incarnations in GpuExecutableRunOptions: "
-            << incarnations.status();
-  } else {
-    gpu_run_options_->set_incarnations(*std::move(incarnations));
+  if (!options.incarnations.empty()) {
+    absl::flat_hash_map<GlobalDeviceId, IncarnationId> incarnations =
+        GetLatestIncarnations(options);
+    gpu_run_options_->set_incarnations(std::move(incarnations));
   }
   return gpu_run_options_.get();
 }
@@ -568,7 +567,7 @@ StreamExecutorGpuClient::PrepareReceiveBuffer(PjRtDevice* device, Shape shape) {
   TF_ASSIGN_OR_RETURN(
       auto buffer,
       DefineBuffer(
-          on_device_shape, raw_buffer,
+          on_device_shape, memory_space, raw_buffer,
           {tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(definition_event)},
           /*raw_buffer_is_mutable=*/true));
 
@@ -1043,7 +1042,9 @@ GetStreamExecutorGpuDeviceAllocator(
             CreateBFCAllocator(ordinal_and_device.second->executor(),
                                allocator_config.memory_fraction,
                                allocator_config.preallocate,
-                               allocator_config.gpu_system_memory_size));
+                               allocator_config.gpu_system_memory_size,
+                               allocator_config.sub_allocator_alloc_visitors,
+                               allocator_config.sub_allocator_free_visitors));
         allocators.emplace_back(
             std::move(bfc_allocator),
             ordinal_and_device.second->compute_stream(),

@@ -328,15 +328,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       DebugOptions::PARTITIONING_ALGORITHM_NOOP);
 
   opts.set_xla_gpu_enable_triton_gemm(true);
-  opts.clear_xla_gpu_unsupported_generic_triton_emitter_features();
-  opts.add_xla_gpu_unsupported_generic_triton_emitter_features(
-      DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
-  opts.add_xla_gpu_unsupported_generic_triton_emitter_features(
-      DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_GEMM_SHAPES);
-  opts.add_xla_gpu_unsupported_generic_triton_emitter_features(
-      DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_OPS_IN_GEMM_FUSION);
-  opts.add_xla_gpu_unsupported_generic_triton_emitter_features(
-      DebugOptions::GENERIC_TRITON_EMITTER_DISABLE_LEGACY_GEMM);
   opts.set_xla_gpu_unsupported_enable_triton_multi_output_fusion(true);
   opts.set_xla_gpu_enable_cudnn_int8x32_convolution_reordering(true);
   opts.set_xla_gpu_triton_gemm_any(true);
@@ -472,6 +463,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_triton_warp_specialization(false);
   opts.set_xla_gpu_experimental_enable_command_buffer_on_thunks(true);
   opts.set_xla_detect_unstable_reductions(DebugOptions::DETECTION_MODE_NONE);
+  opts.set_xla_detect_unstable_reductions_post_optimizations(
+      DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_gpu_experimental_scaled_dot_with_triton(false);
   opts.set_xla_gpu_experimental_use_raft_select_k(false);
 
@@ -480,6 +473,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_keep_shardings_after_spmd(false);
   opts.set_xla_gpu_experimental_enable_checksum_tracing_on_thunks(false);
+  opts.set_xla_gpu_experimental_enable_buffer_saver_on_thunks(false);
   opts.set_xla_gpu_detect_nan(DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_gpu_detect_inf(DebugOptions::DETECTION_MODE_NONE);
   return opts;
@@ -870,17 +864,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         return true;
       };
 
-  auto xla_gpu_generic_triton_emitter_features_to_string =
-      [](google::protobuf::RepeatedField<int> values) -> std::string {
-    struct Formatter {
-      void operator()(std::string* out, int type) const {
-        absl::StrAppend(out,
-                        DebugOptions::GenericTritonEmitterFeature_Name(type));
-      }
-    };
-    return absl::StrJoin(values, ",", Formatter());
-  };
-
   // Custom "sub-parser" for xla_gpu_experimental_autotune_cache_mode.
   auto detection_mode = [](DebugOptions* debug_options,
                            const std::string& value)
@@ -900,6 +883,16 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       [debug_options, detection_mode](const std::string& value) {
         if (auto mode = detection_mode(debug_options, value)) {
           debug_options->set_xla_detect_unstable_reductions(mode.value());
+          return true;
+        }
+        return false;
+      };
+
+  auto setter_for_xla_detect_unstable_reductions_post_optimizations =
+      [debug_options, detection_mode](const std::string& value) {
+        if (auto mode = detection_mode(debug_options, value)) {
+          debug_options->set_xla_detect_unstable_reductions_post_optimizations(
+              mode.value());
           return true;
         }
         return false;
@@ -1969,19 +1962,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 bool_setter_for(&DebugOptions::set_xla_gpu_enable_triton_gemm),
                 debug_options->xla_gpu_enable_triton_gemm(),
                 "[Stable] Whether to use Triton-based matrix multiplication."));
+  // TODO(b/393299275): remove. The flag is left here as a no-op to migrate
+  // users separately from deleting the underlying functionality.
   flag_list->push_back(tsl::Flag(
       "xla_gpu_unsupported_generic_triton_emitter_features",
-      SetterForRepeatedEnum<DebugOptions::GenericTritonEmitterFeature>(
-          "xla_gpu_unsupported_generic_triton_emitter_features",
-          /*enum_prefix=*/"GENERIC_TRITON_EMITTER_",
-          &DebugOptions::GenericTritonEmitterFeature_Parse,
-          debug_options
-              ->mutable_xla_gpu_unsupported_generic_triton_emitter_features()),
-      xla_gpu_generic_triton_emitter_features_to_string(
-          debug_options->xla_gpu_unsupported_generic_triton_emitter_features()),
-      "Comma-separated list of individual features of generic Triton emitter. "
-      "Use +/- prefix to modify the default list, or list features to enable "
-      "explicitly - that will override the defaults."));
+      noop_flag_setter<std::string>, "", "[Deprecated, do not use]."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_unsupported_enable_triton_multi_output_fusion",
       bool_setter_for(
@@ -2667,6 +2652,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 "Acceptable values are: 'none', 'log', and 'crash'. 'none' is "
                 "the default."));
   flag_list->push_back(tsl::Flag(
+      "xla_detect_unstable_reductions_post_optimizations",
+      setter_for_xla_detect_unstable_reductions_post_optimizations,
+      DebugOptions::DetectionMode_Name(
+          debug_options->xla_detect_unstable_reductions_post_optimizations()),
+      "Controls the behavior of the unstable reduction detector pass "
+      "that checks for unstable reductions in HLO computations after "
+      "optimizations. Acceptable values are: 'none', 'log', and "
+      "'crash'. 'none' is the default."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_use_raft_select_k",
       bool_setter_for(
           &DebugOptions::set_xla_gpu_experimental_use_raft_select_k),
@@ -2704,6 +2698,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_checksum_tracing_on_thunks(),
       "Enables an experimental feature to record checksums of selected thunk "
       "inputs/outputs."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_buffer_saver_on_thunks",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_buffer_saver_on_thunks),
+      debug_options->xla_gpu_experimental_enable_buffer_saver_on_thunks(),
+      "When provided, enables an experimental feature to save results of "
+      "selected thunks."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_thunk_buffer_debug_filter_by_thunk_id_ranges",
       setter_for_thunk_buffer_debug_filter_by_thunk_id, "(none)",

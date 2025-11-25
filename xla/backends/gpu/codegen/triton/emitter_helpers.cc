@@ -285,23 +285,10 @@ Value Cast(EmitterLocOpBuilder& b, Value value, Type dst_element_ty) {
   auto src_fp_element_ty = mlir::dyn_cast<mlir::FloatType>(src_element_ty);
   auto dst_fp_element_ty = mlir::dyn_cast<mlir::FloatType>(dst_element_ty);
   if (src_fp_element_ty && dst_fp_element_ty) {
-    // F8 <-> FP16, BF16, FP32, FP64 need to be handled via Triton's tt.fp_to_fp
-    // because LLVM doesn't support casts from/to FP8.
-    // TODO(b/413272992): Add better test coverage for FpToFpOp.
-    if (IsFp8Type(src_element_ty) && !IsFp8Type(dst_element_ty)) {
-      return b.create<mt::FpToFpOp>(dst_ty, value);
-    }
-    if (IsFp8Type(dst_element_ty) && !IsFp8Type(src_element_ty)) {
-      return b.create<mt::FpToFpOp>(
-          dst_ty, value,
-          mt::RoundingModeAttr::get(b.getContext(), mt::RoundingMode::RTNE));
-    }
     if (IsFp8Type(src_element_ty) && IsFp8Type(dst_element_ty)) {
       // FP8 <-> FP8 conversion needs to go through FP16
-      auto fp16_value = b.create<mt::FpToFpOp>(fp16_ty, value);
-      return b.create<mt::FpToFpOp>(
-          dst_ty, fp16_value,
-          mt::RoundingModeAttr::get(b.getContext(), mt::RoundingMode::RTNE));
+      auto fp16_value = b.create<ma::ExtFOp>(fp16_ty, value);
+      return b.create<ma::TruncFOp>(dst_ty, fp16_value);
     }
 
     if (src_fp_element_ty.getFPMantissaWidth() >
@@ -407,44 +394,29 @@ Value Compare(EmitterLocOpBuilder& b, ValueRange values,
 }
 
 Value Maximum(EmitterLocOpBuilder& b, ValueRange values) {
-  if (mlir::isa<mlir::FloatType>(mlir::getElementTypeOrSelf(values[0]))) {
+  auto type = mlir::getElementTypeOrSelf(values[0]);
+  if (mlir::isa<mlir::FloatType>(type)) {
     return b.create<ma::MaximumFOp>(values);
   }
-  // logic: isNaN(lhs) || (!isNan(rhs) && lhs >= rhs) ? lhs : rhs
-  // See also: IEEE Std 754-2008 5.11.
-  //
-  // This also works, but we wanted to make it similar to minimum.
-  // logic: isNaN(lhs) || lhs >= rhs ? lhs : rhs
-  Value lhs_is_nan =
-      Compare(b, {values[0], values[0]}, mh::ComparisonDirection::NE);
-  Value rhs_is_not_nan =
-      Compare(b, {values[1], values[1]}, mh::ComparisonDirection::EQ);
-  Value lhs_is_ge = Compare(b, values, mh::ComparisonDirection::GE);
-  return b.create<ma::SelectOp>(
-      b.create<ma::OrIOp>(lhs_is_nan,
-                          b.create<ma::AndIOp>(rhs_is_not_nan, lhs_is_ge)),
-      values[0], values[1]);
+
+  if (type.isInteger(1)) {
+    return b.create<ma::OrIOp>(values);
+  }
+
+  return b.create<ma::MaxSIOp>(values);
 }
 
 Value Minimum(EmitterLocOpBuilder& b, ValueRange values) {
-  if (mlir::isa<mlir::FloatType>(mlir::getElementTypeOrSelf(values[0]))) {
+  auto type = mlir::getElementTypeOrSelf(values[0]);
+  if (mlir::isa<mlir::FloatType>(type)) {
     return b.create<ma::MinimumFOp>(values);
   }
-  // logic: isNaN(lhs) || (!isNan(rhs) && lhs <= rhs) ? lhs : rhs
-  // See also: IEEE Std 754-2008 5.11.
-  //
-  // This should also work, but the tests show that it doesn't work for
-  // minimum(x, NaN):
-  // logic: isNaN(lhs) || lhs <= rhs ? lhs : rhs
-  Value lhs_is_nan =
-      Compare(b, {values[0], values[0]}, mh::ComparisonDirection::NE);
-  Value rhs_is_not_nan =
-      Compare(b, {values[1], values[1]}, mh::ComparisonDirection::EQ);
-  Value lhs_is_le = Compare(b, values, mh::ComparisonDirection::LE);
-  return b.create<ma::SelectOp>(
-      b.create<ma::OrIOp>(lhs_is_nan,
-                          b.create<ma::AndIOp>(rhs_is_not_nan, lhs_is_le)),
-      values[0], values[1]);
+
+  if (type.isInteger(1)) {
+    return b.create<ma::AndIOp>(values);
+  }
+
+  return b.create<ma::MinSIOp>(values);
 }
 
 bool IsSupportedElementwiseLibdeviceFunction(const HloInstruction& hlo) {
@@ -551,7 +523,7 @@ absl::StatusOr<Value> EmitElementwise(EmitterLocOpBuilder& b,
     case HloOpcode::kMinimum:
       return Minimum(b, inputs);
     case HloOpcode::kClamp:
-      return Maximum(b, {Minimum(b, {inputs[1], inputs[2]}), inputs[0]});
+      return Minimum(b, {Maximum(b, {inputs[0], inputs[1]}), inputs[2]});
     case HloOpcode::kAnd:
       return b.create<ma::AndIOp>(inputs[0], inputs[1]);
     case HloOpcode::kOr:

@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "google/protobuf/message.h"
+#include "xla/backends/cpu/target_machine_options.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/cpu/executable.pb.h"
 #include "xla/service/executable.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_module_config.h"
@@ -161,11 +161,12 @@ class Compiler {
   // Description of a target CPU for compilation.
   struct CpuTargetConfig {
     explicit CpuTargetConfig(
-        cpu::TargetMachineOptionsProto& target_machine_options_proto)
-        : cpu_target_machine_options_proto(target_machine_options_proto) {};
+        const cpu::TargetMachineOptions& target_machine_options)
+        : cpu_target_machine_options(target_machine_options) {};
 
     // If not set, we default to the options inferred from the host machine.
-    cpu::TargetMachineOptionsProto cpu_target_machine_options_proto;
+    std::optional<cpu::TargetMachineOptions> cpu_target_machine_options =
+        std::nullopt;
   };
 
   struct CompileOptions {

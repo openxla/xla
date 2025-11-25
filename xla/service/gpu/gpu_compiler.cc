@@ -1072,7 +1072,7 @@ absl::Status RunFusionPasses(HloModule* hlo_module,
                              const Compiler::GpuTargetConfig& gpu_target_config,
                              tsl::thread::ThreadPool* thread_pool,
                              HloCostAnalysis::ShapeSizeFunction shape_size_fn,
-                             SymbolicExprContext* symbolic_expr_context) {
+                             mlir::MLIRContext* mlir_context) {
   const se::DeviceDescription& gpu_device_info =
       gpu_target_config.device_description;
 
@@ -1082,7 +1082,7 @@ absl::Status RunFusionPasses(HloModule* hlo_module,
 
   TF_RETURN_IF_ERROR(
       FusionPipeline(hlo_module->config().debug_options(), shape_size_fn,
-                     thread_pool, gpu_device_info, symbolic_expr_context)
+                     thread_pool, gpu_device_info, mlir_context)
           .Run(hlo_module, {HloInstruction::kMainExecutionThread})
           .status());
 
@@ -1141,13 +1141,13 @@ void AddCollectiveCombinerPasses(
     const se::DeviceDescription& device_description,
     const GpuAliasInfo* alias_info, int pointer_size,
     const GpuCompiler::CompileOptions& options,
-    SymbolicExprContext* symbolic_expr_context) {
+    mlir::MLIRContext* mlir_context) {
   const DebugOptions& opts = module.config().debug_options();
 
   if (EnableHeuristicCollectiveCombining(module.config(), device_description,
                                          options.slice_size)) {
     pipeline.AddPass<CollectiveCombinerAnnotator>(
-        device_description, alias_info, pointer_size, symbolic_expr_context);
+        device_description, alias_info, pointer_size, mlir_context);
   }
 
   pipeline.AddPass<GpuAllGatherCombiner>(
@@ -1173,12 +1173,11 @@ absl::Status RunPostFusionPasses(
     HloModule* hlo_module, const se::DeviceDescription& device_description,
     const GpuAliasInfo* alias_info, int pointer_size,
     const GpuCompiler::CompileOptions& options,
-    SymbolicExprContext* symbolic_expr_context) {
+    mlir::MLIRContext* mlir_context) {
   HloPassPipeline pipeline("post-fusion optimization");
   pipeline.AddPass<RenameFusions>();
   AddCollectiveCombinerPasses(pipeline, *hlo_module, device_description,
-                              alias_info, pointer_size, options,
-                              symbolic_expr_context);
+                              alias_info, pointer_size, options, mlir_context);
 
   pipeline.AddPass<AllReduceContiguous>();
 
@@ -1230,7 +1229,7 @@ absl::Status RunPostFusionVerificationPasses(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
     const GpuCompiler::CompileOptions& options,
     const Compiler::GpuTargetConfig& gpu_target_config,
-    SymbolicExprContext* symbolic_expr_context) {
+    mlir::MLIRContext* mlir_context) {
   HloPassPipeline pipeline("post-fusion-verification-pipeline optimization");
 
   if (hlo_module->config()
@@ -1240,7 +1239,7 @@ absl::Status RunPostFusionVerificationPasses(
         GetDeviceConfig(stream_exec, options, gpu_target_config);
     if (!device_config.IsDeviceless()) {
       pipeline.AddPass<TritonFusionNumericsVerifier>(device_config,
-                                                     symbolic_expr_context);
+                                                     mlir_context);
     }
   }
 
@@ -1496,12 +1495,12 @@ absl::Status GpuCompiler::OptimizeHloModule(
   TF_RETURN_IF_ERROR(
       RunDynamicSliceFusionPasses(hlo_module, /*platform_id=*/PlatformId()));
 
-  TF_RETURN_IF_ERROR(
-      RunFusionPasses(hlo_module, gpu_target_config, thread_pool.get_mutable(),
-                      ShapeSizeBytesFunction(), &symbolic_expr_context_));
+  TF_RETURN_IF_ERROR(RunFusionPasses(hlo_module, gpu_target_config,
+                                     thread_pool.get_mutable(),
+                                     ShapeSizeBytesFunction(), &mlir_context_));
   TF_RETURN_IF_ERROR(RunPostFusionPasses(hlo_module, device_description,
                                          alias_info, pointer_size_, options,
-                                         &symbolic_expr_context_));
+                                         &mlir_context_));
   TF_RETURN_IF_ERROR(RunAsyncCollectivesConversionPasses(hlo_module));
   TF_RETURN_IF_ERROR(RunPostFusionSimplificationPasses(
       hlo_module,
@@ -1511,12 +1510,22 @@ absl::Status GpuCompiler::OptimizeHloModule(
           gpu_target_config.platform_name == "ROCM"),
       gpu_version, gpu_target_config));
 
-  TF_RETURN_IF_ERROR(RunPostFusionVerificationPasses(hlo_module, stream_exec,
-                                                     options, gpu_target_config,
-                                                     &symbolic_expr_context_));
+  TF_RETURN_IF_ERROR(RunPostFusionVerificationPasses(
+      hlo_module, stream_exec, options, gpu_target_config, &mlir_context_));
 
   TF_RETURN_IF_ERROR(
       RunCollectiveScheduleLinearizerPasses(hlo_module, stream_exec));
+
+  {
+    HloPassPipeline pipeline("invariant-checkers");
+    if (hlo_module->config()
+            .debug_options()
+            .xla_detect_unstable_reductions_post_optimizations() !=
+        DebugOptions::DETECTION_MODE_NONE) {
+      pipeline.AddPass<UnstableReductionDetector>();
+    }
+    TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
+  }
 
   TF_RETURN_IF_ERROR(RunAsyncDotPasses(hlo_module));
   {
@@ -1713,7 +1722,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
       pipeline.AddPass<HloDCE>();
       pipeline.AddPass<SoftmaxRewriterTriton>(
           gpu_target_config.device_description, ShapeSizeBytesFunction(),
-          &symbolic_expr_context_,
+          &mlir_context_,
           /*only_fuse_if_profitable=*/true);
     }
 
@@ -1792,7 +1801,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // Match the location of this pass in `gemm_fusion_autotuner.cc` to make sure
   // that there is no discrepancy.
   pipeline.AddPass<NestGemmFusion>(gpu_target_config.device_description,
-                                   &symbolic_expr_context_);
+                                   &mlir_context_);
 
   // Clean up new_tuple described above.
   pipeline.AddPass<TupleSimplifier>();
@@ -2425,10 +2434,9 @@ GpuCompiler::CompileToBackendResult(
   std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(gpu_device_info);
   TF_RETURN_IF_ERROR(
       RunPreSchedulingPasses(module, gpu_device_info, alias_info.get()));
-  TF_ASSIGN_OR_RETURN(
-      ScheduleMetadata schedule_metadata,
-      ScheduleGpuModule(module, pointer_size_, gpu_device_info,
-                        &symbolic_expr_context_, alias_info.get()));
+  TF_ASSIGN_OR_RETURN(ScheduleMetadata schedule_metadata,
+                      ScheduleGpuModule(module, pointer_size_, gpu_device_info,
+                                        &mlir_context_, alias_info.get()));
   HloPassPipeline pipeline("scheduled-gpu-module");
   AddHloVerifier(&pipeline);
   TF_RETURN_IF_ERROR(pipeline.Run(module).status());
@@ -2799,14 +2807,14 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
         /*count_multiple_input_accesses=*/true};
     // Cost model analysis for compute.
     pipeline.AddPass<GpuCostModelStatsCollection>(
-        gpu_device_info, cost_analysis_options, &symbolic_expr_context_);
+        gpu_device_info, cost_analysis_options, &mlir_context_);
     // S-curve model analysis for collectives.
     if (module->config()
             .debug_options()
             .xla_gpu_enable_analytical_sol_latency_estimator()) {
       pipeline.AddPass<SolGpuCostModelStatsCollection>(
           gpu_device_info, ShapeSizeBytesFunction(), pointer_size_,
-          &symbolic_expr_context_);
+          &mlir_context_);
     }
 
     // Perf tables model analysis for collectives.
@@ -2953,7 +2961,7 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     // This needs to run after every pass affecting fusions. The last passes
     // that create new fusions are FusionWrapper and StreamAttributeAnnotator.
     main_pipeline.AddPass<HloPassPipeline>(FusionDispatchPipeline(
-        gpu_device_info, ShapeSizeBytesFunction(), &symbolic_expr_context_));
+        gpu_device_info, ShapeSizeBytesFunction(), &mlir_context_));
   }
 
   // Pipeline with passes which wrap a scheduled module into command buffers.
@@ -3080,8 +3088,7 @@ GpuCompiler::LoadExecutableFromAotResult(
   }
 
   auto ir_emitter = IrEmitterUnnested::Create(&ir_emitter_context);
-  TF_RETURN_IF_ERROR(
-      ir_emitter->EmitHloComputation(hlo_module->entry_computation()));
+  TF_RETURN_IF_ERROR(ir_emitter->EmitHloEntryComputation(hlo_module.get()));
 
   // Get all other fields required by GpuExecutable.
   std::vector<GpuExecutable::ConstantInfo> constants =

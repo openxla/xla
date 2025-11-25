@@ -79,7 +79,7 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
     const se::GpuComputeCapability& cc,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
-    llvm::Module* llvm_module, SymbolicExprContext& symbolic_expr_context);
+    llvm::Module* llvm_module, mlir::MLIRContext& mlir_context);
 
 // Creates the initial Triton module for the given fusion. Visible for testing,
 // use TritonWrapper instead.
@@ -87,7 +87,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
     absl::string_view fn_name, const HloFusionInstruction* fusion,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
-    SymbolicExprContext& symbolic_expr_context);
+    mlir::MLIRContext& mlir_context);
 
 // Compiles a given Triton module to LLVM IR.
 // If `emit_kernels` is false, then the function skips emitting
@@ -146,21 +146,6 @@ absl::StatusOr<Tiling> TilingFromAnnotatedFusion(
     const SymbolicTileAnalysis& symbolic_tile_analysis,
     const BlockLevelParameters& block_level_parameters);
 
-// TODO(basioli): Remove this class once the legacy matmul
-// emitter no longer exists.
-class LegacyMatmulEmitter {
- public:
-  explicit LegacyMatmulEmitter(const se::DeviceDescription& device_info)
-      : device_info_(device_info) {}
-
-  absl::Status Emit(EmitterLocOpBuilder& b, const HloFusionInstruction* fusion,
-                    xtile::EntryFuncOp& fn,
-                    const BlockLevelParameters& block_level_parameters);
-
- private:
-  const se::DeviceDescription& device_info_;
-};
-
 // This function (or its future equivalent) should emit the MLIR module in the
 // shared dialect between XLA:CPU and XLA:GPU. At the moment it is still
 // emitting GPU specific modules. It is currently exposed only for testing
@@ -171,8 +156,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     EmitterSpecificConstraintsBuilder emitter_specific_constraints_builder,
     const HloFusionInstruction* fusion,
     const BlockLevelParameters& block_level_parameters,
-    SymbolicExprContext& symbolic_expr_context,
-    std::optional<LegacyMatmulEmitter> legacy_matmul_emitter = std::nullopt);
+    mlir::MLIRContext& mlir_context);
 
 // This function lowers the shared dialect module to Triton. It is exposed for
 // testing with the same motivation as EmitXTileModule.

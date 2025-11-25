@@ -417,7 +417,7 @@ cc_library(
     srcs = ["codegen_test_base.cc"],
     hdrs = ["codegen_test_base.h"],
     deps = [
-        ":hlo_test_base_with_symbolic_expr_context",
+        ":hlo_test_base_with_mlir_context",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",
         "//xla/service:executable",
@@ -2833,6 +2833,46 @@ xla_test(
     ],
 )
 
+cc_library(
+    name = "collective_ops_e2e_test_base",
+    testonly = True,
+    srcs = ["collective_ops_e2e_test_base.cc"],
+    hdrs = ["collective_ops_e2e_test_base.h"],
+    deps = [
+        "//xla:array",
+        "//xla:literal",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:backend",
+        "//xla/service:computation_placer_hdr",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_runner",
+        "//xla/service:hlo_runner_interface",
+        "//xla/service:platform_util",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:gpu_memory_space_assignment",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/integrations:device_mem_allocator",
+        "//xla/stream_executor/integrations:stream_executor_allocator",
+        "//xla/stream_executor/integrations:tf_allocator_adapter",
+        "//xla/tsl/framework:allocator",
+        "//xla/tsl/framework:bfc_allocator",
+        "//xla/tsl/framework:device_id_impl",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
 xla_test(
     name = "collective_ops_e2e_test",
     srcs = ["collective_ops_e2e_test.cc"],
@@ -2846,6 +2886,7 @@ xla_test(
         "gpu",
     ],
     deps = [
+        ":collective_ops_e2e_test_base",
         ":literal_test_util",
         ":test_utils",
         ":xla_internal_test_main",
@@ -2856,6 +2897,7 @@ xla_test(
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/hlo/testlib:verified_hlo_module",
@@ -2874,6 +2916,7 @@ xla_test(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/integrations:device_mem_allocator",
+        "//xla/stream_executor/integrations:stream_executor_allocator",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
         "//xla/tsl/framework:bfc_allocator",
         "//xla/tsl/framework:device_id",
@@ -2893,7 +2936,11 @@ xla_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:regexp",
-    ],
+    ] + if_google([
+        # In OSS this dependency is added automatically for xla_test targets. See
+        # third_party/tensorflow/compiler/xla/xla.default.bzl.
+        "//xla/tsl/framework:allocator",
+    ]),
 )
 
 xla_test(
@@ -3886,9 +3933,9 @@ cc_library(
 )
 
 cc_library(
-    name = "hlo_test_base_with_symbolic_expr_context",
+    name = "hlo_test_base_with_mlir_context",
     testonly = True,
-    hdrs = ["hlo_test_base_with_symbolic_expr_context.h"],
+    hdrs = ["hlo_test_base_with_mlir_context.h"],
     deps = [
         ":hlo_test_base",
         "//xla/hlo/analysis:symbolic_expr",

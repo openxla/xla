@@ -123,7 +123,7 @@ class GpuCompilerTest : public HloTestBase {
     std::unique_ptr<GpuAliasInfo> alias_info =
         gpu_compiler->GetAliasInfo(gpu_device_info);
     TF_RETURN_IF_ERROR(ScheduleGpuModule(module, 4, gpu_device_info,
-                                         gpu_compiler->symbolic_expr_context(),
+                                         gpu_compiler->mlir_context(),
                                          alias_info.get())
                            .status());
     return gpu_compiler->RunPostSchedulingPipelines(
@@ -1759,10 +1759,6 @@ TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
 TEST_F(PassOrderTest, NestGemmFusionRunsAfterGemmFusionAutotuner) {
   // NestGemmFusion expect to see __triton_gemm custom call with a backend
   // config created by gemm_fusion_autotuner.
-  DebugOptions options = GetDebugOptionsForTest();
-  options.add_xla_gpu_unsupported_generic_triton_emitter_features(
-      DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
-  SetDebugOptions(options);
   VerifyPassOrder("gemm-fusion-autotuner", "nest_gemm_fusion");
 }
 
