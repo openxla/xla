@@ -495,7 +495,7 @@ absl::Status ReductionFusion::EmitEntryFunction(
   absl::c_iota(cases, 1);  // `default` is region 0.
   auto switch_op =
       mlir::scf::IndexSwitchOp::create(b, entry_function.getResultTypes(),
-                                       EmitBlockId(b, 1), cases, cases.size());
+                                       EmitBlockId(b, 2), cases, cases.size());
   mlir::func::ReturnOp::create(b, switch_op.getResults());
   for (auto [id, region] : llvm::enumerate(switch_op->getRegions())) {
     b.setInsertionPointToStart(&region.emplaceBlock());
