@@ -160,12 +160,8 @@ CollectiveKernelThunkMetadata CreateCollectiveKernelThunk(
   }
 
   CollectiveConfig collective_config{
-      /*operand_count=*/1,
       /*operand_element_type=*/{PrimitiveType::F32},
       /*replica_groups=*/{replica_group},
-      /*collective_op_kind=*/
-      RendezvousKey::CollectiveOpKind::kCrossReplica,
-      /*op_id=*/0,
       /*group_mode=*/
       CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA,
       /*use_symmetric_buffer=*/false};
@@ -226,7 +222,7 @@ absl::StatusOr<se::DeviceMemoryBase> RunCollectiveKernelThunk(
       &gpu_options);
 
   TF_ASSIGN_OR_RETURN(auto collective_params,
-                      Thunk::CollectiveExecuteParams::Create(
+                      CollectiveParams::Create(
                           run_options, /*async_streams=*/{},
                           /*local_device_ordinal=*/executor->device_ordinal()));
   std::vector<se::DeviceMemoryBase> allocated_buffers = {

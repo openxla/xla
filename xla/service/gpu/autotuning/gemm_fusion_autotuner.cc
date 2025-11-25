@@ -201,8 +201,7 @@ class GemmFusionCollector : public ConstDfsHloVisitorWithDefault {
         gpu_config.fusion_backend_config();
     if (backend_config.kind() != kTritonGemmFusionKind &&
         backend_config.kind() != kCuDnnFusionKind &&
-        backend_config.kind() != kCustomFusionKind &&
-        backend_config.kind() != kTritonScaledDotFusionKind) {
+        backend_config.kind() != kCustomFusionKind) {
       return absl::OkStatus();
     }
 
@@ -460,7 +459,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> CuDnnFusionExtractor(
   GpuBackendConfig gpu_config;
   FusionBackendConfig& backend_config =
       *gpu_config.mutable_fusion_backend_config();
-  backend_config.set_kind(std::string(kCuDnnFusionKind));
+  backend_config.set_kind(kCuDnnFusionKind);
   // Provided a plan ID the autotuner just compiles one plan.
   backend_config.mutable_cudnn_fusion_config()->set_plan_id(plan_id);
   TF_RETURN_IF_ERROR(root->set_backend_config(gpu_config));
@@ -595,7 +594,10 @@ bool IsScaledDotFusion(const HloInstruction* fusion_instr) {
   if (fusion_instr->fusion_kind() != HloInstruction::FusionKind::kCustom) {
     return false;
   }
-  return IsGpuFusionKind(*fusion_instr, kTritonScaledDotFusionKind);
+  return IsGpuFusionKind(*fusion_instr, kTritonGemmFusionKind) &&
+         hlo_query::GetFirstInstructionWithOpcode(
+             *fusion_instr->fused_instructions_computation(),
+             HloOpcode::kScaledDot) != nullptr;
 }
 
 absl::Status RewriteGemmFusionToCall(HloInstruction* fusion_instr) {
@@ -698,8 +700,7 @@ absl::Status GemmFusionAutotunerRewriterVisitor::HandleFusion(
   // Only autotune Triton, cuDNN, and custom kernel fusions.
   if (fusion_backend_config.kind() != kTritonGemmFusionKind &&
       fusion_backend_config.kind() != kCuDnnFusionKind &&
-      fusion_backend_config.kind() != kCustomFusionKind &&
-      fusion_backend_config.kind() != kTritonScaledDotFusionKind) {
+      fusion_backend_config.kind() != kCustomFusionKind) {
     return absl::OkStatus();
   }
 
@@ -762,7 +763,7 @@ absl::Status GemmFusionAutotunerRewriterVisitor::HandleFusion(
 
   // Autotune result has a cuDNN fusion.
   CHECK(autotune_result.has_algorithm());
-  if (fusion_backend_config.kind() == kTritonScaledDotFusionKind) {
+  if (IsScaledDotFusion(fusion_instr)) {
     TF_ASSIGN_OR_RETURN(fusion_instr,
                         CudnnScaledDotHelper::AddScaleSwizzle(
                             Cast<HloFusionInstruction>(fusion_instr)));
@@ -1019,7 +1020,17 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
       /*autotune_tma=*/autotune_tma,
       /*autotune_warp_specialization=*/autotune_warp_specialization);
 
-  if (!debug_options_.xla_gpu_exhaustive_tiling_search()) {
+  if (auto overrides = config_.gemm_config_overrides(); overrides.has_value()) {
+    VLOG(1) << "Restricting configs to the overridden set.";
+    std::vector<TritonGemmConfig> allowed_configs;
+    for (const AutotuneResult::TritonGemmKey& key : *overrides) {
+      TF_ASSIGN_OR_RETURN(TritonGemmConfig config,
+                          TritonGemmConfig::FromProto(key));
+      allowed_configs.push_back(std::move(config));
+    }
+    configs =
+        search_space.OptimizeConfigSet(configs, /*hints=*/allowed_configs);
+  } else if (!debug_options_.xla_gpu_exhaustive_tiling_search()) {
     VLOG(1) << "Restricting configs to the default set.";
     configs = search_space.OptimizeConfigSet(
         configs, /*hints=*/GetDefaultTritonConfigs());

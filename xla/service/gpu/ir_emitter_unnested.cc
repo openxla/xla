@@ -148,6 +148,7 @@ limitations under the License.
 #include "xla/service/gpu/execution_stream_assignment.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_conv_runner.h"
+#include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_norm_runner.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -233,6 +234,16 @@ EmitCollectiveKernelThunk(IrEmitterContext* ir_emitter_context,
           .xla_gpu_unsupported_use_all_reduce_one_shot_kernel());
 }
 
+std::unique_ptr<llvm::Module> CreateLocalLLVMModule(
+    const std::string& module_name, llvm::Module* global_llvm_module) {
+  auto llvm_module = std::make_unique<llvm::Module>(
+      module_name, global_llvm_module->getContext());
+  llvm_module->setTargetTriple(
+      llvm::Triple(global_llvm_module->getTargetTriple()));
+  llvm_module->setDataLayout(global_llvm_module->getDataLayout());
+  return llvm_module;
+}
+
 }  // namespace
 
 IrEmitterUnnested::IrEmitterUnnested(IrEmitterContext* ir_emitter_context)
@@ -263,8 +274,10 @@ absl::Status IrEmitterUnnested::EmitConstant(
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
                       GetAllocationSliceForHlo(instr, {}));
 
-  ir_emitter_context_->emit_constant(num_elements, element_bytes, global_name,
-                                     slice.index(), std::move(content), &b_);
+  GpuExecutable::ConstantInfo info = AppendGlobalConstant(
+      ir_emitter_context_->llvm_module_constants(), num_elements, element_bytes,
+      global_name, slice.index(), std::move(content), &b_);
+  ir_emitter_context_->constants().push_back(std::move(info));
   return absl::OkStatus();
 }
 
@@ -352,16 +365,18 @@ void IrEmitterUnnested::CreateStore(llvm::Value* data, llvm::Value* address,
 // end)} Output = {static array, dynamic_dim0, dynamic_dim1}
 absl::Status IrEmitterUnnested::EmitPadToStatic(
     const HloCustomCallInstruction* instr) {
-  int unroll_factor = 1;
   std::string ir_name = std::string(instr->name());
+  auto local_llvm_module =
+      CreateLocalLLVMModule(ir_name, ir_emitter_context_->llvm_module());
+
+  constexpr int kUnrollFactor = 1;
   const Shape& input_shape = instr->operand(0)->shape();
 
   LaunchDimensions launch_dimensions = CalculateLaunchDimensions(
-      input_shape, ir_emitter_context_->gpu_device_info(), {unroll_factor});
-  TF_ASSIGN_OR_RETURN(
-      std::vector<llvm_ir::IrArray> ir_arrays,
-      BuildKernelThunkForNonFusionOp(ir_emitter_context_->llvm_module(), instr,
-                                     launch_dimensions));
+      input_shape, ir_emitter_context_->gpu_device_info(), {kUnrollFactor});
+  TF_ASSIGN_OR_RETURN(std::vector<llvm_ir::IrArray> ir_arrays,
+                      BuildKernelThunkForNonFusionOp(local_llvm_module.get(),
+                                                     instr, launch_dimensions));
 
   const llvm_ir::IrArray& source_array = ir_arrays[0];
   const llvm_ir::IrArray& output_array = ir_arrays[1];
@@ -473,8 +488,11 @@ absl::Status IrEmitterUnnested::EmitPadToStatic(
   const Shape& data_shape = instr->shape().tuple_shapes(0);
   TF_RETURN_IF_ERROR(ParallelLoopEmitter(body_generator, data_shape,
                                          launch_dimensions, &b_,
-                                         {unroll_factor})
+                                         {kUnrollFactor})
                          .EmitLoop(ir_name, index_ty));
+  CHECK(!llvm::Linker::linkModules(*ir_emitter_context_->llvm_module(),
+                                   std::move(local_llvm_module),
+                                   llvm::Linker::Flags::OverrideFromSrc));
   return absl::OkStatus();
 }
 
@@ -482,20 +500,21 @@ absl::Status IrEmitterUnnested::EmitPadToStatic(
 // end)} Output = {static array, dynamic_dim0, dynamic_dim1}
 absl::Status IrEmitterUnnested::EmitSliceToDynamic(
     const HloCustomCallInstruction* instr) {
-  // TODO(jurahul): Create an op to represent SliceToDynamic.
-  int unroll_factor = 1;
   std::string ir_name = std::string(instr->name());
+  auto local_llvm_module =
+      CreateLocalLLVMModule(ir_name, ir_emitter_context_->llvm_module());
 
+  // TODO(jurahul): Create an op to represent SliceToDynamic.
+  constexpr int kUnrollFactor = 1;
   const Shape& input_shape = instr->operand(0)->shape();
 
   LaunchDimensions launch_dimensions = CalculateLaunchDimensions(
-      input_shape, ir_emitter_context_->gpu_device_info(), {unroll_factor});
+      input_shape, ir_emitter_context_->gpu_device_info(), {kUnrollFactor});
   llvm::Type* index_ty =
       GetIndexTypeForKernel(instr, launch_dimensions.launch_bound(), &b_);
-  TF_ASSIGN_OR_RETURN(
-      std::vector<llvm_ir::IrArray> ir_arrays,
-      BuildKernelThunkForNonFusionOp(ir_emitter_context_->llvm_module(), instr,
-                                     launch_dimensions));
+  TF_ASSIGN_OR_RETURN(std::vector<llvm_ir::IrArray> ir_arrays,
+                      BuildKernelThunkForNonFusionOp(local_llvm_module.get(),
+                                                     instr, launch_dimensions));
 
   const Shape& data_shape = ShapeUtil::MakeStaticShape(instr->shape());
   TF_RET_CHECK(data_shape.IsArray());
@@ -596,8 +615,11 @@ absl::Status IrEmitterUnnested::EmitSliceToDynamic(
 
   TF_RETURN_IF_ERROR(ParallelLoopEmitter(body_generator, data_shape,
                                          launch_dimensions, &b_,
-                                         {unroll_factor})
+                                         {kUnrollFactor})
                          .EmitLoop(ir_name, index_ty));
+  CHECK(!llvm::Linker::linkModules(*ir_emitter_context_->llvm_module(),
+                                   std::move(local_llvm_module),
+                                   llvm::Linker::Flags::OverrideFromSrc));
   return absl::OkStatus();
 }
 
@@ -1481,59 +1503,14 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
             call.num_warps *
             ir_emitter_context_->gpu_device_info().threads_per_warp()));
 
-    std::string sanitized_kernel_name =
-        GetSanitizedUniqueName(*ir_emitter_context_, kernel_name);
-
     if (emit_kernels) {
-      llvm::Function* impl_fn =
-          ir_emitter_context_->llvm_module()->getFunction(kernel_name);
-      TF_RET_CHECK(impl_fn);
-      impl_fn->setName(
-          GetSanitizedUniqueName(*ir_emitter_context_, kernel_name + "_impl"));
-
-      llvm::IRBuilder builder(ir_emitter_context_->llvm_module()->getContext());
-
-      TF_ASSIGN_OR_RETURN(llvm::Function * kernel,
-                          BuildKernelPrototypeFromUniqueName(
-                              ir_emitter_context_->llvm_module(),
-                              ir_emitter_context_->gpu_device_info(),
-                              impl_fn->getName().str(), sanitized_kernel_name,
-                              kernel_arguments, launch_dimensions, &builder));
-
-      // Move function body into kernel prototype.
-      llvm::Function* prototype_func = builder.GetInsertBlock()->getParent();
-      prototype_func->splice(prototype_func->begin(), impl_fn);
-      for (const auto& [impl_fn_arg, kernel_arg] :
-           llvm::zip(impl_fn->args(), kernel->args())) {
-        impl_fn_arg.replaceAllUsesWith(&kernel_arg);
-      }
-      // Triton's kernel ABI expects additional scratchpad global memory for TMA
-      // and profiling information. For now it is only used for on-device
-      // creation of TMA descriptors, which we do not use yet, so we are just
-      // replacing this argument with a null pointer.
-      // TODO: b/381242007 - Allocate a proper buffer if we want to use
-      // device-side TMA APIs.
-      CHECK_EQ(impl_fn->arg_size(), kernel->arg_size() + 2);
-      auto tma_scratchpad_arg = impl_fn->getArg(impl_fn->arg_size() - 2);
-      tma_scratchpad_arg->replaceAllUsesWith(llvm::ConstantPointerNull::get(
-          llvm::cast<llvm::PointerType>(tma_scratchpad_arg->getType())));
-      auto profiling_scratchpad_arg = impl_fn->getArg(impl_fn->arg_size() - 1);
-      profiling_scratchpad_arg->replaceAllUsesWith(
-          llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(
-              profiling_scratchpad_arg->getType())));
-
-      impl_fn->eraseFromParent();
-
-      for (auto& arg : prototype_func->args()) {
-        // Remove the alignment and aliasing attributes to avoid
-        // recompiling the kernel for each alignment/aliasing
-        // combination.
-        arg.removeAttr(llvm::Attribute::Alignment);
-        arg.removeAttr(llvm::Attribute::NoAlias);
-      }
+      TF_RETURN_IF_ERROR(
+          RemoveUnusedTritonAbiArguments(*ir_emitter_context_, kernel_name,
+                                         launch_dimensions, kernel_arguments)
+              .status());
     }
 
-    return {{sanitized_kernel_name, launch_dimensions, result.cluster_dim,
+    return {{kernel_name, launch_dimensions, result.cluster_dim,
              result.shmem_bytes}};
   };
 
@@ -1602,6 +1579,13 @@ absl::Status IrEmitterUnnested::EmitFusion(const HloFusionInstruction* instr) {
           /*call_graph=*/*call_graph_),
       ir_emitter_context_->mlir_context());
   TF_ASSIGN_OR_RETURN(auto result, emitter->Emit(*ir_emitter_context_, *instr));
+
+  // Use override flag because libdevice functions can be present in both.
+  if (result.module) {
+    TF_RET_CHECK(!llvm::Linker::linkModules(
+        *ir_emitter_context_->llvm_module(), std::move(result.module),
+        llvm::Linker::Flags::OverrideFromSrc));
+  }
 
   const ExecutionStreamAssignment& stream_assignment =
       ir_emitter_context_->execution_stream_assignment();
@@ -1889,8 +1873,9 @@ absl::Status IrEmitterUnnested::EmitSort(const HloSortInstruction* sort) {
                              : standard_num_iterations_in_sort_dim,
         tile_size, kUnrollFactor,
         [&](absl::Span<llvm::Value* const> operands, llvm::Value* output) {
-          return CallNestedComputation(&b_, *ir_emitter_context_, *comparator,
-                                       operands, output);
+          return CallNestedComputation(&b_, *ir_emitter_context_,
+                                       ir_emitter_context_->llvm_module(),
+                                       *comparator, operands, output);
         });
   };
   std::vector<int64_t> xor_masks;
@@ -3395,6 +3380,11 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
   }
 
   return Internal("Unhandled HLO instruction");
+}
+
+absl::Status IrEmitterUnnested::EmitHloEntryComputation(
+    const HloModule* module) {
+  return EmitHloComputation(module->entry_computation());
 }
 
 absl::Status IrEmitterUnnested::EmitHloComputation(

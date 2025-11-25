@@ -36,13 +36,13 @@ limitations under the License.
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Casting.h"
+#include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/triton/fusion_emitter.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -54,7 +54,6 @@ limitations under the License.
 #include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
-#include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
@@ -95,50 +94,17 @@ TritonFusion::GenerateTritonKernelAndWrapper(
     const se::DeviceDescription& device_info, llvm::Module* llvm_module,
     mlir::MLIRContext* mlir_context) const {
   const se::GpuComputeCapability& cc = device_info.gpu_compute_capability();
-  auto backend_config =
-      fusion.backend_config<GpuBackendConfig>()->fusion_backend_config();
-  absl::string_view fusion_kind = backend_config.kind();
-  TritonWrapperResult triton_wrapper_result;
 
-  if (fusion_kind == kTritonFusionKind ||
-      fusion_kind == kTritonNestedGemmFusionKind ||
-      fusion_kind == kTritonScaledDotFusionKind ||
-      fusion_kind == kTritonCollectiveFusionKind) {
-    if (!analysis_.fusion_backend_config().has_block_level_fusion_config()) {
-      return absl::InvalidArgumentError(absl::StrCat(
-          "Block level fusion config is required for Triton fusions: ",
-          fusion.ToString()));
-    }
-    TF_ASSIGN_OR_RETURN(
-        triton_wrapper_result,
-        TritonWrapper(
-            impl_fn_name, &fusion, cc, device_info,
-            BlockLevelParameters::FromBlockLevelFusionConfig(
-                analysis_.fusion_backend_config().block_level_fusion_config()),
-            llvm_module, *mlir_context));
-  } else {  // Must be a MatMul
-    CHECK_EQ(fusion_kind, kTritonGemmFusionKind);
-    // TODO(bchetioui): port matmul emitter to fully use the new
-    // infrastructure.
-    BlockLevelParameters block_level_parameters;
-    if (!backend_config.has_triton_gemm_config()) {
-      block_level_parameters.num_ctas = 1;
-      block_level_parameters.num_stages = 1;
-      block_level_parameters.num_warps = 2;
-    } else {
-      const auto& triton_config = backend_config.triton_gemm_config();
-      block_level_parameters.num_ctas = triton_config.num_ctas();
-      block_level_parameters.num_stages = triton_config.num_stages();
-      block_level_parameters.num_warps = triton_config.num_warps();
-    }
-
-    TF_ASSIGN_OR_RETURN(
-        triton_wrapper_result,
-        TritonWrapper(impl_fn_name, &fusion, cc, device_info,
-                      block_level_parameters, llvm_module, *mlir_context));
+  if (!analysis_.fusion_backend_config().has_block_level_fusion_config()) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Block level fusion config is required for Triton fusions: ",
+        fusion.ToString()));
   }
-
-  return triton_wrapper_result;
+  return TritonWrapper(
+      impl_fn_name, &fusion, cc, device_info,
+      BlockLevelParameters::FromBlockLevelFusionConfig(
+          analysis_.fusion_backend_config().block_level_fusion_config()),
+      llvm_module, *mlir_context);
 };
 
 absl::StatusOr<FusionEmissionResult> TritonFusion::Emit(
@@ -159,12 +125,12 @@ absl::StatusOr<FusionEmissionResult> TritonFusion::Emit(
   auto generate = [&]() -> absl::StatusOr<KernelReuseCache::Entry> {
     VLOG(3) << "Generating: " << suggested_kernel_name;
 
-    const std::string impl_fn_name = GetSanitizedUniqueName(
-        ir_emitter_context, absl::StrCat(suggested_kernel_name, "_impl"));
+    const std::string sanitized_kernel_name =
+        GetSanitizedUniqueName(ir_emitter_context, suggested_kernel_name);
 
     TF_ASSIGN_OR_RETURN(
         TritonWrapperResult triton_wrapper_result,
-        GenerateTritonKernelAndWrapper(fusion, impl_fn_name,
+        GenerateTritonKernelAndWrapper(fusion, sanitized_kernel_name,
                                        ir_emitter_context.gpu_device_info(),
                                        ir_emitter_context.llvm_module(),
                                        ir_emitter_context.mlir_context()));
@@ -180,7 +146,6 @@ absl::StatusOr<FusionEmissionResult> TritonFusion::Emit(
     const std::vector<absl::string_view> kSupportedFusionKinds = {
         kTritonFusionKind,
         kTritonNestedGemmFusionKind,
-        kTritonScaledDotFusionKind,
         kTritonCollectiveFusionKind,
     };
 
@@ -206,42 +171,14 @@ absl::StatusOr<FusionEmissionResult> TritonFusion::Emit(
     CHECK(launch_config.has_value());
     launch_dimensions = std::move(launch_config->launch_dimensions);
 
-    llvm::Function* impl_fn =
-        ir_emitter_context.llvm_module()->getFunction(impl_fn_name);
-    TF_RET_CHECK(impl_fn);
-
-    TF_ASSIGN_OR_RETURN(
-        llvm::Function * kernel,
-        BuildKernelPrototype(
-            ir_emitter_context.llvm_module(),
-            ir_emitter_context.gpu_device_info(), impl_fn_name,
-            GetSanitizedUniqueName(ir_emitter_context, suggested_kernel_name),
-            kernel_arguments, launch_dimensions, &builder));
+    TF_ASSIGN_OR_RETURN(llvm::Function * kernel,
+                        RemoveUnusedTritonAbiArguments(
+                            ir_emitter_context, sanitized_kernel_name,
+                            launch_dimensions, kernel_arguments));
 
     PopulateNvvmAnnotations(ir_emitter_context.llvm_module(), kernel,
                             triton_wrapper_result);
 
-    // Move function body into kernel prototype.
-    llvm::Function* prototype_func = builder.GetInsertBlock()->getParent();
-    prototype_func->splice(prototype_func->begin(), impl_fn);
-    for (const auto& [impl_fn_arg, kernel_arg] :
-         llvm::zip(impl_fn->args(), kernel->args())) {
-      impl_fn_arg.replaceAllUsesWith(&kernel_arg);
-    }
-    // Triton's kernel ABI expects additional scratchpad global memory for
-    // TMA and profiling information.
-    // For now it is only used for on-device creation of TMA descriptors, which
-    // we do not use yet, so we are just replacing this argument with a null
-    // pointer.
-    // TODO: b/381242007 - Allocate a proper buffer if we want to use
-    // device-side TMA APIs.
-    CHECK_EQ(impl_fn->arg_size(), kernel->arg_size() + 2);
-    auto tma_scratchpad_arg = impl_fn->getArg(impl_fn->arg_size() - 2);
-    tma_scratchpad_arg->replaceAllUsesWith(llvm::ConstantPointerNull::get(
-        llvm::cast<llvm::PointerType>(tma_scratchpad_arg->getType())));
-    auto profiling_scratchpad_arg = impl_fn->getArg(impl_fn->arg_size() - 1);
-    profiling_scratchpad_arg->replaceAllUsesWith(llvm::ConstantPointerNull::get(
-        llvm::cast<llvm::PointerType>(profiling_scratchpad_arg->getType())));
 
     return {{kernel->getName().str(), launch_dimensions,
              triton_wrapper_result.cluster_dim,

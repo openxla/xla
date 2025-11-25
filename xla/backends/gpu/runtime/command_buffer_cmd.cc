@@ -457,10 +457,9 @@ CommandBufferCmdExecutor::CommandBufferCmdExecutor(
 }
 
 absl::Status CommandBufferCmdExecutor::Prepare(
-    const Thunk::PrepareParams& params,
-    Thunk::ResourceRequestsInterface& resource_requests) {
+    const Thunk::PrepareParams& params) {
   for (auto& command : commands_) {
-    TF_RETURN_IF_ERROR(command->Prepare(params, resource_requests));
+    TF_RETURN_IF_ERROR(command->Prepare(params));
   }
   return absl::OkStatus();
 }
@@ -491,6 +490,60 @@ absl::Status CommandBufferCmdExecutor::Record(
   } else {
     auto* create = std::get_if<CommandBufferCmd::RecordCreate>(&record_action);
     CHECK(create);
+
+    if (VLOG_IS_ON(5) &&
+        command_buffer->mode() == se::CommandBuffer::Mode::kPrimary) {
+      int64_t input_count = 0;
+      int64_t output_count = 0;
+      int64_t input_temp_count = 0;
+      int64_t output_temp_count = 0;
+      int64_t input_output_count = 0;
+      int64_t input_temp_output_count = 0;
+
+      for (const auto& cmd : commands_) {
+        bool has_input = false;
+        bool has_output = false;
+        bool has_temp = false;
+
+        for (const auto& buffer : cmd->buffers()) {
+          if (buffer.HasDefinedContentsOnInput()) {
+            has_input = true;
+          }
+          if (buffer.HasDefinedContentsOnOutput()) {
+            has_output = true;
+          }
+          if (!buffer.HasDefinedContentsOnInput() &&
+              !buffer.HasDefinedContentsOnOutput()) {
+            has_temp = true;
+          }
+        }
+
+        if (has_input && !has_output && !has_temp) input_count++;
+        if (!has_input && has_output && !has_temp) output_count++;
+        if (has_input && !has_output && has_temp) input_temp_count++;
+        if (!has_input && has_output && has_temp) output_temp_count++;
+        if (has_input && has_output && !has_temp) input_output_count++;
+        if (has_input && has_output && has_temp) input_temp_output_count++;
+      }
+
+      VLOG(5) << "CommandBufferCmdExecutor allocation summary:\n"
+              << "  Total commands                                 : "
+              << commands_.size() << "\n"
+              << "  ------------------------------------------------\n"
+              << "  Commands consuming input buffer                : "
+              << input_count << "\n"
+              << "  Commands consuming output buffer               : "
+              << output_count << "\n"
+              << "  Commands consuming input, temp buffers         : "
+              << input_temp_count << "\n"
+              << "  Commands consuming output, temp buffers        : "
+              << output_temp_count << "\n"
+              << "  Commands consuming input, output buffers       : "
+              << input_output_count << "\n"
+              << "  Commands consuming input, temp, output buffers : "
+              << input_temp_output_count;
+    }
+
     TF_RETURN_IF_ERROR(RecordCreate(execute_params, record_params,
                                     command_buffer, create->dependencies)
                            .status());
@@ -1498,11 +1551,9 @@ absl::Status WhileCmd::Initialize(const Thunk::InitializeParams& params,
   return absl::OkStatus();
 }
 
-absl::Status WhileCmd::Prepare(
-    const Thunk::PrepareParams& params,
-    Thunk::ResourceRequestsInterface& resource_requests) {
-  TF_RETURN_IF_ERROR(cond_commands_.Prepare(params, resource_requests));
-  TF_RETURN_IF_ERROR(body_commands_.Prepare(params, resource_requests));
+absl::Status WhileCmd::Prepare(const Thunk::PrepareParams& params) {
+  TF_RETURN_IF_ERROR(cond_commands_.Prepare(params));
+  TF_RETURN_IF_ERROR(body_commands_.Prepare(params));
   return absl::OkStatus();
 }
 
@@ -1747,53 +1798,6 @@ CommandBufferCmd::BufferUseVector CublasLtCmd::buffers() const {
   if (d_amax_.allocation() != nullptr) {
     buffer_usage.push_back(BufferUse::Read(d_amax_));
   }
-  return buffer_usage;
-}
-
-//===----------------------------------------------------------------------===//
-// ConvolutionCmd
-//===----------------------------------------------------------------------===//
-
-ConvolutionCmd::ConvolutionCmd(const ConvolutionThunk& thunk)
-    : TracedCommandBufferCmd(CommandBufferCmdType::kConvolutionCmd),
-      operand_buffers_(thunk.operand_buffers_),
-      result_buffers_(thunk.result_buffers_),
-      scratch_buffer_(thunk.scratch_buffer_),
-      config_(thunk.config_) {}
-
-absl::Status ConvolutionCmd::Initialize(const Thunk::InitializeParams& params,
-                                        StateManager& state) {
-  // populate cache of ConvRunner
-  cache_.GetOrCreate(config_, params.stream);
-  return absl::OkStatus();
-}
-
-absl::StatusOr<const se::CommandBuffer::Command*> ConvolutionCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  VLOG(5) << "ConvolutionCmd";
-
-  return RecordTracedCommand(
-      execute_params, record_params, std::move(record_action), command_buffer,
-      [&](se::Stream* stream) {
-        return RunConvolutionOnStream(execute_params, operand_buffers_,
-                                      result_buffers_, scratch_buffer_, config_,
-                                      cache_, stream);
-      });
-}
-
-CommandBufferCmd::BufferUseVector ConvolutionCmd::buffers() const {
-  BufferUseVector buffer_usage;
-  buffer_usage.reserve(operand_buffers_.size() + result_buffers_.size() + 1);
-
-  for (BufferAllocation::Slice buffer : operand_buffers_) {
-    buffer_usage.push_back({buffer, MemoryAccess::kRead});
-  }
-  for (BufferAllocation::Slice buffer : result_buffers_) {
-    buffer_usage.push_back({buffer, MemoryAccess::kWrite});
-  }
-  buffer_usage.push_back({scratch_buffer_, MemoryAccess::kWrite});
   return buffer_usage;
 }
 
@@ -2055,9 +2059,8 @@ CollectiveCmd::CollectiveCmd(
       config_(std::move(config)),
       async_events_(std::move(async_events)) {}
 
-absl::Status CollectiveCmd::Prepare(
-    const Thunk::PrepareParams& params,
-    Thunk::ResourceRequestsInterface& resource_requests) {
+absl::Status CollectiveCmd::Prepare(const Thunk::PrepareParams& params) {
+  TF_RET_CHECK(params.collective_params != nullptr);
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
                       Thunk::GetGpuCollectives(params));
   TF_ASSIGN_OR_RETURN(
@@ -2065,7 +2068,7 @@ absl::Status CollectiveCmd::Prepare(
       GetGpuCliqueKey(collectives, *params.collective_params,
                       config().replica_groups, config().group_mode,
                       AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
-  return resource_requests.AddClique(clique_key);
+  return params.clique_requests->RequestClique(clique_key);
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*>
@@ -2585,8 +2588,7 @@ absl::Status DynamicSliceFusionCmd::Initialize(
 }
 
 absl::Status DynamicSliceFusionCmd::Prepare(
-    const Thunk::PrepareParams& params,
-    Thunk::ResourceRequestsInterface& resource_requests) {
+    const Thunk::PrepareParams& params) {
   for (DynamicSliceThunk::SliceDef& slice : slices_) {
     VLOG(3) << "DynamicSliceFusionCmd: slice: " << slice.ToString();
     if (slice.offsets.has_value()) {
@@ -2602,7 +2604,7 @@ absl::Status DynamicSliceFusionCmd::Prepare(
                    slice.orig_shape->dimensions().size());
     }
   }
-  TF_RETURN_IF_ERROR(embedded_commands_.Prepare(params, resource_requests));
+  TF_RETURN_IF_ERROR(embedded_commands_.Prepare(params));
   if (offset_as_function_of_indvar_metadata_ != std::nullopt) {
     Indvar(this) =
         HloEvaluator()
