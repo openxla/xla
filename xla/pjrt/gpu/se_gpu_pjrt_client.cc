@@ -597,10 +597,11 @@ absl::StatusOr<PreparedReceive> PrepareReceive(
       client->AllocateRawBuffer(memory_space, on_device_bytes_count,
                                 /*retry_on_oom=*/true,
                                 /*allocate_after=*/{}));
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<PjRtBuffer> buffer,
-      client->DefineBuffer(on_device_shape, raw_buffer, {definition_event},
-                           /*raw_buffer_is_mutable=*/true));
+
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtBuffer> buffer,
+                      client->DefineBuffer(on_device_shape, memory_space,
+                                           raw_buffer, {definition_event},
+                                           /*raw_buffer_is_mutable=*/true));
   definition_event->AndThen([raw_buffer]() {});
 
   return PreparedReceive{
