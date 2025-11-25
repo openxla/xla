@@ -288,7 +288,6 @@ xla_test(
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
     ],
