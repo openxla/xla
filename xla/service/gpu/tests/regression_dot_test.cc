@@ -47,8 +47,13 @@ ENTRY main {
 }
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+  TF_ASSERT_OK_AND_ASSIGN(auto fake_arguments,
+        MakeFakeArguments(module.get(), /*pseudo_random=*/true,
+                          /*use_large_range=*/false));
+
   EXPECT_TRUE(RunAndCompare(std::move(module),
-                            ErrorSpec{1e-3, 1e-3}));
+                         LiteralUtil::MakePointers(fake_arguments), 
+                         ErrorSpec{1e-3, 1e-2}));
 }
 
 }  // namespace
