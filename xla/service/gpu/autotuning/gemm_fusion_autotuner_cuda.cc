@@ -17,9 +17,11 @@ limitations under the License.
 #include <vector>
 
 #include "third_party/gpus/cuda/include/cublas_v2.h"
+#include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/autotuning/gemm_fusion_autotuner.h"
@@ -67,15 +69,16 @@ bool GemmFusionAutotunerImpl::AddLibConfigs(
         debug_options_.xla_gpu_cudnn_gemm_fusion_level() > 1) ||
        (cc.IsAtLeastBlackwell() &&
         debug_options_.xla_gpu_cudnn_gemm_fusion_level() > 0));
-  bool is_supported_triton_scaled_dot_fusion =
-      IsGpuFusionKind(fusion, kTritonScaledDotFusionKind) &&
+  bool is_cudnn_supported_scaled_dot_fusion =
+      IsGpuFusionKind(fusion, kTritonNestedGemmFusionKind) &&
+      dot->opcode() == HloOpcode::kScaledDot &&
       dnn_version >= kCudnnSupportsBlockScaledDot &&
       CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(dot)) &&
       cc.IsAtLeastBlackwell();
 
   if (IsAutotuningEnabled() &&
       (is_cudnn_fusion || is_supported_triton_dot_fusion ||
-       is_supported_triton_scaled_dot_fusion)) {
+       is_cudnn_supported_scaled_dot_fusion)) {
     const int plan_count = GetCuDnnPlanCount(fusion, config_);
     for (int plan_id = 0; plan_id < plan_count; ++plan_id) {
       configs.push_back(CuDnnConfig{plan_id});
@@ -114,8 +117,10 @@ std::vector<TritonGemmConfig> GemmFusionAutotunerImpl::GetDefaultTritonConfigs()
     config.is_tma_allowed = false;
     tma_parameterized_configs.push_back(config);
 
-    config.is_tma_allowed = true;
-    tma_parameterized_configs.push_back(config);
+    if (IsTmaRecommended(config)) {
+      config.is_tma_allowed = true;
+      tma_parameterized_configs.push_back(config);
+    }
   }
 
   // TODO(b/449668102): Currently only supporting warp specialization on

@@ -121,13 +121,13 @@ absl::StatusOr<bool> CollectiveKernelThunk::IsSupported(
       collective_config_.operand_element_type[0], reduction_kind_, strategy);
 }
 
-absl::Status CollectiveKernelThunk::Prepare(
-    const PrepareParams& params, ResourceRequestsInterface& resource_requests) {
+absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
+  TF_RET_CHECK(params.collective_params != nullptr);
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_,
                                 /*use_nccl=*/false));
-  return resource_requests.AddClique(clique_key);
+  return params.clique_requests->RequestClique(clique_key);
 }
 
 int64_t CollectiveKernelThunk::GetInputSizeBytes() const {
@@ -155,7 +155,8 @@ absl::Status CollectiveKernelThunk::ExchangeStateMetadata(
       sizeof(CollectiveKernelMetadata) + param_to_peers_ptrs_size_bytes, 0);
   return CollectiveMetadataThunk::ConstructCollectiveMetadata(
       std::move(parameters), params.stream, clique_key,
-      state.multicast_device_ptr, rank.value().value(), state.metadata);
+      state.multicast_device_ptr,
+      /* device_ordinal= */ params.executor->device_ordinal(), state.metadata);
 }
 
 absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {

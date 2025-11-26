@@ -200,7 +200,8 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
-    ] + if_google(["@com_google_protobuf//:wrappers_cc_proto"]),
+        "@com_google_protobuf//:wrappers_cc_proto",
+    ],
 )
 
 cc_library(
@@ -218,11 +219,10 @@ cc_library(
     deps = [
         ":device_memory",
         ":platform",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -373,13 +373,14 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:wrappers_cc_proto",
         "@eigen_archive//:eigen3",  # buildcleaner: keep
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-    ] + if_google(["@com_google_protobuf//:wrappers_cc_proto"]),
+    ],
 )
 
 tf_proto_library(
@@ -835,7 +836,6 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:status",
     ],
 )
 

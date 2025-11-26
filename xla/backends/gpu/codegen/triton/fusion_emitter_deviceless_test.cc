@@ -23,7 +23,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "llvm/IR/LLVMContext.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/backends/gpu/codegen/triton/fusion_emitter.h"
+#include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -130,7 +130,8 @@ ENTRY e {
     EXPECT_THAT(RunFileCheck(annotated_ir, R"(
       CHECK:  [[SOMETHING:.*]] "triton_dot -> [[FILE_LINE:fusion_emitter.*:.*]]"
     )"),
-                absl_testing::IsOkAndHolds(true));
+                absl_testing::IsOkAndHolds(true))
+        << annotated_ir;
   } else {
     EXPECT_THAT(RunFileCheck(annotated_ir, R"(
       CHECK:  [[SOMETHING:.*]] "triton_dot"

@@ -180,7 +180,7 @@ absl::Status RunPassPipeline(mlir::ModuleOp module, const HloModule& hlo_module,
                              absl::string_view entry_function_name) {
   bool should_dump_mlir_passes =
       DumpingEnabledForHloModule(hlo_module) &&
-      DumpingEnabledForHloPass("mlir-fusion-emitter",
+      DumpingEnabledForEmitter("mlir-fusion",
                                hlo_module.config().debug_options());
 
   std::string mlir_passes_dump_result;
@@ -229,7 +229,7 @@ Value EmitterBase::EmitWorkGroupId(mlir::ImplicitLocOpBuilder& builder,
   int64_t count = dim == WorkGroupDimension::x   ? counts.x
                   : dim == WorkGroupDimension::y ? counts.y
                                                  : counts.z;
-  auto block_id = builder.create<WorkGroupIdOp>(dim);
+  auto block_id = WorkGroupIdOp::create(builder, dim);
   block_id->setAttr("xla.range", builder.getIndexArrayAttr({0, count - 1}));
   return block_id;
 }
@@ -238,8 +238,8 @@ Value EmitterBase::EmitBlockId(mlir::ImplicitLocOpBuilder& builder,
                                int dim) const {
   const auto& counts = launch_dimensions().block_counts();
   int64_t count = dim == 0 ? counts.x : dim == 1 ? counts.y : counts.z;
-  auto block_id = builder.create<mlir::gpu::BlockIdOp>(
-      static_cast<mlir::gpu::Dimension>(dim));
+  auto block_id = mlir::gpu::BlockIdOp::create(
+      builder, static_cast<mlir::gpu::Dimension>(dim));
   block_id->setAttr("xla.range", builder.getIndexArrayAttr({0, count - 1}));
   return block_id;
 }
@@ -248,8 +248,8 @@ Value EmitterBase::EmitThreadId(mlir::ImplicitLocOpBuilder& builder,
                                 int dim) const {
   const auto& counts = launch_dimensions().thread_counts_per_block();
   int64_t count = dim == 0 ? counts.x : dim == 1 ? counts.y : counts.z;
-  auto thread_id = builder.create<mlir::gpu::ThreadIdOp>(
-      static_cast<mlir::gpu::Dimension>(dim));
+  auto thread_id = mlir::gpu::ThreadIdOp::create(
+      builder, static_cast<mlir::gpu::Dimension>(dim));
   thread_id->setAttr("xla.range", builder.getIndexArrayAttr({0, count - 1}));
   return thread_id;
 }
@@ -339,8 +339,8 @@ absl::StatusOr<std::unique_ptr<llvm::Module>> EmitterBase::CreateLLVMModule(
   AddLoopTransformationPasses(pm, device);
   AddLoweringPasses(pm, device);
 
-  auto pipeline_status = RunPassPipeline(module.get(), *fusion.GetModule(), pm,
-                                         entry_function_name);
+  TF_RETURN_IF_ERROR(RunPassPipeline(module.get(), *fusion.GetModule(), pm,
+                                     entry_function_name));
 
   auto llvm_module = mlir::translateModuleToLLVMIR(module.get(), llvm_context);
   TF_RET_CHECK(llvm_module != nullptr)

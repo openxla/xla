@@ -389,6 +389,8 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/translate/mhlo_to_hlo:translate",
+        "//xla/hlo/translate/stablehlo_to_hlo:translate",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/status",
@@ -396,6 +398,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_protobuf//:protobuf",
         "@com_googlesource_code_re2//:re2",
+        "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -546,8 +549,6 @@ xla_cc_binary(
         ":run_hlo_module_lib",
         ":run_hlo_module_proto_cc",
         "//xla:debug_options_flags",
-        "//xla/hlo/translate/mhlo_to_hlo:translate",
-        "//xla/hlo/translate/stablehlo_to_hlo:translate",
         "//xla/service:cpu_plugin",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_runner",
@@ -558,7 +559,6 @@ xla_cc_binary(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
-        "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
@@ -1027,6 +1027,8 @@ tsl_gpu_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@com_google_protobuf//:duration_cc_proto",
+        "@com_google_protobuf//:protobuf",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
@@ -1044,7 +1046,7 @@ tsl_gpu_library(
         "//xla/service/gpu:nvptx_compiler",
     ]) + if_rocm_is_configured([
         "//xla/service/gpu:amdgpu_compiler",
-    ]) + if_google(["@com_google_protobuf//:duration_cc_proto"]),
+    ]),
 )
 
 xla_test(
@@ -1066,12 +1068,19 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:env_time",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "//xla/tsl/protobuf:status_proto_cc",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest",
+        "@com_google_protobuf//:duration_cc_proto",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:env_time",
         "@tsl//tsl/platform:errors",
@@ -1079,7 +1088,9 @@ xla_test(
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-    ] + if_google(["@com_google_protobuf//:duration_cc_proto"]),
+    ] + if_cuda([
+        "//xla/tsl/cuda:nvml",
+    ]),
 )
 
 xla_test(
@@ -1107,14 +1118,14 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "//xla/tsl/protobuf:status_proto_cc",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 
