@@ -1027,6 +1027,7 @@ tsl_gpu_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@com_google_protobuf//:duration_cc_proto",
         "@com_google_protobuf//:protobuf",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
@@ -1045,7 +1046,7 @@ tsl_gpu_library(
         "//xla/service/gpu:nvptx_compiler",
     ]) + if_rocm_is_configured([
         "//xla/service/gpu:amdgpu_compiler",
-    ]) + if_google(["@com_google_protobuf//:duration_cc_proto"]),
+    ]),
 )
 
 xla_test(
@@ -1079,6 +1080,7 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest",
+        "@com_google_protobuf//:duration_cc_proto",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:env_time",
         "@tsl//tsl/platform:errors",
@@ -1086,7 +1088,7 @@ xla_test(
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-    ] + if_google(["@com_google_protobuf//:duration_cc_proto"]) + if_cuda([
+    ] + if_cuda([
         "//xla/tsl/cuda:nvml",
     ]),
 )
