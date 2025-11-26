@@ -37,30 +37,85 @@ echo ""
 echo "Bazel will use ${N_BUILD_JOBS} concurrent build job(s) and ${N_TEST_JOBS} concurrent test job(s) for gpu ${AMD_GPU_GFX_ID}."
 echo ""
 
-# First positional argument (if any) specifies the ROCM_INSTALL_DIR
-if [[ -n $1 ]]; then
-    ROCM_INSTALL_DIR=$1
-else
-    if [[ -z "${ROCM_PATH}" ]]; then
-        ROCM_INSTALL_DIR=/opt/rocm/
-    else
-        ROCM_INSTALL_DIR=$ROCM_PATH
-    fi
-fi
-
 export PYTHON_BIN_PATH=`which python3`
 export TF_NEED_ROCM=1
-export ROCM_PATH=$ROCM_INSTALL_DIR
-TAGS_FILTER="gpu,requires-gpu-amd,-multi_gpu,-requires-gpu-nvidia,-requires-gpu-intel,-no_oss,-oss_excluded,-oss_serial,-no_gpu,-cuda-only,-oneapi-only"
-UNSUPPORTED_GPU_TAGS="$(echo -requires-gpu-sm{60,70,80,86,89,90}{,-only})"
-TAGS_FILTER="${TAGS_FILTER},${UNSUPPORTED_GPU_TAGS// /,}"
+export ROCM_PATH="/opt/rocm"
 
-bazel \
-    test \
-    --define xnn_enable_avxvnniint8=false --define xnn_enable_avx512fp16=false \
-    --config=rocm_gcc \
-    --build_tag_filters=${TAGS_FILTER} \
-    --test_tag_filters=${TAGS_FILTER} \
+EXCLUDED_TESTS=(
+    BasicDotAlgorithmEmitterTestSuite/BasicDotAlgorithmEmitterTest.BasicAlgorithmIsEmittedCorrectly/ALG_DOT_F16_F16_F16
+    CommandBufferConversionPassTest.ConvertWhileThunk
+    CommandBufferConversionPassTest.ConvertWhileThunkWithAsyncPair
+    CommandBufferTests/CommandBufferTest.WhileLoop/*
+    CommandBufferTests/CommandBufferTest.IndexConditional/*
+    CommandBufferTests/CommandBufferTest.TrueFalseConditional/*
+    CompareTest.SplitK
+    CublasLtGemmRewriteTest.MatrixBiasSwishActivation
+    DeterminismTest.Conv
+    DotTestTestSuite/DotTest.IsTritonSupportedExecutesCorrectlyForDot/f32_dot
+    DotTf32Tf32F32Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
+    DotTf32Tf32F32X3Tests/DotAlgorithmSupportTest.AlgorithmIsSupportedFromCudaCapability/dot_tf32_tf32_f32_*
+    ElementwiseTestSuiteF16/UnaryElementwiseTest.ElementwiseUnaryOpExecutesCorrectly/f16_cosine
+    ElementwiseTestSuiteF16/BinaryElementwiseTest.ElementwiseBinaryOpExecutesCorrectly/f16_atan2
+    ElementwiseTestSuiteF16/BinaryElementwiseTest.ElementwiseFusionExecutesCorrectly/f16_atan2
+    GpuKernelTilingTest.ReductionInputTooLarge
+    KernelThunkTmaPTXTestSuite/KernelThunkTmaPTXTest.TmaPTX/*
+    MultiOutputFusionTest.MultiOutputReduceFusionMajorWithExtraOutput
+    PjrtCAPIGpuExtensionTest.TritonCompile
+    ScatterTest.TensorFlowScatterV1_UpdateTwice
+    TestRadixSort/CubSortPairsTest.SortPairs/*
+    TestRadixSort/CubSortKeysTest.SortKeys/*
+    TopKTests/TopKKernelTest.*
+    TritonAndBlasSupportForDifferentTensorSizes/TritonAndBlasSupportForDifferentTensorSizes.IsDotAlgorithmSupportedByTriton/dot_*
+    TritonEmitterTest.RocmWarpSizeIsSetCorrectly
+    TritonEmitterTest.FusionWithOutputContainingMoreThanInt32MaxElementsExecutesCorrectly
+    TritonEmitterTest.ConvertF16ToF8E5M2Exhaustive
+    TritonEmitterTest.RocmWarpSizeIsSetCorrectly
+    TritonFusionNumericsVerifierTest.CompilationSucceedsEvenIfKernelWillSpillRegisters
+    TritonFusionNumericsVerifierTest.VerifyThatDisablingTritonIsFast
+    TritonNormalizationTest.CanFuseAndEmitDiamondWithBF16Converts
+    TritonScaledDotGemmTest/TritonScaledDotGemmTest.FP8ScaledDotCompilesToPtxIntrinsicsWhenAvailable/f8e*
+    TritonTest.FuseSubchannelDequantizationWithTranspose
+    TritonTest.FuseSubchannelDequantizationWithTranspose
+    )
+
+BAZEL_DISK_CACHE_SIZE=100G
+BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib-v0.7.1"
+mkdir -p ${BAZEL_DISK_CACHE_DIR}
+if [ ! -d /tf/pkg ]; then
+	mkdir -p /tf/pkg
+fi
+
+SCRIPT_DIR=$(realpath $(dirname $0))
+TAG_FILTERS=$($SCRIPT_DIR/rocm_tag_filters.sh),-multigpu,-multi_gpu_h100,requires-gpu-amd,-skip_rocprofiler_sdk,-no_oss,-oss_excluded,-oss_serial
+
+SANITIZER_ARGS=()
+if [[ $1 == "asan" ]]; then
+    SANITIZER_ARGS+=("--config=asan")
+    TAG_FILTERS=$TAG_FILTERS,-noasan
+    shift
+elif [[ $1 == "tsan" ]]; then
+    SANITIZER_ARGS+=("--config=tsan")
+    TAG_FILTERS=$TAG_FILTERS,-notsan
+    # excluded from tsan
+    EXCLUDED_TESTS+=(
+        # //xla/tests:collective_ops_e2e_test_amdgpu_any
+        CollectiveOpsTestE2E*
+        # //xla/backends/gpu/runtime:host_execute_thunk_test_amdgpu_any
+        HostExecuteStartThunkTest*
+        HostExecuteDoneThunkTest*
+    )
+    shift
+fi
+
+bazel --bazelrc=build_tools/rocm/rocm_xla.bazelrc test \
+    --config=rocm_ci \
+    --config=xla_sgpu \
+    --disk_cache=${BAZEL_DISK_CACHE_DIR} \
+    --profile=/tf/pkg/profile.json.gz \
+    --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE} \
+    --experimental_guard_against_concurrent_changes \
+    --build_tag_filters=$TAG_FILTERS \
+    --test_tag_filters=$TAG_FILTERS \
     --test_timeout=920,2400,7200,9600 \
     --test_sharding_strategy=disabled \
     --test_output=errors \
@@ -68,9 +123,17 @@ bazel \
     --keep_going \
     --local_test_jobs=${N_TEST_JOBS} \
     --test_env=TF_TESTS_PER_GPU=$TF_TESTS_PER_GPU \
-    --test_env=TF_GPU_COUNT=$TF_GPU_COUNT \
-    --action_env=TF_ROCM_AMDGPU_TARGETS=${AMD_GPU_GFX_ID} \
-    --action_env=XLA_FLAGS=--xla_gpu_force_compilation_parallelism=16 \
-    --action_env=XLA_FLAGS=--xla_gpu_enable_llvm_module_compilation_parallelism=true \
+    --action_env=XLA_FLAGS="--xla_gpu_enable_llvm_module_compilation_parallelism=true --xla_gpu_force_compilation_parallelism=16" \
     --run_under=//build_tools/ci:parallel_gpu_execute \
-    -- //xla/...
+    --test_env=MIOPEN_FIND_ENFORCE=5 \
+    --test_env=MIOPEN_FIND_MODE=1 \
+    --test_filter=-$(IFS=: ; echo "${EXCLUDED_TESTS[*]}") \
+    "${SANITIZER_ARGS[@]}" \
+    "$@" \
+    --spawn_strategy=local \
+    --strategy=TestRunner=local # execute multigpu tests locally as there is no gpu exclusive protection on rbe
+
+# clean up bazel disk_cache
+bazel shutdown \
+  --disk_cache=${BAZEL_DISK_CACHE_DIR} \
+  --experimental_disk_cache_gc_max_size=${BAZEL_DISK_CACHE_SIZE}

@@ -444,6 +444,7 @@ xla_test(
     name = "sdc_log_test",
     srcs = ["sdc_log_test.cc"],
     backends = ["gpu"],
+    tags = ["cuda-only"],
     deps = [
         ":sdc_log",
         "//xla/backends/gpu/runtime:sdc_buffer_id",

@@ -112,10 +112,12 @@ absl::StatusOr<Type> TritonType(EmitterLocOpBuilder& b, PrimitiveType t) {
       return b.getType<mlir::Float8E5M2Type>();
     case F8E4M3FN:
       return b.getType<mlir::Float8E4M3FNType>();
-    case F8E8M0FNU:
-      return b.getType<mlir::Float8E8M0FNUType>();
-    case F4E2M1FN:
-      return b.getType<mlir::Float4E2M1FNType>();
+    case F8E4M3B11FNUZ:
+      return b.getType<mlir::Float8E4M3B11FNUZType>();
+    case F8E5M2FNUZ:
+      return b.getType<mlir::Float8E5M2FNUZType>();
+    case F8E4M3FNUZ:
+      return b.getType<mlir::Float8E4M3FNUZType>();
     default:
       return absl::UnimplementedError(
           absl::StrCat("This type is not supported yet: ",
@@ -137,8 +139,9 @@ absl::StatusOr<PrimitiveType> GetPrimitiveType(Type t) {
   if (t.isInteger(1)) return PRED;
   if (mlir::isa<mlir::Float8E5M2Type>(t)) return F8E5M2;
   if (mlir::isa<mlir::Float8E4M3FNType>(t)) return F8E4M3FN;
-  if (mlir::isa<mlir::Float8E8M0FNUType>(t)) return F8E8M0FNU;
-  // NOLINTEND(google-readability-braces-around-statements)
+  if (mlir::isa<mlir::Float8E4M3B11FNUZType>(t)) return F8E4M3B11FNUZ;
+  if (mlir::isa<mlir::Float8E5M2FNUZType>(t)) return F8E5M2FNUZ;
+  if (mlir::isa<mlir::Float8E4M3FNUZType>(t)) return F8E4M3FNUZ;
   return absl::UnimplementedError("Unsupported type in getPrimitiveType.\n");
 }
 

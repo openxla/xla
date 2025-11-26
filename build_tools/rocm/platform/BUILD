@@ -13,7 +13,4 @@
 # limitations under the License.
 # ============================================================================
 
-package(
-    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//visibility:public"],
-)
+package(default_visibility = ["//visibility:public"])

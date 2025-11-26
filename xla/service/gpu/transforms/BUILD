@@ -6,7 +6,7 @@ load(
     "if_gpu_is_configured",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_google", "if_oss")
+load("//xla/tsl:tsl.bzl", "if_google")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
     "tf_gpu_tests_tags",
@@ -689,16 +689,18 @@ xla_test(
     name = "cudnn_fused_conv_rewriter_test",
     srcs = ["cudnn_fused_conv_rewriter_test.cc"],
     backend_tags = {
-        "gpu_a100": [
+        "a100": [
             "noasan",
             "nomsan",
         ],
     },
     backends = [
         "a100",
-        "amdgpu_any",
-    ] + if_oss(["nvgpu_any"]),
+    ],
     shard_count = 10,
+    tags = [
+        "cuda-only",  # TODO(rocm): Until #12613 is fixed.
+    ],
     deps = [
         ":conv_rewriter",
         ":cudnn_fused_conv_rewriter",

@@ -99,9 +99,9 @@ namespace mt = ::mlir::tensor;
 namespace mv = ::mlir::vector;
 
 constexpr int kTileSize = 32;
-constexpr int kNumRows = 4;
-constexpr int kNumThreadsPerBlock = 128;
-constexpr int kMaxVectorizedBytes = 4;
+constexpr int kNumRows = 8;
+constexpr int kNumThreadsPerBlock = kNumRows * kTileSize;
+constexpr int kMaxVectorizedBytes = 16;
 
 // Reads the 2D vector tile <vector_size x vector_size> from the shared memory
 // at the given indices.

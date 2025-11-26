@@ -457,7 +457,7 @@ RaggedAllToAllStartThunk::RaggedAllToAllStartThunk(
 absl::Status RaggedAllToAllStartThunk::Initialize(
     const InitializeParams& params) {
   TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
-  device_count_ = params.local_device_count;
+  device_count_.store(params.local_device_count, std::memory_order_relaxed);
 
   se::StreamExecutor* executor = params.executor;
 
@@ -511,12 +511,13 @@ absl::Status RaggedAllToAllStartThunk::Initialize(
 }
 
 bool RaggedAllToAllStartThunk::is_local() const {
-  CHECK_NE(device_count_, -1);
+  const auto device_count = device_count_.load(std::memory_order_relaxed);
+  CHECK_NE(device_count, -1);
   for (const auto& replica_group : config_.config.replica_groups) {
-    const int64_t node_id = replica_group.replica_ids().at(0) / device_count_;
+    const int64_t node_id = replica_group.replica_ids().at(0) / device_count;
     if (!absl::c_all_of(replica_group.replica_ids(),
-                        [this, node_id](const int64_t rank) {
-                          return rank / device_count_ == node_id;
+                        [node_id, device_count](const int64_t rank) {
+                          return rank / device_count == node_id;
                         })) {
       return false;
     }

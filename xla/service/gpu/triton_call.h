@@ -29,6 +29,7 @@ struct TritonCall {
   std::string ir;
   int64_t num_stages;
   int64_t num_warps;
+  int64_t waves_per_eu;
   int32_t grid_x;
   int32_t grid_y;
   int32_t grid_z;

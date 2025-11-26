@@ -1,0 +1,14 @@
+--- a/third_party/amd/lib/TritonAMDGPUTransforms/AccelerateAMDMatmul.cpp
++++ b/third_party/amd/lib/TritonAMDGPUTransforms/AccelerateAMDMatmul.cpp
+@@ -1068,7 +1068,10 @@ public:
+     if (isFloat(srcElTy) && isFloat(dstElTy)) {
+       auto rmode =
+           RoundingModeAttr::get(rewriter.getContext(), RoundingMode::RTNE);
+-      return rewriter.create<FpToFpOp>(loc, dstTy, v, rmode);
++      if (dstElTy.getIntOrFloatBitWidth() < srcElTy.getIntOrFloatBitWidth()) {
++        return rewriter.create<FpToFpOp>(loc, dstTy, v, rmode);
++      }
++      return rewriter.create<FpToFpOp>(loc, dstTy, v);
+     }
+     if (!isFloat(srcElTy) && isFloat(dstElTy))
+       return rewriter.create<arith::SIToFPOp>(loc, dstTy, v);

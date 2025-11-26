@@ -20,5 +20,8 @@ temporary_patch_list = [
     "//third_party/triton:temporary/convert_layout_op_to_llvm_small_width.patch",
     "//third_party/triton:temporary/convert_layout_op_to_llvm_small_width_2.patch",
     "//third_party/triton:temporary/cherrypick_dominance_fix.patch",
+    "//third_party/triton:temporary/0001-AMD-Quick-fix-disabling-transposed-load-used-as-diff.patch",
+    "//third_party/triton:temporary/accelerateamdmatmul.patch",
+    "//third_party/triton:temporary/accelerateamdmatmul2.patch",
     # Add new patches just above this line
 ]

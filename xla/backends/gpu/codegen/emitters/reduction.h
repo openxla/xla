@@ -124,7 +124,7 @@ class ReductionFusion : public EmitterBase {
     return IndexingMap::GetUndefined();
   }
 
-  int64_t WarpSize() const {
+  virtual int64_t WarpSize() const {
     return ::xla::gpu::WarpSize(analysis_.device_info());
   }
 
@@ -207,6 +207,11 @@ class ColumnReductionFusion : public ReductionFusion {
   explicit ColumnReductionFusion(const HloFusionAnalysis& analysis,
                                  SymbolicExprContext* symbolic_expr_context);
 
+  int64_t WarpSize() const override {
+    // PAE HACK HACK
+    return 32;
+  }
+
  protected:
   llvm::SmallVector<mlir::Value> EmitReduction(
       int group_id, EmitterState& state) const override;
@@ -229,6 +234,11 @@ class SmallColumnReductionFusion : public ReductionFusion {
   explicit SmallColumnReductionFusion(
       const HloFusionAnalysis& analysis,
       SymbolicExprContext* symbolic_expr_context);
+
+  int64_t WarpSize() const override {
+    // PAE HACK HACK
+    return 32;
+  }
 
  protected:
   llvm::SmallVector<mlir::Value> EmitReduction(
