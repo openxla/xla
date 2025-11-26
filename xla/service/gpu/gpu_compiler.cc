@@ -863,7 +863,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
         /*should_allow_control_dependencies=*/false,
-        /*should_find_dynamic_slice_operand=*/HloPredicateFalse,
+        /*find_dynamic_slice_operand=*/nullptr,
         /*postprocess_backward_peeled_op=*/{},
         /*postprocess_backward_rotated_op=*/{},
         /*postprocess_backward_peeled_trailing_op=*/{},
@@ -887,7 +887,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
         /*should_allow_control_dependencies=*/false,
-        /*should_find_dynamic_slice_operand=*/HloPredicateFalse,
+        /*find_dynamic_slice_operand=*/nullptr,
         /*postprocess_backward_peeled_op=*/{},
         /*postprocess_backward_rotated_op=*/{},
         /*postprocess_backward_peeled_trailing_op=*/{},
@@ -911,7 +911,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
         /*should_allow_control_dependencies=*/false,
-        /*should_find_dynamic_slice_operand=*/HloPredicateFalse,
+        /*find_dynamic_slice_operand=*/nullptr,
         /*postprocess_backward_peeled_op=*/{},
         /*postprocess_backward_rotated_op=*/{},
         /*postprocess_backward_peeled_trailing_op=*/{},
@@ -938,7 +938,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
         /*should_allow_control_dependencies=*/false,
-        /*should_find_dynamic_slice_operand=*/HloPredicateFalse,
+        /*find_dynamic_slice_operand=*/nullptr,
         /*postprocess_backward_peeled_op=*/{},
         /*postprocess_backward_rotated_op=*/{},
         /*postprocess_backward_peeled_trailing_op=*/{},
@@ -951,6 +951,11 @@ absl::Status RunCollectiveOptimizationPasses(
   if (debug_options.xla_gpu_enable_pipelined_host_offloading() ||
       IsPassEnabledAtOptimizationEffort<CollectivePipeliner>(*hlo_module)) {
     // Backward pass host offloading pipelining
+    auto acceptable_formatting = [](const HloInstruction* instr) {
+      return instr->opcode() == HloOpcode::kReshape ||
+             instr->opcode() == HloOpcode::kBroadcast ||
+             instr->opcode() == HloOpcode::kTranspose;
+    };
     CollectivePipeliner::Config config_backward{
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
@@ -960,14 +965,44 @@ absl::Status RunCollectiveOptimizationPasses(
         /*pipelining_direction=*/
         collective_pipeliner_utils::PipeliningDirection::kBackward,
         /*should_process=*/host_offload_utils::IsMoveToDeviceWithDynamicSlice,
-        /*acceptable_formatting=*/HloPredicateTrue,
+        /*acceptable_formatting=*/acceptable_formatting,
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
         /*should_allow_control_dependencies=*/false,
-        /*should_find_dynamic_slice_operand=*/
-        [](const HloInstruction* instr) {
-          return instr->IsCustomCall(
-              memory_annotations::kMoveToDeviceCustomCallTarget);
+        /*find_dynamic_slice_operand=*/
+        [acceptable_formatting](HloInstruction* instr,
+                                absl::flat_hash_set<const HloInstruction*>& visited_set)
+            -> std::optional<HloInstruction*> {
+          if (!instr->IsCustomCall(
+                  memory_annotations::kMoveToDeviceCustomCallTarget)) {
+            return std::nullopt;
+          }
+          if (instr->operand_count() == 0) {
+            return std::nullopt;
+          }
+
+          std::vector<HloInstruction*> to_check = {instr->mutable_operand(0)};
+          std::set<HloInstruction*> visited;
+
+          while (!to_check.empty()) {
+            HloInstruction* current = to_check.back();
+            to_check.pop_back();
+
+            if (visited.insert(current).second) {
+              if (current->opcode() == HloOpcode::kDynamicSlice) {
+                if (visited_set.insert(current).second) {
+                  return current;
+                }
+                return std::nullopt;
+              }
+              if (acceptable_formatting(current)) {
+                for (HloInstruction* operand : current->operands()) {
+                  to_check.push_back(operand);
+                }
+              }
+            }
+          }
+          return std::nullopt;
         },
         /*postprocess_backward_peeled_op=*/{},
         /*postprocess_backward_rotated_op=*/{},

@@ -99,11 +99,12 @@ class CollectivePipeliner : public HloModulePass {
     // pipelined. The control dependencies will be dropped when the operation is
     // pipelined. This is currently only used to support kBackward pipelining.
     bool should_allow_control_dependencies = false;
-    // Predicate to identify instructions that need dynamic slice operand
-    // discovery (e.g., MoveToDevice in host offloading). When true, the pass
-    // will traverse through layout-preserving ops to find associated
-    // DynamicSlice operations.
-    HloPredicate should_find_dynamic_slice_operand = HloPredicateFalse;
+    // Function to find a DynamicSlice operand by traversing through formatting
+    // operations. If set, this function will be called to discover DynamicSlice
+    // operations in the operand chain.
+    std::function<std::optional<HloInstruction*>(
+        HloInstruction*, absl::flat_hash_set<const HloInstruction*>&)>
+        find_dynamic_slice_operand = nullptr;
     // TODO(b/399476667): Consolidate these postprocessing functions.
     HloPostprocessor postprocess_backward_peeled_op;
     HloPostprocessor postprocess_backward_rotated_op;

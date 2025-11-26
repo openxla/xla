@@ -600,6 +600,7 @@ absl::StatusOr<bool> GpuP2PPipeliner::Run(
       /*should_allow_loop_variant_parameter_in_chain=*/
       ShouldAllowLoopVariantParameterInChain,
       /*should_allow_control_dependencies=*/true,
+      /*find_dynamic_slice_operand=*/nullptr,
       /*postprocess_backward_peeled_op=*/postprocess_backward_peeled_op,
       /*postprocess_backward_rotated_op=*/postprocess_backward_rotated_op,
       /*postprocess_backward_peeled_trailing_op=*/

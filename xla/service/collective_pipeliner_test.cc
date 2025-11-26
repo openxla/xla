@@ -121,7 +121,7 @@ absl::StatusOr<bool> RunOptimizer(
       /*reuse_pipelined_op_buffer=*/reuse_pipelined_op_buffer,
       should_allow_loop_variant_parameter_in_chain,
       /*should_allow_control_dependencies=*/false,
-      /*should_find_dynamic_slice_operand=*/HloPredicateFalse,
+      /*find_dynamic_slice_operand=*/nullptr,
       postprocess_backward_peeled, postprocess_backward_rotated,
       postprocess_backward_peeled_trailing,
       should_add_loop_invariant_op_in_chain,
