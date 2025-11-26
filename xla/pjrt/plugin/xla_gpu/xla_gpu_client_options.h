@@ -53,9 +53,11 @@ struct GpuClientOptions {
 
   std::optional<std::string> mock_gpu_topology;
 
-  std::optional<int> slice_index;
+  std::optional<int> partition_index;
 
   bool use_tfrt_gpu_client = false;
+
+  int max_inflight_computations = 8;
 };
 
 }  //  namespace xla

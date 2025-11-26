@@ -44,6 +44,8 @@ limitations under the License.
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/utils.h"
 #include "stablehlo/dialect/StablehloOps.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/utils.h"
 
@@ -79,16 +81,20 @@ using ::mlir::sdy::TensorShardingPerValueAttr;
 // the `op`.
 void saveOpShardingPerValueAttr(
     Operation* op, TensorShardingPerValueAttr shardingPerValueAttr) {
-  setFrontendAttribute(op, kShardingRoundTripAttr, shardingPerValueAttr);
+  setFrontendAttribute(op,
+                       xla::ToStringRef(HloSharding::kShardingFrontendAttrName),
+                       shardingPerValueAttr);
 }
 
 // Converts the shardings from `kShardingAttr` into
-// `kShardingRoundTripStringAttr`.
+// `HloSharding::kShardingFrontendAttrName`.
 LogicalResult exportFunc(FuncOp funcOp, OpBuilder& builder) {
   for (int64_t argNum = 0; argNum < funcOp.getNumArguments(); ++argNum) {
     if (auto oldSharding = funcOp.getArgAttrOfType<TensorShardingAttr>(
             argNum, kShardingAttr)) {
-      setFrontendAttribute(funcOp, kShardingRoundTripAttr, oldSharding, argNum);
+      setFrontendAttribute(
+          funcOp, xla::ToStringRef(HloSharding::kShardingFrontendAttrName),
+          oldSharding, argNum);
     }
   }
 
@@ -172,8 +178,8 @@ class SdyRoundTripExportShardyAttrsPass
   StringRef getDescription() const override {
     return "Converts the shardy attributes from "
            "kShardingAttr/kShardingRuleAttr to "
-           "kShardingRoundTripAttr/kShardingRuleRoundTripAttr in the HLO "
-           "frontend attributes and saves the mesh symbols as "
+           "HloSharding::kShardingFrontendAttrName/kShardingRuleRoundTripAttr "
+           "in the HLO frontend attributes and saves the mesh symbols as "
            "kMeshesRoundTripAttr in the module frontend attributes.";
   }
 

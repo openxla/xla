@@ -48,8 +48,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "xla/autotuning.pb.h"
-#include "xla/backends/gpu/codegen/triton/kernel_name_tracer.h"
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
+#include "xla/backends/gpu/profiler/kernel_name_tracer.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -81,10 +81,16 @@ class AlgorithmTest : public GpuCodegenTest {
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_autotune_level(0);
-    // TODO(b/393299275): remove when the flag is enabled by default.
+    // TODO(b/393299275): remove when these flags are on by default.
     debug_options.clear_xla_gpu_unsupported_generic_triton_emitter_features();
     debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
         DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_DISABLE_LEGACY_GEMM);
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_OPS_IN_GEMM_FUSION);
+    debug_options.add_xla_gpu_unsupported_generic_triton_emitter_features(
+        DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_GEMM_SHAPES);
     return debug_options;
   }
 
@@ -195,13 +201,15 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32) {
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   ASSERT_TRUE(ok);
 
-  auto tracer = KernelNameTracer::Create();
-  if (tracer == nullptr) {
+  absl::StatusOr<std::unique_ptr<KernelNameTracer>> tracer =
+      KernelNameTracer::Create(
+          backend().default_stream_executor()->GetPlatform()->id());
+  if (!tracer.ok()) {
     GTEST_SKIP() << "KernelNameTracer is not implemented.";
   }
-  tracer->start();
+  tracer.value()->start();
   EXPECT_TRUE(Run(std::move(module), /*run_hlo_passes=*/false));
-  auto kernel_names = tracer->stop();
+  auto kernel_names = tracer.value()->stop();
 
   auto cc = GetCudaComputeCapability();
   using CudaComputeCapabilities =
@@ -290,13 +298,15 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   ASSERT_TRUE(ok);
 
-  auto tracer = KernelNameTracer::Create();
-  if (tracer == nullptr) {
+  absl::StatusOr<std::unique_ptr<KernelNameTracer>> tracer =
+      KernelNameTracer::Create(
+          backend().default_stream_executor()->GetPlatform()->id());
+  if (!tracer.ok()) {
     GTEST_SKIP() << "KernelNameTracer is not implemented.";
   }
-  tracer->start();
+  tracer.value()->start();
   EXPECT_TRUE(Run(std::move(module), /*run_hlo_passes=*/false));
-  auto kernel_names = tracer->stop();
+  auto kernel_names = tracer.value()->stop();
 
   auto cc = GetCudaComputeCapability();
   using CudaComputeCapabilities =
@@ -308,6 +318,7 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
                                     ::testing::HasSubstr("loop_convert_fusion"),
                                     ::testing::HasSubstr("loop_select_fusion"),
                                     ::testing::HasSubstr("nvjet"),
+                                    ::testing::HasSubstr("nvjet"),
                                     ::testing::HasSubstr("nvjet")));
       break;
     case CudaComputeCapabilities::kAmpere:
@@ -315,6 +326,8 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
                                     ::testing::HasSubstr("loop_convert_fusion"),
                                     ::testing::HasSubstr("loop_convert_fusion"),
                                     ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
                                     ::testing::HasSubstr("gemm_bf16_")));
       break;
     case CudaComputeCapabilities::kHopper:
@@ -352,26 +365,31 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   ASSERT_TRUE(ok);
 
-  auto tracer = KernelNameTracer::Create();
-  if (tracer == nullptr) {
+  absl::StatusOr<std::unique_ptr<KernelNameTracer>> tracer =
+      KernelNameTracer::Create(
+          backend().default_stream_executor()->GetPlatform()->id());
+  if (!tracer.ok()) {
     GTEST_SKIP() << "KernelNameTracer is not implemented.";
   }
-  tracer->start();
+  tracer.value()->start();
   EXPECT_TRUE(Run(std::move(module), /*run_hlo_passes=*/false));
-  auto kernel_names = tracer->stop();
+  auto kernel_names = tracer.value()->stop();
 
   auto cc = GetCudaComputeCapability();
   using CudaComputeCapabilities =
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
     case CudaComputeCapabilities::kBlackwell:
-      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
-                                    ::testing::HasSubstr("loop_convert_fusion"),
-                                    ::testing::HasSubstr("loop_convert_fusion"),
-                                    ::testing::HasSubstr("loop_select_fusion"),
-                                    ::testing::HasSubstr("wrapped_add"),
-                                    ::testing::HasSubstr("nvjet"),
-                                    ::testing::HasSubstr("nvjet")));
+      EXPECT_THAT(
+          kernel_names,
+          ::testing::UnorderedElementsAre(
+              ::testing::HasSubstr("loop_convert_fusion"),
+              ::testing::HasSubstr("loop_convert_fusion"),
+              ::testing::HasSubstr("loop_select_fusion"),
+              ::testing::HasSubstr("wrapped_add"),
+              ::testing::HasSubstr("nvjet"), ::testing::HasSubstr("nvjet"),
+              ::testing::HasSubstr("nvjet"), ::testing::HasSubstr("nvjet"),
+              ::testing::HasSubstr("nvjet"), ::testing::HasSubstr("nvjet")));
       break;
     case CudaComputeCapabilities::kAmpere:
       EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
@@ -379,6 +397,11 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
                                     ::testing::HasSubstr("loop_convert_fusion"),
                                     ::testing::HasSubstr("loop_select_fusion"),
                                     ::testing::HasSubstr("wrapped_add"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
                                     ::testing::HasSubstr("gemm_bf16_")));
       break;
     case CudaComputeCapabilities::kHopper:
@@ -417,41 +440,46 @@ TEST_F(BlasAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   ASSERT_TRUE(ok);
 
-  auto tracer = KernelNameTracer::Create();
-  if (tracer == nullptr) {
+  absl::StatusOr<std::unique_ptr<KernelNameTracer>> tracer =
+      KernelNameTracer::Create(
+          backend().default_stream_executor()->GetPlatform()->id());
+  if (!tracer.ok()) {
     GTEST_SKIP() << "KernelNameTracer is not implemented.";
   }
-  tracer->start();
+  tracer.value()->start();
   EXPECT_TRUE(Run(std::move(module), /*run_hlo_passes=*/false));
-  auto kernel_names = tracer->stop();
+  auto kernel_names = tracer.value()->stop();
 
   auto cc = GetCudaComputeCapability();
   using CudaComputeCapabilities =
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
     case CudaComputeCapabilities::kBlackwell:
-      EXPECT_THAT(kernel_names,
-                  ::testing::UnorderedElementsAre(
-                      ::testing::HasSubstr("bitcast_convert_subtract"),
-                      ::testing::HasSubstr("bitcast_convert_subtract"),
-                      ::testing::HasSubstr("loop_select_fusion"),
-                      ::testing::HasSubstr("tf32gemm")));
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_and_subtract"),
+                                    ::testing::HasSubstr("loop_and_subtract"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("tf32gemm"),
+                                    ::testing::HasSubstr("tf32gemm"),
+                                    ::testing::HasSubstr("tf32gemm")));
       break;
     case CudaComputeCapabilities::kAmpere:
-      EXPECT_THAT(kernel_names,
-                  ::testing::UnorderedElementsAre(
-                      ::testing::HasSubstr("bitcast_convert_subtract"),
-                      ::testing::HasSubstr("bitcast_convert_subtract"),
-                      ::testing::HasSubstr("loop_select_fusion"),
-                      ::testing::HasSubstr("cutlass_80")));
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_and_subtract"),
+                                    ::testing::HasSubstr("loop_and_subtract"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("cutlass_80"),
+                                    ::testing::HasSubstr("cutlass_80"),
+                                    ::testing::HasSubstr("cutlass_80")));
       break;
     case CudaComputeCapabilities::kHopper:
-      EXPECT_THAT(kernel_names,
-                  ::testing::UnorderedElementsAre(
-                      ::testing::HasSubstr("bitcast_convert_subtract"),
-                      ::testing::HasSubstr("bitcast_convert_subtract"),
-                      ::testing::HasSubstr("loop_select_fusion"),
-                      ::testing::HasSubstr("tf32f32")));
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_and_subtract"),
+                                    ::testing::HasSubstr("loop_and_subtract"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("tf32f32"),
+                                    ::testing::HasSubstr("tf32f32"),
+                                    ::testing::HasSubstr("tf32f32")));
       break;
     default:
       GTEST_SKIP() << "Unsupported compute capability: " << cc.major
@@ -463,10 +491,26 @@ TEST_F(Triton6xBF16GemmTest, Emit6xBF16GemmWhenBothInputsAreF32) {
   constexpr absl::string_view kHloText = R"(
     HloModule Emit6xBF16GemmWhenBothInputsAreF32
 
+    lhs {
+      ROOT p0 = f32[5,7] parameter(0)
+    }
+
+    rhs {
+      ROOT p0 = f32[7,33] parameter(0)
+    }
+
     triton_dot {
       p0 = f32[5,7] parameter(0)
       p1 = f32[7,33] parameter(1)
-      ROOT dot = f32[5,33] dot(p0, p1),
+      lhs = f32[5,7] fusion(p0), kind=kCustom, calls=lhs,
+       backend_config={"fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{"output_tiles":[{"sizes":["32","32"]}]}}}
+      rhs = f32[7,33] fusion(p1), kind=kCustom, calls=rhs,
+       backend_config={"fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{"output_tiles":[{"sizes":["32","32"]}]}}}
+      ROOT dot = f32[5,33] dot(lhs, rhs),
         lhs_contracting_dims={1}, rhs_contracting_dims={0},
         algorithm=dot_bf16_bf16_f32_x6
     }
@@ -475,9 +519,11 @@ TEST_F(Triton6xBF16GemmTest, Emit6xBF16GemmWhenBothInputsAreF32) {
       p0 = f32[5,7]{1,0} parameter(0)
       p1 = f32[7,33]{1,0} parameter(1)
       ROOT _ = f32[5,33] fusion(p0, p1), kind=kCustom, calls=triton_dot,
-        backend_config={"fusion_backend_config": {kind: "__triton_gemm",
-        triton_gemm_config:
-        {"block_m":32,"block_n":32,"block_k":32,"split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}
+        backend_config={"fusion_backend_config": {
+          kind: "__triton_nested_gemm_fusion",
+          block_level_fusion_config: {
+            "output_tiles":[{"sizes":["32","32"]}],
+            "num_stages":1,"num_warps":1,"num_ctas":1}}}
     }
   )";
   TF_ASSERT_OK(
@@ -514,10 +560,26 @@ TEST_F(Triton6xBF16GemmTest, Triton6xBF16GemmWorksForLongContractingDimension) {
   constexpr absl::string_view kHloText = R"(
     HloModule Triton6xBF16GemmWorksForLongContractingDimension
 
+    lhs {
+      ROOT p0 = f32[5,2048] parameter(0)
+    }
+
+    rhs {
+      ROOT p0 = f32[2048,33] parameter(0)
+    }
+
     triton_dot {
       p0 = f32[5,2048] parameter(0)
       p1 = f32[2048,33] parameter(1)
-      ROOT dot = f32[5,33] dot(p0, p1),
+      lhs = f32[5,2048] fusion(p0), kind=kCustom, calls=lhs,
+       backend_config={"fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{"output_tiles":[{"sizes":["64","32"]}]}}}
+      rhs = f32[2048,33] fusion(p1), kind=kCustom, calls=rhs,
+       backend_config={"fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{"output_tiles":[{"sizes":["32","32"]}]}}}
+      ROOT dot = f32[5,33] dot(lhs, rhs),
         lhs_contracting_dims={1}, rhs_contracting_dims={0},
         algorithm=dot_bf16_bf16_f32_x6
     }
@@ -526,9 +588,11 @@ TEST_F(Triton6xBF16GemmTest, Triton6xBF16GemmWorksForLongContractingDimension) {
       p0 = f32[5,2048]{1,0} parameter(0)
       p1 = f32[2048,33]{1,0} parameter(1)
       ROOT _ = f32[5,33] fusion(p0, p1), kind=kCustom, calls=triton_dot,
-        backend_config={"fusion_backend_config": {kind: "__triton_gemm",
-        triton_gemm_config:
-        {"block_m":64,"block_n":32,"block_k":32,"split_k":1,"num_stages":1,"num_warps":4, "num_ctas":1}}}
+        backend_config={"fusion_backend_config": {
+          kind: "__triton_nested_gemm_fusion",
+          block_level_fusion_config: {
+            "output_tiles":[{"sizes":["64","32"]}],
+            "num_stages":1,"num_warps":4, "num_ctas":1}}}
     }
   )";
   TF_ASSERT_OK(
@@ -540,7 +604,7 @@ CHECK-COUNT-6:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} : tensor<64x32xbf16> 
 }
 
 TEST_F(Triton6xBF16GemmTest, Emit6xBF16GemmEndToEnd) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "ALG_DOT_BF16_BF16_F32_X6 not supported on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -573,10 +637,26 @@ TEST_F(Triton3xBF16GemmTest, Emit3xBF16GemmWhenBothInputsAreF32) {
   constexpr absl::string_view kHloText = R"(
     HloModule Emit3xBF16GemmWhenBothInputsAreF32
 
+    lhs {
+      ROOT p0 = f32[5,7] parameter(0)
+    }
+
+    rhs {
+      ROOT p0 = f32[7,33] parameter(0)
+    }
+
     triton_dot {
       p0 = f32[5,7] parameter(0)
       p1 = f32[7,33] parameter(1)
-      ROOT dot = f32[5,33] dot(p0, p1),
+      lhs = f32[5,7] fusion(p0), kind=kCustom, calls=lhs,
+       backend_config={"fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{"output_tiles":[{"sizes":["32","32"]}]}}}
+      rhs = f32[7,33] fusion(p1), kind=kCustom, calls=rhs,
+       backend_config={"fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{"output_tiles":[{"sizes":["32","32"]}]}}}
+      ROOT dot = f32[5,33] dot(lhs, rhs),
         lhs_contracting_dims={1}, rhs_contracting_dims={0},
         algorithm=dot_bf16_bf16_f32_x3
     }
@@ -585,9 +665,11 @@ TEST_F(Triton3xBF16GemmTest, Emit3xBF16GemmWhenBothInputsAreF32) {
       p0 = f32[5,7]{1,0} parameter(0)
       p1 = f32[7,33]{1,0} parameter(1)
       ROOT _ = f32[5,33] fusion(p0, p1), kind=kCustom, calls=triton_dot,
-        backend_config={"fusion_backend_config": {kind: "__triton_gemm",
-        triton_gemm_config:
-        {"block_m":32,"block_n":32,"block_k":32,"split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}
+        backend_config={"fusion_backend_config": {
+          kind: "__triton_nested_gemm_fusion",
+          block_level_fusion_config: {
+            "output_tiles":[{"sizes":["32","32"]}],
+            "num_stages":1,"num_warps":1,"num_ctas":1}}}
     }
   )";
   TF_ASSERT_OK(
@@ -618,10 +700,26 @@ TEST_F(Triton3xBF16GemmTest, Triton3xBF16GemmWorksForLongContractingDimension) {
   constexpr absl::string_view kHloText = R"(
     HloModule Triton3xBF16GemmWorksForLongContractingDimension
 
+    lhs {
+      ROOT p0 = f32[5,2048] parameter(0)
+    }
+
+    rhs {
+      ROOT p0 = f32[2048,33] parameter(0)
+    }
+
     triton_dot {
       p0 = f32[5,2048] parameter(0)
       p1 = f32[2048,33] parameter(1)
-      ROOT dot = f32[5,33] dot(p0, p1),
+      lhs = f32[5,2048] fusion(p0), kind=kCustom, calls=lhs,
+       backend_config={"fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{"output_tiles":[{"sizes":["64","32"]}]}}}
+      rhs = f32[2048,33] fusion(p1), kind=kCustom, calls=rhs,
+       backend_config={"fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{"output_tiles":[{"sizes":["32","32"]}]}}}
+      ROOT dot = f32[5,33] dot(lhs, rhs),
         lhs_contracting_dims={1}, rhs_contracting_dims={0},
         algorithm=dot_bf16_bf16_f32_x3
     }
@@ -630,9 +728,11 @@ TEST_F(Triton3xBF16GemmTest, Triton3xBF16GemmWorksForLongContractingDimension) {
       p0 = f32[5,2048]{1,0} parameter(0)
       p1 = f32[2048,33]{1,0} parameter(1)
       ROOT _ = f32[5,33] fusion(p0, p1), kind=kCustom, calls=triton_dot,
-        backend_config={"fusion_backend_config": {kind: "__triton_gemm",
-        triton_gemm_config:
-        {"block_m":64,"block_n":32,"block_k":32,"split_k":1,"num_stages":1,"num_warps":4, "num_ctas":1}}}
+        backend_config={"fusion_backend_config": {
+          kind: "__triton_nested_gemm_fusion",
+          block_level_fusion_config: {
+            "output_tiles":[{"sizes":["64","32"]}],
+            "num_stages":1,"num_warps":4, "num_ctas":1}}}
     }
   )";
   TF_ASSERT_OK(
@@ -644,7 +744,7 @@ CHECK-COUNT-3:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} : tensor<64x32xbf16> 
 }
 
 TEST_F(Triton3xBF16GemmTest, Emit3xBF16GemmEndToEnd) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "ALG_DOT_BF16_BF16_F32_X3 not supported on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -670,7 +770,7 @@ CHECK-NOT: mma.sync.aligned.{{.*}}.row.col.f32.tf32.tf32.f32
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Triton currently disabled on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -693,7 +793,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Triton currently disabled on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -716,7 +816,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Triton currently disabled on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -741,7 +841,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Triton currently disabled on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -767,7 +867,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32) {
   if (!SupportsBF16(GpuComputeComp())) {
     GTEST_SKIP() << "BF16 not supported.";
   }
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Triton currently disabled on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -793,43 +893,50 @@ TEST_F(TritonAlgorithmTest, Dot_BF16_X6_WithConst) {
   constexpr absl::string_view kHloText = R"(
     HloModule Dot_BF16_X6_WithConst
 
-    %triton_fusion_dot (p_0: f32[1,258]) -> f32[258] {
-      %c_1 = f32[] constant(-1.22474492)
-      %r_1 = f32[1]{0} reshape(f32[] %c_1)
-      %r_2 = f32[1,1]{1,0} reshape(f32[1]{0} %r_1)
-      %p_0 = f32[1,258]{1,0} parameter(0)
-      %r_3 = f32[258]{0} reshape(f32[1,258]{1,0} %p_0)
-      %r_4 = f32[258,1]{1,0} reshape(f32[258]{0} %r_3)
-      %dot_0 = f32[1,258]{1,0} dot(f32[1,1]{1,0} %r_2, f32[258,1]{1,0} %r_4),
+    lhs {
+      constant = f32[] constant(-1.22474492)
+      ROOT broadcast = f32[1,1] broadcast(constant)
+    }
+
+    rhs {
+      ROOT p0 = f32[258,1] parameter(0)
+    }
+
+    triton_fusion_dot {
+      p0 = f32[258,1] parameter(0)
+      lhs = f32[1,1] fusion(), kind=kCustom, calls=lhs,
+       backend_config={"fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{"output_tiles":[{"sizes":["16","16"]}]}}}
+      rhs = f32[258,1] fusion(p0), kind=kCustom, calls=rhs,
+       backend_config={"fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{"output_tiles":[{"sizes":["16","256"]}]}}}
+      dot = f32[1,258] dot(lhs, rhs),
           lhs_contracting_dims={0},
           rhs_contracting_dims={1},
           algorithm=dot_bf16_bf16_f32_x6
-      %r_5 = f32[258]{0} reshape(f32[1,258]{1,0} %dot_0)
-      %c_2 = f32[] constant(0.282094777)
-      %b_0 = f32[258]{0} broadcast(f32[] %c_2), dimensions={}
-      ROOT %m_0 = f32[258]{0} multiply(f32[258]{0} %r_5, f32[258]{0} %b_0)
+      constant = f32[] constant(0.282094777)
+      broadcast = f32[1,258] broadcast(constant), dimensions={}
+      ROOT root = f32[1,258] multiply(dot, broadcast)
     }
 
-    ENTRY %entry_computation {
-      %p_0 = f32[1,258]{1,0} parameter(0)
-      ROOT %dot = f32[258]{0} fusion(f32[1,258]{1,0} %p_0),
+    ENTRY entry_computation {
+      p0 = f32[258,1] parameter(0)
+      ROOT root = f32[1,258] fusion(p0),
         kind=kCustom,
-        calls=%triton_fusion_dot,
+        calls=triton_fusion_dot,
         backend_config={
           "operation_queue_id":"0",
           "wait_on_operation_queues":[],
           "fusion_backend_config":{
-            "kind":"__triton_gemm",
-            "triton_gemm_config":{
-              "block_m":"16",
-              "block_n":"256",
-              "block_k":"16",
-              "split_k":"1",
-              "num_stages":"4",
-              "num_warps":"4",
-              "num_ctas":"1"
-            }
-          },
+            "kind":"__triton_nested_gemm_fusion",
+            "block_level_fusion_config":{
+              "output_tiles": [{"sizes": ["16","256"]}],
+              "num_stages":4,
+              "num_warps":4,
+              "num_ctas":1
+            }},
           "force_earliest_schedule":false
         }
     }
@@ -1797,7 +1904,8 @@ class PrecisionTests
     module->mutable_config().set_debug_options(debug_options);
     TF_ASSIGN_OR_RETURN(module, GetOptimizedModule(std::move(module)));
     if (backend == Backend::kTriton) {
-      TF_RETURN_IF_ERROR(CheckGemmPattern(*module, "CHECK: __triton_gemm"));
+      TF_RETURN_IF_ERROR(CheckGemmPattern(
+          *module, "CHECK: {{__triton_gemm|__triton_nested_gemm_fusion}}"));
     } else if (backend == Backend::kBlas) {
       TF_RETURN_IF_ERROR(CheckGemmPattern(*module, "CHECK: __cublas$gemm"));
     } else {
@@ -1843,7 +1951,7 @@ MATCHER_P(RelativeDifferenceIsWithin, max_rel_difference, "") {
 }
 
 TEST_P(PrecisionTests, PrecisionCheck) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Precision tests is unknown for ROCM.";
   }
 
@@ -1925,7 +2033,7 @@ TEST_P(PrecisionTests, CheckPrecisionDegradationAlongKDimension) {
         << "To run the test, set --v=1 and rerun the test.\n"
         << "The test is quite slow and produces output for manual inspection.";
   }
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Precision tests is unknown for ROCM.";
   }
   Backend backend = std::get<1>(GetParam());

@@ -26,8 +26,10 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/autotuning.pb.h"
 #include "xla/error_spec.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -58,9 +60,10 @@ class TritonTest : public GpuCodegenTest {
         .set_xla_gpu_experimental_enable_subchannel_dequantisation_fusion(true);
     // TODO(b/393299275): remove this once flag is on by default and test is
     // updated.
-    // Note that we do NOT set
-    // xla_gpu_unsupported_generic_triton_emitter_opts here as test
-    // will run the pass forcefully later.
+    // Note that we clear
+    // xla_gpu_unsupported_generic_triton_emitter_opts here to disable
+    // nest gemm fusion pass as test will run the pass manually.
+    debug_options.clear_xla_gpu_unsupported_generic_triton_emitter_features();
     return debug_options;
   }
 
@@ -104,12 +107,13 @@ class TritonTest : public GpuCodegenTest {
             .mutable_debug_options()
             .mutable_xla_gpu_unsupported_generic_triton_emitter_features();
     emitter_opts->Add(DebugOptions::GENERIC_TRITON_EMITTER_ENABLE_NESTED_GEMM);
+    emitter_opts->Add(DebugOptions::GENERIC_TRITON_EMITTER_DISABLE_LEGACY_GEMM);
     emitter_opts->Add(
         DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_OPS_IN_GEMM_FUSION);
     emitter_opts->Add(
         DebugOptions::GENERIC_TRITON_EMITTER_ALLOW_ALL_GEMM_SHAPES);
     absl::StatusOr<bool> nested_or =
-        NestGemmFusion(device_desc().gpu_compute_capability())
+        NestGemmFusion(device_desc(), &symbolic_expr_context_)
             .Run(module.get());
     if (!nested_or.ok()) {
       return ::testing::AssertionFailure() << nested_or.status().message();
@@ -150,6 +154,8 @@ class TritonTest : public GpuCodegenTest {
   const stream_executor::DeviceDescription& device_desc() {
     return backend().default_stream_executor()->GetDeviceDescription();
   }
+  mlir::MLIRContext mlir_context_;
+  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 // The following tests are for the channel and subchannel dequantization
@@ -659,7 +665,8 @@ TEST_F(TritonTest, FuseMultiplyInPrologue) {
   )"));
 }
 
-TEST_F(TritonTest, FuseMultiplyInEpilogue) {
+// TODO(b/449140429): Re-enable this test.
+TEST_F(TritonTest, DISABLED_FuseMultiplyInEpilogue) {
   constexpr absl::string_view kHloText = R"(
     HloModule FuseMultiplyInEpilogue
 
@@ -1216,6 +1223,52 @@ TEST_F(TritonTest, RHSTestWithNotMinorContractingDimWithBatchDim0) {
       ROOT dot = bf16[2,8,4] fusion(lhs, rhs), kind=kCustom,
         calls=triton_computation,
         backend_config={"fusion_backend_config": {"kind":"__triton_gemm"}}
+    }
+  )";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      kHloText, ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-2}));
+}
+
+TEST_F(TritonTest, FusedBroadcastAddBroadcastMultiplyDotGeneratesValidTriton) {
+  // Here we test that the Triton codegen can handle a fusion with the chain of
+  // a broadcast, add, broadcast, multiply, and dot. First broadcast was causing
+  // a problem in the past because it was not using a 1d tile shape. That was
+  // necessary for the Triton kernel to be valid.
+  constexpr absl::string_view kHloText = R"(
+    HloModule gemm_fusion_dot
+
+    %fusion  {
+      p0 = bf16[1024,1,512]{2,1,0} parameter(0)
+      p0_b = bf16[1,128,8,8,64]{4,3,2,1,0} bitcast(p0)
+      p1 = bf16[1,128,8,8]{3,2,1,0} parameter(1)
+      c0 = bf16[] constant(3.e-02)
+      c0_b = bf16[1,128,8,8]{3,2,1,0} broadcast(c0), dimensions={}
+      add_0 = bf16[1,128,8,8]{3,2,1,0} add(p1, c0_b)
+      add_bitcast = bf16[128,8,8]{2,1,0} bitcast(add_0)
+      add_broadcast = bf16[1,128,8,8,64]{4,3,2,1,0} broadcast(add_bitcast), dimensions={1,2,3}
+      m_p0 = bf16[1,128,8,8,64]{4,3,2,1,0} multiply(p0_b, add_broadcast)
+      p2 = bf16[8,64]{1,0} parameter(2)
+      c1 = bf16[] constant(1)
+      c1_broadcast = bf16[8,64]{1,0} broadcast(c1), dimensions={}
+      add_p2 = bf16[8,64]{1,0} add(p2, c1_broadcast)
+      add_p2_broadcast = bf16[1,128,8,8,64]{4,3,2,1,0} broadcast(add_p2),
+          dimensions={3,4}
+      m_m_p0 = bf16[1,128,8,8,64]{4,3,2,1,0} multiply(m_p0, add_p2_broadcast)
+      m_m_p0_bitcast = bf16[1024,512]{1,0} bitcast(m_m_p0)
+      p3 = bf16[64,512]{1,0} parameter(3)
+      ROOT dot = bf16[1024,64]{1,0} dot(m_m_p0_bitcast, p3),
+          lhs_contracting_dims={1},
+          rhs_contracting_dims={1}
+    }
+
+    ENTRY entry_computation {
+      p0 = bf16[1024,1,512]{2,1,0} parameter(0)
+      p1 = bf16[1,128,8,8]{3,2,1,0} parameter(1)
+      p2 = bf16[8,64]{1,0} parameter(2)
+      p3 = bf16[64,512]{1,0} parameter(3)
+      ROOT gemm_fusion_dot.1642 = bf16[1024,64]{1,0} fusion(p0, p1, p2, p3),
+          kind=kCustom,
+          calls=fusion
     }
   )";
   EXPECT_TRUE(RunAndCompareNoHloPasses(

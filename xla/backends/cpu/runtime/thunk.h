@@ -35,6 +35,8 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/xfeed_manager.h"
+#include "xla/backends/cpu/runtime/xnnpack/xnn_interop.h"
+#include "xla/backends/cpu/runtime/xnnpack/xnn_threadpool.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/runtime/buffer_use.h"
@@ -44,6 +46,11 @@ limitations under the License.
 #include "xla/tsl/concurrency/chain.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
+
+#ifdef XLA_YNNPACK
+#include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
+#include "xla/backends/cpu/runtime/ynnpack/ynn_threadpool.h"
+#endif  // XLA_YNNPACK
 
 namespace Eigen {
 struct ThreadPoolDevice;
@@ -85,6 +92,7 @@ class Thunk {
     kTopK,
     kWhile,
     kXnnFusion,
+    kYnnFusion,
     kOneDnnFusion,
   };
 
@@ -247,6 +255,39 @@ class Thunk {
   };
 
   //===--------------------------------------------------------------------===//
+  // XnnParams
+  //===--------------------------------------------------------------------===//
+
+  // Parameters capturing all the details required for running XNNPACK fusions.
+  struct XnnParams {
+    static absl::StatusOr<XnnParams> Create(
+        const ExecutableRunOptions* run_options);
+
+    XnnThreadpool threadpool = nullptr;
+
+    explicit XnnParams(XnnThreadpool threadpool);
+  };
+
+  //===--------------------------------------------------------------------===//
+  // YnnParams
+  //===--------------------------------------------------------------------===//
+
+#ifdef XLA_YNNPACK
+  // Parameters capturing all the details required for running XNNPACK fusions.
+  struct YnnParams {
+    static absl::StatusOr<YnnParams> Create(
+        const ExecutableRunOptions* run_options);
+
+    YnnThreadpool threadpool = nullptr;
+
+    explicit YnnParams(YnnThreadpool threadpool);
+  };
+#else
+  // Use XnnParams for placeholder. The parameter won't be used anyway.
+  using YnnParams = XnnParams;
+#endif  // XLA_YNNPACK
+
+  //===--------------------------------------------------------------------===//
   // ExecuteParams
   //===--------------------------------------------------------------------===//
 
@@ -260,6 +301,10 @@ class Thunk {
     TaskRunner* task_runner = nullptr;
     CollectiveExecuteParams* collective_params = nullptr;
     CustomCallExecuteParams* custom_call_params = nullptr;
+    XnnParams* xnn_params = nullptr;
+    YnnParams* ynn_params = nullptr;
+    int64_t run_id = -1;          // -1 means no run id is set.
+    int64_t device_ordinal = -1;  // -1 means no device ordinal is set.
     ExecuteSession session = ExecuteSession(ExecuteSession::kMaxWorkers,
                                             ExecuteSession::kSplitThreshold);
   };
@@ -330,7 +375,7 @@ class Thunk {
 
   // Encodes thunk info into the TraceMe compatible format. Used by
   // ThunkExecutor to create TraceMe annotations for profiler.
-  std::string TraceMeEncode() const;
+  std::string TraceMeEncode(int64_t run_id, int64_t device_ordinal) const;
 
   Kind kind_;
   Info info_;

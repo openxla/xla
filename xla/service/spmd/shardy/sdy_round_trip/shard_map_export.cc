@@ -51,7 +51,6 @@ namespace sdy {
 
 namespace {
 
-using ::mlir::MLIRContext;
 using ::mlir::ModuleOp;
 using ::mlir::StringRef;
 using ::mlir::func::CallOp;
@@ -68,11 +67,10 @@ class SdyRoundTripShardMapExportPass
 
   void runOnOperation() final {
     ModuleOp moduleOp = getOperation();
-    MLIRContext* context = moduleOp.getContext();
     mlir::SymbolTableCollection symbolTableCollection;
     mlir::SymbolTable& symbolTable =
         symbolTableCollection.getSymbolTable(moduleOp);
-    auto rewriter = mlir::IRRewriter(context);
+    auto rewriter = mlir::IRRewriter(moduleOp.getContext());
     moduleOp->walk([&](sdy::ManualComputationOp manualComputation) {
       rewriter.setInsertionPointToEnd(&moduleOp.getRegion().front());
       mlir::Location loc = manualComputation.getLoc();
@@ -82,15 +80,14 @@ class SdyRoundTripShardMapExportPass
       mlir::TypeRange localResultTypes =
           sdy::getBodyTerminatorOpOperandTypes(manualComputation);
       auto funcOp = FuncOp::create(
-          rewriter, loc, kManualComputationBodyFuncName,
+          rewriter, loc, kManualComputationFuncName,
           rewriter.getFunctionType(manualCompBodyArgTypes, localResultTypes));
       mlir::StringAttr funcName = symbolTable.insert(funcOp);
 
       rewriter.setInsertionPoint(manualComputation);
-      stablehlo::CustomCallOp globalToLocalShape;
       mlir::ValueRange operands = manualComputation->getOperands();
       if (!operands.empty()) {
-        globalToLocalShape = stablehlo::CustomCallOp::create(
+        auto globalToLocalShape = stablehlo::CustomCallOp::create(
             rewriter, loc, manualCompBodyArgTypes, operands);
         globalToLocalShape.setCallTargetName(kGlobalToLocalShapeCallTargetName);
         // We mark `xla.sdy.GlobalToLocalShape` as side-effecting to avoid
@@ -106,15 +103,14 @@ class SdyRoundTripShardMapExportPass
 
       auto callOp =
           CallOp::create(rewriter, loc, localResultTypes, funcName, operands);
+      setFrontendAttribute(callOp, kXlaInlineableAttr,
+                           rewriter.getBoolAttr(false));
 
       mlir::ResultRange results = manualComputation->getResults();
       if (!results.empty()) {
         auto localToGlobalShape = stablehlo::CustomCallOp::create(
             rewriter, loc, manualComputation.getResultTypes(),
             callOp->getResults());
-        // We don't mark `xla.sdy.LocalToGlobalShape` as side-effecting, so if
-        // any of its results has a dimension of size 0 (i.e. 0 num-elements),
-        // it will be replaced with a constant of the same shape.
         localToGlobalShape.setCallTargetName(kLocalToGlobalShapeCallTargetName);
         // We mark `xla.sdy.LocalToGlobalShape` as side-effecting to avoid
         // CSE removing it if it has no users.
@@ -136,10 +132,12 @@ class SdyRoundTripShardMapExportPass
   }
 
   StringRef getDescription() const override {
-    return "Converts the body of a ManualComputationOp to a separate function "
-           "with a CallOp and a pair of CustomCallOps that change the shape of "
-           "the arguments/results. The CallOp saves the in/out shardings and "
-           "manual axes as frontend attrs.";
+    return "Converts a `ManualComputationOp` to the following."
+           "1. A separate function for the body of the `ManualComputationOp`."
+           "2. A `CallOp` calling the function in #1, marked as not inlinable."
+           "3. A pair of `CustomCallOp`s that change the shape of the "
+           "   arguments/results. They save the in/out shardings and manual "
+           "   axes as frontend attrs.";
   }
   void getDependentDialects(mlir::DialectRegistry& registry) const final {
     registry.insert<stablehlo::StablehloDialect>();

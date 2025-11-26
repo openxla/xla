@@ -42,11 +42,13 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
 #include "shardy/common/file_utils.h"
+#include "shardy/dialect/sdy/transforms/common/propagation_options.h"
 #include "shardy/dialect/sdy/transforms/propagation/passes.h"
 #include "re2/re2.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/translate/stablehlo.h"
@@ -311,6 +313,7 @@ absl::Status runShardingPropagation(HloModule* hloModule,
                                     mlir::ModuleOp mlirModule,
                                     bool importMhloShardings,
                                     mlir::sdy::PropagationOptions options,
+                                    bool dedupFunctionsFully,
                                     absl::string_view passName) {
   LOG(INFO) << "Using Shardy for XLA SPMD propagation.";
 
@@ -356,6 +359,10 @@ absl::Status runShardingPropagation(HloModule* hloModule,
                                                dumpIndex++));
 
   if (importMhloShardings) {
+    // This branch is only used for testing. It allows us to test the module
+    // with hlo shardings without the frontend attributes.
+    LOG(WARNING) << "ShardyXLA is run against a module with HLO shardings. It "
+                    "should be used only for testing.";
     auto spanToArrayRef = [](absl::Span<const bool> span) {
       return mlir::ArrayRef<bool>(span.data(), span.size());
     };
@@ -365,10 +372,13 @@ absl::Status runShardingPropagation(HloModule* hloModule,
         spanToArrayRef(hloModule->config()
                            .allow_spmd_sharding_propagation_to_parameters()),
         spanToArrayRef(
-            hloModule->config().allow_spmd_sharding_propagation_to_output()));
+            hloModule->config().allow_spmd_sharding_propagation_to_output()),
+        /*importFuncCalls=*/true);
   } else {
-    // This is the default path.
-    addSdyRoundTripImportPipeline(pm);
+    // This branch is in production.
+    addSdyRoundTripImportPipeline(pm, /*enableConstantImport=*/true,
+                                  /*importFuncCalls=*/true,
+                                  /*liftAndDedupMeshes=*/true);
   }
 
   // NOTE: if we are using auto-spmd, we will use conservative propagation
@@ -377,7 +387,10 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
   options.enableAutoPartitioning = hloModule->use_auto_spmd_partitioning();
   mlir::sdy::addPropagationPipeline(pm, dumpIndex, options);
-  addStablehloExportPipeline(pm);
+
+  xla::sdy::StablehloExportPipelineOptions stablehloExportPipelineOptions;
+  stablehloExportPipelineOptions.dedupFunctionsFully = dedupFunctionsFully;
+  addStablehloExportPipeline(pm, stablehloExportPipelineOptions);
   pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir, "output_module",
                                                dumpIndex++));
   tsl::StatusScopedDiagnosticHandler diagnosticHandler(
@@ -385,19 +398,50 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   return diagnosticHandler.consumeStatus(pm.run(mlirModule));
 }
 
+bool eraseInlineableAttrForShardyManualComputations(HloModule* module) {
+  bool changed = false;
+  for (HloComputation* computation : module->computations()) {
+    for (HloInstruction* instruction : computation->instructions()) {
+      if (instruction->opcode() != HloOpcode::kCall ||
+          !instruction->frontend_attributes().map().contains(
+              kXlaInlineableAttr)) {
+        continue;
+      }
+      if (absl::StrContains(instruction->to_apply()->name(),
+                            sdy::kManualComputationFuncName.str())) {
+        instruction->erase_frontend_attribute(kXlaInlineableAttr);
+        // TODO(b/436603025). CallInliner do not inline the Shardy related
+        // manual computations based on the callee name. We have to rename the
+        // callee to a name such that it can be inlined. If we can remove the
+        // special handling in CallInliner, we can remove this renaming.
+        module->SetAndUniquifyComputationName(instruction->to_apply(),
+                                              "inlineable_callee");
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 }  // namespace
 
-absl::StatusOr<bool> ShardyXLA::Run(
+absl::StatusOr<bool> ShardyXLA::RunImpl(
     HloModule* hloModule,
     const absl::flat_hash_set<absl::string_view>& executionThreads) {
   auto moduleFrontendAttrs = hloModule->frontend_attributes().map();
   bool useTupleArgs = moduleFrontendAttrs.contains(kUseTupleArgs);
   bool importMhloShardings = moduleFrontendAttrs.contains(kImportMhloShardings);
 
-  if (!runSdyShardingPropagation && !useTupleArgs) {
-    // Nothing to do.
-    return false;
+  // If propagation is enabled, we don't need to erase the inlineable attribute
+  // for manual computations, since StablehloExportPipeline can handle it.
+  if (!runSdyShardingPropagation) {
+    bool changed = eraseInlineableAttrForShardyManualComputations(hloModule);
+    if (!useTupleArgs) {
+      // Nothing more to do.
+      return changed;
+    }
   }
+
   // The auto-spmd flag is present in both the HLO module and the config. Apply
   // auto spmd partitioning if either is true.
   if (hloModule->use_auto_spmd_partitioning() ||
@@ -430,9 +474,9 @@ absl::StatusOr<bool> ShardyXLA::Run(
                                      useTupleArgs);
 
   if (runSdyShardingPropagation) {
-    TF_RETURN_IF_ERROR(runShardingPropagation(hloModule, mlirModule.get(),
-                                              importMhloShardings,
-                                              defaultOptions, name()));
+    TF_RETURN_IF_ERROR(
+        runShardingPropagation(hloModule, mlirModule.get(), importMhloShardings,
+                               defaultOptions, dedupFunctionsFully, name()));
   }
 
   // TODO(b/431836696): Remove once issue is fixed.

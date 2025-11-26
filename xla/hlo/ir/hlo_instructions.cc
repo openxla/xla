@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_instructions.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -38,7 +37,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
-#include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -47,9 +45,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
+#include "xla/hlo/ir/replica_group.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
@@ -67,7 +67,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
@@ -112,22 +111,17 @@ void PrintPrecisionConfig(HloInstruction::AttributePrinter& printer,
 }
 
 void SetThreadName(HloComputation* called_computation,
-                   absl::string_view execution_thread,
-                   bool skip_async_execution_thread_overwrite) {
+                   absl::string_view execution_thread) {
   called_computation->SetExecutionThread(execution_thread);
   for (HloInstruction* instr : called_computation->instructions()) {
     if (instr->IsAsynchronous()) {
-      if (!skip_async_execution_thread_overwrite) {
-        // Set async instruction thread name and also recursively set async
-        // computations.
-        instr->set_async_execution_thread(execution_thread);
-      }
-      continue;
+      // Set async instruction thread name and also recursively set async
+      // computations.
+      instr->set_async_execution_thread(execution_thread);
     }
     for (HloComputation* nested_called_computation :
          instr->called_computations()) {
-      SetThreadName(nested_called_computation, execution_thread,
-                    skip_async_execution_thread_overwrite);
+      SetThreadName(nested_called_computation, execution_thread);
     }
   }
 }
@@ -423,8 +417,7 @@ HloInstruction* HloAsyncStartInstruction::AddCallOperand(
 void HloAsyncStartInstruction::set_async_execution_thread(
     absl::string_view async_execution_thread) {
   async_execution_thread_ = std::string(async_execution_thread);
-  SetThreadName(async_wrapped_computation(), async_execution_thread,
-                /*skip_async_execution_thread_overwrite=*/false);
+  SetThreadName(async_wrapped_computation(), async_execution_thread);
 }
 
 HloInstructionProto HloAsyncStartInstruction::ToProto() const {
@@ -713,12 +706,17 @@ HloInstructionProto HloChannelInstruction::ToProto() const {
 }
 
 void HloChannelInstruction::PrintExtraAttributesImpl(
-    AttributePrinter& printer, const HloPrintOptions& /*options*/) const {
+    AttributePrinter& printer, const HloPrintOptions& options) const {
   if (!channel_id_) {
     return;
   }
-  printer.Next([this](Printer* printer) {
-    AppendCat(printer, "channel_id=", *channel_id_);
+  printer.Next([this, &options](Printer* printer) {
+    printer->Append("channel_id=");
+    if (options.print_channel_id()) {
+      printer->Append(*channel_id_);
+    } else {
+      printer->Append("_");
+    }
   });
 }
 
@@ -850,7 +848,7 @@ HloSendDoneInstruction::CloneWithNewOperandsImpl(
     const Shape& shape, absl::Span<HloInstruction* const> new_operands,
     HloCloneContext* context) const {
   CHECK_EQ(new_operands.size(), 1);
-  HloSendInstruction* send = dynamic_cast<HloSendInstruction*>(new_operands[0]);
+  HloSendInstruction* send = DynCast<HloSendInstruction>(new_operands[0]);
   if (send != nullptr) {
     return std::make_unique<HloSendDoneInstruction>(send, is_host_transfer());
   }
@@ -909,7 +907,7 @@ HloRecvDoneInstruction::CloneWithNewOperandsImpl(
     const Shape& shape, absl::Span<HloInstruction* const> new_operands,
     HloCloneContext* context) const {
   CHECK_EQ(new_operands.size(), 1);
-  HloRecvInstruction* recv = dynamic_cast<HloRecvInstruction*>(new_operands[0]);
+  HloRecvInstruction* recv = DynCast<HloRecvInstruction>(new_operands[0]);
   if (recv != nullptr) {
     return std::make_unique<HloRecvDoneInstruction>(recv, is_host_transfer());
   }
@@ -1364,9 +1362,7 @@ HloCollectivePermuteInstruction::CloneWithNewOperandsImpl(
     HloCloneContext* /*context*/) const {
   if (dynamic_slice_sizes_list().empty()) {
     return std::make_unique<HloCollectivePermuteInstruction>(
-        opcode(), shape,
-        absl::Span<HloInstruction* const>(new_operands.subspan(0, 1)),
-        source_target_pairs(), channel_id());
+        opcode(), shape, new_operands, source_target_pairs(), channel_id());
   }
   return std::make_unique<HloCollectivePermuteInstruction>(
       opcode(), shape, new_operands[0], new_operands[1], new_operands[2],
@@ -2110,13 +2106,21 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
     }
     HloInstruction* new_root = called_computation()->AddInstruction(
         HloInstruction::CreateTuple(tuple_elements));
+    new_root->set_original_value(
+        xla::OriginalValue::CreateFromInstruction(new_root));
 
     // No need to create an original value for a new root with added outputs
     // as the original value is saved in the get-tuple-element instructions
     // that use it.
     called_computation()->set_root_instruction(new_root,
                                                /*accept_different_shape=*/true);
+
+    // Update the shape of the fusion instruction to the shape of the new root.
     *mutable_shape() = new_root->shape();
+    // Update the original value of the fusion instruction to the original value
+    // of the new root.
+    set_original_value(new_root->original_value());
+
     // The instruction might have an existing sharding, which will no longer
     // be valid after we change the shape. So clear the sharding.
     clear_sharding();
@@ -2181,11 +2185,9 @@ HloCallableInstruction::GetOrCloneCalledComputations(
 }
 
 void HloCallableInstruction::RecursivelySetComputationsThreadName(
-    absl::string_view execution_thread,
-    bool skip_async_execution_thread_overwrite) {
+    absl::string_view execution_thread) {
   for (HloComputation* comp : called_computations()) {
-    SetThreadName(comp, execution_thread,
-                  skip_async_execution_thread_overwrite);
+    SetThreadName(comp, execution_thread);
   }
 }
 
@@ -3947,6 +3949,56 @@ HloRaggedDotInstruction::CloneWithNewOperandsImpl(
   return std::make_unique<HloRaggedDotInstruction>(
       shape, new_operands[0], new_operands[1], new_operands[2],
       ragged_dot_dimension_numbers_, precision_config_);
+}
+
+HloScaledDotInstruction::HloScaledDotInstruction(
+    const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+    HloInstruction* lhs_scale, HloInstruction* rhs_scale,
+    const DotDimensionNumbers& dimension_numbers,
+    const PrecisionConfig& precision_config)
+    : HloInstruction(HloOpcode::kScaledDot, shape),
+      dot_dimension_numbers_(dimension_numbers),
+      precision_config_(precision_config) {
+  AppendOperand(lhs);
+  AppendOperand(rhs);
+  AppendOperand(lhs_scale);
+  AppendOperand(rhs_scale);
+}
+
+HloInstructionProto HloScaledDotInstruction::ToProto() const {
+  HloInstructionProto proto = HloInstruction::ToProto();
+  *proto.mutable_dot_dimension_numbers() = dot_dimension_numbers_;
+  *proto.mutable_precision_config() = precision_config_;
+  return proto;
+}
+
+void HloScaledDotInstruction::PrintExtraAttributesImpl(
+    AttributePrinter& printer, const HloPrintOptions& options) const {
+  printer.Next([this](Printer* printer) {
+    printer->Append(DotDimensionNumbersToString(dot_dimension_numbers_));
+  });
+  PrintPrecisionConfig(printer, precision_config_);
+}
+
+bool HloScaledDotInstruction::IdenticalSlowPath(
+    const HloInstruction& other,
+    absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
+        eq_computations) const {
+  const auto& casted_other = static_cast<const HloScaledDotInstruction&>(other);
+  return protobuf_util::HaveSameSerialization(
+             dot_dimension_numbers(), casted_other.dot_dimension_numbers()) &&
+         protobuf_util::HaveSameSerialization(precision_config(),
+                                              casted_other.precision_config());
+}
+
+std::unique_ptr<HloInstruction>
+HloScaledDotInstruction::CloneWithNewOperandsImpl(
+    const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+    HloCloneContext* context) const {
+  CHECK_EQ(new_operands.size(), kOperands);
+  return std::make_unique<HloScaledDotInstruction>(
+      shape, new_operands[0], new_operands[1], new_operands[2], new_operands[3],
+      dot_dimension_numbers_, precision_config_);
 }
 
 HloDomainInstruction::HloDomainInstruction(

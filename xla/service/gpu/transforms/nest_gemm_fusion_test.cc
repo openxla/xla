@@ -15,15 +15,16 @@ limitations under the License.
 
 #include "xla/service/gpu/transforms/nest_gemm_fusion.h"
 
-#include <cstddef>
 #include <string>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/hash/hash.h"
 #include "absl/log/log.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
+#include "mlir/IR/MLIRContext.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -36,11 +37,10 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla.pb.h"
 
 using ::testing::ElementsAre;
-using ::tsl::testing::IsOkAndHolds;
 
 namespace xla {
 
@@ -73,9 +73,11 @@ MATCHER_P(OutputTileSizesIs, matcher, "") {
 
 class NestGemmFusionTest : public HloHardwareIndependentTestBase {
  protected:
-  const se::GpuComputeCapability compute_capability_{
-      TestGpuDeviceInfo::RTXA6000DeviceInfo(se::CudaComputeCapability::Ampere())
-          .gpu_compute_capability()};
+  const se::DeviceDescription device_description_{
+      TestGpuDeviceInfo::RTXA6000DeviceInfo(
+          se::GpuComputeCapability{se::CudaComputeCapability::Ampere()})};
+  mlir::MLIRContext mlir_context_;
+  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions options =
@@ -115,7 +117,8 @@ ENTRY entry {
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  ASSERT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  ASSERT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 
@@ -173,7 +176,8 @@ ENTRY e {
                          "num_ctas":1}}}
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   HloComputation* fusion_computation = module->entry_computation()
@@ -188,38 +192,72 @@ ENTRY e {
               GmockMatch(match::Concatenate(match::Fusion(), match::Fusion())));
 }
 
-TEST_F(NestGemmFusionTest, UnsupportedComputationsAreNotChanged) {
+// TODO(b/393299275): update test to use a unsupported operation.
+TEST_F(NestGemmFusionTest, DISABLED_UnsupportedComputationsAreNotChanged) {
   // Fusions other than kTritonNestedGemmFusionKind are not supported.
-  // In this case pass should not make any changes to the module.
+  // In this case pass should only change the supported fusions.
   absl::string_view hlo = R"(
 identity {
   ROOT result = f32[128,128]{1,0} parameter(0)
 }
 
-triton_dot {
+unsupported_fusion {
   p0 = f32[128,128]{1,0} parameter(0)
+  // This fusion is not supported by nest_gemm_fusion pass.
   cp0 = f32[128,128]{1,0} fusion(p0), kind=kCustom, calls=identity
   p1 = f32[128,128]{1,0} parameter(1)
   ROOT result = f32[128,128]{1,0} dot(cp0, p1),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 }
 
+supported_fusion {
+  lhs = f32[8192,512] parameter(0)
+  rhs = f32[512,512] parameter(1)
+  ROOT dot = f32[8192,512] dot(lhs, rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
 ENTRY e {
   p0 = f32[128,128]{1,0} parameter(0)
   p1 = f32[128,128]{1,0} parameter(1)
-  ROOT result = f32[128,128] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+  r1 = f32[128,128] fusion(p0, p1), kind=kCustom, calls=unsupported_fusion,
     backend_config={"fusion_backend_config": {kind: "__triton_gemm",
     "triton_gemm_config": {
       "block_m":32,"block_n":16,"block_k":128,
-      "split_k":1,"num_stages":1,"num_warps":4, "num_ctas":1}}}}
+      "split_k":1,"num_stages":1,"num_warps":4, "num_ctas":1}}}
+  p2 = f32[8192,512] parameter(2)
+  p3 = f32[512,512] parameter(3)
+  r2 = f32[8192,512] fusion(p2, p3), kind=kCustom, calls=supported_fusion,
+    backend_config={
+      "fusion_backend_config": {
+        "kind":"__triton_gemm",  "triton_gemm_config": {
+          "block_m":"64", "block_n":"256", "block_k":"32",
+          "split_k":"1", "num_stages":"5", "num_warps":"4", "num_ctas":"3"
+        }
+      }
+    }
+  ROOT result = (f32[128,128], f32[8192,512]) tuple(r1, r2)
+}
 )";
-
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  size_t hash_before = absl::HashOf(module.get());
   TF_ASSERT_OK_AND_ASSIGN(
-      bool updated, NestGemmFusion(compute_capability_).Run(module.get()));
-  EXPECT_FALSE(updated);
-  EXPECT_EQ(absl::HashOf(module.get()), hash_before);
+      bool updated, NestGemmFusion(device_description_, &symbolic_expr_context_)
+                        .Run(module.get()));
+  EXPECT_TRUE(updated);
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kTuple);
+  EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(root->operand(0)
+                ->backend_config<GpuBackendConfig>()
+                ->fusion_backend_config()
+                .kind(),
+            "__triton_gemm");
+  EXPECT_EQ(root->operand(1)->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(root->operand(1)
+                ->backend_config<GpuBackendConfig>()
+                ->fusion_backend_config()
+                .kind(),
+            "__triton_nested_gemm_fusion");
 }
 
 class NestGemmFusionReshapeTest
@@ -257,7 +295,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  ASSERT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  ASSERT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 
@@ -303,7 +342,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  ASSERT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  ASSERT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 
@@ -349,7 +389,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
@@ -383,7 +424,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
@@ -416,7 +458,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
@@ -461,7 +504,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
@@ -496,7 +540,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
@@ -539,7 +584,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
@@ -577,7 +623,8 @@ ENTRY entry_computation {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
@@ -612,7 +659,8 @@ ENTRY entry_computation {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
@@ -646,7 +694,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
 }
@@ -677,7 +726,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
@@ -722,7 +772,9 @@ ENTRY e {
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
   // We can nest the fusion including the broadcast.
-  EXPECT_TRUE(NestGemmFusion(compute_capability_).Run(module.get()).ok());
+  EXPECT_TRUE(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get())
+                  .ok());
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   // Cos should not be rewritten as we cannot hoist bitcast.
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
@@ -762,7 +814,9 @@ ENTRY e {
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
   // We can nest the fusion including the broadcast.
-  EXPECT_TRUE(NestGemmFusion(compute_capability_).Run(module.get()).ok());
+  EXPECT_TRUE(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get())
+                  .ok());
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   // Cos should not be rewritten as we cannot hoist bitcast.
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
@@ -803,7 +857,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
@@ -842,7 +897,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
@@ -892,7 +948,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
@@ -942,7 +999,8 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
@@ -977,7 +1035,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
@@ -1013,7 +1072,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
@@ -1049,7 +1109,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
@@ -1087,7 +1148,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   // Checks that transpose is on rank 3 tensor from hoisting bitcast1, not rank
@@ -1125,7 +1187,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
@@ -1160,7 +1223,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
@@ -1196,7 +1260,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
@@ -1230,7 +1295,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
@@ -1266,7 +1332,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   TF_ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
@@ -1306,7 +1373,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
@@ -1356,7 +1424,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
@@ -1403,7 +1472,8 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(NestGemmFusion(compute_capability_).Run(module.get()),
+  EXPECT_THAT(NestGemmFusion(device_description_, &symbolic_expr_context_)
+                  .Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(

@@ -19,9 +19,9 @@ limitations under the License.
 #include <optional>
 
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/emitters/emitter_base.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -30,13 +30,6 @@ limitations under the License.
 namespace xla {
 
 namespace gpu {
-
-// Loads a test module from the given filename, ensuring it has a single fusion.
-// If the file contains more than one fusion, the function fails. If the file
-// contains no fusions, the function generates a fusion from the entry
-// computation.
-absl::StatusOr<std::unique_ptr<HloModule>> LoadTestModule(
-    absl::string_view filename);
 
 // Returns the MLIR fusion emitter for the given module, which should have been
 // loaded using LoadTestModule.
@@ -47,10 +40,15 @@ struct EmitterData {
   std::unique_ptr<EmitterBase> emitter;
 };
 absl::StatusOr<std::unique_ptr<EmitterData>> GetEmitter(
-    const HloModule& module);
+    const HloModule& module, SymbolicExprContext& symbolic_expr_context);
 
 // Returns an MLIR context with all the dialects needed for testing.
 mlir::MLIRContext GetMlirContextForTest();
+
+// Returns a symbolic expression context with all the dialects needed for
+// testing.
+SymbolicExprContext GetSymbolicExprContextForTest(
+    mlir::MLIRContext* mlir_context);
 
 }  // namespace gpu
 }  // namespace xla

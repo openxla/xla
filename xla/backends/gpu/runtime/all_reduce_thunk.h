@@ -22,8 +22,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "xla/backends/gpu/collectives/gpu_clique_key.h"
-#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/core/collectives/communicator.h"
@@ -122,11 +120,13 @@ class ReduceScatterStartThunk : public AllReduceReduceScatterThunkBase {
 
 absl::Status RunAllReduce(ReductionKind reduction_kind,
                           std::vector<DeviceBufferPair>& buffers,
-                          se::Stream& stream, Communicator* comm);
+                          se::Stream& stream, Communicator* comm,
+                          bool use_symmetric_buffer = false);
 
 absl::Status RunReduceScatter(ReductionKind reduction_kind,
                               std::vector<DeviceBufferPair>& buffers,
-                              se::Stream& stream, Communicator* comm);
+                              se::Stream& stream, Communicator* comm,
+                              bool use_symmetric_buffer = false);
 
 }  // namespace gpu
 }  // namespace xla

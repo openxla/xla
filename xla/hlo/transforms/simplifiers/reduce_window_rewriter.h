@@ -20,7 +20,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -56,8 +55,8 @@ class ReduceWindowRewriter : public HloModulePass {
 
   absl::string_view name() const override { return "reduce-window-rewriter"; }
 
-  using HloPassInterface::Run;
-  absl::StatusOr<bool> Run(
+ protected:
+  absl::StatusOr<bool> RunImpl(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
@@ -98,9 +97,6 @@ class ReduceWindowRewriter : public HloModulePass {
                           int64_t num_columns,
                           std::vector<Shape>& column_shapes,
                           std::vector<HloInstruction*>& last_cols);
-
-  absl::Status ReplaceReduceWindowWithReshape(
-      HloReduceWindowInstruction* reduce_window);
 
   absl::StatusOr<bool> TryOptimizeCumSumOrProd(
       HloReduceWindowInstruction* reduce_window);

@@ -18,6 +18,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/log/check.h"
@@ -25,7 +26,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
-#include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/autotuning/dot_search_space.h"
+#include "xla/service/gpu/autotuning/triton_configs.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -44,7 +45,9 @@ limitations under the License.
 #include "xla/service/gpu/transforms/nest_gemm_fusion.h"
 #include "xla/service/gpu/transforms/priority_fusion.h"
 #include "xla/service/hlo_cost_analysis.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -52,6 +55,44 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+
+namespace {
+std::vector<TritonGemmConfig> GetDefaultTritonConfigs(
+    se::GpuComputeCapability compute_capability, bool autotune_tma) {
+  if (compute_capability.IsRocm()) {
+    return *kDefaultRocmConfigs;
+  }
+
+  CHECK(compute_capability.IsCuda());
+  auto* cuda_compute_capability = compute_capability.cuda_compute_capability();
+  std::vector<TritonGemmConfig> configs;
+
+  if (cuda_compute_capability->IsAtLeastBlackwell()) {
+    configs = *kBlackwellConfigs;
+  } else if (cuda_compute_capability->IsHopper() ||
+             cuda_compute_capability->IsAmpere()) {
+    configs = *kHopperAmpereConfigs;
+  } else {
+    configs = *kDefaultCudaConfigs;
+  }
+
+  if (!autotune_tma) {
+    return configs;
+  }
+
+  // Hopper+ devices support TMA. Add TMA parameterized configs.
+  std::vector<TritonGemmConfig> tma_parameterized_configs;
+  for (auto& config : configs) {
+    config.is_tma_allowed = false;
+    tma_parameterized_configs.push_back(config);
+
+    config.is_tma_allowed = true;
+    tma_parameterized_configs.push_back(config);
+  }
+  return tma_parameterized_configs;
+}
+
+}  // namespace
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
 TritonBackend::GetSupportedConfigs(const HloInstruction& instr) {
@@ -75,7 +116,8 @@ TritonBackend::GetSupportedConfigs(const HloInstruction& instr) {
   // Allow TMA tuning for Hopper+ devices when TMA flag is passed.
   bool autotune_tma =
       debug_options().xla_gpu_experimental_enable_triton_tma() &&
-      IsTmaEnabledForDevice(target_config().device_description);
+      stream_executor::gpu::IsTmaAvailableForDevice(
+          target_config().device_description);
   std::vector<std::unique_ptr<BackendConfig>> configs;
   VLOG(1) << "Generating configs from search space: "
           << search_space.ToString();
@@ -86,6 +128,14 @@ TritonBackend::GetSupportedConfigs(const HloInstruction& instr) {
           ? std::nullopt
           : std::make_optional(1),
       /*autotune_tma=*/autotune_tma);
+
+  if (!debug_options().xla_gpu_exhaustive_tiling_search()) {
+    VLOG(1) << "Restricting configs to the default set.";
+    gemm_configs = search_space.OptimizeConfigSet(
+        gemm_configs, /*hints=*/GetDefaultTritonConfigs(
+            target_config().device_description.gpu_compute_capability(),
+            autotune_tma));
+  }
   configs.reserve(gemm_configs.size());
   for (const auto& config : gemm_configs) {
     auto any = std::make_unique<google::protobuf::Any>();
@@ -149,7 +199,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
   HloCostAnalysis::Options priority_fusion_options;
   priority_fusion_options.count_multiple_input_accesses = true;
   PriorityFusion priority_fusion(
-      /*thread_pool=*/nullptr, gpu_device_info, priority_fusion_options);
+      /*thread_pool=*/nullptr, gpu_device_info, priority_fusion_options,
+      symbolic_expr_context_);
   TF_RETURN_IF_ERROR(priority_fusion.Run(hlo_module.get()).status());
 
   // If the priority fusion pass above skipped some instructions, turn them
@@ -157,7 +208,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
   FusionWrapper fusion_wrapper(gpu_device_info);
   TF_RETURN_IF_ERROR(fusion_wrapper.Run(hlo_module.get()).status());
 
-  NestGemmFusion nest_gemm_fusion(gpu_device_info.gpu_compute_capability());
+  NestGemmFusion nest_gemm_fusion(gpu_device_info, symbolic_expr_context_);
   TF_RETURN_IF_ERROR(nest_gemm_fusion.Run(hlo_module.get()).status());
   return hlo_module;
 }

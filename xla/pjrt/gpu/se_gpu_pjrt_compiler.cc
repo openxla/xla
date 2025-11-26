@@ -138,8 +138,10 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
         tensorflow::down_cast<const xla::StreamExecutorGpuTopologyDescription&>(
             topology);
     if (gpu_topology.target_config().has_value()) {
-      options.target_config.emplace(
-          Compiler::TargetConfig(*gpu_topology.target_config()));
+      TF_ASSIGN_OR_RETURN(
+          Compiler::TargetConfig target_config,
+          Compiler::TargetConfig::FromProto(*gpu_topology.target_config()));
+      options.target_config.emplace(std::move(target_config));
     } else {
       return absl::UnimplementedError(
           "Compilation without client and without target_config specified is "
@@ -178,12 +180,9 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
   const int num_partitions = hlo_module->config().num_partitions();
   const std::string name = hlo_module->name();
   const std::string fingerprint = hlo_module->GetFingerprint128();
-  auto unique_module_group =
-      std::make_unique<HloModuleGroup>(std::move(hlo_module));
   TF_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<AotCompilationResult>> aot_results,
-      gpu_compiler->CompileAheadOfTime(std::move(unique_module_group),
-                                       aot_options));
+      gpu_compiler->CompileAheadOfTime(std::move(hlo_module), aot_options));
   return std::make_unique<StreamExecutorExecutable>(
       std::move(input_options), std::move(aot_results), num_replicas,
       num_partitions, name, fingerprint,
@@ -210,7 +209,8 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
       module, xla_computation,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
       /*return_tuple=*/false,
-      /*exec_build_options=*/&input_options.executable_build_options));
+      /*exec_build_options=*/&input_options.executable_build_options,
+      mlir::mhlo::getGpuChloToHighLevelMhloOptions()));
   return Compile(std::move(input_options), xla_computation, topology, client);
 }
 }  // namespace xla

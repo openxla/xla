@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,57 +15,48 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/xnnpack/xnn_threadpool.h"
 
+#include <cstdint>
+
 #include "experimental.h"  // xnnpack
+#include "absl/base/optimization.h"
+#include "absl/status/statusor.h"
+#include "xla/backends/cpu/runtime/xnnpack/xnn_interop.h"
 
 #define EIGEN_USE_THREADS
+#include "Eigen/ThreadPool"
 #include "unsupported/Eigen/CXX11/Tensor"
 
 namespace xla::cpu {
 
-class XnnEigenScheduler : public xnn_scheduler {
- public:
-  explicit XnnEigenScheduler(Eigen::ThreadPoolInterface* eigen_thread_pool);
-
- private:
-  static int NumThreads(xnn_scheduler* self);
-  static void Schedule(xnn_scheduler* self, void* context,
-                       void (*task)(void* context));
-
-  Eigen::ThreadPoolInterface* eigen_thread_pool_ = nullptr;
-};
-
-XnnEigenScheduler::XnnEigenScheduler(
-    Eigen::ThreadPoolInterface* eigen_thread_pool) {
-  eigen_thread_pool_ = eigen_thread_pool;
-  num_threads = &NumThreads;
-  schedule = &Schedule;
+static int32_t NumThreads(void* pool) {
+  if (ABSL_PREDICT_FALSE(pool == nullptr)) {
+    return 0;
+  }
+  return reinterpret_cast<Eigen::ThreadPoolInterface*>(pool)->NumThreads();
 }
 
-int XnnEigenScheduler::NumThreads(xnn_scheduler* self) {
-  return reinterpret_cast<XnnEigenScheduler*>(self)
-      ->eigen_thread_pool_->NumThreads();
-}
-
-void XnnEigenScheduler::Schedule(xnn_scheduler* self, void* context,
-                                 void (*task)(void* context)) {
-  reinterpret_cast<XnnEigenScheduler*>(self)->eigen_thread_pool_->Schedule(
+static void Schedule(void* pool, void* context, void (*task)(void* context)) {
+  if (ABSL_PREDICT_FALSE(pool == nullptr)) {
+    (*task)(context);
+  }
+  reinterpret_cast<Eigen::ThreadPoolInterface*>(pool)->Schedule(
       [task, context]() { (*task)(context); });
 }
 
-namespace {
+// And adaptor from Eigen::ThreadPoolInterface to xnn_threadpool_t.
+static constexpr xnn_scheduler_v2 kXnnScheduler = {&NumThreads, &Schedule};
 
-void DestroyXnnEigenScheduler(xnn_scheduler* scheduler) {
-  delete reinterpret_cast<XnnEigenScheduler*>(scheduler);
+absl::StatusOr<XnnThreadpool> CreateXnnThreadpool(
+    Eigen::ThreadPoolInterface* threadpool) {
+  return CreateXnnThreadpool([&](xnn_threadpool_t* xnn_threadpool) {
+    return xnn_create_threadpool_v2(kXnnScheduler, threadpool, /*flags=*/1,
+                                    xnn_threadpool);
+  });
 }
 
-}  // namespace
-
-XnnScheduler CreateXnnEigenScheduler(Eigen::ThreadPoolInterface* threads) {
-  return XnnScheduler(new XnnEigenScheduler(threads), DestroyXnnEigenScheduler);
-}
-
-XnnScheduler CreateXnnEigenScheduler(const Eigen::ThreadPoolDevice* device) {
-  return CreateXnnEigenScheduler(device->getPool());
+absl::StatusOr<XnnThreadpool> CreateXnnThreadpool(
+    const Eigen::ThreadPoolDevice* device) {
+  return CreateXnnThreadpool(device->getPool());
 }
 
 }  // namespace xla::cpu

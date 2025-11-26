@@ -28,10 +28,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "absl/types/span.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "xla/autotuning.pb.h"
+#include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/host_send_recv_thunk.h"
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
@@ -124,8 +124,8 @@ class IrEmitterUnnested : public IrEmitter {
       const HloCustomCallInstruction* instr);
   absl::Status EmitNormThunk(const HloCustomCallInstruction* instr);
   absl::Status EmitCuDnnThunk(const HloCustomCallInstruction* instr);
+  absl::Status EmitPtxCustomCall(const HloCustomCallInstruction* instr);
   absl::Status EmitCubDeviceRadixSort(const HloCustomCallInstruction* instr);
-  absl::Status EmitCholeskyThunk(const HloInstruction* instr);
   absl::Status EmitCustomCallThunk(const HloCustomCallInstruction* instr);
   absl::Status EmitFftThunk(const HloFftInstruction* instr);
   absl::Status EmitAsyncComputation(const HloInstruction* instr);
@@ -332,6 +332,11 @@ class IrEmitterUnnested : public IrEmitter {
 
   CollectivesAsyncEvents& GetCollectivesAsyncEvents() {
     return ir_emitter_context_->collectives_async_events();
+  }
+
+  InstructionToHostExecuteAsyncEvents&
+  GetInstructionToHostExecuteAsyncEvents() {
+    return ir_emitter_context_->instruction_to_host_execute_async_events();
   }
 
   // The thunk sequence this IrEmitter generates for the input computation.

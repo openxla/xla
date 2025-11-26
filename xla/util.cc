@@ -45,6 +45,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -86,7 +87,7 @@ void ScopedLoggingTimer::StopAndLog() {
     double secs = elapsed_micros / 1000000.0;
 
     TimerStats& stats = *timer_stats_;
-    absl::MutexLock lock(&stats.stats_mutex);
+    absl::MutexLock lock(stats.stats_mutex);
     stats.cumulative_secs += secs;
     if (secs > stats.max_secs) {
       stats.max_secs = secs;
@@ -315,7 +316,7 @@ void LogLines(absl::LogSeverity sev, absl::string_view text, const char* fname,
   // Protect calls with a mutex so we don't interleave calls to LogLines from
   // multiple threads.
   static absl::Mutex log_lines_mu(absl::kConstInit);
-  absl::MutexLock lock(&log_lines_mu);
+  absl::MutexLock lock(log_lines_mu);
 
   size_t cur = 0;
   while (cur < text.size()) {
@@ -331,11 +332,6 @@ void LogLines(absl::LogSeverity sev, absl::string_view text, const char* fname,
   if (orig_sev == absl::LogSeverity::kFatal) {
     LogString(fname, lineno, orig_sev, "Aborting due to errors.");
   }
-}
-
-int64_t Product(absl::Span<const int64_t> xs) {
-  return absl::c_accumulate(xs, static_cast<int64_t>(1),
-                            std::multiplies<int64_t>());
 }
 
 std::vector<int64_t> ElemwiseProduct(absl::Span<const int64_t> a,
@@ -497,6 +493,19 @@ std::string SanitizeFileName(std::string file_name) {
   return file_name;
 }
 
+std::string SanitizeOpName(std::string op_name, char separator,
+                           const std::string& replace_with) {
+  auto pos = op_name.rfind(separator);
+  if (pos > 0 && pos != std::string::npos) {
+    std::string suffix = op_name.substr(pos + 1);
+    if (std::all_of(suffix.begin(), suffix.end(), absl::ascii_isdigit)) {
+      op_name = op_name.substr(0, pos);
+    }
+  }
+  return absl::StrReplaceAll(op_name,
+                             {{std::string(1, separator), replace_with}});
+}
+
 bool DistinctNumbersAreConsecutiveIfSorted(absl::Span<const int64_t> seq) {
   return *absl::c_max_element(seq) - *absl::c_min_element(seq) ==
          seq.size() - 1;
@@ -550,4 +559,5 @@ std::unique_ptr<void, FreeDeleter> AlignedAlloc(std::size_t alignment,
   return std::unique_ptr<void, FreeDeleter>(raw_ptr, FreeDeleter());
 }
 
+int64_t Product(absl::Span<const int64_t> xs) { return Product<int64_t>(xs); }
 }  // namespace xla

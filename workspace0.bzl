@@ -134,16 +134,18 @@ def workspace():
     # We only need `benchmark_deps` to be able to have bazel query to work and not complain about missing `@libpfm`.
     benchmark_deps()
 
+    # TODO(yuriit): Remove this once the rules_ml_toolchain is added to WORKSPACE files of all ML projects.
     # Toolchains for ML projects hermetic builds.
     # Details: https://github.com/google-ml-infra/rules_ml_toolchain
-    http_archive(
-        name = "rules_ml_toolchain",
-        sha256 = "40d1e8a2c2e91e0c8781bce80ade7fb34dface5861248d03cae88b24c38fb991",
-        strip_prefix = "rules_ml_toolchain-02fe7225d62af3036a541aa48b6f7bc86089ea5d",
-        urls = [
-            "https://github.com/google-ml-infra/rules_ml_toolchain/archive/02fe7225d62af3036a541aa48b6f7bc86089ea5d.tar.gz",
-        ],
-    )
+    if "rules_ml_toolchain" not in native.existing_rules():
+        http_archive(
+            name = "rules_ml_toolchain",
+            sha256 = "fc1292463a0ae26bd4b3dc8ffda6e12dc5fc68b432005fb97d2c4cbfe2fa6cea",
+            strip_prefix = "rules_ml_toolchain-96700b0ef73efb569ecb2509d15ea3d341bd53fd",
+            urls = [
+                "https://github.com/google-ml-infra/rules_ml_toolchain/archive/96700b0ef73efb569ecb2509d15ea3d341bd53fd.tar.gz",
+            ],
+        )
 
     # If a target is bound twice, the later one wins, so we have to do tf bindings
     # at the end of the WORKSPACE file.

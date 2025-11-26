@@ -17,11 +17,11 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status_matchers.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace m = ::xla::match;
@@ -29,8 +29,6 @@ namespace m = ::xla::match;
 namespace xla {
 namespace gpu {
 namespace {
-
-using ::tsl::testing::IsOkAndHolds;
 
 using TriangularSolveRewriterTest = HloHardwareIndependentTestBase;
 

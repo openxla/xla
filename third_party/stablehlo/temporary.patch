@@ -1,2272 +1,1326 @@
-diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/LegalizeToLinalgUtils.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/LegalizeToLinalgUtils.cpp
---- stablehlo/stablehlo/conversions/linalg/transforms/LegalizeToLinalgUtils.cpp
-+++ stablehlo/stablehlo/conversions/linalg/transforms/LegalizeToLinalgUtils.cpp
-@@ -72,16 +72,16 @@
+diff --ruN a/stablehlo/BUILD.bazel b/stablehlo/BUILD.bazel
+--- stablehlo/BUILD.bazel
++++ stablehlo/BUILD.bazel
+@@ -1105,6 +1105,24 @@
+     tblgen = "@llvm-project//mlir:mlir-tblgen",
+     td_file = "stablehlo/transforms/Passes.td",
+     deps = ["@llvm-project//mlir:PassBaseTdFiles"],
++)
++
++cc_library(
++    name = "stablehlo_broadcast_lowering",
++    srcs = [
++        "stablehlo/transforms/StablehloBroadcastLowering.cpp",
++    ],
++    hdrs = [
++        "stablehlo/transforms/StablehloBroadcastLowering.h",
++    ],
++    strip_include_prefix = ".",
++    deps = [
++        ":stablehlo_ops",
++        "@llvm-project//llvm:Support",
++        "@llvm-project//mlir:IR",
++        "@llvm-project//mlir:ShapeDialect",
++        "@llvm-project//mlir:Support",
++    ],
+ )
  
- Value getEmptySparseTensor(OpBuilder &b, Location loc, ShapedType type,
-                            ArrayRef<Value> dynSizes) {
--  return b.create<bufferization::AllocTensorOp>(
--      loc, llvm::cast<TensorType>(type), dynSizes,
-+  return bufferization::AllocTensorOp::create(
-+      b, loc, llvm::cast<TensorType>(type), dynSizes,
-       /*copy=*/Value(),
-       /*memory_space=*/IntegerAttr());
+ cc_library(
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.cpp b/stablehlo/stablehlo/dialect/StablehloOps.cpp
+--- stablehlo/stablehlo/dialect/StablehloOps.cpp
++++ stablehlo/stablehlo/dialect/StablehloOps.cpp
+@@ -3275,12 +3275,12 @@
+ // Entry point for Attribute printing, TableGen generated code will handle the
+ // dispatch to the individual classes.
+ void StablehloDialect::printAttribute(Attribute attr,
+-                                      DialectAsmPrinter& os) const {
++                                      DialectAsmPrinter& printer) const {
+   if (auto type_extensions = dyn_cast<TypeExtensionsAttr>(attr)) {
+-    hlo::printTypeExtensions(cast<hlo::BoundedAttrInterface>(attr), os);
++    hlo::printTypeExtensions(cast<hlo::BoundedAttrInterface>(attr), printer);
+     return;
+   }
+-  LogicalResult result = generatedAttributePrinter(attr, os);
++  LogicalResult result = generatedAttributePrinter(attr, printer);
+   (void)result;
+   assert(succeeded(result));
  }
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.h b/stablehlo/stablehlo/dialect/StablehloOps.h
+--- stablehlo/stablehlo/dialect/StablehloOps.h
++++ stablehlo/stablehlo/dialect/StablehloOps.h
+@@ -93,13 +93,14 @@
+   Type parseType(DialectAsmParser& parser) const override;
  
- Value getEmptyTensor(OpBuilder &b, Location loc, ShapedType type,
-                      ArrayRef<Value> dynSizes) {
--  return b.create<tensor::EmptyOp>(
--      loc, type.getShape(), type.getElementType(), dynSizes,
-+  return tensor::EmptyOp::create(
-+      b, loc, type.getShape(), type.getElementType(), dynSizes,
-       llvm::cast<RankedTensorType>(type).getEncoding());
- }
+   // Prints a type registered to this dialect.
+-  void printType(Type type, DialectAsmPrinter& os) const override;
++  void printType(Type type, DialectAsmPrinter& printer) const override;
  
-@@ -103,8 +103,8 @@
-     // Construct sizes for the required dimensions.
-     for (const auto &en : llvm::enumerate(resultType.getShape())) {
-       if (en.value() != ShapedType::kDynamic) continue;
--      sizes.push_back(b.create<tensor::ExtractOp>(
--          loc, reifiedShapes[0],
-+      sizes.push_back(tensor::ExtractOp::create(
-+          b, loc, reifiedShapes[0],
-           ValueRange{b.create<arith::ConstantIndexOp>(loc, en.index())}));
-     }
+   // Parses an attribute registered to this dialect.
+   Attribute parseAttribute(DialectAsmParser& parser, Type type) const override;
+ 
+   // Prints an attribute registered to this dialect.
+-  void printAttribute(Attribute attr, DialectAsmPrinter& os) const override;
++  void printAttribute(Attribute attr,
++                      DialectAsmPrinter& printer) const override;
+ 
+   // Get the set dialect version.
+   std::optional<StablehloDialectVersion> getVersion() const;
+diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtilTest.cpp b/stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtilTest.cpp
+--- stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtilTest.cpp
++++ stablehlo/stablehlo/integrations/cpp/builder/AttrTypeBuilderUtilTest.cpp
+@@ -20,7 +20,7 @@
+ #include <utility>
+ #include <vector>
+ 
+-#include "gtest/gtest.h"
++#include "testing/base/public/gunit.h"
+ #include "llvm/ADT/DenseMap.h"
+ #include "mlir/IR/BuiltinTypeInterfaces.h"
+ #include "mlir/IR/BuiltinTypes.h"
+diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/MlirBuilderTest.cpp b/stablehlo/stablehlo/integrations/cpp/builder/MlirBuilderTest.cpp
+--- stablehlo/stablehlo/integrations/cpp/builder/MlirBuilderTest.cpp
++++ stablehlo/stablehlo/integrations/cpp/builder/MlirBuilderTest.cpp
+@@ -15,7 +15,7 @@
+ 
+ #include <string>
+ 
+-#include "gtest/gtest.h"
++#include "testing/base/public/gunit.h"
+ #include "llvm/Support/raw_ostream.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+ #include "mlir/IR/BuiltinOps.h"
+diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilderTest.cpp b/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilderTest.cpp
+--- stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilderTest.cpp
++++ stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilderTest.cpp
+@@ -17,7 +17,7 @@
+ #include <cstdint>
+ #include <string>
+ 
+-#include "gtest/gtest.h"
++#include "testing/base/public/gunit.h"
+ #include "mlir/IR/BuiltinAttributes.h"
+ #include "mlir/IR/BuiltinOps.h"
+ #include "mlir/IR/DialectRegistry.h"
+diff --ruN a/stablehlo/stablehlo/integrations/python/mlir/dialects/InterpreterOps.td b/stablehlo/stablehlo/integrations/python/mlir/dialects/InterpreterOps.td
+--- stablehlo/stablehlo/integrations/python/mlir/dialects/InterpreterOps.td
++++ stablehlo/stablehlo/integrations/python/mlir/dialects/InterpreterOps.td
+@@ -17,6 +17,6 @@
+ #ifndef STABLEHLO_INTEGRATIONS_PYTHON_INTERPRETER_OPS
+ #define STABLEHLO_INTEGRATIONS_PYTHON_INTERPRETER_OPS
+ 
+-include "third_party/stablehlo/stablehlo/reference/InterpreterOps.h"
++include "stablehlo/reference/InterpreterOps.h"
+ 
+ #endif
+diff --ruN a/stablehlo/stablehlo/tests/BUILD.bazel b/stablehlo/stablehlo/tests/BUILD.bazel
+--- stablehlo/stablehlo/tests/BUILD.bazel
++++ stablehlo/stablehlo/tests/BUILD.bazel
+@@ -102,6 +102,8 @@
+     deps = [
+         ":test_utils_inc_gen",
+         "//:stablehlo_assembly_format",
++        "//:stablehlo_broadcast_lowering",
++        "//:stablehlo_ops",
+         "@llvm-project//llvm:Support",
+         "@llvm-project//mlir:FuncDialect",
+         "@llvm-project//mlir:IR",
+diff --ruN a/stablehlo/stablehlo/tests/TestUtils.cpp b/stablehlo/stablehlo/tests/TestUtils.cpp
+--- stablehlo/stablehlo/tests/TestUtils.cpp
++++ stablehlo/stablehlo/tests/TestUtils.cpp
+@@ -19,6 +19,7 @@
+ #include <utility>
+ 
+ #include "llvm/ADT/STLExtras.h"
++#include "llvm/ADT/SmallVector.h"
+ #include "llvm/Support/Casting.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+ #include "mlir/Dialect/Shape/IR/Shape.h"
+@@ -28,6 +29,7 @@
+ #include "mlir/IR/Operation.h"
+ #include "mlir/IR/OperationSupport.h"
+ #include "mlir/IR/PatternMatch.h"
++#include "mlir/IR/TypeRange.h"
+ #include "mlir/Interfaces/InferTypeOpInterface.h"
+ #include "mlir/Interfaces/SideEffectInterfaces.h"
+ #include "mlir/Pass/Pass.h"
+@@ -35,11 +37,34 @@
+ #include "mlir/Support/LLVM.h"
+ #include "mlir/Support/LogicalResult.h"
+ #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
++#include "stablehlo/dialect/StablehloOps.h"
++#include "stablehlo/transforms/StablehloBroadcastLowering.h"
+ 
+ namespace mlir {
+ namespace hlo {
+ 
+ namespace {
++
++struct BroadcastValuesPattern : public RewritePattern {
++  explicit BroadcastValuesPattern(MLIRContext* context)
++      : RewritePattern("hlo_test_broadcast.numpy_broadcast", 1, context) {}
++  LogicalResult matchAndRewrite(Operation* op,
++                                PatternRewriter& rewriter) const override {
++    // Process all operands
++    SmallVector<Value> operands = llvm::to_vector(op->getOperands());
++    auto broadcastedOperands =
++        stablehlo::numpyBroadcastIfNeeded(rewriter, operands);
++    if (failed(broadcastedOperands)) return failure();
++
++    // Replace with custom call to avoid pattern reapplication
++    auto customCall = stablehlo::CustomCallOp::create(
++        rewriter, op->getLoc(), op->getResultTypes(), *broadcastedOperands);
++    customCall.setCallTargetName("numpy_broadcasted");
++    customCall.setHasSideEffect(true);
++    rewriter.replaceOp(op, customCall);
++    return success();
++  }
++};
+ 
+ struct InferReturnTypesPattern : public RewritePattern {
+   explicit InferReturnTypesPattern(MLIRContext *context)
+@@ -137,36 +162,55 @@
    }
-@@ -126,12 +126,12 @@
-   if (auto complexType = llvm::dyn_cast<ComplexType>(type.getElementType())) {
-     auto zeroElement = builder.getZeroAttr(complexType.getElementType());
-     auto zeroAttr = builder.getArrayAttr({zeroElement, zeroElement});
--    zero = builder.create<complex::ConstantOp>(loc, complexType, zeroAttr);
-+    zero = complex::ConstantOp::create(builder, loc, complexType, zeroAttr);
-   } else {
-     auto zeroAttr = builder.getZeroAttr(type.getElementType());
--    zero = builder.create<arith::ConstantOp>(loc, zeroAttr);
-+    zero = arith::ConstantOp::create(builder, loc, zeroAttr);
-   }
--  return builder.create<linalg::FillOp>(loc, zero, tensor).result();
-+  return linalg::FillOp::create(builder, loc, zero, tensor).result();
- }
- 
- Value preSparsify(Operation *op, llvm::SmallVector<Value, 2> &values, Type rtp,
-diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp
---- stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp
-+++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp
-@@ -93,7 +93,8 @@
- Value extractIndexFromTensor(OpBuilder &builder, Location loc, Value tensor,
-                              ShapedType originalType,
-                              ArrayRef<Value> tensorIndex = {}) {
--  Value extracted = builder.create<tensor::ExtractOp>(loc, tensor, tensorIndex);
-+  Value extracted =
-+      tensor::ExtractOp::create(builder, loc, tensor, tensorIndex);
-   if (extracted.getType().isIndex()) return extracted;
-   return originalType.getElementType().isUnsignedInteger()
-              ? builder.createOrFold<arith::IndexCastUIOp>(
-@@ -137,14 +138,14 @@
-       auto dimIndPos = dimIndIt - lhsLoopVec.begin();
-       auto lhsShape = llvm::cast<RankedTensorType>(lhs.getType()).getShape();
-       if (lhsShape[dimIndPos] != ShapedType::kDynamic) continue;
--      dimSize = b.create<tensor::DimOp>(loc, lhs, dimIndPos);
-+      dimSize = tensor::DimOp::create(b, loc, lhs, dimIndPos);
-     } else {
-       // query from rhs vars.
-       dimIndIt = std::find(rhsLoopVec.begin(), rhsLoopVec.end(), dimInd);
-       auto dimIndPos = dimIndIt - rhsLoopVec.begin();
-       auto rhsShape = llvm::cast<RankedTensorType>(rhs.getType()).getShape();
-       if (rhsShape[dimIndPos] != ShapedType::kDynamic) continue;
--      dimSize = b.create<tensor::DimOp>(loc, rhs, dimIndPos);
-+      dimSize = tensor::DimOp::create(b, loc, rhs, dimIndPos);
-     }
-     dynSizes.push_back(dimSize);
-   }
-@@ -290,9 +291,9 @@
-       maps.push_back(AffineMap::get(nloops, 0, exprs, rewriter.getContext()));
-     }
- 
--    auto linalgOp = rewriter.create<linalg::GenericOp>(
--        loc, resultTy ? resultTy : TypeRange{}, adaptor.getOperands(), output,
--        maps, getEinsumLoopsAttrs(inputInd, reductionAxe),
-+    auto linalgOp = linalg::GenericOp::create(
-+        rewriter, loc, resultTy ? resultTy : TypeRange{}, adaptor.getOperands(),
-+        output, maps, getEinsumLoopsAttrs(inputInd, reductionAxe),
-         [reductionAxe](OpBuilder &b, Location nestedLoc, ValueRange args) {
-           Value resultVal =
-               b.create<mlir::arith::MulFOp>(nestedLoc, args[0], args[1]);
-@@ -404,8 +405,8 @@
- 
-     int64_t nloops = resultType.getRank();
-     Location loc = op.getLoc();
--    auto linalgOp = rewriter.create<linalg::GenericOp>(
--        loc,
-+    auto linalgOp = linalg::GenericOp::create(
-+        rewriter, loc,
-         /*resultTensorTypes=*/resultType,
-         /*inputs=*/adaptor.getOperands().front(),
-         /*outputBuffers=*/
-@@ -567,8 +568,8 @@
- 
-     auto newOperandType =
-         RankedTensorType::get(newOperandShape, operandTy.getElementType());
--    operand = rewriter.create<tensor::CollapseShapeOp>(
--        loc, newOperandType, operand, reassociationMap);
-+    operand = tensor::CollapseShapeOp::create(rewriter, loc, newOperandType,
-+                                              operand, reassociationMap);
-   }
-   return operand;
- }
-@@ -598,8 +599,8 @@
-   }
-   dimensions = transposedDimensions;
- 
--  return rewriter.create<mlir::stablehlo::TransposeOp>(
--      loc,
-+  return mlir::stablehlo::TransposeOp::create(
-+      rewriter, loc,
-       RankedTensorType::get(transposedOperandShape, operandTy.getElementType()),
-       operand, rewriter.getDenseI64ArrayAttr(permutation));
- }
-@@ -718,7 +719,7 @@
-         getNParallelLoopsAttrs(nloops),
-         [&](OpBuilder &nestedBuilder, Location /*nested_loc*/,
-             ValueRange args) {
--          nestedBuilder.create<linalg::YieldOp>(loc, *args.begin());
-+          linalg::YieldOp::create(nestedBuilder, loc, *args.begin());
-         },
-         linalg::getPrunedAttributeList(op));
-     return success();
-@@ -791,14 +792,13 @@
-         addedDimensions.push_back(dim);
-     }
- 
--    Value result = rewriter
--                       .create<linalg::BroadcastOp>(
--                           loc, operand, emptyTensor, addedDimensions,
--                           linalg::getPrunedAttributeList(op))
-+    Value result = linalg::BroadcastOp::create(
-+                       rewriter, loc, operand, emptyTensor, addedDimensions,
-+                       linalg::getPrunedAttributeList(op))
-                        .getResults()[0];
- 
-     if (resultTy != broadcastResultTy) {
--      result = rewriter.create<tensor::CastOp>(loc, resultTy, result);
-+      result = tensor::CastOp::create(rewriter, loc, resultTy, result);
-     }
- 
-     rewriter.replaceOp(op, result);
-@@ -821,7 +821,8 @@
-         RankedTensorType::get(updatedOperandShape, operandTy.getElementType());
- 
-     if (updatedOperandTy != operandTy) {
--      operand = rewriter.create<tensor::CastOp>(loc, updatedOperandTy, operand);
-+      operand =
-+          tensor::CastOp::create(rewriter, loc, updatedOperandTy, operand);
-     }
- 
-     return operand;
-@@ -943,47 +944,49 @@
-           if (isExpansion) {
-             // Expand a big value into multiple small values with shifts.
-             auto iotaIndex =
--                nestedBuilder.create<linalg::IndexOp>(nestedLoc, maxRank - 1);
--            auto iota = nestedBuilder.create<arith::IndexCastOp>(
--                nestedLoc, inIntType, iotaIndex);
--
--            auto width = nestedBuilder.create<arith::ConstantOp>(
--                nestedLoc,
-+                linalg::IndexOp::create(nestedBuilder, nestedLoc, maxRank - 1);
-+            auto iota = arith::IndexCastOp::create(nestedBuilder, nestedLoc,
-+                                                   inIntType, iotaIndex);
-+
-+            auto width = arith::ConstantOp::create(
-+                nestedBuilder, nestedLoc,
-                 nestedBuilder.getIntegerAttr(inIntType, outputBitWidth));
-             auto shiftWidth =
--                nestedBuilder.create<arith::MulIOp>(nestedLoc, iota, width);
--            Value inputCasted = nestedBuilder.create<arith::BitcastOp>(
--                nestedLoc, inIntType, args.front());
--            Value shifted = nestedBuilder.create<arith::ShRUIOp>(
--                nestedLoc, inputCasted, shiftWidth);
--            innerResult = nestedBuilder.create<arith::TruncIOp>(
--                nestedLoc, outIntType, shifted);
-+                arith::MulIOp::create(nestedBuilder, nestedLoc, iota, width);
-+            Value inputCasted = arith::BitcastOp::create(
-+                nestedBuilder, nestedLoc, inIntType, args.front());
-+            Value shifted = arith::ShRUIOp::create(nestedBuilder, nestedLoc,
-+                                                   inputCasted, shiftWidth);
-+            innerResult = arith::TruncIOp::create(nestedBuilder, nestedLoc,
-+                                                  outIntType, shifted);
-           } else if (isContraction) {
-             // Combine multiple small values into one big value.
-             auto iotaIndex =
--                nestedBuilder.create<linalg::IndexOp>(nestedLoc, maxRank - 1);
--            auto iota = nestedBuilder.create<arith::IndexCastOp>(
--                nestedLoc, outIntType, iotaIndex);
--
--            auto width = nestedBuilder.create<arith::ConstantOp>(
--                nestedLoc,
-+                linalg::IndexOp::create(nestedBuilder, nestedLoc, maxRank - 1);
-+            auto iota = arith::IndexCastOp::create(nestedBuilder, nestedLoc,
-+                                                   outIntType, iotaIndex);
-+
-+            auto width = arith::ConstantOp::create(
-+                nestedBuilder, nestedLoc,
-                 nestedBuilder.getIntegerAttr(outIntType, inputBitWidth));
-             auto shiftWidth =
--                nestedBuilder.create<arith::MulIOp>(nestedLoc, iota, width);
--            Value inputCasted = nestedBuilder.create<arith::BitcastOp>(
--                nestedLoc, inIntType, args.front());
--            Value inputExt = nestedBuilder.create<arith::ExtUIOp>(
--                nestedLoc, outIntType, inputCasted);
--            Value shifted = nestedBuilder.create<arith::ShLIOp>(
--                nestedLoc, inputExt, shiftWidth);
--            Value accumulatorCasted = nestedBuilder.create<arith::BitcastOp>(
--                nestedLoc, outIntType, args.back());
--            innerResult = nestedBuilder.create<arith::OrIOp>(
--                nestedLoc, outIntType, shifted, accumulatorCasted);
-+                arith::MulIOp::create(nestedBuilder, nestedLoc, iota, width);
-+            Value inputCasted = arith::BitcastOp::create(
-+                nestedBuilder, nestedLoc, inIntType, args.front());
-+            Value inputExt = arith::ExtUIOp::create(nestedBuilder, nestedLoc,
-+                                                    outIntType, inputCasted);
-+            Value shifted = arith::ShLIOp::create(nestedBuilder, nestedLoc,
-+                                                  inputExt, shiftWidth);
-+            Value accumulatorCasted = arith::BitcastOp::create(
-+                nestedBuilder, nestedLoc, outIntType, args.back());
-+            innerResult =
-+                arith::OrIOp::create(nestedBuilder, nestedLoc, outIntType,
-+                                     shifted, accumulatorCasted);
-           }
--          innerResult = nestedBuilder.create<arith::BitcastOp>(
--              nestedLoc, outputType.getElementType(), innerResult);
--          nestedBuilder.create<linalg::YieldOp>(nestedLoc, innerResult);
-+          innerResult = arith::BitcastOp::create(nestedBuilder, nestedLoc,
-+                                                 outputType.getElementType(),
-+                                                 innerResult);
-+          linalg::YieldOp::create(nestedBuilder, nestedLoc, innerResult);
-         },
-         linalg::getPrunedAttributeList(op));
-     return success();
-@@ -1000,10 +1003,10 @@
-   //   size = ceil((limit - start)/stride)
-   static Value computeSize(Location loc, Value start, Value limit, Value stride,
-                            ConversionPatternRewriter &b) {
--    Value delta = b.create<arith::SubIOp>(loc, limit, start);
--    Value ret = b.create<arith::CeilDivUIOp>(loc, delta, stride);
-+    Value delta = arith::SubIOp::create(b, loc, limit, start);
-+    Value ret = arith::CeilDivUIOp::create(b, loc, delta, stride);
-     if (ret.getType().isIndex()) return ret;
--    return b.create<arith::IndexCastOp>(loc, b.getIndexType(), ret);
-+    return arith::IndexCastOp::create(b, loc, b.getIndexType(), ret);
-   }
- 
-   LogicalResult matchAndRewrite(
-@@ -1025,17 +1028,17 @@
- 
-     auto resultType = llvm::cast<RankedTensorType>(
-         this->typeConverter->convertType(realDynamicSliceOp.getType()));
--    Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-+    Value zero = arith::ConstantIndexOp::create(rewriter, loc, 0);
-     SmallVector<OpFoldResult> offsets, sizes, strides;
-     SmallVector<Type, 3> clampType(3, arithType);
-     for (auto i : llvm::seq<unsigned>(0, argType.getRank())) {
--      Value dim = rewriter.create<arith::ConstantIndexOp>(loc, i);
--      Value start = rewriter.create<tensor::ExtractOp>(
--          loc, adaptor.getStartIndices(), dim);
--      Value limit = rewriter.create<tensor::ExtractOp>(
--          loc, adaptor.getLimitIndices(), dim);
-+      Value dim = arith::ConstantIndexOp::create(rewriter, loc, i);
-+      Value start = tensor::ExtractOp::create(rewriter, loc,
-+                                              adaptor.getStartIndices(), dim);
-+      Value limit = tensor::ExtractOp::create(rewriter, loc,
-+                                              adaptor.getLimitIndices(), dim);
-       Value stride =
--          rewriter.create<tensor::ExtractOp>(loc, adaptor.getStrides(), dim);
-+          tensor::ExtractOp::create(rewriter, loc, adaptor.getStrides(), dim);
- 
-       // Compute i-th dimension size of the result : size[i].
-       // If the i-th dimension of the result type is known, we go ahead with it
-@@ -1044,12 +1047,12 @@
-       Value size =
-           ShapedType::isDynamic(resultDimSize)
-               ? computeSize(loc, start, limit, stride, rewriter)
--              : rewriter.create<arith::ConstantIndexOp>(loc, resultDimSize);
-+              : arith::ConstantIndexOp::create(rewriter, loc, resultDimSize);
- 
-       // We can now convert start to index.
-       if (!start.getType().isIndex())
--        start = rewriter.create<arith::IndexCastOp>(
--            loc, rewriter.getIndexType(), start);
-+        start = arith::IndexCastOp::create(rewriter, loc,
-+                                           rewriter.getIndexType(), start);
- 
-       // Fetch i-th dimension size of the operand and calculate upper bound as
-       //   ub = operand_dim[i] - size[i]
-@@ -1061,8 +1064,8 @@
-       // We clamp the start_index to keep it bounded as
-       //   0 <= start_index[i] <= ub
-       // Clamp does not support index type, so cast to integer type.
--      start = rewriter.create<arith::MaxSIOp>(loc, start, zero);
--      start = rewriter.create<arith::MinSIOp>(loc, start, upperBound);
-+      start = arith::MaxSIOp::create(rewriter, loc, start, zero);
-+      start = arith::MinSIOp::create(rewriter, loc, start, upperBound);
- 
-       offsets.push_back(start);
-       if (ShapedType::isDynamic(resultDimSize))
-@@ -1118,8 +1121,8 @@
-       // cast the dynamic dimensions to 1.
-       auto staticType = RankedTensorType::get(
-           llvm::SmallVector<int64_t>(operandType.getRank(), 1), elemType);
--      operand = rewriter.create<tensor::CastOp>(reshapeOp.getLoc(), staticType,
--                                                operand);
-+      operand = tensor::CastOp::create(rewriter, reshapeOp.getLoc(), staticType,
-+                                       operand);
-       rewriter.replaceOpWithNewOp<tensor::CollapseShapeOp>(
-           reshapeOp, resultType, operand, ArrayRef<ReassociationIndices>{});
-       return success();
-@@ -1153,8 +1156,8 @@
-         auto enc = sparse_tensor::getSparseTensorEncoding(operandType);
-         auto newOperandType = RankedTensorType::get(shape, elemType, enc);
-         if (newOperandType != operandType) {
--          operand = rewriter.create<tensor::CastOp>(reshapeOp.getLoc(),
--                                                    newOperandType, operand);
-+          operand = tensor::CastOp::create(rewriter, reshapeOp.getLoc(),
-+                                           newOperandType, operand);
-         }
-         // Generate collapse operation.
-         // For scalar collapses must pass an empty reassociation map.
-@@ -1188,14 +1191,14 @@
-           // dimensions.
-           getIdentityExprs(operandType.getRank())};
- 
--      collapsedOp =
--          rewriter.create<tensor::CollapseShapeOp>(loc, operand, collapsingMap);
-+      collapsedOp = tensor::CollapseShapeOp::create(rewriter, loc, operand,
-+                                                    collapsingMap);
-     }
-     // Cast to a known static type if the input has dynamic dimensions.
-     int64_t totalElems = resultType.getNumElements();
-     auto collapsedType = RankedTensorType::get({totalElems}, elemType);
-     collapsedOp =
--        rewriter.create<tensor::CastOp>(loc, collapsedType, collapsedOp);
-+        tensor::CastOp::create(rewriter, loc, collapsedType, collapsedOp);
-     if (resultType.getRank() == 1) {
-       rewriter.replaceOp(reshapeOp, collapsedOp);
-     } else {
-@@ -1233,8 +1236,8 @@
-     unsigned nloops = resultShapedType.getRank();
- 
-     Location loc = iotaOp.getLoc();
--    auto linalgOp = rewriter.create<linalg::GenericOp>(
--        loc,
-+    auto linalgOp = linalg::GenericOp::create(
-+        rewriter, loc,
-         /*resultTensorTypes=*/
-         ArrayRef<Type>{resultShapedType},
-         /*inputs=*/ValueRange{},
-@@ -1288,8 +1291,8 @@
-     Value empty = getEmptyTensorFor(rewriter, loc, resultTy, iotaOp,
-                                     adaptor.getOperands());
- 
--    auto linalgOp = rewriter.create<linalg::MapOp>(
--        loc, ValueRange{}, empty,
-+    auto linalgOp = linalg::MapOp::create(
-+        rewriter, loc, ValueRange{}, empty,
-         [&](OpBuilder &nestedBuilder, Location nestedLoc, ValueRange /*args*/) {
-           Value index = nestedBuilder.create<linalg::IndexOp>(
-               nestedLoc, iotaOp.getIotaDimension());
-@@ -1345,11 +1348,11 @@
- 
-     if (enablePrimitiveOps) {
-       auto concatOp =
--          rewriter.create<tensor::ConcatOp>(loc, dim, adaptor.getOperands());
-+          tensor::ConcatOp::create(rewriter, loc, dim, adaptor.getOperands());
-       rewriter.replaceOp(op, concatOp);
-       return success();
-     }
--    Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-+    Value zero = arith::ConstantIndexOp::create(rewriter, loc, 0);
- 
-     // Allocate the output tensor with tensor.empty.
-     Value result =
-@@ -1372,25 +1375,26 @@
-           SmallVector<Value> extractIndices;
-           extractIndices.reserve(nloops);
-           for (int64_t i = 0; i < nloops; i++) {
--            extractIndices.push_back(b.create<linalg::IndexOp>(loc, i));
-+            extractIndices.push_back(linalg::IndexOp::create(b, loc, i));
-           }
- 
--          Value indexOp = b.create<linalg::IndexOp>(loc, dim);
-+          Value indexOp = linalg::IndexOp::create(b, loc, dim);
-           for (auto [idx, arg] : llvm::enumerate(adaptor.getOperands())) {
-             Value newConcatDimSize;
-             scf::IfOp ifOp;
-             if (idx + 1 != adaptor.getOperands().size()) {
-               // Calculate how far along we have iterated along the concatenate
-               // dimension. That way we can tell which input to select.
--              newConcatDimSize = b.create<arith::AddIOp>(
--                  loc, concatDimSize, b.create<tensor::DimOp>(loc, arg, dim));
--              Value cmp = b.create<arith::CmpIOp>(loc, rewriter.getI1Type(),
--                                                  arith::CmpIPredicate::ult,
--                                                  indexOp, newConcatDimSize);
--              ifOp = b.create<scf::IfOp>(loc, resultType.getElementType(), cmp,
--                                         true);
-+              newConcatDimSize =
-+                  arith::AddIOp::create(b, loc, concatDimSize,
-+                                        b.create<tensor::DimOp>(loc, arg, dim));
-+              Value cmp = arith::CmpIOp::create(b, loc, rewriter.getI1Type(),
-+                                                arith::CmpIPredicate::ult,
-+                                                indexOp, newConcatDimSize);
-+              ifOp = scf::IfOp::create(b, loc, resultType.getElementType(), cmp,
-+                                       true);
-               if (result) {
--                b.create<scf::YieldOp>(loc, ifOp->getResults()[0]);
-+                scf::YieldOp::create(b, loc, ifOp->getResults()[0]);
-               } else {
-                 result = ifOp->getResults()[0];
-               }
-@@ -1401,17 +1405,17 @@
-             // Now adjust the index for the concatenated dimension to fit into
-             // the selected tensor and do an extract at that position.
-             extractIndices[dim] =
--                b.create<arith::SubIOp>(loc, indexOp, concatDimSize);
-+                arith::SubIOp::create(b, loc, indexOp, concatDimSize);
-             Value extract =
--                b.create<tensor::ExtractOp>(loc, arg, extractIndices);
--            b.create<scf::YieldOp>(loc, extract);
-+                tensor::ExtractOp::create(b, loc, arg, extractIndices);
-+            scf::YieldOp::create(b, loc, extract);
- 
-             if (ifOp) {
-               b = ifOp.getElseBodyBuilder(b.getListener());
-               concatDimSize = newConcatDimSize;
-             }
-           }
--          nestedBuilder.create<linalg::YieldOp>(loc, result);
-+          linalg::YieldOp::create(nestedBuilder, loc, result);
-         },
-         linalg::getPrunedAttributeList(op));
-     return success();
-@@ -1566,15 +1570,15 @@
-       Value startIndex =
-           extractIndexFromTensor(rewriter, loc, start, originalStartIndexType);
- 
--      Value mn = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-+      Value mn = arith::ConstantIndexOp::create(rewriter, loc, 0);
- 
-       Value mx =
-           rewriter.createOrFold<tensor::DimOp>(loc, adaptor.getOperand(), idx);
-       mx = rewriter.createOrFold<arith::SubIOp>(
--          loc, mx, rewriter.create<arith::ConstantIndexOp>(loc, size));
--
--      startIndex = rewriter.create<arith::MaxSIOp>(loc, startIndex, mn);
--      startIndex = rewriter.create<arith::MinSIOp>(loc, startIndex, mx);
-+          loc, mx, arith::ConstantIndexOp::create(rewriter, loc, size));
-+
-+      startIndex = arith::MaxSIOp::create(rewriter, loc, startIndex, mn);
-+      startIndex = arith::MinSIOp::create(rewriter, loc, startIndex, mx);
- 
-       startIndices.push_back(startIndex);
-     }
-@@ -1620,7 +1624,7 @@
-     }
- 
-     SmallVector<OpFoldResult, 3> startIndices;
--    Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-+    Value zero = arith::ConstantIndexOp::create(rewriter, loc, 0);
-     for (auto [idx, start] : llvm::enumerate(adaptor.getStartIndices())) {
-       // By stablehlo.DynamicUpdateSlice definition:
-       //   `start_indices[i] = clamp(start_indices[i],
-@@ -1628,11 +1632,12 @@
-       Value startIndex = extractIndexFromTensor(
-           rewriter, loc, start,
-           cast<ShapedType>(op.getStartIndices()[idx].getType()));
--      Value ub = rewriter.create<arith::ConstantIndexOp>(
--          loc, operandType.getDimSize(idx) - updateType.getDimSize(idx));
--
--      startIndex = rewriter.create<arith::MaxSIOp>(loc, startIndex, zero);
--      startIndex = rewriter.create<arith::MinSIOp>(loc, startIndex, ub);
-+      Value ub = arith::ConstantIndexOp::create(
-+          rewriter, loc,
-+          operandType.getDimSize(idx) - updateType.getDimSize(idx));
-+
-+      startIndex = arith::MaxSIOp::create(rewriter, loc, startIndex, zero);
-+      startIndex = arith::MinSIOp::create(rewriter, loc, startIndex, ub);
-       startIndices.push_back(startIndex);
-     }
- 
-@@ -1667,8 +1672,8 @@
-         op.getNumOperands() + 1,
-         rewriter.getMultiDimIdentityMap(resultType.getRank()));
- 
--    auto linalgOp = rewriter.create<linalg::GenericOp>(
--        loc, resultType, adaptor.getOperands(), output, indexingMaps,
-+    auto linalgOp = linalg::GenericOp::create(
-+        rewriter, loc, resultType, adaptor.getOperands(), output, indexingMaps,
-         getNParallelLoopsAttrs(resultType.getRank()),
-         /*bodyBuild=*/nullptr, linalg::getPrunedAttributeList(op));
- 
-@@ -1718,12 +1723,12 @@
-           rewriter, loc, cast<TypedValue<ShapedType>>(operand),
-           cast<ShapedType>(operand0.getType())));
-     }
--    Value output = rewriter.create<tensor::EmptyOp>(
--        loc, tensor::getMixedSizes(rewriter, loc, operand0),
-+    Value output = tensor::EmptyOp::create(
-+        rewriter, loc, tensor::getMixedSizes(rewriter, loc, operand0),
-         resultType.getElementType());
- 
--    auto linalgOp = rewriter.create<linalg::MapOp>(
--        loc, coercedOperands, output,
-+    auto linalgOp = linalg::MapOp::create(
-+        rewriter, loc, coercedOperands, output,
-         /*bodyBuild=*/nullptr, linalg::getPrunedAttributeList(op));
- 
-     // Convert the signature of the body. We scalarize the operands and add a
-@@ -1798,7 +1803,7 @@
-     for (int64_t i = 0, e = std::max({resultRank, operandRank, int64_t{2}});
-          i < e; ++i) {
-       constants.push_back(
--          rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(i)));
-+          arith::ConstantOp::create(rewriter, loc, rewriter.getIndexAttr(i)));
-     }
- 
-     Value emptyOp = getEmptyTensorFor(rewriter, loc, resultType, gatherOp,
-@@ -1807,8 +1812,8 @@
-     ValueRange ins;
-     SmallVector<AffineMap, 1> indexingMaps(
-         {rewriter.getMultiDimIdentityMap(resultRank)});
--    auto linalgOp = rewriter.create<linalg::GenericOp>(
--        loc, /*resultTensorTypes=*/resultType,
-+    auto linalgOp = linalg::GenericOp::create(
-+        rewriter, loc, /*resultTensorTypes=*/resultType,
-         /*inputs=*/ins,
-         /*outputs=*/emptyOp, indexingMaps, getNParallelLoopsAttrs(resultRank),
-         /*bodyBuild=*/nullptr, linalg::getPrunedAttributeList(gatherOp));
-@@ -1832,7 +1837,7 @@
-     // potentially getting duplicates later.
-     SmallVector<Value> linalgIndices;
-     for (int64_t i = 0; i < resultRank; ++i) {
--      linalgIndices.push_back(rewriter.create<linalg::IndexOp>(loc, i));
-+      linalgIndices.push_back(linalg::IndexOp::create(rewriter, loc, i));
-     }
- 
-     // Now the complicated part. For a given output dimension we build up an
-@@ -1921,8 +1926,8 @@
-           loc, operandDimSize, outputDimSize);
- 
-       // Clamp indices to [0, i, operand_dim-output_dim].
--      Value clamp = rewriter.create<arith::MinSIOp>(
--          loc,
-+      Value clamp = arith::MinSIOp::create(
-+          rewriter, loc,
-           rewriter.create<arith::MaxSIOp>(loc, constants[0],
-                                           remappedIndexFromIndices[i]),
-           largestValidIndex);
-@@ -1957,11 +1962,11 @@
-       SmallVector<int64_t> dims(operandRank, ShapedType::kDynamic);
-       auto type = RankedTensorType::get(
-           dims, cast<TensorType>(operand.getType()).getElementType());
--      extractOperand = rewriter.create<tensor::CastOp>(loc, type, operand);
-+      extractOperand = tensor::CastOp::create(rewriter, loc, type, operand);
-     }
-     Value element =
--        rewriter.create<tensor::ExtractOp>(loc, extractOperand, combinedIndex);
--    rewriter.create<linalg::YieldOp>(loc, element);
-+        tensor::ExtractOp::create(rewriter, loc, extractOperand, combinedIndex);
-+    linalg::YieldOp::create(rewriter, loc, element);
- 
-     rewriter.replaceOp(gatherOp, linalgOp.getResults());
- 
-@@ -2083,24 +2088,25 @@
-     SmallVector<Value> reduceDynSizes;
-     for (int i = 0, s = rank; i < s; ++i)
-       if (sourceTy.isDynamicDim(i))
--        reduceDynSizes.push_back(b.create<tensor::DimOp>(source, i));
--
--    Value reduceValueEmpty =
--        b.create<tensor::EmptyOp>(sourceTy.getShape(), destETy, reduceDynSizes);
--    Value reduceIndexEmpty = b.create<tensor::EmptyOp>(
--        sourceTy.getShape(), indexETy, reduceDynSizes);
-+        reduceDynSizes.push_back(tensor::DimOp::create(b, source, i));
-+
-+    Value reduceValueEmpty = tensor::EmptyOp::create(b, sourceTy.getShape(),
-+                                                     destETy, reduceDynSizes);
-+    Value reduceIndexEmpty = tensor::EmptyOp::create(b, sourceTy.getShape(),
-+                                                     indexETy, reduceDynSizes);
- 
-     // We initialize indices to -1 which indicates no matching destination.
--    Value negativeOne = b.create<arith::ConstantOp>(b.getI32IntegerAttr(-1));
-+    Value negativeOne = arith::ConstantOp::create(b, b.getI32IntegerAttr(-1));
-     reduceIndexEmpty =
--        b.create<linalg::FillOp>(negativeOne, reduceIndexEmpty).getResult(0);
-+        linalg::FillOp::create(b, negativeOne, reduceIndexEmpty).getResult(0);
- 
-     // We only care to match the reduction dimensions.
--    Value windowEmpty = b.create<tensor::EmptyOp>(filteredWindows, srcETy);
--
--    auto reduceGeneric = b.create<linalg::GenericOp>(
--        /*resultTensors=*/ArrayRef<Type>{reduceValueEmpty.getType(),
--                                         reduceIndexEmpty.getType()},
-+    Value windowEmpty = tensor::EmptyOp::create(b, filteredWindows, srcETy);
-+
-+    auto reduceGeneric = linalg::GenericOp::create(
-+        b,
-+        /*resultTensors=*/
-+        ArrayRef<Type>{reduceValueEmpty.getType(), reduceIndexEmpty.getType()},
-         /*inputs=*/ValueRange{operand, windowEmpty},
-         /*outputs=*/ValueRange{reduceValueEmpty, reduceIndexEmpty},
-         reduceIndexingMaps,
-@@ -2137,32 +2143,32 @@
-     // The predicate operates on scalar-tensors, so we need to extract the
-     // value for `linalg` operations. Tensor-ops are cleaned up by other
-     // rewriters.
--    selectPred = b.create<tensor::ExtractOp>(rewriter.getI1Type(), selectPred,
--                                             ValueRange{});
-+    selectPred = tensor::ExtractOp::create(b, rewriter.getI1Type(), selectPred,
-+                                           ValueRange{});
- 
-     // We select if either the selection function returns `true` or the
-     // current reduction index is `-1`, e.g. no index has been selected yet.
--    Value selectNegOne = b.create<arith::CmpIOp>(arith::CmpIPredicate::eq,
--                                                 selectOutIdx, negativeOne);
--    selectPred = b.create<arith::OrIOp>(selectPred, selectNegOne);
-+    Value selectNegOne = arith::CmpIOp::create(b, arith::CmpIPredicate::eq,
-+                                               selectOutIdx, negativeOne);
-+    selectPred = arith::OrIOp::create(b, selectPred, selectNegOne);
- 
-     // We compute a unique idx for each element in the window.
--    Value computedIdx = b.create<linalg::IndexOp>(rank);
-+    Value computedIdx = linalg::IndexOp::create(b, rank);
-     for (int i = 1, s = filteredStrides.size(); i < s; ++i) {
--      Value width = b.create<arith::ConstantIndexOp>(filteredStrides[i]);
--      Value idx = b.create<linalg::IndexOp>(rank + i);
--      computedIdx = b.create<arith::MulIOp>(width, computedIdx);
--      computedIdx = b.create<arith::AddIOp>(computedIdx, idx);
--    }
--    computedIdx = b.create<arith::IndexCastOp>(indexETy, computedIdx);
-+      Value width = arith::ConstantIndexOp::create(b, filteredStrides[i]);
-+      Value idx = linalg::IndexOp::create(b, rank + i);
-+      computedIdx = arith::MulIOp::create(b, width, computedIdx);
-+      computedIdx = arith::AddIOp::create(b, computedIdx, idx);
-+    }
-+    computedIdx = arith::IndexCastOp::create(b, indexETy, computedIdx);
- 
-     // Using the selection predicate track the value and selected
-     // identifier for the future scattering.
-     Value selectedIdx =
--        b.create<arith::SelectOp>(selectPred, computedIdx, selectOutIdx);
-+        arith::SelectOp::create(b, selectPred, computedIdx, selectOutIdx);
-     Value selectedValue =
--        b.create<arith::SelectOp>(selectPred, selectInVal, selectOutVal);
--    b.create<linalg::YieldOp>(ValueRange{selectedValue, selectedIdx});
-+        arith::SelectOp::create(b, selectPred, selectInVal, selectOutVal);
-+    linalg::YieldOp::create(b, ValueRange{selectedValue, selectedIdx});
- 
-     // Original terminator is an stablehlo.return we no longer need.
-     rewriter.eraseOp(reduceTerminator);
-@@ -2181,7 +2187,7 @@
-     for (int i = 0, s = reduceIndexTy.getRank(); i < s; ++i) {
-       int64_t broadcast = strides[i];
-       if (sourceTy.isDynamicDim(i))
--        broadcastDynDims.push_back(b.create<tensor::DimOp>(source, i));
-+        broadcastDynDims.push_back(tensor::DimOp::create(b, source, i));
- 
-       broadcastExprs.push_back(b.getAffineDimExpr(broadcastShape.size()));
-       broadcastShape.push_back(sourceTy.getDimSize(i));
-@@ -2192,12 +2198,12 @@
- 
-     // We broadcast the values of our input tensors across the stride-tiling
-     // size.
--    Value scatterEmpty = b.create<tensor::EmptyOp>(
--        broadcastShape, resultTy.getElementType(), broadcastDynDims);
--    Value initScalar = b.create<tensor::ExtractOp>(initTy.getElementType(),
--                                                   init, ValueRange{});
-+    Value scatterEmpty = tensor::EmptyOp::create(
-+        b, broadcastShape, resultTy.getElementType(), broadcastDynDims);
-+    Value initScalar = tensor::ExtractOp::create(b, initTy.getElementType(),
-+                                                 init, ValueRange{});
-     Value scatterFill =
--        b.create<linalg::FillOp>(initScalar, scatterEmpty).getResult(0);
-+        linalg::FillOp::create(b, initScalar, scatterEmpty).getResult(0);
- 
-     // Both the indices and values are broadcasted using the same indexing map.
-     // Output fully parallel.
-@@ -2210,7 +2216,8 @@
-     scatterIndexingMaps.push_back(
-         b.getMultiDimIdentityMap(broadcastShape.size()));
- 
--    auto scatterGeneric = b.create<linalg::GenericOp>(
-+    auto scatterGeneric = linalg::GenericOp::create(
-+        b,
-         /*resultTensors=*/ArrayRef<Type>{scatterFill.getType()},
-         /*inputs=*/ValueRange{reduceIndex, source},
-         /*outputs=*/ValueRange{scatterFill}, scatterIndexingMaps,
-@@ -2237,32 +2244,32 @@
- 
-     Value scatterInputIdx = scatterBlock.getArgument(0);
-     Value scatterOutputVal = scatterBlock.getArgument(2);
--    Value scatterUpdate = b.create<tensor::ExtractOp>(
--        sourceTy.getElementType(), scatterTerminator->getOperand(0),
-+    Value scatterUpdate = tensor::ExtractOp::create(
-+        b, sourceTy.getElementType(), scatterTerminator->getOperand(0),
-         ValueRange{});
- 
-     // Compute the index of the tiled region to determine if it was selected.
--    Value id = b.create<arith::ConstantIndexOp>(0);
-+    Value id = arith::ConstantIndexOp::create(b, 0);
-     int64_t dim = 0;
-     for (int i = 0, s = strides.size(); i < s; ++i) {
-       if (strides[i] > 1) {
--        Value idx = b.create<linalg::IndexOp>(++dim);
--        Value tileSz = b.create<arith::ConstantIndexOp>(strides[i]);
--        id = b.create<arith::MulIOp>(id, tileSz);
--        id = b.create<arith::AddIOp>(id, idx);
-+        Value idx = linalg::IndexOp::create(b, ++dim);
-+        Value tileSz = arith::ConstantIndexOp::create(b, strides[i]);
-+        id = arith::MulIOp::create(b, id, tileSz);
-+        id = arith::AddIOp::create(b, id, idx);
-       }
-       ++dim;
-     }
- 
-     // Check whether the computed id matches the to-scatter id, then select and
-     // yield.
--    id = b.create<arith::IndexCastOp>(indexETy, id);
--    auto scatterPred = b.create<arith::CmpIOp>(
--        b.getI1Type(), arith::CmpIPredicate::eq, id, scatterInputIdx);
--    scatterUpdate =
--        b.create<arith::SelectOp>(scatterPred, scatterUpdate, scatterOutputVal);
--
--    b.create<linalg::YieldOp>(scatterUpdate);
-+    id = arith::IndexCastOp::create(b, indexETy, id);
-+    auto scatterPred = arith::CmpIOp::create(
-+        b, b.getI1Type(), arith::CmpIPredicate::eq, id, scatterInputIdx);
-+    scatterUpdate = arith::SelectOp::create(b, scatterPred, scatterUpdate,
-+                                            scatterOutputVal);
-+
-+    linalg::YieldOp::create(b, scatterUpdate);
-     rewriter.eraseOp(scatterTerminator);
-     b.setInsertionPoint(op);
- 
-@@ -2278,8 +2285,8 @@
-       collapseDim += dims.size();
-     }
- 
--    Value collapse = b.create<tensor::CollapseShapeOp>(
--        scatterGeneric.getResult(0), reassociationMap);
-+    Value collapse = tensor::CollapseShapeOp::create(
-+        b, scatterGeneric.getResult(0), reassociationMap);
-     auto collapseTy = llvm::cast<ShapedType>(collapse.getType());
- 
-     // After collapsing it it possible that the target may need to be padded.
-@@ -2294,15 +2301,15 @@
-         size = ShapedType::kDynamic;
-       padShape.push_back(size);
- 
--      Value in = b.create<tensor::DimOp>(collapse, i);
--      Value out = b.create<tensor::DimOp>(operand, i);
--      Value diff = b.create<arith::SubIOp>(out, in);
-+      Value in = tensor::DimOp::create(b, collapse, i);
-+      Value out = tensor::DimOp::create(b, operand, i);
-+      Value diff = arith::SubIOp::create(b, out, in);
-       Value pad = b.createOrFold<arith::MaxSIOp>(diff, zero);
-       padHigh.push_back(pad);
-     }
- 
--    Value padded = b.create<tensor::PadOp>(collapseTy.clone(padShape), collapse,
--                                           padLow, padHigh, initScalar);
-+    Value padded = tensor::PadOp::create(b, collapseTy.clone(padShape),
-+                                         collapse, padLow, padHigh, initScalar);
- 
-     // The result may exceed the target size, slice if necessary.
-     SmallVector<OpFoldResult> sliceSizes;
-@@ -2363,9 +2370,9 @@
-     if (!hasNegativePadding) return failure();
- 
-     // Create a new pad op with the positive values.
--    Value pad = rewriter.create<mlir::stablehlo::PadOp>(
--        op.getLoc(), adaptor.getOperand(), adaptor.getPaddingValue(), padLow,
--        padHigh, op.getInteriorPadding());
-+    Value pad = mlir::stablehlo::PadOp::create(
-+        rewriter, op.getLoc(), adaptor.getOperand(), adaptor.getPaddingValue(),
-+        padLow, padHigh, op.getInteriorPadding());
- 
-     // Then slice according to the negative edge padding. Static shapes only for
-     // now.
-@@ -2410,8 +2417,8 @@
-     // If there is no interior padding lower to tensor.pad directly.
-     if (llvm::all_of(op.getInteriorPadding(),
-                      [](const int64_t &i) { return i == 0; })) {
--      auto padTensorOp = rewriter.create<tensor::PadOp>(
--          loc, resultType, adaptor.getOperand(),
-+      auto padTensorOp = tensor::PadOp::create(
-+          rewriter, loc, resultType, adaptor.getOperand(),
-           llvm::map_to_vector(op.getEdgePaddingLow(), i64ToFoldResult),
-           llvm::map_to_vector(op.getEdgePaddingHigh(), i64ToFoldResult),
-           paddingVal);
-@@ -2424,7 +2431,7 @@
-     auto emptyTensor =
-         getEmptyTensorFor(rewriter, loc, resultType, op, adaptor.getOperands());
-     auto fill =
--        rewriter.create<linalg::FillOp>(loc, paddingVal, emptyTensor).result();
-+        linalg::FillOp::create(rewriter, loc, paddingVal, emptyTensor).result();
- 
-     // Get sizes of the original operand.
-     auto operandType = llvm::cast<ShapedType>(adaptor.getOperand().getType());
-@@ -2433,7 +2440,7 @@
-         [&](int64_t dim) -> OpFoldResult {
-           if (!operandType.isDynamicDim(dim))
-             return rewriter.getIndexAttr(operandType.getDimSize(dim));
--          return rewriter.create<tensor::DimOp>(loc, adaptor.getOperand(), dim)
-+          return tensor::DimOp::create(rewriter, loc, adaptor.getOperand(), dim)
-               .getResult();
-         });
-     // Map interior padding to strides.
-@@ -2481,15 +2488,15 @@
-       if (!resultType.isDynamicDim(i)) continue;
-       if (i < axis) {
-         dynSizes.push_back(
--            rewriter.create<tensor::DimOp>(loc, adaptor.getOperand(), i));
-+            tensor::DimOp::create(rewriter, loc, adaptor.getOperand(), i));
-       } else if (i < (axis + numIndices - batch)) {
-         int idx = i - axis + batch;
-         dynSizes.push_back(
--            rewriter.create<tensor::DimOp>(loc, adaptor.getIndex(), idx));
-+            tensor::DimOp::create(rewriter, loc, adaptor.getIndex(), idx));
-       } else {
-         int idx = i - (axis + numIndices - batch) + axis + 1;
-         dynSizes.push_back(
--            rewriter.create<tensor::DimOp>(loc, adaptor.getOperand(), idx));
-+            tensor::DimOp::create(rewriter, loc, adaptor.getOperand(), idx));
-       }
-     }
- 
-@@ -2503,7 +2510,7 @@
-       sliceShape.push_back(resultShape[i]);
-       if (!resultType.isDynamicDim(i)) continue;
-       dynSliceSizes.push_back(
--          rewriter.create<tensor::DimOp>(loc, adaptor.getOperand(), i));
-+          tensor::DimOp::create(rewriter, loc, adaptor.getOperand(), i));
-     }
-     for (int i = axis + numIndices - batch; i < rank; ++i) {
-       sliceExprs.push_back(rewriter.getAffineDimExpr(i));
-@@ -2511,7 +2518,7 @@
-       if (!resultType.isDynamicDim(i)) continue;
-       int idx = i - (axis + numIndices - batch) + axis + 1;
-       dynSliceSizes.push_back(
--          rewriter.create<tensor::DimOp>(loc, adaptor.getOperand(), idx));
-+          tensor::DimOp::create(rewriter, loc, adaptor.getOperand(), idx));
-     }
- 
-     // Setup AffineMap for operand tensor.
-@@ -2530,13 +2537,14 @@
-         rank, /*symbolCount=*/0, sliceExprs, rewriter.getContext()));
-     indexingMaps.emplace_back(rewriter.getMultiDimIdentityMap(rank));
- 
--    Value sliceOp = rewriter.create<tensor::EmptyOp>(
--        loc, sliceShape, resultType.getElementType(), dynSliceSizes);
--
--    Value emptyOp = rewriter.create<tensor::EmptyOp>(
--        loc, resultType.getShape(), resultType.getElementType(), dynSizes);
--    auto linalgOp = rewriter.create<linalg::GenericOp>(
--        loc, /*resultTensors=*/ArrayRef<Type>{resultType},
-+    Value sliceOp = tensor::EmptyOp::create(
-+        rewriter, loc, sliceShape, resultType.getElementType(), dynSliceSizes);
-+
-+    Value emptyOp =
-+        tensor::EmptyOp::create(rewriter, loc, resultType.getShape(),
-+                                resultType.getElementType(), dynSizes);
-+    auto linalgOp = linalg::GenericOp::create(
-+        rewriter, loc, /*resultTensors=*/ArrayRef<Type>{resultType},
-         /*inputs=*/ValueRange{adaptor.getIndex(), sliceOp},
-         /*outputs=*/emptyOp, indexingMaps, getNParallelLoopsAttrs(rank),
-         /*bodyBuild=*/nullptr, linalg::getPrunedAttributeList(op));
-@@ -2556,20 +2564,20 @@
-     OpBuilder::InsertionGuard guard(rewriter);
-     rewriter.setInsertionPointToEnd(block);
- 
--    Value castedValue = rewriter.create<arith::IndexCastOp>(
--        loc, rewriter.getIndexType(), block->getArgument(0));
-+    Value castedValue = arith::IndexCastOp::create(
-+        rewriter, loc, rewriter.getIndexType(), block->getArgument(0));
- 
-     SmallVector<Value> indices;
-     for (int i = 0; i < axis; ++i) {
--      indices.push_back(rewriter.create<linalg::IndexOp>(loc, i));
-+      indices.push_back(linalg::IndexOp::create(rewriter, loc, i));
-     }
-     indices.push_back(castedValue);
-     for (int i = axis + numIndices - batch; i < rank; ++i) {
--      indices.push_back(rewriter.create<linalg::IndexOp>(loc, i));
-+      indices.push_back(linalg::IndexOp::create(rewriter, loc, i));
-     }
-     Value res =
--        rewriter.create<tensor::ExtractOp>(loc, adaptor.getOperand(), indices);
--    rewriter.create<linalg::YieldOp>(loc, res);
-+        tensor::ExtractOp::create(rewriter, loc, adaptor.getOperand(), indices);
-+    linalg::YieldOp::create(rewriter, loc, res);
- 
-     rewriter.replaceOp(op, linalgOp.getResults());
-     return success();
-@@ -2598,11 +2606,10 @@
-                                        return rewriter.getIndexAttr(dim);
-                                      });
-     Value dimensionSize =
--        rewriter.create<tensor::ExtractOp>(loc, setDimensionSizeOp.getSize());
-+        tensor::ExtractOp::create(rewriter, loc, setDimensionSizeOp.getSize());
-     sizes[setDimensionSizeOp.getDimension()] =
--        rewriter
--            .create<arith::IndexCastOp>(loc, rewriter.getIndexType(),
--                                        dimensionSize)
-+        arith::IndexCastOp::create(rewriter, loc, rewriter.getIndexType(),
-+                                   dimensionSize)
-             .getResult();
- 
-     rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
-diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp
---- stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp
-+++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgConvolution.cpp
-@@ -97,17 +97,17 @@
-   if (auto complexType = dyn_cast<ComplexType>(inputType.getElementType())) {
-     auto zeroElement = rewriter.getZeroAttr(complexType.getElementType());
-     auto zeroAttr = rewriter.getArrayAttr({zeroElement, zeroElement});
--    zero = rewriter.create<complex::ConstantOp>(loc, complexType, zeroAttr);
--    zero = rewriter.create<tensor::FromElementsOp>(
--        loc, RankedTensorType::get({}, complexType), zero);
-+    zero = complex::ConstantOp::create(rewriter, loc, complexType, zeroAttr);
-+    zero = tensor::FromElementsOp::create(
-+        rewriter, loc, RankedTensorType::get({}, complexType), zero);
-   } else {
--    zero = rewriter.create<arith::ConstantOp>(
--        loc, rewriter.getZeroAttr(
--                 RankedTensorType::get({}, inputType.getElementType())));
--  }
--
--  return rewriter.create<mlir::stablehlo::PadOp>(loc, input, zero, padLow,
--                                                 padHigh, padInterior);
-+    zero = arith::ConstantOp::create(rewriter, loc,
-+                                     rewriter.getZeroAttr(RankedTensorType::get(
-+                                         {}, inputType.getElementType())));
+ };
+ 
++#define GEN_PASS_DEF_HLOTESTBROADCASTPASS
+ #define GEN_PASS_DEF_HLOTESTINFERPASS
+ #define GEN_PASS_DEF_HLOTESTSPECULATABILITYPASS
+ #include "stablehlo/tests/TestUtils.h.inc"
+ 
++struct HloTestBroadcastPass
++    : public impl::HloTestBroadcastPassBase<HloTestBroadcastPass> {
++  LogicalResult initialize(MLIRContext* context) override {
++    RewritePatternSet patterns(context);
++    patterns.add<BroadcastValuesPattern>(context);
++    patterns_ = std::move(patterns);
++    return success();
 +  }
 +
-+  return mlir::stablehlo::PadOp::create(rewriter, loc, input, zero, padLow,
-+                                        padHigh, padInterior);
- }
- 
- /// If the ConvolutionOp has a window reversal, applies it to the filter.
-@@ -126,8 +126,8 @@
-     }
++  void runOnOperation() override {
++    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns_))))
++      return signalPassFailure();
++  }
++
++ private:
++  FrozenRewritePatternSet patterns_;
++};
++
+ struct HloTestInferPass : public impl::HloTestInferPassBase<HloTestInferPass> {
+   LogicalResult initialize(MLIRContext *context) override {
+-    RewritePatternSet patterns_(context);
+-    patterns_.add<InferReturnTypesPattern>(context);
+-    patterns_.add<ReifyReturnTypeShapesPattern>(context);
+-    patterns = std::move(patterns_);
++    RewritePatternSet patterns(context);
++    patterns.add<InferReturnTypesPattern>(context);
++    patterns.add<ReifyReturnTypeShapesPattern>(context);
++    patterns_ = std::move(patterns);
+     return success();
    }
  
--  return b.create<mlir::stablehlo::ReverseOp>(
--      loc, filter, b.getDenseI64ArrayAttr(reversedDims));
-+  return mlir::stablehlo::ReverseOp::create(
-+      b, loc, filter, b.getDenseI64ArrayAttr(reversedDims));
- }
- 
- /// Returns true if the given `dimensionNumbers` from a stablehlo.convolution op
-@@ -231,7 +231,7 @@
-     // The output shape is N spatial_dims F.
-     SmallVector<Value, 8> dynSizes;
-     if (resultType.isDynamicDim(0)) {
--      dynSizes.push_back(rewriter.create<tensor::DimOp>(loc, input, 0));
-+      dynSizes.push_back(tensor::DimOp::create(rewriter, loc, input, 0));
-     }
-     for (int64_t i = 1, e = rank - 1; i < e; ++i) {
-       if (resultType.isDynamicDim(i)) {
-@@ -240,10 +240,12 @@
-       }
-     }
-     if (resultType.isDynamicDim(rank - 1)) {
--      dynSizes.push_back(rewriter.create<tensor::DimOp>(loc, filter, rank - 1));
--    }
--    Value emptyTensor = rewriter.create<tensor::EmptyOp>(
--        loc, resultType.getShape(), resultType.getElementType(), dynSizes);
-+      dynSizes.push_back(
-+          tensor::DimOp::create(rewriter, loc, filter, rank - 1));
-+    }
-+    Value emptyTensor =
-+        tensor::EmptyOp::create(rewriter, loc, resultType.getShape(),
-+                                resultType.getElementType(), dynSizes);
-     Value zeroTensor = fillTensorWithZeros(rewriter, loc, emptyTensor);
-     linalg::LinalgOp res;
-     Attribute strides;
-@@ -260,27 +262,30 @@
- 
-     switch (rank) {
-       case 2: {
--        res = rewriter.create<linalg::MatmulOp>(
--            loc, resultType, ValueRange{input, filter}, ValueRange{zeroTensor},
-+        res = linalg::MatmulOp::create(
-+            rewriter, loc, resultType, ValueRange{input, filter},
-+            ValueRange{zeroTensor}, linalg::getPrunedAttributeList(op));
-+        break;
-+      }
-+      case 3: {
-+        res = linalg::Conv1DNwcWcfOp::create(
-+            rewriter, loc, resultType, ValueRange{input, filter},
-+            ValueRange{zeroTensor}, strides, dilations,
-             linalg::getPrunedAttributeList(op));
-         break;
-       }
--      case 3: {
--        res = rewriter.create<linalg::Conv1DNwcWcfOp>(
--            loc, resultType, ValueRange{input, filter}, ValueRange{zeroTensor},
--            strides, dilations, linalg::getPrunedAttributeList(op));
-+      case 4: {
-+        res = linalg::Conv2DNhwcHwcfOp::create(
-+            rewriter, loc, resultType, ValueRange{input, filter},
-+            ValueRange{zeroTensor}, strides, dilations,
-+            linalg::getPrunedAttributeList(op));
-         break;
-       }
--      case 4: {
--        res = rewriter.create<linalg::Conv2DNhwcHwcfOp>(
--            loc, resultType, ValueRange{input, filter}, ValueRange{zeroTensor},
--            strides, dilations, linalg::getPrunedAttributeList(op));
--        break;
--      }
-       case 5: {
--        res = rewriter.create<linalg::Conv3DNdhwcDhwcfOp>(
--            loc, resultType, ValueRange{input, filter}, ValueRange{zeroTensor},
--            strides, dilations, linalg::getPrunedAttributeList(op));
-+        res = linalg::Conv3DNdhwcDhwcfOp::create(
-+            rewriter, loc, resultType, ValueRange{input, filter},
-+            ValueRange{zeroTensor}, strides, dilations,
-+            linalg::getPrunedAttributeList(op));
-         break;
-       }
-       default: {
-@@ -438,8 +443,8 @@
-         reshapeShapeVector(prevDimsRef, newShape, inputFeatureDimension,
-                            featureGroupCount);
-         updateDimMappingFromOffset(lhsIndexMapping, inputFeatureDimension);
--        modifiedLhs = rewriter.create<mlir::stablehlo::ReshapeOp>(
--            loc,
-+        modifiedLhs = mlir::stablehlo::ReshapeOp::create(
-+            rewriter, loc,
-             RankedTensorType::get(newShape, paddedLhsType.getElementType()),
-             modifiedLhs);
-       }
-@@ -454,8 +459,8 @@
-                            featureGroupCount);
-         updateDimMappingFromOffset(rhsIndexMapping,
-                                    kernelOutputFeatureDimension);
--        modifiedRhs = rewriter.create<mlir::stablehlo::ReshapeOp>(
--            loc,
-+        modifiedRhs = mlir::stablehlo::ReshapeOp::create(
-+            rewriter, loc,
-             RankedTensorType::get(newShape, paddedRhsType.getElementType()),
-             modifiedRhs);
-       }
-@@ -481,8 +486,8 @@
-         reshapeShapeVector(prevDimsRef, newShape, inputBatchDimension,
-                            batchGroupCount);
-         updateDimMappingFromOffset(lhsIndexMapping, inputBatchDimension);
--        modifiedLhs = rewriter.create<mlir::stablehlo::ReshapeOp>(
--            op.getLoc(),
-+        modifiedLhs = mlir::stablehlo::ReshapeOp::create(
-+            rewriter, op.getLoc(),
-             RankedTensorType::get(newShape, paddedLhsType.getElementType()),
-             modifiedLhs);
-       }
-@@ -497,8 +502,8 @@
-                            batchGroupCount);
-         updateDimMappingFromOffset(rhsIndexMapping,
-                                    kernelOutputFeatureDimension);
--        modifiedRhs = rewriter.create<mlir::stablehlo::ReshapeOp>(
--            op.getLoc(),
-+        modifiedRhs = mlir::stablehlo::ReshapeOp::create(
-+            rewriter, op.getLoc(),
-             RankedTensorType::get(newShape, paddedRhsType.getElementType()),
-             modifiedRhs);
-       }
-@@ -562,28 +567,26 @@
-     auto inferredMaps =
-         AffineMap::inferFromExprList({srcExprs, windowExprs, dstExprs}, ctx);
- 
--    Value emptyTensor = rewriter.create<tensor::EmptyOp>(
--        loc, reshapedResultShape, resultType.getElementType());
-+    Value emptyTensor = tensor::EmptyOp::create(
-+        rewriter, loc, reshapedResultShape, resultType.getElementType());
-     Value zeroTensor = fillTensorWithZeros(rewriter, loc, emptyTensor);
- 
-     Value convolved =
--        rewriter
--            .create<linalg::GenericOp>(
--                loc,
--                /*resultTensors=*/
--                llvm::ArrayRef<Type>(zeroTensor.getType()),
--                /*inputs=*/
--                llvm::ArrayRef<Value>({modifiedLhs, modifiedRhs}),
--                /*outputs=*/llvm::ArrayRef<Value>(zeroTensor), inferredMaps,
--                iterationLoops,
--                /*bodyBuild=*/
--                [&](OpBuilder &nestedBuilder, Location nestedLoc, ValueRange) {
--                  ImplicitLocOpBuilder builder(nestedLoc, nestedBuilder);
--                  linalg::Conv2DOp::regionBuilder(builder,
--                                                  *builder.getInsertionBlock(),
--                                                  {}, /*emitError=*/{});
--                },
--                linalg::getPrunedAttributeList(op))
-+        linalg::GenericOp::create(
-+            rewriter, loc,
-+            /*resultTensors=*/
-+            llvm::ArrayRef<Type>(zeroTensor.getType()),
-+            /*inputs=*/
-+            llvm::ArrayRef<Value>({modifiedLhs, modifiedRhs}),
-+            /*outputs=*/llvm::ArrayRef<Value>(zeroTensor), inferredMaps,
-+            iterationLoops,
-+            /*bodyBuild=*/
-+            [&](OpBuilder &nestedBuilder, Location nestedLoc, ValueRange) {
-+              ImplicitLocOpBuilder builder(nestedLoc, nestedBuilder);
-+              linalg::Conv2DOp::regionBuilder(
-+                  builder, *builder.getInsertionBlock(), {}, /*emitError=*/{});
-+            },
-+            linalg::getPrunedAttributeList(op))
-             .getResult(0);
-     rewriter.replaceOpWithNewOp<mlir::stablehlo::ReshapeOp>(op, resultType,
-                                                             convolved);
-@@ -709,8 +712,8 @@
-             reshapedFilterDims,
-             cast<ShapedType>(op.getRhs().getType()).getElementType());
- 
--        reshapedFilter = rewriter.create<mlir::stablehlo::ReshapeOp>(
--            loc, reshapedFilterType, filter);
-+        reshapedFilter = mlir::stablehlo::ReshapeOp::create(
-+            rewriter, loc, reshapedFilterType, filter);
-       }
- 
-       ArrayRef<int64_t> outputDims = resultType.getShape();
-@@ -720,8 +723,8 @@
-       reshapedOutputDims.push_back(channelMultiplier);
-       reshapedOutputDims[reshapedOutputDims.size() - 2] /= channelMultiplier;
- 
--      Value emptyTensor = rewriter.create<tensor::EmptyOp>(
--          loc, reshapedOutputDims, resultType.getElementType());
-+      Value emptyTensor = tensor::EmptyOp::create(
-+          rewriter, loc, reshapedOutputDims, resultType.getElementType());
-       Value zeroTensor = fillTensorWithZeros(rewriter, loc, emptyTensor);
- 
-       auto reshapedOutputType = RankedTensorType::get(
-@@ -729,32 +732,29 @@
-       Value conv;
-       switch (spatialRank) {
-         case 1: {
--          conv = rewriter
--                     .create<linalg::DepthwiseConv1DNwcWcmOp>(
--                         loc, reshapedOutputType,
--                         ValueRange{input, reshapedFilter},
--                         ValueRange{zeroTensor}, windowStrides, rhsDilation,
--                         linalg::getPrunedAttributeList(op))
-+          conv = linalg::DepthwiseConv1DNwcWcmOp::create(
-+                     rewriter, loc, reshapedOutputType,
-+                     ValueRange{input, reshapedFilter}, ValueRange{zeroTensor},
-+                     windowStrides, rhsDilation,
-+                     linalg::getPrunedAttributeList(op))
-                      .getResult(0);
-           break;
-         }
-         case 2: {
--          conv = rewriter
--                     .create<linalg::DepthwiseConv2DNhwcHwcmOp>(
--                         loc, reshapedOutputType,
--                         ValueRange{input, reshapedFilter},
--                         ValueRange{zeroTensor}, windowStrides, rhsDilation,
--                         linalg::getPrunedAttributeList(op))
-+          conv = linalg::DepthwiseConv2DNhwcHwcmOp::create(
-+                     rewriter, loc, reshapedOutputType,
-+                     ValueRange{input, reshapedFilter}, ValueRange{zeroTensor},
-+                     windowStrides, rhsDilation,
-+                     linalg::getPrunedAttributeList(op))
-                      .getResult(0);
-           break;
-         }
-         case 3: {
--          conv = rewriter
--                     .create<linalg::DepthwiseConv3DNdhwcDhwcmOp>(
--                         loc, reshapedOutputType,
--                         ValueRange{input, reshapedFilter},
--                         ValueRange{zeroTensor}, windowStrides, rhsDilation,
--                         linalg::getPrunedAttributeList(op))
-+          conv = linalg::DepthwiseConv3DNdhwcDhwcmOp::create(
-+                     rewriter, loc, reshapedOutputType,
-+                     ValueRange{input, reshapedFilter}, ValueRange{zeroTensor},
-+                     windowStrides, rhsDilation,
-+                     linalg::getPrunedAttributeList(op))
-                      .getResult(0);
-           break;
-         }
-@@ -771,8 +771,8 @@
-           getReassociationIndicesToCollapseLastTwoDims(conv));
-     } else {
-       // For cases where channel multiplier == 1
--      Value emptyTensor = rewriter.create<tensor::EmptyOp>(
--          loc, resultType.getShape(), resultType.getElementType());
-+      Value emptyTensor = tensor::EmptyOp::create(
-+          rewriter, loc, resultType.getShape(), resultType.getElementType());
-       Value zeroTensor = fillTensorWithZeros(rewriter, loc, emptyTensor);
- 
-       // Create a Linalg reshape op that converts the filter from 4 dimensions
-@@ -787,8 +787,8 @@
-       RankedTensorType filterShape =
-           RankedTensorType::get(filterDims, op.getType().getElementType());
- 
--      Value reshapedFilter = rewriter.create<tensor::CollapseShapeOp>(
--          loc, filterShape, filter,
-+      Value reshapedFilter = tensor::CollapseShapeOp::create(
-+          rewriter, loc, filterShape, filter,
-           getReassociationIndicesToCollapseLastTwoDims(filter));
- 
-       switch (spatialRank) {
-diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgDotProduct.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgDotProduct.cpp
---- stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgDotProduct.cpp
-+++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloToLinalgDotProduct.cpp
-@@ -89,9 +89,9 @@
+   void runOnOperation() override {
+-    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
++    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns_))))
+       return signalPassFailure();
    }
- 
-   if (lhsIsMatrix && lhsType.isDynamicDim(0))
--    dynShape.push_back(b.create<tensor::DimOp>(loc, lhs, 0));
-+    dynShape.push_back(tensor::DimOp::create(b, loc, lhs, 0));
-   if (rhsIsMatrix && rhsType.isDynamicDim(1))
--    dynShape.push_back(b.create<tensor::DimOp>(loc, rhs, 1));
-+    dynShape.push_back(tensor::DimOp::create(b, loc, rhs, 1));
-   return dynShape;
- }
- 
-@@ -182,8 +182,8 @@
-     Value emptyTensor =
-         getEmptyTensorFor(rewriter, loc, outputType, op, adaptor.getOperands());
-     Value zeroTensor = fillTensorWithZeros(rewriter, loc, emptyTensor);
--    Operation *linalgOp = rewriter.create<linalg::BatchMatmulOp>(
--        loc, /*resultTensorTypes=*/TypeRange{outputType},
-+    Operation *linalgOp = linalg::BatchMatmulOp::create(
-+        rewriter, loc, /*resultTensorTypes=*/TypeRange{outputType},
-         /*inputs=*/ValueRange{adaptor.getLhs(), adaptor.getRhs()},
-         /*outputBuffers=*/ValueRange{zeroTensor},
-         linalg::getPrunedAttributeList(op));
-@@ -290,8 +290,8 @@
-                                             op.getContext()));
-     }
- 
--    Operation *linalgOp = rewriter.create<linalg::GenericOp>(
--        loc, /*resultTensorTypes=*/TypeRange{outputType},
-+    Operation *linalgOp = linalg::GenericOp::create(
-+        rewriter, loc, /*resultTensorTypes=*/TypeRange{outputType},
-         /*inputs=*/ValueRange{adaptor.getLhs(), adaptor.getRhs()},
-         /*outputBuffers=*/ValueRange{zeroTensor}, indexingMaps,
-         getParallelAndReductionIterators(
-diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.td b/stablehlo/stablehlo/dialect/StablehloOps.td
---- stablehlo/stablehlo/dialect/StablehloOps.td
-+++ stablehlo/stablehlo/dialect/StablehloOps.td
-@@ -1245,11 +1245,6 @@
-   );
- 
-   let results = (outs HLO_Token);
--  let builders = [
--    OpBuilder<(ins
--      "::mlir::Type":$result_type, "::mlir::Value":$operand,
--      "::mlir::DenseIntElementsAttr":$source_target_pairs,
--      "::mlir::stablehlo::ChannelHandleAttr":$channel_handle)>];
- }
- 
- def StableHLO_RecvOp : StableHLO_Op<"recv", [
-@@ -1279,11 +1274,6 @@
-     DefaultValuedOptionalAttr<BoolAttr, "false">:$is_host_transfer, /*recv_i4*/
-     OptionalAttr<I64ElementsAttr>:$source_target_pairs /*recv_i5*/
-   );
--  let builders = [
--    OpBuilder<(ins
--      "::mlir::Type":$result_type, "::mlir::Value":$operand,
--      "::mlir::DenseIntElementsAttr":$source_target_pairs,
--      "::mlir::stablehlo::ChannelHandleAttr":$channel_handle)>];
- 
-   let results = (outs Variadic<HLO_StaticShapeTensorOrPerAxisQuantizedTensorOrToken>);
-   let hasVerifier = 1;
-diff --ruN a/stablehlo/stablehlo/dialect/Version.cpp b/stablehlo/stablehlo/dialect/Version.cpp
---- stablehlo/stablehlo/dialect/Version.cpp
-+++ stablehlo/stablehlo/dialect/Version.cpp
-@@ -83,7 +83,7 @@
-     case CompatibilityRequirement::NONE:
-       return Version::getCurrentVersion();
-     case CompatibilityRequirement::WEEK_4:
--      return Version(1, 10, 10);  // WEEK_4 ANCHOR: DO NOT MODIFY
-+      return Version(1, 11, 0);  // WEEK_4 ANCHOR: DO NOT MODIFY
-     case CompatibilityRequirement::WEEK_12:
-       return Version(1, 10, 3);  // WEEK_12 ANCHOR: DO NOT MODIFY
-     case CompatibilityRequirement::MAX:
-diff --ruN a/stablehlo/stablehlo/integrations/python/tests/stablehlo.py b/stablehlo/stablehlo/integrations/python/tests/stablehlo.py
---- stablehlo/stablehlo/integrations/python/tests/stablehlo.py
-+++ stablehlo/stablehlo/integrations/python/tests/stablehlo.py
-@@ -21,6 +21,9 @@
- import os
- import re
- import tempfile
-+
-+from jax.interpreters import mlir
-+import jax.numpy as jnp
- from mlir import ir
- from mlir import passmanager as pm
- from mlir.dialects import stablehlo
-@@ -432,23 +435,43 @@
-   assert attr.ulps == 2
- 
- 
--@run
--def test_reference_api_with_probe():
--  """Tests that probe files are created in the specified directory."""
-+def _run_probe_test(tensor_type, arg):
-+  """Helper to run a probe test and verify output files."""
-   test_tmpdir_base = os.environ.get("TEST_TMPDIR")
-   with tempfile.TemporaryDirectory(dir=test_tmpdir_base) as tmpdir:
--    tensor_type = "f32"
--    arg = np.asarray(2, np.float32)
-     m = ir.Module.parse(_ASM_FORMAT_WITH_PROBE.format(tensor_type))
--    args = [ir.DenseElementsAttr.get(arg)]
-+
-+    # bfloat16 requires special handling for DenseElementsAttr creation
-+    if arg.dtype == jnp.bfloat16:
-+      element_type = mlir.dtype_to_ir_type(arg.dtype)
-+      shaped_type = ir.RankedTensorType.get(
-+          arg.shape, element_type, loc=ir.Location.unknown(context=ir.Context())
-+      )
-+      args = [ir.DenseElementsAttr.get(arg, type=shaped_type)]
-+    else:
-+      args = [ir.DenseElementsAttr.get(arg)]
- 
-     # Call eval_module, directing probe outputs to the temporary directory.
-     stablehlo.eval_module(m, args, probe_instrumentation_dir=tmpdir)
- 
--    # Verify that the expected probe files were created.
-+    # Verify that the expected probe files were created. The interpreter names
-+    # probe files probe1.npy, probe2.npy, etc. The `probe_id` is used as
-+    # metadata in `index.csv`.
-     probe_file = os.path.join(tmpdir, "probe1.npy")
-     metadata_file = os.path.join(tmpdir, "index.csv")
-     assert os.path.exists(probe_file), f"Probe file not found: {probe_file}"
-     assert os.path.exists(
-         metadata_file
-     ), f"Metadata file not found: {metadata_file}"
-+
-+
-+@run
-+def test_reference_api_with_probe():
-+  """Tests that probe files are created in the specified directory."""
-+  _run_probe_test("f32", np.asarray(2, np.float32))
-+
-+
-+@run
-+def test_reference_api_with_probe_bf16():
-+  """Tests that probe files are created for bf16 tensors."""
-+  _run_probe_test("bf16", np.asarray(2, jnp.bfloat16))
-diff --ruN a/stablehlo/stablehlo/reference/InterpreterInstrumentWithProbe.cpp b/stablehlo/stablehlo/reference/InterpreterInstrumentWithProbe.cpp
---- stablehlo/stablehlo/reference/InterpreterInstrumentWithProbe.cpp
-+++ stablehlo/stablehlo/reference/InterpreterInstrumentWithProbe.cpp
-@@ -43,7 +43,7 @@
-   InterpreterInstrumentWithProbePass(
-       const InterpreterInstrumentWithProbePassOptions& opts)
-       : InterpreterInstrumentWithProbePassBase<
--            InterpreterInstrumentWithProbePass>(opts){};
-+            InterpreterInstrumentWithProbePass>(opts) {};
-   void runOnOperation() override;
  
   private:
-@@ -122,7 +122,16 @@
- }
+-  FrozenRewritePatternSet patterns;
++  FrozenRewritePatternSet patterns_;
+ };
  
- bool InterpreterInstrumentWithProbePass::shouldProbeValue(Value value) const {
--  return isa<TensorType>(value.getType());
-+  // Check if the value's type is a RankedTensorType.
-+  auto tensorType = dyn_cast<RankedTensorType>(value.getType());
-+  if (!tensorType) return false;
-+
-+  // Check if the RankedTensorType has a static shape.
-+  if (!tensorType.hasStaticShape()) return false;
-+
-+  Type elementType = tensorType.getElementType();
-+
-+  return elementType.isIntOrFloat() || isa<ComplexType>(elementType);
- }
+ struct HloTestSpeculatabilityPass
+     : public impl::HloTestSpeculatabilityPassBase<HloTestSpeculatabilityPass> {
+   LogicalResult initialize(MLIRContext *context) override {
+-    RewritePatternSet patterns_(context);
+-    patterns_.add<IsSpeculatablePattern>(context);
+-    patterns_.add<IsNotSpeculatablePattern>(context);
+-    patterns_.add<IsRecursivelySpeculatablePattern>(context);
+-    patterns = std::move(patterns_);
++    RewritePatternSet patterns(context);
++    patterns.add<IsSpeculatablePattern>(context);
++    patterns.add<IsNotSpeculatablePattern>(context);
++    patterns.add<IsRecursivelySpeculatablePattern>(context);
++    patterns_ = std::move(patterns);
+     return success();
+   }
  
- }  // namespace
-diff --ruN a/stablehlo/stablehlo/reference/NumPy.cpp b/stablehlo/stablehlo/reference/NumPy.cpp
---- stablehlo/stablehlo/reference/NumPy.cpp
-+++ stablehlo/stablehlo/reference/NumPy.cpp
-@@ -319,6 +319,7 @@
-   if (type.isF16()) return Functor<uint16_t>()(std::forward<Args>(args)...);
-   if (type.isF32()) return Functor<float>()(std::forward<Args>(args)...);
-   if (type.isF64()) return Functor<double>()(std::forward<Args>(args)...);
-+  if (type.isBF16()) return Functor<uint16_t>()(std::forward<Args>(args)...);
-   if (auto complexTy = dyn_cast<ComplexType>(type)) {
-     auto complexElemTy = complexTy.getElementType();
+@@ -175,11 +219,11 @@
+     config.setMaxIterations(1)
+         .setUseTopDownTraversal(true)
+         .setRegionSimplificationLevel(GreedySimplifyRegionLevel::Disabled);
+-    (void)applyPatternsGreedily(getOperation(), std::move(patterns));
++    (void)applyPatternsGreedily(getOperation(), std::move(patterns_));
+   }
  
-diff --ruN a/stablehlo/stablehlo/tests/interpret/probe.mlir b/stablehlo/stablehlo/tests/interpret/probe.mlir
---- stablehlo/stablehlo/tests/interpret/probe.mlir
-+++ stablehlo/stablehlo/tests/interpret/probe.mlir
-@@ -43,6 +43,17 @@
-   %2 = stablehlo.add %0, %1 : tensor<3xf64>
-   %3 = interpreter.probe %2, probe_id = "probe_f64" : tensor<3xf64>
-   check.expect_serialized_eq %3, probe_id = "probe_f64" : tensor<3xf64>
-+  func.return
+  private:
+-  FrozenRewritePatternSet patterns;
++  FrozenRewritePatternSet patterns_;
+ };
+ 
+ #define GEN_PASS_REGISTRATION
+diff --ruN a/stablehlo/stablehlo/tests/TestUtils.td b/stablehlo/stablehlo/tests/TestUtils.td
+--- stablehlo/stablehlo/tests/TestUtils.td
++++ stablehlo/stablehlo/tests/TestUtils.td
+@@ -16,6 +16,11 @@
+ 
+ include "mlir/Pass/PassBase.td"
+ 
++def HloTestBroadcastPass : Pass<"hlo-test-broadcast", "func::FuncOp"> {
++  let summary = "Uses test ops to invoke BroadcastUtils methods.";
++  let dependentDialects = ["stablehlo::StablehloDialect"];
++}
++
+ def HloTestInferPass : Pass<"hlo-test-infer", "func::FuncOp"> {
+   let summary = "Uses test ops to invoke InferShapedTypeOpInterface methods.";
+   let dependentDialects = ["shape::ShapeDialect"];
+diff --ruN a/stablehlo/stablehlo/tests/ops_broadcasting.mlir b/stablehlo/stablehlo/tests/ops_broadcasting.mlir
+--- stablehlo/stablehlo/tests/ops_broadcasting.mlir
++++ stablehlo/stablehlo/tests/ops_broadcasting.mlir
+@@ -0,0 +1,249 @@
++// RUN: stablehlo-opt %s --hlo-test-broadcast --split-input-file --allow-unregistered-dialect | FileCheck %s
++
++/////////
++// Scalar broadcast tests.
++
++// [] x [1] => [1]
++// CHECK-LABEL: func @scalar_broadcast_scalar_x_1
++func.func @scalar_broadcast_scalar_x_1(%arg0: tensor<f64>, %arg1: tensor<1xf64>) -> !stablehlo.token {
++  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [] : (tensor<f64>) -> tensor<1xf64>
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST]], %arg1)
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<f64>, tensor<1xf64>) -> !stablehlo.token
++  return %0 : !stablehlo.token
 +}
 +
 +// -----
 +
-+func.func @probe_bf16() {
-+  %0 = stablehlo.constant dense<[1.0, 2.5, -3.0]> : tensor<3xbf16>
-+  %1 = stablehlo.constant dense<[0.5, 1.5, 0.0]> : tensor<3xbf16>
-+  %2 = stablehlo.add %0, %1 : tensor<3xbf16>
-+  %3 = interpreter.probe %2, probe_id = "probe_bf16" : tensor<3xbf16>
-+  check.expect_serialized_eq %3, probe_id = "probe_bf16" : tensor<3xbf16>
-   func.return
- }
- 
++// [1] x [] => [1]
++// CHECK-LABEL: func @scalar_broadcast_1_x_scalar
++func.func @scalar_broadcast_1_x_scalar(%arg0: tensor<1xf64>, %arg1: tensor<f64>) -> !stablehlo.token {
++  // CHECK: %[[RHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [] : (tensor<f64>) -> tensor<1xf64>
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %[[RHS_BCAST]])
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<1xf64>, tensor<f64>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// -----
++
++// [] x [10] => [10]
++// CHECK-LABEL: func @scalar_broadcast_scalar_x_10
++func.func @scalar_broadcast_scalar_x_10(%arg0: tensor<f64>, %arg1: tensor<10xf64>) -> !stablehlo.token {
++  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [] : (tensor<f64>) -> tensor<10xf64>
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST]], %arg1)
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<f64>, tensor<10xf64>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// -----
++
++// [<=10] x [] => [<=10]
++// CHECK-LABEL: func @scalar_broadcast_b10_x_scalar
++func.func @scalar_broadcast_b10_x_scalar(%arg0: tensor<?xf64, #stablehlo.bounds<10>>, %arg1: tensor<f64>) -> !stablehlo.token {
++  // CHECK: %[[RHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [] : (tensor<f64>) -> tensor<10xf64>
++  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg0, dim = 0
++  // CHECK: %[[RHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[RHS_BCAST]], %[[DIM_SIZE]], dim = 0
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %[[RHS_BCAST_DYN]])
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<?xf64, #stablehlo.bounds<10>>, tensor<f64>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// -----
++
++// [] x [<=10] => [<=10]
++// CHECK-LABEL: func @scalar_broadcast_scalar_x_b10
++func.func @scalar_broadcast_scalar_x_b10(%arg0: tensor<f64>, %arg1: tensor<?xf64, #stablehlo.bounds<10>>) -> !stablehlo.token {
++  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [] : (tensor<f64>) -> tensor<10xf64>
++  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg1, dim = 0
++  // CHECK: %[[LHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[LHS_BCAST]], %[[DIM_SIZE]], dim = 0
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST_DYN]], %arg1)
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<f64>, tensor<?xf64, #stablehlo.bounds<10>>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// -----
++
++// [] x [1, <=10, 1] => [1, <=10, 1]
++// CHECK-LABEL: func @scalar_broadcast_scalar_x_1_b10_1
++func.func @scalar_broadcast_scalar_x_1_b10_1(%arg0: tensor<f64>, %arg1: tensor<1x?x1xf64, #stablehlo.bounds<?, 10, ?>>) -> !stablehlo.token {
++  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [] : (tensor<f64>) -> tensor<1x10x1xf64>
++  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg1, dim = 1
++  // CHECK: %[[LHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[LHS_BCAST]], %[[DIM_SIZE]], dim = 1
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST_DYN]], %arg1)
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<f64>, tensor<1x?x1xf64, #stablehlo.bounds<?, 10, ?>>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// [10, 1, <=5] x [] => [10, 1, <=5]
++// CHECK-LABEL: func @scalar_broadcast_10_1_b5_x_scalar
++func.func @scalar_broadcast_10_1_b5_x_scalar(%arg0: tensor<10x1x?xf64, #stablehlo.bounds<?, ?, 5>>, %arg1: tensor<f64>) -> !stablehlo.token {
++  // CHECK: %[[RHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [] : (tensor<f64>) -> tensor<10x1x5xf64>
++  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg0, dim = 2
++  // CHECK: %[[RHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[RHS_BCAST]], %[[DIM_SIZE]], dim = 2
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %[[RHS_BCAST_DYN]])
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<10x1x?xf64, #stablehlo.bounds<?, ?, 5>>, tensor<f64>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++//////
++// 1-D SCALAR TESTS
++
++// [1] x [1] => [1]
++// [1] x [10] => [1]
++// [<=10] x [1] => [<=10]
++// [1] x [<=10] => [<=10]
++// [1] x [1, <=10, 1] => [1, <=10, 1]
++
++
++// [1] x [1] => [1]
++// CHECK-LABEL: func @single_dim_scalar_1_x_1
++func.func @single_dim_scalar_1_x_1(%arg0: tensor<1xf64>, %arg1: tensor<1xf64>) -> !stablehlo.token {
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %arg1)
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<1xf64>, tensor<1xf64>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// -----
++
++// [1] x [10] => [10]
++// CHECK-LABEL: func @single_dim_scalar_1_x_10
++func.func @single_dim_scalar_1_x_10(%arg0: tensor<1xf64>, %arg1: tensor<10xf64>) -> !stablehlo.token {
++  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [0] : (tensor<1xf64>) -> tensor<10xf64>
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST]], %arg1)
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<1xf64>, tensor<10xf64>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// -----
++
++// [<=10] x [1] => [<=10]
++// CHECK-LABEL: func @single_dim_scalar_b10_x_1
++func.func @single_dim_scalar_b10_x_1(%arg0: tensor<?xf64, #stablehlo.bounds<10>>, %arg1: tensor<1xf64>) -> !stablehlo.token {
++  // CHECK: %[[RHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [0] : (tensor<1xf64>) -> tensor<10xf64>
++  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg0, dim = 0
++  // CHECK: %[[RHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[RHS_BCAST]], %[[DIM_SIZE]], dim = 0
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %[[RHS_BCAST_DYN]])
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<?xf64, #stablehlo.bounds<10>>, tensor<1xf64>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// -----
++
++// [1] x [<=10] => [<=10]
++// CHECK-LABEL: func @single_dim_scalar_1_x_b10
++func.func @single_dim_scalar_1_x_b10(%arg0: tensor<1xf64>, %arg1: tensor<?xf64, #stablehlo.bounds<10>>) -> !stablehlo.token {
++  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [0] : (tensor<1xf64>) -> tensor<10xf64>
++  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg1, dim = 0
++  // CHECK: %[[LHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[LHS_BCAST]], %[[DIM_SIZE]], dim = 0
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST_DYN]], %arg1)
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<1xf64>, tensor<?xf64, #stablehlo.bounds<10>>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// [<=10] x [<=10] => [<=10] // PT layer must ensure these are identical!
++// CHECK-LABEL: func @single_dim_scalar_b10_x_b10
++func.func @single_dim_scalar_b10_x_b10(%arg0: tensor<?xf64, #stablehlo.bounds<10>>, %arg1: tensor<?xf64, #stablehlo.bounds<10>>) -> !stablehlo.token {
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %arg1)
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<?xf64, #stablehlo.bounds<10>>, tensor<?xf64, #stablehlo.bounds<10>>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// -----
++
++// [1] x [1, <=10, 1] => [1, <=10, 1]
++// CHECK-LABEL: func @single_dim_scalar_1_x_1_b10_1
++func.func @single_dim_scalar_1_x_1_b10_1(%arg0: tensor<1xf64>, %arg1: tensor<1x?x1xf64, #stablehlo.bounds<?, 10, ?>>) -> !stablehlo.token {
++  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [2] : (tensor<1xf64>) -> tensor<1x10x1xf64>
++  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg1, dim = 1
++  // CHECK: %[[LHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[LHS_BCAST]], %[[DIM_SIZE]], dim = 1
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST_DYN]], %arg1)
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<1xf64>, tensor<1x?x1xf64, #stablehlo.bounds<?, 10, ?>>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// -----
++
++// [10, 1, <=5] x [1] => [10, 1, <=5]
++// CHECK-LABEL: func @single_dim_scalar_10_1_b5_x_1
++func.func @single_dim_scalar_10_1_b5_x_1(%arg0: tensor<10x1x?xf64, #stablehlo.bounds<?, ?, 5>>, %arg1: tensor<1xf64>) -> !stablehlo.token {
++  // CHECK: %[[RHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [2] : (tensor<1xf64>) -> tensor<10x1x5xf64>
++  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg0, dim = 2
++  // CHECK: %[[RHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[RHS_BCAST]], %[[DIM_SIZE]], dim = 2
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %[[RHS_BCAST_DYN]])
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<10x1x?xf64, #stablehlo.bounds<?, ?, 5>>, tensor<1xf64>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++
++//////
++// N-D Tests
++
++// [1, 2] x [1, 2] => [1, 2]
++// CHECK-LABEL: func @tensor_no_broadcast_match
++func.func @tensor_no_broadcast_match(%arg0: tensor<1x2xf64>, %arg1: tensor<1x2xf64>) -> !stablehlo.token {
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %arg1)
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<1x2xf64>, tensor<1x2xf64>) ->  !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// [10, 1] x [1, 1] => [10, 1]
++// CHECK-LABEL: func @tensor_broadcast_10_1_x_1_1
++func.func @tensor_broadcast_10_1_x_1_1(%arg0: tensor<10x1xf64>, %arg1: tensor<1x1xf64>) -> !stablehlo.token {
++  // CHECK: %[[RHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [0, 1] : (tensor<1x1xf64>) -> tensor<10x1xf64>
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%arg0, %[[RHS_BCAST]])
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<10x1xf64>, tensor<1x1xf64>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// -----
++
++// [<=10, 1] x [1, 10] => [<=10, 10]
++// CHECK-LABEL: func @tensor_broadcast_b10_1_x_1_10
++func.func @tensor_broadcast_b10_1_x_1_10(%arg0: tensor<?x1xf64, #stablehlo.bounds<10, ?>>, %arg1: tensor<1x10xf64>) -> !stablehlo.token {
++  // CHECK: %[[LHS_BCAST:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [0, 1] : (tensor<?x1xf64, #stablehlo.bounds<10, ?>>) -> tensor<?x10xf64, #stablehlo.bounds<10, ?>>
++  // CHECK: %[[RHS_BCAST_STATIC:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [0, 1] : (tensor<1x10xf64>) -> tensor<10x10xf64>
++  // CHECK: %[[DIM_SIZE:.+]] = stablehlo.get_dimension_size %arg0, dim = 0
++  // CHECK: %[[RHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[RHS_BCAST_STATIC]], %[[DIM_SIZE]], dim = 0
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST]], %[[RHS_BCAST_DYN]])
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (tensor<?x1xf64, #stablehlo.bounds<10, ?>>, tensor<1x10xf64>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// -----
++
++// [<=10, 1] x [1, <=10] => [<=10, <=10]
++// CHECK-LABEL: func @tensor_broadcast_b10_1_x_1_b10
++func.func @tensor_broadcast_b10_1_x_1_b10(
++  %arg0: tensor<?x1xf64, #stablehlo.bounds<10, ?>>,
++  %arg1: tensor<1x?xf64, #stablehlo.bounds<?, 10>>
++) -> !stablehlo.token {
++  // CHECK: %[[LHS_BCAST_STATIC:.+]] = stablehlo.broadcast_in_dim %arg0, dims = [0, 1] : (tensor<?x1xf64, #stablehlo.bounds<10, ?>>) -> tensor<?x10xf64, #stablehlo.bounds<10, ?>>
++  // CHECK: %[[ARG1_DIM1_SIZE:.+]] = stablehlo.get_dimension_size %arg1, dim = 1
++  // CHECK: %[[LHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[LHS_BCAST_STATIC]], %[[ARG1_DIM1_SIZE]], dim = 1
++  // CHECK: %[[RHS_BCAST_STATIC:.+]] = stablehlo.broadcast_in_dim %arg1, dims = [0, 1] : (tensor<1x?xf64, #stablehlo.bounds<?, 10>>) -> tensor<10x?xf64, #stablehlo.bounds<?, 10>>
++  // CHECK: %[[ARG0_DIM0_SIZE:.+]] = stablehlo.get_dimension_size %arg0, dim = 0
++  // CHECK: %[[RHS_BCAST_DYN:.+]] = stablehlo.set_dimension_size %[[RHS_BCAST_STATIC]], %[[ARG0_DIM0_SIZE]], dim = 0
++  // CHECK-NEXT: stablehlo.custom_call @numpy_broadcasted(%[[LHS_BCAST_DYN]], %[[RHS_BCAST_DYN]])
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1) : (
++    tensor<?x1xf64, #stablehlo.bounds<10, ?>>,
++    tensor<1x?xf64, #stablehlo.bounds<?, 10>>
++  ) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
++// -----
++
++//////
++// N-ary broadcast tests.
++
++
++// [<=10, 1] x [1, <=10] x [1] => [<=10, <=10]
++// CHECK-LABEL: func @nary_broadcast_b10_1_x_1_b10_x_1
++func.func @nary_broadcast_b10_1_x_1_b10_x_1(
++  %arg0: tensor<?x1xf64, #stablehlo.bounds<10, ?>>,
++  %arg1: tensor<1x?xf64, #stablehlo.bounds<?, 10>>,
++  %arg2: tensor<1xf64>
++) -> !stablehlo.token {
++  %0 = "hlo_test_broadcast.numpy_broadcast"(%arg0, %arg1, %arg2) : (tensor<?x1xf64, #stablehlo.bounds<10, ?>>, tensor<1x?xf64, #stablehlo.bounds<?, 10>>, tensor<1xf64>) -> !stablehlo.token
++  return %0 : !stablehlo.token
++}
++
 diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir
 --- stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir
 +++ stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir
-@@ -246,6 +246,9 @@
+@@ -473,6 +473,44 @@
+   return %0, %1, %2, %3 : tensor<6xi32>, tensor<3xi32>, tensor<3x3xi32>, tensor<2x5xi32>
+ }
  
++// CHECK-LABEL: func.func @fold_concatenate_splat_leading
++func.func @fold_concatenate_splat_leading(%arg0: tensor<1xi32>) -> tensor<3xi32> {
++  // CHECK: [[CST0:%.+]] = stablehlo.constant dense<0> : tensor<2xi32>
++  // CHECK-NEXT: stablehlo.concatenate [[CST0]], %arg0, dim = 0
++  %cst0 = stablehlo.constant dense<0> : tensor<1xi32>
++  %0 = stablehlo.concatenate %cst0, %cst0, %arg0, dim = 0 : (tensor<1xi32>, tensor<1xi32>, tensor<1xi32>) -> tensor<3xi32>
++  return %0 : tensor<3xi32>
++}
++
++// CHECK-LABEL: func.func @fold_concatenate_splat_trailing
++func.func @fold_concatenate_splat_trailing(%arg0: tensor<2xi32>) -> tensor<6xi32> {
++  // CHECK: [[CST0:%.+]] = stablehlo.constant dense<0> : tensor<4xi32>
++  // CHECK-NEXT: stablehlo.concatenate %arg0, [[CST0]], dim = 0
++  %cst0 = stablehlo.constant dense<0> : tensor<2xi32>
++  %0 = stablehlo.concatenate %arg0, %cst0, %cst0, dim = 0 : (tensor<2xi32>, tensor<2xi32>, tensor<2xi32>) -> tensor<6xi32>
++  return %0 : tensor<6xi32>
++}
++
++// CHECK-LABEL: func.func @fold_concatenate_splat_middle
++func.func @fold_concatenate_splat_middle(%arg0: tensor<1xi32>) -> tensor<4xi32> {
++  // CHECK: [[CST0:%.+]] = stablehlo.constant dense<0> : tensor<2xi32>
++  // CHECK-NEXT: stablehlo.concatenate %arg0, [[CST0]], %arg0, dim = 0
++  %cst0 = stablehlo.constant dense<0> : tensor<1xi32>
++  %0 = stablehlo.concatenate %arg0, %cst0, %cst0, %arg0, dim = 0 : (tensor<1xi32>, tensor<1xi32>, tensor<1xi32>, tensor<1xi32>) -> tensor<4xi32>
++  return %0 : tensor<4xi32>
++}
++
++// CHECK-LABEL: func.func @fold_concatenate_splat_multiple
++func.func @fold_concatenate_splat_multiple(%arg0: tensor<1xi32>) -> tensor<5xi32> {
++  // CHECK-DAG: [[CST0:%.+]] = stablehlo.constant dense<0> : tensor<2xi32>
++  // CHECK-DAG: [[CST1:%.+]] = stablehlo.constant dense<1> : tensor<2xi32>
++  // CHECK-NEXT: stablehlo.concatenate [[CST0]], [[CST1]], %arg0, dim = 0
++  %cst0 = stablehlo.constant dense<0> : tensor<1xi32>
++  %cst1 = stablehlo.constant dense<1> : tensor<1xi32>
++  %0 = stablehlo.concatenate %cst0, %cst0, %cst1, %cst1, %arg0, dim = 0 : (tensor<1xi32>, tensor<1xi32>, tensor<1xi32>, tensor<1xi32>, tensor<1xi32>) -> tensor<5xi32>
++  return %0 : tensor<5xi32>
++}
++
  // -----
  
-+////////
-+// ConvertOp
+ ////////
+@@ -576,16 +614,19 @@
+ // ReshapeOp
+ 
+ // CHECK-LABEL: func @reshape_fold
+-func.func @reshape_fold() -> (tensor<1xi32>, tensor<2x2xi32>) {
+-  %c0 = stablehlo.constant dense<2> : tensor<i32>
++func.func @reshape_fold() -> (tensor<1xf32>, tensor<2x2xi32>, tensor<3x2xcomplex<f32>>) {
++  %c0 = stablehlo.constant dense<2.0> : tensor<f32>
+   %c1 = stablehlo.constant dense<[1, 2, 3, 4]> : tensor<4xi32>
+-  %0 = stablehlo.reshape %c0 : (tensor<i32>) -> tensor<1xi32>
++  %c2 = stablehlo.constant dense<(1.0,2.0)> : tensor<2x3xcomplex<f32>>
++  %0 = stablehlo.reshape %c0 : (tensor<f32>) -> tensor<1xf32>
+   %1 = stablehlo.reshape %c1 : (tensor<4xi32>) -> tensor<2x2xi32>
+-
+-  // CHECK-DAG:  [[CST1:%.+]] = stablehlo.constant dense<2> : tensor<1xi32>
+-  // CHECK-DAG:  [[CST2:%.+]] = stablehlo.constant dense<{{\[\[1, 2\], \[3, 4\]\]}}> : tensor<2x2xi32>
+-  // CHECK-NEXT: return [[CST1]], [[CST2]]
+-  return %0, %1 : tensor<1xi32>, tensor<2x2xi32>
++  %2 = stablehlo.reshape %c2 : (tensor<2x3xcomplex<f32>>) -> tensor<3x2xcomplex<f32>>
 +
- // CHECK-LABEL: func @eval_convert_f32_to_i64
- func.func @eval_convert_f32_to_i64() -> tensor<2xi64> {
-   // CHECK-NOT: stablehlo.convert
-@@ -254,6 +257,42 @@
-   %0 = stablehlo.constant dense<[1.0, 2.0]> : tensor<2xf32>
-   %1 = stablehlo.convert %0 : (tensor<2xf32>) -> tensor<2xi64>
-   func.return %1 : tensor<2xi64>
-+}
-+
-+// CHECK-LABEL: func @eval_convert_bool_f32
-+func.func @eval_convert_bool_f32() -> tensor<2xf32> {
-+  // CHECK-NEXT: [[CST:%.+]] = stablehlo.constant dense<[0.000000e+00, 1.000000e+00]> : tensor<2xf32>
-+  %cst = stablehlo.constant dense<[0, 1]> : tensor<2xi1>
-+  %0 = stablehlo.convert %cst : (tensor<2xi1>) -> tensor<2xf32>
-+  // CHECK-NEXT: return [[CST]]
-+  func.return %0 : tensor<2xf32>
-+}
-+
-+// CHECK-LABEL: func @eval_convert_bool_i32
-+func.func @eval_convert_bool_i32() -> tensor<2xi32> {
-+  // CHECK-NEXT: [[CST:%.+]] = stablehlo.constant dense<[0, 1]> : tensor<2xi32>
-+  %cst = stablehlo.constant dense<[0, 1]> : tensor<2xi1>
-+  %0 = stablehlo.convert %cst : (tensor<2xi1>) -> tensor<2xi32>
-+  // CHECK-NEXT: return [[CST]]
-+  func.return %0 : tensor<2xi32>
-+}
-+
-+// CHECK-LABEL: func @eval_convert_i32_bool
-+func.func @eval_convert_i32_bool() -> tensor<3xi1> {
-+  // CHECK-NEXT: [[CST:%.+]] = stablehlo.constant dense<[false, true, true]> : tensor<3xi1>
-+  %cst = stablehlo.constant dense<[0, 1, 10]> : tensor<3xi32>
-+  %0 = stablehlo.convert %cst : (tensor<3xi32>) -> tensor<3xi1>
-+  // CHECK-NEXT: return [[CST]]
-+  func.return %0 : tensor<3xi1>
-+}
-+
-+// CHECK-LABEL: func @eval_convert_f32_bool
-+func.func @eval_convert_f32_bool() -> tensor<4xi1> {
-+  // CHECK-NEXT: [[CST:%.+]] = stablehlo.constant dense<[true, false, true, true]> : tensor<4xi1>
-+  %cst = stablehlo.constant dense<[-1.0, 0.0, 1.0, 10.0]> : tensor<4xf32>
-+  %0 = stablehlo.convert %cst : (tensor<4xf32>) -> tensor<4xi1>
-+  // CHECK-NEXT: return [[CST]]
-+  func.return %0 : tensor<4xi1>
++  // CHECK-DAG:  [[RESULT0:%.+]] = stablehlo.constant dense<2.0{{.*}}> : tensor<1xf32>
++  // CHECK-DAG:  [[RESULT1:%.+]] = stablehlo.constant dense<{{\[\[1, 2\], \[3, 4\]\]}}> : tensor<2x2xi32>
++  // CHECK-DAG:  [[RESULT2:%.+]] = stablehlo.constant dense<(1.0{{.*}},2.0{{.*}})> : tensor<3x2xcomplex<f32>>
++  // CHECK-NEXT: return [[RESULT0]], [[RESULT1]], [[RESULT2]]
++  return %0, %1, %2 : tensor<1xf32>, tensor<2x2xi32>, tensor<3x2xcomplex<f32>>
  }
  
  // -----
-@@ -318,6 +357,9 @@
- 
- // -----
- 
-+////////
-+// SqrtOp
+diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_simplification.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_simplification.mlir
+--- stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_simplification.mlir
++++ stablehlo/stablehlo/tests/transforms/stablehlo_aggressive_simplification.mlir
+@@ -27,6 +27,14 @@
+   // CHECK-NOT: stablehlo.constant
+   // CHECK: return %arg0
+   return %1 : tensor<f32>
++}
 +
- // CHECK-LABEL: func @fold_sqrt
- func.func @fold_sqrt() -> (tensor<f32>) {
-   // CHECK: [[RESULT0:%.*]] = stablehlo.constant dense<2.0{{.*}}> : tensor<f32>
-@@ -327,7 +369,37 @@
-   func.return %1 : tensor<f32>
++// CHECK-LABEL: @add_cst_on_rhs_with_attrs
++func.func @add_cst_on_rhs_with_attrs(%arg0: tensor<f32>) -> tensor<f32> {
++  %cst = stablehlo.constant dense<1.0> : tensor<f32>
++  // CHECK: stablehlo.add %arg0, %cst {mhlo.frontend_attributes = {foo = "1"}} : tensor<f32>
++  %0 = stablehlo.add %cst, %arg0 {mhlo.frontend_attributes = {foo = "1"}} : tensor<f32>
++  return %0 : tensor<f32>
  }
  
--// -----
+ // -----
+@@ -976,6 +984,26 @@
+   // CHECK-NOT: stablehlo.constant
+   // CHECK: return %arg0 : tensor<f32>
+   return %0 : tensor<f32>
++}
++
++// CHECK-LABEL: @multiply_by_one_merge_attrs
++func.func @multiply_by_one_merge_attrs(%arg0: tensor<f32>) -> tensor<f32> {
++  %cst = stablehlo.constant dense<1.0> : tensor<f32>
++  %0 = stablehlo.add %arg0, %arg0 {mhlo.frontend_attributes = {bar = "1"}} : tensor<f32>
++  %1 = stablehlo.multiply %0, %cst {mhlo.frontend_attributes = {foo = "1"}} : tensor<f32>
++  // CHECK: %[[ADD:.*]] = stablehlo.add %arg0, %arg0 {mhlo.frontend_attributes = {bar = "1", foo = "1"}} : tensor<f32>
++  // CHECK: return %[[ADD]] : tensor<f32>
++  return %1 : tensor<f32>
++}
++
++// CHECK-LABEL: @multiply_by_one_merge_attrs_conflict
++func.func @multiply_by_one_merge_attrs_conflict(%arg0: tensor<f32>) -> tensor<f32> {
++  %cst = stablehlo.constant dense<1.0> : tensor<f32>
++  %0 = stablehlo.add %arg0, %arg0 {mhlo.frontend_attributes = {bar = "1", foo = "0"}} : tensor<f32>
++  %1 = stablehlo.multiply %0, %cst {mhlo.frontend_attributes = {foo = "1"}} : tensor<f32>
++  // CHECK: %[[ADD:.*]] = stablehlo.add %arg0, %arg0 {mhlo.frontend_attributes = {bar = "1", foo = "1"}} : tensor<f32>
++  // CHECK: return %[[ADD]] : tensor<f32>
++  return %1 : tensor<f32>
+ }
+ 
+ // -----
+diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_target_independent_optimization.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_target_independent_optimization.mlir
+--- stablehlo/stablehlo/tests/transforms/stablehlo_target_independent_optimization.mlir
++++ stablehlo/stablehlo/tests/transforms/stablehlo_target_independent_optimization.mlir
+@@ -9,6 +9,32 @@
+   // CHECK: stablehlo.add %arg0, %cst : tensor<f32>
+   %1 = stablehlo.add %0, %arg0 : tensor<f32>
+   return %1 : tensor<f32>
++}
++
++// -----
++
++func.func @concatenate_fold_splat_flatten_integ(%arg0: tensor<8xf32>) -> tensor<64xf32> {
++  // CHECK-DAG: [[CST0:%.+]] = stablehlo.constant dense<0.000000e+00> : tensor<8xf32>
++  // CHECK-DAG: [[CST1:%.+]] = stablehlo.constant dense<1.000000e+00> : tensor<8xf32>
++  // CHECK-DAG: [[CST2:%.+]] = stablehlo.constant dense<2.000000e+00> : tensor<8xf32>
++  // CHECK-DAG: [[CST3:%.+]] = stablehlo.constant dense<3.000000e+00> : tensor<8xf32>
++  // CHECK: stablehlo.concatenate [[CST0]], [[CST1]], [[CST2]], [[CST3]], %arg0, %arg0, %arg0, %arg0,
++  %cst0 = stablehlo.constant dense<0.0> : tensor<f32>
++  %cst1 = stablehlo.constant dense<1.0> : tensor<f32>
++  %cst2 = stablehlo.constant dense<2.0> : tensor<f32>
++  %cst3 = stablehlo.constant dense<3.0> : tensor<f32>
++  %0 = stablehlo.reshape %cst0 : (tensor<f32>) -> tensor<1xf32>
++  %1 = stablehlo.reshape %cst1 : (tensor<f32>) -> tensor<1xf32>
++  %2 = stablehlo.reshape %cst2 : (tensor<f32>) -> tensor<1xf32>
++  %3 = stablehlo.reshape %cst3 : (tensor<f32>) -> tensor<1xf32>
++  %4 = stablehlo.concatenate %0, %0, %0, %0, %0, %0, %0, %0, dim = 0 : (tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>) -> tensor<8xf32>
++  %5 = stablehlo.concatenate %1, %1, %1, %1, %1, %1, %1, %1, dim = 0 : (tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>) -> tensor<8xf32>
++  %6 = stablehlo.concatenate %2, %2, %2, %2, %2, %2, %2, %2, dim = 0 : (tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>) -> tensor<8xf32>
++  %7 = stablehlo.concatenate %3, %3, %3, %3, %3, %3, %3, %3, dim = 0 : (tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>, tensor<1xf32>) -> tensor<8xf32>
++  %8 = stablehlo.concatenate %4, %5, %6, %7, dim = 0 : (tensor<8xf32>, tensor<8xf32>, tensor<8xf32>, tensor<8xf32>) -> tensor<32xf32>
++  %9 = stablehlo.concatenate %arg0, %arg0, %arg0, %arg0, dim = 0 : (tensor<8xf32>, tensor<8xf32>, tensor<8xf32>, tensor<8xf32>) -> tensor<32xf32>
++  %10 = stablehlo.concatenate %8, %9, dim = 0 : (tensor<32xf32>, tensor<32xf32>) -> tensor<64xf32>
++  return %10 : tensor<64xf32>
+ }
+ 
+ // -----
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloBroadcastLowering.cpp b/stablehlo/stablehlo/transforms/StablehloBroadcastLowering.cpp
+--- stablehlo/stablehlo/transforms/StablehloBroadcastLowering.cpp
++++ stablehlo/stablehlo/transforms/StablehloBroadcastLowering.cpp
+@@ -0,0 +1,293 @@
++/* Copyright 2025 The StableHLO Authors.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++==============================================================================*/
++
++#include "stablehlo/transforms/StablehloBroadcastLowering.h"
++
++#include <algorithm>
++#include <cassert>
++#include <cstddef>
++#include <cstdint>
++#include <string>
++#include <utility>
++
++#include "llvm/ADT/STLExtras.h"
++#include "llvm/ADT/Sequence.h"
++#include "llvm/ADT/SmallVector.h"
++#include "llvm/Support/Debug.h"
++#include "llvm/Support/raw_ostream.h"
++#include "mlir/IR/Builders.h"
++#include "mlir/IR/BuiltinTypeInterfaces.h"
++#include "mlir/IR/BuiltinTypes.h"
++#include "mlir/IR/Diagnostics.h"
++#include "mlir/IR/Location.h"
++#include "mlir/IR/Types.h"
++#include "mlir/IR/Value.h"
++#include "mlir/Support/LLVM.h"
++#include "stablehlo/dialect/StablehloOps.h"
++
++#define DEBUG_TYPE "stablehlo-broadcast-lowering"
++
++namespace mlir {
++namespace stablehlo {
++
++/////
++// Bounded dynamism broadcasting
++
++namespace {
++
++DimensionInfo getDimensionInfo(Value op, mlir::RankedTensorType tensorType,
++                               TypeExtensionsAttr encoding,
++                               int64_t dim) {
++  if (!encoding || !mlir::ShapedType::isDynamic(tensorType.getDimSize(dim)))
++    return DimensionInfo{tensorType.getDimSize(dim)};
++
++  return DimensionInfo{
++      encoding.getBounds()[dim],
++      op,
++      dim,
++  };
++}
++
++FailureOr<Dimensions> getDimensions(Value op) {
++  // Get tensor type
++  mlir::RankedTensorType tensor_type = dyn_cast<RankedTensorType>(op.getType());
++  if (!tensor_type)
++    return emitError(op.getLoc(), "expected ranked tensor type");
++
++  auto encoding =
++      mlir::dyn_cast_if_present<mlir::stablehlo::TypeExtensionsAttr>(
++          tensor_type.getEncoding());
++
++  Dimensions dimensions;
++  dimensions.reserve(tensor_type.getRank());
++  for (size_t idx = 0; idx < tensor_type.getRank(); ++idx) {
++    auto dimInfo = getDimensionInfo(op, tensor_type, encoding, idx);
++    dimensions.push_back(dimInfo);
++  }
++  return dimensions;
++}
++
++FailureOr<Dimensions> getNumpyBroadcastShapeWithBounds(
++    const Dimensions& a, const Dimensions& b) {
++  LLVM_DEBUG(llvm::dbgs() << "[getNumpyBroadcastShapeWithBounds] inputs: "
++                          << toString(a) << " * " << toString(b));
++  size_t max_rank = std::max(a.size(), b.size());
++  Dimensions result(max_rank);
++
++  // Iterate from right to left (NumPy-style broadcasting)
++  for (int i = 1; i <= max_rank; ++i) {
++    size_t a_idx = a.size() - i;
++    size_t b_idx = b.size() - i;
++    size_t res_idx = max_rank - i;
++
++    // Get DimensionInfo for the current index, padding with size 1 if out of
++    // bounds.
++    DimensionInfo dim_a =
++        (a_idx >= 0 && a_idx < a.size()) ? a[a_idx] : DimensionInfo{1};
++    DimensionInfo dim_b =
++        (b_idx >= 0 && b_idx < b.size()) ? b[b_idx] : DimensionInfo{1};
++
++    // Short circuit on size 1 dimensions.
++    if (dim_a.size == 1) {
++      result[res_idx] = dim_b;
++      continue;
++    }
++    if (dim_b.size == 1) {
++      result[res_idx] = dim_a;
++      continue;
++    }
++
++    // If both LHS and RHS are not 1, dim size must match.
++    if (dim_a.size != dim_b.size) {
++      return emitError(a[a_idx].boundOp.value().getLoc(),
++                       "incompatible shapes for broadcasting ")
++             << dim_a.size << " and " << dim_b.size;
++    }
++
++    // If bounded both must be bounded
++    if (dim_a.boundOp.has_value() != dim_b.boundOp.has_value()) {
++      return emitError(a[a_idx].boundOp.value().getLoc(),
++                       "cannot mix bounded and static dimensions in broadcast");
++    }
++
++    // LHS and RHS match, populate with one of the dimensions.
++    result[res_idx] = dim_a;
++  }
++
++  LLVM_DEBUG(llvm::dbgs() << "[getNumpyBroadcastShapeWithBounds] result: "
++                          << toString(result));
++  return result;
++}
++
++mlir::RankedTensorType getRankedTensorType(const Dimensions& dims,
++                                           mlir::Type element_type) {
++  mlir::SmallVector<int64_t> shape;
++  mlir::SmallVector<int64_t> bounds;
++  shape.reserve(dims.size());
++  for (const DimensionInfo& dim : dims) {
++    if (dim.boundOp.has_value()) {
++      shape.push_back(mlir::ShapedType::kDynamic);
++      bounds.push_back(dim.size);
++    } else {
++      shape.push_back(dim.size);
++      bounds.push_back(mlir::ShapedType::kDynamic);
++    }
++  }
++  mlir::stablehlo::TypeExtensionsAttr encoding;
++  if (!llvm::all_of(
++          bounds, [](int64_t b) { return b == mlir::ShapedType::kDynamic; })) {
++    encoding = mlir::stablehlo::TypeExtensionsAttr::get(
++        element_type.getContext(), bounds);
++  }
++  return mlir::RankedTensorType::get(shape, element_type, encoding);
++}
++
++}  // namespace
++
++
++FailureOr<Dimensions> getNumpyBroadcastShape(ArrayRef<Value> ops) {
++  if (ops.empty()) return failure();
++
++  Value first = ops[0];
++  auto bcastShapeOrFail = getDimensions(first);
++  if (failed(bcastShapeOrFail)) return failure();
++  Dimensions bcastShape = std::move(*bcastShapeOrFail);
++
++  for (int i = 1; i < ops.size(); ++i) {
++    Value currOp = ops[i];
++    auto dims = getDimensions(currOp);
++    if (failed(dims)) return failure();
++    auto currBcastShapeOrFail =
++        getNumpyBroadcastShapeWithBounds(bcastShape, *dims);
++    if (failed(currBcastShapeOrFail)) return failure();
++    bcastShape = std::move(*currBcastShapeOrFail);
++  }
++  return std::move(bcastShape);
++}
++
++std::string toString(const Dimensions& dims) {
++  std::string result;
++  llvm::raw_string_ostream os(result);
++  os << "tensor<";
++  llvm::interleave(
++      dims, os,
++      [&](const DimensionInfo& dim) {
++        os << (dim.boundOp.has_value() ? "b" : "") << dim.size;
++      },
++      "x");
++  os << ">";
++  return result;
++}
++
++FailureOr<SmallVector<Value>> numpyBroadcastIfNeeded(OpBuilder& builder,
++                                                     ArrayRef<Value> operands) {
++  // Figure out the broadcast shape
++  auto bcastShapeOrFail = getNumpyBroadcastShape(operands);
++  if (failed(bcastShapeOrFail)) return failure();
++  Dimensions bcastShape = std::move(*bcastShapeOrFail);
++
++  // Apply to all operands
++  SmallVector<Value> broadcastedOperands;
++  for (auto operand : operands) {
++    auto bcastOperand = numpyBroadcastIfNeeded(builder, operand, bcastShape);
++    if (failed(bcastOperand)) return failure();
++    broadcastedOperands.push_back(*bcastOperand);
++  }
++  return std::move(broadcastedOperands);
++}
++
++FailureOr<Value> numpyBroadcastIfNeeded(OpBuilder& builder, Value input,
++                                        const Dimensions& shape) {
++  LLVM_DEBUG(llvm::dbgs() << "[BroadcastIfNeeded] input: " << input
++                          << " shape: " << toString(shape));
++  auto loc = input.getLoc();
++  mlir::RankedTensorType input_type =
++      dyn_cast<RankedTensorType>(input.getType());
++  if (!input_type) return emitError(input.getLoc(), "expected tensor type");
++  mlir::RankedTensorType output_type =
++      getRankedTensorType(shape, input_type.getElementType());
++
++  // Short circuit if no broadcasting is needed.
++  if (input_type == output_type) return input;
++
++  int64_t input_rank = input_type.getRank();
++  int64_t output_rank = output_type.getRank();
++  if (input_rank > output_rank)
++    return emitError(loc, "input rank must be <= output rank, got ")
++           << input_rank << " vs " << output_rank;
++
++  size_t rank_diff = output_rank - input_rank;
++  SmallVector<int64_t> bcast_dims;
++  bcast_dims.reserve(input_rank);
++
++  auto inputShapeOrFail = getDimensions(input);
++  if (failed(inputShapeOrFail)) return failure();
++  Dimensions inputShape = std::move(*inputShapeOrFail);
++
++  // Construct broadcast dimensions.
++  auto broadcastDimensions = llvm::to_vector(
++      llvm::seq<int64_t>(output_rank - input_rank, output_rank));
++
++  // Construct the result type of the broadcast
++  //  - If input is static and target shape is static, use static shape.
++  //  - If input has bounded dim, target shape must be bounded, use bounded dim.
++  //  - If input is not bounded, but target shape is bounded, broadcast to
++  //    the padded shape then call SetDimensionSize to make dynamic.
++  auto bcastShape = shape;
++  for (size_t i = 0; i < input_rank; ++i) {
++    int64_t input_dim_size = inputShape[i].size;
++    int64_t result_idx = i + rank_diff;
++    int64_t result_dim_size = shape[result_idx].size;
++    if (input_dim_size != 1 && input_dim_size != result_dim_size)
++      return emitError(loc, "Cannot broadcast input: ")
++             << input_type << " to target shape " << toString(shape);
++
++    if (!inputShape[i].boundOp.has_value() &&
++        shape[result_idx].boundOp.has_value()) {
++      // Use padded shape in broadcast.
++      bcastShape[result_idx] = DimensionInfo{shape[result_idx].size};
++    }
++    bcast_dims.push_back(result_idx);
++  }
++
++  // Broadcast to padded size for remaining dimensions.
++  for (size_t i = input_rank; i < shape.size(); ++i) {
++    bcastShape[i] = DimensionInfo{shape[i].size};
++  }
++
++  // Insert broadcast ops
++  mlir::RankedTensorType bcast_type =
++      getRankedTensorType(bcastShape, input_type.getElementType());
++  Value bcast_op = stablehlo::BroadcastInDimOp::create(
++      builder, loc, bcast_type, input, broadcastDimensions);
++  if (bcast_op.getType() == output_type) return bcast_op;
++
++  // Mark the padded broadcast as dynamic where the result is bounded.
++  // Inserts `GetDimSize(boundOp)->SetDimSize(inputBcast)` for any bounded
++  // dimensions that required broadcasting.
++  for (size_t i = 0; i < shape.size(); ++i) {
++    if (!bcastShape[i].boundOp.has_value() && shape[i].boundOp.has_value()) {
++      Value boundOp = shape[i].boundOp.value();
++      auto dim_size = stablehlo::GetDimensionSizeOp::create(
++          builder, loc, boundOp, shape[i].boundOpDim);
++      bcast_op = stablehlo::SetDimensionSizeOp::create(builder, loc, bcast_op,
++                                                       dim_size, i);
++    }
++  }
++  return bcast_op;
++}
++
++}  // namespace stablehlo
++}  // namespace mlir
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloBroadcastLowering.h b/stablehlo/stablehlo/transforms/StablehloBroadcastLowering.h
+--- stablehlo/stablehlo/transforms/StablehloBroadcastLowering.h
++++ stablehlo/stablehlo/transforms/StablehloBroadcastLowering.h
+@@ -0,0 +1,68 @@
++/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
++   Copyright 2022 The StableHLO Authors.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++==============================================================================*/
++
++
++#ifndef STABLEHLO_TRANSFORMS_OPBROADCASTUTILS_H_
++#define STABLEHLO_TRANSFORMS_OPBROADCASTUTILS_H_
++
++#include <cstdint>
++#include <optional>
++#include <string>
++
++#include "mlir/IR/Builders.h"
++#include "mlir/IR/Value.h"
++#include "mlir/Support/LLVM.h"
++
++namespace mlir {
++namespace stablehlo {
++
++///////
++// Numpy broadcasting with support for bounded dynamism.
++
++// Struct that represents a dim size of a tensor and possible dynamic value to
++// match. If dimension is not dynamic, bound_op is set to std::nullopt. If
++// dimension is bounded, the resulting dimension should be padded to `size` then
++// marked dynamic using:
++//   runtime_size = get_dimension_size(bound_op, dim=bound_op_dim)
++//   T = set_dimension_size(T, dim=bound_op_dim, runtime_size)
 +//
++struct DimensionInfo {
++  int64_t size;
++  std::optional<Value> boundOp = std::nullopt;
++  int64_t boundOpDim = -1;
++};
 +
-+////////
-+// SetDimensionSizeOp
++using Dimensions = SmallVector<DimensionInfo>;
++std::string toString(const Dimensions& dims);
 +
-+// CHECK-LABEL: func.func @fold_set_dimension_size
-+// CHECK-SAME:   ([[ARG0:%.+]]: tensor<10xf32>)
-+func.func @fold_set_dimension_size(%arg0: tensor<10xf32>) -> tensor<10xf32> {
-+  // CHECK-NOT: stablehlo.set_dimension_size
-+  // CHECK: return [[ARG0]]
-+  %c = stablehlo.constant dense<10> : tensor<i32>
-+  %0 = stablehlo.set_dimension_size %arg0, %c, dim = 0 : (tensor<10xf32>, tensor<i32>) -> tensor<10xf32>
-+  return %0 : tensor<10xf32>
-+}
++// Returns the common shape these ops would broadcast to, or an error if the
++// ops are not broadcastable.
++FailureOr<Dimensions> getNumpyBroadcastShape(ArrayRef<Value> ops);
 +
-+// -----
++// Apply numpy broadcasting to the given operands, returning an error if any
++// operands are not broadcastable.
++FailureOr<SmallVector<Value>> numpyBroadcastIfNeeded(OpBuilder& builder,
++                                                     ArrayRef<Value> operands);
 +
-+// Don't fold when set_dimension_size result is bounded.
-+// CHECK-LABEL: func.func @no_fold_set_dimension_size
-+func.func @no_fold_set_dimension_size(%arg0: tensor<10xf32>) -> tensor<?xf32, #stablehlo.bounds<10>> {
-+  %c = stablehlo.constant dense<10> : tensor<i32>
-+  // CHECK: [[RESULT0:%.+]] = stablehlo.set_dimension_size
-+  // CHECK-NEXT: return [[RESULT0]]
-+  %0 = stablehlo.set_dimension_size %arg0, %c, dim = 0 : (tensor<10xf32>, tensor<i32>) -> tensor<?xf32, #stablehlo.bounds<10>>
-+  return %0 : tensor<?xf32, #stablehlo.bounds<10>>
-+}
++// Apply numpy broadcasting to the given operand, returning an error if the
++// operand is not broadcastable.
++FailureOr<Value> numpyBroadcastIfNeeded(OpBuilder& builder, Value input,
++                                        const Dimensions& shape);
 +
-+// -----
++}  // namespace stablehlo
++}  // namespace mlir
 +
-+////////
-+// TransposeOp
- 
- // CHECK-LABEL: func @eval_transpose
- func.func @eval_transpose() -> (tensor<2x3x2xi32>, tensor<2x4x3xi32>, tensor<4x3x2xi32>) {
-diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_probe_instrumentation.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_probe_instrumentation.mlir
---- stablehlo/stablehlo/tests/transforms/stablehlo_probe_instrumentation.mlir
-+++ stablehlo/stablehlo/tests/transforms/stablehlo_probe_instrumentation.mlir
-@@ -1,4 +1,4 @@
--// RUN: stablehlo-opt --interpreter-instrument-with-probe="useDebugInfo=true" --split-input-file --verify-diagnostics %s | FileCheck %s
-+// RUN: stablehlo-opt --allow-unregistered-dialect --interpreter-instrument-with-probe="useDebugInfo=true" --split-input-file --verify-diagnostics %s | FileCheck %s
- 
- // CHECK-LABEL: func @instrument_basic_no_location
- func.func @instrument_basic_no_location(%arg0: tensor<1x2xi32>, %arg1: tensor<1x2xi32>) -> tensor<1x2xi32> {
-@@ -98,3 +98,14 @@
- 
-   func.return %results1 : tensor<i64>
- }
-+
-+// -----
-+
-+// CHECK-LABEL: func @test_string_type
-+func.func @test_string_type() -> tensor<!tf_type.string> {
-+  // CHECK: "tf.Const"
-+  // CHECK-NOT: interpreter.probe
-+  // CHECK-NEXT: return
-+  %0 = "tf.Const"() {value = dense<"hello"> : tensor<!tf_type.string>} : () -> tensor<!tf_type.string>
-+  return %0 : tensor<!tf_type.string>
-+}
-diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir
---- stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir
-+++ stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir
-@@ -19,7 +19,8 @@
- 
- // -----
- 
--// expected-error@-3{{must have no more than one function or a `main` function to clearly identify which function will be refined}}
-+// expected-error@+1{{must have no more than one function or a `main` function to clearly identify which function will be refined}}
-+module {
- func.func @error_too_many_functions(%arg0: tensor<f32>) -> tensor<f32> {
-   %0 = func.call @helper(%arg0) : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
-@@ -27,6 +28,7 @@
- 
- func.func private @helper(%arg0: tensor<f32>) -> tensor<f32> {
-   return %arg0 : tensor<f32>
-+}
- }
- 
- // -----
-diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_16_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_16_0.mlir
---- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_16_0.mlir
-+++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_16_0.mlir
-@@ -1,6 +1,7 @@
- // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=0.16.0' --verify-diagnostics --split-input-file %s
- 
--// expected-error @-3 {{failed to convert VHLO to v0.16.0}}
-+// expected-error @+1 {{failed to convert VHLO to v0.16.0}}
-+module {
- func.func @reduce_with_promotable_types(%arg0: tensor<4x4xf32>, %arg1 : tensor<f32>)
-     -> (tensor<4xf64>) {
- 
-@@ -15,10 +16,12 @@
- 
-   func.return %0: tensor<4xf64>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v0.16.0}}
-+// expected-error @+1 {{failed to convert VHLO to v0.16.0}}
-+module {
- func.func @all_reduce_with_promotable_types(%operand: tensor<f32>) -> tensor<f64> {
- 
-   // expected-error @+1 {{failed to legalize operation 'vhlo.all_reduce_v2' that was explicitly marked illegal}}
-@@ -33,10 +36,12 @@
- 
-   func.return %result : tensor<f64>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v0.16.0}}
-+// expected-error @+1 {{failed to convert VHLO to v0.16.0}}
-+module {
- func.func @reduce_scatter_with_promotable_types(%data: tensor<4x16xf32>) -> tensor<4x4xf64> {
- 
-   // expected-error @+1 {{failed to legalize operation 'vhlo.reduce_scatter_v1' that was explicitly marked illegal}}
-@@ -50,10 +55,12 @@
-       use_global_device_ids} : (tensor<4x16xf32>) -> tensor<4x4xf64>
-   func.return %0 : tensor<4x4xf64>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v0.16.0}}
-+// expected-error @+1 {{failed to convert VHLO to v0.16.0}}
-+module {
- func.func @reduce_window_with_promotable_types(%arg0: tensor<4x2xf32>,
-     %arg1: tensor<4x2xf32>, %init0: tensor<f32>, %init1: tensor<f32>) ->
-     (tensor<2x2xf64>, tensor<2x2xf32>) {
-@@ -73,10 +80,12 @@
-               (tensor<2x2xf64>, tensor<2x2xf32>)
-   func.return %0#0, %0#1 : tensor<2x2xf64>, tensor<2x2xf32>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v0.16.0}}
-+// expected-error @+1 {{failed to convert VHLO to v0.16.0}}
-+module {
- func.func @scatter_with_promotable_types(%input_tensor: tensor<200x100x300xf32>,
-     %scatter_indices: tensor<10x2xi32>, %updates: tensor<10x300xf32>) ->
-       tensor<200x100x300xf64> {
-@@ -99,10 +108,12 @@
-       tensor<200x100x300xf64>
-   func.return %0 : tensor<200x100x300xf64>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v0.16.0}}
-+// expected-error @+1 {{failed to convert VHLO to v0.16.0}}
-+module {
- func.func @select_and_scatter_with_promotable_types(
-     %arg0: tensor<10x24x24x64xf32>,
-     %arg1: tensor<10x12x12x64xf32>) -> () {
-@@ -127,3 +138,4 @@
-         tensor<10x24x24x64xf64>
-   func.return
- }
-+}
-diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_9_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_9_0.mlir
---- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_9_0.mlir
-+++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.0_9_0.mlir
-@@ -1,17 +1,21 @@
- // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=0.9.0' --verify-diagnostics --split-input-file %s
- 
--// expected-error @-3 {{failed to convert VHLO to v0.9.0}}
--// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+// expected-error @+2 {{failed to convert VHLO to v0.9.0}}
-+// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+module {
- func.func @type_fp8_E5M2FNUZ(%arg0: tensor<f8E5M2FNUZ>) -> tensor<f8E5M2FNUZ> {
-   %0 = stablehlo.add %arg0, %arg0 : tensor<f8E5M2FNUZ>
-   func.return %0 : tensor<f8E5M2FNUZ>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v0.9.0}}
--// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+// expected-error @+2 {{failed to convert VHLO to v0.9.0}}
-+// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+module {
- func.func @type_fp8_E4M3FNUZ(%arg0: tensor<f8E4M3FNUZ>) -> tensor<f8E4M3FNUZ> {
-   %0 = stablehlo.add %arg0, %arg0 : tensor<f8E4M3FNUZ>
-   func.return %0 : tensor<f8E4M3FNUZ>
- }
-+}
-diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_11_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_11_0.mlir
---- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_11_0.mlir
-+++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_11_0.mlir
-@@ -1,6 +1,7 @@
- // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.11.0' --verify-diagnostics --split-input-file %s
- 
--// expected-error @-3 {{failed to convert VHLO to v1.11.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.11.0}}
-+module {
- func.func public @send_op(%arg0: tensor<f32>, %arg1: !stablehlo.token) -> !stablehlo.token {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.send_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.send"(%arg0, %arg1) {
-@@ -10,10 +11,12 @@
-   } : (tensor<f32>, !stablehlo.token) -> !stablehlo.token
-   func.return %0 : !stablehlo.token
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.11.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.11.0}}
-+module {
- func.func public @recv_op(%arg0: !stablehlo.token) -> (tensor<f32>, !stablehlo.token) {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.recv_v2' that was explicitly marked illegal}}
-   %0:2 = "stablehlo.recv"(%arg0) {
-@@ -23,3 +26,4 @@
-   } : (!stablehlo.token) -> (tensor<f32>, !stablehlo.token)
-   func.return %0#0, %0#1 : tensor<f32>, !stablehlo.token
- }
-+}
-diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_1_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_1_0.mlir
---- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_1_0.mlir
-+++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_1_0.mlir
-@@ -1,17 +1,21 @@
- // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.1.0' --verify-diagnostics --split-input-file %s
- 
--// expected-error @-3 {{failed to convert VHLO to v1.1.0}}
--// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+// expected-error @+2 {{failed to convert VHLO to v1.1.0}}
-+// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+module {
- func.func @type_i2(%arg0: tensor<i2>) -> tensor<i2> {
-   %0 = stablehlo.add %arg0, %arg0 : tensor<i2>
-   func.return %0 : tensor<i2>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.1.0}}
--// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+// expected-error @+2 {{failed to convert VHLO to v1.1.0}}
-+// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+module {
- func.func @type_ui2(%arg0: tensor<ui2>) -> tensor<ui2> {
-   %0 = stablehlo.add %arg0, %arg0 : tensor<ui2>
-   func.return %0 : tensor<ui2>
- }
-+}
-diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_2_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_2_0.mlir
---- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_2_0.mlir
-+++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_2_0.mlir
-@@ -1,6 +1,7 @@
- // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.2.0' --verify-diagnostics --split-input-file %s
- 
--// expected-error @-3 {{failed to convert VHLO to v1.2.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.2.0}}
-+module {
- func.func @custom_call_dictionary_attr(%arg0: tensor<f32>) -> tensor<f32> {
- // expected-error @+1 {{failed to legalize operation 'vhlo.custom_call_v1' that was explicitly marked illegal}}
- %0 = "stablehlo.custom_call"(%arg0) {
-@@ -10,10 +11,12 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.2.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.2.0}}
-+module {
- func.func @custom_call_dictionary_attr(%arg0: tensor<f32>) -> tensor<f32> {
- // expected-error @+1 {{failed to legalize operation 'vhlo.custom_call_v1' that was explicitly marked illegal}}
- %0 = "stablehlo.custom_call"(%arg0) {
-@@ -22,3 +25,4 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
-diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_4_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_4_0.mlir
---- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_4_0.mlir
-+++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_4_0.mlir
-@@ -1,6 +1,7 @@
- // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.4.0' --verify-diagnostics --split-input-file %s
- 
--// expected-error @-3 {{failed to convert VHLO to v1.4.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.4.0}}
-+module {
- func.func @all_reduce_variadic(%arg0: tensor<f32>, %arg1: tensor<f32>) -> (tensor<f32>, tensor<f32>) {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.all_reduce_v2' that was explicitly marked illegal}}
-   %0:2 = "stablehlo.all_reduce"(%arg0, %arg1) ({
-@@ -12,10 +13,12 @@
-   } : (tensor<f32>, tensor<f32>) -> (tensor<f32>, tensor<f32>)
-   func.return %0#0, %0#1 : tensor<f32>, tensor<f32>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.4.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.4.0}}
-+module {
- func.func @all_gather_variadic(%arg0: tensor<16x8xf32>, %arg1: tensor<16x8xf32>) -> (tensor<16x16xf32>, tensor<16x16xf32>) {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.all_gather_v2' that was explicitly marked illegal}}
-   %0:2 = "stablehlo.all_gather"(%arg0, %arg1) {
-@@ -24,10 +27,12 @@
-   } : (tensor<16x8xf32>, tensor<16x8xf32>) -> (tensor<16x16xf32>, tensor<16x16xf32>)
-   func.return %0#0, %0#1 : tensor<16x16xf32>, tensor<16x16xf32>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.4.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.4.0}}
-+module {
- func.func @all_to_all_variadic(%arg0: tensor<4x16xf32>, %arg1: tensor<5x16xf32>) -> (tensor<16x4xf32>, tensor<20x4xf32>) {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.all_to_all_v2' that was explicitly marked illegal}}
-   %0:2 = "stablehlo.all_to_all"(%arg0, %arg1) {
-@@ -39,3 +44,4 @@
-   } : (tensor<4x16xf32>, tensor<5x16xf32>) -> (tensor<16x4xf32>, tensor<20x4xf32>)
-   func.return %0#0, %0#1 : tensor<16x4xf32>, tensor<20x4xf32>
- }
-+}
-diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_5_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_5_0.mlir
---- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_5_0.mlir
-+++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_5_0.mlir
-@@ -1,6 +1,7 @@
- // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.5.0' --verify-diagnostics --split-input-file %s
- 
--// expected-error @-3 {{failed to convert VHLO to v1.5.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.5.0}}
-+module {
- func.func @dot_general_algorithm(%arg0: tensor<2x2x2xi64>, %arg1: tensor<2x2x2xi64>) -> tensor<2x2x2xi64> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.dot_general_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.dot_general"(%arg0, %arg1) <{
-@@ -9,19 +10,24 @@
-     algorithm = #stablehlo.dot_algorithm<lhs_precision_type = tf32, rhs_precision_type = tf32, accumulation_type = f32, lhs_component_count = 1, rhs_component_count = 1, num_primitive_operations = 1, allow_imprecise_accumulation = false>
-   }> : (tensor<2x2x2xi64>, tensor<2x2x2xi64>) -> tensor<2x2x2xi64>  return %0 : tensor<2x2x2xi64>
- }
--
--// -----
--
--// expected-error @-3 {{failed to convert VHLO to v1.5.0}}
--// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
--func.func @none_type() attributes {stablehlo.attr = none } {
--  return
- }
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.5.0}}
--// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+// expected-error @+2 {{failed to convert VHLO to v1.5.0}}
-+// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+module {
-+func.func @none_type() attributes {stablehlo.attr = none } {
-+  return
-+}
-+}
-+
-+// -----
-+
-+// expected-error @+2 {{failed to convert VHLO to v1.5.0}}
-+// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+module {
- func.func @tf32_type() attributes {stablehlo.attr = tf32 } {
-   return
- }
-+}
-diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_6_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_6_0.mlir
---- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_6_0.mlir
-+++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_6_0.mlir
-@@ -1,17 +1,21 @@
- // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.6.0' --verify-diagnostics --split-input-file %s
- 
--// expected-error @-3 {{failed to convert VHLO to v1.6.0}}
--// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+// expected-error @+2 {{failed to convert VHLO to v1.6.0}}
-+// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+module {
- func.func @type_f8E4M3(%arg0: tensor<f8E4M3>) -> tensor<f8E4M3> {
-   %0 = stablehlo.add %arg0, %arg0 : tensor<f8E4M3>
-   func.return %0 : tensor<f8E4M3>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.6.0}}
--// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+// expected-error @+2 {{failed to convert VHLO to v1.6.0}}
-+// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+module {
- func.func @type_f8E3M4(%arg0: tensor<f8E3M4>) -> tensor<f8E3M4> {
-   %0 = stablehlo.add %arg0, %arg0 : tensor<f8E3M4>
-   func.return %0 : tensor<f8E3M4>
- }
-+}
-diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_7_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_7_0.mlir
---- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_7_0.mlir
-+++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_7_0.mlir
-@@ -1,35 +1,43 @@
- // RUN: stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.7.0' --verify-diagnostics --split-input-file %s
- 
--// expected-error @-3 {{failed to convert VHLO to v1.7.0}}
--// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+// expected-error @+2 {{failed to convert VHLO to v1.7.0}}
-+// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+module {
- func.func @type_f4E2M1FN(%arg0: tensor<f4E2M1FN>, %arg1: tensor<f4E2M1FN>) -> tensor<f4E2M1FN> {
-   %0 = "stablehlo.add"(%arg0, %arg1) : (tensor<f4E2M1FN>, tensor<f4E2M1FN>) -> tensor<f4E2M1FN>
-   func.return %0 : tensor<f4E2M1FN>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.7.0}}
--// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+// expected-error @+2 {{failed to convert VHLO to v1.7.0}}
-+// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+module {
- func.func @type_f6E2M3FN(%arg0: tensor<f6E2M3FN>, %arg1: tensor<f6E2M3FN>) -> tensor<f6E2M3FN> {
-   %0 = "stablehlo.add"(%arg0, %arg1) : (tensor<f6E2M3FN>, tensor<f6E2M3FN>) -> tensor<f6E2M3FN>
-   func.return %0 : tensor<f6E2M3FN>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.7.0}}
--// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+// expected-error @+2 {{failed to convert VHLO to v1.7.0}}
-+// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+module {
- func.func @type_f6E3M2FN(%arg0: tensor<f6E3M2FN>, %arg1: tensor<f6E3M2FN>) -> tensor<f6E3M2FN> {
-   %0 = "stablehlo.add"(%arg0, %arg1) : (tensor<f6E3M2FN>, tensor<f6E3M2FN>) -> tensor<f6E3M2FN>
-   func.return %0 : tensor<f6E3M2FN>
- }
-+}
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.7.0}}
--// expected-error @+1 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+// expected-error @+2 {{failed to convert VHLO to v1.7.0}}
-+// expected-error @+2 {{failed to legalize operation 'vhlo.func_v1' that was explicitly marked illegal}}
-+module {
- func.func @type_f8E8M0FNU(%arg0: tensor<f8E8M0FNU>, %arg1: tensor<f8E8M0FNU>) -> tensor<f8E8M0FNU> {
-   %0 = "stablehlo.add"(%arg0, %arg1) : (tensor<f8E8M0FNU>, tensor<f8E8M0FNU>) -> tensor<f8E8M0FNU>
-   func.return %0 : tensor<f8E8M0FNU>
- }
-+}
-diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_8_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_8_0.mlir
---- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_8_0.mlir
-+++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_8_0.mlir
-@@ -11,7 +11,8 @@
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.8.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.8.0}}
-+module {
- func.func @attr_result_accuracy_highest(%arg0: tensor<f32>) -> tensor<f32> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.exponential_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.exponential"(%arg0) {
-@@ -19,4 +20,5 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
- 
-diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_9_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_9_0.mlir
---- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_9_0.mlir
-+++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_9_0.mlir
-@@ -11,7 +11,8 @@
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
-+module {
- func.func @cbrt_invalid(%arg0: tensor<f32>) -> tensor<f32> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.cbrt_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.cbrt"(%arg0) {
-@@ -19,6 +20,7 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
- 
- // -----
- 
-@@ -32,7 +34,8 @@
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
-+module {
- func.func @cosine_invalid(%arg0: tensor<f32>) -> tensor<f32> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.cosine_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.cosine"(%arg0) {
-@@ -40,6 +43,7 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
- 
- // -----
- 
-@@ -53,7 +57,8 @@
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
-+module {
- func.func @exponential_minus_one_invalid(%arg0: tensor<f32>) -> tensor<f32> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.exponential_minus_one_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.exponential_minus_one"(%arg0) {
-@@ -61,6 +66,7 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
- 
- // -----
- 
-@@ -74,7 +80,8 @@
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
-+module {
- func.func @log_invalid(%arg0: tensor<f32>) -> tensor<f32> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.log_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.log"(%arg0) {
-@@ -82,6 +89,7 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
- 
- // -----
- 
-@@ -95,7 +103,8 @@
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
-+module {
- func.func @log_plus_one_invalid(%arg0: tensor<f32>) -> tensor<f32> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.log_plus_one_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.log_plus_one"(%arg0) {
-@@ -103,6 +112,7 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
- 
- // -----
- 
-@@ -116,7 +126,8 @@
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
-+module {
- func.func @logistic_invalid(%arg0: tensor<f32>) -> tensor<f32> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.logistic_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.logistic"(%arg0) {
-@@ -124,6 +135,7 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
- 
- // -----
- 
-@@ -137,7 +149,8 @@
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
-+module {
- func.func @rsqrt_invalid(%arg0: tensor<f32>) -> tensor<f32> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.rsqrt_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.rsqrt"(%arg0) {
-@@ -145,6 +158,7 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
- 
- // -----
- 
-@@ -158,7 +172,8 @@
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
-+module {
- func.func @sine_invalid(%arg0: tensor<f32>) -> tensor<f32> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.sine_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.sine"(%arg0) {
-@@ -166,6 +181,7 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
- 
- // -----
- 
-@@ -179,7 +195,8 @@
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
-+module {
- func.func @sqrt_invalid(%arg0: tensor<f32>) -> tensor<f32> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.sqrt_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.sqrt"(%arg0) {
-@@ -187,6 +204,7 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
- 
- // -----
- 
-@@ -200,7 +218,8 @@
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
-+module {
- func.func @tan_invalid(%arg0: tensor<f32>) -> tensor<f32> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.tan_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.tan"(%arg0) {
-@@ -208,6 +227,7 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
-+}
- 
- // -----
- 
-@@ -221,7 +241,8 @@
- 
- // -----
- 
--// expected-error @-3 {{failed to convert VHLO to v1.9.0}}
-+// expected-error @+1 {{failed to convert VHLO to v1.9.0}}
-+module {
- func.func @tanh_invalid(%arg0: tensor<f32>) -> tensor<f32> {
-   // expected-error @+1 {{failed to legalize operation 'vhlo.tanh_v2' that was explicitly marked illegal}}
-   %0 = "stablehlo.tanh"(%arg0) {
-@@ -229,4 +250,5 @@
-   } : (tensor<f32>) -> tensor<f32>
-   func.return %0 : tensor<f32>
- }
--
-+}
-+
++#endif  // STABLEHLO_TRANSFORMS_OPBROADCASTUTILS_H_
 diff --ruN a/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp b/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp
 --- stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp
 +++ stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp
-@@ -200,8 +200,11 @@
-   auto newType = getElementTypeOrSelf(resultType);
-   size_t newBitWidth = newType.getIntOrFloatBitWidth();
- 
--  bool isOldTypeUnsigned = oldType.isInteger(1) || oldType.isUnsignedInteger();
--  bool isNewTypeUnsigned = newType.isInteger(1) || newType.isUnsignedInteger();
-+  bool isOldTypeUnsigned =
-+      oldType.isSignlessInteger(1) || oldType.isUnsignedInteger();
-+  bool isNewTypeUnsigned =
-+      newType.isSignlessInteger(1) || newType.isUnsignedInteger();
-+  bool isNewTypeBoolean = newType.isSignlessInteger(1);
- 
-   if (isa<FloatType>(oldType)) {
-     if (auto newFloatType = dyn_cast<FloatType>(newType)) {
-@@ -217,6 +220,16 @@
-                                           llvm::RoundingMode::NearestTiesToEven,
-                                           &losesInfo);
-             return newValue;
-+          });
-+    }
-+
-+    // Float -> Boolean
-+    if (isNewTypeBoolean) {
-+      return foldConvertHelper<FloatAttr, IntegerAttr>(
-+          rewriter, op, elements, resultType,
-+          [newBitWidth](const APFloat& operand, bool& /*castStatus*/) {
-+            APInt resVal(1, operand.isZero() ? 0 : 1);
-+            return resVal.sextOrTrunc(newBitWidth);
-           });
-     }
- 
-@@ -249,6 +262,16 @@
-           apf.convertFromAPInt(operand, !isOldTypeUnsigned,
-                                APFloat::rmNearestTiesToEven);
-           return apf;
-+        });
-+  }
-+
-+  // Int -> Boolean
-+  if (isNewTypeBoolean) {
-+    return foldConvertHelper<IntegerAttr, IntegerAttr>(
-+        rewriter, op, elements, resultType,
-+        [newBitWidth](const APInt& operand, bool& /*castStatus*/) {
-+          APInt resVal(1, operand.isZero() ? 0 : 1);
-+          return resVal.sextOrTrunc(newBitWidth);
-         });
-   }
- 
-@@ -813,6 +836,36 @@
-   };
+@@ -822,6 +822,61 @@
+   int64_t foldOpElementLimit;
  };
  
-+// Pattern: set_dim_size(op, size, dim) -> op [op[dim] == size]
-+struct FoldSetDimensionSizeOpPattern
-+    : public ShapeOpRewritePattern<SetDimensionSizeOp> {
++// Pattern: concat(splat_a, splat_a, X) -> concat(splat_a_resize, X)
++struct FoldConcatenateAdjacentSplatsOpPattern final
++    : ShapeOpRewritePattern<mlir::stablehlo::ConcatenateOp> {
 +  using ShapeOpRewritePattern::ShapeOpRewritePattern;
 +
-+  LogicalResult matchAndRewrite(SetDimensionSizeOp op,
++  LogicalResult matchAndRewrite(ConcatenateOp op,
 +                                PatternRewriter& rewriter) const override {
-+    auto resultType = op.getType();
-+    // No need to verify static shape or dtype here since we aren't evaluating
-+    // dtype, just folding set_dim_size ops with no semantic meaning.
++    SmallVector<Value> newOperands;
++    SplatElementsAttr currSplat;
++    for (size_t i = 0; i < op.getNumOperands(); ++i) {
++      Value operand = op.getOperand(i);
++      // Match a splat and look ahead for adjacent identical splats.
++      if (matchPattern(operand, m_Constant(&currSplat)) && currSplat) {
++        size_t j = i+1;
++        SplatElementsAttr lookaheadSplat;
++        int64_t nOccurrences = 1;
++        for (; j < op.getNumOperands(); ++j) {
++          if (matchPattern(op.getOperand(j), m_Constant(&lookaheadSplat)) &&
++              lookaheadSplat && lookaheadSplat == currSplat) {
++            ++nOccurrences;
++            continue;
++          }
++          break;
++        }
 +
-+    SplatElementsAttr cstSplatAttr;
-+    matchPattern(op.getSize(), m_Constant(&cstSplatAttr));
-+    if (!cstSplatAttr)
-+      return rewriter.notifyMatchFailure(op, "size operand not constant");
++        // Special case for a single occurrence, no new constants
++        if (nOccurrences == 1) {
++          newOperands.push_back(operand);
++          continue;
++        }
 +
-+    // Compare to the dimension size, not the bound size.
-+    // We can't fold and change shapes, but we do want to fold meaningless
-+    // set_dim_size ops that use a constant to set a static dimension size
-+    // like `set_dim_size(X, 2, dim=0) : (tensor<2xf32>) -> tensor<2xf32>`
-+    if (cstSplatAttr.getSplatValue<APInt>() !=
-+        resultType.getDimSize(op.getDimension()))
-+      return rewriter.notifyMatchFailure(op,
-+                                         "dim size does not match result type");
++        // Resize the splat and append it to the new operands.
++        SmallVector<int64_t> newShape =
++            llvm::to_vector(currSplat.getType().getShape());
++        newShape[op.getDimension()] *= nOccurrences;
++        newOperands.push_back(ConstantOp::create(
++            rewriter, op.getLoc(),
++            currSplat.resizeSplat(currSplat.getType().clone(newShape))));
 +
-+    rewriter.replaceAllOpUsesWith(op, op.getOperand());
++        // Set `i` to j-1 so that next iteration processes the next operand.
++        i = j - 1;
++        continue;
++      }
++      // Not splat, append the operand.
++      newOperands.push_back(operand);
++    }
++    if (newOperands.size() == op.getNumOperands()) {
++      return rewriter.notifyMatchFailure(op, "No splats to fold");
++    }
++    rewriter.replaceOpWithNewOp<ConcatenateOp>(op, op.getType(), newOperands,
++                                               op.getDimension());
 +    return success();
 +  }
 +};
 +
- struct FoldSignOpPattern : public ShapeOpRewritePattern<SignOp> {
+ struct FoldConvertOpPattern : public ShapeOpRewritePattern<ConvertOp> {
    using ShapeOpRewritePattern::ShapeOpRewritePattern;
  
-@@ -1388,6 +1441,7 @@
-   patterns->add<FoldRemOpPattern>(context, options, benefit);
-   patterns->add<FoldReshapeOpPattern>(context, options, benefit);
-   patterns->add<FoldSelectOpPattern>(context, options, benefit);
-+  patterns->add<FoldSetDimensionSizeOpPattern>(context, options, benefit);
-   patterns->add<FoldSignOpPattern>(context, options, benefit);
-   patterns->add<FoldSliceOpPattern>(context, options, benefit);
-   patterns->add<FoldSubtractOpPattern>(context, options, benefit);
+@@ -1108,7 +1163,8 @@
+                                 PatternRewriter& rewriter) const override {
+     auto resultType = op.getType();
+     if (failed(validateStaticShapeResult(rewriter, op, resultType)) ||
+-        failed(validateShapeFoldDtype(rewriter, op, resultType)))
++        failed(validateShapeFoldDtype(rewriter, op, resultType,
++                                      /*allowComplex=*/true)))
+       return failure();
+ 
+     DenseElementsAttr attr;
+@@ -1923,6 +1979,8 @@
+   patterns->add<FoldClampOpPattern>(context, options, benefit);
+   patterns->add<FoldCompareOpPattern>(context, options, benefit);
+   patterns->add<FoldConcatenateOpPattern>(context, options, benefit);
++  patterns->add<FoldConcatenateAdjacentSplatsOpPattern>(context, options,
++                                                        benefit);
+   patterns->add<FoldConvertOpPattern>(context, options, benefit);
+   patterns->add<FoldDivOpPattern>(context, options, benefit);
+   patterns->add<FoldDynamicSliceOpPattern>(context, options, benefit);
+diff --ruN a/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplification.cpp b/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplification.cpp
+--- stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplification.cpp
++++ stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplification.cpp
+@@ -69,6 +69,54 @@
+   });
+ }
+ 
++bool mergeDiscardableAttributes(ValueRange sourceValues,
++                                ValueRange destValues) {
++  if (sourceValues.size() != destValues.size()) return false;
++  bool changed = false;
++  for (auto [source, dest] : llvm::zip(sourceValues, destValues)) {
++    if (mergeDiscardableAttributes(source, dest)) changed = true;
++  }
++  return changed;
++}
++
++bool mergeDiscardableAttributes(Value sourceValue, Value destValue) {
++  Operation* sourceOp = sourceValue.getDefiningOp();
++  Operation* destOp = destValue.getDefiningOp();
++  if (!sourceOp || !destOp) return false;
++
++  auto sourceAttrs = sourceOp->getDiscardableAttrDictionary();
++  if (!sourceAttrs) return true;
++
++  auto destAttrs = destOp->getDiscardableAttrDictionary();
++  if (!destAttrs) {
++    destOp->setDiscardableAttrs(sourceAttrs);
++    return true;
++  }
++
++  NamedAttrList mergedAttrs(destAttrs);
++  for (auto attr : sourceAttrs.getValue()) {
++    if (attr.getName() == "mhlo.frontend_attributes" &&
++        mergedAttrs.get("mhlo.frontend_attributes")) {
++      // Merge frontend attributes, prioritizing source attributes.
++      auto destFrontendAttrs =
++          cast<DictionaryAttr>(mergedAttrs.get("mhlo.frontend_attributes"));
++      auto sourceFrontendAttrs = cast<DictionaryAttr>(attr.getValue());
++      NamedAttrList frontendAttrs(destFrontendAttrs);
++      for (auto sourceAttr : sourceFrontendAttrs) {
++        frontendAttrs.set(sourceAttr.getName(), sourceAttr.getValue());
++      }
++      mergedAttrs.set("mhlo.frontend_attributes",
++                      frontendAttrs.getDictionary(destOp->getContext()));
++    } else {
++      // Otherwise prioritize source attributes
++      mergedAttrs.set(attr.getName(), attr.getValue());
++    }
++  }
++
++  destOp->setDiscardableAttrs(mergedAttrs.getDictionary(destOp->getContext()));
++  return true;
++}
++
+ template <typename OpType>
+ struct SimplifyOpRewritePattern : OpRewritePattern<OpType> {
+   SimplifyOpRewritePattern(
+diff --ruN a/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplificationPatterns.td b/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplificationPatterns.td
+--- stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplificationPatterns.td
++++ stablehlo/stablehlo/transforms/optimization/StablehloAggressiveSimplificationPatterns.td
+@@ -134,6 +134,8 @@
+ 
+ def MergePermutations : NativeCodeCall<"getMergedTransposePermutation($_builder, $0, $1)">;
+ 
++def MergeDiscardableAttributes : NativeCodeCall<"mergeDiscardableAttributes($0, $1)">;
++
+ def StableHLO_ConvertOpWithShape : NativeCodeCall<
+     "stablehlo::ConvertOp::create($_builder, $_loc, $0.getType(), $1)">;
+ 
+@@ -149,8 +151,9 @@
+ // op(cst, X) -> op(X, cst)
+ class CanonicalizeConstantToRhs<Op StableHLO_OpType>
+   : Pat<(StableHLO_OpType:$op (StableHLO_ConstantOp:$lhs $value), $rhs),
+-        (StableHLO_OpType $rhs, $lhs),
+-        [(NotConstantOp $rhs), (CommutativeOp $op)]>;
++        (StableHLO_OpType:$new_op $rhs, $lhs),
++        [(NotConstantOp $rhs), (CommutativeOp $op)],
++        [(MergeDiscardableAttributes $op, $new_op)]>;
+ 
+ ////////
+ // AddOp
+@@ -161,8 +164,9 @@
+ 
+ // Pattern: add(X, 0) -> X
+ def AddOp_RemoveNoop
+-  : Pat<(StableHLO_AddOp $lhs, (ConstantLikeMatcher AnyZero:$value)),
+-        (replaceWithValue $lhs)>;
++  : Pat<(StableHLO_AddOp:$op $lhs, (ConstantLikeMatcher AnyZero:$value)),
++        (replaceWithValue $lhs), [],
++        [(MergeDiscardableAttributes $op, $lhs)]>;
+ 
+ ////////
+ // AndOp
+@@ -173,13 +177,15 @@
+ 
+ // Pattern: and(X, 0) -> 0
+ def AndOp_FoldToZero
+-  : Pat<(StableHLO_AndOp $lhs, (StableHLO_ConstantOp:$zero IntZero:$value)),
+-        (replaceWithValue $zero)>;
++  : Pat<(StableHLO_AndOp:$op $lhs, (StableHLO_ConstantOp:$zero IntZero:$value)),
++        (replaceWithValue $zero), [],
++        [(MergeDiscardableAttributes $op, $zero)]>;
+ 
+ // Pattern: and(X, 1) -> X
+ def AndOp_RemoveNoop
+-  : Pat<(StableHLO_AndOp $lhs, (StableHLO_ConstantOp:$one IntAllOnes:$value)),
+-        (replaceWithValue $lhs)>;
++  : Pat<(StableHLO_AndOp:$op $lhs, (StableHLO_ConstantOp:$one IntAllOnes:$value)),
++        (replaceWithValue $lhs), [],
++        [(MergeDiscardableAttributes $op, $lhs)]>;
+ 
+ ////////
+ // BroadcastInDimOp
+@@ -188,7 +194,8 @@
+ def BroadcastInDimOp_RemoveNoop
+   : Pat<(StableHLO_BroadcastInDimOp:$op $operand, IotaDims:$dims),
+         (replaceWithValue $operand),
+-        [(TypesEqual $op, $operand)]>;
++        [(TypesEqual $op, $operand)],
++        [(MergeDiscardableAttributes $op, $operand)]>;
+ 
+ // Pattern: broadcast_in_dim(broadcast_in_dim(X, [dimsA...]), [dimsB...])
+ //       -> broadcast_in_dim(X, merge(dimsA, dimsB))
+@@ -254,7 +261,8 @@
+ def ConvertOp_RemoveNoop
+   : Pat<(StableHLO_ConvertOp:$convert $operand),
+         (replaceWithValue $operand),
+-        [(TypesEqual $convert, $operand)]>;
++        [(TypesEqual $convert, $operand)],
++        [(MergeDiscardableAttributes $convert, $operand)]>;
+ 
+ ////////
+ // DynamicBroadcastInDimOp
+@@ -441,13 +449,15 @@
+ // Multiplication by 0. This fold is not trivial for floats in presence of NaNs,
+ // so we currently only enable it for ints.
+ def MulOp_FoldToZero
+-  : Pat<(StableHLO_MulOp $lhs, (StableHLO_ConstantOp:$zero IntZero:$value)),
+-        (replaceWithValue $zero)>;
++  : Pat<(StableHLO_MulOp:$mul_op $lhs, (StableHLO_ConstantOp:$zero IntZero:$value)),
++        (replaceWithValue $zero), [],
++        [(MergeDiscardableAttributes $mul_op, $zero)]>;
+ 
+ // Pattern: multiply(X, 1i) -> X
+ def MulOp_RemoveNoop
+-  : Pat<(StableHLO_MulOp $lhs, (StableHLO_ConstantOp AnyOne:$value)),
+-        (replaceWithValue $lhs)>;
++  : Pat<(StableHLO_MulOp:$mul_op $lhs, (StableHLO_ConstantOp AnyOne:$value)),
++        (replaceWithValue $lhs), [],
++        [(MergeDiscardableAttributes $mul_op, $lhs)]>;
+ 
+ ////////
+ // OrOp
+@@ -457,13 +467,15 @@
+ 
+ // Pattern: or(X, 1) -> 1
+ def OrOp_FoldToOne
+-  : Pat<(StableHLO_OrOp $lhs, (StableHLO_ConstantOp:$one IntAllOnes:$value)),
+-        (replaceWithValue $one)>;
++  : Pat<(StableHLO_OrOp:$op $lhs, (StableHLO_ConstantOp:$one IntAllOnes:$value)),
++        (replaceWithValue $one), [],
++        [(MergeDiscardableAttributes $op, $one)]>;
+ 
+ // Pattern: or(X, 0) -> X
+ def OrOp_RemoveNoop
+-  : Pat<(StableHLO_OrOp $lhs, (StableHLO_ConstantOp:$zero IntZero:$value)),
+-        (replaceWithValue $lhs)>;
++  : Pat<(StableHLO_OrOp:$op $lhs, (StableHLO_ConstantOp:$zero IntZero:$value)),
++        (replaceWithValue $lhs), [],
++        [(MergeDiscardableAttributes $op, $lhs)]>;
+ 
+ ////////
+ // PadOp
+@@ -564,8 +576,9 @@
+ 
+ // Pattern: subtract(X, 0) -> X
+ def SubtractOp_RemoveNoop
+-  : Pat<(StableHLO_SubtractOp $lhs, (StableHLO_ConstantOp AnyZero:$value)),
+-        (replaceWithValue $lhs)>;
++  : Pat<(StableHLO_SubtractOp:$op $lhs, (StableHLO_ConstantOp AnyZero:$value)),
++        (replaceWithValue $lhs), [],
++        [(MergeDiscardableAttributes $op, $lhs)]>;
+ 
+ ////////
+ // SliceOp
 

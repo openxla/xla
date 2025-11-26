@@ -157,6 +157,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kCos:
     case HloOpcode::kSign:
     case HloOpcode::kSin:
+    case HloOpcode::kSinh:
     case HloOpcode::kTan:
       return ShapeUtil::ElementIsComplex(instruction.shape());
 
@@ -173,13 +174,19 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
 
     // Expensive instructions or unusual instructions for which fusion is
     // nonsensical.
+    case HloOpcode::kAcos:
+    case HloOpcode::kAcosh:
+    case HloOpcode::kAsin:
+    case HloOpcode::kAsinh:
     case HloOpcode::kAddDependency:
     case HloOpcode::kAfterAll:
     case HloOpcode::kAtan2:
+    case HloOpcode::kAtanh:
     case HloOpcode::kAsyncStart:
     case HloOpcode::kAsyncUpdate:
     case HloOpcode::kAsyncDone:
     case HloOpcode::kBatchNormGrad:
+    case HloOpcode::kCosh:
     case HloOpcode::kBatchNormInference:
     case HloOpcode::kBatchNormTraining:
     case HloOpcode::kCall:
@@ -223,6 +230,7 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kRngGetAndUpdateState:
     case HloOpcode::kRngBitGenerator:
     case HloOpcode::kRsqrt:
+    case HloOpcode::kScaledDot:
     case HloOpcode::kScatter:
     case HloOpcode::kSelectAndScatter:
     case HloOpcode::kSend:
@@ -525,7 +533,7 @@ class ReversePostOrderFusionQueue : public FusionQueue {
 bool MultiOutputFusionCreatesCycle(HloInstruction* producer,
                                    HloInstruction* consumer,
                                    const HloReachabilityMap& reachability) {
-  absl::flat_hash_set<int> operands;
+  absl::flat_hash_set<int64_t> operands;
   auto insert = [&](const HloInstruction* operand) {
     if (operand == producer) {
       return false;
@@ -560,7 +568,7 @@ bool MultiOutputFusionCreatesCycle(HloInstruction* producer,
   std::vector<HloInstruction*> worklist = producer->users();
   worklist.insert(worklist.end(), producer->control_successors().begin(),
                   producer->control_successors().end());
-  absl::flat_hash_set<int> visits;
+  absl::flat_hash_set<int64_t> visits;
   while (!worklist.empty()) {
     const HloInstruction* user = worklist.back();
     worklist.pop_back();
@@ -591,7 +599,7 @@ std::unique_ptr<FusionQueue> InstructionFusion::GetFusionQueue(
   return std::make_unique<ReversePostOrderFusionQueue>(computation);
 }
 
-absl::StatusOr<bool> InstructionFusion::Run(
+absl::StatusOr<bool> InstructionFusion::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
@@ -794,14 +802,15 @@ HloInstruction* InstructionFusion::AddFusionInstruction(
     // fusions.
     TF_CHECK_OK(computation->ReplaceInstruction(consumer, fusion_instruction));
   }
-  fusion_instruction->set_called_computations_execution_thread(
-      computation->execution_thread(),
-      /*skip_async_execution_thread_overwrite=*/false);
   return fusion_instruction;
 }
 
 HloInstruction* InstructionFusion::FuseInstruction(
     HloInstruction* fusion_instruction, HloInstruction* producer) {
+  if (producer->opcode() == HloOpcode::kFusion) {
+    fusion_instruction->MergeFusionInstruction(producer);
+    return fusion_instruction;
+  }
   return fusion_instruction->FuseInstruction(producer);
 }
 

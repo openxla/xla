@@ -48,8 +48,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "xla/autotuning.pb.h"
-#include "xla/backends/gpu/codegen/triton/kernel_name_tracer.h"
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
+#include "xla/backends/gpu/profiler/kernel_name_tracer.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -193,13 +193,15 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32) {
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   ASSERT_TRUE(ok);
 
-  auto tracer = KernelNameTracer::Create();
-  if (tracer == nullptr) {
+  absl::StatusOr<std::unique_ptr<KernelNameTracer>> tracer =
+      KernelNameTracer::Create(
+          backend().default_stream_executor()->GetPlatform()->id());
+  if (!tracer.ok()) {
     GTEST_SKIP() << "KernelNameTracer is not implemented.";
   }
-  tracer->start();
+  tracer.value()->start();
   EXPECT_TRUE(Run(std::move(module), /*run_hlo_passes=*/false));
-  auto kernel_names = tracer->stop();
+  auto kernel_names = tracer.value()->stop();
 
   auto cc = GetCudaComputeCapability();
   using CudaComputeCapabilities =
@@ -288,38 +290,36 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   ASSERT_TRUE(ok);
 
-  auto tracer = KernelNameTracer::Create();
-  if (tracer == nullptr) {
+  absl::StatusOr<std::unique_ptr<KernelNameTracer>> tracer =
+      KernelNameTracer::Create(
+          backend().default_stream_executor()->GetPlatform()->id());
+  if (!tracer.ok()) {
     GTEST_SKIP() << "KernelNameTracer is not implemented.";
   }
-  tracer->start();
+  tracer.value()->start();
   EXPECT_TRUE(Run(std::move(module), /*run_hlo_passes=*/false));
-  auto kernel_names = tracer->stop();
+  auto kernel_names = tracer.value()->stop();
 
   auto cc = GetCudaComputeCapability();
   using CudaComputeCapabilities =
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
+    case CudaComputeCapabilities::kAmpere:
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_convert_fusion"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
+                                    ::testing::HasSubstr("gemm_bf16_")));
+      break;
+    case CudaComputeCapabilities::kHopper:
     case CudaComputeCapabilities::kBlackwell:
       EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
                                     ::testing::HasSubstr("loop_convert_fusion"),
                                     ::testing::HasSubstr("loop_convert_fusion"),
                                     ::testing::HasSubstr("loop_select_fusion"),
                                     ::testing::HasSubstr("nvjet"),
-                                    ::testing::HasSubstr("nvjet")));
-      break;
-    case CudaComputeCapabilities::kAmpere:
-      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
-                                    ::testing::HasSubstr("loop_convert_fusion"),
-                                    ::testing::HasSubstr("loop_convert_fusion"),
-                                    ::testing::HasSubstr("loop_select_fusion"),
-                                    ::testing::HasSubstr("gemm_bf16_")));
-      break;
-    case CudaComputeCapabilities::kHopper:
-      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
-                                    ::testing::HasSubstr("loop_convert_fusion"),
-                                    ::testing::HasSubstr("loop_convert_fusion"),
-                                    ::testing::HasSubstr("loop_select_fusion"),
                                     ::testing::HasSubstr("nvjet"),
                                     ::testing::HasSubstr("nvjet")));
       break;
@@ -354,43 +354,45 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   ASSERT_TRUE(ok);
 
-  auto tracer = KernelNameTracer::Create();
-  if (tracer == nullptr) {
+  absl::StatusOr<std::unique_ptr<KernelNameTracer>> tracer =
+      KernelNameTracer::Create(
+          backend().default_stream_executor()->GetPlatform()->id());
+  if (!tracer.ok()) {
     GTEST_SKIP() << "KernelNameTracer is not implemented.";
   }
-  tracer->start();
+  tracer.value()->start();
   EXPECT_TRUE(Run(std::move(module), /*run_hlo_passes=*/false));
-  auto kernel_names = tracer->stop();
+  auto kernel_names = tracer.value()->stop();
 
   auto cc = GetCudaComputeCapability();
   using CudaComputeCapabilities =
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
-    case CudaComputeCapabilities::kBlackwell:
-      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
-                                    ::testing::HasSubstr("loop_convert_fusion"),
-                                    ::testing::HasSubstr("loop_convert_fusion"),
-                                    ::testing::HasSubstr("loop_select_fusion"),
-                                    ::testing::HasSubstr("wrapped_add"),
-                                    ::testing::HasSubstr("nvjet"),
-                                    ::testing::HasSubstr("nvjet")));
-      break;
     case CudaComputeCapabilities::kAmpere:
       EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
                                     ::testing::HasSubstr("loop_convert_fusion"),
                                     ::testing::HasSubstr("loop_convert_fusion"),
                                     ::testing::HasSubstr("loop_select_fusion"),
                                     ::testing::HasSubstr("wrapped_add"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
+                                    ::testing::HasSubstr("gemm_bf16_"),
                                     ::testing::HasSubstr("gemm_bf16_")));
       break;
     case CudaComputeCapabilities::kHopper:
-      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
-                                    ::testing::HasSubstr("loop_convert_fusion"),
-                                    ::testing::HasSubstr("loop_convert_fusion"),
-                                    ::testing::HasSubstr("loop_select_fusion"),
-                                    ::testing::HasSubstr("wrapped_add"),
-                                    ::testing::HasSubstr("nvjet"),
-                                    ::testing::HasSubstr("nvjet")));
+    case CudaComputeCapabilities::kBlackwell:
+      EXPECT_THAT(
+          kernel_names,
+          ::testing::UnorderedElementsAre(
+              ::testing::HasSubstr("loop_convert_fusion"),
+              ::testing::HasSubstr("loop_convert_fusion"),
+              ::testing::HasSubstr("loop_select_fusion"),
+              ::testing::HasSubstr("wrapped_add"),
+              ::testing::HasSubstr("nvjet"), ::testing::HasSubstr("nvjet"),
+              ::testing::HasSubstr("nvjet"), ::testing::HasSubstr("nvjet"),
+              ::testing::HasSubstr("nvjet"), ::testing::HasSubstr("nvjet")));
       break;
     default:
       GTEST_SKIP() << "Unsupported compute capability: " << cc.major
@@ -423,41 +425,30 @@ TEST_F(BlasAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
   ASSERT_TRUE(ok);
 
-  auto tracer = KernelNameTracer::Create();
-  if (tracer == nullptr) {
+  absl::StatusOr<std::unique_ptr<KernelNameTracer>> tracer =
+      KernelNameTracer::Create(
+          backend().default_stream_executor()->GetPlatform()->id());
+  if (!tracer.ok()) {
     GTEST_SKIP() << "KernelNameTracer is not implemented.";
   }
-  tracer->start();
+  tracer.value()->start();
   EXPECT_TRUE(Run(std::move(module), /*run_hlo_passes=*/false));
-  auto kernel_names = tracer->stop();
+  auto kernel_names = tracer.value()->stop();
 
   auto cc = GetCudaComputeCapability();
   using CudaComputeCapabilities =
       stream_executor::CudaComputeCapability::CudaComputeCapabilities;
   switch (cc.major) {
     case CudaComputeCapabilities::kBlackwell:
-      EXPECT_THAT(kernel_names,
-                  ::testing::UnorderedElementsAre(
-                      ::testing::HasSubstr("bitcast_convert_subtract"),
-                      ::testing::HasSubstr("bitcast_convert_subtract"),
-                      ::testing::HasSubstr("loop_select_fusion"),
-                      ::testing::HasSubstr("gemm_")));
-      break;
     case CudaComputeCapabilities::kAmpere:
-      EXPECT_THAT(kernel_names,
-                  ::testing::UnorderedElementsAre(
-                      ::testing::HasSubstr("bitcast_convert_subtract"),
-                      ::testing::HasSubstr("bitcast_convert_subtract"),
-                      ::testing::HasSubstr("loop_select_fusion"),
-                      ::testing::HasSubstr("gemm_")));
-      break;
     case CudaComputeCapabilities::kHopper:
-      EXPECT_THAT(kernel_names,
-                  ::testing::UnorderedElementsAre(
-                      ::testing::HasSubstr("bitcast_convert_subtract"),
-                      ::testing::HasSubstr("bitcast_convert_subtract"),
-                      ::testing::HasSubstr("loop_select_fusion"),
-                      ::testing::HasSubstr("tf32f32")));
+      EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
+                                    ::testing::HasSubstr("loop_and_subtract"),
+                                    ::testing::HasSubstr("loop_and_subtract"),
+                                    ::testing::HasSubstr("loop_select_fusion"),
+                                    ::testing::HasSubstr("gemm_"),
+                                    ::testing::HasSubstr("gemm_"),
+                                    ::testing::HasSubstr("gemm_")));
       break;
     default:
       GTEST_SKIP() << "Unsupported compute capability: " << cc.major
@@ -546,7 +537,7 @@ CHECK-COUNT-6:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} : tensor<64x32xbf16> 
 }
 
 TEST_F(Triton6xBF16GemmTest, Emit6xBF16GemmEndToEnd) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "ALG_DOT_BF16_BF16_F32_X6 not supported on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -650,7 +641,7 @@ CHECK-COUNT-3:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} : tensor<64x32xbf16> 
 }
 
 TEST_F(Triton3xBF16GemmTest, Emit3xBF16GemmEndToEnd) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "ALG_DOT_BF16_BF16_F32_X3 not supported on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -676,7 +667,7 @@ CHECK-NOT: mma.sync.aligned.{{.*}}.row.col.f32.tf32.tf32.f32
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Triton currently disabled on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -699,7 +690,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Triton currently disabled on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -722,7 +713,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Triton currently disabled on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -747,7 +738,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Triton currently disabled on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -773,7 +764,7 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32) {
   if (!SupportsBF16(GpuComputeComp())) {
     GTEST_SKIP() << "BF16 not supported.";
   }
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Triton currently disabled on ROCM.";
   }
   constexpr absl::string_view kHloText = R"(
@@ -1843,7 +1834,7 @@ MATCHER_P(RelativeDifferenceIsWithin, max_rel_difference, "") {
 }
 
 TEST_P(PrecisionTests, PrecisionCheck) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Precision tests is unknown for ROCM.";
   }
 
@@ -1925,7 +1916,7 @@ TEST_P(PrecisionTests, CheckPrecisionDegradationAlongKDimension) {
         << "To run the test, set --v=1 and rerun the test.\n"
         << "The test is quite slow and produces output for manual inspection.";
   }
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+  if (GpuComputeComp().IsRocm()) {
     GTEST_SKIP() << "Precision tests is unknown for ROCM.";
   }
   Backend backend = std::get<1>(GetParam());

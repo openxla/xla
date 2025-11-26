@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 
 #include <climits>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -30,10 +31,10 @@ limitations under the License.
 #include "absl/container/fixed_array.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
-#include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -51,9 +52,7 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "tsl/platform/abi.h"
 #include "tsl/platform/host_info.h"
-#include "tsl/platform/mem.h"
 #include "tsl/platform/thread_annotations.h"
-#include "tsl/platform/types.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
@@ -62,12 +61,9 @@ namespace profiler {
 namespace {
 
 using tensorflow::profiler::XEventMetadata;
-using tensorflow::profiler::XLine;
-using tensorflow::profiler::XPlane;
 using tensorflow::profiler::XSpace;
 using tensorflow::profiler::XStatMetadata;
 using tsl::profiler::Annotation;
-using tsl::profiler::FindMutablePlaneWithName;
 using tsl::profiler::FindOrAddMutablePlaneWithName;
 using tsl::profiler::GpuPlaneName;
 using tsl::profiler::kCuptiActivityNvtxPlaneName;
@@ -474,14 +470,14 @@ class PerDeviceCollector {
   }
 
   void AddEvent(CuptiTracerEvent&& event) {
-    absl::MutexLock l(&m_);
+    absl::MutexLock l(m_);
     events_.emplace_back(std::move(event));
   }
 
   size_t Flush(uint64_t start_gpu_ns, uint64_t end_gpu_ns,
                XPlaneBuilder* device_plane, XPlaneBuilder* host_plane,
                XPlaneBuilder* nvtx_plane) {
-    absl::MutexLock l(&m_);
+    absl::MutexLock l(m_);
     // Tracking event types per line.
     absl::flat_hash_map<int64_t, absl::flat_hash_set<CuptiTracerEventType>>
         events_types_per_line;
@@ -507,7 +503,8 @@ class PerDeviceCollector {
       events_types_per_line[line_id].emplace(event.type);
     }
     device_plane->ForEachLine([&](XLineBuilder line) {
-      line.SetName(
+      // If the line name is already set, we should not override it.
+      line.SetNameIfEmpty(
           GetDeviceXLineName(line.Id(), events_types_per_line[line.Id()]));
     });
     host_plane->ForEachLine([&](XLineBuilder line) {
@@ -681,7 +678,9 @@ class EventInQueue {
 
 }  // namespace
 
-void PmSamples::PopulateCounterLine(XPlaneBuilder* plane) {
+void PmSamples::PopulateCounterLine(XPlaneBuilder* plane,
+                                    uint64_t start_gpu_time_ns) {
+  absl::flat_hash_map<std::string, int> skipped_nan_count_per_metric;
   XLineBuilder line = plane->GetOrCreateCounterLine();
   std::vector<std::pair<XEventMetadata*, XStatMetadata*>> counter_metadata;
   counter_metadata.reserve(metrics_.size());
@@ -692,13 +691,26 @@ void PmSamples::PopulateCounterLine(XPlaneBuilder* plane) {
   for (auto& sampler_range : sampler_ranges_) {
     DCHECK_EQ(metrics_.size(), sampler_range.metric_values.size());
     for (int i = 0; i < sampler_range.metric_values.size(); ++i) {
+      if (std::isnan(sampler_range.metric_values[i])) {
+        ++skipped_nan_count_per_metric[counter_metadata[i].first->name()];
+        continue;
+      }
       XEventBuilder event = line.AddEvent(
           tsl::profiler::Timespan(
-              tsl::profiler::NanoToPico(sampler_range.start_timestamp_ns), 0),
+              tsl::profiler::NanoToPico(sampler_range.start_timestamp_ns -
+                                        start_gpu_time_ns),
+              0),
           *counter_metadata[i].first);
       event.AddStatValue(*counter_metadata[i].second,
                          sampler_range.metric_values[i]);
     }
+  }
+  for (const auto& [metric, count] : skipped_nan_count_per_metric) {
+    plane->AddStatValue(
+        *plane->GetOrCreateStatMetadata(tsl::profiler::GetStatTypeStr(
+            tsl::profiler::StatType::kNanCounterEvents)),
+        absl::StrFormat("Skipped %d NaN counter events for %s: ", count,
+                        metric));
   }
 }
 
@@ -711,6 +723,8 @@ const std::vector<std::string>& PmSamples::GetMetrics() const {
 const std::vector<SamplerRange>& PmSamples::GetSamplerRanges() const {
   return sampler_ranges_;
 }
+
+int64_t PmSamples::GetDeviceId() const { return device_id_; }
 
 void CuptiTraceCollector::OnTracerCollectedCallbackData(
     std::vector<CallbackAnnotationsAndEvents> callback_annotations_and_events,
@@ -864,7 +878,7 @@ class CuptiTraceCollectorImpl : public CuptiTraceCollector {
               << " callback api events and " << num_activity_events_
               << " activity events. " << ReportDroppedEvents();
     LOG(INFO) << " GpuTracer max callback_events: "
-              << options_.max_activity_api_events
+              << options_.max_callback_api_events
               << ", max activity events: " << options_.max_activity_api_events;
     if (std::string num_events_dropped_message = ReportNumEventsIfDropped();
         !num_events_dropped_message.empty()) {
@@ -918,6 +932,7 @@ class CuptiTraceCollectorImpl : public CuptiTraceCollector {
                         num_activity_events_, " device events.",
                         events_dropped);
   }
+  uint64_t GetProfileStartTimeNs() const override { return start_gpu_ns_; }
 
  private:
   size_t num_callback_events_ = 0;

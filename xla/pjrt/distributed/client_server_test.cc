@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include <gmock/gmock.h>
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
@@ -42,6 +43,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/service.h"
 #include "xla/pjrt/distributed/topology_util.h"
+#include "xla/service/global_device_id.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service_agent.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -57,11 +59,13 @@ namespace xla {
 namespace {
 
 using ::testing::IsEmpty;
+using ::testing::Key;
 using ::testing::Matches;
 using ::testing::Pair;
 using ::testing::UnorderedElementsAre;
 using ::tsl::proto_testing::EqualsProto;
-using tsl::testing::StatusIs;
+using ::tsl::testing::IsOkAndHolds;
+using ::tsl::testing::StatusIs;
 
 constexpr absl::Duration kHeartbeatTimeout = absl::Milliseconds(2500);
 constexpr absl::Duration kBarrierTimeout = absl::Milliseconds(200);
@@ -125,7 +129,7 @@ TEST_F(ClientServerTest, ConnectAndShutdownAreBarriers) {
       return connect_count == node_id;
     };
     {
-      absl::MutexLock lock(&mu);
+      absl::MutexLock lock(mu);
       mu.Await(absl::Condition(&my_connect_turn));
       ++connect_count;
     }
@@ -133,7 +137,7 @@ TEST_F(ClientServerTest, ConnectAndShutdownAreBarriers) {
     // Verify that all of the threads have called Connect() by the time we get
     // here.
     {
-      absl::MutexLock lock(&mu);
+      absl::MutexLock lock(mu);
       TF_RET_CHECK(connect_count == num_nodes);
     }
 
@@ -143,13 +147,13 @@ TEST_F(ClientServerTest, ConnectAndShutdownAreBarriers) {
       return shutdown_count == node_id;
     };
     {
-      absl::MutexLock lock(&mu);
+      absl::MutexLock lock(mu);
       mu.Await(absl::Condition(&my_shutdown_turn));
       ++shutdown_count;
     }
     TF_RETURN_IF_ERROR(client->Shutdown());
     {
-      absl::MutexLock lock(&mu);
+      absl::MutexLock lock(mu);
       TF_RET_CHECK(shutdown_count == num_nodes);
     }
 
@@ -196,13 +200,13 @@ TEST_F(ClientServerTest, ConnectAndEnumerateDevices) {
   node0->mutable_devices(0)->set_global_device_id(0);
   node0->mutable_devices(1)->set_global_device_id(1);
   node0->mutable_devices(2)->set_global_device_id(2);
-  node0->mutable_devices(0)->set_slice_index(0);
-  node0->mutable_devices(1)->set_slice_index(0);
-  node0->mutable_devices(2)->set_slice_index(0);
+  node0->mutable_devices(0)->set_partition_index(0);
+  node0->mutable_devices(1)->set_partition_index(0);
+  node0->mutable_devices(2)->set_partition_index(0);
   *node1 = locals[1];
   node1->set_boot_id(host_1_boot_id);
   node1->mutable_devices(0)->set_global_device_id(3);
-  node1->mutable_devices(0)->set_slice_index(1);
+  node1->mutable_devices(0)->set_partition_index(1);
 
   // Used to ensure that thread0's client sends their device after thread1's
   // client. This ensures that devices are sent out of turn (compared to their
@@ -292,11 +296,13 @@ TEST_F(ClientServerTest, EnumerateElevenDevices) {
     device->set_vendor("test_vendor");
   }
   GlobalTopologyProto expected_topology;
+  int slice_0_global_id = 0, slice_1_global_id = num_nodes / 2 + 1;
   for (int i = 0; i < num_nodes; ++i) {
     auto* node = expected_topology.add_nodes();
     *node = locals[i];
-    node->mutable_devices(0)->set_global_device_id(i);
-    node->mutable_devices(0)->set_slice_index(i % 2);
+    node->mutable_devices(0)->set_global_device_id(
+        (i % 2 == 0) ? slice_0_global_id++ : slice_1_global_id++);
+    node->mutable_devices(0)->set_partition_index(i % 2);
   }
 
   auto thread_fn = [&](int node_id) -> absl::Status {
@@ -998,10 +1004,10 @@ TEST_F(ClientServerTest, GetLiveTasksSucceeds) {
       TF_ASSERT_OK(client->Connect());
 
       // Get the set of live nodes. All three nodes should be live.
-      absl::StatusOr<std::vector<int32_t>> live_nodes =
-          client->GetLiveNodes(std::vector<int>{0, 1, 2});
+      absl::StatusOr<absl::flat_hash_map<int32_t, IncarnationId>> live_nodes =
+          client->GetLiveNodesWithIncarnations(std::vector<int>{0, 1, 2});
       TF_ASSERT_OK(live_nodes.status());
-      EXPECT_THAT(*live_nodes, UnorderedElementsAre(0, 1, 2));
+      EXPECT_THAT(*live_nodes, UnorderedElementsAre(Key(0), Key(1), Key(2)));
     });
   }
 }
@@ -1020,7 +1026,7 @@ TEST_F(ClientServerTest, GetLiveTasksWithoutBeingAMember) {
       // Get the set of live nodes but don't include ourselves.
       std::vector<int> nodes{0, 1, 2};
       nodes.erase(nodes.begin() + i);
-      EXPECT_THAT(client->GetLiveNodes(nodes),
+      EXPECT_THAT(client->GetLiveNodesWithIncarnations(nodes),
                   absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
     });
   }
@@ -1083,6 +1089,17 @@ TEST_F(ClientServerTest, KeyValueTryGet) {
   auto result = client->KeyValueTryGet("test_key");
   TF_ASSERT_OK(result.status());
   EXPECT_EQ(result.value(), "value");
+}
+
+TEST_F(ClientServerTest, KeyValueIncrement) {
+  StartService(/*num_nodes=*/1);
+  auto client = GetClient(/*node_id=*/0);
+  TF_ASSERT_OK(client->Connect());
+  TF_ASSERT_OK(client->KeyValueSet("test_key", "10"));
+  EXPECT_THAT(client->KeyValueIncrement("test_key", 1),
+              absl_testing::IsOkAndHolds(11));
+  EXPECT_THAT(client->KeyValueTryGet("test_key"),
+              absl_testing::IsOkAndHolds("11"));
 }
 
 TEST_F(ClientServerTest, KeyValueDelete) {

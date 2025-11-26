@@ -61,10 +61,10 @@ class CpuUnaryIntrinsicTest
     auto spec = info.param;
 
     std::string opcode(HloOpcodeString(spec.opcode));
-    opcode[0] = toupper(opcode[0]);
+    opcode[0] = absl::ascii_toupper(opcode[0]);
 
     std::string type(PrimitiveType_Name(spec.type));
-    type[0] = toupper(type[0]);
+    type[0] = absl::ascii_toupper(type[0]);
 
     std::string triple{spec.triple.data(), spec.triple.size()};
     if (triple == kTriple_x86_64) {
@@ -130,11 +130,11 @@ TEST_P(CpuUnaryIntrinsicTest, DoIt) {
   auto hlo_module = CreateNewVerifiedModule();
   hlo_module->AddEntryComputation(std::move(computation));
 
-  std::string check_lines{spec.check_lines.data(), spec.check_lines.size()};
-
   hlo_module->mutable_config()
       .mutable_debug_options()
-      .set_xla_cpu_use_thunk_runtime(false);
+      .clear_xla_cpu_prefer_vector_width();
+
+  std::string check_lines{spec.check_lines.data(), spec.check_lines.size()};
 
   CompileAheadOfTimeAndVerifyIr(std::move(hlo_module), options, check_lines,
                                 spec.match_optimized_ir);
@@ -168,7 +168,7 @@ IntrinsicTestSpec CpuUnaryIntrinsicTestCases[] = {
     )"},
 
     IntrinsicTestSpec{HloOpcode::kExp, F64, false, kTriple_x86_64, "",
-                      R"(CHECK: call fast double @xla.exp.f64(double %4)"},
+                      R"(CHECK: call fast double @xla.exp.f64(double)"},
 
     IntrinsicTestSpec{
         HloOpcode::kExp, F32, true, kTriple_x86_64, "+avx",

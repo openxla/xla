@@ -12,18 +12,18 @@ package(
 )
 
 copy_file(
-    name = "gpu_fusion_to_mlir_copy",
+    name = "cpu_fusion_to_mlir_copy",
     testonly = True,
-    src = "//xla/backends/gpu/codegen/tools:fusion_to_mlir",
-    out = "gpu_fusion_to_mlir",
+    src = "//xla/backends/cpu/codegen/tools:fusion_to_mlir",
+    out = "cpu_fusion_to_mlir",
     is_executable = True,
 )
 
 copy_file(
-    name = "gpu_test_correctness_copy",
+    name = "gpu_fusion_to_mlir_copy",
     testonly = True,
-    src = "//xla/backends/gpu/codegen/tools:test_correctness",
-    out = "gpu_test_correctness",
+    src = "//xla/backends/gpu/codegen/tools:fusion_to_mlir",
+    out = "gpu_fusion_to_mlir",
     is_executable = True,
 )
 
@@ -35,8 +35,10 @@ lit_test_suite(
     exec_properties = tf_exec_properties({"tags": tf_cuda_tests_tags()}),
     hermetic_cuda_data_dir = "%S/../../../../../../cuda_nvcc",
     tools = [
+        ":cpu_fusion_to_mlir_copy",
         ":gpu_fusion_to_mlir_copy",
-        ":gpu_test_correctness_copy",
+        "//xla/backends/cpu/codegen/tools:cpu_test_correctness",
+        "//xla/backends/gpu/codegen/tools:gpu_test_correctness",
         "//xla/codegen/tools:emitters_opt",
         "@llvm-project//llvm:FileCheck",
     ],

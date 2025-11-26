@@ -38,7 +38,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/array.h"
 #include "xla/comparison_util.h"
-#include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -46,6 +45,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
@@ -1140,6 +1140,8 @@ std::optional<HloInstruction*> ExchangeHalo(
     return std::nullopt;
   }
   // Left halo.
+  // Coalescing the zero-bcasted left halos.
+  int64_t left_coalesced_zero_halo_size = 0;
   for (int64_t i = CeilOfRatio(max_left_halo_size, input_shard_size) - 1;
        i >= 0 && (-i - 1) * input_shard_size < right_bound; --i) {
     std::vector<std::pair<int64_t, int64_t>> source_target_pairs;
@@ -1174,10 +1176,24 @@ std::optional<HloInstruction*> ExchangeHalo(
           HloInstruction::CreateSlice(halo_shape, hlo, halo_start_indices,
                                       halo_limit_indices, halo_slice_strides));
     }
+    if (source_target_pairs.empty()) {
+      left_coalesced_zero_halo_size +=
+          source_halo_slice->shape().dimensions(dim);
+      continue;
+    }
     auto left_halo =
         collective_ops_creator.create_cross_partition_collective_permute(
             b, source_halo_slice, source_target_pairs, (*next_channel_id)++);
     concat_pieces.push_back(left_halo);
+  }
+  // Add the zero-bcasted left halo is not inserted yet.
+  if (left_coalesced_zero_halo_size > 0) {
+    auto zero_bcast_shape = hlo->shape();
+    zero_bcast_shape.set_dimensions(dim, left_coalesced_zero_halo_size);
+    HloInstruction* padding = CreateZero(zero_bcast_shape, b);
+    VLOG(10) << "ExchangeHalo:left halo zero-bcasted coalesced "
+             << padding->ToString();
+    concat_pieces.insert(concat_pieces.begin(), padding);
   }
 
   if (left_bound < input_shard_size && right_bound > 0) {
@@ -1204,6 +1220,8 @@ std::optional<HloInstruction*> ExchangeHalo(
                         std::max<int64_t>(max_right_halo_size, 0)) /
       input_shard_size;
   // Right halo.
+  // Coalescing the zero-bcasted right halos.
+  int64_t right_coalesced_zero_halo_size = 0;
   for (int64_t i = skipped_right_halos;
        i < CeilOfRatio(max_right_halo_size, input_shard_size); ++i) {
     std::vector<std::pair<int64_t, int64_t>> source_target_pairs;
@@ -1237,12 +1255,24 @@ std::optional<HloInstruction*> ExchangeHalo(
           HloInstruction::CreateSlice(halo_shape, hlo, halo_start_indices,
                                       halo_limit_indices, halo_slice_strides));
     }
+    if (source_target_pairs.empty()) {
+      right_coalesced_zero_halo_size +=
+          source_halo_slice->shape().dimensions(dim);
+      continue;
+    }
     auto right_halo =
         collective_ops_creator.create_cross_partition_collective_permute(
             b, source_halo_slice, source_target_pairs, (*next_channel_id)++);
     concat_pieces.push_back(right_halo);
   }
-
+  if (right_coalesced_zero_halo_size > 0) {
+    auto zero_bcast_shape = hlo->shape();
+    zero_bcast_shape.set_dimensions(dim, right_coalesced_zero_halo_size);
+    HloInstruction* padding = CreateZero(zero_bcast_shape, b);
+    VLOG(10) << "ExchangeHalo:right halo zero-bcasted coalesced "
+             << padding->ToString();
+    concat_pieces.push_back(padding);
+  }
   auto concat = concat_pieces[0];
   // Concat with halos/padding.
   if (concat_pieces.size() > 1) {
@@ -1254,6 +1284,7 @@ std::optional<HloInstruction*> ExchangeHalo(
     concat_shape.set_dimensions(dim, concat_dim_size);
     concat = b->AddInstruction(
         HloInstruction::CreateConcatenate(concat_shape, concat_pieces, dim));
+    VLOG(10) << "ExchangeHalo: adding concat: " << concat->ToString();
   }
 
   return concat;
@@ -2503,10 +2534,9 @@ HloSharding CreateMatchingShardingOnDims(
   if (to_be_partially_replicated) {
     return AlignShardingOnDims(HloSharding::PartialTile(tgt_tile_assignment),
                                target_dims, source_sharding, source_dims);
-  } else {
-    return AlignShardingOnDims(HloSharding::Tile(tgt_tile_assignment),
-                               target_dims, source_sharding, source_dims);
   }
+  return AlignShardingOnDims(HloSharding::Tile(tgt_tile_assignment),
+                             target_dims, source_sharding, source_dims);
 }
 
 std::optional<GatherScatterParallelDimSharding>
@@ -2878,8 +2908,8 @@ std::vector<std::vector<int64_t>> GetPartitionGroupsAcrossTargetDims(
       [&](absl::Span<const int64_t> indices, int64_t device) {
         int64_t group_id = 0;
         for (int64_t dim = 0; dim < indices.size(); ++dim) {
-          auto it = absl::c_find(target_dims, dim);
-          if (it != target_dims.end()) {
+          if (auto it = absl::c_find(target_dims, dim);
+              it != target_dims.end()) {
             int64_t group_size =
                 group_sizes[std::distance(target_dims.begin(), it)];
             group_id *= sharding.tile_assignment().dim(dim) / group_size;
@@ -2932,8 +2962,7 @@ std::optional<IotaReplicaGroupList> GetIotaPartitionGroupsAcrossTargetDims(
   std::vector<int64_t> target_dim_locations;
   for (int64_t dim = 0; dim < sharding.tile_assignment().num_dimensions();
        ++dim) {
-    auto it = std::find(target_dims.begin(), target_dims.end(), dim);
-    if (it != target_dims.end()) {
+    if (auto it = absl::c_find(target_dims, dim); it != target_dims.end()) {
       int64_t current_val = sharding.tile_assignment().dim(dim);
       int64_t group_size = group_sizes[std::distance(target_dims.begin(), it)];
       reshape_dimensions.push_back(current_val / group_size);
@@ -2947,8 +2976,8 @@ std::optional<IotaReplicaGroupList> GetIotaPartitionGroupsAcrossTargetDims(
   std::vector<int> transpose_dims(reshape_dimensions.size());
   std::iota(transpose_dims.begin(), transpose_dims.end(), 0);
   for (int64_t loc : target_dim_locations) {
-    auto it = std::find(transpose_dims.begin(), transpose_dims.end(), loc);
-    if (it != transpose_dims.end()) {
+    if (auto it = absl::c_find(transpose_dims, loc);
+        it != transpose_dims.end()) {
       transpose_dims.erase(it);
       transpose_dims.push_back(loc);
     }
@@ -3016,8 +3045,7 @@ std::optional<IotaReplicaGroupList> GetIotaPartitionGroupsForReplication(
                                            replication_dims.end());
   std::sort(replication_dims_sorted.begin(), replication_dims_sorted.end());
   for (int64_t i : replication_dims_sorted) {
-    auto it = std::find(transpose_dims.begin(), transpose_dims.end(), i);
-    if (it != transpose_dims.end()) {
+    if (auto it = absl::c_find(transpose_dims, i); it != transpose_dims.end()) {
       transpose_dims.erase(it);
       transpose_dims.push_back(i);
     }
@@ -3133,6 +3161,37 @@ DynamicUpdateSliceAnalysis AnalyzeDynamicUpdateSlice(
   } else {
     analysis.method =
         DynamicUpdateSliceMethod::kAllPartitionedSliceDimsHaveConstantIndices;
+  }
+
+  // For now, only enable Method 3 if enzyme optimization is enabled.
+  bool is_enzyme_opt_enabled = hlo->parent()
+                                   ->parent()
+                                   ->config()
+                                   .debug_options()
+                                   .xla_enable_enzyme_comms_opt();
+  if (!is_enzyme_opt_enabled &&
+      analysis.method == DynamicUpdateSliceMethod::
+                             kAllPartitionedSliceDimsHaveConstantIndices) {
+    analysis.method = DynamicUpdateSliceMethod::kDefault;
+    return analysis;
+  }
+
+  // Extra check for out-of-bounds indexing
+  const HloInstruction* update_tensor = hlo->operand(1);
+  if (analysis.method ==
+      DynamicUpdateSliceMethod::kAllPartitionedSliceDimsHaveConstantIndices) {
+    for (int64_t dim = 0; dim < hlo->shape().dimensions().size(); ++dim) {
+      const HloInstruction* dus_index = hlo->operand(dim + 2);
+      CHECK(dus_index->IsConstant());
+
+      int64_t start_index = dus_index->literal().GetIntegralAsS64({}).value();
+      int64_t end_index = start_index + update_tensor->shape().dimensions(dim);
+      int64_t padding_high = hlo->shape().dimensions(dim) - end_index;
+      if (start_index < 0 || padding_high < 0) {
+        analysis.method = DynamicUpdateSliceMethod::kDefault;
+        return analysis;
+      }
+    }
   }
 
   return analysis;

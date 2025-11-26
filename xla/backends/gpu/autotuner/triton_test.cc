@@ -22,18 +22,22 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.pb.h"
-#include "xla/tsl/platform/status_matchers.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla.pb.h"
@@ -42,9 +46,9 @@ namespace xla {
 namespace gpu {
 namespace {
 
+using absl_testing::IsOk;
+using absl_testing::StatusIs;
 using ::tsl::proto_testing::EqualsProto;
-using ::tsl::testing::IsOk;
-using ::tsl::testing::StatusIs;
 using TritonBackendConfig = AutotuneResult::TritonGemmKey;
 
 const char kHlo[] = R"(
@@ -70,11 +74,13 @@ const char kHlo[] = R"(
 class TritonBackendTest : public HloHardwareIndependentTestBase {
  protected:
   TritonBackendTest()
-      : backend_(PlatformUtil::GetDefaultPlatform()
-                     .value()
-                     ->ExecutorForDevice(0)
-                     .value(),
-                 &debug_options_, &compiler_) {
+      : stream_executor_(PlatformUtil::GetDefaultPlatform()
+                             .value()
+                             ->ExecutorForDevice(0)
+                             .value()),
+        target_config_(stream_executor_),
+        backend_(&debug_options_, &compiler_, &target_config_,
+                 &symbolic_expr_context_) {
     // TODO(b/315957220): Remove the experimental flags once TMA is enabled by
     // default.
     debug_options_.set_xla_gpu_experimental_enable_triton_tma(true);
@@ -82,7 +88,11 @@ class TritonBackendTest : public HloHardwareIndependentTestBase {
 
   DebugOptions debug_options_;
   NVPTXCompiler compiler_;
+  se::StreamExecutor* stream_executor_;
+  Compiler::TargetConfig target_config_;
   TritonBackend backend_;
+  mlir::MLIRContext mlir_context_;
+  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 TEST_F(TritonBackendTest, GetSupportedConfigs) {
@@ -113,6 +123,21 @@ TEST_F(TritonBackendTest, GetSupportedConfigs) {
     // is_tma_allowed set to true.
     EXPECT_EQ(count_tma_allowed(configs.value()), configs.value().size() / 2);
   }
+}
+
+TEST_F(TritonBackendTest, GetSupportedConfigsRestrictedDefaultSearch) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHlo));
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> default_configs =
+      backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+  debug_options_.set_xla_gpu_exhaustive_tiling_search(true);
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
+      exhaustive_configs = backend_.GetSupportedConfigs(
+          *(module->entry_computation()->root_instruction()));
+  EXPECT_THAT(default_configs, IsOk());
+  EXPECT_THAT(exhaustive_configs, IsOk());
+  EXPECT_GE(exhaustive_configs.value().size(), default_configs.value().size());
 }
 
 TEST_F(TritonBackendTest, GetSupportedConfigsForUnsupportedInstruction) {
@@ -153,8 +178,7 @@ TEST_F(TritonBackendTest, GetDefaultConfigForUnsupportedInstruction) {
                                           ->root_instruction();
   absl::StatusOr<std::unique_ptr<BackendConfig>> config =
       backend_.GetDefaultConfig(*unsupported_instr);
-  EXPECT_THAT(config.status(),
-              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(config.status(), StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 TEST_F(TritonBackendTest, Compile) {

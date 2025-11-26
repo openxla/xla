@@ -25,8 +25,8 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
-#include "xla/backends/autotuner/autotune_config.h"
 #include "xla/backends/autotuner/autotuner_cache.pb.h"
+#include "xla/backends/autotuner/autotuner_cache_interface.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/literal_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -34,17 +34,14 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
-#include "xla/tsl/util/proto/proto_matchers.h"
 #include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
 
+using Config = ::xla::AutotunerCacheInterface::Config;
 using ::testing::Eq;
 using ::testing::Optional;
-using ::tsl::proto_testing::EqualsProto;
-
-constexpr char kVersion[] = "1";
 
 // Helper to create a dummy DeviceDescription.
 se::DeviceDescription CreateDummyDeviceDescription(
@@ -84,11 +81,14 @@ class FileBasedAutotunerCacheTest : public ::testing::Test {
 
   std::string test_dir_;
 
-  AutotuneConfig GetConfig(
-      AutotuneConfig::CacheMode mode = AutotuneConfig::CacheMode::READ_WRITE) {
-    AutotuneConfig config;
+  FileBasedCacheConfig GetConfig(
+      se::DeviceDescription device_desc,
+      FileBasedCacheConfig::CacheMode mode =
+          FileBasedCacheConfig::CacheMode::READ_WRITE) {
+    FileBasedCacheConfig config;
     config.autotune_cache_dir = test_dir_;
     config.autotune_cache_mode = mode;
+    config.device_desc = device_desc;
     return config;
   }
 
@@ -103,10 +103,37 @@ class FileBasedAutotunerCacheTest : public ::testing::Test {
   }
 };
 
+// Matcher for Config.
+MATCHER_P(ConfigEq, expected_config, "") {
+  const Config& actual_config = arg;
+  if (actual_config.codegen_backend_name !=
+      expected_config.codegen_backend_name) {
+    *result_listener << "codegen_backend mismatch: expected "
+                     << expected_config.codegen_backend_name << ", got "
+                     << actual_config.codegen_backend_name;
+    return false;
+  }
+  // Compare backend_config (google::protobuf::Any)
+  if (actual_config.backend_config.type_url() !=
+      expected_config.backend_config.type_url()) {
+    *result_listener << "backend_config type_url mismatch: expected "
+                     << expected_config.backend_config.type_url() << ", got "
+                     << actual_config.backend_config.type_url();
+    return false;
+  }
+  if (actual_config.backend_config.value() !=
+      expected_config.backend_config.value()) {
+    *result_listener << "backend_config value mismatch";
+    return false;
+  }
+  return true;
+}
+
 TEST_F(FileBasedAutotunerCacheTest, CreateEmpty) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto cache, FileBasedAutotunerCache::Create(
-                      GetConfig(), CreateDummyDeviceDescription(), kVersion));
+                      GetConfig(CreateDummyDeviceDescription(),
+                                FileBasedCacheConfig::CacheMode::READ_WRITE)));
   auto instr = CreateDummyInstr("hlo1");
   EXPECT_THAT(cache->Lookup(instr.get()), Eq(std::nullopt));
 }
@@ -114,124 +141,131 @@ TEST_F(FileBasedAutotunerCacheTest, CreateEmpty) {
 TEST_F(FileBasedAutotunerCacheTest, InsertAndLookup) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto cache, FileBasedAutotunerCache::Create(
-                      GetConfig(), CreateDummyDeviceDescription(), kVersion));
+                      GetConfig(CreateDummyDeviceDescription(),
+                                FileBasedCacheConfig::CacheMode::READ_WRITE)));
   auto instr = CreateDummyInstr("hlo1");
-  AutotunerCacheEntry entry;
-  entry.set_codegen_backend("TestBackend");
-  *entry.mutable_backend_config() = CreateDummyBackendConfig();
+  Config config;
+  config.codegen_backend_name = "TestBackend";
+  config.backend_config = CreateDummyBackendConfig();
 
-  TF_ASSERT_OK(cache->Insert(instr.get(), entry));
-  EXPECT_THAT(cache->Lookup(instr.get()), Optional(EqualsProto(entry)));
+  TF_ASSERT_OK(cache->Insert(instr.get(), config));
+  EXPECT_THAT(cache->Lookup(instr.get()), Optional(ConfigEq(config)));
 }
 
 TEST_F(FileBasedAutotunerCacheTest, SaveAndLoad) {
   auto instr = CreateDummyInstr("hlo2");
-  AutotunerCacheEntry entry;
-  entry.set_codegen_backend("TestBackend");
-  *entry.mutable_backend_config() = CreateDummyBackendConfig();
+  Config config;
+  config.codegen_backend_name = "TestBackend";
+  config.backend_config = CreateDummyBackendConfig();
 
   // Create cache, insert, and let it save.
   {
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto cache, FileBasedAutotunerCache::Create(
-                        GetConfig(), CreateDummyDeviceDescription(), kVersion));
-    TF_ASSERT_OK(cache->Insert(instr.get(), entry));
+    TF_ASSERT_OK_AND_ASSIGN(auto cache,
+                            FileBasedAutotunerCache::Create(GetConfig(
+                                CreateDummyDeviceDescription(),
+                                FileBasedCacheConfig::CacheMode::READ_WRITE)));
+    TF_ASSERT_OK(cache->Insert(instr.get(), config));
   }
 
   // Create a new cache, which should load from disk.
   {
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto cache, FileBasedAutotunerCache::Create(
-                        GetConfig(), CreateDummyDeviceDescription(), kVersion));
-    EXPECT_THAT(cache->Lookup(instr.get()), Optional(EqualsProto(entry)));
+    TF_ASSERT_OK_AND_ASSIGN(auto cache,
+                            FileBasedAutotunerCache::Create(GetConfig(
+                                CreateDummyDeviceDescription(),
+                                FileBasedCacheConfig::CacheMode::READ_WRITE)));
+    EXPECT_THAT(cache->Lookup(instr.get()), Optional(ConfigEq(config)));
   }
 }
 
 TEST_F(FileBasedAutotunerCacheTest, LoadWithDifferentDevice) {
   auto instr = CreateDummyInstr("hlo2");
-  AutotunerCacheEntry entry;
-  entry.set_codegen_backend("TestBackend");
-  *entry.mutable_backend_config() = CreateDummyBackendConfig();
+  Config config;
+  config.codegen_backend_name = "TestBackend";
+  config.backend_config = CreateDummyBackendConfig();
 
   // Create cache, insert, and let it save.
   {
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto cache, FileBasedAutotunerCache::Create(
-                        GetConfig(), CreateDummyDeviceDescription(), kVersion));
-    TF_ASSERT_OK(cache->Insert(instr.get(), entry));
+    TF_ASSERT_OK_AND_ASSIGN(auto cache,
+                            FileBasedAutotunerCache::Create(GetConfig(
+                                CreateDummyDeviceDescription(),
+                                FileBasedCacheConfig::CacheMode::READ_WRITE)));
+    TF_ASSERT_OK(cache->Insert(instr.get(), config));
   }
 
   // Create a new cache with different device, should not load the entry.
   {
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto cache,
-        FileBasedAutotunerCache::Create(
-            GetConfig(), CreateDummyDeviceDescription("other_device"),
-            kVersion));
+    TF_ASSERT_OK_AND_ASSIGN(auto cache,
+                            FileBasedAutotunerCache::Create(GetConfig(
+                                CreateDummyDeviceDescription("other_device"),
+                                FileBasedCacheConfig::CacheMode::READ_WRITE)));
     EXPECT_THAT(cache->Lookup(instr.get()), Eq(std::nullopt));
   }
 }
 
 TEST_F(FileBasedAutotunerCacheTest, LoadWithDifferentVersion) {
   auto instr = CreateDummyInstr("hlo2");
-  AutotunerCacheEntry entry;
-  entry.set_codegen_backend("TestBackend");
-  *entry.mutable_backend_config() = CreateDummyBackendConfig();
+  Config config;
+  config.codegen_backend_name = "TestBackend";
+  config.backend_config = CreateDummyBackendConfig();
 
   // Create cache, insert, and let it save.
   {
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto cache, FileBasedAutotunerCache::Create(
-                        GetConfig(), CreateDummyDeviceDescription(), kVersion));
-    TF_ASSERT_OK(cache->Insert(instr.get(), entry));
+    TF_ASSERT_OK_AND_ASSIGN(auto cache,
+                            FileBasedAutotunerCache::Create(GetConfig(
+                                CreateDummyDeviceDescription(),
+                                FileBasedCacheConfig::CacheMode::READ_WRITE)));
+    TF_ASSERT_OK(cache->Insert(instr.get(), config));
   }
 
   // Create a new cache with different version, should not load the entry.
   {
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto cache, FileBasedAutotunerCache::Create(
-                        GetConfig(), CreateDummyDeviceDescription(), "2"));
+    auto cache_config = GetConfig(CreateDummyDeviceDescription(),
+                                  FileBasedCacheConfig::CacheMode::READ_WRITE);
+    cache_config.cache_version = "2";
+    TF_ASSERT_OK_AND_ASSIGN(auto cache,
+                            FileBasedAutotunerCache::Create(cache_config));
     EXPECT_THAT(cache->Lookup(instr.get()), Eq(std::nullopt));
   }
 }
 
 TEST_F(FileBasedAutotunerCacheTest, ReadOnlyMode) {
   auto instr = CreateDummyInstr("hlo3");
-  AutotunerCacheEntry entry;
-  entry.set_codegen_backend("TestBackend");
-  *entry.mutable_backend_config() = CreateDummyBackendConfig();
+  Config config;
+  config.codegen_backend_name = "TestBackend";
+  config.backend_config = CreateDummyBackendConfig();
 
   // Create in READ_WRITE mode to pre-populate the cache file.
   {
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto cache, FileBasedAutotunerCache::Create(
-                        GetConfig(), CreateDummyDeviceDescription(), kVersion));
-    TF_ASSERT_OK(cache->Insert(instr.get(), entry));
+    TF_ASSERT_OK_AND_ASSIGN(auto cache,
+                            FileBasedAutotunerCache::Create(GetConfig(
+                                CreateDummyDeviceDescription(),
+                                FileBasedCacheConfig::CacheMode::READ_WRITE)));
+    TF_ASSERT_OK(cache->Insert(instr.get(), config));
   }
 
   // Create in READ mode.
-  TF_ASSERT_OK_AND_ASSIGN(auto cache,
-                          FileBasedAutotunerCache::Create(
-                              GetConfig(AutotuneConfig::CacheMode::READ),
-                              CreateDummyDeviceDescription(), kVersion));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto cache, FileBasedAutotunerCache::Create(
+                      GetConfig(CreateDummyDeviceDescription(),
+                                FileBasedCacheConfig::CacheMode::READ)));
   // Lookup should work.
-  EXPECT_THAT(cache->Lookup(instr.get()), Optional(EqualsProto(entry)));
+  EXPECT_THAT(cache->Lookup(instr.get()), Optional(ConfigEq(config)));
 
   // Insert a new entry.
   auto instr2 = CreateDummyInstr("hlo4");
-  AutotunerCacheEntry entry2;
-  entry2.set_codegen_backend("AnotherBackend");
-  *entry2.mutable_backend_config() = CreateDummyBackendConfig();
-  TF_ASSERT_OK(cache->Insert(instr2.get(), entry2));
+  Config config2;
+  config2.codegen_backend_name = "AnotherBackend";
+  config2.backend_config = CreateDummyBackendConfig();
+  TF_ASSERT_OK(cache->Insert(instr2.get(), config2));
   EXPECT_THAT(cache->Lookup(instr2.get()), Eq(std::nullopt));
 
   // Create a new cache, key2 should not be present as it wasn't saved.
   {
     TF_ASSERT_OK_AND_ASSIGN(auto cache2,
-                            FileBasedAutotunerCache::Create(
-                                GetConfig(),  // READ_WRITE to check file
-                                CreateDummyDeviceDescription(), kVersion));
-    EXPECT_THAT(cache2->Lookup(instr.get()), Optional(EqualsProto(entry)));
+                            FileBasedAutotunerCache::Create(GetConfig(
+                                CreateDummyDeviceDescription(),
+                                FileBasedCacheConfig::CacheMode::READ_WRITE)));
+    EXPECT_THAT(cache2->Lookup(instr.get()), Optional(ConfigEq(config)));
     EXPECT_THAT(cache2->Lookup(instr2.get()), Eq(std::nullopt));
   }
 }
@@ -239,20 +273,21 @@ TEST_F(FileBasedAutotunerCacheTest, ReadOnlyMode) {
 TEST_F(FileBasedAutotunerCacheTest, OverwriteEntry) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto cache, FileBasedAutotunerCache::Create(
-                      GetConfig(), CreateDummyDeviceDescription(), kVersion));
+                      GetConfig(CreateDummyDeviceDescription(),
+                                FileBasedCacheConfig::CacheMode::READ_WRITE)));
   auto instr = CreateDummyInstr("hlo5");
 
-  AutotunerCacheEntry entry1;
-  entry1.set_codegen_backend("BackendV1");
-  *entry1.mutable_backend_config() = CreateDummyBackendConfig();
-  TF_ASSERT_OK(cache->Insert(instr.get(), entry1));
-  EXPECT_THAT(cache->Lookup(instr.get()), Optional(EqualsProto(entry1)));
+  Config config1;
+  config1.codegen_backend_name = "BackendV1";
+  config1.backend_config = CreateDummyBackendConfig();
+  TF_ASSERT_OK(cache->Insert(instr.get(), config1));
+  EXPECT_THAT(cache->Lookup(instr.get()), Optional(ConfigEq(config1)));
 
-  AutotunerCacheEntry entry2;
-  entry2.set_codegen_backend("BackendV2");
-  *entry2.mutable_backend_config() = CreateDummyBackendConfig();
-  TF_ASSERT_OK(cache->Insert(instr.get(), entry2));
-  EXPECT_THAT(cache->Lookup(instr.get()), Optional(EqualsProto(entry2)));
+  Config config2;
+  config2.codegen_backend_name = "BackendV2";
+  config2.backend_config = CreateDummyBackendConfig();
+  TF_ASSERT_OK(cache->Insert(instr.get(), config2));
+  EXPECT_THAT(cache->Lookup(instr.get()), Optional(ConfigEq(config2)));
 }
 
 }  // namespace

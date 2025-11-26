@@ -78,6 +78,9 @@ limitations under the License.
 #include "xla/util.h"
 
 namespace xla {
+namespace {
+using mlir::mhlo::ChloLegalizeToHighLevelMhloPassOptions;
+}
 
 void RegisterAllHloDialects(mlir::DialectRegistry& registry) {
   registry.insert<mlir::arith::ArithDialect>();
@@ -90,33 +93,14 @@ void RegisterAllHloDialects(mlir::DialectRegistry& registry) {
   mlir::stablehlo::registerAllDialects(registry);
 }
 
-absl::Status MlirToXlaComputation(mlir::ModuleOp module,
-                                  XlaComputation& xla_computation,
-                                  bool use_tuple_args, bool return_tuple,
-                                  ExecutableBuildOptions* exec_build_options) {
+absl::Status MlirToXlaComputation(
+    mlir::ModuleOp module, XlaComputation& xla_computation, bool use_tuple_args,
+    bool return_tuple, ExecutableBuildOptions* exec_build_options,
+    const ChloLegalizeToHighLevelMhloPassOptions& chlo_opts) {
   mlir::MLIRContext* context = module->getContext();
   mlir::BaseScopedDiagnosticHandler diagnostic_handler(context);
   {
     mlir::PassManager pm(context);
-
-    // CHLO -> MHLO for high level ops (TopK, Erf, RaggedDot, etc.)
-    // CHLO -> StableHLO otherwise
-    pm.addNestedPass<mlir::func::FuncOp>(
-        mlir::stablehlo_ext::createChloRecomposeOpsPass());
-    pm.addPass(mlir::createSymbolDCEPass());
-    pm.addNestedPass<mlir::func::FuncOp>(
-        mlir::mhlo::createChloLegalizeToHighLevelMhloPass());
-    pm.addNestedPass<mlir::func::FuncOp>(
-        mlir::stablehlo::createChloLegalizeToStablehloPass());
-
-    // Expand stablehlo complex math functions such as log_plus_one, etc.
-    pm.addNestedPass<mlir::func::FuncOp>(
-        mlir::stablehlo::createStablehloComplexMathExpanderPass());
-
-    // In order to export to XLA, we must sink constants to control flow
-    // regions, since XLA uses functional control flow.
-    pm.addNestedPass<mlir::func::FuncOp>(
-        mlir::stablehlo_ext::createSinkConstantsToControlFlowPass());
 
     // TODO(b/420837831): Remove this once we don't need to fall back to GSPMD.
     if (exec_build_options && exec_build_options->use_shardy_partitioner() &&
@@ -135,6 +119,25 @@ absl::Status MlirToXlaComputation(mlir::ModuleOp module,
     // NOTE: we don't use `use_shardy` because it isn't guaranteed to be true if
     // the module has Shardy artifacts.
     xla::sdy::addSdyRoundTripExportPipeline(pm);
+
+    // CHLO -> MHLO for high level ops (TopK, Erf, RaggedDot, etc.)
+    // CHLO -> StableHLO otherwise
+    pm.addNestedPass<mlir::func::FuncOp>(
+        mlir::stablehlo_ext::createChloRecomposeOpsPass());
+    pm.addPass(mlir::createSymbolDCEPass());
+    pm.addNestedPass<mlir::func::FuncOp>(
+        mlir::mhlo::createChloLegalizeToHighLevelMhloPass(chlo_opts));
+    pm.addNestedPass<mlir::func::FuncOp>(
+        mlir::stablehlo::createChloLegalizeToStablehloPass());
+
+    // Expand stablehlo complex math functions such as log_plus_one, etc.
+    pm.addNestedPass<mlir::func::FuncOp>(
+        mlir::stablehlo::createStablehloComplexMathExpanderPass());
+
+    // In order to export to XLA, we must sink constants to control flow
+    // regions, since XLA uses functional control flow.
+    pm.addNestedPass<mlir::func::FuncOp>(
+        mlir::stablehlo_ext::createSinkConstantsToControlFlowPass());
 
     if (failed(pm.run(module))) {
       VLOG(1) << "MHLO->HLO lowering passes failed.";
@@ -227,6 +230,7 @@ absl::Status ExportShardyForGSPMD(mlir::ModuleOp module) {
   // to handle.
   xla::sdy::StablehloExportPipelineOptions options;
   options.keepHloShardingConstraints = true;
+  options.addMissingShardingToControlFlow = false;
   xla::sdy::addStablehloExportPipeline(pm, options);
   mlir::BaseScopedDiagnosticHandler diagnostic_handler(context);
   if (!mlir::succeeded(pm.run(module))) {

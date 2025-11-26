@@ -61,14 +61,6 @@ inline constexpr llvm::StringRef kXlaBackendConfigAttr = "backend_config";
 // The attribute name for inlineable.
 inline constexpr llvm::StringRef kXlaInlineableAttr = "inlineable";
 
-// Attribute name for temporarily storing the Shardy sharding during HLO
-// sdy-round-trip. It cannot match the name `kShardingAttr` ("sdy.sharding"), as
-// during sdy-round-trip, going from HLO to StableHLO, the code removes
-// attributes in the `frontend_attributes` field, making them top level. And
-// Shardy verification expects `kShardingAttr` to be of type
-// TensorShardingAttr/TensorShardingPerValueAttr - not a StringAttr.
-inline constexpr llvm::StringRef kShardingRoundTripAttr = "xla.sdy.sharding";
-
 // Attribute name for temporarily storing the Shardy sharding rule during HLO
 // sdy-round-trip. It cannot match the name `kShardingRuleAttr`
 // ("sdy.sharding_rule"), as during sdy-round-trip, going from HLO to StableHLO,
@@ -110,6 +102,7 @@ inline constexpr llvm::StringRef kFrontendAttributesAttr =
 
 // Attribute name for determining whether we need to import StableHLO shardings,
 // i.e., the input module doesn't contain SDY shardings as frontend attributes.
+// This is only used for testing.
 inline constexpr llvm::StringRef kImportMhloShardings =
     "xla.sdy.import_mhlo_shardings";
 
@@ -139,10 +132,15 @@ inline constexpr llvm::StringRef kManualAxes = "xla.sdy.manual_axes";
 // `true` or not set.
 inline constexpr char kHasUnreducedAxes[] = "xla.sdy.has_unreduced_axes";
 
-// The function name of the of the body of a `ManualComputationOp` during Shardy
-// round tripping. Used
-inline constexpr llvm::StringRef kManualComputationBodyFuncName =
+// The function name of the body of a `ManualComputationOp` during Shardy
+// round tripping.
+inline constexpr llvm::StringRef kManualComputationFuncName =
     "xla.sdy.manual_computation_body";
+
+// The function name of the body of a `ManualComputationOp` that should
+// be inlined after stablehlo-round-trip-export
+inline constexpr llvm::StringRef kInlineableManualComputationFuncName =
+    "xla.sdy.inlinable_manual_computation_body";
 
 // The target name of the custom call that changes operands from global to local
 // shape during Shardy round tripping.

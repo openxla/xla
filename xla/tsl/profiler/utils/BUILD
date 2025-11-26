@@ -23,6 +23,7 @@ package_group(
 cc_library(
     name = "math_utils",
     hdrs = ["math_utils.h"],
+    visibility = internal_visibility([":friends"]),
 )
 
 cc_library(
@@ -340,10 +341,13 @@ tsl_cc_test(
     srcs = ["group_events_test.cc"],
     deps = [
         ":group_events",
+        ":preprocess_xplane",
         ":tf_xplane_visitor",
+        ":timespan",
         ":xplane_builder",
         ":xplane_schema",
         ":xplane_test_utils",
+        ":xplane_utils",
         ":xplane_visitor",
         "//xla/tsl/platform:env_impl",
         "//xla/tsl/platform:test",
@@ -482,6 +486,18 @@ cc_library(
     ],
 )
 
+tsl_cc_test(
+    name = "session_manager_test",
+    srcs = ["session_manager_test.cc"],
+    deps = [
+        ":session_manager",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "timestamp_utils",
     srcs = ["timestamp_utils.cc"],
@@ -490,6 +506,7 @@ cc_library(
         ":xplane_builder",
         ":xplane_schema",
         ":xplane_utils",
+        ":xplane_visitor",
         "@com_google_absl//absl/log",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
@@ -500,8 +517,6 @@ tsl_cc_test(
     srcs = ["timestamp_utils_test.cc"],
     deps = [
         ":timestamp_utils",
-        ":xplane_schema",
-        ":xplane_utils",
         ":xplane_visitor",
         "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest_main",
@@ -613,6 +628,10 @@ cc_library(
     srcs = ["profiler_options_util.cc"],
     hdrs = ["profiler_options_util.h"],
     deps = [
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
     ],
 )

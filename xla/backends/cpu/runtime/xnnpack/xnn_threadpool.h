@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,9 +16,8 @@ limitations under the License.
 #ifndef XLA_BACKENDS_CPU_RUNTIME_XNNPACK_XNN_THREADPOOL_H_
 #define XLA_BACKENDS_CPU_RUNTIME_XNNPACK_XNN_THREADPOOL_H_
 
-#include <memory>
-
-struct xnn_scheduler;
+#include "absl/status/statusor.h"
+#include "xla/backends/cpu/runtime/xnnpack/xnn_interop.h"
 
 namespace Eigen {
 struct ThreadPoolDevice;
@@ -27,13 +26,13 @@ class ThreadPoolInterface;
 
 namespace xla::cpu {
 
-// A wrapper to redirect xnn_scheduler operations to Eigen::ThreadPoolInterface.
-using XnnScheduler = std::unique_ptr<xnn_scheduler, void (*)(xnn_scheduler*)>;
+// Creates an XNNPACK threadpool from an Eigen threadpool.
+absl::StatusOr<XnnThreadpool> CreateXnnThreadpool(
+    Eigen::ThreadPoolInterface* threadpool);
 
-// Creates an XnnScheduler that uses the given Eigen thread pool to launch tasks
-// submitted by the XNNPACK.
-XnnScheduler CreateXnnEigenScheduler(Eigen::ThreadPoolInterface* threads);
-XnnScheduler CreateXnnEigenScheduler(const Eigen::ThreadPoolDevice* device);
+// Creates an XNNPACK threadpool from an Eigen ThreadPoolDevice.
+absl::StatusOr<XnnThreadpool> CreateXnnThreadpool(
+    const Eigen::ThreadPoolDevice* device);
 
 }  // namespace xla::cpu
 

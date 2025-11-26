@@ -24,7 +24,8 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
-#include "xla/backends/cpu/xnn_fusion.h"
+#include "xla/backends/cpu/runtime/xnnpack/xnn_interop.h"
+#include "xla/backends/cpu/xnn_support.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -36,8 +37,7 @@ limitations under the License.
 #include "xla/tsl/platform/status.h"
 #include "xla/xla.pb.h"
 
-namespace xla {
-namespace cpu {
+namespace xla::cpu {
 
 namespace {
 
@@ -131,16 +131,8 @@ bool XnnGraphFusion::IsOpSupported(const HloInstruction* instr) {
   switch (instr->opcode()) {
     case HloOpcode::kBitcast:
       return IsBitcastOpSupportedByXnn(instr);
-    case HloOpcode::kBroadcast: {
-      if (instr->GetModule()
-              ->config()
-              .debug_options()
-              .xla_cpu_experimental_xnn_graph_fusion_mode() !=
-          DebugOptions::XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY) {
-        return false;
-      }
+    case HloOpcode::kBroadcast:
       return IsBroadcastOpSupportedByXnn(instr);
-    }
     case HloOpcode::kReduce:
       return IsReduceOpSupportedByXnn(instr);
     default:
@@ -162,5 +154,5 @@ bool XnnGraphFusion::IsXnnGraphFusion(const HloInstruction* instr) {
   }
   return backend_config->fusion_config().kind() == kXnnFusionKind;
 }
-}  // namespace cpu
-}  // namespace xla
+
+}  // namespace xla::cpu

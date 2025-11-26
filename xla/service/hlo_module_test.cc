@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
@@ -37,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
+#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
@@ -52,6 +54,7 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tuple_tree.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
@@ -506,13 +509,19 @@ ENTRY ReduceR3ToR2.v3 {
     }
   }
 
-  // Verify that the next unique ID which the module would have handed out is
-  // greater than the unique id of any instruction.
-  int next_id = module_copy->NewUniqueInstructionId();
+  // Verify that the next unique ID which any computation would have handed out
+  // is greater than the unique id of any existing instruction in that
+  // computation.
+  int32_t next_module_unique_id = module->next_unique_computation_id();
   for (const HloComputation* computation : module_copy->computations()) {
+    int32_t next_instruction_id_internal =
+        computation->next_unique_instruction_internal_id();
     for (const HloInstruction* instruction : computation->instructions()) {
-      EXPECT_GT(next_id, instruction->unique_id());
+      EXPECT_GT(next_instruction_id_internal, instruction->local_id());
     }
+    // Also verify that the next module unique id is greater than the module
+    // unique ids already present in the computation.
+    EXPECT_GT(next_module_unique_id, computation->unique_id());
   }
 }
 
@@ -971,10 +980,9 @@ TEST_F(HloModuleTest, PrintOriginalValue) {
   std::vector<float> values(16, 42.0);
   auto instruction =
       HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(42.0f));
-  auto original_value = std::make_shared<OriginalValue>(instruction->shape());
-  for (auto& leaf : original_value->leaves()) {
-    leaf.second = {std::string(instruction->name()), leaf.first};
-  }
+  auto original_value =
+      std::make_shared<OriginalValue>(TupleTree<std::optional<OriginalArray>>(
+          OriginalArray{std::string(instruction->name()), {}}));
   instruction->set_original_value(original_value);
   builder.AddInstruction(std::move(instruction));
   module->AddEntryComputation(builder.Build());

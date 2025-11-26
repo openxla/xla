@@ -708,7 +708,8 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
       // info now contains a list of samples and metrics,
       // hand off to process or store elsewhere
       if (process_samples_) {
-        PmSamples samples(dev->GetEnabledMetrics(), info.sampler_ranges);
+        PmSamples samples(dev->GetEnabledMetrics(), info.sampler_ranges,
+                          dev->device_id_);
         process_samples_(&samples);
       }
 
@@ -735,7 +736,7 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
     }
 
     // Sleep until start of next period,
-    // warning if decode took longer than alloted time
+    // warning if decode took longer than allocated time
     absl::Time end = absl::Now();
     absl::Duration elapsed = end - begin;
     if (elapsed < decode_period_) {
@@ -774,7 +775,7 @@ void CuptiPmSamplerDecodeThread::DecodeUntilDisabled() {
 // Entry function for decode thread
 void CuptiPmSamplerDecodeThread::MainFunc() {
   // RAII lock to ensure mutex is released when thread exits
-  absl::MutexLock lock(&state_mutex_);
+  absl::MutexLock lock(state_mutex_);
 
   // Control loop for decode thread
   do {
@@ -797,9 +798,9 @@ void CuptiPmSamplerDecodeThread::MainFunc() {
         {
           // Release lock for expensive decode call, but regain before returning
           // to control loop
-          state_mutex_.Unlock();
+          state_mutex_.unlock();
           DecodeUntilDisabled();
-          state_mutex_.Lock();
+          state_mutex_.lock();
         }
         // Returns when Disabled has been requested
         StateIs(ThreadState::kDisabled);
@@ -828,7 +829,7 @@ absl::Status CuptiPmSamplerImpl::Initialize(
     return absl::AlreadyExistsError("PM sampler already initialized");
   }
 
-  // Use absl cleanup to clear alloced memory on error
+  // Use absl cleanup to clear allocated memory on error
   // (Cancel before successful return)
   absl::Cleanup cleanup([this]() {
     threads_.clear();

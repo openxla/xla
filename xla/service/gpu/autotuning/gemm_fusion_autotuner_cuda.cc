@@ -23,7 +23,9 @@ limitations under the License.
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/autotuning/gemm_fusion_autotuner.h"
+#include "xla/service/gpu/autotuning/triton_configs.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
@@ -50,7 +52,8 @@ bool GemmFusionAutotunerImpl::AddLibConfigs(
     const HloFusionInstruction& fusion, const HloDotInstruction* dot,
     std::vector<BackendConfig>& configs) {
   // Add cuDNN plans, if available.
-  auto cc = std::get<se::CudaComputeCapability>(GetComputeCapability());
+  stream_executor::CudaComputeCapability cc =
+      *GetComputeCapability().cuda_compute_capability();
   bool is_cudnn_enabled =
       !config_.IsDeviceless() &&
       GetDnnVersionInfoOrDefault(config_.GetExecutor()).major_version() >= 9 &&
@@ -58,8 +61,8 @@ bool GemmFusionAutotunerImpl::AddLibConfigs(
         debug_options_.xla_gpu_cudnn_gemm_fusion_level() > 1) ||
        (cc.IsAtLeastBlackwell() &&
         debug_options_.xla_gpu_cudnn_gemm_fusion_level() > 0));
-  if ((IsFusionKind(fusion, kCuDnnFusionKind) && IsAutotuningEnabled()) ||
-      (IsFusionKind(fusion, kTritonGemmFusionKind) && is_cudnn_enabled &&
+  if ((IsGpuFusionKind(fusion, kCuDnnFusionKind) && IsAutotuningEnabled()) ||
+      (IsGpuFusionKind(fusion, kTritonGemmFusionKind) && is_cudnn_enabled &&
        algorithm_util::IsSupportedByCudnn(
            dot->precision_config().algorithm()) &&
        IsAutotuningEnabled())) {
@@ -68,7 +71,7 @@ bool GemmFusionAutotunerImpl::AddLibConfigs(
       configs.push_back(CuDnnConfig{plan_id});
     }
   }
-  if (IsFusionKind(fusion, kCuDnnFusionKind)) {
+  if (IsGpuFusionKind(fusion, kCuDnnFusionKind)) {
     if (!IsAutotuningEnabled()) {
       configs.push_back(CuDnnConfig{-1});
     }
@@ -79,74 +82,23 @@ bool GemmFusionAutotunerImpl::AddLibConfigs(
 
 std::vector<TritonGemmConfig> GemmFusionAutotunerImpl::GetDefaultTritonConfigs()
     const {
-  using Config = TritonGemmConfig;
-  auto compute_capability =
-      std::get<se::CudaComputeCapability>(GetComputeCapability());
+  stream_executor::CudaComputeCapability compute_capability =
+      *GetComputeCapability().cuda_compute_capability();
   std::vector<TritonGemmConfig> configs;
 
   if (compute_capability.IsAtLeastBlackwell()) {
-    configs = {Config(128, 128, 32, 1, 4, 4), Config(128, 128, 64, 1, 1, 8),
-               Config(128, 128, 64, 8, 3, 4), Config(128, 16, 16, 512, 4, 2),
-               Config(128, 16, 32, 16, 3, 2), Config(128, 16, 64, 1, 5, 4),
-               Config(128, 16, 64, 16, 3, 4), Config(128, 16, 64, 64, 1, 2),
-               Config(128, 256, 64, 1, 4, 8), Config(128, 256, 64, 2, 4, 8),
-               Config(128, 256, 64, 4, 3, 8), Config(128, 64, 64, 1, 3, 4),
-               Config(128, 64, 64, 16, 4, 8), Config(128, 64, 64, 8, 4, 4),
-               Config(16, 16, 128, 1, 3, 2),  Config(16, 16, 16, 1, 1, 2),
-               Config(16, 16, 64, 8, 3, 2),   Config(16, 32, 64, 1, 3, 2),
-               Config(256, 128, 64, 1, 3, 8), Config(256, 16, 16, 1, 1, 2),
-               Config(256, 32, 32, 16, 3, 4), Config(32, 16, 32, 1, 4, 2),
-               Config(32, 16, 512, 1, 1, 4),  Config(32, 16, 64, 1, 1, 2),
-               Config(32, 16, 64, 1, 4, 2),   Config(64, 128, 16, 1, 1, 16),
-               Config(64, 128, 16, 1, 3, 2),  Config(64, 128, 64, 1, 4, 4),
-               Config(64, 16, 64, 1, 2, 2),   Config(64, 32, 128, 1, 3, 2),
-               Config(64, 32, 32, 1, 4, 2),   Config(64, 32, 64, 64, 3, 2),
-               Config(64, 64, 128, 8, 1, 8),  Config(64, 64, 16, 1, 1, 2),
-               Config(64, 64, 16, 1, 3, 2)};
+    configs = *kBlackwellConfigs;
   } else if (compute_capability.IsHopper() || compute_capability.IsAmpere()) {
-    configs = {Config(16, 16, 64, 1, 4, 2),    Config(16, 16, 128, 1, 4, 4),
-               Config(16, 16, 128, 128, 4, 2), Config(16, 16, 128, 16, 1, 2),
-               Config(16, 256, 16, 1, 1, 2),   Config(32, 32, 128, 16, 1, 4),
-               Config(32, 256, 32, 1, 3, 4),   Config(32, 256, 32, 16, 3, 8),
-               Config(64, 16, 32, 1, 4, 2),    Config(64, 16, 32, 16, 4, 2),
-               Config(64, 16, 64, 1, 1, 4),    Config(64, 16, 64, 4, 3, 2),
-               Config(64, 16, 64, 16, 4, 4),   Config(64, 16, 128, 1, 4, 2),
-               Config(64, 16, 128, 16, 4, 4),  Config(64, 32, 32, 1, 4, 4),
-               Config(64, 32, 64, 16, 3, 4),   Config(64, 32, 128, 1, 3, 2),
-               Config(64, 32, 128, 128, 2, 4), Config(64, 64, 32, 1, 4, 4),
-               Config(64, 64, 64, 1, 4, 4),    Config(64, 64, 64, 4, 4, 4),
-               Config(64, 64, 128, 16, 3, 4),  Config(64, 64, 256, 16, 4, 8),
-               Config(64, 128, 16, 1, 4, 2),   Config(64, 128, 64, 1, 3, 4),
-               Config(64, 128, 128, 8, 1, 4),  Config(64, 256, 32, 1, 4, 4),
-               Config(128, 16, 32, 8, 4, 2),   Config(128, 16, 64, 16, 3, 2),
-               Config(128, 16, 64, 16, 1, 4),  Config(128, 32, 32, 8, 4, 2),
-               Config(128, 128, 32, 8, 4, 8),  Config(128, 256, 32, 1, 4, 8),
-               Config(128, 256, 64, 1, 4, 8)};
+    configs = *kHopperAmpereConfigs;
   } else {
-    configs = {Config(32, 32, 256, 1, 1, 4),   Config(64, 32, 32, 16, 1, 4),
-               Config(32, 64, 64, 4, 1, 4),    Config(128, 128, 64, 4, 1, 4),
-               Config(16, 16, 256, 1, 1, 4),   Config(16, 128, 32, 16, 1, 4),
-               Config(16, 64, 128, 1, 1, 4),   Config(16, 128, 32, 8, 1, 4),
-               Config(16, 16, 512, 1, 1, 4),   Config(32, 16, 512, 1, 1, 4),
-               Config(64, 32, 64, 1, 2, 8),    Config(128, 256, 32, 1, 3, 8),
-               Config(256, 128, 32, 1, 3, 8),  Config(256, 64, 32, 1, 4, 4),
-               Config(64, 256, 32, 1, 4, 4),   Config(128, 64, 32, 1, 4, 4),
-               Config(64, 128, 32, 1, 4, 4),   Config(256, 128, 128, 1, 3, 8),
-               Config(256, 64, 128, 1, 4, 4),  Config(64, 256, 128, 1, 4, 4),
-               Config(128, 128, 128, 1, 4, 4), Config(128, 64, 64, 1, 4, 4),
-               Config(64, 128, 64, 1, 4, 4),   Config(128, 32, 64, 1, 4, 4),
-               Config(64, 32, 64, 1, 4, 4),    Config(32, 128, 32, 1, 4, 4),
-               Config(128, 128, 32, 1, 4, 4),  Config(16, 16, 256, 1, 3, 4),
-               Config(128, 128, 64, 2, 1, 8),  Config(64, 64, 64, 1, 2, 4),
-               Config(16, 64, 256, 8, 1, 4),   Config(256, 256, 128, 1, 3, 8)};
+    configs = *kDefaultCudaConfigs;
   }
 
+  // Hopper+ devices support TMA. Add TMA parameterized configs.
   if (!debug_options_.xla_gpu_experimental_enable_triton_tma() ||
       !compute_capability.IsAtLeastHopper()) {
     return configs;
   }
-
-  // Hopper+ devices support TMA. Add TMA parameterized configs.
   std::vector<TritonGemmConfig> tma_parameterized_configs;
   for (auto& config : configs) {
     config.is_tma_allowed = false;
@@ -155,7 +107,25 @@ std::vector<TritonGemmConfig> GemmFusionAutotunerImpl::GetDefaultTritonConfigs()
     config.is_tma_allowed = true;
     tma_parameterized_configs.push_back(config);
   }
-  return tma_parameterized_configs;
+
+  // TODO(b/449668102): Currently only supporting warp specialization on
+  // Blackwell+. Potentially extend support to Hopper.
+  if (!compute_capability.IsAtLeastBlackwell()) {
+    return tma_parameterized_configs;
+  }
+  std::vector<TritonGemmConfig> warp_specialized_configs;
+  for (auto& config : tma_parameterized_configs) {
+    config.is_warp_specialization_allowed = false;
+    warp_specialized_configs.push_back(config);
+
+    if (config.is_tma_allowed && config.num_warps <= 16 &&
+        config.num_warps % 4 == 0) {
+      config.is_warp_specialization_allowed = true;
+      warp_specialized_configs.push_back(config);
+    }
+  }
+
+  return warp_specialized_configs;
 }
 
 }  // namespace gpu

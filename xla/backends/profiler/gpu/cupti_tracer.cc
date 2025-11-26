@@ -22,6 +22,7 @@ limitations under the License.
 #include <cstdint>
 #include <ios>
 #include <list>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -48,6 +49,7 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_interface.h"
+#include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler_factory.h"
 #include "xla/backends/profiler/gpu/cupti_utils.h"
 #include "xla/tsl/platform/env.h"
@@ -55,6 +57,8 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
 #include "xla/tsl/profiler/utils/per_thread.h"
+#include "xla/tsl/profiler/utils/xplane_builder.h"
+#include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "tsl/platform/host_info.h"
 #include "tsl/platform/thread_annotations.h"
 
@@ -65,6 +69,8 @@ namespace {
 
 using tsl::Env;
 using tsl::profiler::AnnotationStack;
+using tsl::profiler::GpuPlaneName;
+using tsl::profiler::XPlaneBuilder;
 
 static thread_local int internalCuCall = 0;
 
@@ -628,24 +634,24 @@ static GraphResourceCreationInfo& GetGraphResourceCreationInfo() {
 class GuardedCallbackAnnotationsAndEvents {
  public:
   CallbackAnnotationsAndEvents Consume() {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     CallbackAnnotationsAndEvents grabbed;
     std::swap(grabbed, annotations_and_events_);
     return grabbed;
   }
 
   void Clear() {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     annotations_and_events_.Clear();
   }
 
   void IncNumDroppedEvents() {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     annotations_and_events_.IncNumDroppedEvents();
   }
 
   void Push(const CuptiTracer& tracer, CuptiTracerEvent&& event) {
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     // Some logic change as no cross thread string comparison should be
     // made here. The max_annotation_string is used to limit per-thread
     // annotation string count. And annotation string is not collected
@@ -664,7 +670,7 @@ class GuardedCallbackAnnotationsAndEvents {
       const int64_t* head = sequence.data();
       const int64_t* curr = &sequence.back();
 
-      absl::MutexLock lock(&mu_);
+      absl::MutexLock lock(mu_);
       ScopeRangeIdTree& tree = annotations_and_events_.scope_range_id_tree();
       for (; curr > head && !tree.contains(*curr); --curr) {
         tree.emplace(*curr, *(curr - 1));
@@ -990,7 +996,7 @@ class CuptiDriverApiHookWithActivityApi : public CuptiDriverApiHook {
   absl::Status SyncAndFlush() override {
     if (option_.sync_devices_before_stop) {
       CuptiApiTracingDisabler disabler;
-      absl::MutexLock lock(&mutex_);
+      absl::MutexLock lock(mutex_);
       for (auto& ctx : contexts_) {
         cuCtxPushCurrent(ctx);
         cuCtxSynchronize();  // Ignore error here for best effort.
@@ -1005,7 +1011,7 @@ class CuptiDriverApiHookWithActivityApi : public CuptiDriverApiHook {
   void TrackContext(CUpti_CallbackId cbid, CUcontext ctx) {
     if (!option_.sync_devices_before_stop) return;
     if (ctx == nullptr) return;
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     if (cbid == CUPTI_DRIVER_TRACE_CBID_cuCtxDestroy_v2 ||
         cbid == CUPTI_DRIVER_TRACE_CBID_cuCtxDestroy) {
       contexts_.erase(ctx);
@@ -1072,13 +1078,15 @@ int CuptiTracer::NumGpus() {
   return num_gpus;
 }
 
-absl::Status CuptiTracer::Enable(const CuptiTracerOptions& option,
-                                 CuptiTraceCollector* collector) {
+absl::Status CuptiTracer::Enable(
+    const CuptiTracerOptions& option, CuptiTraceCollector* collector,
+    const std::vector<std::unique_ptr<tensorflow::profiler::XPlane>>& xplanes) {
   option_ = option;
   collector_ = collector;
 
   // For nvtx tracking, utilize CUPTI activity marker and marker_data.
   if (option_->enable_nvtx_tracking) {
+    VLOG(1) << "NVTX tracking Enabled.";
     std::vector<CUpti_ActivityKind>& activities = option_->activities_selected;
     if (std::find(activities.begin(), activities.end(),
                   CUPTI_ACTIVITY_KIND_MARKER) == activities.end()) {
@@ -1099,15 +1107,39 @@ absl::Status CuptiTracer::Enable(const CuptiTracerOptions& option,
     return status;
   }
 
-  EnableActivityTracing().IgnoreError();
+  TF_RETURN_IF_ERROR(EnableActivityTracing());
   tsl::profiler::AnnotationStack::Enable(true);
 
-  if (option_->pm_sampler_options.enable) {
+  int num_gpus_requested = xplanes.size();
+  // Enable PM Sampling after CUPTI is initialized.
+  if (option_->pm_sampler_options.enable && num_gpus_requested > 0) {
+    // Callback to populate PM sampling data to XPlane for each device.
+    option_->pm_sampler_options.process_samples =
+        [&xplanes, this](xla::profiler::PmSamples* samples) {
+          if (!samples) {
+            return;
+          }
+          int device_id = samples->GetDeviceId();
+          if (device_id < 0 || device_id >= xplanes.size()) {
+            LOG(ERROR) << "Device ID " << device_id << " out of range.";
+            return;
+          }
+          if (!xplanes[device_id]) {
+            LOG(ERROR) << "Device ID " << device_id << " XPlane is null.";
+            return;
+          }
+          tensorflow::profiler::XPlane* xplane = xplanes[device_id].get();
+          xplane->set_name(GpuPlaneName(device_id));
+          XPlaneBuilder xplane_builder(xplane);
+          samples->PopulateCounterLine(&xplane_builder,
+                                       collector_->GetProfileStartTimeNs());
+        };
+    // Creates PM sampler object.
     TF_ASSIGN_OR_RETURN(
-        pm_sampler_, CreatePmSampler(NumGpus(), option_->pm_sampler_options));
+        cupti_pm_sampler_,
+        CreatePmSampler(num_gpus_requested, option_->pm_sampler_options));
 
-    TF_RETURN_IF_ERROR(pm_sampler_->StartSampler());
-
+    TF_RETURN_IF_ERROR(cupti_pm_sampler_->StartSampler());
     pm_sampling_enabled_ = true;
   }
 
@@ -1115,9 +1147,14 @@ absl::Status CuptiTracer::Enable(const CuptiTracerOptions& option,
 }
 
 void CuptiTracer::Disable() {
+  // Disables the PM Sampling before Cupti Tracer is disabled.
   if (pm_sampling_enabled_) {
-    pm_sampler_->StopSampler().IgnoreError();
-    pm_sampler_->Deinitialize().IgnoreError();
+    if (absl::Status status = cupti_pm_sampler_->StopSampler(); !status.ok()) {
+      LOG(WARNING) << "Failed to stop PM sampler: " << status;
+    }
+    if (absl::Status status = cupti_pm_sampler_->Deinitialize(); !status.ok()) {
+      LOG(WARNING) << "Failed to deinitialize PM sampler: " << status;
+    }
 
     pm_sampling_enabled_ = false;
   }
@@ -1188,6 +1225,8 @@ CuptiTracer::CreateDefaultCallbackIds() {
       CUPTI_DRIVER_TRACE_CBID_cuMemcpy3DAsync_v2,
       CUPTI_DRIVER_TRACE_CBID_cuMemcpyHtoA_v2,
       CUPTI_DRIVER_TRACE_CBID_cuMemcpyHtoAAsync_v2,
+      CUPTI_DRIVER_TRACE_CBID_cuMemcpyPeer,
+      CUPTI_DRIVER_TRACE_CBID_cuMemcpyPeerAsync,
       // MemAlloc
       CUPTI_DRIVER_TRACE_CBID_cuMemAlloc_v2,
       CUPTI_DRIVER_TRACE_CBID_cuMemAllocPitch_v2,

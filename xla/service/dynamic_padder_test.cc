@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_replace.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/xla_builder.h"
@@ -51,12 +52,12 @@ limitations under the License.
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/llvm_irgen_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/error_codes.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -810,9 +811,10 @@ ENTRY main {
       LiteralUtil::CreateR2<int32_t>({{10, 20, 30}, {70, 80, 90}});
   Literal dynamic_size = LiteralUtil::CreateR0<int32_t>(2);
 
-  Literal not_padded =
-      ExecuteAndTransfer(std::move(module_not_padded),
-                         {&operand, &scatter_indices, &updates, &dynamic_size});
+  TF_ASSERT_OK_AND_ASSIGN(
+      Literal not_padded,
+      Execute(std::move(module_not_padded),
+              {&operand, &scatter_indices, &updates, &dynamic_size}));
 
   // Pad input to 4.
   const std::string hlo_text_padded =
@@ -1011,8 +1013,9 @@ ENTRY main {
   Literal operand = LiteralUtil::CreateR2<int32_t>({{1, 2}, {4, 5}});
   Literal dynamic_size = LiteralUtil::CreateR0<int32_t>(2);
 
-  Literal not_padded = ExecuteAndTransfer(std::move(module_not_padded),
-                                          {&operand, &dynamic_size});
+  TF_ASSERT_OK_AND_ASSIGN(
+      Literal not_padded,
+      Execute(std::move(module_not_padded), {&operand, &dynamic_size}));
 
   // Pad input to 4.
   const std::string hlo_text_padded =
@@ -1444,8 +1447,13 @@ ENTRY main {
   ROOT out = reduce(param, zero), to_apply=add, dimensions={0,1,2,3,4,5,6,7}
 }
 )";
-
-  CompileAndVerifyIr(hlo_text, R"(
+  HloModuleConfig config;
+  auto debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_autotune_level(0);
+  config.set_debug_options(debug_options);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
+  CompileAndVerifyIr(std::move(module), R"(
 CHECK: ret void
 )",
                      /*match_optimized_ir=*/true);
