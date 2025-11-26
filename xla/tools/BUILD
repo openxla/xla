@@ -1086,7 +1086,9 @@ xla_test(
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-    ] + if_google(["@com_google_protobuf//:duration_cc_proto"]),
+    ] + if_google(["@com_google_protobuf//:duration_cc_proto"]) + if_cuda([
+        "//xla/tsl/cuda:nvml",
+    ]),
 )
 
 xla_test(
