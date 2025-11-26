@@ -19,6 +19,16 @@ rocm_redist = {
         required_softlinks = [struct(target = "llvm/amdgcn", link = "amdgcn")],
         rocm_root = "",
     ),
+    "rocm_7.10.0_gfx110X_all": struct(
+        packages = [
+            {
+                "url": "https://rocm.nightlies.amd.com/tarball/therock-dist-linux-gfx110X-all-7.11.0a20251125.tar.gz",
+                "sha256": "9a307f098efccf8b5c449911ee65dd96a34928bf8733a128ef4dfa46641bb16b",
+            },
+        ],
+        required_softlinks = [struct(target = "llvm/amdgcn", link = "amdgcn")],
+        rocm_root = "",
+    ),
     "rocm_7.10.0_gfx94X_whl": struct(
         packages = [
             {
