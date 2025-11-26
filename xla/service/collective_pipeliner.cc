@@ -1518,8 +1518,7 @@ void WhileLoopAnalysis::CollectCollectivesToMove(
           invariant_loop_parameters_,
           should_allow_loop_variant_parameter_in_chain,
           should_allow_control_dependencies, invariant_loop_instructions_,
-          should_add_loop_invariant_op_in_chain,
-          find_dynamic_slice_operand);
+          should_add_loop_invariant_op_in_chain, find_dynamic_slice_operand);
       if (!chain_collected.has_value()) {
         VLOG(5) << "Skipping " << instr->name()
                 << " because didn't find compatible slice of parameter";
@@ -1653,88 +1652,6 @@ HloInstruction* CreateZero(HloComputation* comp, const Shape& shape,
               HloInstruction::CreateConstant(LiteralUtil::Zero(ptype))),
           {}));
   return zero_constant;
-}
-
-// Recursively finds GTE indices used in DS/DUS and marks them as dynamic
-// variables.
-absl::flat_hash_set<int64_t> FindTupleIndicesInOperand(
-    const HloInstruction* operand) {
-  absl::flat_hash_set<int64_t> indices;
-
-  if (operand->opcode() == HloOpcode::kGetTupleElement) {
-    indices.insert(operand->tuple_index());
-  } else if (operand->opcode() == HloOpcode::kCopy &&
-             operand->operand_count() == 1) {
-    auto copy_indices = FindTupleIndicesInOperand(operand->operand(0));
-    indices.insert(copy_indices.begin(), copy_indices.end());
-  } else if (operand->opcode() == HloOpcode::kAdd ||
-             operand->opcode() == HloOpcode::kSubtract ||
-             operand->opcode() == HloOpcode::kMultiply ||
-             operand->opcode() == HloOpcode::kDivide) {
-    for (int i = 0; i < operand->operand_count(); ++i) {
-      auto op_indices = FindTupleIndicesInOperand(operand->operand(i));
-      indices.insert(op_indices.begin(), op_indices.end());
-    }
-  }
-
-  return indices;
-}
-
-// Scans while loop body for DS/DUS, traces their index operands back to GTEs
-// and marks corresponding tuple indices as dynamic variables.
-absl::Status MarkDynamicVariables(HloInstruction* while_loop) {
-  if (while_loop->opcode() != HloOpcode::kWhile) {
-    return absl::OkStatus();
-  }
-
-  if (!while_loop->while_body()) {
-    return absl::OkStatus();
-  }
-
-  bool has_host_offloading = false;
-  for (const HloInstruction* instr : while_loop->while_body()->instructions()) {
-    if (host_offload_utils::IsMoveToHostWithDynamicUpdateSlice(instr) ||
-        host_offload_utils::IsMoveToDeviceWithDynamicSlice(instr)) {
-      has_host_offloading = true;
-      break;
-    }
-  }
-  if (!has_host_offloading) {
-    return absl::OkStatus();
-  }
-
-  WhileLoopBackendConfig config;
-  TF_ASSIGN_OR_RETURN(config,
-                      while_loop->backend_config<WhileLoopBackendConfig>());
-
-  config.clear_dynamic_variable_tuple_indices();
-
-  std::set<int64_t> dynamic_slice_indices;
-
-  for (auto* instr : while_loop->while_body()->instructions()) {
-    if (instr->opcode() == HloOpcode::kDynamicUpdateSlice ||
-        instr->opcode() == HloOpcode::kDynamicSlice) {
-      int first_index_operand =
-          (instr->opcode() == HloOpcode::kDynamicUpdateSlice)
-              ? Cast<HloDynamicUpdateSliceInstruction>(instr)
-                    ->first_index_operand_number()
-              : Cast<HloDynamicSliceInstruction>(instr)
-                    ->first_index_operand_number();
-
-      for (int i = first_index_operand; i < instr->operand_count(); ++i) {
-        auto* index_op = instr->operand(i);
-        auto op_indices = FindTupleIndicesInOperand(index_op);
-        dynamic_slice_indices.insert(op_indices.begin(), op_indices.end());
-      }
-    }
-  }
-
-  for (int64_t tuple_idx : dynamic_slice_indices) {
-    config.add_dynamic_variable_tuple_indices(tuple_idx);
-  }
-
-  TF_RETURN_IF_ERROR(while_loop->set_backend_config(config));
-  return absl::OkStatus();
 }
 
 }  // namespace
@@ -1893,7 +1810,7 @@ absl::Status UpdateSendRecvValidation(
 // }
 // xg_last = all-reduce(x)
 // yg_last = all-reduce(y)
-absl::Status TransformLoopForward(
+absl::StatusOr<HloInstruction*> TransformLoopForward(
     const WhileLoopAnalysis& loop_analysis, bool insert_non_alias_custom_call,
     int64_t level_to_operate_on, bool pipeline_use_tree,
     bool process_different_sized_ops, HloPredicate should_process,
@@ -2393,7 +2310,7 @@ absl::Status TransformLoopForward(
         absl::MakeSpan(loop_output_to_replace), output_stacked_data));
   }
   TF_RETURN_IF_ERROR(loop_computation->parent()->RemoveUnusedComputations());
-  return absl::OkStatus();
+  return new_while_loop;
 }
 
 absl::Status TransformFormattingOp(
@@ -2625,13 +2542,11 @@ absl::Status TransformFormattingOp(
 // }
 // xg_all = all-reduce(x_all)
 // yg_all = all-reduce(y_all)
-absl::Status TransformLoopForwardSink(const WhileLoopAnalysis& loop_analysis,
-                                      bool insert_non_alias_custom_call,
-                                      int64_t level_to_operate_on,
-                                      bool pipeline_use_tree,
-                                      bool process_different_sized_ops,
-                                      HloPredicate should_process,
-                                      int64_t& next_channel_id) {
+absl::StatusOr<HloInstruction*> TransformLoopForwardSink(
+    const WhileLoopAnalysis& loop_analysis, bool insert_non_alias_custom_call,
+    int64_t level_to_operate_on, bool pipeline_use_tree,
+    bool process_different_sized_ops, HloPredicate should_process,
+    int64_t& next_channel_id) {
   // Defining some maps/sets to keep track of instructions duplicated.
   absl::flat_hash_map<HloInstruction*, int64_t> is_output_instruction;
   absl::flat_hash_map<const HloInstruction*, bool> invariant_cache;
@@ -2981,7 +2896,7 @@ absl::Status TransformLoopForwardSink(const WhileLoopAnalysis& loop_analysis,
   TF_RETURN_IF_ERROR(
       loop_computation->RemoveInstructionAndUnusedOperands(while_loop));
   TF_RETURN_IF_ERROR(loop_computation->parent()->RemoveUnusedComputations());
-  return absl::OkStatus();
+  return new_while;
 }
 
 // Function that does the work of pushing backward instructions that have been
@@ -3007,7 +2922,7 @@ absl::Status TransformLoopForwardSink(const WhileLoopAnalysis& loop_analysis,
 //   x_ag = p0_ag_next
 // }
 // x_last = computation(p0_ag_next)
-static absl::Status TransformLoopBackward(
+static absl::StatusOr<HloInstruction*> TransformLoopBackward(
     const WhileLoopAnalysis& loop_analysis, bool insert_non_alias_custom_call,
     int64_t level_to_operate_on, bool process_different_sized_ops,
     HloPredicate acceptable_formatting,
@@ -3364,7 +3279,7 @@ static absl::Status TransformLoopBackward(
   TF_RETURN_IF_ERROR(
       loop_computation->RemoveInstructionAndUnusedOperands(while_loop));
   TF_RETURN_IF_ERROR(loop_computation->parent()->RemoveUnusedComputations());
-  return absl::OkStatus();
+  return new_while_loop;
 }
 
 absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
@@ -3434,31 +3349,43 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
         VLOG(1) << "MoveInfo #" << id++ << "\n" << ToString(to_move);
       }
     }
+    HloInstruction* transformed_while_loop;
     if (config_.pipelining_direction ==
         collective_pipeliner_utils::PipeliningDirection::kForward) {
       CHECK(config_.reuse_pipelined_op_buffer);
-      TF_RETURN_IF_ERROR(TransformLoopForward(
-          *loop_analysis, !config_.last_run, config_.level_to_operate_on,
-          config_.pipeline_use_tree, config_.process_different_sized_ops,
-          config_.should_process, config_.acceptable_formatting,
-          config_.reuse_pipelined_op_buffer, next_channel_id,
-          config_.postprocess_pipelined_ops));
+      TF_ASSIGN_OR_RETURN(
+          transformed_while_loop,
+          TransformLoopForward(
+              *loop_analysis, !config_.last_run, config_.level_to_operate_on,
+              config_.pipeline_use_tree, config_.process_different_sized_ops,
+              config_.should_process, config_.acceptable_formatting,
+              config_.reuse_pipelined_op_buffer, next_channel_id,
+              config_.postprocess_pipelined_ops));
     } else if (config_.pipelining_direction ==
                collective_pipeliner_utils::PipeliningDirection::kForwardSink) {
-      TF_RETURN_IF_ERROR(TransformLoopForwardSink(
-          *loop_analysis, !config_.last_run, config_.level_to_operate_on,
-          config_.pipeline_use_tree, config_.process_different_sized_ops,
-          config_.should_process, next_channel_id));
+      TF_ASSIGN_OR_RETURN(
+          transformed_while_loop,
+          TransformLoopForwardSink(
+              *loop_analysis, !config_.last_run, config_.level_to_operate_on,
+              config_.pipeline_use_tree, config_.process_different_sized_ops,
+              config_.should_process, next_channel_id));
     } else {
       CHECK_EQ(config_.pipelining_direction,
                collective_pipeliner_utils::PipeliningDirection::kBackward);
-      TF_RETURN_IF_ERROR(TransformLoopBackward(
-          *loop_analysis, !config_.last_run, config_.level_to_operate_on,
-          config_.process_different_sized_ops, config_.acceptable_formatting,
-          config_.postprocess_backward_peeled_op,
-          config_.postprocess_backward_rotated_op,
-          config_.postprocess_backward_peeled_trailing_op, next_channel_id,
-          config_.postprocess_pipelined_ops));
+      TF_ASSIGN_OR_RETURN(
+          transformed_while_loop,
+          TransformLoopBackward(
+              *loop_analysis, !config_.last_run, config_.level_to_operate_on,
+              config_.process_different_sized_ops,
+              config_.acceptable_formatting,
+              config_.postprocess_backward_peeled_op,
+              config_.postprocess_backward_rotated_op,
+              config_.postprocess_backward_peeled_trailing_op, next_channel_id,
+              config_.postprocess_pipelined_ops));
+    }
+    if (config_.postprocess_transformed_while_loop) {
+      TF_RETURN_IF_ERROR(
+          config_.postprocess_transformed_while_loop(transformed_while_loop));
     }
     ++transformed_loops;
     changed = true;
@@ -3491,16 +3418,6 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
   // Run necessary cleanup to make sure unused code doesn't trigger HloVerifier.
   if (changed) {
     TF_RETURN_IF_ERROR(HloDCE().Run(module, execution_threads).status());
-
-    // Mark dynamic variables after transformation to identify tuple indices
-    // used in DS/DUS. This enables FusionDynamicMemcpyRewriter to optimize
-    // memory access patterns in CollectivePipeliner-transformed loops.
-    for (HloComputation* computation : module->MakeComputationPostOrder()) {
-      for (HloInstruction* instruction :
-           computation->MakeInstructionPostOrder()) {
-        TF_RETURN_IF_ERROR(MarkDynamicVariables(instruction));
-      }
-    }
   }
 
   return changed;

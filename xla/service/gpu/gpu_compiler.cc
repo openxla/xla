@@ -944,6 +944,10 @@ absl::Status RunCollectiveOptimizationPasses(
         /*postprocess_backward_peeled_trailing_op=*/{},
         /*should_add_loop_invariant_op_in_chain=*/false,
         /*postprocess_pipelined_ops=*/AppendPipelinedInstruction,
+        /*collective_size_threshold_to_delay_sinking=*/INT64_MAX,
+        /*delay_sinking_large_collectives=*/true,
+        /*postprocess_transformed_while_loop=*/
+        host_offload_utils::MarkDynamicVariables,
     };
     collectives_pipeline.AddPass<CollectivePipeliner>(config);
   }
@@ -970,8 +974,9 @@ absl::Status RunCollectiveOptimizationPasses(
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
         /*should_allow_control_dependencies=*/false,
         /*find_dynamic_slice_operand=*/
-        [acceptable_formatting](HloInstruction* instr,
-                                absl::flat_hash_set<const HloInstruction*>& visited_set)
+        [acceptable_formatting](
+            HloInstruction* instr,
+            absl::flat_hash_set<const HloInstruction*>& visited_set)
             -> std::optional<HloInstruction*> {
           if (!instr->IsCustomCall(
                   memory_annotations::kMoveToDeviceCustomCallTarget)) {
@@ -1011,6 +1016,8 @@ absl::Status RunCollectiveOptimizationPasses(
         /*postprocess_pipelined_ops=*/AppendPipelinedInstruction,
         /*collective_size_threshold_to_delay_sinking=*/INT64_MAX,
         /*delay_sinking_large_collectives=*/true,
+        /*postprocess_transformed_while_loop=*/
+        host_offload_utils::MarkDynamicVariables,
     };
 
     collectives_pipeline.AddPass<CollectivePipeliner>(config_backward);

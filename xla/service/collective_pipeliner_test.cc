@@ -107,7 +107,9 @@ absl::StatusOr<bool> RunOptimizer(
     CollectivePipeliner::HloPostprocessor postprocess_backward_peeled_trailing =
         {},
     bool should_add_loop_invariant_op_in_chain = false,
-    int64_t collective_size_threshold_to_delay_sinking = INT64_MAX) {
+    int64_t collective_size_threshold_to_delay_sinking = INT64_MAX,
+    CollectivePipeliner::WhileLoopPostprocessor
+        postprocess_transformed_while_loop = {}) {
   CollectivePipeliner::Config config = {
       /*level_to_operate_on=*/level_to_operate_on,
       /*max_pipelining_per_loop=*/INT64_MAX,
@@ -121,12 +123,13 @@ absl::StatusOr<bool> RunOptimizer(
       /*reuse_pipelined_op_buffer=*/reuse_pipelined_op_buffer,
       should_allow_loop_variant_parameter_in_chain,
       /*should_allow_control_dependencies=*/false,
-      /*find_dynamic_slice_operand=*/nullptr,
-      postprocess_backward_peeled, postprocess_backward_rotated,
-      postprocess_backward_peeled_trailing,
+      /*find_dynamic_slice_operand=*/nullptr, postprocess_backward_peeled,
+      postprocess_backward_rotated, postprocess_backward_peeled_trailing,
       should_add_loop_invariant_op_in_chain,
       /*postprocess_pipelined_ops=*/{},
-      collective_size_threshold_to_delay_sinking};
+      collective_size_threshold_to_delay_sinking,
+      /*delay_sinking_large_collectives=*/true,
+      postprocess_transformed_while_loop};
   HloPassPipeline pass("optimizer");
   pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                             /*allow_mixed_precision=*/false);
@@ -5517,13 +5520,24 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
   auto module = ParseAndReturnUnverifiedModule(hlo_string, config_).value();
 
   EXPECT_TRUE(
-      RunOptimizer(module.get(), /*last_run=*/true, 0,
-                   /*pipeline_use_tree=*/true,
-                   /*process_different_sized_ops=*/true,
-                   /*direction=*/
-                   collective_pipeliner_utils::PipeliningDirection::kForward,
-                   /*should_process=*/
-                   host_offload_utils::IsMoveToHostWithDynamicUpdateSlice)
+      RunOptimizer(
+          module.get(), /*last_run=*/true, 0,
+          /*pipeline_use_tree=*/true,
+          /*process_different_sized_ops=*/true,
+          /*direction=*/
+          collective_pipeliner_utils::PipeliningDirection::kForward,
+          /*should_process=*/
+          host_offload_utils::IsMoveToHostWithDynamicUpdateSlice,
+          /*acceptable_formatting=*/HloPredicateTrue,
+          /*reuse_pipelined_op_buffer=*/HloPredicateTrue,
+          /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
+          /*postprocess_backward_peeled=*/{},
+          /*postprocess_backward_rotated=*/{},
+          /*postprocess_backward_peeled_trailing=*/{},
+          /*should_add_loop_invariant_op_in_chain=*/false,
+          /*collective_size_threshold_to_delay_sinking=*/INT64_MAX,
+          /*postprocess_transformed_while_loop=*/
+          host_offload_utils::MarkDynamicVariables)
           .value());
 
   std::vector<HloInstruction*> while_loops;
@@ -5614,13 +5628,24 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
   auto module = ParseAndReturnUnverifiedModule(hlo_string, config_).value();
 
   EXPECT_TRUE(
-      RunOptimizer(module.get(), /*last_run=*/true, 0,
-                   /*pipeline_use_tree=*/true,
-                   /*process_different_sized_ops=*/true,
-                   /*direction=*/
-                   collective_pipeliner_utils::PipeliningDirection::kBackward,
-                   /*should_process=*/
-                   host_offload_utils::IsMoveToDeviceWithDynamicSlice)
+      RunOptimizer(
+          module.get(), /*last_run=*/true, 0,
+          /*pipeline_use_tree=*/true,
+          /*process_different_sized_ops=*/true,
+          /*direction=*/
+          collective_pipeliner_utils::PipeliningDirection::kBackward,
+          /*should_process=*/
+          host_offload_utils::IsMoveToDeviceWithDynamicSlice,
+          /*acceptable_formatting=*/HloPredicateTrue,
+          /*reuse_pipelined_op_buffer=*/HloPredicateTrue,
+          /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
+          /*postprocess_backward_peeled=*/{},
+          /*postprocess_backward_rotated=*/{},
+          /*postprocess_backward_peeled_trailing=*/{},
+          /*should_add_loop_invariant_op_in_chain=*/false,
+          /*collective_size_threshold_to_delay_sinking=*/INT64_MAX,
+          /*postprocess_transformed_while_loop=*/
+          host_offload_utils::MarkDynamicVariables)
           .value());
 
   std::vector<HloInstruction*> while_loops;

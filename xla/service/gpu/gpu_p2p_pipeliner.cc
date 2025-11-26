@@ -288,8 +288,8 @@ struct PeeledHloInstructionInfo {
 
 // Finds the start instruction for send/recv where send/recv-done are chosen to
 // be pipelined.
-static HloInstruction* absl_nullable GetSendRecvStartInstruction(
-    HloInstruction* absl_nonnull instr) {
+static HloInstruction* absl_nullable
+GetSendRecvStartInstruction(HloInstruction* absl_nonnull instr) {
   if (instr->opcode() == HloOpcode::kRecv ||
       instr->opcode() == HloOpcode::kSend) {
     return instr;
@@ -301,9 +301,9 @@ static HloInstruction* absl_nullable GetSendRecvStartInstruction(
   return nullptr;
 }
 
-static std::vector<HloInstruction* absl_nonnull> GetSendRecvStartInstructions(
-    const std::vector<HloInstruction* absl_nonnull>& instructions) {
-  std::vector<HloInstruction* absl_nonnull> start_instructions;
+static std::vector<HloInstruction * absl_nonnull> GetSendRecvStartInstructions(
+    const std::vector<HloInstruction * absl_nonnull>& instructions) {
+  std::vector<HloInstruction * absl_nonnull> start_instructions;
   for (HloInstruction* absl_nonnull instr : instructions) {
     HloInstruction* absl_nullable start_instr =
         GetSendRecvStartInstruction(instr);
@@ -312,14 +312,14 @@ static std::vector<HloInstruction* absl_nonnull> GetSendRecvStartInstructions(
   return start_instructions;
 }
 
-static HloInstruction* absl_nonnull GetSendRecvStartInstructionOrSelf(
-    HloInstruction* absl_nonnull instr) {
+static HloInstruction* absl_nonnull
+GetSendRecvStartInstructionOrSelf(HloInstruction* absl_nonnull instr) {
   HloInstruction* send_recv_start = GetSendRecvStartInstruction(instr);
   return send_recv_start != nullptr ? send_recv_start : instr;
 }
 
-static HloInstruction* absl_nonnull GetSendRecvDoneInstructionOrSelf(
-    HloInstruction* absl_nonnull rotated_instr) {
+static HloInstruction* absl_nonnull
+GetSendRecvDoneInstructionOrSelf(HloInstruction* absl_nonnull rotated_instr) {
   auto it = absl::c_find_if(rotated_instr->users(), [](HloInstruction* user) {
     return user->opcode() == HloOpcode::kRecvDone ||
            user->opcode() == HloOpcode::kSendDone;
@@ -332,7 +332,7 @@ static HloInstruction* absl_nonnull GetSendRecvDoneInstructionOrSelf(
 static absl::Status PostProcessRotatedSendRecvOps(
     const std::vector<HloInstruction*>& rotated) {
   // Find the start instructions for send/recv.
-  std::vector<HloInstruction* absl_nonnull> rotated_send_recvs =
+  std::vector<HloInstruction * absl_nonnull> rotated_send_recvs =
       GetSendRecvStartInstructions(rotated);
 
   VLOG(5) << "Post-processing rotated send/recv ops:";
@@ -343,7 +343,7 @@ static absl::Status PostProcessRotatedSendRecvOps(
   }
 
   // Convert to set for faster lookup.
-  absl::flat_hash_set<HloInstruction* absl_nonnull> rotated_send_recvs_set(
+  absl::flat_hash_set<HloInstruction * absl_nonnull> rotated_send_recvs_set(
       rotated_send_recvs.begin(), rotated_send_recvs.end());
 
   // Add control dependencies from conflicting collectives to rotated send/recv

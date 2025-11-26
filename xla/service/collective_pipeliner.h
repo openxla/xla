@@ -67,6 +67,8 @@ class CollectivePipeliner : public HloModulePass {
   // created.
   using HloPostprocessor = std::function<absl::Status(
       HloInstruction* instr, HloInstruction* new_while_instr)>;
+  using WhileLoopPostprocessor =
+      std::function<absl::Status(HloInstruction* while_loop)>;
 
   struct Config {
     int64_t level_to_operate_on = 0;
@@ -116,6 +118,7 @@ class CollectivePipeliner : public HloModulePass {
     HloPostprocessor postprocess_pipelined_ops;
     int64_t collective_size_threshold_to_delay_sinking = INT64_MAX;
     bool delay_sinking_large_collectives = true;
+    WhileLoopPostprocessor postprocess_transformed_while_loop;
   };
   static const char* const kInsertedByPreviousStep;
   static const char* const kSunkByPreviousStep;
