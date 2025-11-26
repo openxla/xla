@@ -311,7 +311,20 @@ def nvidia_gpu_build_with_compute_capability(
           **_DEFAULT_BAZEL_OPTIONS,
       },
       repo_env={"TF_CUDA_COMPUTE_CAPABILITIES": f"{compute_capability/10}"},
-      extra_setup_commands=(["nvidia-smi"],),
+      override_repository=dict(
+          rules_ml_toolchain=f"{_GITHUB_WORKSPACE}/openxla/rules_ml_toolchain",
+      ),
+      extra_setup_commands=(
+          ["nvidia-smi"],
+          [
+              "git",
+              "clone",
+              "-b",
+              "layering_check_support",
+              "https://github.com/beckerhe/rules_ml_toolchain.git",
+              f"{_GITHUB_WORKSPACE}/openxla/rules_ml_toolchain",
+          ],
+      ),
   )
 
 
@@ -330,6 +343,19 @@ Build(
     build_tag_filters=cpu_x86_tag_filter,
     test_tag_filters=cpu_x86_tag_filter,
     options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
+    override_repository=dict(
+        rules_ml_toolchain=f"{_GITHUB_WORKSPACE}/openxla/rules_ml_toolchain",
+    ),
+    extra_setup_commands=(
+        [
+            "git",
+            "clone",
+            "-b",
+            "layering_check_support",
+            "https://github.com/beckerhe/rules_ml_toolchain.git",
+            f"{_GITHUB_WORKSPACE}/openxla/rules_ml_toolchain",
+        ],
+    ),
 )
 
 windows_x86_tag_filter = (
@@ -413,6 +439,19 @@ Build(
     build_tag_filters=cpu_x86_tag_filter,
     test_tag_filters=cpu_x86_tag_filter,
     options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
+    override_repository=dict(
+        rules_ml_toolchain=f"{_GITHUB_WORKSPACE}/openxla/rules_ml_toolchain",
+    ),
+    extra_setup_commands=(
+        [
+            "git",
+            "clone",
+            "-b",
+            "layering_check_support",
+            "https://github.com/beckerhe/rules_ml_toolchain.git",
+            f"{_GITHUB_WORKSPACE}/openxla/rules_ml_toolchain",
+        ],
+    ),
 )
 
 cpu_arm_tag_filter = (
