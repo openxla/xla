@@ -2900,6 +2900,7 @@ cc_library(
         "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/stream_executor/integrations:stream_executor_allocator",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
+        "//xla/tsl/framework:allocator",
         "//xla/tsl/framework:bfc_allocator",
         "//xla/tsl/framework:device_id_impl",
         "//xla/tsl/platform:statusor",
@@ -2910,11 +2911,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-    ] + if_google([
-        # In OSS this dependency is added automatically for xla_test targets. See
-        # third_party/tensorflow/compiler/xla/xla.default.bzl.
-        "//xla/tsl/framework:allocator",
-    ]),
+    ],
 )
 
 xla_test(
