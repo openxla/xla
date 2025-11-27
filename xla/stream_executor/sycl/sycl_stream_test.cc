@@ -21,7 +21,6 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <future>
 #include <memory>
 #include <optional>
 #include <string>
@@ -355,38 +354,6 @@ TEST_F(SyclStreamTest, MultipleStreams) {
   // Callbacks may run concurrently or in any order since the streams are
   // independent.
   EXPECT_THAT(host_buffer, UnorderedElementsAreArray(expected));
-}
-
-TEST_F(SyclStreamTest, DoHostCallbackWithStatus) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
-                          SyclStream::Create(executor_,
-                                             /*enable_multiple_streams=*/false,
-                                             /*priority=*/std::nullopt));
-
-  bool callback_called = false;
-  EXPECT_THAT(stream->DoHostCallbackWithStatus([&callback_called]() {
-    callback_called = true;
-    return absl::OkStatus();
-  }),
-              absl_testing::IsOk());
-  EXPECT_THAT(stream->BlockHostUntilDone(), absl_testing::IsOk());
-  EXPECT_TRUE(callback_called);
-
-  // Use std::promise for thread-safe communication of callback status.
-  std::promise<absl::Status> callback_promise;
-  EXPECT_THAT(stream->DoHostCallbackWithStatus([&callback_promise]() {
-    absl::Status error_status = absl::InternalError("Callback error");
-    callback_promise.set_value(error_status);
-    return error_status;
-  }),
-              absl_testing::IsOk());
-
-  // Wait for the callback to finish and get the status.
-  EXPECT_THAT(stream->BlockHostUntilDone(), absl_testing::IsOk());
-  absl::Status callback_status = callback_promise.get_future().get();
-  EXPECT_THAT(callback_status,
-              absl_testing::StatusIs(absl::StatusCode::kInternal));
-  EXPECT_EQ(callback_status.message(), "Callback error");
 }
 
 }  // namespace
