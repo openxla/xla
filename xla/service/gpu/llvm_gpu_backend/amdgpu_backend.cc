@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/llvm_gpu_backend/amdgpu_backend.h"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -253,6 +254,7 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   // This is faster than parsing ELF and more reliable than string search
   VLOG(2) << "Checking for register spilling in: " << module->getModuleIdentifier();
   
+  auto spill_check_start = std::chrono::high_resolution_clock::now();
   bool has_scratch = false;
   
   // Use llvm-objdump to disassemble and check for scratch instructions
@@ -344,6 +346,12 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   } else {
     VLOG(2) << "No register spilling detected";
   }
+  
+  auto spill_check_end = std::chrono::high_resolution_clock::now();
+  auto spill_check_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+      spill_check_end - spill_check_start);
+  VLOG(0) << "Register spilling check took " << spill_check_duration.count() << " us ("
+          << (spill_check_duration.count() / 1000.0) << " ms)";
 
   if (keep_tempfiles) {
     std::unique_ptr<llvm::raw_fd_ostream> ir_fs(
