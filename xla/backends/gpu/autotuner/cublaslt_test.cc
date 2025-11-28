@@ -238,6 +238,5 @@ TEST_F(CublasLtBackendTest, CompileFp8SwapOperands) {
   EXPECT_THAT(executable, absl_testing::IsOk());
 }
 
-
 }  // namespace gpu
 }  // namespace xla
