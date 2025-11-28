@@ -5,27 +5,41 @@
 Consider an example HLO:
 
 ```
+add.936 = bf16[8,1,1280,16384]{3,2,0,1:T(8,128)(2,1)}
+          add(exponential.183, broadcast.3115)
+```
+
+This consists of the following components:
+
+* Op Name: `add.936`
+  * This is the unique name for the operation.
+* Shape: `bf16[8,1,1280,16384]`
+  * This is the output shape of the Op. Here the dtype is [bf316](https://en.wikipedia.org/wiki/Bfloat16_floating-point_format) and the shape is `[8,1,1280,16384]`.
+* Layout (with Tiling): `3,2,0,1:T(8,128)(2,1)`
+  * This describes how the array is stored in memory. `3,2,0,1` denotes the order of the axes in memory (i.e., column major, row major, etc.) and `T(8,128)(2,1)` denotes the tiling & padding used.
+  * Layout is optional. If not specified, there is no tiling and the dimensions are assumed to be ordered from most-major to most-minor.
+* Operation: `add`
+  * The operation being performed. Here, it is [Add](operation_semantics.md#add), which is also mentioned in the Op name.
+* Arguments: `exponential.183`, `broadcast.3115`
+  * This operation takes two arguments, specified with their unique names.
+
+Let's consider another example, a fusion Op:
+
+```
 %fusion.3 = bf16[32,32,4096]{2,1,0:T(8,128)(2,1)S(1)}
             fusion(bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)} %fusion.32),
             kind=kCustom, calls=%all-reduce-scatter.3
 ```
 
-This consists on the following components:
+In addition to the previously described components, this consists of:
 
-* Op Name: `%fusion.3`
-  * This is the unique name for the operation. Here, the name indicates this is a fusion operation (which combines multiple operations into a single kernel). The `%` sign is part of the name, and may or may not be present in all operations. Learn about other Ops in [Operation Semantics](operation_semantics.md).
-* Shape: `bf16[32,32,4096]`
-  * This is the output shape of the op. Here the dtype is bf16 (2 bytes per parameter) and the shape is `[32,32,4096]`. The following sections have more details about Shape.
-* Layout (with Tiling): `{2,1,0:T(8,128)(2,1)}`
-  * This describes how the array is stored in memory. `2,1,0` denotes the order of the axes in memory (column major, row major, etc.) and `T(8,128)(2,1)` denotes the tiling & padding used. The following sections have more details about Layout, you can also learn more in [Tiled Layout](tiled_layout.md).
-  * This is optional. If not specified, there is no tiling and the dimensions are assumed to be ordered from most-major to most-minor.
+* Attributes: `kind` and `calls`
+  * These provide more information about the operation being performed, in this case: fusion.
 * Memory location (memory space identifier): `S(1)`
-  * This denotes the memory space/location where the array is stored. `S(1)` denotes this array lives in VMEM (on a TPU). More [memory space identifiers are listed below](#memory-space-identifiers).
-* Arguments: `bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)} %fusion.32`
-  * This op has one input, a bf16 array called `fusion.32` with a particular shape (as well as layout, tiling, and memory location): ` bf16[32,32,8192]{2,1,0:T(8,128)(2,1)S(1)}`. This tells us what function feeds into this one.
-* Attributes:
-  * `kind=kCustom`: This describes the "kind" of fusion operation, `kCustom` denotes this is a custom or composite operation.
-  * `calls=%all-reduce-scatter.3` : This describes the computation that will be called for this fusion operation.
+  * This denotes the memory space/location where the array is stored. `S(1)` here denotes this array lives in VMEM (on a TPU).
+* Shape and layout details for the input argument `%fusion.32`
+
+The following sections describe Shapes, [Layout](#layout), and [Memory Space Identifiers](#memory-space-identifiers). You can learn more about Tiling in [Tiled Layout](tiled_layout.md).
 
 ## Shapes
 
