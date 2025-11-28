@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/llvm_gpu_backend/amdgpu_backend.h"
 
-#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -250,109 +249,6 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   pm.run(*module);
   isabin_fs->flush();
 
-  // Check for register spilling by disassembling the object file
-  // This is faster than parsing ELF and more reliable than string search
-  VLOG(2) << "Checking for register spilling in: " << module->getModuleIdentifier();
-  
-  auto spill_check_start = std::chrono::high_resolution_clock::now();
-  bool has_scratch = false;
-  
-  // Use llvm-objdump to disassemble and check for scratch instructions
-  std::string llvm_bin_dir;
-  if (std::getenv("LLVM_PATH")) {
-    llvm_bin_dir = tsl::io::JoinPath(std::getenv("LLVM_PATH"), "bin");
-  } else {
-    llvm_bin_dir = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
-  }
-  
-  auto objdump_program = llvm::sys::findProgramByName("llvm-objdump", {llvm_bin_dir});
-  if (objdump_program) {
-    // Run: llvm-objdump -d <object_file>
-    std::vector<llvm::StringRef> objdump_args{
-        llvm_ir::AsStringRef("llvm-objdump"),
-        llvm_ir::AsStringRef("-d"),  // Disassemble
-        llvm_ir::AsStringRef("--section=.text"),  // Only check code sections
-        llvm_ir::AsStringRef(isabin_path),
-    };
-    
-    // Create temporary file for output
-    std::string disasm_path = isabin_path + ".disasm";
-    std::error_code ec;
-    llvm::raw_fd_ostream disasm_stream(disasm_path, ec, llvm::sys::fs::OF_Text);
-    if (!ec) {
-      disasm_stream.close();
-      
-      std::string error_msg;
-      std::optional<llvm::sys::ProcessStatistics> proc_stats;
-      llvm::StringRef empty_input;
-      std::optional<llvm::StringRef> redirects[] = {
-          empty_input,                           // stdin
-          llvm::StringRef(disasm_path),         // stdout
-          std::nullopt                           // stderr
-      };
-      
-      int result = llvm::sys::ExecuteAndWait(
-          *objdump_program, llvm_ir::AsArrayRef(objdump_args),
-          std::nullopt, redirects, 0, 0, &error_msg, nullptr, &proc_stats);
-      
-      if (result == 0) {
-        // Read the disassembly output
-        std::ifstream disasm_file(disasm_path);
-        std::string disasm_output((std::istreambuf_iterator<char>(disasm_file)),
-                                  std::istreambuf_iterator<char>());
-        disasm_file.close();
-        
-        if (!disasm_output.empty()) {
-          // Check for scratch buffer instructions in the disassembly
-          // AMD GCN ISA uses instructions like:
-          // - buffer_store_dword for spilling to scratch
-          // - buffer_load_dword for loading from scratch
-          // - s_scratch_* instructions
-          if (disasm_output.find("buffer_store") != std::string::npos ||
-              disasm_output.find("buffer_load") != std::string::npos ||
-              disasm_output.find("scratch_") != std::string::npos) {
-            
-            // Double check it's actually accessing scratch memory, not global
-            // Scratch access typically has "off" (scratch offset) in the operands
-            if (disasm_output.find("off,") != std::string::npos ||
-                disasm_output.find("scratch") != std::string::npos) {
-              has_scratch = true;
-              VLOG(2) << "Found scratch buffer instructions in disassembly";
-            }
-          }
-        }
-        
-        // Clean up temp file unless keeping tempfiles
-        if (!keep_tempfiles) {
-          remove(disasm_path.c_str());
-        }
-      } else {
-        VLOG(2) << "Could not disassemble object file: " << error_msg;
-      }
-    }
-  }
-  
-  if (has_scratch) {
-    LOG(WARNING) << "====== REGISTER SPILLING DETECTED ======";
-    LOG(WARNING) << "Module: " << module->getModuleIdentifier();
-    LOG(WARNING) << "Kernel uses scratch memory for register spills";
-    LOG(WARNING) << "Performance may be degraded due to register pressure";
-    LOG(WARNING) << "========================================";
-    // Uncomment to filter during autotuning:
-    // if (debug_options.xla_gpu_filter_kernels_spilling_registers_on_autotuning()) {
-    //   return xla::Cancelled(
-    //       "Compilation discarded due to register spilling in AMD GPU kernel");
-    // }
-  } else {
-    VLOG(2) << "No register spilling detected";
-  }
-  
-  auto spill_check_end = std::chrono::high_resolution_clock::now();
-  auto spill_check_duration = std::chrono::duration_cast<std::chrono::microseconds>(
-      spill_check_end - spill_check_start);
-  VLOG(0) << "Register spilling check took " << spill_check_duration.count() << " us ("
-          << (spill_check_duration.count() / 1000.0) << " ms)";
-
   if (keep_tempfiles) {
     std::unique_ptr<llvm::raw_fd_ostream> ir_fs(
         new llvm::raw_fd_ostream(ir_opt_path, ec, llvm::sys::fs::OF_None));
@@ -420,6 +316,138 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
       return xla::Internal("ld.lld execute fail: %s, error code %d",
                            error_message, lld_result);
     }
+  }
+
+  // Check for register spilling using HSACO metadata (faster than disassembly)
+  // The .note section contains kernel metadata including spill counts
+  VLOG(2) << "Checking for register spilling in: "
+          << module->getModuleIdentifier();
+
+  bool has_spilling = false;
+  int sgpr_spill_count = 0;
+  int vgpr_spill_count = 0;
+  int private_segment_size = 0;
+
+  // Use llvm-readobj to extract properly parsed .note section metadata
+  // llvm-readobj --notes properly decodes the AMD MessagePack format
+  std::string llvm_bin_dir;
+  if (std::getenv("LLVM_PATH")) {
+    llvm_bin_dir = tsl::io::JoinPath(std::getenv("LLVM_PATH"), "bin");
+  } else {
+    llvm_bin_dir = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
+  }
+
+  auto readobj_program =
+      llvm::sys::findProgramByName("llvm-readobj", {llvm_bin_dir});
+  if (readobj_program) {
+    // Run: llvm-readobj --notes <hsaco_file>
+    std::vector<llvm::StringRef> readobj_args{
+        llvm_ir::AsStringRef("llvm-readobj"),
+        llvm_ir::AsStringRef("--notes"),
+        llvm_ir::AsStringRef(hsaco_path),
+    };
+
+    // Create temporary file for output
+    std::string note_output_path = hsaco_path + ".note";
+    std::error_code ec;
+    llvm::raw_fd_ostream note_stream(note_output_path, ec,
+                                     llvm::sys::fs::OF_Text);
+    if (!ec) {
+      note_stream.close();
+
+      std::string error_msg;
+      llvm::StringRef empty_input;
+      std::optional<llvm::StringRef> redirects[] = {
+          empty_input,                        // stdin
+          llvm::StringRef(note_output_path),  // stdout
+          std::nullopt                        // stderr
+      };
+
+      int result = llvm::sys::ExecuteAndWait(
+          *readobj_program, llvm_ir::AsArrayRef(readobj_args), std::nullopt,
+          redirects, 0, 0, &error_msg);
+
+      if (result == 0) {
+        // Read the note section output
+        std::ifstream note_file(note_output_path);
+        std::string note_output((std::istreambuf_iterator<char>(note_file)),
+                                std::istreambuf_iterator<char>());
+        note_file.close();
+
+        // Print the full .note section output for debugging
+        // LOG(INFO) << "====== HSACO .note section content (llvm-readobj)
+        // ======"; LOG(INFO) << note_output; LOG(INFO) <<
+        // "=========================================================";
+
+        if (!note_output.empty()) {
+          // llvm-readobj --notes outputs properly formatted YAML like:
+          //   .sgpr_spill_count: 76
+          //   .vgpr_spill_count: 4
+          //   .private_segment_fixed_size: 15
+
+          auto find_value = [&note_output](const std::string& key) -> int {
+            size_t pos = note_output.find(key);
+            if (pos != std::string::npos) {
+              pos += key.length();
+              // Skip whitespace and colon
+              while (pos < note_output.length() &&
+                     (note_output[pos] == ' ' || note_output[pos] == ':')) {
+                pos++;
+              }
+              // Parse the number
+              int value = 0;
+              while (pos < note_output.length() && note_output[pos] >= '0' &&
+                     note_output[pos] <= '9') {
+                value = value * 10 + (note_output[pos] - '0');
+                pos++;
+              }
+              return value;
+            }
+            return 0;
+          };
+
+          sgpr_spill_count = find_value(".sgpr_spill_count");
+          vgpr_spill_count = find_value(".vgpr_spill_count");
+          private_segment_size = find_value(".private_segment_fixed_size");
+
+          if (sgpr_spill_count > 0 || vgpr_spill_count > 0 ||
+              private_segment_size > 0) {
+            has_spilling = true;
+          }
+        }
+
+        // Clean up temp file unless keeping tempfiles
+        if (!keep_tempfiles) {
+          remove(note_output_path.c_str());
+        }
+      } else {
+        VLOG(2) << "Could not read HSACO metadata: " << error_msg;
+      }
+    }
+  } else {
+    VLOG(2) << "llvm-readobj not found, skipping spilling check";
+  }
+
+  if (has_spilling) {
+    LOG(WARNING) << "====== REGISTER SPILLING DETECTED ======";
+    LOG(WARNING) << "Module: " << module->getModuleIdentifier();
+    LOG(WARNING) << "SGPR spill count: " << sgpr_spill_count;
+    LOG(WARNING) << "VGPR spill count: " << vgpr_spill_count;
+    LOG(WARNING) << "Private segment size: " << private_segment_size
+                 << " bytes";
+    LOG(WARNING) << "Performance may be degraded due to register pressure";
+    LOG(WARNING) << "========================================";
+
+    // Filter out kernels with register spilling during autotuning
+    // This matches NVIDIA's behavior in ptx_compiler_impl.cc
+    if (debug_options
+            .xla_gpu_filter_kernels_spilling_registers_on_autotuning() &&
+        is_autotuning_compilation) {
+      return xla::Cancelled(
+          "Compilation result discarded due to register spilling");
+    }
+  } else {
+    VLOG(2) << "No register spilling detected";
   }
 
   // Read HSACO.
@@ -669,25 +697,26 @@ std::vector<std::string> GetAMDGPUBackendOptions(
   // Manually add LLVM debug options for register usage analysis
   // Note: The disassembly-based spilling detection is now the primary method.
   // These options are mainly useful for debugging the compiler itself.
-  
+
   // Uncomment if you want to see LLVM compilation details:
-  
+
   // Option 1: Enable LLVM statistics (aggregate stats, not per-kernel)
   // backend_llvm_opts.push_back("-stats");
-  
+
   // Option 2: Print final machine code (very verbose)
   // backend_llvm_opts.push_back("-print-after-all");
-  
+
   // Option 3: Print after register allocation (shows register assignments)
   // backend_llvm_opts.push_back("-print-after=regallocfast");
   // backend_llvm_opts.push_back("-print-after=regallocgreedy");
-  
+
   // Option 4: Enable pass timing (shows compilation time breakdown)
   // backend_llvm_opts.push_back("-time-passes");
 
   // Log the final LLVM options
   if (!backend_llvm_opts.empty()) {
-    LOG(INFO) << "AMDGPU backend LLVM options (" << backend_llvm_opts.size() << "):";
+    LOG(INFO) << "AMDGPU backend LLVM options (" << backend_llvm_opts.size()
+              << "):";
     for (const auto& opt : backend_llvm_opts) {
       LOG(INFO) << "  " << opt;
     }
@@ -708,10 +737,10 @@ absl::StatusOr<std::vector<uint8_t>> CompileToHsaco(
   absl::call_once(backend_init_flag, AMDGPUBackendInit, debug_options,
                   rocdl_dir_path);
   auto llvm_opts = GetAMDGPUBackendOptions(debug_options);
-  
-  LOG(INFO) << "====== CompileToHsaco called for module: " << module->getModuleIdentifier() << " ======";
-  LOG(INFO) << "Module name: " << module->getName().str();
-  
+
+  VLOG(2) << "CompileToHsaco called for module: "
+          << module->getModuleIdentifier();
+
   llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_opts);
 
   std::vector<uint8_t> hsaco;
@@ -777,7 +806,8 @@ absl::StatusOr<std::vector<uint8_t>> CompileToHsaco(
 
     // Lower optimized LLVM module to HSA code object.
     TF_ASSIGN_OR_RETURN(
-        hsaco, EmitModuleToHsaco(module, target_machine.get(), debug_options));
+        hsaco, EmitModuleToHsaco(module, target_machine.get(), debug_options,
+                                 is_autotuning_compilation));
     HsacoCache::Add(str, hash, gcn_arch_name, hsaco);
   }
   return hsaco;
