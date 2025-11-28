@@ -616,7 +616,12 @@ filegroup(
 
 filegroup(
     name = "rocminfo",
-    srcs = ["%{rocm_root}/bin/rocminfo"],
+    srcs = glob([
+        "%{rocm_root}/bin/rocminfo",
+        "%{rocm_root}/lib/libhsa-runtime64.so*",
+        "%{rocm_root}/lib/rocm_sysdeps/lib/*",
+        "%{rocm_root}/lib/librocprofiler-register.so.0*",
+    ]),
     visibility = ["//visibility:public"],
 )
 
