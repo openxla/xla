@@ -234,18 +234,20 @@ static bool IsCommand(const HloCustomCallInstruction* hlo,
     return true;
   }
 
-  if (config.enabled_commands.contains(DebugOptions::CUDNN)) {
-    if (IsCustomCallToBlockScaledDot(*hlo)) {
-      VLOG(3) << "Recording BlockScaledDot, target " << hlo->custom_call_target()
+  if (config.enabled_commands.contains(DebugOptions::CUDNN) &&
+      IsCustomCallToBlockScaledDot(*hlo)) {
+    VLOG(3) << "Recording BlockScaledDot, target " << hlo->custom_call_target()
             << " into command buffer.";
-      return true;
-    }
-    if (IsCustomCallTofMHA(*hlo)) {
-      VLOG(3) << "Recording FusedMHA, target " << hlo->custom_call_target()
-            << " into command buffer.";
-      return true;
-    }
+    return true;
   }
+
+  if (config.enabled_commands.contains(DebugOptions::CUDNN) &&
+      IsCustomCallTofMHA(*hlo)) {
+    VLOG(3) << "Recording FusedMHA, target " << hlo->custom_call_target()
+            << " into command buffer.";
+    return true;
+  }
+  
   if (config.enabled_commands.contains(DebugOptions::CONVOLUTION) && 
             IsCustomCallToDnnConvolution(*hlo)) {
     VLOG(3) << "Recording convolution, target " << hlo->custom_call_target()
