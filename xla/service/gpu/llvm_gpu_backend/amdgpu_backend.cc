@@ -249,6 +249,102 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   pm.run(*module);
   isabin_fs->flush();
 
+  // Check for register spilling by disassembling the object file
+  // This is faster than parsing ELF and more reliable than string search
+  VLOG(2) << "Checking for register spilling in: " << module->getModuleIdentifier();
+  
+  bool has_scratch = false;
+  
+  // Use llvm-objdump to disassemble and check for scratch instructions
+  std::string llvm_bin_dir;
+  if (std::getenv("LLVM_PATH")) {
+    llvm_bin_dir = tsl::io::JoinPath(std::getenv("LLVM_PATH"), "bin");
+  } else {
+    llvm_bin_dir = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
+  }
+  
+  auto objdump_program = llvm::sys::findProgramByName("llvm-objdump", {llvm_bin_dir});
+  if (objdump_program) {
+    // Run: llvm-objdump -d <object_file>
+    std::vector<llvm::StringRef> objdump_args{
+        llvm_ir::AsStringRef("llvm-objdump"),
+        llvm_ir::AsStringRef("-d"),  // Disassemble
+        llvm_ir::AsStringRef("--section=.text"),  // Only check code sections
+        llvm_ir::AsStringRef(isabin_path),
+    };
+    
+    // Create temporary file for output
+    std::string disasm_path = isabin_path + ".disasm";
+    std::error_code ec;
+    llvm::raw_fd_ostream disasm_stream(disasm_path, ec, llvm::sys::fs::OF_Text);
+    if (!ec) {
+      disasm_stream.close();
+      
+      std::string error_msg;
+      std::optional<llvm::sys::ProcessStatistics> proc_stats;
+      llvm::StringRef empty_input;
+      std::optional<llvm::StringRef> redirects[] = {
+          empty_input,                           // stdin
+          llvm::StringRef(disasm_path),         // stdout
+          std::nullopt                           // stderr
+      };
+      
+      int result = llvm::sys::ExecuteAndWait(
+          *objdump_program, llvm_ir::AsArrayRef(objdump_args),
+          std::nullopt, redirects, 0, 0, &error_msg, nullptr, &proc_stats);
+      
+      if (result == 0) {
+        // Read the disassembly output
+        std::ifstream disasm_file(disasm_path);
+        std::string disasm_output((std::istreambuf_iterator<char>(disasm_file)),
+                                  std::istreambuf_iterator<char>());
+        disasm_file.close();
+        
+        if (!disasm_output.empty()) {
+          // Check for scratch buffer instructions in the disassembly
+          // AMD GCN ISA uses instructions like:
+          // - buffer_store_dword for spilling to scratch
+          // - buffer_load_dword for loading from scratch
+          // - s_scratch_* instructions
+          if (disasm_output.find("buffer_store") != std::string::npos ||
+              disasm_output.find("buffer_load") != std::string::npos ||
+              disasm_output.find("scratch_") != std::string::npos) {
+            
+            // Double check it's actually accessing scratch memory, not global
+            // Scratch access typically has "off" (scratch offset) in the operands
+            if (disasm_output.find("off,") != std::string::npos ||
+                disasm_output.find("scratch") != std::string::npos) {
+              has_scratch = true;
+              VLOG(2) << "Found scratch buffer instructions in disassembly";
+            }
+          }
+        }
+        
+        // Clean up temp file unless keeping tempfiles
+        if (!keep_tempfiles) {
+          remove(disasm_path.c_str());
+        }
+      } else {
+        VLOG(2) << "Could not disassemble object file: " << error_msg;
+      }
+    }
+  }
+  
+  if (has_scratch) {
+    LOG(WARNING) << "====== REGISTER SPILLING DETECTED ======";
+    LOG(WARNING) << "Module: " << module->getModuleIdentifier();
+    LOG(WARNING) << "Kernel uses scratch memory for register spills";
+    LOG(WARNING) << "Performance may be degraded due to register pressure";
+    LOG(WARNING) << "========================================";
+    // Uncomment to filter during autotuning:
+    // if (debug_options.xla_gpu_filter_kernels_spilling_registers_on_autotuning()) {
+    //   return xla::Cancelled(
+    //       "Compilation discarded due to register spilling in AMD GPU kernel");
+    // }
+  } else {
+    VLOG(2) << "No register spilling detected";
+  }
+
   if (keep_tempfiles) {
     std::unique_ptr<llvm::raw_fd_ostream> ir_fs(
         new llvm::raw_fd_ostream(ir_opt_path, ec, llvm::sys::fs::OF_None));
@@ -562,6 +658,33 @@ std::vector<std::string> GetAMDGPUBackendOptions(
                            backend_extra_llvm_opts.cbegin(),
                            backend_extra_llvm_opts.cend());
 
+  // Manually add LLVM debug options for register usage analysis
+  // Note: The disassembly-based spilling detection is now the primary method.
+  // These options are mainly useful for debugging the compiler itself.
+  
+  // Uncomment if you want to see LLVM compilation details:
+  
+  // Option 1: Enable LLVM statistics (aggregate stats, not per-kernel)
+  // backend_llvm_opts.push_back("-stats");
+  
+  // Option 2: Print final machine code (very verbose)
+  // backend_llvm_opts.push_back("-print-after-all");
+  
+  // Option 3: Print after register allocation (shows register assignments)
+  // backend_llvm_opts.push_back("-print-after=regallocfast");
+  // backend_llvm_opts.push_back("-print-after=regallocgreedy");
+  
+  // Option 4: Enable pass timing (shows compilation time breakdown)
+  // backend_llvm_opts.push_back("-time-passes");
+
+  // Log the final LLVM options
+  if (!backend_llvm_opts.empty()) {
+    LOG(INFO) << "AMDGPU backend LLVM options (" << backend_llvm_opts.size() << "):";
+    for (const auto& opt : backend_llvm_opts) {
+      LOG(INFO) << "  " << opt;
+    }
+  }
+
   return backend_llvm_opts;
 }
 
@@ -576,6 +699,10 @@ absl::StatusOr<std::vector<uint8_t>> CompileToHsaco(
   absl::call_once(backend_init_flag, AMDGPUBackendInit, debug_options,
                   rocdl_dir_path);
   auto llvm_opts = GetAMDGPUBackendOptions(debug_options);
+  
+  LOG(INFO) << "====== CompileToHsaco called for module: " << module->getModuleIdentifier() << " ======";
+  LOG(INFO) << "Module name: " << module->getName().str();
+  
   llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_opts);
 
   std::vector<uint8_t> hsaco;
