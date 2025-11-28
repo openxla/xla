@@ -235,22 +235,22 @@ static bool IsCommand(const HloCustomCallInstruction* hlo,
   }
 
   if (config.enabled_commands.contains(DebugOptions::CUDNN)) {
-    
     if (IsCustomCallToBlockScaledDot(*hlo)) {
-    VLOG(3) << "Recording BlockScaledDot, target " << hlo->custom_call_target()
+      VLOG(3) << "Recording BlockScaledDot, target " << hlo->custom_call_target()
             << " into command buffer.";
-    return true;
-  }
-    if (IsCustomCallTofMHA(*hlo)) {
-    VLOG(3) << "Recording FusedMHA, target " << hlo->custom_call_target()
-            << " into command buffer.";
-    return true;
-    }
-    if (IsCustomCallToDnnConvolution(*hlo)) {
-      VLOG(3) << "Recording convolution, target " << hlo->custom_call_target()
-              << " into command buffer.";
       return true;
     }
+    if (IsCustomCallTofMHA(*hlo)) {
+      VLOG(3) << "Recording FusedMHA, target " << hlo->custom_call_target()
+            << " into command buffer.";
+      return true;
+    }
+  }
+  if (config.enabled_commands.contains(DebugOptions::CONVOLUTION) && 
+            IsCustomCallToDnnConvolution(*hlo)) {
+    VLOG(3) << "Recording convolution, target " << hlo->custom_call_target()
+            << " into command buffer.";
+    return true;
   }
 
   if (!config.enabled_commands.contains(DebugOptions::CUSTOM_CALL)) {
@@ -825,7 +825,8 @@ absl::StatusOr<bool> CommandBufferScheduling::RunImpl(
                                                 DebugOptions::WHILE};
   static constexpr auto kRequireTracing = {
       DebugOptions::CUBLAS, DebugOptions::CUBLASLT, DebugOptions::CUDNN,
-      DebugOptions::CUSTOM_CALL, DebugOptions::COLLECTIVES};
+      DebugOptions::CUSTOM_CALL, DebugOptions::COLLECTIVES,
+      DebugOptions::CONVOLUTION };
 
   auto erase = [&](absl::Span<const DebugOptions::CommandBufferCmdType> cmds) {
     for (auto cmd : cmds) {

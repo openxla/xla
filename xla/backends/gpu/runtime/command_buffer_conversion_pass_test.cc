@@ -389,7 +389,7 @@ TEST(CommandBufferConversionPassTest, ConvertConvolutionAndGemmThunks) {
   // Enable only FUSION, which means GemmThunk should not be converted.
   debug_options.clear_xla_gpu_enable_command_buffer();
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
-  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CONVOLUTION);
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
   
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();

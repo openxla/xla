@@ -59,6 +59,7 @@ class CommandBufferSchedulingTest : public HloTestBase {
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CONVOLUTION);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLASLT);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
     debug_options.set_xla_gpu_graph_min_graph_size(2);
