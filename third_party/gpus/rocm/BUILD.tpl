@@ -616,7 +616,7 @@ filegroup(
 
 filegroup(
     name = "rocminfo",
-    srcs = glob(["%{rocm_root}/bin/rocminfo"]),
+    srcs = ["%{rocm_root}/bin/rocminfo"],
     visibility = ["//visibility:public"],
 )
 
