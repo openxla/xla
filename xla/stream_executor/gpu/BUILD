@@ -871,6 +871,15 @@ cc_library(
 )
 
 cc_library(
+    name = "prefetch_kernel",
+    hdrs = ["prefetch_kernel.h"],
+    deps = [
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:kernel",
+    ],
+)
+
+cc_library(
     name = "repeat_buffer_kernel",
     hdrs = ["repeat_buffer_kernel.h"],
     deps = [
