@@ -365,7 +365,6 @@ cc_library(
         "//xla/tsl/protobuf:dnn_proto_cc",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -375,11 +374,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@com_google_protobuf//:wrappers_cc_proto",
         "@eigen_archive//:eigen3",  # buildcleaner: keep
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:ml_dtypes",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
