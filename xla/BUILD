@@ -337,6 +337,7 @@ cc_library(
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:bfloat16",
         "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:protobuf",
