@@ -859,6 +859,24 @@ func.func @atomic_rmw_c32(%in: tensor<8xcomplex<f32>>, %i: index)
 
 // -----
 
+// Test that AMDGPU allocas are in address space 5 (private)
+func.func @amdgpu_alloca_address_space(%in: tensor<8xcomplex<f32>>, %i: index)
+    -> (tensor<8xcomplex<f32>>) {
+  %ret = xla.atomic_rmw %in[%i] : tensor<8xcomplex<f32>> {
+    ^bb0(%current : complex<f32>):
+      %a = complex.add %current, %current : complex<f32>
+      xla.yield %a : complex<f32>
+  }
+  return %ret : tensor<8xcomplex<f32>>
+}
+
+// CHECK-GFX90A-MI200-LABEL: @amdgpu_alloca_address_space
+// Verify allocas created for complex arithmetic are in AS5 for AMDGPU
+// CHECK-GFX90A-MI200: llvm.alloca %{{.*}} x !llvm.struct<(f32, f32)> : (i32) -> !llvm.ptr<5>
+// CHECK-GFX90A-MI200: llvm.alloca %{{.*}} x i64 : (i32) -> !llvm.ptr<5>
+
+// -----
+
 func.func @unused_index_switch_results(%i: index) -> index {
   %ret, %ret2 = scf.index_switch %i -> tensor<8xi32>, tensor<3xf32>
   case 0 {
