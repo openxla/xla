@@ -211,8 +211,8 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
 
   void ScheduleSendsOnLocalDevice(
       PjRtDevice* device, std::vector<PjRtBuffer*> buffers,
-      const std::vector<PjRtGlobalDeviceId> dst_global_device_ids,
-      const std::vector<CrossHostTransferKey> transfer_keys,
+      std::vector<PjRtGlobalDeviceId> dst_global_device_ids,
+      std::vector<CrossHostTransferKey> transfer_keys,
       std::vector<std::shared_ptr<Future<>::Promise>> promises);
 
   struct PrepareReceiveBufferResult {
