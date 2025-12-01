@@ -249,10 +249,10 @@ cc_library(
     srcs = ["gpu_semaphore.cc"],
     hdrs = ["gpu_semaphore.h"],
     deps = [
+        # "@com_google_absl//absl/status:statusor",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream_executor_h",
-        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:statusor",
     ],
 )
