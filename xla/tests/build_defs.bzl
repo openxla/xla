@@ -376,6 +376,7 @@ def xla_test(
                 this_backend_tags.append("gpu")
                 if "multi_gpu" in this_backend_tags:
                     this_backend_tags.append("exclusive-if-local")
+                    this_backend_tags.append("local")
                 backend_deps += [
                     "//xla/stream_executor/rocm:all_runtime",
                     "//xla/stream_executor/rocm:gpu_test_kernels_rocm",
