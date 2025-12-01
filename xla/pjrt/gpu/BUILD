@@ -71,6 +71,7 @@ cc_library(
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/backends/gpu/collectives:gpu_cliques",
         "//xla/backends/gpu/collectives:gpu_collectives",
+        "//xla/backends/gpu/collectives:gpu_communicator",
         "//xla/client:client_library",
         "//xla/client:local_client",
         "//xla/core/collectives",
