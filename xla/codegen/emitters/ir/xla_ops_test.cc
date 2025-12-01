@@ -69,6 +69,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ParseMlirModuleString(
 
 class XLAOpsTest : public HloPjRtTestBase {
  public:
+  XLAOpsTest() { RegisterSymbolicExprStorage(&mlir_context_); }
   mlir::MLIRContext mlir_context_;
 };
 

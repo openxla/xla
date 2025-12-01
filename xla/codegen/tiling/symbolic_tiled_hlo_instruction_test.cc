@@ -53,6 +53,7 @@ ENTRY main {
 )"));
 
   mlir::MLIRContext mlir_ctx;
+  RegisterSymbolicExprStorage(&mlir_ctx);
   auto fusion = module->entry_computation()->root_instruction();
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(fusion);
 

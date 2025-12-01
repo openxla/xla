@@ -115,6 +115,7 @@ limitations under the License.
 #include "xla/codegen/xtile/ir/transforms/passes.h"
 #include "xla/codegen/xtile/ir/xtile_dialect.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/mlir/tools/mlir_replay/public/compiler_trace.pb.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/status_macros.h"
@@ -527,6 +528,7 @@ std::unique_ptr<mlir::MLIRContext> FusionCompiler::CreateContext() {
 
   context->appendDialectRegistry(CreateDialectRegistry());
   context->loadAllAvailableDialects();
+  RegisterSymbolicExprStorage(context.get());
 
   return context;
 }

@@ -280,6 +280,7 @@ absl::StatusOr<FusionEmissionResult> EmitterBase::Emit(
             if (ir_emitter_context.emit_kernels()) {
               mlir_context.appendDialectRegistry(GetDialectRegistry());
               mlir_context.loadAllAvailableDialects();
+              RegisterSymbolicExprStorage(&mlir_context);
               TF_ASSIGN_OR_RETURN(
                   module,
                   CreateLLVMModule(

@@ -228,6 +228,7 @@ xla_cc_test(
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/codegen/triton:support",
         "//xla/codegen/tiling:symbolic_tile_analysis",
+        "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:hlo_cost_analysis",
@@ -1914,6 +1915,7 @@ xla_cc_test(
     deps = [
         ":hoist_fused_bitcasts",
         "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
@@ -1987,6 +1989,7 @@ xla_cc_test(
     deps = [
         ":nest_gemm_fusion",
         "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
@@ -2067,6 +2070,7 @@ xla_cc_test(
     deps = [
         ":priority_fusion",
         "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:pattern_matcher_gmock",
@@ -2578,6 +2582,7 @@ xla_cc_test(
         ":softmax_rewriter_triton",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/codegen/triton:support",
+        "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:pattern_matcher_gmock",
@@ -3417,6 +3422,7 @@ xla_cc_test(
     deps = [
         ":convert_triton_gemm_config",
         "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:pattern_matcher_gmock",

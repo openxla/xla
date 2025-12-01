@@ -1153,6 +1153,7 @@ xla_cc_binary(
     deps = [
         ":hlo_module_loader",
         "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:command_line_flags",
