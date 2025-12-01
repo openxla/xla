@@ -650,6 +650,13 @@ absl::Status FulfillDeviceEvent(
   }
   return s;
 }
+
+void FulfillPromises(std::vector<std::shared_ptr<Future<>::Promise>>& promises,
+                     absl::Status status) {
+  for (std::shared_ptr<Future<>::Promise>& promise : promises) {
+    promise->Set(status);
+  }
+}
 }  // namespace
 
 // Send functionality for second cross-host transfers API.
@@ -767,8 +774,7 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
   };
 
   if (absl::Status status = setup_sends(); !status.ok()) {
-    for (std::shared_ptr<Future<>::Promise> promise : promises)
-      promise->Set(status);
+    FulfillPromises(promises, status);
     return;
   }
 
@@ -800,6 +806,7 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
 
   // Form the closure to schedule on the device's execute thread.
   auto execute_sends_fn = [this, local_device_state, stream,
+                           promises = std::move(promises),
                            prepared_sends = std::move(prepared_sends),
                            launch_send_group = std::move(launch_send_group),
                            usage_event = std::move(usage_event)]() mutable {
@@ -835,15 +842,28 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
 
     all_sends_future.OnReady(
         *this->thread_pool()->AsExecutor(),
-        [this, local_device_state, stream,
-         grouped_sends = std::move(grouped_sends),
-         usage_event](const absl::Status& status) mutable {
+        [this, local_device_state, stream, promises = std::move(promises),
+         usage_event, grouped_sends = std::move(grouped_sends)](
+            const absl::Status& status) mutable {
+          // Add usage_event onto the stream.
           absl::Status fulfill_status = FulfillDeviceEvent(
               this, local_device_state, stream, usage_event, status);
-          for (auto& [clique_key, curr_sends] : grouped_sends) {
-            for (PreparedSend& prepared_send : curr_sends) {
-              prepared_send.promise->Set(status.ok() ? fulfill_status : status);
-            }
+
+          // Fail promises early if there was an issue.
+          if (!status.ok() || !fulfill_status.ok()) {
+            FulfillPromises(promises, status);
+            return;
+          }
+
+          // Asynchronously fulfill promises via a host callback, failing them
+          // early if there is an issue registering the callback.
+          absl::Status callback_status = RunCallbackOnStream(
+              stream, this->thread_pool(), [promises]() mutable {
+                FulfillPromises(promises, absl::OkStatus());
+              });
+
+          if (!callback_status.ok()) {
+            FulfillPromises(promises, callback_status);
           }
         });
   };
