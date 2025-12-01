@@ -407,10 +407,7 @@ using AcquiredCliqueAndCommunicator =
     std::pair<std::shared_ptr<gpu::LockableGpuClique::Lock>,
               gpu::GpuCommunicator*>;
 
-class PreparedSend {
- public:
-  PreparedSend() = delete;
-
+struct PreparedSend {
   StreamExecutorGpuClient* client;
   gpu::GpuCliqueKey clique_key;
   tsl::RCReference<CommonPjRtRawBuffer> raw_buffer;
@@ -418,6 +415,9 @@ class PreparedSend {
   tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event;
   AcquiredCliqueAndCommunicator clique_and_communicator;
   std::shared_ptr<Future<>::Promise> promise;
+
+  PreparedSend(PreparedSend&&) = default;
+  PreparedSend& operator=(PreparedSend&&) = default;
 
   ~PreparedSend() {
     if (!usage_event || usage_event->event()->IsDefined()) {
@@ -429,24 +429,18 @@ class PreparedSend {
         absl::InternalError("PreparedSend destroyed without fulfilling "
                             "usage_event"));
   }
-
-  // Disable copy to prevent double-fulfillment issues.
-  PreparedSend(const PreparedSend&) = delete;
-  PreparedSend& operator=(const PreparedSend&) = delete;
-  PreparedSend(PreparedSend&&) = default;
-  PreparedSend& operator=(PreparedSend&&) = default;
 };
 
-class PreparedReceive {
- public:
-  PreparedReceive() = delete;
-
+struct PreparedReceive {
   StreamExecutorGpuClient* client;
   gpu::GpuCliqueKey clique_key;
   std::unique_ptr<PjRtBuffer> buffer;
   tsl::RCReference<CommonPjRtRawBuffer> raw_buffer;
   tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event;
   AcquiredCliqueAndCommunicator clique_and_communicator;
+
+  PreparedReceive(PreparedReceive&&) = default;
+  PreparedReceive& operator=(PreparedReceive&&) = default;
 
   ~PreparedReceive() {
     if (!definition_event || definition_event->event()->IsDefined()) {
@@ -459,12 +453,6 @@ class PreparedReceive {
         absl::InternalError("PreparedReceive destroyed without fulfilling "
                             "definition_event"));
   }
-
-  // Disable copy to prevent double-fulfillment issues.
-  PreparedReceive(const PreparedReceive&) = delete;
-  PreparedReceive& operator=(const PreparedReceive&) = delete;
-  PreparedReceive(PreparedReceive&&) = default;
-  PreparedReceive& operator=(PreparedReceive&&) = default;
 };
 
 // Acquire the GPU clique and communicator for a given clique key.
