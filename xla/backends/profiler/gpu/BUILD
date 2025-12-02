@@ -217,6 +217,7 @@ cuda_library(
         "@com_google_googletest//:gtest_for_library",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cuda_runtime",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
