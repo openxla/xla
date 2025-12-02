@@ -408,7 +408,8 @@ using AcquiredCliqueAndCommunicator =
     std::pair<std::shared_ptr<gpu::LockableGpuClique::Lock>,
               gpu::GpuCommunicator*>;
 
-struct PreparedSend {
+class PreparedSend {
+ public:
   StreamExecutorGpuClient* client_;
   gpu::GpuCliqueKey clique_key_;
   tsl::RCReference<CommonPjRtRawBuffer> raw_buffer_;
@@ -416,6 +417,20 @@ struct PreparedSend {
   tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event_;
   AcquiredCliqueAndCommunicator clique_and_communicator_;
   std::shared_ptr<Future<>::Promise> promise_;
+
+  PreparedSend(StreamExecutorGpuClient* client, gpu::GpuCliqueKey clique_key,
+               tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+               std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events,
+               tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event,
+               AcquiredCliqueAndCommunicator clique_and_communicator,
+               std::shared_ptr<Future<>::Promise> promise)
+      : client_(client),
+        clique_key_(std::move(clique_key)),
+        raw_buffer_(std::move(raw_buffer)),
+        definition_events_(std::move(definition_events)),
+        usage_event_(std::move(usage_event)),
+        clique_and_communicator_(std::move(clique_and_communicator)),
+        promise_(std::move(promise)) {}
 
   PreparedSend(PreparedSend&&) = default;
   PreparedSend& operator=(PreparedSend&&) = default;
@@ -432,13 +447,27 @@ struct PreparedSend {
   }
 };
 
-struct PreparedReceive {
+class PreparedReceive {
+ public:
   StreamExecutorGpuClient* client_;
   gpu::GpuCliqueKey clique_key_;
   std::unique_ptr<PjRtBuffer> buffer_;
   tsl::RCReference<CommonPjRtRawBuffer> raw_buffer_;
   tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event_;
   AcquiredCliqueAndCommunicator clique_and_communicator_;
+
+  PreparedReceive(
+      StreamExecutorGpuClient* client, gpu::GpuCliqueKey clique_key,
+      std::unique_ptr<PjRtBuffer> buffer,
+      tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+      tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event,
+      AcquiredCliqueAndCommunicator clique_and_communicator)
+      : client_(client),
+        clique_key_(std::move(clique_key)),
+        buffer_(std::move(buffer)),
+        raw_buffer_(std::move(raw_buffer)),
+        definition_event_(std::move(definition_event)),
+        clique_and_communicator_(std::move(clique_and_communicator)) {}
 
   PreparedReceive(PreparedReceive&&) = default;
   PreparedReceive& operator=(PreparedReceive&&) = default;
@@ -539,15 +568,9 @@ absl::StatusOr<PreparedSend> PrepareSend(
               "PrepareSend"));
 
   // Return the result.
-  return PreparedSend{
-      /*client_=*/client,
-      /*clique_key_=*/std::move(clique_key),
-      /*raw_buffer_=*/std::move(raw_buffer),
-      /*definition_events_=*/std::move(definition_events),
-      /*usage_event_=*/std::move(usage_event),
-      /*clique_and_communicator_=*/std::move(clique_and_communicator),
-      /*promise_=*/std::move(promise),
-  };
+  return PreparedSend(client, std::move(clique_key), std::move(raw_buffer),
+                      std::move(definition_events), std::move(usage_event),
+                      std::move(clique_and_communicator), std::move(promise));
 }
 
 // Create a `PreparedReceive` object bundling together state needed to perform a
@@ -593,14 +616,9 @@ absl::StatusOr<PreparedReceive> PrepareReceive(
                                            /*raw_buffer_is_mutable=*/true));
   definition_event->AndThen([raw_buffer]() {});
 
-  return PreparedReceive{
-      /*client_=*/client,
-      /*clique_key_=*/std::move(clique_key),
-      /*buffer_=*/std::move(buffer),
-      /*raw_buffer_=*/std::move(raw_buffer),
-      /*definition_event_=*/std::move(definition_event),
-      /*clique_and_communicator_=*/std::move(clique_and_communicator),
-  };
+  return PreparedReceive(client, std::move(clique_key), std::move(buffer),
+                         std::move(raw_buffer), std::move(definition_event),
+                         std::move(clique_and_communicator));
 }
 
 absl::flat_hash_map<gpu::GpuCliqueKey, std::vector<PreparedSend>>
