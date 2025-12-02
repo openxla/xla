@@ -86,10 +86,9 @@ RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
 
   const auto& dbg = xla::GetDebugOptionsFromFlags();
   int64_t max_events = dbg.xla_gpu_rocm_max_trace_events();
-  VLOG(3) << "max number of events to be trace from flag = " << max_events;
+  VLOG(2) << "max number of events to be trace from flag = " << max_events;
   if (max_events <= 0) max_events = 4 * 1024 * 1024;
   if (max_events > 1'000'000'000LL) max_events = 1'000'000'000LL;
-
   VLOG(3) << "maximum number of events to be traced = " << max_events;
 
   options.max_callback_api_events = max_events;
