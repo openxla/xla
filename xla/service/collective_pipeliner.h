@@ -101,12 +101,13 @@ class CollectivePipeliner : public HloModulePass {
     // pipelined. The control dependencies will be dropped when the operation is
     // pipelined. This is currently only used to support kBackward pipelining.
     bool should_allow_control_dependencies = false;
-    // Function to find a DynamicSlice operand by traversing through formatting
-    // operations. If set, this function will be called to discover DynamicSlice
-    // operations in the operand chain.
+    // Function to find an additional operation to start the operand chain from.
+    // If set, this function will be called to discover additional starting
+    // points for the operand chain (e.g., DynamicSlice operations through
+    // formatting ops).
     std::function<std::optional<HloInstruction*>(
         HloInstruction*, absl::flat_hash_set<const HloInstruction*>&)>
-        find_dynamic_slice_operand = nullptr;
+        additional_chain_start_op_finder = nullptr;
     // TODO(b/399476667): Consolidate these postprocessing functions.
     HloPostprocessor postprocess_backward_peeled_op;
     HloPostprocessor postprocess_backward_rotated_op;

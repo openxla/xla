@@ -1008,12 +1008,6 @@ TEST_F(IrEmissionUtilsTest, DynamicVariableLoopCarriedVariable) {
 
 TEST_F(IrEmissionUtilsTest, DynamicVariableWithIrrelevantGTE) {
   constexpr absl::string_view kHlo = R"(
-      add_both {
-        p0 = s32[] parameter(0)
-        p1 = s32[] parameter(1)
-        ROOT sum = s32[] add(p0, p1)
-      }
-
       while_body {
         p0 = (s32[], s32[], s32[], s32[]) parameter(0)
         ivar = s32[] get-tuple-element(p0), index=0
@@ -1024,7 +1018,7 @@ TEST_F(IrEmissionUtilsTest, DynamicVariableWithIrrelevantGTE) {
         c1 = s32[] constant(1)
         next_ivar = s32[] add(ivar, c1)
         
-        dynamic_computation = s32[] fusion(ivar), kind=kLoop, calls=add_both
+        dynamic_computation = s32[] add(ivar, c1)
         
         irrelevant_computation = s32[] add(irrelevant_var, c1)
         
@@ -1072,10 +1066,6 @@ TEST_F(IrEmissionUtilsTest, DynamicVariableWithIrrelevantGTE) {
 
 TEST_F(IrEmissionUtilsTest, MultipleDynamicVariables) {
   constexpr absl::string_view kHlo = R"(
-      identity {
-        ROOT p0 = s32[] parameter(0)
-      }
-
       while_body {
         p0 = (s32[], s32[], s32[], s32[]) parameter(0)
         ivar = s32[] get-tuple-element(p0), index=0
@@ -1086,9 +1076,9 @@ TEST_F(IrEmissionUtilsTest, MultipleDynamicVariables) {
         c1 = s32[] constant(1)
         next_ivar = s32[] add(ivar, c1)
         
-        compute1 = s32[] fusion(dynamic_var1), kind=kLoop, calls=identity
-        compute2 = s32[] fusion(dynamic_var2), kind=kLoop, calls=identity
-        compute_regular = s32[] fusion(regular_var), kind=kLoop, calls=identity
+        compute1 = s32[] add(dynamic_var1, c1)
+        compute2 = s32[] add(dynamic_var2, c1)
+        compute_regular = s32[] add(regular_var, c1)
 
         ROOT result = (s32[], s32[], s32[], s32[]) tuple(next_ivar, compute1, compute2, compute_regular)
       }

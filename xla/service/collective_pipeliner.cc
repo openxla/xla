@@ -520,7 +520,7 @@ std::optional<std::vector<HloInstruction*>> CollectIndependentOperandChain(
     bool should_add_loop_invariant_op_in_chain,
     std::function<std::optional<HloInstruction*>(
         HloInstruction*, absl::flat_hash_set<const HloInstruction*>&)>
-        find_dynamic_slice_operand) {
+        additional_chain_start_op_finder) {
   std::vector<HloInstruction*> chain;
   absl::flat_hash_set<const HloInstruction*> visited_set({instr});
   std::vector<std::pair<HloInstruction*, int>> stack(1, {instr, 0});
@@ -534,10 +534,11 @@ std::optional<std::vector<HloInstruction*>> CollectIndependentOperandChain(
                !loop_invariant_params.count(instr);
       };
 
-  if (find_dynamic_slice_operand) {
-    auto maybe_dynamic_slice = find_dynamic_slice_operand(instr, visited_set);
-    if (maybe_dynamic_slice.has_value()) {
-      stack.emplace_back(maybe_dynamic_slice.value(), 0);
+  if (additional_chain_start_op_finder) {
+    auto maybe_additional_op =
+        additional_chain_start_op_finder(instr, visited_set);
+    if (maybe_additional_op.has_value()) {
+      stack.emplace_back(maybe_additional_op.value(), 0);
     }
   }
 
@@ -617,14 +618,14 @@ std::optional<std::vector<HloInstruction*>> CollectChainsToPushBackwards(
     bool should_add_loop_invariant_op_in_chain,
     std::function<std::optional<HloInstruction*>(
         HloInstruction*, absl::flat_hash_set<const HloInstruction*>&)>
-        find_dynamic_slice_operand) {
+        additional_chain_start_op_finder) {
   if (instr->HasControlDependencies() && !should_allow_control_dependencies) {
     return std::nullopt;
   }
   return CollectIndependentOperandChain(
       instr, loop_iter, loop_invariant_params,
       should_allow_loop_variant_parameter_in_chain, loop_invariant_instructions,
-      should_add_loop_invariant_op_in_chain, find_dynamic_slice_operand);
+      should_add_loop_invariant_op_in_chain, additional_chain_start_op_finder);
 }
 
 // Given a dynamic-update-slice find the output index of the loop we feed into.
@@ -927,7 +928,7 @@ class WhileLoopAnalysis {
       bool should_add_loop_invariant_op_in_chain = false,
       std::function<std::optional<HloInstruction*>(
           HloInstruction*, absl::flat_hash_set<const HloInstruction*>&)>
-          find_dynamic_slice_operand = nullptr);
+          additional_chain_start_op_finder = nullptr);
   HloInstruction* while_loop_instruction() const { return while_; }
   void ExtractLoopInvariantOps();
 
@@ -1341,7 +1342,7 @@ void WhileLoopAnalysis::CollectCollectivesToMove(
     bool should_add_loop_invariant_op_in_chain,
     std::function<std::optional<HloInstruction*>(
         HloInstruction*, absl::flat_hash_set<const HloInstruction*>&)>
-        find_dynamic_slice_operand) {
+        additional_chain_start_op_finder) {
   move_infos_.clear();
   HloComputation* while_body = while_->while_body();
   const HloInstruction* loop_parameter =
@@ -1518,7 +1519,8 @@ void WhileLoopAnalysis::CollectCollectivesToMove(
           invariant_loop_parameters_,
           should_allow_loop_variant_parameter_in_chain,
           should_allow_control_dependencies, invariant_loop_instructions_,
-          should_add_loop_invariant_op_in_chain, find_dynamic_slice_operand);
+          should_add_loop_invariant_op_in_chain,
+          additional_chain_start_op_finder);
       if (!chain_collected.has_value()) {
         VLOG(5) << "Skipping " << instr->name()
                 << " because didn't find compatible slice of parameter";
@@ -3337,7 +3339,7 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
         config_.should_allow_loop_variant_parameter_in_chain,
         config_.should_allow_control_dependencies,
         config_.should_add_loop_invariant_op_in_chain,
-        config_.find_dynamic_slice_operand);
+        config_.additional_chain_start_op_finder);
     if (loop_analysis->GetMoveInfos().empty()) {
       continue;
     }

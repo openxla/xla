@@ -871,7 +871,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
         /*should_allow_control_dependencies=*/false,
-        /*find_dynamic_slice_operand=*/nullptr,
+        /*additional_chain_start_op_finder=*/nullptr,
         /*postprocess_backward_peeled_op=*/{},
         /*postprocess_backward_rotated_op=*/{},
         /*postprocess_backward_peeled_trailing_op=*/{},
@@ -895,7 +895,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
         /*should_allow_control_dependencies=*/false,
-        /*find_dynamic_slice_operand=*/nullptr,
+        /*additional_chain_start_op_finder=*/nullptr,
         /*postprocess_backward_peeled_op=*/{},
         /*postprocess_backward_rotated_op=*/{},
         /*postprocess_backward_peeled_trailing_op=*/{},
@@ -919,7 +919,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
         /*should_allow_control_dependencies=*/false,
-        /*find_dynamic_slice_operand=*/nullptr,
+        /*additional_chain_start_op_finder=*/nullptr,
         /*postprocess_backward_peeled_op=*/{},
         /*postprocess_backward_rotated_op=*/{},
         /*postprocess_backward_peeled_trailing_op=*/{},
@@ -946,7 +946,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
         /*should_allow_control_dependencies=*/false,
-        /*find_dynamic_slice_operand=*/nullptr,
+        /*additional_chain_start_op_finder=*/nullptr,
         /*postprocess_backward_peeled_op=*/{},
         /*postprocess_backward_rotated_op=*/{},
         /*postprocess_backward_peeled_trailing_op=*/{},
@@ -981,7 +981,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*reuse_pipelined_op_buffer=*/HloPredicateFalse,
         /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateFalse,
         /*should_allow_control_dependencies=*/false,
-        /*find_dynamic_slice_operand=*/
+        /*additional_chain_start_op_finder=*/
         [acceptable_formatting](
             HloInstruction* instr,
             absl::flat_hash_set<const HloInstruction*>& visited_set)
@@ -3105,7 +3105,6 @@ GpuCompiler::LoadExecutableFromAotResult(
   const se::DeviceDescription& gpu_device_info =
       stream_exec.GetDeviceDescription();
   llvm::LLVMContext llvm_context;
-
 
   // Recreate BufferAssignment from proto.
   std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(gpu_device_info);
