@@ -118,10 +118,13 @@ cc_library(
         "@tsl//tsl/platform:load_library",
         "@tsl//tsl/platform:path",
     ] + if_oss([
-        "@nvshmem//:nvshmem_config",
+        # keep sorted
         "@local_config_nccl//:nccl_config",
         "@local_config_tensorrt//:tensorrt_headers",
+        "@nvshmem//:nvshmem_config",
+        "@tsl//tsl/platform",
     ]) + if_rocm_is_configured([
+        # keep sorted
         "@local_config_rocm//rocm:rocm_headers",
     ]),
 )
@@ -164,12 +167,16 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf",
+        "@com_google_protobuf//:protobuf_lite",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:blocking_counter",
@@ -185,7 +192,6 @@ cc_library(
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:stringpiece",
-        "@tsl//tsl/platform:stringprintf",
         "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/platform:tracing",
     ],

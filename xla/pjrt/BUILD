@@ -419,10 +419,10 @@ cc_library(
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/pjrt/proto:executable_metadata_proto_cc",
         "//xla/pjrt/proto:execute_options_proto_cc",
+        "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",
         "//xla/service:compiler",
         "//xla/service:computation_layout",
-        "//xla/service:global_device_id",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_value",
@@ -1258,6 +1258,7 @@ cc_library(
 cc_library(
     name = "async_work_runner",
     hdrs = ["async_work_runner.h"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",

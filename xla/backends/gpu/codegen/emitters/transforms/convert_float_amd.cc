@@ -47,7 +47,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
-#include "xla/tsl/platform/status.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 
 namespace xla {
 namespace gpu {
@@ -221,9 +221,8 @@ struct RewriteFp8TruncFPattern : public Fp8OpRewritePattern<arith::TruncFOp> {
       }
       if (v.getType() != f32_ty) {
         return arith::TruncFOp::create(b, f32_ty, v);
-      } else {
-        return v;
       }
+      return v;
     });
 
     mlir::StringAttr cvtIntr = b.getStringAttr(
@@ -565,7 +564,7 @@ class ConvertFloatAMDPass
                                                        &device_info));
       absl::StatusOr<se::DeviceDescription> device_description =
           se::DeviceDescription::FromProto(device_info);
-      TF_CHECK_OK(device_description.status());
+      CHECK_OK(device_description.status());
       cc_ = device_description->rocm_compute_capability();
     }
     mlir::RewritePatternSet patterns(&getContext());

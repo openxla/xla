@@ -298,7 +298,7 @@ def lit_test(
     See https://llvm.org/docs/CommandGuide/lit.html for details on lit
     """
     args = args or []
-    data = data or []
+    data = (data or []) + ["//xla:sh_test_with_runfiles.py"]
     tools = tools or []
     env = env or {}
 
@@ -342,7 +342,9 @@ def lit_test(
     _ = py_binary  # @unused
 
     # copybara:comment_begin(oss-only)
-    lit_name = "lit_custom_" + name
+    # Prevents creation of the files with identical names located in different
+    # directories on Windows platform.
+    lit_name = "lit_custom_" + name.replace("/", "_")
     py_binary(
         name = lit_name,
         main = "@llvm-project//llvm:utils/lit/lit.py",

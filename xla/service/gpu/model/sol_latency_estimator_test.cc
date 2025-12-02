@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/model/collective_interpolator.h"
 #include "xla/service/gpu/model/sol_gpu_cost_model.h"
@@ -44,6 +45,7 @@ limitations under the License.
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -322,8 +324,6 @@ ENTRY e {
     kind=kCustom,
     calls=comp,
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "fusion_backend_config": {
         "kind":"__triton_gemm",
         "triton_gemm_config":{
@@ -354,8 +354,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$gemm",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -384,8 +382,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$lt$matmul$f8",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -414,8 +410,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$lt$matmul$f8",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -444,8 +438,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$lt$matmul$f8",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -474,8 +466,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$lt$matmul$f8",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,

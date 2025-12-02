@@ -7,7 +7,7 @@ load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
 load("@io_bazel_rules_closure//closure:defs.bzl", "filegroup_external")
 load("@rules_ml_toolchain//gpu/sycl:sycl_configure.bzl", "sycl_configure")
 load("@rules_ml_toolchain//gpu/sycl:sycl_init_repository.bzl", "sycl_init_repository")
-load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
+load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls", "tf_vendored")
 load("//third_party/absl:workspace.bzl", absl = "repo")
 load("//third_party/benchmark:workspace.bzl", benchmark = "repo")
 load("//third_party/clang_toolchain:cc_configure_clang.bzl", "cc_download_clang_toolchain")
@@ -24,6 +24,7 @@ load("//third_party/gemmlowp:workspace.bzl", gemmlowp = "repo")
 load("//third_party/git:git_configure.bzl", "git_configure")
 load("//third_party/gloo:workspace.bzl", gloo = "repo")
 load("//third_party/gpus:rocm_configure.bzl", "rocm_configure")
+load("//third_party/gutil:workspace.bzl", gutil = "repo")
 load("//third_party/highwayhash:workspace.bzl", highwayhash = "repo")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
 load("//third_party/implib_so:workspace.bzl", implib_so = "repo")
@@ -77,6 +78,7 @@ def _initialize_third_party():
     fxdiv()
     gemmlowp()
     gloo()
+    gutil()
     highwayhash()
     hwloc()
     implib_so()
@@ -303,8 +305,25 @@ def _tf_repositories():
         },
     )
 
-    tf_http_archive(
+    # We use a vendored wrapper over googletest to provide
+    # ASSERT_OK/EXPECT_OK/ASSERT_OK_AND_ASSIGN macros through gmock/gmock.h.
+    #
+    # Internal gmock includes those macros, but the external one doesn't. This
+    # caused issues where internal builds succeed, but the copybara export to
+    # github doesn't compile because those macros are not defined. The
+    # workaround was to use custom TF_-prefixed variants of those macros.
+    #
+    # This wrapper lets us have the same code work in both by just swapping the
+    # internal header with gmock/gmock.h. This applies to XLA only, not to TF,
+    # so the TF_ macros that are still in use there must stay, and can't just
+    # expand to non-TF_ variants as.
+    tf_vendored(
         name = "com_google_googletest",
+        path = "third_party/xla_googletest_wrapper",
+    )
+
+    tf_http_archive(
+        name = "com_google_googletest_upstream",
         # Use the commit on 2025/6/09:
         # https://github.com/google/googletest/commit/28e9d1f26771c6517c3b4be10254887673c94018
         sha256 = "f253ca1a07262f8efde8328e4b2c68979e40ddfcfc001f70d1d5f612c7de2974",
@@ -583,8 +602,8 @@ def _tf_repositories():
     # https://github.com/bazelbuild/apple_support/releases
     tf_http_archive(
         name = "build_bazel_apple_support",
-        sha256 = "d71b02d6df0500f43279e22400db6680024c1c439115c57a9a82e9effe199d7b",
-        urls = tf_mirror_urls("https://github.com/bazelbuild/apple_support/releases/download/1.18.1/apple_support.1.18.1.tar.gz"),
+        sha256 = "1ae6fcf983cff3edab717636f91ad0efff2e5ba75607fdddddfd6ad0dbdfaf10",
+        urls = tf_mirror_urls("https://github.com/bazelbuild/apple_support/releases/download/1.24.5/apple_support.1.24.5.tar.gz"),
     )
 
     # https://github.com/apple/swift-protobuf/releases

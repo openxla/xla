@@ -15,14 +15,35 @@ limitations under the License.
 
 #include "xla/tsl/platform/cloud/gcs_file_system.h"
 
-#include <fstream>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/cloud/auth_provider.h"
+#include "xla/tsl/platform/cloud/file_block_cache.h"
+#include "xla/tsl/platform/cloud/gcs_throttle.h"
+#include "xla/tsl/platform/cloud/http_request.h"
 #include "xla/tsl/platform/cloud/http_request_fake.h"
+#include "xla/tsl/platform/cloud/zone_provider.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/file_statistics.h"
+#include "xla/tsl/platform/file_system.h"
+#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/str_util.h"
+#include "xla/tsl/platform/types.h"
+#include "tsl/platform/retrying_utils.h"
 #include "tsl/platform/strcat.h"
 
 // Undef DeleteFile macro defined in wndows.h.
@@ -160,7 +181,7 @@ TEST(GcsFileSystemTest, NewRandomAccessFile_Buffered_Errors) {
           "Auth Token: fake_token\n"
           "Range: 0-9\n"
           "Timeouts: 5 1 20\n",
-          "Server Not", errors::Unavailable("important HTTP error 308"),
+          "Server Not", absl::UnavailableError("important HTTP error 308"),
           nullptr, {}, 308),
       new FakeHttpRequest(
           "Uri: https://storage.googleapis.com/bucket/random_access.txt\n"
@@ -539,7 +560,7 @@ TEST(GcsFileSystemTest,
 
   std::unique_ptr<RandomAccessFile> file;
   EXPECT_EQ(
-      errors::FailedPrecondition(
+      absl::FailedPreconditionError(
           "Bucket 'bucket' is in 'barfoo' location, allowed locations "
           "are: (us-east1)."),
       fs.NewRandomAccessFile("gs://bucket/random_access.txt", nullptr, &file));
@@ -1015,39 +1036,39 @@ TEST(GcsFileSystemTest, NewWritableFile_ResumeUploadSucceeds) {
                            "Header Content-Range: bytes 0-16/17\n"
                            "Timeouts: 5 1 30\n"
                            "Put body: content1,content2\n",
-                           "", errors::Unavailable("503"), 503),
+                           "", absl::UnavailableError("503"), 503),
        new FakeHttpRequest("Uri: https://custom/upload/location\n"
                            "Auth Token: fake_token\n"
                            "Timeouts: 5 1 10\n"
                            "Header Content-Range: bytes */17\n"
                            "Put: yes\n",
-                           "", errors::Unavailable("308"), nullptr,
+                           "", absl::UnavailableError("308"), nullptr,
                            {{"Range", "0-10"}}, 308),
        new FakeHttpRequest("Uri: https://custom/upload/location\n"
                            "Auth Token: fake_token\n"
                            "Header Content-Range: bytes 11-16/17\n"
                            "Timeouts: 5 1 30\n"
                            "Put body: ntent2\n",
-                           "", errors::Unavailable("503"), 503),
+                           "", absl::UnavailableError("503"), 503),
        new FakeHttpRequest("Uri: https://custom/upload/location\n"
                            "Auth Token: fake_token\n"
                            "Timeouts: 5 1 10\n"
                            "Header Content-Range: bytes */17\n"
                            "Put: yes\n",
-                           "", errors::Unavailable("308"), nullptr,
+                           "", absl::UnavailableError("308"), nullptr,
                            {{"Range", "bytes=0-12"}}, 308),
        new FakeHttpRequest("Uri: https://custom/upload/location\n"
                            "Auth Token: fake_token\n"
                            "Header Content-Range: bytes 13-16/17\n"
                            "Timeouts: 5 1 30\n"
                            "Put body: ent2\n",
-                           "", errors::Unavailable("308"), 308),
+                           "", absl::UnavailableError("308"), 308),
        new FakeHttpRequest("Uri: https://custom/upload/location\n"
                            "Auth Token: fake_token\n"
                            "Timeouts: 5 1 10\n"
                            "Header Content-Range: bytes */17\n"
                            "Put: yes\n",
-                           "", errors::Unavailable("308"), nullptr,
+                           "", absl::UnavailableError("308"), nullptr,
                            {{"Range", "bytes=0-14"}}, 308),
        new FakeHttpRequest("Uri: https://custom/upload/location\n"
                            "Auth Token: fake_token\n"
@@ -1106,7 +1127,7 @@ TEST(GcsFileSystemTest, NewWritableFile_ResumeUploadSucceedsOnGetStatus) {
                            "Header Content-Range: bytes 0-16/17\n"
                            "Timeouts: 5 1 30\n"
                            "Put body: content1,content2\n",
-                           "", errors::Unavailable("503"), 503),
+                           "", absl::UnavailableError("503"), 503),
        new FakeHttpRequest("Uri: https://custom/upload/location\n"
                            "Auth Token: fake_token\n"
                            "Timeouts: 5 1 10\n"
@@ -1180,23 +1201,23 @@ TEST(GcsFileSystemTest, NewWritableFile_ResumeUploadAllAttemptsFail) {
                            "Header Content-Range: bytes 0-16/17\n"
                            "Timeouts: 5 1 30\n"
                            "Put body: content1,content2\n",
-                           "", errors::Unavailable("503"), 503)});
+                           "", absl::UnavailableError("503"), 503)});
   for (int i = 0; i < 10; i++) {
-    requests.emplace_back(
-        new FakeHttpRequest("Uri: https://custom/upload/location\n"
-                            "Auth Token: fake_token\n"
-                            "Timeouts: 5 1 10\n"
-                            "Header Content-Range: bytes */17\n"
-                            "Put: yes\n",
-                            "", errors::Unavailable("important HTTP error 308"),
-                            nullptr, {{"Range", "0-10"}}, 308));
+    requests.emplace_back(new FakeHttpRequest(
+        "Uri: https://custom/upload/location\n"
+        "Auth Token: fake_token\n"
+        "Timeouts: 5 1 10\n"
+        "Header Content-Range: bytes */17\n"
+        "Put: yes\n",
+        "", absl::UnavailableError("important HTTP error 308"), nullptr,
+        {{"Range", "0-10"}}, 308));
     requests.emplace_back(new FakeHttpRequest(
         "Uri: https://custom/upload/location\n"
         "Auth Token: fake_token\n"
         "Header Content-Range: bytes 11-16/17\n"
         "Timeouts: 5 1 30\n"
         "Put body: ntent2\n",
-        "", errors::Unavailable("important HTTP error 503"), 503));
+        "", absl::UnavailableError("important HTTP error 503"), 503));
   }
   // These calls will be made in the Close() attempt from the destructor.
   // Letting the destructor succeed.
@@ -3622,11 +3643,11 @@ TEST(GcsFileSystemTest, CreateDir_Folder) {
   TF_EXPECT_OK(fs.CreateDir("gs://bucket/subpath", nullptr));
   // Check that when GCS returns the object already exists return that the
   // directory already exists.
-  EXPECT_EQ(errors::AlreadyExists("gs://bucket/subpath"),
+  EXPECT_EQ(absl::AlreadyExistsError("gs://bucket/subpath"),
             fs.CreateDir("gs://bucket/subpath", nullptr));
   // Check that when GCS returns the object already has a version (failed
   // precondition) return directory already exists.
-  EXPECT_EQ(errors::AlreadyExists("gs://bucket/subpath"),
+  EXPECT_EQ(absl::AlreadyExistsError("gs://bucket/subpath"),
             fs.CreateDir("gs://bucket/subpath", nullptr));
 }
 

@@ -798,6 +798,7 @@ cc_library(
     hdrs = ["ptx_compiler_helpers.h"],
     deps = [
         ":cuda_compute_capability",
+        "//xla/stream_executor:kernel_stats",
         "//xla/stream_executor:semantic_version",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/log",
@@ -805,6 +806,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_googlesource_code_re2//:re2",
     ],
 )
 
@@ -813,6 +815,7 @@ xla_cc_test(
     srcs = ["ptx_compiler_helpers_test.cc"],
     deps = [
         ":ptx_compiler_helpers",
+        "//xla/stream_executor:kernel_stats",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
@@ -1176,6 +1179,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
@@ -2336,6 +2340,7 @@ cuda_library(
     ],
     deps = [
         ":cub_sort_kernel_cuda_impl_{}".format(typename),
+        "//xla/backends/gpu:ffi",
         "//xla/ffi",
         "//xla/ffi:ffi_api",
         "//xla/stream_executor/cuda:cuda_status",

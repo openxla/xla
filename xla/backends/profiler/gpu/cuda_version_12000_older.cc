@@ -1,4 +1,4 @@
-/* Copyright 2020 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,19 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/global_device_id.h"
-
-#include "absl/strings/str_join.h"
+#include "absl/types/span.h"
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti_callbacks.h"
+#include "xla/backends/profiler/gpu/cuda_version_variants.h"
 
 namespace xla {
+namespace profiler {
+namespace cuda_versions {
 
-std::string GlobalDeviceIdsToString(absl::Span<GlobalDeviceId const> ids) {
-  std::vector<int64_t> values;
-  values.reserve(ids.size());
-  for (GlobalDeviceId id : ids) {
-    values.push_back(id.value());
-  }
-  return absl::StrJoin(values, ",");
+const CbidCategoryMap& GetExtraCallbackIdCategories12000() {
+  return EmptyCallbackIdCategories();
 }
 
+absl::Span<const CUpti_CallbackIdResource> GetCudaGraphTracingResourceCbids() {
+  return {};
+}
+
+}  // namespace cuda_versions
+
+}  // namespace profiler
 }  // namespace xla
