@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -97,11 +98,16 @@ absl::StatusOr<std::vector<std::pair<int64_t, int64_t>>> GetSourceTargetPairs(
 P2PConfig GetP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
                                   const Shape& shape, int64_t replica_count,
                                   int64_t partition_count);
+
 // Returns an execution stream override for P2P ops based on frontend
 // attributes of the given instruction. This should be used at thunk
 // construction time to stash the override for later use at runtime.
 std::optional<ExecutionStreamId> GetStreamIdOverride(
     const HloInstruction* instr);
+
+absl::StatusOr<const int64_t> GetCollectiveCurrentId(
+    Thunk::CollectiveExecuteParams* collective_params, const P2PConfig& config);
+
 }  // namespace gpu
 }  // namespace xla
 

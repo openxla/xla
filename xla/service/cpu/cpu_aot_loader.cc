@@ -32,6 +32,7 @@ limitations under the License.
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
+#include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/backends/cpu/codegen/execution_engine.h"
 #include "xla/backends/cpu/codegen/ir_compiler.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/cpu/cpu_aot_compilation_result.h"
 #include "xla/service/cpu/executable.pb.h"
-#include "xla/service/cpu/runtime_symbol_generator.h"
 #include "xla/service/executable.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
@@ -107,7 +107,7 @@ absl::StatusOr<std::unique_ptr<FunctionLibrary>> LoadFunctionLibrary(
   // Definition generator to link with XLA:CPU host runtime symbols.
   ExecutionEngine::DefinitionGenerator definition_generator =
       [](const llvm::DataLayout& data_layout) {
-        return std::make_unique<RuntimeSymbolGenerator>(data_layout);
+        return std::make_unique<BuiltinDefinitionGenerator>(data_layout);
       };
 
   ObjectLoader object_loader(/*num_dylibs=*/1,
@@ -116,7 +116,7 @@ absl::StatusOr<std::unique_ptr<FunctionLibrary>> LoadFunctionLibrary(
 
   for (size_t i = 0; i < object_loader.num_dylibs(); ++i) {
     object_loader.dylib(i).value()->addGenerator(
-        std::make_unique<RuntimeSymbolGenerator>(
+        std::make_unique<BuiltinDefinitionGenerator>(
             target_machine->createDataLayout()));
   }
 
@@ -190,25 +190,28 @@ CpuAotLoader::LoadAotCompilationResult(
   llvm::StringMap<bool> host_machine_features = llvm::sys::getHostCPUFeatures();
   auto compile_machine_features =
       absl::StrSplit(aot_result_proto.target_machine_options().features(), ',');
+  // Convert the supported features to a vector of strings.
+  std::vector<std::string> host_machine_features_vector;
+  for (const auto& [feature, supported] : host_machine_features) {
+    if (supported) {
+      host_machine_features_vector.push_back(feature.str());
+    }
+  }
 
   for (const absl::string_view feature : compile_machine_features) {
     if (!host_machine_features.contains(feature) ||
         !host_machine_features[feature]) {
-      // Convert the supported features to a vector of strings.
-      std::vector<std::string> host_machine_features_vector;
-      for (const auto& [feature, supported] : host_machine_features) {
-        if (supported) {
-          host_machine_features_vector.push_back(feature.str());
-        }
-      }
-
-      return Internal(
-          "Cannot load XLA:CPU AOT result. Target machine feature %s is not "
-          "supported on the host machine. Machine type used for XLA:CPU "
-          "compilation doesn't match the machine type for execution. Compile "
-          "machine features: [%s] vs host machine features: [%s]",
-          feature, absl::StrJoin(compile_machine_features, ","),
-          absl::StrJoin(host_machine_features_vector, ","));
+      // TODO: b/457415427 - Turn this warning into an error once a mechanism
+      // for passing target machine features to the CPU compiler is implemented.
+      LOG(ERROR)
+          << "Loading XLA:CPU AOT result. Target machine feature " << feature
+          << " is not  supported on the host machine. Machine type used for "
+             "XLA:CPU compilation doesn't match the machine type for "
+             "execution. Compile machine features: ["
+          << absl::StrJoin(compile_machine_features, ",")
+          << "] vs host machine features: ["
+          << absl::StrJoin(host_machine_features_vector, ",") << "]"
+          << ". This could lead to execution errors such as SIGILL.";
     }
   }
 

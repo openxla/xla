@@ -188,8 +188,11 @@ cc_library(
         ":tile_assignment",
         "//xla:array",
         "//xla:xla_data_proto_cc",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
@@ -201,7 +204,11 @@ cc_library(
     hdrs = ["named_sharding.h"],
     deps = [
         ":mesh_and_axis",
+        ":tile_assignment",
+        "//xla:shape_util",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -233,7 +240,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -439,6 +445,8 @@ xla_cc_test(
         "//xla:array",
         "//xla:array2d",
         "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
     ],

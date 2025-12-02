@@ -221,6 +221,11 @@ message DebugOptions {
   // below!
   optional bool xla_cpu_enable_fast_min_max = 140;
 
+  // When xla_enable_platform_dependent_math is true, we allow operations to use
+  // calculations that produce different results depending on the current
+  // machine.
+  optional bool xla_cpu_enable_platform_dependent_math = 425;
+
   // Call oneDNN custom call thunks in the CPU backend
   optional bool xla_cpu_experimental_onednn_custom_call = 412;
 
@@ -356,6 +361,10 @@ message DebugOptions {
   // supported on XLA:GPU and XLA:CPU.
   optional bool xla_dump_hlo_unoptimized_snapshots = 405;
 
+  // Enable communication optimization patterns specified in Enzyme. More
+  // details in http://shortn/_jXJ2VFoyMN.
+  optional bool xla_enable_enzyme_comms_opt = 429;
+
   // Denylist for cuDNN convolutions.
   optional string xla_gpu_algorithm_denylist_path = 128;
 
@@ -453,6 +462,11 @@ message DebugOptions {
   optional string xla_gpu_cuda_data_dir = 61;
 
   // Let GEMM fusion autotuning probe cuDNN as a backend.
+  //
+  // CAUTION:
+  // * HLO dot precision (e.g. `algorithm=dot_bf16_bf16_f32`) is ignored.
+  // * `tf32` matmuls are enabled unconditionally.
+  //
   // Current levels:
   // 0: Disabled.
   // 1: Enabled on Blackwell+ GPUs.
@@ -629,6 +643,15 @@ message DebugOptions {
   // Dump FDO profiles in a binary format to a separate file.
   optional bool xla_gpu_experimental_dump_fdo_profiles = 338;
 
+  // Dump the serialized GPU executables to 'gpu_executable' suffixed
+  // files in the directory specified by `xla_dump_to`.
+  // No-op if `xla_dump_to` isn't set, or during autotuning compilations.
+  //
+  // The dumped files are serialized `xla.ExecutableAndOptionsProto` messages,
+  // which contain the binary serialized `xla.gpu.GpuExecutableProto`, in the
+  // `serialized_executable` field.
+  optional bool xla_gpu_experimental_dump_gpu_executable = 427;
+
   // Enable windowed einsum(collective matmul) rewrite for all-to-all + gemm
   // This feature is still experimental and effective only
   // xla_gpu_multi_streamed_windowed_einsum is set to true.
@@ -658,9 +681,6 @@ message DebugOptions {
   // If true, enable heuristic based collective combining.
   optional bool xla_gpu_experimental_enable_heuristic_collective_combining =
       366;
-
-  // If true, enable buffer nan counter on thunks.
-  optional bool xla_gpu_experimental_enable_nan_counter_on_thunks = 423;
 
   // Enable NCCL symmetric buffers.
   optional bool xla_gpu_experimental_enable_nccl_symmetric_buffers = 406;
@@ -981,6 +1001,7 @@ message DebugOptions {
   reserved 385;  // xla_gpu_experimental_enable_dynamic_dot_search_space
   reserved "xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms";
   reserved 367;
+  reserved 423;  // xla_gpu_experimental_enable_checksum_tracing_on_thunks
 
   //--------------------------------------------------------------------------//
   // XLA:TPU options.
@@ -1292,13 +1313,19 @@ message DebugOptions {
   // Maximum number of buffers to print when debugging buffer assignment.
   optional int64 xla_debug_buffer_assignment_show_max = 251;
 
-  enum UnstableReductionDetectionMode {
-    UNSTABLE_REDUCTION_DETECTION_MODE_NONE = 0;
-    UNSTABLE_REDUCTION_DETECTION_MODE_WARNING = 1;
-    UNSTABLE_REDUCTION_DETECTION_MODE_FAIL = 2;
+  enum DetectionMode {
+    DETECTION_MODE_NONE = 0;
+    DETECTION_MODE_WARNING = 1;
+    DETECTION_MODE_FAIL = 2;
   }
   // Whether to enable checks for unstable reductions in computations.
-  optional UnstableReductionDetectionMode xla_detect_unstable_reductions = 403;
+  optional DetectionMode xla_detect_unstable_reductions = 403;
+
+  // Whether to enable checks for NaN values in computations.
+  optional DetectionMode xla_gpu_detect_nan = 426;
+
+  // Whether to enable checks for Inf values in computations.
+  optional DetectionMode xla_gpu_detect_inf = 428;
 
   reserved 275;  // was xla_gpu_enable_mlir_emitters
   reserved 281;  // was xla_gpu_max_mlir_kernels
@@ -1393,7 +1420,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 425
+  // Next id: 429
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

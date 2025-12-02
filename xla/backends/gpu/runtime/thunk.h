@@ -138,8 +138,7 @@ class Thunk {
     kAllToAllDone,
     kAllToAllStart,
     kBuffersDebugChecksum,
-    kBuffersDebugNanCount,
-    kCholesky,
+    kBuffersDebugFloatCheck,
     kCollectiveBroadcast,
     kCollectiveBroadcastDone,
     kCollectiveBroadcastStart,
@@ -607,18 +606,6 @@ class Thunk {
 using ThunkSequence = std::vector<std::unique_ptr<Thunk>>;
 
 std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);
-
-// A struct that defines a shaped slice, i.e., a BufferAllocation::Slice and its
-// shape.
-struct ShapedSlice {
-  BufferAllocation::Slice slice;
-  Shape shape;
-
-  static absl::StatusOr<ShapedSlice> FromProto(
-      const ShapedSliceProto& proto,
-      absl::Span<const BufferAllocation> buffer_allocations);
-  absl::StatusOr<ShapedSliceProto> ToProto() const;
-};
 
 // Returns if the thunk implements a reduction collective (all-reduce or
 // reduce-scatter).

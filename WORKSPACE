@@ -9,10 +9,10 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "5a9586022d8e9bdf7d5a7a36ec0232dc3a795ae6344ee3a3625b9fd290436669",
-    strip_prefix = "rules_ml_toolchain-08019214a1acf479496692743366faa6fdea9e61",
+    sha256 = "fc1292463a0ae26bd4b3dc8ffda6e12dc5fc68b432005fb97d2c4cbfe2fa6cea",
+    strip_prefix = "rules_ml_toolchain-96700b0ef73efb569ecb2509d15ea3d341bd53fd",
     urls = [
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/08019214a1acf479496692743366faa6fdea9e61.tar.gz",
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/96700b0ef73efb569ecb2509d15ea3d341bd53fd.tar.gz",
     ],
 )
 
@@ -157,3 +157,8 @@ nvshmem_redist_init_repository(
 load("//build_tools/pjrt_wheels:nightly.bzl", "nightly_timestamp_repo")
 
 nightly_timestamp_repo(name = "nightly_timestamp")
+
+# This is used for building release candidate PJRT wheels.
+load("//build_tools/pjrt_wheels:release_candidate.bzl", "rc_number_repo")
+
+rc_number_repo(name = "rc_number")

@@ -18,27 +18,31 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
+#include "google/protobuf/text_format.h"
+#include "xla/stream_executor/kernel_argument_packing_spec.h"
 #include "xla/stream_executor/kernel_spec.pb.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/protobuf.h"
 
 namespace stream_executor {
 namespace {
 
+using ::absl_testing::IsOkAndHolds;
+using ::absl_testing::StatusIs;
 using ::testing::Field;
 using ::testing::Optional;
 using ::tsl::proto_testing::EqualsProto;
-using ::tsl::testing::IsOkAndHolds;
-using ::tsl::testing::StatusIs;
+using ::tsl::proto_testing::ParseTextProtoOrDie;
 
 TEST(KernelLoaderSpec, InProcessSymbol) {
   void* symbol = absl::bit_cast<void*>(0xDEADBEEFul);
@@ -168,12 +172,92 @@ TEST(KernelLoaderSpec, CubinKernelToProto) {
               )pb")));
 }
 
-TEST(KernelLoaderSpec, InProcessSymbolToProto) {
-  auto spec = stream_executor::KernelLoaderSpec::CreateInProcessSymbolSpec(
-      nullptr, "kernel_name", 42);
+TEST(KernelLoaderSpec, InProcessSymbolFromProto) {
+  auto proto = ParseTextProtoOrDie<KernelLoaderSpecProto>(R"pb(
+    in_process_symbol { persistent_name: "persistent_kernel_name" }
+    kernel_name: "kernel_name"
+    arity: 42
+  )pb");
 
-  EXPECT_THAT(spec.ToProto(),
-              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  const auto symbol_resolver = [](absl::string_view name) {
+    return absl::bit_cast<void*>(static_cast<uintptr_t>(0x1234567890));
+  };
+
+  TF_ASSERT_OK_AND_ASSIGN(KernelLoaderSpec spec,
+                          KernelLoaderSpec::FromProto(proto, symbol_resolver));
+  EXPECT_EQ(spec.kernel_name(), "kernel_name");
+  EXPECT_EQ(spec.arity(), 42);
+  EXPECT_THAT(spec.in_process_symbol(),
+              Optional(Field(&InProcessSymbol::symbol,
+                             absl::bit_cast<void*>(
+                                 static_cast<uintptr_t>(0x1234567890)))));
+  EXPECT_THAT(spec.in_process_symbol(),
+              Optional(Field(&InProcessSymbol::persistent_name,
+                             "persistent_kernel_name")));
+
+  // If the symbol resolver is not provided, the spec cannot be deserialized.
+  EXPECT_THAT(KernelLoaderSpec::FromProto(proto),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(KernelLoaderSpec, InProcessSymbolToProto) {
+  auto non_serializable_spec =
+      stream_executor::KernelLoaderSpec::CreateInProcessSymbolSpec(
+          nullptr, "kernel_name", 42);
+
+  // InProcessSymbol specs without a persistent name cannot be serialized.
+  EXPECT_THAT(non_serializable_spec.ToProto(),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+
+  auto serializable_spec =
+      stream_executor::KernelLoaderSpec::CreateSerializableInProcessSymbolSpec(
+          "persistent_kernel_name", nullptr, "kernel_name", 42);
+  EXPECT_THAT(serializable_spec.ToProto(), IsOkAndHolds(EqualsProto(R"pb(
+                in_process_symbol { persistent_name: "persistent_kernel_name" }
+                kernel_name: "kernel_name"
+                arity: 42
+              )pb")));
+}
+
+TEST(kernelLoaderSpec, StoresKernelArgsPackingSpec) {
+  auto kernel_args_packing_spec_proto =
+      ParseTextProtoOrDie<KernelArgumentsPackingSpecProto>(
+          R"pb(
+            kernel_arguments {
+              relocations {
+                type: TYPE_BITS64_ABSOLUTE
+                argument_index: 0
+                offset: 0
+              }
+              data: "\x00\x00\x00\x00\x00\x00\x00\x00"
+            }
+            kernel_arguments { data: "\x34\x12\x00\x00" }
+          )pb");
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      KernelArgumentsPackingSpec kernel_args_packing_spec,
+      KernelArgumentsPackingSpec::FromProto(kernel_args_packing_spec_proto));
+
+  auto spec = KernelLoaderSpec::CreateOwningCudaCubinInMemorySpec(
+      std::vector<uint8_t>{'C', 'U', 'B', 'I', 'N'}, "kernel_name",
+      /*arity=*/42, std::move(kernel_args_packing_spec));
+
+  EXPECT_THAT(spec.ToProto(), IsOkAndHolds(EqualsProto(R"pb(
+                cubin { data: "CUBIN" }
+                kernel_name: "kernel_name"
+                arity: 42
+                kernel_args_packing_spec {
+                  kernel_arguments {
+                    relocations {
+                      type: TYPE_BITS64_ABSOLUTE
+                      argument_index: 0
+                      offset: 0
+                    }
+                    data: "\x00\x00\x00\x00\x00\x00\x00\x00"
+                  }
+                  kernel_arguments { data: "\x34\x12\x00\x00" }
+                }
+              )pb")));
 }
 
 }  // namespace

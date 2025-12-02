@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/hlo/analysis/indexing_test_utils.h"
 
-#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -30,6 +29,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
@@ -171,10 +171,10 @@ bool ApproximateMatch(absl::string_view lhs, absl::string_view rhs) {
   size_t rhs_length = rhs.size();
   size_t l = 0, r = 0;
   while (l < lhs_length || r < rhs_length) {
-    while (l < lhs_length && std::isspace(lhs[l])) {
+    while (l < lhs_length && absl::ascii_isspace(lhs[l])) {
       ++l;
     }
-    while (r < rhs_length && std::isspace(rhs[r])) {
+    while (r < rhs_length && absl::ascii_isspace(rhs[r])) {
       ++r;
     }
     if (l == lhs_length || r == rhs_length) {

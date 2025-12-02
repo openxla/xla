@@ -16,6 +16,7 @@ package(
         "//learning/brain/google/monitoring:__subpackages__",
         # copybara:uncomment "//learning/infra/mira/experimental/orbax_model:__subpackages__",
         # copybara:uncomment "//learning/pathways/util/platform:__subpackages__",
+        # copybara:uncomment "//third_party/pathways/util/platform:__subpackages__",
         # tensorflow/core:lib effectively exposes all targets under tensorflow/core/lib/**
         "//tensorflow/core:__pkg__",
         # tensorflow/core/platform:monitoring depends on this package
@@ -71,6 +72,29 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:thread_annotations",
+    ],
+)
+
+cc_library(
+    name = "counter_gauge",
+    hdrs = ["counter_gauge.h"],
+    deps = [
+        ":collection_registry",
+        ":metric_def",
+        "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+tsl_cc_test(
+    name = "counter_gauge_test",
+    srcs = ["counter_gauge_test.cc"],
+    deps = [
+        ":counter_gauge",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -191,6 +215,7 @@ tsl_cc_test(
     deps = [
         ":cell_reader",
         ":counter",
+        ":counter_gauge",
         ":gauge",
         ":percentile_sampler",
         ":sampler",

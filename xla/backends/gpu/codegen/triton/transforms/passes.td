@@ -28,6 +28,8 @@ def TritonXLAExtractInsertToTritonPass : Pass<"triton-xla-extract-insert-to-trit
   let options = [
     Option<"allow_tma_", "allow_tma", "bool", "false",
            "Whether to permit lowering to TMA.">,
+    Option<"num_stages_", "num_stages", "int", "1",
+           "Number of stages for pipelining.">,
   ];
   let dependentDialects = [
     "triton::TritonDialect",
@@ -223,7 +225,8 @@ def TensorLowerToTritonPass
   let summary = "Lowers tensor operations to their Triton equivalent.";
   let dependentDialects = [
     "tensor::TensorDialect",
-    "triton::TritonDialect"
+    "triton::TritonDialect",
+    "::xla::xtile::XTileDialect",
   ];
   let constructor = "CreateTensorLowerToTritonPass()";
 }
@@ -241,6 +244,17 @@ def TritonXLAMathToLibdevicePass
     Option<"triple_string_", "triple", "std::string", "",
            "Device triple string.">,
   ];
+}
+
+
+def XTileLowerToTritonPass
+    : Pass<"xtile-lower-to-triton", "mlir::ModuleOp"> {
+  let summary = "Lowers XTile operations to their Triton equivalent.";
+  let dependentDialects = [
+    "::mlir::triton::TritonDialect",
+    "::xla::xtile::XTileDialect",
+  ];
+  let constructor = "CreateXTileLowerToTritonPass()";
 }
 
 #endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_PASSES_TD_

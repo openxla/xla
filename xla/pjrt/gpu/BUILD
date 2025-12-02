@@ -199,6 +199,11 @@ xla_test(
             "broken",
             "no_oss",
         ],
+        "h100": [
+            # TODO(b/452317320): Re-enable once fixed.
+            "broken",
+            "no_oss",
+        ],
         "nvgpu_any": [
             "broken",
             "no_oss",
@@ -230,6 +235,7 @@ xla_test(
         "//xla/pjrt:local_device_state",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_executable",

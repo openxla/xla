@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
 #include "xla/hlo/ir/tile_assignment.h"
@@ -33,41 +34,55 @@ limitations under the License.
 
 namespace xla {
 
-// C++ representation for corresponding `OpSharding::Mesh` proto so same
+class AxisRef;
+
+// C++ representation for corresponding OpSharding::Mesh proto so same
 // documentation applies, except device assignment is represented in the array
 // format instead of list of device ids to align with various array specific
-// queries. Note that `TileAssignment` is used instead of `xla::Array` for
-// optimized array representation in iota based cases which is the most common
-// case.
+// queries. `TileAssignment` is used instead of `xla::Array` for optimized array
+// representation in the most common iota-based cases.
 //
-// Example: device_assignment {{3, 0, 2}, {1, 4, 5}} with axes names {"data",
-// "model"} represents the mesh ["data"=2, "model"=3].
+// - device_assignment_.dimensions() represents the axis sizes.
+// - device_assignment_.array() represents the list of device IDs.
+//
+// For maximal mesh, axes_names is empty and device_assignment_ contains the
+// single device id.
+//
+// Example: device_assignment {{3, 0, 2}, {1, 4, 5}} with axes names
+// {"data", "model"} represents the mesh ["data"=2, "model"=3].
 class Mesh {
  public:
+  // Empty mesh
+  explicit Mesh() = default;
+
+  // Maximal Mesh
+  explicit Mesh(int64_t device_id) : device_assignment_(device_id) {}
+
   // Constructs an iota device assignment mesh with given axes sizes and names.
   //
   // Example: axes_sizes {2, 3} and axes_names {"data", "model"} represent the
   // mesh ["data"=2, "model"=3] with iota device list. We use `TileAssignment`
   // optimized for iota based cases which will not store the entire array.
   explicit Mesh(absl::Span<const int64_t> axes_sizes,
-                absl::Span<const std::string> axes_names)
+                absl::Span<const absl::string_view> axes_names)
       : Mesh(TileAssignment(axes_sizes), axes_names) {}
 
   // Constructs a mesh with given device assignment and axes names. This ctor
   // should **ONLY** be used for non-iota based device assignments.
   explicit Mesh(Array<int64_t> device_assignment,
-                absl::Span<const std::string> axes_names)
+                absl::Span<const absl::string_view> axes_names)
       : Mesh(TileAssignment(std::make_shared<Array<int64_t>>(
                  std::move(device_assignment))),
              axes_names) {}
 
   explicit Mesh(TileAssignment device_assignment,
-                absl::Span<const std::string> axes_names)
-      : device_assignment_(std::move(device_assignment)),
-        axes_names_(axes_names.begin(), axes_names.end()) {
-    CHECK_EQ(device_assignment_.dimensions().size(), axes_names_.size())
-        << "Number of axes names must match number of dimensions in the "
-           "device assignment.";
+                absl::Span<const absl::string_view> axes_names);
+
+  // Returns whether this mesh is a maximal-sharding mesh.
+  //
+  // A maximal-sharding mesh contains an empty axis list and a single device id.
+  bool IsMaximal() const {
+    return axes_names_.empty() && device_assignment_.num_elements() == 1;
   }
 
   bool operator==(const Mesh& other) const {
@@ -107,7 +122,7 @@ class Mesh {
 
   static Mesh FromProto(const MeshProto& proto);
 
-  TileAssignment device_assignment() const { return device_assignment_; }
+  const TileAssignment& device_assignment() const { return device_assignment_; }
   std::vector<std::string> axis_names() const { return axes_names_; }
   absl::Span<const int64_t> axis_sizes() const {
     return device_assignment_.dimensions();
@@ -117,6 +132,7 @@ class Mesh {
   }
 
  private:
+  absl::Status ValidateMesh();
   // Dimensions of the `device_assignment_` array correspond to the axes of the
   // mesh.
   TileAssignment device_assignment_;
@@ -142,16 +158,9 @@ class AxisRef {
   std::optional<SubAxis> sub_axis_info_;
 
  public:
-  explicit AxisRef(int64_t mesh_axis_index)
-      : mesh_axis_index_(mesh_axis_index) {}
+  explicit AxisRef(int64_t mesh_axis_index);
 
-  explicit AxisRef(int64_t mesh_axis_index, SubAxis sub_axis_info)
-      : mesh_axis_index_(mesh_axis_index), sub_axis_info_(sub_axis_info) {}
-
-  explicit AxisRef(int64_t mesh_axis_index, int64_t sub_axis_pre_size,
-                   int64_t sub_axis_size)
-      : mesh_axis_index_(mesh_axis_index),
-        sub_axis_info_({sub_axis_pre_size, sub_axis_size}) {}
+  explicit AxisRef(int64_t mesh_axis_index, SubAxis sub_axis_info);
 
   bool operator==(const xla::AxisRef& other) const {
     if (mesh_axis_index_ != other.mesh_axis_index_) {
@@ -185,10 +194,24 @@ class AxisRef {
   static AxisRef FromProto(const AxisRefProto& proto);
 
   bool CanCoexist(const AxisRef& other) const;
+  bool Overlaps(const AxisRef& other) const;
+  bool CanCoexistWithoutOverlap(const AxisRef& other) const;
 
+  // Validates that the given mesh is compatible for this axis ref.
+  absl::Status Validate(const Mesh& mesh) const;
   int64_t mesh_axis_index() const { return mesh_axis_index_; }
   std::optional<SubAxis> sub_axis_info() const { return sub_axis_info_; }
+
+ private:
+  absl::Status ValidateAxisRef();
 };
+
+bool AxesCanCoexistWithoutOverlap(absl::Span<const AxisRef> axes);
+
+// The span of axes is valid if (1) all axes are valid for the given mesh, and
+// (2) the axes can coexist without overlap.
+absl::Status ValidateSpanOfAxes(absl::Span<const AxisRef> axes,
+                                const Mesh& mesh);
 
 }  // namespace xla
 

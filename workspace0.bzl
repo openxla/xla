@@ -140,10 +140,10 @@ def workspace():
     if "rules_ml_toolchain" not in native.existing_rules():
         http_archive(
             name = "rules_ml_toolchain",
-            sha256 = "5a9586022d8e9bdf7d5a7a36ec0232dc3a795ae6344ee3a3625b9fd290436669",
-            strip_prefix = "rules_ml_toolchain-08019214a1acf479496692743366faa6fdea9e61",
+            sha256 = "fc1292463a0ae26bd4b3dc8ffda6e12dc5fc68b432005fb97d2c4cbfe2fa6cea",
+            strip_prefix = "rules_ml_toolchain-96700b0ef73efb569ecb2509d15ea3d341bd53fd",
             urls = [
-                "https://github.com/google-ml-infra/rules_ml_toolchain/archive/08019214a1acf479496692743366faa6fdea9e61.tar.gz",
+                "https://github.com/google-ml-infra/rules_ml_toolchain/archive/96700b0ef73efb569ecb2509d15ea3d341bd53fd.tar.gz",
             ],
         )
 

@@ -30,6 +30,23 @@ xtile.entry_func @too_many_tile_ids(%input: memref<1024xf32>, %id0: index, %id1:
 
 // -----
 
+xtile.entry_func @correct_opaque_args(
+  %input: memref<1024xf32>, %opaque0: index, %opaque1: index, %id1: index)
+  attributes {num_opaque_args = 2 : i32}  {
+  xtile.return
+}
+
+// -----
+
+// expected-error@+1 {{entry function arguments should be of the form (arg: memref..., tile_id: index)}}
+xtile.entry_func @wrong_opaque_args(
+  %input: memref<1024xf32>, %opaque0: index, %opaque1: index, %id1: index)
+  attributes {num_opaque_args = 1 : i32}  {
+  xtile.return
+}
+
+// -----
+
 func.func @incorrect_full_shape_extract(%arg: memref<1024xf32>) -> tensor<10xf32> {
   %offset = arith.constant 0 : index
   // expected-error@+1 {{full tile shape size: 2 does not match rank of buffer: 1}}
@@ -99,3 +116,12 @@ func.func @type_mismatch_insert(%src: tensor<24xf64>, %dst: memref<1024xf32>) {
   xtile.insert %src into %dst[%offset][24][1] : tensor<24xf64> -> memref<1024xf32>
   return
 }
+
+
+// -----
+
+func.func @dot_scaled(%lhs: tensor<128x128xf32>, %lhs_scale: tensor<128x4xi8>, %rhs: tensor<128x256xf32>, %rhs_scale: tensor<256x4xi8>, %acc: tensor<128x256xf32>) -> tensor<128x256xf32> {
+  %0 = xtile.dot_scaled %lhs scale %lhs_scale, %rhs scale %rhs_scale {fastMath = true} : tensor<128x128xf32>, tensor<128x4xi8> * tensor<128x256xf32>, tensor<256x4xi8> -> tensor<128x256xf32>
+  return %0 : tensor<128x256xf32>
+}
+

@@ -21,6 +21,7 @@ limitations under the License.
 #include <numeric>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -131,66 +132,14 @@ void HandleMultiAxisRefPerDimension(std::vector<AxisRef>& axes,
   out_aggregate_axes = permuted_aggregate_axes;
 }
 
-bool ValidateSingleDimensionAxes(int64_t dim, std::vector<AxisRef>& axes,
-                                 const Mesh& mesh_) {
-  // If there's only one axis, nothing to check.
-  if (axes.size() <= 1) {
-    return true;
-  }
-  // --- Step 1: Deduplication ---
-  // If one is a "full" axis (no sub_axis_info), it subsumes all other AxisRefs
-  // with sub_axis_info.
-  for (const AxisRef& axis : axes) {
-    if (!axis.sub_axis_info().has_value()) {
-      LOG(WARNING) << "MeshAxesReplicaGroupList: Redundant axis definition at "
-                      "dimension: "
-                   << dim
-                   << ". Keeping only the full axis: " << axis.ToString(mesh_);
-      axes = {axis};
-      return true;
-    }
-  }
-  // --- Step 2: Overlap Check ---
-  // At this point, all remaining axes MUST have sub_axis_info().
-  // Verify that the remaining multiple sub-axes do not overlap.
-  for (int64_t i = 0; i < axes.size() - 1; ++i) {
-    for (int64_t j = i + 1; j < axes.size(); ++j) {
-      // CHECK will terminate the program on failure, matching original
-      // behavior.
-      CHECK(axes[i].CanCoexist(axes[j]))
-          << "Overlapping sub-axes detected: " << axes[i].ToString(mesh_)
-          << " and " << axes[j].ToString(mesh_);
-    }
-  }
-  return true;  // Passed all checks for this dimension.
-}
-
 MeshAxesReplicaGroupList::MeshAxesReplicaGroupList(Mesh mesh,
                                                    std::vector<AxisRef> axes)
     : mesh_(std::move(mesh)), axes_(std::move(axes)) {
-  if (num_devices_per_group() == 1) {
-    LOG(ERROR) << "MeshAxesReplicaGroupList: " << ToString()
-               << " has only one device per replica group.";
-  }
+  CHECK_GT(num_devices_per_group(), 1)
+      << "MeshAxesReplicaGroupList: " << ToString()
+      << " has only one device per replica group.";
 
-  absl::flat_hash_set<int64_t> dimensions;
-  absl::flat_hash_map<int64_t, std::vector<AxisRef>> dim_to_axes;
-  for (const AxisRef& axis : axes_) {
-    dim_to_axes[axis.mesh_axis_index()].push_back(axis);
-    dimensions.insert(axis.mesh_axis_index());
-    if (axis.sub_axis_info().has_value()) {
-      CHECK(mesh_.axis_size(axis.mesh_axis_index()) %
-                axis.sub_axis_info()->next_pre_size() ==
-            0)
-          << "Next pre-size must divide the full axis size.";
-    }
-  }
-
-  // Validate input AxisRefs.
-  for (int64_t dim : dimensions) {
-    std::vector<AxisRef>& axes = dim_to_axes[dim];
-    CHECK(ValidateSingleDimensionAxes(dim, axes, mesh_));
-  }
+  CHECK_OK(ValidateSpanOfAxes(axes_, mesh_));
 }
 
 int64_t MeshAxesReplicaGroupList::num_replica_groups() const {
@@ -270,16 +219,14 @@ void MeshAxesReplicaGroupList::InitializeDimToReshapeAndAggregateAxes() {
   dim_to_reshape_and_aggregate_axes_ = dim_map;
 }
 
-std::vector<std::vector<int64_t>>
-MeshAxesReplicaGroupList::flattened_replica_groups() {
+std::pair<std::vector<int64_t>, std::vector<int64_t>>
+MeshAxesReplicaGroupList::ComputeReindexedAxes() {
   if (!dim_to_reshape_and_aggregate_axes_.has_value()) {
     InitializeDimToReshapeAndAggregateAxes();
   }
-
+  std::vector<int64_t> reindex_axis_sizes, reindexed_grouped_axes;
   absl::flat_hash_map<int64_t, ReshapeAndAggregateAxes> dim_map =
       dim_to_reshape_and_aggregate_axes_.value();
-  std::vector<int64_t> reindex_axis_sizes;
-  std::vector<int64_t> reindexed_grouped_axes;
   for (int64_t i = 0; i < mesh_.axis_sizes().size(); ++i) {
     int64_t axis_size = mesh_.axis_size(i);
     auto it = dim_map.find(i);
@@ -296,6 +243,13 @@ MeshAxesReplicaGroupList::flattened_replica_groups() {
       reindexed_grouped_axes.push_back(aggregate_dim + offset_index);
     }
   }
+  return std::make_pair(reindex_axis_sizes, reindexed_grouped_axes);
+}
+
+std::vector<std::vector<int64_t>>
+MeshAxesReplicaGroupList::flattened_replica_groups() {
+  std::vector<int64_t> reindex_axis_sizes, reindexed_grouped_axes;
+  std::tie(reindex_axis_sizes, reindexed_grouped_axes) = ComputeReindexedAxes();
   return get_replica_groups_for_full_axes(
       mesh_, reindex_axis_sizes, reindexed_grouped_axes, num_replica_groups(),
       num_devices_per_group());
@@ -336,6 +290,30 @@ MeshAxesReplicaGroupList MeshAxesReplicaGroupList::FromProto(
     axes.push_back(AxisRef::FromProto(axis_proto));
   }
   return MeshAxesReplicaGroupList(mesh, axes);
+}
+
+IotaReplicaGroupList MeshAxesReplicaGroupList::ToIotaReplicaGroupList() {
+  CHECK(mesh_.device_assignment().iota().has_value());
+  std::vector<int64_t> reshape_dims, reindexed_grouped_axes;
+  std::tie(reshape_dims, reindexed_grouped_axes) = ComputeReindexedAxes();
+
+  std::vector<int> transpose_perm;
+  for (int64_t reshape_dim = 0; reshape_dim < reshape_dims.size();
+       ++reshape_dim) {
+    if (!absl::c_linear_search(reindexed_grouped_axes, reshape_dim)) {
+      transpose_perm.push_back(reshape_dim);
+    }
+  }
+  for (int64_t grouped_axis : reindexed_grouped_axes) {
+    transpose_perm.push_back(grouped_axis);
+  }
+
+  return IotaReplicaGroupList(num_replica_groups(), num_devices_per_group(),
+                              reshape_dims, transpose_perm);
+}
+
+CollectiveDeviceList MeshAxesReplicaGroupList::ToCollectiveDeviceList() {
+  return CollectiveDeviceList(flattened_replica_groups());
 }
 
 /************** IotaReplicaGroupList implementation ***************************/
@@ -423,6 +401,16 @@ const std::vector<ReplicaGroup>& CollectiveDeviceList::replica_groups() const {
     CHECK(replica_groups_ != nullptr);
   }
   return *replica_groups_;
+}
+
+std::vector<std::vector<int64_t>>
+CollectiveDeviceList::flattened_replica_groups() const {
+  std::vector<std::vector<int64_t>> result;
+  result.reserve(replica_groups().size());
+  for (const ReplicaGroup& group : replica_groups()) {
+    result.emplace_back(group.replica_ids().begin(), group.replica_ids().end());
+  }
+  return result;
 }
 
 std::string CollectiveDeviceList::ToString(

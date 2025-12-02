@@ -307,6 +307,7 @@ cc_library(
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_cost_analysis",
         "//xla/tsl/framework:allocator",
+        "//xla/tsl/lib/gtl:int_type",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:coordination_service_proto_cc",
@@ -525,6 +526,7 @@ cc_library(
     deps = [
         "//xla/pjrt/proto:pjrt_value_type_proto_cc",
         "//xla/tsl/lib/gtl:int_type",
+        "@com_google_absl//absl/container:inlined_vector",
     ],
 )
 
@@ -888,6 +890,15 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:fingerprint",
+    ],
+)
+
+cc_library(
+    name = "tpu_constants",
+    hdrs = ["tpu_constants.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 

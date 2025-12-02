@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/hlo/analysis/indexing_map_serialization.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cstdint>
 #include <optional>
 #include <ostream>
@@ -26,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
+#include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -169,7 +169,7 @@ class Parser {
 
  private:
   void ConsumeWhitespace() {
-    while (it_ != input_.end() && std::isspace(*it_)) {
+    while (it_ != input_.end() && absl::ascii_isspace(*it_)) {
       ++it_;
     }
   }
@@ -302,10 +302,10 @@ Token Parser::GetNextTokenImpl() {
     return Token{"", Token::Kind::kEOF};
   }
   auto start = it_;
-  if (std::isalpha(*it_)) {
+  if (absl::ascii_isalpha(*it_)) {
     // Variable name.
-    while (it_ != input_.end() &&
-           (std::isalpha(*it_) || std::isdigit(*it_) || *it_ == '_')) {
+    while (it_ != input_.end() && (absl::ascii_isalpha(*it_) ||
+                                   absl::ascii_isdigit(*it_) || *it_ == '_')) {
       ++it_;
     }
     StringRef spelling = input_.substr(start - input_.data(), it_ - start);
@@ -326,9 +326,9 @@ Token Parser::GetNextTokenImpl() {
     }
     return Token{spelling, Token::Kind::kVarName};
   }
-  if (std::isdigit(*it_)) {
+  if (absl::ascii_isdigit(*it_)) {
     auto start = it_;
-    while (it_ != input_.end() && std::isdigit(*it_)) {
+    while (it_ != input_.end() && absl::ascii_isdigit(*it_)) {
       ++it_;
     }
 
@@ -342,9 +342,9 @@ Token Parser::GetNextTokenImpl() {
         ++it_;
         return Token{"->", Token::Kind::kArrow};
       }
-      if (std::isdigit(*it_)) {
+      if (absl::ascii_isdigit(*it_)) {
         auto start = it_ - 1;
-        while (it_ != input_.end() && std::isdigit(*it_)) {
+        while (it_ != input_.end() && absl::ascii_isdigit(*it_)) {
           ++it_;
         }
         StringRef spelling = input_.substr(start - input_.data(), it_ - start);

@@ -87,7 +87,11 @@ def EntryFuncOp : XTile_Op<"entry_func", [
                        TypeAttrOf<FunctionType>:$function_type,
                        OptionalAttr<DictArrayAttr>:$arg_attrs,
                        OptionalAttr<XTile_TilingInfoAttr>:$tile_info,
-                       OptionalAttr<DictArrayAttr>:$res_attrs
+                       OptionalAttr<DictArrayAttr>:$res_attrs,
+                       // The number of arguments that are opaque to tiling
+                       // infrastructure and hence do not correspond to a memref
+                       // argument.
+                       DefaultValuedAttr<I32Attr, "0">:$num_opaque_args
   );
 
   // The entry function has no return values.
@@ -106,7 +110,13 @@ def EntryFuncOp : XTile_Op<"entry_func", [
     // Helper Methods
     //===------------------------------------------------------------------===//
     mlir::ValueRange getBufferArgs() {
-      return getBody().getArguments().drop_back();
+      // +1 for the tile id argument.
+      return getBody().getArguments().drop_back(getNumOpaqueArgs() + 1);
+    }
+
+    mlir::ValueRange getOpaqueArgs() {
+      return getBody().getArguments().take_back(getNumOpaqueArgs() + 1)
+          .drop_back();
     }
 
     mlir::Value getTileId() {
@@ -202,26 +212,40 @@ def InsertTileOp : XTile_Op<"insert", [TiledBufferInterface]> {
   let hasVerifier = 1;
 }
 
-// TODO(willfroom): Revisit if/where these are needed after the migration of the
-// triton emitter to support 0D tensors is complete.
-def ToScalarOp : XTile_Op<"to_scalar", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
-  let summary = "Converts a 0D tensor to a scalar";
-  let arguments = (ins 0DTensorOf<[AnyType]>:$input);
-  let results = (outs AnyType:$output);
 
-  let assemblyFormat = "$input `:` type($input) attr-dict";
+//
+// DotScaled Op
+//
+// TODO(basioli): This op was copied from the triton dialect. If we want to use 
+// it more we should probably consider documenting it properly, and including 
+// more checks (e.x. similar to the Triton DotOpInterface).
+def DotScaledOp : XTile_Op<"dot_scaled", [Pure, AttrSizedOperandSegments]> {
+    let summary = "dot_scaled";
 
-  let hasFolder = 1;
-}
+    let description = [{
+        $result = matrix_multiply(scale($lhs, $lhs_scale), scale($rhs, $rhs_scale)).
+        Where scale(x, s) is a function that applies the scale per block following microscaling spec.
+    }];
 
-def ToTensorOp : XTile_Op<"to_tensor", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
-  let summary = "Converts a scalar to a 0D tensor";
-  let arguments = (ins AnyType:$input);
-  let results = (outs 0DTensorOf<[AnyType]>:$output);
+    let arguments = (
+      ins
+      // inputs are floats if we have a type for them, otherwise (fp4),
+      // they are packed in pairs in an I8Tensor
+      RankedTensorOf<[AnyFloat,I8]>:$lhs,
+      RankedTensorOf<[AnyFloat,I8]>:$rhs,
+      Optional<RankedTensorOf<[AnyFloat,I8]>>:$lhs_scale,
+      Optional<RankedTensorOf<[AnyFloat,I8]>>:$rhs_scale,
+      BoolAttr:$fastMath,
+      DefaultValuedAttr<BoolAttr, "true">:$lhs_k_pack,
+      DefaultValuedAttr<BoolAttr, "true">:$rhs_k_pack
+    );
 
-  let assemblyFormat = "$input `:` type($input) attr-dict";
+    let results = (outs RankedTensorOf<[AnyFloat]>:$result);
 
-  let hasFolder = 1;
+    let assemblyFormat = [{
+      $lhs (`scale` $lhs_scale^)? `,` $rhs (`scale` $rhs_scale^)? attr-dict
+      `:` type($lhs) (`,` type($lhs_scale)^)? `*` type($rhs) (`,` type($rhs_scale)^)? `->` type($result)
+    }];
 }
 
 #endif // XLA_CODEGEN_XTILE_IR_XTILE_OPS

@@ -294,18 +294,26 @@ CallInliner::Inline(HloInstruction* call) {
   // inlined instructions.
   if (call->has_frontend_attributes()) {
     const FrontendAttributes& call_attributes = call->frontend_attributes();
-    std::string has_fuse =
-        call_attributes.map().contains("MUST_FUSE")      ? "MUST_FUSE"
-        : call_attributes.map().contains("MAXIMAL_FUSE") ? "MAXIMAL_FUSE"
-                                                         : "";
-    if (!has_fuse.empty()) {
+    for (auto maybe_attribute :
+         {call_attributes.map().contains("MUST_FUSE")
+              ? std::make_optional("MUST_FUSE")
+          : call_attributes.map().contains("MAXIMAL_FUSE")
+              ? std::make_optional("MAXIMAL_FUSE")
+              : std::nullopt,
+          call_attributes.map().contains("mosaic_fusion_group")
+              ? std::make_optional("mosaic_fusion_group")
+              : std::nullopt}) {
+      if (!maybe_attribute.has_value()) {
+        continue;
+      }
+      const auto attribute = *maybe_attribute;
       for (auto instruction : callee->instructions()) {
         // Do so for only fusible instructions.
         if (instruction->IsFusible()) {
           FrontendAttributes frontend_attributes =
               instruction->frontend_attributes();
           frontend_attributes.mutable_map()->insert(
-              {has_fuse, call_attributes.map().at(has_fuse)});
+              {attribute, call_attributes.map().at(attribute)});
           instruction->set_frontend_attributes(frontend_attributes);
         }
       }
@@ -505,7 +513,7 @@ absl::StatusOr<bool> CallInliner::RunWithInlineMap(
   return did_mutate;
 }
 
-absl::StatusOr<bool> CallInliner::Run(
+absl::StatusOr<bool> CallInliner::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   return RunWithInlineMap(module, std::nullopt, execution_threads);
