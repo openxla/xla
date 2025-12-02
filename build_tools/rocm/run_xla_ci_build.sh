@@ -41,6 +41,7 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     --disk_cache=${BAZEL_DISK_CACHE_DIR} \
     --build_tag_filters=$TAG_FILTERS \
     --test_tag_filters=$TAG_FILTERS \
+    --test_timeout=920,2400,7200,9600 \
     --profile=/tf/pkg/profile.json.gz \
     --keep_going \
     --test_env=TF_TESTS_PER_GPU=1 \

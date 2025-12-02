@@ -20,6 +20,8 @@ race:lld::lldMain
 race:llvm::*
 race:xla::MutableLiteralBase::~MutableLiteralBase*
 race:xla::LocalDeviceState::AllocateAndRecordEvent*
-race:xla::HloRunnerPjRt::TransferLiteralFromDevice*
+race:xla::HloRunnerPjRt::TransferLiteralsFromDevice*
 race:xla::Service::TransferFromOutfeed*
 race:xla::gpu::OutfeedManager::TransferLiteralFromOutfeed*
+race:xla::ShapeUtil::MakeShape*
+race:xla::gpu::HostExecuteStartThunk::ExecuteOnStream*
