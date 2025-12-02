@@ -3125,7 +3125,6 @@ cc_library(
     srcs = ["computation_placer.cc"],
     hdrs = ["computation_placer.h"],
     deps = [
-        ":global_device_id",
         "//xla:array2d",
         "//xla:literal",
         "//xla:shape_util",
@@ -3133,6 +3132,7 @@ cc_library(
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/runtime:device_id",
         "//xla/stream_executor:platform",
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/host:host_platform_id",
@@ -3174,9 +3174,9 @@ cc_library(
     name = "computation_placer_hdr",
     hdrs = ["computation_placer.h"],
     deps = [
-        ":global_device_id",
         "//xla:array2d",
         "//xla:xla_data_proto_cc",
+        "//xla/runtime:device_id",
         "//xla/stream_executor:platform",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
@@ -5217,7 +5217,6 @@ cc_library(
     deps = [
         ":collective_permute_cycle",
         ":computation_placer",
-        ":global_device_id",
         ":pattern_matcher",
         ":source_target_pairs",
         "//xla:executable_run_options",
@@ -5229,6 +5228,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:collective_op_group_mode",
         "//xla/hlo/ir:hlo",
+        "//xla/runtime:device_id",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
@@ -5250,7 +5250,6 @@ xla_cc_test(
         ":collective_ops_utils",
         ":collective_permute_cycle",
         ":computation_placer",
-        ":global_device_id",
         ":hlo_module_config",
         ":source_target_pairs",
         "//xla:array2d",
@@ -5260,6 +5259,7 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/runtime:device_id",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
@@ -5324,7 +5324,6 @@ xla_cc_test(
 
 cc_library(
     name = "global_device_id",
-    srcs = ["global_device_id.cc"],
     hdrs = ["global_device_id.h"],
     deps = [
         "//xla/runtime:device_id",
