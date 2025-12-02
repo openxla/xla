@@ -552,14 +552,14 @@ std::vector<int64_t> GetBlockCounts(absl::Span<const int64_t> shape,
 PackedTranspose::PackedTranspose(const HloFusionAnalysis& analysis,
                                  const TransposeSpec& spec,
                                  absl::Span<const int64_t> output_block_tile,
-                                 int64_t num_warps,
+                                 int64_t num_shmem_groups,
                                  SymbolicExprContext* symbolic_expr_context)
     : TransposeFusionBase(analysis, symbolic_expr_context),
       spec_(spec),
       output_tile_(output_block_tile.begin(), output_block_tile.end()),
       input_tile_(Permute(output_tile_, spec_.canonical_inv_permutation)),
       block_counts_(GetBlockCounts(spec_.canonical_output_shape, output_tile_)),
-      num_warps_per_block_(num_warps),
+      num_shmem_groups_per_block_(num_shmem_groups),
       tile_size_t1_(input_tile_[spec_.dim_T1_input_id()]),
       tile_size_a_(input_tile_[spec_.dim_A_id()]),
       tile_size_t2_(input_tile_[spec_.dim_T2_input_id()]),
@@ -567,7 +567,7 @@ PackedTranspose::PackedTranspose(const HloFusionAnalysis& analysis,
       populated_shmem_rows_(tile_size_t2_) {
   VLOG(5) << "Transpose spec: " << spec.ToString()
           << "Output block tile: " << absl::StrJoin(output_block_tile, ", ")
-          << "\nNumber of warps: " << num_warps << "\n";
+          << "\nNumber of shmem groups: " << num_shmem_groups << "\n";
   auto bits_per_element = GetBitwidth(spec_.elem_type());
   vector_size_ = kBankBitwidth / bits_per_element;
   CHECK_GE(vector_size_, 1);
@@ -640,36 +640,42 @@ PackedTranspose::WriteResult PackedTranspose::EmitWriteToShMemMlir(
       GetShmemWriteIndexing(symbolic_expr_context_);
 
   int64_t shmem_dim = kNumShmemBanks * vector_size_;
-  SmallVector<Value> shmem_tensors;
+
+  // Allocate all shared memory tensors upfront (one per transpose).
+  SmallVector<Value> shmem_inits;
   for (auto* transpose : shmem_transposes_) {
     Type elem_type = emitters::PrimitiveTypeToMlirType(
         transpose->shape().element_type(), builder);
     Value shmem = builder.create<AllocateSharedOp>(
         RankedTensorType::get({shmem_dim, shmem_dim}, elem_type));
-
-    auto tids_and_bids = EmitThreadAndBlockIds(builder);
-    Value updated_shmem =
-        emitters::EmitXlaLoopOp(
-            builder, tids_and_bids, shmem, input_indexing,
-            [&](ImplicitLocOpBuilder& nested_b, ValueRange ivs,
-                ValueRange input_indices,
-                ValueRange iter_arg) -> SmallVector<Value> {
-              Value input_element =
-                  emitters::ProvideParameter(root_computation, transpose,
-                                             /*operand_index=*/0, input_indices,
-                                             call_target_provider,
-                                             entry_function, nested_b)
-                      .front();
-              auto shmem_indices = emitters::ApplyIndexing(
-                  shmem_write_indexing, tids_and_bids, ivs, nested_b);
-              return nested_b
-                  .create<mt::InsertOp>(input_element, iter_arg.front(),
-                                        shmem_indices)
-                  ->getResults();
-            })
-            .front();
-    shmem_tensors.push_back(updated_shmem);
+    shmem_inits.push_back(shmem);
   }
+
+  // Create a single loop that writes to all shared memory tensors.
+  auto tids_and_bids = EmitThreadAndBlockIds(builder);
+  SmallVector<Value> shmem_tensors = emitters::EmitXlaLoopOp(
+      builder, tids_and_bids, shmem_inits, input_indexing,
+      [&](ImplicitLocOpBuilder& nested_b, ValueRange ivs,
+          ValueRange input_indices,
+          ValueRange iter_args) -> SmallVector<Value> {
+        SmallVector<Value> updated_shmems;
+        auto shmem_indices = emitters::ApplyIndexing(
+            shmem_write_indexing, tids_and_bids, ivs, nested_b);
+
+        // Process all transposes in a single loop iteration.
+        for (auto [transpose, shmem_tensor] :
+             llvm::zip(shmem_transposes_, iter_args)) {
+          Value input_element =
+              emitters::ProvideParameter(root_computation, transpose,
+                                         /*operand_index=*/0, input_indices,
+                                         call_target_provider, entry_function,
+                                         nested_b)
+                  .front();
+          updated_shmems.push_back(nested_b.create<mt::InsertOp>(
+              input_element, shmem_tensor, shmem_indices));
+        }
+        return updated_shmems;
+      });
 
   // Produce all side outputs and then write them.
   int num_inputs = fusion.fused_instructions_computation()->num_parameters();
@@ -825,17 +831,19 @@ IndexingMap PackedTranspose::GetInputIndexing(
       KernelFusionInterface::kIndexingMapThreadIdxDims[0], mlir_context);
   auto block_id = getAffineDimExpr(
       KernelFusionInterface::kIndexingMapBlockIdxDims[0], mlir_context);
-  auto warp_size = kNumShmemBanks;
-  auto lane_id = thread_id % warp_size;
-  auto warp_id = thread_id.floorDiv(warp_size);
-  std::vector<IndexingMap::Variable> dim_vars = DimVarsFromGPUGrid(
-      {num_warps_per_block_ * warp_size, 1, 1, Product(block_counts_), 1, 1});
+  auto shmem_group_size = kNumShmemBanks;
+  auto lane_id = thread_id % shmem_group_size;
+  auto shmem_group_id = thread_id.floorDiv(shmem_group_size);
+  std::vector<IndexingMap::Variable> dim_vars =
+      DimVarsFromGPUGrid({num_shmem_groups_per_block_ * shmem_group_size, 1, 1,
+                          Product(block_counts_), 1, 1});
 
   // Range variables.
   auto loop = getAffineSymbolExpr(0, mlir_context);
   auto vector_element_id = getAffineSymbolExpr(1, mlir_context);
   std::vector<IndexingMap::Variable> range_vars = RangeVarsFromTensorSizes(
-      {{CeilOfRatio(tile_size_t2_, num_warps_per_block_), vector_size_}});
+      {{CeilOfRatio(tile_size_t2_, num_shmem_groups_per_block_),
+        vector_size_}});
 
   // Block offsets.
   auto block_ids = DelinearizeInBoundsIndex(block_id, block_counts_);
@@ -843,7 +851,7 @@ IndexingMap PackedTranspose::GetInputIndexing(
                block_ids.begin());
 
   // Shmem expressions.
-  auto shmem_row = loop * num_warps_per_block_ + warp_id;
+  auto shmem_row = loop * num_shmem_groups_per_block_ + shmem_group_id;
   auto shmem_col = lane_id * vector_size_ + vector_element_id;
 
   // Offsets within the block.
@@ -887,20 +895,21 @@ IndexingMap PackedTranspose::GetShmemWriteIndexing(
   // Dimensions variables.
   auto thread_id = getAffineDimExpr(
       KernelFusionInterface::kIndexingMapThreadIdxDims[0], mlir_context);
-  auto warp_size = kNumShmemBanks;
-  auto lane_id = thread_id % warp_size;
-  auto warp_id = thread_id.floorDiv(warp_size);
-  std::vector<IndexingMap::Variable> dim_vars = DimVarsFromGPUGrid(
-      {num_warps_per_block_ * warp_size, 1, 1, Product(block_counts_), 1, 1});
+  auto shmem_group_size = kNumShmemBanks;
+  auto lane_id = thread_id % shmem_group_size;
+  auto shmem_group_id = thread_id.floorDiv(shmem_group_size);
+  std::vector<IndexingMap::Variable> dim_vars =
+      DimVarsFromGPUGrid({num_shmem_groups_per_block_ * shmem_group_size, 1, 1,
+                          Product(block_counts_), 1, 1});
 
   // Range variables.
   auto loop = getAffineSymbolExpr(0, mlir_context);
   auto vector_element_id = getAffineSymbolExpr(1, mlir_context);
   std::vector<IndexingMap::Variable> range_vars = RangeVarsFromTensorSizes(
-      {CeilOfRatio(tile_size_t2_, num_warps_per_block_), vector_size_});
+      {CeilOfRatio(tile_size_t2_, num_shmem_groups_per_block_), vector_size_});
 
   // Shmem expressions.
-  auto shmem_row = loop * num_warps_per_block_ + warp_id;
+  auto shmem_row = loop * num_shmem_groups_per_block_ + shmem_group_id;
   auto shmem_col = lane_id * vector_size_ + vector_element_id;
   llvm::SmallVector<std::pair<AffineExpr, Interval>> constraints{
       {shmem_col, Interval{0, populated_shmem_cols_ - 1}},
@@ -920,11 +929,12 @@ IndexingMap PackedTranspose::GetShmemReadIndexing(
   // Dimensions variables.
   auto thread_id = getAffineDimExpr(
       KernelFusionInterface::kIndexingMapThreadIdxDims[0], mlir_context);
-  auto warp_size = kNumShmemBanks;
-  auto lane_id = thread_id % warp_size;
-  auto warp_id = thread_id.floorDiv(warp_size);
-  std::vector<IndexingMap::Variable> dim_vars = DimVarsFromGPUGrid(
-      {num_warps_per_block_ * warp_size, 1, 1, Product(block_counts_), 1, 1});
+  auto shmem_group_size = kNumShmemBanks;
+  auto lane_id = thread_id % shmem_group_size;
+  auto shmem_group_id = thread_id.floorDiv(shmem_group_size);
+  std::vector<IndexingMap::Variable> dim_vars =
+      DimVarsFromGPUGrid({num_shmem_groups_per_block_ * shmem_group_size, 1, 1,
+                          Product(block_counts_), 1, 1});
 
   // Range variables.
   auto loop = getAffineSymbolExpr(0, mlir_context);
@@ -932,13 +942,14 @@ IndexingMap PackedTranspose::GetShmemReadIndexing(
   auto vector_vertical = getAffineSymbolExpr(2, mlir_context);
   std::vector<IndexingMap::Variable> range_vars = RangeVarsFromTensorSizes(
       {CeilOfRatio(populated_shmem_cols_,
-                   (vector_size_ * num_warps_per_block_)),
+                   (vector_size_ * num_shmem_groups_per_block_)),
        vector_size_, vector_size_});
 
   // Shmem expressions.
   auto shmem_row = lane_id * vector_size_ + vector_vertical;
-  auto shmem_col = (loop * num_warps_per_block_ + warp_id) * vector_size_ +
-                   vector_horizontal;
+  auto shmem_col =
+      (loop * num_shmem_groups_per_block_ + shmem_group_id) * vector_size_ +
+      vector_horizontal;
   llvm::SmallVector<std::pair<AffineExpr, Interval>> constraints{
       {shmem_col, Interval{0, populated_shmem_cols_ - 1}},
       {shmem_row, Interval{0, populated_shmem_rows_ - 1}}};
@@ -959,26 +970,29 @@ IndexingMap PackedTranspose::GetOutputIndexing(
       KernelFusionInterface::kIndexingMapThreadIdxDims[0], mlir_context);
   auto block_id = getAffineDimExpr(
       KernelFusionInterface::kIndexingMapBlockIdxDims[0], mlir_context);
-  auto warp_size = kNumShmemBanks;
-  auto lane_id = thread_id % warp_size;
-  auto warp_id = thread_id.floorDiv(warp_size);
-  std::vector<IndexingMap::Variable> dim_vars = DimVarsFromGPUGrid(
-      {num_warps_per_block_ * warp_size, 1, 1, Product(block_counts_), 1, 1});
+  auto shmem_group_size = kNumShmemBanks;
+  auto lane_id = thread_id % shmem_group_size;
+  auto shmem_group_id = thread_id.floorDiv(shmem_group_size);
+  std::vector<IndexingMap::Variable> dim_vars =
+      DimVarsFromGPUGrid({num_shmem_groups_per_block_ * shmem_group_size, 1, 1,
+                          Product(block_counts_), 1, 1});
 
   // Range variables.
   auto loop = getAffineSymbolExpr(0, mlir_context);
   auto vector_horizontal = getAffineSymbolExpr(1, mlir_context);
   auto vector_vertical = getAffineSymbolExpr(2, mlir_context);
   std::vector<IndexingMap::Variable> range_vars = RangeVarsFromTensorSizes(
-      {CeilOfRatio(populated_shmem_cols_, vector_size_ * num_warps_per_block_),
+      {CeilOfRatio(populated_shmem_cols_,
+                   vector_size_ * num_shmem_groups_per_block_),
        vector_size_, vector_size_});
 
   // Block offsets.
   auto block_ids = DelinearizeInBoundsIndex(block_id, block_counts_);
 
   // Shmem expressions.
-  auto shmem_col = (loop * num_warps_per_block_ + warp_id) * vector_size_ +
-                   vector_horizontal;
+  auto shmem_col =
+      (loop * num_shmem_groups_per_block_ + shmem_group_id) * vector_size_ +
+      vector_horizontal;
   auto shmem_row = lane_id * vector_size_ + vector_vertical;
 
   // Offsets within the block.
@@ -1025,7 +1039,7 @@ std::unique_ptr<EmitterBase> CreateTransposeFusion(
   if (packed_transpose_tile.ok()) {
     return std::make_unique<PackedTranspose>(
         analysis, spec, *packed_transpose_tile,
-        /* num_warps= */ 4, symbolic_expr_context);
+        kNumThreadsPerBlock / kNumShmemBanks, symbolic_expr_context);
   }
   return std::make_unique<TransposeFusion>(analysis, symbolic_expr_context);
 }
