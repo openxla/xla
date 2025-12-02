@@ -496,6 +496,7 @@ absl::Status CommandBufferCmdExecutor::Record(
         command_buffer->mode() == se::CommandBuffer::Mode::kPrimary) {
       int64_t input_count = 0;
       int64_t output_count = 0;
+      int64_t temp_count = 0;
       int64_t input_temp_count = 0;
       int64_t output_temp_count = 0;
       int64_t input_output_count = 0;
@@ -507,36 +508,24 @@ absl::Status CommandBufferCmdExecutor::Record(
         bool has_temp = false;
 
         for (const auto& buffer : cmd->buffers()) {
-          if (buffer.HasDefinedContentsOnInput()) {
+          if (buffer.slice().allocation()->IsPreallocatedTempBuffer()) {
+            has_temp = true;
+          }
+          if (buffer.slice().allocation()->is_entry_computation_parameter()) {
             has_input = true;
           }
-          if (buffer.HasDefinedContentsOnOutput()) {
+          if (buffer.slice().allocation()->maybe_live_out()) {
             has_output = true;
-          }
-          if (!buffer.HasDefinedContentsOnInput() &&
-              !buffer.HasDefinedContentsOnOutput()) {
-            has_temp = true;
           }
         }
 
-        if (has_input && !has_output && !has_temp) {
-          input_count++;
-        }
-        if (!has_input && has_output && !has_temp) {
-          output_count++;
-        }
-        if (has_input && !has_output && has_temp) {
-          input_temp_count++;
-        }
-        if (!has_input && has_output && has_temp) {
-          output_temp_count++;
-        }
-        if (has_input && has_output && !has_temp) {
-          input_output_count++;
-        }
-        if (has_input && has_output && has_temp) {
-          input_temp_output_count++;
-        }
+        if (has_input && !has_output && !has_temp) input_count++;
+        if (!has_input && has_output && !has_temp) output_count++;
+        if (!has_input && !has_output && has_temp) temp_count++;
+        if (has_input && !has_output && has_temp) input_temp_count++;
+        if (!has_input && has_output && has_temp) output_temp_count++;
+        if (has_input && has_output && !has_temp) input_output_count++;
+        if (has_input && has_output && has_temp) input_temp_output_count++;
       }
 
       VLOG(5) << "CommandBufferCmdExecutor allocation summary:\n"
@@ -547,6 +536,8 @@ absl::Status CommandBufferCmdExecutor::Record(
               << input_count << "\n"
               << "  Commands consuming output buffer               : "
               << output_count << "\n"
+              << "  Commands consuming temp buffer                 : "
+              << temp_count << "\n"
               << "  Commands consuming input, temp buffers         : "
               << input_temp_count << "\n"
               << "  Commands consuming output, temp buffers        : "
