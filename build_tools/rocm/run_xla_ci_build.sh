@@ -18,7 +18,7 @@
 set -e
 
 SCRIPT_DIR=$(realpath $(dirname $0))
-TAG_FILTERS=$($SCRIPT_DIR/rocm_tag_filters.sh),gpu,-skip_rocprofiler_sdk,-oss_excluded,-oss_serial
+TAG_FILTERS=$($SCRIPT_DIR/rocm_tag_filters.sh),-skip_rocprofiler_sdk,-oss_excluded,-oss_serial
 BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib"
 mkdir -p ${BAZEL_DISK_CACHE_DIR}
 mkdir -p /tf/pkg
@@ -29,6 +29,12 @@ for arg in "$@"; do
     fi
     if [[ "$arg" == "--config=tsan" ]]; then
         TAG_FILTERS="${TAG_FILTERS},-notsan"
+    fi
+    if [[ "$arg" == "--config=ci_multi_gpu" ]]; then
+        TAG_FILTERS="${TAG_FILTERS},multi_gpu"
+    fi
+    if [[ "$arg" == "--config=ci_single_gpu" ]]; then
+        TAG_FILTERS="${TAG_FILTERS},gpu,-multi_gpu"
     fi
 done
 
@@ -48,7 +54,6 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     --action_env=XLA_FLAGS="--xla_gpu_enable_llvm_module_compilation_parallelism=true --xla_gpu_force_compilation_parallelism=16" \
     --test_output=errors \
     --local_test_jobs=4 \
-    --run_under=//build_tools/rocm:parallel_gpu_execute \
     "$@" \
     -//xla/tests:collective_pipeline_parallelism_test \
     -//xla/backends/gpu/codegen/emitters/tests:reduce_row/mof_scalar_variadic.hlo.test \
@@ -72,8 +77,6 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     -//xla/service/gpu:dot_algorithm_support_test_amdgpu_any \
     -//xla/service/gpu/tests:command_buffer_test_amdgpu_any \
     -//xla/service/gpu/tests:command_buffer_test_amdgpu_any_notfrt \
-    -//xla/service/gpu/tests:dynamic_shared_memory_test_amdgpu_any \
-    -//xla/service/gpu/tests:gpu_cub_sort_test_amdgpu_any \
     -//xla/service/gpu/tests:gpu_kernel_tiling_test_amdgpu_any \
     -//xla/service/gpu/tests:gpu_triton_custom_call_test_amdgpu_any \
     -//xla/service/gpu/tests:sorting_test_amdgpu_any \
@@ -90,7 +93,6 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     -//xla/tests:scatter_test_amdgpu_any \
     -//xla/tests:scatter_test_amdgpu_any_notfrt \
     -//xla/tools/hlo_opt:tests/gpu_hlo_llvm.hlo.test \
-    -//xla/tests:collective_pipeline_parallelism_test_amdgpu_any \
     -//xla/backends/gpu/codegen/triton:dot_algorithms_legacy_test_amdgpu_any \
     -//xla/tests:cholesky_test_amdgpu_any \
     -//xla/service/gpu/tests:sorting.hlo.test \
@@ -101,17 +103,14 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     -//xla/hlo/builder/lib:self_adjoint_eig_test_amdgpu_any_notfrt \
     -//xla/tests:convert_test_amdgpu_any \
     -//xla/pjrt/gpu/tfrt:tfrt_gpu_buffer_test \
-    -//xla/backends/gpu/collectives:nvshmem_collectives_test_amdgpu_any \
-    -//xla/pjrt/gpu:nvshmem_gpu_collectives_test_amdgpu_any \
+    -//xla/service/gpu/tests:gpu_cub_sort_test_amdgpu_any \
     -//xla/service/gpu:auto_sharding_gpu_compiler_test_amdgpu_any \
     -//xla/backends/gpu/codegen/triton:fusion_emitter_large_test_amdgpu_any \
-    -//xla/pjrt/gpu:se_gpu_pjrt_client_test_amdgpu_any \
     -//xla/backends/gpu/codegen:dynamic_slice_fusion_test_amdgpu_any \
-    -//xla/pjrt/gpu:pjrt_client_test_se_gpu_amdgpu_any \
-    -//xla/tests:collective_ops_e2e_test_amdgpu_any \
-    -//xla/tests:collective_ops_test_amdgpu_any \
-    -//xla/tools/multihost_hlo_runner:functional_hlo_runner_test_amdgpu_any \
-    -//xla/backends/gpu/runtime:all_reduce_test_amdgpu_any \
+    -//xla/pjrt/gpu:nvshmem_gpu_collectives_test_amdgpu_any \
     -//xla/pjrt/gpu:se_gpu_pjrt_client_nvshmem_test_amdgpu_any \
-    -//xla/tools/multihost_hlo_runner:functional_hlo_runner_test_amdgpu_any
-
+    -//xla/pjrt/gpu:se_gpu_pjrt_client_test_amdgpu_any \
+    -//xla/tests:nccl_group_execution_test_amdgpu_any \
+    -//xla/backends/gpu/collectives:nvshmem_collectives_test_amdgpu_any \
+    -//xla/tools/multihost_hlo_runner:functional_hlo_runner_test_amdgpu_any \
+    -//xla/tests:collective_ops_e2e_test_amdgpu_any
