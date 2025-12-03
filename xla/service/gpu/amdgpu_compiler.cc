@@ -304,8 +304,7 @@ AMDGPUCompiler::CompileTargetBinary(
         hsaco, amdgpu::CompileToHsaco(
                    llvm_module, device_description.gpu_compute_capability(),
                    module_config.debug_options(),
-                   module_config.compilation_cache_key(),
-                   options.is_autotuning_compilation));
+                   module_config.compilation_cache_key()));
   }
 
   return BackendCompileResult{"", std::move(hsaco)};
