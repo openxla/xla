@@ -876,8 +876,12 @@ HloInstruction* CreateGpuConvFusion(
   std::vector<HloInstruction*> fusion_params;
   HloInstruction* fused_lhs =
       FuseTowardOperand(lhs, builder, fusion_params, fused_hlo_map);
+  // CuDNN doesn't allow fusion on filter
+  fusion_params.push_back(rhs);
   HloInstruction* fused_rhs =
-      FuseTowardOperand(rhs, builder, fusion_params, fused_hlo_map);
+      builder.AddInstruction(HloInstruction::CreateParameter(
+          fusion_params.size() - 1, rhs->shape(), rhs->name()));
+  CHECK(fused_hlo_map.insert({rhs, fused_rhs}).second);
   HloInstruction* fused_conv = builder.AddInstruction(
       conv->CloneWithNewOperands(conv->shape(), {fused_lhs, fused_rhs}));
 
