@@ -518,8 +518,7 @@ std::optional<std::vector<HloInstruction*>> CollectIndependentOperandChain(
     const absl::flat_hash_set<const HloInstruction*>&
         loop_invariant_instructions,
     bool should_add_loop_invariant_op_in_chain,
-    std::function<std::optional<HloInstruction*>(
-        HloInstruction*, absl::flat_hash_set<const HloInstruction*>&)>
+    CollectivePipeliner::AdditionalChainStartOpFinder
         additional_chain_start_op_finder) {
   std::vector<HloInstruction*> chain;
   absl::flat_hash_set<const HloInstruction*> visited_set({instr});
@@ -535,10 +534,11 @@ std::optional<std::vector<HloInstruction*>> CollectIndependentOperandChain(
       };
 
   if (additional_chain_start_op_finder) {
-    auto maybe_additional_op =
-        additional_chain_start_op_finder(instr, visited_set);
+    auto maybe_additional_op = additional_chain_start_op_finder(instr);
     if (maybe_additional_op.has_value()) {
-      stack.emplace_back(maybe_additional_op.value(), 0);
+      if (visited_set.insert(maybe_additional_op.value()).second) {
+        stack.emplace_back(maybe_additional_op.value(), 0);
+      }
     }
   }
 
@@ -616,8 +616,7 @@ std::optional<std::vector<HloInstruction*>> CollectChainsToPushBackwards(
     const absl::flat_hash_set<const HloInstruction*>&
         loop_invariant_instructions,
     bool should_add_loop_invariant_op_in_chain,
-    std::function<std::optional<HloInstruction*>(
-        HloInstruction*, absl::flat_hash_set<const HloInstruction*>&)>
+    CollectivePipeliner::AdditionalChainStartOpFinder
         additional_chain_start_op_finder) {
   if (instr->HasControlDependencies() && !should_allow_control_dependencies) {
     return std::nullopt;
@@ -926,8 +925,7 @@ class WhileLoopAnalysis {
           HloPredicateFalse,
       bool should_allow_control_dependencies = false,
       bool should_add_loop_invariant_op_in_chain = false,
-      std::function<std::optional<HloInstruction*>(
-          HloInstruction*, absl::flat_hash_set<const HloInstruction*>&)>
+      CollectivePipeliner::AdditionalChainStartOpFinder
           additional_chain_start_op_finder = nullptr);
   HloInstruction* while_loop_instruction() const { return while_; }
   void ExtractLoopInvariantOps();
@@ -1340,8 +1338,7 @@ void WhileLoopAnalysis::CollectCollectivesToMove(
     HloPredicate should_allow_loop_variant_parameter_in_chain,
     bool should_allow_control_dependencies,
     bool should_add_loop_invariant_op_in_chain,
-    std::function<std::optional<HloInstruction*>(
-        HloInstruction*, absl::flat_hash_set<const HloInstruction*>&)>
+    CollectivePipeliner::AdditionalChainStartOpFinder
         additional_chain_start_op_finder) {
   move_infos_.clear();
   HloComputation* while_body = while_->while_body();

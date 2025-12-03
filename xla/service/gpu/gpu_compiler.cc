@@ -983,9 +983,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*should_allow_control_dependencies=*/false,
         /*additional_chain_start_op_finder=*/
         [acceptable_formatting](
-            HloInstruction* instr,
-            absl::flat_hash_set<const HloInstruction*>& visited_set)
-            -> std::optional<HloInstruction*> {
+            HloInstruction* instr) -> std::optional<HloInstruction*> {
           if (!instr->IsCustomCall(
                   memory_annotations::kMoveToDeviceCustomCallTarget)) {
             return std::nullopt;
@@ -1003,10 +1001,7 @@ absl::Status RunCollectiveOptimizationPasses(
 
             if (visited.insert(current).second) {
               if (current->opcode() == HloOpcode::kDynamicSlice) {
-                if (visited_set.insert(current).second) {
-                  return current;
-                }
-                return std::nullopt;
+                return current;
               }
               if (acceptable_formatting(current)) {
                 for (HloInstruction* operand : current->operands()) {

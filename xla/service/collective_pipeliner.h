@@ -69,6 +69,8 @@ class CollectivePipeliner : public HloModulePass {
       HloInstruction* instr, HloInstruction* new_while_instr)>;
   using WhileLoopPostprocessor =
       std::function<absl::Status(HloInstruction* while_loop)>;
+  using AdditionalChainStartOpFinder =
+      std::function<std::optional<HloInstruction*>(HloInstruction*)>;
 
   struct Config {
     int64_t level_to_operate_on = 0;
@@ -105,9 +107,7 @@ class CollectivePipeliner : public HloModulePass {
     // If set, this function will be called to discover additional starting
     // points for the operand chain (e.g., DynamicSlice operations through
     // formatting ops).
-    std::function<std::optional<HloInstruction*>(
-        HloInstruction*, absl::flat_hash_set<const HloInstruction*>&)>
-        additional_chain_start_op_finder = nullptr;
+    AdditionalChainStartOpFinder additional_chain_start_op_finder = nullptr;
     // TODO(b/399476667): Consolidate these postprocessing functions.
     HloPostprocessor postprocess_backward_peeled_op;
     HloPostprocessor postprocess_backward_rotated_op;
