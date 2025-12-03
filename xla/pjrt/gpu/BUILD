@@ -191,6 +191,7 @@ xla_test(
             "no_oss",
             "noasan",
             "nomsan",
+            "cuda-only",
         ],
         "b200": [
             # TODO(b/452317320): Re-enable once fixed.
@@ -307,6 +308,7 @@ xla_test(
             "no_oss",
             "noasan",
             "nomsan",
+            "cuda-only",
         ],
         "nvgpu_any": [
             "broken",
@@ -362,6 +364,7 @@ xla_test(
             "no_oss",
             "noasan",
             "nomsan",
+            "cuda-only",
         ],
     },
     backends = ["gpu"],

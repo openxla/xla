@@ -522,6 +522,7 @@ xla_test(
             "no_oss",
             "noasan",
             "nomsan",
+            "cuda-only",
         ],
         "nvgpu_any": [
             "broken",
