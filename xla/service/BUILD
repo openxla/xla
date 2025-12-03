@@ -2052,6 +2052,7 @@ cc_library(
         ":hlo_module_config",
         ":shape_inference",
         "//xla:comparison_util",
+        "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -2061,6 +2062,7 @@ cc_library(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/builder/lib:comparators",
         "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
@@ -2068,8 +2070,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
