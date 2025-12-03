@@ -203,7 +203,7 @@ UpdateLayoutForCudnnConvolutionFusion(HloFusionInstruction* hlo) {
   };
 
   bool performed_normalization = false;
-  // Normalize fusion instrcution shape if needed
+  // Normalize fusion instruction shape if needed
   Shape normalized_shape;
   if (hlo->shape().IsTuple()) {
     std::vector<Shape> new_tuple_shape;
@@ -220,7 +220,7 @@ UpdateLayoutForCudnnConvolutionFusion(HloFusionInstruction* hlo) {
   }
   performed_normalization |= normalized_shape != hlo->shape();
 
-  // Normalize fusion instrcution operand shape if needed
+  // Normalize fusion instruction operand shape if needed
   std::vector<HloInstruction*> normalized_operands;
   for (int idx = 0; idx < hlo->operand_count(); idx++) {
     HloInstruction* operand = hlo->mutable_operand(idx);
@@ -231,7 +231,7 @@ UpdateLayoutForCudnnConvolutionFusion(HloFusionInstruction* hlo) {
     normalized_operands.emplace_back(
         MaybeBitcast(operand, normalized_operand_shape));
   }
-  // No normalized required, don't do anything
+  // No normalization required, don't do anything
   if (!performed_normalization) {
     return std::nullopt;
   }
@@ -269,7 +269,6 @@ UpdateLayoutForCudnnConvolutionFusion(HloFusionInstruction* hlo) {
       transpose_dim(dim_numbers.output_feature_dimension(), output_shape));
   transpose_dims(*new_dim_numbers.mutable_output_spatial_dimensions(),
                  output_shape);
-  std::cerr << "!!\n" << new_dim_numbers.DebugString() << "\n";
   conv->set_convolution_dimension_numbers(new_dim_numbers);
 
   // Normalize instructions inside fusion computation

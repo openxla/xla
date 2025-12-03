@@ -683,7 +683,7 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
       }
       continue;
     } else if (HloPredicateIsOp<HloOpcode::kTuple>(hlo)) {
-      if (!IsWorkspaceAllocationRoot(*hlo)) {
+      if (!IsWorkspaceAllocationRoot(*hlo) && !IsAmaxRoot(*hlo)) {
         VLOG(3) << "Tuples are only expected at outputs for workspace "
                    "allocation.";
         return std::nullopt;
@@ -853,6 +853,11 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
       const std::optional<Result> dims =
           conv_adapter->DimensionsAndStrides(*hlo);
       hlo_to_cudnn[hlo]->set_dim(dims->sizes);
+    } else if (HloPredicateIsOp<HloOpcode::kReduce>(hlo)) {
+      hlo_to_cudnn[hlo] = graph.reduction(
+          operand(0), graph::Reduction_attributes()
+                          .set_mode(fe::ReductionMode_t::AMAX)
+                          .set_compute_data_type(fe::DataType_t::FLOAT));
     } else {
       VLOG(3) << "Unimplemented operation.";
       return std::nullopt;
@@ -872,25 +877,36 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
         ->set_data_type(data_type.value())
         .set_name(std::string(hlo->name()));
   }
-  const HloInstruction* output = instructions.back();
+
+  std::vector<HloInstruction*> outputs;
   if (instructions.back()->shape().IsTuple()) {
-    output = instructions.back()->operand(0);
+    for (auto operand : instructions.back()->operands()) {
+      if (!operand->IsCustomCall(kWorkspaceAllocationCustomCallTarget)) {
+        outputs.push_back(operand);
+      }
+    }
+  } else {
+    outputs.push_back(instructions.back());
   }
 
-  const std::optional<Result> dims =
-      conv_adapter.has_value()
-          ? conv_adapter->DimensionsAndStrides(*output)
-          : gemm_adapter->DimensionsAndStrides(
-                *output, TritonFusionAnalysis::Scope::OUTPUT);
-  if (!dims.has_value()) {
-    VLOG(3) << "Unsupported dimensions.";
-    return std::nullopt;
+  for (int i = 0; i < outputs.size(); ++i) {
+    HloInstruction* output = outputs[i];
+    const std::optional<Result> dims =
+        conv_adapter.has_value()
+            ? conv_adapter->DimensionsAndStrides(*output)
+            : gemm_adapter->DimensionsAndStrides(
+                  *output, TritonFusionAnalysis::Scope::OUTPUT);
+    if (!dims.has_value()) {
+      VLOG(3) << "Unsupported dimensions.";
+      return std::nullopt;
+    }
+    hlo_to_cudnn[output]
+        ->set_output(true)
+        .set_dim(dims->sizes)
+        .set_stride(dims->strides)
+        .set_uid(se::gpu::CuDnnTensorUID(fusion.operand_count() + i));
   }
-  hlo_to_cudnn[output]
-      ->set_output(true)
-      .set_dim(dims->sizes)
-      .set_stride(dims->strides)
-      .set_uid(se::gpu::CuDnnTensorUID(fusion.operand_count()));
+
   if (!fusion.GetModule()->config().debug_options().xla_dump_to().empty()) {
     json dump;
     graph.serialize(dump);
@@ -927,17 +943,37 @@ absl::StatusOr<HloInstruction*> AddWorkspace(HloInstruction& fusion,
       computation->AddInstruction(HloInstruction::CreateCustomCall(
           ShapeUtil::MakeShape(S8, {workspace_size}), {},
           kWorkspaceAllocationCustomCallTarget));
-  HloInstruction* output_tuple =
-      computation->AddInstruction(HloInstruction::CreateTuple(
-          {computation->root_instruction(), custom_call}));
+  HloInstruction* output_tuple;
+  bool is_tuple_output =
+      computation->root_instruction()->opcode() == HloOpcode::kTuple;
+  if (is_tuple_output) {
+    std::vector<HloInstruction*> operands;
+    operands.insert(operands.begin(),
+                    computation->root_instruction()->operands().begin(),
+                    computation->root_instruction()->operands().end());
+    operands.push_back(custom_call);
+    output_tuple =
+        computation->AddInstruction(HloInstruction::CreateTuple(operands));
+    TF_RETURN_IF_ERROR(computation->ReplaceInstructionWithDifferentShape(
+        computation->root_instruction(), output_tuple));
+  } else {
+    output_tuple = computation->AddInstruction(HloInstruction::CreateTuple(
+        {computation->root_instruction(), custom_call}));
+  }
   computation->set_root_instruction(output_tuple, true);
   HloInstruction* new_fusion = fusion.parent()->AddInstruction(
       fusion.CloneWithNewShape(output_tuple->shape()));
   TF_RETURN_IF_ERROR(new_fusion->CopyAllControlDepsFrom(&fusion));
   TF_RETURN_IF_ERROR(fusion.DropAllControlDeps());
-  TF_RETURN_IF_ERROR(fusion.ReplaceAllUsesWith(fusion.parent()->AddInstruction(
-      HloInstruction::CreateGetTupleElement(new_fusion, 0))));
-  TF_RETURN_IF_ERROR(fusion.parent()->RemoveInstruction(&fusion));
+  if (is_tuple_output) {
+    TF_RETURN_IF_ERROR(fusion.parent()->ReplaceInstructionWithDifferentShape(
+        &fusion, new_fusion));
+  } else {
+    TF_RETURN_IF_ERROR(
+        fusion.ReplaceAllUsesWith(fusion.parent()->AddInstruction(
+            HloInstruction::CreateGetTupleElement(new_fusion, 0))));
+    TF_RETURN_IF_ERROR(fusion.parent()->RemoveInstruction(&fusion));
+  }
   return new_fusion;
 }
 
