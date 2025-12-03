@@ -406,8 +406,8 @@ TEST(ParseRepeatedEnumFlagsTest, CommandBufferCmdType) {
 
   // Removing options from the existing setting.
   SetXlaFlagsEnvVar("--xla_gpu_enable_command_buffer=-fusion,-cublas");
-  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects)
-      EXPECT_EQ(enabled_types.size(), 4);
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+  EXPECT_EQ(enabled_types.size(), 4);
   EXPECT_THAT(enabled_types,
               ElementsAre(DebugOptions::CUBLASLT, DebugOptions::CUSTOM_CALL,
                           DebugOptions::CUDNN,
