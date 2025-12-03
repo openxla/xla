@@ -683,10 +683,10 @@ absl::Status NcclCommunicator::LaunchAllToAll(
 
   TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
 
+#if NCCL_VERSION_CODE >= 22800  // ncclAlltoAll requires NCCL 2.28+
   // Try using native ncclAlltoAll if available.
   // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/colls.html#ncclalltoall
   bool can_use_native_alltoall = true;
-
   size_t element_size = primitive_util::ByteWidth(dtype);
 
   // Non-contiguous buffers are not supported by native ncclAlltoAll.
@@ -713,8 +713,7 @@ absl::Status NcclCommunicator::LaunchAllToAll(
   }
 
   if (can_use_native_alltoall) {
-#if NCCL_VERSION_CODE >= 22800  // ncclAlltoAll requires NCCL 2.28+
-    LOG(INFO) << absl::StreamFormat(
+    VLOG(1) << absl::StreamFormat(
         "[%d] NCCL AllToAll: Using native ncclAlltoAll API",
         stream->parent()->device_ordinal());
     TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(
@@ -725,13 +724,13 @@ absl::Status NcclCommunicator::LaunchAllToAll(
       TF_RETURN_IF_ERROR(PollUntilDone());
     }
     return absl::OkStatus();
-#else
-    VLOG(1) << absl::StreamFormat(
-        "[%d] NCCL AllToAll: ncclAlltoAll requires NCCL 2.28+, "
-        "falling back to Send/Recv (current NCCL version: %d)",
-        stream->parent()->device_ordinal(), NCCL_VERSION_CODE);
-#endif
   }
+#else
+  VLOG(1) << absl::StreamFormat(
+      "[%d] NCCL AllToAll: ncclAlltoAll requires NCCL 2.28+, "
+      "falling back to Send/Recv (current NCCL version: %d)",
+      stream->parent()->device_ordinal(), NCCL_VERSION_CODE);
+#endif
 
   // Fall back to Send/Recv for in-place, non-contiguous, or old NCCL version.
   VLOG(2) << absl::StreamFormat("[%d] NCCL AllToAll: Using Send/Recv fallback",
