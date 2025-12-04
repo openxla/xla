@@ -370,13 +370,9 @@ cc_library(
         "//xla/tsl/lib/gtl:flatmap",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:status",
-        "//xla/tsl/platform:types",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:hash",
-        "@tsl//tsl/platform:stringpiece",
         "@tsl//tsl/platform:thread_annotations",
     ],
 )
