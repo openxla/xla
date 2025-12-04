@@ -550,6 +550,56 @@ INSTANTIATE_TEST_SUITE_P(SolLatencyEstimatorTests, SolLatencyEstimatorTest,
                            return info.param.test_name;
                          });
 
+TEST_F(HloHardwareIndependentTestBase, CollectiveCostModelDispatching) {
+  const auto shape_size_fn = HloCostAnalysis::DefaultShapeSize;
+  const auto gpu_info =
+      TestGpuDeviceInfo::RTXA6000DeviceInfo(se::CudaComputeCapability(9, 0));
+  const SolGPUCostModel::Config sol_flags = {
+      absl::Microseconds(100), 100, absl::Microseconds(100),
+      absl::Microseconds(100), 8,   4 * 1024 * 1024};
+  mlir::MLIRContext mlir_ctx;
+  SymbolicExprContext sym_ctx{&mlir_ctx};
+  auto interpolator =
+      *CollectiveInterpolator::Create(sol_flags.gpus_per_node, gpu_info,
+                                      /*analysis=*/nullptr);
+
+  // NVLink domain collective should use CollectiveInterpolator.
+  TF_ASSERT_OK_AND_ASSIGN(auto nvl_module, ParseAndReturnVerifiedModule(R"(
+HloModule m, num_partitions=16
+ENTRY main {
+  p = bf16[8,16000,1000] parameter(0)
+  ROOT a2a = bf16[8,16000,1000] all-to-all(p),
+    replica_groups={{0,1,2,3,4,5,6,7},{8,9,10,11,12,13,14,15}},
+    channel_id=1, dimensions={0}
+})"));
+  HloInstruction* nvl_instr = hlo_query::FindInstruction(
+      nvl_module->entry_computation(), HloOpcode::kAllToAll);
+  EXPECT_FALSE(SolLatencyEstimator::ComputeCollectiveTime(
+                   *nvl_instr, gpu_info, shape_size_fn, sol_flags, &sym_ctx,
+                   /*collective_interpolator=*/nullptr)
+                   .ok());
+  EXPECT_TRUE(SolLatencyEstimator::ComputeCollectiveTime(
+                  *nvl_instr, gpu_info, shape_size_fn, sol_flags, &sym_ctx,
+                  interpolator.get())
+                  .ok());
+
+  // IB collective should use S-curve model (world-level across 2 hosts).
+  TF_ASSERT_OK_AND_ASSIGN(auto ib_module, ParseAndReturnVerifiedModule(R"(
+HloModule m, num_partitions=16
+ENTRY main {
+  p = bf16[16,16000,1000] parameter(0)
+  ROOT a2a = bf16[16,16000,1000] all-to-all(p),
+    replica_groups={{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}},
+    channel_id=1, dimensions={0}
+})"));
+  HloInstruction* ib_instr = hlo_query::FindInstruction(
+      ib_module->entry_computation(), HloOpcode::kAllToAll);
+  EXPECT_TRUE(SolLatencyEstimator::ComputeCollectiveTime(
+                  *ib_instr, gpu_info, shape_size_fn, sol_flags, &sym_ctx,
+                  /*collective_interpolator=*/nullptr)
+                  .ok());
+}
+
 class IsSolLatencyEstimatorEnabledTest : public HloTestBase {
  protected:
   IsSolLatencyEstimatorEnabledTest()
