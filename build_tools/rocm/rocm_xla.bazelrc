@@ -19,7 +19,7 @@ build:rocm_rbe --remote_timeout=3600
 build:rocm_rbe --remote_download_minimal
 build:rocm_rbe --remote_upload_local_results
 
-test:rocm_rbe --strategy=TestRunner=local
+test:rocm_rbe --strategy=TestRunner=remote,local
 
 build:asan --strip=never
 build:asan --copt -fsanitize=address
@@ -52,6 +52,7 @@ build:ci_multi_gpu --test_sharding_strategy=disabled
 build:ci_multi_gpu --flaky_test_attempts=3
 build:ci_multi_gpu --experimental_guard_against_concurrent_changes
 build:ci_multi_gpu --test_env=HIP_VISIBLE_DEVICES=0,1,2,3
+build:ci_multi_gpu --strategy=TestRunner=local
 
 build:xla_sgpu -- \
 //xla/... \
