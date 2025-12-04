@@ -55,6 +55,19 @@ constexpr char kDeviceHloOpProfilesTest[] = R"pb(
       }
     }
   }
+
+  entries {
+    key: "gfx90a"
+    value {
+      entries {
+        instruction {
+          opcode: "multiply"
+          shape { element_type: F32 }
+        }
+        clock_cycles: 123
+      }
+    }
+  }
 )pb";
 
 using HloOpProfilesTest = ::testing::Test;
@@ -114,6 +127,19 @@ TEST_F(HloOpProfilesTest, GetProfileH100) {
   EXPECT_EQ(
       op_profile.at(std::make_pair(HloOpcode::kMultiply, PrimitiveType::F32)),
       3);
+}
+
+TEST_F(HloOpProfilesTest, GetProfileMI210) {
+  auto hlo_op_profiles = HloOpProfiles::Load(kDeviceHloOpProfilesTest,
+                                             /*default_profile_name=*/"sm_80");
+  auto device_info_mi210 = TestGpuDeviceInfo::AMDMI210DeviceInfo();
+
+  const auto& op_profile = hlo_op_profiles->GetProfile(device_info_mi210);
+  ASSERT_TRUE(op_profile.contains(
+      std::make_pair(HloOpcode::kMultiply, PrimitiveType::F32)));
+  EXPECT_EQ(
+      op_profile.at(std::make_pair(HloOpcode::kMultiply, PrimitiveType::F32)),
+      123);
 }
 
 }  // namespace
