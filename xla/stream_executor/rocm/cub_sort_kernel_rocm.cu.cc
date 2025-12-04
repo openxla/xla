@@ -24,6 +24,7 @@ limitations under the License.
 #include "rocm/include/rocprim/thread/radix_key_codec.hpp"
 #include "rocm/include/rocprim/type_traits.hpp"
 #include "rocm/rocm_config.h"
+#include "xla/backends/gpu/ffi.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"  // IWYU pragma: keep
 #include "xla/stream_executor/rocm/rocm_status.h"
@@ -284,7 +285,7 @@ static absl::Status CubSortPairsGetScratchSize(size_t* temp_bytes,
 
 // Floating point types.
 #ifdef CUB_TYPE_BF16
-XLA_CUB_DEFINE_SORT_KEYS(bf16, __nv_bfloat16)
+XLA_CUB_DEFINE_SORT_KEYS(bf16, hip_bfloat16)
 #endif
 #ifdef CUB_TYPE_F16
 XLA_CUB_DEFINE_SORT_KEYS(f16, __half)

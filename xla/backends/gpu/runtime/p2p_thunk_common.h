@@ -77,7 +77,9 @@ struct P2PConfig {
   static SourceTargetMapEntry GetSourceTarget(
       const IdToSourceTargetMap& id_to_source_target, int64_t id) {
     auto it = id_to_source_target.find(id);
-    if (it != id_to_source_target.end()) return it->second;
+    if (it != id_to_source_target.end()) {
+      return it->second;
+    }
     return SourceTargetMapEntry{};
   }
 
@@ -106,7 +108,7 @@ std::optional<ExecutionStreamId> GetStreamIdOverride(
     const HloInstruction* instr);
 
 absl::StatusOr<const int64_t> GetCollectiveCurrentId(
-    Thunk::CollectiveExecuteParams* collective_params, const P2PConfig& config);
+    CollectiveParams* collective_params, const P2PConfig& config);
 
 }  // namespace gpu
 }  // namespace xla

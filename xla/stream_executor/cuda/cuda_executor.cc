@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
 #include "absl/base/casts.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/numeric/int128.h"
@@ -98,7 +99,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
@@ -808,6 +808,17 @@ absl::StatusOr<FabricInfo> GetDeviceFabricInfo(nvmlDevice_t device) {
 
 }  // namespace
 
+bool CudaExecutor::MemoryTracker::Insert(CUdeviceptr ptr) {
+  absl::MutexLock lock(mutex_);
+  auto [it, inserted] = allocated_memory_.insert(ptr);
+  return inserted;
+}
+
+bool CudaExecutor::MemoryTracker::Remove(CUdeviceptr ptr) {
+  absl::MutexLock lock(mutex_);
+  return allocated_memory_.erase(ptr) > 0;
+}
+
 // Given const GPU memory, returns a libcuda device pointer datatype, suitable
 // for passing directly to libcuda APIs.
 //
@@ -849,7 +860,7 @@ absl::StatusOr<xla::gpu::GpuCollectives*> GetGpuCollectives(
   return tsl::down_cast<xla::gpu::GpuCollectives*>(collectives);
 }
 
-CudaExecutor::VmmMemoryHandle::~VmmMemoryHandle() { TF_CHECK_OK(Release()); }
+CudaExecutor::VmmMemoryHandle::~VmmMemoryHandle() { CHECK_OK(Release()); }
 
 absl::Status CudaExecutor::VmmMemoryHandle::Release() {
   if (handle_ != 0) {
@@ -869,7 +880,7 @@ CudaExecutor::VmmMemoryHandle::VmmMemoryHandle(VmmMemoryHandle&& other) {
 CudaExecutor::VmmMemoryHandle& CudaExecutor::VmmMemoryHandle::operator=(
     VmmMemoryHandle&& other) {
   if (this != &other) {
-    TF_CHECK_OK(Release());
+    CHECK_OK(Release());
     handle_ = other.handle_;
     other.handle_ = 0;
   }
@@ -922,7 +933,6 @@ absl::StatusOr<void*> CudaExecutor::VmmAllocateMemory(uint64_t bytes) {
   TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuMemAddressReserve(&ptr, padded_size, granularity, 0, 0)));
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemMap(ptr, padded_size, 0, handle, 0)));
-
   VLOG(3) << "[" << device_ordinal() << "] VMM allocated " << ptr
           << " requested size: " << bytes << " padded size: " << padded_size
           << " granularity: " << granularity;
@@ -937,10 +947,24 @@ absl::StatusOr<void*> CudaExecutor::VmmAllocateMemory(uint64_t bytes) {
     }
   }
 
+  if (!vmm_memory_tracker_.Insert(ptr)) {
+    LOG(WARNING) << "[" << device_ordinal()
+                 << "] VMM memory already tracked: " << ptr;
+  }
   return reinterpret_cast<void*>(ptr);
 }
 
-absl::Status CudaExecutor::VmmDeallocateMemory(void* ptr) {
+absl::StatusOr<bool> CudaExecutor::VmmDeallocateMemory(void* ptr) {
+  CUdeviceptr device_ptr = reinterpret_cast<CUdeviceptr>(ptr);
+  if (!vmm_memory_tracker_.Remove(device_ptr)) {
+    return false;
+  }
+  bool deletion_completed = false;
+  absl::Cleanup cleanup = [&]() {
+    if (!deletion_completed) {
+      vmm_memory_tracker_.Insert(device_ptr);
+    }
+  };
   if (!is_vmm_supported_) {
     return absl::InternalError("VMM is not supported on this device.");
   }
@@ -954,13 +978,15 @@ absl::Status CudaExecutor::VmmDeallocateMemory(void* ptr) {
     handle = static_cast<CUmemGenericAllocationHandle>(scoped_handle.handle());
   }
   size_t size = 0;
-  CUdeviceptr device_ptr = reinterpret_cast<CUdeviceptr>(ptr);
   TF_RETURN_IF_ERROR(
       cuda::ToStatus(cuMemGetAddressRange(nullptr, &size, device_ptr)));
+  VLOG(3) << "[" << device_ordinal() << "] VMM deallocated " << ptr
+          << " size: " << size;
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemUnmap(device_ptr, size)));
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemRelease(handle)));
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemAddressFree(device_ptr, size)));
-  return absl::OkStatus();
+  deletion_completed = true;
+  return true;
 }
 
 absl::StatusOr<void*> CollectiveMemoryAllocate(StreamExecutor* executor,
@@ -1439,7 +1465,11 @@ void CudaExecutor::Deallocate(DeviceMemoryBase* mem) {
     // Memory space is always kDevice here, so the only way to check if the
     // memory was allocated with VMM API is to try to retain the handle with VMM
     // API (which VmmDeallocateMemory does).
-    if (!VmmDeallocateMemory(mem->opaque()).ok()) {
+    auto result = VmmDeallocateMemory(mem->opaque());
+    if (!result.ok()) {
+      LOG(WARNING) << "Failed to deallocate VMM memory handle: "
+                   << result.status();
+    } else if (!result.value()) {  // If it was not allocated with VMM API.
       DeviceDeallocate(cuda_context_, mem->opaque());
     }
   }
@@ -1975,18 +2005,18 @@ CudaExecutor::CudaMulticastMemory::~CudaMulticastMemory() {
   if (handle_ != 0) {
     for (auto const& [device_ordinal, mapped_memory_ptr] : mapped_devices_) {
       VLOG(3) << "[" << device_ordinal << "] Unbind multicast: " << handle_;
-      TF_CHECK_OK(stream_executor::cuda::ToStatus(cuMulticastUnbind(
+      CHECK_OK(stream_executor::cuda::ToStatus(cuMulticastUnbind(
           handle_, device_ordinal, /*mcOffset=*/0, padded_size_)));
 
       VLOG(3) << "[" << device_ordinal << "] Unmap ptr: " << mapped_memory_ptr;
-      TF_CHECK_OK(stream_executor::cuda::ToStatus(
+      CHECK_OK(stream_executor::cuda::ToStatus(
           cuMemUnmap(mapped_memory_ptr, padded_size_)));
       VLOG(3) << "[" << device_ordinal
               << "] Release address space: " << mapped_memory_ptr;
-      TF_CHECK_OK(stream_executor::cuda::ToStatus(
+      CHECK_OK(stream_executor::cuda::ToStatus(
           cuMemAddressFree(mapped_memory_ptr, padded_size_)));
     }
-    TF_CHECK_OK(stream_executor::cuda::ToStatus(
+    CHECK_OK(stream_executor::cuda::ToStatus(
         cuMemRelease(static_cast<CUmemGenericAllocationHandle>(handle_))));
   }
 }

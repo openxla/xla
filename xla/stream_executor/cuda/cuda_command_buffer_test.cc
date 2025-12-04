@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status_matchers.h"
 #include "absl/strings/ascii.h"
 #include "absl/types/span.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"  // IWYU pragma: keep - cudnn frontend headers are not hermetic
@@ -38,14 +39,12 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor::cuda {
 namespace {
 
 using ::testing::Each;
-using ::tsl::testing::IsOkAndHolds;
 
 static Platform* CudaPlatform() {
   auto name = absl::AsciiStrToUpper(

@@ -352,7 +352,6 @@ cc_library(
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:types",
     ],
 )

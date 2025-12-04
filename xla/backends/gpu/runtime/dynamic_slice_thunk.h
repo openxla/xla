@@ -126,8 +126,7 @@ class DynamicSliceThunk : public Thunk {
 
   const Thunk* embedded_thunk() const { return embedded_thunk_.get(); }
 
-  absl::Status Prepare(const PrepareParams& params,
-                       ResourceRequestsInterface& resource_requests) override;
+  absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
@@ -172,9 +171,10 @@ class DynamicSliceThunk : public Thunk {
 
   void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const override;
   void ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn) override;
-  void TransformAllNestedThunks(
-      absl::FunctionRef<std::unique_ptr<Thunk>(std::unique_ptr<Thunk>)> fn)
-      override;
+  absl::Status TransformAllNestedThunks(
+      absl::FunctionRef<
+          absl::StatusOr<std::unique_ptr<Thunk>>(std::unique_ptr<Thunk>)>
+          fn) override;
 
   absl::StatusOr<ThunkProto> ToProto() const override;
 
@@ -191,9 +191,8 @@ class DynamicSliceThunk : public Thunk {
   get_offset_function() const {
     if (offset_as_function_of_indvar_metadata_.has_value()) {
       return &offset_as_function_of_indvar_metadata_.value();
-    } else {
-      return std::nullopt;
     }
+    return std::nullopt;
   }
 
  private:

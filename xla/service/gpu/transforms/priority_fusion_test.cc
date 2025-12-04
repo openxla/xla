@@ -76,11 +76,10 @@ class PriorityFusionTest : public HloHardwareIndependentTestBase {
 
   se::DeviceDescription device_info_ = TestGpuDeviceInfo::RTXA6000DeviceInfo();
   mlir::MLIRContext mlir_context_;
-  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
   PriorityFusion priority_fusion_{
       /*thread_pool=*/nullptr, device_info_,
       GpuHloCostAnalysis::Options{.count_multiple_input_accesses = true},
-      &symbolic_expr_context_};
+      &mlir_context_};
 };
 
 TEST_F(PriorityFusionTest, FuseWithSharedArgument) {
@@ -218,17 +217,19 @@ CHECK-NEXT: ROOT %{{.*}} = (f32[512]{0}, s32[512]{0}) tuple(%[[FUSION_F32]], %[[
 }
 
 TEST_F(PriorityFusionTest, DoNotFuseBitWidthChangingBitcast) {
-  EXPECT_TRUE(RunAndCheckHloRewrite(R"(
-e {
-  a = s8[3,5,2]{2,1,0} parameter(0)
-  n = s8[3,5,2]{2,1,0} negate(a)
-  b = s16[3,5]{1,0} bitcast(n)
-  m = s16[3,5]{1,0} multiply(b, b)
-})",
-                                    std::move(priority_fusion_),
-                                    /*expect_change=*/false)
-                  .status()
-                  .ok());
+  // `neg` is the producer that could be fused with `bitcast` and `mul`, but
+  // since `bitcast` changes the bit width, we don't fuse it.
+  auto module = *ParseAndReturnVerifiedModule(R"(
+    ENTRY main {
+      p0 = s8[3,5,2]{2,1,0} parameter(0)
+      neg = s8[3,5,2]{2,1,0} negate(p0)
+      bitcast = s16[3,5]{1,0} bitcast(neg)
+      mul = s8[3,5,2]{2,1,0} add(neg, neg)
+      ROOT result = (s16[3,5]{1,0}, s8[3,5,2]{2,1,0}) tuple(bitcast, mul)
+    })");
+
+  EXPECT_THAT(priority_fusion_.Run(module.get()),
+              absl_testing::IsOkAndHolds(false));
 }
 
 TEST_F(PriorityFusionTest, FuseConvertIntoReduce) {
@@ -1377,7 +1378,7 @@ TEST_F(PriorityFusionWithTritonEnabledTest,
   GpuHloCostAnalysis::Options options;
   options.count_multiple_input_accesses = true;
   PriorityFusion priority_fusion_with_thread_pool{
-      /*thread_pool=*/&pool, device_info_, options, &symbolic_expr_context_};
+      /*thread_pool=*/&pool, device_info_, options, &mlir_context_};
   EXPECT_THAT(priority_fusion_with_thread_pool.Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   HloInstruction* root = module->entry_computation()->root_instruction();

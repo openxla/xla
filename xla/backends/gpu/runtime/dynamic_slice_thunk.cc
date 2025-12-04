@@ -216,8 +216,7 @@ DynamicSliceThunk::DynamicSliceThunk(
   }
 }
 
-absl::Status DynamicSliceThunk::Prepare(
-    const PrepareParams& params, ResourceRequestsInterface& resource_requests) {
+absl::Status DynamicSliceThunk::Prepare(const PrepareParams& params) {
   for (SliceDef& slice : slices_) {
     VLOG(2) << "DynamicSliceThunk: slice: " << slice.ToString();
     if (slice.offsets.has_value()) {
@@ -236,7 +235,7 @@ absl::Status DynamicSliceThunk::Prepare(
     }
   }
 
-  TF_RETURN_IF_ERROR(embedded_thunk_->Prepare(params, resource_requests));
+  TF_RETURN_IF_ERROR(embedded_thunk_->Prepare(params));
 
   if (offset_as_function_of_indvar_metadata_ != std::nullopt) {
     Indvar(this) =
@@ -259,7 +258,9 @@ absl::Status DynamicSliceThunk::Initialize(const InitializeParams& params) {
   TF_RETURN_IF_ERROR(embedded_thunk_->Initialize(params));
 
   absl::MutexLock lock(mutex_);
-  if (offsets_allocs_.contains(params.executor)) return absl::OkStatus();
+  if (offsets_allocs_.contains(params.executor)) {
+    return absl::OkStatus();
+  }
 
   VLOG(2) << "Allocate " << offsets_allocs_size_
           << " bytes for transferring offsets on executor: " << params.executor;
@@ -439,10 +440,16 @@ void DynamicSliceThunk::ForAllThunksMutable(
   embedded_thunk_->ForAllThunksMutable(fn);
 }
 
-void DynamicSliceThunk::TransformAllNestedThunks(
-    absl::FunctionRef<std::unique_ptr<Thunk>(std::unique_ptr<Thunk>)> fn) {
-  embedded_thunk_->TransformAllNestedThunks(fn);
-  embedded_thunk_ = SequentialThunk::FromThunk(fn(std::move(embedded_thunk_)));
+absl::Status DynamicSliceThunk::TransformAllNestedThunks(
+    absl::FunctionRef<
+        absl::StatusOr<std::unique_ptr<Thunk>>(std::unique_ptr<Thunk>)>
+        fn) {
+  TF_RETURN_IF_ERROR(embedded_thunk_->TransformAllNestedThunks(fn));
+
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<Thunk> thunk,
+                      fn(std::move(embedded_thunk_)));
+  embedded_thunk_ = SequentialThunk::FromThunk(std::move(thunk));
+  return absl::OkStatus();
 }
 
 absl::StatusOr<OptionalDynamicSliceOffsetsProto>

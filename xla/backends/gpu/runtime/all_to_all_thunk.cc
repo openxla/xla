@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/communicator.h"
@@ -83,7 +84,7 @@ AllToAllStartThunk::AllToAllStartThunk(
       config_(GetAllToAllConfig(instr)),
       buffers_(std::move(buffers)),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {
-  CHECK_EQ(config_.config.operand_count, buffers_.size());
+  CHECK_EQ(config_.config.operand_element_type.size(), buffers_.size());
 }
 
 /*static*/ absl::Status AllToAllStartThunk::CheckImplementable(
@@ -120,13 +121,15 @@ absl::Status AllToAllStartThunk::Initialize(const InitializeParams& params) {
           << "] Local device count : " << device_count_;
 
   if (is_local() && p2p_memcpy_enabled_) {
-    TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
-                        GetGpuCollectives(params));
     TF_ASSIGN_OR_RETURN(
-        CommunicatorHandle comm_handle,
-        GetComm(collectives, *params.collective_params,
-                *params.collective_cliques, config().replica_groups,
-                config().group_mode, IsP2PCollective()));
+        GpuCliqueKey clique_key,
+        GetGpuCliqueKey(*params.collective_params, config().replica_groups,
+                        config().group_mode, IsP2PCollective()));
+
+    TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
+                        GetComm(*params.collective_params,
+                                *params.collective_cliques, clique_key));
+
     TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm_handle.comm->NumRanks());
     se::StreamExecutor* executor = params.executor;
     {

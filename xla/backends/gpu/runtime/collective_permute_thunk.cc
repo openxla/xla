@@ -45,13 +45,11 @@ limitations under the License.
 #include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/computation_placer.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/service/rendezvous.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
@@ -74,8 +72,12 @@ bool IsLocalPeerTransfer(const P2PConfig::SourceTargetMapEntry& source_target,
   // We determine if it's a local peer if the source/target id is within a node
   // if they are present.
   int64_t host_id = (current_id / device_count);
-  if (source_id && host_id != *source_id / device_count) return false;
-  if (target_id && host_id != *target_id / device_count) return false;
+  if (source_id && host_id != *source_id / device_count) {
+    return false;
+  }
+  if (target_id && host_id != *target_id / device_count) {
+    return false;
+  }
   return true;
 }
 
@@ -101,12 +103,9 @@ CollectivePermuteStartThunk::CollectivePermuteStartThunk(
           ->config()
           .debug_options()
           .xla_gpu_experimental_enable_nccl_symmetric_buffers();
-  config.operand_count = instr->operand_count();
-  for (int i = 0; i < config.operand_count; ++i) {
-    config.operand_element_type.push_back(
-        instr->operand(i)->shape().element_type());
+  for (const HloInstruction* operand : instr->operands()) {
+    config.operand_element_type.push_back(operand->shape().element_type());
   }
-  config.SetCollectiveOpKindAndID(instr);
   config.group_mode = GetGroupMode(instr);
 
   // With a collective permute, all execution instances together form one
@@ -201,15 +200,13 @@ absl::Status CollectivePermuteStartThunk::Initialize(
 
     if (source_id) {
       std::vector<se::DeviceMemoryBase> dest_addrs;
-      std::transform(device_buffers.begin(), device_buffers.end(),
-                     std::back_inserter(dest_addrs),
-                     [](const DeviceBufferPair& buffer) {
-                       return buffer.destination_buffer;
-                     });
+      absl::c_transform(device_buffers, std::back_inserter(dest_addrs),
+                        [](const DeviceBufferPair& buffer) {
+                          return buffer.destination_buffer;
+                        });
       std::vector<void*> dest_opaques;
-      std::transform(
-          dest_addrs.begin(), dest_addrs.end(),
-          std::back_inserter(dest_opaques),
+      absl::c_transform(
+          dest_addrs, std::back_inserter(dest_opaques),
           [](se::DeviceMemoryBase dest_addr) { return dest_addr.opaque(); });
       TF_RETURN_IF_ERROR(recv_ptr_map_.PutRecvPtr(current_id, dest_opaques));
     }
@@ -269,10 +266,9 @@ absl::StatusOr<bool> CollectivePermuteStartThunk::RunCollective(
                         comm_handle.comm->NumRanks());
 
     auto rendezvous_name = absl::StrFormat(
-        "rendezvous before calling collective-permute; run_id=%ld; op id:%d; "
-        "num_local_participants:%d",
-        params.collective_params->run_id.ToInt(), config_.config.op_id,
-        num_local_participants);
+        "rendezvous before calling collective-permute: run_id=%ld; "
+        "num_local_participants=%d",
+        params.collective_params->run_id.ToInt(), num_local_participants);
     auto rendezvous_key = CallRendezvousKey{params.collective_params->run_id};
 
     // Perform a rendezvous to make sure all receivers have their events
@@ -292,7 +288,7 @@ absl::StatusOr<bool> CollectivePermuteStartThunk::RunCollective(
 
   TF_RETURN_IF_ERROR(::xla::gpu::RunCollectivePermute(
       source_target, device_buffers, stream, comm_handle.comm, device_string,
-      current_id, use_memcpy, recv_ptr_map_,
+      current_id, use_memcpy, &recv_ptr_map_,
       config_.config.use_symmetric_buffer));
 
   if (use_memcpy) {
@@ -311,10 +307,9 @@ absl::StatusOr<bool> CollectivePermuteStartThunk::RunCollective(
                         comm_handle.comm->NumRanks());
 
     auto rendezvous_name = absl::StrFormat(
-        "rendezvous after calling collective-permute; run_id=%ld; op id:%d; "
-        "num_local_participants:%d",
-        params.collective_params->run_id.ToInt(), config_.config.op_id,
-        num_local_participants);
+        "rendezvous after calling collective-permute: run_id=%ld; "
+        "num_local_participants=%d",
+        params.collective_params->run_id.ToInt(), num_local_participants);
     auto rendezvous_key = CallRendezvousKey{params.collective_params->run_id};
 
     // Perform a rendezvous to make sure all senders have their events
@@ -337,9 +332,10 @@ absl::StatusOr<bool> CollectivePermuteStartThunk::RunCollective(
 
 absl::Status RunCollectivePermute(
     P2PConfig::SourceTargetMapEntry source_target,
-    std::vector<DeviceBufferPair>& buffers, se::Stream& stream,
+    const std::vector<DeviceBufferPair>& buffers, se::Stream& stream,
     Communicator* comm, absl::string_view device_string, int64_t current_id,
-    bool use_memcpy, CollectivePermuteStartThunk::RecvPtrMap& recv_ptr_map,
+    bool use_memcpy,
+    const CollectivePermuteStartThunk::RecvPtrMap* recv_ptr_map,
     bool use_symmetric_buffer) {
   // Determine the source and target IDs for this instance. The source ID is the
   // ID which will copy its data to this instance. The destination ID is the ID
@@ -373,11 +369,11 @@ absl::Status RunCollectivePermute(
   std::optional<int64_t> target_id = source_target.target;
 
   std::vector<se::DeviceMemoryBase> src_addrs, dest_addrs;
-  std::transform(
-      buffers.begin(), buffers.end(), std::back_inserter(src_addrs),
+  absl::c_transform(
+      buffers, std::back_inserter(src_addrs),
       [](const DeviceBufferPair& buffer) { return buffer.source_buffer; });
-  std::transform(
-      buffers.begin(), buffers.end(), std::back_inserter(dest_addrs),
+  absl::c_transform(
+      buffers, std::back_inserter(dest_addrs),
       [](const DeviceBufferPair& buffer) { return buffer.destination_buffer; });
 
   VLOG(3) << absl::StreamFormat("%s : id = %d, source_id = %d, target_id = %d",
@@ -391,8 +387,12 @@ absl::Status RunCollectivePermute(
 
     std::optional<RankId> source_rank;
     std::vector<RankId> target_ranks;
-    if (source_id) source_rank = RankId(*source_id);
-    if (target_id) target_ranks.push_back(RankId(*target_id));
+    if (source_id) {
+      source_rank = RankId(*source_id);
+    }
+    if (target_id) {
+      target_ranks.push_back(RankId(*target_id));
+    }
 
     if (!is_nccl_group_needed) {
       for (uint64_t idx = 0; idx < buffers.size(); ++idx) {
@@ -437,7 +437,9 @@ absl::Status RunCollectivePermute(
   }
 
   if (use_memcpy && target_id) {
-    TF_ASSIGN_OR_RETURN(auto recv_ptrs, recv_ptr_map.GetRecvPtr(*target_id));
+    CHECK(recv_ptr_map != nullptr);
+    TF_ASSIGN_OR_RETURN(AsyncValueRef<std::vector<void*>> recv_ptrs,
+                        recv_ptr_map->GetRecvPtr(*target_id));
 
     VLOG(3) << "Using memcpy, received target pointers, current_id: "
             << current_id << " target_id: " << *target_id;

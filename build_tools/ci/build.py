@@ -107,6 +107,7 @@ class BuildType(enum.Enum):
   """
 
   XLA_LINUX_X86_CPU_GITHUB_ACTIONS = enum.auto()
+  XLA_WINDOWS_X86_CPU_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_ARM64_CPU_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_L4_GITHUB_ACTIONS = enum.auto()
@@ -126,6 +127,7 @@ class BuildType(enum.Enum):
   XLA_MACOS_ARM64_CPU_KOKORO = enum.auto()
 
   JAX_LINUX_X86_CPU_GITHUB_ACTIONS = enum.auto()
+  JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS = enum.auto()
   JAX_LINUX_X86_GPU_L4_GITHUB_ACTIONS = enum.auto()
 
   TENSORFLOW_LINUX_X86_CPU_GITHUB_ACTIONS = enum.auto()
@@ -159,6 +161,7 @@ class Build:
   repo_env: Dict[str, Any] = dataclasses.field(default_factory=dict)
   override_repository: Dict[str, str] = dataclasses.field(default_factory=dict)
   options: Dict[str, Any] = dataclasses.field(default_factory=dict)
+  startup_options: Dict[str, Any] = dataclasses.field(default_factory=dict)
   extra_setup_commands: Tuple[List[str], ...] = ()
 
   def __post_init__(self):
@@ -187,6 +190,7 @@ class Build:
     Returns: List of command line arguments
     """
     options = _dict_to_cli_options(self.options)
+    startup_options = _dict_to_cli_options(self.startup_options)
     configs = [f"--config={config}" for config in self.configs]
     build_tag_filters = (
         f"--build_tag_filters={','.join(self.build_tag_filters)}"
@@ -211,7 +215,14 @@ class Build:
         + options
         + list(extra_options)
     )
-    return ["bazel", subcommand, *all_options, "--", *self.target_patterns]
+    return [
+        "bazel",
+        *startup_options,
+        subcommand,
+        *all_options,
+        "--",
+        *self.target_patterns,
+    ]
 
   def commands(self) -> List[List[str]]:
     """Returns list of commands for a build."""
@@ -228,7 +239,11 @@ class Build:
         self.type_ == BuildType.XLA_MACOS_X86_CPU_KOKORO
         or self.type_ == BuildType.XLA_MACOS_ARM64_CPU_KOKORO
     )
-    if not macos_build:
+    windows_build = (
+        self.type_ == BuildType.JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS
+        or self.type_ == BuildType.XLA_WINDOWS_X86_CPU_GITHUB_ACTIONS
+    )
+    if not (macos_build or windows_build):
       cmds.append(
           retry(
               self.bazel_command(
@@ -310,6 +325,79 @@ Build(
     build_tag_filters=cpu_x86_tag_filter,
     test_tag_filters=cpu_x86_tag_filter,
     options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
+)
+
+windows_x86_tag_filter = (
+    "-no_windows",
+    "-no_oss",
+    "-gpu",
+    "-tpu",
+    "-requires-gpu-nvidia",
+    "-requires-gpu-amd",
+    "-requires-gpu-intel",
+)
+
+Build(
+    type_=BuildType.XLA_WINDOWS_X86_CPU_GITHUB_ACTIONS,
+    repo="openxla/xla",
+    configs=(
+        "warnings",
+        "nonccl",
+        "rbe_xla_windows_x86_cpu_2022",
+    ),
+    target_patterns=(
+        "//xla/...",
+        "//build_tools/...",
+        "@tsl//tsl/...",
+        "-//xla/stream_executor/tpu/...",
+        # mpitrampoline and gloo are not windows compatible
+        "-//xla/backends/cpu/collectives:gloo_collectives_test",
+        "-//xla/backends/cpu/collectives:mpi_collectives",
+        "-//xla/backends/cpu/collectives:mpi_communicator",
+        # ortools is not windows compatible
+        "-//xla/hlo/experimental/...",
+        # implementation is not windows compatible
+        "-//xla/python/transfer/...",
+        "-//xla/backends/profiler/subprocess:subprocess_profiling_session",
+        "-//xla/backends/profiler/subprocess:subprocess_profiling_session_test",
+        "-//xla/backends/profiler/subprocess:subprocess_registry",
+        "-//xla/backends/profiler/subprocess:subprocess_registry_test",
+        "-//xla/tools/benchmarks/utils:generate_benchmark_matrices_cc",
+        "-//xla/tools/benchmarks/utils:generate_benchmark_matrices_main",
+        "-//xla/tools/benchmarks/utils:generate_benchmark_matrices_test",
+        # xnnpack is not windows compatible
+        "-//xla/backends/cpu/runtime/ynnpack:ynn_fusion_thunk",
+        "-//xla/backends/cpu/runtime/ynnpack:ynn_interop",
+        "-//xla/backends/cpu/runtime/ynnpack:ynn_threadpool",
+        # triton is not windows compatible
+        "-//xla/backends/gpu/...",
+        "-//xla/codegen/emitters/tests/...",
+        "-//xla/service/gpu/...",
+        # undefined symbols
+        "-//xla/codegen/xtile/ir/...",
+        "-//xla/codegen/tools:emitters_opt",
+        "-//xla/codegen/emitters/ir/tests/...",
+        "-//xla/codegen/emitters/transforms/tests/...",
+        "-//xla/backends/cpu/codegen/emitters/ir/tests/...",
+        "-//xla/backends/cpu/codegen/emitters/transforms/tests/...",
+        "-//xla/backends/cpu:ynn_emitter",
+        "-//xla/backends/cpu:ynn_support",
+        "-//xla/hlo/transforms/simplifiers:simplify_fp_conversions_test",
+        "-@tsl//tsl/platform:net_test",
+        # eigen is not windows compatible
+        "-//xla/codegen/intrinsic/cpp:eigen_unary_test",
+        "-//xla/codegen/intrinsic/cpp:eigen_unary_ll_generator",
+    ),
+    build_tag_filters=windows_x86_tag_filter,
+    test_tag_filters=windows_x86_tag_filter,
+    options={
+        **_DEFAULT_BAZEL_OPTIONS,
+        "//xla/tsl:ci_build": True,
+    },
+    subcommand="build",
+    startup_options={
+        "output_user_root": "C:/x",
+    },
 )
 
 Build(
@@ -705,6 +793,26 @@ Build(
     ),
     options=_DEFAULT_BAZEL_OPTIONS,
     repo_env={"HERMETIC_PYTHON_VERSION": "3.12"},
+)
+
+Build(
+    type_=BuildType.JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS,
+    repo="google/jax",
+    configs=("rbe_windows_amd64",),
+    target_patterns=("//tests:cpu_tests", "//tests:backend_independent_tests"),
+    test_env=dict(
+        JAX_NUM_GENERATED_CASES=25,
+        JAX_SKIP_SLOW_TESTS=1,
+    ),
+    override_repository=dict(
+        xla=f"{_GITHUB_WORKSPACE}\\openxla\\xla",
+    ),
+    options={**_DEFAULT_BAZEL_OPTIONS, "build_runfile_links": False},
+    repo_env={"HERMETIC_PYTHON_VERSION": "3.12"},
+    subcommand="build",
+    startup_options={
+        "output_base": f"{_GITHUB_WORKSPACE}\\bazel_output_base",
+    },
 )
 
 Build(

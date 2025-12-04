@@ -57,15 +57,14 @@ ConditionalThunk::ConditionalThunk(
       branch_thunks_(std::move(branch_thunks)),
       branch_index_is_bool_(branch_index_is_bool) {}
 
-absl::Status ConditionalThunk::Prepare(
-    const PrepareParams& params, ResourceRequestsInterface& resource_requests) {
+absl::Status ConditionalThunk::Prepare(const PrepareParams& params) {
   if (branch_index_is_bool_) {
     TF_RET_CHECK(branch_thunks_.size() == 2);
   } else {
     TF_RET_CHECK(!branch_thunks_.empty());
   }
   for (auto& branch_thunk : branch_thunks_) {
-    TF_RETURN_IF_ERROR(branch_thunk->Prepare(params, resource_requests));
+    TF_RETURN_IF_ERROR(branch_thunk->Prepare(params));
   }
   return absl::OkStatus();
 }
@@ -165,12 +164,18 @@ void ConditionalThunk::ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn) {
   }
 }
 
-void ConditionalThunk::TransformAllNestedThunks(
-    absl::FunctionRef<std::unique_ptr<Thunk>(std::unique_ptr<Thunk>)> fn) {
+absl::Status ConditionalThunk::TransformAllNestedThunks(
+    absl::FunctionRef<
+        absl::StatusOr<std::unique_ptr<Thunk>>(std::unique_ptr<Thunk>)>
+        fn) {
   for (std::unique_ptr<SequentialThunk>& branch_thunk : branch_thunks_) {
-    branch_thunk->TransformAllNestedThunks(fn);
-    branch_thunk = SequentialThunk::FromThunk(fn(std::move(branch_thunk)));
+    TF_RETURN_IF_ERROR(branch_thunk->TransformAllNestedThunks(fn));
+
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<Thunk> thunk,
+                        fn(std::move(branch_thunk)));
+    branch_thunk = SequentialThunk::FromThunk(std::move(thunk));
   }
+  return absl::OkStatus();
 }
 
 absl::StatusOr<ThunkProto> ConditionalThunk::ToProto() const {

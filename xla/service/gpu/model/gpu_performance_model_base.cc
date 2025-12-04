@@ -143,10 +143,9 @@ void GpuPerformanceModelCache::Invalidate(const HloInstruction& instruction) {
 
 /*static*/
 LaunchDimensions GpuPerformanceModelBase::EstimateFusionLaunchDimensions(
-    const HloFusionAnalysis& fusion_analysis,
-    SymbolicExprContext* symbolic_expr_context) {
+    const HloFusionAnalysis& fusion_analysis, mlir::MLIRContext* mlir_context) {
   auto emitter = GetFusionEmitter(
-      PreBufferAssignmentFusionInfo{fusion_analysis}, symbolic_expr_context);
+      PreBufferAssignmentFusionInfo{fusion_analysis}, mlir_context);
   if (const auto* kernel_emitter =
           dynamic_cast<const KernelFusionInterface*>(emitter.get())) {
     return kernel_emitter->launch_dimensions();
@@ -346,7 +345,7 @@ int64_t GpuPerformanceModelBase::CalculateEffectiveFlopsPerNs(
       std::min<int64_t>(num_blocks, gpu_device_info.core_count());
   int64_t fpu_count = n_active_core * n_active_fpus_per_core;
 
-  int64_t flop_per_ns_per_fpu = gpu_device_info.clock_rate_ghz() * /*fma:*/ 2;
+  double flop_per_ns_per_fpu = gpu_device_info.clock_rate_ghz() * /*fma:*/ 2;
   return flop_per_ns_per_fpu * fpu_count;
 }
 

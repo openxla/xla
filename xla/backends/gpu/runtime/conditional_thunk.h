@@ -58,8 +58,7 @@ class ConditionalThunk : public Thunk {
   ConditionalThunk(const ConditionalThunk&) = delete;
   ConditionalThunk& operator=(const ConditionalThunk&) = delete;
 
-  absl::Status Prepare(const PrepareParams& params,
-                       ResourceRequestsInterface& resource_requests) override;
+  absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
@@ -73,9 +72,10 @@ class ConditionalThunk : public Thunk {
 
   void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const override;
   void ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn) override;
-  void TransformAllNestedThunks(
-      absl::FunctionRef<std::unique_ptr<Thunk>(std::unique_ptr<Thunk>)> fn)
-      override;
+  absl::Status TransformAllNestedThunks(
+      absl::FunctionRef<
+          absl::StatusOr<std::unique_ptr<Thunk>>(std::unique_ptr<Thunk>)>
+          fn) override;
 
   bool branch_index_is_bool() const { return branch_index_is_bool_; }
 

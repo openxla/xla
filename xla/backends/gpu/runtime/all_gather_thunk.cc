@@ -75,7 +75,7 @@ AllGatherStartThunk::AllGatherStartThunk(ThunkInfo thunk_info,
                       IsGPUSyncCollective(*inst), false),
       config_(impl::GetAllGatherConfig(inst)),
       buffers_(std::move(buffers)) {
-  CHECK_EQ(config_.config.operand_count, buffers_.size());
+  CHECK_EQ(config_.config.operand_element_type.size(), buffers_.size());
 }
 
 /*static*/ absl::Status AllGatherStartThunk::CheckImplementable(

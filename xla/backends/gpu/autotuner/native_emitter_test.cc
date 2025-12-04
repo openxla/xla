@@ -101,7 +101,7 @@ class NativeEmitterBackendTest : public HloHardwareIndependentTestBase {
   DebugOptions debug_options_;
   NVPTXCompiler compiler_;
   se::StreamExecutor* stream_executor_;
-  Compiler::TargetConfig target_config_;
+  Compiler::GpuTargetConfig target_config_;
   NativeEmitterBackend backend_;
 };
 
@@ -226,8 +226,7 @@ TEST_F(NativeEmitterBackendTest, CompileSetsIsAutotuningCompilationOption) {
       mock_compiler,
       RunBackend(
           testing::_, testing::_,
-          testing::Field(&Compiler::CompileOptions::is_autotuning_compilation,
-                         true)))
+          testing::Field(&Compiler::CompileOptions::embed_hlo_module, false)))
       .WillOnce(testing::Return(std::unique_ptr<Executable>()));
   // Attempt to compile the fusion using the retrieved backend config.
   EXPECT_THAT(backend.Compile(*fusion, *config), absl_testing::IsOk());

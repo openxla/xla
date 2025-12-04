@@ -49,7 +49,9 @@ absl::Status ExecutionCounters::Initialize(se::StreamExecutor* executor,
                                            RunId run_id) {
   absl::MutexLock lock(mu_);
   CounterKey key = {executor, run_id};
-  if (counters_.contains(key)) return absl::OkStatus();
+  if (counters_.contains(key)) {
+    return absl::OkStatus();
+  }
   counters_.emplace(key, 0);
   return absl::OkStatus();
 }
@@ -93,9 +95,7 @@ P2PConfig GetP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
   P2PConfig p2p_config;
   auto& config = p2p_config.config;
 
-  config.operand_count = 1;
   config.operand_element_type.push_back(shape.element_type());
-  config.SetCollectiveOpKindAndID(instr);
   config.group_mode = GetCollectiveOpGroupMode(
                           instr->channel_id().value_or(0) > 0, std::nullopt)
                           .value();
@@ -196,8 +196,7 @@ std::optional<ExecutionStreamId> GetStreamIdOverride(
 // Retrieves the current collective ID (replica or partition ID) for the
 // executing device.
 absl::StatusOr<const int64_t> GetCollectiveCurrentId(
-    Thunk::CollectiveExecuteParams* collective_params,
-    const P2PConfig& config) {
+    CollectiveParams* collective_params, const P2PConfig& config) {
   GlobalDeviceId global_device_id = collective_params->global_device_id;
   TF_ASSIGN_OR_RETURN(
       const DeviceAssignment::LogicalID current_logical_id,

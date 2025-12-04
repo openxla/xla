@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
-#include "xla/service/gpu/executable.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -106,14 +105,11 @@ class GpuCompiler : public LLVMCompiler {
 
   int64_t GetPointerSize() const { return pointer_size_; }
 
-  static absl::StatusOr<Compiler::TargetConfig> GetTargetConfig(
+  static absl::StatusOr<Compiler::GpuTargetConfig> GetTargetConfig(
       const Compiler::CompileOptions& options, const DebugOptions& debug_opts,
       se::StreamExecutor* executor);
 
   mlir::MLIRContext* mlir_context() { return &mlir_context_; }
-  SymbolicExprContext* symbolic_expr_context() {
-    return &symbolic_expr_context_;
-  }
 
   virtual std::unique_ptr<GpuAliasInfo> GetAliasInfo(
       const se::DeviceDescription& device_description) const {
@@ -156,7 +152,7 @@ class GpuCompiler : public LLVMCompiler {
   // thread_pool is used to speed up compilation during autotuning.
   virtual absl::Status OptimizeHloPostLayoutAssignment(
       HloModule* hlo_module, se::StreamExecutor* stream_exec,
-      const CompileOptions& options, const TargetConfig& gpu_target_config,
+      const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
       const GpuAliasInfo* alias_info, tsl::thread::ThreadPool* thread_pool);
 
   // CollectivesScheduleLinearizer enforces a total ordering between collectives
@@ -177,7 +173,7 @@ class GpuCompiler : public LLVMCompiler {
       const CompileOptions& options, HloModule* hlo_module,
       AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool,
       se::StreamExecutor* stream_exec,
-      const Compiler::TargetConfig* target_config) {
+      const Compiler::GpuTargetConfig* target_config) {
     return absl::OkStatus();
   }
 
@@ -196,7 +192,7 @@ class GpuCompiler : public LLVMCompiler {
       HloPassPipeline* pipeline, HloModule* hlo_module,
       const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
       stream_executor::StreamExecutor* stream_executor,
-      const Compiler::TargetConfig* target_config,
+      const Compiler::GpuTargetConfig* target_config,
       HloCostAnalysis::ShapeSizeFunction shape_size_fn) {
     return absl::OkStatus();
   }
@@ -249,7 +245,7 @@ class GpuCompiler : public LLVMCompiler {
   absl::Status OptimizeHloModule(HloModule* hlo_module,
                                  se::StreamExecutor* stream_exec,
                                  const CompileOptions& options,
-                                 const TargetConfig& gpu_target_config,
+                                 const GpuTargetConfig& gpu_target_config,
                                  const GpuAliasInfo* alias_info);
 
   virtual absl::Status OptimizeHloConvolutionCanonicalization(
@@ -277,6 +273,15 @@ class GpuCompiler : public LLVMCompiler {
     return Unimplemented("LinkModules is not implemented.");
   }
 
+  // New AOT compilation as part of the AOT split project.
+  absl::StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
+  NewCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
+                        const AotCompilationOptions& options);
+  // Legacy AOT compilation.
+  absl::StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
+  LegacyCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
+                           const AotCompilationOptions& options);
+
   se::Platform::Id platform_id_;
 
   // The triple that represents our target.
@@ -299,9 +304,6 @@ class GpuCompiler : public LLVMCompiler {
   // A MLIR context that can be used by pre-codegen passes. For codegen, we will
   // need to have a context with more dialects registered.
   mlir::MLIRContext mlir_context_;
-  // A symbolic expression context that can be used by pre-codegen passes to
-  // create symbolic expressions.
-  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 }  // namespace gpu

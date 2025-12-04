@@ -46,7 +46,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/resource_requests.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/shape.h"
@@ -1945,7 +1944,7 @@ TEST_F(DynamicSliceThunkTest,
                                 /*device_ordinal=*/0,
                                 /*memory_allocator=*/&allocator);
 
-  Thunk::PrepareParams prepare_params{nullptr};
+  Thunk::PrepareParams prepare_params{};
 
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, /*buffer_allocations=*/allocations, stream.get(),
@@ -1957,8 +1956,7 @@ TEST_F(DynamicSliceThunkTest,
       {executor, source, &allocations, stream.get(), stream.get()}));
 
   // Executing dynamic slice thunk.
-  ResourceRequests resource_requests;
-  TF_ASSERT_OK(thunk->Prepare(prepare_params, resource_requests));
+  TF_ASSERT_OK(thunk->Prepare(prepare_params));
   TF_ASSERT_OK(thunk->ExecuteOnStream(params));
   TF_ASSERT_OK(stream->BlockHostUntilDone());
 
@@ -2110,10 +2108,10 @@ TEST_F(DynamicSliceThunkTest, TransformAllNestedThunks) {
                           /*sliced_shapes=*/{},
                           /*offset_byte_sizes=*/{});
 
-  thunk.TransformAllNestedThunks([](auto) {
+  TF_EXPECT_OK(thunk.TransformAllNestedThunks([](auto) {
     return std::make_unique<DummyThunk>(Thunk::Kind::kCustomCall,
                                         Thunk::ThunkInfo());
-  });
+  }));
 
   EXPECT_THAT(thunk.get_embedded_thunk(), NotNull());
   EXPECT_THAT(thunk.get_embedded_thunk()->thunks(), SizeIs(1));

@@ -72,7 +72,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/util/env_var.h"
@@ -845,7 +844,7 @@ const json* CudnnExecutionPlanEngineFilterRuntime() {
 bool BatchnormSpatialPersistentEnabled() {
   static bool is_enabled = [] {
     bool is_enabled = false;
-    TF_CHECK_OK(
+    CHECK_OK(
         tsl::ReadBoolFromEnvVar("TF_USE_CUDNN_BATCHNORM_SPATIAL_PERSISTENT",
                                 /*default_val=*/false, &is_enabled));
     return is_enabled;
@@ -857,8 +856,8 @@ bool BatchnormSpatialPersistentEnabled() {
 bool ConvUseDefaultAlgorithm() {
   static bool use_default = [] {
     bool use_default = false;
-    TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_USE_DEFAULT_CONV_ALGO",
-                                        /*default_val=*/false, &use_default));
+    CHECK_OK(tsl::ReadBoolFromEnvVar("TF_USE_DEFAULT_CONV_ALGO",
+                                     /*default_val=*/false, &use_default));
     return use_default;
   }();
   return use_default;
@@ -3461,13 +3460,12 @@ GetGenericCudnnOperationGraph(
 bool SideInputNeeded(dnn::ActivationMode activation_mode, double conv_scale,
                      double side_input_scale) {
   // Cudnn uses precompiled kernels to perform the Conv-Add-BiasAdd-Act when the
-  // activation is Relu or Identity and this requires the "side_input" for the
+  // activation is Relu and this requires the "side_input" for the
   // Add. For other activations, cudnn uses the runtime-compiled kernels.
   // However, for this case, we need to drop the Add node and use
   // Conv-BiasAdd-Act pattern to trigger the correct cudnn path.
   // TODO(kaixih@nvidia): We should remove this WAR when the cudnn fixes it.
-  bool check_activation = activation_mode == dnn::ActivationMode::kNone ||
-                          activation_mode == dnn::ActivationMode::kRelu;
+  bool check_activation = activation_mode == dnn::ActivationMode::kRelu;
   bool check_scale = conv_scale != 1.0 || side_input_scale != 0.0;
   return check_activation || check_scale;
 }
@@ -4630,7 +4628,7 @@ absl::StatusOr<CudnnGraph> GetCudnnBlockScaledDotOperationGraph(
                         desc.GetPhysicalDimensionsMajorToMinor());
     std::vector<int64_t> strides = desc.GetPhysicalStridesMajorToMinor();
     if (dimensions.size() == 2) {
-      dimensions.insert(dimensions.begin(), 1);
+      dimensions.insert(dimensions.begin(), 1);  // Batch dimension is implicit.
       strides.insert(strides.begin(), dimensions[1] * dimensions[2]);
     }
     CHECK_EQ(dimensions.size(), 3);
@@ -4670,7 +4668,7 @@ absl::StatusOr<CudnnGraph> GetCudnnBlockScaledDotOperationGraph(
     d_tensor->set_uid(next_uid());
     d_tensor->set_is_virtual(false);
   } else {
-    std::vector<int64_t> scalar(lhs_data.ndims(), 1);
+    std::vector<int64_t> scalar(3, 1);  // Batch dimension is implicit.
     auto scale_attr = Tensor_attributes()
                           .set_uid(next_uid())
                           .set_dim(scalar)
@@ -5432,11 +5430,13 @@ absl::Status CreateOpRunners(
                     .setEngineConfig(filtered_configs[i], op_graph->getTag())
                     .build();
     if (plan.get_status() != CUDNN_STATUS_SUCCESS) {
+#if CUDNN_VERSION >= 90000
       std::string message(65535, '\0');
       cudnnGetLastErrorString(message.data(), message.size());
       VLOG(4) << "Failed building ExecutionPlan: found error: "
               << cudnnGetErrorString(plan.get_status())
               << " with message: " << message;
+#endif
       continue;
     }
 
@@ -5648,7 +5648,7 @@ absl::Status CudnnSupport::GetFusedConvolveRunners(
 
   if (input_type == dnn::DataType::kInt8 &&
       !stream->GetCudaComputeCapability().IsAtLeast(6, 1)) {
-    return tsl::errors::Unimplemented(
+    return absl::UnimplementedError(
         "cudnnConvolutionBiasActivationForward() for int8 is only supported "
         "on GPUs with compute capability 6.1 or later.");
   }

@@ -1,4 +1,3 @@
-#include "xla/backends/gpu/runtime/thunk.pb.h"
 /* Copyright 2019 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,14 +30,14 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
-#include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/runtime/collective_execution.h"
+#include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/rendezvous.h"
@@ -51,30 +50,18 @@ limitations under the License.
 namespace xla::gpu {
 
 struct CollectiveConfig {
-  int64_t operand_count;
+  // Returns if the collective communication operation is degenerate because all
+  // the groups formed by the operation are singleton.
+  bool IsDegenerate(int64_t replica_count, int64_t partition_count) const;
+
   std::vector<PrimitiveType> operand_element_type;
   std::vector<ReplicaGroup> replica_groups;
-  RendezvousKey::CollectiveOpKind collective_op_kind;
-  int64_t op_id;
   CollectiveOpGroupMode group_mode;
   bool use_symmetric_buffer;
-
-  void SetCollectiveOpKindAndID(const HloCollectivePermuteInstruction* instr);
-  void SetCollectiveOpKindAndID(const HloSendRecvInstruction* instr);
-  bool IsDegenerate(int64_t replica_count, int64_t partition_count) const;
 };
 
 CollectiveConfig GetCollectiveConfig(const HloInstruction* hlo,
                                      std::optional<bool> use_global_device_ids);
-
-// Handle to a communicator object with corresponding clique key.
-struct CommunicatorHandle {
-  CommunicatorHandle(Communicator* comm, GpuCliqueKey clique_key)
-      : comm(comm), clique_key(std::move(clique_key)) {}
-
-  Communicator* comm;       // communicator object
-  GpuCliqueKey clique_key;  // clique key
-};
 
 // Wrap GpuCliqueKey into a unique struct to guarantee we do not accidentally
 // try to run multiple unrelated rendezvous for a same key.
@@ -132,11 +119,9 @@ class CollectiveThunk : public Thunk {
   };
 
   // Logging support.
-  static std::string GetDeviceString(
-      const Thunk::CollectiveExecuteParams& params);
+  static std::string GetDeviceString(const CollectiveParams& params);
 
-  absl::Status Prepare(const PrepareParams& params,
-                       ResourceRequestsInterface& resource_requests) override;
+  absl::Status Prepare(const PrepareParams& params) override;
 
   absl::Status Initialize(const InitializeParams& params) override;
 
@@ -256,22 +241,10 @@ absl::Status AddOpDescription(absl::Status status, OpT op,
 
 //===----------------------------------------------------------------------===//
 
-absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
-    GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
-    const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, bool is_p2p, bool use_nccl = true);
-
 // Helper over GetGpuCliqueKey that builds key for AsyncStreamKind::kCollective.
 absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(
-    const CollectiveThunk::CollectiveExecuteParams& params,
-    const CollectiveConfig& collective_config, bool use_nccl = true);
-
-// Returns a communicator and additional information about the clique.
-absl::StatusOr<CommunicatorHandle> GetComm(
-    GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
-    const Thunk::CollectiveCliques& collective_cliques,
-    const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, bool is_p2p);
+    const CollectiveParams& params, const CollectiveConfig& collective_config,
+    bool include_participant_groups = true);
 
 struct DeviceBufferPair {
   PrimitiveType element_type;

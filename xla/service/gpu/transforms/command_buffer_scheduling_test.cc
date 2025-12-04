@@ -18,7 +18,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -120,7 +119,7 @@ TEST_F(CommandBufferSchedulingTest, SingleCommandBuffer) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -197,7 +196,7 @@ TEST_F(CommandBufferSchedulingTest, MultipleCommandBuffers) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -235,7 +234,7 @@ TEST_F(CommandBufferSchedulingTest, AllReduceStartFollowedByDone) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -269,7 +268,7 @@ TEST_F(CommandBufferSchedulingTest, AllGatherStartFollowedByDone) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -309,7 +308,7 @@ TEST_F(CommandBufferSchedulingTest, ReduceScatterStartFollowedByDone) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -349,7 +348,7 @@ TEST_F(CommandBufferSchedulingTest, AllReduceStartFollowedByBitcast) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -393,7 +392,7 @@ TEST_F(CommandBufferSchedulingTest, AllReduceStartFollowedAllReduceStart) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -457,7 +456,7 @@ TEST_F(CommandBufferSchedulingTest, DoNotCaptureUnmatchedAsyncDone) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -659,7 +658,7 @@ TEST_F(CommandBufferSchedulingTest, ForwardControlDependencies) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -698,7 +697,7 @@ TEST_F(CommandBufferSchedulingTest, ForwardControlDependenciesToParams) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -776,7 +775,7 @@ TEST_F(CommandBufferSchedulingTest, WhileNotCommand) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -841,7 +840,7 @@ TEST_F(CommandBufferSchedulingTest, While) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -920,7 +919,7 @@ TEST_F(CommandBufferSchedulingTest, Conditional) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -972,7 +971,7 @@ ENTRY e {
   RunAndFilecheckHloRewrite(kHloText, CommandBufferScheduling(device_desc()),
                             kExpected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -1003,7 +1002,7 @@ TEST_F(CommandBufferSchedulingTest, AsyncCustomCall) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -1047,7 +1046,7 @@ TEST_F(CommandBufferSchedulingTest, AsyncFusion) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -1076,7 +1075,7 @@ TEST_F(CommandBufferSchedulingTest, AsyncAlltoAll) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -1344,7 +1343,7 @@ TEST_F(CommandBufferSchedulingTest, MoveGTEs) {
   RunAndFilecheckHloRewrite(hlo, CommandBufferScheduling(device_desc()),
                             expected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 
@@ -1378,7 +1377,7 @@ ENTRY e {
   RunAndFilecheckHloRewrite(kHloText, CommandBufferScheduling(device_desc()),
                             kExpected, [](HloModule* module) {
                               EXPECT_TRUE(module->has_schedule());
-                              TF_CHECK_OK(module->schedule().Verify());
+                              CHECK_OK(module->schedule().Verify());
                             });
 }
 

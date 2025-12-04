@@ -22,6 +22,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/time/time.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_memory.h"
@@ -31,13 +32,11 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor::gpu {
 namespace {
 using ::testing::Gt;
-using ::tsl::testing::IsOk;
 
 class CudaTimerTest : public ::testing::TestWithParam<CudaTimer::TimerType> {
  public:

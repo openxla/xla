@@ -28,7 +28,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
-#include "xla/service/gpu/executable.pb.h"
+#include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/stream_executor/stream_executor.h"
 
@@ -55,6 +55,9 @@ class LegacyGpuAotCompilationResult : public AotCompilationResult {
   static absl::StatusOr<std::unique_ptr<LegacyGpuAotCompilationResult>>
   FromString(const std::string& serialized, int pointer_size);
 
+  static absl::StatusOr<std::unique_ptr<LegacyGpuAotCompilationResult>>
+  FromProto(const GpuExecutableProto& proto, int pointer_size);
+
   absl::StatusOr<std::string> SerializeAsString() const override;
 
   absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable(
@@ -69,19 +72,17 @@ class LegacyGpuAotCompilationResult : public AotCompilationResult {
   absl::StatusOr<std::unique_ptr<BufferAssignment>> buffer_assignment()
       const override;
 
-  const CompilationResultProto& GetCompilationResultProto() const {
-    return proto_;
-  }
+  const GpuExecutableProto& GetGpuExecutableProto() const { return proto_; }
 
  private:
   LegacyGpuAotCompilationResult(std::unique_ptr<HloModule> module,
-                                CompilationResultProto proto, int pointer_size)
+                                GpuExecutableProto proto, int pointer_size)
       : module_(std::move(module)),
         proto_(std::move(proto)),
         pointer_size_(pointer_size) {}
 
   std::unique_ptr<HloModule> module_;
-  CompilationResultProto proto_;
+  GpuExecutableProto proto_;
   int pointer_size_;
 };
 

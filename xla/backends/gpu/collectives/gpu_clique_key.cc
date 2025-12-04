@@ -29,7 +29,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "xla/core/collectives/clique_key.h"
-#include "xla/service/global_device_id.h"
+#include "xla/runtime/device_id.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
@@ -101,14 +101,14 @@ std::string GpuCliqueKey::ToString() const {
     std::vector<std::string> values;
     values.reserve(participant_groups_.size());
     for (const auto& group : participant_groups_) {
-      values.push_back("[" + GlobalDeviceIdsToString(group) + "]");
+      values.push_back(absl::StrFormat("[%s]", absl::StrJoin(group, ",")));
     }
     group_string = absl::StrFormat("; groups=[%s]", absl::StrJoin(values, ","));
   }
   return absl::StrFormat(
       "devices=[%s]; is_p2p=%d%s; root_device=%lld; "
       "num_local_participants=%lld; incarnations=[%s]",
-      GlobalDeviceIdsToString(devices()), is_p2p_, group_string,
+      absl::StrJoin(devices(), ","), is_p2p_, group_string,
       root_device_.value(), num_local_participants_,
       absl::StrJoin(incarnations_, ", ",
                     [](std::string* out, IncarnationId id) {
