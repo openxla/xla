@@ -32,8 +32,9 @@ namespace {
 
 class MatmulPerfTableGenTest : public HloPjRtGpuTestBase {
   void SetUp() override {
-    if (!device_description().gpu_compute_capability().IsCuda()) {
-      GTEST_SKIP() << "Not built with --config=cuda";
+    auto compute_capability = device_description().gpu_compute_capability();
+    if (!compute_capability.IsCuda() && !compute_capability.IsRocm()) {
+      GTEST_SKIP() << "Not built with --config=cuda or --config=rocm";
     }
   }
 };
