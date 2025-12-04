@@ -80,6 +80,7 @@ cc_library(
     hdrs = ["plugin_metadata.h"],
     visibility = ["//xla/backends/profiler/plugin:__subpackages__"],
     deps = [
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
@@ -90,7 +91,7 @@ cc_library(
     copts = tf_profiler_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        ":plugin_metadata_hdr",
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ] + if_google(
         ["//xla/backends/profiler/plugin/google:plugin_metadata_google"],
