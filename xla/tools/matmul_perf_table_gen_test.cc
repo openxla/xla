@@ -34,12 +34,12 @@ namespace {
 
 class MatmulPerfTableGenTest : public HloTestBase {
   void SetUp() override {
-    if (!backend()
+    auto compute_capability = backend()
              .default_stream_executor()
              ->GetDeviceDescription()
-             .gpu_compute_capability()
-             .IsCuda()) {
-      GTEST_SKIP() << "Not built with --config=cuda";
+             .gpu_compute_capability();
+    if (!compute_capability.IsCuda() && !compute_capability.IsRocm()) {
+      GTEST_SKIP() << "Not built with --config=cuda or --config=rocm";
     }
   }
 };
