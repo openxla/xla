@@ -247,6 +247,13 @@ static bool IsCommand(const HloCustomCallInstruction* hlo,
             << " into command buffer.";
     return true;
   }
+  
+  if (config.enabled_commands.contains(DebugOptions::CONVOLUTION) && 
+            IsCustomCallToDnnConvolution(*hlo)) {
+    VLOG(3) << "Recording convolution, target " << hlo->custom_call_target()
+            << " into command buffer.";
+    return true;
+  }
 
   if (!config.enabled_commands.contains(DebugOptions::CUSTOM_CALL)) {
     return false;
@@ -390,7 +397,10 @@ CommandBufferScheduling::CollectCommandBufferSequences(
   int64_t num_commands_in_current_seq = 0;
 
   // Adds `current_seq` to `sequences` if it has enough commands in it.
-  auto collect_current_seq = [&]() {
+  auto collect_current_seq = [&](HloInstruction *instr) {
+
+    VLOG(1) << "Stopped at: " << (instr ? instr->ToString() : "<end>") 
+            << " #commands: " << num_commands_in_current_seq;
     if (num_commands_in_current_seq >= std::max(1, min_num_commands)) {
       RemoveTrailingNoOps(current_seq);
       sequences.push_back(std::move(current_seq));
@@ -541,11 +551,11 @@ CommandBufferScheduling::CollectCommandBufferSequences(
 
     // If we didn't find the next command, collect the current sequence and
     // start a new one.
-    collect_current_seq();
+    collect_current_seq(inst);
   }
 
   // Don't forget to collect the final command sequence.
-  collect_current_seq();
+  collect_current_seq(nullptr);
   return sequences;
 }
 
@@ -817,7 +827,8 @@ absl::StatusOr<bool> CommandBufferScheduling::RunImpl(
                                                 DebugOptions::WHILE};
   static constexpr auto kRequireTracing = {
       DebugOptions::CUBLAS, DebugOptions::CUBLASLT, DebugOptions::CUDNN,
-      DebugOptions::CUSTOM_CALL, DebugOptions::COLLECTIVES};
+      DebugOptions::CUSTOM_CALL, DebugOptions::COLLECTIVES,
+      DebugOptions::CONVOLUTION };
 
   auto erase = [&](absl::Span<const DebugOptions::CommandBufferCmdType> cmds) {
     for (auto cmd : cmds) {
