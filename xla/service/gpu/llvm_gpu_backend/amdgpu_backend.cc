@@ -92,6 +92,8 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/traceme.h"
 
+#include "amd_comgr/amd_comgr.h"
+
 #ifdef HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY
 #include <array>
 
@@ -318,8 +320,19 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
     }
   }
 
-  // Check for register spilling using HSACO metadata (faster than disassembly)
-  // The .note section contains kernel metadata including spill counts
+  // Read HSACO file into memory (used for both metadata extraction and return)
+  std::ifstream hsaco_file(hsaco_path, std::ios::binary | std::ios::ate);
+  if (!hsaco_file) {
+    return xla::Internal("Failed to open HSACO file: %s", hsaco_path);
+  }
+  std::ifstream::pos_type hsaco_file_size = hsaco_file.tellg();
+  std::vector<uint8_t> hsaco(hsaco_file_size);
+  hsaco_file.seekg(0, std::ios::beg);
+  hsaco_file.read(reinterpret_cast<char*>(hsaco.data()), hsaco_file_size);
+  hsaco_file.close();
+
+  // Check for register spilling using HSACO metadata
+  // Use amd_comgr library for fast in-process metadata extraction
   VLOG(2) << "Checking for register spilling in: "
           << module->getModuleIdentifier();
 
@@ -328,115 +341,116 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
   int vgpr_spill_count = 0;
   int private_segment_size = 0;
 
-  // Use llvm-readobj to extract properly parsed .note section metadata
-  // llvm-readobj --notes properly decodes the AMD MessagePack format
-  std::string llvm_bin_dir;
-  if (std::getenv("LLVM_PATH")) {
-    llvm_bin_dir = tsl::io::JoinPath(std::getenv("LLVM_PATH"), "bin");
-  } else {
-    llvm_bin_dir = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
-  }
+  // Use already-loaded HSACO data for amd_comgr parsing
+  {
+    // Create amd_comgr data object from HSACO
+    amd_comgr_data_t comgr_data;
+    amd_comgr_status_t status =
+        amd_comgr_create_data(AMD_COMGR_DATA_KIND_EXECUTABLE, &comgr_data);
 
-  auto readobj_program =
-      llvm::sys::findProgramByName("llvm-readobj", {llvm_bin_dir});
-  if (readobj_program) {
-    // Run: llvm-readobj --notes <hsaco_file>
-    std::vector<llvm::StringRef> readobj_args{
-        llvm_ir::AsStringRef("llvm-readobj"),
-        llvm_ir::AsStringRef("--notes"),
-        llvm_ir::AsStringRef(hsaco_path),
-    };
+    if (status == AMD_COMGR_STATUS_SUCCESS) {
+      status = amd_comgr_set_data(comgr_data, hsaco.size(),
+                                  reinterpret_cast<const char*>(hsaco.data()));
 
-    // Create temporary file for output
-    std::string note_output_path = hsaco_path + ".note";
-    std::error_code ec;
-    llvm::raw_fd_ostream note_stream(note_output_path, ec,
-                                     llvm::sys::fs::OF_Text);
-    if (!ec) {
-      note_stream.close();
+      if (status == AMD_COMGR_STATUS_SUCCESS) {
+        // Get metadata from the executable
+        amd_comgr_metadata_node_t metadata;
+        status = amd_comgr_get_data_metadata(comgr_data, &metadata);
 
-      std::string error_msg;
-      llvm::StringRef empty_input;
-      std::optional<llvm::StringRef> redirects[] = {
-          empty_input,                        // stdin
-          llvm::StringRef(note_output_path),  // stdout
-          std::nullopt                        // stderr
-      };
-
-      int result = llvm::sys::ExecuteAndWait(
-          *readobj_program, llvm_ir::AsArrayRef(readobj_args), std::nullopt,
-          redirects, 0, 0, &error_msg);
-
-      if (result == 0) {
-        // Read the note section output
-        std::ifstream note_file(note_output_path);
-        std::string note_output((std::istreambuf_iterator<char>(note_file)),
-                                std::istreambuf_iterator<char>());
-        note_file.close();
-
-        // Print the full .note section output for debugging
-        // LOG(INFO) << "====== HSACO .note section content (llvm-readobj)
-        // ======"; LOG(INFO) << note_output; LOG(INFO) <<
-        // "=========================================================";
-
-        if (!note_output.empty()) {
-          // llvm-readobj --notes outputs properly formatted YAML like:
-          //   .sgpr_spill_count: 76
-          //   .vgpr_spill_count: 4
-          //   .private_segment_fixed_size: 15
-
-          auto find_value = [&note_output](const std::string& key) -> int {
-            size_t pos = note_output.find(key);
-            if (pos != std::string::npos) {
-              pos += key.length();
-              // Skip whitespace and colon
-              while (pos < note_output.length() &&
-                     (note_output[pos] == ' ' || note_output[pos] == ':')) {
-                pos++;
-              }
-              // Parse the number
-              int value = 0;
-              while (pos < note_output.length() && note_output[pos] >= '0' &&
-                     note_output[pos] <= '9') {
-                value = value * 10 + (note_output[pos] - '0');
-                pos++;
-              }
-              return value;
+        if (status == AMD_COMGR_STATUS_SUCCESS) {
+          // Helper lambda to lookup integer value from metadata map
+          auto lookup_int_value = [](amd_comgr_metadata_node_t root,
+                                     const char* key) -> int {
+            amd_comgr_metadata_node_t value_node;
+            amd_comgr_status_t s =
+                amd_comgr_metadata_lookup(root, key, &value_node);
+            if (s != AMD_COMGR_STATUS_SUCCESS) {
+              return 0;
             }
-            return 0;
+
+            size_t size = 0;
+            s = amd_comgr_get_metadata_string(value_node, &size, nullptr);
+            if (s != AMD_COMGR_STATUS_SUCCESS || size == 0) {
+              amd_comgr_destroy_metadata(value_node);
+              return 0;
+            }
+
+            std::string str_value(size, '\0');
+            s = amd_comgr_get_metadata_string(value_node, &size,
+                                              str_value.data());
+            amd_comgr_destroy_metadata(value_node);
+
+            if (s != AMD_COMGR_STATUS_SUCCESS) {
+              return 0;
+            }
+
+            // Parse the integer value
+            try {
+              return std::stoi(str_value);
+            } catch (...) {
+              return 0;
+            }
           };
 
-          sgpr_spill_count = find_value(".sgpr_spill_count");
-          vgpr_spill_count = find_value(".vgpr_spill_count");
-          private_segment_size = find_value(".private_segment_fixed_size");
+          // Navigate to amdhsa.kernels array and check each kernel
+          amd_comgr_metadata_node_t kernels_node;
+          if (amd_comgr_metadata_lookup(metadata, "amdhsa.kernels",
+                                        &kernels_node) ==
+              AMD_COMGR_STATUS_SUCCESS) {
+            size_t kernel_count = 0;
+            amd_comgr_get_metadata_list_size(kernels_node, &kernel_count);
 
-          if (sgpr_spill_count > 0 || vgpr_spill_count > 0 ||
-              private_segment_size > 0) {
-            has_spilling = true;
+            for (size_t i = 0; i < kernel_count; ++i) {
+              amd_comgr_metadata_node_t kernel_node;
+              if (amd_comgr_index_list_metadata(kernels_node, i,
+                                                &kernel_node) ==
+                  AMD_COMGR_STATUS_SUCCESS) {
+                // Get spill counts for this kernel
+                int kernel_sgpr_spill =
+                    lookup_int_value(kernel_node, ".sgpr_spill_count");
+                int kernel_vgpr_spill =
+                    lookup_int_value(kernel_node, ".vgpr_spill_count");
+                int kernel_private_size = lookup_int_value(
+                    kernel_node, ".private_segment_fixed_size");
+
+                // Aggregate max values across all kernels
+                sgpr_spill_count =
+                    std::max(sgpr_spill_count, kernel_sgpr_spill);
+                vgpr_spill_count =
+                    std::max(vgpr_spill_count, kernel_vgpr_spill);
+                private_segment_size =
+                    std::max(private_segment_size, kernel_private_size);
+
+                amd_comgr_destroy_metadata(kernel_node);
+              }
+            }
+            amd_comgr_destroy_metadata(kernels_node);
           }
-        }
 
-        // Clean up temp file unless keeping tempfiles
-        if (!keep_tempfiles) {
-          remove(note_output_path.c_str());
+          amd_comgr_destroy_metadata(metadata);
+        } else {
+          VLOG(2) << "Could not get HSACO metadata via amd_comgr";
         }
-      } else {
-        VLOG(2) << "Could not read HSACO metadata: " << error_msg;
       }
+      amd_comgr_release_data(comgr_data);
+    } else {
+      VLOG(2) << "Could not create amd_comgr data object";
     }
-  } else {
-    VLOG(2) << "llvm-readobj not found, skipping spilling check";
+
+    if (sgpr_spill_count > 0 || vgpr_spill_count > 0 ||
+        private_segment_size > 0) {
+      has_spilling = true;
+    }
   }
 
   if (has_spilling) {
-    LOG(WARNING) << "====== REGISTER SPILLING DETECTED ======";
-    LOG(WARNING) << "Module: " << module->getModuleIdentifier();
-    LOG(WARNING) << "SGPR spill count: " << sgpr_spill_count;
-    LOG(WARNING) << "VGPR spill count: " << vgpr_spill_count;
-    LOG(WARNING) << "Private segment size: " << private_segment_size
-                 << " bytes";
-    LOG(WARNING) << "Performance may be degraded due to register pressure";
-    LOG(WARNING) << "========================================";
+    VLOG(0) << "====== REGISTER SPILLING DETECTED ======";
+    VLOG(0) << "Module: " << module->getModuleIdentifier();
+    VLOG(0) << "SGPR spill count: " << sgpr_spill_count;
+    VLOG(0) << "VGPR spill count: " << vgpr_spill_count;
+    VLOG(0) << "Private segment size: " << private_segment_size << " bytes";
+    VLOG(0) << "Performance may be degraded due to register pressure";
+    VLOG(0) << "========================================";
 
     // Filter out kernels with register spilling during autotuning
     // This matches NVIDIA's behavior in ptx_compiler_impl.cc
@@ -450,14 +464,7 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
     VLOG(2) << "No register spilling detected";
   }
 
-  // Read HSACO.
-  std::ifstream hsaco_file(hsaco_path, std::ios::binary | std::ios::ate);
-  std::ifstream::pos_type hsaco_file_size = hsaco_file.tellg();
-
-  std::vector<uint8_t> hsaco(hsaco_file_size);
-  hsaco_file.seekg(0, std::ios::beg);
-  hsaco_file.read(reinterpret_cast<char*>(hsaco.data()), hsaco_file_size);
-  hsaco_file.close();
+  // Clean up temp files
   if (!keep_tempfiles) {
     remove(ir_path.c_str());
     remove(isabin_path.c_str());
