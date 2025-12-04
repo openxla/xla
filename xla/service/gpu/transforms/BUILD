@@ -3306,3 +3306,39 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+cc_library(
+    name = "l2_prefetch_scheduler",
+    srcs = ["l2_prefetch_scheduler.cc"],
+    hdrs = ["l2_prefetch_scheduler.h"],
+    tags = ["gpu"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/transforms/simplifiers:computation_canonicalizers",
+        "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/service/gpu/model:gpu_hlo_cost_analysis",
+        "//xla/stream_executor/gpu:prefetch_kernel",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_test(
+    name = "l2_prefetch_scheduler_test",
+    srcs = ["l2_prefetch_scheduler_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":l2_prefetch_scheduler",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:literal_test_util",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status_matchers",
+    ],
+)

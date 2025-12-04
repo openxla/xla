@@ -117,6 +117,25 @@ xla_test(
 )
 
 cc_library(
+    name = "prefetch",
+    srcs = ["prefetch.cc"],
+    hdrs = ["prefetch.h"],
+    deps = [
+        ":fusion_emitter",
+        "//xla/backends/gpu/runtime:kernel_thunk",
+        "//xla/backends/gpu/runtime:thunk",
+        "//xla/codegen/emitters:kernel_arguments",
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu:ir_emitter_context",
+        "//xla/stream_executor/gpu:prefetch_kernel",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "custom",
     srcs = ["custom.cc"],
     hdrs = ["custom.h"],
@@ -286,6 +305,7 @@ cc_library(
         ":cudnn",
         ":custom",
         ":fusion_emitter",
+        ":prefetch",
         "//xla:shape_util",
         "//xla/backends/gpu/codegen/emitters:concatenate",
         "//xla/backends/gpu/codegen/emitters:in_place_dynamic_update_slice",
