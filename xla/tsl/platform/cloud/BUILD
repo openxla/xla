@@ -357,6 +357,7 @@ cc_library(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
         "@boringssl//:crypto",
+        "@com_google_absl//absl/status",
         "@jsoncpp_git//:jsoncpp",
         "@tsl//tsl/platform:base64",
     ],

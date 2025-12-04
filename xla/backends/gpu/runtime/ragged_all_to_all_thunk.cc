@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 
@@ -109,10 +110,10 @@ absl::Status LoadRaggedTensorMetadata(
 absl::Status RunAllToAllOnIndexBuffer(
     const se::DeviceMemoryBase& source_buffer, int64_t num_updates_per_replica,
     const se::DeviceMemoryBase& destination_buffer, PrimitiveType element_type,
-    se::Stream& stream, Communicator* comm) {
-  TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
+    se::Stream& stream, Communicator& comm) {
+  TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
 
-  auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(comm);
+  auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
   Future<> future = gpu_comm->GroupExecute(
       [num_ranks, num_updates_per_replica, element_type, &source_buffer,
        &destination_buffer, &stream](GpuCommunicator* comm) -> absl::Status {
@@ -142,14 +143,13 @@ absl::Status RunAllToAllOnIndexBuffer(
 absl::Status RunRaggedAllToAll(
     int64_t ragged_row_element_size, int64_t num_total_updates,
     const std::vector<DeviceBufferPair>& original_buffers, se::Stream& stream,
-    Communicator* comm, absl::Span<int64_t* const> ragged_metadata_allocs,
+    Communicator& comm, absl::Span<int64_t* const> ragged_metadata_allocs,
     const se::DeviceMemoryBase& output_offsets_device_buffer,
     bool use_symmetric_buffer) {
   int device_ordinal = stream.parent()->device_ordinal();
-  VLOG(3) << "[" << device_ordinal
-          << "] Performing ragged-all-to-all from device ordinal: "
-          << device_ordinal;
-  TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
+  XLA_VLOG_DEVICE(3, device_ordinal)
+      << "Performing ragged-all-to-all from device ordinal: " << device_ordinal;
+  TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
 
   std::vector<DeviceBufferPair> buffers = original_buffers;
 
@@ -175,7 +175,7 @@ absl::Status RunRaggedAllToAll(
   const int64_t* output_offsets = ragged_metadata_allocs[2];
   const int64_t* recv_sizes = ragged_metadata_allocs[3];
 
-  auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(comm);
+  auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
   Future<> future = gpu_comm->GroupExecute(
       [num_updates_per_replica, num_ranks, input_offsets, send_sizes,
        output_offsets, recv_sizes, ragged_row_element_size, &buffers,
@@ -316,8 +316,8 @@ absl::Status RaggedAllToAllStartThunk::RunOneShotRaggedAllToAll(
 
   const int64_t num_ranks = clique_key.num_local_participants();
 
-  VLOG(3) << "[" << device_ordinal
-          << "] Performing one-shot ragged-all-to-all rank: " << rank.value();
+  XLA_VLOG_DEVICE(3, device_ordinal)
+      << "Performing one-shot ragged-all-to-all rank: " << rank.value();
 
   PrimitiveType element_type = buffers[0].element_type;
 
@@ -467,18 +467,18 @@ bool RaggedAllToAllStartThunk::is_local() const {
 }
 
 absl::StatusOr<bool> RaggedAllToAllStartThunk::RunCollective(
-    const ExecuteParams& params, se::Stream& stream,
-    CommunicatorHandle comm_handle) {
+    const ExecuteParams& params, const GpuCliqueKey& clique_key,
+    se::Stream& stream, Communicator& comm) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, buffers_,
                              config_.config.operand_element_type));
 
-  TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm_handle.comm->NumRanks());
+  TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
 
   TF_ASSIGN_OR_RETURN(
       bool peer_access_enabled,
-      params.collective_cliques->peer_access_enabled(comm_handle.clique_key));
+      params.collective_cliques->peer_access_enabled(clique_key));
 
   StreamState* state = nullptr;
   {
@@ -492,8 +492,8 @@ absl::StatusOr<bool> RaggedAllToAllStartThunk::RunCollective(
                                       device_buffers[0].element_type);
 
   if (should_use_one_shot_kernel) {
-    TF_RETURN_IF_ERROR(RunOneShotRaggedAllToAll(comm_handle.clique_key, stream,
-                                                *state, device_buffers));
+    TF_RETURN_IF_ERROR(
+        RunOneShotRaggedAllToAll(clique_key, stream, *state, device_buffers));
     return false;
   }
 
@@ -506,11 +506,11 @@ absl::StatusOr<bool> RaggedAllToAllStartThunk::RunCollective(
         reinterpret_cast<int64_t*>(state->host_buffer_allocs[i]->opaque()));
   }
 
-  TF_RETURN_IF_ERROR(RunRaggedAllToAll(
-      config_.num_row_elements, config_.num_total_updates, device_buffers,
-      stream, comm_handle.comm, ragged_metadata_allocs,
-      state->output_offsets_device_buffer.memory(),
-      config_.config.use_symmetric_buffer));
+  TF_RETURN_IF_ERROR(
+      RunRaggedAllToAll(config_.num_row_elements, config_.num_total_updates,
+                        device_buffers, stream, comm, ragged_metadata_allocs,
+                        state->output_offsets_device_buffer.memory(),
+                        config_.config.use_symmetric_buffer));
   return true;
 }
 

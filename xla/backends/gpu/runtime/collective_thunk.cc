@@ -217,12 +217,11 @@ absl::Status MaybeRegisterBuffer(se::StreamExecutor* executor,
                                  Communicator* comm,
                                  bool use_symmetric_buffer) {
   TF_ASSIGN_OR_RETURN(auto range, executor->GetMemoryRange(buffer));
-  VLOG(1) << "[" << executor->device_ordinal() << "] "
-          << "Registering range: " << range.opaque()
-          << " with size: " << range.size()
-          << " for buffer: " << buffer.opaque()
-          << " with size: " << buffer.size()
-          << " is symmetric: " << (use_symmetric_buffer ? "true" : "false");
+  XLA_VLOG_DEVICE(1, executor->device_ordinal())
+      << "Registering range: " << range.opaque()
+      << " with size: " << range.size() << " for buffer: " << buffer.opaque()
+      << " with size: " << buffer.size()
+      << " is symmetric: " << (use_symmetric_buffer ? "true" : "false");
   // If the collective memory buffer is a slice of a larger preallocated buffer,
   // we need to register the entire preallocated buffer once.
   return comm->RegisterBufferOnce(range, executor->device_ordinal(),
@@ -298,9 +297,11 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
       GetGpuCliqueKey(*params.collective_params, config().replica_groups,
                       config().group_mode, IsP2PCollective()));
 
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(*params.collective_params,
-                              *params.collective_cliques, clique_key));
+  TF_ASSIGN_OR_RETURN(
+      Communicator * comm,
+      params.collective_cliques->GetComm(
+          clique_key, params.collective_params->global_device_id));
+  DCHECK(comm) << "Failed to get communicator for collective operation";
 
   se::StreamExecutor* executor = params.stream->parent();
 
@@ -320,8 +321,9 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
     // Wait for main compute stream to make sure all buffers are ready.
     TF_RETURN_IF_ERROR(async_stream->WaitFor(params.stream));
 
-    TF_ASSIGN_OR_RETURN(is_first_rendezvous_needed,
-                        RunCollective(params, *async_stream, comm_handle));
+    TF_ASSIGN_OR_RETURN(
+        is_first_rendezvous_needed,
+        RunCollective(params, clique_key, *async_stream, *comm));
 
     // Record collective operation completion.
     TF_ASSIGN_OR_RETURN(se::Event * event, async_events_->GetEvent(executor));
@@ -329,8 +331,9 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   } else {
     // Launch collective operation on a main stream.
-    TF_ASSIGN_OR_RETURN(is_first_rendezvous_needed,
-                        RunCollective(params, *params.stream, comm_handle));
+    TF_ASSIGN_OR_RETURN(
+        is_first_rendezvous_needed,
+        RunCollective(params, clique_key, *params.stream, *comm));
   }
 
   // After a first execution of this instance of collective operation do a
@@ -339,18 +342,17 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
   // ahead on one rank leads to deadlocks in NCCL.
   if (is_first_rendezvous_needed &&
       !first_call_rendezvous_flag_.IsCompleted()) {
-    GpuCliqueKey clique_key = comm_handle.clique_key;
     size_t num_local_participants = clique_key.num_local_participants();
 
     auto global_device_id = params.collective_params->global_device_id;
     RankId rank = clique_key.rank(global_device_id).value_or(RankId(-1));
-    VLOG(1) << "[" << global_device_id.value()
-            << "] Do a rendezvous after a first call to "
-            << Thunk::KindToString(kind())
-            << "; run_id=" << params.collective_params->run_id.ToInt()
-            << "; num_local_participants=" << num_local_participants
-            << "; rank=" << rank.value()
-            << "; clique_key=" << clique_key.ToString();
+    XLA_VLOG_DEVICE(1, global_device_id.value())
+        << "Do a rendezvous after a first call to "
+        << Thunk::KindToString(kind())
+        << "; run_id=" << params.collective_params->run_id.ToInt()
+        << "; num_local_participants=" << num_local_participants
+        << "; rank=" << rank.value()
+        << "; clique_key=" << clique_key.ToString();
 
     auto rendezvous_key = FirstCallRendezvousKey{std::move(clique_key)};
     auto rendezvous_name = absl::StrFormat(
@@ -379,15 +381,15 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 
 absl::StatusOr<std::vector<Communicator*>> CollectiveThunk::GetCommunicators(
     const ExecuteParams& params) const {
-
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*params.collective_params, config().replica_groups,
                       config().group_mode, IsP2PCollective()));
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(*params.collective_params,
-                              *params.collective_cliques, clique_key));
-  return std::vector<Communicator*>{comm_handle.comm};
+  TF_ASSIGN_OR_RETURN(
+      Communicator * comm,
+      params.collective_cliques->GetComm(
+          clique_key, params.collective_params->global_device_id));
+  return std::vector<Communicator*>{comm};
 }
 
 std::string CollectiveThunk::GetDeviceString(

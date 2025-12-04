@@ -335,16 +335,16 @@ absl::Status NcclCommunicator::RegisterBufferOnce(
     if (!registered_buffers_.range_to_handle.contains(buffer_range.opaque())) {
       need_reg = true;
     } else {
-      VLOG(5) << "[" << device_ordinal
-              << "] Buffer range: " << buffer_range.opaque()
-              << " with size: " << buffer_range.size()
-              << " is already registered.";
+      XLA_VLOG_DEVICE(5, device_ordinal)
+          << "Buffer range: " << buffer_range.opaque()
+          << " with size: " << buffer_range.size() << " is already registered.";
     }
   }
   if (need_reg) {
-    VLOG(5) << "[" << device_ordinal << "] Registering "
-            << buffer_range.opaque() << " with size: " << buffer_range.size()
-            << ", is symmetric: " << (use_symmetric_buffer ? "true" : "false");
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "Registering " << buffer_range.opaque()
+        << " with size: " << buffer_range.size()
+        << ", is symmetric: " << (use_symmetric_buffer ? "true" : "false");
     // Symmetric buffer registration is a collective operation,
     // we need to do that before locking on a global.
     TF_ASSIGN_OR_RETURN(
@@ -545,11 +545,11 @@ absl::Status NcclCommunicator::LaunchAllReduce(
 
   VLOG(3) << absl::StreamFormat(
       "[%d] Launch NCCL AllReduce operation; send_buffer=%p; "
-      "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%s; comm=%p; "
+      "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%v; comm=%p; "
       "stream=%p",
       stream->parent()->device_ordinal(), send_buffer.opaque(),
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
-      count, ReductionKindToString(reduction_kind), comm_, stream);
+      count, reduction_kind, comm_, stream);
 
   TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
 
@@ -603,11 +603,11 @@ absl::Status NcclCommunicator::LaunchReduceScatter(
 
   VLOG(3) << absl::StreamFormat(
       "[%d] Launch NCCL ReduceScatter operation; send_buffer=%p; "
-      "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%s; comm=%p; "
+      "recv_buffer=%p; dtype=%s; count=%d; reduction_kind=%v; comm=%p; "
       "stream=%p",
       stream->parent()->device_ordinal(), send_buffer.opaque(),
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
-      count, ReductionKindToString(reduction_kind), comm_, stream);
+      count, reduction_kind, comm_, stream);
 
   TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
 

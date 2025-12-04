@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
@@ -47,8 +48,9 @@ class SendThunk : public CollectiveThunk {
     return stream_id_override_;
   }
   absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
+                                     const GpuCliqueKey& clique_key,
                                      se::Stream& stream,
-                                     CommunicatorHandle comm) override;
+                                     Communicator& comm) override;
 
  private:
   const P2PConfig config_;
@@ -57,12 +59,6 @@ class SendThunk : public CollectiveThunk {
   std::string hlo_name_;
   std::optional<ExecutionStreamId> stream_id_override_;
 };
-
-absl::Status RunSend(GpuCollectives* collectives,
-                     P2PConfig::SourceTargetMapEntry source_target,
-                     DeviceBufferPair& buffer, se::Stream& stream,
-                     Communicator* comm, absl::string_view device_string,
-                     int64_t current_id);
 
 }  // namespace gpu
 }  // namespace xla

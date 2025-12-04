@@ -125,18 +125,8 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
                                           unique_incarnations.end());
   absl::c_sort(incarnations);
 
-  return GpuCliqueKey(std::move(participants), num_local_participants,
-                      is_p2p,
+  return GpuCliqueKey(std::move(participants), num_local_participants, is_p2p,
                       std::move(participant_groups), root_device, incarnations);
-}
-
-absl::StatusOr<CommunicatorHandle> GetComm(
-    const CollectiveParams& params, const CollectiveCliques& collective_cliques,
-    const GpuCliqueKey& clique_key) {
-  TF_ASSIGN_OR_RETURN(
-      Communicator * comm,
-      collective_cliques.GetComm(clique_key, params.global_device_id));
-  return CommunicatorHandle(comm, std::move(clique_key));
 }
 
 }  // namespace xla::gpu

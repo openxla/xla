@@ -46,7 +46,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
-#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
@@ -62,6 +61,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
+#include "xla/core/collectives/communicator.h"
 #include "xla/debug_options_flags.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/call_frame.h"
@@ -70,6 +70,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/runtime/buffer_use.h"
+#include "xla/runtime/device_id.h"
 #include "xla/runtime/execution_graph.h"
 #include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
@@ -2132,15 +2133,16 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllReduceCmd::Record(
                              config().operand_element_type));
 
   int device_ordinal = execute_params.stream->parent()->device_ordinal();
-  VLOG(5) << "[" << device_ordinal << "] AllReduceCmd: reduction="
-          << ReductionKindString(reduction_kind_);
+  XLA_VLOG_DEVICE(5, device_ordinal)
+      << "AllReduceCmd: reduction=" << ReductionKindString(reduction_kind_);
 
   for (size_t i = 0; i < device_buffers.size(); ++i) {
-    VLOG(5) << "[" << device_ordinal << "]  Src: " << buffers_[i].source_buffer
-            << " (" << device_buffers[i].source_buffer.opaque() << ")";
-    VLOG(5) << "[" << device_ordinal
-            << "]  Dst: " << buffers_[i].destination_buffer << " ("
-            << device_buffers[i].destination_buffer.opaque() << ")";
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "  Src: " << buffers_[i].source_buffer << " ("
+        << device_buffers[i].source_buffer.opaque() << ")";
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "  Dst: " << buffers_[i].destination_buffer << " ("
+        << device_buffers[i].destination_buffer.opaque() << ")";
   }
 
   if (!execute_params.collective_params || !execute_params.collective_cliques) {
@@ -2151,18 +2153,18 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllReduceCmd::Record(
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      false));
+                      config().replica_groups, config().group_mode, false));
 
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(*execute_params.collective_params,
-                              *execute_params.collective_cliques, clique_key));
+  TF_ASSIGN_OR_RETURN(
+      Communicator * comm,
+      execute_params.collective_cliques->GetComm(
+          clique_key, execute_params.collective_params->global_device_id));
 
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
-        return RunAllReduce(reduction_kind_, device_buffers, *stream,
-                            comm_handle.comm, config().use_symmetric_buffer);
+        return RunAllReduce(reduction_kind_, device_buffers, *stream, *comm,
+                            config().use_symmetric_buffer);
       });
 }
 
@@ -2198,15 +2200,16 @@ absl::StatusOr<const se::CommandBuffer::Command*> ReduceScatterCmd::Record(
                              config().operand_element_type));
 
   int device_ordinal = execute_params.stream->parent()->device_ordinal();
-  VLOG(5) << "[" << device_ordinal << "] ReduceScatterCmd: reduction="
-          << ReductionKindString(reduction_kind_);
+  XLA_VLOG_DEVICE(5, device_ordinal)
+      << "ReduceScatterCmd: reduction=" << ReductionKindString(reduction_kind_);
 
   for (size_t i = 0; i < device_buffers.size(); ++i) {
-    VLOG(5) << "[" << device_ordinal << "]  Src: " << buffers_[i].source_buffer
-            << " (" << device_buffers[i].source_buffer.opaque() << ")";
-    VLOG(5) << "[" << device_ordinal
-            << "]  Dst: " << buffers_[i].destination_buffer << " ("
-            << device_buffers[i].destination_buffer.opaque() << ")";
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "  Src: " << buffers_[i].source_buffer << " ("
+        << device_buffers[i].source_buffer.opaque() << ")";
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "  Dst: " << buffers_[i].destination_buffer << " ("
+        << device_buffers[i].destination_buffer.opaque() << ")";
   }
 
   if (!execute_params.collective_params || !execute_params.collective_cliques) {
@@ -2217,19 +2220,18 @@ absl::StatusOr<const se::CommandBuffer::Command*> ReduceScatterCmd::Record(
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      false));
+                      config().replica_groups, config().group_mode, false));
 
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(*execute_params.collective_params,
-                              *execute_params.collective_cliques, clique_key));
+  TF_ASSIGN_OR_RETURN(
+      Communicator * comm,
+      execute_params.collective_cliques->GetComm(
+          clique_key, execute_params.collective_params->global_device_id));
 
   return RecordTracedCommand(execute_params, record_params, record_action,
                              command_buffer, [&](se::Stream* stream) {
                                return RunReduceScatter(
                                    reduction_kind_, device_buffers, *stream,
-                                   comm_handle.comm,
-                                   config().use_symmetric_buffer);
+                                   *comm, config().use_symmetric_buffer);
                              });
 }
 
@@ -2265,15 +2267,16 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllToAllCmd::Record(
                              config().operand_element_type));
 
   int device_ordinal = execute_params.stream->parent()->device_ordinal();
-  VLOG(5) << "[" << device_ordinal
-          << "] AllToAllCmd, has_split_dimension=" << has_split_dimension_;
+  XLA_VLOG_DEVICE(5, device_ordinal)
+      << "AllToAllCmd, has_split_dimension=" << has_split_dimension_;
 
   for (size_t i = 0; i < device_buffers.size(); ++i) {
-    VLOG(5) << "[" << device_ordinal << "]  Src: " << buffers_[i].source_buffer
-            << " (" << device_buffers[i].source_buffer.opaque() << ")";
-    VLOG(5) << "[" << device_ordinal
-            << "]  Dst: " << buffers_[i].destination_buffer << " ("
-            << device_buffers[i].destination_buffer.opaque() << ")";
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "  Src: " << buffers_[i].source_buffer << " ("
+        << device_buffers[i].source_buffer.opaque() << ")";
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "  Dst: " << buffers_[i].destination_buffer << " ("
+        << device_buffers[i].destination_buffer.opaque() << ")";
   }
 
   if (!execute_params.collective_params || !execute_params.collective_cliques) {
@@ -2284,19 +2287,19 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllToAllCmd::Record(
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      false));
+                      config().replica_groups, config().group_mode, false));
 
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(*execute_params.collective_params,
-                              *execute_params.collective_cliques, clique_key));
+  TF_ASSIGN_OR_RETURN(
+      Communicator * comm,
+      execute_params.collective_cliques->GetComm(
+          clique_key, execute_params.collective_params->global_device_id));
 
   // MemCpy case is not currently supported in CommandBuffer.
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
-        return RunAllToAll(has_split_dimension_, device_buffers, *stream,
-                           comm_handle.comm, config().use_symmetric_buffer);
+        return RunAllToAll(has_split_dimension_, device_buffers, *stream, *comm,
+                           config().use_symmetric_buffer);
       });
 }
 
@@ -2330,14 +2333,15 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllGatherCmd::Record(
                              config().operand_element_type));
 
   int device_ordinal = execute_params.stream->parent()->device_ordinal();
-  VLOG(5) << "[" << device_ordinal << "] AllGatherCmd:";
+  XLA_VLOG_DEVICE(5, device_ordinal) << "AllGatherCmd:";
 
   for (size_t i = 0; i < device_buffers.size(); ++i) {
-    VLOG(5) << "[" << device_ordinal << "]  Src: " << buffers_[i].source_buffer
-            << " (" << device_buffers[i].source_buffer.opaque() << ")";
-    VLOG(5) << "[" << device_ordinal
-            << "]  Dst: " << buffers_[i].destination_buffer << " ("
-            << device_buffers[i].destination_buffer.opaque() << ")";
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "  Src: " << buffers_[i].source_buffer << " ("
+        << device_buffers[i].source_buffer.opaque() << ")";
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "  Dst: " << buffers_[i].destination_buffer << " ("
+        << device_buffers[i].destination_buffer.opaque() << ")";
   }
 
   if (!execute_params.collective_params || !execute_params.collective_cliques) {
@@ -2348,17 +2352,17 @@ absl::StatusOr<const se::CommandBuffer::Command*> AllGatherCmd::Record(
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      false));
+                      config().replica_groups, config().group_mode, false));
 
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(*execute_params.collective_params,
-                              *execute_params.collective_cliques, clique_key));
+  TF_ASSIGN_OR_RETURN(
+      Communicator * comm,
+      execute_params.collective_cliques->GetComm(
+          clique_key, execute_params.collective_params->global_device_id));
 
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
-        return RunAllGather(device_buffers, *stream, comm_handle.comm,
+        return RunAllGather(device_buffers, *stream, *comm,
                             config().use_symmetric_buffer);
       });
 }
@@ -2394,14 +2398,15 @@ CollectiveBroadcastCmd::Record(const Thunk::ExecuteParams& execute_params,
                              config().operand_element_type));
 
   int device_ordinal = execute_params.stream->parent()->device_ordinal();
-  VLOG(5) << "[" << device_ordinal << "] CollectiveBroadcastCmd:";
+  XLA_VLOG_DEVICE(5, device_ordinal) << "CollectiveBroadcastCmd:";
 
   for (size_t i = 0; i < device_buffers.size(); ++i) {
-    VLOG(5) << "[" << device_ordinal << "]  Src: " << buffers_[i].source_buffer
-            << " (" << device_buffers[i].source_buffer.opaque() << ")";
-    VLOG(5) << "[" << device_ordinal
-            << "]  Dst: " << buffers_[i].destination_buffer << " ("
-            << device_buffers[i].destination_buffer.opaque() << ")";
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "  Src: " << buffers_[i].source_buffer << " ("
+        << device_buffers[i].source_buffer.opaque() << ")";
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "  Dst: " << buffers_[i].destination_buffer << " ("
+        << device_buffers[i].destination_buffer.opaque() << ")";
   }
 
   if (!execute_params.collective_params || !execute_params.collective_cliques) {
@@ -2412,19 +2417,18 @@ CollectiveBroadcastCmd::Record(const Thunk::ExecuteParams& execute_params,
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      false));
+                      config().replica_groups, config().group_mode, false));
 
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(*execute_params.collective_params,
-                              *execute_params.collective_cliques, clique_key));
+  TF_ASSIGN_OR_RETURN(
+      Communicator * comm,
+      execute_params.collective_cliques->GetComm(
+          clique_key, execute_params.collective_params->global_device_id));
 
-  return RecordTracedCommand(execute_params, record_params,
-                             std::move(record_action), command_buffer,
-                             [&](se::Stream* stream) {
-                               return RunCollectiveBroadcast(
-                                   device_buffers, *stream, comm_handle.comm);
-                             });
+  return RecordTracedCommand(
+      execute_params, record_params, std::move(record_action), command_buffer,
+      [&](se::Stream* stream) {
+        return RunCollectiveBroadcast(device_buffers, *stream, *comm);
+      });
 }
 
 CommandBufferCmd::BufferUseVector CollectiveBroadcastCmd::buffers() const {
@@ -2459,14 +2463,15 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectivePermuteCmd::Record(
                              config().operand_element_type));
 
   int device_ordinal = execute_params.stream->parent()->device_ordinal();
-  VLOG(5) << "[" << device_ordinal << "] CollectivePermuteCmd:";
+  XLA_VLOG_DEVICE(5, device_ordinal) << "CollectivePermuteCmd:";
 
   for (size_t i = 0; i < device_buffers.size(); ++i) {
-    VLOG(5) << "[" << device_ordinal << "]  Src: " << buffers_[i].source_buffer
-            << " (" << device_buffers[i].source_buffer.opaque() << ")";
-    VLOG(5) << "[" << device_ordinal
-            << "]  Dst: " << buffers_[i].destination_buffer << " ("
-            << device_buffers[i].destination_buffer.opaque() << ")";
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "  Src: " << buffers_[i].source_buffer << " ("
+        << device_buffers[i].source_buffer.opaque() << ")";
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "  Dst: " << buffers_[i].destination_buffer << " ("
+        << device_buffers[i].destination_buffer.opaque() << ")";
   }
 
   if (!execute_params.collective_params || !execute_params.collective_cliques) {
@@ -2477,12 +2482,12 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectivePermuteCmd::Record(
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*execute_params.collective_params,
-                      config().replica_groups, config().group_mode,
-                      false));
+                      config().replica_groups, config().group_mode, false));
 
-  TF_ASSIGN_OR_RETURN(CommunicatorHandle comm_handle,
-                      GetComm(*execute_params.collective_params,
-                              *execute_params.collective_cliques, clique_key));
+  TF_ASSIGN_OR_RETURN(
+      Communicator * comm,
+      execute_params.collective_cliques->GetComm(
+          clique_key, execute_params.collective_params->global_device_id));
 
   std::string device_string =
       CollectiveThunk::GetDeviceString(*execute_params.collective_params);
@@ -2500,7 +2505,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectivePermuteCmd::Record(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
         return RunCollectivePermute(source_target, device_buffers, *stream,
-                                    comm_handle.comm, device_string, current_id,
+                                    *comm, device_string, current_id,
                                     /*use_memcpy=*/false,
                                     /*recv_ptr_map=*/nullptr,
                                     use_symmetric_buffer);
@@ -2588,9 +2593,9 @@ absl::Status DynamicSliceFusionCmd::Initialize(
     return absl::OkStatus();
   }
 
-  VLOG(2) << "[" << params.executor->device_ordinal() << "] Allocate "
-          << offsets_allocs_size_
-          << " bytes for transferring offsets on executor: " << params.executor;
+  XLA_VLOG_DEVICE(2, params.executor->device_ordinal())
+      << "Allocate " << offsets_allocs_size_
+      << " bytes for transferring offsets on executor: " << params.executor;
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<se::MemoryAllocation> allocation,
       params.executor->HostMemoryAllocate(offsets_allocs_size_));
