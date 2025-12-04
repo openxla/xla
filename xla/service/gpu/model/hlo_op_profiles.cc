@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/service/gpu/model/hlo_op_profiles_data.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "tsl/platform/protobuf.h"
 
 namespace xla {
@@ -47,6 +48,9 @@ namespace gpu {
   if (auto* ptr =
           device_info.gpu_compute_capability().cuda_compute_capability()) {
     return absl::StrCat("sm_", ptr->major, ptr->minor);
+  } else if (auto* ptr =
+          device_info.gpu_compute_capability().rocm_compute_capability()) {
+    return ptr->gfx_version();
   }
   return "<unknown>";
 }
