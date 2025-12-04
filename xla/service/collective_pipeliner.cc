@@ -3377,7 +3377,8 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
           TransformLoopForwardSink(
               *loop_analysis, !config_.last_run, config_.level_to_operate_on,
               config_.pipeline_use_tree, config_.process_different_sized_ops,
-              config_.should_process, next_channel_id, config_.unique_channel_id));
+              config_.should_process, next_channel_id,
+              config_.unique_channel_id));
     } else {
       CHECK_EQ(config_.pipelining_direction,
                collective_pipeliner_utils::PipeliningDirection::kBackward);

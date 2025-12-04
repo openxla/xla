@@ -121,7 +121,8 @@ class CollectivePipeliner : public HloModulePass {
     bool delay_sinking_large_collectives = true;
     // When cloning collectives, use a unique channel id for each clone.
     bool unique_channel_id = true;
-    // Postprocessing hook which runs for every successfully transformed while loop.
+    // Postprocessing hook which runs for every successfully transformed while
+    // loop.
     WhileLoopPostprocessor postprocess_transformed_while_loop;
   };
   static const char* const kInsertedByPreviousStep;
