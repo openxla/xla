@@ -29,10 +29,20 @@ namespace xla {
 namespace gpu {
 namespace {
 
+#if defined(GOOGLE_CUDA)
+constexpr int kMinClockCyclesAddF32 = 0;
+constexpr int kMinClockCyclesDivideF64 = 280;
+constexpr int kMinClockCyclesSqrtC128 = 1000;
+#elif defined(TENSORFLOW_USE_ROCM)
+constexpr int kMinClockCyclesAddF32 = 0;
+constexpr int kMinClockCyclesDivideF64 = 100;
+constexpr int kMinClockCyclesSqrtC128 = 1000;
+#endif
+
 class HloOpProfilerTest : public HloTestBase {
   void SetUp() override {
-#ifndef GOOGLE_CUDA
-    GTEST_SKIP() << "Not built with --config=cuda";
+#if !defined(GOOGLE_CUDA) && !defined(TENSORFLOW_USE_ROCM)
+    GTEST_SKIP() << "Not built with --config=cuda or --config=rocm";
 #endif
   }
 };
@@ -43,17 +53,17 @@ TEST_F(HloOpProfilerTest, BasicMeasurementsAreCorrect) {
   EXPECT_GT(profiler.MeasureClockCyclesPerOp(HloOpcode::kAdd, F32)
                 .value()
                 .clock_cycles(),
-            0);
+            kMinClockCyclesAddF32);
   // f64 divide is somewhat slow.
   EXPECT_GT(profiler.MeasureClockCyclesPerOp(HloOpcode::kDivide, F64)
                 .value()
                 .clock_cycles(),
-            280);
+            kMinClockCyclesDivideF64);
   // c128 sqrt is slow.
   EXPECT_GT(profiler.MeasureClockCyclesPerOp(HloOpcode::kSqrt, C128)
                 .value()
                 .clock_cycles(),
-            1000);
+            kMinClockCyclesSqrtC128);
 }
 
 TEST_F(HloOpProfilerTest, UnsupportedCombinationsDoNotCrash) {
@@ -98,9 +108,23 @@ TEST_F(HloOpProfilerTest, AllSupportedCombinationsAreMeasurable) {
 
   FloatTypes.insert(MeasurebleInFloat.begin(), MeasurebleInFloat.end());
   HloOpProfiler profiler(test_runner_as_hlo_runner());
+
+  // TODO(esjoblom): These ops currently fail with too fast to measure on ROCm
+  const std::unordered_set<HloOpcode> skip_on_rocm = {
+      HloOpcode::kPopulationCount,
+      HloOpcode::kRoundNearestAfz,
+      HloOpcode::kRoundNearestEven,
+  };
+  const bool is_rocm = backend()
+                           .default_stream_executor()
+                           ->GetDeviceDescription()
+                           .gpu_compute_capability()
+                           .IsRocm();
+
   for (const HloOpcode op : HloOpProfiler::AllSupportedOps()) {
     if (!HloOpProfiler::TooFastToMeasure().count(op) &&
-        !HloOpProfiler::Unsupported().count(op)) {
+        !HloOpProfiler::Unsupported().count(op) &&
+        !(is_rocm && skip_on_rocm.count(op))) {
       auto Type = FloatTypes.count(op) ? F32 : S32;
       TF_EXPECT_OK(profiler.MeasureClockCyclesPerOp(op, Type));
     }
