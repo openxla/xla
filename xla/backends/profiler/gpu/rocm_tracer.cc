@@ -499,6 +499,11 @@ void RocmTracer::toolFinalize(void* tool_data) {
 }
 
 void RocmTracer::Disable() {
+  // TODO(esjoblom): We need this to see the events in hlo_op_profiler?
+  // Flush the rocprofiler buffer to ensure all pending events are delivered
+  // to the collector before we clear it.
+  rocprofiler_flush_buffer(buffer_);
+
   absl::MutexLock lock(collector_mutex_);
   collector_->Flush();
   collector_ = nullptr;
