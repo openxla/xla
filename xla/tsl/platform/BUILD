@@ -383,11 +383,13 @@ cc_library(
         ":threadpool_interface",
         ":types",
         "//xla/tsl/concurrency:executor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
@@ -468,8 +470,10 @@ cc_library(
         ":status",
         ":statusor",
         ":types",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
@@ -763,6 +767,16 @@ cc_library(
         "@tsl//tsl/platform:tstring",
     ] + tf_platform_deps("types"),
 )
+
+# copybara:comment_begin(oss-only)
+cc_library(
+    name = "status_macros",
+    hdrs = ["status_macros.h"],
+    compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([]),  # The header should be used only in OSS.
+    deps = [":statusor"],
+)
+# copybara:comment_end
 
 cc_library(
     name = "byte_order",

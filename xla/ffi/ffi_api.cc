@@ -48,8 +48,6 @@ limitations under the License.
 #include "xla/ffi/type_registry.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_memory_allocator.h"
-#include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
 #include "xla/tsl/platform/logging.h"
@@ -99,8 +97,9 @@ static XLA_FFI_ExecutionContext CreateExecutionContext(
     }
 
     BackendContext operator()(const CallOptions::GpuOptions& options) const {
-      return XLA_FFI_ExecutionContext::GpuContext{options.stream,
-                                                  options.allocator};
+      return XLA_FFI_ExecutionContext::GpuContext{
+          options.stream, options.allocator, options.collective_params,
+          options.collective_clique_requests, options.collective_cliques};
     }
   };
 
