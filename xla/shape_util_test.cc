@@ -15,22 +15,21 @@ limitations under the License.
 
 #include "xla/shape_util.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <numeric>
 #include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/algorithm/container.h"
 #include "absl/status/status.h"
-#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "google/protobuf/text_format.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -41,12 +40,10 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
 
-using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
 
 TEST(ShapeUtilTest, GetDimensionHelperCanNegativeIndex) {
@@ -1022,23 +1019,41 @@ TEST(ShapeUtilTest, HasDegenerateDimensions) {
       ShapeUtil::HasDegenerateDimensions(ShapeUtil::MakeShape(F32, {3, 0, 5})));
 }
 
+TEST(ShapeUtilTest, PermuteDimensionsIgnoringLayout) {
+  {
+    Shape s =
+        ShapeUtil::MakeShapeWithDenseLayout(F32, {10, 100, 1000}, {2, 1, 0});
+    Shape permuted = ShapeUtil::PermuteDimensionsIgnoringLayout({1, 2, 0}, s);
+    EXPECT_EQ(permuted, ShapeUtil::MakeShapeWithDenseLayout(
+                            F32, {100, 1000, 10}, {2, 1, 0}));
+  }
+  {
+    Shape s = ShapeUtil::MakeShape(F32, {10, 100, 1000});
+    LayoutUtil::ClearLayout(&s);
+    Shape permuted = ShapeUtil::PermuteDimensionsIgnoringLayout({1, 2, 0}, s);
+    Shape expected = ShapeUtil::MakeShape(F32, {100, 1000, 10});
+    LayoutUtil::ClearLayout(&expected);
+    EXPECT_EQ(permuted, expected);
+  }
+}
+
 TEST(ShapeUtilTest, PermuteDimensionsLayout) {
   std::vector<int64_t> layout(3);
-  std::iota(layout.begin(), layout.end(), 0);
+  absl::c_iota(layout, 0);
   do {
     Shape s = ShapeUtil::MakeShapeWithDenseLayout(F32, {10, 100, 1000}, layout);
     SCOPED_TRACE(absl::StrCat("s=", ShapeUtil::HumanString(s)));
 
     std::vector<int64_t> permutation(3);
-    std::iota(permutation.begin(), permutation.end(), 0);
+    absl::c_iota(permutation, 0);
     do {
       SCOPED_TRACE(
           absl::StrCat("permutation=", absl::StrJoin(permutation, ",")));
 
       EXPECT_TRUE(ShapeUtil::TransposeIsBitcast(
           s, ShapeUtil::PermuteDimensions(permutation, s), permutation));
-    } while (std::next_permutation(permutation.begin(), permutation.end()));
-  } while (std::next_permutation(layout.begin(), layout.end()));
+    } while (absl::c_next_permutation(permutation));
+  } while (absl::c_next_permutation(layout));
 }
 
 TEST(ShapeUtilTest, UpdateDynamicDimensions) {
@@ -1066,7 +1081,7 @@ TEST(ShapeUtilTest, PermuteDynamicDimensions) {
   SCOPED_TRACE(absl::StrCat("shape=", shape.ToString()));
 
   std::vector<int64_t> permutation(3);
-  std::iota(permutation.begin(), permutation.end(), 0);
+  absl::c_iota(permutation, 0);
   do {
     SCOPED_TRACE(absl::StrCat("permutation=", absl::StrJoin(permutation, ",")));
 
@@ -1076,7 +1091,7 @@ TEST(ShapeUtilTest, PermuteDynamicDimensions) {
       EXPECT_EQ(permuted.is_dynamic_dimension(i),
                 shape.is_dynamic_dimension(permutation[i]));
     }
-  } while (std::next_permutation(permutation.begin(), permutation.end()));
+  } while (absl::c_next_permutation(permutation));
 }
 
 TEST(ShapeUtilTest, PrependMajorDimension) {

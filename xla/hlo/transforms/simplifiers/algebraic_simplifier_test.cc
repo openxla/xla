@@ -29,6 +29,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -61,7 +62,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/window_util.h"
@@ -71,8 +71,6 @@ namespace xla {
 namespace {
 
 using ::testing::ElementsAre;
-using ::tsl::testing::IsOk;
-using ::tsl::testing::IsOkAndHolds;
 namespace m = match;
 namespace op = xla::testing::opcode_matchers;
 
@@ -5299,6 +5297,66 @@ TEST_F(AlgebraicSimplifierTest, SliceOfSliceToSlice) {
   EXPECT_EQ(computation->root_instruction()->slice_starts(1), 5);
   EXPECT_EQ(computation->root_instruction()->slice_limits(0), dim0 - 2);
   EXPECT_EQ(computation->root_instruction()->slice_limits(1), dim1 - 4);
+}
+
+TEST_F(AlgebraicSimplifierTest, SliceWithReshape) {
+  const absl::string_view hlo_string = R"hlo(
+  HloModule SliceWithReshape
+
+  ENTRY main {
+    %arg = f32[1,2024,4,128]{3,2,1,0} parameter(0)
+    %reshape.1 = f32[2,259072,2]{2,1,0} reshape(%arg)
+    %slice = f32[2,259072,1]{2,1,0} slice(%reshape.1), slice={[0:2], [0:259072], [1:2]}
+    ROOT %reshape.2 = f32[518144]{0} reshape(%slice)
+  }
+)hlo";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(module.get()).value());
+
+  auto* root = module->entry_computation()->root_instruction();
+  VLOG(2) << module->ToString();
+
+  // Expected: Reshape(Slice(Arg))
+  // AlgebraicSimplifier merges the two reshapes.
+  const HloInstruction* slice;
+  EXPECT_THAT(root, GmockMatch(m::Reshape(
+                        m::Slice(&slice, m::Parameter(0)))));
+
+  EXPECT_EQ(slice->slice_strides(3), 2);
+  EXPECT_EQ(slice->slice_starts(3), 1);
+  EXPECT_EQ(slice->slice_limits(3), 128);
+  EXPECT_EQ(slice->shape().dimensions(3), 64);
+}
+
+TEST_F(AlgebraicSimplifierTest, SmallSliceWithReshape) {
+  const absl::string_view hlo_string = R"hlo(
+  HloModule SliceWithReshape
+
+  ENTRY main {
+    %arg = f32[2]{0} parameter(0)
+    %reshape.1 = f32[2,1]{1,0} reshape(%arg)
+    %slice = f32[1,1]{1,0} slice(%reshape.1), slice={[0:1], [0:1]}
+    ROOT %reshape.2 = f32[1]{0} reshape(%slice)
+  }
+)hlo";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(module.get()).value());
+
+  auto* root = module->entry_computation()->root_instruction();
+  LOG(INFO) << module->ToString();
+
+  // Expected: Reshape(Slice(Arg))
+  // AlgebraicSimplifier merges the two reshapes.
+  const HloInstruction* slice;
+  EXPECT_THAT(root, GmockMatch(m::Reshape(
+                        m::Slice(&slice, m::Parameter(0)))));
+
+  EXPECT_EQ(slice->slice_strides(0), 1);
+  EXPECT_EQ(slice->slice_starts(0), 0);
+  EXPECT_EQ(slice->slice_limits(0), 1);
+  EXPECT_EQ(slice->shape().dimensions(0), 1);
 }
 
 TEST_F(AlgebraicSimplifierTest, SliceOfBroadcastToBroadcast) {
@@ -13048,6 +13106,48 @@ ENTRY main {
   TF_EXPECT_OK(VerifyHloModule(m.get(),
                                /*layout_sensitive=*/true,
                                /*allow_mixed_precision=*/true));
+}
+
+TEST_F(AlgebraicSimplifierTest, ConditionalWithConvert) {
+  const char* kModuleStr = R"(
+    HloModule test
+    branch_false {
+      p0 = f32[] parameter(0)
+      ROOT r0 = f32[] copy(p0)
+    }
+    branch_true {
+      p1 = f32[] parameter(0)
+      ROOT r1 = f32[] copy(p1)
+    }
+    ENTRY main {
+      %p = pred[] parameter(0)
+      cond_val = s32[] convert(%p)
+      val_false = f32[] constant(10.0)
+      val_true = f32[] constant(20.0)
+
+      ROOT conditional = f32[] conditional(cond_val, val_false, val_true),
+        branch_computations={branch_false, branch_true}
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_conditional_simplification(true);
+  AlgebraicSimplifier simplifier(options);
+  ASSERT_THAT(simplifier.Run(m.get()), absl_testing::IsOkAndHolds(true));
+
+  // The simplified Boolean Conditional should be:
+  // conditional(pred, true_arg, false_arg)
+  //
+  // We expect:
+  // True Arg  -> val_true (20.0)  [Originally Index 1]
+  // False Arg -> val_false (10.0) [Originally Index 0]
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Conditional(
+                  m::Parameter(0),
+                  m::ConstantEffectiveScalar(20.0),  // Expected True Slot
+                  m::ConstantEffectiveScalar(10.0)   // Expected False Slot
+                  )));
 }
 
 }  // namespace

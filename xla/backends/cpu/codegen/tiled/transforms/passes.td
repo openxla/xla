@@ -52,18 +52,25 @@ def LinalgElementwiseToVectorPass : Pass<"xtile-cpu-linalg-elementwise-to-vector
   let constructor = "CreateLinalgElementwiseToVectorPass()";
 
   let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect",
     "mlir::vector::VectorDialect",
   ];
 }
 
-def TensorOpsToVectorPass : Pass<"xtile-cpu-tensor-ops-to-vector",
+def TensorOpsToBufferizablePass : Pass<"xtile-cpu-tensor-ops-to-bufferizable",
                                  "mlir::ModuleOp"> {
-  let summary = "Lowering tensor dialect ops to vector ops";
+  let summary = "Lowering tensor dialect ops to bufferizable ops";
 
-  let constructor = "CreateTensorOpsToVectorPass()";
+  let description = [{
+    Some tensor ops such as bitcast are not directly bufferizable. This pass
+    lowers such ops to ops that have bufferization support.
+  }];
+
+  let constructor = "CreateTensorOpsToBufferizablePass()";
 
   let dependentDialects = [
-    "mlir::vector::VectorDialect",
+    "mlir::arith::ArithDialect",
   ];
 }
 
@@ -86,4 +93,35 @@ def FuseElementwisePass : Pass<"xtile-cpu-fuse-elementwise"> {
     that contain multiple instructions. This allows for fewer matrializations
     and fewer temporary allocations in bufferization.
   }];
+}
+
+def VectorToScalarPass : Pass<"xtile-cpu-vector-to-scalar"> {
+  let summary = "Convert vector ops to scalar ops where possible.";
+
+  let description = [{
+    This pass converts elementwise vector ops to scalar ops if the operation
+    acts on a single element.
+  }];
+
+  let dependentDialects = [
+    "::mlir::vector::VectorDialect",
+  ];
+}
+
+
+def UnpackSubByteVectorWritePass : Pass<"xtile-cpu-unpack-sub-byte-vector-write"> {
+  let summary = "Unpacks sub-byte vector writes.";
+
+  let description = [{
+    The default lowering of vector.transfer_write of subbyte types reflects that
+    of llvm vector store instructions, i.e it writes the packed data directly.
+    The semantics we use in the CPU lowering is that it will unpack the data
+    into a series of bytes and store them separately. This pass implements that
+    by using unrolling the transfer_write into individual elements.
+  }];
+
+  let dependentDialects = [
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+  ];
 }

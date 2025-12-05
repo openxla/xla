@@ -50,40 +50,13 @@ cc_library(
 
 filegroup(
     name = "runtime_srcs",
-    srcs = [
-        # Single-threaded support.
-        "runtime_single_threaded_matmul_c128.cc",
-        "runtime_single_threaded_matmul_c64.cc",
-        "runtime_single_threaded_matmul_common.h",
-        "runtime_single_threaded_matmul_f8.cc",
-        "runtime_single_threaded_matmul_f16.cc",
-        "runtime_single_threaded_matmul_f32.cc",
-        "runtime_single_threaded_matmul_f64.cc",
-        "runtime_single_threaded_matmul_s32.cc",
-        "runtime_single_threaded_matmul_u8.cc",
-        # Multi-threaded support.
-        "runtime_matmul_c128.cc",
-        "runtime_matmul_c64.cc",
-        "runtime_matmul_common.h",
-        "runtime_matmul_f16.cc",
-        "runtime_matmul_f32.cc",
-        "runtime_matmul_f64.cc",
-        "runtime_matmul_s32.cc",
-        "//xla/backends/cpu/runtime:runtime_srcs",
-    ],
+    srcs = ["//xla/backends/cpu/runtime:runtime_srcs"],
     visibility = internal_visibility([":friends"]),
 )
 
 filegroup(
     name = "runtime_hdrs",
-    srcs = [
-        # Single-threaded support.
-        "runtime_single_threaded_matmul.h",
-        # Multi-threaded support.
-        "runtime_lightweight_check.h",
-        "runtime_matmul.h",
-        "//xla/backends/cpu/runtime:runtime_hdrs",
-    ],
+    srcs = ["//xla/backends/cpu/runtime:runtime_hdrs"],
     visibility = internal_visibility([":friends"]),
 )
 
@@ -422,6 +395,7 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -547,13 +521,6 @@ tf_proto_library(
         "//xla:xla_proto",
         "//xla/backends/cpu/runtime:thunk_proto",
     ],
-)
-
-cc_library(
-    name = "runtime_lightweight_check",
-    hdrs = ["runtime_lightweight_check.h"],
-    compatible_with = get_compatible_with_portable(),
-    copts = runtime_copts(),
 )
 
 cc_library(
@@ -950,6 +917,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service/llvm_ir:kernel_support_library",
         "//xla/tsl/lib/math:math_util",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/strings",
@@ -1014,9 +982,9 @@ cc_library(
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/runtime:device_id",
         "//xla/service:collective_ops_utils",
         "//xla/service:computation_placer",
-        "//xla/service:global_device_id",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/concurrency:async_value",
@@ -1050,27 +1018,6 @@ cc_library(
 
 cc_library(
     name = "runtime_matmul",
-    srcs = [
-        "runtime_matmul_c128.cc",
-        "runtime_matmul_c64.cc",
-        "runtime_matmul_common.h",
-        "runtime_matmul_f16.cc",
-        "runtime_matmul_f32.cc",
-        "runtime_matmul_f64.cc",
-        "runtime_matmul_s32.cc",
-    ],
-    hdrs = ["runtime_matmul.h"],
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        ":runtime_lightweight_check",
-        "//xla:executable_run_options",
-        "//xla/tsl/framework/contraction:eigen_contraction_kernel",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:dynamic_annotations",
-        "@com_google_absl//absl/synchronization",  # build_cleaner: keep
-        "@eigen_archive//:eigen3",
-    ],
 )
 
 cc_library(
@@ -1082,57 +1029,14 @@ cc_library(
 )
 
 cc_library(
-    name = "runtime_single_threaded_matmul_impl",
-    srcs = [
-        "runtime_single_threaded_matmul_c128.cc",
-        "runtime_single_threaded_matmul_c64.cc",
-        "runtime_single_threaded_matmul_common.h",
-        "runtime_single_threaded_matmul_f16.cc",
-        "runtime_single_threaded_matmul_f32.cc",
-        "runtime_single_threaded_matmul_f64.cc",
-        "runtime_single_threaded_matmul_f8.cc",
-        "runtime_single_threaded_matmul_s32.cc",
-        "runtime_single_threaded_matmul_u8.cc",
-    ],
-    hdrs = ["runtime_single_threaded_matmul.h"],
-    compatible_with = get_compatible_with_portable(),
-    copts = runtime_copts(),
-    linkstatic = 1,
-    visibility = ["//visibility:private"],
-    deps = [
-        "//xla/tsl/framework/contraction:eigen_contraction_kernel_no_mkl",
-        "@com_google_absl//absl/base:core_headers",
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:ml_dtypes",
-    ],
-)
-
-cc_library(
     name = "runtime_single_threaded_matmul",
-    hdrs = ["runtime_single_threaded_matmul.h"],
-    compatible_with = get_compatible_with_portable(),
-    copts = runtime_copts(),
-    visibility = ["//visibility:public"],
-    deps = [
-        ":runtime_single_threaded_matmul_impl",
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:ml_dtypes",
-    ],
 )
 
 cc_library(
     name = "runtime_single_threaded_matmul_nomkl",
-    hdrs = ["runtime_single_threaded_matmul.h"],
     compatible_with = get_compatible_with_portable(),
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
-    deps = [
-        ":runtime_single_threaded_matmul_impl",
-        "//xla/tsl/framework/contraction:eigen_contraction_kernel_no_mkl",
-        "@com_google_absl//absl/base:core_headers",
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:ml_dtypes",
-    ],
 )
 
 cc_library(
@@ -1156,10 +1060,12 @@ xla_cc_test(
         "//xla/service:transpose_folding",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -1245,16 +1151,15 @@ cc_library(
         ":dot_op_emitter",
         ":ir_emission_utils",
         "//xla:shape_util",
-        "//xla:util",
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/hlo/ir:hlo",
         "//xla/service:computation_layout",
         "//xla/service:layout_assignment",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
     ],
 )
@@ -1338,11 +1243,11 @@ cc_library(
         "//xla/hlo/pass:hlo_pass",
         "//xla/service:hlo_cost_analysis",
         "//xla/service/llvm_ir:dynamic_update_slice_util",
-        "//xla/tsl/platform:status",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -1379,21 +1284,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-    ],
-)
-
-cc_library(
-    name = "orc_jit_memory_mapper",
-    srcs = ["orc_jit_memory_mapper.cc"],
-    hdrs = ["orc_jit_memory_mapper.h"],
-    deps = [
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/synchronization",
-        "@llvm-project//llvm:ExecutionEngine",
     ],
 )
 
@@ -1505,14 +1395,15 @@ onednn_cc_library(
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        ":runtime_lightweight_check",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/service/llvm_ir:ir_array",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/tsl/mkl:onednn",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
@@ -1531,7 +1422,6 @@ onednn_cc_library(
         ":onednn_config_proto_cc",
         ":onednn_memory_util",
         ":onednn_util",
-        ":runtime_lightweight_check",
         "//xla:executable_run_options",
         "//xla:literal",
         "//xla:shape_util",
@@ -1540,6 +1430,7 @@ onednn_cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
@@ -1558,12 +1449,12 @@ onednn_cc_library(
         ":onednn_config_proto_cc",
         ":onednn_memory_util",
         ":onednn_util",
-        ":runtime_lightweight_check",
         "//xla:executable_run_options",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/tsl/mkl:onednn",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@eigen_archive//:eigen3",
     ],
@@ -1581,11 +1472,11 @@ onednn_cc_library(
         ":backend_config_proto_cc",
         ":onednn_config_proto_cc",
         ":onednn_memory_util",
-        ":runtime_lightweight_check",
         "//xla:executable_run_options",
         "//xla/tsl/mkl:onednn",
         "//xla/tsl/platform:env",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/synchronization",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:platform_port",
@@ -1604,11 +1495,11 @@ onednn_cc_library(
         ":backend_config_proto_cc",
         ":onednn_config_proto_cc",
         ":onednn_memory_util",
-        ":runtime_lightweight_check",
         "//xla:executable_run_options",
         "//xla/tsl/mkl:onednn",
         "//xla/tsl/platform:env",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/synchronization",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:platform_port",
@@ -1878,9 +1769,9 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla/codegen/emitters:elemental_hlo_to_mlir",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/service:multi_output_fusion",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings:string_view",
     ],
@@ -1891,6 +1782,7 @@ xla_cc_test(
     srcs = ["cpu_multi_output_fusion_test.cc"],
     deps = [
         ":cpu_multi_output_fusion",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/utils:hlo_matchers",

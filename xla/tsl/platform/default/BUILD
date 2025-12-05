@@ -13,7 +13,6 @@ load(
     "//xla/tsl:tsl.default.bzl",
     "filegroup",
     "if_cuda_tools",
-    "tsl_grpc_cc_dependencies",
 )
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load(
@@ -119,11 +118,13 @@ cc_library(
         "@tsl//tsl/platform:load_library",
         "@tsl//tsl/platform:path",
     ] + if_oss([
-        "@nvshmem//:nvshmem_config",
+        # keep sorted
         "@local_config_nccl//:nccl_config",
         "@local_config_tensorrt//:tensorrt_headers",
+        "@nvshmem//:nvshmem_config",
+        "@tsl//tsl/platform",
     ]) + if_rocm_is_configured([
-        "@local_config_rocm//rocm:rocm_config",
+        # keep sorted
         "@local_config_rocm//rocm:rocm_headers",
     ]),
 )
@@ -163,14 +164,21 @@ cc_library(
         "//xla/tsl/platform:threadpool_interface",
         "//xla/tsl/platform:types",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf",
+        "@com_google_protobuf//:protobuf_lite",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:blocking_counter",
@@ -186,7 +194,6 @@ cc_library(
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:stringpiece",
-        "@tsl//tsl/platform:stringprintf",
         "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/platform:tracing",
     ],
@@ -252,8 +259,9 @@ cc_library(
     ],
     deps = [
         "//xla/tsl/platform:logging",
+        "@com_github_grpc_grpc//:grpc++",
         "@com_google_absl//absl/log:check",
-    ] + tsl_grpc_cc_dependencies(),
+    ],
 )
 
 cc_library(
@@ -399,7 +407,6 @@ cc_library(
     deps = [
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:types",
-        "@local_config_rocm//rocm:rocm_config",
         "@local_config_rocm//rocm:rocm_headers",
         "@tsl//tsl/platform:path",
     ],

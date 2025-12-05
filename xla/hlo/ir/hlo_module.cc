@@ -40,6 +40,7 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -47,6 +48,7 @@ limitations under the License.
 #include "highwayhash/arch_specific.h"
 #include "highwayhash/hh_types.h"
 #include "highwayhash/highwayhash.h"
+#include "llvm/ADT/STLExtras.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -73,7 +75,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tuple_tree.h"
 #include "xla/util.h"
@@ -339,7 +340,7 @@ void HloModule::ReplaceComputations(
     }
     auto& computation = *iterator;
     if (replacements.contains(computation.get())) {
-      TF_CHECK_OK(RemoveEmbeddedComputation(iterator));
+      CHECK_OK(RemoveEmbeddedComputation(iterator));
     }
   }
 
@@ -398,6 +399,7 @@ void HloModule::Print(
         },
         value);
   }
+  PrintStackFrameIndex(printer);
   printer->Append("\n\n");
   PrintComputations(printer, options);
 }
@@ -467,6 +469,42 @@ void HloModule::PrintComputations(Printer* printer,
       computation->Print(printer, new_options);
     }
     printer->Append("\n\n");
+  }
+}
+
+void HloModule::PrintStackFrameIndex(Printer* printer) const {
+  if (!stack_frame_index_.has_value()) {
+    return;
+  }
+  printer->Append("\n\nFileNames\n");
+  for (const auto& [index, file_name] :
+       llvm::enumerate(stack_frame_index_->file_names())) {
+    printer->Append(
+        absl::StrFormat("%d \"%s\"\n", index + 1, absl::CEscape(file_name)));
+  }
+  printer->Append("\nFunctionNames\n");
+  for (const auto& [index, function_name] :
+       llvm::enumerate(stack_frame_index_->function_names())) {
+    printer->Append(absl::StrFormat("%d \"%s\"\n", index + 1,
+                                    absl::CEscape(function_name)));
+  }
+  printer->Append("\nFileLocations\n");
+  for (const auto& [index, file_location] :
+       llvm::enumerate(stack_frame_index_->file_locations())) {
+    printer->Append(
+        absl::StrFormat("%d {file_name_id=%d function_name_id=%d line=%d "
+                        "end_line=%d column=%d end_column=%d}\n",
+                        index + 1, file_location.file_name_id(),
+                        file_location.function_name_id(), file_location.line(),
+                        file_location.end_line(), file_location.column(),
+                        file_location.end_column()));
+  }
+  printer->Append("\nStackFrames\n");
+  for (const auto& [index, frame] :
+       llvm::enumerate(stack_frame_index_->stack_frames())) {
+    printer->Append(absl::StrFormat(
+        "%d {file_location_id=%d parent_frame_id=%d}\n", index + 1,
+        frame.file_location_id(), frame.parent_frame_id() + 1));
   }
 }
 
@@ -1039,8 +1077,7 @@ absl::StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromProto(
     const HloModuleProto& module, const DebugOptions& debug_options,
     const ExecutionOptions* execution_options) {
   if (!module.has_host_program_shape()) {
-    return tsl::errors::FailedPrecondition(
-        "No program shape found in the proto");
+    return absl::FailedPreconditionError("No program shape found in the proto");
   }
   TF_ASSIGN_OR_RETURN(ProgramShape program_shape,
                       ProgramShape::FromProto(module.host_program_shape()));
@@ -1144,7 +1181,7 @@ HloInstruction* HloModule::OutlineExpressionFromComputation(
             parameter_count, old_operand->shape(), "p"));
         ++parameter_count;
       }
-      TF_CHECK_OK(
+      CHECK_OK(
           outlined_instruction->ReplaceOperandWith(operand_num, *operand_slot));
     }
 
@@ -1185,10 +1222,10 @@ HloInstruction* HloModule::OutlineExpressionFromComputation(
   VLOG(2) << "as a call " << call->ToString();
   VLOG(2) << "to " << nested_computation->ToString();
 
-  TF_CHECK_OK(output->ReplaceAllUsesWith(call));
+  CHECK_OK(output->ReplaceAllUsesWith(call));
   for (auto i = instructions_to_outline.rbegin();
        i != instructions_to_outline.rend(); ++i) {
-    TF_CHECK_OK(computation->RemoveInstruction(*i));
+    CHECK_OK(computation->RemoveInstruction(*i));
   }
 
   return call;
@@ -1455,7 +1492,7 @@ void HloModule::Clone(const std::string& suffix, HloCloneContext* context,
         }
       }
     }
-    TF_CHECK_OK(module->set_schedule(std::move(clone_schedule)));
+    CHECK_OK(module->set_schedule(std::move(clone_schedule)));
   }
   for (const auto& [parameter, indices, offset] : CrossProgramPrefetches()) {
     module->AddCrossProgramPrefetch(parameter, indices, offset);

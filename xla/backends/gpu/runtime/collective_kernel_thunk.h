@@ -30,10 +30,13 @@ limitations under the License.*/
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_metadata_thunk.h"
+#include "xla/backends/gpu/runtime/collective_multimem.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/core/collectives/reduction_kind.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_handle.h"
@@ -63,6 +66,7 @@ class CollectiveKernelThunk : public Thunk {
                         std::vector<CollectiveThunk::Buffer> buffers,
                         bool is_collective_kernel_enabled,
                         absl::string_view kernel_name = "",
+                        int32_t shmem_bytes = 0,
                         bool is_multimem_enabled = false)
       : Thunk{Thunk::kCollectiveKernel, info},
         collective_kernel_enabled_(is_collective_kernel_enabled),
@@ -70,6 +74,7 @@ class CollectiveKernelThunk : public Thunk {
         collective_config_(std::move(collective_config)),
         reduction_kind_(reduction_kind),
         kernel_name_(kernel_name),
+        shmem_bytes_(shmem_bytes),
         buffers_(std::move(buffers)),
         is_multimem_enabled_(is_multimem_enabled) {
     per_stream_state_.reserve(kMaxNumExecutors);
@@ -81,8 +86,7 @@ class CollectiveKernelThunk : public Thunk {
       const CollectiveCliques* collective_cliques) const;
 
   // The single host collective thunk actually requires a clique key.
-  absl::Status Prepare(const PrepareParams& params,
-                       ResourceRequestsInterface& resource_requests) final;
+  absl::Status Prepare(const PrepareParams& params) final;
 
   // Allocate buffers and events as needed for cross device communication.
   // If InitializeParams contains a PTX kernel, it will be used instead of the
@@ -126,6 +130,7 @@ class CollectiveKernelThunk : public Thunk {
     std::unique_ptr<se::Kernel> kernel;
     uint32_t invocation_count = 0;
 
+    std::shared_ptr<CollectiveMultimem> collective_multimem;
     void* multicast_device_ptr = nullptr;
 
     // Constructor to make OSS builds happy.
@@ -161,10 +166,12 @@ class CollectiveKernelThunk : public Thunk {
   // Kernel name to execute. Required when Codegen/PTX kernel is used.
   // Must match the kernel name in the generated PTX kernel.
   const std::string kernel_name_;
+  // Number of bytes of shared memory used by the kernel.
+  // Only useful when the codegen kernel is used.
+  const int32_t shmem_bytes_;
   // Reference to the buffer related information required for the collective.
   std::vector<CollectiveThunk::Buffer> buffers_;
 
-  CollectiveMetadataThunk::MultimemAddressSpaceProvider address_space_provider_;
   // Guard access to the stream state across different threads (which control
   // different streams).
   absl::Mutex mutex_;

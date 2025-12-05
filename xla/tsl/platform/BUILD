@@ -374,7 +374,32 @@ cc_library(
         "threadpool.h",
     ],
     deps = tf_windows_aware_platform_deps("env") + if_static([":env_impl"]) + [
+        ":env_time",
+        ":errors",
+        ":file_statistics",
+        ":macros",
+        ":status",
+        ":statusor",
+        ":threadpool_interface",
+        ":types",
+        "//xla/tsl/concurrency:executor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf",
+        "@com_google_protobuf//:protobuf_lite",
+        "@tsl//tsl/platform",
+        "@tsl//tsl/platform:cord",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:stringpiece",
     ],
 )
 
@@ -445,8 +470,10 @@ cc_library(
         ":status",
         ":statusor",
         ":types",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
@@ -579,14 +606,15 @@ tsl_cc_test(
         ":errors",
         ":stack_frame",
         ":status",
-        ":status_matchers",
         ":status_to_from_proto",
         ":test",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "//xla/tsl/protobuf:status_proto_cc",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -638,13 +666,13 @@ tsl_cc_test(
     size = "small",
     srcs = ["statusor_test.cc"],
     deps = [
-        ":errors",
         ":macros",
         ":statusor",
         ":test",
         ":test_benchmark",
         ":test_main",
-        "@com_google_absl//absl/base:config",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -739,6 +767,16 @@ cc_library(
         "@tsl//tsl/platform:tstring",
     ] + tf_platform_deps("types"),
 )
+
+# copybara:comment_begin(oss-only)
+cc_library(
+    name = "status_macros",
+    hdrs = ["status_macros.h"],
+    compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([]),  # The header should be used only in OSS.
+    deps = [":statusor"],
+)
+# copybara:comment_end
 
 cc_library(
     name = "byte_order",

@@ -76,8 +76,7 @@ class NVPTXCompilerTest : public HloTestBase {
     std::unique_ptr<GpuAliasInfo> alias_info =
         compiler.GetAliasInfo(gpu_device_info);
     TF_RETURN_IF_ERROR(ScheduleGpuModule(module, pointer_size, gpu_device_info,
-                                         &symbolic_expr_context_,
-                                         alias_info.get())
+                                         &mlir_context_, alias_info.get())
                            .status());
 
     auto buffer_size_bytes_function =
@@ -89,12 +88,12 @@ class NVPTXCompilerTest : public HloTestBase {
         module, std::make_unique<SequentialHloOrdering>(module->schedule()),
         buffer_size_bytes_function, alias_info.get(),
         /*color_alignment=*/
-        [](LogicalBuffer::Color) { return kXlaAllocatedBufferAlignBytes; });
+        [](LogicalBuffer::Color) { return kXlaAllocatedBufferAlignBytes; },
+        BufferAssigner::Options{});
   }
 
  protected:
   mlir::MLIRContext mlir_context_;
-  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 class NVPTXCompilerTestTriton : public NVPTXCompilerTest {

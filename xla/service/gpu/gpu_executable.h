@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/client/executable_build_options.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/buffer_assignment.h"
@@ -53,6 +54,8 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/kernel_stats.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/scoped_module_handle.h"
 #include "xla/stream_executor/stream_executor.h"
 
@@ -119,6 +122,7 @@ class GpuExecutable : public Executable {
     se::DeviceDescription device_description;
     std::unique_ptr<HloModule> debug_module = nullptr;
     bool enable_debug_info_manager = true;
+    ModuleStats module_stats;
   };
 
   static absl::StatusOr<std::unique_ptr<GpuExecutable>> Create(Params params);
@@ -219,14 +223,31 @@ class GpuExecutable : public Executable {
   static absl::StatusOr<std::unique_ptr<GpuExecutable>> FromProto(
       const GpuExecutableProto&,
       const se::DeviceDescription& device_description,
-      absl::string_view platform);
+      absl::string_view platform,
+      const std::optional<stream_executor::KernelLoaderSpec::SymbolResolver>&
+          symbol_resolver = std::nullopt);
 
   absl::StatusOr<GpuExecutableProto> ToProto() const;
 
+  absl::Status DumpExecutableIfEnabled(
+      const ExecutableBuildOptions& options,
+      const DebugOptions& debug_options) const final;
+
  private:
   // Use GpuExecutable::Create() to create an instance.
-  explicit GpuExecutable(Params params,
-                         std::deque<BufferAllocation> thunk_pass_allocations);
+  explicit GpuExecutable(
+      std::unique_ptr<HloModule> debug_module, std::string asm_text,
+      std::vector<uint8_t> binary, BinaryMap dnn_compiled_graphs,
+      se::DeviceDescription device_description,
+      std::unique_ptr<SequentialThunk> executable, std::string module_name,
+      ProgramShape program_shape,
+      std::optional<std::vector<BufferAllocation>> mlir_allocations,
+      std::unique_ptr<const BufferAssignment> buffer_assignment,
+      std::deque<BufferAllocation> thunk_pass_allocations,
+      std::unique_ptr<GpuAliasInfo> alias_info, DebugOptions debug_options,
+      std::vector<ConstantInfo> constants,
+      absl::flat_hash_map<ShapeIndex, OutputInfo> output_info,
+      bool enable_debug_info_manager, ModuleStats module_stats);
 
   // GpuExecutable check with either AMD's ISA version, or Nvidia's major minor
   // version for compute capability, depending on the hardware.

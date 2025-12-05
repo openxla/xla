@@ -39,7 +39,10 @@ struct SymbolicExprTest : public ::testing::Test {
   mlir::MLIRContext ctx;
   SymbolicExpr v0 = CreateSymbolicVariable(0, &ctx);
   SymbolicExpr v1 = CreateSymbolicVariable(1, &ctx);
+  SymbolicExpr c1 = CreateSymbolicConstant(1, &ctx);
+  SymbolicExpr c3 = CreateSymbolicConstant(3, &ctx);
   SymbolicExpr c2 = CreateSymbolicConstant(2, &ctx);
+  SymbolicExpr c5 = CreateSymbolicConstant(5, &ctx);
 };
 
 TEST_F(SymbolicExprTest, CreateAndPrint) {
@@ -80,6 +83,22 @@ TEST_F(SymbolicExprTest, ParseAndPrint_Invalid) {
   EXPECT_DEATH(ParseSymbolicExpr("(1 + 2", &ctx), "Missing parenthesis");
   EXPECT_DEATH(ParseSymbolicExpr("foo(3, 4)", &ctx),
                "Failed to parse expression");
+}
+
+TEST_F(SymbolicExprTest, ConstantFolding) {
+  // Expressions are simplified at creation if possible.
+  EXPECT_EQ(c2 + c3, c5);
+  EXPECT_EQ(c5 - c2, c3);
+  EXPECT_EQ(c2 * c3, CreateSymbolicConstant(6, &ctx));
+  EXPECT_EQ(c5 / c2, c2);
+  EXPECT_EQ(c5 % c2, c1);
+  EXPECT_EQ(c5.floorDiv(c2), c2);
+  EXPECT_EQ(c5.ceilDiv(c2), c3);
+  EXPECT_EQ(c2.min(c5), c2);
+  EXPECT_EQ(c5.min(c2), c2);
+  EXPECT_EQ(c2.max(c5), c5);
+  EXPECT_EQ(c5.max(c2), c5);
+  EXPECT_EQ(((c2 + c3) * c2).ceilDiv(c5), c2);
 }
 
 TEST_F(SymbolicExprTest, Evaluate) {
@@ -145,17 +164,8 @@ TEST_F(SymbolicExprTest, ReplaceDimsAndSymbols) {
   SymbolicExpr s1 = CreateSymbolicVariable(2, &ctx);
   SymbolicExpr c7 = CreateSymbolicConstant(7, &ctx);
   SymbolicExpr expr_to_sub = (d0 + s0 * 2) * s1;
-  SymbolicExpr result =
-      expr_to_sub.ReplaceDimsAndSymbols({s0}, {d0, c7}, /*num_dims=*/1);
+  SymbolicExpr result = expr_to_sub.ReplaceDimsAndSymbols({s0}, {d0, c7});
   EXPECT_EQ(result, ((s0 + (d0 * 2)) * c7));
-
-  SymbolicExpr replace_only_dims =
-      expr_to_sub.ReplaceDimsAndSymbols({s0}, {}, /*num_dims=*/1);
-  EXPECT_EQ(replace_only_dims, ((s0 + (s0 * 2)) * s1));
-
-  SymbolicExpr replace_only_symbols =
-      expr_to_sub.ReplaceDimsAndSymbols({}, {d0, c7}, /*num_dims=*/1);
-  EXPECT_EQ(replace_only_symbols, ((d0 + (d0 * 2)) * c7));
 }
 
 TEST_F(SymbolicExprTest, UniquingWorks) {

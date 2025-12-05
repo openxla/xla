@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/core/collectives/communicator.h"
@@ -38,8 +39,7 @@ struct AllReduceConfig {
   ReductionKind reduction_kind;
 };
 
-template <typename HloInstType>
-AllReduceConfig GetAllReduceConfigInst(HloInstType* inst);
+AllReduceConfig GetAllReduceConfigInst(const HloAllReduceInstructionBase* inst);
 
 // Thunk that performs a NCCL-based All-Reduce or Reduce-Scatter among CUDA
 // GPU-based replicas.
@@ -80,14 +80,14 @@ class AllReduceStartThunk : public AllReduceReduceScatterThunkBase {
   static CollectiveOpGroupMode GetGroupMode(
       const HloAllReduceInstruction* inst);
 
-  absl::Status Prepare(const PrepareParams& params,
-                       ResourceRequestsInterface& resource_requests) override;
+  absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
 
  protected:
   absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
+                                     const GpuCliqueKey& clique_key,
                                      se::Stream& stream,
-                                     CommunicatorHandle comm) override;
+                                     Communicator& comm) override;
 
  private:
   std::unique_ptr<CollectiveKernelThunk> collective_kernel_thunk_;
@@ -115,20 +115,21 @@ class ReduceScatterStartThunk : public AllReduceReduceScatterThunkBase {
 
  protected:
   absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
+                                     const GpuCliqueKey& clique_key,
                                      se::Stream& stream,
-                                     CommunicatorHandle comm) override;
+                                     Communicator& comm) override;
 };
 
 // -----------------------------------------------------------------------------
 
 absl::Status RunAllReduce(ReductionKind reduction_kind,
                           std::vector<DeviceBufferPair>& buffers,
-                          se::Stream& stream, Communicator* comm,
+                          se::Stream& stream, Communicator& comm,
                           bool use_symmetric_buffer = false);
 
 absl::Status RunReduceScatter(ReductionKind reduction_kind,
                               std::vector<DeviceBufferPair>& buffers,
-                              se::Stream& stream, Communicator* comm,
+                              se::Stream& stream, Communicator& comm,
                               bool use_symmetric_buffer = false);
 
 }  // namespace gpu

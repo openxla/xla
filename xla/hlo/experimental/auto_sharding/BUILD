@@ -352,9 +352,13 @@ xla_cc_binary(
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = [
         ":auto_sharding",
+        ":auto_sharding_option",
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/tools:hlo_module_loader",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@tsl//tsl/platform:platform_port",
@@ -480,6 +484,7 @@ cc_library(
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = [
         "@com_google_absl//absl/numeric:int128",
+        "@com_google_absl//absl/random",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -493,7 +498,6 @@ cc_test(
     srcs = ["iopddl_test.cc"],
     deps = [
         ":iopddl_lib",
-        "//xla/tsl/platform:status_matchers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/time",

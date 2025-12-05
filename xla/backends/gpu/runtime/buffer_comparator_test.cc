@@ -22,6 +22,8 @@ limitations under the License.
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/cleanup/cleanup.h"
+#include "absl/log/check.h"
 #include "absl/strings/ascii.h"
 #include "absl/types/span.h"
 #include "xla/primitive_util.h"
@@ -33,7 +35,6 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/ml_dtypes.h"
@@ -65,11 +66,11 @@ class BufferComparatorTest : public testing::Test {
         stream_exec_,
         stream_exec_->AllocateArray<ElementType>(expected.size()));
 
-    TF_CHECK_OK(stream->Memcpy(current_buffer.memory_ptr(), current.data(),
-                               current_buffer.memory().size()));
-    TF_CHECK_OK(stream->Memcpy(expected_buffer.memory_ptr(), expected.data(),
-                               expected_buffer.memory().size()));
-    TF_CHECK_OK(stream->BlockHostUntilDone());
+    CHECK_OK(stream->Memcpy(current_buffer.memory_ptr(), current.data(),
+                            current_buffer.memory().size()));
+    CHECK_OK(stream->Memcpy(expected_buffer.memory_ptr(), expected.data(),
+                            expected_buffer.memory().size()));
+    CHECK_OK(stream->BlockHostUntilDone());
 
     BufferComparator comparator(
         ShapeUtil::MakeShape(
@@ -109,11 +110,11 @@ class BufferComparatorTest : public testing::Test {
     se::DeviceMemoryHandle expected_buffer(
         stream_exec_, stream_exec_->AllocateScalar<ElementType>());
 
-    TF_CHECK_OK(stream->Memcpy(current_buffer.memory_ptr(), &current,
-                               current_buffer.memory().size()));
-    TF_CHECK_OK(stream->Memcpy(expected_buffer.memory_ptr(), &expected,
-                               expected_buffer.memory().size()));
-    TF_CHECK_OK(stream->BlockHostUntilDone());
+    CHECK_OK(stream->Memcpy(current_buffer.memory_ptr(), &current,
+                            current_buffer.memory().size()));
+    CHECK_OK(stream->Memcpy(expected_buffer.memory_ptr(), &expected,
+                            expected_buffer.memory().size()));
+    CHECK_OK(stream->BlockHostUntilDone());
 
     BufferComparator comparator(
         ShapeUtil::MakeShape(
@@ -452,34 +453,34 @@ TEST_F(BufferComparatorTest, VeryLargeArray) {
   constexpr PrimitiveType number_type = U8;
   using NT = primitive_util::PrimitiveTypeToNative<number_type>::type;
 
-  // Set non-power-of-two element count on purpose, use aligned byffer siuze
-  int64_t n_elems = (1LL << 33) - 11,
-          // Buffer size must be 4-bytes aligned for Memset32
+  // Set non-power-of-two element count on purpose, use aligned buffer size.
+  int64_t n_elems = (1LL << 32) - 11,
+          // Buffer size must be 4-bytes aligned for Memset32.
       buf_size = (((n_elems + 1) * sizeof(NT)) + 3) & ~3;
   auto stream = stream_exec_->CreateStream().value();
 
-  // Use host memory here since there is a limitation of 4GB per test on
-  // device memory alloc
-  TF_ASSERT_OK_AND_ASSIGN(auto base,
-                          stream_exec_->HostMemoryAllocate(buf_size));
+  auto base = stream_exec_->Allocate(buf_size);
+  EXPECT_TRUE(!base.is_null());
+  auto cleanup =
+      absl::MakeCleanup([this, &base] { stream_exec_->Deallocate(&base); });
 
   // We use overlapping lhs and rhs arrays to reduce memory usage, also this
-  // serves as an extra test for possible pointer aliasing problems
-  se::DeviceMemoryBase lhs(base->opaque(), n_elems * sizeof(NT)),
-      rhs(static_cast<NT*>(base->opaque()) + 1, lhs.size());
+  // serves as an extra test for possible pointer aliasing problems.
+  se::DeviceMemoryBase lhs(base.opaque(), n_elems * sizeof(NT)),
+      rhs(static_cast<NT*>(base.opaque()) + 1, lhs.size());
 
   constexpr uint32_t pattern = 0xABABABAB;
   TF_CHECK_OK(stream->Memset32(&lhs, pattern, buf_size));
 
   // First we do "positive" test to make sure lhs and rhs are indeed equal:
-  // disable host comparison here since it could take a while for ~8GB array
+  // disable host comparison here since it could take a while for ~4GB array
   BufferComparator comparator(ShapeUtil::MakeShape(number_type, {n_elems}),
                               /*tolerance*/ 0.1, /* verbose */ false,
                               /*run_host_compare*/ false);
   EXPECT_TRUE(comparator.CompareEqual(stream.get(), lhs, rhs).value());
 
   se::DeviceMemoryBase last_word(
-      static_cast<uint8_t*>(base->opaque()) + (n_elems & ~3), sizeof(uint32_t));
+      static_cast<uint8_t*>(base.opaque()) + (n_elems & ~3), sizeof(uint32_t));
   // Change only the very last entry of rhs to verify that the whole arrays are
   // compared (if the grid dimensions are not computed correctly, this might
   // not be the case).

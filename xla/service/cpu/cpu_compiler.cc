@@ -26,7 +26,6 @@ limitations under the License.
 #include <stack>
 #include <string>
 #include <tuple>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -35,7 +34,6 @@ limitations under the License.
 // IWYU pragma: no_include "llvm/Config/Disassemblers.def.inc"
 // IWYU pragma: no_include "llvm/Config/Targets.def.inc"
 
-#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -88,18 +86,15 @@ limitations under the License.
 #include "mlir/Transforms/DialectConversion.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/builtin_definition_generator.h"
-#include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
 #include "xla/backends/cpu/codegen/execution_engine.h"
 #include "xla/backends/cpu/codegen/ir_compiler.h"
 #include "xla/backends/cpu/codegen/jit_compiler.h"
-#include "xla/backends/cpu/codegen/object_loader.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/constant_allocation.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
-#include "xla/backends/cpu/runtime/thunk_proto_serdes.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/cpu/transforms/collectives/all_reduce_combiner.h"
 #include "xla/backends/cpu/transforms/library_rewriter.h"
@@ -234,7 +229,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
@@ -304,8 +298,8 @@ ModuleComputationsTransitivelyContainCustomCall(const HloModule& module) {
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(&module);
 
   // Can never fail because we always return an OK status from the visitor.
-  TF_CHECK_OK(call_graph->VisitNodes([&custom_call_map](
-                                         const CallGraphNode& node) {
+  CHECK_OK(call_graph->VisitNodes([&custom_call_map](
+                                      const CallGraphNode& node) {
     const HloComputation* computation = node.computation();
 
     for (const HloInstruction* instruction : computation->instructions()) {
@@ -1026,8 +1020,9 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     pipeline.AddPass<FusionWrapper>(use_experimental_loop_fusion);
   }
 
+  AliasInfo alias_info;
   if (use_multi_output_fusion) {
-    pipeline.AddPass<CpuMultiOutputFusion>();
+    pipeline.AddPass<CpuMultiOutputFusion>(&alias_info);
     pipeline.AddPass<TupleSimplifier>();
   }
 
@@ -1090,7 +1085,6 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   pipeline.AddPass<OptimizeInputOutputBufferAlias>(true);
 
   // If enabled we'll use more precise region based analysis for copy removal.
-  AliasInfo alias_info;
   if (debug_options.xla_cpu_copy_insertion_use_region_analysis()) {
     pipeline.AddPass<CopyInsertion>(
         &alias_info,
@@ -2108,10 +2102,6 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
       CompileCpuExecutable(std::move(module), thunk_emitter_options,
                            std::move(ir_compiler)));
 
-  AliasInfo alias_info;
-  cpu_executable->set_debug_info(
-      cpu_executable->buffer_assignment().StatsString(&alias_info));
-
   VLOG(1) << "Compilation finished";
   cpu_executable->Finalize();
 
@@ -2362,10 +2352,15 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>>
 CpuCompiler::CreateBufferAssignment(const HloModule& module) const {
   // Run buffer allocation on the HLO graph.
   AliasInfo alias_info;
-  return BufferAssigner::Run(
-      &module, std::make_unique<SequentialHloOrdering>(module.schedule()),
-      BufferSizeBytesFunction(), &alias_info, memory_alignment,
-      /*allocate_buffers_for_constants=*/true);
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.buffer_order = BufferAssigner::BufferOrder::kTopological;
+  // We use a DependencyHloOrdering rather than a SequentialHloOrdering to
+  // increase the amount of concurrency the program can execute with.
+  return BufferAssigner::Run(&module,
+                             std::make_unique<DependencyHloOrdering>(&module),
+                             BufferSizeBytesFunction(), &alias_info,
+                             memory_alignment, std::move(opts));
 }
 
 }  // namespace cpu

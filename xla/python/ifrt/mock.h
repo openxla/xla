@@ -317,13 +317,6 @@ class MockExecutable : public llvm::RTTIExtends<MockExecutable, Executable> {
 class MockLoadedExecutable
     : public llvm::RTTIExtends<MockLoadedExecutable, LoadedExecutable> {
  public:
-  MockLoadedExecutable() {
-    static absl::NoDestructor<DeviceListRef> kEmptyDeviceList(
-        BasicDeviceList::Create({}));
-    ON_CALL(*this, devices())
-        .WillByDefault(testing::ReturnRef(*kEmptyDeviceList));
-  }
-
   MOCK_METHOD(Client*, client, (), (const, final));
   MOCK_METHOD(absl::string_view, name, (), (const, final));
   MOCK_METHOD(absl::StatusOr<std::optional<std::string>>, Fingerprint, (),
@@ -363,7 +356,7 @@ class MockLoadedExecutable
               (final));
   MOCK_METHOD(absl::Span<Device* const>, addressable_devices, (),
               (const, final));
-  MOCK_METHOD(const DeviceListRef&, devices, (), (const, final));
+  MOCK_METHOD(std::optional<DeviceListRef>, devices, (), (const, final));
 
   static char ID;  // NOLINT
 };
@@ -402,23 +395,16 @@ class MockSharding : public llvm::RTTIExtends<MockSharding, Sharding> {
                                                   is_fully_replicated) {}
 
   MOCK_METHOD((absl::StatusOr<std::vector<std::pair<Shape, ShardingRef>>>),
-              Disassemble, (const Shape& shape), (const, final));
-  MOCK_METHOD((absl::StatusOr<std::vector<std::pair<Shape, ShardingRef>>>),
               Disassemble,
               (const Shape& shape,
                SingleDeviceShardSemantics single_device_shard_semantics),
               (const, final));
   MOCK_METHOD(
       (absl::StatusOr<std::vector<std::pair<DynamicShape, ShardingRef>>>),
-      Disassemble, (const DynamicShape& dynamic_shape), (const final));
-  MOCK_METHOD(
-      (absl::StatusOr<std::vector<std::pair<DynamicShape, ShardingRef>>>),
       Disassemble,
       (const DynamicShape& dynamic_shape,
        SingleDeviceShardSemantics single_device_shard_semantics),
       (const final));
-  MOCK_METHOD(absl::StatusOr<std::vector<IndexDomain>>, IndexDomains,
-              (const Shape& shape), (const, final));
   MOCK_METHOD(absl::StatusOr<std::vector<IndexDomain>>, IndexDomains,
               (const Shape& shape,
                SingleDeviceShardSemantics single_device_shard_semantics),

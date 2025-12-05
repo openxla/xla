@@ -28,6 +28,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -184,8 +185,6 @@ class Compiler {
         const HloModule& module)>
         layout_canonicalization_callback = {};
 
-    bool is_autotuning_compilation = false;
-
     // AOT device description. If provided, used instead of querying the device
     // on which compilation is performed.
     std::optional<GpuTargetConfig> gpu_target_config;
@@ -197,6 +196,9 @@ class Compiler {
 
     // The number of devices in a fast-interconnect domain.
     int64_t slice_size = 0;
+
+    // Embed HLO module in the executable. Only used on GPU at the moment.
+    bool embed_hlo_module = true;
   };
 
   virtual ~Compiler() = default;

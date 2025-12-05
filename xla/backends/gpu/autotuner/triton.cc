@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -88,8 +89,10 @@ std::vector<TritonGemmConfig> GetDefaultTritonConfigs(
     config.is_tma_allowed = false;
     tma_parameterized_configs.push_back(config);
 
-    config.is_tma_allowed = true;
-    tma_parameterized_configs.push_back(config);
+    if (IsTmaRecommended(config)) {
+      config.is_tma_allowed = true;
+      tma_parameterized_configs.push_back(config);
+    }
   }
   return tma_parameterized_configs;
 }
@@ -203,7 +206,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
   priority_fusion_options.count_multiple_input_accesses = true;
   PriorityFusion priority_fusion(
       /*thread_pool=*/nullptr, gpu_device_info, priority_fusion_options,
-      symbolic_expr_context_);
+      mlir_context_);
   TF_RETURN_IF_ERROR(priority_fusion.Run(hlo_module.get()).status());
 
   // If the priority fusion pass above skipped some instructions, turn them
@@ -211,20 +214,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
   FusionWrapper fusion_wrapper(gpu_device_info);
   TF_RETURN_IF_ERROR(fusion_wrapper.Run(hlo_module.get()).status());
 
-  NestGemmFusion nest_gemm_fusion(gpu_device_info, symbolic_expr_context_);
+  NestGemmFusion nest_gemm_fusion(gpu_device_info, mlir_context_);
   TF_RETURN_IF_ERROR(nest_gemm_fusion.Run(hlo_module.get()).status());
-
-  bool is_legacy_gemm_disabled = absl::c_contains(
-      debug_options().xla_gpu_unsupported_generic_triton_emitter_features(),
-      DebugOptions::GENERIC_TRITON_EMITTER_DISABLE_LEGACY_GEMM);
-  bool is_triton_gemm_fusion =
-      IsGpuFusionKind(*hlo_module->entry_computation()->root_instruction(),
-                      kTritonGemmFusionKind);
-  if (is_legacy_gemm_disabled && is_triton_gemm_fusion) {
-    return absl::InternalError(
-        absl::StrCat("Unexpected ", kTritonGemmFusionKind,
-                     " fusion: ", hlo_module->ToString()));
-  }
   return hlo_module;
 }
 

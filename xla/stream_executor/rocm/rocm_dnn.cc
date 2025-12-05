@@ -63,7 +63,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/determinism.h"
 #include "xla/tsl/util/env_var.h"
@@ -790,19 +789,19 @@ MIOpenSupport::MIOpenSupport(StreamExecutor* parent) : parent_(parent) {
   return_best_algo_only_ = false;
   // but if the env var TF_ROCM_RETURN_BEST_ALGO_ONLY is set, only the best
   // (i.e. most efficient) algorithm will be returned
-  TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_RETURN_BEST_ALGO_ONLY", false,
-                                      &return_best_algo_only_));
+  CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_RETURN_BEST_ALGO_ONLY", false,
+                                   &return_best_algo_only_));
 
   // by default, use Find Mode APIs for convolution
   use_immediate_mode_ = false;
   // swich to Find Mode if env var TF_ROCM_USE_IMMEDIATE_MODE is set
 
-  TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_USE_IMMEDIATE_MODE", false,
-                                      &use_immediate_mode_));
+  CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_USE_IMMEDIATE_MODE", false,
+                                   &use_immediate_mode_));
 
   bool enable_pooling_cache = false;
-  TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_BW_POOL_CACHE", false,
-                                      &enable_pooling_cache));
+  CHECK_OK(tsl::ReadBoolFromEnvVar("TF_ROCM_BW_POOL_CACHE", false,
+                                   &enable_pooling_cache));
   if (enable_pooling_cache) m_pooling_cache_allowed = true;
 }
 
@@ -3253,53 +3252,6 @@ void MIOpenDeallocatorCallback(void* ctx, void* mem) {
   // reclaim the memory
 }
 
-absl::Status MIOpenSupport::DoPrepareForConvolution(
-    dnn::ConvolutionKind kind, dnn::DataType element_type, Stream* stream,
-    const dnn::BatchDescriptor& input_descriptor, DeviceMemoryBase input_data,
-    const dnn::FilterDescriptor& filter_descriptor,
-    DeviceMemoryBase filter_data, const dnn::BatchDescriptor& output_descriptor,
-    DeviceMemoryBase output_data,
-    const dnn::ConvolutionDescriptor& convolution_descriptor,
-    const dnn::AlgorithmConfig& algorithm_config,
-    ScratchAllocator* scratch_allocator, dnn::AlgorithmDesc* algorithm_desc,
-    DeviceMemory<uint8_t>* scratch_memory) {
-  std::optional<dnn::AlgorithmDesc> input_algo_desc =
-      algorithm_config.algorithm();
-
-  assert(input_algo_desc.has_value());
-
-  // An algorithm has been specified.
-  *algorithm_desc = *input_algo_desc;
-
-  assert(algorithm_config.scratch_size().has_value());
-
-  size_t scratch_memory_size = *(algorithm_config.scratch_size());
-
-  // allocate scratch memory
-  if (scratch_memory_size != 0) {
-    if (scratch_allocator == nullptr) {
-      return absl::InternalError(
-          "An allocator must be specified when scratch memory is needed");
-    }
-    auto allocated = scratch_allocator->AllocateBytes(scratch_memory_size);
-    if (allocated.ok()) {
-      *scratch_memory = allocated.value();
-    } else {
-      LOG(ERROR)
-          << "Failed to allocate scratch memory - "
-          << allocated.status().message() << "\n"
-          << "\tYou can set the env var TF_CUDNN_WORKSPACE_LIMIT_IN_MB to a "
-             "larger number (e.g. 8192) to increase the max memory limit.\n"
-          << "\tIncreasing the max memory limit might help resolve this "
-             "error";
-      return absl::InternalError(absl::StrCat(
-          "Failed to allocate scratch memory of size: ", scratch_memory_size));
-    }
-  }
-
-  return absl::OkStatus();
-}
-
 class RocmConvRunner : public dnn::ConvRunner {
  public:
   RocmConvRunner(StreamExecutor* parent, MIOpenAccess* miopen, int64_t algo_id,
@@ -3459,26 +3411,6 @@ class RocmConvRunner : public dnn::ConvRunner {
   ScopedFilterDescriptor filter_desc_;
   ScopedConvolutionDescriptor conv_desc_;
 };
-
-absl::Status MIOpenSupport::DoConvolve(
-    dnn::ConvolutionKind kind, dnn::DataType element_type,
-    dnn::DataType output_type, Stream* stream,
-    const dnn::BatchDescriptor& input_descriptor, DeviceMemoryBase input_data,
-    const dnn::FilterDescriptor& filter_descriptor,
-    DeviceMemoryBase filter_data, const dnn::BatchDescriptor& output_descriptor,
-    DeviceMemoryBase output_data,
-    const dnn::ConvolutionDescriptor& convolution_descriptor,
-    dnn::AlgorithmDesc algorithm_desc, DeviceMemory<uint8_t> scratch_memory,
-    dnn::ProfileResult* output_profile_result) {
-  TF_ASSIGN_OR_RETURN(
-      auto runner,
-      ConvolveRunnerFromDesc(stream, algorithm_desc, kind, element_type,
-                             output_type, input_descriptor, filter_descriptor,
-                             output_descriptor, convolution_descriptor));
-
-  return (*runner)(stream, output_profile_result, scratch_memory, input_data,
-                   filter_data, output_data);
-}
 
 absl::Status MIOpenSupport::GetConvolveRunners(
     dnn::ConvolutionKind kind, dnn::DataType input_type,
@@ -5200,8 +5132,8 @@ bool UseNhwcLayoutForRocm() {
 #if TF_ROCM_VERSION >= 50100
   static bool is_enabled = [] {
     bool is_enabled = false;
-    TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_USE_ROCM_NHWC",
-                                        /*default_val=*/false, &is_enabled));
+    CHECK_OK(tsl::ReadBoolFromEnvVar("TF_USE_ROCM_NHWC",
+                                     /*default_val=*/false, &is_enabled));
     return is_enabled;
   }();
   return is_enabled;

@@ -97,6 +97,56 @@ cc_library(
 )
 
 cc_library(
+    name = "cuda_version_variants",
+    srcs = [
+        "cuda_version_variants.cc",
+    ] + if_cuda_newer_than(
+        "12_0",
+        ["cuda_version_12000_newer.cc"],
+        ["cuda_version_12000_older.cc"],
+    ) + if_cuda_newer_than(
+        "12_8",
+        ["cuda_version_12080_newer.cc"],
+        ["cuda_version_12080_older.cc"],
+    ),
+    hdrs = ["cuda_version_variants.h"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "requires-gpu-nvidia",
+    ],
+    deps = [
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/types:span",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+xla_cc_test(
+    name = "cuda_version_variants_test",
+    srcs = ["cuda_version_variants_test.cc"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "no_mac",
+        "nomsan",  # Disable  msan for cuda related tests.
+        "requires-gpu-nvidia",
+    ],
+    deps = [
+        ":cuda_version_variants",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_cuda//cuda:cuda_runtime",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
     name = "mock_cupti",
     testonly = 1,
     hdrs = ["mock_cupti.h"],
@@ -168,6 +218,7 @@ cuda_library(
         "@com_google_googletest//:gtest_for_library",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cuda_runtime",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
@@ -231,9 +282,11 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":cuda_version_variants",
         ":cupti_buffer_events",
         ":cupti_collector",
         ":cupti_interface",
+        ":cupti_marker_data_parser",
         ":cupti_pm_sampler_factory",
         ":cupti_utils",
         "//xla/tsl/platform:env",
@@ -244,7 +297,9 @@ cc_library(
         "//xla/tsl/profiler/utils:per_thread",
         "//xla/tsl/profiler/utils:xplane_builder",
         "//xla/tsl/profiler/utils:xplane_schema",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -506,6 +561,64 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "cupti_nvtx_ext_payload",
+    srcs = if_cuda_newer_than(
+        "13_0",
+        ["cupti_nvtx_ext_payload.cc"],
+        [],
+    ),
+    hdrs = if_cuda_newer_than(
+        "13_0",
+        ["cupti_nvtx_ext_payload.h"],
+        [],
+    ),
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        "//xla/tsl/cuda:cupti",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@tsl//tsl/platform",
+        "@tsl//tsl/platform:macros",
+    ],
+)
+
+cc_library(
+    name = "cupti_marker_data_parser",
+    srcs = if_cuda_newer_than(
+        "13_0",
+        ["cupti_marker_data_parser_ext.cc"],
+        ["cupti_marker_data_parser.cc"],
+    ),
+    hdrs = ["cupti_marker_data_parser.h"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        "//xla/tsl/cuda:cupti",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_cuda//cuda:cuda_headers",
+    ] + if_cuda_newer_than(
+        "13_0",
+        [":cupti_nvtx_ext_payload"],
+        [],
+    ),
+)
+
+cc_library(
     name = "cupti_collector",
     srcs = ["cupti_collector.cc"],
     hdrs = ["cupti_collector.h"],
@@ -558,6 +671,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":cupti_interface",
+        ":cupti_marker_data_parser",
         ":cupti_utils",
         "//xla/tsl/cuda:cupti",
         "//xla/tsl/profiler/utils:buffer_pool",

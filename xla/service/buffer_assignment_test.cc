@@ -25,8 +25,10 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -64,7 +66,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
@@ -76,7 +77,6 @@ using memory_space_assignment::PresetAssignments;
 using ::testing::HasSubstr;
 using ::testing::UnorderedElementsAre;
 using ::tsl::proto_testing::EqualsProto;
-using tsl::testing::StatusIs;
 
 // DFS visitor that collects the instructions referenced by a computation
 // without descending into nested computations, i.e., only from the operands.
@@ -104,7 +104,7 @@ class InstructionListVisitor : public DfsHloVisitorWithDefault {
 
 std::vector<const HloInstruction*> GetInstructions(HloInstruction* root) {
   InstructionListVisitor main_list(root);
-  TF_CHECK_OK(root->Accept(&main_list));
+  CHECK_OK(root->Accept(&main_list));
   return main_list.GetInstructions();
 }
 
@@ -118,11 +118,13 @@ class BufferAssignmentTest : public HloHardwareIndependentTestBase {
 
   std::unique_ptr<BufferAssignment> RunBufferAssignment(HloModule* module,
                                                         int64_t alignment = 1) {
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = true;
     return BufferAssigner::Run(
                module, std::make_unique<DependencyHloOrdering>(module),
                &BufferSizeBytes, &alias_info_,
                [alignment](LogicalBuffer::Color) { return alignment; },
-               /*allocate_buffers_for_constants=*/true)
+               std::move(opts))
         .value();
   }
 
@@ -141,25 +143,29 @@ class BufferAssignmentTest : public HloHardwareIndependentTestBase {
       const BufferAssigner::PrivateStacks& private_stacks = {},
       std::optional<BufferAssignment::BufferIsolationOptions>
           isolation_options = std::nullopt) {
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = true;
+    opts.colorer = colorer;
+    opts.private_stacks = &private_stacks;
+    opts.isolation_options = isolation_options;
     return BufferAssigner::Run(
                module,
                std::make_unique<SequentialHloOrdering>(module->schedule()),
                &BufferSizeBytes, &alias_info_,
                [alignment](LogicalBuffer::Color) { return alignment; },
-               /*allocate_buffers_for_constants=*/true, colorer,
-               /*must_not_live_out=*/std::nullopt,
-               /*preset_assignments=*/{}, private_stacks,
-               /*heap_buffer_interval_compare=*/nullptr, isolation_options)
+               std::move(opts))
         .value();
   }
 
   std::unique_ptr<BufferAssignment> RunBufferAssignmentNoBuffersForConstants(
       HloModule* module, int64_t alignment = 1) {
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = false;
     return BufferAssigner::Run(
                module, std::make_unique<DependencyHloOrdering>(module),
                &BufferSizeBytes, &alias_info_,
                [alignment](LogicalBuffer::Color) { return alignment; },
-               /*allocate_buffers_for_constants=*/false)
+               std::move(opts))
         .value();
   }
 
@@ -171,24 +177,28 @@ class BufferAssignmentTest : public HloHardwareIndependentTestBase {
       return instruction->opcode() == HloOpcode::kAdd;
     };
 
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = false;
+    opts.must_not_live_out = must_not_live_out;
     return BufferAssigner::Run(
                module, std::make_unique<DependencyHloOrdering>(module),
                &BufferSizeBytes, &alias_info_,
                [alignment](LogicalBuffer::Color) { return alignment; },
-               /*allocate_buffers_for_constants=*/false,
-               /*colorer=*/BufferAssigner::DefaultColorer(),
-               /*must_not_live_out=*/must_not_live_out)
+               std::move(opts))
         .value();
   }
 
   std::unique_ptr<BufferAssignment> RunColoredBufferAssignment(
       HloModule* module, BufferAssigner::Colorer colorer,
       int64_t alignment = 1) {
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = true;
+    opts.colorer = std::move(colorer);
     return BufferAssigner::Run(
                module, std::make_unique<DependencyHloOrdering>(module),
                &BufferSizeBytes, &alias_info_,
                [alignment](LogicalBuffer::Color) { return alignment; },
-               /*allocate_buffers_for_constants=*/true, std::move(colorer))
+               std::move(opts))
         .value();
   }
 
@@ -197,41 +207,41 @@ class BufferAssignmentTest : public HloHardwareIndependentTestBase {
       int64_t alignment = 1) {
     HloSchedule schedule(module);
     schedule.set_sequence(module->entry_computation(), instruction_sequence);
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = true;
     return BufferAssigner::Run(
                module, std::make_unique<SequentialHloOrdering>(schedule),
                &BufferSizeBytes, &alias_info_,
                [alignment](LogicalBuffer::Color) { return alignment; },
-               /*allocate_buffers_for_constants=*/true)
+               std::move(opts))
         .value();
   }
 
   std::unique_ptr<BufferAssignment> RunBufferAssignmentWithPresetAssignments(
       HloModule* module, std::unique_ptr<PresetAssignments> preset_assignments,
       int64_t alignment = 1) {
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = true;
+    opts.preset_assignments = std::move(preset_assignments);
     return BufferAssigner::Run(
                module, std::make_unique<DependencyHloOrdering>(module),
                &BufferSizeBytes, &alias_info_,
                [alignment](LogicalBuffer::Color) { return alignment; },
-               /*allocate_buffers_for_constants=*/true,
-               BufferAssigner::DefaultColorer(),
-               /*must_not_live_out=*/std::nullopt,
-               std::move(preset_assignments))
+               std::move(opts))
         .value();
   }
 
   std::unique_ptr<BufferAssignment> RunBufferAssignmentWithIsolationOptions(
       HloModule* module, std::optional<BufferAssignment::BufferIsolationOptions>
                              isolation_options = std::nullopt) {
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = true;
+    opts.isolation_options = isolation_options;
     return BufferAssigner::Run(
                module,
                std::make_unique<SequentialHloOrdering>(module->schedule()),
                &BufferSizeBytes, &alias_info_,
-               [](LogicalBuffer::Color) { return 1; },
-               /*allocate_buffers_for_constants=*/true,
-               BufferAssigner::DefaultColorer(),
-               /*must_not_live_out=*/std::nullopt,
-               /*preset_assignments=*/{}, /*private_stacks=*/{},
-               /*heap_buffer_interval_compare=*/nullptr, isolation_options)
+               [](LogicalBuffer::Color) { return 1; }, std::move(opts))
         .value();
   }
 
@@ -2413,11 +2423,13 @@ class WhileBufferAssignmentTest : public HloHardwareIndependentTestBase {
                                                         int64_t alignment = 1) {
     HloSchedule schedule =
         ScheduleModule(module, &alias_info_, ByteSizeOf).value();
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = true;
     return BufferAssigner::Run(
                module, std::make_unique<SequentialHloOrdering>(schedule),
                ByteSizeOf, &alias_info_,
                [alignment](LogicalBuffer::Color) { return alignment; },
-               /*allocate_buffers_for_constants=*/true)
+               std::move(opts))
         .value();
   }
 
@@ -2735,13 +2747,14 @@ TEST_F(WhileBufferAssignmentTest, ColocatedBuffers) {
       {token, infeed, infeed_data, while0, while1, zero, add, while2, tuple});
   TF_ASSERT_OK(schedule.Verify());
 
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
   TF_ASSERT_OK_AND_ASSIGN(
       auto assignment,
       BufferAssigner::Run(
           module.get(), std::make_unique<SequentialHloOrdering>(schedule),
           &BufferSizeBytes, &alias_info_,
-          [](LogicalBuffer::Color) { return 1; },
-          /*allocate_buffers_for_constants=*/true));
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
 
   // The result tuple elements must be assigned with different buffers.
   TF_ASSERT_OK_AND_ASSIGN(auto slice0, assignment->GetUniqueSlice(tuple, {0}));
@@ -3470,11 +3483,13 @@ TEST_F(WhileBufferAssignmentTest, WhileLoopsInterferingResultRange) {
   // itself is buggy.
   TF_ASSERT_OK(schedule.Verify());
 
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
   auto assignment =
       BufferAssigner::Run(
           module.get(), std::make_unique<SequentialHloOrdering>(schedule),
           ByteSizeOf, &alias_info_, [](LogicalBuffer::Color) { return 1; },
-          /*allocate_buffers_for_constants=*/true)
+          std::move(opts))
           .value();
 
   EXPECT_TRUE(BuffersDistinct({while0}, {while1}, *assignment));

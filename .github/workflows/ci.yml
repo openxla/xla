@@ -49,6 +49,12 @@ jobs:
             repo: "openxla/xla",
           },
           {
+            pool: "windows-x86-n2-16",
+            container: null,
+            name: "XLA Windows x86 CPU",
+            repo: "openxla/xla",
+          },
+          {
             pool: "linux-x86-n2-16",
             container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest",
             name: "XLA Linux x86 CPU Bzlmod",
@@ -112,12 +118,12 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: "Checking out openxla/xla"
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           path: "openxla/xla"
       - name: Checking out ${{ matrix.job_info.repo }}
         if: ${{ matrix.job_info.repo != 'openxla/xla' }}
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           repository: ${{ matrix.job_info.repo }}
           path: ${{ matrix.job_info.repo }}

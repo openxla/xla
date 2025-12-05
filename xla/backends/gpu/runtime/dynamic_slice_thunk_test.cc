@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.pb.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/resource_requests.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/shape.h"
@@ -1945,7 +1945,7 @@ TEST_F(DynamicSliceThunkTest,
                                 /*device_ordinal=*/0,
                                 /*memory_allocator=*/&allocator);
 
-  Thunk::PrepareParams prepare_params{nullptr};
+  Thunk::PrepareParams prepare_params{};
 
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, /*buffer_allocations=*/allocations, stream.get(),
@@ -1957,8 +1957,7 @@ TEST_F(DynamicSliceThunkTest,
       {executor, source, &allocations, stream.get(), stream.get()}));
 
   // Executing dynamic slice thunk.
-  ResourceRequests resource_requests;
-  TF_ASSERT_OK(thunk->Prepare(prepare_params, resource_requests));
+  TF_ASSERT_OK(thunk->Prepare(prepare_params));
   TF_ASSERT_OK(thunk->ExecuteOnStream(params));
   TF_ASSERT_OK(stream->BlockHostUntilDone());
 

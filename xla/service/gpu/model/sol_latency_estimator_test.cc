@@ -26,12 +26,12 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/time/time.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/model/collective_interpolator.h"
 #include "xla/service/gpu/model/sol_gpu_cost_model.h"
@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -97,17 +98,16 @@ class SolLatencyEstimatorTest : public HloHardwareIndependentTestBase,
   absl::StatusOr<absl::Duration> ComputeCollectiveTime(
       const HloInstruction& instr) {
     return SolLatencyEstimator::ComputeCollectiveTime(
-        instr, gpu_device_info_, shape_size_fn_, sol_flags_,
-        &symbolic_expr_context_, collective_interpolator_.get());
+        instr, gpu_device_info_, shape_size_fn_, sol_flags_, &mlir_context_,
+        collective_interpolator_.get());
   }
 
   absl::Duration ComputeNodeCost(const HloInstruction& instr,
                                  const HloComputation* computation) {
     std::unique_ptr<SolLatencyEstimator> estimator =
-        *SolLatencyEstimator::Create(scheduler_config_,
-                                     std::make_unique<DummyLatencyEstimator>(),
-                                     gpu_device_info_, shape_size_fn_,
-                                     computation, &symbolic_expr_context_);
+        *SolLatencyEstimator::Create(
+            scheduler_config_, std::make_unique<DummyLatencyEstimator>(),
+            gpu_device_info_, shape_size_fn_, computation, &mlir_context_);
     LatencyEstimator::TimeCost cost_val = estimator->NodeCost(&instr);
     return absl::Microseconds(static_cast<int64_t>(cost_val));
   }
@@ -116,10 +116,9 @@ class SolLatencyEstimatorTest : public HloHardwareIndependentTestBase,
                                    const HloGraphNode& target,
                                    const HloComputation* computation) {
     std::unique_ptr<SolLatencyEstimator> estimator =
-        *SolLatencyEstimator::Create(scheduler_config_,
-                                     std::make_unique<DummyLatencyEstimator>(),
-                                     gpu_device_info_, shape_size_fn_,
-                                     computation, &symbolic_expr_context_);
+        *SolLatencyEstimator::Create(
+            scheduler_config_, std::make_unique<DummyLatencyEstimator>(),
+            gpu_device_info_, shape_size_fn_, computation, &mlir_context_);
     LatencyEstimator::TimeCost cost_val =
         estimator->GetLatencyBetween(from, target);
     return absl::Microseconds(static_cast<int64_t>(cost_val));
@@ -131,7 +130,6 @@ class SolLatencyEstimatorTest : public HloHardwareIndependentTestBase,
   SchedulerConfig scheduler_config_;
   std::unique_ptr<CollectiveInterpolator> collective_interpolator_;
   mlir::MLIRContext mlir_context_;
-  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 TEST_P(SolLatencyEstimatorTest, TestLatencyEstimation) {
@@ -326,8 +324,6 @@ ENTRY e {
     kind=kCustom,
     calls=comp,
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "fusion_backend_config": {
         "kind":"__triton_gemm",
         "triton_gemm_config":{
@@ -358,8 +354,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$gemm",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -388,8 +382,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$lt$matmul$f8",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -418,8 +410,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$lt$matmul$f8",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -448,8 +438,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$lt$matmul$f8",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -478,8 +466,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$lt$matmul$f8",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,

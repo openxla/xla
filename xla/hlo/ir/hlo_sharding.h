@@ -130,6 +130,16 @@ class HloSharding {
                        metadata);
   }
 
+  explicit HloSharding(NamedSharding named_sharding)
+      : replicated_(false),
+        maximal_(false),
+        tuple_(false),
+        manual_(false),
+        unknown_(false),
+        unreduced_(false),
+        replicate_on_last_tile_dim_(false),
+        named_sharding_(std::move(named_sharding)) {}
+
   // Creates a subgroup sharding with device-level tile assignment, the
   // sharding type of each subgroup is defined by subgroup_types. When creating
   // the HloSharding, subgroup dims of the same type will be merged.
@@ -508,6 +518,22 @@ class HloSharding {
   // REQUIRES: !IsReplicated() && !IsTuple()
   const TileAssignment& tile_assignment() const { return tile_assignment_; }
 
+  // Returns the number of dimensions.
+  int64_t num_dimensions() const { return tile_assignment().num_dimensions(); }
+
+  // Returns number of shards in the given dimension.
+  int64_t dimension(int64_t dim_index) const {
+    return tile_assignment().dim(dim_index);
+  }
+
+  // Returns all sharding dimensions.
+  absl::Span<const int64_t> dimensions() const {
+    return tile_assignment().dimensions();
+  }
+
+  // Returns the total number of devices used by sharding.
+  int64_t num_devices() const { return tile_assignment().num_elements(); }
+
   // Gets the subgroup types array.
   // REQUIRES: !IsTuple()
   const std::vector<OpSharding::Type>& subgroup_types() const {
@@ -667,6 +693,10 @@ class HloSharding {
 
   const ShardGroup& GetShardGroup() const { return shard_group_; }
 
+  std::optional<NamedSharding> named_sharding() const {
+    return named_sharding_;
+  }
+
  private:
   explicit HloSharding(bool manual, bool replicated, bool unknown,
                        bool unreduced, absl::Span<const OpMetadata> metadata)
@@ -733,15 +763,6 @@ class HloSharding {
         unreduced_(false),
         replicate_on_last_tile_dim_(false),
         named_sharding_(std::nullopt) {}
-  explicit HloSharding(NamedSharding named_sharding)
-      : replicated_(false),
-        maximal_(false),
-        tuple_(false),
-        manual_(false),
-        unknown_(false),
-        unreduced_(false),
-        replicate_on_last_tile_dim_(false),
-        named_sharding_(std::move(named_sharding)) {}
 
   // Test-only constructor for sharding format code coverage. Copies the
   // original sharding with provided tile assignment.

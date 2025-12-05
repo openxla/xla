@@ -275,6 +275,12 @@ absl::Status CpuExecutable::ExecuteThunks(
     TF_ASSIGN_OR_RETURN(xnn_params, Thunk::XnnParams::Create(run_options));
   }
 
+  // Prepare for executing YNNPACK fusions.
+  std::optional<Thunk::YnnParams> ynn_params;
+  if (has_ynn_fusions()) {
+    TF_ASSIGN_OR_RETURN(ynn_params, Thunk::YnnParams::Create(run_options));
+  }
+
   // Use the intra-op thread pool to offload thunk executor tasks.
   auto* intra_op_thread_pool = run_options->intra_op_thread_pool();
   ThreadPoolTaskRunner task_runner(
@@ -288,7 +294,8 @@ absl::Status CpuExecutable::ExecuteThunks(
       &task_runner,
       &collective_execute_params,
       &custom_call_execute_params,
-      xnn_params ? &*xnn_params : nullptr};
+      xnn_params ? &*xnn_params : nullptr,
+      ynn_params ? &*ynn_params : nullptr};
 
   auto executed_event = thunks_->Execute(execute_params);
 
@@ -316,7 +323,7 @@ absl::StatusOr<ExecutionOutput> CpuExecutable::CreateResultShapedBuffer(
                          stream->parent()->device_ordinal());
   const HloInputOutputAliasConfig& input_output_alias =
       module().input_output_alias_config();
-  HloInstruction* root = hlo_module_->entry_computation()->root_instruction();
+  HloInstruction* root = module().entry_computation()->root_instruction();
   const Shape& root_shape = root->shape();
 
   // Move se::OwningDeviceMemory values which contain the array(s) of the result
@@ -418,8 +425,8 @@ absl::StatusOr<ExecutionOutput> CpuExecutable::ExecuteAsyncOnStream(
     return Unimplemented("Points-to set of root instruction is ambiguous");
   }
 
-  if (hlo_module_) {
-    const HloComputation* entry_comp = hlo_module_->entry_computation();
+  if (has_module()) {
+    const HloComputation* entry_comp = module().entry_computation();
     CHECK_EQ(entry_comp->num_parameters(), arguments.size())
         << "Wrong number of arguments passed when running executable";
     for (int64_t i = 0; i < entry_comp->num_parameters(); ++i) {
