@@ -2915,15 +2915,11 @@ TEST_F(CollectiveOpsTestE2E, MultipleModuleDifferentDeviceGroupsShouldRun) {
   TF_ASSERT_OK_AND_ASSIGN(auto module_2,
                           ParseAndReturnVerifiedModule(kModuleStr_2, config_2));
 
-  int64_t num_elements_1 = module_1->entry_computation()
-                               ->root_instruction()
-                               ->shape()
-                               .dimensions()[0];
+  int64_t num_elements_1 = ShapeUtil::ElementsIn(
+      module_1->entry_computation()->parameter_instructions()[0]->shape());
 
-  int64_t num_elements_2 = module_2->entry_computation()
-                               ->root_instruction()
-                               ->shape()
-                               .dimensions()[0];
+  int64_t num_elements_2 = ShapeUtil::ElementsIn(
+      module_2->entry_computation()->parameter_instructions()[0]->shape());
 
   Array<float> input1_1({num_elements_1}), input1_2({num_elements_1});
   input1_1.FillRandom(1.0f, 10.0f, /*seed=*/0);
