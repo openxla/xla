@@ -106,20 +106,22 @@ TEST_F(HloOpProfilerTest, AllSupportedCombinationsAreMeasurable) {
       // go/keep-sorted end
   };
 
-  FloatTypes.insert(MeasurebleInFloat.begin(), MeasurebleInFloat.end());
-  HloOpProfiler profiler(test_runner_as_hlo_runner());
-
-  // TODO(esjoblom): These ops currently fail with too fast to measure on ROCm
+  // TODO(esjoblom): These ops fail with too fast to measure on ROCm
+  // but let's just skip them for now.
   const std::unordered_set<HloOpcode> skip_on_rocm = {
       HloOpcode::kPopulationCount,
       HloOpcode::kRoundNearestAfz,
       HloOpcode::kRoundNearestEven,
   };
+
+  FloatTypes.insert(MeasurebleInFloat.begin(), MeasurebleInFloat.end());
+  HloOpProfiler profiler(test_runner_as_hlo_runner());
+
   const bool is_rocm = backend()
-                           .default_stream_executor()
-                           ->GetDeviceDescription()
-                           .gpu_compute_capability()
-                           .IsRocm();
+      .default_stream_executor()
+      ->GetDeviceDescription()
+      .gpu_compute_capability()
+      .IsRocm();
 
   for (const HloOpcode op : HloOpProfiler::AllSupportedOps()) {
     if (!HloOpProfiler::TooFastToMeasure().count(op) &&
