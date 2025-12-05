@@ -38,7 +38,8 @@ absl::Status LinkROCDLIfNecessary(llvm::Module* module,
 absl::StatusOr<std::vector<uint8_t>> CompileToHsaco(
     llvm::Module* module, stream_executor::GpuComputeCapability gpu_version,
     const DebugOptions& debug_options,
-    const std::string& module_config_cache_key);
+    const std::string& module_config_cache_key,
+    bool is_autotuning_compilation = false);
 
 // Returns the LLVM command line flags that we use for compilation.
 std::vector<std::string> GetAMDGPUBackendOptions(
