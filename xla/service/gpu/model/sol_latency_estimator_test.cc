@@ -536,8 +536,7 @@ INSTANTIATE_TEST_SUITE_P(SolLatencyEstimatorTests, SolLatencyEstimatorTest,
 
 TEST_F(HloHardwareIndependentTestBase, CollectiveCostModelDispatching) {
   const auto shape_size_fn = HloCostAnalysis::DefaultShapeSize;
-  const auto gpu_info =
-      TestGpuDeviceInfo::RTXA6000DeviceInfo(se::CudaComputeCapability(9, 0));
+  const auto gpu_info = TestGpuDeviceInfo::RTXH100SXMDeviceInfo();
   const SolGPUCostModel::Config sol_flags = {
       absl::Microseconds(100), 100, absl::Microseconds(100),
       absl::Microseconds(100), 8,   4 * 1024 * 1024};
@@ -566,7 +565,8 @@ ENTRY main {
                   interpolator.get())
                   .ok());
 
-  // IB collective should use S-curve model (world-level across 2 hosts).
+  // Cross-partition collective should use S-curve model (world-level across 2
+  // hosts).
   TF_ASSERT_OK_AND_ASSIGN(auto ib_module, ParseAndReturnVerifiedModule(R"(
 HloModule m, num_partitions=16
 ENTRY main {
