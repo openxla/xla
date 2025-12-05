@@ -106,7 +106,8 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     -//xla/backends/gpu/codegen:dynamic_slice_fusion_test_amdgpu_any \
     -//xla/tests:nccl_group_execution_test_amdgpu_any \
     -//xla/tools/multihost_hlo_runner:functional_hlo_runner_test_amdgpu_any \
-    -//xla/tests:collective_ops_e2e_test_amdgpu_any
+    -//xla/tests:collective_ops_e2e_test_amdgpu_any \
+    -//xla/tests:collective_ops_test_amdgpu_any
 
 result=$?
 
