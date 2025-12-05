@@ -1,5 +1,9 @@
 """
 A rule to compile a C++ file to a header containing LLVM IR.
+
+This rule is critical for generating LLVM IR bitcode that is embedded into the XLA compiler.
+It uses a hermetic Clang binary to ensure consistent compilation across different build environments
+(OSS, Google, Stargate) and to bypass potential issues with the default toolchain wrappers.
 """
 
 load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
@@ -12,106 +16,289 @@ visibility(DEFAULT_LOAD_VISIBILITY)
 
 def to_camel_case(s):
     """Converts a snake_case or kebab-case string to CamelCase."""
-    s_with_underscores = s.replace("-", "_")
-    return "".join([p.capitalize() for p in s_with_underscores.split("_")])
+    return "".join([p.capitalize() for p in s.replace("-", "_").split("_")])
+
+def _get_builtin_flags(headers):
+    """Generates -isystem flags for Clang builtin headers."""
+    builtin_include_dirs = {}
+    wrappers = ["openmp_wrappers", "cuda_wrappers", "llvm_libc_wrappers"]
+    for h in headers:
+        # Check if any wrapper string is in the dirname
+        is_wrapper = False
+        for w in wrappers:
+            if w in h.dirname:
+                is_wrapper = True
+                break
+        if not is_wrapper:
+            builtin_include_dirs[h.dirname] = True
+
+    return ["-isystem" + d for d in sorted(builtin_include_dirs.keys())]
+
+def _get_header_category(path):
+    """Determines the category of a header path."""
+    if not path:
+        return None
+    if "third_party/stl" in path or "cuda_wrappers" in path:
+        return None
+
+    if any([x in path for x in ["libcxx/include", "libc++/include", "c++/v1"]]):
+        return "libcxx"
+    if "libc/include" in path:
+        return "libc"
+    if any([x in path for x in ["/usr/include", "/usr/local/include", "grte"]]):
+        return "system"
+    return "other"
+
+def _process_toolchain_flags(flags, categories, src_path):
+    """Processes toolchain flags: extracts sysroot, filters, and categorizes."""
+    sysroot = None
+    skip = False
+
+    for i, arg in enumerate(flags):
+        if skip:
+            skip = False
+            continue
+
+        if arg.startswith("--sysroot="):
+            sysroot = arg.split("=", 1)[1].strip()
+            continue
+
+        # Filter compilation/dependency flags and source file
+        if arg in ["-c", "-S", "-emit-llvm"] or arg == src_path:
+            continue
+        if arg == "-o":
+            skip = True
+            continue
+        if arg in ["-MD", "-MF", "-MP", "-MT"]:
+            if arg in ["-MF", "-MT"]:
+                skip = True
+            continue
+
+        # Handle includes (split or joined)
+        current_args = [arg]
+        path = arg
+
+        if arg in ["-isystem", "-iquote", "-I"]:
+            if i + 1 < len(flags):
+                path = flags[i + 1].strip()
+                current_args = [arg, path]
+                skip = True
+
+            # Handle OSS case with leading space in joined arg (e.g. "-isystem external/...")
+        elif arg.startswith("-isystem ") or arg.startswith("-iquote ") or arg.startswith("-I "):
+            parts = arg.split(" ", 1)
+            flag = parts[0]
+            path = parts[1].strip()
+            current_args = [flag, path]
+
+        cat = _get_header_category(path)
+        if cat:
+            categories[cat].extend(current_args)
+
+    return sysroot
 
 def _cc_ir_header_impl(ctx):
     """Rule implementation that generates IR for multiple features and embeds them in a header."""
     cc_toolchain = find_cc_toolchain(ctx)
+    output_header = ctx.outputs.out_header
+    temp_ir_output = ctx.actions.declare_file(ctx.label.name + ".ll")
+
+    filtered_compiler_files = depset([
+        f
+        for f in cc_toolchain.all_files.to_list()
+        if f.extension not in ["o", "a"] and "startup_libs" not in f.path
+    ])
+
+    # Configure features to disable conflicting ones (sanitizers, etc.).
     feature_configuration = cc_common.configure_features(
         ctx = ctx,
         cc_toolchain = cc_toolchain,
+        unsupported_features = ctx.disabled_features + [
+            "thin_lto",
+            "per_object_debug_info",
+            "module_maps",
+            "use_header_modules",
+            "layering_check",
+            "parse_headers",
+            "fdo_optimize",
+            "fdo_instrument",
+            "asan",
+            "msan",
+            "tsan",
+            "ubsan",
+        ],
     )
+
+    # Get toolchain flags
+    compile_variables = cc_common.create_compile_variables(
+        feature_configuration = feature_configuration,
+        cc_toolchain = cc_toolchain,
+        user_compile_flags = ctx.fragments.cpp.cxxopts + ctx.fragments.cpp.copts,
+    )
+    command_line = cc_common.get_memory_inefficient_command_line(
+        feature_configuration = feature_configuration,
+        action_name = "c++-compile",
+        variables = compile_variables,
+    )
+
+    # Initialize categories with builtin flags
+    categories = {
+        "libcxx": [],
+        "builtin": _get_builtin_flags(ctx.files._clang_headers),
+        "libc": [],
+        "system": [],
+        "other": [],
+    }
+
+    # Process toolchain flags
+    sysroot = _process_toolchain_flags(command_line, categories, ctx.file.src.path)
+    # fail("DEBUG: categories={}".format(categories))
+
+    # Process dependency flags
     compilation_contexts = [dep[CcInfo].compilation_context for dep in ctx.attr.deps]
-    output_header = ctx.outputs.out_header
+    merged_context = cc_common.merge_compilation_contexts(compilation_contexts = compilation_contexts)
 
-    ir_file = ctx.actions.declare_file("{}.ll".format(ctx.label.name))
+    dep_flags = (
+        ["-iquote" + p for p in merged_context.quote_includes.to_list()] +
+        ["-I" + p for p in merged_context.includes.to_list()] +
+        ["-isystem" + p for p in merged_context.system_includes.to_list()] +
+        ["-iquote."]
+    )
 
-    cxx_flags = [
+    for arg in dep_flags:
+        cat = _get_header_category(arg)
+        if cat:
+            categories[cat].append(arg)
+
+    # Explicitly add libc++ path from sysroot if present to ensure precedence
+    if sysroot:
+        categories["libcxx"].insert(0, "-isystem" + sysroot + "/usr/include/c++/v1")
+
+        # Add sysroot/include to system category to ensure libc headers are found
+        # This fixes math.h errors in Google repo where sysroot has include/ but not usr/include/
+        categories["system"].append("-isystem" + sysroot + "/include")
+
+    # Construct arguments
+    args = ctx.actions.args()
+    args.add("-v")
+    args.add("-pthread")
+
+    # Order: Libc++ -> Builtin -> Libc -> System -> Others
+    for cat in ["libcxx", "builtin", "libc", "system", "other"]:
+        args.add_all(categories[cat])
+
+    args.add_all([
         "-S",
         "-emit-llvm",
         "-O3",
+        "-DNDEBUG",
+        "-mprefer-vector-width=512",
         "-DEIGEN_VECTORIZE_GENERIC",
-    ]
-    compilation_outputs = cc_common.compile(
-        actions = ctx.actions,
-        feature_configuration = feature_configuration,
-        cc_toolchain = cc_toolchain,
-        srcs = ctx.files.src,
-        compilation_contexts = compilation_contexts,
-        cxx_flags = cxx_flags,
-        name = "{}_compiler".format(ctx.label.name),
-    )
+        "-fno-builtin",
+        "-Wno-psabi",
+        "-std=c++17",
+        "-o",
+        temp_ir_output.path,
+        ctx.file.src.path,
+    ])
 
-    # Copy the compiler's output to our declared intermediate file.
-    if len(compilation_outputs[1].pic_objects) > 0:
-        temp_ir_output = compilation_outputs[1].pic_objects[0]
-    else:
-        temp_ir_output = compilation_outputs[1].objects[0]
-    ctx.actions.run_shell(
-        inputs = [temp_ir_output],
-        outputs = [ir_file],
-        command = "cp {} {}".format(temp_ir_output.path, ir_file.path),
-        mnemonic = "CopyLLVMIR",
-    )
+    clang_executable = ctx.executable._clang_binary
 
-    # Prepare the C++ variable definition for the header.
-    ir_definition = 'inline constexpr char k{base_name}Ir[] = R"IR($(cat {input}))IR";'.format(
-        base_name = to_camel_case(ctx.attr.base_name),
-        input = ir_file.path,
+    additional_inputs = []
+
+    ctx.actions.run(
+        executable = clang_executable,
+        arguments = [args],
+        tools = [clang_executable],
+        inputs = depset(
+            [ctx.file.src] + ctx.files._clang_headers,
+            transitive = [
+                dep[CcInfo].compilation_context.headers
+                for dep in ctx.attr.deps
+            ] + [filtered_compiler_files] + additional_inputs,
+        ),
+        outputs = [temp_ir_output],
+        mnemonic = "CompileLlvmIr",
+        progress_message = "Compiling %s to LLVM IR" % ctx.label.name,
+        env = {"LC_ALL": "C"},
     )
 
     # Generate the final C++ header file.
-    ctx.actions.run_shell(
-        inputs = [ir_file],
-        outputs = [output_header],
-        mnemonic = "EmbeddingLLVMIR",
-        command = """
-cat <<EOF > {output}
-#pragma once
+    python_script = """
+import sys
 
-// Generated by cc_ir_header rule. DO NOT EDIT.
+def main():
+    if len(sys.argv) != 5:
+        print("Usage: script.py <input_ll_file> <output_header_file> <variable_name> <namespace>")
+        sys.exit(1)
+
+    input_path, output_path, variable_name, namespace = sys.argv[1:5]
+    
+    with open(input_path, 'rb') as f:
+        content = f.read()
+
+    if content.startswith(b'\\xef\\xbb\\xbf'):
+        content = content[3:]
+        
+    ir_content = content.decode('utf-8', errors='ignore')
+
+    header_content = '''#pragma once
+
+// This file is generated by the cc_to_llvm_ir_header rule. Do not edit.
 
 namespace {namespace} {{
 
-{defs}
+// LLVM IR compiled for the current architecture
+inline constexpr char {variable_name}[] = R"IR(
+{ir_content}
+)IR";
 
-}} // namespace {namespace}
-EOF
-""".format(
-            output = output_header.path,
-            defs = ir_definition,
-            namespace = ctx.attr.namespace,
+}}  // namespace {namespace}
+'''.format(namespace=namespace, variable_name=variable_name, ir_content=ir_content)
+
+    with open(output_path, 'w') as f:
+        f.write(header_content)
+
+if __name__ == "__main__":
+    main()
+"""
+
+    script_file = ctx.actions.declare_file(ctx.label.name + "_gen.py")
+    ctx.actions.write(output = script_file, content = python_script)
+
+    variable_name = "k{}Ir".format(to_camel_case(ctx.attr.base_name))
+
+    ctx.actions.run_shell(
+        inputs = [script_file, temp_ir_output],
+        outputs = [output_header],
+        command = "python {} {} {} {} {}".format(
+            script_file.path,
+            temp_ir_output.path,
+            output_header.path,
+            variable_name,
+            ctx.attr.namespace,
         ),
-        progress_message = "Embedding LLVM IR into header for %s" % ctx.label,
+        mnemonic = "GenerateLlvmIrHeader",
+        progress_message = "Generating LLVM IR header %s" % output_header.short_path,
     )
-    compilation_context = cc_common.create_compilation_context(headers = depset([output_header]))
-    cc_info = CcInfo(compilation_context = compilation_context)
 
-    return [DefaultInfo(files = depset([output_header])), cc_info]
+    return [DefaultInfo(files = depset([output_header]))]
 
 _cc_ir_header_rule = rule(
     implementation = _cc_ir_header_impl,
     attrs = {
-        "src": attr.label(
-            allow_single_file = True,
-            mandatory = True,
-            doc = "The C++ source file to compile.",
-        ),
+        "src": attr.label(allow_single_file = True, mandatory = True),
         "deps": attr.label_list(providers = [CcInfo]),
-        "out_header": attr.output(
-            mandatory = True,
-            doc = "The output header file.",
+        "out_header": attr.output(mandatory = True),
+        "base_name": attr.string(mandatory = True, doc = "The base name of the generated IR variables."),
+        "namespace": attr.string(default = "llvm_ir", doc = "The C++ namespace for the generated IR variables."),
+        # No "Label()" wrapper - copybara expects exact strings here.
+        "_clang_headers": attr.label(default = "@llvm-project//clang:builtin_headers_gen"),
+        "_clang_binary": attr.label(
+            default = "@llvm-project//clang:clang",
+            executable = True,
+            cfg = "exec",
         ),
-        "base_name": attr.string(
-            mandatory = True,
-            doc = "The base name of the generated IR variables.",
-        ),
-        "namespace": attr.string(
-            default = "llvm_ir",
-            doc = "The C++ namespace for the generated IR variables.",
-        ),
-        "_cc_toolchain": attr.label(default = "@bazel_tools//tools/cpp:current_cc_toolchain"),
     },
     toolchains = use_cc_toolchain(),
     fragments = ["cpp"],
