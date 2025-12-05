@@ -780,7 +780,6 @@ cc_library(
         "//xla/backends/profiler/gpu:cupti_collector",
         "//xla/backends/profiler/gpu:cupti_tracer",
     ]) + if_rocm_is_configured([
-        # keep sorted
         "//xla/backends/profiler/gpu:rocm_collector",
         "//xla/backends/profiler/gpu:rocm_tracer",
     ]),
