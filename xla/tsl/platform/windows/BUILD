@@ -59,6 +59,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@eigen_archive//:eigen3",
@@ -77,7 +78,6 @@ cc_library(
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:stringpiece",
-        "@tsl//tsl/platform:stringprintf",
         "@tsl//tsl/platform:tracing",
     ],
 )

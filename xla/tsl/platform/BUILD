@@ -593,7 +593,6 @@ cc_library(
         "@tsl//tsl/platform:stacktrace",
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:strcat",
-        "@tsl//tsl/platform:stringprintf",
         "@tsl//tsl/platform:thread_annotations",
     ] + tf_platform_deps("status"),
 )
