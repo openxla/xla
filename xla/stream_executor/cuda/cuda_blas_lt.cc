@@ -475,7 +475,7 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
       // for gemms with beta = 0.
       TF_ASSIGN_OR_RETURN(
           int32_t scale_type,
-          GetAttr<int64_t>(op_desc_.get(), CUBLASLT_MATMUL_DESC_SCALE_TYPE));
+          GetAttr<int32_t>(op_desc_.get(), CUBLASLT_MATMUL_DESC_SCALE_TYPE));
       // For fp8 gemms, scale is always fp32 type.
       if (scale_type == CUDA_R_32F && *((float*)beta) == 0) {
         SE_CUBLAS_RETURN_IF_ERROR(
