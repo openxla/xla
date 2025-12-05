@@ -31,7 +31,6 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
-#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/model/collective_interpolator.h"
 #include "xla/service/gpu/model/sol_gpu_cost_model.h"
@@ -45,7 +44,6 @@ limitations under the License.
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -544,7 +542,6 @@ TEST_F(HloHardwareIndependentTestBase, CollectiveCostModelDispatching) {
       absl::Microseconds(100), 100, absl::Microseconds(100),
       absl::Microseconds(100), 8,   4 * 1024 * 1024};
   mlir::MLIRContext mlir_ctx;
-  SymbolicExprContext sym_ctx{&mlir_ctx};
   auto interpolator =
       *CollectiveInterpolator::Create(sol_flags.gpus_per_node, gpu_info,
                                       /*analysis=*/nullptr);
@@ -561,11 +558,11 @@ ENTRY main {
   HloInstruction* nvl_instr = hlo_query::FindInstruction(
       nvl_module->entry_computation(), HloOpcode::kAllToAll);
   EXPECT_FALSE(SolLatencyEstimator::ComputeCollectiveTime(
-                   *nvl_instr, gpu_info, shape_size_fn, sol_flags, &sym_ctx,
+                   *nvl_instr, gpu_info, shape_size_fn, sol_flags, &mlir_ctx,
                    /*collective_interpolator=*/nullptr)
                    .ok());
   EXPECT_TRUE(SolLatencyEstimator::ComputeCollectiveTime(
-                  *nvl_instr, gpu_info, shape_size_fn, sol_flags, &sym_ctx,
+                  *nvl_instr, gpu_info, shape_size_fn, sol_flags, &mlir_ctx,
                   interpolator.get())
                   .ok());
 
@@ -581,7 +578,7 @@ ENTRY main {
   HloInstruction* ib_instr = hlo_query::FindInstruction(
       ib_module->entry_computation(), HloOpcode::kAllToAll);
   EXPECT_TRUE(SolLatencyEstimator::ComputeCollectiveTime(
-                  *ib_instr, gpu_info, shape_size_fn, sol_flags, &sym_ctx,
+                  *ib_instr, gpu_info, shape_size_fn, sol_flags, &mlir_ctx,
                   /*collective_interpolator=*/nullptr)
                   .ok());
 }
