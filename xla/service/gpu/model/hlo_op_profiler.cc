@@ -291,10 +291,11 @@ class RocmKernelTracer : public HloOpProfiler::KernelTracer,
  public:
   RocmKernelTracer()
       :  rocm_tracer_(&profiler::RocmTracer::GetRocmTracerSingleton()),
-         profiler::RocmTraceCollector(MakeCollectorOptions()) {
+         profiler::RocmTraceCollector(MakeCollectorOptions(
+             profiler::RocmTracer::GetRocmTracerSingleton().NumGpus())),
+         start_timestamp_ns_(profiler::RocmTracer::GetTimestamp()) {
     CHECK(rocm_tracer_->IsAvailable());
     profiler::RocmTracerOptions options;
-    // TODO(esjoblom): What's sensible here?
     options.max_annotation_strings = 1024 * 1024;
     rocm_tracer_->Enable(options, this);
   }
@@ -316,34 +317,37 @@ class RocmKernelTracer : public HloOpProfiler::KernelTracer,
   }
 
  private:
-  static profiler::RocmTraceCollectorOptions MakeCollectorOptions() {
+  static profiler::RocmTraceCollectorOptions MakeCollectorOptions(
+      uint32_t num_gpus) {
     profiler::RocmTraceCollectorOptions options;
     options.max_callback_api_events = 2 * 1024 * 1024;
     options.max_activity_api_events = 2 * 1024 * 1024;
     options.max_annotation_strings = 1024 * 1024;
-    // TODO(esjoblom): Do not hardcode this
-    options.num_gpus = 8;
+    options.num_gpus = num_gpus;
     return options;
+  }
+
+  static bool IsComputeKernel(const std::string& name) {
+    // Exclude ROCm runtime (memory fill, copy, etc.)
+    return !absl::StartsWith(name, "__amd_rocclr_");
   }
 
   // RocmTraceCollector interface
   void AddEvent(profiler::RocmTracerEvent&& event, bool is_auxiliary) override {
-    // Only collect actual kernel dispatch events (Activity source), not HIP API
-    // call events (ApiCallback source). The HipApiEvent() in rocm_tracer.cc
-    // marks all HIP API events as Kernel type, so we need to additionally filter 
-    // by source to get actual GPU kernel execution times.
-    //
-    // TODO(esjoblom): Ensure this does not filter out anything we want
-    // Also filter out kernels like __amd_rocclr_copyBuffer.kd which are memory 
-    // copy operations, not compute kernels we want to measure.
     if (event.type == profiler::RocmTracerEventType::Kernel &&
         event.source == profiler::RocmTracerEventSource::Activity &&
-        !absl::StartsWith(event.name, "__amd_rocclr_")) {
+        IsComputeKernel(event.name)) {
+      // Filter out events that started before the tracer was created.
+      // This discards stray events from warmup runs.
+      if (event.start_time_ns < start_timestamp_ns_) {
+        return;
+      }
       kernel_times_ns_.push_back(event.end_time_ns - event.start_time_ns);
       VLOG(3) << "Kernel dispatch: " << event.name << ", "
               << event.end_time_ns - event.start_time_ns << "ns";
     }
   }
+
   void OnEventsDropped(const std::string& reason,
                        uint32_t num_events) override {
     LOG(WARNING) << "Dropped " << num_events << " events: " << reason;
@@ -353,6 +357,7 @@ class RocmKernelTracer : public HloOpProfiler::KernelTracer,
 
   profiler::RocmTracer* rocm_tracer_;
   std::vector<uint64_t> kernel_times_ns_;
+  uint64_t start_timestamp_ns_;
 };
 #endif  // TENSORFLOW_USE_ROCM
 
