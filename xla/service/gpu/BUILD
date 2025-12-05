@@ -1738,6 +1738,7 @@ cc_library(
         "//xla/service:llvm_compiler",
         "//xla/service:logical_buffer",
         "//xla/service:loop_schedule_linearizer",
+        "//xla/service:memory_annotations_hdr",
         "//xla/service:reduce_scatter_combiner",
         "//xla/service:reduce_scatter_reassociate",
         "//xla/service:scatter_determinism_expander",
