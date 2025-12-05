@@ -803,7 +803,6 @@ ENTRY main {
 
   se::GpuComputeCapability gpu_cc =
       device_description().gpu_compute_capability();
-  bool is_cuda = gpu_cc.IsCuda();
   se::CudaComputeCapability cuda_cc = get_cuda_cc();
   se::RocmComputeCapability rocm_cc =
       device_description().rocm_compute_capability();
@@ -821,7 +820,7 @@ ENTRY main {
 
   HloPrintOptions print_options =
       HloPrintOptions().set_print_operand_shape(true);
-  if (is_cuda) {
+  {
     // Triton enabled, no fallback.
     ASSERT_OK_AND_ASSIGN(auto optimized_module_no_fallback_and_executable,
                          optimize_module(/*enable_triton=*/true,
@@ -831,7 +830,8 @@ ENTRY main {
     const std::string triton_expected_check =
         (cuda_cc.IsAtLeastHopper() ||
          (cuda_cc.IsAtLeastAmpere() && lhs_type == F8E5M2 &&
-          rhs_type == F8E5M2))
+          rhs_type == F8E5M2) ||
+         rocm_cc.has_ocp_fp8_support())
             ? triton_keep_types
             : cublas_convert_to_f16;
     ASSERT_OK_AND_ASSIGN(
