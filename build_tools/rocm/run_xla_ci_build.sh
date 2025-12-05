@@ -15,8 +15,6 @@
 #
 # ==============================================================================
 
-set -e
-
 SCRIPT_DIR=$(realpath $(dirname $0))
 TAG_FILTERS=$($SCRIPT_DIR/rocm_tag_filters.sh),-skip_rocprofiler_sdk,-oss_excluded,-oss_serial
 BAZEL_DISK_CACHE_DIR="/tf/disk_cache/rocm-jaxlib"
@@ -42,7 +40,6 @@ set -x
 
 bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     --disk_cache=${BAZEL_DISK_CACHE_DIR} \
-    --experimental_disk_cache_gc_max_size=400G \
     --config=rocm_rbe \
     --disk_cache=${BAZEL_DISK_CACHE_DIR} \
     --build_tag_filters=$TAG_FILTERS \
@@ -110,3 +107,15 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     -//xla/tests:nccl_group_execution_test_amdgpu_any \
     -//xla/tools/multihost_hlo_runner:functional_hlo_runner_test_amdgpu_any \
     -//xla/tests:collective_ops_e2e_test_amdgpu_any
+
+result=$?
+
+# clean up nccl- files
+rm -rf /dev/shm/nccl-*
+
+# clean up bazel disk_cache
+bazel shutdown \
+    --disk_cache=${BAZEL_DISK_CACHE_DIR} \
+    --experimental_disk_cache_gc_max_size=100G
+
+exit $result
