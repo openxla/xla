@@ -1837,11 +1837,6 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
     if (fabric_info.ok()) {
       info.cluster_uuid = fabric_info->cluster_uuid;
       info.clique_id = fabric_info->clique_id;
-    } else if (cc.IsAtLeastBlackwell()) {
-      // Only log the warning for Blackwell+ where multi-node NVLink is possibly
-      // relevant.
-      LOG(WARNING) << "GPU interconnect information not available: "
-                   << fabric_info.status();
     }
     desc.set_device_interconnect_info(info);
   }
