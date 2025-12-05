@@ -1501,9 +1501,10 @@ class alignas(kInstructionTypeMask + 1) HloInstruction {
                       bool call_finish_visit = true,
                       bool ignore_control_predecessors = false,
                       bool cross_computation = false) const {
-    return const_cast<HloInstruction*>(this)->Accept(
-        visitor, call_finish_visit, ignore_control_predecessors,
-        cross_computation);
+    return const_cast<HloInstruction*>(this)
+        ->Accept<const HloInstruction*>(visitor, call_finish_visit,
+                                        ignore_control_predecessors,
+                                        cross_computation);
   }
 
   // Same as Accept() above, but the order of operand and control predecessor
@@ -1519,7 +1520,8 @@ class alignas(kInstructionTypeMask + 1) HloInstruction {
   template <typename HloInstructionPtr>
   absl::Status Visit(DfsHloVisitorBase<HloInstructionPtr>* visitor);
   absl::Status Visit(ConstDfsHloVisitor* visitor) const {
-    return const_cast<HloInstruction*>(this)->Visit(visitor);
+    return const_cast<HloInstruction*>(this)->Visit<const HloInstruction*>(
+        visitor);
   }
 
   // Returns the first non-GetTupleElement ancestor instruction of 'hlo'.
