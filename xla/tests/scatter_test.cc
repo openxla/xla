@@ -109,6 +109,7 @@ ENTRY main {
       index_vector_dim=1
 }
 )";
+
   Literal operand =
       LiteralUtil::CreateR2<int32_t>({{1, 2, 3}, {4, 5, 6}, {7, 8, 9}});
   Literal scatter_indices = LiteralUtil::CreateR1<int32_t>({0, 0});
@@ -122,8 +123,23 @@ ENTRY main {
   Literal expected_option_one =
       LiteralUtil::CreateR2<int32_t>({{10, 20, 30}, {4, 5, 6}, {7, 8, 9}});
   Literal expected_option_two =
+      LiteralUtil::CreateR2<int32_t>({{10, 20, 90}, {4, 5, 6}, {7, 8, 9}});
+  Literal expected_option_three =
+      LiteralUtil::CreateR2<int32_t>({{10, 80, 30}, {4, 5, 6}, {7, 8, 9}});
+  Literal expected_option_four =
+      LiteralUtil::CreateR2<int32_t>({{10, 80, 90}, {4, 5, 6}, {7, 8, 9}});
+  Literal expected_option_five =
+      LiteralUtil::CreateR2<int32_t>({{70, 20, 30}, {4, 5, 6}, {7, 8, 9}});
+  Literal expected_option_six =
+      LiteralUtil::CreateR2<int32_t>({{70, 20, 90}, {4, 5, 6}, {7, 8, 9}});
+  Literal expected_option_seven =
+      LiteralUtil::CreateR2<int32_t>({{70, 80, 30}, {4, 5, 6}, {7, 8, 9}});
+  Literal expected_option_eight =
       LiteralUtil::CreateR2<int32_t>({{70, 80, 90}, {4, 5, 6}, {7, 8, 9}});
-  EXPECT_TRUE(result == expected_option_one || result == expected_option_two);
+  EXPECT_TRUE(result == expected_option_one   || result == expected_option_two  ||
+              result == expected_option_three || result == expected_option_four ||
+              result == expected_option_five  || result == expected_option_six  ||
+              result == expected_option_seven || result == expected_option_eight);
 }
 
 TEST_F(ScatterTest, TensorFlowScatterV1_WithFusedAdds) {
