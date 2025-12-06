@@ -75,7 +75,7 @@ static absl::Status PrepareAllReduce(
       GetGpuCliqueKey(
           *collective_params, {AllDevices()},
           CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
-          AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+          false));
 
   // Ask XLA:GPU runtime to acquire a clique for this key. Later we will be able
   // to get access to it from the execute handler.
@@ -98,7 +98,7 @@ static absl::Status AllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
       GetGpuCliqueKey(
           *collective_params, {AllDevices()},
           CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
-          AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+          false));
 
   // Get the communicator for the requested clique.
   TF_ASSIGN_OR_RETURN(Communicator * comm,
