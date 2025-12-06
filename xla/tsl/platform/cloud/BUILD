@@ -438,7 +438,6 @@ tsl_cc_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:retrying_utils",
-        "@tsl//tsl/platform:strcat",
     ],
 )
 
