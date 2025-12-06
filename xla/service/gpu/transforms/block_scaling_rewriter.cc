@@ -41,6 +41,8 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/shape_inference.h"
+#include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -52,17 +54,8 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-// Expand builder into a new instruction that will replace the old one.
-absl::StatusOr<HloInstruction*> ExpandInstructionUsingBuilder(
-    XlaBuilder& builder, HloInstruction* old_instruction) {
-  TF_ASSIGN_OR_RETURN(XlaComputation xla_computation, builder.Build());
-  TF_ASSIGN_OR_RETURN(
-      HloComputation * computation,
-      XlaComputationToHloComputation(xla_computation,
-                                     old_instruction->parent()->parent()));
-
-  // Fix broadcast layouts (they cannot be inferred correctly).
-  for (HloInstruction* instruction : computation->instructions()) {
+void FixBroadcastLayouts(HloComputation* hlo_computation) {
+  for (HloInstruction* instruction : hlo_computation->instructions()) {
     auto broadcast = DynCast<HloBroadcastInstruction>(instruction);
     if (broadcast != nullptr && !LayoutUtil::IsMonotonicWithDim0Major(
                                     broadcast->operand(0)->shape().layout())) {
@@ -87,9 +80,53 @@ absl::StatusOr<HloInstruction*> ExpandInstructionUsingBuilder(
       *reshape->mutable_shape()->mutable_layout() = convert->shape().layout();
     }
   }
+}
+
+// Expand builder into a new instruction that will replace the old one.
+absl::StatusOr<HloInstruction*> ExpandInstructionUsingBuilder(
+    XlaBuilder& builder, HloInstruction* old_instruction) {
+  TF_ASSIGN_OR_RETURN(XlaComputation xla_computation, builder.Build());
+  TF_ASSIGN_OR_RETURN(
+      HloComputation * hlo_computation,
+      XlaComputationToHloComputation(xla_computation,
+                                     old_instruction->parent()->parent()));
+
+  // Fix broadcast layouts (they cannot be inferred correctly).
+  FixBroadcastLayouts(hlo_computation);
 
   return old_instruction->parent()->AddInstruction(HloInstruction::CreateCall(
-      old_instruction->shape(), old_instruction->operands(), computation));
+      old_instruction->shape(), old_instruction->operands(), hlo_computation));
+}
+
+absl::StatusOr<HloInstruction*> ExpandInstructionWithGemmConfigUsingBuilder(
+    XlaBuilder& builder, HloInstruction* old_instruction,
+    const xla::gpu::GemmBackendConfig& gemm_cfg) {
+  TF_ASSIGN_OR_RETURN(XlaComputation xla_computation, builder.Build());
+  TF_ASSIGN_OR_RETURN(
+      HloComputation * hlo_computation,
+      XlaComputationToHloComputation(xla_computation,
+                                     old_instruction->parent()->parent()));
+
+  // search for hipblaslt custom call and populate its backend_config
+  HloInstruction* target = nullptr;
+  for (HloInstruction* instr : hlo_computation->instructions()) {
+    if (instr->opcode() == HloOpcode::kCustomCall &&
+        instr->custom_call_target() == kCublasLtMatmulMXCallTarget) {
+      target = instr;
+      break;
+    }
+  }
+  if (target != nullptr) {
+    xla::gpu::GpuBackendConfig gpu_cfg;
+    *gpu_cfg.mutable_gemm_backend_config() = gemm_cfg;
+    TF_RETURN_IF_ERROR(target->set_backend_config(gpu_cfg));
+  }
+
+  // Fix broadcast layouts (they cannot be inferred correctly).
+  FixBroadcastLayouts(hlo_computation);
+
+  return old_instruction->parent()->AddInstruction(HloInstruction::CreateCall(
+      old_instruction->shape(), old_instruction->operands(), hlo_computation));
 }
 
 // Determine block size from the shapes.
@@ -247,7 +284,9 @@ absl::StatusOr<HloInstruction*> ExpandDequantizeCustomCall(
   return ExpandInstructionUsingBuilder(builder, instruction);
 }
 
-// ----- Block scaled dot (cuDNN)
+/*****************************************************************************************
+ *      CUDA Solution: __op$block_scaled_dot --> cudnn graph                             *
+ *****************************************************************************************/
 
 enum class CudnnMxType {
   // Not a supported composite type.
@@ -501,7 +540,7 @@ absl::StatusOr<XlaOp> BuildBlockScaledDotInput(
 }
 
 // Build HLO for scaled dot op.
-absl::StatusOr<XlaOp> BuildBlockScaledDot(
+absl::StatusOr<XlaOp> BuildBlockScaledDotForCuda(
     XlaBuilder& builder, const HloInstruction* lhs_input,
     const HloInstruction* rhs_input, const HloInstruction* lhs_scale,
     const HloInstruction* rhs_scale, const HloInstruction* global_scale,
@@ -556,7 +595,7 @@ absl::StatusOr<XlaOp> BuildBlockScaledDot(
 }
 
 // Convert scaled dot custom call to HLO computation.
-absl::StatusOr<HloInstruction*> ExpandBlockScaledDotCustomCall(
+absl::StatusOr<HloInstruction*> CudaExpandBlockScaledDotCustomCall(
     HloInstruction* instruction, se::dnn::VersionInfo cudnn_version) {
   PrimitiveType result_type = instruction->shape().element_type();
 
@@ -610,7 +649,7 @@ absl::StatusOr<HloInstruction*> ExpandBlockScaledDotCustomCall(
   auto operands = absl::MakeSpan(instruction->operands());
   TF_ASSIGN_OR_RETURN(
       XlaOp block_scaled_dot,
-      BuildBlockScaledDot(builder, operands[0], operands[1], operands[2],
+      BuildBlockScaledDotForCuda(builder, operands[0], operands[1], operands[2],
                           operands.size() >= 4 ? operands[3] : nullptr,
                           operands.size() == 5 ? operands[4] : nullptr, dnums,
                           result_type, block_size, std::move(cudnn_version)));
@@ -626,7 +665,205 @@ absl::StatusOr<HloInstruction*> ExpandBlockScaledDotCustomCall(
   return ExpandInstructionUsingBuilder(builder, instruction);
 }
 
+/*****************************************************************************************
+ *      ROCm Solution: __op$block_scaled_dot --> hipblaslt matmul call                   *
+ *****************************************************************************************/
+bool IsSupportedByHipblaslt(const Shape& lhs_shape, const Shape& rhs_shape,
+                            const Shape& lhs_scale_shape,
+                            const Shape& rhs_scale_shape) {
+  auto IsSupported = [&](const Shape& input_shape,
+                         const Shape& scale_shape) -> bool {
+    // Check supported shapes
+    // TODO: remove this constraint when hipblaslt supports batch_size > 1
+    if (input_shape.dimensions().size() == 3 &&
+        input_shape.dimensions(0) != 1) {
+      return false;
+    }
+    // TODO: remove this constraint when hipblaslt supports other M, N, K values
+    if (input_shape.dimensions().size() == 2) {
+      if (input_shape.dimensions(0) % 16 != 0 ||
+          input_shape.dimensions(1) % 32 != 0) {
+        return false;
+      }
+    } else if (input_shape.dimensions().size() == 3) {
+      if (input_shape.dimensions(1) % 16 != 0 ||
+          input_shape.dimensions(2) % 32 != 0) {
+        return false;
+      }
+    } else {
+      return false;
+    }
+    int block_size = GetBlockSize(input_shape, scale_shape).value_or(0);
+    if (block_size != BlockScalingRewriter::kBlockSizeHipblaslt) {
+      return false;
+    }
+    // Check supported data types
+    if (input_shape.element_type() != PrimitiveType::F8E4M3FN &&
+        input_shape.element_type() != PrimitiveType::F8E5M2 &&
+        input_shape.element_type() != PrimitiveType::F4E2M1FN) {
+      return false;
+    }
+    if (scale_shape.element_type() != PrimitiveType::F8E8M0FNU) {
+      return false;
+    }
+    return true;
+  };
+
+  return IsSupported(lhs_shape, lhs_scale_shape) &&
+         IsSupported(rhs_shape, rhs_scale_shape);
+}
+
+// Build HLO for hipblaslt custom call op.
+absl::StatusOr<XlaOp> BuildHipblasltScaledDot(
+    XlaOp lhs_input, XlaOp rhs_input, XlaOp lhs_scale, XlaOp rhs_scale,
+    const PrimitiveType result_type,
+    const se::DeviceDescription& device_description) {
+  // Calculate output shape.
+  XlaBuilder& builder = *lhs_input.builder();
+  TF_ASSIGN_OR_RETURN(Shape lhs_shape, builder.GetShape(lhs_input));
+  TF_ASSIGN_OR_RETURN(Shape rhs_shape, builder.GetShape(rhs_input));
+  Shape result_shape;
+  if (lhs_shape.dimensions().size() == 2) {
+    result_shape = ShapeUtil::MakeShape(
+        result_type, {lhs_shape.dimensions(0), rhs_shape.dimensions(0)});
+  } else if (lhs_shape.dimensions().size() == 3) {
+    result_shape = ShapeUtil::MakeShape(
+        result_type, {lhs_shape.dimensions(0), lhs_shape.dimensions(1),
+                      rhs_shape.dimensions(1)});
+  } else {
+    return InvalidArgument("Unsupported input shape for hipblaslt scaled dot");
+  }
+  // Append workspace buffer to instruction outputs.
+  int64_t workspace = GemmConfig::kDefaultWorkspace;
+  auto* rocm_cc = std::get_if<se::RocmComputeCapability>(
+      &device_description.gpu_compute_capability());
+  if (rocm_cc->gfx_version() == "gfx950") {
+    workspace = GemmConfig::kGFX950Workspace;
+  }
+  Shape workspace_shape = ShapeUtil::MakeShape(PrimitiveType::S8, {workspace});
+  Shape output_shape =
+      ShapeUtil::MakeTupleShape({result_shape, workspace_shape});
+
+  // Build custom call to hipblaslt.
+  std::string custom_call_target{kCublasLtMatmulMXCallTarget};
+  XlaOp custom_call =
+      CustomCall(&builder, custom_call_target,
+                 {lhs_input, rhs_input, lhs_scale, rhs_scale}, output_shape);
+  XlaOp result = GetTupleElement(custom_call, 0);
+
+  return result;
+}
+
+// Build HLO for scaled dot op for ROCm platform.
+absl::StatusOr<XlaOp> BuildBlockScaledDotForROCm(
+    XlaBuilder& builder, const HloInstruction* lhs_input,
+    const HloInstruction* rhs_input, const HloInstruction* lhs_scale,
+    const HloInstruction* rhs_scale, const DotDimensionNumbers& dnums,
+    const bool allow_hipblaslt, const PrimitiveType result_type,
+    const se::DeviceDescription& device_description) {
+  // Get dot LHS parameter(s).
+  XlaOp lhs_op = Parameter(&builder, 0, lhs_input->shape(), "lhs");
+  XlaOp lhs_scale_op = Parameter(&builder, 2, lhs_scale->shape(), "lhs_scale");
+
+  // Get dot RHS parameter(s).
+  XlaOp rhs_op = Parameter(&builder, 1, rhs_input->shape(), "rhs");
+  XlaOp rhs_scale_op;
+  if (rhs_scale != nullptr) {
+    rhs_scale_op = Parameter(&builder, 3, rhs_scale->shape(), "rhs_scale");
+  }
+
+  // Use hipblaslt kernel, if possible.
+  if (allow_hipblaslt && rhs_scale_op.valid() &&
+      IsSupportedByHipblaslt(lhs_input->shape(), rhs_input->shape(),
+                             lhs_scale->shape(), rhs_scale->shape())) {
+    return BuildHipblasltScaledDot(lhs_op, rhs_op, lhs_scale_op, rhs_scale_op,
+                                   result_type, device_description);
+  }
+
+  // Fallback solution: build general dot op.
+  TF_ASSIGN_OR_RETURN(lhs_op,
+                      BuildDequantize(lhs_op, lhs_scale_op, result_type));
+  TF_ASSIGN_OR_RETURN(Shape lhs_op_shape, builder.GetShape(lhs_op));
+  if (rhs_scale_op.valid()) {
+    TF_ASSIGN_OR_RETURN(rhs_op,
+                        BuildDequantize(rhs_op, rhs_scale_op, result_type));
+    TF_ASSIGN_OR_RETURN(Shape rhs_op_shape, builder.GetShape(rhs_op));
+  }
+  return DotGeneral(lhs_op, rhs_op, dnums, /*precision_config=*/nullptr,
+                    /*preferred_element_type=*/result_type);
+}
+
+// Convert scaled dot custom call to HLO computation for ROCm platform.
+absl::StatusOr<HloInstruction*> RocmExpandBlockScaledDotCustomCall(
+    HloInstruction* instruction, const bool allow_hipblaslt,
+    const se::DeviceDescription& device_description) {
+  PrimitiveType result_type = instruction->shape().element_type();
+
+  // Check operand count.
+  if (instruction->operand_count() != 3 && instruction->operand_count() != 4) {
+    return InvalidArgument(
+        "Incorrect number of operands for block scaled dot op");
+  }
+
+  // Check output shape.
+  const Shape& lhs_shape = instruction->operand(0)->shape();
+  const Shape& rhs_shape = instruction->operand(1)->shape();
+  DotDimensionNumbers dnums;
+  dnums.add_lhs_contracting_dimensions(lhs_shape.dimensions().size() - 1);
+  dnums.add_rhs_contracting_dimensions(rhs_shape.dimensions().size() - 1);
+  if (lhs_shape.dimensions().size() == 3) {
+    dnums.add_lhs_batch_dimensions(0);
+    dnums.add_rhs_batch_dimensions(0);
+  }
+  TF_ASSIGN_OR_RETURN(Shape inferred_shape,
+                      ShapeInference::InferDotOpShape(lhs_shape, rhs_shape,
+                                                      dnums, result_type));
+  if (inferred_shape != instruction->shape()) {
+    return InvalidArgument("Incorrect output shape for block scaled dot op");
+  }
+
+  // Build replacement instruction sequence.
+  XlaBuilder builder(std::string(instruction->name()));
+  auto operands = absl::MakeSpan(instruction->operands());
+  TF_ASSIGN_OR_RETURN(XlaOp block_scaled_dot,
+                      BuildBlockScaledDotForROCm(
+                          builder, operands[0], operands[1], operands[2],
+                          operands.size() == 4 ? operands[3] : nullptr, dnums,
+                          allow_hipblaslt, result_type, device_description));
+  TF_ASSIGN_OR_RETURN(Shape result_shape, builder.GetShape(block_scaled_dot));
+  CHECK_EQ(result_shape, instruction->shape());
+
+  // Build gemm_cfg
+  xla::gpu::GemmBackendConfig gemm_cfg;
+  gemm_cfg.set_alpha_real(1.0);
+  gemm_cfg.set_alpha_imag(0.0);
+  gemm_cfg.set_beta(0.0);
+  *gemm_cfg.mutable_dot_dimension_numbers() = dnums;
+  gemm_cfg.mutable_precision_config()->add_operand_precision(
+      PrecisionConfig::DEFAULT);
+  gemm_cfg.set_epilogue(xla::gpu::GemmBackendConfig::DEFAULT);
+  gemm_cfg.set_grad_x(true);
+  gemm_cfg.set_grad_y(true);
+  gemm_cfg.set_damax_output(false);
+  gemm_cfg.set_mx_mode(true);
+
+  return ExpandInstructionWithGemmConfigUsingBuilder(builder, instruction,
+                                                     gemm_cfg);
+}
+
 }  // namespace
+
+bool BlockScalingRewriter::IsCuda() {
+  se::GpuComputeCapability gpu_cc =
+      device_description_.gpu_compute_capability();
+  return std::holds_alternative<stream_executor::CudaComputeCapability>(gpu_cc);
+}
+
+bool BlockScalingRewriter::IsRocm() {
+  se::GpuComputeCapability gpu_cc =
+      device_description_.gpu_compute_capability();
+  return std::holds_alternative<stream_executor::RocmComputeCapability>(gpu_cc);
+}
 
 bool BlockScalingRewriter::InstructionMatchesPattern(
     HloInstruction* instruction) {
@@ -645,7 +882,12 @@ absl::StatusOr<HloInstruction*> BlockScalingRewriter::ExpandInstruction(
     return ExpandDequantizeCustomCall(instruction);
   }
   if (instruction->custom_call_target() == kBlockScaledDotCustomCallTarget) {
-    return ExpandBlockScaledDotCustomCall(instruction, cudnn_version_);
+    if (IsCuda()) {
+      return CudaExpandBlockScaledDotCustomCall(instruction, cudnn_version_);
+    } else if (IsRocm()) {
+      return RocmExpandBlockScaledDotCustomCall(instruction, allow_hipblaslt_,
+                                                device_description_);
+    }
   }
   LOG(FATAL) << "Unexpected custom call target: "
              << instruction->custom_call_target();
