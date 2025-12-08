@@ -494,9 +494,13 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
 
   // Synchronize the device to make sure no other collectives are
   // running before we do the split.
-  if (!device->SynchronizeAllActivity()) {
-    return Internal(
-        "Failed to synchronize GPU before splitting communicators.");
+  {
+    tsl::profiler::TraceMe trace("SynchronizeAllActivityBeforeSplit");
+    if (!device->SynchronizeAllActivity()) {
+      return Internal(
+          "Failed to synchronize GPU before splitting communicators.");
+    }
+    VLOG(3) << "Synchronized device before splitting";
   }
 
   // Current approach for communicator splitting works because of XLAs SPMD
@@ -732,6 +736,9 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireGpuClique(
         return InitializeGpuClique(collectives, device, run_id, clique_key,
                                    acquired_clique, num_local_participants,
                                    rank, config);
+      } else if (clique_key.ParticipantGroups().empty()) {
+        LOG(WARNING) << "Found empty participant groups."
+                     << " Skip splitting communicators.";
       }
     }
   }
