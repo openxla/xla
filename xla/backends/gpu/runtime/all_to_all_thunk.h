@@ -65,7 +65,7 @@ class AllToAllStartThunk : public CollectiveThunk {
   const CollectiveConfig& config() const override { return config_.config; }
   bool has_split_dimension() const { return config_.has_split_dimension; }
   absl::Span<const Buffer> buffers() const { return buffers_; }
-  const std::optional<ExecutionStreamId> GetStreamIdOverride() const override;
+  std::optional<ExecutionStreamId> GetStreamIdOverride() const override;
 
  protected:
   absl::StatusOr<bool> RunCollective(const ExecuteParams& params,

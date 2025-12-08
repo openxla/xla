@@ -248,7 +248,7 @@ absl::StatusOr<bool> AllToAllStartThunk::RunCollective(
   return true;
 }
 
-const std::optional<ExecutionStreamId> AllToAllStartThunk::GetStreamIdOverride()
+std::optional<ExecutionStreamId> AllToAllStartThunk::GetStreamIdOverride()
     const {
   if (is_local() && p2p_memcpy_enabled_) {
     // TODO: Remove this specialized value when it is safe to do so.

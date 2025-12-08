@@ -44,7 +44,7 @@ class SendThunk : public CollectiveThunk {
 
  protected:
   const CollectiveConfig& config() const override { return config_.config; }
-  const std::optional<ExecutionStreamId> GetStreamIdOverride() const override {
+  std::optional<ExecutionStreamId> GetStreamIdOverride() const override {
     return stream_id_override_;
   }
   absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
