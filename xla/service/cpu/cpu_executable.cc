@@ -65,8 +65,8 @@ limitations under the License.
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
@@ -88,16 +88,13 @@ absl::StatusOr<std::unique_ptr<CpuExecutable>> CpuExecutable::Create(
     std::unique_ptr<BufferAssignment> assignment,
     std::unique_ptr<HloModule> hlo_module, ThunkSequence thunks,
     std::vector<ConstantAllocation> constants,
-    std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
-    std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map,
     TargetMachineOptions target_machine_options) {
   VLOG(2) << "Create CpuExecutable from a thunk sequence; module="
           << hlo_module->name() << ", constants=" << constants.size();
 
-  std::unique_ptr<CpuExecutable> executable(new CpuExecutable(
-      std::move(hlo_module), std::move(hlo_profile_printer_data),
-      std::move(hlo_profile_index_map), std::move(assignment),
-      std::move(target_machine_options)));
+  std::unique_ptr<CpuExecutable> executable(
+      new CpuExecutable(std::move(hlo_module), std::move(assignment),
+                        std::move(target_machine_options)));
   executable->function_library_ = std::move(function_library);
 
   ThunkExecutor::Options thunk_executor_options;
@@ -129,14 +126,10 @@ absl::StatusOr<std::unique_ptr<CpuExecutable>> CpuExecutable::Create(
   return executable;
 }
 
-CpuExecutable::CpuExecutable(
-    std::unique_ptr<HloModule> hlo_module,
-    std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
-    std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map,
-    std::unique_ptr<BufferAssignment> assignment,
-    TargetMachineOptions target_machine_options)
-    : Executable(std::move(hlo_module), std::move(hlo_profile_printer_data),
-                 std::move(hlo_profile_index_map)),
+CpuExecutable::CpuExecutable(std::unique_ptr<HloModule> hlo_module,
+                             std::unique_ptr<BufferAssignment> assignment,
+                             TargetMachineOptions target_machine_options)
+    : Executable(std::move(hlo_module)),
       assignment_(std::move(assignment)),
       target_machine_options_(std::move(target_machine_options)) {
   if (assignment_ && has_module()) {
@@ -167,12 +160,12 @@ static absl::StatusOr<MaybeOwningDeviceMemory> MemoryForAllocation(
     const BufferAllocation& allocation,
     absl::Span<const ExecutionInput> arguments,
     absl::Span<const ConstantAllocation> constants,
-    se::DeviceMemoryAllocator* memory_allocator, int device_ordinal) {
+    se::DeviceAddressAllocator* memory_allocator, int device_ordinal) {
   VLOG(3) << allocation.ToString();
   if (allocation.is_entry_computation_parameter()) {
-    se::DeviceMemoryBase out = arguments[allocation.parameter_number()]
-                                   .Buffer(allocation.param_shape_index())
-                                   .AsDeviceMemoryBase();
+    se::DeviceAddressBase out = arguments[allocation.parameter_number()]
+                                    .Buffer(allocation.param_shape_index())
+                                    .AsDeviceMemoryBase();
     CHECK_LE(allocation.size(), out.size())
         << "Size mismatch on param " << allocation.parameter_number()
         << " at shape index " << allocation.param_shape_index().ToString();
@@ -184,14 +177,14 @@ static absl::StatusOr<MaybeOwningDeviceMemory> MemoryForAllocation(
       return MaybeOwningDeviceMemory(
           constants[allocation.index()].AsDeviceMemoryBase());
     }
-    return MaybeOwningDeviceMemory{se::DeviceMemoryBase{}};
+    return MaybeOwningDeviceMemory{se::DeviceAddressBase{}};
   } else if (allocation.is_thread_local()) {
     VLOG(3) << "buffer is thread-local";
-    return MaybeOwningDeviceMemory{se::DeviceMemoryBase{}};
+    return MaybeOwningDeviceMemory{se::DeviceAddressBase{}};
   }
 
   int64_t buffer_size = allocation.size();
-  TF_ASSIGN_OR_RETURN(se::OwningDeviceMemory out,
+  TF_ASSIGN_OR_RETURN(se::ScopedDeviceAddress<uint8_t> out,
                       memory_allocator->Allocate(device_ordinal, buffer_size));
   VLOG(3) << "buffer allocated " << buffer_size << " bytes [" << out->opaque()
           << "]";
@@ -205,7 +198,7 @@ static absl::StatusOr<MaybeOwningDeviceMemory> MemoryForAllocation(
 }
 
 absl::StatusOr<std::vector<MaybeOwningDeviceMemory>>
-CpuExecutable::CreateBufferTable(se::DeviceMemoryAllocator* memory_allocator,
+CpuExecutable::CreateBufferTable(se::DeviceAddressAllocator* memory_allocator,
                                  int device_ordinal,
                                  absl::Span<ExecutionInput const> arguments) {
   std::vector<MaybeOwningDeviceMemory> buffers(
@@ -326,12 +319,12 @@ absl::StatusOr<ExecutionOutput> CpuExecutable::CreateResultShapedBuffer(
   HloInstruction* root = module().entry_computation()->root_instruction();
   const Shape& root_shape = root->shape();
 
-  // Move se::OwningDeviceMemory values which contain the array(s) of the result
-  // into the respective location in ScopedShapedBuffer which is returned to the
-  // caller.
+  // Move se::ScopedDeviceAddress<uint8_t> values which contain the array(s) of
+  // the result into the respective location in ScopedShapedBuffer which is
+  // returned to the caller.
   for (auto& p : result.MutableResult()->buffers()) {
     const ShapeIndex& index = p.first;
-    se::DeviceMemoryBase& result_buffer = p.second;
+    se::DeviceAddressBase& result_buffer = p.second;
     const HloValueSet& sources = this->GetRootValueSet().element(index);
     // The points to set is unambiguous so the set should be a
     // singleton.
@@ -360,13 +353,13 @@ absl::StatusOr<ExecutionOutput> CpuExecutable::CreateResultShapedBuffer(
             "compile time but not donated at runtime: %s",
             alias->ToString());
       }
-      if (std::optional<se::OwningDeviceMemory> owning =
+      if (std::optional<se::ScopedDeviceAddress<uint8_t>> owning =
               maybe_owning_memory->Release()) {
         // If the caller passes the ownership of the device memory, reuse it
         // as the output buffer. It is up to the caller whether or not to
         // donate a buffer; the aliasing information describes which buffers
         // may alias, not buffers that must alias.
-        se::DeviceMemoryBase argument_buffer = owning->Release();
+        se::DeviceAddressBase argument_buffer = owning->Release();
         *maybe_owning_memory = argument_buffer;
         result_buffer = argument_buffer;
         // The caller is giving us the
@@ -384,7 +377,7 @@ absl::StatusOr<ExecutionOutput> CpuExecutable::CreateResultShapedBuffer(
         int64_t allocation_size =
             ShapeUtil::ByteSizeOf(ShapeUtil::GetSubshape(root_shape, index));
         TF_ASSIGN_OR_RETURN(
-            se::OwningDeviceMemory allocated_buffer,
+            se::ScopedDeviceAddress<uint8_t> allocated_buffer,
             run_options->allocator()->Allocate(
                 stream->parent()->device_ordinal(), allocation_size));
         result_buffer = allocated_buffer.Release();
@@ -400,7 +393,7 @@ absl::StatusOr<ExecutionOutput> CpuExecutable::CreateResultShapedBuffer(
 
     if (result_buffer.is_null()) {
       MaybeOwningDeviceMemory& buffer = buffers[buffer_index];
-      if (std::optional<se::OwningDeviceMemory> owned_buffer =
+      if (std::optional<se::ScopedDeviceAddress<uint8_t>> owned_buffer =
               buffer.Release()) {
         result_buffer = owned_buffer->Release();
         buffer = result_buffer;
@@ -442,7 +435,7 @@ absl::StatusOr<ExecutionOutput> CpuExecutable::ExecuteAsyncOnStream(
   }
 
   se::Stream* stream = run_options->stream();
-  se::DeviceMemoryAllocator* memory_allocator = run_options->allocator();
+  se::DeviceAddressAllocator* memory_allocator = run_options->allocator();
   TF_ASSIGN_OR_RETURN(
       std::vector<MaybeOwningDeviceMemory> buffers,
       CreateBufferTable(memory_allocator, stream->parent()->device_ordinal(),

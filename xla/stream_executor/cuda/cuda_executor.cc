@@ -68,8 +68,8 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_version_parser.h"
 #include "xla/stream_executor/cuda/cudnn_api_wrappers.h"
 #include "xla/stream_executor/cuda/tma_util.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/event_based_timer.h"
@@ -78,6 +78,7 @@ limitations under the License.
 #include "xla/stream_executor/generic_memory_allocator.h"
 #include "xla/stream_executor/gpu/context.h"
 #include "xla/stream_executor/gpu/gpu_executor.h"
+#include "xla/stream_executor/gpu/multicast_memory.h"
 #include "xla/stream_executor/gpu/read_numa_node.h"
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
@@ -583,20 +584,20 @@ absl::StatusOr<void*> HostAllocate(Context* context, int numa_node,
           xla::XlaFormatDevice(context->device_ordinal()), size, numa_node));
     }
     return buffer;
-  } else {
-    ScopedActivateContext activation(context);
-    void* buffer = nullptr;
-    // "Portable" memory is visible to all CUDA contexts. Safe for our use
-    // model.
-    TF_RETURN_IF_ERROR(cuda::ToStatus(
-        cuMemHostAlloc(&buffer, size, CU_MEMHOSTALLOC_PORTABLE)));
-    if (!buffer && size > 0) {
-      return absl::InternalError(absl::StrFormat(
-          "%sFailed to allocate pinned host memory of size %d",
-          xla::XlaFormatDevice(context->device_ordinal()), size));
-    }
-    return buffer;
   }
+
+  ScopedActivateContext activation(context);
+  void* buffer = nullptr;
+  // "Portable" memory is visible to all CUDA contexts. Safe for our use
+  // model.
+  TF_RETURN_IF_ERROR(
+      cuda::ToStatus(cuMemHostAlloc(&buffer, size, CU_MEMHOSTALLOC_PORTABLE)));
+  if (!buffer && size > 0) {
+    return absl::InternalError(
+        absl::StrFormat("%sFailed to allocate pinned host memory of size %d",
+                        xla::XlaFormatDevice(context->device_ordinal()), size));
+  }
+  return buffer;
 }
 
 // Deallocates memory allocated via HostAllocate.
@@ -651,7 +652,7 @@ absl::StatusOr<bool> IsRdmaSupported(CUdevice device) {
 
 absl::StatusOr<bool> IsMulticastSupported(CUdevice device) {
   int is_multicast_supported = 0;
-  TF_RETURN_IF_ERROR(stream_executor::cuda::ToStatus(
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuDeviceGetAttribute(&is_multicast_supported,
                            CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, device)));
   return is_multicast_supported;
@@ -687,7 +688,7 @@ absl::StatusOr<CUmulticastObjectProp> CreateMulticastObjectProperties(
   multicast_properties.flags = 0;
 
   size_t multicast_granularity = 0;
-  TF_RETURN_IF_ERROR(stream_executor::cuda::ToStatus(
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuMulticastGetGranularity(&multicast_granularity, &multicast_properties,
                                 CU_MULTICAST_GRANULARITY_RECOMMENDED)));
 
@@ -827,22 +828,22 @@ bool CudaExecutor::MemoryTracker::Remove(CUdeviceptr ptr) {
 // N.B. we must lose constness in order to pass a suitable type to the existing
 // libcuda APIs, so the caller should take care to only pass the result of const
 // GPU memory conversions to libcuda functions which will honor constness.
-static CUdeviceptr AsCudaDevicePtr(const DeviceMemoryBase& gpu_mem) {
+static CUdeviceptr AsCudaDevicePtr(const DeviceAddressBase& gpu_mem) {
   return reinterpret_cast<CUdeviceptr>(gpu_mem.opaque());
 }
 
 // See description on const version above.
-static CUdeviceptr AsCudaDevicePtr(DeviceMemoryBase* gpu_mem) {
+static CUdeviceptr AsCudaDevicePtr(DeviceAddressBase* gpu_mem) {
   return AsCudaDevicePtr(*gpu_mem);
 }
 
-absl::StatusOr<DeviceMemoryBase> CudaExecutor::GetMemoryRange(
-    const DeviceMemoryBase& location) const {
+absl::StatusOr<DeviceAddressBase> CudaExecutor::GetMemoryRange(
+    const DeviceAddressBase& location) const {
   CUdeviceptr device_pointer;
   size_t size;
   TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuMemGetAddressRange(&device_pointer, &size, AsCudaDevicePtr(location))));
-  return DeviceMemoryBase(reinterpret_cast<void*>(device_pointer), size);
+  return DeviceAddressBase(reinterpret_cast<void*>(device_pointer), size);
 }
 
 std::unique_ptr<ActivateContext> CudaExecutor::Activate() {
@@ -994,7 +995,9 @@ absl::StatusOr<bool> CudaExecutor::VmmDeallocateMemory(void* ptr) {
 
 absl::StatusOr<void*> CollectiveMemoryAllocate(StreamExecutor* executor,
                                                uint64_t bytes) {
-  if (bytes == 0) return nullptr;
+  if (bytes == 0) {
+    return nullptr;
+  }
 
   std::unique_ptr<ActivateContext> activation = executor->Activate();
   TF_ASSIGN_OR_RETURN(xla::gpu::GpuCollectives * gpu_collectives,
@@ -1234,14 +1237,12 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
   } else {
     const auto& packing_spec =
         std::get<KernelArgumentsPackingSpec>(spec.kernel_args_packing());
-    cuda_kernel->set_args_packing([packing_spec](const Kernel& kernel,
-                                                 const KernelArgs& args) {
-      const auto& mem_args =
-          stream_executor::Cast<stream_executor::KernelArgsDeviceMemoryArray>(
-              &args);
-      return packing_spec.BuildArguments(mem_args->device_memory_args(),
-                                         args.number_of_shared_bytes());
-    });
+    cuda_kernel->set_args_packing(
+        [packing_spec](const Kernel& kernel, const KernelArgs& args) {
+          const auto& mem_args = Cast<KernelArgsDeviceAddressArray>(&args);
+          return packing_spec.BuildArguments(mem_args->device_memory_args(),
+                                             args.number_of_shared_bytes());
+        });
   }
   return std::move(cuda_kernel);
 }
@@ -1309,7 +1310,8 @@ absl::StatusOr<ModuleHandle> CudaExecutor::LoadModule(
     absl::MutexLock lock{in_memory_modules_mu_};
     return LoadModuleFromCuBin(
         reinterpret_cast<const char*>(spec.cuda_cubin_in_memory().data()));
-  } else if (spec.has_cuda_ptx_in_memory()) {
+  }
+  if (spec.has_cuda_ptx_in_memory()) {
     if (!spec.cuda_ptx_in_memory()) {
       return absl::InternalError("PTX not found in spec");
     }
@@ -1346,7 +1348,7 @@ int fpus_per_core(int cc_major, int cc_minor) {
 
 }  // namespace
 
-absl::StatusOr<std::shared_ptr<DeviceMemoryBase>>
+absl::StatusOr<std::shared_ptr<DeviceAddressBase>>
 CudaExecutor::CreateOrShareConstant(Stream* stream,
                                     absl::Span<const uint8_t> content) {
   absl::MutexLock lock{shared_constants_mu_};
@@ -1358,10 +1360,10 @@ CudaExecutor::CreateOrShareConstant(Stream* stream,
       reinterpret_cast<const char*>(content.data()), content.size()));
   // Must insert nullptr first to get an iterator to the insertion point.
   auto insert_result = shared_constants_.insert(
-      {fingerprint, std::weak_ptr<DeviceMemoryBase>()});
+      {fingerprint, std::weak_ptr<DeviceAddressBase>()});
   auto it = insert_result.first;
   bool was_already_in_cache = !insert_result.second;
-  std::shared_ptr<DeviceMemoryBase> shared_constant;
+  std::shared_ptr<DeviceAddressBase> shared_constant;
 
   if (was_already_in_cache) {
     shared_constant = it->second.lock();
@@ -1370,7 +1372,7 @@ CudaExecutor::CreateOrShareConstant(Stream* stream,
   if (shared_constant == nullptr) {
     // Either the constant wasn't found in the cache, or it was but its
     // weak_ptr had expired.
-    auto new_constant = std::make_unique<DeviceMemoryBase>(
+    auto new_constant = std::make_unique<DeviceAddressBase>(
         Allocate(content.size(), /*memory_space=*/0));
     if (new_constant->opaque() == nullptr) {
       return absl::InternalError(absl::StrFormat(
@@ -1389,18 +1391,18 @@ CudaExecutor::CreateOrShareConstant(Stream* stream,
 
     // Capturing 'this' in the custom deleter means this executor must
     // outlive all shared uses of this constant.
-    shared_constant = std::shared_ptr<DeviceMemoryBase>(
-        new_constant.release(), [this](DeviceMemoryBase* p) {
+    shared_constant = std::shared_ptr<DeviceAddressBase>(
+        new_constant.release(), [this](DeviceAddressBase* p) {
           Deallocate(p);
           delete p;
         });
-    it->second = std::weak_ptr<DeviceMemoryBase>(shared_constant);
+    it->second = std::weak_ptr<DeviceAddressBase>(shared_constant);
   }
 
   return shared_constant;
 }
 
-DeviceMemoryBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
+DeviceAddressBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
   XLA_VLOG_DEVICE(1, device_ordinal())
       << "CudaExecutor::Allocate size: " << size
       << " memory_space: " << memory_space;
@@ -1413,20 +1415,19 @@ DeviceMemoryBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
     }
     XLA_VLOG_DEVICE(1, device_ordinal())
         << "CudaExecutor::Allocate returns " << result.value();
-    return DeviceMemoryBase(result.value(), size);
+    return DeviceAddressBase(result.value(), size);
   }
 
-  if (memory_space ==
-      static_cast<int64_t>(stream_executor::MemoryType::kHost)) {
+  if (memory_space == static_cast<int64_t>(MemoryType::kHost)) {
     auto result = HostAllocate(cuda_context_, numa_node_, size);
     if (!result.ok()) {
       XLA_LOG_DEVICE(ERROR, device_ordinal())
           << "Failed to allocate host memory: " << result.status();
-      return DeviceMemoryBase(nullptr, 0);
+      return DeviceAddressBase(nullptr, 0);
     }
     XLA_VLOG_DEVICE(1, device_ordinal())
         << "CudaExecutor::Allocate returns " << result.value();
-    return DeviceMemoryBase(result.value(), size);
+    return DeviceAddressBase(result.value(), size);
   }
 
   if (memory_space == static_cast<int64_t>(MemoryType::kP2P) &&
@@ -1434,13 +1435,13 @@ DeviceMemoryBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
     auto device_buf_base = VmmAllocateMemory(size);
 
     if (device_buf_base.ok()) {
-      return DeviceMemoryBase(device_buf_base.value(), size);
+      return DeviceAddressBase(device_buf_base.value(), size);
     }
 
     XLA_LOG_DEVICE(ERROR, device_ordinal())
         << "Failed to allocate memory with VMM: " << device_buf_base.status();
 
-    return DeviceMemoryBase(nullptr, 0);
+    return DeviceAddressBase(nullptr, 0);
   }
 
   CHECK(memory_space == static_cast<int64_t>(MemoryType::kDevice) ||
@@ -1449,7 +1450,7 @@ DeviceMemoryBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
   auto device_buf_base = DeviceAllocate(cuda_context_, size);
   XLA_VLOG_DEVICE(1, device_ordinal())
       << "CudaExecutor::Allocate returns " << device_buf_base;
-  return DeviceMemoryBase(device_buf_base, size);
+  return DeviceAddressBase(device_buf_base, size);
 }
 
 absl::StatusOr<std::unique_ptr<MemoryAllocation>>
@@ -1457,7 +1458,7 @@ CudaExecutor::HostMemoryAllocate(uint64_t size) {
   return AllocateHostMemory(cuda_context_, numa_node_, size);
 }
 
-void CudaExecutor::Deallocate(DeviceMemoryBase* mem) {
+void CudaExecutor::Deallocate(DeviceAddressBase* mem) {
   XLA_VLOG_DEVICE(1, device_ordinal())
       << "CudaExecutor::Deallocate mem: " << mem->opaque();
 
@@ -1499,7 +1500,7 @@ bool CudaExecutor::HostMemoryUnregister(void* location) {
   return HostUnregister(cuda_context_, location);
 }
 
-absl::Status CudaExecutor::SynchronousMemZero(DeviceMemoryBase* location,
+absl::Status CudaExecutor::SynchronousMemZero(DeviceAddressBase* location,
                                               uint64_t size) {
   std::unique_ptr<ActivateContext> activation = Activate();
   CUdeviceptr cuda_location = AsCudaDevicePtr(location);
@@ -1513,7 +1514,7 @@ absl::Status CudaExecutor::SynchronousMemZero(DeviceMemoryBase* location,
                         "Failed to memset memory");
 }
 
-absl::Status CudaExecutor::SynchronousMemcpy(DeviceMemoryBase* gpu_dst,
+absl::Status CudaExecutor::SynchronousMemcpy(DeviceAddressBase* gpu_dst,
                                              const void* host_src,
                                              uint64_t size) {
   std::unique_ptr<ActivateContext> activation = Activate();
@@ -1530,7 +1531,7 @@ absl::Status CudaExecutor::SynchronousMemcpy(DeviceMemoryBase* gpu_dst,
 }
 
 absl::Status CudaExecutor::SynchronousMemcpy(void* host_dst,
-                                             const DeviceMemoryBase& gpu_src,
+                                             const DeviceAddressBase& gpu_src,
                                              uint64_t size) {
   std::unique_ptr<ActivateContext> activation = Activate();
   TF_RETURN_IF_ERROR(cuda::ToStatus(
@@ -1642,7 +1643,7 @@ bool CudaExecutor::DeviceMemoryUsage(int64_t* free_out,
   return true;
 }
 
-absl::StatusOr<DeviceMemoryBase> CudaExecutor::GetSymbol(
+absl::StatusOr<DeviceAddressBase> CudaExecutor::GetSymbol(
     const std::string& symbol_name, ModuleHandle module_handle) {
   void* mem = nullptr;
   size_t bytes = 0;
@@ -1658,7 +1659,7 @@ absl::StatusOr<DeviceMemoryBase> CudaExecutor::GetSymbol(
     TF_RETURN_IF_ERROR(
         GetModuleSymbol(cuda_context_, gpu_module_handle, symbol_name.c_str(),
                         reinterpret_cast<CUdeviceptr*>(&mem), &bytes));
-    return DeviceMemoryBase(mem, bytes);
+    return DeviceAddressBase(mem, bytes);
   }
 
   return absl::NotFoundError(
@@ -1878,7 +1879,9 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
           .value());
 
   auto value_or = [](const auto& status_or, auto default_val) {
-    if (status_or.ok()) return *status_or;
+    if (status_or.ok()) {
+      return *status_or;
+    }
     return default_val;
   };
 
@@ -1990,7 +1993,7 @@ absl::StatusOr<TensorMap> CudaExecutor::CreateTensorMap(
   return absl::bit_cast<TensorMap>(tensor_map);
 }
 
-absl::StatusOr<std::unique_ptr<GpuExecutor::MulticastMemory>>
+absl::StatusOr<std::unique_ptr<MulticastMemory>>
 CudaExecutor::CreateMulticastMemory(uint64_t size, int num_devices) const {
   if (!is_multicast_supported_) {
     return absl::FailedPreconditionError(
@@ -2012,18 +2015,17 @@ CudaExecutor::CudaMulticastMemory::~CudaMulticastMemory() {
   if (handle_ != 0) {
     for (auto const& [device_ordinal, mapped_memory_ptr] : mapped_devices_) {
       XLA_VLOG_DEVICE(3, device_ordinal) << "Unbind multicast: " << handle_;
-      CHECK_OK(stream_executor::cuda::ToStatus(cuMulticastUnbind(
-          handle_, device_ordinal, /*mcOffset=*/0, padded_size_)));
+      CHECK_OK(cuda::ToStatus(cuMulticastUnbind(handle_, device_ordinal,
+                                                /*mcOffset=*/0, padded_size_)));
 
       XLA_VLOG_DEVICE(3, device_ordinal) << "Unmap ptr: " << mapped_memory_ptr;
-      CHECK_OK(stream_executor::cuda::ToStatus(
-          cuMemUnmap(mapped_memory_ptr, padded_size_)));
+      CHECK_OK(cuda::ToStatus(cuMemUnmap(mapped_memory_ptr, padded_size_)));
       XLA_VLOG_DEVICE(3, device_ordinal)
           << "Release address space: " << mapped_memory_ptr;
-      CHECK_OK(stream_executor::cuda::ToStatus(
-          cuMemAddressFree(mapped_memory_ptr, padded_size_)));
+      CHECK_OK(
+          cuda::ToStatus(cuMemAddressFree(mapped_memory_ptr, padded_size_)));
     }
-    CHECK_OK(stream_executor::cuda::ToStatus(
+    CHECK_OK(cuda::ToStatus(
         cuMemRelease(static_cast<CUmemGenericAllocationHandle>(handle_))));
   }
 }
@@ -2049,17 +2051,16 @@ absl::Status CudaExecutor::CudaMulticastMemory::Initialize(
 
   CUmemAllocationProp properties = GetVmmAllocationProperties(
       cuda_executor->device_, cuda_executor->is_rdma_supported_);
-  TF_RETURN_IF_ERROR(
-      stream_executor::cuda::ToStatus(cuMemGetAllocationGranularity(
-          &granularity_, &properties, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED)));
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemGetAllocationGranularity(
+      &granularity_, &properties, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED)));
 
   padded_size_ = xla::RoundUpTo<size_t>(size, granularity_);
   num_devices_ = num_devices;
   TF_ASSIGN_OR_RETURN(CUmulticastObjectProp multicast_properties,
                       CreateMulticastObjectProperties(num_devices_, size));
 
-  TF_RETURN_IF_ERROR(stream_executor::cuda::ToStatus(
-      cuMulticastCreate(&handle_, &multicast_properties)));
+  TF_RETURN_IF_ERROR(
+      cuda::ToStatus(cuMulticastCreate(&handle_, &multicast_properties)));
   XLA_VLOG_DEVICE(3, cuda_executor->device_ordinal())
       << "Created multicast memory: " << static_cast<uint64_t>(handle_)
       << " size: " << padded_size_ << " with granularity: " << granularity_
@@ -2079,14 +2080,14 @@ absl::Status CudaExecutor::CudaMulticastMemory::SubscribeDevice(
   }
 
   XLA_VLOG_DEVICE(3, device_number) << "Subscribe to multicast: " << handle_;
-  TF_RETURN_IF_ERROR(stream_executor::cuda::ToStatus(
-      cuMulticastAddDevice(handle_, device_number)));
+  TF_RETURN_IF_ERROR(
+      cuda::ToStatus(cuMulticastAddDevice(handle_, device_number)));
   subscribed_devices_++;
   return absl::OkStatus();
 }
 
 absl::StatusOr<void*> CudaExecutor::CudaMulticastMemory::MapMemory(
-    const DeviceMemoryBase& location, const GpuExecutor* gpu_executor) {
+    const DeviceAddressBase& location, const GpuExecutor* gpu_executor) {
   const CudaExecutor* cuda_executor =
       dynamic_cast<const CudaExecutor*>(gpu_executor);
   if (cuda_executor == nullptr) {
@@ -2106,9 +2107,8 @@ absl::StatusOr<void*> CudaExecutor::CudaMulticastMemory::MapMemory(
     return absl::FailedPreconditionError("All devices should be subscribed.");
   }
 
-  TF_ASSIGN_OR_RETURN(
-      stream_executor::gpu::CudaExecutor::VmmMemoryHandle memory_handle,
-      cuda_executor->RetainVmmMemoryHandle(location.opaque()));
+  TF_ASSIGN_OR_RETURN(CudaExecutor::VmmMemoryHandle memory_handle,
+                      cuda_executor->RetainVmmMemoryHandle(location.opaque()));
 
   CUmemGenericAllocationHandle retained_memory_handle =
       static_cast<CUmemGenericAllocationHandle>(memory_handle.handle());
@@ -2119,7 +2119,7 @@ absl::StatusOr<void*> CudaExecutor::CudaMulticastMemory::MapMemory(
                     reinterpret_cast<uint64_t>(base_address.opaque());
 
   // Bind the memory to the multicast object.
-  TF_RETURN_IF_ERROR(stream_executor::cuda::ToStatus(
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuMulticastBindMem(handle_, /*mcOffset=*/0, retained_memory_handle,
                          /*memOffset=*/offset, padded_size_, /*flags=*/0)));
 
@@ -2132,14 +2132,14 @@ absl::StatusOr<void*> CudaExecutor::CudaMulticastMemory::MapMemory(
   // Map a virtual address range for the multicast memory. Multicast
   // memory is used to reduce the data stored in the multicast object.
   CUdeviceptr multicast_device_ptr;
-  TF_RETURN_IF_ERROR(stream_executor::cuda::ToStatus(cuMemAddressReserve(
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemAddressReserve(
       &multicast_device_ptr, padded_size_, granularity_, 0, 0)));
 
-  TF_RETURN_IF_ERROR(stream_executor::cuda::ToStatus(
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuMemMap(multicast_device_ptr, padded_size_, 0, handle_, 0)));
 
   CUmemAccessDesc accessDesc = GetVmmAccessDescriptor(cuda_executor->device_);
-  TF_RETURN_IF_ERROR(stream_executor::cuda::ToStatus(
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuMemSetAccess(multicast_device_ptr, padded_size_, &accessDesc, 1)));
 
   absl::MutexLock subscription_lock(mapped_devices_mu_);

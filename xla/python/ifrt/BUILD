@@ -230,6 +230,7 @@ xla_cc_test(
         ":serdes_version",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -578,6 +579,7 @@ cc_library(
         ":attribute_map",
         ":basic_device_list",
         ":ifrt",
+        ":mpmd_executable",
         ":user_context",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",

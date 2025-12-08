@@ -41,11 +41,12 @@ limitations under the License.
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/runtime/object_pool.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/stream.h"
 
 namespace xla {
@@ -153,6 +154,18 @@ class CustomCallThunk : public Thunk {
   const std::vector<NullableShapedSlice>& results() const { return results_; }
 
   absl::string_view opaque() const { return opaque_; }
+
+  BufferUses buffer_uses() const override {
+    BufferUses res;
+    res.reserve(operands_.size() + results_.size());
+    for (const NullableShapedSlice& shaped_slice : operands_) {
+      if (!shaped_slice.has_value()) {
+        continue;
+      }
+      res.push_back(BufferUse::Read(shaped_slice->slice, shaped_slice->shape));
+    }
+    return res;
+  }
 
   absl::StatusOr<ThunkProto> ToProto() const override;
 

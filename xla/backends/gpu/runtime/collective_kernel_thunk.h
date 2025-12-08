@@ -30,13 +30,16 @@ limitations under the License.*/
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_metadata_thunk.h"
+#include "xla/backends/gpu/runtime/collective_multimem.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/core/collectives/reduction_kind.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_memory_handle.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_handle.h"
 #include "xla/stream_executor/gpu/all_reduce_kernel.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/stream.h"
@@ -109,31 +112,32 @@ class CollectiveKernelThunk : public Thunk {
     //   This implies that all GPUs must have finished the first invocation
     //   before they can sync on the second invocation.
     // - Alternate back to Buffer 0 on third invocation. And so on.
-    se::DeviceMemoryHandle local_buffers_handle;
+    se::DeviceAddressHandle local_buffers_handle;
 
     // Signal buffers allocated for the collective.
     // Also double buffered for the same reason as local buffers.
-    se::DeviceMemoryHandle signal_buffers_handle;
+    se::DeviceAddressHandle signal_buffers_handle;
 
     // Pointer to the collective kernel metadata on device.
-    se::DeviceMemoryBase metadata;
+    se::DeviceAddressBase metadata;
 
     // These vectors are merely pointers into the buffer(s) above ordered
     // by RankId. They are initialized once at the end of Initialize() and never
     // changed.
-    std::array<se::DeviceMemoryBase, kNumBuffers> remote_buffer_ptrs;
-    std::array<se::DeviceMemoryBase, kNumBuffers> signal_buffer_ptrs;
+    std::array<se::DeviceAddressBase, kNumBuffers> remote_buffer_ptrs;
+    std::array<se::DeviceAddressBase, kNumBuffers> signal_buffer_ptrs;
     // Kernel entry for the stream executor.
     std::unique_ptr<se::Kernel> kernel;
     uint32_t invocation_count = 0;
 
+    std::shared_ptr<CollectiveMultimem> collective_multimem;
     void* multicast_device_ptr = nullptr;
 
     // Constructor to make OSS builds happy.
     StreamState() = default;
     StreamState(int device_ordinal_arg, RankId rank_arg,
-                se::DeviceMemoryHandle local_buffers_handle_arg,
-                se::DeviceMemoryHandle signal_buffers_handle_arg,
+                se::DeviceAddressHandle local_buffers_handle_arg,
+                se::DeviceAddressHandle signal_buffers_handle_arg,
                 std::unique_ptr<se::Kernel> kernel_arg)
         : device_ordinal(device_ordinal_arg),
           rank(rank_arg),
@@ -168,7 +172,6 @@ class CollectiveKernelThunk : public Thunk {
   // Reference to the buffer related information required for the collective.
   std::vector<CollectiveThunk::Buffer> buffers_;
 
-  CollectiveMetadataThunk::MultimemAddressSpaceProvider address_space_provider_;
   // Guard access to the stream state across different threads (which control
   // different streams).
   absl::Mutex mutex_;

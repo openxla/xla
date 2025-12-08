@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -21,6 +20,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
@@ -49,6 +49,10 @@ namespace {
 // E2E tests comparing the results of sharded and unsharded execution.
 class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
  public:
+  CollectiveOpsTestE2EShardedUnsharded()
+      : CollectiveOpsE2ETestBase(/*memory_size=*/64 * kMB,
+                                 /*collectives_memory_size=*/0) {}
+
   void CollectiveOpsCompareShardedUnsharded(
       const std::string& hlo_text, const int64_t num_partitions = 2,
       bool enable_enzyme_comms_opt = false) {
@@ -161,9 +165,8 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
             upper[param_sharded_dims[k][m]] =
                 param_dims_per_shard[k][param_sharded_dims[k][m]];
           }
-          std::transform(upper.begin(), upper.end(),
-                         param_dims_per_shard[k].begin(), lower.begin(),
-                         std::minus<int64_t>());
+          absl::c_transform(upper, param_dims_per_shard[k], lower.begin(),
+                            std::minus<int64_t>());
         }
       } else {
         fake_args_sliced[k].push_back(fake_args[k].Clone());
@@ -223,8 +226,8 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
           upper[root_sharded_dims[m]] =
               root_dims_per_shard[root_sharded_dims[m]];
         }
-        std::transform(upper.begin(), upper.end(), root_dims_per_shard.begin(),
-                       lower.begin(), std::minus<int64_t>());
+        absl::c_transform(upper, root_dims_per_shard, lower.begin(),
+                          std::minus<int64_t>());
       }
     } else {
       EXPECT_TRUE(
@@ -236,7 +239,7 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
                            std::vector<int64_t>& sharded_dims,
                            const HloSharding& sharding) {
     if (!sharding.IsReplicated()) {
-      for (int k = 0; k < sharding.tile_assignment().num_dimensions(); ++k) {
+      for (int k = 0; k < sharding.num_dimensions(); ++k) {
         if (sharding.dimension(k) > 1) {
           dims_per_shard[k] /= sharding.dimension(k);
           sharded_dims.push_back(k);

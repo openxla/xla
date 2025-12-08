@@ -45,7 +45,7 @@ limitations under the License.
 #include "xla/service/hlo_value.h"
 #include "xla/service/maybe_owning_device_memory.h"
 #include "xla/service/service_executable_run_options.h"
-#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/device_address_allocator.h"
 
 namespace xla {
 namespace cpu {
@@ -62,8 +62,6 @@ class CpuExecutable : public Executable {
       std::unique_ptr<BufferAssignment> assignment,
       std::unique_ptr<HloModule> hlo_module, ThunkSequence thunks,
       std::vector<ConstantAllocation> constants,
-      std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
-      std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map,
       TargetMachineOptions target_machine_options);
 
   ~CpuExecutable() override;
@@ -175,7 +173,7 @@ class CpuExecutable : public Executable {
   //  - buffers_to_free: buffers whose ownership was donated by the caller that
   //    are to be freed by the caller.
   absl::StatusOr<std::vector<MaybeOwningDeviceMemory>> CreateBufferTable(
-      se::DeviceMemoryAllocator* memory_allocator, int device_ordinal,
+      se::DeviceAddressAllocator* memory_allocator, int device_ordinal,
       absl::Span<ExecutionInput const> arguments);
 
   // Creates an Execution output holding ScopedShapedBuffer for holding the
@@ -246,8 +244,6 @@ class CpuExecutable : public Executable {
   std::string entry_function_name_;
 
   CpuExecutable(std::unique_ptr<HloModule> hlo_module,
-                std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
-                std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map,
                 std::unique_ptr<BufferAssignment> assignment,
                 TargetMachineOptions target_machine_options);
   CpuExecutable(const CpuExecutable&) = delete;

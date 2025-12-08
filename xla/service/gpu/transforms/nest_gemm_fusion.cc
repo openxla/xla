@@ -38,12 +38,12 @@ limitations under the License.
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/iterator_range.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/codegen/tiling/symbolic_tile.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
 #include "xla/codegen/tiling/symbolic_tiled_hlo_instruction.h"
 #include "xla/codegen/tiling/tiling_specification.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -65,7 +65,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tools/hlo_extractor.h"
+#include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -679,6 +679,12 @@ absl::StatusOr<BitcastParams> CalculateBitcastOfTransposeImpl(
       indices.push_back(index);
     };
 
+    if (indices.empty()) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Cannot hoist bitcast across ", transpose->ToString(),
+                       " because size-1 dims in bitcasts are not yet supported "
+                       "(b/466065483)."));
+    }
     if (indices.back() - indices.front() >= transpose_to - transpose_from ||
         !absl::c_is_sorted(indices)) {
       return absl::InvalidArgumentError(
@@ -1242,13 +1248,13 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
       SymbolicTileAnalysis::AnalyzeComputation(
           *computation, ctx,
           TritonEmitterConstraints::GetBuilder(device_description));
-  if (std::holds_alternative<FusionDecision>(analysis_or)) {
+
+  if (const auto* fusion_decision = std::get_if<FusionDecision>(&analysis_or)) {
     std::unique_ptr<HloModule> extracted_computation_module =
-        ExtractModule(computation->FusionInstruction());
-    return absl::InternalError(
-        absl::StrCat("Failed to analyze the computation (",
-                     std::get<FusionDecision>(analysis_or).Explain(),
-                     "): ", extracted_computation_module->ToString()));
+        ExtractInstructionIntoNewModule(*computation->FusionInstruction());
+    return absl::InternalError(absl::StrCat(
+        "Failed to analyze the computation (", fusion_decision->Explain(),
+        "):\n", extracted_computation_module->ToString()));
   }
 
   auto& analysis = std::get<SymbolicTileAnalysis>(analysis_or);

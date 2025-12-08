@@ -141,7 +141,7 @@ cc_library(
         "//xla/service:dump",
         "//xla/stream_executor:bit_pattern",
         "//xla/stream_executor:command_buffer",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_spec",
@@ -170,7 +170,7 @@ cc_library(
     name = "gpu_executor_header",
     hdrs = ["gpu_executor.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        ":multicast_memory",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_common",
         "//xla/stream_executor:stream_executor_h",
@@ -182,10 +182,20 @@ cc_library(
 )
 
 cc_library(
+    name = "multicast_memory",
+    hdrs = ["multicast_memory.h"],
+    deps = [
+        "//xla/stream_executor:device_address",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
     name = "gpu_helpers_header",
     hdrs = ["gpu_helpers.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
     ],
 )
 
@@ -249,7 +259,7 @@ cc_library(
     srcs = ["gpu_semaphore.cc"],
     hdrs = ["gpu_semaphore.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/status:statusor",
@@ -322,7 +332,7 @@ cc_library(
         "redzone_allocator_kernel.h",
     ],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -339,9 +349,9 @@ cc_library(
         ":redzone_allocator_kernel",
         "//xla:shape_util",
         "//xla/service/gpu:stream_executor_util",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:device_memory_allocator",
-        "//xla/stream_executor:device_memory_handle",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:device_address_handle",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:scratch_allocator",
         "//xla/stream_executor:stream",
@@ -367,8 +377,8 @@ xla_test(
     deps = [
         ":gpu_init",
         ":redzone_allocator",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_memory_allocator",
@@ -444,7 +454,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/service:algorithm_util",
         "//xla/stream_executor:blas",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:statusor",
@@ -499,7 +509,7 @@ cc_library(
     name = "gpu_test_kernel_traits",
     hdrs = ["gpu_test_kernel_traits.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -578,7 +588,7 @@ xla_test(
         ":tma_metadata_proto_cc",
         "//xla/service:platform_util",
         "//xla/stream_executor:command_buffer",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:kernel_spec",
@@ -610,7 +620,7 @@ xla_test(
         ":gpu_test_kernels",
         "//xla/service:platform_util",
         "//xla/stream_executor:command_buffer",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
@@ -641,7 +651,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         "//xla/service:platform_util",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
@@ -814,7 +824,7 @@ cc_library(
     name = "buffer_comparator_kernel",
     hdrs = ["buffer_comparator_kernel.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -832,7 +842,7 @@ cc_library(
     name = "make_batch_pointers_kernel",
     hdrs = ["make_batch_pointers_kernel.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -841,7 +851,7 @@ cc_library(
     name = "ragged_all_to_all_kernel",
     hdrs = ["ragged_all_to_all_kernel.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -865,7 +875,7 @@ cc_library(
     name = "topk_kernel",
     hdrs = ["topk_kernel.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -874,7 +884,7 @@ cc_library(
     name = "repeat_buffer_kernel",
     hdrs = ["repeat_buffer_kernel.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -888,7 +898,7 @@ xla_test(
         ":gpu_kernel_registry",
         ":repeat_buffer_kernel",
         "//xla/service:platform_util",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
@@ -936,8 +946,8 @@ cc_library(
     deps = [
         "//xla/backends/gpu/runtime:buffer_debug_log_proto_cc",
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:stream",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
@@ -956,7 +966,7 @@ xla_test(
         "//xla/backends/gpu/runtime:buffer_debug_log_proto_cc",
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
         "//xla/backends/gpu/runtime:thunk_id",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
@@ -974,7 +984,7 @@ cc_library(
     hdrs = ["buffer_debug_xor_checksum_kernel.h"],
     deps = [
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -985,7 +995,7 @@ cc_library(
     deps = [
         "//xla:types",
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -995,7 +1005,7 @@ cc_library(
     hdrs = ["prefix_sum_kernel.h"],
     deps = [
         "//xla:types",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )

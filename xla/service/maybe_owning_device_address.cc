@@ -13,40 +13,40 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/maybe_owning_device_memory.h"
+#include "xla/service/maybe_owning_device_address.h"
 
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <variant>
 
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 
 namespace xla {
 
-tensorflow::se::DeviceMemoryBase MaybeOwningDeviceMemory::AsDeviceMemoryBase()
-    const {
+se::DeviceAddressBase MaybeOwningDeviceAddress::AsDeviceAddress() const {
   if (HasOwnership()) {
-    return *std::get<tensorflow::se::OwningDeviceMemory>(mem_);
+    return *std::get<se::ScopedDeviceAddress<uint8_t>>(mem_);
   }
-  return std::get<tensorflow::se::DeviceMemoryBase>(mem_);
+  return std::get<se::DeviceAddressBase>(mem_);
 }
 
-bool MaybeOwningDeviceMemory::HasOwnership() const {
-  return std::holds_alternative<tensorflow::se::OwningDeviceMemory>(mem_);
+bool MaybeOwningDeviceAddress::HasOwnership() const {
+  return std::holds_alternative<se::ScopedDeviceAddress<uint8_t>>(mem_);
 }
 
-std::optional<tensorflow::se::OwningDeviceMemory>
-MaybeOwningDeviceMemory::Release() {
+std::optional<se::ScopedDeviceAddress<uint8_t>>
+MaybeOwningDeviceAddress::Release() {
   if (!HasOwnership()) {
     return {};
   }
-  return std::move(std::get<tensorflow::se::OwningDeviceMemory>(mem_));
+  return std::move(std::get<se::ScopedDeviceAddress<uint8_t>>(mem_));
 }
 
-const tensorflow::se::OwningDeviceMemory*
-MaybeOwningDeviceMemory::AsOwningDeviceMemory() const {
-  return HasOwnership() ? &std::get<tensorflow::se::OwningDeviceMemory>(mem_)
+const se::ScopedDeviceAddress<uint8_t>*
+MaybeOwningDeviceAddress::AsScopedDeviceAddress() const {
+  return HasOwnership() ? &std::get<se::ScopedDeviceAddress<uint8_t>>(mem_)
                         : nullptr;
 }
 

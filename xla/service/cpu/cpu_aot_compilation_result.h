@@ -25,6 +25,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/backends/cpu/buffer_allocation_info.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/thunk.h"
@@ -106,7 +107,6 @@ class CpuAotCompilationResult : public AotCompilationResult {
       absl::string_view function_name, std::vector<ObjFileProto> obj_files,
       std::vector<SymbolProto> symbols, const ThunkSequence& thunks,
       std::unique_ptr<FunctionLibrary> function_library,
-      std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
       TargetMachineOptionsProto target_machine_options =
           TargetMachineOptionsProto());
 
@@ -153,10 +153,6 @@ class CpuAotCompilationResult : public AotCompilationResult {
     return buffer_allocation_infos_;
   }
 
-  const HloProfilePrinterData* hlo_profile_printer_data() const {
-    return hlo_profile_printer_data_.get();
-  }
-
   static absl::StatusOr<std::unique_ptr<CpuAotCompilationResult>> FromProto(
       CompilationResultProto proto,
       std::unique_ptr<FunctionLibrary> function_library) {
@@ -187,7 +183,6 @@ class CpuAotCompilationResult : public AotCompilationResult {
       std::optional<size_t> temp_allocation_index,
       std::vector<BufferAllocationInfo> buffer_allocation_infos,
       std::unique_ptr<FunctionLibrary> function_library,
-      std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
       TargetMachineOptionsProto target_machine_options);
 
   explicit CpuAotCompilationResult(
@@ -203,10 +198,6 @@ class CpuAotCompilationResult : public AotCompilationResult {
   std::vector<BufferAllocationInfo> buffer_allocation_infos_;
 
   std::unique_ptr<FunctionLibrary> function_library_;
-
-  // Contains an instance of HloProfilePrinterData if HLO profiling is enabled,
-  // otherwise is nullptr.
-  std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data_;
 };
 
 }  // namespace xla::cpu

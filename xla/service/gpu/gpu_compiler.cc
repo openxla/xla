@@ -97,6 +97,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/eigh_expander.h"
 #include "xla/hlo/transforms/expanders/logistic_expander.h"
 #include "xla/hlo/transforms/expanders/optimization_barrier_expander.h"
+#include "xla/hlo/transforms/expanders/permutation_sort_expander.h"
 #include "xla/hlo/transforms/expanders/qr_expander.h"
 #include "xla/hlo/transforms/expanders/ragged_dot_rewriter.h"
 #include "xla/hlo/transforms/expanders/real_imag_expander.h"
@@ -219,7 +220,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/collectives/convert_async_collectives_to_sync.h"
 #include "xla/service/gpu/transforms/collectives/gpu_collective_combiner_utils.h"
 #include "xla/service/gpu/transforms/collectives/reduce_scatter_combiner.h"
-#include "xla/service/gpu/transforms/command_buffer_scheduling.h"
 #include "xla/service/gpu/transforms/composite_rewriter.h"
 #include "xla/service/gpu/transforms/conv_rewriter.h"
 #include "xla/service/gpu/transforms/cudnn_custom_call_converter.h"
@@ -298,6 +298,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/kernel_stats.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -606,6 +607,11 @@ absl::Status RunOptimizationPasses(
   // Expand random number generation.
   pipeline.AddPass<RngExpander>();
   pipeline.AddPass<RngBitGeneratorExpander>(RandomAlgorithm::RNG_PHILOX);
+
+  // Replaces sort with scatter where possible. Needs to run before
+  // SortRewriter, as this rewrite is even more efficient than what SortRewriter
+  // would do.
+  pipeline.AddPass<PermutationSortExpander>();
 
   // SortRewriter needs to ask the device how much scratch space is needed,
   // which isn't feasible if we don't have a device.
@@ -1288,6 +1294,7 @@ AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
   opts.set_supports_non_canonical_dots(false);
   opts.set_enable_unconditional_reduce_of_concat_replacement(false);
   opts.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
+  opts.set_enable_conditional_simplification(true);
 
   switch (mode) {
     case AlgebraicSimplifierMode::kPostFusionSimplification:
@@ -2553,6 +2560,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
   TF_ASSIGN_OR_RETURN(CompileResultWithMetadata res,
                       CompileToBackendResult(module.get(), &llvm_context,
                                              options, gpu_device_info));
+  ModuleStats module_stats = res.backend_result.module_stats;
 
   if (DumpingEnabledForHloModule(*module)) {
     DumpToFileInDirOrStdout(
@@ -2597,7 +2605,8 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           /*debug_module=*/options.embed_hlo_module
               ? std::move(module)
               : std::unique_ptr<HloModule>(),
-          /*enable_debug_info_manager=*/embed_debug_info}));
+          /*enable_debug_info_manager=*/embed_debug_info,
+          /*module_stats=*/std::move(module_stats)}));
 
   if (embed_ir_in_executable) {
     std::string ir_module_string_before_opt =
@@ -2896,17 +2905,6 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
         gpu_device_info, ShapeSizeBytesFunction(), &mlir_context_));
   }
 
-  // Pipeline with passes which wrap a scheduled module into command buffers.
-  {
-    if (!module->config()
-             .debug_options()
-             .xla_gpu_experimental_enable_command_buffer_on_thunks()) {
-      HloPassPipeline& pipeline =
-          main_pipeline.AddPass<HloPassPipeline>("command-buffer-scheduling");
-      pipeline.AddPass<CommandBufferScheduling>(gpu_device_info);
-    }
-  }
-
   // Sanitize constant names. This is in its own pipeline to ensure it always
   // runs, as the preceding pipeline is conditional.
   {
@@ -3004,7 +3002,6 @@ GpuCompiler::LoadExecutableFromAotResult(
   const se::DeviceDescription& gpu_device_info =
       stream_exec.GetDeviceDescription();
   llvm::LLVMContext llvm_context;
-
 
   // Recreate BufferAssignment from proto.
   std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(gpu_device_info);

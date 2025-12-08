@@ -43,7 +43,12 @@ limitations under the License.
 
 namespace xla::gpu {
 
-class CollectiveOpsTestFFI : public CollectiveOpsE2ETestBase {};
+class CollectiveOpsTestFFI : public CollectiveOpsE2ETestBase {
+ public:
+  CollectiveOpsTestFFI()
+      : CollectiveOpsE2ETestBase(/*memory_size=*/1 * kMB,
+                                 /*collectives_memory_size=*/0) {}
+};
 
 static constexpr int64_t kNumReplicas = 2;
 
@@ -60,7 +65,6 @@ static ReplicaGroup AllDevices() {
 // should be acquired before the execution starts. All collective operations
 // must let XLA:GPU runtime know what cliques they need ahead of time.
 static absl::Status PrepareAllReduce(
-    ffi::RemainingArgs, ffi::RemainingRets,
     const CollectiveParams* collective_params,
     CollectiveCliqueRequests* clique_requests) {
   TF_RET_CHECK(collective_params && clique_requests);
@@ -109,8 +113,6 @@ static absl::Status AllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
 
 XLA_FFI_DEFINE_HANDLER(kPrepareAllReduce, PrepareAllReduce,
                        ffi::Ffi::BindPrepare()
-                           .RemainingArgs()
-                           .RemainingRets()
                            .Ctx<ffi::CollectiveParams>()
                            .Ctx<ffi::CollectiveCliqueRequests>());
 

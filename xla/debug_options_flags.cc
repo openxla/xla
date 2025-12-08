@@ -416,7 +416,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
 
-  opts.set_xla_enable_command_buffers_during_profiling(false);
+  opts.set_xla_enable_command_buffers_during_profiling(true);
 
   opts.set_xla_gpu_cudnn_gemm_max_plans(5);
 
@@ -441,7 +441,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_enable_fast_math(false);
   opts.set_xla_gpu_experimental_parallel_collective_overlap_limit(1);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
-  opts.set_xla_gpu_enable_scatter_determinism_expander(false);
+  opts.set_xla_gpu_enable_scatter_determinism_expander(true);
   opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(false);
   opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(false);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
@@ -460,7 +460,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_split_k_rewrite(false);
   opts.set_xla_gpu_experimental_enable_triton_tma(true);
   opts.set_xla_gpu_experimental_enable_triton_warp_specialization(false);
-  opts.set_xla_gpu_experimental_enable_command_buffer_on_thunks(true);
   opts.set_xla_detect_unstable_reductions(DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_detect_unstable_reductions_post_optimizations(
       DebugOptions::DETECTION_MODE_NONE);
@@ -2635,14 +2634,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
               set_xla_gpu_experimental_enable_triton_warp_specialization),
       debug_options->xla_gpu_experimental_enable_triton_warp_specialization(),
       "Enable Triton's auto warp specialization feature where applicable."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_enable_command_buffer_on_thunks",
-      bool_setter_for(
-          &DebugOptions::
-              set_xla_gpu_experimental_enable_command_buffer_on_thunks),
-      debug_options->xla_gpu_experimental_enable_command_buffer_on_thunks(),
-      "Enables an experimental feature for command buffer conversion on "
-      "thunks."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_use_autotuner_pass",
       bool_setter_for(
