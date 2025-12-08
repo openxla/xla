@@ -37,6 +37,7 @@ load("//third_party/tensorrt:workspace.bzl", tensorrt = "repo")
 load("//third_party/triton:workspace.bzl", triton = "repo")
 load("//third_party/uv:workspace.bzl", uv = "repo")
 load("//third_party/xnnpack:workspace.bzl", xnnpack = "repo")
+load("//third_party:repo.bzl", "tf_vendored")
 
 def _third_party_ext_impl(mctx):  # @unused
     benchmark()
@@ -76,6 +77,10 @@ def _third_party_ext_impl(mctx):  # @unused
     triton()
     uv()
     xnnpack()
+    tf_vendored(
+        name = "com_google_googletest",
+        path = "third_party/xla_googletest_wrapper",
+    )
 
 third_party_ext = module_extension(
     implementation = _third_party_ext_impl,
