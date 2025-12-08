@@ -17,6 +17,7 @@
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load(
     "//third_party/gpus/rocm:rocm_redist.bzl",
+    "create_rocm_distro",
     "rocm_redist",
 )
 load(
@@ -548,12 +549,18 @@ def _remove_root_dir(path, root_dir):
         return path[len(root_dir) + 1:]
     return path
 
-def _parse_rocm_distro_links(distro_links):
-    result = []
-    for pair in distro_links.split(","):
-        link = pair.split(":")
-        result.append(struct(target = link[0], link = link[1]))
-    return result
+def _setup_rocm_distro_dir_impl(repository_ctx, rocm_distro):
+    repository_ctx.file("rocm/.index")
+    for pkg in rocm_distro.packages:
+        _download_package(repository_ctx, pkg)
+
+    for entry in rocm_distro.required_softlinks:
+        repository_ctx.symlink(
+            "{}/{}".format(_DISTRIBUTION_PATH, entry.target),
+            "{}/{}".format(_DISTRIBUTION_PATH, entry.link),
+        )
+    bash_bin = get_bash_bin(repository_ctx)
+    return _get_rocm_config(repository_ctx, bash_bin, _canonical_path("{}/{}".format(_DISTRIBUTION_PATH, rocm_distro.rocm_root)), "")
 
 def _setup_rocm_distro_dir(repository_ctx):
     """Sets up the rocm hermetic installation directory to be used in hermetic build"""
@@ -564,41 +571,14 @@ def _setup_rocm_distro_dir(repository_ctx):
         if not rocm_distro_hash:
             fail("{} environment variable is required", _ROCM_DISTRO_HASH)
         rocm_distro_links = repository_ctx.os.environ.get(_ROCM_DISTRO_LINKS, "")
-        rocm_distro = struct(
-            packages = [
-                {
-                    "url": rocm_distro_url,
-                    "sha256": rocm_distro_hash,
-                },
-            ],
-            required_softlinks = _parse_rocm_distro_links(rocm_distro_links),
-            rocm_root = "",
-        )
-        repository_ctx.file("rocm/.index")
-        for pkg in rocm_distro.packages:
-            _download_package(repository_ctx, pkg)
-
-        for entry in rocm_distro.required_softlinks:
-            repository_ctx.symlink(
-                "{}/{}".format(_DISTRIBUTION_PATH, entry.target),
-                "{}/{}".format(_DISTRIBUTION_PATH, entry.link),
-            )
-        return _get_rocm_config(repository_ctx, bash_bin, _canonical_path("{}/{}".format(_DISTRIBUTION_PATH, rocm_distro.rocm_root)), "")
+        rocm_distro = create_rocm_distro(rocm_distro_url, rocm_distro_hash, rocm_distro_links)
+        return _setup_rocm_distro_dir_impl(repository_ctx, rocm_distro)
 
     rocm_distro = repository_ctx.os.environ.get(_ROCM_DISTRO_VERSION)
     multiple_paths = repository_ctx.os.environ.get(_TF_ROCM_MULTIPLE_PATHS)
     if rocm_distro:
         redist = rocm_redist[rocm_distro]
-        repository_ctx.file("rocm/.index")
-        for pkg in redist.packages:
-            _download_package(repository_ctx, pkg)
-
-        for entry in redist.required_softlinks:
-            repository_ctx.symlink(
-                "{}/{}".format(_DISTRIBUTION_PATH, entry.target),
-                "{}/{}".format(_DISTRIBUTION_PATH, entry.link),
-            )
-        return _get_rocm_config(repository_ctx, bash_bin, _canonical_path("{}/{}".format(_DISTRIBUTION_PATH, redist.rocm_root)), "")
+        return _setup_rocm_distro_dir_impl(repository_ctx, rocm_distro)
     elif multiple_paths:
         paths_list = multiple_paths.split(":")
         for rocm_custom_path in paths_list:
