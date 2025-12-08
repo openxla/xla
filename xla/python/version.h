@@ -19,7 +19,7 @@ limitations under the License.
 // An increasing version number to protect jax code against breaking changes.
 // In JAX, reference this via jax._src.lib.ifrt_version.
 #define JAX_IFRT_VERSION_NUMBER \
-  38  // `xla::ifrt::Executable::Create()` can directly take an MLIR module and
-      // compile it.
+  39  // `tensorflow::ProfileOptions::AdvancedConfigValue` Python getter is
+      // newly added.
 
 #endif  // XLA_PYTHON_VERSION_H_
