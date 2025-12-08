@@ -158,7 +158,7 @@ class CollectiveThunk : public Thunk {
 
   virtual const CollectiveConfig& config() const = 0;
   virtual CollectiveStreamId GetAsyncStreamId() const { return stream_id_; }
-  virtual const std::optional<ExecutionStreamId> GetStreamIdOverride() const {
+  virtual std::optional<ExecutionStreamId> GetStreamIdOverride() const {
     return std::nullopt;
   }
   bool IsAsync() const { return async_events_ != nullptr; }

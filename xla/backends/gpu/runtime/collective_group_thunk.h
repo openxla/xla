@@ -56,7 +56,6 @@ class CollectiveGroupThunk : public Thunk {
  private:
   ThunkSequence thunks_;
   std::shared_ptr<CollectiveThunk::AsyncEvents> async_events_;
-  bool is_p2p_;
 };
 
 }  // namespace gpu
