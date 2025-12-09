@@ -637,6 +637,33 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "mixed_type_canonicalizer",
+    srcs = ["mixed_type_canonicalizer.cc"],
+    hdrs = ["mixed_type_canonicalizer.h"],
+    deps = [
+        ":op_expander_pass",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "mixed_type_canonicalizer_test",
+    srcs = ["mixed_type_canonicalizer_test.cc"],
+    deps = [
+        ":mixed_type_canonicalizer",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 xla_cc_test(
     name = "stochastic_convert_decomposer_test",
     srcs = ["stochastic_convert_decomposer_test.cc"],
