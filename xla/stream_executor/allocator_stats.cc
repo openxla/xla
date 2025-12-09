@@ -18,23 +18,28 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/str_format.h"
+#include "tsl/platform/numbers.h"
 
 namespace stream_executor {
 
 std::string AllocatorStats::DebugString() const {
   return absl::StrFormat(
-      "Limit:            %20lld\n"
-      "InUse:            %20lld\n"
-      "MaxInUse:         %20lld\n"
+      "Limit:            %20s\n"
+      "InUse:            %20s\n"
+      "MaxInUse:         %20s\n"
       "NumAllocs:        %20lld\n"
-      "MaxAllocSize:     %20lld\n"
-      "Reserved:         %20lld\n"
-      "PeakReserved:     %20lld\n"
-      "LargestFreeBlock: %20lld\n",
-      this->bytes_limit ? *this->bytes_limit : 0, this->bytes_in_use,
-      this->peak_bytes_in_use, this->num_allocs, this->largest_alloc_size,
-      this->bytes_reserved, this->peak_bytes_reserved,
-      this->largest_free_block_bytes);
+      "MaxAllocSize:     %20s\n"
+      "Reserved:         %20s\n"
+      "PeakReserved:     %20s\n"
+      "LargestFreeBlock: %20s\n",
+      strings::HumanReadableNumBytes(this->bytes_limit ? *this->bytes_limit
+                                                       : 0),
+      strings::HumanReadableNumBytes(this->bytes_in_use),
+      strings::HumanReadableNumBytes(this->peak_bytes_in_use), this->num_allocs,
+      strings::HumanReadableNumBytes(this->largest_alloc_size),
+      strings::HumanReadableNumBytes(this->bytes_reserved),
+      strings::HumanReadableNumBytes(this->peak_bytes_reserved),
+      strings::HumanReadableNumBytes(this->largest_free_block_bytes));
 }
 
 }  // namespace stream_executor
