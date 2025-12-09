@@ -47,6 +47,7 @@ cc_library(
     srcs = [
         "erase_dead_functions.cc",
         "expand_float_ops.cc",
+        "expand_integer_power.cc",
         "flatten_tensors.cc",
         "lower_tensors.cc",
         "lower_to_llvm.cc",

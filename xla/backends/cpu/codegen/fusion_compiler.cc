@@ -194,6 +194,7 @@ static void AddGenericLoweringPasses(mlir::OpPassManager& pm,
                                      bool fast_min_max) {
   pm.addNestedPass<mlir::func::FuncOp>(
       emitters::CreateSimplifyArithPass(fast_min_max));
+  pm.addPass(emitters::CreateExpandIntegerPowerPass());
   pm.addPass(emitters::CreateSimplifyAffinePass());
   pm.addPass(mlir::createCanonicalizerPass());
 
