@@ -258,7 +258,9 @@ TEST_F(TritonTest, FuseSubchannelDequantizationWithTranspose) {
     CHECK:    %[[bitcast:.*]] = bf16[2,8,64]{2,1,0} bitcast({{.*}})
     CHECK:    %[[transpose:.*]] = bf16[2,64,8]{2,1,0} transpose(%[[bitcast]]), dimensions={0,2,1}
     CHECK:    %[[broadcast:.*]] = bf16[2,64,8,256]{3,2,1,0} broadcast(%[[transpose]]), dimensions={0,1,2}
-    CHECK:    %[[multiply:.*]] = bf16[2,64,8,256]{3,2,1,0} multiply({{.*}}, %[[broadcast]])
+    CHECK-PTX:    %[[multiply:.*]] = bf16[2,64,8,256]{3,2,1,0} multiply({{.*}}, %[[broadcast]])
+    CHECK-GCN:    %[[convert:.*]] = f32[2,64,8,256]{3,2,1,0} convert(%[[broadcast]])
+    CHECK-GCN:    %[[multiply:.*]] = f32[2,64,8,256]{3,2,1,0} multiply({{.*}}, %[[convert]]
   )"));
   EXPECT_TRUE(*RunFileCheck(module->ToString(), "CHECK: __triton_gemm"));
 

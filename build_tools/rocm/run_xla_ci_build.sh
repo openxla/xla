@@ -58,7 +58,6 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     -//xla/backends/gpu/codegen/triton:dot_algorithms_test_amdgpu_any \
     -//xla/backends/gpu/codegen/triton:fusion_emitter_device_legacy_port_test_amdgpu_any \
     -//xla/backends/gpu/codegen/triton:fusion_emitter_device_test_amdgpu_any \
-    -//xla/backends/gpu/codegen/triton:fusion_emitter_int4_device_test_amdgpu_any \
     -//xla/backends/gpu/codegen/triton:fusion_emitter_parametrized_test_amdgpu_any \
     -//xla/backends/gpu/codegen/triton:support_legacy_test_amdgpu_any \
     -//xla/backends/gpu/codegen/triton:support_test \
