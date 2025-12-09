@@ -313,8 +313,8 @@ cc_library(
         "//xla/service:shape_inference",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:cublas_cudnn",
-        "//xla/stream_executor:dnn",
         "//xla/service/gpu:matmul_utils",
+        "//xla/stream_executor:dnn",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
@@ -1890,6 +1890,7 @@ lit_test_suite(
         "//xla/tools/hlo_opt:gpu_specs/v100.txtpb",
     ],
     default_tags = tf_gpu_tests_tags(),
+    tags = ["cuda-only"],
     tools = [
         "//xla/tools:hlo-opt",
         "@llvm-project//llvm:FileCheck",

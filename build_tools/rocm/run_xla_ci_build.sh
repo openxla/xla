@@ -76,9 +76,6 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     -//xla/service/gpu/tests:gpu_triton_custom_call_test_amdgpu_any \
     -//xla/service/gpu/tests:sorting_test_amdgpu_any \
     -//xla/service/gpu/transforms:cublas_gemm_rewriter_test_amdgpu_any \
-    -//xla/service/gpu/transforms:layout_assignment_a100.hlo.test \
-    -//xla/service/gpu/transforms:layout_assignment_h100.hlo.test \
-    -//xla/service/gpu/transforms:layout_assignment_v100.hlo.test \
     -//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any \
     -//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any_notfrt \
     -//xla/tests:convolution_test_amdgpu_any \
