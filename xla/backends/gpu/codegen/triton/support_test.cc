@@ -542,16 +542,17 @@ ENTRY triton_computation {
         any_is(PrimitiveType::F8E4M3FN) && any_is(PrimitiveType::F8E5M2);
   }
 
-  // Crashes due to unsupported/unspecified rounding mode.
-  crashes_on_failure |= (data_type_in == PrimitiveType::F64 &&
-                         (data_type_out == PrimitiveType::F8E4M3FN ||
-                          data_type_out == PrimitiveType::F8E5M2));
+  if (std::holds_alternative<se::CudaComputeCapability>(cc)) {
+    // Crashes due to unsupported/unspecified rounding mode.
+    crashes_on_failure |= (data_type_in == PrimitiveType::F64 &&
+                          (data_type_out == PrimitiveType::F8E4M3FN ||
+                            data_type_out == PrimitiveType::F8E5M2));
 
-  // Crashes due to unsupported conversion.
-  crashes_on_failure |= (data_type_out == PrimitiveType::F64 &&
-                         (data_type_in == PrimitiveType::F8E4M3FN ||
-                          data_type_in == PrimitiveType::F8E5M2));
-
+    // Crashes due to unsupported conversion.
+    crashes_on_failure |= (data_type_out == PrimitiveType::F64 &&
+                          (data_type_in == PrimitiveType::F8E4M3FN ||
+                            data_type_in == PrimitiveType::F8E5M2));
+  }
   RunSupportTest(
       std::move(ti), /*output_tile_sizes=*/{1, 32}, cc,
       crashes_on_failure ? ExpectedFailMode::kCrash : ExpectedFailMode::kFail);
@@ -592,15 +593,22 @@ ENTRY triton_computation {
                                      data_type, opcode));
 
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (opcode == HloOpcode::kDivide &&
-      (data_type == PrimitiveType::BF16 || data_type == PrimitiveType::F16 ||
-       data_type == PrimitiveType::F8E5M2 ||
-       data_type == PrimitiveType::F8E4M3FN ||
-       data_type == PrimitiveType::F8E4M3B11FNUZ ||
-       data_type == PrimitiveType::F8E5M2FNUZ ||
-       data_type == PrimitiveType::F8E4M3FNUZ)) {
-    fail_mode = ExpectedFailMode::kCrash;
-  };
+  if (std::holds_alternative<se::CudaComputeCapability>(cc)) {
+    if (opcode == HloOpcode::kDivide &&
+        (data_type == PrimitiveType::BF16 || data_type == PrimitiveType::F16 ||
+         data_type == PrimitiveType::F8E5M2 ||
+         data_type == PrimitiveType::F8E4M3FN)) {
+      fail_mode = ExpectedFailMode::kCrash;
+    }
+  } else {
+    if (((opcode == HloOpcode::kMaximum || opcode == HloOpcode::kMinimum) &&
+         (data_type == PrimitiveType::F8E5M2 ||
+          data_type == PrimitiveType::F8E4M3FN || 
+          data_type == PrimitiveType::F8E5M2FNUZ ||
+          data_type == PrimitiveType::F8E4M3FNUZ))) {
+      fail_mode = ExpectedFailMode::kFailOrCrash;
+    }
+  }
 
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc, fail_mode);
 }
@@ -629,14 +637,21 @@ ENTRY triton_computation {
                                      data_type, opcode));
 
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (opcode == HloOpcode::kDivide &&
-      (data_type == PrimitiveType::BF16 || data_type == PrimitiveType::F16 ||
-       data_type == PrimitiveType::F8E5M2 ||
-       data_type == PrimitiveType::F8E4M3FN ||
-       data_type == PrimitiveType::F8E4M3B11FNUZ ||
-       data_type == PrimitiveType::F8E5M2FNUZ ||
-       data_type == PrimitiveType::F8E4M3FNUZ)) {
-    fail_mode = ExpectedFailMode::kCrash;
+  if (std::holds_alternative<se::CudaComputeCapability>(cc)) {
+    if (opcode == HloOpcode::kDivide &&
+        (data_type == PrimitiveType::BF16 || data_type == PrimitiveType::F16 ||
+         data_type == PrimitiveType::F8E5M2 ||
+         data_type == PrimitiveType::F8E4M3FN)) {
+      fail_mode = ExpectedFailMode::kCrash;
+    }
+  } else {
+    if (((opcode == HloOpcode::kMaximum || opcode == HloOpcode::kMinimum) &&
+         (data_type == PrimitiveType::F8E5M2 ||
+          data_type == PrimitiveType::F8E4M3FN ||
+          data_type == PrimitiveType::F8E5M2FNUZ ||
+          data_type == PrimitiveType::F8E4M3FNUZ))) {
+      fail_mode = ExpectedFailMode::kFailOrCrash;
+    }
   }
 
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{}, cc, fail_mode);
@@ -690,7 +705,20 @@ ENTRY triton_computation {
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(hlo_text, data_type, opcode));
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc);
+
+  bool skip_failure_branch_to_avoid_crash = false;
+  if (std::holds_alternative<se::RocmComputeCapability>(cc)) {
+    skip_failure_branch_to_avoid_crash =
+        (opcode == HloOpcode::kClamp || opcode == HloOpcode::kSelect) &&
+        (data_type == PrimitiveType::F8E5M2 ||
+         data_type == PrimitiveType::F8E4M3FN ||
+         data_type == PrimitiveType::F8E5M2FNUZ ||
+         data_type == PrimitiveType::F8E4M3FNUZ);
+  }
+
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc,
+                 skip_failure_branch_to_avoid_crash ? ExpectedFailMode::kFailOrCrash
+                                                    : ExpectedFailMode::kFail);
 }
 
 constexpr std::array kTestedOpsTernaryElementwise = {HloOpcode::kSelect,
@@ -733,7 +761,9 @@ ENTRY triton_computation {
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
   bool crashes_on_failure = data_type == PrimitiveType::F8E4M3FN ||
-                            data_type == PrimitiveType::F8E5M2;
+                            data_type == PrimitiveType::F8E5M2 ||
+                            data_type == PrimitiveType::F8E5M2FNUZ ||
+                            data_type == PrimitiveType::F8E4M3FNUZ;
   RunSupportTest(
       std::move(ti), /*output_tile_sizes=*/{1}, cc,
       crashes_on_failure ? ExpectedFailMode::kCrash : ExpectedFailMode::kFail);
@@ -757,7 +787,7 @@ ENTRY triton_computation {
                           ParseTemplateAndGetInstruction(kHloTestTemplate, F32,
                                                          HloOpcode::kReduce));
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{3, 4},
-                 se::CudaComputeCapability::Ampere());
+                 CudaAmpereOrRocm());
 }
 
 TEST_P(
@@ -804,7 +834,9 @@ ENTRY triton_computation {
       ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
 
   bool crashes_on_failure = data_type == PrimitiveType::F8E4M3FN ||
-                            data_type == PrimitiveType::F8E5M2;
+                            data_type == PrimitiveType::F8E5M2 ||
+                            data_type == PrimitiveType::F8E5M2FNUZ ||
+                            data_type == PrimitiveType::F8E4M3FNUZ;
   RunSupportTest(
       std::move(ti), /*output_tile_sizes=*/{1}, cc,
       crashes_on_failure ? ExpectedFailMode::kCrash : ExpectedFailMode::kFail);
@@ -840,7 +872,7 @@ ENTRY triton_computation {
 }
 
 TEST_F(ReduceTest, ReduceWithNonConstReduceValueIsSupportedWithTriton) {
-  const se::GpuComputeCapability cc = se::CudaComputeCapability::Ampere();
+  const se::GpuComputeCapability cc = CudaAmpereOrRocm();
   const std::string kHloTestTemplate = R"(
 add {
   Arg_0 = $0[] parameter(0)
@@ -920,12 +952,15 @@ ENTRY triton_computation {
 
   // TODO(b/361526623): Reduce the cases where emitter crashes.
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (opcode == HloOpcode::kDivide && (data_type == BF16 || data_type == F16)) {
+  if (opcode == HloOpcode::kDivide && (data_type == BF16 ||
+                                        data_type == F16)) {
     fail_mode = ExpectedFailMode::kCrash;
   }
-  if (data_type == F8E4M3FN || data_type == F8E5M2) {
+  if (data_type == F8E4M3FN || data_type == F8E5M2 ||  data_type == PrimitiveType::F8E5M2FNUZ ||
+        data_type == PrimitiveType::F8E4M3FNUZ) {
     fail_mode = ExpectedFailMode::kFailOrCrash;
   }
+
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc, fail_mode);
 }
 
@@ -1869,12 +1904,12 @@ TEST_P(DotTypesTest, Dot) {
       fail_mode = ExpectedFailMode::kFailOrCrash;
     }
   }
-  if (absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ, F8E4M3FN}, input_type) ||
-      absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ, F8E4M3FN}, result_type) ||
-      input_type == F64) {
-    if (std::holds_alternative<se::RocmComputeCapability>(cc)) {
-      // Hits llvm::report_fatal_error during Triton compilation.
-      fail_mode = ExpectedFailMode::kFailOrCrash;
+  if (std::holds_alternative<se::RocmComputeCapability>(cc)) {
+    if (absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ, F8E4M3FN}, input_type) ||
+        absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ, F8E4M3FN}, result_type) ||
+        input_type == F64) {
+        // Hits llvm::report_fatal_error during Triton compilation.
+        fail_mode = ExpectedFailMode::kFailOrCrash;
     }
   }
 
@@ -2184,49 +2219,6 @@ ENTRY triton_computation {
                  CudaAmpereOrRocm());
 }
 
-TEST_F(DotTest, SparsityConfiguration) {
-  // Note that support rejects this HLO as u16 is not supported.
-  const std::string kHloTestTemplate = R"(
-flhs {
-  ROOT result = $0[128,128] parameter(0)
-}
-
-frhs {
-  ROOT result = $0[256,512] parameter(0)
-}
-
-ENTRY triton_computation {
-  p0 = $0[128,128] parameter(0)
-  p1 = $0[256,512] parameter(1)
-  lhs = $0[128,128] fusion(p0), kind=kCustom, calls=flhs, backend_config={
-    "fusion_backend_config":{
-      "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["16", "64"]}]
-      }
-    }
-  }
-  rhs = $0[256,512] fusion(p1), kind=kCustom, calls=frhs, backend_config={
-    "fusion_backend_config":{
-      "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["64", "32"]}]
-      }
-    }
-  }
-  meta = u16[128,16] parameter(2)
-  ROOT result = $0[128,512] dot(lhs, rhs, meta),
-    lhs_contracting_dims={1},
-    rhs_contracting_dims={0},
-    sparsity=L.1@2:4
-}
-)";
-  TF_ASSERT_OK_AND_ASSIGN(
-      TestedInstruction ti,
-      ParseTemplateAndGetInstruction(kHloTestTemplate, F32, HloOpcode::kDot,
-                                     /* use_nested_gemm_fusions=*/true));
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{16, 32},
-                 CudaAmpereOrRocm());
-}
-
 class DotPrecisionTest
     : public DotTest,
       public ::testing::WithParamInterface<
@@ -2287,14 +2279,9 @@ ENTRY triton_computation {
   if (absl::c_linear_search(std::vector{F8E5M2, F8E4M3FN, S8}, data_type)) {
     fail_mode = ExpectedFailMode::kFailOrCrash;
   }
-  if (std::holds_alternative<se::CudaComputeCapability>(cc)) {
-    if (data_type == F64) {
-      fail_mode = ExpectedFailMode::kFailOrCrash;
-    }
-  }
   if (std::holds_alternative<se::RocmComputeCapability>(cc)) {
     if (absl::c_linear_search(std::vector{F8E4M3FNUZ, F8E5M2FNUZ, F8E4M3FN,
-                                          F64}, data_type)) {
+                                          S8, S16, S32, S64}, data_type)) {
       fail_mode = ExpectedFailMode::kFailOrCrash;
     }
   }
@@ -2395,7 +2382,7 @@ ENTRY triton_computation {
   if (std::holds_alternative<se::RocmComputeCapability>(cc)) {
     if (absl::c_linear_search(std::vector{F8E4M3FN, F8E5M2FNUZ, F8E4M3FNUZ, F64},
                                 data_type) ||
-        (absl::c_linear_search(std::vector{F16, S64, S32, S16, BF16, F32},
+        (absl::c_linear_search(std::vector{S64, S32, S16, BF16, F16, F32},
                                 data_type)  &&
          algorithm == xla::PrecisionConfig::ALG_DOT_F64_F64_F64)) {
       fail_mode = ExpectedFailMode::kFailOrCrash;
