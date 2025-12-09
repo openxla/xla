@@ -10,8 +10,7 @@
   * `ROCM_PATH`: The path to the ROCm toolkit. Default is `/opt/rocm`.
   * `TF_ROCM_AMDGPU_TARGETS`: The AMDGPU targets.
   * `TF_ROCM_RBE_DOCKER_IMAGE`: Docker image to be used in rbe worker to execute the action
-  * `TF_ROCM_RBE_SINGLE_GPU_POOL`: The name of the rbe pool used to execute single gpu tests
-  * `TF_ROCM_RBE_MULTI_GPU_POOL`: The name of the rbe pool used to execute multi gpu tests
+  * `TF_ROCM_RBE_POOL`: The name of the rbe pool used to execute tests
 """
 
 load("@bazel_skylib//lib:paths.bzl", "paths")
@@ -59,10 +58,7 @@ _TMPDIR = "TMPDIR"
 _DEFAULT_ROCM_TOOLKIT_PATH = "/opt/rocm"
 _TF_ROCM_MULTIPLE_PATHS = "TF_ROCM_MULTIPLE_PATHS"
 _TF_ROCM_RBE_DOCKER_IMAGE = "TF_ROCM_RBE_DOCKER_IMAGE"
-_TF_ROCM_RBE_SINGLE_GPU_POOL = "TF_ROCM_RBE_SINGLE_GPU_POOL"
-_TF_ROCM_RBE_MULTI_GPU_POOL = "TF_ROCM_RBE_MULTI_GPU_POOL"
-_DEFAULT_TF_ROCM_RBE_SINGLE_GPU_POOL = "linux_x64_gpu"
-_DEFAULT_TF_ROCM_RBE_MULTI_GPU_POOL = "linux_x64_multigpu"
+_TF_ROCM_RBE_POOL = "TF_ROCM_RBE_POOL"
 
 # rocm/tensorflow-build:latest-jammy-python3.11-rocm7.0.2
 _DEFAULT_TF_ROCM_RBE_DOCKER_IMAGE = "rocm/tensorflow-build@sha256:a2672ff2510b369b4a5f034272a518dc93c2e492894e3befaeef19649632ccaa"
@@ -442,8 +438,6 @@ def _create_dummy_repository(repository_ctx):
             "%{rocm_gpu_architectures}": "[]",
             "%{rocm_version_number}": "0",
             "%{rocm_hipblaslt}": "False",
-            "%{single_gpu_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_SINGLE_GPU_POOL, _DEFAULT_TF_ROCM_RBE_SINGLE_GPU_POOL),
-            "%{multi_gpu_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_MULTI_GPU_POOL, _DEFAULT_TF_ROCM_RBE_MULTI_GPU_POOL),
         },
     )
     _tpl(
@@ -628,8 +622,6 @@ def _create_local_rocm_repository(repository_ctx):
                 repository_ctx,
                 rocm_config.amdgpu_targets,
             ),
-            "%{single_gpu_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_SINGLE_GPU_POOL, _DEFAULT_TF_ROCM_RBE_SINGLE_GPU_POOL),
-            "%{multi_gpu_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_MULTI_GPU_POOL, _DEFAULT_TF_ROCM_RBE_MULTI_GPU_POOL),
             "%{rocm_gpu_architectures}": str(rocm_config.amdgpu_targets),
             "%{rocm_version_number}": str(rocm_version_number),
             "%{rocm_hipblaslt}": "True",
@@ -640,6 +632,7 @@ def _create_local_rocm_repository(repository_ctx):
         "%{rocm_root}": rocm_toolkit_path,
         "%{rocm_toolkit_path}": str(repository_ctx.path(rocm_config.rocm_toolkit_path)),
         "%{rocm_rbe_docker_image}": repository_ctx.os.environ.get(_TF_ROCM_RBE_DOCKER_IMAGE, _DEFAULT_TF_ROCM_RBE_DOCKER_IMAGE),
+        "%{rocm_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_POOL, "default"),
     }
 
     is_rocm_clang = _use_rocm_clang(repository_ctx)
@@ -856,8 +849,7 @@ _ENVIRONS = [
     _TF_ROCM_AMDGPU_TARGETS,
     _ROCM_DISTRO_VERSION,
     _TF_ROCM_RBE_DOCKER_IMAGE,
-    _TF_ROCM_RBE_SINGLE_GPU_POOL,
-    _TF_ROCM_RBE_MULTI_GPU_POOL,
+    _TF_ROCM_RBE_POOL,
     _TF_ROCM_MULTIPLE_PATHS,
 ]
 
