@@ -15,6 +15,7 @@ platform(
         "@platforms//cpu:x86_64",
         "@platforms//os:windows",
         "@bazel_tools//tools/cpp:clang-cl",
+        "@rules_cc//cc/compiler:clang-cl",
     ],
     exec_properties = {
         "container-image": "docker://gcr.io/tensorflow-testing/tf-win2022@sha256:915cb093630432c38b028f56bd31116a5559ebbc688d427b6092d86828ae03bc",
