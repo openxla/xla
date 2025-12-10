@@ -84,6 +84,7 @@ class CudaExecutor : public GpuExecutor {
   void DeallocateStream(Stream* stream) override;
   absl::Status EnablePeerAccessTo(StreamExecutor* other) override;
   bool CanEnablePeerAccessTo(StreamExecutor* other) override;
+  bool CanEnablePeerAccessTo(int other_device_ordinal) override;
   bool DeviceMemoryUsage(int64_t* free_out, int64_t* total_out) const override;
   absl::StatusOr<std::unique_ptr<Kernel>> LoadKernel(
       const KernelLoaderSpec& spec) override;
