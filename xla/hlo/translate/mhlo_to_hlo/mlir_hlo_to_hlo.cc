@@ -2955,6 +2955,8 @@ LogicalResult ExportXlaOp(RngBitGeneratorOp op, OpLoweringContext ctx) {
   return mlir::success();
 }
 
+// ScanOp is not yet supported in StableHLO.
+
 LogicalResult ExportXlaOp(ScatterOp op, OpLoweringContext ctx) {
   auto& value_map = *ctx.values;
   xla::XlaComputationId update_computation;
@@ -4820,6 +4822,62 @@ LogicalResult ExportXlaOp(RngOp op, OpLoweringContext ctx) {
     return success();
   }
   return failure();
+}
+
+LogicalResult ExportXlaOp(ScanOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+  xla::XlaComputationId body;
+  if (failed(ctx.converter->LowerRegionAsComputation(&op.getBody(), body))) {
+    return failure();
+  }
+
+  llvm::SmallVector<xla::XlaOp> inits;
+  if (failed(GetTuple(op, op.getInits(), ctx, inits))) {
+    return failure();
+  }
+
+  llvm::SmallVector<xla::XlaOp> inputs;
+  if (failed(GetTuple(op, op.getInputs(), ctx, inputs))) {
+    return failure();
+  }
+
+  // Scan with 2 operands has 2 outputs.
+  // Scan with 2 * N (N > 1) operands has N outputs which are all tuples (one
+  // tuple for results, one for carries).
+  // The XLA builder API for Scan returns a single XlaOp which is a tuple of
+  // (carries, outputs).
+  xla::XlaOp result =
+      xla::Scan(inits, inputs, body, op.getDimension(), op.getIsReverse());
+
+  if (op.getNumResults() == 2) {
+    value_map[op.getResult(0)] = xla::GetTupleElement(result, 0);
+    value_map[op.getResult(1)] = xla::GetTupleElement(result, 1);
+    return success();
+  }
+
+  // If there are more than 2 results, they must be interleaved in the result
+  // tuple.
+  // The `xla::Scan` builder returns a tuple of N + M elements where N is the
+  // number of carries (inits) and M is the number of scanned outputs (inputs).
+  // However, the MLIR `mhlo.scan` op returns N results corresponding to new
+  // carries and M results corresponding to scanned outputs, interleaved or
+  // separate?
+  //
+  // Let's check `xla::Scan` signature.
+  // `xla::Scan(inits, inputs, ...)` returns a tuple of (new_inits...,
+  // scanned_inputs...). The size of the tuple is `inits.size() +
+  // inputs.size()`.
+  //
+  // `mhlo.scan` returns `results`. The number of results should match
+  // `inits.size()
+  // + inputs.size()`.
+  // `getResults()` returns all results.
+  //
+  // Let's iterate and map them.
+  for (int i = 0; i < op.getNumResults(); ++i) {
+    value_map[op.getResult(i)] = xla::GetTupleElement(result, i);
+  }
+  return success();
 }
 
 LogicalResult ExportXlaOp(ScatterOp op, OpLoweringContext ctx) {
