@@ -26,11 +26,15 @@ limitations under the License.
 #include "rocm/include/roctracer/ext/prof_protocol.h"
 #include "xla/backends/profiler/gpu/rocm_collector.h"
 #include "xla/backends/profiler/gpu/rocm_tracer.h"
+#include "tsl/profiler/lib/profiler_factory.h"
+#include "tsl/profiler/lib/profiler_interface.h"
+#include "xla/backends/profiler/gpu/rocm_collector.h"
+#include "xla/backends/profiler/gpu/rocm_tracer.h"
+#include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
+#include "xla/debug_options_flags.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
-#include "tsl/profiler/lib/profiler_factory.h"
-#include "tsl/profiler/lib/profiler_interface.h"
 
 namespace xla {
 namespace profiler {
@@ -38,7 +42,6 @@ namespace profiler {
 using tensorflow::ProfileOptions;
 using tsl::profiler::AnnotationStack;
 using tsl::profiler::ProfilerInterface;
-using tsl::profiler::RegisterProfilerFactory;
 using tsl::profiler::XSpace;
 
 // GpuTracer for ROCm GPU.
@@ -59,7 +62,6 @@ class GpuTracer : public profiler::ProfilerInterface {
   absl::Status DoStop();
 
   RocmTracerOptions GetRocmTracerOptions();
-
   RocmTraceCollectorOptions GetRocmTraceCollectorOptions(uint32_t num_gpus);
 
   enum State {
@@ -76,10 +78,9 @@ class GpuTracer : public profiler::ProfilerInterface {
 };
 
 RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
-  // TODO(rocm-profiler): We need support for context similar to CUDA
   RocmTracerOptions options;
+#if XLA_GPU_ROCM_TRACER_BACKEND == XLA_GPU_ROCM_TRACER_BACKEND_V1
   std::vector<uint32_t> empty_vec;
-
   // clang formatting does not preserve one entry per line
   // clang-format off
   std::vector<uint32_t> hip_api_domain_ops{
@@ -149,35 +150,42 @@ RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
   options.api_callbacks.emplace(ACTIVITY_DOMAIN_HIP_API, empty_vec);
 
   options.activity_tracing.emplace(ACTIVITY_DOMAIN_HIP_OPS, empty_vec);
-
+#else
+  options.max_annotation_strings = 4 * 1024 * 1024;
+#endif
   return options;
 }
 
 RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
     uint32_t num_gpus) {
   RocmTraceCollectorOptions options;
-  options.max_callback_api_events = 2 * 1024 * 1024;
-  options.max_activity_api_events = 2 * 1024 * 1024;
-  options.max_annotation_strings = 1024 * 1024;
   options.num_gpus = num_gpus;
+
+  const auto& dbg = xla::GetDebugOptionsFromFlags();
+  int64_t max_events = dbg.xla_gpu_rocm_max_trace_events();
+  VLOG(2) << "max number of events to be trace from flag = " << max_events;
+  if (max_events <= 0) max_events = 4 * 1024 * 1024;
+  if (max_events > 1'000'000'000LL) max_events = 1'000'000'000LL;
+
+  VLOG(3) << "maximum number of events to be traced = " << max_events;
+
+  options.max_callback_api_events = max_events;
+  options.max_activity_api_events = max_events;
+  options.max_annotation_strings = max_events;
   return options;
 }
 
 absl::Status GpuTracer::DoStart() {
-  if (!rocm_tracer_->IsAvailable()) {
-    return tsl::errors::Unavailable("Another profile session running.");
-  }
-
   AnnotationStack::Enable(true);
-
-  RocmTraceCollectorOptions trace_collector_options =
-      GetRocmTraceCollectorOptions(rocm_tracer_->NumGpus());
   uint64_t start_gputime_ns = RocmTracer::GetTimestamp();
   uint64_t start_walltime_ns = tsl::EnvTime::NowNanos();
+
+  RocmTracerOptions tracer_options = GetRocmTracerOptions();
+  RocmTraceCollectorOptions trace_collector_options =
+      GetRocmTraceCollectorOptions(rocm_tracer_->NumGpus());
   rocm_trace_collector_ = CreateRocmCollector(
       trace_collector_options, start_walltime_ns, start_gputime_ns);
 
-  RocmTracerOptions tracer_options = GetRocmTracerOptions();
   rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
 
   return absl::OkStatus();
@@ -240,13 +248,9 @@ std::unique_ptr<profiler::ProfilerInterface> CreateGpuTracer(
     return nullptr;
   }
 
-  profiler::RocmTracer* rocm_tracer =
-      profiler::RocmTracer::GetRocmTracerSingleton();
-  if (!rocm_tracer->IsAvailable()) {
-    return nullptr;
-  }
-
-  return std::make_unique<profiler::GpuTracer>(rocm_tracer);
+  auto& rocm_tracer = profiler::RocmTracer::GetRocmTracerSingleton();
+  if (!rocm_tracer.IsAvailable()) return nullptr;
+  return std::make_unique<profiler::GpuTracer>(&rocm_tracer);
 }
 
 auto register_rocm_gpu_tracer_factory = [] {
