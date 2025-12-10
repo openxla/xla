@@ -53,7 +53,9 @@ class DeviceAddressAllocator {
       : platform_(platform) {}
   virtual ~DeviceAddressAllocator() = default;
 
-  // Allocates addressable memory on the device.
+  // Allocates addressable memory on the device, the address is allocated with
+  // physical memory if allocate_physical_memory is true, otherwise it is only
+  // allocated with virtual memory without the mapping physical memory.
   //
   // If size > 0 and the returned absl::StatusOr is OK, the wrapped
   // ScopedDeviceAddress must not be null.  If size == 0, must return a null
@@ -65,7 +67,25 @@ class DeviceAddressAllocator {
   // performance impact.
   virtual absl::StatusOr<ScopedDeviceAddress<uint8_t>> Allocate(
       int device_ordinal, uint64_t size, bool retry_on_failure,
-      int64_t memory_space) = 0;
+      int64_t memory_space, bool allocate_physical_memory = true) = 0;
+
+  // Allocate physical memory on the device for the virtual address that was
+  // allocated before. The virtual address must not be allocated with physical
+  // memory yet.
+  virtual absl::StatusOr<ScopedDeviceAddress<uint8_t>> Allocate(
+      int device_ordinal, DeviceAddressBase address) = 0;
+
+  // The virtual address can be mapped to the physical address that was
+  // allocated for other virtual address. source is the virtual address that has
+  // been previously allocated with physical memory. After map, both
+  // source and dest virtual address will map to the same physical memory.
+  virtual absl::Status Map(int device_ordinal, DeviceAddressBase dest,
+                           DeviceAddressBase source) = 0;
+
+  // Unmap the physical memory that was mapped to the virtual address, but still
+  // reserve the virtual address. If the physical memory is not mapped to any
+  // other virtual address, then physical memory is deallocated.
+  virtual absl::Status Unmap(int device_ordinal, DeviceAddressBase address) = 0;
 
   // Two-arg version of Allocate(), which sets retry-on-failure to true and
   // memory_space to default (0).
@@ -102,6 +122,9 @@ class DeviceAddressAllocator {
   virtual absl::StatusOr<Stream*> GetStream(int device_ordinal) = 0;
 
   // TODO(ezhulenev): Make this method private.
+  // Deallocates the virtual memory and the physical memory if it has been
+  // allocated previously. If the physical memory is also mapped to other
+  // virtual address, only the virtual address is deallocated.
   virtual absl::Status Deallocate(int device_ordinal,
                                   DeviceAddressBase mem) = 0;
 

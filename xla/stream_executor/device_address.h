@@ -87,6 +87,13 @@ class DeviceAddressBase {
   // Sets payload to given value.
   void SetPayload(uint64_t payload) { payload_ = payload; }
 
+  // Returns whether the address is allocated on the device.
+  bool physical_memory_allocated() const { return physical_memory_allocated_; }
+
+  void set_physical_memory_allocated(bool physical_memory_allocated) {
+    physical_memory_allocated_ = physical_memory_allocated;
+  }
+
   // Returns whether the two DeviceAddressBase segments are identical (both in
   // their opaque pointer and size).
   bool IsSameAs(const DeviceAddressBase& other) const {
@@ -110,6 +117,8 @@ class DeviceAddressBase {
   void* opaque_;          // Platform-dependent value representing base address.
   uint64_t size_;         // Size in bytes of this address range.
   uint64_t payload_ = 0;  // Payload data associated with this address.
+  bool physical_memory_allocated_ =
+      false;  // Whether the address is allocated on the device.
 };
 
 // Typed wrapper around "void *"-like DeviceAddressBase.
