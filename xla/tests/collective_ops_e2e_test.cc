@@ -2899,10 +2899,10 @@ TEST_F(CollectiveOpsTestE2E, MultipleModuleDifferentDeviceGroupsShouldRun) {
 
   const int64_t kNumReplicas_1 = 2;
   const int64_t kNumReplicas_2 = 4;
-
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas_2)
-      << "Test requires at least " << kNumReplicas_2 << " devices ("
-      << hlo_runner_->device_count() << " available)";
+  if (hlo_runner_->device_count() < kNumReplicas_2) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas_2 << " devices ("
+                 << hlo_runner_->device_count() << " available)";
+  }
 
   HloModuleConfig config_1 =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas_1);
