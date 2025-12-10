@@ -124,6 +124,5 @@ xla_cc_test(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:LLVMToLLVMIRTranslation",
         "@llvm-project//mlir:Pass",
-        "@tsl//tsl/platform:casts",
     ],
 )

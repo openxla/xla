@@ -108,7 +108,6 @@ cc_library(
     deps = [
         ":cpu_async_execution_tracker",
         ":execution_stream_event_map",
-        "//xla:future",
         "//xla:literal",
         "//xla/pjrt:host_memory_spaces",
         "//xla/pjrt:pjrt_client",
@@ -203,7 +202,7 @@ cc_library(
         "//xla/service:hlo_module_util",
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_value",
-        "//xla/service:maybe_owning_device_memory",
+        "//xla/service:maybe_owning_device_address",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:cpu_executable",
         "//xla/service/cpu:cpu_executable_run_options",
@@ -318,7 +317,6 @@ cc_library(
     hdrs = ["cpu_pjrt_compiler.h"],
     visibility = internal_visibility(["//xla/pjrt/cpu:legacy_cpu_client_users"]),
     deps = [
-        "//xla:status_macros",
         "//xla/backends/cpu/collectives:cpu_collectives",
         "//xla/core/collectives:clique_id",
         "//xla/core/collectives:clique_key",
@@ -356,7 +354,6 @@ xla_cc_test(
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt/plugin/xla_cpu:cpu_topology",
         "//xla/pjrt/plugin/xla_cpu:cpu_topology_description",
-        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings:string_view",

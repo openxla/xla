@@ -159,7 +159,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -183,9 +182,9 @@ cc_library(
         "//xla/ffi/api:c_api_internal",
         "//xla/hlo/ir:hlo",
         "//xla/service:platform_util",
+        "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/concurrency:async_value",
-        "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
@@ -231,7 +230,6 @@ cc_library(
         ":execution_context",
         ":execution_state",
         "//xla:executable_run_options",
-        "//xla/ffi/api:c_api",
         "//xla/hlo/ir:hlo",
         "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/status",
@@ -263,6 +261,7 @@ xla_cc_test(
     srcs = ["attribute_map_test.cc"],
     deps = [
         ":attribute_map",
+        ":attribute_map_proto_cc",
         "//xla/tsl/util/proto:parse_text_proto",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/status",
@@ -306,7 +305,6 @@ xla_cc_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",
-        "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/log:check",

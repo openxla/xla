@@ -41,7 +41,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/hlo_module_util.h"
 #include "xla/service/hlo_runner_interface.h"
-#include "xla/service/maybe_owning_device_memory.h"
+#include "xla/service/maybe_owning_device_address.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/transfer_manager.h"
@@ -49,9 +49,9 @@ limitations under the License.
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
@@ -90,7 +90,7 @@ class HloRunnerExecutable : public OpaqueExecutable {
 }  // namespace
 
 HloRunner::HloRunner(se::Platform* platform, int intra_op_parallelism_threads,
-                     std::unique_ptr<se::DeviceMemoryAllocator> allocator) {
+                     std::unique_ptr<se::DeviceAddressAllocator> allocator) {
   BackendOptions backend_options;
   backend_options.set_platform(platform);
   backend_options.set_intra_op_parallelism_threads(
@@ -105,7 +105,7 @@ HloRunner::HloRunner(se::Platform* platform, int intra_op_parallelism_threads,
 
 HloRunner::~HloRunner() {}
 
-se::DeviceMemoryAllocator* HloRunner::GetAllocator() {
+se::DeviceAddressAllocator* HloRunner::GetAllocator() {
   if (allocator_ == nullptr) {
     return backend_->memory_allocator();
   }
@@ -195,7 +195,7 @@ absl::StatusOr<Literal> HloRunner::TransferLiteralFromDevice(
   ShapedBuffer shaped_buffer(device_shape, buffer.device_ordinal());
   // Populate buffer element by element since the shapes differ now.
   shaped_buffer.buffers().ForEachMutableElement(
-      [&](const xla::ShapeIndex& index, se::DeviceMemoryBase* base_buffer) {
+      [&](const xla::ShapeIndex& index, se::DeviceAddressBase* base_buffer) {
         *base_buffer = buffer.buffer(index);
       });
   return backend().transfer_manager()->TransferLiteralFromDevice(stream.get(),
@@ -289,21 +289,22 @@ absl::StatusOr<Literal> HloRunner::ExecuteWithExecutableAndProfile(
 static std::vector<ExecutionInput> ExecutionInputsFromScopedShapedBuffers(
     absl::Span<ScopedShapedBuffer const> inputs,
     HloInputOutputAliasConfig alias_config, int device_ordinal,
-    se::DeviceMemoryAllocator* allocator) {
+    se::DeviceAddressAllocator* allocator) {
   std::vector<ExecutionInput> execution_inputs;
 
   for (int param_num = 0; param_num < inputs.size(); param_num++) {
     const ScopedShapedBuffer& input_buffer = inputs[param_num];
-    ShapeTree<MaybeOwningDeviceMemory> buffer_tree(
+    ShapeTree<MaybeOwningDeviceAddress> buffer_tree(
         input_buffer.on_device_shape());
 
     input_buffer.buffers().ForEachElement(
         [&](const ShapeIndex& index,
-            const se::DeviceMemoryBase& execution_input_buffer) {
+            const se::DeviceAddressBase& execution_input_buffer) {
           if (alias_config.ParameterHasAlias(param_num, index)) {
             // Store owned.
-            *buffer_tree.mutable_element(index) = se::OwningDeviceMemory{
-                execution_input_buffer, device_ordinal, allocator};
+            *buffer_tree.mutable_element(index) =
+                se::ScopedDeviceAddress<uint8_t>{execution_input_buffer,
+                                                 device_ordinal, allocator};
           } else {
             // Store unowned.
             *buffer_tree.mutable_element(index) = execution_input_buffer;
@@ -318,22 +319,22 @@ static std::vector<ExecutionInput> ExecutionInputsFromScopedShapedBuffers(
 // ExecutionInputs, and an owning vector of `OwningDeviceMemory`'s.
 static void ExecutionInputsFromMovedScopedShapedBuffers(
     std::vector<ExecutionInput>* out_execution_inputs,
-    std::vector<se::OwningDeviceMemory>* out_owned_args,
+    std::vector<se::ScopedDeviceAddress<uint8_t>>* out_owned_args,
     std::vector<ScopedShapedBuffer> inputs,
     HloInputOutputAliasConfig alias_config, int device_ordinal,
-    se::DeviceMemoryAllocator* allocator) {
+    se::DeviceAddressAllocator* allocator) {
   CHECK(out_execution_inputs->empty());
   CHECK(out_owned_args->empty());
 
   for (int param_num = 0; param_num < inputs.size(); param_num++) {
     ShapedBuffer input_buffer = inputs[param_num].release();
 
-    ShapeTree<MaybeOwningDeviceMemory> buffer_tree(
+    ShapeTree<MaybeOwningDeviceAddress> buffer_tree(
         input_buffer.on_device_shape());
 
     input_buffer.buffers().ForEachElement(
         [&](const ShapeIndex& index,
-            const se::DeviceMemoryBase& execution_input_buffer) {
+            const se::DeviceAddressBase& execution_input_buffer) {
           if (alias_config.ParameterHasAlias(param_num, index)) {
             VLOG(1) << "Input " << param_num << " index " << index.ToString()
                     << " buffer " << execution_input_buffer.opaque()
@@ -342,8 +343,9 @@ static void ExecutionInputsFromMovedScopedShapedBuffers(
             // Owned by out_execution_inputs.
             // This allows the Executable to transfer the ownership to the
             // ExecutionOutput.
-            *buffer_tree.mutable_element(index) = se::OwningDeviceMemory{
-                execution_input_buffer, device_ordinal, allocator};
+            *buffer_tree.mutable_element(index) =
+                se::ScopedDeviceAddress<uint8_t>{execution_input_buffer,
+                                                 device_ordinal, allocator};
           } else {
             VLOG(1) << "Input " << param_num << " index " << index.ToString()
                     << " buffer " << execution_input_buffer.opaque()
@@ -419,7 +421,7 @@ absl::StatusOr<ExecutionOutput> HloRunner::ExecuteWithMovedDeviceBuffers(
   std::vector<ExecutionInput> execution_arguments;
   // We need this to keep the arguments not owned by execution_arguments
   // alive.
-  std::vector<se::OwningDeviceMemory> owned_arguments;
+  std::vector<se::ScopedDeviceAddress<uint8_t>> owned_arguments;
 
   ExecutionInputsFromMovedScopedShapedBuffers(
       &execution_arguments, &owned_arguments, std::move(arguments),

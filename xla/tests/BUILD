@@ -223,6 +223,7 @@ cc_library(
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_module_util",
+        "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_runner_interface",
         "//xla/service:hlo_verifier",
         "//xla/service:interpreter_plugin",  # reference backend
@@ -241,6 +242,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:protobuf",
     ],
@@ -518,7 +520,7 @@ xla_test(
         "//xla/service:backend",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
-        "//xla/service:maybe_owning_device_memory",
+        "//xla/service:maybe_owning_device_address",
         "//xla/service:shaped_buffer",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
@@ -1783,9 +1785,11 @@ xla_test(
         "interpreter",
     ],
     shard_count = 40,
+    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
-        ":hlo_test_base",
+        ":hlo_pjrt_interpreter_reference_mixin",
+        ":hlo_pjrt_test_base",
         ":xla_internal_test_main",
         "//xla:array2d",
         "//xla:array3d",
@@ -2912,10 +2916,6 @@ xla_test(
         "gpu": [
             "multi_gpu",
         ],
-        "nvgpu_any": [
-            "broken",
-            "no_oss",
-        ],
     },
     backends = [
         "gpu",
@@ -2967,9 +2967,6 @@ xla_test(
         "gpu": [
             "multi_gpu",
         ],
-        "nvgpu_any": [
-            "no_oss",
-        ],
     },
     backends = ["gpu"],
     deps = [
@@ -3012,10 +3009,6 @@ xla_test(
         "gpu": [
             "multi_gpu",
         ],
-        "nvgpu_any": [
-            "broken",
-            "no_oss",
-        ],
     },
     backends = [
         "gpu",
@@ -3039,10 +3032,6 @@ xla_test(
         "gpu": [
             "multi_gpu",
         ],
-        "nvgpu_any": [
-            "broken",
-            "no_oss",
-        ],
     },
     backends = [
         "gpu",
@@ -3063,6 +3052,7 @@ xla_test(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",

@@ -34,14 +34,14 @@ limitations under the License.
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/maybe_owning_device_memory.h"
+#include "xla/service/maybe_owning_device_address.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/c_api_defn.h"  // IWYU pragma: keep
 #include "xla/stream_executor/tpu/proto_helper.h"
@@ -144,7 +144,7 @@ xla::ShapedBuffer FromC(XLA_ShapedBuffer* c_buffer) {
   xla::Shape xla_on_device_shape =
       ApiConverter::FromC(&c_buffer->on_device_shape);
 
-  xla::ShapeTree<stream_executor::DeviceMemoryBase> xla_shape_tree(
+  xla::ShapeTree<stream_executor::DeviceAddressBase> xla_shape_tree(
       xla_on_device_shape);
   size_t i = 0;
   for (auto& pair : xla_shape_tree) {
@@ -158,14 +158,14 @@ xla::ShapedBuffer FromC(XLA_ShapedBuffer* c_buffer) {
   return xla_shaped_buffer;
 }
 
-SE_MaybeOwningDeviceMemory ToC(xla::MaybeOwningDeviceMemory& mem,
+SE_MaybeOwningDeviceMemory ToC(xla::MaybeOwningDeviceAddress& mem,
                                bool aliased) {
   SE_MaybeOwningDeviceMemory se_mem;
   se_mem.owned = mem.HasOwnership();
-  se_mem.memory = ApiConverter::ToC(mem.AsDeviceMemoryBase());
+  se_mem.memory = ApiConverter::ToC(mem.AsDeviceAddress());
   if (mem.HasOwnership()) {
-    const stream_executor::OwningDeviceMemory* owned =
-        mem.AsOwningDeviceMemory();
+    const stream_executor::ScopedDeviceAddress<uint8_t>* owned =
+        mem.AsScopedDeviceAddress();
     se_mem.device_ordinal = owned->device_ordinal();
     se_mem.allocator = ApiConverter::ToC(owned->allocator());
     if (!aliased) {
@@ -174,27 +174,27 @@ SE_MaybeOwningDeviceMemory ToC(xla::MaybeOwningDeviceMemory& mem,
     }
   } else {
     se_mem.allocator =
-        ToC(static_cast<stream_executor::DeviceMemoryAllocator*>(nullptr));
+        ToC(static_cast<stream_executor::DeviceAddressAllocator*>(nullptr));
     se_mem.device_ordinal = -1;
   }
   return se_mem;
 }
 
-xla::MaybeOwningDeviceMemory FromC(
+xla::MaybeOwningDeviceAddress FromC(
     SE_MaybeOwningDeviceMemory* se_mem,
-    stream_executor::DeviceMemoryAllocator* allocator) {
+    stream_executor::DeviceAddressAllocator* allocator) {
   if (se_mem->owned) {
-    return xla::MaybeOwningDeviceMemory(
-        stream_executor::OwningDeviceMemory(ApiConverter::FromC(se_mem->memory),
-                                            se_mem->device_ordinal, allocator));
+    return xla::MaybeOwningDeviceAddress(stream_executor::OwningDeviceAddress(
+        ApiConverter::FromC(se_mem->memory), se_mem->device_ordinal,
+        allocator));
   } else {
-    return xla::MaybeOwningDeviceMemory(ApiConverter::FromC(se_mem->memory));
+    return xla::MaybeOwningDeviceAddress(ApiConverter::FromC(se_mem->memory));
   }
 }
 
-SE_DeviceMemoryAllocator ToC(
-    stream_executor::DeviceMemoryAllocator* allocator) {
-  SE_DeviceMemoryAllocator se_allocator;
+SE_DeviceAddressAllocator ToC(
+    stream_executor::DeviceAddressAllocator* allocator) {
+  SE_DeviceAddressAllocator se_allocator;
   if (allocator == nullptr) {
     se_allocator.ctx = nullptr;
     se_allocator.platform = nullptr;
@@ -207,10 +207,10 @@ SE_DeviceMemoryAllocator ToC(
   se_allocator.ctx = allocator;
   se_allocator.allocate = [](void* ctx, int device_ordinal, uint64_t size,
                              bool retry_on_failure, int64_t memory_space,
-                             SE_ScopedDeviceMemory* memory,
+                             SE_ScopedDeviceAddress* memory,
                              TF_Status* se_status) {
     auto allocation =
-        reinterpret_cast<stream_executor::DeviceMemoryAllocator*>(ctx)
+        reinterpret_cast<stream_executor::DeviceAddressAllocator*>(ctx)
             ->Allocate(device_ordinal, size, retry_on_failure, memory_space);
     if (!allocation.ok()) {
       auto status = allocation.status();
@@ -224,10 +224,11 @@ SE_DeviceMemoryAllocator ToC(
     }
   };
 
-  se_allocator.deallocate = [](void* ctx, SE_DeviceMemoryBase* base,
+  se_allocator.deallocate = [](void* ctx, SE_DeviceAddressBase* base,
                                int device_ordinal, TF_Status* se_status) {
-    auto status = reinterpret_cast<stream_executor::DeviceMemoryAllocator*>(ctx)
-                      ->Deallocate(device_ordinal, ApiConverter::FromC(*base));
+    auto status =
+        reinterpret_cast<stream_executor::DeviceAddressAllocator*>(ctx)
+            ->Deallocate(device_ordinal, ApiConverter::FromC(*base));
     if (!status.ok()) {
       auto message = status.message();
       stream_executor::tpu::ExecutorApiFn()->TpuStatus_SetFn(
@@ -237,13 +238,13 @@ SE_DeviceMemoryAllocator ToC(
   return se_allocator;
 }
 
-stream_executor::DeviceMemoryAllocator* FromC(
-    const SE_DeviceMemoryAllocator& c_allocator) {
-  return reinterpret_cast<stream_executor::DeviceMemoryAllocator*>(
+stream_executor::DeviceAddressAllocator* FromC(
+    const SE_DeviceAddressAllocator& c_allocator) {
+  return reinterpret_cast<stream_executor::DeviceAddressAllocator*>(
       c_allocator.ctx);
 }
 
-SE_MaybeOwningDeviceMemory ToC(stream_executor::OwningDeviceMemory* mem) {
+SE_MaybeOwningDeviceMemory ToC(stream_executor::OwningDeviceAddress* mem) {
   SE_MaybeOwningDeviceMemory se_mem;
   se_mem.device_ordinal = mem->device_ordinal();
   se_mem.memory = ApiConverter::ToC(mem->Release());
@@ -252,21 +253,21 @@ SE_MaybeOwningDeviceMemory ToC(stream_executor::OwningDeviceMemory* mem) {
   return se_mem;
 }
 
-void ToC(const stream_executor::DeviceMemoryBase& base,
-         SE_DeviceMemoryBase* se_base) {
+void ToC(const stream_executor::DeviceAddressBase& base,
+         SE_DeviceAddressBase* se_base) {
   se_base->opaque = const_cast<void*>(base.opaque());
   se_base->payload = base.payload();
   se_base->size = base.size();
 }
 
-SE_DeviceMemoryBase ToC(const stream_executor::DeviceMemoryBase& base) {
-  SE_DeviceMemoryBase se_base;
+SE_DeviceAddressBase ToC(const stream_executor::DeviceAddressBase& base) {
+  SE_DeviceAddressBase se_base;
   ToC(base, &se_base);
   return se_base;
 }
 
-stream_executor::DeviceMemoryBase FromC(const SE_DeviceMemoryBase& se_base) {
-  stream_executor::DeviceMemoryBase base(se_base.opaque, se_base.size);
+stream_executor::DeviceAddressBase FromC(const SE_DeviceAddressBase& se_base) {
+  stream_executor::DeviceAddressBase base(se_base.opaque, se_base.size);
   base.SetPayload(se_base.payload);
   return base;
 }
@@ -435,12 +436,12 @@ void ToC(const xla::ShapedBuffer& buffer, XLA_ShapedBuffer* c_device_buffer) {
   ApiConverter::ToC(buffer.on_device_shape(),
                     &c_device_buffer->on_device_shape);
   c_device_buffer->device_ordinal = buffer.device_ordinal();
-  absl::InlinedVector<SE_DeviceMemoryBase, 2> bases;
+  absl::InlinedVector<SE_DeviceAddressBase, 2> bases;
   for (auto& pair : buffer.buffers()) {
     bases.push_back(ApiConverter::ToC(pair.second));
   }
   c_device_buffer->count = bases.size();
-  c_device_buffer->bases = new SE_DeviceMemoryBase[bases.size()];
+  c_device_buffer->bases = new SE_DeviceAddressBase[bases.size()];
   for (int i = 0; i < bases.size(); ++i) {
     c_device_buffer->bases[i] = bases[i];
   }
@@ -457,7 +458,7 @@ std::unique_ptr<TpuEmbeddingEngineParametersData> Create(int num_tables) {
 }
 
 void Destroy(XLA_ShapeIndex* shape_index) { delete[] shape_index; }
-void Destroy(SE_DeviceMemoryBase*) {}
+void Destroy(SE_DeviceAddressBase*) {}
 
 void Destroy(XLA_Literal* c_literal) {
   delete[] c_literal->buffers;

@@ -92,7 +92,8 @@ absl::flat_hash_set<HloOpcode> TritonSupportedUnaryElementwiseOps(
   absl::flat_hash_set<HloOpcode> ret{HloOpcode::kAbs, HloOpcode::kCopy};
 
   if (element_type != PrimitiveType::F8E5M2 &&
-      element_type != PrimitiveType::F8E4M3FN) {
+      element_type != PrimitiveType::F8E4M3FN &&
+      element_type != PrimitiveType::F8E8M0FNU) {
     ret.insert(HloOpcode::kNegate);
   }
 
@@ -464,8 +465,12 @@ CodegenDecision IsTritonSupportedDot(
         "Only operands that are fusions are supported.");
   }
 
+  auto types_are = [&](PrimitiveType compare1, PrimitiveType compare2) {
+    return (lhs_type == compare1 && rhs_type == compare2) ||
+           (lhs_type == compare2 && rhs_type == compare1);
+  };
   // TODO(b/393299275): add support tests for mixed types.
-  if (lhs_type != rhs_type) {
+  if (lhs_type != rhs_type && !types_are(F8E5M2, F8E4M3FN)) {
     return CodegenDecision::Forbid(
         "Dot operation only supports same types for lhs and rhs.");
   }

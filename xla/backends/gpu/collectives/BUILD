@@ -140,6 +140,39 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "gpu_clique_rendezvous",
+    srcs = ["gpu_clique_rendezvous.cc"],
+    hdrs = ["gpu_clique_rendezvous.h"],
+    deps = [
+        ":gpu_clique_key",
+        "//xla:util",
+        "//xla/core/collectives:rank_id",
+        "//xla/service:rendezvous",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "gpu_clique_rendezvous_test",
+    srcs = ["gpu_clique_rendezvous_test.cc"],
+    deps = [
+        ":gpu_clique_key",
+        ":gpu_clique_rendezvous",
+        "//xla/core/collectives:rank_id",
+        "//xla/runtime:device_id",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
     name = "gpu_cliques",
     srcs = ["gpu_cliques.cc"],
     hdrs = ["gpu_cliques.h"],
@@ -203,7 +236,7 @@ cc_library(
         "//xla/core/collectives:rank_id",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/runtime:device_id",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -224,7 +257,7 @@ cc_library(
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/service:collective_ops_utils",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
@@ -313,7 +346,7 @@ cc_library(
         "//xla/runtime:device_id",
         "//xla/service:collective_ops_utils",
         "//xla/service/gpu:gpu_executable_run_options",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:gpu_stream",
@@ -378,7 +411,7 @@ cc_library(
         "//xla/runtime:device_id",
         "//xla/service:collective_ops_utils",
         "//xla/service/gpu:gpu_executable_run_options",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
@@ -444,7 +477,7 @@ cc_library(
         "//xla/core/collectives:rank_id",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:collective_ops_utils",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream",
         "//xla/stream_executor/gpu:gpu_stream",
         "//xla/tsl/concurrency:async_value",
@@ -497,7 +530,7 @@ xla_test(
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/service:collective_ops_utils",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:errors",

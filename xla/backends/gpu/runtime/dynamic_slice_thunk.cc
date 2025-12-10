@@ -45,12 +45,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
@@ -117,15 +118,17 @@ std::string DynamicSliceThunk::SliceDef::ToString() const {
 
   // embedded_thunk_argument
   if (embedded_thunk_argument.has_value()) {
-    result += "embedded_thunk_argument:" + embedded_thunk_argument->ToString();
+    absl::StrAppend(&result, "embedded_thunk_argument:",
+                    embedded_thunk_argument->ToString());
   } else {
-    result += "embedded_thunk_argument:null";
+    absl::StrAppend(&result, "embedded_thunk_argument:null");
   }
 
   // offsets
   if (offsets.has_value()) {
-    result += ", offsets:[";
-    result +=
+    absl::StrAppend(&result, ", offsets:[");
+    absl::StrAppend(
+        &result,
         absl::StrJoin(*offsets, ", ", [](std::string* out, const auto& offset) {
           std::visit(
               [out](const auto& value) {
@@ -140,34 +143,34 @@ std::string DynamicSliceThunk::SliceDef::ToString() const {
                 }
               },
               offset);
-        });
-    result += "]";
+        }));
+    absl::StrAppend(&result, "]");
   } else {
-    result += ", offsets:null";
+    absl::StrAppend(&result, ", offsets:null");
   }
 
   // orig_shape
   if (orig_shape.has_value()) {
-    result += ", orig_shape:" + orig_shape->ToString();
+    absl::StrAppend(&result, ", orig_shape:", orig_shape->ToString());
   } else {
-    result += ", orig_shape:null";
+    absl::StrAppend(&result, ", orig_shape:null");
   }
 
   // sliced_shape
   if (sliced_shape.has_value()) {
-    result += ", sliced_shape:" + sliced_shape->ToString();
+    absl::StrAppend(&result, ", sliced_shape:", sliced_shape->ToString());
   } else {
-    result += ", sliced_shape:null";
+    absl::StrAppend(&result, ", sliced_shape:null");
   }
 
   // offset_byte_size
   if (offset_byte_size.has_value()) {
-    result += ", offset_byte_size:" + absl::StrCat(*offset_byte_size);
+    absl::StrAppend(&result, ", offset_byte_size:", *offset_byte_size);
   } else {
-    result += ", offset_byte_size:null";
+    absl::StrAppend(&result, ", offset_byte_size:null");
   }
 
-  result += "}";
+  absl::StrAppend(&result, "}");
   return result;
 }
 
@@ -242,7 +245,7 @@ absl::Status DynamicSliceThunk::Prepare(const PrepareParams& params) {
         HloEvaluator()
             .Evaluate(
                 /*module=*/*offset_as_function_of_indvar_metadata_->indvar_init,
-                /*arg_literals=*/{})
+                /*args=*/{})
             .value();
     VLOG(2) << "Indvar init module: "
             << offset_as_function_of_indvar_metadata_->indvar_init->ToString();
@@ -276,8 +279,8 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
   se::Stream& stream = *params.stream;
   const BufferAllocations& orig_allocations = *params.buffer_allocations;
 
-  absl::InlinedVector<se::DeviceMemoryBase, 8> slice_buffers(
-      slices_.size(), se::DeviceMemoryBase());
+  absl::InlinedVector<se::DeviceAddressBase, 8> slice_buffers(
+      slices_.size(), se::DeviceAddressBase());
 
   // Get memory allocation for copying offsets from device.
   int64_t* offsets_alloc = [&] {
@@ -299,7 +302,7 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     // `argument_buffer` will contain the original offset for slice
     // `argument_slice` within `orig_allocations`
-    se::DeviceMemoryBase argument_buffer =
+    se::DeviceAddressBase argument_buffer =
         orig_allocations.GetDeviceAddress(*slice.embedded_thunk_argument);
 
     // If argument is not sliced, just use the original buffer.
@@ -349,7 +352,7 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
         VLOG(2) << "  - arg " << argument_idx << "[" << offset_idx
                 << "]: transfer offset from device " << alloc_slice.ToString();
 
-        se::DeviceMemoryBase offset_src =
+        se::DeviceAddressBase offset_src =
             orig_allocations.GetDeviceAddress(alloc_slice);
         int64_t* offset_dst = &offset_value(argument_idx, offset_idx);
 
@@ -450,6 +453,30 @@ absl::Status DynamicSliceThunk::TransformAllNestedThunks(
                       fn(std::move(embedded_thunk_)));
   embedded_thunk_ = SequentialThunk::FromThunk(std::move(thunk));
   return absl::OkStatus();
+}
+
+Thunk::BufferUses DynamicSliceThunk::buffer_uses() const {
+  Thunk::BufferUses res;
+  res.reserve(slices_.size());
+  for (const SliceDef& slice : slices_) {
+    if (!slice.embedded_thunk_argument.has_value()) {
+      continue;
+    }
+    res.push_back(
+        BufferUse::Read(*slice.embedded_thunk_argument, *slice.orig_shape));
+
+    if (!slice.offsets.has_value()) {
+      continue;
+    }
+    for (const Offset& offset : *slice.offsets) {
+      auto* alloc_slice = std::get_if<BufferAllocation::Slice>(&offset);
+      if (!alloc_slice) {
+        continue;
+      }
+      res.push_back(BufferUse::Read(*alloc_slice));
+    }
+  }
+  return res;
 }
 
 absl::StatusOr<OptionalDynamicSliceOffsetsProto>

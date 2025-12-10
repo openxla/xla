@@ -114,13 +114,13 @@ cc_library(
         ":type_traits",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
     ] + if_static(
         extra_deps = [
             ":allocator_registry_impl",
             "@com_google_absl//absl/synchronization",
             "//xla/tsl/lib/gtl:inlined_vector",
             "@tsl//tsl/platform:strcat",
-            "@tsl//tsl/platform:stringprintf",
             "//xla/tsl/platform:env",
             "//xla/tsl/platform:env_impl",
             "//xla/tsl/platform:logging",
@@ -171,8 +171,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:strcat",
-        "@tsl//tsl/platform:stringprintf",
         "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/profiler/lib:scoped_memory_debug_annotation",
         "@tsl//tsl/profiler/lib:traceme",
@@ -231,7 +229,10 @@ cc_library(
         "device_id_manager.h",
     ],
     deps = [
+        ":device_type",
         "//xla/tsl/lib/gtl:int_type",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
     ] + if_static([
         ":device_id_impl",
     ]),
@@ -252,7 +253,6 @@ cc_library(
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
-        "//xla/tsl/platform:types",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
@@ -412,6 +412,7 @@ tsl_cc_test(
     deps = [
         ":cancellation",
         "//xla/tsl/platform:env",
+        "//xla/tsl/platform:env_impl",  # buildcleaner: keep
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
