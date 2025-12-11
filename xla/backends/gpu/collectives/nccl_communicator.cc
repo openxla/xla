@@ -84,12 +84,14 @@ static absl::StatusOr<ncclDataType_t> ToNcclDataType(PrimitiveType dtype,
                                                      bool is_reduction_op) {
   switch (dtype) {
     case S8:
-    case F8E5M2:
-    case F8E4M3FN:
     case F8E5M2FNUZ:
     case F8E4M3FNUZ:
     case F8E8M0FNU:
       return ncclInt8;
+    case F8E5M2:
+      return ncclFloat8e5m2;
+    case F8E4M3FN:
+      return ncclFloat8e4m3;
     case PRED:
     case U8:
       return ncclUint8;
