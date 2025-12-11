@@ -48,6 +48,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/mesh_and_axis.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/hlo/utils/hlo_container_util.h"
 #include "xla/layout.h"
@@ -712,22 +714,6 @@ bool MergeShardingIfCompatible(const HloSharding& to_merge,
   return true;
 }
 
-std::optional<int64_t> SelectDominantDevice(
-    const std::map<int64_t, int64_t>& device_map, int64_t* top_count) {
-  int64_t device = 0;
-  int64_t count = 0;
-  for (auto& it : device_map) {
-    if (it.second > count) {
-      count = it.second;
-      device = it.first;
-    }
-  }
-  if (top_count != nullptr) {
-    *top_count = count;
-  }
-  return count > 0 ? std::optional<int64_t>(device) : std::optional<int64_t>();
-}
-
 HloSharding FindCommonSharding(absl::Span<const HloSharding> shardings,
                                std::optional<HloSharding> default_sharding) {
   CHECK(!shardings.empty());
@@ -748,46 +734,6 @@ HloSharding FindCommonSharding(absl::Span<const HloSharding> shardings,
   // shardings are compatible, we should find a sharding that's compatible with
   // the most number of shardings instead.
   return default_sharding.has_value() ? default_sharding.value() : shardings[0];
-}
-
-void AssignComputationDevice(HloComputation* computation, int64_t device) {
-  VLOG(4) << "Assigning device " << device << " to " << computation->name()
-          << " computation";
-  for (HloInstruction* instruction : computation->instructions()) {
-    if (!instruction->has_sharding()) {
-      VLOG(4) << "Assigning device " << device << " to " << instruction->name();
-      instruction->set_device_sharding(device);
-    }
-  }
-}
-
-std::optional<int64_t> GetDominantDevice(
-    absl::Span<HloComputation* const> computations, double dominant_factor) {
-  int64_t instruction_count = 0;
-  std::map<int64_t, int64_t> device_map;
-  for (HloComputation* computation : computations) {
-    for (HloInstruction* instruction : computation->instructions()) {
-      int64_t count = 1;
-      if (instruction->has_sharding()) {
-        for (auto& it : instruction->sharding().UsedDevices(&count)) {
-          // The UsedDevices() API returns a map<device, occurrence_count>.
-          device_map[it.first] += it.second;
-        }
-      }
-      instruction_count += count;
-    }
-  }
-  int64_t count;
-  std::optional<int64_t> device = SelectDominantDevice(device_map, &count);
-  std::optional<int64_t> dominant_device;
-  if (device) {
-    double factor =
-        static_cast<double>(count) / static_cast<double>(instruction_count);
-    if (factor >= dominant_factor) {
-      dominant_device = device;
-    }
-  }
-  return dominant_device;
 }
 
 HloSharding MoveAndMergeShardingTiles(const HloSharding& sharding,
@@ -1134,6 +1080,21 @@ HloSharding PropagateShardingAlongDimsAndReplicateOthers(
   CHECK_EQ(source_dims.size(), target_dims.size());
   if (source_sharding.IsTileMaximal() || source_sharding.IsManual()) {
     return source_sharding;
+  }
+
+  if (source_sharding.UseNamedShardingLeaf()) {
+    std::vector<NamedSharding::DimensionSharding> target_dim_shardings(
+        target_shape_rank);
+    for (int i = 0; i < source_dims.size(); ++i) {
+      target_dim_shardings[target_dims[i]] =
+          source_sharding.named_sharding().dim_shardings()[source_dims[i]];
+    }
+
+    return HloSharding(NamedSharding(
+        source_sharding.named_sharding().mesh(), target_dim_shardings,
+        source_sharding.named_sharding().replicated_axes(),
+        source_sharding.named_sharding().unreduced_axes(),
+        source_sharding.named_sharding().metadata()));
   }
 
   HloSharding replicate_other_dims =
@@ -1544,52 +1505,27 @@ std::optional<HloSharding> ScatterUpdateShardingFromOutputParallelDimensions(
       scatter.scatter_updates()[0]->shape().dimensions().size());
 }
 
-absl::StatusOr<std::pair<std::unique_ptr<HloInstruction>, HloOpcode>>
-IdentityValueAndHloOpcodeForScatterReduceComputation(
-    const HloScatterInstruction& scatter) {
-  auto computation = scatter.to_apply();
-  // We only handle computations with 2 parameters and only 1 calculation.
-  if (computation->instruction_count() != 3) {
-    return absl::Status(
-        absl::StatusCode::kInvalidArgument,
-        "Expected scatter reduce computation with 2 parameters and only 1 "
-        "calculation");
-  }
-
-  auto root_instruction = computation->root_instruction();
-  if (root_instruction->opcode() == HloOpcode::kAdd ||
-      root_instruction->opcode() == HloOpcode::kOr) {
-    return std::make_pair(HloInstruction::CreateConstant(LiteralUtil::Zero(
-                              scatter.shape().element_type())),
-                          root_instruction->opcode());
-  }
-  if (root_instruction->opcode() == HloOpcode::kMultiply ||
-      root_instruction->opcode() == HloOpcode::kAnd) {
-    return std::make_pair(HloInstruction::CreateConstant(
-                              LiteralUtil::One(scatter.shape().element_type())),
-                          root_instruction->opcode());
-  }
-  if (root_instruction->opcode() == HloOpcode::kMaximum) {
-    return std::make_pair(HloInstruction::CreateConstant(LiteralUtil::MinValue(
-                              scatter.shape().element_type())),
-                          root_instruction->opcode());
-  }
-  if (root_instruction->opcode() == HloOpcode::kMinimum) {
-    return std::make_pair(HloInstruction::CreateConstant(LiteralUtil::MaxValue(
-                              scatter.shape().element_type())),
-                          root_instruction->opcode());
-  }
-
-  return absl::Status(absl::StatusCode::kInvalidArgument,
-                      "Expected scatter reduce computation which is "
-                      "add/or/multiply/add/min/max");
-}
-
 HloSharding PartiallyReplicateTiledShardingOnDims(
     const HloSharding& sharding, absl::Span<const int64_t> dims_to_replicate) {
   if (sharding.IsTileMaximal() || sharding.IsManual()) {
     return sharding;
   }
+
+  if (sharding.UseNamedShardingLeaf()) {
+    std::vector<NamedSharding::DimensionSharding> dim_shardings(
+        sharding.named_sharding().dim_shardings().begin(),
+        sharding.named_sharding().dim_shardings().end());
+    for (int64_t dim : dims_to_replicate) {
+      if (dim < dim_shardings.size()) {
+        dim_shardings[dim] = NamedSharding::DimensionSharding();
+      }
+    }
+    return HloSharding(NamedSharding(
+        sharding.named_sharding().mesh(), dim_shardings,
+        sharding.named_sharding().replicated_axes(),
+        sharding.named_sharding().unreduced_axes(), sharding.metadata()));
+  }
+
   int64_t group_count = 1;
   DimensionVector valid_dims_to_replicate;
   for (int64_t dim : dims_to_replicate) {
@@ -1652,6 +1588,15 @@ HloSharding PartiallyReplicateTiledShardingOnAllDimsExcept(
 
 HloSharding ReplicateAllDataDims(const HloSharding& sharding,
                                  int64_t data_rank) {
+  if (sharding.UseNamedShardingLeaf()) {
+    std::vector<NamedSharding::DimensionSharding> dim_shardings(
+        data_rank >= 0 ? data_rank : sharding.num_dimensions());
+    return HloSharding(NamedSharding(
+        sharding.named_sharding().mesh(), dim_shardings,
+        sharding.named_sharding().replicated_axes(),
+        sharding.named_sharding().unreduced_axes(), sharding.metadata()));
+  }
+
   if (sharding.IsManual()) {
     return sharding;
   }
@@ -1677,6 +1622,34 @@ HloSharding RemoveShapeDimensions(const HloSharding& sharding,
   if (sharding.IsTileMaximal() || dims_to_remove.empty()) {
     return sharding;
   }
+
+  if (sharding.UseNamedShardingLeaf()) {
+    // Check to ensure subgroup dimensions are not passed in dims_to_remove as
+    // named sharding doesn't handle them as part of dim_shardings but separate
+    // replicated, unreduced axes as opposed to tile hlo sharding format which
+    // uses tile dimensions to represent subgroup dimensions as well.
+    DCHECK(
+        std::all_of(dims_to_remove.begin(), dims_to_remove.end(),
+                    [&](int64_t i) { return i < sharding.num_dimensions(); }));
+
+    std::vector<NamedSharding::DimensionSharding> new_dim_shardings;
+    new_dim_shardings.reserve(sharding.num_dimensions() -
+                              dims_to_remove.size());
+    for (int64_t i = 0; i < sharding.num_dimensions(); ++i) {
+      if (absl::c_linear_search(dims_to_remove, i)) {
+        CHECK_EQ(sharding.dimension(i), 1);
+      } else {
+        new_dim_shardings.push_back(
+            sharding.named_sharding().dim_shardings()[i]);
+      }
+    }
+
+    return HloSharding(NamedSharding(
+        sharding.named_sharding().mesh(), new_dim_shardings,
+        sharding.named_sharding().replicated_axes(),
+        sharding.named_sharding().unreduced_axes(), sharding.metadata()));
+  }
+
   DimensionVector new_tile_shape;
   new_tile_shape.reserve(sharding.num_dimensions() - dims_to_remove.size());
   for (int64_t i = 0; i < sharding.num_dimensions(); ++i) {

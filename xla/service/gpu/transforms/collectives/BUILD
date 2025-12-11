@@ -94,6 +94,7 @@ cc_library(
     name = "collective_ops_utils",
     srcs = ["collective_ops_utils.cc"],
     hdrs = ["collective_ops_utils.h"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     deps = [
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -592,7 +593,6 @@ cc_library(
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:collective_ops_utils",
-        "//xla/service:source_target_pairs",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",

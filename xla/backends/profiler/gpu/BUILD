@@ -68,7 +68,6 @@ cc_library(
         ":rocm_tracer_utils",
         "//xla/stream_executor/rocm:roctracer_wrapper",
         "//xla/tsl/platform:env_time",
-        "//xla/tsl/platform:errors",
         "//xla/tsl/profiler/backends/cpu:annotation_stack",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -201,9 +200,7 @@ xla_test(
         ":cupti_wrapper",
         ":mock_cupti",
         "//xla/tsl/profiler/utils:time_utils",
-        "@com_google_absl//absl/memory",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -362,7 +359,6 @@ cc_library(
     ],
     deps = [
         ":cupti_collector",
-        ":cupti_interface",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
     ],
@@ -537,6 +533,7 @@ xla_cc_test(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@local_config_rocm//rocm:hip",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
@@ -756,11 +753,7 @@ xla_cc_test(
         ":ondevice_event_exporter",
         "//xla/tsl/profiler/backends/gpu:ondevice_event_receiver",
         "//xla/tsl/profiler/backends/gpu:ondevice_trace_event",
-        "//xla/tsl/profiler/utils:xplane_builder",
-        "//xla/tsl/profiler/utils:xplane_schema",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
 
@@ -865,10 +858,15 @@ xla_test(
     size = "small",
     srcs = ["profile_with_cuda_kernels_test.cc"],
     args = if_google(["--heap_check="]),  # There is a memory leak in CUPTI
-    backends = ["gpu"],
+    backends = [
+        "a100",
+        "h100",
+        "b200",
+    ],
     tags = [
         "cuda-only",
         "no_mac",
+        "nomsan",
     ],
     deps = [
         ":cupti_collector",
@@ -882,5 +880,6 @@ xla_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
+        "@local_config_cuda//cuda:cuda_headers",
     ],
 )

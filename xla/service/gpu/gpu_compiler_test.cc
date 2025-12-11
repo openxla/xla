@@ -455,6 +455,24 @@ TEST_F(PersistedAutotuningTest, WriteResultsOnEachCompilation) {
   }
 }
 
+TEST_F(PersistedAutotuningTest, SingleOperationGetsAutotuned) {
+  xla_gpu_dump_autotune_results_to_ = GetUniqueTempFilePath(".txt");
+
+  TF_EXPECT_OK(GetOptimizedModule(R"(
+e {
+  a = f32[64,128] parameter(0)
+  t = f32[128,64] transpose(a), dimensions={1,0}
+})")
+                   .status());
+
+  TF_ASSERT_OK_AND_ASSIGN(std::string autotune_results_str,
+                          ReadNonEmptyFile(xla_gpu_dump_autotune_results_to_));
+  AutotuneResults results;
+  EXPECT_TRUE(tsl::protobuf::TextFormat::ParseFromString(autotune_results_str,
+                                                         &results));
+  EXPECT_THAT(results.results(), Not(IsEmpty()));
+}
+
 int64_t CountCopies(const HloComputation& computation) {
   int64_t count = 0;
   for (const auto& instruction : computation.instructions()) {
@@ -950,9 +968,8 @@ TEST_P(AotCompilationTest, CompileAndLoadAotResult) {
       std::unique_ptr<AotCompilationResult> aot_result,
       compiler_->LoadAotCompilationResult(serialized_aot_result));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Executable> executable,
-      std::move(*aot_result).LoadExecutable(compiler_, stream_exec_));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                          std::move(*aot_result).LoadExecutable(stream_exec_));
   std::unique_ptr<OpaqueExecutable> wrapped_executable =
       test_runner_as_hlo_runner().WrapExecutable(std::move(executable));
 
@@ -988,9 +1005,8 @@ TEST_P(AotCompilationTest, ExportAndImportAotResult) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<AotCompilationResult> aot_result,
                           compiler_->Export(executable.get()));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Executable> new_executable,
-      std::move(*aot_result).LoadExecutable(compiler_, stream_exec_));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> new_executable,
+                          std::move(*aot_result).LoadExecutable(stream_exec_));
   std::unique_ptr<OpaqueExecutable> wrapped_executable =
       test_runner_as_hlo_runner().WrapExecutable(std::move(new_executable));
 
@@ -1156,8 +1172,7 @@ ENTRY e {
 
     TF_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Executable> executable,
-        std::move(*aot_result)
-            .LoadExecutable(compiler, aot_options.executor()));
+        std::move(*aot_result).LoadExecutable(aot_options.executor()));
     std::unique_ptr<OpaqueExecutable> wrapped_executable =
         test_runner_as_hlo_runner().WrapExecutable(std::move(executable));
 

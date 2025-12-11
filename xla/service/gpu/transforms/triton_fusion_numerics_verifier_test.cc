@@ -77,7 +77,7 @@ class TritonFusionNumericsVerifierTest
   }
 
   DeviceOrDevicelessConfig CreateDeviceOrDevicelessConfig() {
-    se::Platform* platform = PlatformUtil::GetDefaultPlatform().value();
+    se::Platform* platform = PlatformUtil::GetPlatform("gpu").value();
     auto executors_or = PlatformUtil::GetStreamExecutors(platform);
     EXPECT_OK(executors_or);
     return DeviceOrDevicelessConfig{DeviceConfig{executors_or->at(0), nullptr}};
@@ -393,7 +393,7 @@ ENTRY main {
         "kind":"__triton",
         "block_level_fusion_config":{
           "output_tiles":[{"sizes":["1","256000"]}],
-          "num_warps":"32",
+          "num_warps":"16",
           "num_ctas":"1",
           "num_stages":"1"}}}
 })",
@@ -517,7 +517,7 @@ ENTRY main {
       "kind":"__triton",
       "block_level_fusion_config":{
         "output_tiles":[{"sizes":["1","1","1","16384"]}],
-        "num_warps":"32",
+        "num_warps":"16",
         "num_ctas":"1",
         "num_stages":"1"}}}
 }

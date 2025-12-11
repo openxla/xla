@@ -1397,56 +1397,32 @@ HloInstruction* PartitionedHlo::ReplicatePartial(
     return broadcast;
   }
 
-  HloInstruction* result = nullptr;
-  if (state_.collective_ops_creator.create_cross_partition_all_gather) {
-    result = state_.partitioner->AllGatherShards(
-        state_.b, broadcast, sharding(), state_.next_channel_id, ag_dims,
-        state_.collective_ops_creator);
-  }
-
-  if (result == nullptr) {
-    // We do not create all-gather instructions.
-    dus_ar_dims.insert(dus_ar_dims.end(), ag_dims.begin(), ag_dims.end());
-    result = broadcast;
-  } else {
-    // We create all-gather instructions, which may contain padding. Add a slice
-    // to remove the padding.
-    if (!ShapeUtil::Compatible(result->shape(), ag_result_shape)) {
-      std::vector<int64_t> start_indices(ag_result_shape.dimensions().size(),
-                                         0);
-      std::vector<int64_t> strides(ag_result_shape.dimensions().size(), 1);
-      result = state_.b->AddInstruction(
-          HloInstruction::CreateSlice(ag_result_shape, result, start_indices,
-                                      ag_result_shape.dimensions(), strides));
-    }
+  HloInstruction* result = state_.partitioner->AllGatherShards(
+      state_.b, broadcast, sharding(), state_.next_channel_id, ag_dims,
+      state_.collective_ops_creator);
+  // We create all-gather instructions, which may contain padding. Add a slice
+  // to remove the padding.
+  if (!ShapeUtil::Compatible(result->shape(), ag_result_shape)) {
+    std::vector<int64_t> start_indices(ag_result_shape.dimensions().size(), 0);
+    std::vector<int64_t> strides(ag_result_shape.dimensions().size(), 1);
+    result = state_.b->AddInstruction(
+        HloInstruction::CreateSlice(ag_result_shape, result, start_indices,
+                                    ag_result_shape.dimensions(), strides));
   }
 
   if (!dus_ar_dims.empty()) {
     auto zero = state_.b->AddInstruction(HloInstruction::CreateConstant(
         LiteralUtil::Zero(shard_shape.element_type())));
-    std::vector<int64_t> masking_dims;
-    for (int64_t dim : dus_ar_dims) {
-      if (shard_shape.dimensions(dim) * sharding().dimension(dim) !=
-          base_shape().dimensions(dim)) {
-        // DUS will be out-of-bound and offset will be clamped, so we need to
-        // mask this dim with 0.
-        masking_dims.push_back(dim);
+    std::vector<int64_t> skipped_dims;
+    for (int64_t i = 0; i < base_shape().dimensions().size(); ++i) {
+      if (!absl::c_linear_search(dus_ar_dims, i)) {
+        skipped_dims.push_back(i);
       }
     }
-    if (!masking_dims.empty()) {
-      std::vector<int64_t> skipped_dims;
-      for (int64_t i = 0; i < base_shape().dimensions().size(); ++i) {
-        if (!absl::c_linear_search(masking_dims, i)) {
-          skipped_dims.push_back(i);
-        }
-      }
-      result->copy_sharding(hlo_);
-      result = PartitionedHlo(result, final_result_shape, state_)
-                   .PadWithValue(zero,
-                                 /*left_padded_dims=*/{},
-                                 /*skipped_dims=*/skipped_dims)
-                   .hlo();
-    }
+    result->copy_sharding(hlo_);
+    result = PartitionedHlo(result, final_result_shape, state_)
+                 .PadWithValue(zero, /*left_padded_dims=*/{}, skipped_dims)
+                 .hlo();
     auto zero_bcast = state_.b->AddInstruction(
         HloInstruction::CreateBroadcast(final_result_shape, zero, {}));
     auto offsets = MakePartitionOffsets(
@@ -5061,121 +5037,133 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
             /*constrain_layout=*/false, channel_id,
             /*use_global_device_ids=*/true));
       };
-  return {
-      [](SpmdBuilder* b) {
-        return b->AddInstruction(HloInstruction::CreatePartitionId());
-      },
-      [create_all_reduce_lists_of_lists](
-          SpmdBuilder* b, HloInstruction* operand, HloComputation* reduction,
-          const std::vector<std::vector<int64_t>>& partition_subgroups,
-          int64_t channel_id) {
-        return create_all_reduce_lists_of_lists(
-            b, operand, reduction, partition_subgroups, channel_id);
-      },
-      [create_all_reduce_lists_of_lists, uses_all_partitions, num_replicas,
-       num_partitions](SpmdBuilder* b, HloInstruction* operand,
-                       HloComputation* reduction,
-                       const IotaReplicaGroupList& partition_group_list,
-                       int64_t channel_id) {
-        // Fallback to list of lists collective creation if the partition group
-        // list does not utilize all the partitions.
-        if (!uses_all_partitions(partition_group_list)) {
-          return create_all_reduce_lists_of_lists(
-              b, operand, reduction,
-              partition_group_list.flattened_replica_groups(), channel_id);
-        }
-        HloComputation* reduction_clone =
-            reduction->parent()->AddComputationAndUnifyNamesAndIds(
-                reduction->Clone(), false);
-        HloInstruction* all_reduce =
-            b->AddInstruction(HloInstruction::CreateAllReduce(
-                operand->shape(), {operand}, reduction_clone,
+
+  SPMDCollectiveOpsCreator result = {
+      .create_partition_id =
+          [](SpmdBuilder* b) {
+            return b->AddInstruction(HloInstruction::CreatePartitionId());
+          },
+      .create_cross_partition_all_reduce =
+          [create_all_reduce_lists_of_lists](
+              SpmdBuilder* b, HloInstruction* operand,
+              HloComputation* reduction,
+              const std::vector<std::vector<int64_t>>& partition_subgroups,
+              int64_t channel_id) {
+            return create_all_reduce_lists_of_lists(
+                b, operand, reduction, partition_subgroups, channel_id);
+          },
+      .create_cross_partition_all_reduce_with_iota_device_list =
+          [create_all_reduce_lists_of_lists, uses_all_partitions, num_replicas,
+           num_partitions](SpmdBuilder* b, HloInstruction* operand,
+                           HloComputation* reduction,
+                           const IotaReplicaGroupList& partition_group_list,
+                           int64_t channel_id) {
+            // Fallback to list of lists collective creation if the partition
+            // group list does not utilize all the partitions.
+            if (!uses_all_partitions(partition_group_list)) {
+              return create_all_reduce_lists_of_lists(
+                  b, operand, reduction,
+                  partition_group_list.flattened_replica_groups(), channel_id);
+            }
+            HloComputation* reduction_clone =
+                reduction->parent()->AddComputationAndUnifyNamesAndIds(
+                    reduction->Clone(), false);
+            HloInstruction* all_reduce =
+                b->AddInstruction(HloInstruction::CreateAllReduce(
+                    operand->shape(), {operand}, reduction_clone,
+                    ExpandPartitionGroupListAcrossReplicas(
+                        partition_group_list, num_replicas, num_partitions),
+                    /*constrain_layout=*/false, channel_id,
+                    /*use_global_device_ids=*/true));
+            return all_reduce;
+          },
+      .create_cross_partition_collective_permute =
+          [num_partitions](
+              SpmdBuilder* b, HloInstruction* operand,
+              std::vector<std::pair<int64_t, int64_t>>& src_dst_pairs,
+              int64_t channel_id) {
+            /* optimize trivial collective permute */
+            if (src_dst_pairs.empty()) {
+              // If the src/dst pairs are empty, then the collective permute
+              // just initializes the output to zero.
+              return CreateZero(operand->shape(), b);
+            }
+            // A collective-permute is a copy if all pairs are "identity" and
+            // all partitions are listed.
+            bool is_copy =
+                src_dst_pairs.size() == num_partitions &&
+                absl::c_all_of(src_dst_pairs,
+                               [](const std::pair<int64_t, int64_t>& pair) {
+                                 return pair.first == pair.second;
+                               });
+            if (is_copy) {
+              return operand;
+            }
+            return b->AddInstruction(HloInstruction::CreateCollectivePermute(
+                operand->shape(), operand, src_dst_pairs, channel_id));
+          },
+      .create_cross_partition_all_to_all =
+          [create_all_to_all_list_of_lists](
+              SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
+              const std::vector<std::vector<int64_t>>& partition_subgroups,
+              int64_t channel_id, std::optional<int64_t> split_dimension) {
+            return create_all_to_all_list_of_lists(
+                b, operands, partition_subgroups, channel_id, split_dimension);
+          },
+      .create_cross_partition_all_to_all_with_iota_device_list =
+          [create_all_to_all_list_of_lists, uses_all_partitions, num_replicas,
+           num_partitions](
+              SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
+              const IotaReplicaGroupList& partition_group_list,
+              int64_t channel_id, std::optional<int64_t> split_dimension) {
+            // Fallback back to list of lists collective creation if the
+            // partition group list does not utilize all the partitions.
+            if (!uses_all_partitions(partition_group_list)) {
+              return create_all_to_all_list_of_lists(
+                  b, operands, partition_group_list.flattened_replica_groups(),
+                  channel_id, split_dimension);
+            }
+            std::vector<Shape> shapes(operands.size(), operands[0]->shape());
+            const Shape output_shape = (shapes.size() == 1)
+                                           ? shapes[0]
+                                           : ShapeUtil::MakeTupleShape(shapes);
+            return b->AddInstruction(HloInstruction::CreateAllToAll(
+                output_shape, operands,
+                ExpandPartitionGroupListAcrossReplicas(
+                    partition_group_list, num_replicas, num_partitions),
+                /*constrain_layout=*/false, channel_id, split_dimension));
+          },
+      .create_cross_partition_all_gather =
+          [create_all_gather_list_of_lists](
+              SpmdBuilder* b, HloInstruction* operand, const Shape& ag_shape,
+              const std::vector<std::vector<int64_t>>& partition_subgroups,
+              int64_t channel_id, int64_t all_gather_dimension) {
+            return create_all_gather_list_of_lists(
+                b, operand, ag_shape, partition_subgroups, channel_id,
+                all_gather_dimension);
+          },
+      .create_cross_partition_all_gather_with_iota_device_list =
+          [create_all_gather_list_of_lists, uses_all_partitions, num_replicas,
+           num_partitions](SpmdBuilder* b, HloInstruction* operand,
+                           const Shape& ag_shape,
+                           const IotaReplicaGroupList& partition_group_list,
+                           int64_t channel_id, int64_t all_gather_dimension) {
+            // Fallback to list of lists collective creation if the partition
+            // group list does not utilize all the partitions.
+            if (!uses_all_partitions(partition_group_list)) {
+              return create_all_gather_list_of_lists(
+                  b, operand, ag_shape,
+                  partition_group_list.flattened_replica_groups(), channel_id,
+                  all_gather_dimension);
+            }
+            return b->AddInstruction(HloInstruction::CreateAllGather(
+                ag_shape, {operand}, all_gather_dimension,
                 ExpandPartitionGroupListAcrossReplicas(
                     partition_group_list, num_replicas, num_partitions),
                 /*constrain_layout=*/false, channel_id,
                 /*use_global_device_ids=*/true));
-        return all_reduce;
-      },
-      [num_partitions](SpmdBuilder* b, HloInstruction* operand,
-                       std::vector<std::pair<int64_t, int64_t>>& src_dst_pairs,
-                       int64_t channel_id) {
-        /* optimize trivial collective permute */
-        if (src_dst_pairs.empty()) {
-          // If the src/dst pairs are empty, then the collective permute
-          // just initializes the output to zero.
-          return CreateZero(operand->shape(), b);
-        }
-        // A collective-permute is a copy if all pairs are "identity" and
-        // all partitions are listed.
-        bool is_copy =
-            src_dst_pairs.size() == num_partitions &&
-            absl::c_all_of(src_dst_pairs,
-                           [](const std::pair<int64_t, int64_t>& pair) {
-                             return pair.first == pair.second;
-                           });
-        if (is_copy) {
-          return operand;
-        }
-        return b->AddInstruction(HloInstruction::CreateCollectivePermute(
-            operand->shape(), operand, src_dst_pairs, channel_id));
-      },
-      [create_all_to_all_list_of_lists](
-          SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
-          const std::vector<std::vector<int64_t>>& partition_subgroups,
-          int64_t channel_id, std::optional<int64_t> split_dimension) {
-        return create_all_to_all_list_of_lists(b, operands, partition_subgroups,
-                                               channel_id, split_dimension);
-      },
-      [create_all_to_all_list_of_lists, uses_all_partitions, num_replicas,
-       num_partitions](
-          SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
-          const IotaReplicaGroupList& partition_group_list, int64_t channel_id,
-          std::optional<int64_t> split_dimension) {
-        // Fallback back to list of lists collective creation if the partition
-        // group list does not utilize all the partitions.
-        if (!uses_all_partitions(partition_group_list)) {
-          return create_all_to_all_list_of_lists(
-              b, operands, partition_group_list.flattened_replica_groups(),
-              channel_id, split_dimension);
-        }
-        std::vector<Shape> shapes(operands.size(), operands[0]->shape());
-        const Shape output_shape = (shapes.size() == 1)
-                                       ? shapes[0]
-                                       : ShapeUtil::MakeTupleShape(shapes);
-        return b->AddInstruction(HloInstruction::CreateAllToAll(
-            output_shape, operands,
-            ExpandPartitionGroupListAcrossReplicas(
-                partition_group_list, num_replicas, num_partitions),
-            /*constrain_layout=*/false, channel_id, split_dimension));
-      },
-      [create_all_gather_list_of_lists](
-          SpmdBuilder* b, HloInstruction* operand, const Shape& ag_shape,
-          const std::vector<std::vector<int64_t>>& partition_subgroups,
-          int64_t channel_id, int64_t all_gather_dimension) {
-        return create_all_gather_list_of_lists(b, operand, ag_shape,
-                                               partition_subgroups, channel_id,
-                                               all_gather_dimension);
-      },
-      [create_all_gather_list_of_lists, uses_all_partitions, num_replicas,
-       num_partitions](SpmdBuilder* b, HloInstruction* operand,
-                       const Shape& ag_shape,
-                       const IotaReplicaGroupList& partition_group_list,
-                       int64_t channel_id, int64_t all_gather_dimension) {
-        // Fallback to list of lists collective creation if the partition group
-        // list does not utilize all the partitions.
-        if (!uses_all_partitions(partition_group_list)) {
-          return create_all_gather_list_of_lists(
-              b, operand, ag_shape,
-              partition_group_list.flattened_replica_groups(), channel_id,
-              all_gather_dimension);
-        }
-        return b->AddInstruction(HloInstruction::CreateAllGather(
-            ag_shape, {operand}, all_gather_dimension,
-            ExpandPartitionGroupListAcrossReplicas(
-                partition_group_list, num_replicas, num_partitions),
-            /*constrain_layout=*/false, channel_id,
-            /*use_global_device_ids=*/true));
-      }};
+          }};
+  return result;
 }
 
 SpmdPartitioner::SpmdPartitioner(int64_t num_partitions, int64_t num_replicas,
@@ -5476,6 +5464,26 @@ int64_t SpmdPartitioner::CommunicationCostInBytes(HloInstruction* hlo) {
   module->set_spmd_output_sharding(entry_root->sharding());
 }
 
+namespace {
+
+// Returns true if the old and the new entry layout shapes differ.
+// NOTE: that we explicitly ignore the layout, since it is either defined
+// beforehand or during layout assignment.
+bool ShapeChangesBetween(const ComputationLayout& old_entry_layout,
+                         const ProgramShape& new_program_shape) {
+  for (int64_t i = 0; i < new_program_shape.parameters_size(); ++i) {
+    if (!Shape::Equal().IgnoreLayout()(old_entry_layout.parameter_shape(i),
+                                       new_program_shape.parameters(i))) {
+      return true;
+    }
+  }
+
+  return !Shape::Equal().IgnoreLayout()(old_entry_layout.result_shape(),
+                                        new_program_shape.result());
+}
+
+}  // namespace
+
 absl::StatusOr<bool> SpmdPartitioner::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -5570,57 +5578,64 @@ absl::StatusOr<bool> SpmdPartitioner::RunImpl(
       }));
 
   // For the entry computation, make sure that the root instruction and the
-  // parameters preserve their signatures.
+  // parameters preserve their signatures if there are any partitioning changes.
   auto new_program_shape = module->entry_computation()->ComputeProgramShape();
-  if (!options_.allow_module_signature_change) {
-    if (!Shape::Equal()(program_shape.result(), new_program_shape.result())) {
-      return absl::InvalidArgumentError(
-          "Result shape changed for the entry computation from: " +
-          program_shape.result().ToString() +
-          " to: " + new_program_shape.result().ToString());
-    }
-    if (program_shape.parameters_size() !=
-        new_program_shape.parameters_size()) {
-      return absl::InvalidArgumentError(
-          "Parameter count changed for the entry computation from: " +
-          std::to_string(program_shape.parameters_size()) +
-          " to: " + std::to_string(new_program_shape.parameters_size()));
-    }
-    for (int64_t i = 0; i < program_shape.parameters_size(); ++i) {
-      if (!Shape::Equal()(program_shape.parameters(i),
-                          new_program_shape.parameters(i))) {
+  const ComputationLayout& old_entry_layout =
+      module->entry_computation_layout();
+  if (ShapeChangesBetween(old_entry_layout, new_program_shape)) {
+    if (!options_.allow_module_signature_change) {
+      if (!Shape::Equal()(program_shape.result(), new_program_shape.result())) {
         return absl::InvalidArgumentError(
-            "Parameter shape changed for the entry computation parameter " +
-            std::to_string(i) +
-            " from: " + program_shape.parameters(i).ToString() +
-            " to: " + new_program_shape.parameters(i).ToString());
+            "Result shape changed for the entry computation from: " +
+            program_shape.result().ToString() +
+            " to: " + new_program_shape.result().ToString());
       }
-    }
-  } else {
-    // Fix up some bad tiling in entry computation layout.
-    auto update_shape = [this](Shape* subshape, const xla::ShapeIndex& index) {
-      if (subshape->IsArray() && subshape->has_layout()) {
-        UpdateLayout(subshape);
+      if (program_shape.parameters_size() !=
+          new_program_shape.parameters_size()) {
+        return absl::InvalidArgumentError(
+            "Parameter count changed for the entry computation from: " +
+            std::to_string(program_shape.parameters_size()) +
+            " to: " + std::to_string(new_program_shape.parameters_size()));
       }
-    };
-    const auto& old_entry_layout = module->entry_computation_layout();
-    // Shapes can change but the layout should still remain the same.
-    for (int64_t i = 0; i < new_program_shape.parameters_size(); ++i) {
-      TF_RETURN_IF_ERROR(LayoutUtil::CopyLayoutBetweenShapes(
-          old_entry_layout.parameter_shape(i),
-          new_program_shape.mutable_parameters(i)));
-      ShapeUtil::ForEachMutableSubshape(new_program_shape.mutable_parameters(i),
-                                        update_shape);
-    }
-    TF_RETURN_IF_ERROR(LayoutUtil::CopyLayoutBetweenShapes(
-        old_entry_layout.result_shape(), new_program_shape.mutable_result()));
-    ShapeUtil::ForEachMutableSubshape(new_program_shape.mutable_result(),
-                                      update_shape);
+      for (int64_t i = 0; i < program_shape.parameters_size(); ++i) {
+        if (!Shape::Equal()(program_shape.parameters(i),
+                            new_program_shape.parameters(i))) {
+          return absl::InvalidArgumentError(
+              "Parameter shape changed for the entry computation parameter " +
+              std::to_string(i) +
+              " from: " + program_shape.parameters(i).ToString() +
+              " to: " + new_program_shape.parameters(i).ToString());
+        }
+      }
+    } else {
+      // For the cases where we update the shape, also fix up some bad tiling in
+      // entry computation layout.
+      auto update_shape = [this](Shape* subshape,
+                                 const xla::ShapeIndex& index) {
+        if (subshape->IsArray() && subshape->has_layout()) {
+          UpdateLayout(subshape);
+        }
+      };
+      // Shapes can change but the layout should still remain the same.
+      // If the shapes do not change, we shouldn't change the layout if pre-set.
+      for (int64_t i = 0; i < new_program_shape.parameters_size(); ++i) {
+        TF_RETURN_IF_ERROR(LayoutUtil::CopyLayoutBetweenShapes(
+            old_entry_layout.parameter_shape(i),
+            new_program_shape.mutable_parameters(i)));
+        ShapeUtil::ForEachMutableSubshape(
+            new_program_shape.mutable_parameters(i), update_shape);
+      }
 
-    HloModuleConfig config = module->config();
-    *config.mutable_entry_computation_layout() =
-        ComputationLayout(new_program_shape, /*ignore_layouts=*/false);
-    module->set_config(config);
+      TF_RETURN_IF_ERROR(LayoutUtil::CopyLayoutBetweenShapes(
+          old_entry_layout.result_shape(), new_program_shape.mutable_result()));
+      ShapeUtil::ForEachMutableSubshape(new_program_shape.mutable_result(),
+                                        update_shape);
+
+      HloModuleConfig config = module->config();
+      *config.mutable_entry_computation_layout() =
+          ComputationLayout(new_program_shape, /*ignore_layouts=*/false);
+      module->set_config(config);
+    }
   }
 
   XLA_VLOG_LINES(1, SpmdLogger::ReportAfterPartition(

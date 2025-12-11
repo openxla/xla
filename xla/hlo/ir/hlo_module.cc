@@ -267,20 +267,27 @@ void HloModule::MarkFusionDuplications(
     const {
   for (const HloComputation* computation : computations()) {
     for (auto* instruction : computation->instructions()) {
-      if (instruction->opcode() == HloOpcode::kFusion) {
-        auto rep =
-            replacements.find(instruction->fused_instructions_computation());
-        if (rep != replacements.end()) {
-          xla::HloComputation* new_comp = rep->second;
-          if (new_comp->IsFusionComputation()) {
-            auto dedup_name = new_comp->FusionInstruction()->name();
-            new_comp->FusionInstruction()->set_metadata_deduplicated_name(
-                std::string(dedup_name));
-            instruction->set_metadata_deduplicated_name(
-                std::string(dedup_name));
-          }
-        }
+      if (instruction->opcode() != HloOpcode::kFusion) {
+        continue;
       }
+      auto it =
+          replacements.find(instruction->fused_instructions_computation());
+      if (it == replacements.end()) {
+        continue;
+      }
+      HloComputation* representative = it->second;
+      // Follow chain to find the root representative.
+      for (auto it2 = replacements.find(representative);
+           it2 != replacements.end(); it2 = replacements.find(representative)) {
+        representative = it2->second;
+      }
+      if (!representative->IsFusionComputation()) {
+        continue;
+      }
+      std::string dedup_name(representative->FusionInstruction()->name());
+      representative->FusionInstruction()->set_metadata_deduplicated_name(
+          dedup_name);
+      instruction->set_metadata_deduplicated_name(dedup_name);
     }
   }
 }
@@ -1751,7 +1758,7 @@ void HloModule::OriginalValueRecoveryTable::AddRecoveryComputation(
     std::optional<OriginalArray>* new_original_array =
         new_inst->original_value()->mutable_original_array(shape_index);
     if (!*new_original_array) {
-      if (recovery_computation->get() == nullptr) {
+      if (*recovery_computation == nullptr) {
         // If the recovery computation is a nullptr, it means this is an
         // identity computation and we can just pass through the original array.
         new_original_array->emplace(*old_original_array);

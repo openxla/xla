@@ -24,13 +24,10 @@ cc_library(
         "//xla/service:compiler",
         "//xla/service:executable",
         "//xla/stream_executor:platform_manager",
-        "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/host:host_platform",
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
     ],
@@ -49,7 +46,7 @@ cc_library(
         "//xla/backends/autotuner:profiler",
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
-        "//xla/service:maybe_owning_device_memory",
+        "//xla/service:maybe_owning_device_address",
         "//xla/service:shaped_buffer",
         "//xla/service/cpu:cpu_executable",
         "//xla/tsl/platform:errors",
@@ -88,7 +85,6 @@ cc_library(
     hdrs = ["xnnpack_backend.h"],
     deps = [
         ":cpu_codegen_backend",
-        "//xla:status_macros",
         "//xla:util",
         "//xla/backends/autotuner:codegen_backend",
         "//xla/backends/cpu:xnn_fusion_options_proto_cc",
@@ -102,7 +98,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:casts",
     ],
 )
 
@@ -203,7 +198,5 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:test",
     ],
 )

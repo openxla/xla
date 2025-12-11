@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/transforms/nest_gemm_fusion.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -467,19 +468,26 @@ absl::StatusOr<BitcastParams> CalculateBitcastOfBroadcast(
 
   // Dimensions of the new broadcast.
   llvm::SmallVector<int64_t> new_dims;
+  llvm::SmallVector<int64_t> broadcast_physical_dims =
+      GetPhysicalDimensions(broadcast_shape);
   auto factors = CommonFactors(GetPhysicalDimensions(result_shape),
-                               GetPhysicalDimensions(broadcast_shape));
+                               broadcast_physical_dims);
   for (int64_t i = 1; i < factors.size(); ++i) {
     auto [result_from, broadcast_from] = factors[i - 1];
     auto [result_to, broadcast_to] = factors[i];
 
     bool all_operands = true, any_operands = false;
     for (int64_t j = broadcast_from; j < broadcast_to; ++j) {
+      if (broadcast_physical_dims[j] == 1) {
+        // If dimension size is 1 then we can ignore it: it's either immediately
+        // dropped by old reshape or it's coming from the operand and then the
+        // new reshape will handle it.
+        continue;
+      }
       bool value = is_operand_dim[broadcast_shape.layout().minor_to_major(j)];
       all_operands &= value;
       any_operands |= value;
     }
-
     if (!any_operands) {
       continue;  // All dimensions in this group are broadcast dimensions.
     }
@@ -658,8 +666,11 @@ absl::StatusOr<BitcastParams> CalculateBitcastOfTransposeImpl(
   // Maps logical operand dimension index to the physical dimension index.
   llvm::SmallVector<int64_t> operand_inv_layout =
       GetInversePermutation(operand_shape.layout().minor_to_major());
-  auto factors = CommonFactors(GetPhysicalDimensions(result_shape),
-                               GetPhysicalDimensions(transpose_shape));
+
+  const absl::InlinedVector<std::pair<int64_t, int64_t>, 8> factors =
+      ::xla::gpu::detail::CommonFactorsMergingTrivialRanges(
+          GetPhysicalDimensions(result_shape),
+          GetPhysicalDimensions(transpose_shape));
   for (int64_t i = 1; i < factors.size(); ++i) {
     auto [result_from, transpose_from] = factors[i - 1];
     auto [result_to, transpose_to] = factors[i];
@@ -679,6 +690,12 @@ absl::StatusOr<BitcastParams> CalculateBitcastOfTransposeImpl(
       indices.push_back(index);
     };
 
+    if (indices.empty()) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Cannot hoist bitcast across ", transpose->ToString(),
+                       " because size-1 dims in bitcasts are not yet supported "
+                       "(b/466065483)."));
+    }
     if (indices.back() - indices.front() >= transpose_to - transpose_from ||
         !absl::c_is_sorted(indices)) {
       return absl::InvalidArgumentError(
@@ -1242,13 +1259,13 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
       SymbolicTileAnalysis::AnalyzeComputation(
           *computation, ctx,
           TritonEmitterConstraints::GetBuilder(device_description));
-  if (std::holds_alternative<FusionDecision>(analysis_or)) {
+
+  if (const auto* fusion_decision = std::get_if<FusionDecision>(&analysis_or)) {
     std::unique_ptr<HloModule> extracted_computation_module =
         ExtractInstructionIntoNewModule(*computation->FusionInstruction());
-    return absl::InternalError(
-        absl::StrCat("Failed to analyze the computation (",
-                     std::get<FusionDecision>(analysis_or).Explain(),
-                     "): ", extracted_computation_module->ToString()));
+    return absl::InternalError(absl::StrCat(
+        "Failed to analyze the computation (", fusion_decision->Explain(),
+        "):\n", extracted_computation_module->ToString()));
   }
 
   auto& analysis = std::get<SymbolicTileAnalysis>(analysis_or);
@@ -1340,6 +1357,33 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
 
   return absl::InternalError(absl::StrCat(
       "Couldn't find output tile sizes that satisfy ", tiled_dot.ToString()));
+}
+
+absl::InlinedVector<std::pair<int64_t, int64_t>, 8>
+CommonFactorsMergingTrivialRanges(absl::Span<const int64_t> a,
+                                  absl::Span<const int64_t> b) {
+  // CommonFactors does what we need but it also creates empty groups with
+  // product of 1, e.g. `[1] -> []` or `[] -> [1]`. We remove the bounds of
+  // such ranges to merge them with neighbors. There are many different ways
+  // to do this, here we continously append ranges to the start of the next
+  // group unless it is the very last range.
+  absl::InlinedVector<std::pair<int64_t, int64_t>, 8> bounds =
+      CommonFactors(a, b);
+  for (size_t i = 0; i + 1 < bounds.size() && bounds.size() > 2;) {
+    auto [a_start, b_start] = bounds[i];
+    auto [a_end, b_end] = bounds[i + 1];
+    if (a_start != a_end && b_start != b_end) {
+      i++;
+      continue;
+    }
+    if (i + 2 == bounds.size()) {
+      // Very last range - append it to the previous one.
+      bounds.erase(bounds.begin() + i);
+    } else {
+      bounds.erase(bounds.begin() + i + 1);
+    }
+  }
+  return bounds;
 }
 
 }  // namespace detail

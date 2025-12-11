@@ -103,8 +103,8 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/ptx_compiler_helpers.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
@@ -145,6 +145,7 @@ namespace {
 std::unique_ptr<HloPassPipeline> GetCublasRewriterPipeline(
     const se::DeviceDescription* device_description) {
   auto pipeline = std::make_unique<HloPassPipeline>("cublas_rewriter_pipeline");
+  pipeline->AddPass(std::make_unique<ScaledDotRewriter>());
   pipeline->AddPass(std::make_unique<DotAlgorithmRewriter>());
   for (GemmRewriterOptions::DType dtype :
        {GemmRewriterOptions::DType::kFp8Only,
@@ -1003,20 +1004,9 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
       supports_contracting_split &&
       debug_options_.xla_gpu_enable_split_k_autotuning();
 
-  // Allow TMA tuning for Hopper+ devices when TMA flag is passed.
-  bool autotune_tma = debug_options_.xla_gpu_experimental_enable_triton_tma() &&
-                      stream_executor::gpu::IsTmaAvailableForDevice(
-                          config_.GetDeviceDescription());
   bool autotune_warp_specialization =
       debug_options_.xla_gpu_experimental_enable_triton_warp_specialization() &&
       IsWarpSpecializationAvailable();
-  if (autotune_warp_specialization && !autotune_tma) {
-    return absl::InvalidArgumentError(
-        "Warp specialization is requested, but TMA is not enabled. If you wish "
-        "to enable warp specialization, set both "
-        "`xla_gpu_experimental_enable_triton_tma` and "
-        "`xla_gpu_experimental_enable_triton_warp_specialization` to true.");
-  }
   TritonDotFusionSearchSpace search_space(config_.GetDeviceDescription(), &dot);
   VLOG(1) << "Generating configs from search space: "
           << search_space.ToString();
@@ -1026,7 +1016,6 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
       /*force_contracting_split=*/autotune_contracting_split
           ? std::nullopt
           : std::make_optional(1),
-      /*autotune_tma=*/autotune_tma,
       /*autotune_warp_specialization=*/autotune_warp_specialization);
 
   if (auto overrides = config_.gemm_config_overrides(); overrides.has_value()) {
@@ -1701,7 +1690,7 @@ absl::StatusOr<bool> GemmFusionAutotuner::RunViaNewInfra(
   se::StreamExecutor* stream_exec = config_.GetExecutor();
   TF_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler,
                       Compiler::GetForPlatform(stream_exec->GetPlatform()));
-  se::DeviceMemoryAllocator* device_allocator = config_.GetAllocator();
+  se::DeviceAddressAllocator* device_allocator = config_.GetAllocator();
   std::unique_ptr<Compiler::GpuTargetConfig> target_config;
   target_config = std::make_unique<Compiler::GpuTargetConfig>(stream_exec);
   backends.push_back(std::make_unique<FissionBackend>(

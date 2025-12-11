@@ -314,7 +314,8 @@ absl::StatusOr<Autotuner::Config> Autotuner::TuneBestConfig(
         absl::StrCat("Autotuner could not find any supported configs for HLO: ",
                      instr->ToString()));
   }
-  VLOG(1) << "Found " << supported_configs.size() << " supported configs.";
+  VLOG(1) << "Found total of " << supported_configs.size()
+          << " supported configs.";
 
   std::vector<absl::StatusOr<std::unique_ptr<Executable>>> executables =
       CompileAll(instr, supported_configs);
@@ -329,6 +330,17 @@ absl::StatusOr<Autotuner::Config> Autotuner::TuneBestConfig(
               << supported_configs[i].ToString()
               << " with status: " << executables[i].status();
     }
+  }
+
+  if (autotune_config_.exclude_cublas_config) {
+    executable_candidates.erase(
+        std::remove_if(executable_candidates.begin(),
+                       executable_candidates.end(),
+                       [](const ExecutableCandidate& candidate) {
+                         return candidate.config.codegen_backend->name() ==
+                                "Cublas_fission";
+                       }),
+        executable_candidates.end());
   }
 
   if (executable_candidates.empty()) {
@@ -411,8 +423,13 @@ absl::StatusOr<std::vector<Autotuner::Config>> Autotuner::GetSupportedConfigs(
     absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
         per_backend_configs = codegen_backend->GetSupportedConfigs(*instr);
     if (!per_backend_configs.ok()) {
+      VLOG(3) << "Failed to get supported configs for backend "
+              << codegen_backend->name() << ": "
+              << per_backend_configs.status();
       continue;
     }
+    VLOG(3) << "Found of " << per_backend_configs->size()
+            << " supported configs for backend " << codegen_backend->name();
     for (auto& config : *per_backend_configs) {
       configs.push_back({codegen_backend.get(), std::move(config)});
     }
@@ -496,15 +513,6 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
 
 absl::StatusOr<Autotuner::ConfigResult> Autotuner::PickBestConfig(
     std::vector<ConfigResult>& results) {
-  if (autotune_config_.exclude_cublas_config) {
-    results.erase(
-        std::remove_if(results.begin(), results.end(),
-                       [](const ConfigResult& result) {
-                         return result.config.codegen_backend->name() ==
-                                "Cublas_fission";
-                       }),
-        results.end());
-  }
 
   absl::Duration min_duration = absl::InfiniteDuration();
   ConfigResult* best_result = nullptr;

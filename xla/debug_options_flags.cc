@@ -418,7 +418,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
 
-  opts.set_xla_enable_command_buffers_during_profiling(true);
+  // TODO(b/355487968): Remove this flag once all data will be presented in
+  // xprof with command buffers.
+  opts.set_xla_enable_command_buffers_during_profiling(false);
 
   opts.set_xla_gpu_cudnn_gemm_max_plans(5);
 
@@ -457,10 +459,11 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_heuristic_collective_combining(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_silent_hlo_change(false);
   opts.set_xla_disable_automatic_host_compute_offload(false);
+  opts.set_xla_allow_h2h_copy_when_automatic_host_compute_offload_disabled(
+      false);
   opts.set_xla_enable_scoped_logging_timers(true);
   opts.set_xla_unsupported_crash_on_hlo_pass_noop_change(false);
   opts.set_xla_gpu_experimental_enable_split_k_rewrite(false);
-  opts.set_xla_gpu_experimental_enable_triton_tma(true);
   opts.set_xla_gpu_experimental_enable_triton_warp_specialization(false);
   opts.set_xla_detect_unstable_reductions(DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_detect_unstable_reductions_post_optimizations(
@@ -2610,6 +2613,16 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Return an error if HostOffloader would have automatically offloaded some"
       " compute to the host."));
   flag_list->push_back(tsl::Flag(
+      "xla_allow_h2h_copy_when_automatic_host_compute_offload_disabled",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_allow_h2h_copy_when_automatic_host_compute_offload_disabled),  // NOLINT
+      debug_options
+          ->xla_allow_h2h_copy_when_automatic_host_compute_offload_disabled(),
+      "Allow host-to-host copy when automatic host compute offload is "
+      "disabled, i.e. when xla_disable_automatic_host_compute_offload is "
+      "set."));
+  flag_list->push_back(tsl::Flag(
       "xla_enable_scoped_logging_timers",
       bool_setter_for(&DebugOptions::set_xla_enable_scoped_logging_timers),
       debug_options->xla_enable_scoped_logging_timers(),
@@ -2629,12 +2642,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_split_k_rewrite(),
       "Enable the pass that splits GEMMs that underutilize the GPU load by "
       "splitting the K dimension using a heuristic."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_enable_triton_tma",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_experimental_enable_triton_tma),
-      debug_options->xla_gpu_experimental_enable_triton_tma(),
-      "Enable Triton's TMA loads/stores for arguments where applicable."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_triton_warp_specialization",
       bool_setter_for(

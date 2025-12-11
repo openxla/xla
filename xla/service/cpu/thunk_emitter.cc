@@ -106,7 +106,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
@@ -486,7 +486,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
       return EmitConvolutionThunk(instruction);
 
     case HloOpcode::kCopy: {
-      if (options_.compile_copy_as_llvm_kernel) {
+      // The copy thunk does not support sub-byte data types.
+      bool has_byte_strides =
+          ShapeUtil::ByteStrides(instruction->shape()).has_value();
+      if (!has_byte_strides || options_.compile_copy_as_llvm_kernel) {
         return EmitElementalKernelThunk(instruction);
       }
       return EmitCopyThunk(instruction);
@@ -766,6 +769,17 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConvolutionThunk(
       /*instruction=*/*instruction, /*operands=*/{input, kernel},
       /*supported_types=*/
       {PRED, S8, U8, S16, U16, S32, U32, S64, U64, F16, F32, F64, C64, C128}));
+
+#ifdef XLA_YNNPACK
+  const bool use_ynn = absl::c_linear_search(
+      hlo_module_config_.debug_options().xla_cpu_experimental_ynn_fusion_type(),
+      DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_CONVOLUTION);
+  if (use_ynn) {
+    if (IsConvolutionOpSupportedByYnn(instruction)) {
+      return EmitYnnFusionThunk(instruction);
+    }
+  }
+#endif  // XLA_YNNPACK
 
   // TODO(tonywy): Add PotentiallyImplementedAsMKLConvolution to support
   // different data layouts.
@@ -1547,7 +1561,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitYnnFusionThunk(
   }
 
   absl::AnyInvocable<absl::StatusOr<YnnSubgraph>(
-      absl::Span<const se::DeviceMemoryBase> arguments_buffers)>
+      absl::Span<const se::DeviceAddressBase> arguments_buffers)>
       builder;
   absl::Span<const int64_t> captured_arguments_ids;
   if (instruction->opcode() == HloOpcode::kDot) {
@@ -1561,6 +1575,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitYnnFusionThunk(
     if (capture_rhs) {
       captured_arguments_ids = kCapturedIds;
     }
+  } else if (instruction->opcode() == HloOpcode::kConvolution) {
+    const HloConvolutionInstruction* conv =
+        Cast<HloConvolutionInstruction>(instruction);
+    // Construct YNNPACK subgraph builder from the convolution instruction.
+    TF_ASSIGN_OR_RETURN(builder, EmitYnnConvolutionBuilder(conv));
   } else {
     auto* fusion = Cast<HloFusionInstruction>(instruction);
     const HloComputation* computation =

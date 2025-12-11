@@ -36,7 +36,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/internal/endian.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -3618,8 +3617,8 @@ absl::Status HloEvaluator::HandleDynamicUpdateSlice(const HloInstruction* dus) {
   std::vector<int64_t> result_index(rank, 0);
 
   auto func = [&](absl::Span<const int64_t> update_index) {
-    std::transform(update_index.begin(), update_index.end(), start.begin(),
-                   result_index.begin(), std::plus<int64_t>());
+    absl::c_transform(update_index, start, result_index.begin(),
+                      std::plus<int64_t>());
     result.CopyElementFrom(update_literal, update_index, result_index);
     return true;
   };

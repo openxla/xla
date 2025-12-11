@@ -123,9 +123,10 @@ bool DoesOpSupportType(HloOpcode opcode, PrimitiveType type) {
     case HloOpcode::kDivide:
     case HloOpcode::kRemainder:
     case HloOpcode::kSubtract:
-    case HloOpcode::kNegate:
     case HloOpcode::kIota:
       return type != PRED;
+    case HloOpcode::kNegate:
+      return type != PRED && type != F8E8M0FNU;
     case HloOpcode::kRng:
       return !pu::IsComplexType(type);
     case HloOpcode::kComplex:
@@ -1171,7 +1172,7 @@ ENTRY triton_computation {
 }
 
 TEST_P(CollectiveTest,
-       UnsupportedAllReduceStartAndDoneFailGracefullyWithTriton) {
+       IsTritonSupportedAllReduceStartAndDoneWithNoReplicaGroups) {
   // 'all-reduce-start' and 'all-reduce-done' need to be tested together, since
   // the HLO verifier relies on one directly consuming the other.
   auto [data_type, cc] = GetParam();
@@ -1185,6 +1186,36 @@ apply_op {
 ENTRY triton_computation {
   input = $0[128,32] parameter(0)
   all-reduce-start = $0[128,32] all-reduce-start(input), replica_groups={},
+      to_apply=apply_op
+  ROOT all-reduce-done = $0[128,32] all-reduce-done(all-reduce-start)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti_start,
+      ParseTemplateAndGetInstruction(kHloTestTemplate, data_type,
+                                     HloOpcode::kAllReduceStart));
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti_done,
+      ParseTemplateAndGetInstruction(kHloTestTemplate, data_type,
+                                     HloOpcode::kAllReduceDone));
+  RunSupportTest(std::move(ti_start), /*output_tile_sizes=*/{2, 2}, cc);
+  RunSupportTest(std::move(ti_done), /*output_tile_sizes=*/{2, 2}, cc);
+}
+
+TEST_P(CollectiveTest,
+       IsTritonSupportedAllReduceStartAndDoneWithReplicaGroups) {
+  // 'all-reduce-start' and 'all-reduce-done' need to be tested together, since
+  // the HLO verifier relies on one directly consuming the other.
+  auto [data_type, cc] = GetParam();
+  const std::string kHloTestTemplate = R"(
+apply_op {
+  x = $0[] parameter(0)
+  y = $0[] parameter(1)
+  ROOT apply_op = $0[] add(x, y)
+}
+
+ENTRY triton_computation {
+  input = $0[128,32] parameter(0)
+  all-reduce-start = $0[128,32] all-reduce-start(input), replica_groups={{0,1}},
       to_apply=apply_op
   ROOT all-reduce-done = $0[128,32] all-reduce-done(all-reduce-start)
 })";
@@ -1908,6 +1939,80 @@ INSTANTIATE_TEST_SUITE_P(
         ::testing::ValuesIn(AllOpSupportedTypes(HloOpcode::kDot)),
         ::testing::ValuesIn(AllDevicesToTest())),
     DotTypesTest::ParamToString);
+
+class MixedF8DotTest
+    : public TritonSupportTest,
+      public ::testing::WithParamInterface<
+          std::tuple<PrimitiveType, PrimitiveType, se::GpuComputeCapability>> {
+ public:
+  static std::string ParamToString(
+      const ::testing::TestParamInfo<ParamType>& info) {
+    auto [lhs_type, rhs_type, cc] = info.param;
+    return absl::StrCat(primitive_util::LowercasePrimitiveTypeName(lhs_type),
+                        "_",
+                        primitive_util::LowercasePrimitiveTypeName(rhs_type),
+                        "_", ComputeCapabilityToString(cc));
+  }
+};
+
+TEST_P(MixedF8DotTest, MixedF8Dot) {
+  auto [lhs_type, rhs_type, cc] = GetParam();
+  if (lhs_type == rhs_type) {
+    GTEST_SKIP() << "Skipping same-type tests, covered by DotTypesTest";
+  }
+
+  if (auto* cuda_cc = cc.cuda_compute_capability();
+      cuda_cc && !cuda_cc->IsAtLeastHopper()) {
+    GTEST_SKIP() << "F8 requires Hopper+ GPUs";
+  }
+
+  std::string hlo_text = R"(
+flhs {
+  result = $0[128,256] parameter(0)
+}
+
+frhs {
+  result = $1[256,512] parameter(0)
+}
+
+triton_computation {
+  p0 = $0[128,256] parameter(0)
+  p1 = $1[256,512] parameter(1)
+  lhs = $0[128,256] fusion(p0), kind=kCustom, calls=flhs, backend_config={
+    "fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["16", "64"]}]
+      }
+    }
+  }
+  rhs = $1[256,512] fusion(p1), kind=kCustom, calls=frhs, backend_config={
+    "fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["64", "32"]}]
+      }
+    }
+  }
+  result = f32[128,512] dot(lhs, rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+  hlo_text = absl::Substitute(
+      hlo_text, primitive_util::LowercasePrimitiveTypeName(lhs_type),
+      primitive_util::LowercasePrimitiveTypeName(rhs_type));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti,
+      ParseTemplateAndGetInstruction(hlo_text, PRIMITIVE_TYPE_INVALID,
+                                     HloOpcode::kDot));
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{16, 32}, cc);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MixedF8DotTestSuite, MixedF8DotTest,
+    ::testing::Combine(::testing::Values(F8E5M2, F8E4M3FN),
+                       ::testing::Values(F8E5M2, F8E4M3FN),
+                       ::testing::ValuesIn(AllDevicesToTest())),
+    MixedF8DotTest::ParamToString);
 
 TEST_F(DotTest, NonFusionRhs) {
   const std::string kHloTestTemplate = R"(

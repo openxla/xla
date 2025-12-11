@@ -119,27 +119,6 @@ HloSharding FindCommonSharding(
     absl::Span<const HloSharding> shardings,
     std::optional<HloSharding> default_sharding = std::nullopt);
 
-// Given a map<device, occurrence_count>, selects the device with higher
-// occurrence count (if any). If top_count in not nullptr, it will receive the
-// count of the dominant device returned.
-std::optional<int64_t> SelectDominantDevice(
-    const std::map<int64_t, int64_t>& device_map, int64_t* top_count);
-
-// Assigns all the instructions of a computation, to a given device.
-// This API does not recurse into called computations, and does not assign
-// instructions which already have sharding.
-void AssignComputationDevice(HloComputation* computation, int64_t device);
-
-// Given a set of computations, tries to extract the dominant device. A device
-// is dominant if the combined occurrence among all the instructions of the
-// input computations, is greater/equal than/to dominant_factor (real number
-// from 0 to 1).
-// This API does not recurse into called computations.
-// If no device exists that satisfies the condition, the returned optional will
-// hold no value.
-std::optional<int64_t> GetDominantDevice(
-    absl::Span<HloComputation* const> computations, double dominant_factor);
-
 // Given a tiled sharding, move the tiles from source_dim and merge it into
 // target_dim. For example, given a sharding with tile assignment [a, b, c, d,
 // e], source_dim = 1, target_dim = 3, the function will return a sharding with
@@ -256,17 +235,6 @@ std::optional<HloSharding> ScatterUpdateShardingFromOutputParallelDimensions(
     const HloSharding& output_sharding, const HloScatterInstruction& scatter,
     const CallGraph& call_graph);
 
-// Returns an identity value and an HloOpcode for reduce computation of scatter
-// instruction.
-// - If computation is add/or, return 0/false with corresponding op code;
-// - If computation is multiply/and, return 1/true with corresponding op code.
-// - If computation is min/max, return max value/min value with corresponding op
-//   code.
-// - Otherwise, return error status.
-absl::StatusOr<std::pair<std::unique_ptr<HloInstruction>, HloOpcode>>
-IdentityValueAndHloOpcodeForScatterReduceComputation(
-    const HloScatterInstruction& scatter);
-
 // Returns a sharding that replicates data across devices along the given
 // dimensions in the original sharding.
 HloSharding PartiallyReplicateTiledShardingOnDims(
@@ -283,9 +251,10 @@ HloSharding PartiallyReplicateTiledShardingOnAllDimsExcept(
 HloSharding ReplicateAllDataDims(const HloSharding& sharding,
                                  int64_t data_rank = -1);
 
-// Returns a sharding the removes given tile dimensions.
+// Returns a sharding that removes given sharding dimensions.
 //
-// Precondition: if not tile maximal, the size of each tile dimension must be 1.
+// Precondition: if not tile maximal, the size of each sharding dimension must
+// be 1.
 HloSharding RemoveShapeDimensions(const HloSharding& sharding,
                                   absl::Span<const int64_t> dims_to_remove);
 
@@ -296,12 +265,13 @@ std::optional<HloSharding> TransposeShardingWithCollapsedDims(
     const HloSharding& source, absl::Span<int64_t const> src_to_tgt,
     absl::Span<int64_t const> tgt_to_src);
 
-// Given a `source_sharding`, preserve the tiles along the `source_dims` and
-// replicate the rest. The `target_dims` are used to determine the order of the
-// dimensions in the resulting sharding. If `source_dims` and `target_dims` are
-// in the different order (i.e., different ArgSort results), we need to
-// transpose the tile assignment.
+// Given a `source_sharding`, preserve the dimensions along the `source_dims`
+// and replicate the rest. The `target_dims` are used to determine the order of
+// the dimensions in the resulting sharding.
 //
+// [For tiled sharding format] If `source_dims` and `target_dims` are in the
+// different order (i.e., different ArgSort results), we need to transpose the
+// tile assignment.
 // Given the following input,
 //   * source_sharding = {devices=[2,3,5,7,11]<=[2310]}
 //   * source_dims = [2, 4, 1]
@@ -309,6 +279,16 @@ std::optional<HloSharding> TransposeShardingWithCollapsedDims(
 //   * target_shape_rank = 5
 // The result shoule be {devices=[1,11,5,3,1,14]<=[2,3,5,7,11]T(4,2,1,0,3)
 // last_tile_dim_replicate}.
+//
+// [For named sharding format]
+// Given the following input,
+//   * mesh = Mesh({2, 3, 5, 7, 11}, {"a", "b", "c", "d", "e"});
+//   * source_sharding = NamedSharding(mesh, {{"a"}, {"b"}, {"c"}, {"d"},
+//   {"e"}})
+//   * source_dims = [2, 4, 1]
+//   * target_dims = [2, 1, 3]
+//   * target_shape_rank = 5
+// The result shoule be NamedSharding(mesh, {{}, {"e"}, {"c"}, {"b"}, {}})
 HloSharding PropagateShardingAlongDimsAndReplicateOthers(
     const HloSharding& source_sharding, absl::Span<const int64_t> source_dims,
     absl::Span<const int64_t> target_dims, int64_t target_shape_rank);

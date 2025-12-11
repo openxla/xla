@@ -114,10 +114,10 @@ limitations under the License.
 #include "xla/service/hlo_module_util.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
-#include "xla/service/maybe_owning_device_memory.h"
+#include "xla/service/maybe_owning_device_address.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -488,7 +488,7 @@ PjRtCpuClient::LoadSerializedExecutable(absl::string_view serialized,
                       compiler.LoadAotCompilationResult(str));
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<Executable> executable,
-      std::move(*aot_result).LoadExecutable(&compiler, /*executor=*/nullptr));
+      std::move(*aot_result).LoadExecutable(/*executor=*/nullptr));
 
   // Set up other arguments for PjRtCpuExecutable
   // TODO(b/232263665): Remove duplicated code in DeserializeExecutable and
@@ -620,7 +620,7 @@ static absl::StatusOr<std::unique_ptr<xla::Executable>> CompileAheadOfTime(
   TF_ASSIGN_OR_RETURN(std::unique_ptr<AotCompilationResult> aot_result,
                       compiler.LoadAotCompilationResult(serialized_aot_result));
 
-  return std::move(*aot_result).LoadExecutable(&compiler, /*executor=*/nullptr);
+  return std::move(*aot_result).LoadExecutable(/*executor=*/nullptr);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
@@ -1275,7 +1275,7 @@ static absl::StatusOr<BufferInfo> MemoryForAllocation(
 
   } else if (allocation.is_constant() &&
              allocation.index() < constants.size()) {
-    se::DeviceMemoryBase constant =
+    se::DeviceAddressBase constant =
         constants[allocation.index()].AsDeviceMemoryBase();
     buffer_info.buffer = CpuDeviceMemory::CreateConstantMemory(
         constant.opaque(), constant.size());
@@ -1390,6 +1390,15 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
   auto execute_event = tsl::MakeConstructedAsyncValueRef<CpuEvent>();
   MarkEventReadyOnExit ready_on_exit(execute_event);
   auto execute_usage_event = tsl::MakeRef<CpuTrackedDeviceEvent>(execute_event);
+  // `returned_future_can_be_set_event` indicates when `returned_future` can be
+  // set using `execute_event`. This is necessary to delay setting the
+  // `returned_future` until all (async) execution activities are complete even
+  // if `execute_event` itself may be set early due to execution poisoning. This
+  // lets the user rely on `returned_future` when there is no more in-flight
+  // executions and destroy any external resources such as loaded callbacks and
+  // execute contexts.
+  auto returned_future_can_be_set_event =
+      tsl::MakeConstructedAsyncValueRef<CpuEvent>();
 
   absl::InlinedVector<CommonPjRtBuffer::ScopedHold, 4> donation_transactions;
 
@@ -1620,12 +1629,12 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
 
     if (cpu_executable->has_thunks()) {
       // Call interpreted thunk sequence implementing XLA executable.
-      absl::InlinedVector<MaybeOwningDeviceMemory, 8> buffer_device_mem;
+      absl::InlinedVector<MaybeOwningDeviceAddress, 8> buffer_device_mem;
       buffer_device_mem.reserve(buffer_table.size());
       for (const auto& buffer_info : buffer_table) {
         buffer_device_mem.emplace_back(
-            se::DeviceMemoryBase(buffer_info.buffer->untyped_data(),
-                                 buffer_info.buffer->size_bytes()));
+            se::DeviceAddressBase(buffer_info.buffer->untyped_data(),
+                                  buffer_info.buffer->size_bytes()));
       }
 
       cpu::BufferAllocations allocations(buffer_device_mem);
@@ -1689,6 +1698,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
       return thunks_execute_event.GetError();
     }
 
+    returned_future_can_be_set_event.SetStateConcrete();
+
   } else {
     // Asynchronously call generated function.
 
@@ -1718,20 +1729,21 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
         device->async_execution_tracker()->NewAsyncExecution(
             run_id.ToInt(), std::move(ready_on_exit).Release());
     client()->async_work_runner()->ScheduleWhenReady(
-        input_deps,
-        [cpu_executable, buffer_alloc = std::move(buffer_alloc),
-         buffer_alloc_and_copy = std::move(buffer_alloc_and_copy),
-         buffer_table = std::move(buffer_table),
-         run_options = std::move(run_options),
-         device_assignment = std::move(device_assignment),
-         cpu_run_options = std::move(cpu_run_options),
-         compute_reservation = std::move(compute_reservation),
-         tuple_index_table = std::move(tuple_index_table),
-         donation_transactions = std::move(donation_transactions),
-         scoped_async_execution = std::move(scoped_async_execution),
-         input_deps_avs = std::move(input_deps_avs_copy),
-         allocator = client()->allocator(),
-         eigen_device = client()->eigen_intraop_device()]() mutable {
+        input_deps, [cpu_executable, buffer_alloc = std::move(buffer_alloc),
+                     buffer_alloc_and_copy = std::move(buffer_alloc_and_copy),
+                     buffer_table = std::move(buffer_table),
+                     run_options = std::move(run_options),
+                     device_assignment = std::move(device_assignment),
+                     cpu_run_options = std::move(cpu_run_options),
+                     compute_reservation = std::move(compute_reservation),
+                     tuple_index_table = std::move(tuple_index_table),
+                     donation_transactions = std::move(donation_transactions),
+                     scoped_async_execution = std::move(scoped_async_execution),
+                     input_deps_avs = std::move(input_deps_avs_copy),
+                     allocator = client()->allocator(),
+                     eigen_device = client()->eigen_intraop_device(),
+                     returned_future_can_be_set_event =
+                         returned_future_can_be_set_event.CopyRef()]() mutable {
           // Because `input_deps` contains the definition events of all inputs,
           // when it is ready, all input buffers must have been allocated. So,
           // we are safe to allocate and copy memory here. Since `execute_event`
@@ -1743,6 +1755,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
             if (auto* error = av->GetErrorIfPresent()) {
               scoped_async_execution.SetError(Internal(
                   "Error dispatching computation: %s", error->message()));
+              returned_future_can_be_set_event.SetStateConcrete();
               return;
             }
           }
@@ -1758,18 +1771,19 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
               scoped_async_execution.SetError(
                   Internal("Error preparing computation: %s",
                            buffer_info.buffer.GetError().message()));
+              returned_future_can_be_set_event.SetStateConcrete();
               return;
             }
           }
           absl::Status status;
           if (cpu_executable->has_thunks()) {
             // Call interpreted thunk sequence implementing XLA executable.
-            absl::InlinedVector<MaybeOwningDeviceMemory, 8> buffer_device_mem;
+            absl::InlinedVector<MaybeOwningDeviceAddress, 8> buffer_device_mem;
             buffer_device_mem.reserve(buffer_table.size());
             for (const auto& buffer_info : buffer_table) {
               buffer_device_mem.emplace_back(
-                  se::DeviceMemoryBase(buffer_info.buffer->untyped_data(),
-                                       buffer_info.buffer->size_bytes()));
+                  se::DeviceAddressBase(buffer_info.buffer->untyped_data(),
+                                        buffer_info.buffer->size_bytes()));
             }
 
             cpu::BufferAllocations allocations(buffer_device_mem);
@@ -1840,10 +1854,13 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
           if (!status.ok()) {
             // CPU computation fails with an error.
             scoped_async_execution.SetError(std::move(status));
+            returned_future_can_be_set_event.SetStateConcrete();
+            return;
           }
 
           // CPU computation completes.
           scoped_async_execution.SetStateConcrete();
+          returned_future_can_be_set_event.SetStateConcrete();
         });
   }
 
@@ -1884,14 +1901,18 @@ absl::StatusOr<PjRtLoadedExecutable::Result> PjRtCpuExecutable::ExecuteHelper(
 
   if (fill_future) {
     auto [promise, future] = Future<>::MakePromise();
-    execute_event.AndThen([promise = std::move(promise),
-                           event = execute_event.CopyRef()]() mutable {
-      if (auto* error = event.GetErrorIfPresent()) {
-        promise.Set(Internal("Compute error: %s", error->message()));
-      } else {
-        promise.Set();
-      }
-    });
+    returned_future_can_be_set_event.AndThen(
+        [execute_event = std::move(execute_event),
+         promise = std::move(promise)]() mutable {
+          execute_event.AndThen([execute_event = execute_event.CopyRef(),
+                                 promise = std::move(promise)]() mutable {
+            if (auto* error = execute_event.GetErrorIfPresent()) {
+              promise.Set(Internal("Compute error: %s", error->message()));
+            } else {
+              promise.Set();
+            }
+          });
+        });
     return Result({std::move(future), /*buffers=*/std::move(res)});
   }
 

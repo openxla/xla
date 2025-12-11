@@ -2,6 +2,7 @@
 #   XLA evaluator implementation.
 
 load("//xla:xla.default.bzl", "xla_cc_test")
+load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -56,6 +57,11 @@ cc_library(
         "hlo_evaluator_typed_visitor_uint8.cc",
     ],
     hdrs = ["hlo_evaluator.h"],
+    tags = if_google([
+        # This header is only conditionally included in hlo_evaluator.cc when a flag is set, which
+        # build_cleaner doesn't understand, so we need to tell it to ignore it.
+        "ignore_for_dep=third_party/tensorflow/compiler/xla/tsl/framework/contraction/eigen_contraction_kernel.h",
+    ]),
     deps = [
         ":hlo_evaluator_interface",
         "//xla:array2d",
@@ -83,7 +89,6 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:endian",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",

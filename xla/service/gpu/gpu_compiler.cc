@@ -57,6 +57,7 @@ limitations under the License.
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
+#include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "google/protobuf/text_format.h"
 #include "xla/backends/cpu/nanort/nanort_client.h"
@@ -70,7 +71,6 @@ limitations under the License.
 #include "xla/core/host_offloading/hlo_host_device_type_call_wrapper.h"
 #include "xla/core/host_offloading/host_compute_asyncifier.h"
 #include "xla/hlo/analysis/alias_info.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -98,6 +98,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/eigh_expander.h"
 #include "xla/hlo/transforms/expanders/logistic_expander.h"
 #include "xla/hlo/transforms/expanders/optimization_barrier_expander.h"
+#include "xla/hlo/transforms/expanders/permutation_sort_expander.h"
 #include "xla/hlo/transforms/expanders/qr_expander.h"
 #include "xla/hlo/transforms/expanders/ragged_dot_rewriter.h"
 #include "xla/hlo/transforms/expanders/real_imag_expander.h"
@@ -609,6 +610,11 @@ absl::Status RunOptimizationPasses(
   // Expand random number generation.
   pipeline.AddPass<RngExpander>();
   pipeline.AddPass<RngBitGeneratorExpander>(RandomAlgorithm::RNG_PHILOX);
+
+  // Replaces sort with scatter where possible. Needs to run before
+  // SortRewriter, as this rewrite is even more efficient than what SortRewriter
+  // would do.
+  pipeline.AddPass<PermutationSortExpander>();
 
   // SortRewriter needs to ask the device how much scratch space is needed,
   // which isn't feasible if we don't have a device.
@@ -1586,6 +1592,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
   TF_RETURN_IF_ERROR(RunAsyncDotPasses(hlo_module));
   {
     HloPassPipeline pipeline("autotune-fusion-emitters");
+    pipeline.AddPass<FusionWrapper>(gpu_target_config.device_description);
     TF_RETURN_IF_ERROR(AddFusionAutotuningPass(
         &pipeline, hlo_module, options, thread_pool.get_mutable(), stream_exec,
         &gpu_target_config, ShapeSizeBytesFunction()));
@@ -2323,7 +2330,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
   // function per module. If caching is not used limit the number of modules to
   // the number of threads.
   int num_modules = CountFunctions(*llvm_module);
-  if (thread_pool.get() != nullptr && !use_cache) {
+  if (thread_pool && !use_cache) {
     num_modules = std::max(1, std::min(thread_pool->NumThreads(), num_modules));
   }
   if (compile_module_results.llvm_module_constants != nullptr) {
@@ -2361,7 +2368,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
     absl::StatusOr<BackendCompileResult> result;
   };
   std::vector<NamedCompileResult> compile_results(llvm_modules.size());
-  if (thread_pool.get() != nullptr) {
+  if (thread_pool) {
     absl::BlockingCounter counter(llvm_modules.size());
     for (int i = 0; i < llvm_modules.size(); ++i) {
       thread_pool.get_mutable()->Schedule(
@@ -2802,7 +2809,7 @@ GpuCompiler::LegacyCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
           optimized_module.get(),
           res.compile_module_results.buffer_assignment.get(),
           res.backend_result.asm_text, res.backend_result.binary,
-          res.backend_result.dnn_compiled_graphs, pointer_size_));
+          res.backend_result.dnn_compiled_graphs, pointer_size_, this));
 
   return std::move(results);
 }
@@ -2813,7 +2820,7 @@ HloCostAnalysis::ShapeSizeFunction GpuCompiler::ShapeSizeBytesFunction() const {
 }
 
 absl::StatusOr<std::unique_ptr<AotCompilationResult>> GpuCompiler::Export(
-    Executable* executable) const {
+    Executable* executable) {
   auto* gpu_executable = tensorflow::down_cast<GpuExecutable*>(executable);
   if (!gpu_executable) {
     return Internal("GpuExecutable is null");
@@ -2830,7 +2837,7 @@ absl::StatusOr<std::unique_ptr<AotCompilationResult>> GpuCompiler::Export(
   return LegacyGpuAotCompilationResult::FromModule(
       &gpu_executable->module(), gpu_executable->buffer_assignment(),
       gpu_executable->text(), gpu_executable->binary(),
-      gpu_executable->dnn_compiled_graphs(), pointer_size_);
+      gpu_executable->dnn_compiled_graphs(), pointer_size_, this);
 }
 
 absl::Status GpuCompiler::RunPreSchedulingPasses(
@@ -3067,7 +3074,7 @@ GpuCompiler::LoadAotCompilationResult(
   }
 
   return LegacyGpuAotCompilationResult::FromProto(gpu_executable_proto,
-                                                  pointer_size_);
+                                                  pointer_size_, this);
 }
 
 absl::StatusOr<std::unique_ptr<Executable>>

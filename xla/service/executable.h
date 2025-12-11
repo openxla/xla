@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -37,15 +36,14 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/hlo_execution_profile.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/maybe_owning_device_memory.h"
+#include "xla/service/maybe_owning_device_address.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
-#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -62,10 +60,12 @@ namespace xla {
 // 2) Donated by the caller but returned on error.
 // 3) Donated by the caller and freed on error.
 //
-// Case (1) buffers are stored as MaybeOwningDeviceMemory(DeviceMemoryBase).
-// Case (2) buffers are stored as MaybeOwningDeviceMemory(OwningDeviceMemory),
+// Case (1) buffers are stored as
+// MaybeOwningDeviceAddress(DeviceAddressBase). Case (2) buffers are
+// stored as MaybeOwningDeviceAddress(ScopedDeviceAddress<uint8_t>),
 //   with their indices present in unowned_indices_.
-// Case (3) buffers are stored as MaybeOwningDeviceMemory(OwningDeviceMemory),
+// Case (3) buffers are stored as
+// MaybeOwningDeviceAddress(ScopedDeviceAddress<uint8_t>),
 //   with their indices absent from unowned_indices_.
 class ExecutionInput {
  public:
@@ -88,14 +88,14 @@ class ExecutionInput {
     }
   }
 
-  explicit ExecutionInput(ShapeTree<MaybeOwningDeviceMemory> buffers)
+  explicit ExecutionInput(ShapeTree<MaybeOwningDeviceAddress> buffers)
       : buffers_(std::move(buffers)) {
     if (!ShapeUtil::DeviceShapeIsHostShape(buffers_.shape())) {
       SetHostShape(ShapeUtil::DeviceShapeToHostShape(buffers_.shape()));
     }
   }
   // TODO(b/170310047): remove this overload.
-  ExecutionInput(ShapeTree<MaybeOwningDeviceMemory> buffers,
+  ExecutionInput(ShapeTree<MaybeOwningDeviceAddress> buffers,
                  xla::Shape host_shape)
       : buffers_(std::move(buffers)) {
     if (!ShapeUtil::DeviceShapeIsHostShape(buffers_.shape())) {
@@ -119,12 +119,12 @@ class ExecutionInput {
 
   absl::Status SetDynamicShape(Shape dynamic_shape);
 
-  void SetBuffer(const ShapeIndex& index, MaybeOwningDeviceMemory buffer) {
+  void SetBuffer(const ShapeIndex& index, MaybeOwningDeviceAddress buffer) {
     *buffers_.mutable_element(index) = std::move(buffer);
   }
 
   void SetUnownedBuffer(const ShapeIndex& index,
-                        MaybeOwningDeviceMemory buffer);
+                        MaybeOwningDeviceAddress buffer);
 
   void SetUnownedIndex(const ShapeIndex& index) {
     unowned_indices_.insert(index);
@@ -138,15 +138,17 @@ class ExecutionInput {
     return unowned_indices_;
   }
 
-  const ShapeTree<MaybeOwningDeviceMemory>& Buffers() const { return buffers_; }
+  const ShapeTree<MaybeOwningDeviceAddress>& Buffers() const {
+    return buffers_;
+  }
 
-  ShapeTree<MaybeOwningDeviceMemory>* MutableBuffers() { return &buffers_; }
+  ShapeTree<MaybeOwningDeviceAddress>* MutableBuffers() { return &buffers_; }
 
-  MaybeOwningDeviceMemory* MutableBuffer(const ShapeIndex& index) {
+  MaybeOwningDeviceAddress* MutableBuffer(const ShapeIndex& index) {
     return buffers_.mutable_element(index);
   }
 
-  const MaybeOwningDeviceMemory& Buffer(const ShapeIndex& index) const {
+  const MaybeOwningDeviceAddress& Buffer(const ShapeIndex& index) const {
     return buffers_.element(index);
   }
 
@@ -157,7 +159,7 @@ class ExecutionInput {
     }
   }
 
-  ShapeTree<MaybeOwningDeviceMemory> buffers_;
+  ShapeTree<MaybeOwningDeviceAddress> buffers_;
 
   // Set of indices of buffers that should be returned to the caller if an error
   // occurs when enqueuing the computation.
@@ -174,16 +176,16 @@ class ExecutionOutput {
   explicit ExecutionOutput(ScopedShapedBuffer result)
       : result_(std::move(result)) {}
   ExecutionOutput(ScopedShapedBuffer result,
-                  std::vector<se::OwningDeviceMemory> to_be_released)
+                  std::vector<se::ScopedDeviceAddress<uint8_t>> to_be_released)
       : result_(std::move(result)),
         to_be_released_(std::move(to_be_released)) {}
   // TODO(b/170310047): remove this overload.
   ExecutionOutput(Shape on_host_shape, Shape on_device_shape,
-                  se::DeviceMemoryAllocator* allocator, int device_ordinal,
+                  se::DeviceAddressAllocator* allocator, int device_ordinal,
                   int physical_device_ordinal = -1)
       : result_(std::move(on_device_shape), allocator, device_ordinal,
                 physical_device_ordinal) {}
-  ExecutionOutput(Shape on_device_shape, se::DeviceMemoryAllocator* allocator,
+  ExecutionOutput(Shape on_device_shape, se::DeviceAddressAllocator* allocator,
                   int device_ordinal, int physical_device_ordinal = -1)
       : result_(std::move(on_device_shape), allocator, device_ordinal,
                 physical_device_ordinal) {}
@@ -195,7 +197,7 @@ class ExecutionOutput {
     // indices, clear them off the ScopedShapedBuffer to prevent them to be
     // released.
     for (auto& index : aliased_indices_) {
-      result_.set_buffer(se::OwningDeviceMemory(), index);
+      result_.set_buffer(se::ScopedDeviceAddress<uint8_t>(), index);
     }
   }
 
@@ -203,7 +205,7 @@ class ExecutionOutput {
     aliased_indices_.push_back(std::move(index));
   }
 
-  void AddToBeReleased(se::OwningDeviceMemory mem) {
+  void AddToBeReleased(se::ScopedDeviceAddress<uint8_t> mem) {
     to_be_released_.push_back(std::move(mem));
   }
 
@@ -223,11 +225,11 @@ class ExecutionOutput {
     return std::move(result_);
   }
 
-  const std::vector<se::OwningDeviceMemory>& ToBeReleased() const {
+  const std::vector<se::ScopedDeviceAddress<uint8_t>>& ToBeReleased() const {
     return to_be_released_;
   }
 
-  std::vector<se::OwningDeviceMemory> ConsumeToBeReleased() {
+  std::vector<se::ScopedDeviceAddress<uint8_t>> ConsumeToBeReleased() {
     return std::move(to_be_released_);
   }
 
@@ -242,7 +244,7 @@ class ExecutionOutput {
 
   // Leftover buffers for the caller to release. Elements in this list are
   // donated input memory buffers that are not reused by XLA as outputs.
-  std::vector<se::OwningDeviceMemory> to_be_released_;
+  std::vector<se::ScopedDeviceAddress<uint8_t>> to_be_released_;
 
   // These are the indices in result_ which have been aliased from the caller.
   // If the execution operation fails, the caller should maintain ownership of
@@ -252,7 +254,7 @@ class ExecutionOutput {
 
   // A shape table is a continuous region in memory that is used to hold the
   // runtime dimension sizes of dynamic output shapes.
-  se::OwningDeviceMemory output_shape_table_;
+  se::ScopedDeviceAddress<uint8_t> output_shape_table_;
 };
 
 // A given platform's compiler will produce an Executable -- this is a uniform
@@ -263,20 +265,6 @@ class Executable {
   // doesn't need it for execution.
   explicit Executable(std::shared_ptr<HloModule> hlo_module)
       : hlo_module_(std::move(hlo_module)) {}
-
-  // TODO(b/172012028): Remove this constructor.
-  // The hlo_module parameter may be nullptr, if the given executable type
-  // doesn't need it for execution.
-  explicit Executable(
-      std::shared_ptr<HloModule> hlo_module,
-      std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data,
-      std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map)
-      : hlo_module_(std::move(hlo_module)),
-        hlo_profile_printer_data_(std::move(hlo_profile_printer_data)),
-        hlo_profile_index_map_(std::move(hlo_profile_index_map)) {
-    CHECK_EQ(hlo_profile_printer_data_.get() == nullptr,
-             hlo_profile_index_map_.get() == nullptr);
-  }
   virtual ~Executable() = default;
 
   // Enqueues the compilation result on the provided stream, passing the given
@@ -342,22 +330,6 @@ class Executable {
       const ServiceExecutableRunOptions* run_options,
       std::vector<ExecutionInput> arguments);
 
-  const HloProfilePrinterData& hlo_profile_printer_data() const {
-    CHECK(hlo_profiling_enabled());
-    return *hlo_profile_printer_data_;
-  }
-
-  const HloProfileIndexMap& hlo_profile_index_map() const {
-    CHECK(hlo_profiling_enabled());
-    return *hlo_profile_index_map_;
-  }
-
-  // Returns whether this executable was compiled with HLO profilings support
-  // enabled. If not, the caller should not expect an hlo_execution_profile
-  // passed to ExecuteOnStream above to be populated during execution.
-  bool hlo_profiling_enabled() const {
-    return hlo_profile_printer_data_ != nullptr;
-  }
 
   HloModule& module() const {
     CHECK(hlo_module_ != nullptr);
@@ -373,7 +345,7 @@ class Executable {
   }
 
   // The shape (including layout) that results from this execution. This is the
-  // shape of the DeviceMemoryBase result value in ExecuteOnStream above.
+  // shape of the DeviceAddressBase result value in ExecuteOnStream above.
   virtual Shape result_shape() const {
     CHECK(hlo_module_ != nullptr);
     return hlo_module_->config().entry_computation_layout().result_shape();
@@ -474,9 +446,6 @@ class Executable {
   // Execution count, used to generate a unique filename for each dumped
   // execution.
   int64_t execution_count_ = 0;
-
-  std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data_;
-  std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map_;
 
   // A map from kernel name to relevant kernel stats.
   ModuleStats module_stats_;

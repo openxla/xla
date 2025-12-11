@@ -30,9 +30,10 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_multimem.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 
 namespace xla::gpu {
@@ -52,6 +53,7 @@ class CollectiveMetadataThunk : public Thunk {
         collective_config_(std::move(collective_config)),
         parameters_(std::move(parameters)),
         result_(result) {}
+
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
@@ -61,24 +63,32 @@ class CollectiveMetadataThunk : public Thunk {
   // All participants should call this method to construct their local
   // metadata.
   static absl::Status ConstructCollectiveMetadata(
-      std::vector<se::DeviceMemoryBase> parameters, se::Stream* stream,
-      const GpuCliqueKey& clique_key, void* multimem_address_space,
-      int device_ordinal, se::DeviceMemoryBase destination);
+      const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
+      std::vector<se::DeviceAddressBase> parameters,
+      std::shared_ptr<CollectiveMultimem> multimem,
+      se::DeviceAddressBase destination);
 
   // Calculate the device memory base for the given parameter index.
   // The size of the returned memory is num_devices pointers.
-  static absl::StatusOr<se::DeviceMemoryBase> GetParameterDeviceMemoryBase(
-      se::DeviceMemoryBase metadata, int64_t num_parameters,
+  static absl::StatusOr<se::DeviceAddressBase> GetParameterDeviceMemoryBase(
+      se::DeviceAddressBase metadata, int64_t num_parameters,
       int64_t num_devices, int64_t parameter_index);
 
-  absl::StatusOr<void*> SetupMultimem(const GpuCliqueKey& clique_key,
-                                      const InitializeParams& params);
-
  private:
+  absl::StatusOr<std::shared_ptr<CollectiveMultimem>> AllocateMultimem(
+      const GpuCliqueKey& clique_key, RankId rank,
+      const InitializeParams& params);
+
   const CollectiveConfig collective_config_;
   std::vector<Buffer> parameters_;
   BufferAllocation::Slice result_;
 
+  // This is a collective multi-mem per stream executor allocated for the thunk
+  // execution in the initialize stage. In theory multiple XLA executions can
+  // run concurrently, and this map would lead to a data race, however XLA
+  // programs with collective operations rely on locking cliques before the
+  // execution starts, and we never get concurrent executions when collective
+  // operations are present in the program.
   absl::Mutex mutex_;
   absl::flat_hash_map<se::StreamExecutor*, std::shared_ptr<CollectiveMultimem>>
       collective_multimem_ ABSL_GUARDED_BY(mutex_);

@@ -53,8 +53,8 @@ message ThunkMetadataListProto {
 }
 
 message CopyThunkProto {
-  xla.buffer_assignment.BufferAllocationSliceProto source_buffer = 1;
-  xla.buffer_assignment.BufferAllocationSliceProto destination_buffer = 2;
+  ShapedSliceProto source_buffer = 1;
+  ShapedSliceProto destination_buffer = 2;
   int64 mem_size = 3;
 }
 
@@ -191,7 +191,7 @@ message DynamicSliceThunkProto {
 }
 
 message MemzeroThunkProto {
-  xla.buffer_assignment.BufferAllocationSliceProto dest_buffer = 1;
+  ShapedSliceProto dest_buffer = 1;
 }
 
 message Memset32BitValueThunkProto {

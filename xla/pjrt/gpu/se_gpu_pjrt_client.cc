@@ -102,16 +102,15 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
-#include "xla/tsl/distributed_runtime/coordination/coordination_service_agent.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
@@ -206,7 +205,7 @@ static absl::flat_hash_map<std::string, PjRtDeviceAttribute> GetAttrsForDevices(
 StreamExecutorGpuClient::StreamExecutorGpuClient(
     std::string platform_name, LocalClient* client,
     std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices,
-    int process_index, std::unique_ptr<se::DeviceMemoryAllocator> allocator,
+    int process_index, std::unique_ptr<se::DeviceAddressAllocator> allocator,
     std::unique_ptr<tsl::Allocator> host_memory_allocator,
     bool should_stage_host_to_device_transfers,
     std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options,
@@ -1414,7 +1413,7 @@ BuildLocalDeviceStates(LocalClient* xla_client) {
 
 // Constructs a GPU device memory allocator to use, according to the allocator
 // configuration the client requested.
-absl::StatusOr<std::unique_ptr<se::DeviceMemoryAllocator>>
+absl::StatusOr<std::unique_ptr<se::DeviceAddressAllocator>>
 GetStreamExecutorGpuDeviceAllocator(
     se::Platform* platform, const GpuAllocatorConfig& allocator_config,
     const std::map<int, std::unique_ptr<LocalDeviceState>>&
@@ -1849,7 +1848,7 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
 
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
 static absl::Status CheckAlignment(const BufferAllocation& allocation,
-                                   se::DeviceMemoryBase buffer, int arg_idx) {
+                                   se::DeviceAddressBase buffer, int arg_idx) {
   const int64_t expected_alignment = [&] {
     if (allocation.is_entry_computation_parameter()) {
       return gpu::kEntryParameterAlignBytes;
@@ -1887,7 +1886,7 @@ StreamExecutorGpuClient::RunAsync(
   auto* gpu_exec =
       tensorflow::down_cast<xla::gpu::GpuExecutable*>(exec.executable());
   const ServiceExecutableRunOptions* run_options = &options_and_stream.first;
-  se::DeviceMemoryAllocator* const memory_allocator = run_options->allocator();
+  se::DeviceAddressAllocator* const memory_allocator = run_options->allocator();
 
   se::StreamExecutor* executor = run_options->stream()->parent();
 
@@ -1932,7 +1931,7 @@ StreamExecutorGpuClient::RunAsync(
   absl::Span<const BufferAllocation* const> allocations =
       gpu_exec->GetAllocations();
 
-  std::vector<se::DeviceMemoryBase> buffers(allocations.size());
+  std::vector<se::DeviceAddressBase> buffers(allocations.size());
   {
     tsl::profiler::TraceMe hlo_module_activity(
         [&] { return std::string("Build buffer allocations"); },
@@ -1940,9 +1939,9 @@ StreamExecutorGpuClient::RunAsync(
     const int64_t num_buffers = allocations.size();
     for (int64_t i = 0; i < num_buffers; ++i) {
       const BufferAllocation& allocation = *allocations[i];
-      se::DeviceMemoryBase& buffer = buffers[i];
+      se::DeviceAddressBase& buffer = buffers[i];
       if (allocation.is_thread_local()) {
-        // buffer = se::DeviceMemoryBase{};
+        // buffer = se::DeviceAddressBase{};
       } else if (allocation.is_entry_computation_parameter()) {
         int64_t param_no = allocation.parameter_number();
         buffer = [&] {
@@ -1970,7 +1969,7 @@ StreamExecutorGpuClient::RunAsync(
         const int64_t buffer_size = allocation.size();
         if (buffer_size > 0) {
           TF_ASSIGN_OR_RETURN(
-              se::OwningDeviceMemory owning_buffer,
+              se::ScopedDeviceAddress<uint8_t> owning_buffer,
               memory_allocator->Allocate(device_ordinal, buffer_size,
                                          /*retry_on_failure=*/true,
                                          /*memory_space=*/allocation.color()));
@@ -1985,7 +1984,7 @@ StreamExecutorGpuClient::RunAsync(
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "Buffer allocations: " << buffer_allocations.ToString();
 
-  std::set<se::DeviceMemoryBase> buffers_in_result;
+  std::set<se::DeviceAddressBase> buffers_in_result;
 
   xla::ShapeTree<tsl::AsyncValueRef<RawSEDeviceMemory>> results(
       gpu_exec->result_shape());
@@ -1999,7 +1998,7 @@ StreamExecutorGpuClient::RunAsync(
         gpu_exec->output_info().at(index);
     const BufferAllocation* allocation =
         allocations[output_info.allocation_index];
-    se::DeviceMemoryBase result_buffer;
+    se::DeviceAddressBase result_buffer;
 
     XLA_VLOG_DEVICE(4, device_ordinal)
         << "Looking at: allocation " << output_info.allocation_index
@@ -2035,7 +2034,7 @@ StreamExecutorGpuClient::RunAsync(
                "buffer is not donated; allocating a fresh buffer";
         int64_t allocation_size = ShapeUtil::ByteSizeOf(
             ShapeUtil::GetSubshape(gpu_exec->result_shape(), index));
-        absl::StatusOr<se::OwningDeviceMemory> allocated_buffer =
+        absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> allocated_buffer =
             memory_allocator->Allocate(device_ordinal, allocation_size,
                                        /*retry_on_failure=*/true,
                                        /*memory_space=*/allocation->color());
@@ -2043,7 +2042,7 @@ StreamExecutorGpuClient::RunAsync(
           return gpu_exec->VerboseAllocationError(allocated_buffer.status());
         }
         result_buffer = allocated_buffer->Release();
-        se::DeviceMemoryBase& aliased_buffer =
+        se::DeviceAddressBase& aliased_buffer =
             buffer_allocations.GetMutableDeviceAddress(
                 output_info.allocation_index);
         CHECK_EQ(aliased_buffer.size(), result_buffer.size());

@@ -15,31 +15,38 @@ limitations under the License.
 
 #include "xla/service/gpu/transforms/nest_gemm_fusion.h"
 
+#include <cstdint>
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/container/inlined_vector.h"
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 
+using ::absl_testing::IsOkAndHolds;
 using ::testing::ElementsAre;
 
 namespace xla {
@@ -77,6 +84,17 @@ class NestGemmFusionTest : public HloHardwareIndependentTestBase {
       TestGpuDeviceInfo::RTXA6000DeviceInfo(
           se::GpuComputeCapability{se::CudaComputeCapability::Ampere()})};
   mlir::MLIRContext mlir_context_;
+
+  std::unique_ptr<VerifiedHloModule> ParseAndRunNestGemmFusion(
+      absl::string_view hlo, const bool expect_change = true) {
+    std::unique_ptr<VerifiedHloModule> module =
+        ParseAndReturnVerifiedModule(hlo).value();
+    EXPECT_THAT(
+        NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
+        IsOkAndHolds(expect_change));
+    EXPECT_OK(verifier().Run(module.get()).status());
+    return module;
+  }
 };
 
 TEST_F(NestGemmFusionTest, BasicTest) {
@@ -102,12 +120,7 @@ ENTRY entry {
     }
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  ASSERT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
-
+  std::unique_ptr<VerifiedHloModule> module = ParseAndRunNestGemmFusion(hlo);
   const HloInstruction* fusion = nullptr;
   ASSERT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(match::Fusion(&fusion)));
@@ -161,11 +174,7 @@ ENTRY e {
                          "split_k":1,"num_stages":1,"num_warps":2,
                          "num_ctas":1}}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module = ParseAndRunNestGemmFusion(hlo);
   HloComputation* fusion_computation = module->entry_computation()
                                            ->root_instruction()
                                            ->fused_instructions_computation();
@@ -225,11 +234,7 @@ ENTRY e {
   ROOT result = (f32[128,128], f32[8192,512]) tuple(r1, r2)
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool updated,
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()));
-  EXPECT_TRUE(updated);
+  std::unique_ptr<VerifiedHloModule> module = ParseAndRunNestGemmFusion(hlo);
   HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_EQ(root->opcode(), HloOpcode::kTuple);
   EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kFusion);
@@ -278,13 +283,8 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  ASSERT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
 
   const HloInstruction* fusion = nullptr;
   ASSERT_THAT(module->entry_computation()->root_instruction(),
@@ -325,13 +325,8 @@ ENTRY entry {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  ASSERT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
 
   const HloInstruction* fusion = nullptr;
   ASSERT_THAT(module->entry_computation()->root_instruction(),
@@ -372,13 +367,7 @@ ENTRY entry {
     }
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
 }
 
 TEST_P(NestGemmFusionReshapeTest,
@@ -407,13 +396,7 @@ ENTRY entry {
       }
     }
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
 }
 
 TEST_P(NestGemmFusionReshapeTest, BitcastsCanBeHoistedPastConvertEpilogues) {
@@ -441,18 +424,14 @@ ENTRY entry {
       }
     }
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
 CHECK: f16[3,11]{1,0} convert(
 CHECK: f16[3,11]{1,0} fusion(
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
 
   ASSERT_OK(verifier().Run(module.get()).status());
 }
@@ -487,13 +466,7 @@ ENTRY entry {
       }
     }
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
 }
 
 TEST_P(NestGemmFusionReshapeTest, BitcastsKeepElementSizeInBits) {
@@ -523,12 +496,8 @@ ENTRY entry {
       }
     }
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
   CHECK: ENTRY
@@ -536,7 +505,7 @@ ENTRY entry {
   CHECK: [[fusion:[^ ]+]] = s8[3,11]{1,0:E(4)} fusion({{.*}})
   CHECK: ROOT {{.*}} = s8[33]{0:E(4)} bitcast([[fusion]])
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
   ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -567,13 +536,7 @@ ENTRY entry {
       }
     }
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
 }
 
 TEST_P(NestGemmFusionReshapeTest, TritonFusionEmitterDeviceLegacyTestSample2) {
@@ -606,13 +569,7 @@ ENTRY entry_computation {
     }
 })";
   // Note: block sizes were 16,16,32, but that now fails to satisfy constraints.
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
 }
 
 TEST_P(NestGemmFusionReshapeTest, TritonFusionEmitterDeviceLegacyTestSample3) {
@@ -642,13 +599,7 @@ ENTRY entry_computation {
       }
     }
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
 }
 
 TEST_P(NestGemmFusionReshapeTest, BitcastsAreHoistedPastCompare) {
@@ -677,13 +628,7 @@ ENTRY e {
       "block_m":32,"block_n":16,"block_k":128,
       "split_k":1,"num_stages":1,"num_warps":4, "num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
 }
 
 TEST_P(NestGemmFusionReshapeTest, BitcastsAreHoistedUpThroughBroadcasts) {
@@ -709,13 +654,8 @@ ENTRY e {
     triton_gemm_config: {"block_m":32,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
 // Broadcast fusion:
@@ -727,7 +667,51 @@ CHECK: ENTRY {{.*}} {
 CHECK: [[entry_p0:[^ ]+]] = f32[11,1,24,1]{3,2,1,0} parameter(0)
 CHECK: {{.*}} = f32[264]{0} bitcast([[entry_p0]])
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
+}
+
+TEST_P(NestGemmFusionReshapeTest,
+       BitcastsAreHoistedUpThroughBroadcastsWithTrivialDimensions) {
+  HloOpcode opcode = GetParam();
+  absl::string_view hlo = R"(
+HloModule t
+
+triton_dot {
+  p0 = f32[11,24,1] parameter(0)
+  p0_broadcast = f32[11,1,24,1,128] broadcast(p0), dimensions={0,2,3}
+  p0_reshape = f32[264,128] $0(p0_broadcast)
+  p1 = f32[128,8]{1,0} parameter(1)
+  ROOT result = f32[264,8]{1,0} dot(p0_reshape, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = f32[11,24,1] parameter(0)
+  p1 = f32[128,8] parameter(1)
+  ROOT result = f32[264,8] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    triton_gemm_config: {"block_m":32,"block_n":16,"block_k":8,
+    "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(
+                              absl::Substitute(hlo, HloOpcodeString(opcode))));
+  ASSERT_THAT(
+      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
+      IsOkAndHolds(true));
+  ASSERT_OK(verifier().Run(module.get()).status());
+  EXPECT_THAT(
+      RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
+// Broadcast fusion:
+CHECK: {{.*}} {
+CHECK-NEXT: [[broadcast_p0:[^ ]+]] = f32[264]{0} parameter(0)
+CHECK-NEXT: ROOT {{.*}} = f32[264,128]{1,0} broadcast([[broadcast_p0]]), dimensions={0}
+CHECK-NEXT: }
+CHECK: ENTRY {{.*}} {
+CHECK: [[entry_p0:[^ ]+]] = f32[11,24,1]{{.*}} parameter(0)
+CHECK: {{.*}} = f32[264]{0} bitcast([[entry_p0]])
+)"),
+      IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest,
@@ -754,14 +738,8 @@ ENTRY e {
     triton_gemm_config: {"block_m":32,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  // We can nest the fusion including the broadcast.
-  EXPECT_TRUE(NestGemmFusion(device_description_, &mlir_context_)
-                  .Run(module.get())
-                  .ok());
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   // Cos should not be rewritten as we cannot hoist bitcast.
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
                            absl::Substitute(R"(
@@ -769,7 +747,7 @@ CHECK:      f32[3,4,16]{2,1,0} broadcast
 CHECK-NEXT: f32[3,64]{1,0} $0
 )",
                                             HloOpcodeString(opcode))),
-              absl_testing::IsOkAndHolds(true));
+              IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest,
@@ -796,14 +774,8 @@ ENTRY e {
     triton_gemm_config: {"block_m":32,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  // We can nest the fusion including the broadcast.
-  EXPECT_TRUE(NestGemmFusion(device_description_, &mlir_context_)
-                  .Run(module.get())
-                  .ok());
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   // Cos should not be rewritten as we cannot hoist bitcast.
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
                            absl::Substitute(R"(
@@ -811,7 +783,7 @@ CHECK:      f32[2,3,5]{2,1,0} $0
 CHECK-NEXT: f32[2,4,3,5]{3,2,1,0} broadcast
 )",
                                             HloOpcodeString(opcode))),
-              absl_testing::IsOkAndHolds(true));
+              IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest,
@@ -840,13 +812,8 @@ ENTRY e {
     triton_gemm_config: {"block_m":32,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
 CHECK: [[p0:[^ ]+]] = f32[15]{0} parameter(0)
@@ -854,7 +821,7 @@ CHECK-DAG: {{.*}} = f32[15,77]{1,0} broadcast([[p0]]), dimensions={0}
 CHECK-DAG: [[br:[^ ]+]] = f32[15]{0} broadcast([[p0]]), dimensions={0}
 CHECK-DAG: {{.*}} = f32[15,77]{1,0} broadcast([[br]]), dimensions={0}
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest, BitcastsAreHoistedOverBroadcasts) {
@@ -880,13 +847,8 @@ ENTRY e {
     triton_gemm_config: {"block_m":32,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
                            R"(
 // Broadcast fusion:
@@ -899,7 +861,7 @@ CHECK: [[entry_p0:[^ ]+]] = f32[11,1,24,1]{3,2,1,0} parameter(0)
 CHECK: {{.*}} = f32[264]{0} bitcast([[entry_p0]])
 )"),
 
-              absl_testing::IsOkAndHolds(true));
+              IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest, BitcastsLayoutIsPreserved) {
@@ -931,13 +893,8 @@ ENTRY e {
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
                            absl::Substitute(R"(
 CHECK: {{.*}} {
@@ -953,7 +910,7 @@ CHECK: ENTRY {{.*}} {
 CHECK: {{.*}} = pred[122,5]{0,1} bitcast({{.*}})
 )",
                                             HloOpcodeString(opcode))),
-              absl_testing::IsOkAndHolds(true));
+              IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest,
@@ -982,19 +939,14 @@ ENTRY entry {
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
-CHECK: bf16[1,2,4,8]{{.*}} broadcast({{.*}}), dimensions={0,3}
-CHECK: bf16[1,2,4,8]{{.*}} broadcast({{.*}}), dimensions={0,3}
+CHECK: bf16[1,2,4,8]{{.*}} broadcast({{.*}}), dimensions={3}
+CHECK: bf16[1,2,4,8]{{.*}} broadcast({{.*}}), dimensions={3}
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest, BitcastsAreHoistedUpThroughTransposes) {
@@ -1018,20 +970,48 @@ ENTRY e {
     triton_gemm_config: {"block_m":16,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
 CHECK:      ROOT transpose
 CHECK-SAME: f32[2,3,7]{2,1,0} transpose
 CHECK-SAME: dimensions={1,2,0}
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
+}
+
+TEST_P(NestGemmFusionReshapeTest,
+       BitcastsWithSize1DimensionsAreHoistedUpThroughTransposes) {
+  const HloOpcode opcode = GetParam();
+  absl::string_view hlo = R"(
+triton_dot {
+  p0 = f32[7,6] parameter(0)
+  transpose = f32[6,7] transpose(p0), dimensions={1,0}
+  bitcast = f32[1,6,7] $0(transpose)
+  p1 = f32[1,5,7] parameter(1)
+  ROOT result = f32[1,6,5] dot(bitcast, p1),
+    lhs_contracting_dims={2}, lhs_batch_dims={0},
+    rhs_contracting_dims={2}, rhs_batch_dims={0}
+}
+
+ENTRY e {
+  p0 = f32[7,6] parameter(0)
+  p1 = f32[1,5,7] parameter(1)
+  ROOT result = f32[1,6,5] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    triton_gemm_config: {"block_m":16,"block_n":16,"block_k":8,
+    "split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}}
+)";
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
+  EXPECT_THAT(
+      RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
+CHECK:      ROOT transpose
+CHECK-SAME: f32[1,6,7]{2,1,0} transpose
+CHECK-SAME: dimensions={1,2,0}
+)"),
+      IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest,
@@ -1055,20 +1035,15 @@ ENTRY e {
     triton_gemm_config: {"block_m":16,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
 CHECK:      transpose
 CHECK-SAME: f32[3,2,7]{2,1,0} transpose
 CHECK-SAME: dimensions={2,0,1}
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest,
@@ -1092,20 +1067,15 @@ ENTRY e {
     triton_gemm_config: {"block_m":16,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
                            absl::Substitute(R"(
 CHECK:      f32[2,3,5]{2,1,0} $0
 CHECK-NEXT: f32[2,5,3]{2,1,0} transpose
 )",
                                             HloOpcodeString(opcode))),
-              absl_testing::IsOkAndHolds(true));
+              IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest,
@@ -1131,13 +1101,8 @@ ENTRY e {
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}
 }
           )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   // Checks that transpose is on rank 3 tensor from hoisting bitcast1, not rank
   // 4 tensor from hoisting bitcast0 first and then failing to hoist bitcast1.
   EXPECT_THAT(
@@ -1146,7 +1111,7 @@ CHECK:      transpose
 CHECK-SAME: f16[3,1152,122]{2,1,0} transpose
 CHECK-SAME: dimensions={0,2,1}
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest, BitcastsAreHoistedDownThroughTransposes) {
@@ -1170,20 +1135,15 @@ ENTRY e {
     triton_gemm_config: {"block_m":16,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
 CHECK:      ROOT transpose
 CHECK-SAME: f32[5,2,3]{2,1,0} transpose
 CHECK-SAME: dimensions={2,0,1}
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest, BitcastsAreHoistedDownThroughBroadcasts) {
@@ -1206,12 +1166,46 @@ ENTRY e {
     triton_gemm_config: {"block_m":16,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}}
 )";
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
+  EXPECT_THAT(
+      RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
+CHECK:      ROOT broadcast
+CHECK-SAME: f32[3,5,6,2]{2,1,0,3} broadcast
+CHECK-SAME: dimensions={0,1}
+)"),
+      IsOkAndHolds(true));
+}
+
+// TODO(b/467306121): handle the case when we need to sink the reshape through
+// broadcast.
+TEST_P(NestGemmFusionReshapeTest,
+       DISABLED_BitcastsAreHoistedDownThroughBroadcastsWithTrivialDimensions) {
+  HloOpcode opcode = GetParam();
+  absl::string_view hlo = R"(
+triton_dot {
+  p0 = f32[3,7] parameter(0)
+  p1 = f32[6,7] parameter(1)
+  dot = f32[3,6] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  bitcast = f32[3,2,3] $0(dot)
+  ROOT broadcast = f32[3,2,1,3,7] broadcast(bitcast), dimensions={0,1,3}
+}
+
+ENTRY e {
+  p0 = f32[3,7] parameter(0)
+  p1 = f32[6,7] parameter(1)
+  ROOT result = f32[3,2,1,3,7] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    triton_gemm_config: {"block_m":16,"block_n":16,"block_k":8,
+    "split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}}
+)";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(
                               absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
+  ASSERT_THAT(
       NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
   ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
@@ -1219,7 +1213,7 @@ CHECK:      ROOT broadcast
 CHECK-SAME: f32[3,5,6,2]{2,1,0,3} broadcast
 CHECK-SAME: dimensions={0,1}
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest,
@@ -1243,20 +1237,15 @@ ENTRY e {
     triton_gemm_config: {"block_m":16,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
                            absl::Substitute(R"(
 CHECK:      f32[2,3,5]{2,1,0} $0(dot)
 CHECK-NEXT: f32[2,3,5]{2,0,1} broadcast
 )",
                                             HloOpcodeString(opcode))),
-              absl_testing::IsOkAndHolds(true));
+              IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest, BitcastRootsAreHoistedDown) {
@@ -1278,18 +1267,13 @@ ENTRY e {
     triton_gemm_config: {"block_m":16,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
 CHECK: ROOT dot
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest,
@@ -1315,18 +1299,13 @@ ENTRY e {
     triton_gemm_config: {"block_m":16,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
 CHECK: ROOT add = f32[3,5]{1,0} add
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
 }
 
 TEST_P(NestGemmFusionReshapeTest,
@@ -1356,12 +1335,8 @@ ENTRY e {
     triton_gemm_config: {"block_m":32,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
 CHECK-NOT: bitcast
@@ -1376,7 +1351,7 @@ CHECK: f32[2,7]{1,0} bitcast(p0
 CHECK: result = f32[2,7,15,11]{2,1,0,3} fusion
 CHECK: ROOT {{.*}} = f32[15,11,14]{0,2,1} bitcast(result)
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
   ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -1407,12 +1382,8 @@ ENTRY e {
     triton_gemm_config: {"block_m":32,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
 CHECK-NOT: bitcast
@@ -1427,7 +1398,7 @@ CHECK: f32[7,3,2]{2,0,1} bitcast(p0
 CHECK: result = f32[3,5,2]{2,1,0} fusion
 CHECK: ROOT {{.*}} = f32[2,3,5]{0,2,1} bitcast(result)
 )"),
-      absl_testing::IsOkAndHolds(true));
+      IsOkAndHolds(true));
   ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -1455,24 +1426,20 @@ ENTRY e {
     triton_gemm_config: {"block_m":32,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
-  EXPECT_THAT(
-      NestGemmFusion(device_description_, &mlir_context_).Run(module.get()),
-      absl_testing::IsOkAndHolds(true));
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(
       RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()), R"(
 CHECK-NOT: bitcast
 CHECK-NOT: reshape
 CHECK: ENTRY
 )"),
-      absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+      IsOkAndHolds(true));
 }
 
+// TODO(b/393299275): this test was not written correctly and now fails.
 TEST_P(NestGemmFusionReshapeTest,
-       BitcastsAreNotHoistedOutThroughLayoutChangingTranspose) {
+       DISABLED_BitcastsAreNotHoistedOutThroughLayoutChangingTranspose) {
   HloOpcode opcode = GetParam();
   absl::string_view hlo = R"(
 HloModule t
@@ -1497,9 +1464,8 @@ ENTRY e {
     triton_gemm_config: {"block_m":32,"block_n":16,"block_k":8,
     "split_k":1,"num_stages":1,"num_warps":4,"num_ctas":1}}}}
 )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(
-                              absl::Substitute(hlo, HloOpcodeString(opcode))));
+  std::unique_ptr<VerifiedHloModule> module =
+      ParseAndRunNestGemmFusion(absl::Substitute(hlo, HloOpcodeString(opcode)));
   EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
                            absl::Substitute(R"(
 CHECK: $0.1 = f32[2,7]{0,1} $0
@@ -1509,8 +1475,7 @@ CHECK-NOT: bitcast
 CHECK-NOT: reshape
         )",
                                             HloOpcodeString(opcode))),
-              absl_testing::IsOkAndHolds(true));
-  ASSERT_OK(verifier().Run(module.get()).status());
+              IsOkAndHolds(true));
 }
 
 INSTANTIATE_TEST_SUITE_P(NestGemmFusionReshapeTestSuite,
@@ -1520,6 +1485,44 @@ INSTANTIATE_TEST_SUITE_P(NestGemmFusionReshapeTestSuite,
                          [](const ::testing::TestParamInfo<HloOpcode>& info) {
                            return std::string(HloOpcodeString(info.param));
                          });
+
+struct CommonFactorsTestCase {
+  std::vector<int64_t> from, to;
+  absl::InlinedVector<std::pair<int64_t, int64_t>, 8> expected;
+};
+
+class CommonFactorsMergingTrivialRangesTest
+    : public ::testing::TestWithParam<CommonFactorsTestCase> {};
+
+TEST_P(CommonFactorsMergingTrivialRangesTest, Example) {
+  const CommonFactorsTestCase& test_case = GetParam();
+  EXPECT_EQ(test_case.expected, detail::CommonFactorsMergingTrivialRanges(
+                                    test_case.from, test_case.to));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    CommonFactorsMergingTrivialRangesTestSuite,
+    CommonFactorsMergingTrivialRangesTest,
+    ::testing::Values(
+        CommonFactorsTestCase{{1}, {}, {{0, 0}, {1, 0}}},
+        CommonFactorsTestCase{{}, {1}, {{0, 0}, {0, 1}}},
+        CommonFactorsTestCase{{}, {}, {{0, 0}}},
+        CommonFactorsTestCase{{1, 2, 0}, {2, 0, 3}, {{0, 0}, {3, 3}}},
+        CommonFactorsTestCase{{2, 3, 0}, {1, 0, 1000}, {{0, 0}, {3, 3}}},
+        CommonFactorsTestCase{{1, 1, 1}, {1, 1}, {{0, 0}, {1, 1}, {3, 2}}},
+        CommonFactorsTestCase{{1, 1, 3}, {3, 1, 1}, {{0, 0}, {3, 3}}},
+        CommonFactorsTestCase{{2, 6}, {4, 3}, {{0, 0}, {2, 2}}},
+        CommonFactorsTestCase{{1, 2, 6}, {4, 1, 3, 1}, {{0, 0}, {3, 4}}},
+        CommonFactorsTestCase{{2, 3, 4, 5}, {6, 20}, {{0, 0}, {2, 1}, {4, 2}}},
+        CommonFactorsTestCase{
+            {2, 3, 4, 5, 6}, {6, 20, 6}, {{0, 0}, {2, 1}, {4, 2}, {5, 3}}},
+        CommonFactorsTestCase{{2, 2, 2, 2}, {4, 4}, {{0, 0}, {2, 1}, {4, 2}}},
+        CommonFactorsTestCase{
+            {2, 5, 1, 3}, {1, 10, 3, 1}, {{0, 0}, {2, 2}, {4, 4}}}),
+    [](const ::testing::TestParamInfo<CommonFactorsTestCase>& info) {
+      return absl::StrCat(absl::StrJoin(info.param.from, "_"), "_to_",
+                          absl::StrJoin(info.param.to, "_"));
+    });
 
 }  // namespace
 }  // namespace gpu

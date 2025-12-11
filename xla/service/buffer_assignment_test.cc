@@ -399,7 +399,7 @@ class BufferAssignmentTest : public HloHardwareIndependentTestBase {
   Shape f32a100x10_ = ShapeUtil::MakeShape(F32, {100, 10});
   Shape t_s32_f32v4_ = ShapeUtil::MakeTupleShape({s32_, f32vec4_});
   Shape t_s32_f32v10_ = ShapeUtil::MakeTupleShape({s32_, f32vec10_});
-  const AliasInfo alias_info_;
+  AliasInfo alias_info_;
 };
 
 // Returns true if the buffers assigned to instructions in "a" are distinct
@@ -4218,6 +4218,58 @@ TEST(ComputePeakMemoryTest, LargeResult) {
   alloc->set_is_entry_computation_parameter(true);
 
   EXPECT_EQ(*ComputePeakMemory(proto), 1LL << 33);
+}
+
+TEST(ComputeTotalAllocationBytesTest, EmptyProto) {
+  BufferAssignmentProto proto;
+  EXPECT_EQ(ComputeTotalAllocationBytes(proto, /*memory_color=*/0), 0);
+}
+
+TEST(ComputeTotalAllocationBytesTest, NonMatchingColorAllocations) {
+  BufferAssignmentProto proto;
+  BufferAllocationProto* alloc1 = proto.add_buffer_allocations();
+  alloc1->set_size(10);
+  alloc1->set_color(1);
+  BufferAllocationProto* alloc2 = proto.add_buffer_allocations();
+  alloc2->set_size(20);
+  alloc2->set_color(2);
+  EXPECT_EQ(ComputeTotalAllocationBytes(proto, /*memory_color=*/0), 0);
+}
+
+TEST(ComputeTotalAllocationBytesTest, OnlyMatchingColorAllocations) {
+  BufferAssignmentProto proto;
+  BufferAllocationProto* alloc1 = proto.add_buffer_allocations();
+  alloc1->set_size(10);
+  alloc1->set_color(0);
+  BufferAllocationProto* alloc2 = proto.add_buffer_allocations();
+  alloc2->set_size(20);
+  alloc2->set_color(0);
+  EXPECT_EQ(ComputeTotalAllocationBytes(proto, /*memory_color=*/0), 30);
+}
+
+TEST(ComputeTotalAllocationBytesTest, MixedColorAllocations) {
+  BufferAssignmentProto proto;
+  BufferAllocationProto* alloc1 = proto.add_buffer_allocations();
+  alloc1->set_size(10);
+  alloc1->set_color(0);
+  BufferAllocationProto* alloc2 = proto.add_buffer_allocations();
+  alloc2->set_size(20);
+  alloc2->set_color(1);
+  BufferAllocationProto* alloc3 = proto.add_buffer_allocations();
+  alloc3->set_size(30);
+  alloc3->set_color(0);
+  EXPECT_EQ(ComputeTotalAllocationBytes(proto, /*memory_color=*/0), 40);
+}
+
+TEST(ComputeTotalAllocationBytesTest, LargeAllocations) {
+  BufferAssignmentProto proto;
+  BufferAllocationProto* alloc1 = proto.add_buffer_allocations();
+  alloc1->set_size(1LL << 33);
+  alloc1->set_color(0);
+  BufferAllocationProto* alloc3 = proto.add_buffer_allocations();
+  alloc3->set_size(1LL << 33);
+  alloc3->set_color(0);
+  EXPECT_EQ(ComputeTotalAllocationBytes(proto, /*memory_color=*/0), 1LL << 34);
 }
 
 }  // namespace
