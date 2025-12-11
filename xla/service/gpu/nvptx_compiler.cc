@@ -78,6 +78,7 @@ limitations under the License.
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_utils.h"
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/gpu/nvptx_alias_info.h"
+#include "xla/service/gpu/transforms/gemm_workspace_rewriter.h"
 #include "xla/service/gpu/ptx_compile_options_from_debug_options.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/service/gpu/transforms/algebraic_simplifier.h"
@@ -375,6 +376,11 @@ absl::Status NVPTXCompiler::AddConvAndGemmAutotuningPasses(
                             thread_pool, should_autotune, target_config,
                             options.device_allocator));
   pipeline->AddPass(std::move(autotuner_pass));
+
+  // After autotuning, update GEMM workspace sizes to match the exact
+  // requirements of the selected algorithms, potentially reducing memory usage.
+  pipeline->AddPass<GemmWorkspaceRewriter>(gpu_version, stream_exec);
+
   return absl::OkStatus();
 }
 

@@ -1377,6 +1377,30 @@ xla_test(
 )
 
 cc_library(
+    name = "gemm_workspace_rewriter",
+    srcs = ["gemm_workspace_rewriter.cc"],
+    hdrs = ["gemm_workspace_rewriter.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:cublas_cudnn",
+        "//xla/service/gpu:matmul_utils",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/gpu:gpu_blas_lt",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
     name = "gemm_fusion",
     srcs = ["gemm_fusion.cc"],
     hdrs = ["gemm_fusion.h"],
