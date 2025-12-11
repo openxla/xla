@@ -156,10 +156,23 @@ class GpuBlasLtThunkBuilder {
     std::string canonical_hlo = gemm->ToString(
         HloPrintOptions::Fingerprint().set_print_backend_config(true));
 
+    // Query the first algorithm's stable ID from cuBLAS.
+    TF_ASSIGN_OR_RETURN(auto stream, exec_->CreateStream());
+    TF_ASSIGN_OR_RETURN(
+        auto plan, se::gpu::BlasLt::GetMatmulPlan(stream.get(), gemm_config,
+                                                  epilogue));
+    TF_ASSIGN_OR_RETURN(
+        auto algorithms,
+        plan->GetAlgorithms(stream.get(), /*num_algorithms=*/1,
+                            /*max_workspace_size=*/0));
+    if (algorithms.empty()) {
+      return absl::InternalError("No cuBLASLt algorithms available");
+    }
+    int64_t algorithm_id = algorithms[0].algorithm_id;
+
     return std::make_unique<CublasLtMatmulThunk>(
         std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
-        epilogue,
-        /*algorithm_idx*/ 0, slices[0], slices[1],
+        epilogue, algorithm_id, slices[0], slices[1],
         has_matrix_bias ? slices[2] : slices.back(), slices.back(), bias,
         BufferAllocation::Slice{} /* aux */,
         BufferAllocation::Slice{} /* a_scale */,

@@ -299,7 +299,7 @@ INSTANTIATE_TEST_SUITE_P(
          &FissionTest::CreateCublasBackendWiithF8Fallback,
          /*expected_module_substrings=*/
          {"custom_call_target=\"__cublas$lt$matmul$f8\"",
-          "\"selected_algorithm\":\"0\""},
+          "\"algorithm_id\":"},
          /*expected_backend_name=*/"Cublas_fission"},
         {"TritonFusion_CustomKernel",
          kTritonFusionHlo,

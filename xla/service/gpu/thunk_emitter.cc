@@ -662,6 +662,14 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunk(
           ? config.selected_algorithm()
           : 0;
 
+  // Extract the stable algorithm ID if available. This allows finding the
+  // correct algorithm at runtime even if workspace size filtering changes
+  // the algorithm index ordering.
+  std::optional<int64_t> algorithm_id;
+  if (config.has_algorithm_id()) {
+    algorithm_id = config.algorithm_id();
+  }
+
   BufferAllocation::Slice a_scale, b_scale, c_scale, d_scale, d_amax;
   TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
                       gpublas_lt::AsBlasLtEpilogue(epilogue));
@@ -671,8 +679,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunk(
       HloPrintOptions::Fingerprint().set_print_backend_config(true));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
       std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
-      blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
-      c_scale, d_scale, d_amax, workspace_buffer);
+      blas_lt_epilogue, algorithm, algorithm_id, a, b, c, d, bias, aux,
+      a_scale, b_scale, c_scale, d_scale, d_amax, workspace_buffer);
   return GetThunkSequence(std::move(thunk));
 }
 
@@ -742,12 +750,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunkF8(
       GemmConfig::For(static_cast<const HloInstruction*>(instr),
                       ir_emitter_context_->gpu_compute_capability()));
 
-  // Use the first algorithm by default (i.e. fastest according to
-  // heuristics).
-  int64_t algorithm =
-      config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
-          ? config.selected_algorithm()
-          : 0;
+  // Extract the stable algorithm ID from cuBLAS.
+  if (!config.has_algorithm_id()) {
+    return Internal(
+        "CublasLtMatmul instruction must have algorithm_id set: %s",
+        instr->ToString());
+  }
+  int64_t algorithm_id = config.algorithm_id();
 
   BufferAllocation::Slice aux;  // Not used.
   TF_RET_CHECK(!has_aux_output);
@@ -766,7 +775,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunkF8(
       HloPrintOptions::Fingerprint().set_print_backend_config(true));
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
       std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
-      blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
+      blas_lt_epilogue, algorithm_id, a, b, c, d, bias, aux, a_scale, b_scale,
       c_scale, d_scale, d_amax, workspace_buffer);
   return GetThunkSequence(std::move(thunk));
 }

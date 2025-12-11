@@ -109,6 +109,12 @@ message GemmBackendConfig {
   bool damax_output = 18;
 
   reserved 19;
+
+  // cuBLASLt algorithm identity. This is the stable algorithm ID from cuBLAS
+  // that uniquely identifies the algorithm across different GetAlgorithms
+  // calls. Unlike selected_algorithm (which is an index), this ID is stable
+  // regardless of workspace size filtering.
+  optional int64 algorithm_id = 20;
 }
 
 // Backend config for bitcast operation generated from MLIR MHLO dialect.

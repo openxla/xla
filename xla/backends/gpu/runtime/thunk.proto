@@ -218,7 +218,7 @@ message SelectKThunkProto {
 message CublasLtMatmulThunkProto {
   xla.GemmConfigProto gemm_config = 1;
   xla.BlasLtEpilogueProto epilogue = 2;
-  int64 algorithm_idx = 3;
+  reserved 3;  // Previously algorithm_idx (removed).
   string canonical_hlo = 4;
   xla.buffer_assignment.BufferAllocationSliceProto a = 5;
   xla.buffer_assignment.BufferAllocationSliceProto b = 6;
@@ -232,6 +232,8 @@ message CublasLtMatmulThunkProto {
   optional xla.buffer_assignment.BufferAllocationSliceProto d_scale = 14;
   optional xla.buffer_assignment.BufferAllocationSliceProto d_amax = 15;
   optional xla.buffer_assignment.BufferAllocationSliceProto workspace = 16;
+  // Stable algorithm identity from cuBLAS (CUBLASLT_ALGO_CONFIG_ID).
+  int64 algorithm_id = 17;
 }
 
 message CubSortThunkProto {

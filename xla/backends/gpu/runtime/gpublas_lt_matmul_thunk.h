@@ -37,7 +37,7 @@ class CublasLtMatmulThunk : public Thunk {
  public:
   CublasLtMatmulThunk(Thunk::ThunkInfo thunk_info, std::string canonical_hlo,
                       GemmConfig gemm_config,
-                      se::gpu::BlasLt::Epilogue epilogue, int64_t algorithm_idx,
+                      se::gpu::BlasLt::Epilogue epilogue, int64_t algorithm_id,
                       BufferAllocation::Slice a, BufferAllocation::Slice b,
                       BufferAllocation::Slice c, BufferAllocation::Slice d,
                       BufferAllocation::Slice bias /* may be null */,
@@ -74,7 +74,8 @@ class CublasLtMatmulThunk : public Thunk {
 
   GemmConfig gemm_config_;
   se::gpu::BlasLt::Epilogue epilogue_;
-  int64_t algorithm_idx_;
+  // Stable algorithm identity from cuBLAS (CUBLASLT_ALGO_CONFIG_ID).
+  int64_t algorithm_id_;
   std::string canonical_hlo_;
   BufferAllocation::Slice a_;
   BufferAllocation::Slice b_;

@@ -123,7 +123,8 @@ CublasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
   configs.reserve(num_algorithms);
   for (int i = 0; i < num_algorithms; ++i) {
     CublasLtBackendConfig gemm_key;
-    gemm_key.set_algorithm(i);
+    // Store the stable algorithm ID from cuBLAS.
+    gemm_key.set_algorithm_id(algorithms[i].algorithm_id);
     auto any = std::make_unique<google::protobuf::Any>();
     any->PackFrom(gemm_key);
     configs.push_back(std::move(any));
@@ -139,8 +140,45 @@ CublasLtBackend::GetDefaultConfig(const HloInstruction& instr) {
         "Not a CublasLt custom call instruction.");
   }
 
+  // Get the first algorithm's stable ID from cuBLAS.
+  GpuBackendConfig gpu_config =
+      instr.backend_config<GpuBackendConfig>().value();
+  const GemmBackendConfig& backend_config = gpu_config.gemm_backend_config();
+
+  TF_ASSIGN_OR_RETURN(
+      GemmConfig gemm_config,
+      GemmConfig::For(
+          &instr, target_config().device_description.gpu_compute_capability()));
+
+  TF_ASSIGN_OR_RETURN(BlasLt::Epilogue epilogue,
+                      AsBlasLtEpilogue(backend_config.epilogue()));
+
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
+                      stream_executor()->CreateStream());
+
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<BlasLt::MatmulPlan> plan,
+      se::gpu::BlasLt::GetMatmulPlan(stream.get(), gemm_config, epilogue));
+
+  const Shape& output_shape = instr.shape();
+  if (!output_shape.IsTuple() || output_shape.tuple_shapes().empty()) {
+    return Internal(
+        "Invalid shape for CublasLt matmul: output is not a non-empty tuple.");
+  }
+  const int64_t workspace_size =
+      ShapeUtil::ByteSizeOf(output_shape.tuple_shapes().back());
+
+  // Get just the first algorithm (the default/fastest according to heuristics).
+  TF_ASSIGN_OR_RETURN(std::vector<BlasLt::MatmulAlgorithm> algorithms,
+                      plan->GetAlgorithms(stream.get(), /*num_algorithms=*/1,
+                                          workspace_size));
+  if (algorithms.empty()) {
+    return Internal("No cuBLASLt algorithms available for instruction: %s",
+                    instr.ToString());
+  }
+
   AutotuneResult::GemmKey gemm_key;
-  gemm_key.set_algorithm(0);
+  gemm_key.set_algorithm_id(algorithms[0].algorithm_id);
   auto any = std::make_unique<google::protobuf::Any>();
   any->PackFrom(gemm_key);
   return any;
@@ -153,10 +191,15 @@ absl::Status CublasLtBackend::ApplyConfig(HloInstruction& instr,
     return absl::InvalidArgumentError(
         "Failed to unpack CublasLtBackendConfig from Any.");
   }
+  if (!gemm_key.has_algorithm_id()) {
+    return absl::InvalidArgumentError(
+        "CublasLtBackendConfig must have algorithm_id set.");
+  }
   TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                       instr.backend_config<GpuBackendConfig>());
   GemmBackendConfig& backend_config = *gpu_config.mutable_gemm_backend_config();
-  backend_config.set_selected_algorithm(gemm_key.algorithm());
+  // Store the stable algorithm ID from cuBLAS.
+  backend_config.set_algorithm_id(gemm_key.algorithm_id());
   TF_RETURN_IF_ERROR(instr.set_backend_config(std::move(gpu_config)));
   return absl::OkStatus();
 }

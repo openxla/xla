@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
-#include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -116,12 +115,6 @@ class CublasLtBackendTest : public HloHardwareIndependentTestBase {
         target_config_(stream_executor_),
         backend_(stream_executor_, &debug_options_, &compiler_,
                  &target_config_) {}
-
-  CublasLtBackendConfig ExpectedDefaultAlgorithm() {
-    auto config = AutotuneResult::GemmKey();
-    config.set_algorithm(se::blas::kDefaultAlgorithm);
-    return config;
-  }
 };
 
 TEST_F(CublasLtBackendTest, CanCreateCublasBackend) {
@@ -184,7 +177,7 @@ TEST_F(CublasLtBackendTest, ApplyConfig) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                           ParseAndReturnVerifiedModule(kCublasLtCustomCallHlo));
   CublasLtBackendConfig config;
-  config.set_algorithm(2);
+  config.set_algorithm_id(12345);  // Use stable algorithm ID.
   google::protobuf::Any any;
   any.PackFrom(config);
   TF_EXPECT_OK(backend_.ApplyConfig(*hlo_module->entry_computation()
@@ -193,7 +186,7 @@ TEST_F(CublasLtBackendTest, ApplyConfig) {
                                          .at(0),
                                     any));
   EXPECT_THAT(RunFileCheck(hlo_module->ToString(),
-                           "CHECK: \"selected_algorithm\":\"2\""),
+                           "CHECK: \"algorithm_id\":\"12345\""),
               absl_testing::IsOkAndHolds(true));
 }
 
