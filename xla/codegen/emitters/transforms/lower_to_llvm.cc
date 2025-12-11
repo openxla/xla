@@ -155,8 +155,12 @@ class LowerToLLVMPass : public impl::LowerToLLVMPassBase<LowerToLLVMPass> {
 
     // Cleanup any leftover math ops not handled NVVM or ROCDL lowering
     mlir::RewritePatternSet mathPatterns(&getContext());
-    mlir::populateMathToLLVMConversionPatterns(type_converter, mathPatterns,
-                                               /* approximateLog1p */ false);
+    // NVVM and ROCDL lower math.log1p directly via their GPU pattern sets, but
+    // the SPIR-V pipeline does not. For Intel GPUs we therefore fall back to
+    // the generic MathToLLVM conversion, hence enabling approximate log1p.
+    mlir::populateMathToLLVMConversionPatterns(
+        type_converter, mathPatterns,
+        /* approximateLog1p */ device_spec_.IsIntelGpu());
     target.addIllegalDialect<mlir::math::MathDialect>();
 
     if (failed(applyFullConversion(getOperation(), target,
