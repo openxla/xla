@@ -465,12 +465,34 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
     std::unique_ptr<ActivateContext> activation = blas_lt->parent_->Activate();
 
     if (palgo != nullptr) {
-      SE_CUBLAS_RETURN_IF_ERROR(cublasLtMatmul(
-          blas_lt->blas_lt_.get(), op_desc_.get(), alpha, a.opaque(),
-          a_desc_.get(), b.opaque(), b_desc_.get(), beta, args.c.opaque(),
-          c_desc_.get(), args.d.opaque(), d_desc_.get(), palgo, workspace_addr,
-          workspace_size,
-          absl::bit_cast<CUstream>(stream->platform_specific_handle().stream)));
+      // Since cuda 13.0, cublasLT adds a check that enforce gemm with same C
+      // and D pointer to have same descs. XLA uses same C and D pointer for in
+      // place gemms which is fine. But for gemms with beta = 0, XLA also uses
+      // same C and D pointer even though C pointer is not needed by cublas. The
+      // new check will fail now in this case for fp8 gemms since C and D
+      // usually have different descs. The correct way is to use dummy C nullptr
+      // for gemms with beta = 0.
+      TF_ASSIGN_OR_RETURN(
+          int32_t scale_type,
+          GetAttr<int32_t>(op_desc_.get(), CUBLASLT_MATMUL_DESC_SCALE_TYPE));
+      // For fp8 gemms, scale is always fp32 type.
+      if (scale_type == CUDA_R_32F && *static_cast<const float*>(beta) == 0) {
+        SE_CUBLAS_RETURN_IF_ERROR(
+            cublasLtMatmul(blas_lt->blas_lt_.get(), op_desc_.get(), alpha,
+                           a.opaque(), a_desc_.get(), b.opaque(), b_desc_.get(),
+                           beta, nullptr, c_desc_.get(), args.d.opaque(),
+                           d_desc_.get(), palgo, workspace_addr, workspace_size,
+                           absl::bit_cast<CUstream>(
+                               stream->platform_specific_handle().stream)));
+      } else {
+        SE_CUBLAS_RETURN_IF_ERROR(cublasLtMatmul(
+            blas_lt->blas_lt_.get(), op_desc_.get(), alpha, a.opaque(),
+            a_desc_.get(), b.opaque(), b_desc_.get(), beta, args.c.opaque(),
+            c_desc_.get(), args.d.opaque(), d_desc_.get(), palgo,
+            workspace_addr, workspace_size,
+            absl::bit_cast<CUstream>(
+                stream->platform_specific_handle().stream)));
+      }
     } else {
       return absl::InternalError("cublaslt: Invalid algorithm type");
     }
