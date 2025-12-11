@@ -545,11 +545,11 @@ message DebugOptions {
 
   optional bool xla_gpu_enable_pipelined_collectives = 239 [deprecated = true];
 
+  optional bool xla_gpu_enable_pipelined_host_offloading = 439;
+
   optional bool xla_gpu_enable_pipelined_p2p = 246;
 
   optional bool xla_gpu_enable_pipelined_reduce_scatter = 231;
-
-  optional bool xla_gpu_enable_pipelined_host_offloading = 439;
 
   // Enable allreduce reassociation on allreduces that are converted to a wider
   // type. The resulting allreduce will be promoted to a wider-typed allreduce.
