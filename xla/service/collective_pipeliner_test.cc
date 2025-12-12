@@ -20,6 +20,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <queue>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -5710,8 +5711,8 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
   }
   ASSERT_EQ(while_loops.size(), 1) << "Expected 1 while loop in the module";
 
-  VLOG(1) << "Transformed while body:\n"
-          << while_loops[0]->while_body()->ToString();
+  XLA_VLOG_LINES(1, "Transformed while body:\n" +
+                        while_loops[0]->while_body()->ToString());
 
   TF_ASSERT_OK_AND_ASSIGN(
       WhileLoopBackendConfig config,
@@ -5819,8 +5820,8 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
   }
   ASSERT_EQ(while_loops.size(), 1) << "Expected 1 while loop in the module";
 
-  VLOG(1) << "Transformed while body:\n"
-          << while_loops[0]->while_body()->ToString();
+  XLA_VLOG_LINES(1, "Transformed while body:\n" +
+                        while_loops[0]->while_body()->ToString());
 
   TF_ASSERT_OK_AND_ASSIGN(
       WhileLoopBackendConfig config,
