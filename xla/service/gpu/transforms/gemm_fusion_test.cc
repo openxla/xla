@@ -227,6 +227,42 @@ ENTRY e {
   EXPECT_TRUE(GemmFusion(cc).Run(module.get()).value());
 }
 
+TEST_F(GemmFusionTest, FuseSliceWithOtherUsersWhenDotHasSmallK) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+  %bitcast = bf16[512,3584]{1,0} parameter(0)
+  %bitcast.8 = bf16[3584,14400]{0,1} parameter(1)
+  %dot.3 = bf16[512,14400]{1,0} dot(%bitcast, %bitcast.8), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %slice = bf16[512,14336]{1,0} slice(%dot.3), slice={[0:512], [0:14336]}
+  %slice.1 = bf16[512,64]{1,0} slice(%dot.3), slice={[0:512], [14336:14400]}
+  %bitcast.2 = bf16[64,14336]{1,0} parameter(2)
+  %dot.1 = bf16[512,14336]{1,0} dot(%slice.1, %bitcast.2), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT %add.0 = bf16[512,14336]{1,0} add(%slice, %dot.1)
+})"));
+
+  const se::CudaComputeCapability cc{se::CudaComputeCapability::kHopper, 0};
+  EXPECT_TRUE(GemmFusion(cc).Run(module.get()).value()) << module->ToString();
+}
+
+TEST_F(GemmFusionTest, DoNotFuseSliceWithOtherUsersWhenDotHasLargeK) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+  %bitcast = bf16[512,3584]{1,0} parameter(0)
+  %bitcast.8 = bf16[3584,14400]{0,1} parameter(1)
+  %dot.3 = bf16[512,14400]{1,0} dot(%bitcast, %bitcast.8), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %slice = bf16[512,14336]{1,0} slice(%dot.3), slice={[0:512], [0:14336]}
+  %slice.1 = bf16[512,1400]{1,0} slice(%dot.3), slice={[0:512], [13000:14400]}
+  %bitcast.2 = bf16[1400,14336]{1,0} parameter(2)
+  %dot.1 = bf16[512,14336]{1,0} dot(%slice.1, %bitcast.2), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT %add.0 = bf16[512,14336]{1,0} add(%slice, %dot.1)
+})"));
+
+  const se::CudaComputeCapability cc{se::CudaComputeCapability::kHopper, 0};
+  EXPECT_FALSE(GemmFusion(cc).Run(module.get()).value()) << module->ToString();
+}
+
 TEST_F(GemmFusionTest, DoNotFuseSliceOfMixedDimensions) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(R"(
