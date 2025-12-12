@@ -216,6 +216,7 @@ cc_library(
     deps = [
         "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
+        "@ml_dtypes_py//ml_dtypes:intn",
         "@tsl//tsl/platform:ml_dtypes",
     ],
 )
