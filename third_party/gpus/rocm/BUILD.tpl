@@ -395,15 +395,19 @@ cc_library(
 
 cc_library(
     name = "rocprofiler-sdk",
-    srcs = glob(["%{rocm_root}/lib/librocprofiler-sdk*.so*"]),
     hdrs = glob(["%{rocm_root}/include/rocprofiler-sdk/**"]),
+    data = glob(["%{rocm_root}/lib/librocprofiler-sdk*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = ["-lrocprofiler-sdk"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
-    deps = [":rocm_config"],
+    deps = [
+        ":rocm_config",
+        ":rocm_rpath",
+    ],
 )
 
 cc_library(
@@ -414,6 +418,7 @@ cc_library(
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = ["-lrocsolver"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [
