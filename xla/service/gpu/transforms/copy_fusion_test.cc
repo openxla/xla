@@ -649,5 +649,31 @@ TEST_F(CopyFusionTest, CopyFusionWithMoreThanMaxCopies) {
   EXPECT_FALSE(CreateFusionWithNumCopies(max_copies));
 }
 
+TEST_F(CopyFusionTest, OriginalValue) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
+fused_broadcast () -> f32[1000,1000] {
+  %constant.4.1 = f32[] constant(1), origin={{"constant.3"}}
+  ROOT %broadcast.4.1 = f32[1000,1000]{1,0} broadcast(%constant.4.1), dimensions={}, origin={{"broadcast.5"}}
+}
+
+%fused_broadcast.1 () -> f32[8,4] {
+  %constant.4.2 = f32[] constant(1), origin={{"constant.3"}}
+  ROOT %broadcast.6 = f32[8,4]{1,0} broadcast(%constant.4.2), dimensions={}, origin={{"slice.1"}}
+}
+
+ENTRY %SliceInPlaceLiveOutViaTuple.1 () -> (f32[1000,1000], f32[1000,1000], f32[8,4]) {
+  %loop_broadcast_fusion = f32[1000,1000]{1,0} fusion(), kind=kLoop, calls=%fused_broadcast, origin={{"broadcast.5"}}
+  %copy = f32[1000,1000]{1,0} copy(%loop_broadcast_fusion)
+  %loop_broadcast_fusion.1 = f32[8,4]{1,0} fusion(), kind=kLoop, calls=%fused_broadcast.1, origin={{"slice.1"}}
+  ROOT %tuple = (f32[1000,1000]{1,0}, f32[1000,1000]{1,0}, f32[8,4]{1,0}) tuple(%loop_broadcast_fusion, %copy, %loop_broadcast_fusion.1)
+}
+
+      )")));
+  ASSERT_TRUE(cf_.Run(module.get()).value());
+  std::cerr << "module: " << module->ToString() << "\n";
+}
+
 }  // namespace gpu
 }  // namespace xla

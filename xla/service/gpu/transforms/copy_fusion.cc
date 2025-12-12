@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/codegen/ir_emission_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/gpu/gpu_fusible.h"
@@ -174,6 +175,10 @@ absl::StatusOr<bool> CopyFusion::DoCopyFusion(
 
     HloInstruction* new_root = fused_computation->AddInstruction(
         HloInstruction::CreateTuple(tuple_elements));
+    std::shared_ptr<xla::OriginalValue> new_original_value =
+        xla::OriginalValue::CreateFromInstruction(new_root);
+    new_root->set_original_value(new_original_value);
+    hlo->set_original_value(new_original_value);
     fused_computation->set_root_instruction(new_root,
                                             /*accept_different_shape=*/true);
     *hlo->mutable_shape() = new_root->shape();
