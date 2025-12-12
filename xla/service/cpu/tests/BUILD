@@ -417,7 +417,9 @@ xla_cc_test(
     local_defines = if_graph_api(["XLA_ONEDNN_USE_GRAPH_API=1"]),
     deps = [
         "//xla:error_spec",
+        "//xla/backends/cpu:onednn_support",
         "//xla/service:cpu_plugin",
+        "//xla/service/cpu:onednn_util",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings:string_view",
