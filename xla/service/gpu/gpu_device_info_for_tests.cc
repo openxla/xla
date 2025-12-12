@@ -127,6 +127,8 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::AMDRX7900DeviceInfo() {
   stream_executor::DeviceDescription b;
   b.set_gpu_compute_capability(
       stream_executor::RocmComputeCapability("gfx1100"));
+  b.set_shared_memory_per_block(64 * 1024);
+  b.set_shared_memory_per_block_optin(64 * 1024);
   return b;
 }
 

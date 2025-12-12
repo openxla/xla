@@ -118,6 +118,8 @@ absl::StatusOr<Type> TritonType(EmitterLocOpBuilder& b, PrimitiveType t) {
       return b.getType<mlir::Float8E5M2FNUZType>();
     case F8E4M3FNUZ:
       return b.getType<mlir::Float8E4M3FNUZType>();
+    case F8E8M0FNU:
+      return b.getType<mlir::Float8E8M0FNUType>();
     default:
       return absl::UnimplementedError(
           absl::StrCat("This type is not supported yet: ",

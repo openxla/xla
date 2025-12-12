@@ -2847,6 +2847,9 @@ ENTRY entry_computation {
 // Reproducer from b/384110192.
 TEST_F(TritonEmitterTest,
        FusionWithOutputContainingMoreThanInt32MaxElementsExecutesCorrectly) {
+  if (std::get_if<se::RocmComputeCapability>(&GpuComputeCapability())) {
+    GTEST_SKIP() << "Not enough shared memory on ROCm.";
+  }
   // The point here is to check the output of the Triton fusion. The `slice` op
   // at the end is inserted to allow the comparison of output to run in a
   // reasonable amount of time, and has been proven to still correctly capture
@@ -2909,6 +2912,11 @@ TEST_F(TritonEmitterTest, ConvertF16ToF8E5M2Exhaustive) {
       cc && cc->IsAtLeastHopper()) {
     GTEST_SKIP() << "Skipping tests above Ampere, Triton's conversion isn't "
                     "always correct";
+  }
+  if (auto cc = std::get_if<se::RocmComputeCapability>(
+      &GpuComputeCapability())) {
+    GTEST_SKIP() << "Skipping on ROCm, Triton's fp8 conversion does not"
+                    "generate inf - it clips to max f8 value";
   }
 
   constexpr absl::string_view kHloTextTemplate = R"(
@@ -3939,12 +3947,19 @@ TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   std::vector<std::string> paths;
   std::string triton_passes_log;
 
+  // https://github.com/openxla/xla/commit/e00d5aa8029d228b148bf0ac463bdc5d1b70ea16
+  // adds bounds checks in Triton fusion emitter.
+  // Consequently valid, non-empty, tile parameters/sizes must be provided.
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{16, 64}};
+  block_level_parameters.num_warps = 1;
+
   // For MI210 warp_size should be 64
-  const se::DeviceDescription dev_info =
+  se::DeviceDescription dev_info =
       TestGpuDeviceInfo::AMDMI210DeviceInfo();
   TF_ASSERT_OK(TritonWrapper(
       "test_fn", triton_fusion, se::RocmComputeCapability("gfx942"), dev_info,
-      BlockLevelParameters(), &llvm_module, symbolic_expr_context));
+      block_level_parameters, &llvm_module, symbolic_expr_context));
   TF_EXPECT_OK(tsl::Env::Default()->GetMatchingPaths(
       tsl::io::JoinPath(output_directory, "*.triton-passes.log"), &paths));
   EXPECT_EQ(paths.size(), 1);
@@ -3956,11 +3971,11 @@ TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   EXPECT_THAT(RunFileCheck(triton_passes_log, kPattern), true);
 
   // For RX7900 warp_size should be 32
-  const se::DeviceDescription dev_info_n =
+  se::DeviceDescription dev_info_n =
       TestGpuDeviceInfo::AMDRX7900DeviceInfo();
   TF_ASSERT_OK(TritonWrapper(
       "test_fn", triton_fusion, se::RocmComputeCapability("gfx1100"),
-      dev_info_n, BlockLevelParameters(), &llvm_module, symbolic_expr_context));
+      dev_info_n, block_level_parameters, &llvm_module, symbolic_expr_context));
   TF_EXPECT_OK(tsl::Env::Default()->GetMatchingPaths(
       tsl::io::JoinPath(output_directory, "*.triton-passes.log"), &paths));
   EXPECT_EQ(paths.size(), 1);
