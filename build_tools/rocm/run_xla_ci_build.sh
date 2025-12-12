@@ -78,8 +78,6 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     -//xla/service/gpu/transforms:cublas_gemm_rewriter_test_amdgpu_any \
     -//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any \
     -//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any_notfrt \
-    -//xla/tests:convolution_test_amdgpu_any \
-    -//xla/tests:convolution_test_amdgpu_any_notfrt \
     -//xla/tests:multioutput_fusion_test_amdgpu_any \
     -//xla/tests:sample_file_test_amdgpu_any \
     -//xla/tests:scatter_test_amdgpu_any \

@@ -32,6 +32,52 @@ package_group(
 )
 
 cc_library(
+    name = "gemm_algorithm_picker",
+    srcs = ["gemm_algorithm_picker.cc"],
+    hdrs = ["gemm_algorithm_picker.h"],
+    tags = ["gpu"],
+    deps = [
+        ":autotuner_util",
+
+        ":redzone_buffers",
+        "//xla:autotune_results_proto_cc",
+        "//xla:autotuning_proto_cc",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_proto_cc",
+        "//xla/backends/gpu/runtime:buffer_comparator",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service:hlo_module_config",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:cublas_cudnn",
+        "//xla/service/gpu:matmul_utils",
+        "//xla/service/gpu:stream_executor_util",
+        "//xla/stream_executor:blas",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/gpu:redzone_allocator",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/util/proto:proto_utils",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/functional:overload",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
+    ],
+)
+
+cc_library(
     name = "gemm_fusion_autotuner_cuda",
     srcs = [
         "gemm_fusion_autotuner.h",
