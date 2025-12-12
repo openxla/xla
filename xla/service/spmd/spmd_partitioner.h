@@ -214,7 +214,7 @@ struct SPMDCollectiveOpsCreator {
   // function that uses CollectiveDeviceList.
   std::function<HloInstruction*(
       SpmdBuilder*, HloInstruction* operand, HloComputation* reduction,
-      const IotaReplicaGroupList& partition_group_list, int64_t channel_id)>
+      IotaReplicaGroupList* partition_group_list, int64_t channel_id)>
       create_cross_partition_all_reduce_with_iota_device_list;
 
   // Function used to create a cross-partition collective-permute HLO.
@@ -236,7 +236,7 @@ struct SPMDCollectiveOpsCreator {
   // create_cross_partition_all_to_all.
   std::function<HloInstruction*(
       SpmdBuilder*, absl::Span<HloInstruction* const> operands,
-      const IotaReplicaGroupList& partition_group_list, int64_t channel_id,
+      IotaReplicaGroupList* partition_group_list, int64_t channel_id,
       std::optional<int64_t> split_dimension)>
       create_cross_partition_all_to_all_with_iota_device_list;
 
@@ -255,7 +255,7 @@ struct SPMDCollectiveOpsCreator {
   // function that uses CollectiveDeviceList.
   std::function<HloInstruction*(
       SpmdBuilder*, HloInstruction* operand, const Shape& ag_shape,
-      const IotaReplicaGroupList& partition_group_list, int64_t channel_id,
+      IotaReplicaGroupList* partition_group_list, int64_t channel_id,
       int64_t all_gather_dimension)>
       create_cross_partition_all_gather_with_iota_device_list;
 };
