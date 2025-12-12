@@ -2875,8 +2875,8 @@ TEST_F(CollectiveOpsTestE2E, MultipleModuleDifferentDeviceGroupsShouldRun) {
   }
 
   ENTRY test_computation {
-    param_0 = f32[65536] parameter(0)
-    ROOT all-reduce = f32[65536] all-reduce(param_0), to_apply=apply_op, replica_groups={{0,1}}
+    param_0 = f32[8] parameter(0)
+    ROOT all-reduce = f32[8] all-reduce(param_0), to_apply=apply_op, replica_groups={{0,1}}
   }
   )";
   const absl::string_view kModuleStr_2 = R"(
@@ -2889,11 +2889,11 @@ TEST_F(CollectiveOpsTestE2E, MultipleModuleDifferentDeviceGroupsShouldRun) {
   }
 
   ENTRY test_computation {
-    param_0 = f32[65536] parameter(0)
-    all-reduce.1 = f32[65536] all-reduce(param_0), to_apply=apply_op, replica_groups={{0,1}, {2,3}}
-    all-reduce.2 = f32[65536] all-reduce(all-reduce.1), to_apply=apply_op, replica_groups={{0,1}, {2,3}}
-    all-reduce.3 = f32[65536] all-reduce(all-reduce.2), to_apply=apply_op, replica_groups={{0,1}, {2,3}}
-    ROOT all-reduce.4 = f32[65536] all-reduce(all-reduce.3), to_apply=apply_op, replica_groups={{0,1,2,3}}
+    param_0 = f32[8] parameter(0)
+    all-reduce.1 = f32[8] all-reduce(param_0), to_apply=apply_op, replica_groups={{0,1}, {2,3}}
+    all-reduce.2 = f32[8] all-reduce(all-reduce.1), to_apply=apply_op, replica_groups={{0,1}, {2,3}}
+    all-reduce.3 = f32[8] all-reduce(all-reduce.2), to_apply=apply_op, replica_groups={{0,1}, {2,3}}
+    ROOT all-reduce.4 = f32[8] all-reduce(all-reduce.3), to_apply=apply_op, replica_groups={{0,1,2,3}}
   }
   )";
 
