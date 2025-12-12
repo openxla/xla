@@ -9,5 +9,6 @@ def repo():
         sha256 = "2d5e0b17d2c25c7100f66e58e7d76b9c4b8a65b1d86c33c9214dc05fce00ee69",
         strip_prefix = "XNNPACK-6400256d3a687d52ae268a553d7208534f39800a",
         urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/6400256d3a687d52ae268a553d7208534f39800a.zip"),
+        patch_file = ["//third_party/xnnpack:layering_check_fix.patch"],
     )
     # LINT.ThenChange(//tensorflow/lite/tools/cmake/modules/xnnpack.cmake)
