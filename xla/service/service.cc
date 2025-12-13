@@ -77,6 +77,25 @@ namespace {
 using absl::StrCat;
 using absl::StrFormat;
 
+// Number of VA reservation sets for interleaving VA range usage.
+// This should match kNumOfVaReservationSets in gpu_executable.cc.
+constexpr int kNumOfVaReservationSets = 2;
+
+// Per-device counter for tracking which VA range index to use next.
+// This enables interleaving VA ranges across executions to overlap
+// CPU VA remapping with GPU execution.
+absl::flat_hash_map<int, int>& GetVaRangeIdxCounters() {
+  static auto* counters = new absl::flat_hash_map<int, int>();
+  return *counters;
+}
+
+int GetNextCommandBufferVaRangeIdx(int device_ordinal) {
+  auto& counters = GetVaRangeIdxCounters();
+  int idx = counters[device_ordinal];
+  counters[device_ordinal] = (idx + 1) % kNumOfVaReservationSets;
+  return idx;
+}
+
 // Records the arguments used to invoke a computation in an HloSnapshot proto.
 absl::Status RecordArguments(
     const absl::Span<const ShapedBuffer* const> arguments, se::Stream* stream,
@@ -346,9 +365,12 @@ absl::StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
   std::vector<ServiceExecutableRunOptions> run_options;
   run_options.reserve(streams.size());
   for (const StreamPool::Ptr& stream : streams) {
+    int device_ordinal = stream->parent()->device_ordinal();
     ExecutableRunOptions options;
     options.set_stream(stream.get());
-    options.set_device_ordinal(stream->parent()->device_ordinal());
+    options.set_device_ordinal(device_ordinal);
+    options.set_command_buffer_va_range_idx(
+        GetNextCommandBufferVaRangeIdx(device_ordinal));
     options.set_local_device_count(backend->device_count());
     options.set_allocator(backend->memory_allocator());
     options.set_intra_op_thread_pool(

@@ -377,6 +377,20 @@ PjRtStreamExecutorClient::GetHloCostAnalysis() const {
 
 namespace {
 
+// Number of VA reservation sets for interleaving VA range usage.
+// This should match kNumOfVaReservationSets in gpu_executable.cc.
+constexpr int kNumOfVaReservationSets = 2;
+
+// Derives command buffer VA range index from run_id.
+// Using run_id ensures all ranks in a distributed execution use the same
+// VA range index, avoiding deadlocks that could occur with per-device counters
+// when ranks execute in different orders. Since run_id is synchronized across
+// all ranks participating in the same logical execution, they will all compute
+// the same VA range index.
+int GetCommandBufferVaRangeIdx(RunId run_id) {
+  return static_cast<int>(run_id.ToInt() % kNumOfVaReservationSets);
+}
+
 // Ensures that it is safe to deallocate any buffers that have been enqueued in
 // an operation on stream. Called only in rare error cases that are triggered
 // during enqueue. These cases generally correspond to resource exhaustion.
@@ -1742,6 +1756,8 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
         client->client()->backend().eigen_intra_op_thread_pool_device());
     run_options.set_device_assignment(device_assignment.get());
     run_options.set_run_id(run_id);
+    run_options.set_command_buffer_va_range_idx(
+        GetCommandBufferVaRangeIdx(run_id));
     run_options.set_rng_seed(device_state->GetNewPrngSeed());
     run_options.set_gpu_executable_run_options(std::move(gpu_run_options));
     run_options.set_launch_id(launch_id);

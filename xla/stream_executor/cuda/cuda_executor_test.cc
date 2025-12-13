@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -255,6 +256,189 @@ TEST(CudaExecutorTest,
 
   EXPECT_THAT(cuda_executor->RetainVmmMemoryHandle(ptr.opaque()),
               absl_testing::StatusIs(absl::StatusCode::kInternal));
+}
+
+TEST(CudaExecutorTest, ReserveAddressAndFreeAddress) {
+  TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
+                          PlatformManager::PlatformWithName("CUDA"));
+  TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                          platform->ExecutorForDevice(0));
+
+  auto cuda_executor = dynamic_cast<CudaExecutor*>(executor);
+  ASSERT_NE(cuda_executor, nullptr);
+
+  // Get granularity to ensure proper alignment.
+  uint64_t granularity = cuda_executor->GetAllocationGranularity();
+  EXPECT_GT(granularity, 0);
+
+  // Reserve a virtual address range.
+  uint64_t size = granularity;  // Use granularity-aligned size.
+  TF_ASSERT_OK_AND_ASSIGN(
+      DeviceAddressBase reserved,
+      cuda_executor->ReserveAddress(size, static_cast<int>(MemorySpace::kP2P)));
+
+  EXPECT_NE(reserved.opaque(), nullptr);
+  EXPECT_EQ(reserved.size(), size);
+
+  // Free the reserved address.
+  EXPECT_THAT(cuda_executor->FreeAddress(&reserved), absl_testing::IsOk());
+}
+
+TEST(CudaExecutorTest, MapRawAddressAndUnmapRawAddress) {
+  TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
+                          PlatformManager::PlatformWithName("CUDA"));
+  TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                          platform->ExecutorForDevice(0));
+
+  auto cuda_executor = dynamic_cast<CudaExecutor*>(executor);
+  ASSERT_NE(cuda_executor, nullptr);
+
+  // Get granularity to ensure proper alignment.
+  uint64_t granularity = cuda_executor->GetAllocationGranularity();
+  EXPECT_GT(granularity, 0);
+
+  uint64_t size = granularity;
+
+  // Allocate physical memory with VMM API (this sets raw_handle_).
+  TF_ASSERT_OK_AND_ASSIGN(DeviceAddressBase vmm_alloc,
+                          cuda_executor->VmmAllocateMemory(size));
+  EXPECT_NE(vmm_alloc.opaque(), nullptr);
+  EXPECT_TRUE(vmm_alloc.raw_handle().has_value());
+
+  // Clean up the VMM allocation (which already has memory mapped).
+  TF_ASSERT_OK_AND_ASSIGN(bool deallocated,
+                          cuda_executor->VmmDeallocateMemory(vmm_alloc));
+  EXPECT_TRUE(deallocated);
+}
+
+TEST(CudaExecutorTest, MapRawAddressWithManualReserveAndMap) {
+  TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
+                          PlatformManager::PlatformWithName("CUDA"));
+  TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                          platform->ExecutorForDevice(0));
+
+  auto cuda_executor = dynamic_cast<CudaExecutor*>(executor);
+  ASSERT_NE(cuda_executor, nullptr);
+
+  // Create a stream for memory operations.
+  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  // Get granularity to ensure proper alignment.
+  uint64_t granularity = cuda_executor->GetAllocationGranularity();
+  EXPECT_GT(granularity, 0);
+
+  uint64_t size = granularity;
+
+  // Step 1: Allocate physical memory with VMM API to get a raw handle.
+  TF_ASSERT_OK_AND_ASSIGN(DeviceAddressBase vmm_alloc,
+                          cuda_executor->VmmAllocateMemory(size));
+  ASSERT_NE(vmm_alloc.opaque(), nullptr);
+  ASSERT_TRUE(vmm_alloc.raw_handle().has_value());
+  RawAddressHandle raw_handle = vmm_alloc.raw_handle().value();
+
+  // Step 2: Write test data to the original virtual address.
+  constexpr uint64_t kTestValue = 0xDEADBEEFCAFEBABE;
+  EXPECT_THAT(stream->Memcpy(&vmm_alloc, &kTestValue, sizeof(kTestValue)),
+              absl_testing::IsOk());
+  EXPECT_THAT(stream->BlockHostUntilDone(), absl_testing::IsOk());
+
+  // Step 3: Reserve a separate virtual address range.
+  TF_ASSERT_OK_AND_ASSIGN(
+      DeviceAddressBase reserved,
+      cuda_executor->ReserveAddress(size, static_cast<int>(MemorySpace::kP2P)));
+  ASSERT_NE(reserved.opaque(), nullptr);
+  EXPECT_EQ(reserved.size(), size);
+
+  // Step 4: Map the physical memory to the new reserved virtual address.
+  // The physical memory is now mapped to both vmm_alloc and reserved.
+  EXPECT_THAT(
+      cuda_executor->MapRawAddress(&reserved, /*offset=*/0, raw_handle),
+      absl_testing::IsOk());
+
+  // Step 4b: Set access permissions for the newly mapped virtual address.
+  CUmemAccessDesc access_desc = {};
+  access_desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  access_desc.location.id = cuda_executor->device_ordinal();
+  access_desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+  EXPECT_THAT(cuda_executor->VmmSetAccess(&reserved, access_desc, /*count=*/1),
+              absl_testing::IsOk());
+
+  // Step 5: Verify that reading from both addresses gives the same value.
+  uint64_t value_from_original = 0;
+  uint64_t value_from_new = 0;
+  EXPECT_THAT(
+      stream->Memcpy(&value_from_original, vmm_alloc, sizeof(uint64_t)),
+      absl_testing::IsOk());
+  EXPECT_THAT(stream->Memcpy(&value_from_new, reserved, sizeof(uint64_t)),
+              absl_testing::IsOk());
+  EXPECT_THAT(stream->BlockHostUntilDone(), absl_testing::IsOk());
+
+  EXPECT_EQ(value_from_original, kTestValue);
+  EXPECT_EQ(value_from_new, kTestValue);
+  EXPECT_EQ(value_from_original, value_from_new);
+
+  // Step 6: Clean up - unmap from the new address and free it.
+  EXPECT_THAT(cuda_executor->UnmapRawAddress(&reserved), absl_testing::IsOk());
+  EXPECT_THAT(cuda_executor->FreeAddress(&reserved), absl_testing::IsOk());
+
+  // Step 7: Deallocate the original VMM memory.
+  TF_ASSERT_OK_AND_ASSIGN(bool deallocated,
+                          cuda_executor->VmmDeallocateMemory(vmm_alloc));
+  EXPECT_TRUE(deallocated);
+}
+
+TEST(CudaExecutorTest, MapRawAddressFailsWithNonZeroOffset) {
+  TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
+                          PlatformManager::PlatformWithName("CUDA"));
+  TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                          platform->ExecutorForDevice(0));
+
+  auto cuda_executor = dynamic_cast<CudaExecutor*>(executor);
+  ASSERT_NE(cuda_executor, nullptr);
+
+  uint64_t granularity = cuda_executor->GetAllocationGranularity();
+  uint64_t size = granularity;
+
+  // Allocate physical memory.
+  TF_ASSERT_OK_AND_ASSIGN(DeviceAddressBase vmm_alloc,
+                          cuda_executor->VmmAllocateMemory(size));
+  ASSERT_TRUE(vmm_alloc.raw_handle().has_value());
+  RawAddressHandle raw_handle = vmm_alloc.raw_handle().value();
+
+  // Reserve address.
+  TF_ASSERT_OK_AND_ASSIGN(
+      DeviceAddressBase reserved,
+      cuda_executor->ReserveAddress(size, static_cast<int>(MemorySpace::kP2P)));
+  ASSERT_NE(reserved.opaque(), nullptr);
+
+  // Try to map with non-zero offset - should fail.
+  EXPECT_THAT(
+      cuda_executor->MapRawAddress(&reserved, /*offset=*/1024, raw_handle),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             HasSubstr("offset must be 0")));
+
+  // Clean up.
+  EXPECT_THAT(cuda_executor->FreeAddress(&reserved), absl_testing::IsOk());
+  EXPECT_THAT(cuda_executor->VmmDeallocateMemory(vmm_alloc),
+              absl_testing::IsOkAndHolds(true));
+}
+
+TEST(CudaExecutorTest, MapRawAddressFailsWithNullAddress) {
+  TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
+                          PlatformManager::PlatformWithName("CUDA"));
+  TF_ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                          platform->ExecutorForDevice(0));
+
+  auto cuda_executor = dynamic_cast<CudaExecutor*>(executor);
+  ASSERT_NE(cuda_executor, nullptr);
+
+  DeviceAddressBase null_address;
+  RawAddressHandle dummy_handle{0};
+
+  EXPECT_THAT(
+      cuda_executor->MapRawAddress(&null_address, /*offset=*/0, dummy_handle),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             HasSubstr("null address")));
 }
 }  // namespace
 }  // namespace stream_executor::gpu

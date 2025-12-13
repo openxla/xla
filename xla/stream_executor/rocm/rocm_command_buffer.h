@@ -121,7 +121,7 @@ class RocmCommandBuffer : public GpuCommandBuffer {
 
   absl::StatusOr<GraphNodeHandle> CreateClonedChildNode(
       absl::Span<const GraphNodeHandle> dependencies,
-      const CommandBuffer& nested) override;
+      CommandBuffer& nested) override;
 
   absl::StatusOr<GraphNodeHandle> CreateMovedChildNode(
       absl::Span<const GraphNodeHandle> dependencies,

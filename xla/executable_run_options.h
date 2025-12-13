@@ -266,6 +266,12 @@ class ExecutableRunOptions {
       std::vector<std::unique_ptr<CliqueKey>>* clique_keys);
   std::vector<std::unique_ptr<CliqueKey>>* clique_keys() const;
 
+  ExecutableRunOptions& set_command_buffer_va_range_idx(
+      int command_buffer_va_range_idx);
+  int command_buffer_va_range_idx() const {
+    return command_buffer_va_range_idx_;
+  }
+
  private:
   stream_executor::DeviceAddressAllocator* allocator_ = nullptr;
   int device_ordinal_ = -1;
@@ -287,6 +293,7 @@ class ExecutableRunOptions {
   const gpu::GpuExecutableRunOptions* gpu_executable_run_options_ = nullptr;
   const ffi::ExecutionContext* ffi_execution_context_ = nullptr;
   std::vector<std::unique_ptr<CliqueKey>>* clique_keys_ = nullptr;
+  int command_buffer_va_range_idx_ = 0;
 };
 
 }  // namespace xla

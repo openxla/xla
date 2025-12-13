@@ -137,7 +137,7 @@ class GpuCommandBuffer : public CommandBuffer {
                             const KernelArgs& args) override;
 
   absl::StatusOr<const Command*> CreateChildCommand(
-      const CommandBuffer& nested,
+      CommandBuffer& nested,
       absl::Span<const Command* const> dependencies) override;
 
   absl::Status UpdateChildCommand(const Command* command,
@@ -352,7 +352,7 @@ class GpuCommandBuffer : public CommandBuffer {
   // buffer graph into the underlying graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateClonedChildNode(
       absl::Span<const GraphNodeHandle> dependencies,
-      const CommandBuffer& nested) = 0;
+      CommandBuffer& nested) = 0;
 
   // Adds a new nested command node to the graph by moving nested command buffer
   // graph into the underlying graph. Nested command buffer becomes linked to

@@ -187,7 +187,7 @@ class CommandBuffer {
 
   // Creates a child command from a pre-recorded command buffer.
   virtual absl::StatusOr<const Command*> CreateChildCommand(
-      const CommandBuffer& nested,
+      CommandBuffer& nested,
       absl::Span<const Command* const> dependencies) = 0;
 
   // Updates a child command with a new command buffer. New command buffer must

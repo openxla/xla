@@ -77,6 +77,9 @@ CommandBufferThunk::CommandBufferThunk(
     }
   }
 
+  enable_command_buffer_va_remapping_ =
+      GetDebugOptionsFromFlags().xla_gpu_enable_command_buffer_va_remapping();
+
   // When we create a new command buffer thunk (which happens when we
   // instantiate a new Gpu executable) we evict command buffers for all
   // previously instantiated executables. If previously instantiated executable
@@ -145,7 +148,8 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   }
 
   TF_ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-                      GetOrCreateCommandBuffer(params.executor));
+                      GetOrCreateCommandBuffer(
+                          params.executor, params.command_buffer_va_range_idx));
   absl::MutexLock lock(cmd_buffer->mutex);
 
   // Initialize commands.
@@ -159,8 +163,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
 
   // If there are no thunks, or command buffer does not require initialization,
   // we can mark warm up as done immediately.
-  if ((!thunks_ || !commands_.requires_initialization()) &&
-      !cmd_buffer->warmup_done) {
+  if (!thunks_ && !cmd_buffer->warmup_done) {
     cmd_buffer->warmup_done = true;
   }
 
@@ -186,18 +189,22 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // If commands require initialization, we also record them into the command
   // buffer before execution. This is required to guarantee that collective
   // commands recorded on all participating ranks to avoid deadlocks.
+
   if (cmd_buffer->warmup_done && (cmd_buffer->command_buffer->state() ==
                                       se::CommandBuffer::State::kCreate ||
-                                  commands_.requires_initialization())) {
+                                  (!enable_command_buffer_va_remapping_ &&
+                                   commands_.requires_initialization()))) {
     VLOG(3) << "Initialize command buffer on device #"
             << params.executor->device_ordinal()
             << " by recoding command buffer cmd sequence"
-            << "; num_commands=" << commands_.size();
+            << "; num_commands=" << commands_.size()
+            << "; va_range_idx=" << params.command_buffer_va_range_idx;
 
     TraceMe trace([&] {
       return TraceMeEncode("command_buffer::initialize",
                            {{"device", params.executor->device_ordinal()},
-                            {"num_commands", commands_.size()}});
+                            {"num_commands", commands_.size()},
+                            {"va_range_idx", params.command_buffer_va_range_idx}});
     });
 
     uint64_t start_micros = tsl::Env::Default()->NowMicros();
@@ -218,6 +225,12 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
             << (end_micros - start_micros)
             << " μs; num_commands=" << commands_.size();
     cmd_buffer->num_executions = 0;
+  } else {
+    VLOG(3) << "skip Initialize command buffer on device #"
+            << params.executor->device_ordinal()
+            << " by recoding command buffer cmd sequence"
+            << "; num_commands=" << commands_.size()
+            << "; va_range_idx=" << params.command_buffer_va_range_idx;
   }
 
   return absl::OkStatus();
@@ -242,8 +255,9 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
   }
 
   se::StreamExecutor* executor = params.stream->parent();
-  TF_ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-                      GetOrCreateCommandBuffer(executor));
+  TF_ASSIGN_OR_RETURN(
+      std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
+      GetOrCreateCommandBuffer(executor, params.command_buffer_va_range_idx));
 
   absl::MutexLock lock(cmd_buffer->mutex);
 
@@ -255,60 +269,108 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
     return absl::OkStatus();
   }
 
-  // Update buffer allocations and collect all allocations that changed since
-  // the last command buffer execution.
-  auto updated_allocs = cmd_buffer->UpdateBufferAllocations(commands_, params);
+  if (!enable_command_buffer_va_remapping_) {
+    // Update buffer allocations and collect all allocations that changed since
+    // the last command buffer execution.
+    auto updated_allocs =
+        cmd_buffer->UpdateBufferAllocations(commands_, params);
 
-  if (!updated_allocs.empty() || commands_.force_update()) {
-    VLOG(3) << "Update command buffer on device #" << executor->device_ordinal()
-            << " by recoding command buffer cmd sequence after "
-            << cmd_buffer->num_executions << " executions since last update"
-            << "; num_commands=" << commands_.size()
-            << "; updated_allocs=" << updated_allocs.size();
+    if (!updated_allocs.empty() || commands_.force_update()) {
+      VLOG(3) << "Update command buffer on device #"
+              << executor->device_ordinal()
+              << " by recoding command buffer cmd sequence after "
+              << cmd_buffer->num_executions << " executions since last update"
+              << "; num_commands=" << commands_.size()
+              << "; updated_allocs=" << updated_allocs.size();
+
+      TraceMe trace([&] {
+        cmd_buffer->mutex.AssertHeld();
+        return TraceMeEncode("command_buffer::update",
+                             {{"device", executor->device_ordinal()},
+                              {"num_commands", commands_.size()},
+                              {"num_executions", cmd_buffer->num_executions}});
+      });
+
+      uint64_t start_micros = tsl::Env::Default()->NowMicros();
+
+      Command::RecordParams record_params = {cmd_buffer->state,
+                                             std::move(updated_allocs)};
+      TF_RETURN_IF_ERROR(commands_.Record(params, record_params,
+                                          cmd_buffer->command_buffer.get()));
+
+      uint64_t end_micros = tsl::Env::Default()->NowMicros();
+      VLOG(3) << "Updated command buffer in " << (end_micros - start_micros)
+              << " μs; num_commands=" << commands_.size();
+      cmd_buffer->num_executions = 0;
+    }
+  } else if (cmd_buffer->command_buffer->state() ==
+             se::CommandBuffer::State::kCreate) {
+    // When VA remapping is enabled, a new command buffer may be created for a
+    // different va_range_idx that was not initialized during Initialize().
+    // We need to record the command buffer before we can submit it.
+    VLOG(3) << "Recording command buffer on device #"
+            << executor->device_ordinal()
+            << " for va_range_idx=" << params.command_buffer_va_range_idx
+            << " (VA remapping enabled)"
+            << "; num_commands=" << commands_.size();
 
     TraceMe trace([&] {
       cmd_buffer->mutex.AssertHeld();
-      return TraceMeEncode("command_buffer::update",
-                           {{"device", executor->device_ordinal()},
-                            {"num_commands", commands_.size()},
-                            {"num_executions", cmd_buffer->num_executions}});
+      return TraceMeEncode(
+          "command_buffer::record_for_va_remapping",
+          {{"device", executor->device_ordinal()},
+           {"num_commands", commands_.size()},
+           {"va_range_idx", params.command_buffer_va_range_idx}});
     });
 
     uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
+    auto updated_allocs =
+        cmd_buffer->UpdateBufferAllocations(commands_, params);
+
     Command::RecordParams record_params = {cmd_buffer->state,
-                                           std::move(updated_allocs)};
+                                           std::move(updated_allocs),
+                                           /*is_initialization=*/true};
     TF_RETURN_IF_ERROR(commands_.Record(params, record_params,
                                         cmd_buffer->command_buffer.get()));
 
     uint64_t end_micros = tsl::Env::Default()->NowMicros();
-    VLOG(3) << "Updated command buffer in " << (end_micros - start_micros)
+    VLOG(3) << "Recorded command buffer in " << (end_micros - start_micros)
             << " μs; num_commands=" << commands_.size();
     cmd_buffer->num_executions = 0;
+    cmd_buffer->warmup_done = true;
   }
 
   ++cmd_buffer->num_executions;
 
   VLOG(3) << "Execute command buffer on device #" << executor->device_ordinal()
-          << "; num_executions=" << cmd_buffer->num_executions;
+          << "; num_executions=" << cmd_buffer->num_executions
+          << "; va_range_idx=" << params.command_buffer_va_range_idx;
 
   TraceMe trace([&] {
     cmd_buffer->mutex.AssertHeld();
     return TraceMeEncode("command_buffer::execute",
                          {{"device", executor->device_ordinal()},
                           {"num_commands", commands_.size()},
-                          {"num_executions", cmd_buffer->num_executions}});
+                          {"num_executions", cmd_buffer->num_executions},
+                          {"va_range_idx", params.command_buffer_va_range_idx}});
   });
 
   return cmd_buffer->command_buffer->Submit(params.stream);
 }
 
 absl::StatusOr<std::shared_ptr<CommandBufferThunk::ExecutorCommandBuffer>>
-CommandBufferThunk::GetOrCreateCommandBuffer(se::StreamExecutor* executor) {
+CommandBufferThunk::GetOrCreateCommandBuffer(se::StreamExecutor* executor,
+                                             int command_buffer_va_range_idx) {
   absl::MutexLock lock(state_->mutex);
 
+  // Key includes both executor and command_buffer_va_range_idx to support
+  // separate command buffers for each VA range index during interleaved
+  // execution.
+  auto key = std::make_pair(executor, command_buffer_va_range_idx);
+
   // Check if command buffer already exists
-  if (auto it = state_->command_buffers.find(executor);
+  if (auto it = state_->command_buffers.find(key);
       it != state_->command_buffers.end()) {
     return it->second;
   }
@@ -318,8 +380,7 @@ CommandBufferThunk::GetOrCreateCommandBuffer(se::StreamExecutor* executor) {
       auto command_buffer,
       executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
   auto emplaced = state_->command_buffers.emplace(
-      executor,
-      std::make_shared<ExecutorCommandBuffer>(std::move(command_buffer)));
+      key, std::make_shared<ExecutorCommandBuffer>(std::move(command_buffer)));
 
   return emplaced.first->second;
 }
