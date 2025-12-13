@@ -30,6 +30,7 @@ cc_library(
         "//xla/hlo/transforms/expanders:cholesky_expander",
         "//xla/hlo/transforms/expanders:dynamic_index_splitter",
         "//xla/hlo/transforms/expanders:eigh_expander",
+        "//xla/hlo/transforms/expanders:mixed_type_canonicalizer",
         "//xla/hlo/transforms/expanders:qr_expander",
         "//xla/pjrt:layout_mode",
         "//xla/pjrt:mlir_to_hlo",

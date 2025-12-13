@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/cholesky_expander.h"
 #include "xla/hlo/transforms/expanders/dynamic_index_splitter.h"
 #include "xla/hlo/transforms/expanders/eigh_expander.h"
+#include "xla/hlo/transforms/expanders/mixed_type_canonicalizer.h"
 #include "xla/hlo/transforms/expanders/qr_expander.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -490,6 +491,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> InterpreterClient::RunHloPasses(
       /*rewrite_grad_op=*/true);
   pipeline.AddPass<LayoutAssignment>(
       hlo_module->mutable_entry_computation_layout());
+  pipeline.AddPass<MixedTypeCanonicalizer>();
 
   TF_RETURN_IF_ERROR(pipeline.Run(hlo_module.get()).status());
   return hlo_module;
