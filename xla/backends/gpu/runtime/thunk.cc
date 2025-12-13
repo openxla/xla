@@ -72,7 +72,8 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
                                  .gpu_executable_run_options()
                                  ->enable_mock_collectives()
                            : false,
-                       run_options.run_options().run_id().ToInt());
+                       run_options.run_options().run_id().ToInt(),
+                       run_options.command_buffer_va_range_idx());
 }
 
 Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
@@ -84,7 +85,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
       params.collective_memory, params.device_to_host_stream,
       params.host_to_device_stream, params.send_device_memory_function,
       params.recv_device_memory_function, params.ffi_execution_context,
-      params.additional_compute_streams);
+      params.additional_compute_streams,params.command_buffer_va_range_idx);
 }
 
 Thunk::ExecuteParams::ExecuteParams(
@@ -97,7 +98,7 @@ Thunk::ExecuteParams::ExecuteParams(
     RecvDeviceMemoryFunction* recv_device_memory_function,
     const ffi::ExecutionContext* ffi_execution_context,
     ExecutionStreamIdMap additional_compute_streams, bool mock_collectives,
-    int64_t execution_id)
+    int64_t execution_id, int command_buffer_va_range_idx)
     : buffer_allocations(buffer_allocations),
       stream(stream),
       command_buffer_trace_stream(command_buffer_trace_stream),
@@ -111,7 +112,8 @@ Thunk::ExecuteParams::ExecuteParams(
       ffi_execution_context(ffi_execution_context),
       additional_compute_streams(additional_compute_streams),
       mock_collectives(mock_collectives),
-      execution_id(execution_id) {}
+      execution_id(execution_id),
+      command_buffer_va_range_idx(command_buffer_va_range_idx) {}
 
 //===----------------------------------------------------------------------===//
 

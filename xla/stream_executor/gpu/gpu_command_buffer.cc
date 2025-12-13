@@ -223,7 +223,7 @@ absl::Status GpuCommandBuffer::UpdateLaunch(const Command* command,
 
 absl::StatusOr<const CommandBuffer::Command*>
 GpuCommandBuffer::CreateChildCommand(
-    const CommandBuffer& nested,
+    CommandBuffer& nested,
     absl::Span<const Command* const> dependencies) {
   TF_RETURN_IF_ERROR(CheckInState(State::kCreate));
   TF_ASSIGN_OR_RETURN(
