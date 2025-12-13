@@ -165,7 +165,7 @@ HloInstruction* ShuffleDataWithAllToAll(
   IotaReplicaGroupList groups(1, num_partitions);
   return collective_ops_creator
       .create_cross_partition_all_to_all_with_iota_device_list(
-          b, {hlo}, groups, (*next_channel_id)++,
+          b, {hlo}, &groups, (*next_channel_id)++,
           hlo->shape().dimensions().size() - 1);
 }
 

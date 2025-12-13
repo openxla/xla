@@ -1744,7 +1744,7 @@ PartitionedHlo PartitionedHlo::ReshardWithAllToAll(
     // After the reshape, it is guaranteed to have at least 3 dimensions.
     all_to_all = state_.collective_ops_creator
                      .create_cross_partition_all_to_all_with_iota_device_list(
-                         state_.b, {reshape}, groups.value(),
+                         state_.b, {reshape}, &groups.value(),
                          (*state_.next_channel_id)++, target_dim);
   } else {
     VLOG(5) << "Falling back to creating all-to-all with replica groups V1 "
@@ -1932,10 +1932,10 @@ PartitionedHlo PartitionedHlo::TryMultipleSourceTargetDims(
   if (state_.collective_ops_creator
           .create_cross_partition_all_to_all_with_iota_device_list &&
       groups.has_value()) {
-    all_to_all =
-        state_.collective_ops_creator
-            .create_cross_partition_all_to_all_with_iota_device_list(
-                state_.b, {reshape_1}, *groups, (*state_.next_channel_id)++, 0);
+    all_to_all = state_.collective_ops_creator
+                     .create_cross_partition_all_to_all_with_iota_device_list(
+                         state_.b, {reshape_1}, &(groups.value()),
+                         (*state_.next_channel_id)++, 0);
   } else {
     VLOG(5) << "Falling back to creating all-to-all with replica groups V1 "
                "(list of vectors).";
@@ -4953,12 +4953,6 @@ absl::Status SpmdPartitioningVisitor::HandleRaggedDot(HloInstruction* hlo) {
 
 SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
                                                         int64_t num_replicas) {
-  auto uses_all_partitions =
-      [num_partitions](const IotaReplicaGroupList& partition_group_list) {
-        return partition_group_list.num_replica_groups() *
-                   partition_group_list.num_devices_per_group() ==
-               num_partitions;
-      };
   auto create_all_reduce_lists_of_lists =
       [num_replicas, num_partitions](
           SpmdBuilder* b, HloInstruction* operand, HloComputation* reduction,
@@ -5053,17 +5047,17 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
                 b, operand, reduction, partition_subgroups, channel_id);
           },
       .create_cross_partition_all_reduce_with_iota_device_list =
-          [create_all_reduce_lists_of_lists, uses_all_partitions, num_replicas,
-           num_partitions](SpmdBuilder* b, HloInstruction* operand,
-                           HloComputation* reduction,
-                           const IotaReplicaGroupList& partition_group_list,
-                           int64_t channel_id) {
+          [create_all_reduce_lists_of_lists, num_replicas, num_partitions](
+              SpmdBuilder* b, HloInstruction* operand,
+              HloComputation* reduction,
+              IotaReplicaGroupList* partition_group_list, int64_t channel_id) {
             // Fallback to list of lists collective creation if the partition
             // group list does not utilize all the partitions.
-            if (!uses_all_partitions(partition_group_list)) {
+            if (!partition_group_list->uses_all_partitions(num_partitions)) {
+              std::vector<std::vector<int64_t>> flattened_replica_groups =
+                  partition_group_list->flattened_replica_groups();
               return create_all_reduce_lists_of_lists(
-                  b, operand, reduction,
-                  partition_group_list.flattened_replica_groups(), channel_id);
+                  b, operand, reduction, flattened_replica_groups, channel_id);
             }
             HloComputation* reduction_clone =
                 reduction->parent()->AddComputationAndUnifyNamesAndIds(
@@ -5072,7 +5066,7 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
                 b->AddInstruction(HloInstruction::CreateAllReduce(
                     operand->shape(), {operand}, reduction_clone,
                     ExpandPartitionGroupListAcrossReplicas(
-                        partition_group_list, num_replicas, num_partitions),
+                        *partition_group_list, num_replicas, num_partitions),
                     /*constrain_layout=*/false, channel_id,
                     /*use_global_device_ids=*/true));
             return all_reduce;
@@ -5111,16 +5105,15 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
                 b, operands, partition_subgroups, channel_id, split_dimension);
           },
       .create_cross_partition_all_to_all_with_iota_device_list =
-          [create_all_to_all_list_of_lists, uses_all_partitions, num_replicas,
-           num_partitions](
+          [create_all_to_all_list_of_lists, num_replicas, num_partitions](
               SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
-              const IotaReplicaGroupList& partition_group_list,
-              int64_t channel_id, std::optional<int64_t> split_dimension) {
+              IotaReplicaGroupList* partition_group_list, int64_t channel_id,
+              std::optional<int64_t> split_dimension) {
             // Fallback back to list of lists collective creation if the
             // partition group list does not utilize all the partitions.
-            if (!uses_all_partitions(partition_group_list)) {
+            if (!partition_group_list->uses_all_partitions(num_partitions)) {
               return create_all_to_all_list_of_lists(
-                  b, operands, partition_group_list.flattened_replica_groups(),
+                  b, operands, partition_group_list->flattened_replica_groups(),
                   channel_id, split_dimension);
             }
             std::vector<Shape> shapes(operands.size(), operands[0]->shape());
@@ -5130,7 +5123,7 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
             return b->AddInstruction(HloInstruction::CreateAllToAll(
                 output_shape, operands,
                 ExpandPartitionGroupListAcrossReplicas(
-                    partition_group_list, num_replicas, num_partitions),
+                    *partition_group_list, num_replicas, num_partitions),
                 /*constrain_layout=*/false, channel_id, split_dimension));
           },
       .create_cross_partition_all_gather =
@@ -5143,23 +5136,22 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
                 all_gather_dimension);
           },
       .create_cross_partition_all_gather_with_iota_device_list =
-          [create_all_gather_list_of_lists, uses_all_partitions, num_replicas,
-           num_partitions](SpmdBuilder* b, HloInstruction* operand,
-                           const Shape& ag_shape,
-                           const IotaReplicaGroupList& partition_group_list,
-                           int64_t channel_id, int64_t all_gather_dimension) {
+          [create_all_gather_list_of_lists, num_replicas, num_partitions](
+              SpmdBuilder* b, HloInstruction* operand, const Shape& ag_shape,
+              IotaReplicaGroupList* partition_group_list, int64_t channel_id,
+              int64_t all_gather_dimension) {
             // Fallback to list of lists collective creation if the partition
             // group list does not utilize all the partitions.
-            if (!uses_all_partitions(partition_group_list)) {
+            if (!partition_group_list->uses_all_partitions(num_partitions)) {
               return create_all_gather_list_of_lists(
                   b, operand, ag_shape,
-                  partition_group_list.flattened_replica_groups(), channel_id,
+                  partition_group_list->flattened_replica_groups(), channel_id,
                   all_gather_dimension);
             }
             return b->AddInstruction(HloInstruction::CreateAllGather(
                 ag_shape, {operand}, all_gather_dimension,
                 ExpandPartitionGroupListAcrossReplicas(
-                    partition_group_list, num_replicas, num_partitions),
+                    *partition_group_list, num_replicas, num_partitions),
                 /*constrain_layout=*/false, channel_id,
                 /*use_global_device_ids=*/true));
           }};
@@ -5210,8 +5202,8 @@ SpmdPartitioner::AllGatherShardsInternal(
                      partition_group_list.value().num_devices_per_group());
         result = collectives_creator
                      .create_cross_partition_all_gather_with_iota_device_list(
-                         b, result, result_shape, partition_group_list.value(),
-                         (*next_channel_id)++,
+                         b, result, result_shape,
+                         &(partition_group_list.value()), (*next_channel_id)++,
                          /*all_gather_dimension=*/*it);
       } else {
         auto partition_subgroups =
@@ -5250,7 +5242,7 @@ SpmdPartitioner::AllGatherShardsInternal(
             .create_cross_partition_all_gather_with_iota_device_list(
                 b, result,
                 ShapeUtil::MakeShape(operand->shape().element_type(), shape),
-                partition_group_list.value(), (*next_channel_id)++,
+                &(partition_group_list.value()), (*next_channel_id)++,
                 /*all_gather_dimension=*/0);
   } else {
     auto partition_subgroups =
@@ -5341,7 +5333,7 @@ HloInstruction* SpmdPartitioner::AllReduceAlongShardingDimsInternal(
             .create_cross_partition_all_reduce_with_iota_device_list) {
       return collectives_creator
           .create_cross_partition_all_reduce_with_iota_device_list(
-              b, operand, reduction, partition_group_list.value(),
+              b, operand, reduction, &(partition_group_list.value()),
               (*next_channel_id)++);
     }
     auto partition_subgroups =
@@ -5364,7 +5356,7 @@ HloInstruction* SpmdPartitioner::AllReduceAlongShardingDimsInternal(
             .create_cross_partition_all_reduce_with_iota_device_list) {
       result = collectives_creator
                    .create_cross_partition_all_reduce_with_iota_device_list(
-                       b, result, reduction, partition_group_list.value(),
+                       b, result, reduction, &(partition_group_list.value()),
                        (*next_channel_id)++);
     } else {
       auto partition_subgroups =
