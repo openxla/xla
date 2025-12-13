@@ -42,9 +42,9 @@ bazel_dep(name = "rules_ml_toolchain")
 # echo "sha256-${HASH}"
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-seXjBtixED5zubd438Op4GnSBmRDegMkaiNXJJYrXJQ=",
-    strip_prefix = "rules_ml_toolchain-484235be45e6843db962c45d08fe4b2b65a6a24c",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/484235be45e6843db962c45d08fe4b2b65a6a24c.tar.gz"],
+    integrity = "sha256-sM1M4sj5Mv4JUzafz/htJnUwLFx2f9YrTGl7+LN/DTY=",
+    strip_prefix = "rules_ml_toolchain-a005f7efcdb10ceff87b1479586e367e4037a908",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/a005f7efcdb10ceff87b1479586e367e4037a908.tar.gz"],
 )
 
 # TODO: Upstream the patch?
@@ -71,12 +71,12 @@ single_version_override(
 # Use an unreleased version of googletest
 archive_override(
     module_name = "googletest",
-    strip_prefix = "googletest-28e9d1f26771c6517c3b4be10254887673c94018",
-    urls = ["https://github.com/google/googletest/archive/28e9d1f26771c6517c3b4be10254887673c94018.zip"],
     patch_strip = 1,
     patches = [
         "//third_party/googletest:0001-Add-ASSERT_OK-EXPECT_OK-ASSERT_OK_AND_ASSIGN-macros.patch",
     ],
+    strip_prefix = "googletest-28e9d1f26771c6517c3b4be10254887673c94018",
+    urls = ["https://github.com/google/googletest/archive/28e9d1f26771c6517c3b4be10254887673c94018.zip"],
 )
 
 ##############################################################
