@@ -1516,9 +1516,10 @@ HloSharding PartiallyReplicateTiledShardingOnDims(
         sharding.named_sharding().dim_shardings().begin(),
         sharding.named_sharding().dim_shardings().end());
     for (int64_t dim : dims_to_replicate) {
-      if (dim < dim_shardings.size()) {
-        dim_shardings[dim] = NamedSharding::DimensionSharding();
-      }
+      CHECK_LT(dim, dim_shardings.size())
+          << "Dimension " << dim << " is out of bounds for number dimensions "
+          << dim_shardings.size();
+      dim_shardings[dim] = NamedSharding::DimensionSharding();
     }
     return HloSharding(NamedSharding(
         sharding.named_sharding().mesh(), dim_shardings,
@@ -1529,9 +1530,9 @@ HloSharding PartiallyReplicateTiledShardingOnDims(
   int64_t group_count = 1;
   DimensionVector valid_dims_to_replicate;
   for (int64_t dim : dims_to_replicate) {
-    if (dim >= sharding.TiledDataRank()) {
-      continue;
-    }
+    CHECK_LT(dim, sharding.TiledDataRank())
+        << "Dimension " << dim << " is out of bounds for number dimensions "
+        << sharding.TiledDataRank();
     valid_dims_to_replicate.push_back(dim);
     group_count *= sharding.dimension(dim);
   }
