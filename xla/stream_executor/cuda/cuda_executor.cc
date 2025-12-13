@@ -405,6 +405,13 @@ absl::StatusOr<CUdevice> DeviceFromContext(Context* context) {
 }
 
 bool CanEnablePeerAccess(CUdevice from, CUdevice to) {
+  static thread_local absl::flat_hash_map<std::pair<CUdevice, CUdevice>, bool>
+      cache;
+
+  if (cache.contains(std::make_pair(from, to))) {
+    return cache.at(std::make_pair(from, to));
+  }
+
   int can_access_peer = -1;
   auto status =
       cuda::ToStatus(cuDeviceCanAccessPeer(&can_access_peer, from, to));
@@ -412,6 +419,8 @@ bool CanEnablePeerAccess(CUdevice from, CUdevice to) {
     LOG(ERROR) << "failed to detect peer access capability: " << status;
     return false;
   }
+
+  cache.insert({std::make_pair(from, to), can_access_peer});
   return can_access_peer;
 }
 
@@ -1605,6 +1614,15 @@ fft::FftSupport* CudaExecutor::AsFft() {
 bool CudaExecutor::CanEnablePeerAccessTo(StreamExecutor* other) {
   CudaExecutor* cuda_other = static_cast<CudaExecutor*>(other);
   return CanEnablePeerAccess(cuda_context_, cuda_other->cuda_context_);
+}
+
+bool CudaExecutor::CanEnablePeerAccessTo(int other_device_ordinal) {
+  if (other_device_ordinal == device_ordinal()) {
+    // Self-access is always allowed.
+    return true;
+  }
+
+  return CanEnablePeerAccess(device_ordinal(), other_device_ordinal);
 }
 
 absl::Status CudaExecutor::EnablePeerAccessTo(StreamExecutor* other) {
