@@ -64,6 +64,10 @@ message AutotuneResult {
 
   message GemmKey {
     int64 algorithm = 1;
+    // Stable algorithm identity from cuBLAS (CUBLASLT_ALGO_CONFIG_ID).
+    // This ID uniquely identifies the algorithm and is stable across
+    // different GetAlgorithms calls regardless of workspace filtering.
+    int64 algorithm_id = 2;
   }
 
   // Legacy and unused in new data; superseded by AlgorithmProto.

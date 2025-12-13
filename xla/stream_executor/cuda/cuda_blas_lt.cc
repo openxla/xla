@@ -275,7 +275,13 @@ auto BlasLt::MatmulPlan::GetAlgorithms(const Stream* stream,
   algorithms.reserve(results.size());
   for (const cublasLtMatmulHeuristicResult_t& result : results) {
     if (result.state == CUBLAS_STATUS_SUCCESS) {  // Skip failed algos.
-      algorithms.push_back({result.algo, result.workspaceSize});
+      // Extract the stable algorithm ID from cuBLAS.
+      int32_t algo_id = 0;
+      SE_CUBLAS_RETURN_IF_ERROR(cublasLtMatmulAlgoConfigGetAttribute(
+          &result.algo, CUBLASLT_ALGO_CONFIG_ID, &algo_id, sizeof(algo_id),
+          nullptr));
+      algorithms.push_back(
+          {result.algo, result.workspaceSize, static_cast<int64_t>(algo_id)});
     }
   }
   return std::move(algorithms);

@@ -281,10 +281,16 @@ auto BlasLt::MatmulPlan::GetAlgorithms(const Stream* stream,
 
   std::vector<MatmulAlgorithm> algorithms;
   algorithms.reserve(results.size());
+  int64_t index = 0;
   for (const hipblasLtMatmulHeuristicResult_t& result : results) {
     if (result.state == HIPBLAS_STATUS_SUCCESS) {  // Skip failed algos.
-      algorithms.push_back({result.algo, result.workspaceSize});
+      // ROCm's hipBLASLt doesn't have an equivalent to CUBLASLT_ALGO_CONFIG_ID,
+      // so we use the index as a fallback algorithm_id. This means ROCm will
+      // still have the workspace size dependency issue.
+      // TODO(b/XXXXXX): Investigate hipBLASLt for stable algorithm IDs.
+      algorithms.push_back({result.algo, result.workspaceSize, index});
     }
+    ++index;
   }
   return std::move(algorithms);
 }
