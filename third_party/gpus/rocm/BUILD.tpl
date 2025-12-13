@@ -105,6 +105,7 @@ cc_library(
         ":hip",
         ":hipblas",
         ":hipblaslt",
+        ":hipfft",
         ":hiprand",
         ":hipsolver",
         ":hipsparse",
@@ -116,7 +117,6 @@ cc_library(
         ":rocsolver",
         ":rocsparse",
         ":roctracer",
-        ":hipfft",
     ],
 )
 
@@ -237,6 +237,7 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
+    linkopts = ["-lrocblas"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [
@@ -254,7 +255,7 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
-    linkopts = ["-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib"],
+    linkopts = ["-lrocfft"],
     linkstatic = 1,
     visibility = ["//visibility:public"],
     deps = [
@@ -270,7 +271,7 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
-    linkopts = ["-Wl,-rpath,external/local_config_rocm/rocm/%{rocm_root}/lib"],
+    linkopts = ["-lhipfft"],
     linkstatic = 1,
     visibility = ["//visibility:public"],
     deps = [
@@ -281,17 +282,21 @@ cc_library(
 
 cc_library(
     name = "hiprand",
-    srcs = glob(["%{rocm_root}/lib/libhiprand*.so*"]),
     hdrs = glob(["%{rocm_root}/include/hiprand/**"]),
+    data = glob(["%{rocm_root}/lib/libhiprand*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
         "%{rocm_root}/include/rocrand",
     ],
+    linkopts = ["-lhiprand"],
     linkstatic = 1,
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
-    deps = [":rocm_config"],
+    deps = [
+        ":rocm_config",
+        ":rocm_rpath",
+    ],
 )
 
 cc_library(
@@ -305,6 +310,7 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
+    linkopts = ["-lMIOpen"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [
@@ -316,18 +322,19 @@ cc_library(
 
 cc_library(
     name = "rccl",
-    srcs = glob(["%{rocm_root}/lib/librccl*.so*"]),
     hdrs = glob(["%{rocm_root}/include/rccl/**"]),
+    data = glob(["%{rocm_root}/lib/librccl*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
     ],
-    linkopts = ["-lnuma"],
+    linkopts = ["-lrccl"],
     linkstatic = 1,
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [
         ":rocm_config",
+        ":rocm_rpath",
         ":roctracer",
         ":system_libs",
     ],
@@ -364,45 +371,56 @@ cc_library(
 
 cc_library(
     name = "hipsparse",
-    srcs = glob(["%{rocm_root}/lib/libhipsparse*.so*"]),
     hdrs = glob(["%{rocm_root}/include/hipsparse/**"]),
     data = glob(["%{rocm_root}/lib/libhipsparse*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = ["-lhipsparse"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
-    deps = [":rocm_config"],
+    deps = [
+        ":rocm_config",
+        ":rocm_rpath",
+    ],
 )
 
 cc_library(
     name = "roctracer",
-    srcs = glob([
+    hdrs = glob(["%{rocm_root}/include/roctracer/**"]),
+    data = glob([
         "%{rocm_root}/lib/libroctracer*.so*",
         "%{rocm_root}/lib/libroctx64.so*",
     ]),
-    hdrs = glob(["%{rocm_root}/include/roctracer/**"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = ["-lroctracer"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
-    deps = [":rocm_config"],
+    deps = [
+        ":rocm_config",
+        ":rocm_rpath",
+    ],
 )
 
 cc_library(
     name = "rocprofiler-sdk",
-    srcs = glob(["%{rocm_root}/lib/librocprofiler-sdk*.so*"]),
     hdrs = glob(["%{rocm_root}/include/rocprofiler-sdk/**"]),
+    data = glob(["%{rocm_root}/lib/librocprofiler-sdk*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = ["-lrocprofiler-sdk"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
-    deps = [":rocm_config"],
+    deps = [
+        ":rocm_config",
+        ":rocm_rpath",
+    ],
 )
 
 cc_library(
@@ -413,6 +431,7 @@ cc_library(
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = ["-lrocsolver"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [
@@ -423,14 +442,18 @@ cc_library(
 
 cc_library(
     name = "rocsparse",
-    srcs = glob(["%{rocm_root}/lib/librocsparse*.so*"]),
+    data = glob(["%{rocm_root}/lib/librocsparse*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = [-"lrocsparse"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
-    deps = [":rocm_config"],
+    deps = [
+        ":rocm_config",
+        ":rocm_rpath",
+    ],
 )
 
 cc_library(
@@ -441,9 +464,13 @@ cc_library(
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = ["-lhipsolver"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
-    deps = [":rocm_config"],
+    deps = [
+        ":rocm_config",
+        ":rocm_rpath",
+    ],
 )
 
 cc_library(
@@ -454,6 +481,7 @@ cc_library(
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = ["-lhipblas"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [
@@ -532,8 +560,8 @@ cc_library(
 
 cc_library(
     name = "amd_comgr_dynamic",
-    hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
     srcs = ["%{rocm_root}/lib/libamd_comgr_stub.a"],
+    hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
     data = glob([
         "%{rocm_root}/lib/libamd_comgr_loader.so*",
         "%{rocm_root}/lib/libamd_comgr.so*",
