@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/nullability.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -64,6 +65,26 @@ limitations under the License.
 namespace xla {
 
 namespace {
+
+// Number of VA reservation sets for interleaving VA range usage.
+// This should match kNumOfVaReservationSets in gpu_executable.cc.
+constexpr int kNumOfVaReservationSets = 2;
+
+// Per-device counter for tracking which VA range index to use next.
+// This enables interleaving VA ranges across executions to overlap
+// CPU VA remapping with GPU execution.
+absl::flat_hash_map<int, int>& GetVaRangeIdxCounters() {
+  static auto* counters = new absl::flat_hash_map<int, int>();
+  return *counters;
+}
+
+int GetNextCommandBufferVaRangeIdx(int device_ordinal) {
+  auto& counters = GetVaRangeIdxCounters();
+  int idx = counters[device_ordinal];
+  counters[device_ordinal] = (idx + 1) % kNumOfVaReservationSets;
+  return idx;
+}
+
 class HloRunnerExecutable : public OpaqueExecutable {
  public:
   HloRunnerExecutable(const HloRunner* absl_nonnull creator,
@@ -820,6 +841,8 @@ ServiceExecutableRunOptions HloRunner::GetServiceRunOptionsForDevice(
     RunId run_id, int local_device_count) {
   ExecutableRunOptions run_options;
   run_options.set_device_ordinal(device);
+  run_options.set_command_buffer_va_range_idx(
+      GetNextCommandBufferVaRangeIdx(static_cast<int>(device)));
   run_options.set_local_device_count(local_device_count);
 
   run_options.set_stream(stream);
