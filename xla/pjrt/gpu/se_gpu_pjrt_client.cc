@@ -107,6 +107,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/stream_executor_virtual_address_allocator.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -1472,6 +1473,16 @@ GetStreamExecutorGpuDeviceAllocator(
       // Returning null will cause the client to use the default backend
       // allocator.
       return nullptr;
+
+    case GpuAllocatorConfig::Kind::kVmm: {
+      LOG(INFO) << "Using VMM (Virtual Memory Management) allocator.";
+      std::vector<se::StreamExecutor*> executors;
+      for (const auto& ordinal_and_device : addressable_devices) {
+        executors.push_back(ordinal_and_device.second->executor());
+      }
+      return std::make_unique<se::DeviceVirtualAddressAllocator>(
+          platform, executors);
+    }
   }
 
   // Add any additional allocators for alternate memory spaces.

@@ -125,6 +125,21 @@ class GpuExecutable : public Executable {
     ModuleStats module_stats;
   };
 
+  struct VaRanges {
+    // Map from allocation index to VA ranges that are reserved for this
+    // GpuExecutable, the VA range is bound to the GpuExecutable's
+    // allocations, so it will guarantee that multiple calls to GpuExecutable
+    // that uses this VA range will have the same VA, which is good for
+    // command buffer run because it does not need update.
+    absl::flat_hash_map<BufferAllocation::Index, se::DeviceAddressBase>
+        allocation_va_map;
+
+    // Event used to synchronize VA range reuse, when device has completed
+    // the task that uses the VA range, it will mark the event, then host
+    // knows that its VA range can be remapped to other physical addresses.
+    std::unique_ptr<se::Event> unmap_event;
+  };
+
   static absl::StatusOr<std::unique_ptr<GpuExecutable>> Create(Params params);
   ~GpuExecutable() override;
 
@@ -184,7 +199,7 @@ class GpuExecutable : public Executable {
       const ServiceExecutableRunOptions* run_options,
       VariantArguments arguments);
 
-  absl::Span<const BufferAllocation* absl_nonnull const> GetAllocations()
+  absl::Span<const BufferAllocation * absl_nonnull const> GetAllocations()
       const override {
     return allocation_ptrs_;
   }
@@ -343,6 +358,10 @@ class GpuExecutable : public Executable {
     return ModuleAnnotations(module_name_);
   }();
 
+  // The allocations that are used by command buffer.
+  absl::flat_hash_set<BufferAllocation::Index>
+      command_buffer_allocation_indexes_;
+
   int64_t debug_buffer_assignment_show_max_;
 
   absl::Mutex module_handle_mutex_;
@@ -360,6 +379,10 @@ class GpuExecutable : public Executable {
   absl::flat_hash_map<stream_executor::StreamExecutor*,
                       std::vector<se::DeviceAddressBase>>
       module_allocations_ ABSL_GUARDED_BY(module_handle_mutex_);
+
+  absl::flat_hash_map<stream_executor::StreamExecutor*,
+                      std::unique_ptr<VaRanges>>
+      module_va_ranges_ ABSL_GUARDED_BY(module_handle_mutex_);
 
   std::vector<ConstantInfo> constants_;
   const absl::flat_hash_map<ShapeIndex, OutputInfo> output_info_;

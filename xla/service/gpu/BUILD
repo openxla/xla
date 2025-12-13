@@ -725,6 +725,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:event_based_timer",
         "//xla/stream_executor:kernel_stats",
+        "//xla/stream_executor:memory_space",
         "//xla/stream_executor:module_spec",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:scoped_module_handle",

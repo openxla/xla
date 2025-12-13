@@ -93,6 +93,7 @@ limitations under the License.
 #include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/stream_executor_virtual_address_allocator.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -636,6 +637,9 @@ absl::StatusOr<std::unique_ptr<tsl::Allocator>> CreateAllocatorForDevice(
     case GpuAllocatorConfig::Kind::kPlatform:
       LOG(FATAL) << "Platform allocator should be handled before calling this "
                     "function.";
+    case GpuAllocatorConfig::Kind::kVmm:
+      LOG(FATAL) << "VMM allocator should be handled before calling this "
+                    "function.";
   }
 }
 
@@ -651,6 +655,20 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
     }
     return MaybeOwning<se::DeviceAddressAllocator>(
         xla_client->backend().memory_allocator());
+  }
+
+  if (allocator_config.kind == GpuAllocatorConfig::Kind::kVmm) {
+    LOG(INFO) << "Using VMM (Virtual Memory Management) allocator.";
+    std::vector<se::StreamExecutor*> executors;
+    for (const auto& device : devices) {
+      se::StreamExecutor* executor = device->executor();
+      if (executor != nullptr) {
+        executors.push_back(executor);
+      }
+    }
+    return MaybeOwning<se::DeviceAddressAllocator>(
+        std::make_unique<se::DeviceVirtualAddressAllocator>(
+            xla_client->platform(), executors));
   }
 
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;
