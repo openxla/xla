@@ -2323,9 +2323,7 @@ xla_cc_test(
         "no_oss",
         "nomsan",  # Pulls in precompiled NVIDIA libraries which cause false positives in msan.
         "requires-gpu-nvidia",
-    ] + if_google([
-        "ignore_for_dep=third_party/tensorflow/compiler/xla/service/gpu/amdgpu_compiler.h",
-    ]),
+    ],
     deps = if_cuda_is_configured([
         ":nvptx_compiler_impl",
         "//xla/stream_executor:cuda_platform",
@@ -2366,7 +2364,6 @@ cc_library(
     ],
     tags = [
         "gpu",
-        "manual",
         "rocm-only",
     ],
     deps = [
@@ -2387,7 +2384,6 @@ cc_library(
     ],
     tags = [
         "gpu",
-        "manual",
         "rocm-only",
     ],
     deps = [
