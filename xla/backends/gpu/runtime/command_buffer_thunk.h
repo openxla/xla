@@ -60,6 +60,11 @@ class CommandBufferThunk : public Thunk {
 
   std::string ToString(int indent) const override;
 
+  // Returns buffer allocation indices referenced by commands in this thunk.
+  absl::Span<const BufferAllocation::Index> allocs_indices() const {
+    return commands_.allocs_indices();
+  }
+
  private:
   // Command buffer instantiated on a `se::StreamExecutor` instance, and
   // auxiliary state required for efficient command buffer updates.
@@ -114,14 +119,14 @@ class CommandBufferThunk : public Thunk {
   // Command buffer thunk owns commands buffers instantiated on all executors.
   struct State {
     absl::Mutex mutex;
-    absl::flat_hash_map<se::StreamExecutor*,
+    absl::flat_hash_map<std::pair<se::StreamExecutor*, int>,
                         std::shared_ptr<ExecutorCommandBuffer>>
         command_buffers ABSL_GUARDED_BY(mutex);
   };
 
   // Returns a command buffer instantiated for `executor` or creates new one.
   absl::StatusOr<std::shared_ptr<ExecutorCommandBuffer>>
-  GetOrCreateCommandBuffer(se::StreamExecutor* executor);
+  GetOrCreateCommandBuffer(se::StreamExecutor* executor, int va_range_idx = 0);
 
   // Each individual command buffer allocates state on device (CUDA graph) and
   // it adds up pretty quickly. To prevent OOM errors we proactively evict
@@ -139,9 +144,6 @@ class CommandBufferThunk : public Thunk {
   // Evicts all previously instantiated command buffers.
   static void EvictCommandBuffers();
 
-  // Commands executor that initializes command buffers on each stream executor.
-  CommandBufferCmdExecutor commands_;
-
   // Thunk sequence that executes the same commands as in `commands_` but using
   // thunk mechanism. We use it as a fallback mechanism to work around CUPTI
   // bugs that lead to memory corruption when CUPTI traces CUDA graph execution.
@@ -154,6 +156,8 @@ class CommandBufferThunk : public Thunk {
   // Command buffer thunk state allocated in heap to allow global (per-process)
   // management of instantiated command buffers.
   std::shared_ptr<State> state_;
+
+  bool enable_command_buffer_va_remapping_;
 };
 
 }  // namespace xla::gpu

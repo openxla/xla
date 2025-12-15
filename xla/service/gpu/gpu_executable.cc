@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
+#include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -109,6 +110,8 @@ namespace xla {
 namespace gpu {
 
 namespace {
+
+constexpr int kNumVaInterleaveSlots = 4;
 
 // Chooses the correct allocations to be used within the GpuExecutable code.
 std::vector<const BufferAllocation*> GatherAllocationPtrs(
@@ -308,6 +311,20 @@ GpuExecutable::GpuExecutable(
                                                buffer_assignment_);
   }
   set_module_stats(std::move(module_stats));
+
+  // Populate command_buffer_allocation_indexes_ with buffer indices accessed by
+  // command buffer thunks.
+  if (thunks_) {
+    thunks_->ForAllThunks([this](const Thunk* thunk) {
+      if (auto* cmd_buffer_thunk =
+              dynamic_cast<const CommandBufferThunk*>(thunk)) {
+        for (BufferAllocation::Index index :
+             cmd_buffer_thunk->allocs_indices()) {
+          command_buffer_allocation_indexes_.insert(index);
+        }
+      }
+    });
+  }
 }
 
 GpuExecutable::~GpuExecutable() {
@@ -498,7 +515,8 @@ absl::Status ExecuteThunksImpl(
         &collective_params,
         &collective_cliques,
         run_options->run_options().ffi_execution_context(),
-        run_options->local_device_count()};
+        run_options->local_device_count(),
+        run_options->va_range_idx()};
 
     tsl::profiler::TraceMe trace_initialize("Thunks::Initialize");
     TF_RETURN_IF_ERROR(thunk_sequence.Initialize(initialize_params));
@@ -1020,7 +1038,61 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     buffers_in_result.insert(result_buffer);
   }
 
-  TF_RETURN_IF_ERROR(ExecuteThunks(buffer_allocations, run_options));
+  bool cmd_buffer_enabled = command_buffer_allocations_.size() > 0;
+  int va_range_idx = 0;
+
+  bool enable_command_buffer_va_remapping =
+      (command_buffer_allocations_.size() > 0) && has_module() &&
+      module_config()
+          .debug_options()
+          .xla_gpu_enable_command_buffer_va_remapping();
+
+  if (enable_command_buffer_va_remapping) {
+    {
+      absl::MutexLock lock(module_handle_mutex_);
+
+      if (module_va_ranges_.find(executor) == module_va_ranges_.end()) {
+        module_va_ranges_[executor] = std::make_unique<DeviceVaRange>();
+      }
+
+      auto& device_va_ranges = module_va_ranges_[executor];
+      int va_range_idx = device_va_ranges->idx;
+      run_options->set_va_range_idx(va_range_idx);
+
+      device_va_ranges->idx = (va_range_idx + 1) % kNumVaInterleaveSlots;
+
+      if (device_va_ranges->va_ranges_idx_map.find(va_range_idx) ==
+          device_va_ranges->va_ranges_idx_map.end()) {
+        device_va_ranges->va_ranges_idx_map[va_range_idx] =
+            std::make_unique<VaRanges>();
+        TF_ASSIGN_OR_RETURN(
+            device_va_ranges->va_ranges_idx_map[va_range_idx]
+                ->allocation_va_map,
+            ReserveCommandBufferVaRange(executor));
+        TF_ASSIGN_OR_RETURN(
+            device_va_ranges->va_ranges_idx_map[va_range_idx]
+                ->unmap_event,
+            executor->CreateEvent(se::Event::Scope::kDevice));
+      } else {
+        // wait the gpu task which access the reserved VA range to complete.
+        device_va_ranges->va_ranges_idx_map[va_range_idx]
+            ->unmap_event->Synchronize();
+      }
+    }
+    TF_ASSIGN_OR_RETURN(
+        auto remaped_buffer_allocations,
+        std::move(MapCommandBufferAllocationsToVa(
+            run_options->stream()->parent(), buffer_allocations)));
+
+    TF_RETURN_IF_ERROR(ExecuteThunks(remaped_buffer_allocations, run_options));
+  } else {
+    TF_RETURN_IF_ERROR(ExecuteThunks(buffer_allocations, run_options));
+  }
+
+  if (enable_command_buffer_va_remapping) {
+    absl::MutexLock lock(module_handle_mutex_);
+    executor->RecordEvent(module_va_ranges_[executor]->va_ranges_idx_map[va_range_idx]
+  }
 
   TF_RETURN_IF_ERROR(
       buffer_allocations.TearDown(buffers_in_result, GetAllocations()));
