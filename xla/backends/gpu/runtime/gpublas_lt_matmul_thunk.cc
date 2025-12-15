@@ -138,7 +138,10 @@ CublasLtMatmulThunk::GetCachedMatmulPlan(const ExecuteParams& params) {
 
     TF_ASSIGN_OR_RETURN(auto plan,
                         blas_lt->GetMatmulPlan(gemm_config_, epilogue_));
-    // Use the workspace size that was determined during autotuning
+
+    // Set the workspace size to the size that was used for autotuning, so
+    // algorithm index will be the same as returned by GetAlgorithms called
+    // during autotuning.
     int64_t max_workspace = autotune_workspace_size_;
 
     // If autotuning is disabled, there is no point on retrieving all
