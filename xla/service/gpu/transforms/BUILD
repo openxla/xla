@@ -1400,6 +1400,20 @@ cc_library(
     ],
 )
 
+xla_test(
+    name = "gemm_workspace_rewriter_test",
+    srcs = ["gemm_workspace_rewriter_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":gemm_workspace_rewriter",
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu/tests:gpu_codegen_test",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "gemm_fusion",
     srcs = ["gemm_fusion.cc"],
