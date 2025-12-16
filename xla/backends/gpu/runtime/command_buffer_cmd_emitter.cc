@@ -160,7 +160,6 @@ static absl::StatusOr<Command> Convert(
     }
   }
   return std::make_unique<CaseCmd>(thunk.branch_index_buffer(),
-                                   thunk.branch_index_is_bool(),
                                    std::move(branch_cmds));
 }
 
@@ -232,7 +231,7 @@ static absl::StatusOr<Command> Convert(const CustomCallThunk& thunk) {
   if (auto bundle = thunk.bundle(); bundle.has_value()) {
     return std::make_unique<CustomCallCmd>(
         thunk.target_name(), bundle->execute, thunk.operands(), thunk.results(),
-        *thunk.call_frame(),
+        *thunk.call_frame(), thunk.execution_state(),
         /*called_computation=*/nullptr);  // TODO(b/342285364)
   }
   return std::make_unique<CustomCallCmd>(thunk.target_name(),
@@ -242,10 +241,6 @@ static absl::StatusOr<Command> Convert(const CustomCallThunk& thunk) {
 
 static absl::StatusOr<Command> Convert(const CuDnnThunk& thunk) {
   return std::make_unique<CuDnnCmd>(thunk.arguments(), thunk.graph());
-}
-
-static absl::StatusOr<Command> Convert(const ConvolutionThunk& thunk) {
-  return std::make_unique<ConvolutionCmd>(thunk);
 }
 
 //===----------------------------------------------------------------------===//
@@ -319,8 +314,6 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
       return append(Convert<WhileThunk>(thunk, options));
     case Thunk::Kind::kCuDnn:
       return append(Convert<CuDnnThunk>(thunk));
-    case Thunk::Kind::kConvolution:
-      return append(Convert<ConvolutionThunk>(thunk));
     case Thunk::Kind::kDynamicSlice:
       return append(Convert<DynamicSliceThunk>(thunk, options));
 

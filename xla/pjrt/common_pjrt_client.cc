@@ -26,6 +26,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -39,6 +40,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/future.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
@@ -46,7 +48,9 @@ limitations under the License.
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/raw_buffer.h"
+#include "xla/pjrt/utils.h"
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -152,7 +156,7 @@ CommonPjRtClient::BufferFromHostLiteral(const LiteralSlice& literal,
       LinearizeInto(literal, device_shape,
                     HostBufferSemantics::kImmutableUntilTransferCompletes,
                     raw_buffer));
-  return DefineBuffer(device_shape, std::move(raw_buffer),
+  return DefineBuffer(device_shape, memory_space, std::move(raw_buffer),
                       {std::move(definition_event)},
                       /*raw_buffer_is_mutable=*/true);
 }
@@ -186,10 +190,10 @@ CommonPjRtClient::CreateUninitializedBuffer(const Shape& shape,
                                         /*allocate_after=*/{}));
   TF_ASSIGN_OR_RETURN(auto definition_event,
                       raw_buffer->MakeAllocationReadyEvent());
-  TF_ASSIGN_OR_RETURN(
-      auto output_buffer,
-      DefineBuffer(device_shape, raw_buffer, {std::move(definition_event)},
-                   /*raw_buffer_is_mutable=*/true));
+  TF_ASSIGN_OR_RETURN(auto output_buffer,
+                      DefineBuffer(device_shape, memory_space, raw_buffer,
+                                   {std::move(definition_event)},
+                                   /*raw_buffer_is_mutable=*/true));
   return output_buffer;
 }
 
@@ -259,10 +263,10 @@ CommonPjRtClient::CreateAliasBuffer(const Shape& shape,
         return absl::OkStatus();
       };
 
-  TF_ASSIGN_OR_RETURN(
-      auto result_buffer,
-      DefineBuffer(shape, std::move(raw_buffer), {std::move(definition_event)},
-                   /*raw_buffer_is_mutable=*/true));
+  TF_ASSIGN_OR_RETURN(auto result_buffer,
+                      DefineBuffer(shape, memory_space, std::move(raw_buffer),
+                                   {std::move(definition_event)},
+                                   /*raw_buffer_is_mutable=*/true));
 
   return std::make_pair(std::move(result_buffer), std::move(fulfill_cb));
 }
@@ -297,7 +301,7 @@ CommonPjRtClient::BufferFromHostBuffer(
       TF_ASSIGN_OR_RETURN(
           auto output_buffer,
           DefineBuffer(
-              device_shape, raw_buffer,
+              device_shape, memory_space, raw_buffer,
               absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>{},
               /*raw_buffer_is_mutable=*/host_buffer_semantics ==
                   PjRtClient::HostBufferSemantics::kMutableZeroCopy));
@@ -316,10 +320,10 @@ CommonPjRtClient::BufferFromHostBuffer(
       LinearizeHostBufferInto(
           data, type, dims, byte_strides, host_buffer_semantics,
           std::move(on_done_with_host_buffer), device_shape, raw_buffer));
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<PjRtBuffer> output_buffer,
-      DefineBuffer(device_shape, raw_buffer, {std::move(definition_event)},
-                   /*raw_buffer_is_mutable=*/true));
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtBuffer> output_buffer,
+                      DefineBuffer(device_shape, memory_space, raw_buffer,
+                                   {std::move(definition_event)},
+                                   /*raw_buffer_is_mutable=*/true));
   return output_buffer;
 }
 
@@ -345,7 +349,7 @@ CommonPjRtClient::CreateViewOfDeviceBuffer(
                           on_device_bytes_count, memory_space));
   TF_ASSIGN_OR_RETURN(
       auto output_buffer,
-      DefineBuffer(device_shape, raw_buffer,
+      DefineBuffer(device_shape, memory_space, raw_buffer,
                    absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>{},
                    /*raw_buffer_is_mutable=*/false));
   return output_buffer;
@@ -425,6 +429,324 @@ void CommonPjRtClient::ScheduleRemoteSend(
   usage_event_promise->SetError(error);
 }
 
+absl::Status CommonPjRtClient::PrepareArguments(
+    const ExecuteOptions& options,
+    absl::Span<PjRtBuffer* const> argument_handles,
+    absl::Span<int const> donated_params, PjRtDeviceEventSet& extra_deps,
+    PjRtDeviceEventSet& control_deps,
+    absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>&
+        input_buffers,
+    absl::InlinedVector<CommonPjRtBuffer::ScopedHold, 4>& device_buffers,
+    PjRtDevice* device, int replica, int partition,
+    absl::Span<const Shape> parameter_device_shapes, bool& is_error) {
+  input_buffers.reserve(argument_handles.size());
+  device_buffers.reserve(argument_handles.size());
+  auto donate_it = donated_params.begin();
+  {
+    tsl::profiler::TraceMe t2("Handle inputs");
+    // State for `TestBufferDonationClashes`.
+    absl::flat_hash_map<const void*, std::pair<bool, int>> donation_clashes;
+    donation_clashes.reserve(argument_handles.size());
+    // The first element is the argument index of the donated buffer, and the
+    // second element is the size in bytes of the donated buffer.
+    std::vector<std::pair<int, size_t>> donated_buffer_stats;
+    for (int i = 0; i < argument_handles.size(); ++i) {
+      PjRtBuffer* handle = argument_handles[i];
+      auto* tfrt_buffer = tensorflow::down_cast<CommonPjRtBufferImpl*>(handle);
+      if (tfrt_buffer->device() != device) {
+        return InvalidArgument(
+            "Buffer passed to Execute() as argument %d to replica %d is on "
+            "device %s, but replica is assigned to device %s.",
+            i, replica, tfrt_buffer->device()->DebugString(),
+            device->DebugString());
+      }
+      const bool donated_param =
+          donate_it != donated_params.end() && *donate_it == i;
+      const bool donation_denied_at_runtime =
+          options.non_donatable_input_indices.contains(i);
+      if (donated_param && donation_denied_at_runtime &&
+          tfrt_buffer->on_device_shape().has_layout() &&
+          tfrt_buffer->on_device_shape().layout().memory_space() ==
+              Layout::kHostMemorySpace) {
+        return absl::UnimplementedError(
+            "pinned_host buffers do not support donation denial at runtime via "
+            "`ExecuteOptions::non_donatable_input_indices`");
+      }
+      bool must_donate = donated_param && !donation_denied_at_runtime;
+      if (must_donate) {
+        ++donate_it;
+        if (VLOG_IS_ON(1)) {
+          TF_ASSIGN_OR_RETURN(size_t on_device_size,
+                              tfrt_buffer->GetOnDeviceSizeInBytes());
+          donated_buffer_stats.emplace_back(std::make_pair(i, on_device_size));
+        }
+      }
+      TF_RETURN_IF_ERROR(TestBufferDonationClashes(
+          tfrt_buffer, donation_clashes, must_donate, i, replica, partition));
+      device_buffers.emplace_back(tfrt_buffer->GetBufferWithHold(
+          must_donate ? CommonPjRtBuffer::ScopedHold::kDonation
+                      : CommonPjRtBuffer::ScopedHold::kUsage));
+      CommonPjRtBuffer::ScopedHold& hold = device_buffers.back();
+      if (!hold.ok()) {
+        return InvalidArgument(
+            "Invalid buffer passed to Execute() as argument %d to replica %d: "
+            "%s",
+            i, replica, hold.status().ToString());
+      }
+      auto* device_buffer = hold.buffer();
+
+      const bool is_handle_dynamic_shape =
+          handle->on_device_shape().is_dynamic();
+
+      const Shape& expected_shape = parameter_device_shapes[i];
+      if (device_buffer->raw_buffer()) {
+        tsl::RCReference<CommonPjRtRawBuffer> actual_buffer =
+            device_buffer->raw_buffer();
+        if (is_handle_dynamic_shape && !expected_shape.is_dynamic()) {
+          TF_ASSIGN_OR_RETURN(auto handle_logical_device_shape,
+                              handle->logical_on_device_shape());
+          auto status_or_buffer =
+              actual_buffer->RemoveDynamicShapeMetadataIfPresent(
+                  handle_logical_device_shape);
+
+          if (!status_or_buffer.ok()) {
+            absl::Status status = status_or_buffer.status();
+            tsl::errors::AppendToMessage(
+                &status, absl::StrCat("; Error when preparing the input buffer "
+                                      "to Execute() as argument ",
+                                      i, " to replica ", replica));
+            return status;
+          }
+          actual_buffer = std::move(status_or_buffer).value();
+        }
+        input_buffers.push_back(std::move(actual_buffer));
+      } else {
+        is_error = true;
+      }
+
+      // Definition events are never modified after buffer construction.
+      is_error |= device_buffer->AddDefinitionEventsToSet(extra_deps);
+      // If we are trying to donate this buffer, we must wait on its usage
+      // events as well as its definition events to ensure that all reads on
+      // this buffer (e.g., d2h transfer) have been completed before it can be
+      // mutated. Usage holds on this buffer are excluded during a donation hold
+      // so we know that its usage events won't be modified while we are
+      // enqueueing, but we ignore any errors from usage events.
+      if (must_donate) {
+        device_buffer->AddUsageEventsToSet(control_deps);
+      }
+    }
+    // Debug logging of buffer donation and input buffer shapes and size.
+    if (VLOG_IS_ON(1)) {
+      // Buffer donation information.
+      if (!argument_handles.empty()) {
+        LOG(INFO) << donated_buffer_stats.size() << " arguments out of total "
+                  << argument_handles.size() << " arguments will be donated.";
+        for (auto [index, buffer_size] : donated_buffer_stats) {
+          LOG(INFO) << "Argument " << index << " with size " << buffer_size
+                    << " will be donated.";
+        }
+      }
+      // Input buffers shape and size.
+      for (int i = 0; i < input_buffers.size(); ++i) {
+        size_t buffer_size = input_buffers[i]->GetOnDeviceSizeInBytes();
+        TF_ASSIGN_OR_RETURN(Shape actual_input_shape,
+                            argument_handles[i]->logical_on_device_shape());
+        VLOG(2) << "input buffer with index " << i
+                << " has shape: " << actual_input_shape.ToString()
+                << " and size: " << buffer_size;
+      }
+    }
+  }
+
+  return absl::OkStatus();
+}
+
+absl::StatusOr<absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>>
+CommonPjRtClient::AllocateOutputBuffersWithInputReuse(
+    const Shape& output_device_shape,
+    absl::Span<const CommonPjRtBuffer::ScopedHold> input_device_buffer_holds,
+    const HloInputOutputAliasConfig& alias_config, PjRtDevice* device,
+    absl::Span<const int> output_memory_space_kind_ids) {
+  tsl::profiler::TraceMe traceme("AllocateOutputBuffersWithInputReuse");
+  VLOG(1) << "Creating an output buffer, which may be partially donated, with "
+             "shape "
+          << output_device_shape.ToString();
+  absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4> buffers;
+  if (output_device_shape.IsTuple() &&
+      output_device_shape.tuple_shapes().empty()) {
+    return buffers;
+  }
+  int num_input_pjrt_buffers = input_device_buffer_holds.size();
+  absl::Span<const Shape> output_leaf_shapes =
+      output_device_shape.IsTuple()
+          ? absl::MakeSpan(output_device_shape.tuple_shapes())
+          : absl::MakeSpan(&output_device_shape, 1);
+  auto get_alias = [&](int i) {
+    return output_device_shape.IsTuple() ? alias_config.GetAliasedParameter({i})
+                                         : alias_config.GetAliasedParameter({});
+  };
+  buffers.reserve(output_leaf_shapes.size());
+
+  auto should_allocate_new_buffer =
+      [&](std::optional<HloInputOutputAliasConfig::Alias> alias) -> bool {
+    if (!alias.has_value()) {
+      return true;
+    }
+    int parameter_index = alias->parameter_number;
+    // Handle "Case 3." input
+    // donation below. ^ denotes donation pair. i0,  i1^  ->   r0^ where
+    // parameter_is_tupled_arguments=true
+    //
+    // e.g. For alias: {0, {1}, may-alias}
+    // We should check the donation eligibility of the second buffer in the
+    // input list.
+    if (num_input_pjrt_buffers > 1 && alias->parameter_index.size() == 1) {
+      parameter_index = alias->parameter_index[0];
+    }
+    return input_device_buffer_holds[parameter_index].type() !=
+           CommonPjRtBuffer::ScopedHold::kDonation;
+  };
+  std::vector<size_t> output_buffer_sizes;
+  for (int i = 0; i < output_leaf_shapes.size(); ++i) {
+    std::optional<HloInputOutputAliasConfig::Alias> alias = get_alias(i);
+    if (should_allocate_new_buffer(alias)) {
+      const Shape& leaf_shape = output_leaf_shapes[i];
+      const auto& current_anno =
+          tsl::profiler::ScopedMemoryDebugAnnotation::CurrentAnnotation();
+      tsl::profiler::ScopedMemoryDebugAnnotation anno(
+          "dummy", current_anno.pending_region_type, 0, [&leaf_shape]() {
+            return ShapeUtil::HumanStringWithLayout(leaf_shape);
+          });
+      int kind_id = output_memory_space_kind_ids[i];
+      PjRtMemorySpace* memory_space = nullptr;
+      for (PjRtMemorySpace* ms : device->memory_spaces()) {
+        if (kind_id == ms->kind_id()) {
+          memory_space = ms;
+          break;
+        }
+      }
+      if (memory_space == nullptr) {
+        return absl::InternalError(
+            absl::StrCat("No memory space found (kind_id: ", kind_id, ")"));
+      }
+      TF_ASSIGN_OR_RETURN(int64_t on_device_bytes,
+                          GetOnDeviceBytesCount(memory_space, leaf_shape));
+      TF_ASSIGN_OR_RETURN(auto raw_buffer,
+                          AllocateRawBuffer(memory_space, on_device_bytes,
+                                            /*retry_on_oom=*/false,
+                                            /*allocate_after=*/{}));
+      buffers.push_back(std::move(raw_buffer));
+    } else {
+      // a tuple output element alias to input. There are 3 supported cases.
+      // Case 1: alias a non-tuple input.
+      // Case 2: alias a tuple input leaf while a single tuple PjRtBuffer is
+      // passed to PjRtLoadExecutable::Execute.
+      // Case 3: alias a tuple input leaf while individual input PjRtBuffer
+      // leaves are passed to PjRtLoadExecutable::Execute.
+      const ShapeIndex& shape_index = alias->parameter_index;
+      size_t parameter_number;
+      if (shape_index.empty()) {
+        // Case 1: (o, i, {}) alias non-tuple input i
+        CHECK_LT(alias->parameter_number, num_input_pjrt_buffers);
+        parameter_number = alias->parameter_number;
+      } else if (num_input_pjrt_buffers == 1 && shape_index.size() == 1 &&
+                 shape_index[0] != 0) {
+        // Case 2: (o, 0, {i}) alias a single tuple input's i-th element
+        //  where i > 0.
+        return Unimplemented("Alias %s not supported: found %d inputs.",
+                             alias->ToString(), num_input_pjrt_buffers);
+      } else if (shape_index.size() == 1) {
+        // Case 3: (o, 0, {i}) alias a single tuple input's i-th element but
+        // the input PjRtBuffers have not been tuplized yet
+        parameter_number = shape_index[0];
+      } else {
+        return Unimplemented("Alias %s not supported: found %d inputs.",
+                             alias->ToString(), num_input_pjrt_buffers);
+      }
+      const CommonPjRtBuffer::ScopedHold& input_hold =
+          input_device_buffer_holds[parameter_number];
+      buffers.push_back(input_hold.buffer()->raw_buffer());
+    }
+  }
+
+  if (VLOG_IS_ON(1)) {
+    int64_t total_size = 0;
+    for (const auto size : output_buffer_sizes) {
+      total_size += size;
+    }
+    LOG(INFO)
+        << "Total size of new output buffers allocated in this execution: "
+        << total_size;
+  }
+  return std::move(buffers);
+}
+
+static std::unique_ptr<PjRtBuffer> CreateOutputLeafBuffer(
+    const Shape& output_leaf_shape,
+    tsl::RCReference<PjRtDeviceEvent> definition_event,
+    bool is_predetermined_error, CommonPjRtClient* client, PjRtDevice* device,
+    tsl::RCReference<CommonPjRtRawBuffer> leaf_buffer, int kind_id) {
+  PjRtMemorySpace* memory_space = nullptr;
+  if (leaf_buffer) {
+    memory_space = leaf_buffer->memory_space();
+  } else {
+    for (PjRtMemorySpace* ms : device->memory_spaces()) {
+      if (kind_id == ms->kind_id()) {
+        memory_space = ms;
+        break;
+      }
+    }
+    CHECK(memory_space) << "No memory space found for device: "
+                        << device->DebugString() << " kind: " << kind_id;
+  }
+  auto buffer_or = client->DefineBuffer(
+      output_leaf_shape, memory_space, std::move(leaf_buffer),
+      {definition_event}, /*raw_buffer_is_mutable=*/true);
+  CHECK_OK(buffer_or);
+  return *std::move(buffer_or);
+}
+
+std::vector<std::unique_ptr<PjRtBuffer>> CommonPjRtClient::CreateOutputs(
+    const Shape& output_device_shape,
+    tsl::RCReference<PjRtDeviceEvent> definition_event, PjRtDevice* device,
+    absl::Span<const int> output_memory_space_kind_ids,
+    absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>
+        output_leaf_buffers,
+    bool is_predetermined_error) {
+  tsl::profiler::TraceMe t1("CommonPjRtClient::CreateOutputs");
+  std::vector<std::unique_ptr<PjRtBuffer>> res;
+  absl::Span<const Shape> output_leaf_shapes =
+      output_device_shape.IsTuple()
+          ? absl::MakeSpan(output_device_shape.tuple_shapes())
+          : absl::MakeSpan(&output_device_shape, 1);
+  auto get_buffer = [&](int i) {
+    return i < output_leaf_buffers.size()
+               ? std::move(output_leaf_buffers[i])
+               : tsl::RCReference<CommonPjRtRawBuffer>();
+  };
+  if (output_device_shape.IsTuple()) {
+    res.reserve(output_leaf_shapes.size());
+    for (int i = 0; i < output_leaf_shapes.size(); ++i) {
+      res.push_back(CreateOutputLeafBuffer(
+          output_leaf_shapes[i], definition_event, is_predetermined_error, this,
+          device, get_buffer(i), output_memory_space_kind_ids[i]));
+    }
+  } else if (!output_device_shape.IsTuple() &&
+             output_leaf_buffers.size() == 1) {
+    res.push_back(CreateOutputLeafBuffer(
+        output_leaf_shapes[0], definition_event, is_predetermined_error, this,
+        device, get_buffer(0), output_memory_space_kind_ids[0]));
+  } else {
+    CHECK(is_predetermined_error)
+        << "Nontuple results must have a single result buffer.";
+    res.push_back(CreateOutputLeafBuffer(output_device_shape, definition_event,
+                                         is_predetermined_error, this, device,
+                                         {}, output_memory_space_kind_ids[0]));
+  }
+  return res;
+}
+
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 CommonPjRtBufferImpl::CopyToCpuMemorySpace(const xla::Shape& dst_shape,
                                            PjRtMemorySpace* dst_memory_space) {
@@ -447,10 +769,11 @@ CommonPjRtBufferImpl::CopyToCpuMemorySpace(const xla::Shape& dst_shape,
   TF_ASSIGN_OR_RETURN(
       std::tie(definition_event_promise, definition_event),
       dst_client->CreateLinkedEventPromise(dst_memory_space, ""));
-  TF_ASSIGN_OR_RETURN(auto buffer,
-                      dst_client->DefineBuffer(dst_shape, dst_raw_buffer,
-                                               {std::move(definition_event)},
-                                               /*raw_buffer_is_mutable=*/true));
+  TF_ASSIGN_OR_RETURN(
+      auto buffer,
+      dst_client->DefineBuffer(dst_shape, dst_memory_space, dst_raw_buffer,
+                               {std::move(definition_event)},
+                               /*raw_buffer_is_mutable=*/true));
   auto* base_ptr = dst_raw_buffer->GetHostPointer();
   std::unique_ptr<MutableLiteralBase> literal;
   bool needs_second_copy = false;
@@ -558,9 +881,10 @@ static absl::Status CommonCopyToMemorySpace(
         dst_client->AllocateRawBuffer(dst_memory_space, on_device_bytes_count,
                                       /*retry_on_oom=*/true, allocation_event));
     TF_ASSIGN_OR_RETURN(
-        dst_buffer, dst_client->DefineBuffer(dst_shape, dst_raw_buffer,
-                                             {std::move(definition_event)},
-                                             /*raw_buffer_is_mutable=*/true));
+        dst_buffer,
+        dst_client->DefineBuffer(dst_shape, dst_memory_space, dst_raw_buffer,
+                                 {std::move(definition_event)},
+                                 /*raw_buffer_is_mutable=*/true));
     TF_RETURN_IF_ERROR(src_buffer->AcquireScopedRawBuffer(
         [&](tsl::RCReference<CommonPjRtRawBuffer> buf_raw_buffer,
             std::vector<tsl::RCReference<tsl::AsyncValue>>

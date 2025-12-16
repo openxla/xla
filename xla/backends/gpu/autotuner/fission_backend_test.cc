@@ -30,7 +30,6 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/cublas.h"
 #include "xla/backends/gpu/autotuner/custom_kernel.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
@@ -41,10 +40,12 @@ limitations under the License.
 #include "xla/service/gpu/transforms/custom_kernel_fusion_rewriter.h"
 #include "xla/service/gpu/transforms/dot_algorithm_rewriter.h"
 #include "xla/service/gpu/transforms/gemm_rewriter.h"
+#include "xla/service/gpu/transforms/scaled_dot_rewriter.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -74,6 +75,42 @@ const char kTritonFusionHlo[] = R"(
       kind=kCustom, calls=computation,
       backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
   })";
+
+const char kF8TritonFusionHlo[] = R"(
+HloModule o
+
+gemm_fusion {
+  p0 = f8e4m3fn[64,6144]{1,0} parameter(0)
+  p1 = f8e4m3fn[64,6144]{1,0} parameter(1)
+  ROOT %dot.0 = f32[64,64]{1,0} dot(p0, p1), lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+
+ENTRY main {
+  p0 = f8e4m3fn[64,6144]{1,0} parameter(0)
+  p1 = f8e4m3fn[64,6144]{1,0} parameter(1)
+  ROOT %dot.0 = f32[64,64]{1,0} fusion(p0, p1), kind=kCustom, calls=gemm_fusion, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_gemm"},"force_earliest_schedule":false}
+})";
+
+const char kScaledDotFusionHlo[] = R"(
+HloModule module
+
+fusion_computation {
+  p0 = f32[1024,1024] parameter(0)
+  p1 = f32[1024,1024] parameter(1)
+  p0_scale = f32[1024,8] parameter(2)
+  p1_scale = f32[8,1024] parameter(3)
+  ROOT r = f32[1024,1024] scaled-dot(p0, p1, p0_scale, p1_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = f32[1024,1024] parameter(0)
+  p1 = f32[1024,1024] parameter(1)
+  p0_scale = f32[1024,8] parameter(2)
+  p1_scale = f32[8,1024] parameter(3)
+  ROOT r = f32[1024,1024] fusion(p0, p1, p0_scale, p1_scale),
+    kind=kCustom, calls=fusion_computation
+})";
 
 const char kUnsupportedFusionHlo[] = R"(
   HloModule module
@@ -116,6 +153,7 @@ class FissionTest : public HloHardwareIndependentTestBase,
   static std::unique_ptr<HloPassPipeline> GetCublasRewriterPipeline(
       const se::DeviceDescription& device_description) {
     auto pipeline = std::make_unique<HloPassPipeline>("fission_pipeline");
+    pipeline->AddPass(std::make_unique<ScaledDotRewriter>());
     pipeline->AddPass(std::make_unique<DotAlgorithmRewriter>());
     for (GemmRewriterOptions::DType dtype :
          {GemmRewriterOptions::DType::kFp8Only,
@@ -145,6 +183,15 @@ class FissionTest : public HloHardwareIndependentTestBase,
                                            compiler, target_config);
   }
 
+  // Static helper to create a CublasBackend.
+  static std::unique_ptr<GpuCodegenBackend> CreateCublasBackendWiithF8Fallback(
+      se::StreamExecutor* stream_executor, const DebugOptions* debug_options,
+      Compiler* compiler, const Compiler::GpuTargetConfig* target_config) {
+    return std::make_unique<CublasBackend>(stream_executor, debug_options,
+                                           compiler, target_config,
+                                           /*enable_f8_fallback=*/true);
+  }
+
   // Static helper to create a CustomKernelBackend.
   static std::unique_ptr<GpuCodegenBackend> CreateCustomKernelBackend(
       se::StreamExecutor* stream_executor, const DebugOptions* debug_options,
@@ -163,7 +210,6 @@ class FissionTest : public HloHardwareIndependentTestBase,
   std::unique_ptr<GpuCodegenBackend> base_codegen_backend_;
   std::unique_ptr<FissionBackend> fission_backend_;
   mlir::MLIRContext mlir_context_;
-  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 
   FissionTest()
       : stream_executor_(PlatformUtil::GetDefaultPlatform()
@@ -178,7 +224,7 @@ class FissionTest : public HloHardwareIndependentTestBase,
         fission_backend_(std::make_unique<FissionBackend>(
             &debug_options_, &compiler_, &target_config_,
             std::move(base_codegen_backend_), std::move(rewriter_pipeline_),
-            &symbolic_expr_context_, stream_executor_)) {}
+            &mlir_context_, stream_executor_)) {}
 };
 
 TEST_P(FissionTest, CanCreateFissionBackend) {
@@ -247,6 +293,14 @@ INSTANTIATE_TEST_SUITE_P(
          {"custom_call_target=\"__cublas$gemm\"",
           "\"selected_algorithm\":\"-1\""},
          /*expected_backend_name=*/"Cublas_fission"},
+        {"TritonFusion_CublasLt_F8",
+         kF8TritonFusionHlo,
+         &FissionTest::GetCublasRewriterPipeline,
+         &FissionTest::CreateCublasBackendWiithF8Fallback,
+         /*expected_module_substrings=*/
+         {"custom_call_target=\"__cublas$lt$matmul$f8\"",
+          "\"selected_algorithm\":\"0\""},
+         /*expected_backend_name=*/"Cublas_fission"},
         {"TritonFusion_CustomKernel",
          kTritonFusionHlo,
          &FissionTest::GetCustomKernelRewriterPipeline,
@@ -256,6 +310,14 @@ INSTANTIATE_TEST_SUITE_P(
              "\"kind\":\"__custom_fusion\"",
          },
          /*expected_backend_name=*/"CustomKernel_fission"},
+        {"ScaledDotFusion_Cublas",
+         kScaledDotFusionHlo,
+         &FissionTest::GetCublasRewriterPipeline,
+         &FissionTest::CreateCublasBackend,
+         /*expected_module_substrings=*/
+         {"custom_call_target=\"__cublas$gemm\"",
+          "\"selected_algorithm\":\"-1\""},
+         /*expected_backend_name=*/"Cublas_fission"},
     }),
     [](const ::testing::TestParamInfo<FissionTest::ParamType>& info) {
       return info.param.test_name;

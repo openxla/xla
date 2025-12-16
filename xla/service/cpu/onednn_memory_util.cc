@@ -19,10 +19,10 @@ limitations under the License.
 #include <cstdint>
 #include <initializer_list>
 #include <iostream>
-#include <numeric>
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -62,8 +62,7 @@ MemrefInfoHandler CreateMemrefFromShape(const Shape& shape, const void* buf) {
   std::vector<int64_t> scalar_shape(1, 1);
   auto dimensions =
       is_scalar ? scalar_shape : shape.dimensions();
-  std::copy(dimensions.begin(), dimensions.end(),
-            absl::MakeSpan(result->dims).begin());
+  absl::c_copy(dimensions, absl::MakeSpan(result->dims).begin());
 
   if (is_scalar) {
     result->strides[0] = 1;
@@ -73,7 +72,7 @@ MemrefInfoHandler CreateMemrefFromShape(const Shape& shape, const void* buf) {
       result->strides[i] = stride;
       stride *= dimensions.at(i);
     }
-}
+  }
   result->data = buf;
   return result;
 }
@@ -210,7 +209,7 @@ absl::StatusOr<dnnl::memory::desc> TransposeLastTwoDims(
     return absl::InvalidArgumentError("Requires at least 2D shape.");
   }
   std::vector<int> permutation(ndims);
-  std::iota(permutation.begin(), permutation.end(), 0);
+  absl::c_iota(permutation, 0);
   std::swap(permutation[ndims - 1], permutation[ndims - 2]);
   return md.permute_axes(permutation);
 }

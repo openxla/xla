@@ -14,8 +14,6 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 
-#include <unistd.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -38,6 +36,7 @@ limitations under the License.
 #include "xla/backends/cpu/alignment.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
+#include "xla/future.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -65,6 +64,7 @@ limitations under the License.
 #include "xla/types.h"
 
 using ::testing::ElementsAreArray;
+using ::testing::HasSubstr;
 
 namespace xla {
 namespace {
@@ -130,6 +130,23 @@ TEST(PjRtCApiClientTest, FulfillAliasBuffer) {
   // Expected result: data + 1
   EXPECT_TRUE(LiteralTestUtil::Equal(
       LiteralUtil::CreateR2<int32_t>({{2, 3, 4}, {5, 6, 7}}), *alias_literal));
+}
+
+TEST(PjRtCApiClientTest, CreateErrorBuffer) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+
+  absl::Status error = absl::InternalError("Test Error");
+  Shape shape = ShapeUtil::MakeShape(S32, {2, 3});
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto error_buffer,
+      client->CreateErrorBuffer(error, shape, client->memory_spaces()[0]));
+
+  absl::Status awaited_status = error_buffer->GetReadyFuture().Await();
+  EXPECT_TRUE(absl::IsInternal(awaited_status));
+  EXPECT_THAT(awaited_status.message(), HasSubstr("Test Error"));
 }
 
 TEST(PjRtCApiClientTest, ConcurrentGetReadyFuture) {
@@ -553,6 +570,32 @@ TEST(PjRtClientTest, DeserializeExecutableWithDifferentDeviceAssignment) {
       deserialized_executable->addressable_devices()[0]->global_device_id(), 1);
 }
 
+TEST(PjRtCApiClientTest, GetOutputShapes) {
+  static constexpr char const* kProgram = R"(
+    HloModule ffi_handler
+    ENTRY main {
+      ROOT %custom-call = f32[4] custom-call(),
+                          custom_call_target="MemsetFromValue",
+                          api_version=API_VERSION_TYPED_FFI
+    })";
+
+  const PJRT_Api* c_api = ::pjrt::cpu_plugin::GetCpuPjrtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          WrapClientAroundCApi(c_api));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
+                          ParseAndReturnUnverifiedModule(kProgram, {}));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto executable,
+      client->CompileAndLoad(XlaComputation(hlo_module->ToProto()), {}));
+
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<Shape> output_shapes,
+                          executable->GetOutputShapes());
+  EXPECT_EQ(output_shapes.size(), 1);
+  Shape expected_shape = ShapeUtil::MakeShape(F32, {4});
+  EXPECT_EQ(output_shapes[0], expected_shape);
+}
+
 TEST(PjRtClientTest, BufferFromLiteralInt4) {
   SetUpCpuPjRtApi();
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
@@ -565,6 +608,35 @@ TEST(PjRtClientTest, BufferFromLiteralInt4) {
   TF_ASSERT_OK_AND_ASSIGN(auto received_literal, buffer->ToLiteral().Await());
   EXPECT_THAT(received_literal->data<s4>(),
               ElementsAreArray(literal.data<s4>()));
+}
+
+TEST(PjRtCApiClientTest, AsyncHostToDeviceTransferManagerTransferLiteral) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+
+  xla::Shape shape = xla::ShapeUtil::MakeShapeWithType<int32_t>({4});
+  std::vector<int32_t> data = {1, 2, 3, 4};
+  xla::Literal literal = xla::LiteralUtil::CreateR1<int32_t>(data);
+
+  std::vector<xla::Shape> host_shapes = {shape};
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>
+          transfer_manager,
+      client->CreateBuffersForAsyncHostToDevice(absl::MakeSpan(host_shapes),
+                                                client->memory_spaces()[0]));
+
+  xla::Future<> future = transfer_manager->TransferLiteralToBuffer(
+      /*buffer_index=*/0, literal, /*on_done=*/[]() {});
+  TF_ASSERT_OK(future.Await());
+
+  std::unique_ptr<PjRtBuffer> buffer =
+      transfer_manager->RetrieveBuffer(/*buffer_index=*/0);
+
+  TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<xla::Literal> result_literal,
+                          buffer->ToLiteral().Await());
+
+  EXPECT_TRUE(LiteralTestUtil::Equal(literal, *result_literal));
 }
 
 }  // namespace

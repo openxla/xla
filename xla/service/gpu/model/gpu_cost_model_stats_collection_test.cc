@@ -23,7 +23,6 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -37,6 +36,7 @@ namespace gpu {
 namespace {
 
 using ::absl_testing::IsOkAndHolds;
+using ::mlir::MLIRContext;
 using ::testing::Contains;
 using ::testing::Truly;
 
@@ -45,11 +45,10 @@ class GpuCostModelStatsCollectionTest : public HloHardwareIndependentTestBase {
   GpuCostModelStatsCollection cost_model_stats_{
       TestGpuDeviceInfo::RTXH100SXMDeviceInfo(),
       GpuHloCostAnalysis::Options{.count_multiple_input_accesses = true},
-      &symbolic_expr_context_};
+      &mlir_context_};
 
  protected:
   mlir::MLIRContext mlir_context_;
-  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 TEST_F(GpuCostModelStatsCollectionTest, FusionInEntryComputation) {

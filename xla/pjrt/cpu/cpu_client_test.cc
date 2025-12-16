@@ -14,8 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 #include <array>
+#include <numeric>
 
-#include "absl/status/status_matchers.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_memory.h"
@@ -36,6 +36,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/notification.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -62,7 +63,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
@@ -1038,16 +1038,16 @@ TEST(PjRtCpuClientTest, SerializeYnnFusions) {
     HloModule add_and_multiply
 
     ynn_fusion {
-      %lhs = f32[4] parameter(0)
-      %rhs = f32[4] parameter(1)
-      %add = f32[4] add(%lhs, %rhs)
-      ROOT %mul = f32[4] multiply(%add, %add)
+      %lhs = f32[100] parameter(0)
+      %rhs = f32[100] parameter(1)
+      %add = f32[100] add(%lhs, %rhs)
+      ROOT %mul = f32[100] multiply(%add, %add)
     }
 
     ENTRY entry {
-      %p0 = f32[4] parameter(0)
-      %p1 = f32[4] parameter(1)
-      ROOT %fusion = f32[4] fusion(%p0, %p1), kind=kCustom, calls=ynn_fusion,
+      %p0 = f32[100] parameter(0)
+      %p1 = f32[100] parameter(1)
+      ROOT %fusion = f32[100] fusion(%p0, %p1), kind=kCustom, calls=ynn_fusion,
         backend_config={"fusion_config": {kind: "__ynn_fusion"}}
     })";
 
@@ -1058,7 +1058,15 @@ TEST(PjRtCpuClientTest, SerializeYnnFusions) {
   TF_ASSERT_OK_AND_ASSIGN(auto executable,
                           client->CompileAndLoad(xla_computation, {}));
 
-  Literal literal = LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f, 4.0f});
+  std::vector<float> literal_data(100);
+  std::iota(literal_data.begin(), literal_data.end(), 1.0f);
+
+  std::vector<float> literal_data_x2_squared(literal_data);
+  for (float& i : literal_data_x2_squared) {
+    i = 4 * i * i;
+  }
+
+  Literal literal = LiteralUtil::CreateR1<float>(literal_data);
   TF_ASSERT_OK_AND_ASSIGN(auto buf, client->BufferFromHostLiteral(
                                         literal, client->memory_spaces()[0]));
 
@@ -1068,8 +1076,7 @@ TEST(PjRtCpuClientTest, SerializeYnnFusions) {
   TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<xla::Literal> result_literal,
                           result->at(0).at(0)->ToLiteralSync());
   EXPECT_TRUE(LiteralTestUtil::Equal(
-      LiteralUtil::CreateR1<float>({4.0f, 16.0f, 36.0f, 64.0f}),
-      *result_literal));
+      LiteralUtil::CreateR1<float>(literal_data_x2_squared), *result_literal));
 
   // Check that serialized/deserialized executable works and produces the same
   // result.
@@ -1082,8 +1089,7 @@ TEST(PjRtCpuClientTest, SerializeYnnFusions) {
   result = executable->Execute({{buf.get(), buf.get()}}, opts);
   TF_ASSERT_OK_AND_ASSIGN(result_literal, result->at(0).at(0)->ToLiteralSync());
   EXPECT_TRUE(LiteralTestUtil::Equal(
-      LiteralUtil::CreateR1<float>({4.0f, 16.0f, 36.0f, 64.0f}),
-      *result_literal));
+      LiteralUtil::CreateR1<float>(literal_data_x2_squared), *result_literal));
 }
 
 }  // namespace

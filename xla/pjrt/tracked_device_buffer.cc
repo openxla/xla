@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
 #include "xla/pjrt/buffer_sequencing_event.h"
 #include "xla/pjrt/device_event.h"
-#include "xla/pjrt/event_pool.h"
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -43,18 +42,14 @@ limitations under the License.
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_memory_allocator.h"
-#include "xla/stream_executor/event.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "tsl/platform/casts.h"
-#include "tsl/profiler/lib/connected_traceme.h"
-#include "tsl/profiler/lib/context_types.h"
 
 namespace xla {
 
@@ -62,7 +57,7 @@ ShapedBuffer RawSEDeviceMemory::AsShapedBuffer(
     PjRtDevice* device, const Shape& on_device_shape) const {
   ShapedBuffer shaped_buffer(on_device_shape, device->local_device_id().value(),
                              device->local_hardware_id().value());
-  ShapeTree<se::DeviceMemoryBase>::iterator iterator =
+  ShapeTree<se::DeviceAddressBase>::iterator iterator =
       shaped_buffer.buffers().begin();
   CHECK(iterator != shaped_buffer.buffers().end());
   iterator->second = mem();
@@ -73,9 +68,9 @@ ShapedBuffer RawSEDeviceMemory::AsShapedBuffer(
 
 class AllocatedRawSEDeviceMemory : public RawSEDeviceMemory {
  public:
-  AllocatedRawSEDeviceMemory(se::DeviceMemoryBase value,
+  AllocatedRawSEDeviceMemory(se::DeviceAddressBase value,
                              LocalDeviceState* local_device,
-                             se::DeviceMemoryAllocator* allocator)
+                             se::DeviceAddressAllocator* allocator)
       : RawSEDeviceMemory(value),
         allocator_(allocator),
         local_device_(local_device) {
@@ -108,21 +103,21 @@ class AllocatedRawSEDeviceMemory : public RawSEDeviceMemory {
   }
 
  private:
-  se::DeviceMemoryAllocator* allocator_;
+  se::DeviceAddressAllocator* allocator_;
   LocalDeviceState* local_device_;
   size_t sync_point_ = std::numeric_limits<size_t>::max();
 };
 
 tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::Create(
-    se::DeviceMemoryBase value, LocalDeviceState* local_device,
-    se::DeviceMemoryAllocator* allocator) {
+    se::DeviceAddressBase value, LocalDeviceState* local_device,
+    se::DeviceAddressAllocator* allocator) {
   return tsl::MakeAvailableAsyncValueRef<AllocatedRawSEDeviceMemory>(
       value, local_device, allocator);
 }
 
 class ForeignRawSEDeviceMemory : public RawSEDeviceMemory {
  public:
-  ForeignRawSEDeviceMemory(se::DeviceMemoryBase value,
+  ForeignRawSEDeviceMemory(se::DeviceAddressBase value,
                            absl::AnyInvocable<void() &&> on_delete_callback)
       : RawSEDeviceMemory(value),
         on_delete_callback_(std::move(on_delete_callback)) {}
@@ -138,7 +133,7 @@ class ForeignRawSEDeviceMemory : public RawSEDeviceMemory {
 };
 
 tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::CreateForeign(
-    se::DeviceMemoryBase value,
+    se::DeviceAddressBase value,
     absl::AnyInvocable<void() &&> on_delete_callback) {
   return tsl::MakeAvailableAsyncValueRef<ForeignRawSEDeviceMemory>(
       value, std::move(on_delete_callback));
@@ -224,8 +219,8 @@ TrackedDeviceBuffer::CloneWithControlDependency(PjRtMemorySpace* memory_space,
           return;
         }
         auto stream = local_device->BorrowStreamFromPool();
-        TF_CHECK_OK(client->AllocateAndRecordEvent(definition_event_for_status,
-                                                   local_device, stream.get()));
+        CHECK_OK(client->AllocateAndRecordEvent(definition_event_for_status,
+                                                local_device, stream.get()));
         local_device->ReturnStreamToPool(std::move(stream));
       });
   return new_device_buffer;

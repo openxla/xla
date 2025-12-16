@@ -27,7 +27,6 @@ limitations under the License.
 #include "llvm/IR/Module.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/autotune_results.pb.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
@@ -45,6 +44,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/kernel_stats.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -89,7 +89,7 @@ class GpuCompiler : public LLVMCompiler {
   LoadAotCompilationResult(const std::string& serialized_aot_result) override;
 
   absl::StatusOr<std::unique_ptr<AotCompilationResult>> Export(
-      Executable* executable) const override;
+      Executable* executable) override;
 
   absl::Status RunPostSchedulingPipelines(
       HloModule* module, int64_t scheduler_mem_limit,
@@ -110,9 +110,6 @@ class GpuCompiler : public LLVMCompiler {
       se::StreamExecutor* executor);
 
   mlir::MLIRContext* mlir_context() { return &mlir_context_; }
-  SymbolicExprContext* symbolic_expr_context() {
-    return &symbolic_expr_context_;
-  }
 
   virtual std::unique_ptr<GpuAliasInfo> GetAliasInfo(
       const se::DeviceDescription& device_description) const {
@@ -147,6 +144,7 @@ class GpuCompiler : public LLVMCompiler {
     std::string asm_text;
     std::vector<uint8_t> binary;
     BinaryMap dnn_compiled_graphs;
+    ModuleStats module_stats;
   };
 
   // During compilation with device, stream_exec != null and autotune_results
@@ -276,6 +274,19 @@ class GpuCompiler : public LLVMCompiler {
     return Unimplemented("LinkModules is not implemented.");
   }
 
+  // New AOT compilation as part of the AOT split project.
+  absl::StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
+  NewCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
+                        const AotCompilationOptions& options);
+  // Legacy AOT compilation.
+  absl::StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
+  LegacyCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
+                           const AotCompilationOptions& options);
+
+  absl::StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
+  EarlyExitCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
+                              const AotCompilationOptions& options);
+
   se::Platform::Id platform_id_;
 
   // The triple that represents our target.
@@ -298,9 +309,6 @@ class GpuCompiler : public LLVMCompiler {
   // A MLIR context that can be used by pre-codegen passes. For codegen, we will
   // need to have a context with more dialects registered.
   mlir::MLIRContext mlir_context_;
-  // A symbolic expression context that can be used by pre-codegen passes to
-  // create symbolic expressions.
-  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 }  // namespace gpu

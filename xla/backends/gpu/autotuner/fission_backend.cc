@@ -83,6 +83,8 @@ absl::Status InlineFissionedComputation(HloInstruction* fusion_instr,
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
 FissionBackend::GetSupportedConfigs(const HloInstruction& instr) {
   if (!IsSupported(instr)) {
+    VLOG(3) << "Instruction not supported by " << name() << ": "
+            << instr.ToString();
     return std::vector<std::unique_ptr<BackendConfig>>();
   }
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
@@ -90,6 +92,8 @@ FissionBackend::GetSupportedConfigs(const HloInstruction& instr) {
   absl::StatusOr<HloInstruction*> supported_instr =
       FindFirstSupportedInstruction(hlo_module.get());
   if (supported_instr.status().code() == absl::StatusCode::kNotFound) {
+    VLOG(3) << "No supported instructions found by " << name() << ": "
+            << instr.ToString();
     return std::vector<std::unique_ptr<BackendConfig>>();
   }
   TF_RETURN_IF_ERROR(supported_instr.status());
@@ -123,7 +127,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> FissionBackend::RunHloPasses(
   // TODO: b/407494653 - Get rid of PriorityFusion.
   PriorityFusion priority_fusion(
       /*thread_pool=*/nullptr, target_config().device_description,
-      priority_fusion_options, symbolic_expr_context_);
+      priority_fusion_options, mlir_context_);
   TF_RETURN_IF_ERROR(priority_fusion.Run(module.get()).status());
   return module;
 }

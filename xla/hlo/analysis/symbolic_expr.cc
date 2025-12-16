@@ -764,19 +764,19 @@ SymbolicExpr SymbolicExpr::ReplaceVariables(
 
 SymbolicExpr SymbolicExpr::ReplaceSymbols(
     absl::Span<const SymbolicExpr> sym_replacements, int64_t num_dims) const {
-  return ReplaceDimsAndSymbols({}, sym_replacements, num_dims);
+  llvm::SmallVector<SymbolicExpr> dim_replacements;
+  dim_replacements.reserve(num_dims);
+  for (int64_t i = 0; i < num_dims; ++i) {
+    dim_replacements.push_back(CreateSymbolicVariable(i, GetContext()));
+  }
+  return ReplaceDimsAndSymbols(dim_replacements, sym_replacements);
 }
 
 SymbolicExpr SymbolicExpr::ReplaceDimsAndSymbols(
     absl::Span<const SymbolicExpr> dim_replacements,
-    absl::Span<const SymbolicExpr> symbol_replacements,
-    int64_t num_dims) const {
+    absl::Span<const SymbolicExpr> symbol_replacements) const {
   llvm::SmallVector<SymbolicExpr> replacements;
   replacements.append(dim_replacements.begin(), dim_replacements.end());
-  mlir::MLIRContext* ctx = GetContext();
-  for (int64_t i = dim_replacements.size(); i < num_dims; ++i) {
-    replacements.push_back(CreateSymbolicVariable(i, ctx));
-  }
   replacements.append(symbol_replacements.begin(), symbol_replacements.end());
   return ReplaceVariables(replacements);
 }
@@ -1028,37 +1028,6 @@ llvm::SmallVector<SymbolicExpr> CreateSymbolicConstantExprs(
 SymbolicExpr ParseSymbolicExpr(absl::string_view expr_str,
                                mlir::MLIRContext* mlir_context) {
   return Parser(expr_str, mlir_context).Parse();
-}
-
-SymbolicExprContext::SymbolicExprContext(mlir::MLIRContext* mlir_context)
-    : mlir_context_(mlir_context) {}
-
-SymbolicExpr SymbolicExprContext::GetOrCreate(SymbolicExprType type,
-                                              int64_t value, SymbolicExpr lhs,
-                                              SymbolicExpr rhs) {
-  return GetOrCreateSymbolicExpr(type, value, lhs, rhs, mlir_context_);
-}
-
-SymbolicExpr SymbolicExprContext::CreateConstant(int64_t value) {
-  return CreateSymbolicConstant(value, mlir_context_);
-}
-
-SymbolicExpr SymbolicExprContext::CreateVariable(int64_t var_id) {
-  return CreateSymbolicVariable(var_id, mlir_context_);
-}
-
-SymbolicExpr SymbolicExprContext::CreateBinaryOp(SymbolicExprType type,
-                                                 SymbolicExpr lhs,
-                                                 SymbolicExpr rhs) {
-  return CreateSymbolicBinaryOp(type, lhs, rhs, mlir_context_);
-}
-
-SymbolicExpr SymbolicExprContext::Parse(absl::string_view expr_str) {
-  return ParseSymbolicExpr(expr_str, mlir_context_);
-}
-
-bool SymbolicExprContext::operator==(const SymbolicExprContext& other) const {
-  return mlir_context_ == other.mlir_context_;
 }
 
 void SymbolicExpr::Walk(

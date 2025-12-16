@@ -299,7 +299,7 @@ AMDGPUCompiler::CompileTargetBinary(
     // parallelized compilation of LLVM modules.
     XLA_SCOPED_LOGGING_TIMER_IF(
         "AMDGPUCompiler::CompileTargetBinary - CompileToHsaco",
-        !options.is_autotuning_compilation);
+        module_config.debug_options().xla_enable_scoped_logging_timers());
     TF_ASSIGN_OR_RETURN(
         hsaco, amdgpu::CompileToHsaco(
                    llvm_module, device_description.gpu_compute_capability(),
@@ -318,7 +318,7 @@ absl::Status AMDGPUCompiler::AddGemmFusionAutotuningPasses(
     se::StreamExecutor* stream_executor) {
   pipeline->AddPass<GemmFusionAutotuner>(autotune_config, toolkit_version,
                                          thread_pool, key_value_store,
-                                         symbolic_expr_context());
+                                         mlir_context());
   return absl::OkStatus();
 }
 

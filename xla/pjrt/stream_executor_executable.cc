@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/util.h"
 
 namespace xla {
+
 absl::StatusOr<std::string> StreamExecutorExecutable::SerializeExecutable()
     const {
   std::string serialized;
@@ -79,6 +80,27 @@ absl::StatusOr<std::string> StreamExecutorExecutable::SerializeExecutable()
   TF_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
                       compile_options_.ToProto());
   return proto.SerializeAsString();
+}
+
+StreamExecutorExecutable::StreamExecutorExecutable(
+    const CompileOptions& compile_options,
+    std::vector<std::unique_ptr<xla::AotCompilationResult>> executables,
+    int num_replicas, int num_partitions, absl::string_view name,
+    absl::string_view fingerprint, absl::string_view default_memory_kind)
+    : compile_options_(compile_options),
+      executables_(std::move(executables)),
+      num_replicas_(num_replicas),
+      num_partitions_(num_partitions),
+      name_(name),
+      fingerprint_(fingerprint),
+      default_memory_kind_(default_memory_kind) {
+  std::vector<std::shared_ptr<HloModule>> hlo_modules;
+  for (const auto& executable :
+       std::get<std::vector<std::unique_ptr<xla::AotCompilationResult>>>(
+           executables_)) {
+    hlo_modules.push_back(executable->shared_optimized_module());
+  }
+  hlo_modules_ = std::move(hlo_modules);
 }
 
 StreamExecutorExecutable::StreamExecutorExecutable(
@@ -128,8 +150,8 @@ StreamExecutorExecutable::GetCompiledMemoryStats() const {
       alloc_ptrs.push_back(&alloc);
     }
     memory_stats.PopulateBufferStatsFromAllocations(alloc_ptrs);
-    TF_ASSIGN_OR_RETURN(int64_t peak_memory, ComputePeakMemory(proto));
-    memory_stats.peak_memory_in_bytes = peak_memory;
+    TF_ASSIGN_OR_RETURN(memory_stats.peak_memory_in_bytes,
+                        ComputePeakMemory(proto));
     return memory_stats;
   }
 
@@ -144,8 +166,8 @@ StreamExecutorExecutable::GetCompiledMemoryStats() const {
       local_executables[0]->executable()->buffer_assignment_proto();
   if (proto != nullptr) {
     memory_stats.serialized_buffer_assignment = proto->SerializeAsString();
-    TF_ASSIGN_OR_RETURN(int64_t peak_memory, ComputePeakMemory(*proto));
-    memory_stats.peak_memory_in_bytes = peak_memory;
+    TF_ASSIGN_OR_RETURN(memory_stats.peak_memory_in_bytes,
+                        ComputePeakMemory(*proto));
   }
   memory_stats.PopulateBufferStatsFromAllocations(
       local_executables[0]->executable()->GetAllocations());

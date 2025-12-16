@@ -103,7 +103,7 @@ limitations under the License.
 namespace xla::cpu {
 namespace {
 
-static const char kMemoryKind[] = "";
+static const char kMemoryKind[] = "device";
 
 // Returns a Future that is immediately ready with the given status. This is
 // mostly useful because everything NanoRT does is immediately ready.
@@ -511,7 +511,7 @@ class NanoArray final : public NanoValue<NanoArray, ifrt::Array> {
     OwnedDataPtr owned_data(
         tsl::port::AlignedMalloc(std::max<size_t>(size, Align()), Align()),
         [](void* ptr) { tsl::port::AlignedFree(ptr); });
-    if (ABSL_PREDICT_FALSE(owned_data.get() == nullptr)) {
+    if (ABSL_PREDICT_FALSE(owned_data == nullptr)) {
       return Internal("Failed to allocate memory for NanoArray. Errno: %s",
                       strerror(errno));
     }
@@ -1009,7 +1009,9 @@ class NanoExecutable final
     return client_->addressable_devices();
   }
 
-  const ifrt::DeviceListRef& devices() const override { return devices_; }
+  std::optional<ifrt::DeviceListRef> devices() const override {
+    return devices_;
+  }
 
   static char ID;  // NOLINT
 
