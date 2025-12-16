@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_target.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
+#include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
@@ -84,6 +85,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -100,9 +102,11 @@ absl::StatusOr<std::unique_ptr<Thunk>> BuildCustomKernelThunkForFusion(
       emitters::KernelArguments::Create(ir_emitter_context.buffer_assignment(),
                                         GetDefaultBufferAlignment(), &fusion));
 
-  return std::make_unique<CustomKernelThunk>(
-      &fusion, std::move(custom_kernel), std::move(kernel_arguments),
-      ir_emitter_context.GetNextThunkId());
+  Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
+      &fusion, ir_emitter_context.GetNextThunkId());
+  return std::make_unique<CustomKernelThunk>(std::move(thunk_info),
+                                             std::move(custom_kernel),
+                                             std::move(kernel_arguments));
 }
 
 absl::StatusOr<BufferAllocation::Slice> GetOperandSlice(
@@ -931,9 +935,7 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
             : custom_call.raw_backend_config_string();
     if (!backend_config_str.empty()) {
       mlir::Attribute attr = mlir::parseAttribute(
-          backend_config_str,
-          // TODO: b/451959933 - Use reference or check pointer.
-          ir_emitter_context.expr_context()->GetMLIRContext());
+          backend_config_str, ir_emitter_context.mlir_context());
       auto dict = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(attr);
       if (dict == nullptr) {
         return absl::InternalError(
@@ -1287,8 +1289,8 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
              "collective";
       seq.emplace_back(std::make_unique<DeviceToDeviceCopyThunk>(
           thunk_info,
-          /*source_buffer=*/src.value(),
-          /*destination_buffer=*/dst.value(),
+          /*source_buffer=*/ShapedSlice{src.value(), shape},
+          /*destination_buffer=*/ShapedSlice{dst.value(), shape},
           /*mem_size=*/ShapeUtil::ByteSizeOf(shape)));
     }
   } else if (implementable_status.ok()) {

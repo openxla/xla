@@ -1,7 +1,7 @@
 // RUN: fusion_compiler_opt %s --xtile-cpu-shlo-to-vector -split-input-file | FileCheck %s
 
 func.func @transpose(%input : tensor<1024x32xf32>) -> tensor<32x1024xf32> {
-  // CHECK: vector.transpose %{{.*}}, [1, 0] : vector<1024x32xf32> to vector<32x1024xf32>
+  // CHECK-NOT: vector.transpose %{{.*}}, [1, 0] : vector<1024x32xf32> to vector<32x1024xf32>
   %transposed = stablehlo.transpose %input, dims = [1, 0] : (tensor<1024x32xf32>) -> tensor<32x1024xf32>
   return %transposed : tensor<32x1024xf32>
 }
@@ -164,21 +164,11 @@ func.func @broadcast_2D_tensor_outer(%input : tensor<4xf32>) -> tensor<4x32xf32>
 
 // -----
 
-func.func @reshape(%input : tensor<4xf32>) -> tensor<2x1x2xf32> {
-  %result = stablehlo.reshape %input : (tensor<4xf32>) -> tensor<2x1x2xf32>
-  return %result : tensor<2x1x2xf32>
-}
-
-// CHECK-LABEL: @reshape
-// CHECK:vector.shape_cast {{.*}} : vector<4xf32> to vector<2x1x2xf32>
-
-// -----
-
 func.func @iota() -> tensor<4xi32> {
   %result = stablehlo.iota dim = 0 : tensor<4xi32>
   return %result : tensor<4xi32>
 }
 
 // CHECK-LABEL: @iota
-// CHECK: arith.constant dense<[0, 1, 2, 3]> : vector<4xi32>
+// CHECK: arith.constant dense<[0, 1, 2, 3]> : tensor<4xi32>
 

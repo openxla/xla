@@ -1620,6 +1620,35 @@ ENTRY %entry_spmd () -> s32[1,3] {
 
 )"
 },
+{
+  "StackFrameIndex",
+R"(HloModule m, entry_computation_layout={()->pred[]}
+
+FileNames
+1 "<embedded module>"
+2 "experimental/module.py"
+3 "yet/another/test.py"
+
+FunctionNames
+1 "main"
+2 "method"
+
+FileLocations
+1 {file_name_id=1 function_name_id=1 line=153 end_line=153 column=2 end_column=31}
+2 {file_name_id=3 function_name_id=2 line=35 end_line=35 column=2 end_column=24}
+3 {file_name_id=2 function_name_id=2 line=83 end_line=83 column=2 end_column=15}
+
+StackFrames
+1 {file_location_id=1 parent_frame_id=1}
+2 {file_location_id=2 parent_frame_id=2}
+
+
+ENTRY %constant_pred () -> pred[] {
+  ROOT %constant = pred[] constant(true), metadata={op_type="const" op_name="opname" stack_frame_id=1}
+}
+
+)"
+}
 });
   // clang-format on
 }
@@ -4111,7 +4140,7 @@ TEST_F(HloParserTest, ParseFrontendAttributes) {
 TEST_F(HloParserTest, ParseWindow) {
   Window original = window_util::MakeWindow({1, 2, 3});
   TF_ASSERT_OK_AND_ASSIGN(Window parsed,
-                          ParseWindow(window_util::ToString(original)))
+                          ParseWindow(window_util::ToString(original)));
   EXPECT_EQ(window_util::ToString(original), window_util::ToString(parsed));
 }
 
@@ -5333,8 +5362,7 @@ ENTRY AsyncStartMissingOperandWrapper {
       ParseAndReturnUnverifiedModule(hlo_string).status(),
       absl_testing::StatusIs(
           tsl::error::INVALID_ARGUMENT,
-          HasSubstr("AsyncStart and AsyncUpdate expect the op shape to be "
-                    "in the form of "
+          HasSubstr("AsyncStart expects the op shape to be in the form of "
                     "((async-operands), async-outputs, state).")));
 }
 
@@ -5356,11 +5384,9 @@ ENTRY AsyncUpdateMissingOperandWrapper {
   )";
   EXPECT_THAT(
       ParseAndReturnUnverifiedModule(hlo_string).status(),
-      absl_testing::StatusIs(
-          tsl::error::INVALID_ARGUMENT,
-          HasSubstr("AsyncStart and AsyncUpdate expect the op shape to be "
-                    "in the form of "
-                    "((async-operands), async-outputs, state).")));
+      absl_testing::StatusIs(tsl::error::INVALID_ARGUMENT,
+                             HasSubstr("AsyncUpdate expects the op shape to be "
+                                       "the same as the operand shape.")));
 }
 
 TEST_F(HloParserTest, AsyncOpTupleWrongType) {
@@ -5382,8 +5408,7 @@ ENTRY AsyncStartAndAsyncDone {
       ParseAndReturnUnverifiedModule(hlo_string).status(),
       absl_testing::StatusIs(
           tsl::error::INVALID_ARGUMENT,
-          HasSubstr("AsyncStart and AsyncUpdate expect the op shape to be "
-                    "in the form of "
+          HasSubstr("AsyncStart expects the op shape to be in the form of "
                     "((async-operands), async-outputs, state).")));
 }
 
@@ -5400,10 +5425,9 @@ ENTRY AsyncStartAndAsyncDone {
   )";
   EXPECT_THAT(
       ParseAndReturnUnverifiedModule(hlo_string).status(),
-      absl_testing::StatusIs(
-          tsl::error::INVALID_ARGUMENT,
-          HasSubstr("AsyncUpdate and AsyncDone expect their operand to be "
-                    "the previous async op.")));
+      absl_testing::StatusIs(tsl::error::INVALID_ARGUMENT,
+                             HasSubstr("AsyncUpdate and AsyncDone expect a "
+                                       "single async op as their operand.")));
 }
 
 TEST_F(HloParserTest, AsyncUpdateAndAsyncDoneNoAsyncStart) {
@@ -5420,10 +5444,9 @@ ENTRY AsyncStartAndAsyncDone {
   )";
   EXPECT_THAT(
       ParseAndReturnUnverifiedModule(hlo_string).status(),
-      absl_testing::StatusIs(
-          tsl::error::INVALID_ARGUMENT,
-          HasSubstr("AsyncUpdate and AsyncDone expect their operand to be "
-                    "the previous async op.")));
+      absl_testing::StatusIs(tsl::error::INVALID_ARGUMENT,
+                             HasSubstr("AsyncUpdate and AsyncDone expect a "
+                                       "single async op as their operand.")));
 }
 
 TEST_F(HloParserTest, AsyncUpdateWithSyntaxSugarWrongOp) {

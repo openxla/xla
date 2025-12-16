@@ -538,6 +538,7 @@ xla_cc_test(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
     ],
@@ -569,28 +570,6 @@ xla_cc_test(
     srcs = ["transposed_dot_benchmark_test.cc"],
     fail_if_no_test_linked = False,  # NOLINT=This contains benchmarks only, no tests.
     fail_if_no_test_selected = False,  # NOLINT=This contains benchmarks only, no tests.
-    deps = [
-        ":hlo_benchmark_runner",
-        ":multi_benchmark_config",
-        "//xla:literal",
-        "//xla:literal_util",
-        "//xla:shape_util",
-        "//xla:xla_data_proto_cc",
-        "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:test_benchmark",
-        "//xla/tsl/platform:test_main",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/types:span",
-    ],
-)
-
-xla_cc_test(
-    name = "xnn_fusion_benchmark_test",
-    srcs = ["xnn_fusion_benchmark_test.cc"],
-    fail_if_no_test_linked = False,  # NOLINT=This contains benchmarks only, no tests.
-    fail_if_no_test_selected = False,  # NOLINT=This contains benchmarks only, no tests.
-    linkstatic = 1,  # required to override pthreadpool symbols
     deps = [
         ":hlo_benchmark_runner",
         ":multi_benchmark_config",

@@ -99,6 +99,10 @@ absl::StatusOr<ynn_binary_operator> YnnBinaryOperator(const HloOpcode& opcode) {
 }
 
 bool IsLayoutSupportedByYnn(const Shape& shape) {
+  if (shape.dimensions().size() > YNN_MAX_TENSOR_RANK) {
+    // TODO(b/460602165): We should eliminate this limitation.
+    return false;
+  }
   return !shape.has_layout() || LayoutUtil::HasDescendingLayout(shape.layout());
 }
 
@@ -154,9 +158,7 @@ absl::StatusOr<bool> IsDotSupportedByYnn(
   static const absl::NoDestructor<absl::flat_hash_set<
       std::tuple<PrimitiveType, PrimitiveType, PrimitiveType>>>
       kAllowedTypes({
-          // TODO(b/452693819): We plan to enable this in stages, starting with
-          // int8, and enable f32 later.
-          // {F32, F32, F32},
+          {F32, F32, F32},
           // TODO(b/449998002): We don't have fast fp16 kernels yet.
           // {F16, F16, F32},
           {BF16, BF16, F32},
@@ -269,6 +271,69 @@ bool IsReduceOpOffloadedToYnn(const HloInstruction* hlo) {
       return true;
     }
   }
+}
+
+bool IsConvolutionOpSupportedByYnn(const HloInstruction* instr) {
+  CHECK_EQ(instr->opcode(), HloOpcode::kConvolution);
+  const HloConvolutionInstruction* conv =
+      Cast<HloConvolutionInstruction>(instr);
+  // Stores tuple of allowed (input, output) dtypes.
+  static const absl::NoDestructor<absl::flat_hash_set<
+      std::tuple<PrimitiveType, PrimitiveType, PrimitiveType>>>
+      kAllowedTypes({{F32, F32, F32}, {BF16, BF16, F32}, {S8, S8, S32}});
+
+  PrimitiveType lhs_dtype = conv->operand(0)->shape().element_type();
+  PrimitiveType rhs_dtype = conv->operand(1)->shape().element_type();
+  PrimitiveType out_dtype = conv->shape().element_type();
+  if (!kAllowedTypes->contains({lhs_dtype, rhs_dtype, out_dtype})) {
+    return false;
+  }
+
+  ConvolutionDimensionNumbers conv_dimensions =
+      conv->convolution_dimension_numbers();
+
+  // Make sure that this layout is supported.
+  if (conv_dimensions.input_feature_dimension() != 3 ||
+      conv_dimensions.output_feature_dimension() != 3) {
+    return false;
+  }
+
+  if (conv_dimensions.kernel_input_feature_dimension() != 2 ||
+      conv_dimensions.kernel_output_feature_dimension() != 3) {
+    return false;
+  }
+
+  if (conv_dimensions.input_spatial_dimensions_size() != 2 ||
+      conv_dimensions.kernel_spatial_dimensions_size() != 2 ||
+      conv_dimensions.output_spatial_dimensions_size() != 2) {
+    return false;
+  }
+
+  if (conv_dimensions.input_spatial_dimensions(0) != 1 ||
+      conv_dimensions.input_spatial_dimensions(1) != 2 ||
+      conv_dimensions.kernel_spatial_dimensions(0) != 0 ||
+      conv_dimensions.kernel_spatial_dimensions(1) != 1 ||
+      conv_dimensions.output_spatial_dimensions(0) != 1 ||
+      conv_dimensions.output_spatial_dimensions(1) != 2) {
+    return false;
+  }
+
+  Window window = conv->window();
+
+  // Only support 2D convolution.
+  if (window.dimensions_size() != 2) {
+    return false;
+  }
+
+  // No dilation for now.
+  if ((window.dimensions(0).window_dilation() != 1) ||
+      (window.dimensions(1).window_dilation() != 1) ||
+      (window.dimensions(0).base_dilation() != 1) ||
+      (window.dimensions(1).base_dilation() != 1)) {
+    return false;
+  }
+
+  return true;
 }
 
 uint32_t YnnFlags(const DebugOptions& debug_options) {

@@ -57,9 +57,9 @@ limitations under the License.
 #include "xla/service/transfer_manager.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.pb.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/framework/allocator.h"
@@ -528,7 +528,7 @@ Future<> TfrtGpuBuffer::ToLiteralHelper(Future<MutableLiteralBase*> literal) {
           }
           if (on_device_shape.IsArray() && !should_unpack &&
               transpose == nullptr) {
-            std::memcpy(literal->untyped_data(), buffer, byte_size);
+            std::memcpy(literal->untyped_data(), buffer, literal->size_bytes());
           }
           promise.Set(absl::OkStatus());
         });
@@ -583,7 +583,7 @@ Future<> TfrtGpuBuffer::CopyRawToHostFuture(Future<void*> dst_future,
       promise.Set(device_buffer->definition_event().GetError());
       return;
     }
-    se::DeviceMemoryBase device_memory = device_buffer->buffer()->buffer();
+    se::DeviceAddressBase device_memory = device_buffer->buffer()->buffer();
     if (offset < 0 || offset > device_memory.size() ||
         device_memory.size() - offset < transfer_size) {
       LOG(ERROR) << "Copy raw buffer called on buffer size "
@@ -596,7 +596,7 @@ Future<> TfrtGpuBuffer::CopyRawToHostFuture(Future<void*> dst_future,
       return;
     }
 
-    se::DeviceMemoryBase sub_buffer;
+    se::DeviceAddressBase sub_buffer;
     if (transfer_size < device_memory.size()) {
       sub_buffer = device_memory.GetByteSlice(offset, transfer_size);
     } else {
@@ -795,11 +795,23 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::CopyToMemorySpace(
        src_device(gpu_src_device), dst_device(gpu_dst_device),
        src_usage_event(src_usage_event.CopyRef()),
        dst_usage_event(dst_usage_event.CopyRef())]() {
+        MarkGpuEventReadyOnExit ready_on_exit_src(std::move(src_usage_event));
+        MarkGpuEventReadyOnExit ready_on_exit_dst(std::move(dst_usage_event));
+
+        // If the source buffer has an error, propagate it to the destination
+        // buffer.
+        if (const absl::Status* error =
+                src_definition_event.GetErrorIfPresent()) {
+          dst_definition_event.SetError(*error);
+          return;
+        }
+
         VLOG(3) << "Request to transfer D2D from "
                 << src_buffer->buffer().opaque() << " on device "
                 << src_device->id() << " to "
                 << allocated_dst_buffer->buffer().opaque() << " on device "
                 << dst_device->id();
+
         tsl::profiler::TraceMe trace([&] {
           return tsl::profiler::TraceMeEncode(
               "CopyToMemorySpace::D2D_copy",
@@ -810,26 +822,9 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::CopyToMemorySpace(
               });
         });
 
-        MarkGpuEventReadyOnExit ready_on_exit_src(std::move(src_usage_event));
-        MarkGpuEventReadyOnExit ready_on_exit_dst(std::move(dst_usage_event));
-
-        if (const absl::Status* error =
-                dst_definition_event.GetErrorIfPresent()) {
-          allocated_dst_buffer.SetError(*error);
-          dst_definition_event.SetError(*error);
-          return;
-        }
-
-        if (const absl::Status* error =
-                src_definition_event.GetErrorIfPresent()) {
-          allocated_dst_buffer.SetError(*error);
-          dst_definition_event.SetError(*error);
-          return;
-        }
-
         auto stream = dst_device->stream();
 
-        se::DeviceMemoryBase dst(allocated_dst_buffer->buffer());
+        se::DeviceAddressBase dst(allocated_dst_buffer->buffer());
         VLOG(3) << "D2D copy: " << src_buffer->buffer().opaque() << " -> "
                 << dst.opaque() << " (" << src_buffer->buffer().size()
                 << " bytes)";

@@ -66,7 +66,7 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
-#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/framework/allocator.h"
@@ -91,8 +91,8 @@ struct PjRtStreamExecutorExecutionOutput {
   // Donated inputs which must be freed.
   std::vector<tsl::AsyncValueRef<RawSEDeviceMemory>> to_be_released;
   // For PjRtStreamExecutorClient implementations that
-  // use OwningDeviceMemory for donated inputs.
-  std::vector<se::OwningDeviceMemory> se_to_be_released;
+  // use ScopedDeviceAddress for donated inputs.
+  std::vector<se::ScopedDeviceAddress<uint8_t>> se_to_be_released;
 };
 
 class PjRtStreamExecutorDevice : public PjRtDevice {
@@ -237,7 +237,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
       std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices,
       int process_index,
       std::vector<std::unique_ptr<PjRtMemorySpace>> memory_spaces,
-      std::unique_ptr<se::DeviceMemoryAllocator> allocator,
+      std::unique_ptr<se::DeviceAddressAllocator> allocator,
       std::unique_ptr<tsl::Allocator> host_memory_allocator,
       bool should_stage_host_to_device_transfers,
       std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options);
@@ -340,7 +340,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
                 ->local_device_state();
   }
   LocalClient* client() const { return client_; }
-  se::DeviceMemoryAllocator* allocator() const { return allocator_; }
+  se::DeviceAddressAllocator* allocator() const { return allocator_; }
   tsl::Allocator* host_memory_allocator() const {
     return host_memory_allocator_.get();
   }
@@ -392,7 +392,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
       bool retry_on_oom, tsl::AsyncValueRef<bool> allocate_after) override;
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
-      const Shape& on_device_shape,
+      const Shape& on_device_shape, PjRtMemorySpace* memory_space,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
       absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
           definition_device_events,
@@ -488,8 +488,8 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   // Device memory allocator. If owned, the allocator must outlive the devices,
   // because it is the device destructor that waits for any outstanding work to
   // complete.
-  se::DeviceMemoryAllocator* allocator_;
-  std::unique_ptr<se::DeviceMemoryAllocator> owned_allocator_;
+  se::DeviceAddressAllocator* allocator_;
+  std::unique_ptr<se::DeviceAddressAllocator> owned_allocator_;
 
   // Includes all devices, including non-local devices on multi-host platforms.
   std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> owned_devices_;
@@ -575,8 +575,8 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
         executables_[0]->executable()->buffer_assignment_proto();
     if (proto != nullptr) {
       memory_stats.serialized_buffer_assignment = proto->SerializeAsString();
-      TF_ASSIGN_OR_RETURN(int64_t peak_memory, ComputePeakMemory(*proto));
-      memory_stats.peak_memory_in_bytes = peak_memory;
+      TF_ASSIGN_OR_RETURN(memory_stats.peak_memory_in_bytes,
+                          ComputePeakMemory(*proto));
     }
     memory_stats.PopulateBufferStatsFromAllocations(
         executables_[0]->executable()->GetAllocations());

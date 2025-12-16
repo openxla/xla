@@ -26,7 +26,6 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/time/time.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -97,17 +96,16 @@ class SolLatencyEstimatorTest : public HloHardwareIndependentTestBase,
   absl::StatusOr<absl::Duration> ComputeCollectiveTime(
       const HloInstruction& instr) {
     return SolLatencyEstimator::ComputeCollectiveTime(
-        instr, gpu_device_info_, shape_size_fn_, sol_flags_,
-        &symbolic_expr_context_, collective_interpolator_.get());
+        instr, gpu_device_info_, shape_size_fn_, sol_flags_, &mlir_context_,
+        collective_interpolator_.get());
   }
 
   absl::Duration ComputeNodeCost(const HloInstruction& instr,
                                  const HloComputation* computation) {
     std::unique_ptr<SolLatencyEstimator> estimator =
-        *SolLatencyEstimator::Create(scheduler_config_,
-                                     std::make_unique<DummyLatencyEstimator>(),
-                                     gpu_device_info_, shape_size_fn_,
-                                     computation, &symbolic_expr_context_);
+        *SolLatencyEstimator::Create(
+            scheduler_config_, std::make_unique<DummyLatencyEstimator>(),
+            gpu_device_info_, shape_size_fn_, computation, &mlir_context_);
     LatencyEstimator::TimeCost cost_val = estimator->NodeCost(&instr);
     return absl::Microseconds(static_cast<int64_t>(cost_val));
   }
@@ -116,10 +114,9 @@ class SolLatencyEstimatorTest : public HloHardwareIndependentTestBase,
                                    const HloGraphNode& target,
                                    const HloComputation* computation) {
     std::unique_ptr<SolLatencyEstimator> estimator =
-        *SolLatencyEstimator::Create(scheduler_config_,
-                                     std::make_unique<DummyLatencyEstimator>(),
-                                     gpu_device_info_, shape_size_fn_,
-                                     computation, &symbolic_expr_context_);
+        *SolLatencyEstimator::Create(
+            scheduler_config_, std::make_unique<DummyLatencyEstimator>(),
+            gpu_device_info_, shape_size_fn_, computation, &mlir_context_);
     LatencyEstimator::TimeCost cost_val =
         estimator->GetLatencyBetween(from, target);
     return absl::Microseconds(static_cast<int64_t>(cost_val));
@@ -131,7 +128,6 @@ class SolLatencyEstimatorTest : public HloHardwareIndependentTestBase,
   SchedulerConfig scheduler_config_;
   std::unique_ptr<CollectiveInterpolator> collective_interpolator_;
   mlir::MLIRContext mlir_context_;
-  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 TEST_P(SolLatencyEstimatorTest, TestLatencyEstimation) {
@@ -326,8 +322,6 @@ ENTRY e {
     kind=kCustom,
     calls=comp,
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "fusion_backend_config": {
         "kind":"__triton_gemm",
         "triton_gemm_config":{
@@ -358,8 +352,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$gemm",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -388,8 +380,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$lt$matmul$f8",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -418,8 +408,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$lt$matmul$f8",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -448,8 +436,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$lt$matmul$f8",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -478,8 +464,6 @@ ENTRY e {
   ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
     custom_call_target="__cublas$lt$matmul$f8",
     backend_config={
-      "operation_queue_id":"0",
-      "wait_on_operation_queues":[],
       "gemm_backend_config":{
         "alpha_real":1,
         "beta":1,
@@ -518,6 +502,22 @@ ENTRY e {
       /*expected_latency=*/absl::Microseconds(8),
   };
 
+  EstimatorTestCase pallas_custom_call = {
+      /*test_name=*/"pallas_custom_call",
+      /*module_string=*/R"(
+HloModule m
+
+ENTRY e {
+  p0 = bf16[128,128] parameter(0)
+  ROOT _ =  bf16[128,128] custom-call(p0),
+    custom_call_target="mosaic_gpu_v2",
+    frontend_attributes={latency_metadata="30000"}
+})",
+      /*opcode_to_find=*/HloOpcode::kCustomCall,
+      /*cost_type=*/CostType::kNodeCost,
+      /*expected_latency=*/absl::Microseconds(30),
+  };
+
   EstimatorTestCase noop = {
       /*test_name=*/"noop",
       /*module_string=*/R"(
@@ -541,6 +541,7 @@ ENTRY e {
           triton_matmul_bf16_batch1_1024_1024_1024,
           cublas_matmul_bf16_batch1_1024_1024_1024,
           simple_fusion_elementwise,
+          pallas_custom_call,
           noop};
 }
 
@@ -549,6 +550,55 @@ INSTANTIATE_TEST_SUITE_P(SolLatencyEstimatorTests, SolLatencyEstimatorTest,
                          [](const TestParamInfo<EstimatorTestCase>& info) {
                            return info.param.test_name;
                          });
+
+TEST_F(HloHardwareIndependentTestBase, CollectiveCostModelDispatching) {
+  const auto shape_size_fn = HloCostAnalysis::DefaultShapeSize;
+  const auto gpu_info = TestGpuDeviceInfo::RTXH100SXMDeviceInfo();
+  const SolGPUCostModel::Config sol_flags = {
+      absl::Microseconds(100), 100, absl::Microseconds(100),
+      absl::Microseconds(100), 8,   4 * 1024 * 1024};
+  mlir::MLIRContext mlir_ctx;
+  auto interpolator =
+      *CollectiveInterpolator::Create(sol_flags.gpus_per_node, gpu_info,
+                                      /*analysis=*/nullptr);
+
+  // NVLink domain collective should use CollectiveInterpolator.
+  TF_ASSERT_OK_AND_ASSIGN(auto nvl_module, ParseAndReturnVerifiedModule(R"(
+HloModule m, num_partitions=16
+ENTRY main {
+  p = bf16[8,16000,1000] parameter(0)
+  ROOT a2a = bf16[8,16000,1000] all-to-all(p),
+    replica_groups={{0,1,2,3,4,5,6,7},{8,9,10,11,12,13,14,15}},
+    channel_id=1, dimensions={0}
+})"));
+  HloInstruction* nvl_instr = hlo_query::FindInstruction(
+      nvl_module->entry_computation(), HloOpcode::kAllToAll);
+  EXPECT_FALSE(SolLatencyEstimator::ComputeCollectiveTime(
+                   *nvl_instr, gpu_info, shape_size_fn, sol_flags, &mlir_ctx,
+                   /*collective_interpolator=*/nullptr)
+                   .ok());
+  EXPECT_TRUE(SolLatencyEstimator::ComputeCollectiveTime(
+                  *nvl_instr, gpu_info, shape_size_fn, sol_flags, &mlir_ctx,
+                  interpolator.get())
+                  .ok());
+
+  // Cross-partition collective should use S-curve model (world-level across 2
+  // hosts).
+  TF_ASSERT_OK_AND_ASSIGN(auto ib_module, ParseAndReturnVerifiedModule(R"(
+HloModule m, num_partitions=16
+ENTRY main {
+  p = bf16[16,16000,1000] parameter(0)
+  ROOT a2a = bf16[16,16000,1000] all-to-all(p),
+    replica_groups={{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}},
+    channel_id=1, dimensions={0}
+})"));
+  HloInstruction* ib_instr = hlo_query::FindInstruction(
+      ib_module->entry_computation(), HloOpcode::kAllToAll);
+  EXPECT_TRUE(SolLatencyEstimator::ComputeCollectiveTime(
+                  *ib_instr, gpu_info, shape_size_fn, sol_flags, &mlir_ctx,
+                  /*collective_interpolator=*/nullptr)
+                  .ok());
+}
 
 class IsSolLatencyEstimatorEnabledTest : public HloTestBase {
  protected:

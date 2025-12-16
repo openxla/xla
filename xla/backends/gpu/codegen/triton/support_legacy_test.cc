@@ -24,11 +24,13 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/backends/gpu/codegen/triton/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
+#include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -38,12 +40,12 @@ limitations under the License.
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -140,8 +142,8 @@ ENTRY e {
                   .block_level_fusion_config());
       EXPECT_THAT(
           TritonWrapper("test_fn", &ti.TritonFusion(), GetComputeCapability(),
-                        dev_info, block_level_parameters, &llvm_module_,
-                        symbolic_expr_context_),
+                        dev_info, block_level_parameters, target_triple_,
+                        data_layout_, llvm_ctx_, mlir_context_),
           absl_testing::StatusIs(
               absl::StatusCode::kInternal,
               ::testing::HasSubstr("Failed to compile Triton kernel")));
@@ -287,10 +289,9 @@ ENTRY e {
         ApplyFloatNormalization(dot.Module().get(), GetComputeCapability()));
     EXPECT_TRUE(RunAndCompareNoHloPasses(
         std::move(dot.Module()), ErrorSpec{/*aabs=*/2e-4, /*arel=*/2e-4}));
-  } else {
-    EXPECT_THAT(TritonFusionAnalysis::Execute(dot.TritonComputation()),
-                absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition));
   }
+  EXPECT_THAT(TritonFusionAnalysis::Execute(dot.TritonComputation()),
+              absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -467,9 +468,10 @@ ENTRY e {
               .backend_config<GpuBackendConfig>()
               ->fusion_backend_config()
               .block_level_fusion_config());
-  TF_EXPECT_OK(TritonWrapper(
-      "test_fn", &ti.TritonFusion(), GetComputeCapability(), dev_info,
-      block_level_parameters, &llvm_module_, symbolic_expr_context_));
+  TF_EXPECT_OK(TritonWrapper("test_fn", &ti.TritonFusion(),
+                             GetComputeCapability(), dev_info,
+                             block_level_parameters, target_triple_,
+                             data_layout_, llvm_ctx_, mlir_context_));
 }
 
 TEST_F(TritonSupportTestBase,
