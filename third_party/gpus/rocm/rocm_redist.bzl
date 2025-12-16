@@ -1,19 +1,19 @@
 rocm_redist = {
-    "rocm_7.10.0_gfx94X": struct(
+    "rocm_7.10.0_gfx90X": struct(
         packages = [
             {
-                "url": "https://repo.amd.com/rocm/tarball/therock-dist-linux-gfx94X-dcgpu-7.10.0.tar.gz",
-                "sha256": "f53d58a26c8738f633a33582d650be76fe634122b693b3f4f0e7c9dd3f840623",
+                "url": "https://therock-nightly-tarball.s3.amazonaws.com/therock-dist-linux-gfx90X-dcgpu-7.10.0a20251106.tar.gz",
+                "sha256": "a9270cac210e02f60a7f180e6a4d2264436cdcce61167440e6e16effb729a8ea",
             },
         ],
         required_softlinks = [struct(target = "llvm/amdgcn", link = "amdgcn")],
         rocm_root = "",
     ),
-    "rocm_7.10.0_gfx90X": struct(
+    "rocm_7.10.0_gfx94X": struct(
         packages = [
             {
-                "url": "https://repo.amd.com/rocm/tarball/therock-dist-linux-gfx90X-dcgpu-7.10.0.tar.gz",
-                "sha256": "060a129cb4b2d04ebc596e936addb91ebcd63efd369939998f50708cfa5688d1",
+                "url": "https://therock-nightly-tarball.s3.amazonaws.com/therock-dist-linux-gfx94X-dcgpu-7.10.0a20251107.tar.gz",
+                "sha256": "486dbf647bcf9b78f21d7477f43addc7b2075b1a322a119045db9cdc5eb98380",
             },
         ],
         required_softlinks = [struct(target = "llvm/amdgcn", link = "amdgcn")],
