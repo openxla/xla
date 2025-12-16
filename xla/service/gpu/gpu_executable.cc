@@ -957,7 +957,7 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     if (output_info.alias_config) {
       MaybeOwningDeviceAddress* maybe_owning_memory =
           [&]() -> xla::MaybeOwningDeviceAddress* {
-        // ScopedBuffer is never an owned buffer.
+        // ShapedBuffer is never an owned buffer.
         if (std::holds_alternative<absl::Span<const ShapedBuffer* const>>(
                 arguments)) {
           return nullptr;
@@ -1038,9 +1038,7 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     buffers_in_result.insert(result_buffer);
   }
 
-  bool cmd_buffer_enabled = command_buffer_allocations_.size() > 0;
   int va_range_idx = 0;
-
   bool enable_command_buffer_va_remapping =
       (command_buffer_allocations_.size() > 0) && has_module() &&
       module_config()
