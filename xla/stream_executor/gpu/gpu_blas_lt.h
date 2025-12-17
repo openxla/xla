@@ -162,6 +162,10 @@ struct BlasLt {
   struct MatmulAlgorithm {
     std::any opaque_algo;
     size_t workspace_size;
+    // Stable algorithm identity from cuBLAS (CUBLASLT_ALGO_CONFIG_ID).
+    // This ID uniquely identifies the algorithm and is stable across
+    // different GetAlgorithms calls regardless of workspace filtering.
+    int64_t algorithm_id;
   };
 
   struct MemoryArgs {

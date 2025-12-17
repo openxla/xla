@@ -27,15 +27,18 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/gpublas_lt_matmul.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace gpu {
@@ -49,9 +52,31 @@ CublasBackend::GetSupportedConfigs(const HloInstruction& instr) {
   }
 
   if (ShouldUseCublasLt(instr)) {
+    // For F8 cuBLASLt, query the first algorithm's stable ID.
+    GemmBackendConfig backend_config =
+        instr.backend_config<GpuBackendConfig>()->gemm_backend_config();
+    TF_ASSIGN_OR_RETURN(
+        GemmConfig gemm_config,
+        GemmConfig::For(
+            &instr, backend_config,
+            target_config().device_description.gpu_compute_capability()));
+    TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue epilogue,
+                        gpublas_lt::AsBlasLtEpilogue(backend_config.epilogue()));
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
+                        stream_executor()->CreateStream());
+    TF_ASSIGN_OR_RETURN(
+        std::unique_ptr<se::gpu::BlasLt::MatmulPlan> plan,
+        se::gpu::BlasLt::GetMatmulPlan(stream.get(), gemm_config, epilogue));
+    TF_ASSIGN_OR_RETURN(
+        std::vector<se::gpu::BlasLt::MatmulAlgorithm> algorithms,
+        plan->GetAlgorithms(stream.get(), /*num_algorithms=*/1,
+                            /*max_workspace_size=*/0));
+    if (algorithms.empty()) {
+      return Internal("No cuBLASLt algorithms available for F8 instruction.");
+    }
     std::vector<std::unique_ptr<BackendConfig>> configs;
     AutotuneResult::GemmKey gemm_key;
-    gemm_key.set_algorithm(0);
+    gemm_key.set_algorithm_id(algorithms[0].algorithm_id);
     configs.push_back(std::make_unique<google::protobuf::Any>());
     configs.back()->PackFrom(gemm_key);
     return configs;
@@ -135,10 +160,33 @@ absl::StatusOr<std::unique_ptr<BackendConfig>> CublasBackend::GetDefaultConfig(
         "CublasBackend does not support this instruction.");
   }
   AutotuneResult::GemmKey gemm_key;
-  gemm_key.set_algorithm(se::blas::kDefaultAlgorithm);
   auto any = std::make_unique<google::protobuf::Any>();
   if (ShouldUseCublasLt(instr)) {
-    gemm_key.set_algorithm(0);
+    // For F8 cuBLASLt, query the first algorithm's stable ID.
+    GemmBackendConfig backend_config =
+        instr.backend_config<GpuBackendConfig>()->gemm_backend_config();
+    TF_ASSIGN_OR_RETURN(
+        GemmConfig gemm_config,
+        GemmConfig::For(
+            &instr, backend_config,
+            target_config().device_description.gpu_compute_capability()));
+    TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue epilogue,
+                        gpublas_lt::AsBlasLtEpilogue(backend_config.epilogue()));
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
+                        stream_executor()->CreateStream());
+    TF_ASSIGN_OR_RETURN(
+        std::unique_ptr<se::gpu::BlasLt::MatmulPlan> plan,
+        se::gpu::BlasLt::GetMatmulPlan(stream.get(), gemm_config, epilogue));
+    TF_ASSIGN_OR_RETURN(
+        std::vector<se::gpu::BlasLt::MatmulAlgorithm> algorithms,
+        plan->GetAlgorithms(stream.get(), /*num_algorithms=*/1,
+                            /*max_workspace_size=*/0));
+    if (algorithms.empty()) {
+      return Internal("No cuBLASLt algorithms available for F8 instruction.");
+    }
+    gemm_key.set_algorithm_id(algorithms[0].algorithm_id);
+  } else {
+    gemm_key.set_algorithm(se::blas::kDefaultAlgorithm);
   }
   any->PackFrom(gemm_key);
   return any;
@@ -151,13 +199,19 @@ absl::Status CublasBackend::ApplyConfig(HloInstruction& instr,
     return absl::InvalidArgumentError(
         "Failed to unpack CublasBackendConfig from Any.");
   }
-  if (ShouldUseCublasLt(instr) && gemm_key.algorithm() == -1) {
-    gemm_key.set_algorithm(0);
-  }
   TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                       instr.backend_config<GpuBackendConfig>());
   GemmBackendConfig& backend_config = *gpu_config.mutable_gemm_backend_config();
-  backend_config.set_selected_algorithm(gemm_key.algorithm());
+  if (ShouldUseCublasLt(instr)) {
+    // For F8 cuBLASLt, require algorithm_id.
+    if (!gemm_key.has_algorithm_id()) {
+      return absl::InvalidArgumentError(
+          "CublasBackendConfig for F8 cuBLASLt must have algorithm_id set.");
+    }
+    backend_config.set_algorithm_id(gemm_key.algorithm_id());
+  } else {
+    backend_config.set_selected_algorithm(gemm_key.algorithm());
+  }
   TF_RETURN_IF_ERROR(instr.set_backend_config(std::move(gpu_config)));
   return absl::OkStatus();
 }
