@@ -35,12 +35,67 @@ clean_up() {
 
 trap clean_up EXIT
 
+TARGETS_TO_EXCLUDE=(
+    -//xla/tests:collective_pipeline_parallelism_test
+    -//xla/backends/gpu/codegen/emitters/tests:reduce_row/mof_scalar_variadic.hlo.test
+    -//xla/backends/gpu/codegen/emitters/tests:reduce_row/side_output_broadcast.hlo.test
+    -//xla/backends/gpu/codegen/triton:dot_algorithms_test_amdgpu_any
+    -//xla/backends/gpu/codegen/triton:fusion_emitter_device_legacy_port_test_amdgpu_any
+    -//xla/backends/gpu/codegen/triton:fusion_emitter_parametrized_test_amdgpu_any
+    -//xla/backends/gpu/codegen/triton:support_legacy_test_amdgpu_any
+    -//xla/backends/gpu/runtime:command_buffer_conversion_pass_test_amdgpu_any
+    -//xla/backends/gpu/runtime:kernel_thunk_test_amdgpu_any
+    -//xla/backends/gpu/runtime:topk_test_amdgpu_any
+    -//xla/codegen/emitters/tests:loop/broadcast_constant_block_dim_limit.hlo.test
+    -//xla/hlo/builder/lib:self_adjoint_eig_test_amdgpu_any
+    -//xla/hlo/builder/lib:svd_test_amdgpu_any
+    -//xla/hlo/builder/lib:svd_test_amdgpu_any_notfrt
+    -//xla/pjrt/c:pjrt_c_api_gpu_test_amdgpu_any
+    -//xla/service/gpu:determinism_test_amdgpu_any
+    -//xla/service/gpu:dot_algorithm_support_test_amdgpu_any
+    -//xla/service/gpu/tests:command_buffer_test_amdgpu_any
+    -//xla/service/gpu/tests:command_buffer_test_amdgpu_any_notfrt
+    -//xla/service/gpu/tests:gpu_kernel_tiling_test_amdgpu_any
+    -//xla/service/gpu/tests:gpu_triton_custom_call_test_amdgpu_any
+    -//xla/service/gpu/tests:sorting_test_amdgpu_any
+    -//xla/service/gpu/transforms:cublas_gemm_rewriter_test_amdgpu_any
+    -//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any
+    -//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any_notfrt
+    -//xla/tests:multioutput_fusion_test_amdgpu_any
+    -//xla/tests:sample_file_test_amdgpu_any
+    -//xla/tests:scatter_test_amdgpu_any
+    -//xla/tests:scatter_test_amdgpu_any_notfrt
+    -//xla/tools/hlo_opt:tests/gpu_hlo_llvm.hlo.test
+    -//xla/backends/gpu/codegen/triton:dot_algorithms_legacy_test_amdgpu_any
+    -//xla/tests:cholesky_test_amdgpu_any
+    -//xla/service/gpu/tests:sorting.hlo.test
+    -//xla/service/gpu/llvm_gpu_backend:amdgpu_bitcode_link_test
+    -//xla/tests:triangular_solve_test_amdgpu_any
+    -//xla/tests:batch_norm_training_test_amdgpu_any_notfrt
+    -//xla/backends/gpu/codegen/triton:fusion_emitter_parametrized_legacy_test_amdgpu_any
+    -//xla/hlo/builder/lib:self_adjoint_eig_test_amdgpu_any_notfrt
+    -//xla/tests:convert_test_amdgpu_any
+    -//xla/pjrt/gpu/tfrt:tfrt_gpu_buffer_test
+    -//xla/service/gpu/tests:gpu_cub_sort_test_amdgpu_any
+    -//xla/service/gpu:auto_sharding_gpu_compiler_test_amdgpu_any
+    -//xla/backends/gpu/codegen/triton:fusion_emitter_large_test_amdgpu_any
+    -//xla/backends/gpu/codegen:dynamic_slice_fusion_test_amdgpu_any
+    -//xla/tests:nccl_group_execution_test_amdgpu_any
+    -//xla/tools/multihost_hlo_runner:functional_hlo_runner_test_amdgpu_any
+    -//xla/tests:collective_ops_e2e_test_amdgpu_any
+    -//xla/tests:collective_ops_test_amdgpu_any
+)
+
 for arg in "$@"; do
     if [[ "$arg" == "--config=asan" ]]; then
         TAG_FILTERS="${TAG_FILTERS},-noasan"
     fi
     if [[ "$arg" == "--config=tsan" ]]; then
         TAG_FILTERS="${TAG_FILTERS},-notsan"
+        TARGETS_TO_EXCLUDE+=(
+            -//xla/tests:iota_test_amdgpu_any
+            -//xla/tests:iota_test_amdgpu_any_notfrt
+        )
     fi
     if [[ "$arg" == "--config=ci_multi_gpu" ]]; then
         TAG_FILTERS="${TAG_FILTERS},multi_gpu"
@@ -66,51 +121,4 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
     --test_output=errors \
     --local_test_jobs=4 \
     "$@" \
-    -//xla/tests:collective_pipeline_parallelism_test \
-    -//xla/backends/gpu/codegen/emitters/tests:reduce_row/mof_scalar_variadic.hlo.test \
-    -//xla/backends/gpu/codegen/emitters/tests:reduce_row/side_output_broadcast.hlo.test \
-    -//xla/backends/gpu/codegen/triton:dot_algorithms_test_amdgpu_any \
-    -//xla/backends/gpu/codegen/triton:fusion_emitter_device_legacy_port_test_amdgpu_any \
-    -//xla/backends/gpu/codegen/triton:fusion_emitter_parametrized_test_amdgpu_any \
-    -//xla/backends/gpu/codegen/triton:support_legacy_test_amdgpu_any \
-    -//xla/backends/gpu/runtime:command_buffer_conversion_pass_test_amdgpu_any \
-    -//xla/backends/gpu/runtime:kernel_thunk_test_amdgpu_any \
-    -//xla/backends/gpu/runtime:topk_test_amdgpu_any \
-    -//xla/codegen/emitters/tests:loop/broadcast_constant_block_dim_limit.hlo.test \
-    -//xla/hlo/builder/lib:self_adjoint_eig_test_amdgpu_any \
-    -//xla/hlo/builder/lib:svd_test_amdgpu_any \
-    -//xla/hlo/builder/lib:svd_test_amdgpu_any_notfrt \
-    -//xla/pjrt/c:pjrt_c_api_gpu_test_amdgpu_any \
-    -//xla/service/gpu:determinism_test_amdgpu_any \
-    -//xla/service/gpu:dot_algorithm_support_test_amdgpu_any \
-    -//xla/service/gpu/tests:command_buffer_test_amdgpu_any \
-    -//xla/service/gpu/tests:command_buffer_test_amdgpu_any_notfrt \
-    -//xla/service/gpu/tests:gpu_kernel_tiling_test_amdgpu_any \
-    -//xla/service/gpu/tests:gpu_triton_custom_call_test_amdgpu_any \
-    -//xla/service/gpu/tests:sorting_test_amdgpu_any \
-    -//xla/service/gpu/transforms:cublas_gemm_rewriter_test_amdgpu_any \
-    -//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any \
-    -//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any_notfrt \
-    -//xla/tests:multioutput_fusion_test_amdgpu_any \
-    -//xla/tests:sample_file_test_amdgpu_any \
-    -//xla/tests:scatter_test_amdgpu_any \
-    -//xla/tests:scatter_test_amdgpu_any_notfrt \
-    -//xla/tools/hlo_opt:tests/gpu_hlo_llvm.hlo.test \
-    -//xla/backends/gpu/codegen/triton:dot_algorithms_legacy_test_amdgpu_any \
-    -//xla/tests:cholesky_test_amdgpu_any \
-    -//xla/service/gpu/tests:sorting.hlo.test \
-    -//xla/service/gpu/llvm_gpu_backend:amdgpu_bitcode_link_test \
-    -//xla/tests:triangular_solve_test_amdgpu_any \
-    -//xla/tests:batch_norm_training_test_amdgpu_any_notfrt \
-    -//xla/backends/gpu/codegen/triton:fusion_emitter_parametrized_legacy_test_amdgpu_any \
-    -//xla/hlo/builder/lib:self_adjoint_eig_test_amdgpu_any_notfrt \
-    -//xla/tests:convert_test_amdgpu_any \
-    -//xla/pjrt/gpu/tfrt:tfrt_gpu_buffer_test \
-    -//xla/service/gpu/tests:gpu_cub_sort_test_amdgpu_any \
-    -//xla/service/gpu:auto_sharding_gpu_compiler_test_amdgpu_any \
-    -//xla/backends/gpu/codegen/triton:fusion_emitter_large_test_amdgpu_any \
-    -//xla/backends/gpu/codegen:dynamic_slice_fusion_test_amdgpu_any \
-    -//xla/tests:nccl_group_execution_test_amdgpu_any \
-    -//xla/tools/multihost_hlo_runner:functional_hlo_runner_test_amdgpu_any \
-    -//xla/tests:collective_ops_e2e_test_amdgpu_any \
-    -//xla/tests:collective_ops_test_amdgpu_any
+    "${TARGETS_TO_EXCLUDE[@]}" \
