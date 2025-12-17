@@ -422,7 +422,7 @@ cc_library(
     srcs = ["pjrt_c_api_gpu_internal.cc"],
     hdrs = ["pjrt_c_api_gpu_internal.h"],
     local_defines =
-        if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]) + if_sycl_is_configured([
+        if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]) + if_sycl_is_configured([
             "TENSORFLOW_USE_SYCL=1",
         ]),
     visibility = ["//visibility:public"],
