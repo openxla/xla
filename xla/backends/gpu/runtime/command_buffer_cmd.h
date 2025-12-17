@@ -104,6 +104,8 @@ class CommandBufferCmdExecutor;  // Forward declaration.
   V(kAsyncDone, "AsyncDone")                                     \
   V(kDynamicSliceFusionCmd, "DynamicSliceFusionCmd")             \
   V(kDynamicSliceCopyFusionCmd, "DynamicSliceCopyFusionCmd")     \
+  V(kRecvCmd, "RecvCmd")                                         \
+  V(kSendCmd, "SendCmd")                                         \
   V(kUnknownCmd, "UnknownCmd") \
   // clang-format on
 
@@ -1144,6 +1146,46 @@ class CollectivePermuteCmd : public CollectiveCmd {
  private:
   P2PConfig p2p_config_;
   std::vector<CollectiveThunk::Buffer> buffers_;
+};
+
+//===----------------------------------------------------------------------===//
+// RecvCmd
+//===----------------------------------------------------------------------===//
+
+class RecvCmd : public CollectiveCmd {
+ public:
+  RecvCmd(CollectiveConfig config, P2PConfig p2p_config,
+          const CollectiveThunk::Buffer& buffer,
+          std::shared_ptr<CollectiveThunk::AsyncEvents> async_events);
+
+  absl::Status Record(const Thunk::ExecuteParams& execute_params,
+                      RecordParams& record_params) override;
+
+  BufferUseVector buffers() const override;
+
+ private:
+  P2PConfig p2p_config_;
+  CollectiveThunk::Buffer buffer_;
+};
+
+//===----------------------------------------------------------------------===//
+// SendCmd
+//===----------------------------------------------------------------------===//
+
+class SendCmd : public CollectiveCmd {
+ public:
+  SendCmd(CollectiveConfig config, P2PConfig p2p_config,
+          const CollectiveThunk::Buffer& buffer,
+          std::shared_ptr<CollectiveThunk::AsyncEvents> async_events);
+
+  absl::Status Record(const Thunk::ExecuteParams& execute_params,
+                      RecordParams& record_params) override;
+
+  BufferUseVector buffers() const override;
+
+ private:
+  P2PConfig p2p_config_;
+  CollectiveThunk::Buffer buffer_;
 };
 
 //===----------------------------------------------------------------------===//
