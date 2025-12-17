@@ -125,7 +125,48 @@ class GpuExecutable : public Executable {
     ModuleStats module_stats;
   };
 
-  static absl::StatusOr<std::unique_ptr<GpuExecutable>> Create(Params params);
+  struct DeviceVaRange {
+    struct VaRanges {
+      // Map from allocation index to VA ranges that are reserved for this
+      // GpuExecutable, the VA range is bound to the GpuExecutable's
+      // allocations, so it will guarantee that multiple calls to GpuExecutable
+      // that uses this VA range will have the same VA, which is good for
+      // command buffer run because it does not need update.
+      absl::flat_hash_map<BufferAllocation::Index, se::DeviceAddressBase>
+          allocation_va_map;
+
+      // Event used to synchronize VA range reuse across interleaved executions,
+      // when device has completed the task that uses the VA range, it will mark
+      // the event, then host knows that its VA range can be remaped to other
+      // physical addresses.
+      std::unique_ptr<se::Event> va_unmap_event;
+    }
+
+    // when running with VA remapping mode, the executable flow would like (1)
+    // Reserve VA range for the GpuExecutable, (2) Map the VA range to the
+    // physical addresses for current iteration, (3) run the GpuExecutable, (4)
+    // Unmap the VA range. Before unmap the VA range, we need to synchronize the
+    // device to complete the task that uses the VA range, this may introduce
+    // device bubble when the host is doing the VA->PA remapping. To avoid the
+    // device bubble, we let one GpuExecutable may reserve multiple VA ranges,
+    // and interleaving use the VA to void device bubble.
+
+    // clang-format off
+    // The host/device overlapping mode will like below:
+    //                  +---------------------+---------------------++---------------------+---------------------+
+    // GPU              |  VA1 Execute        |  VA2 Execute        ||  VA1 Execute        |  VA2 Execute        |
+    //                  +---------------------+---------------------++---------------------+---------------------+
+    //        +---------++---------+           +---------++---------+ +---------++---------++---------+           +---------+
+    // CPU    | VA1 Map || VA2 Map |           |VA1 UnMap|| VA1 Map | |VA2 UnMap|| VA2 Map ||VA1 UnMap|           |VA2 UnMap|
+    //        +---------++---------+           +---------++---------+ +---------++---------++---------+           +---------+
+    // clang-format on
+    absl::flat_hash_map<int, std::unique_ptr<VaRanges>>
+        va_ranges_idx_map;
+    int idx = 0;
+  }
+
+  static absl::StatusOr<std::unique_ptr<GpuExecutable>>
+  Create(Params params);
   ~GpuExecutable() override;
 
   int64_t SizeOfGeneratedCodeInBytes() const override;
@@ -343,6 +384,10 @@ class GpuExecutable : public Executable {
     return ModuleAnnotations(module_name_);
   }();
 
+  // The allocations that are used by command buffer.
+  absl::flat_hash_set<BufferAllocation::Index>
+      command_buffer_allocation_indexes_;
+
   int64_t debug_buffer_assignment_show_max_;
 
   absl::Mutex module_handle_mutex_;
@@ -360,6 +405,24 @@ class GpuExecutable : public Executable {
   absl::flat_hash_map<stream_executor::StreamExecutor*,
                       std::vector<se::DeviceAddressBase>>
       module_allocations_ ABSL_GUARDED_BY(module_handle_mutex_);
+
+  absl::flat_hash_map<stream_executor::StreamExecutor*,
+                      std::unique_ptr<DeviceVaRange>>
+      module_va_ranges_ ABSL_GUARDED_BY(module_handle_mutex_);
+
+  // Reserve a set of VA ranges for allocations that are consumed by command
+  // buffer thunks.
+  absl::statusOr<
+      absl::flat_hash_map<BufferAllocation::Index, se::DeviceAddressBase>>
+  ReserveCommandBufferVaRange(stream_executor::StreamExecutor* stream_executor);
+
+  // Give the BufferAllocations, remap the allocation's physical address to the
+  // reserve VA range that was previously reserved, and returns the
+  // BufferAllocations where it uses the reserved VA for allocations that are
+  // accessed by command buffer thunks.
+  absl::statusOr<BufferAllocations> MapCommandBufferAllocationsToVa(
+      stream_executor::StreamExecutor* stream_executor,
+      BufferAllocations& buffer_allocations, int va_range_idx);
 
   std::vector<ConstantInfo> constants_;
   const absl::flat_hash_map<ShapeIndex, OutputInfo> output_info_;
