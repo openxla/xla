@@ -150,9 +150,11 @@ cc_library(
         ],
         ":multiple_rocm_paths": [
             "-Wl,-rpath=%{rocm_lib_paths}",
+            "-Lexternal/local_config_rocm/rocm/%{rocm_root}/lib",
         ],
         "//conditions:default": [
             "-Wl,-rpath,/opt/rocm/lib",
+            "-Lexternal/local_config_rocm/rocm/%{rocm_root}/lib",
         ],
     }),
     visibility = ["//visibility:public"],
@@ -239,6 +241,7 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
+    linkopts = ["-lrocblas"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [
@@ -412,6 +415,7 @@ cc_library(
     hdrs = glob(["%{rocm_root}/include/rocsolver/**"]),
     data = glob(["%{rocm_root}/lib/librocsolver*.so*"]),
     include_prefix = "rocm",
+    linkopts = ["-lrocsolver"],
     includes = [
         "%{rocm_root}/include/",
     ],
@@ -443,9 +447,13 @@ cc_library(
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = ["-lhipsolver"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
-    deps = [":rocm_config"],
+    deps = [
+        ":rocm_config",
+        ":rocm_rpath",
+    ],
 )
 
 cc_library(
@@ -456,6 +464,7 @@ cc_library(
     includes = [
         "%{rocm_root}/include/",
     ],
+    linkopts = ["-lhipblas"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [
