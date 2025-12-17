@@ -271,7 +271,7 @@ PJRT_Error* PJRT_GpuDeviceTopology_Create(
   xla::PjRtPlatformId platform_id;
   std::string platform_name;
 
-  std::string plugin_platform = std::string(PJRT_GPU_PLUGIN_PLATFORM_NAME);
+  absl::string_view plugin_platform = PJRT_GPU_PLUGIN_PLATFORM_NAME;
 
   if (plugin_platform == "ROCM") {
       platform_id = xla::RocmId();
