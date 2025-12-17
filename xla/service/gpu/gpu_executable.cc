@@ -111,7 +111,14 @@ namespace gpu {
 
 namespace {
 
-constexpr int kNumVaInterleaveSlots = 4;
+//  To achieve the overlapping across VA remap/unmap and device execution, we
+//  reserve multiple sets (controlled by kNumVaInterleaveSlots) of VAs for each
+//  GpuExecutable, and GpuExecutable::ExecuteThunksImpl interleaves the using of
+//  VA ranges. For CommandBufferThunk, it means that I will also create multiple
+//  graph executors, and each is corresponding to one VA set. During runtime, it
+//  choose the graph executor based on the VA index passed through execution
+//  parameters.
+constexpr int kNumVaInterleaveSlots = 2;
 
 // Chooses the correct allocations to be used within the GpuExecutable code.
 std::vector<const BufferAllocation*> GatherAllocationPtrs(
