@@ -627,7 +627,7 @@ ENTRY triton_computation {
           data_type == PrimitiveType::F8E4M3FN || 
           data_type == PrimitiveType::F8E5M2FNUZ ||
           data_type == PrimitiveType::F8E4M3FNUZ))) {
-      fail_mode = ExpectedFailMode::kFailOrCrash;
+      fail_mode = ExpectedFailMode::kCrash;
     }
   }
 
@@ -671,7 +671,7 @@ ENTRY triton_computation {
           data_type == PrimitiveType::F8E4M3FN ||
           data_type == PrimitiveType::F8E5M2FNUZ ||
           data_type == PrimitiveType::F8E4M3FNUZ))) {
-      fail_mode = ExpectedFailMode::kFailOrCrash;
+      fail_mode = ExpectedFailMode::kCrash;
     }
   }
 
@@ -738,7 +738,7 @@ ENTRY triton_computation {
   }
 
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc,
-                 skip_failure_branch_to_avoid_crash ? ExpectedFailMode::kFailOrCrash
+                 skip_failure_branch_to_avoid_crash ? ExpectedFailMode::kCrash
                                                     : ExpectedFailMode::kFail);
 }
 
@@ -2381,7 +2381,7 @@ ENTRY triton_computation {
   if (cc.IsRocm()) {
     if (absl::c_linear_search(std::vector{F8E4M3FNUZ, F8E5M2FNUZ, F8E4M3FN,
                                           S8, S16, S32, S64}, data_type)) {
-      fail_mode = ExpectedFailMode::kFailOrCrash;
+      fail_mode = ExpectedFailMode::kFail;
     }
   }
   TF_ASSERT_OK_AND_ASSIGN(
@@ -2482,7 +2482,7 @@ ENTRY triton_computation {
         (absl::c_linear_search(std::vector{S64, S32, S16, BF16, F16, F32},
                                 data_type)  &&
          algorithm == xla::PrecisionConfig::ALG_DOT_F64_F64_F64)) {
-      fail_mode = ExpectedFailMode::kFailOrCrash;
+      fail_mode = ExpectedFailMode::kFail;
     }
   }
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{16, 32}, cc, fail_mode);
