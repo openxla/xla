@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/base/call_once.h"
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/numeric/int128.h"
@@ -50,9 +51,6 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
-#include "xla/backends/gpu/collectives/gpu_collectives.h"
-#include "xla/core/collectives/collectives.h"
-#include "xla/core/collectives/collectives_registry.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -61,12 +59,15 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_context.h"
 #include "xla/stream_executor/cuda/cuda_event.h"
 #include "xla/stream_executor/cuda/cuda_kernel.h"
+#include "xla/stream_executor/cuda/cuda_memory_allocator.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/cuda/cuda_stream.h"
 #include "xla/stream_executor/cuda/cuda_timer.h"
 #include "xla/stream_executor/cuda/cuda_version_parser.h"
 #include "xla/stream_executor/cuda/cudnn_api_wrappers.h"
+#include "xla/stream_executor/cuda/nccl_memory_allocator.h"
+#include "xla/stream_executor/cuda/nvshmem_memory_allocator.h"
 #include "xla/stream_executor/cuda/tma_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
@@ -90,12 +91,14 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/tensor_map.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
@@ -408,27 +411,8 @@ bool CanEnablePeerAccess(CUdevice from, CUdevice to) {
     LOG(ERROR) << "failed to detect peer access capability: " << status;
     return false;
   }
+
   return can_access_peer;
-}
-
-bool CanEnablePeerAccess(Context* from, Context* to) {
-  if (from == to) {
-    return true;  // A context can always access its own memory.
-  }
-
-  auto from_device = DeviceFromContext(from);
-  if (!from_device.ok()) {
-    LOG(ERROR) << "failed to resolve 'from' peer access context to a device: "
-               << from_device.status();
-    return false;
-  }
-  auto to_device = DeviceFromContext(to);
-  if (!to_device.ok()) {
-    LOG(ERROR) << "failed to resolve 'to' peer access context to a device: "
-               << to_device.status();
-    return false;
-  }
-  return CanEnablePeerAccess(from_device.value(), to_device.value());
 }
 
 absl::Status EnablePeerAccess(Context* from, Context* to) {
@@ -783,8 +767,9 @@ absl::StatusOr<FabricInfo> GetDeviceFabricInfo(nvmlDevice_t device) {
 
   if (fabricInfo.state == NVML_GPU_FABRIC_STATE_NOT_SUPPORTED) {
     std::string error_message =
-        "NVML doesn't support extracting fabric info or NVLink is not used by "
-        "the device.";
+        "[Ignore this message unless multi-node NVLink is used] "
+        "CUDA driver version is too low for extracting fabric info (550+ "
+        "required), or multi-node NVLink is not available.";
     VLOG(2) << error_message;
     return absl::InternalError(error_message);
   }
@@ -853,14 +838,6 @@ std::unique_ptr<ActivateContext> CudaExecutor::Activate() {
 CudaExecutor::~CudaExecutor() {
   CHECK(kernel_to_gpu_binary_.empty()) << "CudaExecutor has live kernels.";
   CHECK(gpu_binary_to_module_.empty()) << "CudaExecutor has loaded modules.";
-}
-
-absl::StatusOr<xla::gpu::GpuCollectives*> GetGpuCollectives(
-    StreamExecutor* executor) {
-  std::unique_ptr<ActivateContext> activation = executor->Activate();
-  TF_ASSIGN_OR_RETURN(xla::Collectives * collectives,
-                      xla::CollectivesRegistry::Default("gpu"));
-  return tsl::down_cast<xla::gpu::GpuCollectives*>(collectives);
 }
 
 CudaExecutor::VmmMemoryHandle::~VmmMemoryHandle() { CHECK_OK(Release()); }
@@ -944,7 +921,7 @@ absl::StatusOr<void*> CudaExecutor::VmmAllocateMemory(uint64_t bytes) {
   int device_count = 0;
   TF_RETURN_IF_ERROR(cuda::ToStatus(cudaGetDeviceCount(&device_count)));
   for (int peer = 0; peer < device_count; peer++) {
-    if (peer == device_ordinal() || CanEnablePeerAccess(peer, device_)) {
+    if (peer == device_ordinal() || CanEnablePeerAccessTo(peer)) {
       CUmemAccessDesc accessDesc = GetVmmAccessDescriptor(peer);
       TF_RETURN_IF_ERROR(
           cuda::ToStatus(cuMemSetAccess(ptr, padded_size, &accessDesc, 1)));
@@ -993,30 +970,9 @@ absl::StatusOr<bool> CudaExecutor::VmmDeallocateMemory(void* ptr) {
   return true;
 }
 
-absl::StatusOr<void*> CollectiveMemoryAllocate(StreamExecutor* executor,
-                                               uint64_t bytes) {
-  if (bytes == 0) {
-    return nullptr;
-  }
-
-  std::unique_ptr<ActivateContext> activation = executor->Activate();
-  TF_ASSIGN_OR_RETURN(xla::gpu::GpuCollectives * gpu_collectives,
-                      GetGpuCollectives(executor));
-  return gpu_collectives->Allocate(bytes);
-}
-
-absl::Status CollectiveMemoryDeallocate(StreamExecutor* executor,
-                                        void* location) {
-  std::unique_ptr<ActivateContext> activation = executor->Activate();
-
-  TF_ASSIGN_OR_RETURN(xla::gpu::GpuCollectives * gpu_collectives,
-                      GetGpuCollectives(executor));
-  return gpu_collectives->Deallocate(location);
-}
-
 absl::StatusOr<std::unique_ptr<MemoryAllocator>>
-CudaExecutor::CreateMemoryAllocator(MemoryType type) {
-  if (type == MemoryType::kUnified) {
+CudaExecutor::CreateMemoryAllocator(MemorySpace type) {
+  if (type == MemorySpace::kUnified) {
     return std::make_unique<GenericMemoryAllocator>(
         [this](uint64_t size)
             -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
@@ -1048,31 +1004,20 @@ CudaExecutor::CreateMemoryAllocator(MemoryType type) {
         });
   }
 
-  if (type == MemoryType::kCollective) {
-    return std::make_unique<GenericMemoryAllocator>(
-        [this](uint64_t size)
-            -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
-          TF_ASSIGN_OR_RETURN(void* ptr, CollectiveMemoryAllocate(this, size));
-          XLA_VLOG_DEVICE(2, device_ordinal())
-              << "allocated " << ptr << " for context " << cuda_context_
-              << " of " << size << " bytes of collective memory";
-          return std::make_unique<GenericMemoryAllocation>(
-              ptr, size, [this](void* location, uint64_t size) {
-                auto status = CollectiveMemoryDeallocate(this, location);
-                if (!status.ok()) {
-                  XLA_LOG_DEVICE(ERROR, device_ordinal())
-                      << "failed to free collective memory at " << location
-                      << "; result: " << status;
-                } else {
-                  XLA_VLOG_DEVICE(2, device_ordinal())
-                      << "deallocated collective memory at " << location
-                      << " for context " << cuda_context_;
-                }
-              });
-        });
+  if (type == MemorySpace::kCollective) {
+    switch (collective_allocator_type_) {
+      case CollectiveAllocatorType::kNvshmem:
+        return std::make_unique<NvshmemMemoryAllocator>();
+      case CollectiveAllocatorType::kNccl:
+        return std::make_unique<NcclMemoryAllocator>(this);
+      default:
+        return absl::UnimplementedError(
+            absl::StrCat("Unsupported collective allocator type: ",
+                         collective_allocator_type_));
+    }
   }
 
-  if (type == MemoryType::kHost) {
+  if (type == MemorySpace::kHost) {
     return std::make_unique<GenericMemoryAllocator>([this](uint64_t size) {
       return AllocateHostMemory(cuda_context_, numa_node_, size);
     });
@@ -1095,6 +1040,17 @@ absl::Status CudaExecutor::Init() {
                    .value_or(tsl::port::kNUMANoAffinity);
   if (numa_node_ == tsl::port::kNUMANoAffinity) {
     XLA_VLOG_DEVICE(2, device_ordinal()) << "Could not determine NUMA node";
+  }
+
+  int cuda_device_count = 0;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cudaGetDeviceCount(&cuda_device_count)));
+  for (int i = 0; i < cuda_device_count; ++i) {
+    if (i == device_ordinal()) {
+      peer_access_cache_[i] = true;
+      continue;
+    }
+
+    peer_access_cache_[i] = CanEnablePeerAccess(device_, i);
   }
   return absl::OkStatus();
 }
@@ -1407,18 +1363,7 @@ DeviceAddressBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
       << "CudaExecutor::Allocate size: " << size
       << " memory_space: " << memory_space;
 
-  if (memory_space == static_cast<int64_t>(MemoryType::kCollective)) {
-    auto result = CollectiveMemoryAllocate(this, size);
-    if (!result.ok()) {
-      XLA_LOG_DEVICE(ERROR, device_ordinal())
-          << "CudaExecutor::Allocate returns " << result.value();
-    }
-    XLA_VLOG_DEVICE(1, device_ordinal())
-        << "CudaExecutor::Allocate returns " << result.value();
-    return DeviceAddressBase(result.value(), size);
-  }
-
-  if (memory_space == static_cast<int64_t>(MemoryType::kHost)) {
+  if (memory_space == static_cast<int64_t>(MemorySpace::kHost)) {
     auto result = HostAllocate(cuda_context_, numa_node_, size);
     if (!result.ok()) {
       XLA_LOG_DEVICE(ERROR, device_ordinal())
@@ -1430,7 +1375,7 @@ DeviceAddressBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
     return DeviceAddressBase(result.value(), size);
   }
 
-  if (memory_space == static_cast<int64_t>(MemoryType::kP2P) &&
+  if (memory_space == static_cast<int64_t>(MemorySpace::kP2P) &&
       is_vmm_supported_) {
     auto device_buf_base = VmmAllocateMemory(size);
 
@@ -1444,8 +1389,8 @@ DeviceAddressBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
     return DeviceAddressBase(nullptr, 0);
   }
 
-  CHECK(memory_space == static_cast<int64_t>(MemoryType::kDevice) ||
-        memory_space == static_cast<int64_t>(MemoryType::kP2P));
+  CHECK(memory_space == static_cast<int64_t>(MemorySpace::kDevice) ||
+        memory_space == static_cast<int64_t>(MemorySpace::kP2P));
 
   auto device_buf_base = DeviceAllocate(cuda_context_, size);
   XLA_VLOG_DEVICE(1, device_ordinal())
@@ -1468,7 +1413,7 @@ void CudaExecutor::Deallocate(DeviceAddressBase* mem) {
     return;
   }
   auto memory_space = status_or_memory_space.value();
-  if (memory_space == MemoryType::kHost) {
+  if (memory_space == MemorySpace::kHost) {
     HostDeallocate(cuda_context_, numa_node_, mem->opaque(), mem->size());
   } else {
     // Memory space is always kDevice here, so the only way to check if the
@@ -1619,7 +1564,25 @@ fft::FftSupport* CudaExecutor::AsFft() {
 
 bool CudaExecutor::CanEnablePeerAccessTo(StreamExecutor* other) {
   CudaExecutor* cuda_other = static_cast<CudaExecutor*>(other);
-  return CanEnablePeerAccess(cuda_context_, cuda_other->cuda_context_);
+  absl::StatusOr<int> to_device = DeviceFromContext(cuda_other->cuda_context_);
+  if (!to_device.ok()) {
+    LOG(ERROR) << "failed to resolve 'to' peer access context to a device: "
+               << to_device.status();
+    return false;
+  }
+  return CanEnablePeerAccessTo(*to_device);
+}
+
+bool CudaExecutor::CanEnablePeerAccessTo(int other_device_ordinal) {
+  auto it = peer_access_cache_.find(other_device_ordinal);
+  if (it != peer_access_cache_.end()) {
+    return it->second;
+  }
+
+  LOG(WARNING) << "Attemping to enable peer access from: " << device_ordinal()
+               << " to: " << other_device_ordinal
+               << " which was not available during initialization.";
+  return false;
 }
 
 absl::Status CudaExecutor::EnablePeerAccessTo(StreamExecutor* other) {
@@ -1836,9 +1799,6 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
     if (fabric_info.ok()) {
       info.cluster_uuid = fabric_info->cluster_uuid;
       info.clique_id = fabric_info->clique_id;
-    } else {
-      LOG(WARNING) << "GPU interconnect information not available: "
-                   << fabric_info.status();
     }
     desc.set_device_interconnect_info(info);
   }
@@ -1901,7 +1861,7 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   return std::make_unique<DeviceDescription>(std::move(desc));
 }
 
-absl::StatusOr<MemoryType> CudaExecutor::GetPointerMemorySpace(
+absl::StatusOr<MemorySpace> CudaExecutor::GetPointerMemorySpace(
     const void* ptr) {
   CUdeviceptr pointer = reinterpret_cast<CUdeviceptr>(const_cast<void*>(ptr));
   unsigned int is_managed;
@@ -1909,7 +1869,7 @@ absl::StatusOr<MemoryType> CudaExecutor::GetPointerMemorySpace(
       &is_managed, CU_POINTER_ATTRIBUTE_IS_MANAGED, pointer)));
 
   if (is_managed) {
-    return MemoryType::kUnified;
+    return MemorySpace::kUnified;
   }
 
   unsigned int value;
@@ -1917,9 +1877,9 @@ absl::StatusOr<MemoryType> CudaExecutor::GetPointerMemorySpace(
       &value, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, pointer)));
   switch (value) {
     case CU_MEMORYTYPE_DEVICE:
-      return MemoryType::kDevice;
+      return MemorySpace::kDevice;
     case CU_MEMORYTYPE_HOST:
-      return MemoryType::kHost;
+      return MemorySpace::kHost;
     default:
       return absl::InternalError(
           absl::StrCat("unknown memory space provided by CUDA API: ", value));

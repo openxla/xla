@@ -63,6 +63,8 @@ cc_library(
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:path",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 

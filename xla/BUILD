@@ -216,6 +216,7 @@ cc_library(
     deps = [
         "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
+        "@ml_dtypes_py//ml_dtypes:intn",
         "@tsl//tsl/platform:ml_dtypes",
     ],
 )
@@ -339,6 +340,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:bfloat16",
         "@tsl//tsl/platform:casts",
@@ -565,6 +567,7 @@ xla_cc_test(
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",

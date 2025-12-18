@@ -1,6 +1,7 @@
 # Build file for OpenMP library that is part of llvm
 
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("@rules_python//python:defs.bzl", "py_binary")
 load(
     "@xla//third_party/llvm_openmp:cmake_vars.bzl",
     "cmake_var_string",

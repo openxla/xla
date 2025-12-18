@@ -179,6 +179,9 @@ class PjRtCApiDevice : public PjRtDevice {
     return nullptr;
   }
 
+  absl::StatusOr<bool> PoisonExecution(int32_t launch_id,
+                                       absl::Status error) override;
+
   PJRT_Device* c_device() const { return device_; }
 
   const PjRtCApiDeviceDescription& description() const override {
@@ -313,6 +316,7 @@ class PjRtCApiTopologyDescription : public PjRtTopologyDescription {
   // Device specific attributes with corresponding values.
   absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute> attributes_;
 
+  const std::string platform_version_;
   const std::string platform_name_;
   const PjRtPlatformId platform_id_;
 
@@ -548,6 +552,9 @@ class PjRtCApiBuffer : public PjRtBuffer {
 
   Future<> CopyRawToHost(void* dst, int64_t offset,
                          int64_t transfer_size) override;
+
+  Future<> CopyRawToHostFuture(Future<void*> dst, int64_t offset,
+                               int64_t transfer_size) override;
 
   void Delete() override;
 

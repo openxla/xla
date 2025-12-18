@@ -48,6 +48,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/mesh_and_axis.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/hlo/utils/hlo_container_util.h"
 #include "xla/layout.h"
@@ -359,7 +361,7 @@ static bool IsLeafShardingMoreSpecific(const HloSharding& lhs,
     return false;
   }
   if (!rhs.IsTileMaximalLeaf()) {
-    return lhs.NumTilesLeaf() > rhs.NumTilesLeaf();
+    return lhs.NumTiles() > rhs.NumTiles();
   }
   // If we are not replicated then only tiled (not tile maximal) shardings
   // can improve us.
@@ -403,19 +405,17 @@ bool MergeSharding(const HloSharding& to_merge, HloSharding* dst,
     }
     return changed;
   }
-  if (!may_combine_partial_sharding || !to_merge.HasPartialReplication() ||
-      !dst->HasPartialReplication() ||
-      to_merge.num_devices() != dst->num_devices()) {
-    goto check_if_more_specific;
-  }
 
-  if (MergeShardingIfCompatible(
+  if (may_combine_partial_sharding && to_merge.HasPartialReplication() &&
+      dst->HasPartialReplication() &&
+      to_merge.num_devices() == dst->num_devices() &&
+      MergeShardingIfCompatible(
           to_merge,
           /*minimum_tiles=*/std::max(to_merge.NumTiles(), dst->NumTiles()) + 1,
           dst)) {
     return true;
   }
-check_if_more_specific:
+
   return IsLeafShardingMoreSpecific(*dst, to_merge);
 }
 
@@ -1080,6 +1080,21 @@ HloSharding PropagateShardingAlongDimsAndReplicateOthers(
     return source_sharding;
   }
 
+  if (source_sharding.UseNamedShardingLeaf()) {
+    std::vector<NamedSharding::DimensionSharding> target_dim_shardings(
+        target_shape_rank);
+    for (int i = 0; i < source_dims.size(); ++i) {
+      target_dim_shardings[target_dims[i]] =
+          source_sharding.named_sharding().dim_shardings()[source_dims[i]];
+    }
+
+    return HloSharding(NamedSharding(
+        source_sharding.named_sharding().mesh(), target_dim_shardings,
+        source_sharding.named_sharding().replicated_axes(),
+        source_sharding.named_sharding().unreduced_axes(),
+        source_sharding.named_sharding().metadata()));
+  }
+
   HloSharding replicate_other_dims =
       PartiallyReplicateTiledShardingOnAllDimsExcept(source_sharding,
                                                      source_dims);
@@ -1493,13 +1508,28 @@ HloSharding PartiallyReplicateTiledShardingOnDims(
   if (sharding.IsTileMaximal() || sharding.IsManual()) {
     return sharding;
   }
-  int64_t group_count = 1;
-  DimensionVector valid_dims_to_replicate;
-  for (int64_t dim : dims_to_replicate) {
-    if (dim >= sharding.TiledDataRank()) {
-      continue;
+
+  if (sharding.UseNamedShardingLeaf()) {
+    std::vector<NamedSharding::DimensionSharding> dim_shardings(
+        sharding.named_sharding().dim_shardings().begin(),
+        sharding.named_sharding().dim_shardings().end());
+    for (int64_t dim : dims_to_replicate) {
+      CHECK_LT(dim, dim_shardings.size())
+          << "Dimension " << dim << " is out of bounds for number dimensions "
+          << dim_shardings.size();
+      dim_shardings[dim] = NamedSharding::DimensionSharding();
     }
-    valid_dims_to_replicate.push_back(dim);
+    return HloSharding(NamedSharding(
+        sharding.named_sharding().mesh(), dim_shardings,
+        sharding.named_sharding().replicated_axes(),
+        sharding.named_sharding().unreduced_axes(), sharding.metadata()));
+  }
+
+  int64_t group_count = 1;
+  for (int64_t dim : dims_to_replicate) {
+    CHECK_LT(dim, sharding.TiledDataRank())
+        << "Dimension " << dim << " is out of bounds for number dimensions "
+        << sharding.TiledDataRank();
     group_count *= sharding.dimension(dim);
   }
   if (group_count == 1) {
@@ -1511,14 +1541,14 @@ HloSharding PartiallyReplicateTiledShardingOnDims(
   DimensionVector dim_permutation(sharding.TiledDataRank());
   absl::c_iota(dim_permutation, 0);
   absl::c_stable_sort(dim_permutation, [&](const int64_t a, const int64_t b) {
-    return absl::c_linear_search(valid_dims_to_replicate, a) <
-           absl::c_linear_search(valid_dims_to_replicate, b);
+    return absl::c_linear_search(dims_to_replicate, a) <
+           absl::c_linear_search(dims_to_replicate, b);
   });
   auto new_tile =
       TransposeSharding(sharding, dim_permutation).tile_assignment();
   DimensionVector new_tile_shape(sharding.dimensions().begin(),
                                  sharding.dimensions().end());
-  for (int64_t dim : valid_dims_to_replicate) {
+  for (int64_t dim : dims_to_replicate) {
     new_tile_shape[dim] = 1;
   }
   if (sharding.ReplicateOnLastTileDim()) {
@@ -1555,6 +1585,15 @@ HloSharding PartiallyReplicateTiledShardingOnAllDimsExcept(
 
 HloSharding ReplicateAllDataDims(const HloSharding& sharding,
                                  int64_t data_rank) {
+  if (sharding.UseNamedShardingLeaf()) {
+    std::vector<NamedSharding::DimensionSharding> dim_shardings(
+        data_rank >= 0 ? data_rank : sharding.num_dimensions());
+    return HloSharding(NamedSharding(
+        sharding.named_sharding().mesh(), dim_shardings,
+        sharding.named_sharding().replicated_axes(),
+        sharding.named_sharding().unreduced_axes(), sharding.metadata()));
+  }
+
   if (sharding.IsManual()) {
     return sharding;
   }
@@ -1580,6 +1619,34 @@ HloSharding RemoveShapeDimensions(const HloSharding& sharding,
   if (sharding.IsTileMaximal() || dims_to_remove.empty()) {
     return sharding;
   }
+
+  if (sharding.UseNamedShardingLeaf()) {
+    // Check to ensure subgroup dimensions are not passed in dims_to_remove as
+    // named sharding doesn't handle them as part of dim_shardings but separate
+    // replicated, unreduced axes as opposed to tile hlo sharding format which
+    // uses tile dimensions to represent subgroup dimensions as well.
+    DCHECK(
+        std::all_of(dims_to_remove.begin(), dims_to_remove.end(),
+                    [&](int64_t i) { return i < sharding.num_dimensions(); }));
+
+    std::vector<NamedSharding::DimensionSharding> new_dim_shardings;
+    new_dim_shardings.reserve(sharding.num_dimensions() -
+                              dims_to_remove.size());
+    for (int64_t i = 0; i < sharding.num_dimensions(); ++i) {
+      if (absl::c_linear_search(dims_to_remove, i)) {
+        CHECK_EQ(sharding.dimension(i), 1);
+      } else {
+        new_dim_shardings.push_back(
+            sharding.named_sharding().dim_shardings()[i]);
+      }
+    }
+
+    return HloSharding(NamedSharding(
+        sharding.named_sharding().mesh(), new_dim_shardings,
+        sharding.named_sharding().replicated_axes(),
+        sharding.named_sharding().unreduced_axes(), sharding.metadata()));
+  }
+
   DimensionVector new_tile_shape;
   new_tile_shape.reserve(sharding.num_dimensions() - dims_to_remove.size());
   for (int64_t i = 0; i < sharding.num_dimensions(); ++i) {
@@ -2797,19 +2864,21 @@ std::optional<HloSharding> ReturnImprovedShardingImpl(
   if (from.IsManual()) {
     return std::nullopt;
   }
-  int64_t sharding_tiles = from.NumTiles();
+  int64_t sharding_tiles;
+  if (!from.IsTuple()) {
+    sharding_tiles = from.NumTiles();
+  }
   if (MergeSharding(*to_improved, &from, may_combine_partial_sharding)) {
     // Override existing tiled sharding only when the new sharding is compatible
     // with the existing one. This avoids unexpected resharding when `sharding`
     // just has more tiles than existing sharding but they are not mergeable.
     if (!allow_aggressive_resharding && to_improved_shape.IsArray() &&
-        !to_improved->IsTileMaximal() && from.NumTiles() == sharding_tiles) {
-      if (!IsSubTilingOrEqualSharding(to_improved_shape, from, *to_improved)) {
-        VLOG(10) << "Not merging because of different device distribution";
-        VLOG(10) << "Instr sharding: " << to_improved->ToString();
-        VLOG(10) << "New sharding " << from.ToString();
-        return std::nullopt;
-      }
+        !to_improved->IsTileMaximal() && from.NumTiles() == sharding_tiles &&
+        !IsSubTilingOrEqualSharding(to_improved_shape, from, *to_improved)) {
+      VLOG(10) << "Not merging because of different device distribution";
+      VLOG(10) << "Instr sharding: " << to_improved->ToString();
+      VLOG(10) << "New sharding " << from.ToString();
+      return std::nullopt;
     }
     return from;
   }

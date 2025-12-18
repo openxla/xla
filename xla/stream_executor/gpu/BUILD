@@ -5,10 +5,6 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load(
-    "@local_config_sycl//sycl:build_defs.bzl",
-    "if_sycl_is_configured",
-)
 load("//xla:xla.default.bzl", "xla_cc_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
@@ -242,19 +238,6 @@ tsl_gpu_library(
 )
 
 cc_library(
-    name = "gpu_stream",
-    srcs = ["gpu_stream.cc"],
-    hdrs = ["gpu_stream.h"],
-    tags = ["gpu"],
-    deps = [
-        ":gpu_types_header",
-        "//xla/stream_executor:stream",
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/log:check",
-    ],
-)
-
-cc_library(
     name = "gpu_semaphore",
     srcs = ["gpu_semaphore.cc"],
     hdrs = ["gpu_semaphore.h"],
@@ -265,24 +248,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:statusor",
     ],
-)
-
-cc_library(
-    name = "gpu_types_header",
-    hdrs = ["gpu_types.h"],
-    defines = if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]) + if_sycl_is_configured([
-        "TENSORFLOW_USE_SYCL=1",
-    ]),
-    tags = ["gpu"],
-    deps = if_cuda_is_configured([
-        "@local_config_cuda//cuda:cuda_headers",
-    ]) + if_rocm_is_configured([
-        "@local_config_rocm//rocm:rocm_headers",
-    ]) + if_sycl_is_configured([
-        "@local_config_sycl//sycl:sycl_headers",
-    ]),
 )
 
 cc_library(
@@ -706,18 +671,7 @@ xla_test(
     name = "gpu_device_info_test",
     srcs = ["gpu_device_info_test.cc"],
     backends = ["gpu"],
-    data = [
-        "//xla/tools/hlo_opt:gpu_specs/a100_pcie_80.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/a100_sxm_40.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/a100_sxm_80.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/a6000.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/b200.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/h100_pcie.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/h100_sxm.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/mi200.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/p100.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/v100.txtpb",
-    ],
+    data = ["//xla/backends/gpu/target_config:all_gpu_specs"],
     deps = [
         "//xla/service:platform_util",
         "//xla/stream_executor:device_description",
