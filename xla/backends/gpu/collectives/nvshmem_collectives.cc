@@ -66,28 +66,6 @@ absl::Status NvshmemCollectives::InitializeTopology(Topology topology) {
   return absl::OkStatus();
 }
 
-absl::StatusOr<void*> NvshmemCollectives::Allocate(uint64_t bytes) {
-  TF_RETURN_IF_ERROR(se::gpu::nvshmem::InitializeOnce());
-  VLOG(3) << absl::StreamFormat(
-      "Start allocation of %s (%llu bytes) for NVSHMEM",
-      tsl::strings::HumanReadableNumBytes(bytes), bytes);
-  void* buffer = nvshmem_malloc(bytes);
-  if (buffer == nullptr) {
-    return absl::InternalError(absl::StrFormat(
-        "Failed to allocate %s (%llu bytes) from NVSHMEM memory",
-        tsl::strings::HumanReadableNumBytes(bytes), bytes));
-  }
-  return buffer;
-}
-
-absl::Status NvshmemCollectives::Deallocate(void* buffer) {
-  TF_RETURN_IF_ERROR(se::gpu::nvshmem::InitializeOnce());
-  VLOG(3) << absl::StreamFormat("Start de-allocation for NVSHMEM buffer: %p",
-                                buffer);
-  nvshmem_free(buffer);
-  return absl::OkStatus();
-}
-
 absl::StatusOr<std::unique_ptr<Communicator>>
 NvshmemCollectives::CreateCommunicator() {
   auto comm = std::make_unique<NvshmemCommunicator>(this);

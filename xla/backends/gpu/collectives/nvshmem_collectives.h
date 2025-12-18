@@ -42,10 +42,6 @@ class NvshmemCollectives : public GpuCollectives {
 
   bool IsInitialized() const;
 
-  absl::StatusOr<void*> Allocate(uint64_t bytes) final;
-
-  absl::Status Deallocate(void* buffer) final;
-
   absl::StatusOr<CliqueId> CreateUniqueCliqueId() const final {
     return absl::UnimplementedError("Not implemented.");
   }
