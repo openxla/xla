@@ -396,8 +396,10 @@ TEST_F(MultiOutputFusionTest, MultiOutputReduceFusionMajorWithExtraOutput) {
         fusion(p), kind=kInput, calls=fused_reduce
     })");
   
-  // This test implicitly assumes that warp_size=32, otherwise such a fusion
-  // won't be possible. Therefore, it breaks on ROCM platform for warp_size=64.
+  // This test requires the input tensor's dimensions to match the warp size of 
+  // a target architecture (which could be different on ROCM). This is because 
+  // the decision on whether to Elemental IR Emitter for reductions 
+  // (IsUnnestedReductionFasterThanElemental) is based on the warp size.
   TF_ASSERT_OK_AND_ASSIGN(auto *platform, PlatformUtil::GetDefaultPlatform());
   int warp_size = 32;
   if (absl::AsciiStrToUpper(platform->Name()) == "ROCM") {
