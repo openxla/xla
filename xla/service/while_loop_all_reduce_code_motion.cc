@@ -652,7 +652,8 @@ MovableAllReduceContext IsAllReduceMovable(
               }
               break;
             }
-            case HloOpcode::kAdd: {
+            case HloOpcode::kAdd:
+            case HloOpcode::kScatter: {
               if (user != accumulation_instruction) {
                 return true;
               }
@@ -714,6 +715,110 @@ MovableAllReduceContext IsAllReduceMovable(
   // Finds all accumulation contexts of the given all-reduce instruction
   // if it is movable.
   std::vector<AccumulationContext> accumulation_contexts;
+
+  // Scatter pattern: select(pred, 0, buffer) → scatter → all-reduce
+  // Unlike other patterns, pred can be non-replicated (e.g., partition-id)
+  // since all-reduce synchronizes results across replicas.
+  auto find_scatter_pattern = [&]() -> std::optional<AccumulationContext> {
+    std::stack<HloInstruction*> operand_chain;
+    operand_chain.push(all_reduce->mutable_operand(0));
+
+    while (!operand_chain.empty()) {
+      HloInstruction* current = operand_chain.top();
+      operand_chain.pop();
+
+      switch (current->opcode()) {
+        case HloOpcode::kScatter: {
+          std::stack<HloInstruction*> base_chain;
+          base_chain.push(current->mutable_operand(0));
+
+          while (!base_chain.empty()) {
+            HloInstruction* base_inst = base_chain.top();
+            base_chain.pop();
+
+            if (base_inst->opcode() == HloOpcode::kSelect) {
+              bool operand_1_is_zero = IsZero(base_inst->operand(1));
+              bool operand_2_is_zero = IsZero(base_inst->operand(2));
+              if (operand_1_is_zero && !operand_2_is_zero) {
+                base_chain.push(base_inst->mutable_operand(2));
+              } else if (operand_2_is_zero && !operand_1_is_zero) {
+                base_chain.push(base_inst->mutable_operand(1));
+              } else {
+                continue;
+              }
+            } else {
+              auto origin_buffer_tuple_index =
+                  get_origin_tuple_index(base_inst);
+              auto output_all_reduce_tuple_index =
+                  get_output_tuple_index(all_reduce, while_body);
+
+              if (!origin_buffer_tuple_index.unsupported_operation &&
+                  !output_all_reduce_tuple_index.unsupported_operation &&
+                  output_all_reduce_tuple_index.returned_from_computation &&
+                  origin_buffer_tuple_index.tuple_index.has_value() &&
+                  output_all_reduce_tuple_index.tuple_index.has_value() &&
+                  origin_buffer_tuple_index.tuple_index ==
+                      output_all_reduce_tuple_index.tuple_index) {
+                return AccumulationContext{
+                    current, base_inst,
+                    *output_all_reduce_tuple_index.tuple_index,
+                    origin_buffer_tuple_index.dynamic_slice, std::nullopt};
+              }
+            }
+          }
+          break;
+        }
+        case HloOpcode::kConvert:
+        case HloOpcode::kBitcast:
+        case HloOpcode::kReshape:
+        case HloOpcode::kTranspose:
+        case HloOpcode::kSlice:
+          operand_chain.push(current->mutable_operand(0));
+          break;
+        default:
+          break;
+      }
+    }
+    return std::nullopt;
+  };
+
+  auto is_scatter_buffer_used =
+      [&](const AccumulationContext& accumulation) -> bool {
+    HloInstruction* buffer = accumulation.accumulation_buffer;
+    HloInstruction* accumulation_instruction =
+        accumulation.accumulation_instruction;
+
+    for (HloInstruction* user : buffer->users()) {
+      switch (user->opcode()) {
+        case HloOpcode::kGetTupleElement:
+          continue;
+        case HloOpcode::kSelect: {
+          if ((user->operand_index(buffer) == 1 && IsZero(user->operand(2))) ||
+              (user->operand_index(buffer) == 2 && IsZero(user->operand(1)))) {
+            continue;
+          }
+          return true;
+        }
+        case HloOpcode::kScatter: {
+          if (user == accumulation_instruction) {
+            continue;
+          }
+          return true;
+        }
+        default:
+          return true;
+      }
+    }
+    return false;
+  };
+
+  if (auto scatter_context = find_scatter_pattern()) {
+    if (!is_scatter_buffer_used(*scatter_context)) {
+      accumulation_contexts.push_back(*scatter_context);
+      return MovableAllReduceContext{true, accumulation_contexts};
+    }
+  }
+
   // DFS starting from the all-reduce instruction and stops at the first
   // non-trival uses of the all-reduce result or finds all accmululations
   // of the all-reduce result.
