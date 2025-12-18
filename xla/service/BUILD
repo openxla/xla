@@ -1588,6 +1588,18 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "compiled_module",
+    hdrs = ["compiled_module.h"],
+    deps = [
+        ":buffer_assignment",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
     name = "compiler",
     srcs = ["compiler.cc"],
     hdrs = ["compiler.h"],
@@ -1596,8 +1608,8 @@ cc_library(
         "//xla/backends/gpu/runtime:__subpackages__",
     ]),
     deps = [
-        ":buffer_assignment",
         ":buffer_value",
+        ":compiled_module",
         ":computation_placer",
         ":executable",
         ":hlo_cost_analysis",

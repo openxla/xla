@@ -12,18 +12,29 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#ifndef XLA_BACKENDS_GPU_CODEGEN_SORT_H_
+#define XLA_BACKENDS_GPU_CODEGEN_SORT_H_
 
-#include <cstdint>
-#include <memory>
-
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "xla/stream_executor/cuda/nvshmem_memory_allocator.h"
-#include "xla/stream_executor/memory_allocation.h"
+#include "xla/backends/gpu/codegen/fusion_emitter.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/service/gpu/ir_emitter_context.h"
 
-namespace stream_executor::gpu {
-absl::StatusOr<std::unique_ptr<MemoryAllocation>>
-NvshmemMemoryAllocator::Allocate(uint64_t size) {
-  return absl::UnimplementedError("NVSHMEM is not supported on this platform.");
-}
-}  // namespace stream_executor::gpu
+namespace xla {
+namespace gpu {
+
+// A fusion consisting of a sort op with operands which are either parameters or
+// iotas.
+class SortFusion : public FusionInterface {
+ public:
+  SortFusion() = default;
+
+  absl::StatusOr<FusionEmissionResult> Emit(
+      IrEmitterContext& ir_emitter_context,
+      const HloFusionInstruction& fusion) const final;
+};
+
+}  // namespace gpu
+}  // namespace xla
+
+#endif  // XLA_BACKENDS_GPU_CODEGEN_SORT_H_
