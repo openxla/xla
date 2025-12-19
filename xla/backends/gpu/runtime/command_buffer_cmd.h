@@ -1015,8 +1015,8 @@ class ConvolutionCmd : public TracedCommandBufferCmd {
   bool IsNestedCommandBuffer() const final { return true; }
 
 private:
-  std::vector<BufferAllocation::Slice> operand_buffers_;
-  std::vector<BufferAllocation::Slice> result_buffers_;
+  std::vector<ShapedSlice> operand_buffers_;
+  std::vector<ShapedSlice> result_buffers_;
   BufferAllocation::Slice scratch_buffer_;
   GpuConvConfig config_;
   ConvRunnerCache cache_;

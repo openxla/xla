@@ -1891,11 +1891,11 @@ CommandBufferCmd::BufferUseVector ConvolutionCmd::buffers() const {
   BufferUseVector buffer_usage;
   buffer_usage.reserve(operand_buffers_.size() + result_buffers_.size() + 1);
 
-  for (BufferAllocation::Slice buffer : operand_buffers_) {
-    buffer_usage.push_back({buffer, MemoryAccess::kRead});
+  for (const auto& buffer : operand_buffers_) {
+    buffer_usage.push_back({buffer.slice, MemoryAccess::kRead});
   }
-  for (BufferAllocation::Slice buffer : result_buffers_) {
-    buffer_usage.push_back({buffer, MemoryAccess::kWrite});
+  for (const auto& buffer : result_buffers_) {
+    buffer_usage.push_back({buffer.slice, MemoryAccess::kWrite});
   }
   buffer_usage.push_back({scratch_buffer_, MemoryAccess::kWrite});
   return buffer_usage;

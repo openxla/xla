@@ -50,8 +50,8 @@ private:
 };
 
 absl::Status RunConvolutionOnStream(const Thunk::ExecuteParams& params,
-    const std::vector<BufferAllocation::Slice>& operand_buffers,
-    const std::vector<BufferAllocation::Slice>& result_buffers,
+    const std::vector<ShapedSlice>& operand_buffers,
+    const std::vector<ShapedSlice>& result_buffers,
     const BufferAllocation::Slice& scratch_buffer,
     const GpuConvConfig& config, ConvRunnerCache& cache, se::Stream* stream);
 

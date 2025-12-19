@@ -160,10 +160,13 @@ std::unique_ptr<GemmThunk> CreateGemmThunk(const BufferAllocation& alloc1) {
 std::unique_ptr<ConvolutionThunk> CreateConvolutionThunk(
                 const BufferAllocation& alloc) {
   se::StreamExecutor* executor = GpuExecutor();
-  std::vector< BufferAllocation::Slice > operand_slices, result_slices;
+  std::vector< ShapedSlice > operand_slices, result_slices;
   for (int i = 0, num = 3; i < num; i++) {
-    operand_slices.emplace_back(&alloc, i*16, 16);
-    result_slices.emplace_back(&alloc, (i + num)*16, 16);
+    operand_slices.emplace_back(
+        ShapedSlice{BufferAllocation::Slice{&alloc, i*16, 16}, Shape{}});
+    result_slices.emplace_back(
+        ShapedSlice{BufferAllocation::Slice{&alloc, (i + num)*16, 16},
+                        Shape{}});
   }
 
   ConvolutionDimensionNumbers dnums;
@@ -205,7 +208,7 @@ std::unique_ptr<ConvolutionThunk> CreateConvolutionThunk(
     .feature_group_count = 1
   };
   auto thunk = ConvolutionThunk::Create(Thunk::ThunkInfo(), desc,
-            operand_slices, result_slices, result_slices.back());
+            operand_slices, result_slices, result_slices.back().slice);
   TF_CHECK_OK(thunk.status());
   return std::move(thunk).value();
 }

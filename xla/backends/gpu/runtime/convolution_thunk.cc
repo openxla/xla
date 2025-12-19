@@ -83,8 +83,8 @@ std::pair< RunConvOptions, bool > ConvRunnerCache::GetOrCreate(
 }
 
 absl::Status RunConvolutionOnStream(const Thunk::ExecuteParams& params,
-    const std::vector<BufferAllocation::Slice>& operand_buffers,
-    const std::vector<BufferAllocation::Slice>& result_buffers,
+    const std::vector<ShapedSlice>& operand_buffers,
+    const std::vector<ShapedSlice>& result_buffers,
     const BufferAllocation::Slice& scratch_buffer,
     const GpuConvConfig& config, ConvRunnerCache& cache, se::Stream* stream) {
 
@@ -96,7 +96,7 @@ absl::Status RunConvolutionOnStream(const Thunk::ExecuteParams& params,
   for (const ShapedSlice& buffer : operand_buffers) {
     operand_se_buffers.push_back(
         buffer_allocations.GetDeviceAddress(buffer.slice));
-    VLOG(5) << "operand buffer: " << buffer.ToString() 
+    VLOG(5) << "operand buffer: " << buffer.slice.ToString() 
             << " addr: " << operand_se_buffers.back().opaque();
   }
 
@@ -104,7 +104,7 @@ absl::Status RunConvolutionOnStream(const Thunk::ExecuteParams& params,
   for (const ShapedSlice& buffer : result_buffers) {
     result_se_buffers.push_back(
         buffer_allocations.GetDeviceAddress(buffer.slice));
-    VLOG(5) << "result buffer: " << buffer.ToString() 
+    VLOG(5) << "result buffer: " << buffer.slice.ToString() 
             << " addr: " << result_se_buffers.back().opaque();
   }
 
