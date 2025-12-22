@@ -24,12 +24,10 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Checkout rocAutomation
-        uses: actions/checkout@v4
-        with:
-          repository: ROCm/rocAutomation
-          ref: jenkins-pipelines
-          path: rocAutomation
+      - name: Checkout rocAutomation using local creds
+        run: |
+          rm -rf rocAutomation
+          git clone -b jenkins-pipelines https://github.com/ROCm/rocAutomation.git rocAutomation
 
       - name: Start Container
         run: |
