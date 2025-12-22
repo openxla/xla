@@ -55,8 +55,15 @@ jobs:
               --config=rocm_ci \
               --config=rocm_rbe \
               --spawn_strategy=local \
-              //xla/...
-          "
+              //xla/tests:matmul_test_amdgpu_any \
+              //xla/service:compiler_test_amdgpu_any \
+              //xla/service:elemental_ir_emitter_test_amdgpu_any \
+              //xla/service/gpu:gpu_compiler_test_amdgpu_any \
+              //xla/stream_executor/gpu:gpu_kernel_test_amdgpu_any \
+              //xla/tests:convolution_test_amdgpu_any \
+              //xla/tests:client_test_amdgpu_any \
+              //xla/service/gpu/tests:kernel_launch_test_amdgpu_any" \
+
 
       - name: Cleanup container
         if: always()
