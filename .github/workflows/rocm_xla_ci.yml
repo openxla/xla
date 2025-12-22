@@ -54,6 +54,7 @@ jobs:
             build_tools/rocm/run_xla_ci_build.sh \
               --config=rocm_ci \
               --config=rocm_rbe \
+              --spawn_strategy=local \
               //xla/...
           "
 
