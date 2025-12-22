@@ -575,10 +575,11 @@ def _setup_rocm_distro_dir(repository_ctx):
         return _setup_rocm_distro_dir_impl(repository_ctx, rocm_distro)
 
     rocm_distro = repository_ctx.os.environ.get(_ROCM_DISTRO_VERSION)
-    multiple_paths = repository_ctx.os.environ.get(_TF_ROCM_MULTIPLE_PATHS)
     if rocm_distro:
         return _setup_rocm_distro_dir_impl(repository_ctx, rocm_redist[rocm_distro])
-    elif multiple_paths:
+
+    multiple_paths = repository_ctx.os.environ.get(_TF_ROCM_MULTIPLE_PATHS)
+    if multiple_paths:
         paths_list = multiple_paths.split(":")
         for rocm_custom_path in paths_list:
             cmd = "find " + rocm_custom_path + "/* \\( -type f -o -type l \\)"
