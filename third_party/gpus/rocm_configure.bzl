@@ -527,6 +527,7 @@ def _get_file_name(url):
 def _download_package(repository_ctx, pkg):
     file_name = _get_file_name(pkg["url"])
 
+    print("Downloading {}".format(pkg["url"]))
     repository_ctx.report_progress("Downloading and extracting {}, expected hash is {}".format(pkg["url"], pkg["sha256"]))  # buildifier: disable=print
     repository_ctx.download_and_extract(
         url = pkg["url"],
