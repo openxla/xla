@@ -13,19 +13,52 @@ concurrency:
 
 jobs:
   test-and-analyze-xla-1:
-    runs-on: linux-x86-n2-128
-    container:
-      image: rocm/tensorflow-build@sha256:a2672ff2510b369b4a5f034272a518dc93c2e492894e3befaeef19649632ccaa
-      options:
-        --ipc=host
-        --shm-size=16G
-        --cap-add=SYS_PTRACE
-        --security-opt=seccomp=unconfined
+    runs-on: linux-x64-mi210-64-2gpu-amd
+    env:
+      DOCKER_IMAGE: rocm/tensorflow-build@sha256:a2672ff2510b369b4a5f034272a518dc93c2e492894e3befaeef19649632ccaa
+      CONTAINER_NAME: xla-runner
     steps:
+      # Pre-clean up in case a previous run crashed
+      - name: Cleanup container
+        run: docker rm -f ${{ env.CONTAINER_NAME }} || true
+
       - uses: actions/checkout@v4
+
+      - name: Checkout rocAutomation
+        uses: actions/checkout@v4
+        with:
+          repository: ROCm/rocAutomation
+          ref: jenkins-pipelines
+          path: rocAutomation
+
+      - name: Start Container
+        run: |
+          docker run -dt \
+            --name ${{ env.CONTAINER_NAME }} \
+            --network=host \
+            --device=/dev/dri \
+            --device=/dev/kfd \
+            --group-add $(getent group render | cut -d: -f3) \
+            --group-add $(getent group video | cut -d: -f3) \
+            --ipc=host \
+            --shm-size=16G \
+            --cap-add=SYS_PTRACE \
+            --security-opt=seccomp=unconfined \
+            -v ${{ github.workspace }}:/workspace \
+            -v ${{ github.workspace }}/rocAutomation/resources/certificates:/tf/certificates:ro \
+            -v ${{ github.workspace }}/rocAutomation/resources/upstream-xla-data/rocm_tag_filters.sh:/tf/xla/build_tools/rocm/rocm_tag_filters.sh:ro \
+            -w /workspace \
+            ${{ env.DOCKER_IMAGE }}
+
       - name: Test XLA
         run: |
-          build_tools/rocm/run_xla_ci_build.sh \
-            --config=rocm_ci \
-            --config=rocm_rbe \
-            //xla/...
+          docker exec ${{ env.CONTAINER_NAME }} bash -c "
+            build_tools/rocm/run_xla_ci_build.sh \
+              --config=rocm_ci \
+              --config=rocm_rbe \
+              //xla/...
+          "
+
+      - name: Cleanup container
+        if: always()
+        run: docker rm -f ${{ env.CONTAINER_NAME }} || true
