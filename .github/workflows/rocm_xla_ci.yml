@@ -44,15 +44,14 @@ jobs:
             --security-opt=seccomp=unconfined \
             -v ${{ github.workspace }}:/workspace \
             -v ${{ github.workspace }}/rocAutomation/resources/certificates:/tf/certificates:ro \
-            -v ${{ github.workspace }}/rocAutomation/resources/upstream-xla-data/rocm_tag_filters.sh:/tf/xla/build_tools/rocm/rocm_tag_filters.sh:ro \
-            -v ${{ github.workspace }}/rocAutomation/resources/upstream-xla-data/execute_ci_build.sh:/tf/xla/build_tools/rocm/execute_ci_build.sh:ro \
+            -v ${{ github.workspace }}/rocAutomation/resources/upstream-xla-data/rocm_tag_filters.sh:/workspace/build_tools/rocm/rocm_tag_filters.sh:ro \
+            -v ${{ github.workspace }}/rocAutomation/resources/upstream-xla-data/execute_ci_build.sh:/workspace/build_tools/rocm/execute_ci_build.sh:ro \
             -w /workspace \
             ${{ env.DOCKER_IMAGE }}
 
       - name: Test XLA
         run: |
           docker exec \
-            -w "/tf/xla" \
             ${{ env.CONTAINER_NAME }} \
             bash -c "build_tools/rocm/execute_ci_build.sh"
 
