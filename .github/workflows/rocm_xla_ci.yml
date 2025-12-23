@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-and-analyze-xla-1:
+  execute-xla-ut:
     runs-on: linux-x64-mi210-64-2gpu-amd
     env:
       DOCKER_IMAGE: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
@@ -45,25 +45,13 @@ jobs:
             -v ${{ github.workspace }}:/workspace \
             -v ${{ github.workspace }}/rocAutomation/resources/certificates:/tf/certificates:ro \
             -v ${{ github.workspace }}/rocAutomation/resources/upstream-xla-data/rocm_tag_filters.sh:/tf/xla/build_tools/rocm/rocm_tag_filters.sh:ro \
+            -v ${{ github.workspace }}/rocAutomation/resources/upstream-xla-data/execute_ci_build.sh:/tf/xla/build_tools/rocm/execute_ci_build.sh:ro \
             -w /workspace \
             ${{ env.DOCKER_IMAGE }}
 
       - name: Test XLA
         run: |
-          docker exec ${{ env.CONTAINER_NAME }} bash -c "
-            build_tools/rocm/run_xla_ci_build.sh \
-              --config=rocm_ci \
-              --config=rocm_rbe \
-              --spawn_strategy=local \
-              //xla/tests:matmul_test_amdgpu_any \
-              //xla/service:compiler_test_amdgpu_any \
-              //xla/service:elemental_ir_emitter_test_amdgpu_any \
-              //xla/service/gpu:gpu_compiler_test_amdgpu_any \
-              //xla/stream_executor/gpu:gpu_kernel_test_amdgpu_any \
-              //xla/tests:convolution_test_amdgpu_any \
-              //xla/tests:client_test_amdgpu_any \
-              //xla/service/gpu/tests:kernel_launch_test_amdgpu_any" \
-
+          docker exec ${{ env.CONTAINER_NAME }} bash -c "build_tools/rocm/execute_ci_build.sh"
 
       - name: Cleanup container
         if: always()
