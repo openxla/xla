@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
+#include "xla/backends/gpu/runtime/command_buffer_cmd_executor.h"
+#include "xla/backends/gpu/runtime/command_buffer_params.h"
 
 #include <algorithm>
 #include <array>
@@ -96,13 +98,11 @@ struct TestOnlyCommandBufferCmd : public CommandBufferCmd {
       : CommandBufferCmd(CommandBufferCmdType::kUnknownCmd, {}),
         buffer_usage(buffer_usage) {}
 
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
-      se::CommandBuffer*) override {
-    return nullptr;
+  absl::Status Record(const Thunk::ExecuteParams&) override {
+    return absl::OkStatus();
   }
 
-  BufferUseVector buffers() const override { return buffer_usage; }
+  BufferUseVector buffer_uses() const override { return buffer_usage; }
 
   BufferUseVector buffer_usage;
 };
@@ -112,13 +112,11 @@ class FakeCmd : public CommandBufferCmd {
   explicit FakeCmd()
       : CommandBufferCmd(CommandBufferCmdType::kTracedCommandBufferCmd, {}) {}
 
-  absl::StatusOr<const se::CommandBuffer::Command*> Record(
-      const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
-      se::CommandBuffer*) override {
-    return nullptr;
+  absl::Status Record(const Thunk::ExecuteParams&) override {
+    return absl::OkStatus();
   }
 
-  BufferUseVector buffers() const override { return BufferUseVector{}; }
+  BufferUseVector buffer_uses() const override { return BufferUseVector{}; }
 };
 
 TEST(CommandBufferCmdStateManageTest, GetOrCreateState) {
@@ -136,7 +134,7 @@ TEST(CommandBufferCmdStateManageTest, GetOrCreateState) {
   auto* command_buffer =
       tsl::safe_reinterpret_cast<se::CommandBuffer*>(std::intptr_t{0x1234567});
 
-  CommandBufferCmd::StateManager state_manager;
+  CommandBufferStateManager state_manager;
 
   // Create a state of type StateA.
   auto* stateA0 = state_manager.GetOrNull<StateA>(cmd, command_buffer);
@@ -282,19 +280,19 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
-  CommandBufferCmd::StateManager state;
+  CommandBufferStateManager state;
 
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
 
-  CommandBufferCmd::RecordParams record_params = {state};
-
   TF_ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       stream_executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK(executor.Record(params, record_params,
-                               CommandBufferCmd::RecordCreate{},
-                               command_buffer.get()));
+
+  CommandBufferParams record_params = {state};
+  record_params.command_buffer = command_buffer.get();
+  params.record_params = &record_params;
+  TF_ASSERT_OK(executor.Record(params));
 
   // Execute command buffer and verify that it copied the memory.
   TF_ASSERT_OK(command_buffer->Submit(stream.get()));
@@ -349,24 +347,25 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   Thunk::ExecutableSource source = {/*text=*/{},
                                     /*binary=*/fatbin};
 
-  CommandBufferCmd::StateManager state;
-  TF_ASSERT_OK(executor.Initialize({stream_executor, source}, state));
+  TF_ASSERT_OK(executor.Initialize({stream_executor, source}));
 
   ServiceExecutableRunOptions run_options;
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
+  CommandBufferStateManager state;
+
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
-
-  CommandBufferCmd::RecordParams record_params = {state};
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       stream_executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK(executor.Record(params, record_params,
-                               CommandBufferCmd::RecordCreate{},
-                               command_buffer.get()));
+
+  CommandBufferParams record_params = {state};
+  record_params.command_buffer = command_buffer.get();
+  params.record_params = &record_params;
+  TF_ASSERT_OK(executor.Record(params));
 
   // Execute command buffer and verify that it copied the memory.
   TF_ASSERT_OK(command_buffer->Submit(stream.get()));
@@ -410,7 +409,7 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
   commands.Emplace<LaunchCmd>("AddI32", args, args_access,
                               LaunchDimensions(1, 4),
                               /*shmem_bytes=*/0);
-  commands.back()->set_priority(se::StreamPriority::Highest);
+  commands.back().cmd()->set_command_buffer_priority(se::StreamPriority::Highest);
 
   TF_ASSERT_OK_AND_ASSIGN(
       CommandBufferCmdExecutor executor,
@@ -423,24 +422,25 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
   Thunk::ExecutableSource source = {/*text=*/{},
                                     /*binary=*/fatbin};
 
-  CommandBufferCmd::StateManager state;
-  TF_ASSERT_OK(executor.Initialize({stream_executor, source}, state));
+  TF_ASSERT_OK(executor.Initialize({stream_executor, source}));
 
   ServiceExecutableRunOptions run_options;
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
+  CommandBufferStateManager state;
+
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
-
-  CommandBufferCmd::RecordParams record_params = {state};
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       stream_executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK(executor.Record(params, record_params,
-                               CommandBufferCmd::RecordCreate{},
-                               command_buffer.get()));
+
+  CommandBufferParams record_params = {state};
+  record_params.command_buffer = command_buffer.get();
+  params.record_params = &record_params;
+  TF_ASSERT_OK(executor.Record(params));
 
   // Execute command buffer and verify that it copied the memory.
   TF_ASSERT_OK(command_buffer->Submit(stream.get()));
@@ -489,19 +489,19 @@ TEST(CommandBufferCmdTest, DynamicSliceCopyFusionCmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
-  CommandBufferCmd::StateManager state;
+  CommandBufferStateManager state;
 
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
 
-  CommandBufferCmd::RecordParams record_params = {state};
-
   TF_ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       stream_executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK(executor.Record(params, record_params,
-                               CommandBufferCmd::RecordCreate{},
-                               command_buffer.get()));
+
+  CommandBufferParams record_params = {state};
+  record_params.command_buffer = command_buffer.get();
+  params.record_params = &record_params;
+  TF_ASSERT_OK(executor.Record(params));
 
   // Execute command buffer and verify that it copied the memory.
   TF_ASSERT_OK(command_buffer->Submit(stream.get()));
@@ -670,44 +670,40 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   Thunk::ExecutableSource source_empty = {/*text=*/{}, /*binary=*/{}};
   Thunk::ExecutableSource source_fatbin = {/*text=*/{}, /*binary=*/fatbin};
 
-  CommandBufferCmd::StateManager state;
-  TF_ASSERT_OK(exec_a.Initialize({stream_executor, source_empty}, state));
-  TF_ASSERT_OK(exec_b.Initialize({stream_executor, source_fatbin}, state));
-  TF_ASSERT_OK(exec_c.Initialize({stream_executor, source_empty}, state));
+  TF_ASSERT_OK(exec_a.Initialize({stream_executor, source_empty}));
+  TF_ASSERT_OK(exec_b.Initialize({stream_executor, source_fatbin}));
+  TF_ASSERT_OK(exec_c.Initialize({stream_executor, source_empty}));
 
   // Execute params and allocations mapping indices 0=a,1=b,2=c
   ServiceExecutableRunOptions run_options;
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b, c}, 0, &allocator);
 
+  CommandBufferStateManager state;
+
   Thunk::ExecuteParams exec_params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
-  CommandBufferCmd::RecordParams record_params = {state};
+  CommandBufferParams record_params = {state};
 
   // Create a primary command buffer and record A -> B -> C with dependencies.
   TF_ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       stream_executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
 
+  record_params.command_buffer = command_buffer.get();
+  exec_params.record_params = &record_params;
+
   // Record A (no deps)
-  // Record A, B, C with dependencies using the Record API; finalize on B.
-  TF_ASSERT_OK(exec_a.Record(exec_params, record_params,
-                             CommandBufferCmd::RecordCreate{},
-                             command_buffer.get(), /*finalize=*/false));
+  // Record A, B, C with dependencies using the Record API; finalize on C.
+  record_params.is_finalize = false;
+  TF_ASSERT_OK(exec_a.Record(exec_params));
 
-  auto a_sinks = exec_a.SinkCommands(record_params, command_buffer.get(),
-                                     /*unroll_iteration=*/0);
-  TF_ASSERT_OK(
-      exec_b.Record(exec_params, record_params,
-                    CommandBufferCmd::RecordCreate{absl::MakeSpan(a_sinks)},
-                    command_buffer.get(), /*finalize=*/false));
+  record_params.external_dependencies = exec_a.SinkCommands(record_params);
+  TF_ASSERT_OK(exec_b.Record(exec_params));
 
-  auto b_sinks = exec_b.SinkCommands(record_params, command_buffer.get(),
-                                     /*unroll_iteration=*/0);
-  TF_ASSERT_OK(
-      exec_c.Record(exec_params, record_params,
-                    CommandBufferCmd::RecordCreate{absl::MakeSpan(b_sinks)},
-                    command_buffer.get(), /*finalize=*/true));
+  record_params.external_dependencies = exec_b.SinkCommands(record_params);
+  record_params.is_finalize = true;
+  TF_ASSERT_OK(exec_c.Record(exec_params));
 
   // Submit and verify c == 2 for all elements.
   TF_ASSERT_OK(command_buffer->Submit(stream.get()));
@@ -782,27 +778,26 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
 
   // Prepare state and params; ChildCmd requires initialization to create a
   // nested buffer.
-  CommandBufferCmd::StateManager state;
+  CommandBufferStateManager state;
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b, c}, 0, &allocator);
   TF_ASSERT_OK(outer_executor.Initialize(
-      {stream_executor, source, &allocations, stream.get(), stream.get()},
-      state));
+      {stream_executor, source, &allocations, stream.get(), stream.get()}));
 
   // allocations already created above
   ServiceExecutableRunOptions run_options;
   Thunk::ExecuteParams exec_params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
-  CommandBufferCmd::RecordParams record_params = {state};
-
   // Create a command buffer and record the nested ChildCmd (Create).
   TF_ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       stream_executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK(outer_executor.Record(exec_params, record_params,
-                                     CommandBufferCmd::RecordCreate{},
-                                     command_buffer.get(), /*finalize=*/true));
+
+  CommandBufferParams record_params = {state};
+  record_params.command_buffer = command_buffer.get();
+  exec_params.record_params = &record_params;
+  TF_ASSERT_OK(outer_executor.Record(exec_params));
   TF_ASSERT_OK(command_buffer->Submit(stream.get()));
 
   // Verify c == a (all ones).
@@ -835,12 +830,11 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
 
   // Indicate which allocations changed to ensure update is not skipped.
   std::vector<BufferAllocation::Index> updated_allocs = {0, 2};
-  CommandBufferCmd::RecordParams record_params2 = {state,
-                                                   std::move(updated_allocs)};
+  CommandBufferParams record_params2 = {state, std::move(updated_allocs)};
+  record_params2.command_buffer = command_buffer.get();
+  exec_params2.record_params = &record_params2;
 
-  TF_ASSERT_OK(outer_executor.Record(exec_params2, record_params2,
-                                     CommandBufferCmd::RecordCreate{},
-                                     command_buffer.get(), /*finalize=*/true));
+  TF_ASSERT_OK(outer_executor.Record(exec_params2));
   TF_ASSERT_OK(command_buffer->Submit(stream.get()));
 
   // Verify c2 == a2 (all sevens).

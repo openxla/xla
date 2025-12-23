@@ -265,7 +265,7 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
                                    const ConvertToCommandsOptions& options) {
   auto append = [&](absl::StatusOr<Command> command) -> absl::Status {
     if (command.ok()) {
-      cmd_sequence.push_back(std::move(*command));
+      cmd_sequence.push_back(CmdOrThunk(std::move(*command)));
       return absl::OkStatus();
     }
     return command.status();
@@ -377,9 +377,9 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
   // predecessor has the token write, and control successor does the token read.
   for (const std::unique_ptr<Thunk>& thunk : sequence) {
     for (const Thunk* control_predecessor : thunk->control_predecessors()) {
-      cmd_sequence[thunk_to_index[control_predecessor]]->add_resouce_use(
+      cmd_sequence[thunk_to_index[control_predecessor]].add_resouce_use(
           ResourceUse::Read(
-              cmd_sequence[thunk_to_index[thunk.get()]]->token()));
+              cmd_sequence[thunk_to_index[thunk.get()]].token()));
     }
   }
 

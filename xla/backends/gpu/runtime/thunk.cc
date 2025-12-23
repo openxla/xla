@@ -92,7 +92,7 @@ Thunk::ExecuteParams::ExecuteParams(
     RecvDeviceMemoryFunction* recv_device_memory_function,
     const ffi::ExecutionContext* ffi_execution_context,
     ExecutionStreamIdMap additional_compute_streams, bool mock_collectives,
-    int64_t execution_id)
+    int64_t execution_id, CommandBufferParams* record_params)
     : buffer_allocations(buffer_allocations),
       stream(stream),
       command_buffer_trace_stream(command_buffer_trace_stream),
@@ -105,7 +105,8 @@ Thunk::ExecuteParams::ExecuteParams(
       ffi_execution_context(ffi_execution_context),
       additional_compute_streams(additional_compute_streams),
       mock_collectives(mock_collectives),
-      execution_id(execution_id) {}
+      execution_id(execution_id),
+      record_params(record_params) {}
 
 //===----------------------------------------------------------------------===//
 
@@ -590,6 +591,9 @@ void Thunk::ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const {
 void Thunk::ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn) {
   fn(this);
 }
+
+// Note: Thunk::CommandBufferDependencies and Thunk::HandleCmdCreateOrUpdate
+// are implemented in command_buffer_params.cc to avoid circular dependencies.
 
 absl::StatusOr<ThunkProto> Thunk::ToProto() const {
   return absl::UnimplementedError(absl::StrFormat(
