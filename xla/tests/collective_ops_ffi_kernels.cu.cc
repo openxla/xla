@@ -82,4 +82,3 @@ GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
     CollectiveInPlaceAllReaduce, xla::gpu::CollectiveInPlaceAllReaduce,
     stream_executor::cuda::kCudaPlatformId,
     xla::gpu::InPlaceAllReduceKernelSpec);
-    
