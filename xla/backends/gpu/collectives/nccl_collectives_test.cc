@@ -15,11 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/nccl_collectives.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include <memory>
 #include <vector>
 
-#include <gtest/gtest.h>
-#include <gmock/gmock.h>
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -34,11 +34,39 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/executor.h"
-#include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/threadpool.h"
 
 namespace xla::gpu {
 namespace {
+
+// Creates a pair of communicators for the given executors.
+static absl::StatusOr<std::vector<std::unique_ptr<GpuCommunicator>>>
+CreateCommunicators(se::StreamExecutor* executor0,
+                    se::StreamExecutor* executor1) {
+  GpuCollectives::Device device0(executor0);
+  GpuCollectives::Device device1(executor1);
+
+  NcclCollectives collectives;
+
+  TF_ASSIGN_OR_RETURN(CliqueId clique_id, collectives.CreateUniqueCliqueId());
+  CliqueIds clique_ids(clique_id);
+
+  GpuCliqueKey clique_key({GlobalDeviceId(0), GlobalDeviceId(1)},
+                          /*num_local_participants=*/2);
+
+  Collectives::DeviceRank rank0(&device0, RankId(0));
+  Collectives::DeviceRank rank1(&device1, RankId(1));
+
+  TF_ASSIGN_OR_RETURN(auto comms, collectives.CreateCommunicators(
+                                      clique_key, clique_ids, {rank0, rank1},
+                                      GpuCollectives::Config{}));
+  CHECK_EQ(comms.size(), 2);
+
+  std::vector<std::unique_ptr<GpuCommunicator>> gpu_comms;
+  gpu_comms.emplace_back(dynamic_cast<GpuCommunicator*>(comms[0].release()));
+  gpu_comms.emplace_back(dynamic_cast<GpuCommunicator*>(comms[1].release()));
+  return gpu_comms;
+}
 
 TEST(NcclCollectives, CreateSymmetricMemory) {
   ASSERT_OK_AND_ASSIGN(se::Platform * platform,
@@ -53,30 +81,16 @@ TEST(NcclCollectives, CreateSymmetricMemory) {
   ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor1,
                        platform->ExecutorForDevice(1));
 
-  GpuCollectives::Device device0(executor0);
-  GpuCollectives::Device device1(executor1);
+  ASSERT_OK_AND_ASSIGN(auto comms, CreateCommunicators(executor0, executor1));
 
-  NcclCollectives collectives;
+  EXPECT_TRUE(comms[0]->platform_comm().handle);
+  EXPECT_TRUE(comms[1]->platform_comm().handle);
 
-  ASSERT_OK_AND_ASSIGN(CliqueId clique_id, collectives.CreateUniqueCliqueId());
-  CliqueIds clique_ids(clique_id);
-
-  GpuCliqueKey clique_key({GlobalDeviceId(0), GlobalDeviceId(1)},
-                          /*num_local_participants=*/2);
-
-  Collectives::DeviceRank rank0(&device0, RankId(0));
-  Collectives::DeviceRank rank1(&device1, RankId(1));
-
-  ASSERT_OK_AND_ASSIGN(auto comms, collectives.CreateCommunicators(
-                                       clique_key, clique_ids, {rank0, rank1},
-                                       GpuCollectives::Config{}));
-  ASSERT_EQ(comms.size(), 2);
-
-  GpuCommunicator* comm0 = dynamic_cast<GpuCommunicator*>(comms[0].get());
-  GpuCommunicator* comm1 = dynamic_cast<GpuCommunicator*>(comms[1].get());
-
-  EXPECT_TRUE(comm0->platform_host_comm().handle);
-  EXPECT_TRUE(comm1->platform_host_comm().handle);
+  // TODO(ezhulenev): We disable symmetric memory test on old NCCL versions as
+  // it has a memory leak in collective window registration.
+  if (!comms[0]->SupportsDeviceComm() || !comms[1]->SupportsDeviceComm()) {
+    GTEST_SKIP() << "GPU communicators do not suppoort symmetric memory";
+  }
 
   // Create memory allocators that allocate physical memory in the collective
   // memory space, which makes them compatible with symmetric memory
@@ -94,21 +108,60 @@ TEST(NcclCollectives, CreateSymmetricMemory) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::MemoryAllocation> alloc1,
                        allocator1->Allocate(1024));
 
-  // Because symmetric memory creating is a collective operation, we must call
+  // Because creating symmetric memory is a collective operation, we must call
   // it from a thead pool to avoid deadlocks.
   tsl::thread::ThreadPool pool(tsl::Env::Default(), "nccl", 2);
   tsl::Executor& exec = *pool.AsExecutor();
 
   // Register allocated buffers as symmetric memory.
-  auto fsymm0 = tsl::Future<std::unique_ptr<SymmetricMemory>>::MakeOn(
-      exec, [&] { return comm0->CreateSymmetricMemory(alloc0->address()); });
-  auto fsymm1 = tsl::Future<std::unique_ptr<SymmetricMemory>>::MakeOn(
-      exec, [&] { return comm1->CreateSymmetricMemory(alloc1->address()); });
+  auto fsymm0 = MakeFutureOn(
+      exec, [&] { return comms[0]->CreateSymmetricMemory(alloc0->address()); });
+  auto fsymm1 = MakeFutureOn(
+      exec, [&] { return comms[1]->CreateSymmetricMemory(alloc1->address()); });
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<SymmetricMemory> symm0,
                        std::move(fsymm0).Await());
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<SymmetricMemory> symm1,
                        std::move(fsymm1).Await());
+}
+
+TEST(NcclCollectivesTest, CreateDeviceComm) {
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       se::PlatformManager::PlatformWithName("CUDA"));
+
+  if (platform->VisibleDeviceCount() < 2) {
+    GTEST_SKIP() << "Test requires at least 2 GPUs";
+  }
+
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor0,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor1,
+                       platform->ExecutorForDevice(1));
+
+  ASSERT_OK_AND_ASSIGN(auto comms, CreateCommunicators(executor0, executor1));
+
+  if (!comms[0]->SupportsDeviceComm() || !comms[1]->SupportsDeviceComm()) {
+    GTEST_SKIP() << "GPU communicators do not suppoort device-initiated comms";
+  }
+
+  GpuCommunicator::DeviceCommRequirements reqs;
+  reqs.lsa_barrier_count = 16;
+
+  // Because creating device comms is a collective operation, we must call
+  // it from a thead pool to avoid deadlocks.
+  tsl::thread::ThreadPool pool(tsl::Env::Default(), "nccl", 2);
+  tsl::Executor& exec = *pool.AsExecutor();
+
+  auto fdev_comm0 =
+      MakeFutureOn(exec, [&] { return comms[0]->CreateDeviceComm(reqs); });
+  auto fdev_comm1 =
+      MakeFutureOn(exec, [&] { return comms[1]->CreateDeviceComm(reqs); });
+
+  ASSERT_OK_AND_ASSIGN(auto dev_comm0, std::move(fdev_comm0).Await());
+  ASSERT_OK_AND_ASSIGN(auto dev_comm1, std::move(fdev_comm1).Await());
+
+  EXPECT_TRUE(dev_comm0->platform_comm().handle);
+  EXPECT_TRUE(dev_comm1->platform_comm().handle);
 }
 
 }  // namespace

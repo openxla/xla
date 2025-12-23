@@ -16,10 +16,10 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_COLLECTIVES_NCCL_SYMMETRIC_MEMORY_H_
 #define XLA_BACKENDS_GPU_COLLECTIVES_NCCL_SYMMETRIC_MEMORY_H_
 
+#include "absl/status/statusor.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/stream_executor/device_address.h"
 #include "third_party/nccl/nccl.h"
-#include "absl/status/statusor.h"
 
 namespace xla::gpu {
 
