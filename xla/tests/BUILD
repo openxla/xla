@@ -2899,6 +2899,7 @@ cc_library(
         "//xla/stream_executor/integrations:stream_executor_allocator",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
         "//xla/tsl/framework:bfc_allocator",
+        "//xla/tsl/framework:allocator",
         "//xla/tsl/framework:device_id_impl",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/functional:any_invocable",
