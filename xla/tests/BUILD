@@ -12,6 +12,7 @@ load("//xla:xla.default.bzl", "tests_build_defs_bzl_deps", "xla_cc_test", "xla_i
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_oss", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
+load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -3004,7 +3005,6 @@ xla_test(
     deps = [
         ":collective_ops_e2e_test_base",
         ":collective_ops_ffi_kernels",
-        ":collective_ops_ffi_kernels_cuda",
         ":literal_test_util",
         ":test_utils",
         ":xla_internal_test_main",
@@ -3033,7 +3033,9 @@ xla_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-    ],
+    ] + if_cuda_is_configured([
+        ":collective_ops_ffi_kernels_cuda",
+    ]),
 )
 
 xla_test(
