@@ -2,6 +2,7 @@
 #   Base testing infrastructure for XLA.
 
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
@@ -2964,6 +2965,33 @@ xla_test(
     ],
 )
 
+cc_library(
+    name = "collective_ops_ffi_kernels",
+    hdrs = ["collective_ops_ffi_kernels.h"],
+    deps = [
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:kernel",
+    ],
+)
+
+cuda_library(
+    name = "collective_ops_ffi_kernels_cuda",
+    srcs = ["collective_ops_ffi_kernels.cu.cc"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        ":collective_ops_ffi_kernels",
+        "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor/cuda:cuda_platform_id",
+        "//xla/stream_executor/gpu:gpu_kernel_registry",
+        "//xla/tsl/cuda:nccl",
+        "@com_google_absl//absl/base",
+    ],
+    alwayslink = True,  # static kernel registation
+)
+
 xla_test(
     name = "collective_ops_ffi_test",
     srcs = ["collective_ops_ffi_test.cc"],
@@ -2975,6 +3003,8 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":collective_ops_e2e_test_base",
+        ":collective_ops_ffi_kernels",
+        ":collective_ops_ffi_kernels_cuda",
         ":literal_test_util",
         ":test_utils",
         ":xla_internal_test_main",
