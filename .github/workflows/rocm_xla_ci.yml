@@ -1,4 +1,4 @@
-name: ROCm OpenXla CI
+name: '[ROCm] OpenXla CI'
 
 on:
   pull_request:
