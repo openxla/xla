@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/collectives/nccl_errors.h"
+#include "xla/backends/gpu/collectives/nccl_symmetric_memory.h"
 #include "xla/backends/gpu/collectives/single_threaded_executor.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
@@ -213,6 +214,15 @@ class NcclCommunicator::NcclRegisteredBufferHandle
   bool symmetric_handle_;
   int device_ordinal_;
 };
+
+//==-----------------------------------------------------------------------===//
+// NCCL Symmetric Memory
+//==-----------------------------------------------------------------------===//
+
+absl::StatusOr<std::unique_ptr<SymmetricMemory>>
+NcclCommunicator::CreateSymmetricMemory(se::DeviceAddressBase addr) {
+  return NcclSymmetricMemory::Create(comm_, addr);
+}
 
 //==-----------------------------------------------------------------------===//
 // NCCL Communicator
