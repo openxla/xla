@@ -27,18 +27,17 @@ limitations under the License.
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
-#include "xla/util.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/util.h"
 
 namespace xla::gpu {
 
 // GpuCommunicator extends Communicator with synchronous versions of the
 // collective methods.
 //
-// For example, the Communicator::AllReduce method (which is asynchronous and
-// returns an AsyncValueRef<Event>) has a corresponding
-// GpuCommunicator::LaunchAllReduce method (which is synchronous and returns an
-// absl::Status).
+// For example, the `Communicator::AllReduce` method (which is asynchronous and
+// returns an AsyncValueRef<Event>) has a corresponding syncrhonous
+// `GpuCommunicator::LaunchAllReduce` method which returns an `absl::Status`.
 class GpuCommunicator : public Communicator {
  public:
   ~GpuCommunicator() override = default;
@@ -50,16 +49,50 @@ class GpuCommunicator : public Communicator {
     void* handle = nullptr;  // will be nullptr if not supported
   };
 
-  // Returns a platform-spcific handle to the unerdlying communicator object for
-  // host initiated collectives.
-  virtual PlatformCommunicatorHandle platform_host_comm() const {
+  // Requirements for constructing a device communicator object.
+  struct DeviceCommRequirements {
+    // The number of barriers to allocate for load/store accessible
+    // communication.
+    int32_t lsa_barrier_count = 0;
+  };
+
+  // A device communicator that corresponds to the host side GPU communicator
+  // object (it has same rank in the collective clique and shares underlying
+  // resources). A host-side GPU communicator object can instantiate multiple
+  // device-side communicators with different properties.
+  //
+  // Device communicator can be passed to GPU kernels to initiate collective
+  // operations (e.g. Send or Recv) directly from the kernel without having to
+  // involve host. Memory that can participate in device-initiated collective
+  // operations typically has to be registered ahead of time (see
+  // `SymmetricMemory` documentation).
+  //
+  // For CUDA this corresponds to:
+  // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/deviceapi.html
+  class DeviceComm {
+   public:
+    virtual ~DeviceComm() = default;
+
+    // Returns a platform-spcific handle to the unerdlying communicator object.
+    virtual PlatformCommunicatorHandle platform_comm() const {
+      return PlatformCommunicatorHandle{nullptr};
+    }
+
+    virtual std::string ToString() const = 0;
+  };
+
+  // Returns a platform-spcific handle to the unerdlying communicator object.
+  virtual PlatformCommunicatorHandle platform_comm() const {
     return PlatformCommunicatorHandle{nullptr};
   }
 
-  // Returns a platform-spcific handle to the unerdlying communicator object for
-  // device initiated collectives.
-  virtual PlatformCommunicatorHandle platform_device_comm() const {
-    return PlatformCommunicatorHandle{nullptr};
+  // Returns true iff communicator supports device-initiated communication.
+  virtual bool SupportsDeviceComm() const { return false; }
+
+  // Creates a new device communicator linked to *this GPU communicator object.
+  virtual absl::StatusOr<std::unique_ptr<DeviceComm>> CreateDeviceComm(
+      const DeviceCommRequirements& requirements) {
+    return Unimplemented("Device communicator is not implementing");
   }
 
   // Creates a symmetric memory from the existing device address range. This is
@@ -69,6 +102,10 @@ class GpuCommunicator : public Communicator {
   CreateSymmetricMemory(se::DeviceAddressBase addr) {
     return Unimplemented("Symmetric memory is not implemented");
   }
+
+  //===--------------------------------------------------------------------===//
+  // Host-side collective communication APIs
+  //===--------------------------------------------------------------------===//
 
   // Executes f in a group. f should invoke synchronous collective methods like
   // LaunchAllReduce and not asynchronous collective methods like AllReduce.

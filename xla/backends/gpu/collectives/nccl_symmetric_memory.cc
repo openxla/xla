@@ -14,7 +14,17 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/backends/gpu/collectives/nccl_symmetric_memory.h"
+
+#include <memory>
+#include <string>
+
+#include "absl/log/log.h"
+#include "absl/memory/memory.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "xla/backends/gpu/collectives/nccl_errors.h"
+#include "xla/stream_executor/device_address.h"
+#include "third_party/nccl/nccl.h"
 
 namespace xla::gpu {
 
