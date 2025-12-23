@@ -51,7 +51,10 @@ jobs:
 
       - name: Test XLA
         run: |
-          docker exec ${{ env.CONTAINER_NAME }} bash -c "build_tools/rocm/execute_ci_build.sh"
+          docker exec \
+            -w "/tf/xla" \
+            ${{ env.CONTAINER_NAME }} \
+            bash -c "build_tools/rocm/execute_ci_build.sh"
 
       - name: Cleanup container
         if: always()
