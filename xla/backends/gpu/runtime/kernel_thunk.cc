@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
+#include "xla/backends/gpu/runtime/command_buffer_params.h"
 #include "xla/backends/gpu/runtime/print_buffer_contents.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -64,7 +65,7 @@ KernelThunk::KernelThunk(Thunk::ThunkInfo thunk_info, std::string kernel_name,
                          std::optional<se::ClusterDim> cluster_dim,
                          int64_t shmem_bytes,
                          stream_executor::gpu::TmaMetadata tma_metadata)
-    : Thunk(Kind::kKernel, std::move(thunk_info)),
+    : CommandThunk(Thunk::Kind::kKernel, std::move(thunk_info)),
       args_(kernel_arguments.GetArgumentBufferSlices()),
       args_shape_(kernel_arguments.GetArgumentBufferShapes()),
       written_(kernel_arguments.GetArgumentOutputFlags()),
@@ -243,10 +244,32 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
     PrintBufferContents(stream, kernel_args);
   }
 
-  return ExecuteKernelOnStream(
-      *kernel,
-      absl::Span<se::KernelArgument>(kernel_args.data(), kernel_args.size()),
-      launch_dimensions_, cluster_dim_, stream);
+  if (params.command_buffer_params != nullptr) {
+    // Record the kernel into the command buffer.
+    CommandBufferParams* record_params = params.command_buffer_params;
+    TF_ASSIGN_OR_RETURN(
+        auto packed_args,
+        se::PackKernelArgs(absl::MakeConstSpan(kernel_args), shmem_bytes_));
+    return HandleCmdCreateOrUpdate(
+        *record_params,
+        [&] {
+          return record_params->command_buffer->CreateLaunch(
+              launch_dimensions_.thread_counts_per_block(),
+              launch_dimensions_.block_counts(), *kernel, *packed_args,
+              CommandBufferDependencies(*record_params),
+              command_buffer_priority());
+        },
+        [&](const se::CommandBuffer::Command* command) {
+          return record_params->command_buffer->UpdateLaunch(
+              command, launch_dimensions_.thread_counts_per_block(),
+              launch_dimensions_.block_counts(), *kernel, *packed_args);
+        });
+  } else {
+    return ExecuteKernelOnStream(
+        *kernel,
+        absl::Span<se::KernelArgument>(kernel_args.data(), kernel_args.size()),
+        launch_dimensions_, cluster_dim_, stream);
+  }
 }
 
 Thunk::BufferUses KernelThunk::buffer_uses() const {

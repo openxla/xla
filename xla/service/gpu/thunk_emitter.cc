@@ -472,7 +472,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSliceToDynamic(
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCommandBufferThunk(
     const HloInstruction* instr) {
   // Spawn a new ThunkEmitter to emit thunks for the command buffer computation.
-  // Then convert emitted thunks to a sequence of CommandBufferCmd. The
+  // Then convert emitted thunks to a sequence of CommandThunk. The
   // resulting thunk added to the thunk sequence is a CommandBufferThunk. Thunks
   // emitted from the command buffer computation are discarded.
   DCHECK_EQ(instr->called_computations().size(), 1);
