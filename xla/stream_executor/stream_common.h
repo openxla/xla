@@ -58,17 +58,17 @@ class StreamCommon : public Stream {
   // Instantiate a stream tied to parent as a platform executor. Work
   // entrained onto this stream will be launched/managed on that
   // StreamExecutor's platform.
-  explicit StreamCommon(StreamExecutor *parent);
+  explicit StreamCommon(StreamExecutor* parent);
 
-  StreamCommon(StreamExecutor *parent,
+  StreamCommon(StreamExecutor* parent,
                std::optional<std::variant<StreamPriority, int>> priority);
 
   PlatformSpecificHandle platform_specific_handle() const override;
   bool ok() const override { return !InErrorState(); }
-  absl::StatusOr<Stream *> GetOrCreateSubStream() override
+  absl::StatusOr<Stream*> GetOrCreateSubStream() override
       TF_LOCKS_EXCLUDED(mu_);
-  void ReturnSubStream(Stream *sub_stream) override TF_LOCKS_EXCLUDED(mu_);
-  StreamExecutor *parent() const override {
+  void ReturnSubStream(Stream* sub_stream) override TF_LOCKS_EXCLUDED(mu_);
+  StreamExecutor* parent() const override {
     CHECK(parent_ != nullptr);
     return parent_;
   }
@@ -84,8 +84,12 @@ class StreamCommon : public Stream {
     return parent()->GetDeviceDescription().rocm_compute_capability();
   }
 
+  OneAPIComputeCapability GetOneAPIComputeCapability() const override {
+    return parent()->GetDeviceDescription().oneapi_compute_capability();
+  }
+
   // Doesn't do anything interesting by default; GpuStream connects this to NVTX
-  const std::string &GetName() const override { return name_; }
+  const std::string& GetName() const override { return name_; }
   void SetName(std::string name) override { name_ = std::move(name); }
 
  protected:
@@ -105,7 +109,7 @@ class StreamCommon : public Stream {
 
  private:
   // The StreamExecutor that supports the operation of this stream.
-  StreamExecutor *parent_;
+  StreamExecutor* parent_;
 
   // mutex that guards the allocation / error state flags.
   // Mutable so that it can be obtained via const reader lock.
