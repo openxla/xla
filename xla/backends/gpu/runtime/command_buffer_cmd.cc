@@ -158,17 +158,17 @@ static se::CommandBuffer::CreateCommands CreateCommands(
   return [=](se::CommandBuffer* command_buffer,
              absl::Span<const se::CommandBuffer::Command* const> dependencies)
              -> absl::StatusOr<std::vector<const se::CommandBuffer::Command*>> {
-    auto new_record_params = *record_params;
-    new_record_params.command_buffer = command_buffer;
-    new_record_params.executor_dependencies.assign(dependencies.begin(),
-                                                   dependencies.end());
+    CommandBufferCmd::RecordParams nest_record_params = *record_params;
+    nest_record_params.command_buffer = command_buffer;
+    nest_record_params.external_dependencies.assign(dependencies.begin(),
+                                                    dependencies.end());
     // Don't finalize from within CreateCommands callbacks - the parent
     // (CreateWhile/CreateCase) handles finalization of nested command buffers.
-    new_record_params.is_finalize = false;
+    nest_record_params.is_finalize = false;
     // Set the executor for dependency resolution within this executor.
-    new_record_params.executor = commands;
-    TF_RETURN_IF_ERROR(commands->Record(*execute_params, new_record_params));
-    return commands->SinkCommands(new_record_params);
+    nest_record_params.executor = commands;
+    TF_RETURN_IF_ERROR(commands->Record(*execute_params, nest_record_params));
+    return commands->SinkCommands(nest_record_params);
   };
 }
 
@@ -191,14 +191,14 @@ static se::CommandBuffer::UpdateCommands UpdateCommands(
     const Thunk::ExecuteParams* execute_params,
     const CommandBufferCmd::RecordParams* record_params) {
   return [=](se::CommandBuffer* command_buffer) {
-    auto new_record_params = *record_params;
-    new_record_params.command_buffer = command_buffer;
+    CommandBufferCmd::RecordParams nest_record_params = *record_params;
+    nest_record_params.command_buffer = command_buffer;
     // Don't finalize from within UpdateCommands callbacks - the parent
     // (UpdateWhile/UpdateCase) handles the nested command buffer lifecycle.
-    new_record_params.is_finalize = false;
+    nest_record_params.is_finalize = false;
     // Set the executor for dependency resolution within this executor.
-    new_record_params.executor = commands;
-    return commands->Record(*execute_params, new_record_params);
+    nest_record_params.executor = commands;
+    return commands->Record(*execute_params, nest_record_params);
   };
 }
 
@@ -256,7 +256,7 @@ std::vector<const se::CommandBuffer::Command*> CommandBufferCmd::Dependencies(
   // If the current command is a source command, use the executor dependencies
   // specified in record_params.
   if (record_params.executor->IsSource(this)) {
-    return record_params.executor_dependencies;
+    return record_params.external_dependencies;
   }
 
   // Otherwise, follow the same method as CommandBufferCmdExecutor::Dependencies
@@ -870,7 +870,7 @@ absl::Status TracedCommandBufferCmd::RecordTracedCommand(
           << record_params.command_buffer;
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateChildCommand(
             se::CommandBuffer::ChildCommandType::kCloned, *nested_cmd,
             Dependencies(record_params));
@@ -958,7 +958,7 @@ absl::Status ComputationIdCmd::Record(
 
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateMemset(
             &dst, value, /*num_elements=*/1, Dependencies(record_params));
       },
@@ -1058,7 +1058,7 @@ absl::Status LaunchCmd::Record(const Thunk::ExecuteParams& execute_params,
 
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateLaunch(
             dims_.thread_counts_per_block(), dims_.block_counts(), *kernel,
             *kernel_args, Dependencies(record_params), priority());
@@ -1136,7 +1136,7 @@ absl::Status CustomKernelLaunchCmd::Record(
 
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateLaunch(
             custom_kernel_.thread_dims(), custom_kernel_.block_dims(), *kernel,
             kernel_args, Dependencies(record_params), priority());
@@ -1192,7 +1192,7 @@ absl::Status MemcpyDeviceToDeviceCmd::Record(
 
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateMemcpyD2D(
             &dst, src, num_bytes_, Dependencies(record_params));
       },
@@ -1229,7 +1229,7 @@ absl::Status MemzeroCmd::Record(const Thunk::ExecuteParams& execute_params,
 
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateMemset(
             &dst, uint8_t{0},
             /*num_elements=*/dst_.slice.size(), Dependencies(record_params));
@@ -1269,7 +1269,7 @@ absl::Status Memset32Cmd::Record(const Thunk::ExecuteParams& execute_params,
 
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateMemset(
             &dst, bit_pattern_,
             /*num_elements=*/dst_.size() / sizeof(uint32_t),
@@ -1320,7 +1320,7 @@ absl::Status ChildCmd::Record(const Thunk::ExecuteParams& execute_params,
   };
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateChildCommand(
             se::CommandBuffer::ChildCommandType::kMoved,
             execute_params.stream->parent(), record_fn,
@@ -1361,7 +1361,7 @@ absl::Status CaseCmd::Record(const Thunk::ExecuteParams& execute_params,
 
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         if (index_is_bool_) {
           return record_params.command_buffer->CreateCase(
               se::DeviceAddress<bool>(index),
@@ -1460,27 +1460,27 @@ absl::Status WhileCmd::Record(const Thunk::ExecuteParams& execute_params,
       // In the unrolled pattern, we still need to run the cond commands because
       // body commands might depends on the value of index variable that is
       // updated by condition commands.
-      auto new_record_params = record_params;
-      new_record_params.command_buffer = child_command_buffer;
-      new_record_params.executor_dependencies = {};
+      auto unroll_record_params = record_params;
+      unroll_record_params.command_buffer = child_command_buffer;
+      unroll_record_params.external_dependencies = {};
       for (int64_t i = 0; i < trip_count_.value(); ++i) {
-        new_record_params.unroll_iteration = i;
-        new_record_params.is_finalize = false;
+        unroll_record_params.unroll_iteration = i;
+        unroll_record_params.is_finalize = false;
         TF_RETURN_IF_ERROR(
-            cond_commands_.Record(execute_params, new_record_params));
-        new_record_params.executor_dependencies =
-            cond_commands_.SinkCommands(new_record_params);
-        new_record_params.is_finalize = (i == trip_count_.value() - 1);
+            cond_commands_.Record(execute_params, unroll_record_params));
+        unroll_record_params.external_dependencies =
+            cond_commands_.SinkCommands(unroll_record_params);
+        unroll_record_params.is_finalize = (i == trip_count_.value() - 1);
         TF_RETURN_IF_ERROR(
-            body_commands_.Record(execute_params, new_record_params));
-        new_record_params.executor_dependencies =
-            body_commands_.SinkCommands(new_record_params);
+            body_commands_.Record(execute_params, unroll_record_params));
+        unroll_record_params.external_dependencies =
+            body_commands_.SinkCommands(unroll_record_params);
       }
       return absl::OkStatus();
     };
     return HandleCmdCreateOrUpdate(
         record_params,
-        [&]() {
+        [&] {
           return record_params.command_buffer->CreateChildCommand(
               se::CommandBuffer::ChildCommandType::kMoved,
               execute_params.stream->parent(), record_fn,
@@ -1493,7 +1493,7 @@ absl::Status WhileCmd::Record(const Thunk::ExecuteParams& execute_params,
   }
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateWhile(
             se::DeviceAddress<bool>(pred),
             CreateCommands(&cond_commands_, &execute_params, &record_params),
@@ -1699,7 +1699,7 @@ absl::Status CuDnnCmd::Record(const Thunk::ExecuteParams& execute_params,
   if (supports_explicit) {
     return HandleCmdCreateOrUpdate(
         record_params,
-        [&]() {
+        [&] {
           return record_params.command_buffer->CreateDnnGraphCommand(
               *graph_->get(), *execute_params.stream,
               absl::Span<se::DeviceAddressBase>(operands),
@@ -1797,7 +1797,7 @@ absl::Status CustomCallCmd::RecordLegacyCustomCall(
 
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateChildCommand(
             se::CommandBuffer::ChildCommandType::kCloned, *nested_cmd,
             Dependencies(record_params));
@@ -1878,7 +1878,7 @@ absl::Status CustomCallCmd::RecordXlaFfiCall(
 
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateChildCommand(
             se::CommandBuffer::ChildCommandType::kCloned, *nested_cmd,
             Dependencies(record_params));
@@ -1936,7 +1936,7 @@ absl::Status CollectiveCmd::RecordTracedCommand(
 
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateChildCommand(
             se::CommandBuffer::ChildCommandType::kCloned, *nested_cmd,
             Dependencies(record_params));
@@ -2639,7 +2639,7 @@ absl::Status DynamicSliceFusionCmd::Record(
 
   return HandleCmdCreateOrUpdate(
       record_params,
-      [&]() {
+      [&] {
         return record_params.command_buffer->CreateChildCommand(
             se::CommandBuffer::ChildCommandType::kCloned,
             *nested_command_buffer, Dependencies(record_params));

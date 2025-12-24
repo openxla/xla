@@ -688,10 +688,10 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   record_params.is_finalize = false;
   TF_ASSERT_OK(exec_a.Record(exec_params, record_params));
 
-  record_params.executor_dependencies = exec_a.SinkCommands(record_params);
+  record_params.external_dependencies = exec_a.SinkCommands(record_params);
   TF_ASSERT_OK(exec_b.Record(exec_params, record_params));
 
-  record_params.executor_dependencies = exec_b.SinkCommands(record_params);
+  record_params.external_dependencies = exec_b.SinkCommands(record_params);
   record_params.is_finalize = true;
   TF_ASSERT_OK(exec_c.Record(exec_params, record_params));
 

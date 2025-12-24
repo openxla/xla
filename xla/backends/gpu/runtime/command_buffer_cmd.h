@@ -27,6 +27,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -206,19 +207,21 @@ class CommandBufferCmd {
     virtual ~StateManager() = default;
 
     template <typename ConcreteState>
-    ConcreteState* GetOrNull(const CommandBufferCmd* cmd,
-                             const se::CommandBuffer* command_buffer,
-                             int64_t unroll_iteration = 0) {
+    ConcreteState* absl_nullable
+    GetOrNull(const CommandBufferCmd* absl_nonnull cmd,
+              const se::CommandBuffer* absl_nonnull command_buffer,
+              int64_t unroll_iteration = 0) {
       static_assert(std::is_base_of_v<State, ConcreteState>);
       return static_cast<ConcreteState*>(GetOrNull(
           cmd, command_buffer, GetTypeId<ConcreteState>(), unroll_iteration));
     }
 
     template <typename ConcreteState>
-    ConcreteState* GetOrCreate(
-        const CommandBufferCmd* cmd, const se::CommandBuffer* command_buffer,
-        absl::FunctionRef<std::unique_ptr<ConcreteState>()> create,
-        int64_t unroll_iteration = 0) {
+    ConcreteState* absl_nonnull
+    GetOrCreate(const CommandBufferCmd* absl_nonnull cmd,
+                const se::CommandBuffer* absl_nonnull command_buffer,
+                absl::FunctionRef<std::unique_ptr<ConcreteState>()> create,
+                int64_t unroll_iteration = 0) {
       static_assert(std::is_base_of_v<State, ConcreteState>);
       return static_cast<ConcreteState*>(
           GetOrCreate(cmd, command_buffer, GetTypeId<ConcreteState>(),
@@ -226,9 +229,10 @@ class CommandBufferCmd {
     }
 
     template <typename ConcreteState>
-    ConcreteState* GetOrCreate(const CommandBufferCmd* cmd,
-                               const se::CommandBuffer* command_buffer,
-                               int64_t unroll_iteration = 0) {
+    ConcreteState* absl_nonnull
+    GetOrCreate(const CommandBufferCmd* absl_nonnull cmd,
+                const se::CommandBuffer* absl_nonnull command_buffer,
+                int64_t unroll_iteration = 0) {
       return GetOrCreate<ConcreteState>(
           cmd, command_buffer, [] { return std::make_unique<ConcreteState>(); },
           unroll_iteration);
@@ -246,14 +250,16 @@ class CommandBufferCmd {
 
     static TypeId GetNextTypeId();
 
-    State* GetOrNull(const CommandBufferCmd* cmd,
-                     const se::CommandBuffer* command_buffer, TypeId type_id,
-                     int64_t unroll_iteration);
+    State* absl_nullable
+    GetOrNull(const CommandBufferCmd* absl_nonnull cmd,
+              const se::CommandBuffer* absl_nonnull command_buffer,
+              TypeId type_id, int64_t unroll_iteration);
 
-    State* GetOrCreate(const CommandBufferCmd* cmd,
-                       const se::CommandBuffer* command_buffer, TypeId type_id,
-                       int64_t unroll_iteration,
-                       absl::FunctionRef<std::unique_ptr<State>()> create);
+    State* absl_nonnull
+    GetOrCreate(const CommandBufferCmd* absl_nonnull cmd,
+                const se::CommandBuffer* absl_nonnull command_buffer,
+                TypeId type_id, int64_t unroll_iteration,
+                absl::FunctionRef<std::unique_ptr<State>()> create);
 
     using Key = std::tuple<const CommandBufferCmd*, const se::CommandBuffer*,
                            TypeId, int64_t>;
@@ -280,18 +286,35 @@ class CommandBufferCmd {
     // unroll_iteration to locate the commands for current unroll iteration.
     int64_t unroll_iteration = 0;
 
-    // The command buffer that is recording the commands.
-    se::CommandBuffer* command_buffer = nullptr;
-
-    // The dependencies across CommandBufferCmdExecutor
-    std::vector<const se::CommandBuffer::Command*> executor_dependencies;
+    // The command buffer that is recording the commands. Must be set before
+    // calling Record().
+    se::CommandBuffer* absl_nonnull command_buffer = nullptr;
 
     // A flag indicating whether we finalize the command buffer after recording.
     bool is_finalize = true;
 
     // The executor that is recording the commands. Used for dependency
-    // resolution within the executor.
-    const CommandBufferCmdExecutor* executor = nullptr;
+    // resolution within the executor. May be null when recording commands
+    // outside of an executor context.
+    const CommandBufferCmdExecutor* absl_nullable executor = nullptr;
+
+    // External dependencies that source commands in this executor must wait on.
+    // When multiple CommandBufferCmdExecutors are recorded into the same
+    // command buffer (e.g., A -> B -> C), the source commands of executor B
+    // must depend on the sink commands of executor A. These external
+    // dependencies are passed in via this field to establish cross-executor
+    // ordering.
+    //
+    // Example: WhileCmd loop unrolling. When a WhileCmd has a known trip count,
+    // we unroll the loop by recording cond_commands and body_commands executors
+    // multiple times into a single command buffer:
+    //   [cond_0] -> [body_0] -> [cond_1] -> [body_1] -> ... -> [cond_N] ->
+    //   [body_N]
+    // Each iteration's body_commands must wait on the preceding cond_commands,
+    // and each cond_commands (except the first) must wait on the preceding
+    // body_commands. The external_dependencies field carries these
+    // cross-executor dependencies between unrolled iterations.
+    std::vector<const se::CommandBuffer::Command*> external_dependencies;
   };
 
   using CreateCommand =
@@ -536,20 +559,21 @@ class CommandBufferCmdExecutor {
 
   // Returns true if the given command is a source command (has no dependencies
   // within this executor).
-  bool IsSource(const CommandBufferCmd* cmd) const;
+  bool IsSource(const CommandBufferCmd* absl_nonnull cmd) const;
 
   // Returns dependencies of the given command.
   std::vector<const se::CommandBuffer::Command*> Dependencies(
-      const RecordParams& record_params, const CommandBufferCmd* cmd) const;
+      const RecordParams& record_params,
+      const CommandBufferCmd* absl_nonnull cmd) const;
 
   using CreateCommand =
       absl::FunctionRef<absl::StatusOr<const se::CommandBuffer::Command*>()>;
 
   using UpdateCommand = absl::FunctionRef<absl::Status(
-      const se::CommandBuffer::Command* command)>;
+      const se::CommandBuffer::Command* absl_nonnull command)>;
 
   absl::Status HandleCmdCreateOrUpdate(RecordParams& record_params,
-                                       CommandBufferCmd* cmd,
+                                       CommandBufferCmd* absl_nonnull cmd,
                                        CreateCommand create_command,
                                        UpdateCommand update_command) const;
 
@@ -568,7 +592,7 @@ class CommandBufferCmdExecutor {
                            std::optional<ExecutionGraph> execution_graph);
 
   absl::Status CheckCommandBufferState(
-      se::CommandBuffer* command_buffer,
+      se::CommandBuffer* absl_nonnull command_buffer,
       se::CommandBuffer::State expected_state) const;
 
   // Returns true if command has no dependencies.
@@ -610,15 +634,17 @@ class CommandBufferCmdExecutor {
 // subsequent calls to XLA executable tend to reuse the same allocations.
 class TracedCommandBuffer : public CommandBufferCmd::State {
  public:
-  explicit TracedCommandBuffer(const CommandBufferCmd* trace_cmd,
+  explicit TracedCommandBuffer(const CommandBufferCmd* absl_nonnull trace_cmd,
                                CommandBufferCmd::BufferUseVector buffers,
                                int64_t capacity = 16);
 
   // Returns cached command buffer traced using the same buffer addresses or
   // traces and caches a new command buffer using user provided callback.
-  absl::StatusOr<se::CommandBuffer*> GetOrTraceCommandBuffer(
-      const BufferAllocations* buffer_allocation, se::StreamExecutor* executor,
-      se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
+  absl::StatusOr<se::CommandBuffer * absl_nonnull> GetOrTraceCommandBuffer(
+      const BufferAllocations* absl_nonnull buffer_allocation,
+      se::StreamExecutor* absl_nonnull executor,
+      se::Stream* absl_nonnull stream,
+      absl::FunctionRef<absl::Status(se::Stream*)> trace,
       se::StreamPriority priority = se::StreamPriority::Default);
 
  private:
@@ -628,7 +654,7 @@ class TracedCommandBuffer : public CommandBufferCmd::State {
     std::vector<se::DeviceAddressBase> recorded_allocs;
     std::unique_ptr<se::CommandBuffer> command_buffer;
   };
-  const CommandBufferCmd* trace_cmd_;
+  const CommandBufferCmd* absl_nonnull trace_cmd_;
   int64_t capacity_;
   std::vector<Entry> entries_;
 };
