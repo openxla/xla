@@ -108,7 +108,7 @@ std::string DeviceDescription::ToString() const {
   return ToGpuProto().DebugString();
 }
 
-const GpuComputeCapability& DeviceDescription::gpu_compute_capability() const {
+const GpuComputeCapability &DeviceDescription::gpu_compute_capability() const {
   return gpu_compute_capability_;
 }
 
@@ -134,8 +134,8 @@ OneAPIComputeCapability DeviceDescription::oneapi_compute_capability() const {
   return OneAPIComputeCapability{};
 }
 
-bool ThreadDimOk(const DeviceDescription& device_description,
-                 const ThreadDim& thread_dim) {
+bool ThreadDimOk(const DeviceDescription &device_description,
+                 const ThreadDim &thread_dim) {
   const int64_t total_threads = thread_dim.x * thread_dim.y * thread_dim.z;
   const int64_t threads_per_block_limit =
       device_description.threads_per_block_limit();
@@ -145,7 +145,7 @@ bool ThreadDimOk(const DeviceDescription& device_description,
     return false;
   }
 
-  const auto& limit = device_description.thread_dim_limit();
+  const auto &limit = device_description.thread_dim_limit();
   bool ok = thread_dim.x <= limit.x && thread_dim.y <= limit.y &&
             thread_dim.z <= limit.z;
   if (!ok) {
@@ -155,9 +155,9 @@ bool ThreadDimOk(const DeviceDescription& device_description,
   return ok;
 }
 
-void CalculateDimensionality(const DeviceDescription& device_description,
-                             int64_t element_count, int64_t* threads_per_block,
-                             int64_t* block_count) {
+void CalculateDimensionality(const DeviceDescription &device_description,
+                             int64_t element_count, int64_t *threads_per_block,
+                             int64_t *block_count) {
   *threads_per_block = device_description.threads_per_block_limit();
   *block_count = tsl::MathUtil::CeilOfRatio(element_count, *threads_per_block);
   if (*block_count == 1) {
