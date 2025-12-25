@@ -1093,6 +1093,12 @@ std::optional<HloSharding> ReshapeSharding(const Shape& source_shape,
     return source_sharding;
   }
 
+  if (source_sharding.UseNamedShardingLeaf()) {
+    HloSharding tiled_sharding =
+        HloSharding::V3ToV2Sharding(source_sharding.named_sharding());
+    return ReshapeSharding(source_shape, target_shape, tiled_sharding);
+  }
+
   // In case of a tiled sharding, the reshaped sharding will be valid if the
   // reshape is composed from the following operations:
   // * Adding or removing dimensions with size 1.
@@ -2702,8 +2708,12 @@ GroupedSharding GetManualSubgroupSharding(const HloSharding& input_sharding) {
 
 std::optional<GroupedSharding>
 PartialReplicatedGroupShardingWithAssignedDeviceGroups(
-    const HloSharding& sharding, int64_t num_shards,
+    const HloSharding& input_sharding, int64_t num_shards,
     const DeviceGroupTileAssignment& device_groups) {
+  HloSharding sharding =
+      input_sharding.UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(input_sharding.named_sharding())
+          : input_sharding;
   if (!sharding.ReplicateOnLastTileDim() ||
       sharding.dimensions().back() % device_groups.num_groups() != 0) {
     VLOG(5) << "Failed because not partial replicated or not divisible";

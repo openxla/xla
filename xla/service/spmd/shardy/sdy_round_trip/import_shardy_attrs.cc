@@ -199,7 +199,7 @@ void convertShardyAttrs(FuncOp funcOp, IRRewriter& rewriter,
         funcOp.setArgAttr(
             argNum, kShardingAttr,
             convertToSdyShardingAttr(parseShardingFromString(oldSharding),
-                                     argType, funcOp.getContext()));
+                                     funcOp.getContext()));
       }
     } else {
       // Attempt to extract the TensorShardingAttr from the frontend attributes
@@ -229,7 +229,6 @@ void convertShardyAttrs(FuncOp funcOp, IRRewriter& rewriter,
         funcOp.setResultAttr(
             resNum, kShardingAttr,
             convertToSdyShardingAttr(parseShardingFromString(oldSharding),
-                                     funcOp.getResultTypes()[resNum],
                                      funcOp.getContext()));
       }
     }
@@ -269,9 +268,9 @@ void convertShardyAttrs(FuncOp funcOp, IRRewriter& rewriter,
             op)) {
       if (enableHloShardingV3) {
         auto sharding = op->getAttrOfType<StringAttr>(kXlaShardingAttr);
-        op->setAttr(kShardingAttr, convertToSdySharding(
-                                       parseShardingFromString(sharding),
-                                       op->getResultTypes(), op->getContext()));
+        op->setAttr(kShardingAttr,
+                    convertToSdySharding(parseShardingFromString(sharding),
+                                         op->getContext()));
       } else {
         if (auto sharding = parseStringAttr<TensorShardingPerValueAttr>(
                 dictAttr,
@@ -300,7 +299,6 @@ void convertShardyAttrs(FuncOp funcOp, IRRewriter& rewriter,
           customCallOp->setAttr(
               kShardingAttr,
               convertToSdySharding(parseShardingFromString(sharding),
-                                   customCallOp->getResultTypes(),
                                    customCallOp->getContext()));
         } else {
           customCallOp->setAttr(
@@ -415,17 +413,6 @@ class SdyRoundTripImportShardyAttrsPass
 
     for (auto funcOp : moduleOp.getOps<FuncOp>()) {
       convertShardyAttrs(funcOp, rewriter, enableHloShardingV3);
-    }
-
-    if (enableHloShardingV3) {
-      // Lift inlined meshes, as meshes are inlined in HloShardingV3 and
-      // therefore in sdy shardings generated from conversion.
-      mlir::PassManager pm(moduleOp.getContext());
-      pm.addPass(mlir::sdy::createLiftInlinedMeshesPass());
-      pm.addPass(createSdyRoundTripDedupMeshesPass());
-      if (mlir::failed(pm.run(moduleOp))) {
-        signalPassFailure();
-      }
     }
   }
 
