@@ -99,17 +99,20 @@ TEST(KernelTest, PackPodArguments) {
   args->add_argument(1);
   args->add_argument(2.0f);
   args->add_argument(3.0);
+  args->add_argument(CustomData{42});
 
-  ASSERT_EQ(args->number_of_arguments(), 3);
+  ASSERT_EQ(args->number_of_arguments(), 4);
 
   auto packed = args->argument_addresses();
   int32_t i32 = *reinterpret_cast<const int32_t*>(packed[0]);
   float f32 = *reinterpret_cast<const float*>(packed[1]);
   double f64 = *reinterpret_cast<const double*>(packed[2]);
+  int32_t custom = *reinterpret_cast<const int32_t*>(packed[3]);
 
   ASSERT_EQ(i32, 1);
   ASSERT_EQ(f32, 2.0f);
   ASSERT_EQ(f64, 3.0);
+  ASSERT_EQ(custom, 43);
 }
 
 TEST(KernelTest, PackTupleArguments) {
@@ -137,13 +140,13 @@ TEST(KernelTest, PackTupleWithCutomPacking) {
 }
 
 TEST(KernelTest, PackArgumentsWithInt64) {
-  std::vector<KernelArgument> args;
+  std::vector<KernelArg> args;
   DeviceAddressBase somemem(reinterpret_cast<void*>(0x12345678));
   int64_t someint64 = 1234;
   args.emplace_back(somemem);
   args.emplace_back(someint64);
-  TF_ASSERT_OK_AND_ASSIGN(auto packed_args_ptr, PackKernelArgs<KernelArgument>(
-                                                    args, KernelMetadata()));
+  TF_ASSERT_OK_AND_ASSIGN(auto packed_args_ptr,
+                          PackKernelArgs<KernelArg>(args, KernelMetadata()));
   ASSERT_EQ(packed_args_ptr->number_of_arguments(), 2);
   ASSERT_EQ(packed_args_ptr->number_of_shared_bytes(), 0);
   const auto packed = packed_args_ptr->argument_addresses();

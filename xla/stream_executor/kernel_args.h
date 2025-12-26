@@ -46,6 +46,9 @@ namespace stream_executor {
 // Kernel arguments
 //===----------------------------------------------------------------------===//
 
+// Builting Kernel argument type widely used in kernels compiled by XLA.
+using KernelArg = std::variant<DeviceAddressBase, TensorMap, int64_t>;
+
 // A virtual base class for passing kernel arguments to a stream executor APIs.
 class KernelArgs {
  public:
@@ -78,17 +81,122 @@ class KernelArgs {
 };
 
 //===----------------------------------------------------------------------===//
+// Kernel argument packing
+//===----------------------------------------------------------------------===//
+
+// KernelArgPacking template specialization defines how arguments are passed to
+// the device kernel. It is essentially a functor that converts user-defined C++
+// type to another C++ type that can be passed to device kernel, and in general
+// such type must be a POD data structure (in C++ terms it must satisfy
+// `std::is_trivially_copyable` type trait), which is later passed to the device
+// kernel (and it must match the device ABI).
+//
+// Default argument packing rules:
+//
+//   (1) `DeviceAddress` passed as an opaque `void*` pointer.
+//   (2) We have a special case for passing pointers to `DeviceAddress` where we
+//       also pass it as an opaque device pointer.
+//   (3) We do not support pointer arguments, as we should not be passing a
+//       pointers to host memory to device kernels. We check this at compile
+//       time, to avoid hard to debug run time errors later.
+//   (4) For all other POD types we always strip references and store a copy of
+//       an argument in the kernel arguments array.
+//
+// Users can override default kernel argument packing by specializing this
+// template, i.e. it allows packing custom user-defined types according to the
+// ABI requirement of a device kernel. This indirection allows library
+// implementation to hide device kernel ABI from the end user:
+//
+// Example: hiding library implementation from headers included by users
+//
+//   struct LibraryArg {
+//     void* type_erased_handle;
+//   };
+//
+//  // Hide type erased handle packing by specializing the template and
+//  // passing an opaque array of bytes to the device kernel.
+//  template<>
+//  struct KernelArgPacking<LibraryArg> {
+//    using Type = std::aligned_storage_t</*size=*/128, /*alignment=*/8>;
+//    static Type Pack(const LibraryArg& arg);
+//  };
+//
+template <typename T>
+struct KernelArgPacking {
+  static_assert(!std::is_pointer_v<T>, "cannot pass raw pointer to the device");
+
+  // A type of the argument passed to the device kernel.
+  using Type = T;
+
+  // Packs an argument as the device argument.
+  static Type Pack(const T& arg) { return arg; }
+};
+
+// A template specialization for packing statically sized arrays.
+template <typename T, size_t N>
+struct KernelArgPacking<T[N]> {
+  using Type = std::array<T, N>;
+
+  static Type Pack(const T (&arg)[N]) {
+    std::array<T, N> arr;
+    std::copy_n(arg, N, arr.begin());
+    return arr;
+  }
+};
+
+// A collection of DeviceAddress(Base) specializations: device address is always
+// passed as a simple pointer. We assume that the device kernel itself knows the
+// addressable range (always true for kernels compiled by XLA), or size is
+// passed as a separate argument (for custom kernels).
+
+template <>
+struct KernelArgPacking<DeviceAddressBase> {
+  using Type = void*;
+  static void* Pack(const DeviceAddressBase& addr) { return addr.opaque(); }
+};
+
+template <>
+struct KernelArgPacking<DeviceAddressBase*> {
+  using Type = void*;
+  static void* Pack(const DeviceAddressBase* addr) { return addr->opaque(); }
+};
+
+template <>
+struct KernelArgPacking<const DeviceAddressBase*> {
+  using Type = const void*;
+  static void* Pack(const DeviceAddressBase* addr) { return addr->opaque(); }
+};
+
+template <typename T>
+struct KernelArgPacking<DeviceAddress<T>> {
+  using Type = T*;
+  static T* Pack(const DeviceAddress<T> addr) { return addr.base(); }
+};
+
+template <typename T>
+struct KernelArgPacking<DeviceAddress<T>*> {
+  using Type = T*;
+  static T* Pack(const DeviceAddress<T>* addr) { return addr->base(); }
+};
+
+template <typename T>
+struct KernelArgPacking<const DeviceAddress<T>*> {
+  using Type = const T*;
+  static T* Pack(const DeviceAddress<T>* addr) { return addr->base(); }
+};
+
+//===----------------------------------------------------------------------===//
 // Kernel arguments packed array
 //===----------------------------------------------------------------------===//
 
 // A virtual base class for passing kernel arguments packed into a storage so
-// that we have stable addresses for all arguments. This is a low level API for
-// passing arguments in a platform-specific way that relies on the knowledge of
-// the ABI of the underlying platform.
+// that we have stable addresses for all arguments. This is a low level API
+// for passing arguments in a platform-specific way that relies on the
+// knowledge of the ABI of the underlying platform.
 //
-// For example `cuLaunchKernel` accepts arguments as `void** kernelParams`, and
-// packed array base guarantees that `argument_addresses` are compatible with
-// the CUDA APIs.
+// For example `cuLaunchKernel` accepts arguments as `void** kernelParams`,
+// and packed array base guarantees that `argument_addresses` are compatible
+// with the CUDA APIs.
 //
 // See: https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXEC.html
 class KernelArgsPackedArrayBase : public KernelArgs {
@@ -194,8 +302,8 @@ struct EmptyArgs {
   static constexpr size_t kSize = 0;
 };
 
-// A storage for POD generic arguments that are smaller than `size` and require
-// alignment smaller or equal to `alignment`.
+// A storage for POD generic arguments that are smaller than `size` and
+// require alignment smaller or equal to `alignment`.
 template <size_t capacity, size_t size = 8,
           size_t alignment = alignof(std::max_align_t)>
 class PodArgs {
@@ -205,13 +313,17 @@ class PodArgs {
  protected:
   template <typename T>
   const std::byte* add_pod_argument(const T& arg) {
-    static_assert(std::is_trivially_copyable_v<T> &&
-                      sizeof(T) <= size & alignof(T) <= alignment,
+    using Packed = typename KernelArgPacking<T>::Type;
+
+    static_assert(std::is_trivially_copyable_v<Packed> &&
+                      sizeof(T) <= size & alignof(Packed) <= alignment,
                   "Type is not compatible with POD arguments storage");
 
     assert(num_args_ < capacity && "pod args overflow");
     std::byte* arg_storage = args_storage_[num_args_++].storage;
-    std::memcpy(arg_storage, &arg, sizeof(T));
+
+    Packed packed = KernelArgPacking<T>::Pack(arg);
+    std::memcpy(arg_storage, &packed, sizeof(Packed));
 
     return arg_storage;
   }
@@ -226,7 +338,7 @@ class PodArgs {
 };
 
 template <size_t capacity, typename T>
-using PodArgsFor = PodArgs<capacity, sizeof(T), alignof(T)>;
+using PodArgsFor = PodArgs<capacity, sizeof(T), alignof(T)>;  // NOLINT
 
 template <typename ArgsStorage>
 static constexpr bool is_pod_args_v = false;
@@ -245,8 +357,8 @@ class KernelArgsPackedArray : public KernelArgsPackedArrayBase, ArgsStorage {
  public:
   KernelArgsPackedArray() = default;
 
-  // KernelArgsPackedArray is not copyable or movable because argument addresses
-  // point to inline storage that can't be moved.
+  // KernelArgsPackedArray is not copyable or movable because argument
+  // addresses point to inline storage that can't be moved.
   KernelArgsPackedArray(const KernelArgsPackedArray&) = delete;
   KernelArgsPackedArray& operator=(const KernelArgsPackedArray&) = delete;
 
@@ -308,25 +420,21 @@ class KernelArgsPackedArray : public KernelArgsPackedArrayBase, ArgsStorage {
   size_t number_of_argument_addresses_ = 0;
 };
 
-using KernelArgument = std::variant<DeviceAddressBase, TensorMap, int64_t>;
-
 namespace internal {
 template <int n>
 std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(
-    absl::Span<const DeviceAddressBase> args, uint32_t shared_mem_bytes) {
+    absl::Span<const DeviceAddressBase> args, uint32_t shmem_bytes) {
   auto packed = std::make_unique<KernelArgsPackedArray<n, EmptyArgs>>();
   for (const DeviceAddressBase& buf : args) {
     packed->add_device_memory_argument(buf);
   }
-  if (shared_mem_bytes > 0) {
-    packed->add_shared_bytes(shared_mem_bytes);
-  }
+  packed->add_shared_bytes(shmem_bytes);
   return packed;
 }
 
 template <int n, typename ArgsStorage>
 std::unique_ptr<KernelArgsPackedArray<n, ArgsStorage>> PackKernelArgsImpl(
-    absl::Span<const KernelArgument> args, uint32_t shared_mem_bytes) {
+    absl::Span<const KernelArg> args, uint32_t shmem_bytes) {
   auto packed = std::make_unique<KernelArgsPackedArray<n, ArgsStorage>>();
   for (const auto& arg : args) {
     std::visit(
@@ -347,13 +455,13 @@ std::unique_ptr<KernelArgsPackedArray<n, ArgsStorage>> PackKernelArgsImpl(
         },
         arg);
   }
-  packed->add_shared_bytes(shared_mem_bytes);
+  packed->add_shared_bytes(shmem_bytes);
   return packed;
 }
 
 template <int n>
 std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(
-    absl::Span<const KernelArgument> args, uint32_t shmem_bytes) {
+    absl::Span<const KernelArg> args, uint32_t shmem_bytes) {
   // Find what kind of arguments passed to the kernel to decide what size and
   // alignment we need for pod arguments.
   bool has_tensormap = false, has_i64 = false;
@@ -420,77 +528,12 @@ PackKernelArgs(absl::Span<const ArgType> args, const KernelMetadata& metadata) {
 }
 
 //===----------------------------------------------------------------------===//
-// Kernel arguments packing for statically know argument types
+// Kernel arguments tuple for statically know argument types
 //===----------------------------------------------------------------------===//
 
-// KernelArgPacking template specializations define how arguments are passed to
-// the device kernel:
-//
-//   (1) We always strip references and store a copy of an argument.
-//   (2) We do not support pointer arguments, as we should not be passing a
-//       pointers to host memory to device kernels.
-//   (3) DeviceAddress passed as an opaque `void*` pointer.
-//   (4) We have a special case for passing pointers to DeviceAddress where we
-//       also pass it as an opaque device pointer.
-//
-// Users can override default kernel argument packing by specializing this
-// template, i.e. it allows packing custom user-defined types according to the
-// ABI requirement of a device kernel.
-template <typename T>
-struct KernelArgPacking {
-  static_assert(!std::is_pointer_v<T>, "cannot pass raw pointer to the device");
-
-  // A type of the argument passed to the device kernel.
-  using Type = T;
-
-  // Packs an argument as the device argument.
-  static Type Pack(const T& arg) { return arg; }
-};
-
-// A collection of DeviceAddress(Base) specializations: device address is always
-// passed as a simple pointer. We assume that the device kernel itself knows the
-// addressable range (always true for kernels compiled by XLA), or size is
-// passed as a separate argument (for custom kernels).
-
-template <>
-struct KernelArgPacking<DeviceAddressBase> {
-  using Type = void*;
-  void* Pack(const DeviceAddressBase& addr) { return addr.opaque(); }
-};
-
-template <>
-struct KernelArgPacking<DeviceAddressBase*> {
-  using Type = void*;
-  void* Pack(const DeviceAddressBase* addr) { return addr->opaque(); }
-};
-
-template <>
-struct KernelArgPacking<const DeviceAddressBase*> {
-  using Type = const void*;
-  void* Pack(const DeviceAddressBase* addr) { return addr->opaque(); }
-};
-
-template <typename T>
-struct KernelArgPacking<DeviceAddress<T>> {
-  using Type = T*;
-  T* Pack(const DeviceAddress<T> addr) { return addr.base(); }
-};
-
-template <typename T>
-struct KernelArgPacking<DeviceAddress<T>*> {
-  using Type = T*;
-  T* Pack(const DeviceAddress<T>* addr) { return addr->base(); }
-};
-
-template <typename T>
-struct KernelArgPacking<const DeviceAddress<T>*> {
-  using Type = const T*;
-  T* Pack(const DeviceAddress<T>* addr) { return addr->base(); }
-};
-
-// KernelArgsPackedTuple is optimized for packing arguments when their types are
-// known at compile time, and somewhat similar to `std::tuple` but with a few
-// special rules for passing device memory arguments.
+// KernelArgsPackedTuple is optimized for packing arguments when their types
+// are known at compile time, and somewhat similar to `std::tuple` but with a
+// few special rules for passing device memory arguments.
 template <typename... Args>
 class KernelArgsPackedTuple : public KernelArgsPackedArrayBase {
  public:
@@ -506,8 +549,8 @@ class KernelArgsPackedTuple : public KernelArgsPackedArrayBase {
     InitializeArgumentAddresses(std::make_index_sequence<kSize>{});
   }
 
-  // KernelArgsPackedTuple is not copyable or movable because argument addresses
-  // point to inline storage that can't be moved.
+  // KernelArgsPackedTuple is not copyable or movable because argument
+  // addresses point to inline storage that can't be moved.
   KernelArgsPackedTuple(const KernelArgsPackedTuple&) = delete;
   KernelArgsPackedTuple& operator=(const KernelArgsPackedTuple&) = delete;
 

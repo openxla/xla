@@ -996,7 +996,7 @@ absl::Status LaunchCmd::Record(const Thunk::ExecuteParams& execute_params,
         "Kernel not loaded on a command buffer executor: ", kernel_name_));
   }
 
-  absl::InlinedVector<se::KernelArgument, 4> kernel_args_variant;
+  absl::InlinedVector<se::KernelArg, 4> kernel_args_variant;
   stream_executor::gpu::TmaMetadata tma_metadata =
       tma_metadata_.value_or(se::gpu::TmaMetadata{});
   for (int idx = 0; idx < args_.size(); ++idx) {
