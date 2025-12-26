@@ -209,3 +209,22 @@ xla_cc_binary(
         "@tsl//tsl/platform:platform_port",
     ],
 )
+
+
+
+cc_binary(
+    name = "print_matches",
+    srcs = ["print_matches.cc"],
+    deps = [
+        ":hlo_gumgraph_diff",
+        ":hlo_diff",
+        "//xla:debug_options_flags",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_module_util",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/flags:parse",
+        "@com_google_absl//absl/log",
+    ],
+)
+

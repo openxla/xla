@@ -1217,3 +1217,72 @@ xla_cc_binary(
         "@tsl//tsl/platform:platform_port",
     ],
 )
+
+
+xla_cc_binary(
+    name = "hlo_snapshot_to_literals",
+    srcs = ["hlo_snapshot_to_literals.cc"],
+    deps = [
+        ":run_hlo_module_proto_cc",     # 里面有 RunHloModuleLiterals
+        "//xla/service:hlo_proto_cc",   # 里面有 HloSnapshot / HloProto
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/flags:parse",
+        "@com_google_absl//absl/log",
+    ],
+)
+
+
+xla_cc_binary(
+    name = "hlo_to_html",
+    srcs = ["hlo_to_html.cc"],
+    deps = [
+        "//xla:debug_options_flags",
+        "//xla/service:hlo_graph_dumper",
+        "//xla/tools:hlo_module_loader",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/flags:parse",
+        "@com_google_absl//absl/log",
+    ],
+)
+
+xla_cc_binary(
+    name = "hlo_to_proto",
+    srcs = ["hlo_to_proto.cc"],
+    deps = [
+        "//xla:debug_options_flags",  # 可选，不用也行
+        "//xla/tools:hlo_module_loader",
+        "//xla/service:hlo_proto_cc",    # 里边通常导出 HloModuleProto / hlo.pb.h（名字可能随仓库略有差异）
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/flags:parse",
+        "@com_google_absl//absl/log",
+        "@com_google_protobuf//:protobuf",  # 为 json util/serialize 提供依赖
+    ],
+)
+
+
+xla_cc_binary(
+    name = "hlo_print_test",
+    srcs = ["hlo_print_test.cc"],
+    deps = [
+        "//xla:debug_options_flags",  # 可选，不用也行
+        "//xla/tools:hlo_module_loader",
+        "//xla/service:hlo_proto_cc",    # 里边通常导出 HloModuleProto / hlo.pb.h（名字可能随仓库略有差异）
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/flags:parse",
+        "@com_google_absl//absl/log",
+        "@com_google_protobuf//:protobuf",  # 为 json util/serialize 提供依赖
+    ],
+)

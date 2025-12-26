@@ -229,6 +229,7 @@ void RealMain(const Options& opts) {
 int main(int argc, char** argv) {
   xla::hlo_diff::Options opts;
   bool need_help = false;
+  // opts.diff_options.match_options.debug_mode = true;  // 打开 matcher 详细日志
   const std::vector<tsl::Flag> flag_list = {
       tsl::Flag("first_hlo_snapshot", &opts.first.hlo_snapshot,
                 "first HloSnapshot proto to compare"),

@@ -63,6 +63,9 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/path.h"
 
+#include "xla/service/hlo_proto_util.h"
+#include "xla/service/dump.h"
+
 namespace xla {
 namespace {
 enum class ModuleResult {
@@ -257,6 +260,13 @@ absl::Status RunAndCompareInternal(
     }
   }
 
+
+  DebugOptions debug_options = test_module->config().debug_options();
+  std::unique_ptr<HloProto> test_hlo_proto;
+  if (debug_options.xla_dump_hlo_snapshots()) {
+    test_hlo_proto = std::make_unique<HloProto>(MakeHloProto(*test_module));
+  }
+
   std::unique_ptr<HloModule> reference_module;
   if (reference_runner != nullptr) {
     // If reference platform is the same as test platform, we shouldn't
@@ -283,6 +293,19 @@ absl::Status RunAndCompareInternal(
   if (test_run_result != nullptr) {
     *test_run_result = ModuleResult::kRan;
   }
+  
+  if (test_hlo_proto != nullptr &&
+      debug_options.xla_dump_hlo_snapshots()) {
+    HloSnapshot snapshot;
+    snapshot.set_execution_platform(test_runner->Name());
+    snapshot.mutable_hlo()->Swap(test_hlo_proto.get());
+    for (const auto& arg : args) {
+      *snapshot.add_arguments() = arg.ToProto();
+    }
+    *snapshot.mutable_result() = test_result.ToProto();
+    DumpHloSnapshotIfEnabled(snapshot, debug_options);
+  }
+
   if (options.print_literals) {
     std::cout << "\n** Result with test runner " << test_runner->Name()
               << " **\n"

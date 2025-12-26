@@ -855,6 +855,11 @@ static const HloConstantInstruction* TryGetFusionParameterConstant(
     return nullptr;
   }
   const HloInstruction* fusion = instr->parent()->FusionInstruction();
+  // Be defensive: if the fused parameter index is out of range, skip it instead
+  // of dereferencing and crashing.
+  if (instr->parameter_number() >= fusion->operand_count()) {
+    return nullptr;
+  }
   const HloInstruction* operand = fusion->operand(instr->parameter_number());
   return DynCast<HloConstantInstruction>(operand);
 }
