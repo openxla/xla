@@ -33,6 +33,17 @@ namespace stream_executor {
 // Struct for testing custom kernel arguments with C++ structs.
 struct Data {};
 
+// Struct for testing custom kernel argument packing.
+struct CustomData {
+  int32_t value;
+};
+
+template <>
+struct KernelArgPacking<CustomData> {
+  using Type = int32_t;
+  static int32_t Pack(CustomData data) { return data.value + 1; }
+};
+
 // Compile time checks to make sure that we correctly infer the storage type
 // from packed arguments.
 template <typename... Args>
@@ -48,22 +59,25 @@ static_assert(std::is_same_v<ArgsStorage<Data, const Data, Data&, const Data>,
                              std::tuple<Data, Data, Data, Data>>);
 
 // We pass DeviceAddressBase as an opaque pointer.
-static_assert(std::is_same_v<
-              ArgsStorage<DeviceAddressBase, const DeviceAddressBase,
-                          DeviceAddressBase&, const DeviceAddressBase&>,
-              std::tuple<const void*, const void*, const void*, const void*>>);
+static_assert(
+    std::is_same_v<ArgsStorage<DeviceAddressBase, const DeviceAddressBase,
+                               DeviceAddressBase&, const DeviceAddressBase&>,
+                   std::tuple<void*, void*, void*, void*>>);
 
 // We pass DeviceAddress<T> as an opaque pointer.
 static_assert(std::is_same_v<
               ArgsStorage<DeviceAddress<float>, const DeviceAddress<float>,
                           DeviceAddress<float>&, const DeviceAddress<float>&>,
-              std::tuple<const void*, const void*, const void*, const void*>>);
+              std::tuple<float*, float*, float*, float*>>);
 
 // We accept pointers to DeviceAddressBase and extract opaque pointers from
 // them.
 static_assert(
     std::is_same_v<ArgsStorage<DeviceAddressBase*, const DeviceAddressBase*>,
-                   std::tuple<const void*, const void*>>);
+                   std::tuple<void*, const void*>>);
+
+// We use out template specialization to pack custom struct as int32_t.
+static_assert(std::is_same_v<ArgsStorage<CustomData>, std::tuple<int32_t>>);
 
 TEST(KernelTest, PackDeviceAddressArguments) {
   DeviceAddressBase a(reinterpret_cast<void*>(0x12345678));
@@ -110,6 +124,16 @@ TEST(KernelTest, PackTupleArguments) {
   ASSERT_EQ(i32, 1);
   ASSERT_EQ(f32, 2.0f);
   ASSERT_EQ(f64, 3.0);
+}
+
+TEST(KernelTest, PackTupleWithCutomPacking) {
+  auto args = PackKernelArgs(/*shmem_bytes=*/0, CustomData{42});
+  ASSERT_EQ(args->number_of_arguments(), 1);
+
+  auto packed = args->argument_addresses();
+  int32_t i32 = *reinterpret_cast<const int32_t*>(packed[0]);
+
+  ASSERT_EQ(i32, 43);
 }
 
 TEST(KernelTest, PackArgumentsWithInt64) {

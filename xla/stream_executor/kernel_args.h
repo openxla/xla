@@ -28,7 +28,6 @@ limitations under the License.
 #include <variant>
 
 #include "absl/base/macros.h"
-#include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/overload.h"
 #include "absl/log/check.h"
@@ -55,11 +54,10 @@ class KernelArgs {
 
   enum class Kind {
     // A list of type-erased DeviceAddressBase pointers to on-device memory.
-    // This
-    // type of kernel arguments used only when the kernel has to do its own
-    // custom packing, e.g. wrap all device pointers into a custom
-    // structure, but can't be implemented as a TypedKernel because it has to be
-    // passed around as a generic Kernel.
+    // This type of kernel arguments used only when the kernel has to do its own
+    // custom packing, e.g. wrap all device pointers into a custom structure,
+    // but can't be implemented as a TypedKernel because it has to be passed
+    // around as a generic Kernel.
     kDeviceAddressArray,
 
     // A list of kernel arguments packed into a storage that can be passed
@@ -227,6 +225,9 @@ class PodArgs {
   std::array<Arg, capacity> args_storage_;
 };
 
+template <size_t capacity, typename T>
+using PodArgsFor = PodArgs<capacity, sizeof(T), alignof(T)>;
+
 template <typename ArgsStorage>
 static constexpr bool is_pod_args_v = false;
 
@@ -346,39 +347,31 @@ std::unique_ptr<KernelArgsPackedArray<n, ArgsStorage>> PackKernelArgsImpl(
         },
         arg);
   }
-  if (shared_mem_bytes > 0) {
-    packed->add_shared_bytes(shared_mem_bytes);
-  }
+  packed->add_shared_bytes(shared_mem_bytes);
   return packed;
 }
 
 template <int n>
 std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(
-    absl::Span<const KernelArgument> args, uint32_t shared_mem_bytes) {
-  const int32_t pod_size = [](absl::Span<const KernelArgument> args) {
-    bool has_int = false;
-    for (const auto& arg : args) {
-      if (std::holds_alternative<TensorMap>(arg)) {
-        return 128;
-      }
-      if (std::holds_alternative<int64_t>(arg)) {
-        has_int = true;
-      }
-    }
-    return has_int ? 64 : 0;
-  }(args);
-
-  switch (pod_size) {
-    case 128:
-      return PackKernelArgsImpl<n, PodArgs<n, 128, 64>>(args, shared_mem_bytes);
-    case 64:
-      return PackKernelArgsImpl<n, PodArgs<n, 64, 64>>(args, shared_mem_bytes);
-    case 0:
-      return PackKernelArgsImpl<n, EmptyArgs>(args, shared_mem_bytes);
-    default:
-      ABSL_UNREACHABLE();
+    absl::Span<const KernelArgument> args, uint32_t shmem_bytes) {
+  // Find what kind of arguments passed to the kernel to decide what size and
+  // alignment we need for pod arguments.
+  bool has_tensormap = false, has_i64 = false;
+  for (const auto& arg : args) {
+    has_tensormap |= std::holds_alternative<TensorMap>(arg);
+    has_i64 |= std::holds_alternative<int64_t>(arg);
   }
+
+  if (has_tensormap) {
+    return PackKernelArgsImpl<n, PodArgsFor<n, TensorMap>>(args, shmem_bytes);
+  }
+  if (has_i64) {
+    return PackKernelArgsImpl<n, PodArgsFor<n, int64_t>>(args, shmem_bytes);
+  }
+
+  return PackKernelArgsImpl<n, EmptyArgs>(args, shmem_bytes);
 }
+
 }  // namespace internal
 
 template <typename ArgType>
@@ -430,14 +423,8 @@ PackKernelArgs(absl::Span<const ArgType> args, const KernelMetadata& metadata) {
 // Kernel arguments packing for statically know argument types
 //===----------------------------------------------------------------------===//
 
-// KernelArgsPackedTuple is optimized for packing arguments when their types are
-// known at compile time, and somewhat similar to `std::tuple` but with a few
-// special rules for passing device memory arguments.
-
-namespace internal {
-
-// PackedArgType template specialization defines what storage type we'll be
-// using for each kernel argument type:
+// KernelArgPacking template specializations define how arguments are passed to
+// the device kernel:
 //
 //   (1) We always strip references and store a copy of an argument.
 //   (2) We do not support pointer arguments, as we should not be passing a
@@ -445,78 +432,76 @@ namespace internal {
 //   (3) DeviceAddress passed as an opaque `void*` pointer.
 //   (4) We have a special case for passing pointers to DeviceAddress where we
 //       also pass it as an opaque device pointer.
+//
+// Users can override default kernel argument packing by specializing this
+// template, i.e. it allows packing custom user-defined types according to the
+// ABI requirement of a device kernel.
 template <typename T>
-struct PackedArgType {
+struct KernelArgPacking {
   static_assert(!std::is_pointer_v<T>, "cannot pass raw pointer to the device");
+
+  // A type of the argument passed to the device kernel.
   using Type = T;
+
+  // Packs an argument as the device argument.
+  static Type Pack(const T& arg) { return arg; }
+};
+
+// A collection of DeviceAddress(Base) specializations: device address is always
+// passed as a simple pointer. We assume that the device kernel itself knows the
+// addressable range (always true for kernels compiled by XLA), or size is
+// passed as a separate argument (for custom kernels).
+
+template <>
+struct KernelArgPacking<DeviceAddressBase> {
+  using Type = void*;
+  void* Pack(const DeviceAddressBase& addr) { return addr.opaque(); }
 };
 
 template <>
-struct PackedArgType<DeviceAddressBase> {
+struct KernelArgPacking<DeviceAddressBase*> {
+  using Type = void*;
+  void* Pack(const DeviceAddressBase* addr) { return addr->opaque(); }
+};
+
+template <>
+struct KernelArgPacking<const DeviceAddressBase*> {
   using Type = const void*;
+  void* Pack(const DeviceAddressBase* addr) { return addr->opaque(); }
 };
 
 template <typename T>
-struct PackedArgType<DeviceAddress<T>> {
-  using Type = typename PackedArgType<DeviceAddressBase>::Type;
-};
-
-template <>
-struct PackedArgType<DeviceAddressBase*> {
-  using Type = typename PackedArgType<DeviceAddressBase>::Type;
-};
-
-template <>
-struct PackedArgType<const DeviceAddressBase*> {
-  using Type = typename PackedArgType<DeviceAddressBase>::Type;
+struct KernelArgPacking<DeviceAddress<T>> {
+  using Type = T*;
+  T* Pack(const DeviceAddress<T> addr) { return addr.base(); }
 };
 
 template <typename T>
-struct PackedArgType<DeviceAddress<T>*> {
-  using Type = typename PackedArgType<DeviceAddressBase>::Type;
+struct KernelArgPacking<DeviceAddress<T>*> {
+  using Type = T*;
+  T* Pack(const DeviceAddress<T>* addr) { return addr->base(); }
 };
 
 template <typename T>
-struct PackedArgType<const DeviceAddress<T>*> {
-  using Type = typename PackedArgType<DeviceAddressBase>::Type;
+struct KernelArgPacking<const DeviceAddress<T>*> {
+  using Type = const T*;
+  T* Pack(const DeviceAddress<T>* addr) { return addr->base(); }
 };
 
-// Overload set for packing kernel arguments. This overload set matches
-// supported kernel arguments types defined by `PackedArgType`.
-template <typename T, std::enable_if_t<!std::is_pointer_v<T>>* = nullptr>
-T PackArg(const T& arg) {
-  return arg;
-}
-
-inline const void* PackArg(const DeviceAddressBase& arg) {
-  return arg.opaque();
-}
-inline const void* PackArg(const DeviceAddressBase* arg) {
-  return PackArg(*arg);
-}
-
-template <typename T>
-const void* PackArg(const DeviceAddress<T>& arg) {
-  return arg.opaque();
-}
-
-template <typename T>
-const void* PackArg(const DeviceAddress<T>* arg) {
-  return PackArg(*arg);
-}
-
-}  // namespace internal
-
+// KernelArgsPackedTuple is optimized for packing arguments when their types are
+// known at compile time, and somewhat similar to `std::tuple` but with a few
+// special rules for passing device memory arguments.
 template <typename... Args>
 class KernelArgsPackedTuple : public KernelArgsPackedArrayBase {
  public:
   static constexpr size_t kSize = sizeof...(Args);
 
   using Storage = std::tuple<
-      typename internal::PackedArgType<absl::remove_cvref_t<Args>>::Type...>;
+      typename KernelArgPacking<absl::remove_cvref_t<Args>>::Type...>;
 
   explicit KernelArgsPackedTuple(Args... args, size_t shared_memory_bytes)
-      : storage_(internal::PackArg(std::forward<Args>(args))...),
+      : storage_(KernelArgPacking<absl::remove_cvref_t<Args>>::Pack(
+            std::forward<Args>(args))...),
         shared_memory_bytes_(shared_memory_bytes) {
     InitializeArgumentAddresses(std::make_index_sequence<kSize>{});
   }
