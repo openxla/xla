@@ -735,7 +735,7 @@ absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
       const auto& mem_args =
           stream_executor::Cast<stream_executor::KernelArgsDeviceAddressArray>(
               &args);
-      return packing_spec.BuildArguments(mem_args->device_memory_args(),
+      return packing_spec.BuildArguments(mem_args->device_addr_args(),
                                          args.number_of_shared_bytes());
     });
   }

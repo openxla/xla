@@ -79,7 +79,7 @@ GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
             auto bufs =
                 stream_executor::Cast<
                     stream_executor::KernelArgsDeviceAddressArray>(&args)
-                    ->device_memory_args();
+                    ->device_addr_args();
             auto cast = [](auto m) {
               return reinterpret_cast<int32_t*>(m.opaque());
             };

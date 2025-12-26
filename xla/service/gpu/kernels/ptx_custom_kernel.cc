@@ -38,7 +38,7 @@ KernelArgsPacking(const se::Kernel& kernel, const se::KernelArgs& args) {
   auto* mem_args = se::Cast<se::KernelArgsDeviceAddressArray>(&args);
 
   return se::PackKernelArgs<se::DeviceAddressBase>(
-      mem_args->device_memory_args(), mem_args->number_of_shared_bytes());
+      mem_args->device_addr_args(), mem_args->number_of_shared_bytes());
 }
 
 // Note: Make sure that the kernel_name matches the kernel name in the ptx,
