@@ -29,10 +29,10 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/tsl/lib/math/math_util.h"
 
-#ifdef __AMDGCN_WAVEFRONT_SIZE
-#define WAVEFRONT_SIZE __AMDGCN_WAVEFRONT_SIZE
+#if defined(__GFX9__)
+  #define WAVEFRONT_SIZE 64
 #else
-#define WAVEFRONT_SIZE 64
+  #define WAVEFRONT_SIZE 32
 #endif
 
 namespace stream_executor::rocm {
