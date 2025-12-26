@@ -1,8 +1,8 @@
 # Error code: 1000
 
-**Category:** Program input buffer mismatch
+**Category:** High Bandwidth Memory (HBM) Out of Memory (OOM)
 
-**Type:** Runtime
+**Type:** Compile time
 
 **XLA Backends:** TPU
 
@@ -49,7 +49,7 @@ This error is thrown if the XLA compiler is unable to fit all of the above alloc
     4. **Explore memory-efficient model architectures:** If possible, explore alternative model architectures or layer types that are inherently more memory-efficient.
 
 
-## How can a user fix their program when they do happen?
+## How can a user debug these failures?
 
 * **[Xprof/Tensorboard Memory Viewer](https://openxla.org/xprof/memory_viewer):** Visualizes the compiler's view of HBM usage, showing peak memory allocation and the lifetime of buffers. This is crucial for understanding what consumes HBM at the point of peak utilization. See [XProf documentation on Getting Started](https://openxla.org/xprof#getting_started) and [JAX documentation on XProf (TensorBoard profiling)](https://docs.jax.dev/en/latest/profiling.html#xprof-tensorboard-profiling).
 * **On "Aborting compilation early ..." error:** This occurs when the XLA compiler aborts early in the compilation process if it determines that its mathematically impossible to fit the model, regardless of optimization strategies. If you need to see exactly which tensors or operations are pushing memory over the limit, you can force the compiler to not abort early by setting the flag: `--xla_tpu_impure_oom_fast_exit_threshold=-1`. This will likely result in a standard OOM later in the compilation, but it will generate a detailed failure log describing the memory state.
