@@ -16,6 +16,14 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_CUDA_CUDA_COMPUTE_CAPABILITY_H_
 #define XLA_STREAM_EXECUTOR_CUDA_CUDA_COMPUTE_CAPABILITY_H_
 
+#include <sys/sysmacros.h>  // IWYU pragma: keep
+#include <sys/types.h>      // IWYU pragma: keep
+
+// These macros are defined in <sys/types.h> or <sys/sysmacros.h> on some
+// systems and conflict with the field names below.
+#undef major
+#undef minor
+
 #include <cassert>
 #include <cstdint>
 #include <string>
