@@ -483,7 +483,6 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
     ],
 )
 
