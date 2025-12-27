@@ -35,6 +35,8 @@ limitations under the License.
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_description.pb.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
@@ -240,6 +242,82 @@ TEST_F(CublasLtBackendTest, CompileFp8SwapOperands) {
   absl::StatusOr<std::unique_ptr<Executable>> executable = backend_.Compile(
       *(module->entry_computation()->root_instruction()->operand(0)), *config);
   EXPECT_THAT(executable, absl_testing::IsOk());
+}
+
+const char kCublasLtSiluHlo[] = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = f32[100,100] parameter(0)
+    p1 = f32[100,100] parameter(1)
+    %custom-call.1 = (f32[100,100]{1,0}, s8[4194304]{0}) custom-call(p0, p1),
+      custom_call_target="__cublas$lt$matmul",
+      backend_config={
+        "gemm_backend_config":{
+          "selected_algorithm":"0",
+          "alpha_real":1,
+          "beta":0,
+          "dot_dimension_numbers":{
+            "lhs_contracting_dimensions":["1"],
+            "rhs_contracting_dimensions":["0"],
+            "lhs_batch_dimensions":[],
+            "rhs_batch_dimensions":[]
+          },
+          "alpha_imag":0,
+          "precision_config":{
+            "operand_precision":["DEFAULT","DEFAULT"],
+            "algorithm":"ALG_UNSET"
+          },
+          "epilogue":"SILU",
+          "lhs_stride":"10000",
+          "rhs_stride":"10000",
+          "grad_x":false,
+          "grad_y":false,
+          "damax_output":false
+        }
+      }
+    ROOT %get-tuple-element = f32[100,100]{1,0} get-tuple-element(%custom-call.1), index=0
+  })";
+
+TEST_F(CublasLtBackendTest, SiluEpilogueSupportedOnRocm7) {
+  const auto& device_description = stream_executor_->GetDeviceDescription();
+  const auto& gpu_cc = device_description.gpu_compute_capability();
+  constexpr se::SemanticVersion kMinRocmVersion{7, 0, 0};
+
+  if (!gpu_cc.IsRocm() ||
+      device_description.compile_time_toolkit_version() < kMinRocmVersion) {
+    GTEST_SKIP() << "SiLU epilogue requires ROCm 7.0 or later";
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(kCublasLtSiluHlo));
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          *hlo_module->entry_computation()->root_instruction()->operand(0));
+
+  EXPECT_THAT(configs,
+              absl_testing::IsOkAndHolds(testing::SizeIs(testing::Gt(0))));
+}
+
+TEST_F(CublasLtBackendTest, SiluEpilogueNotSupportedOnNonRocm7) {
+  const auto& device_description = stream_executor_->GetDeviceDescription();
+  const auto& gpu_cc = device_description.gpu_compute_capability();
+  constexpr se::SemanticVersion kMinRocmVersion{7, 0, 0};
+
+  if (gpu_cc.IsRocm() &&
+      device_description.compile_time_toolkit_version() >= kMinRocmVersion) {
+    GTEST_SKIP() << "Test requires CUDA or ROCm < 7.0";
+  }
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(kCublasLtSiluHlo));
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          *hlo_module->entry_computation()->root_instruction()->operand(0));
+
+  EXPECT_THAT(configs, testing::Not(absl_testing::IsOk()));
 }
 
 }  // namespace gpu
