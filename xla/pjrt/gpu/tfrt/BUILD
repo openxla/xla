@@ -37,6 +37,7 @@ cc_library(
     visibility = internal_visibility(["//xla/pjrt/gpu:legacy_gpu_client_users"]),
     deps = [
         ":gpu_event",
+        ":stream_accessor_guard",
         ":tracked_gpu_device_buffer",
         "//xla:debug_options_flags",
         "//xla:executable_run_options",
@@ -61,6 +62,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo:mhlo_passes",
         "//xla/pjrt:abstract_tracked_device_buffer",
+        "//xla/pjrt:async_work_runner",
         "//xla/pjrt:device_event",
         "//xla/pjrt:host_callback",
         "//xla/pjrt:host_memory_allocator",
@@ -92,6 +94,7 @@ cc_library(
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",
+        "//xla/service:compiled_module",
         "//xla/service:compiler",
         "//xla/service:computation_placer_hdr",
         "//xla/service:executable",
@@ -108,6 +111,7 @@ cc_library(
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
+        "//xla/stream_executor:memory_space",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
@@ -139,12 +143,15 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf",
         "@eigen_archive//:eigen3",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:unbounded_work_queue",
         "@tsl//tsl/profiler/lib:connected_traceme",
         "@tsl//tsl/profiler/lib:context_types_hdrs",
         "@tsl//tsl/profiler/lib:traceme",
@@ -171,6 +178,7 @@ xla_test(
     ],
     deps = [
         ":gpu_event",
+        ":stream_accessor_guard",
         ":tfrt_gpu_client",
         ":tracked_gpu_device_buffer",
         "@com_google_googletest//:gtest_main",
@@ -287,6 +295,13 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "stream_accessor_guard",
+    srcs = ["stream_accessor_guard.cc"],
+    hdrs = ["stream_accessor_guard.h"],
+    deps = ["@com_google_absl//absl/log:check"],
+)
+
 xla_cc_test(
     name = "tracked_gpu_device_buffer_test",
     srcs = ["tracked_gpu_device_buffer_test.cc"],
@@ -338,6 +353,7 @@ xla_cc_test(
     ],
     deps = [
         ":gpu_event",
+        ":stream_accessor_guard",
         ":tfrt_gpu_client",
         ":tracked_gpu_device_buffer",
         "//xla:shape_util",
