@@ -83,7 +83,7 @@ TEST(KernelTest, PackDeviceAddressArguments) {
   DeviceAddressBase a(reinterpret_cast<void*>(0x12345678));
   DeviceAddressBase b(reinterpret_cast<void*>(0x87654321));
 
-  auto args = PackKernelArgs<DeviceAddressBase>({a, b}, 0).value();
+  auto args = PackKernelArgs(std::vector<DeviceAddressBase>({a, b}), 0);
   ASSERT_EQ(args->number_of_arguments(), 2);
 
   auto packed = args->argument_addresses();
@@ -95,7 +95,7 @@ TEST(KernelTest, PackDeviceAddressArguments) {
 }
 
 TEST(KernelTest, PackPodArguments) {
-  auto args = std::make_unique<KernelArgsPackedArray<4>>();
+  auto args = std::make_unique<KernelArgsPackedArray>(4);
   args->add_argument(1);
   args->add_argument(2.0f);
   args->add_argument(3.0);
@@ -146,7 +146,7 @@ TEST(KernelTest, PackArgumentsWithInt64) {
   args.emplace_back(somemem);
   args.emplace_back(someint64);
   TF_ASSERT_OK_AND_ASSIGN(auto packed_args_ptr,
-                          PackKernelArgs<KernelArg>(args, KernelMetadata()));
+                          PackKernelArgs(args, KernelMetadata()));
   ASSERT_EQ(packed_args_ptr->number_of_arguments(), 2);
   ASSERT_EQ(packed_args_ptr->number_of_shared_bytes(), 0);
   const auto packed = packed_args_ptr->argument_addresses();
@@ -166,7 +166,7 @@ static void BM_PackDeviceAddressArgs(benchmark::State& state) {
   }
 
   for (auto s : state) {
-    auto packed = PackKernelArgs<DeviceAddressBase>(args, 0);
+    auto packed = PackKernelArgs(args, 0);
     benchmark::DoNotOptimize(packed);
   }
 }
