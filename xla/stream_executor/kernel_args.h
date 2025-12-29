@@ -32,9 +32,7 @@ limitations under the License.
 #include "absl/functional/overload.h"
 #include "absl/log/check.h"
 #include "absl/meta/type_traits.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/kernel_metadata.h"
@@ -90,6 +88,12 @@ class KernelArgs {
 // such type must be a POD data structure (in C++ terms it must satisfy
 // `std::is_trivially_copyable` type trait), which is later passed to the device
 // kernel (and it must match the device ABI).
+//
+// Packed arguments passed by pointer to the underlying device kernel launch
+// API (see `argument_addresses` below), and how exactly the value is passed to
+// the device kernel is platform specific (we assume that bytes are copied into
+// the kernel launch command and sent to the device, and for this reason we
+// require packed type to be trivially copyable).
 //
 // Default argument packing rules:
 //
@@ -290,72 +294,38 @@ using KernelArgsDeviceMemoryArray ABSL_DEPRECATE_AND_INLINE() =
 // Kernel arguments packing for device address and POD args
 //===----------------------------------------------------------------------===//
 
-// KernelArgsPackedArray is optimized for packing DeviceAddressBase pointers
-// and POD arguments (i.e. scalars) when the number and type of arguments are
-// not known at compile time.
-
 namespace internal {
 
-// An empty storage for packing just the device address arguments, that are
-// stored directly in the `KernelArgsPackedArray`.
-struct EmptyArgs {
-  static constexpr size_t kSize = 0;
+// A virtual base class for storing trivially copyable packed arguments.
+struct PackedArgBase {
+  virtual ~PackedArgBase() = default;
+  virtual void* argument_address() = 0;
 };
 
-// A storage for POD generic arguments that are smaller than `size` and
-// require alignment smaller or equal to `alignment`.
-template <size_t capacity, size_t size = 8,
-          size_t alignment = alignof(std::max_align_t)>
-class PodArgs {
- public:
-  static constexpr size_t kSize = size;
-
- protected:
-  template <typename T>
-  const std::byte* add_pod_argument(const T& arg) {
-    using Packed = typename KernelArgPacking<T>::Type;
-
-    static_assert(std::is_trivially_copyable_v<Packed> &&
-                      sizeof(T) <= size & alignof(Packed) <= alignment,
-                  "Type is not compatible with POD arguments storage");
-
-    assert(num_args_ < capacity && "pod args overflow");
-    std::byte* arg_storage = args_storage_[num_args_++].storage;
-
-    Packed packed = KernelArgPacking<T>::Pack(arg);
-    std::memcpy(arg_storage, &packed, sizeof(Packed));
-
-    return arg_storage;
-  }
-
- private:
-  struct Arg {
-    alignas(alignment) std::byte storage[size];
-  };
-
-  size_t num_args_ = 0;
-  std::array<Arg, capacity> args_storage_;
+template <typename T>
+struct PackedArg final : PackedArgBase {
+  explicit PackedArg(T arg) : arg(std::move(arg)) {}
+  void* argument_address() final { return &arg; }
+  T arg;
 };
-
-template <size_t capacity, typename T>
-using PodArgsFor = PodArgs<capacity, sizeof(T), alignof(T)>;  // NOLINT
-
-template <typename ArgsStorage>
-static constexpr bool is_pod_args_v = false;
-
-template <size_t capacity, size_t size, size_t alignment>
-static constexpr bool is_pod_args_v<PodArgs<capacity, size, alignment>> = true;
 
 }  // namespace internal
 
-// An array of arguments for a kernel call.
-//
-// The template parameter `num_args` is the maximum number of arguments which
-// can be stored in the array.
-template <size_t num_args, typename ArgsStorage = internal::PodArgs<num_args>>
-class KernelArgsPackedArray : public KernelArgsPackedArrayBase, ArgsStorage {
+// KernelArgsPackedArray is optimized for packing DeviceAddressBase pointers
+// and POD arguments (i.e. scalars) when the number and type of arguments are
+// not known at compile time. When the kernel signature is fully known at
+// compile time, prefer `KernelArgsPackedTuple` as it requires fewer memory
+// allocations and has lower overheads on a hot path.
+class KernelArgsPackedArray : public KernelArgsPackedArrayBase {
  public:
-  KernelArgsPackedArray() = default;
+  // The `num_args` is the maximum number of device address arguments that can
+  // be stored in the array. Adding more arguments will can lead to UB because
+  // of `device_addr_args_` storage reallocation. We don't reserve space for
+  // packed arguments as we don't know how many of them we'll see.
+  explicit KernelArgsPackedArray(size_t num_args) {
+    device_addr_args_.reserve(num_args);
+    argument_addresses_.reserve(num_args);
+  }
 
   // KernelArgsPackedArray is not copyable or movable because argument
   // addresses point to inline storage that can't be moved.
@@ -365,22 +335,21 @@ class KernelArgsPackedArray : public KernelArgsPackedArrayBase, ArgsStorage {
   // Adds an argument to the list.
   template <typename T>
   void add_argument(const T& arg) {
-    if constexpr (internal::is_pod_args_v<ArgsStorage>) {
-      argument_addresses_[number_of_argument_addresses_++] =
-          ArgsStorage::add_pod_argument(arg);
-    } else {
-      // https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2593r0.html
-      static_assert(sizeof(T) == 0, "Arguments storage is not supported");
-    }
+    using Packed = typename KernelArgPacking<T>::Type;
+    static_assert(std::is_trivially_copyable_v<Packed>,
+                  "Packed type must be trivially copyable");
+    Packed packed = KernelArgPacking<T>::Pack(arg);
+
+    auto& emplaced = packed_args_.emplace_back(
+        std::make_unique<internal::PackedArg<Packed>>(packed));
+    argument_addresses_.push_back(emplaced->argument_address());
   }
 
   // Adds a device address argument to the list.
   void add_argument(const DeviceAddressBase& arg) {
-    const void** ptr =
-        &device_addr_opaque_pointers_[number_of_argument_addresses_];
-    *ptr = arg.opaque();
-    argument_addresses_[number_of_argument_addresses_] = ptr;
-    ++number_of_argument_addresses_;
+    DCHECK_LT(device_addr_args_.size(), device_addr_args_.capacity());
+    auto& emplaced = device_addr_args_.emplace_back(arg.opaque());
+    argument_addresses_.push_back(&emplaced);
   }
 
   // Adds a shared memory argument to the list.
@@ -394,7 +363,7 @@ class KernelArgsPackedArray : public KernelArgsPackedArrayBase, ArgsStorage {
   // Gets the number of arguments added so far, including shared memory
   // arguments.
   size_t number_of_arguments() const final {
-    return number_of_argument_addresses_ + (shared_memory_bytes_ > 0);
+    return argument_addresses_.size() + (shared_memory_bytes_ > 0);
   }
 
   // Gets the total number of shared memory bytes added so far.
@@ -402,29 +371,26 @@ class KernelArgsPackedArray : public KernelArgsPackedArrayBase, ArgsStorage {
 
   // Gets the list of argument addresses.
   absl::Span<const void* const> argument_addresses() const final {
-    return absl::Span<const void* const>(argument_addresses_.data(),
-                                         number_of_argument_addresses_);
+    return argument_addresses_;
   }
 
  private:
-  // A place to store copies of opaque pointers from device memory arguments.
-  std::array<const void*, num_args> device_addr_opaque_pointers_;
+  // A storage for device address arguments added to this array.
+  absl::InlinedVector<void*, 8> device_addr_args_;
 
-  // Addresses for non-shared-memory arguments.
-  std::array<const void*, num_args> argument_addresses_;
+  // A storage for packed POD arguments added to this array.
+  absl::InlinedVector<std::unique_ptr<internal::PackedArgBase>, 8> packed_args_;
+
+  // Pointers to entries `device_addr_args_` or `packed_args_`.
+  absl::InlinedVector<void*, 8> argument_addresses_;
 
   // Shared memory required by a kernel.
   size_t shared_memory_bytes_ = 0;
-
-  // Number of significant entries in argument_addresses_.
-  size_t number_of_argument_addresses_ = 0;
 };
 
-namespace internal {
-template <int n>
-std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(
+inline std::unique_ptr<KernelArgsPackedArray> PackKernelArgs(
     absl::Span<const DeviceAddressBase> args, uint32_t shmem_bytes) {
-  auto packed = std::make_unique<KernelArgsPackedArray<n, EmptyArgs>>();
+  auto packed = std::make_unique<KernelArgsPackedArray>(args.size());
   for (const DeviceAddressBase& buf : args) {
     packed->add_argument(buf);
   }
@@ -432,26 +398,15 @@ std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(
   return packed;
 }
 
-template <int n, typename ArgsStorage>
-std::unique_ptr<KernelArgsPackedArray<n, ArgsStorage>> PackKernelArgsImpl(
+inline std::unique_ptr<KernelArgsPackedArray> PackKernelArgs(
     absl::Span<const KernelArg> args, uint32_t shmem_bytes) {
-  auto packed = std::make_unique<KernelArgsPackedArray<n, ArgsStorage>>();
+  auto packed = std::make_unique<KernelArgsPackedArray>(args.size());
   for (const auto& arg : args) {
     std::visit(
         absl::Overload{
-            [&](const DeviceAddressBase& device_addr) {
-              packed->add_argument(device_addr);
-            },
-            [&](int64_t int_arg) {
-              if constexpr (ArgsStorage::kSize >= sizeof(int64_t)) {
-                packed->add_argument(int_arg);
-              }
-            },
-            [&](const TensorMap& tensor_map) {
-              if constexpr (ArgsStorage::kSize >= sizeof(tensor_map.storage)) {
-                packed->add_argument(tensor_map.storage);
-              }
-            },
+            [&](const DeviceAddressBase& ptr) { packed->add_argument(ptr); },
+            [&](int64_t i64) { packed->add_argument(i64); },
+            [&](const TensorMap& m) { packed->add_argument(m.storage); },
         },
         arg);
   }
@@ -459,71 +414,13 @@ std::unique_ptr<KernelArgsPackedArray<n, ArgsStorage>> PackKernelArgsImpl(
   return packed;
 }
 
-template <int n>
-std::unique_ptr<KernelArgsPackedArrayBase> PackKernelArgs(
-    absl::Span<const KernelArg> args, uint32_t shmem_bytes) {
-  // Find what kind of arguments passed to the kernel to decide what size and
-  // alignment we need for pod arguments.
-  bool has_tensormap = false, has_i64 = false;
-  for (const auto& arg : args) {
-    has_tensormap |= std::holds_alternative<TensorMap>(arg);
-    has_i64 |= std::holds_alternative<int64_t>(arg);
-  }
-
-  if (has_tensormap) {
-    return PackKernelArgsImpl<n, PodArgsFor<n, TensorMap>>(args, shmem_bytes);
-  }
-  if (has_i64) {
-    return PackKernelArgsImpl<n, PodArgsFor<n, int64_t>>(args, shmem_bytes);
-  }
-
-  return PackKernelArgsImpl<n, EmptyArgs>(args, shmem_bytes);
+inline absl::StatusOr<std::unique_ptr<KernelArgsPackedArray>> PackKernelArgs(
+    absl::Span<const DeviceAddressBase> args, const KernelMetadata& metadata) {
+  return PackKernelArgs(args, metadata.shared_memory_bytes().value_or(0));
 }
 
-}  // namespace internal
-
-template <typename ArgType>
-inline absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
-PackKernelArgs(absl::Span<const ArgType> args, uint32_t shared_mem_bytes) {
-  static constexpr int kKernelArgsLimit = 1024;
-
-  if (args.size() > kKernelArgsLimit) {
-    return absl::InvalidArgumentError(absl::StrCat(
-        "Can't pack device address arguments array of size ", args.size(),
-        " which is larger than the maximum supported size of ",
-        kKernelArgsLimit));
-  }
-
-  // Specialize kernel arguments array for small sizes to allocate a smaller
-  // chunk of memory and hopefully hit a small allocations cache.
-  if (args.size() <= 4) {
-    return internal::PackKernelArgs<4>(args, shared_mem_bytes);
-  }
-  if (args.size() <= 8) {
-    return internal::PackKernelArgs<8>(args, shared_mem_bytes);
-  }
-  if (args.size() <= 16) {
-    return internal::PackKernelArgs<16>(args, shared_mem_bytes);
-  }
-  if (args.size() <= 32) {
-    return internal::PackKernelArgs<32>(args, shared_mem_bytes);
-  }
-  if (args.size() <= 64) {
-    return internal::PackKernelArgs<64>(args, shared_mem_bytes);
-  }
-  if (args.size() <= 256) {
-    return internal::PackKernelArgs<256>(args, shared_mem_bytes);
-  }
-  if (args.size() <= 512) {
-    return internal::PackKernelArgs<512>(args, shared_mem_bytes);
-  }
-
-  return internal::PackKernelArgs<kKernelArgsLimit>(args, shared_mem_bytes);
-}
-
-template <typename ArgType>
-inline absl::StatusOr<std::unique_ptr<KernelArgsPackedArrayBase>>
-PackKernelArgs(absl::Span<const ArgType> args, const KernelMetadata& metadata) {
+inline absl::StatusOr<std::unique_ptr<KernelArgsPackedArray>> PackKernelArgs(
+    absl::Span<const KernelArg> args, const KernelMetadata& metadata) {
   return PackKernelArgs(args, metadata.shared_memory_bytes().value_or(0));
 }
 
@@ -539,8 +436,13 @@ class KernelArgsPackedTuple : public KernelArgsPackedArrayBase {
  public:
   static constexpr size_t kSize = sizeof...(Args);
 
-  using Storage = std::tuple<
-      typename KernelArgPacking<absl::remove_cvref_t<Args>>::Type...>;
+  template <typename Arg>
+  using Packed = typename KernelArgPacking<absl::remove_cvref_t<Arg>>::Type;
+  using Storage = std::tuple<Packed<Args>...>;
+
+  static_assert(
+      std::conjunction<std::is_trivially_copyable<Packed<Args>>...>::value,
+      "Packed types must be trivially copyable");
 
   explicit KernelArgsPackedTuple(Args... args, size_t shared_memory_bytes)
       : storage_(KernelArgPacking<absl::remove_cvref_t<Args>>::Pack(

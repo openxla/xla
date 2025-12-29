@@ -1020,10 +1020,7 @@ absl::Status LaunchCmd::Record(const Thunk::ExecuteParams& execute_params,
     }
   }
 
-  TF_ASSIGN_OR_RETURN(
-      auto kernel_args,
-      se::PackKernelArgs(absl::MakeConstSpan(kernel_args_variant),
-                         shmem_bytes_));
+  auto kernel_args = se::PackKernelArgs(kernel_args_variant, shmem_bytes_);
 
   return HandleCmdCreateOrUpdate(
       record_params,
