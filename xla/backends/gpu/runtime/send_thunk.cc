@@ -222,6 +222,13 @@ absl::StatusOr<bool> SendThunk::RunCollective(const ExecuteParams& params,
     } else {
       VLOG(3) << "[" << device_ordinal << "] Skipping Send";
     }
+  } else {
+    // If there is no target_id, i.e. no receiver for this sender, do self-copy
+    VLOG(3) << absl::StreamFormat("[%d] %s : Send: Doing self-copy",
+                                  device_ordinal, device_string);
+    // We use a self-copy to ensure the Command Buffer/CUDA Graph has a valid
+    // node to capture.
+    RETURN_IF_ERROR(stream.MemcpyD2D(&src_addr, src_addr, src_addr.size()));
   }
 
   return false;
