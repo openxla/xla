@@ -28,7 +28,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/sycl/oneapi_compute_capability.pb.h"
 
-namespace stream_executor::sycl {
+namespace stream_executor {
 
 #define EMIT_COMPUTE_CAPABILITY_FOR(HW)                    \
   static OneAPIComputeCapability HW() {                    \
@@ -99,6 +99,6 @@ class OneAPIComputeCapability {
 
 #undef EMIT_COMPUTE_CAPABILITY_FOR
 
-}  // namespace stream_executor::sycl
+}  // namespace stream_executor
 
 #endif  // XLA_STREAM_EXECUTOR_SYCL_ONEAPI_COMPUTE_CAPABILITY_H_

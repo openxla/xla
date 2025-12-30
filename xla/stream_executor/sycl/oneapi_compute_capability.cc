@@ -27,7 +27,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/sycl/oneapi_compute_capability.pb.h"
 
-namespace stream_executor::sycl {
+namespace stream_executor {
 
 OneAPIComputeCapabilityProto OneAPIComputeCapability::ToProto() const {
   OneAPIComputeCapabilityProto proto;
@@ -75,4 +75,4 @@ OneAPIComputeCapability OneAPIComputeCapability::FromProto(
   return OneAPIComputeCapability{proto.architecture()};
 }
 
-}  // namespace stream_executor::sycl
+}  // namespace stream_executor

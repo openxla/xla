@@ -36,8 +36,6 @@ limitations under the License.
 
 namespace stream_executor {
 
-using sycl::OneAPIComputeCapability;
-
 class GpuComputeCapability {
  public:
   GpuComputeCapability() = default;
