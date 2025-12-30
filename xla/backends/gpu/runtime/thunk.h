@@ -364,6 +364,27 @@ class Thunk {
 
     mutable CommandBufferParams* record_params = nullptr;
 
+    // RAII helper to temporarily change record_params and automatically
+    // restore it when the scope exits.
+    class ScopedCommandBufferParams {
+     public:
+      ScopedCommandBufferParams(const ExecuteParams& params,
+                                CommandBufferParams* new_record_params)
+          : params_(params), original_(params.record_params) {
+        params_.record_params = new_record_params;
+      }
+      ~ScopedCommandBufferParams() { params_.record_params = original_; }
+
+      // Non-copyable, non-movable
+      ScopedCommandBufferParams(const ScopedCommandBufferParams&) = delete;
+      ScopedCommandBufferParams& operator=(const ScopedCommandBufferParams&) =
+          delete;
+
+     private:
+      const ExecuteParams& params_;
+      CommandBufferParams* original_;
+    };
+
    private:
     friend class CommandBufferThunk;
 

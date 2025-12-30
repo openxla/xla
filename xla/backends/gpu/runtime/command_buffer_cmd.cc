@@ -159,7 +159,6 @@ static se::CommandBuffer::CreateCommands CreateCommands(
   return [=](se::CommandBuffer* command_buffer,
              absl::Span<const se::CommandBuffer::Command* const> dependencies)
              -> absl::StatusOr<std::vector<const se::CommandBuffer::Command*>> {
-    CommandBufferParams* record_params = execute_params->record_params;
     CommandBufferParams nest_record_params = *execute_params->record_params;
     nest_record_params.command_buffer = command_buffer;
     nest_record_params.external_dependencies.assign(dependencies.begin(),
@@ -169,9 +168,10 @@ static se::CommandBuffer::CreateCommands CreateCommands(
     nest_record_params.is_finalize = false;
     // Set the executor for dependency resolution within this executor.
     nest_record_params.executor = commands;
-    execute_params->record_params = &nest_record_params;
+    // Automatically restores original record_params when scope exits.
+    Thunk::ExecuteParams::ScopedCommandBufferParams scoped(*execute_params,
+                                                    &nest_record_params);
     TF_RETURN_IF_ERROR(commands->Record(*execute_params));
-    execute_params->record_params = record_params;
     return commands->SinkCommands(nest_record_params);
   };
 }
@@ -192,17 +192,17 @@ static se::CommandBuffer::UpdateCommands UpdateCommands(
     const CommandBufferCmdExecutor* commands,
     const Thunk::ExecuteParams* execute_params) {
   return [=](se::CommandBuffer* command_buffer) -> absl::Status {
-    CommandBufferParams* record_params = execute_params->record_params;
-    CommandBufferParams nest_record_params = *record_params;
+    CommandBufferParams nest_record_params = *execute_params->record_params;
     nest_record_params.command_buffer = command_buffer;
     // Don't finalize from within UpdateCommands callbacks - the parent
     // (UpdateWhile/UpdateCase) handles the nested command buffer lifecycle.
     nest_record_params.is_finalize = false;
     // Set the executor for dependency resolution within this executor.
     nest_record_params.executor = commands;
-    execute_params->record_params = &nest_record_params;
+    // Automatically restores original record_params when scope exits.
+    Thunk::ExecuteParams::ScopedCommandBufferParams scoped(*execute_params,
+                                                    &nest_record_params);
     TF_RETURN_IF_ERROR(commands->Record(*execute_params));
-    execute_params->record_params = record_params;
     return absl::OkStatus();
   };
 }
@@ -819,9 +819,9 @@ absl::Status ChildCmd::Record(const Thunk::ExecuteParams& execute_params) {
   auto record_fn = [&](se::CommandBuffer* command_buffer) -> absl::Status {
     CommandBufferParams child_record_params = *record_params;
     child_record_params.command_buffer = command_buffer;
-    execute_params.record_params = &child_record_params;
+    Thunk::ExecuteParams::ScopedCommandBufferParams scoped(execute_params,
+                                                    &child_record_params);
     TF_RETURN_IF_ERROR(child_commands_.Record(execute_params));
-    execute_params.record_params = record_params;
     return absl::OkStatus();
   };
   return HandleCmdCreateOrUpdate(
@@ -971,7 +971,8 @@ absl::Status WhileCmd::Record(const Thunk::ExecuteParams& execute_params) {
       CommandBufferParams unroll_record_params = *record_params;
       unroll_record_params.command_buffer = child_command_buffer;
       unroll_record_params.external_dependencies = {};
-      execute_params.record_params = &unroll_record_params;
+      Thunk::ExecuteParams::ScopedCommandBufferParams scoped(execute_params,
+                                                      &unroll_record_params);
       for (int64_t i = 0; i < trip_count_.value(); ++i) {
         unroll_record_params.unroll_iteration = i;
         unroll_record_params.is_finalize = false;
@@ -983,7 +984,6 @@ absl::Status WhileCmd::Record(const Thunk::ExecuteParams& execute_params) {
         unroll_record_params.external_dependencies =
             body_commands_.SinkCommands(unroll_record_params);
       }
-      execute_params.record_params = record_params;
       return absl::OkStatus();
     };
     return HandleCmdCreateOrUpdate(
@@ -2115,7 +2115,8 @@ absl::Status DynamicSliceFusionCmd::Record(
       .executor = &embedded_commands_,
       .external_dependencies = {},
   };
-  new_params.record_params = &nested_record_params;
+  Thunk::ExecuteParams::ScopedCommandBufferParams scoped(new_params,
+                                                  &nested_record_params);
   TF_RETURN_IF_ERROR(embedded_commands_.Record(new_params));
 
   // For command buffer instantiation ran by CommandBufferThunk::Initialize, we
