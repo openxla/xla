@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
+#include "xla/backends/gpu/runtime/command_buffer_params.h"
 #include "xla/backends/gpu/runtime/print_buffer_contents.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -243,10 +244,28 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
     PrintBufferContents(stream, kernel_args);
   }
 
-  return ExecuteKernelOnStream(
-      *kernel,
-      absl::Span<se::KernelArgument>(kernel_args.data(), kernel_args.size()),
-      launch_dimensions_, cluster_dim_, stream);
+  if (params.record_params) {
+    // Record the kernel into the command buffer.
+    CommandBufferParams* record_params = params.record_params;
+    return HandleCmdCreateOrUpdate(
+        *record_params,
+        [&] {
+          return record_params->command_buffer->CreateLaunch(
+              dims_.thread_counts_per_block(), dims_.block_counts(), *kernel,
+              *kernel_args, CommandBufferDependencies(*record_params),
+              command_buffer_priority());
+        },
+        [&](const se::CommandBuffer::Command* command) {
+          return record_params->command_buffer->UpdateLaunch(
+              command, dims_.thread_counts_per_block(), dims_.block_counts(),
+              *kernel, *kernel_args);
+        });
+  } else {
+    return ExecuteKernelOnStream(
+        *kernel,
+        absl::Span<se::KernelArgument>(kernel_args.data(), kernel_args.size()),
+        launch_dimensions_, cluster_dim_, stream);
+  }
 }
 
 Thunk::BufferUses KernelThunk::buffer_uses() const {
