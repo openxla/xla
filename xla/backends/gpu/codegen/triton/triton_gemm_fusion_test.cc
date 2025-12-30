@@ -395,8 +395,11 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 
   std::vector<std::string> paths;
-  TF_EXPECT_OK(tsl::Env::Default()->GetMatchingPaths(
-      tsl::io::JoinPath(output_directory, "*.triton-passes.log"), &paths));
+  EXPECT_OK(tsl::Env::Default()->GetMatchingPaths(
+      tsl::io::JoinPath(output_directory, "*.xtile-to-triton.txt"), &paths));
+  EXPECT_EQ(paths.size(), 1);
+  EXPECT_OK(tsl::Env::Default()->GetMatchingPaths(
+      tsl::io::JoinPath(output_directory, "*.triton-to-llvm.txt"), &paths));
   EXPECT_EQ(paths.size(), 1);
 }
 
