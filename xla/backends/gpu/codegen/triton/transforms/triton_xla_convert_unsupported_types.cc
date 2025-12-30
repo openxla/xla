@@ -19,6 +19,8 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
@@ -54,6 +56,29 @@ struct GenericOpConversionPattern final : public OpConversionPattern<OpType> {
   }
 };
 
+template <>
+LogicalResult
+GenericOpConversionPattern<::xla::xtile::ExtractTileOp>::matchAndRewrite(
+    ::xla::xtile::ExtractTileOp op,
+    ::xla::xtile::ExtractTileOp::Adaptor adaptor,
+    ConversionPatternRewriter& rewriter) const {
+  ::xla::xtile::ExtractTileOp replacement =
+      mlir::dyn_cast<::xla::xtile::ExtractTileOp>(rewriter.clone(*op));
+  if (op.getResult().getType().getElementType() ==
+      Float4E2M1FNType::get(op.getResult().getType().getContext())) {
+    auto full_tile_shape = op.getFullTileShape().vec();
+    full_tile_shape[full_tile_shape.size() - 1] = full_tile_shape.back() / 2;
+    replacement.setFullTileShape(full_tile_shape);
+  }
+  replacement->setOperands(adaptor.getOperands());
+  const TypeConverter* converter = this->getTypeConverter();
+  for (auto result : replacement->getResults()) {
+    result.setType(converter->convertType(result.getType()));
+  }
+  rewriter.replaceOp(op, replacement);
+  return success();
+}
+
 class TritonXLAConvertUnsupportedTypesPass
     : public impl::TritonXLAConvertUnsupportedTypesPassBase<
           TritonXLAConvertUnsupportedTypesPass> {
@@ -68,7 +93,16 @@ class TritonXLAConvertUnsupportedTypesPass
       return IntegerType::get(type.getContext(), 8);
     });
     converter.addConversion([&](ShapedType type) {
-      return type.clone(converter.convertType(type.getElementType()));
+      if (type.getElementType() == Float4E2M1FNType::get(type.getContext())) {
+        auto shape = type.getShape().vec();
+        shape.back() = shape.back() / 2;
+        auto new_type =
+            type.clone(shape, IntegerType::get(type.getContext(), 8));
+        return new_type;
+      }
+
+      auto new_type = type.clone(converter.convertType(type.getElementType()));
+      return new_type;
     });
 
     converter.addConversion([&](triton::PointerType type) {
@@ -100,6 +134,7 @@ class TritonXLAConvertUnsupportedTypesPass
                  GenericOpConversionPattern<ReshapeOp>,
                  GenericOpConversionPattern<TransOp>,
                  GenericOpConversionPattern<ExpandDimsOp>,
+                 GenericOpConversionPattern<DotScaledOp>,
                  GenericOpConversionPattern<BroadcastOp>,
                  GenericOpConversionPattern<arith::BitcastOp>>(converter, ctx);
     scf::populateSCFStructuralTypeConversions(converter, patterns);

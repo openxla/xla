@@ -122,7 +122,7 @@ absl::StatusOr<Value> ScaledDot(mlir::ImplicitLocOpBuilder& b,
 
   auto dot_scaled_op = xtile::DotScaledOp::create(
       b, operands.accumulator.getType(), operands.lhs, operands.rhs, lhs_scale,
-      rhs_scale, true);
+      rhs_scale, true, true, false);
 
   auto add_result =
       mlir::isa<mlir::IntegerType>(
