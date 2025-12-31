@@ -1050,6 +1050,7 @@ cc_library(
     srcs = ["kernel_thunk.cc"],
     hdrs = ["kernel_thunk.h"],
     deps = [
+        ":command_buffer_params",
         ":print_buffer_contents",
         ":thunk",
         ":thunk_proto_cc",

@@ -247,18 +247,22 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
   if (params.record_params) {
     // Record the kernel into the command buffer.
     CommandBufferParams* record_params = params.record_params;
+    TF_ASSIGN_OR_RETURN(
+        auto packed_args,
+        se::PackKernelArgs(absl::MakeConstSpan(kernel_args), shmem_bytes_));
     return HandleCmdCreateOrUpdate(
         *record_params,
         [&] {
           return record_params->command_buffer->CreateLaunch(
-              dims_.thread_counts_per_block(), dims_.block_counts(), *kernel,
-              *kernel_args, CommandBufferDependencies(*record_params),
+              launch_dimensions_.thread_counts_per_block(),
+              launch_dimensions_.block_counts(), *kernel, *packed_args,
+              CommandBufferDependencies(*record_params),
               command_buffer_priority());
         },
         [&](const se::CommandBuffer::Command* command) {
           return record_params->command_buffer->UpdateLaunch(
-              command, dims_.thread_counts_per_block(), dims_.block_counts(),
-              *kernel, *kernel_args);
+              command, launch_dimensions_.thread_counts_per_block(),
+              launch_dimensions_.block_counts(), *kernel, *packed_args);
         });
   } else {
     return ExecuteKernelOnStream(
