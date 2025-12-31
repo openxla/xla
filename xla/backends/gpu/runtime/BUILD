@@ -58,6 +58,19 @@ cc_library(
 #===-------------------------------------------------------------------------------------------===//
 
 cc_library(
+    name = "command_state",
+    srcs = ["command_state.cc"],
+    hdrs = ["command_state.h"],
+    deps = [
+        "//xla/stream_executor:command_buffer",
+        "//xla/tsl/lib/gtl:int_type",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:function_ref",
+    ],
+)
+
+cc_library(
     name = "command_buffer_cmd",
     srcs = ["command_buffer_cmd.cc"],
     hdrs = ["command_buffer_cmd.h"],
@@ -70,6 +83,7 @@ cc_library(
         ":collective_execution",
         ":collective_permute_thunk",
         ":collective_thunk",
+        ":command_state",
         ":copy_thunk",
         ":custom_call_thunk",
         ":dynamic_slice_thunk",
@@ -330,6 +344,7 @@ cc_library(
     hdrs = ["command_buffer_thunk.h"],
     deps = [
         ":command_buffer_cmd",
+        ":command_state",
         ":sequential_thunk",  # build_cleaner: keep
         ":thunk",
         "//xla/service:buffer_assignment",  # build_cleaner: keep
