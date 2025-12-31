@@ -448,37 +448,37 @@ absl::StatusOr<std::unique_ptr<Kernel>> SyclExecutor::LoadKernel(
         gpu_binary_to_module_[module_handle] = std::make_pair(module, 1);
       }
     }
-
-    // Retrieve the kernel function from the loaded module.
-    VLOG(2) << "Getting function " << kernel_name << " from module " << module;
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<sycl::kernel> function,
-        GetModuleFunction(sycl_context_.get(), module, kernel_name.c_str()));
-    {
-      absl::MutexLock lock{&in_memory_modules_mu_};
-      // Track which kernels are loaded and their associated modules.
-      kernel_to_gpu_binary_[sycl_kernel.get()] = module_handle;
-      loaded_kernels_.insert(sycl_kernel.get());
-    }
-
-    // Set kernel function and metadata.
-    sycl_kernel->set_gpu_function(function.release());
-    // We have to trust the kernel loader spec arity because there doesn't
-    // appear to be a way to reflect on the number of expected arguments w/the
-    // SPIR API.
-    sycl_kernel->set_arity(spec.arity());
-    // TODO (intel-tf): Once SyclKernel::GetKernelMetadata() is implemented,
-    // we should use it here via set_metadata().
-    sycl_kernel->set_name(kernel_name);
-    // Set argument packing function if provided.
-    if (std::holds_alternative<KernelLoaderSpec::KernelArgsPackingFunc>(
-            spec.kernel_args_packing())) {
-      sycl_kernel->set_args_packing(
-          std::get<KernelLoaderSpec::KernelArgsPackingFunc>(
-              spec.kernel_args_packing()));
-    }
-    return std::move(sycl_kernel);
   }
+
+  // Retrieve the kernel function from the loaded module.
+  VLOG(2) << "Getting function " << kernel_name << " from module " << module;
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<sycl::kernel> function,
+      GetModuleFunction(sycl_context_.get(), module, kernel_name.c_str()));
+  {
+    absl::MutexLock lock{&in_memory_modules_mu_};
+    // Track which kernels are loaded and their associated modules.
+    kernel_to_gpu_binary_[sycl_kernel.get()] = module_handle;
+    loaded_kernels_.insert(sycl_kernel.get());
+  }
+
+  // Set kernel function and metadata.
+  sycl_kernel->set_gpu_function(function.release());
+  // We have to trust the kernel loader spec arity because there doesn't
+  // appear to be a way to reflect on the number of expected arguments w/the
+  // SPIR API.
+  sycl_kernel->set_arity(spec.arity());
+  // TODO (intel-tf): Once SyclKernel::GetKernelMetadata() is implemented,
+  // we should use it here via set_metadata().
+  sycl_kernel->set_name(kernel_name);
+  // Set argument packing function if provided.
+  if (std::holds_alternative<KernelLoaderSpec::KernelArgsPackingFunc>(
+          spec.kernel_args_packing())) {
+    sycl_kernel->set_args_packing(
+        std::get<KernelLoaderSpec::KernelArgsPackingFunc>(
+            spec.kernel_args_packing()));
+  }
+  return std::move(sycl_kernel);
 }
 
 bool SyclExecutor::UnloadModule(ModuleHandle module_handle) {
@@ -621,8 +621,11 @@ absl::Status SyclExecutor::SynchronousMemcpy(void* host_dst,
 
 absl::StatusOr<std::unique_ptr<DeviceDescription>>
 SyclExecutor::CreateDeviceDescription(int device_ordinal) {
-  return absl::InternalError(
-      "SyclExecutor::CreateDeviceDescription is not implemented.");
+  // TODO(intel-tf): Properly populate SYCL device description.
+  // Returns a default-constructed DeviceDescription to allow StreamExecutor
+  // initialization for tests and code paths that do not require device info.
+  DeviceDescription desc;
+  return std::make_unique<DeviceDescription>(desc);
 }
 
 absl::StatusOr<std::unique_ptr<Stream>> SyclExecutor::CreateStream(

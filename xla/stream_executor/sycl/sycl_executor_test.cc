@@ -41,6 +41,7 @@ using ::tsl::testing::StatusIs;
 
 class SyclExecutorTest : public xla::LlvmIrGenTestBase {};
 
+// TODO(intel-tf): Add unit tests for DeviceDescription once it is ready.
 TEST_F(SyclExecutorTest, GetSyclKernel) {
   TF_ASSERT_OK_AND_ASSIGN(Platform * platform,
                           stream_executor::PlatformManager::PlatformWithId(

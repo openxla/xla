@@ -204,11 +204,10 @@ class SyclExecutor : public gpu::GpuExecutor {
   // context. If the module is already loaded, increments its reference count
   // and returns the existing handle. Otherwise, loads the module, caches it,
   // and sets its reference count to 1.
-  // REQUIRES: Caller must hold in_memory_modules_mu_.
+  // Internally acquires in_memory_modules_mu_; the caller should not hold it.
   // Returns a handle to the loaded module on success, or an error status.
   absl::StatusOr<ModuleHandle> LoadModuleFromSpirv(const char* spirv,
-                                                   const size_t size)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
+                                                   const size_t size);
 
   // Unloads the given SPIR-V module when its reference count reaches zero.
   // Removes the module from caches and destroys it.
