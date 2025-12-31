@@ -24,16 +24,16 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
+#include "google/protobuf/repeated_ptr_field.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.h"
 #include "xla/pjrt/distributed/coordination/coordination_service_agent.h"
 #include "xla/pjrt/distributed/coordination/coordination_service_error_util.h"
+#include "xla/runtime/device_id.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
@@ -134,7 +134,7 @@ void CoordinationServiceRpcHandler::WatchJobStateAsync(
       request->job_name(), version_number,
       [response, done](std::vector<tensorflow::CoordinatedTaskStateInfo> info,
                        int64_t version_number) {
-        absl::c_move(info, tsl::protobuf::RepeatedFieldBackInserter(
+        absl::c_move(info, google::protobuf::RepeatedFieldBackInserter(
                                response->mutable_task_state()));
         response->set_version_number(version_number);
         done(absl::OkStatus());

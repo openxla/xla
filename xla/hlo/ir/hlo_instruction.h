@@ -45,7 +45,6 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
@@ -61,7 +60,6 @@ limitations under the License.
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
-#include "xla/literal_pool.h"
 #include "xla/printer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/mapped_ptr_container_sorter.h"
@@ -73,7 +71,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -2019,8 +2016,8 @@ class alignas(kInstructionTypeMask + 1) HloInstruction {
   const StatisticsViz& statistics_viz() const { return rare()->statistics_viz; }
 
   template <typename T>
-  using EnableIfProto = typename std::enable_if_t<
-      std::is_base_of<tsl::protobuf::Message, T>::value>;
+  using EnableIfProto =
+      typename std::enable_if_t<std::is_base_of<google::protobuf::Message, T>::value>;
 
   // Returns the backend-specific configuration for how a backend should compile
   // this HLO. The meaning of the field is backend specific. Not for use before
@@ -2047,7 +2044,7 @@ class alignas(kInstructionTypeMask + 1) HloInstruction {
     return backend_config_.ApplyFnOnProto(fn);
   }
 
-  absl::Status set_backend_config(const tsl::protobuf::Message& proto) {
+  absl::Status set_backend_config(const google::protobuf::Message& proto) {
     backend_config_ = BackendConfigWrapper(proto);
     return absl::OkStatus();
   }
@@ -2566,7 +2563,7 @@ class alignas(kInstructionTypeMask + 1) HloInstruction {
 
   // Helper for implementing backend_config().  Parses backend_config_ into the
   // given proto.
-  absl::Status GetBackendConfigInternal(tsl::protobuf::Message* proto) const;
+  absl::Status GetBackendConfigInternal(google::protobuf::Message* proto) const;
 
   // Mark this instruction as dead. Accessed by friend class HloInstruction.
   void MarkAsDead() { marked_as_dead_ = true; }

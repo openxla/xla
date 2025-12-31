@@ -825,11 +825,11 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_for_library",
+        "@com_google_protobuf//:protobuf",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -957,7 +957,6 @@ xla_cc_test(
     # Force it to run on GPU temporarily in order to get important OSS coverage.
     tags = ["gpu"],
     deps = [
-        ":fusion_emitter",
         ":support",
         ":test_utils",
         ":xtile_compiler",
@@ -973,13 +972,15 @@ xla_cc_test(
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:protobuf",
+        "@com_google_protobuf//:protobuf",
+        "@llvm-project//llvm:TargetParser",
     ],
 )
 

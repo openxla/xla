@@ -54,7 +54,6 @@
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace ifrt {
@@ -99,7 +98,7 @@ class ClientTest : public ::testing::TestWithParam</*protocol_version=*/int> {
 
     InitResponse response;
     if (rpc_helper_->protocol_version() <= 3) {
-      ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
+      ASSERT_TRUE(google::protobuf::TextFormat::ParseFromString(
           R"pb(
             platform_name: "ifrt-service"
             platform_version: "n/a"
@@ -144,7 +143,7 @@ class ClientTest : public ::testing::TestWithParam</*protocol_version=*/int> {
           )pb",
           &response));
     } else if (rpc_helper_->protocol_version() < 7) {
-      ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
+      ASSERT_TRUE(google::protobuf::TextFormat::ParseFromString(
           R"pb(
             platform_name: "ifrt-service"
             platform_version: "n/a"
@@ -193,7 +192,7 @@ class ClientTest : public ::testing::TestWithParam</*protocol_version=*/int> {
           )pb",
           &response));
     } else {
-      ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
+      ASSERT_TRUE(google::protobuf::TextFormat::ParseFromString(
           R"pb(
             platform_name: "ifrt-service"
             platform_version: "n/a"

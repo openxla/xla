@@ -42,12 +42,12 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "google/protobuf/text_format.h"
 #include "xla/codegen/device_spec.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/atomic_rmw_utils.h"
 #include "xla/codegen/emitters/transforms/passes.h"
 #include "xla/stream_executor/device_description.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace emitters {
@@ -559,8 +559,8 @@ class VectorizeLoadsAndStoresPass
   void runOnOperation() override {
     if (target_type_ == "gpu" && !gpu_device_info_.empty()) {
       se::GpuDeviceInfoProto device_info;
-      CHECK(tsl::protobuf::TextFormat::ParseFromString(gpu_device_info_,
-                                                       &device_info));
+      CHECK(
+          google::protobuf::TextFormat::ParseFromString(gpu_device_info_, &device_info));
       absl::StatusOr<se::DeviceDescription> device_description =
           se::DeviceDescription::FromProto(device_info);
       CHECK_OK(device_description.status());

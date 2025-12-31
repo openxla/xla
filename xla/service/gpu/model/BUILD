@@ -714,7 +714,6 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_protobuf//:protobuf",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -809,7 +808,6 @@ xla_test(
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
