@@ -54,7 +54,7 @@ using tsl::profiler::TraceMeEncode;
 
 CommandBufferThunk::ExecutorCommandBuffer::ExecutorCommandBuffer(
     std::unique_ptr<se::CommandBuffer> command_buffer)
-    : command_buffer(std::move(command_buffer)) {}
+    : command_buffer(std::move(command_buffer)), state(command_buffer.get()) {}
 
 CommandBufferThunk::CommandBufferThunk(
     CommandBufferCmdExecutor commands, ThunkInfo thunk_info,

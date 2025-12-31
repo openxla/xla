@@ -227,37 +227,6 @@ static absl::StatusOr<const se::CommandBuffer::Command*> Handle(
 }
 
 //===----------------------------------------------------------------------===//
-// CommandBufferCmd
-//===----------------------------------------------------------------------===//
-
-CommandBufferCmd::StateManager::TypeId
-CommandBufferCmd::StateManager::GetNextTypeId() {
-  static auto* counter = new std::atomic<int64_t>(1);
-  return TypeId(counter->fetch_add(1));
-}
-
-CommandBufferCmd::State* CommandBufferCmd::StateManager::GetOrNull(
-    const CommandBufferCmd* cmd, const se::CommandBuffer* command_buffer,
-    TypeId type_id, int64_t unroll_iteration) {
-  Key key = {cmd, command_buffer, type_id, unroll_iteration};
-  if (auto it = state_.find(key); it != state_.end()) {
-    return it->second.get();
-  }
-  return nullptr;
-}
-
-CommandBufferCmd::State* CommandBufferCmd::StateManager::GetOrCreate(
-    const CommandBufferCmd* cmd, const se::CommandBuffer* command_buffer,
-    TypeId type_id, int64_t unroll_iteration,
-    absl::FunctionRef<std::unique_ptr<State>()> create) {
-  Key key = {cmd, command_buffer, type_id, unroll_iteration};
-  if (auto it = state_.find(key); it != state_.end()) {
-    return it->second.get();
-  }
-  return state_.try_emplace(key, create()).first->second.get();
-}
-
-//===----------------------------------------------------------------------===//
 // CommandBufferCmdSequence
 //===----------------------------------------------------------------------===//
 
@@ -467,8 +436,7 @@ absl::Status CommandBufferCmdExecutor::Prepare(
 }
 
 absl::Status CommandBufferCmdExecutor::Initialize(
-    const Thunk::InitializeParams& params,
-    CommandBufferCmd::StateManager& state) {
+    const Thunk::InitializeParams& params, CommandStateManager& state) {
   for (auto& command : commands_) {
     TF_RETURN_IF_ERROR(command->Initialize(params, state));
   }
@@ -619,7 +587,7 @@ CommandBufferCmdExecutor::RecordCreate(
 
   // Keep a state associated with commands in the sequence in the state
   // manager.
-  CommandBufferCmd::StateManager& state = record_params.state;
+  CommandStateManager& state = record_params.state;
 
   // Collect sink commands while recording the command sequence.
   std::vector<const se::CommandBuffer::Command*> sink_commands;
@@ -637,11 +605,11 @@ CommandBufferCmdExecutor::RecordCreate(
     }
 
     // Create new commands by recording them into the command buffer.
-    DCHECK(!state.GetOrNull<RecordState>(command, command_buffer,
-                                         record_params.unroll_iteration))
+    DCHECK(
+        !state.GetOrNull<RecordState>(command, record_params.unroll_iteration))
         << "Record state must be null for " << command->ToString();
-    auto* record_state = state.GetOrCreate<RecordState>(
-        command, command_buffer, record_params.unroll_iteration);
+    auto* record_state =
+        state.GetOrCreate<RecordState>(command, record_params.unroll_iteration);
 
     std::vector<const se::CommandBuffer::Command*> command_dependencies =
         Dependencies(record_params, command_buffer, id);
@@ -691,7 +659,7 @@ absl::Status CommandBufferCmdExecutor::RecordUpdate(
 
   // Keep a state associated with commands in the sequence in the state
   // manager.
-  CommandBufferCmd::StateManager& state = record_params.state;
+  CommandStateManager& state = record_params.state;
 
   // Check if command `id` has to be updated based on the buffer allocations
   // that changed since the last call to `Record`. We keep intersection vector
@@ -752,8 +720,8 @@ absl::Status CommandBufferCmdExecutor::RecordUpdate(
     }
 
     // Update existing commands in the command buffer.
-    auto* record_state = state.GetOrNull<RecordState>(
-        command, command_buffer, record_params.unroll_iteration);
+    auto* record_state =
+        state.GetOrNull<RecordState>(command, record_params.unroll_iteration);
     DCHECK(record_state) << "Record state must be not null for "
                          << command->ToString();
 
@@ -806,7 +774,7 @@ CommandBufferCmdExecutor::SinkCommands(const RecordParams& record_params,
   std::vector<const se::CommandBuffer::Command*> sink_commands;
   for (CommandId id : sink_ids) {
     auto* record_state = record_params.state.GetOrNull<RecordState>(
-        commands_[id].get(), command_buffer, unroll_iteration);
+        commands_[id].get(), unroll_iteration);
     sink_commands.push_back(record_state->command);
   }
   return sink_commands;
@@ -827,7 +795,7 @@ CommandBufferCmdExecutor::SourceCommands(const RecordParams& record_params,
   std::vector<const se::CommandBuffer::Command*> source_commands;
   for (CommandId id : source_ids) {
     auto* record_state = record_params.state.GetOrNull<RecordState>(
-        commands_[id].get(), command_buffer, unroll_iteration);
+        commands_[id].get(), unroll_iteration);
     source_commands.push_back(record_state->command);
   }
   return source_commands;
@@ -859,8 +827,7 @@ CommandBufferCmdExecutor::Dependencies(const RecordParams& record_params,
   std::vector<const se::CommandBuffer::Command*> dependencies;
   for (CommandId dependency_id : dependencies_ids) {
     auto* record_state = record_params.state.GetOrNull<RecordState>(
-        commands_[dependency_id].get(), command_buffer,
-        record_params.unroll_iteration);
+        commands_[dependency_id].get(), record_params.unroll_iteration);
     DCHECK(record_state) << "Record state must be not null for "
                          << commands_[dependency_id]->ToString();
 
@@ -1009,7 +976,7 @@ TracedCommandBufferCmd::RecordTracedCommand(
     se::CommandBuffer* command_buffer,
     absl::FunctionRef<absl::Status(se::Stream*)> trace) {
   auto traced_cmd = record_params.state.GetOrCreate<TracedCommandBuffer>(
-      this, command_buffer,
+      this,
       [&] {
         const auto& debug_options = xla::GetDebugOptionsFromFlags();
         return std::make_unique<TracedCommandBuffer>(
@@ -1146,7 +1113,7 @@ LaunchCmd::LaunchCmd(
       tma_metadata_(std::move(tma_metadata)) {}
 
 absl::Status LaunchCmd::Initialize(const Thunk::InitializeParams& params,
-                                   StateManager& state) {
+                                   CommandStateManager& state) {
   {
     absl::MutexLock lock(mutex_);
     if (kernels_.contains(params.executor)) {
@@ -1253,7 +1220,7 @@ CustomKernelLaunchCmd::CustomKernelLaunchCmd(
       custom_kernel_(std::move(custom_kernel)) {}
 
 absl::Status CustomKernelLaunchCmd::Initialize(
-    const Thunk::InitializeParams& params, StateManager& state) {
+    const Thunk::InitializeParams& params, CommandStateManager& state) {
   {
     absl::MutexLock lock(mutex_);
     if (kernels_.contains(params.executor)) {
@@ -1473,7 +1440,7 @@ CommandBufferCmd::BufferUseVector ChildCmd::buffers() const {
 }
 
 absl::Status ChildCmd::Initialize(const Thunk::InitializeParams& params,
-                                  StateManager& state) {
+                                  CommandStateManager& state) {
   TF_RETURN_IF_ERROR(child_commands_.Initialize(params, state));
   return absl::OkStatus();
 }
@@ -1513,7 +1480,7 @@ CaseCmd::CaseCmd(ShapedSlice index,
       branches_(std::move(branches)) {}
 
 absl::Status CaseCmd::Initialize(const Thunk::InitializeParams& params,
-                                 StateManager& state) {
+                                 CommandStateManager& state) {
   for (auto& branch : branches_) {
     TF_RETURN_IF_ERROR(branch.Initialize(params, state));
   }
@@ -1591,7 +1558,7 @@ WhileCmd::WhileCmd(BufferAllocation::Slice pred,
       enable_loop_unroll_(enable_loop_unroll) {}
 
 absl::Status WhileCmd::Initialize(const Thunk::InitializeParams& params,
-                                  StateManager& state) {
+                                  CommandStateManager& state) {
   TF_RETURN_IF_ERROR(cond_commands_.Initialize(params, state));
   TF_RETURN_IF_ERROR(body_commands_.Initialize(params, state));
   enable_loop_unroll_ = true;
@@ -1727,7 +1694,7 @@ GemmCmd::GemmCmd(GemmConfig config, const BufferAllocation::Slice& lhs_buffer,
       deterministic_(deterministic) {}
 
 absl::Status GemmCmd::Initialize(const Thunk::InitializeParams& params,
-                                 StateManager& state) {
+                                 CommandStateManager& state) {
   if (!params.stream->parent()->AsBlas()) {
     return absl::InternalError("Failed to initialize BLAS support for GemmCmd");
   }
@@ -1784,7 +1751,7 @@ CublasLtCmd::CublasLtCmd(const CublasLtMatmulThunk& matmul_thunk)
       CublasLtMatmulThunk(matmul_thunk) {}
 
 absl::Status CublasLtCmd::Initialize(const Thunk::InitializeParams& params,
-                                     StateManager& state) {
+                                     CommandStateManager& state) {
   TF_RETURN_IF_ERROR(CublasLtMatmulThunk::Initialize(params));
   return absl::OkStatus();
 }
@@ -1863,7 +1830,7 @@ CuDnnCmd::CuDnnCmd(absl::Span<const BufferAllocation::Slice> args,
       graph_(graph) {}
 
 absl::Status CuDnnCmd::Initialize(const Thunk::InitializeParams& params,
-                                  StateManager&) {
+                                  CommandStateManager&) {
   if (!params.stream->parent()->AsDnn()) {
     return absl::InternalError("Failed to initialize DNN support for CuDnnCmd");
   }
@@ -2632,7 +2599,7 @@ bool DynamicSliceFusionCmd::requires_initialization() {
 }
 
 absl::Status DynamicSliceFusionCmd::Initialize(
-    const Thunk::InitializeParams& params, StateManager& state) {
+    const Thunk::InitializeParams& params, CommandStateManager& state) {
   TF_RETURN_IF_ERROR(embedded_commands_.Initialize(params, state));
   absl::MutexLock lock(mutex_);
   if (offsets_allocs_.contains(params.executor)) {
@@ -2840,7 +2807,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
                       execute_params.stream->parent()->CreateCommandBuffer(
                           se::CommandBuffer::Mode::kNested));
 
-  StateManager state;
+  CommandStateManager state(command_buffer);
   RecordParams nested_record_params = {state, std::nullopt, false};
   TF_RETURN_IF_ERROR(embedded_commands_.Record(new_params, nested_record_params,
                                                CommandBufferCmd::RecordCreate{},

@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
+#include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/service/buffer_assignment.h"
@@ -82,8 +83,8 @@ class CommandBufferThunk : public Thunk {
     std::unique_ptr<se::CommandBuffer> command_buffer ABSL_GUARDED_BY(mutex);
 
     // A manager for an external state attached by commands in a command
-    // sequence to a command buffer.
-    CommandBufferCmd::StateManager state ABSL_GUARDED_BY(mutex);
+    // sequence to a `command buffer`.
+    CommandStateManager state ABSL_GUARDED_BY(mutex);
 
     // Mapping from buffer allocation index to the device memory passed at
     // that index to the last call of `commands_.Record(...)` for

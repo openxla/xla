@@ -70,6 +70,21 @@ cc_library(
     ],
 )
 
+xla_test(
+    name = "command_state_test",
+    srcs = ["command_state_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":command_state",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/profiler/lib:profiler_lock",
+    ],
+)
+
 cc_library(
     name = "command_buffer_cmd",
     srcs = ["command_buffer_cmd.cc"],
