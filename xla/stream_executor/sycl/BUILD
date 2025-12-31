@@ -31,6 +31,10 @@ cc_library(
     name = "sycl_platform_id",
     srcs = ["sycl_platform_id.cc"],
     hdrs = ["sycl_platform_id.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
     deps = ["//xla/stream_executor:platform"],
 )
 
@@ -38,8 +42,13 @@ cc_library(
     name = "sycl_platform",
     srcs = ["sycl_platform.cc"],
     hdrs = ["sycl_platform.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
     visibility = ["//visibility:public"],
     deps = [
+        ":sycl_executor",
         ":sycl_platform_id",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:executor_cache",
@@ -55,17 +64,22 @@ cc_library(
     alwayslink = True,  # Registers itself with the PlatformManager.
 )
 
-xla_cc_test(
+xla_test(
     name = "sycl_platform_test",
     srcs = ["sycl_platform_test.cc"],
-    fail_if_no_test_linked = False,  # NOLINT=If not building with SYCL, we don't have any tests linked.
-    fail_if_no_test_selected = False,  # NOLINT=If not building with SYCL, we don't have any tests linked.
+    backends = ["gpu"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
     deps = [
         ":sycl_platform",
         ":sycl_platform_id",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_googletest//:gtest_main",
     ],
 )
