@@ -420,7 +420,7 @@ class DeviceDescription {
   }
 
   void set_oneapi_compute_capability(uint32_t ip_version) {
-    gpu_compute_capability_ = OneAPIComputeCapability(std::move(ip_version));
+    gpu_compute_capability_ = OneAPIComputeCapability(ip_version);
   }
 
   void set_numa_node(int value) { numa_node_ = value; }

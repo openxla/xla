@@ -73,8 +73,7 @@ message RuntimeVersionProto {
 message GpuTargetConfigProto {
   GpuDeviceInfoProto gpu_device_info = 1;
   reserved 2, 3;
-  reserved "cuda_compute_capability", "rocm_compute_capability",
-      "oneapi_compute_capability";
+  reserved "cuda_compute_capability", "rocm_compute_capability";
   string platform_name = 4;
   DnnVersionInfoProto dnn_version_info = 5;
   RuntimeVersionProto runtime_version = 8;
