@@ -24,7 +24,7 @@ limitations under the License.
 namespace xla::gpu {
 
 // Forward declare.
-class CommandBufferCmd;
+class Command;
 
 // A base class for externally managed command state.
 //
@@ -41,7 +41,7 @@ class CommandBufferCmd;
 //
 // To make a command stateful, it needs a `CommandStateManager` indirection:
 //
-//   class MyCommand : public CommandBufferCmd {
+//   class MyCommand : public Command {
 //     public:
 //
 //     // Container for mutable state required for command execution.
@@ -87,15 +87,15 @@ class CommandStateManager {
       const stream_executor::CommandBuffer* command_buffer);
 
   template <typename S>
-  S* GetOrNull(const CommandBufferCmd* cmd, int64_t unroll_iteration = 0);
+  S* GetOrNull(const Command* cmd, int64_t unroll_iteration = 0);
 
   template <typename S>
-  S* GetOrCreate(const CommandBufferCmd* cmd,
+  S* GetOrCreate(const Command* cmd,
                  absl::FunctionRef<std::unique_ptr<S>()> create,
                  int64_t unroll_iteration = 0);
 
   template <typename S>
-  S* GetOrCreate(const CommandBufferCmd* cmd, int64_t unroll_iteration = 0);
+  S* GetOrCreate(const Command* cmd, int64_t unroll_iteration = 0);
 
   const stream_executor::CommandBuffer* command_buffer() const {
     return command_buffer_;
@@ -113,14 +113,14 @@ class CommandStateManager {
     return id;
   }
 
-  CommandState* GetOrNull(const CommandBufferCmd* cmd, TypeId type_id,
+  CommandState* GetOrNull(const Command* cmd, TypeId type_id,
                           int64_t unroll_iteration);
 
   CommandState* GetOrCreate(
-      const CommandBufferCmd* cmd, TypeId type_id, int64_t unroll_iteration,
+      const Command* cmd, TypeId type_id, int64_t unroll_iteration,
       absl::FunctionRef<std::unique_ptr<CommandState>()> create);
 
-  using Key = std::tuple<const CommandBufferCmd*, TypeId, int64_t>;
+  using Key = std::tuple<const Command*, TypeId, int64_t>;
   absl::flat_hash_map<Key, std::unique_ptr<CommandState>> state_;
 
   const stream_executor::CommandBuffer* command_buffer_;
@@ -131,7 +131,7 @@ class CommandStateManager {
 //===----------------------------------------------------------------------===//
 
 template <typename S>
-S* CommandStateManager::GetOrNull(const CommandBufferCmd* cmd,
+S* CommandStateManager::GetOrNull(const Command* cmd,
                                   int64_t unroll_iteration) {
   static_assert(std::is_base_of_v<CommandState, S>);
   return static_cast<S*>(GetOrNull(cmd, GetTypeId<S>(), unroll_iteration));
@@ -139,7 +139,7 @@ S* CommandStateManager::GetOrNull(const CommandBufferCmd* cmd,
 
 template <typename S>
 S* CommandStateManager::GetOrCreate(
-    const CommandBufferCmd* cmd, absl::FunctionRef<std::unique_ptr<S>()> create,
+    const Command* cmd, absl::FunctionRef<std::unique_ptr<S>()> create,
     int64_t unroll_iteration) {
   static_assert(std::is_base_of_v<CommandState, S>);
   return static_cast<S*>(GetOrCreate(cmd, GetTypeId<S>(), unroll_iteration,
@@ -147,7 +147,7 @@ S* CommandStateManager::GetOrCreate(
 }
 
 template <typename S>
-S* CommandStateManager::GetOrCreate(const CommandBufferCmd* cmd,
+S* CommandStateManager::GetOrCreate(const Command* cmd,
                                     int64_t unroll_iteration) {
   return GetOrCreate<S>(
       cmd, [] { return std::make_unique<S>(); }, unroll_iteration);

@@ -70,6 +70,20 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "command",
+    srcs = ["command.cc"],
+    hdrs = ["command.h"],
+    deps = [
+        ":command_state",
+        ":thunk",
+        "//xla/runtime:buffer_use",
+        "//xla/runtime:resource_use",
+        "//xla/stream_executor:command_buffer",
+        "//xla/stream_executor:platform",
+    ],
+)
+
 xla_test(
     name = "command_state_test",
     srcs = ["command_state_test.cc"],
@@ -98,6 +112,7 @@ cc_library(
         ":collective_execution",
         ":collective_permute_thunk",
         ":collective_thunk",
+        ":command",
         ":command_state",
         ":copy_thunk",
         ":custom_call_thunk",

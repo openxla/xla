@@ -29,8 +29,7 @@ CommandStateManager::TypeId CommandStateManager::GetNextTypeId() {
   return TypeId(counter->fetch_add(1));
 }
 
-CommandState* CommandStateManager::GetOrNull(const CommandBufferCmd* cmd,
-                                             TypeId type_id,
+CommandState* CommandStateManager::GetOrNull(const Command* cmd, TypeId type_id,
                                              int64_t unroll_iteration) {
   Key key = {cmd, type_id, unroll_iteration};
   if (auto it = state_.find(key); it != state_.end()) {
@@ -40,7 +39,7 @@ CommandState* CommandStateManager::GetOrNull(const CommandBufferCmd* cmd,
 }
 
 CommandState* CommandStateManager::GetOrCreate(
-    const CommandBufferCmd* cmd, TypeId type_id, int64_t unroll_iteration,
+    const Command* cmd, TypeId type_id, int64_t unroll_iteration,
     absl::FunctionRef<std::unique_ptr<CommandState>()> create) {
   Key key = {cmd, type_id, unroll_iteration};
   if (auto it = state_.find(key); it != state_.end()) {
