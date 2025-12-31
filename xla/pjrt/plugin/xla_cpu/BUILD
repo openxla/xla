@@ -134,7 +134,7 @@ xla_cc_test(
         ":cpu_topology_proto_cc",
         "//xla/pjrt:pjrt_common",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:protobuf",
+        "@com_google_protobuf//:protobuf",
     ],
 )
 

@@ -23,8 +23,6 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_protobuf//:protobuf_lite",
         "@nanobind",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
     alwayslink = 1,
@@ -41,7 +39,6 @@ tsl_pybind_extension(
         ":profile_data_lib",
         "@com_google_protobuf//:protobuf",
         "@nanobind",
-        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )

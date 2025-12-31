@@ -134,7 +134,6 @@ cc_library(
     deps = [
         "//xla/tsl/platform:logging",
         "@tsl//tsl/platform:coding",
-        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:stringpiece",
     ],
 )
