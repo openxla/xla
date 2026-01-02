@@ -414,6 +414,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/target_config",
         "//xla/client:executable_build_options",
         "//xla/ffi:execution_context",
         "//xla/hlo/ir:hlo",
@@ -437,6 +438,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf",
     ],
 )
 

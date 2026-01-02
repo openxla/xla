@@ -310,10 +310,6 @@ nanobind_pywrap_extension(
         ":nb_absl_span",
         ":nb_helpers",
         ":types",
-        # placeholder for index annotation deps
-        "@com_google_absl//absl/hash",
-        "@com_google_absl//absl/types:span",
-        "@nanobind",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -330,6 +326,9 @@ nanobind_pywrap_extension(
         "//xla/hlo/builder/lib:svd",
         "//xla/pjrt:status_casters",
         "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
     ],
 )
 
@@ -408,10 +407,6 @@ nanobind_pywrap_extension(
         ":aggregate_profile",
         ":profiler_utils",
         ":xplane_to_profile_instructions",
-        # placeholder for index annotation deps
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@nanobind",
         "//xla/backends/profiler:profiler_backends",
         "//xla/backends/profiler/cpu:python_tracer",
         "//xla/backends/profiler/plugin:plugin_tracer",
@@ -423,7 +418,10 @@ nanobind_pywrap_extension(
         "//xla/tsl/profiler/rpc:profiler_server_impl",
         "//xla/tsl/profiler/rpc/client:capture_profile",
         "//xla/tsl/profiler/rpc/client:profiler_client_impl",
-        "@tsl//tsl/platform:protobuf",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf",
+        "@nanobind",
         "@tsl//tsl/profiler/lib:profiler_session",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
@@ -446,8 +444,8 @@ nanobind_pywrap_extension(
     ]),
     deps = [
         "//xla/python/profiler:profile_data_lib",
+        "@com_google_protobuf//:protobuf",
         "@nanobind",
-        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )

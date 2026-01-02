@@ -21,7 +21,6 @@ limitations under the License.
 #include <cstdlib>
 #include <cstring>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -46,6 +45,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "unsupported/Eigen/CXX11/Tensor"
+#include "google/protobuf/text_format.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/local_client.h"
@@ -88,6 +88,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/async_value.h"
@@ -102,7 +103,6 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/fingerprint.h"
-#include "tsl/platform/protobuf.h"
 #include "tsl/profiler/lib/traceme.h"
 
 #if defined(PLATFORM_WINDOWS)
@@ -297,7 +297,7 @@ absl::flat_hash_map<std::string, PjRtDeviceAttribute> GetAttrsForDevices(
   absl::flat_hash_map<std::string, PjRtDeviceAttribute> attrs;
   if (target_config.has_value()) {
     std::string attr;
-    if (tsl::protobuf::TextFormat::PrintToString(*target_config, &attr)) {
+    if (google::protobuf::TextFormat::PrintToString(*target_config, &attr)) {
       attrs["target_config"] = std::move(attr);
     }
   }
