@@ -18,6 +18,7 @@
 #include <cstring>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -258,7 +259,7 @@ class IfrtBackend::ArrayStore::Reservation {
  private:
   IfrtBackend::ArrayStore* const parent_;
 
-  absl::Mutex mu_;
+  DebuggedMutex mu_;
   std::vector<uint64_t> reserved_handles_ ABSL_GUARDED_BY(mu_);
   bool filled_ ABSL_GUARDED_BY(mu_) = false;
 };
@@ -316,7 +317,7 @@ struct IfrtBackend::LoadedExecutableWithInfo {
   explicit LoadedExecutableWithInfo(xla::ifrt::LoadedExecutableRef executable_p)
       : executable(std::move(executable_p)) {}
 
-  absl::Mutex mu;
+  DebuggedMutex mu;
   // `output_spec` captures the output specification from the result of the
   // first `Execute()`, and is used to verify that further `Execute()` calls
   // do not result in a different specification.
@@ -434,7 +435,7 @@ class IfrtBackend::InOrderRequestsProcessor {
     }
   }
 
-  absl::Mutex mu_;
+  DebuggedMutex mu_;
   std::deque<Entry> entries_ ABSL_GUARDED_BY(mu_);
   std::optional<std::string> shutdown_msg_ ABSL_GUARDED_BY(mu_);
   IfrtBackend* const parent_;
@@ -450,7 +451,7 @@ IfrtBackend::IfrtBackend(IfrtProxyVersion version, uint64_t session_id,
       client_(std::move(ifrt_client)),
       host_buffer_store_(std::move(host_buffer_store)),
       array_store_(&handle_generator_),
-      compile_thread_pool_(
+      compile_thread_pool_(std::make_unique<tsl::thread::ThreadPool>(
           tsl::Env::Default(),
           []() {
             tsl::ThreadOptions options;
@@ -461,7 +462,7 @@ IfrtBackend::IfrtBackend(IfrtProxyVersion version, uint64_t session_id,
           }(),
           "IfrtBackend",
           // TODO(b/282757875): Consider making this configurable.
-          /*num_threads=*/32),
+          /*num_threads=*/32)),
       in_order_requests_processor_(
           std::make_unique<InOrderRequestsProcessor>(this)),
       destroyed_user_context_ids_(std::make_shared<DestroyedUserContextIds>()) {
@@ -531,6 +532,59 @@ IfrtBackend::~IfrtBackend() {
     };
     absl::MutexLock lock(in_flight_count_mutex_, absl::Condition(&done));
   }
+
+  LOG(INFO) << "Clearning destroyed_user_context_ids_...";
+  destroyed_user_context_ids_ = nullptr;
+
+  LOG(INFO) << "Clearning in_order_requests_processor_...";
+  in_order_requests_processor_ = nullptr;
+
+  LOG(INFO) << "Clearning compile_thread_pool_...";
+  compile_thread_pool_ = nullptr;
+
+  LOG(INFO) << "Clearing host_callback_executions_...";
+  {
+    absl::MutexLock l(host_callback_executions_mutex_);
+    host_callback_executions_.clear();
+  }
+
+  LOG(INFO) << "Clearing host_callback_queues_...";
+  {
+    absl::MutexLock l(host_callback_queues_mutex_);
+    host_callback_queues_.clear();
+  }
+
+  LOG(INFO) << "Clearing execute_results_...";
+  {
+    absl::MutexLock l(execute_results_mutex_);
+    execute_results_.clear();
+  }
+
+  LOG(INFO) << "Clearing executables_...";
+  {
+    absl::MutexLock l(executables_mutex_);
+    executables_.clear();
+  }
+
+  LOG(INFO) << "Clearing array_store_...";
+  array_store_.Clear();
+
+  LOG(INFO) << "Clearing futures_...";
+  {
+    absl::MutexLock l(futures_mutex_);
+    futures_.clear();
+  }
+
+  LOG(INFO) << "Clearing host_buffer_store_...";
+  host_buffer_store_ = nullptr;
+
+  LOG(INFO) << "Clearing client_...";
+  client_ = nullptr;
+
+  LOG(INFO) << "Stopping handle_generator_...";
+  handle_generator_.Stop();
+
+  LOG(INFO) << "~IfrtBackend done.";
 }
 
 tsl::Future<BackendInterface::Response> IfrtBackend::Process(
@@ -703,6 +757,7 @@ IfrtBackend::HandleGenerator::HandleGenerator(IfrtBackend* parent)
 
 uint64_t IfrtBackend::HandleGenerator::GenerateAtServer() {
   absl::MutexLock lock(mu_);
+  CHECK_NE(current_, std::numeric_limits<uint64_t>::max());
   uint64_t result = current_++;
   CHECK_GE(result, kServerGeneratedHandlesMinValue);
   return result;
@@ -711,6 +766,7 @@ uint64_t IfrtBackend::HandleGenerator::GenerateAtServer() {
 void IfrtBackend::HandleGenerator::GenerateAtServerBulk(
     absl::Span<uint64_t> result_handles) {
   absl::MutexLock lock(mu_);
+  CHECK_NE(current_, std::numeric_limits<uint64_t>::max());
   absl::c_iota(result_handles, current_);
   current_ += result_handles.size();
   CHECK_GE(current_, kServerGeneratedHandlesMinValue);
@@ -1568,7 +1624,7 @@ tsl::Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
 
     return ifrt_resp;
   };
-  return AsyncExecute(std::move(f), &compile_thread_pool_);
+  return AsyncExecute(std::move(f), compile_thread_pool_.get());
 }
 
 tsl::Future<BackendInterface::Response>
