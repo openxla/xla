@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/tsl/lib/math/math_util.h"
 
+// https://rocm.docs.amd.com/en/latest/about/release-notes.html#amdgpu-wavefront-size-compiler-macro-deprecation
 #if defined(__GFX9__)
   #define WAVEFRONT_SIZE 64
 #else
