@@ -192,7 +192,7 @@ RemoteProfilerSessionManagerOptions GetRemoteSessionManagerOptionsLocked(
       LOG(WARNING) << "Unrecognised key: " << key;
     }
   }
-
+  LOG(INFO) << "options: " << options.DebugString();
   return options;
 }
 

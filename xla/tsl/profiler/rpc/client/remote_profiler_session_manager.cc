@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/tsl/profiler/rpc/client/remote_profiler_session_manager.h"
 
 #include <cstddef>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -112,6 +113,17 @@ absl::Status RemoteProfilerSessionManager::Init() {
             << " and session_creation_timestamp_ns was "
             << options_.session_creation_timestamp_ns() << " ["
             << session_created_ts << "]";
+  std::cout << "Deadline set to " << deadline
+            << " because max_session_duration_ms was "
+            << options_.max_session_duration_ms()
+            << " and session_creation_timestamp_ns was "
+            << options_.session_creation_timestamp_ns() << " ["
+            << session_created_ts << "]" << std::endl;
+
+  LOG(INFO) << "RemoteProfilerSessionManagerOptions: "
+            << options_.DebugString();
+  std::cout << "RemoteProfilerSessionManagerOptions: " << options_.DebugString()
+            << std::endl;
 
   // Prepare a list of clients.
   clients_.reserve(options_.service_addresses().size());
@@ -132,6 +144,11 @@ absl::Status RemoteProfilerSessionManager::Init() {
           .set_string_value(override_hostnames_list[i]);
     }
 
+    LOG(INFO) << "Sending ProfileRequest to " << resolved_service_address
+              << ": " << request.DebugString();
+    std::cout << "Sending ProfileRequest to " << resolved_service_address
+              << ": " << request.DebugString() << std::endl;
+
     // Creation also issues Profile RPC asynchronously.
     auto client = RemoteProfilerSession::Create(resolved_service_address,
                                                 deadline, request);
@@ -139,6 +156,8 @@ absl::Status RemoteProfilerSessionManager::Init() {
   }
 
   LOG(INFO) << "Issued Profile gRPC to " << clients_.size() << " clients";
+  std::cout << "Issued Profile gRPC to " << clients_.size() << " clients"
+            << std::endl;
   return absl::OkStatus();
 }
 
