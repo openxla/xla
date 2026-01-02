@@ -139,6 +139,7 @@ xla_cc_test(
     name = "array_test",
     size = "small",
     srcs = ["array_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":ifrt",
         ":mock",
@@ -176,6 +177,7 @@ xla_cc_test(
     name = "attribute_map_test",
     size = "small",
     srcs = ["attribute_map_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":attribute_map",
         ":serdes_test_util",
@@ -226,6 +228,7 @@ xla_cc_test(
     name = "executable_test",
     size = "small",
     srcs = ["executable_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":attribute_map",
         ":execute_options_proto_cc",
@@ -243,6 +246,7 @@ xla_cc_test(
     name = "index_domain_test",
     size = "small",
     srcs = ["index_domain_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":ifrt",
         "@com_google_absl//absl/hash:hash_testing",
@@ -254,6 +258,7 @@ xla_cc_test(
     name = "index_test",
     size = "small",
     srcs = ["index_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":ifrt",
         "@com_google_absl//absl/hash:hash_testing",
@@ -276,6 +281,7 @@ xla_cc_test(
     name = "layout_test",
     size = "small",
     srcs = ["layout_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":basic_device_list",
         ":ifrt",
@@ -318,6 +324,7 @@ xla_cc_test(
     name = "layout_serdes_test",
     size = "small",
     srcs = ["layout_serdes_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":ifrt",
         ":layout_serdes",
@@ -334,6 +341,7 @@ xla_cc_test(
     name = "memory_test",
     size = "small",
     srcs = ["memory_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":ifrt",
         "@com_google_absl//absl/strings",
@@ -360,6 +368,7 @@ xla_cc_test(
     name = "ref_wrapper_test",
     size = "small",
     srcs = ["ref_wrapper_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":ref_wrapper",
         "//xla/tsl/concurrency:ref_count",
@@ -373,6 +382,7 @@ xla_cc_test(
     name = "shape_test",
     size = "small",
     srcs = ["shape_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":ifrt",
         ":serdes_test_util",
@@ -391,6 +401,7 @@ xla_cc_test(
     name = "sharding_test",
     size = "small",
     srcs = ["sharding_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":device_test_util",
         ":ifrt",
@@ -712,6 +723,7 @@ cc_library(
 xla_cc_test(
     name = "serdes_test",
     srcs = ["serdes_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":serdes",
         ":serdes_proto_cc",
@@ -826,6 +838,7 @@ xla_cc_test(
 xla_cc_test(
     name = "sharding_serdes_test",
     srcs = ["sharding_serdes_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":device_test_util",
         ":ifrt",
@@ -860,6 +873,7 @@ xla_cc_test(
     name = "array_spec_test",
     size = "small",
     srcs = ["array_spec_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":array_spec_proto_cc",
         ":device_test_util",
@@ -891,6 +905,7 @@ xla_cc_test(
     name = "device_list_test",
     size = "small",
     srcs = ["device_list_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":device_proto_cc",
         ":device_test_util",
@@ -942,6 +957,7 @@ xla_cc_test(
     name = "dtype_test",
     size = "small",
     srcs = ["dtype_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":dtype_proto_cc",
         ":ifrt",
@@ -970,6 +986,7 @@ xla_cc_test(
     name = "remap_plan_test",
     size = "small",
     srcs = ["remap_plan_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":device_test_util",
         ":ifrt",
@@ -1118,6 +1135,7 @@ cc_library(
 xla_cc_test(
     name = "plugin_program_serdes_test",
     srcs = ["plugin_program_serdes_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":plugin_program",
         ":plugin_program_serdes",
@@ -1222,6 +1240,7 @@ cc_library(
 xla_cc_test(
     name = "user_context_test",
     srcs = ["user_context_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":user_context",
         ":user_context_test_util",
@@ -1257,6 +1276,7 @@ cc_library(
 xla_cc_test(
     name = "user_context_registry_test",
     srcs = ["user_context_registry_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":user_context",
         ":user_context_registry",
@@ -1317,6 +1337,7 @@ cc_library(
 xla_cc_test(
     name = "user_context_status_util_test",
     srcs = ["user_context_status_util_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":user_context",
         ":user_context_registry",
@@ -1346,6 +1367,7 @@ cc_library(
 xla_cc_test(
     name = "with_user_context_test",
     srcs = ["with_user_context_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":user_context",
         ":user_context_test_util",
@@ -1361,6 +1383,7 @@ xla_cc_test(
 xla_cc_test(
     name = "custom_call_program_serdes_test",
     srcs = ["custom_call_program_serdes_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":custom_call_program",
         ":custom_call_program_serdes",
