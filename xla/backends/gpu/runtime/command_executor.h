@@ -23,15 +23,16 @@ limitations under the License.
 
 namespace xla::gpu {
 
-// Command executor is responsible for recording commands sequence into the
-// underlying command buffer and setting up dependencies between commands.
+// Command executor takes a sequence of individual commands and records them
+// into the underlying command buffer and sets up dependencies between them
+// using one of the available syncrhonization modes.
 class CommandExecutor {
  public:
+  using RecordParams = Command::RecordParams;
+
   CommandExecutor() = default;
   CommandExecutor(CommandExecutor&&) = default;
   CommandExecutor& operator=(CommandExecutor&&) = default;
-
-  using RecordParams = Command::RecordParams;
 
   // Synchronization mode defines how much concurrency is allowed between
   // commands in the sequence.
@@ -79,18 +80,18 @@ class CommandExecutor {
   // Records commands into the command buffer. This method automatically
   // switches between `RecordCreate` or `RecordUpdate` depending on the command
   // buffer state.
-
+  //
   // This Record function allows multiple CommandbufferCmdEXecutor to be
   // recorded into a single command buffer. e.g. we can have Executor A, B, C to
   // be recorded into the same command buffer in the order of A -> B -> C. In
   // this pattern, B's source commands will depend on A's sink commands, and C's
   // source commands will also depend on B's sink commands.
-
-  // If record_action is `RecordCreate`, it will set up initial
-  // dependencies for recorded commands by the `dependencies` parameter.
-  // If record_action is `RecordUpdate`, it will only update previously
-  // recorded commands' dependencies, no other actions.
-
+  //
+  // If record_action is `RecordCreate`, it will set up initial dependencies for
+  // recorded commands by the `dependencies` parameter. If record_action is
+  // `RecordUpdate`, it will only update previously recorded commands'
+  // dependencies, no other actions.
+  //
   // If finalize is true, it will finalize the command buffer after recording,
   // if not, this allows the command_buffer to further record other executors
   // into the this command buffer.
