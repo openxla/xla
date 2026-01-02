@@ -27,21 +27,18 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/backends/gpu/runtime/command_buffer_cmd.h"
-#include "xla/backends/gpu/runtime/sequential_thunk.h"
-#include "xla/backends/gpu/runtime/thunk.h"
-#include "xla/service/buffer_assignment.h"
-#include "xla/service/gpu/buffer_allocations.h"
-#include "xla/stream_executor/command_buffer.h"
-#include "xla/stream_executor/device_address.h"
-#include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/statusor.h"
 #include "tsl/profiler/lib/profiler_lock.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/lib/traceme_encode.h"
+#include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
+#include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/service/gpu/buffer_allocations.h"
+#include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 
@@ -57,7 +54,7 @@ CommandBufferThunk::ExecutorCommandBuffer::ExecutorCommandBuffer(
     : command_buffer(std::move(command_buffer)), state(command_buffer.get()) {}
 
 CommandBufferThunk::CommandBufferThunk(
-    CommandBufferCmdExecutor commands, ThunkInfo thunk_info,
+    CommandExecutor commands, ThunkInfo thunk_info,
     std::unique_ptr<SequentialThunk> thunks,
     bool enable_command_buffers_during_profiling)
     : Thunk(Thunk::kCommandBuffer, std::move(thunk_info)),
@@ -94,8 +91,7 @@ CommandBufferThunk::CommandBufferThunk(
 
 std::vector<BufferAllocation::Index>
 CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
-    const CommandBufferCmdExecutor& commands,
-    const Thunk::ExecuteParams& params) {
+    const CommandExecutor& commands, const Thunk::ExecuteParams& params) {
   std::vector<BufferAllocation::Index> updated_allocs;
   const BufferAllocations* allocs = params.buffer_allocations;
 
@@ -203,11 +199,11 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
     auto updated_allocs =
         cmd_buffer->UpdateBufferAllocations(commands_, execute_params);
 
-    CommandBufferCmd::RecordParams record_params = {cmd_buffer->state,
-                                                    std::move(updated_allocs),
-                                                    /*is_initialization=*/true};
+    Command::RecordParams record_params = {cmd_buffer->state,
+                                           std::move(updated_allocs),
+                                           /*is_initialization=*/true};
     TF_RETURN_IF_ERROR(commands_.Record(execute_params, record_params,
-                                        CommandBufferCmd::RecordCreate{},
+                                        Command::RecordCreate{},
                                         cmd_buffer->command_buffer.get()));
 
     uint64_t end_micros = tsl::Env::Default()->NowMicros();
@@ -274,10 +270,10 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
-    CommandBufferCmd::RecordParams record_params = {cmd_buffer->state,
-                                                    std::move(updated_allocs)};
+    Command::RecordParams record_params = {cmd_buffer->state,
+                                           std::move(updated_allocs)};
     TF_RETURN_IF_ERROR(commands_.Record(params, record_params,
-                                        CommandBufferCmd::RecordCreate{},
+                                        Command::RecordCreate{},
                                         cmd_buffer->command_buffer.get()));
 
     uint64_t end_micros = tsl::Env::Default()->NowMicros();

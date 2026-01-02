@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,6 +24,20 @@ std::string CommandTypeString(CommandType type) {
     return cmd_name;
     XLA_GPU_COMMAND_LIST(CASE_CMD_STRING)
 #undef CASE_CMD_STRING
+  }
+}
+
+bool IsCollectiveCommand(CommandType type) {
+  switch (type) {
+    case CommandType::kAllGatherCmd:
+    case CommandType::kAllReduceCmd:
+    case CommandType::kAllToAllCmd:
+    case CommandType::kReduceScatterCmd:
+    case CommandType::kCollectiveBroadcastCmd:
+    case CommandType::kCollectivePermuteCmd:
+      return true;
+    default:
+      return false;
   }
 }
 

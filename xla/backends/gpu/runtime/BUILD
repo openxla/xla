@@ -70,6 +70,20 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "command_state_test",
+    srcs = ["command_state_test.cc"],
+    deps = [
+        ":command_state",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/profiler/lib:profiler_lock",
+    ],
+)
+
 cc_library(
     name = "command",
     srcs = ["command.cc"],
@@ -84,18 +98,23 @@ cc_library(
     ],
 )
 
-xla_test(
-    name = "command_state_test",
-    srcs = ["command_state_test.cc"],
-    backends = ["gpu"],
+cc_library(
+    name = "command_executor",
+    srcs = ["command_executor.cc"],
+    hdrs = ["command_executor.h"],
     deps = [
+        ":annotation",
+        ":command",
         ":command_state",
-        "//xla/tsl/platform:test",
+        ":thunk",
+        "//xla/runtime:buffer_use",
+        "//xla/runtime:execution_graph",
+        "//xla/runtime:resource_use",
+        "//xla/stream_executor:command_buffer",
+        "//xla/stream_executor:platform",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/profiler/lib:profiler_lock",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
@@ -113,6 +132,7 @@ cc_library(
         ":collective_permute_thunk",
         ":collective_thunk",
         ":command",
+        ":command_executor",
         ":command_state",
         ":copy_thunk",
         ":custom_call_thunk",
@@ -241,6 +261,7 @@ cc_library(
         ":collective_broadcast_thunk",
         ":collective_permute_thunk",
         ":collective_thunk",
+        ":command",
         ":command_buffer_cmd",
         ":conditional_thunk",
         ":copy_thunk",
@@ -373,8 +394,10 @@ cc_library(
     srcs = ["command_buffer_thunk.cc"],
     hdrs = ["command_buffer_thunk.h"],
     deps = [
-        ":command_buffer_cmd",
+        ":command",
+        ":command_executor",
         ":command_state",
+        ":command_buffer_cmd",
         ":sequential_thunk",  # build_cleaner: keep
         ":thunk",
         "//xla/service:buffer_assignment",  # build_cleaner: keep

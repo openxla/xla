@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
+#include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
@@ -277,13 +278,24 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(const Thunk& thunk,
 static absl::Status AppendCommands(CommandSequence& cmd_sequence,
                                    const Thunk& thunk,
                                    const ConvertToCommandsOptions& options) {
+  // A mapping from collective thunk async events to the corresponding
+  // collective command.
+  absl::flat_hash_map<CollectiveThunk::AsyncEvents*, const AsyncStartCommand*>
+      async_start;
+
   auto append =
       [&](absl::StatusOr<std::unique_ptr<Command>> command) -> absl::Status {
-    if (command.ok()) {
-      cmd_sequence.push_back(std::move(*command));
-      return absl::OkStatus();
+    if (!command.ok()) {
+      return command.status();
     }
-    return command.status();
+
+    // Keep track of async start commands for converting to CollectiveDoneCmd.
+    if (auto* collective = dynamic_cast<CollectiveCmd*>(command->get())) {
+      async_start[collective->async_events().get()] = collective;
+    }
+
+    cmd_sequence.push_back(std::move(*command));
+    return absl::OkStatus();
   };
 
   switch (thunk.kind()) {
@@ -347,10 +359,11 @@ static absl::Status AppendCommands(CommandSequence& cmd_sequence,
     case Thunk::Kind::kReduceScatterDone:
       if (options.synchronization_mode ==
           CommandExecutor::SynchronizationMode::kLHS) {
+        auto& done = static_cast<const CollectiveDoneThunk&>(thunk);
         return append(absl::StatusOr<std::unique_ptr<Command>>(
-            std::make_unique<AsyncDoneCmd>(
-                static_cast<const CollectiveDoneThunk&>(thunk)
-                    .async_events())));
+            std::make_unique<CollectiveDoneCmd>(
+                async_start.at(done.async_events().get()),
+                done.async_events())));
       } else {
         if (thunk.control_predecessors().empty()) {
           return absl::OkStatus();

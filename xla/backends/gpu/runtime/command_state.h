@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,10 +16,10 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_COMMAND_STATE_H_
 #define XLA_BACKENDS_GPU_RUNTIME_COMMAND_STATE_H_
 
-#include "xla/tsl/lib/gtl/int_type.h"
-#include "absl/functional/function_ref.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/functional/function_ref.h"
 #include "xla/stream_executor/command_buffer.h"
+#include "xla/tsl/lib/gtl/int_type.h"
 
 namespace xla::gpu {
 

@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,10 +19,10 @@ limitations under the License.
 #include <string>
 
 #include "xla/backends/gpu/runtime/command_state.h"
-#include "xla/stream_executor/command_buffer.h"
+#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/resource_use.h"
-#include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/stream_executor/command_buffer.h"
 
 namespace xla::gpu {
 
@@ -73,6 +73,9 @@ template <typename Sink>
 void AbslStringify(Sink& sink, CommandType type) {
   sink.Append(CommandTypeString(type));
 }
+
+// Returns true if command type corresponds to a collective operation.
+bool IsCollectiveCommand(CommandType type);
 
 //===----------------------------------------------------------------------===//
 // Command
@@ -243,6 +246,41 @@ class Command {
   // Command priority, currently only support default, lowest and highest
   // priority.
   se::StreamPriority priority_ = se::StreamPriority::Default;
+};
+
+// Returns true if command is a collective one.
+inline bool IsCollectiveCommand(const Command& cmd) {
+  return IsCollectiveCommand(cmd.command_type());
+}
+
+//===----------------------------------------------------------------------===//
+// Asyncrhronous commands
+//===----------------------------------------------------------------------===//
+
+// A base class for a command that starts an asyncrhonous execution.
+class AsyncStartCommand : public Command {
+ public:
+  using Command::Command;
+
+  // At run time async command might behave like a syncrhonous one, i.e.
+  // some collective operations if they can't be overlapped with compute
+  // operations executed like they have syncrhonous execution semantics.
+  virtual bool IsAsync() const = 0;
+};
+
+// A command that completes an `async_start` command.
+class AsyncDoneCommand : public Command {
+ public:
+  explicit AsyncDoneCommand(const AsyncStartCommand* async_start)
+      : Command(CommandType::kAsyncDone), async_start_(async_start) {
+    DCHECK(async_start_) << "AsyncStart command must be not null";
+  }
+
+  const AsyncStartCommand* async_start() const { return async_start_; }
+  bool IsAsync() const { return async_start_->IsAsync(); }
+
+ private:
+  const AsyncStartCommand* async_start_;
 };
 
 //===----------------------------------------------------------------------===//
