@@ -1,5 +1,6 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 
@@ -709,6 +710,7 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
@@ -737,7 +739,7 @@ cc_library(
     srcs = ["hlo_op_profiler.cc"],
     hdrs = ["hlo_op_profiler.h"],
     compatible_with = get_compatible_with_portable(),
-    local_defines = if_cuda(["GOOGLE_CUDA"]),
+    local_defines = if_cuda(["GOOGLE_CUDA"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM"]),
     deps = [
         ":hlo_op_profile_proto_cc",
         "//xla:debug_options_flags",
@@ -769,6 +771,9 @@ cc_library(
         "//xla/backends/profiler/gpu:cupti_buffer_events",
         "//xla/backends/profiler/gpu:cupti_collector",
         "//xla/backends/profiler/gpu:cupti_tracer",
+    ]) + if_rocm_is_configured([
+        "//xla/backends/profiler/gpu:rocm_collector",
+        "//xla/backends/profiler/gpu:rocm_tracer",
     ]),
 )
 
@@ -826,7 +831,7 @@ xla_test(
     # TODO(b/372714955): Fix the memory leak!
     args = if_google(["--heap_check="]),
     backends = ["gpu"],
-    local_defines = if_cuda(["GOOGLE_CUDA"]),
+    local_defines = if_cuda(["GOOGLE_CUDA"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM"]),
     deps = [
         ":hlo_op_profiler_lib",
         "//xla:xla_data_proto_cc",
