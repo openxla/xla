@@ -292,44 +292,6 @@ static absl::StatusOr<xla::gpu::GpuCollectives*> GetNvshmemCollectives() {
   return nvshmem_collectives;
 }
 
-absl::StatusOr<void*> RcclCollectives::Allocate(uint64_t bytes) {
-  if (xla::GetDebugOptionsFromFlags().xla_gpu_experimental_enable_nvshmem()) {
-    TF_ASSIGN_OR_RETURN(auto* nvshmem_collectives, GetNvshmemCollectives());
-    return nvshmem_collectives->Allocate(bytes);
-  }
-
-  void* ptr = nullptr;
-  ncclResult_t res = ncclMemAlloc(&ptr, bytes);
-  if (res != ncclSuccess) {
-    return absl::InternalError(absl::StrFormat(
-        "failed to allocate %s (%llu bytes) from device collective memory: %s, "
-        "Last NCCL warning(error) log entry (may be unrelated): %s",
-        tsl::strings::HumanReadableNumBytes(bytes), bytes,
-        ncclGetErrorString(res), ncclGetLastError(nullptr)));
-  }
-  VLOG(2) << "Allocated collective memory " << ptr << " of " << bytes
-          << " bytes";
-  return ptr;
-}
-
-absl::Status RcclCollectives::Deallocate(void* location) {
-  if (xla::GetDebugOptionsFromFlags().xla_gpu_experimental_enable_nvshmem()) {
-    TF_ASSIGN_OR_RETURN(auto* nvshmem_collectives, GetNvshmemCollectives());
-    return nvshmem_collectives->Deallocate(location);
-  }
-
-  ncclResult_t res = ncclMemFree(location);
-  if (res != ncclSuccess) {
-    return absl::InternalError(absl::StrFormat(
-        "failed to free device collective memory at %p; result: %s, Last NCCL "
-        "warning(error) log entry (may be unrelated): %s",
-        location, ncclGetErrorString(res), ncclGetLastError(nullptr)));
-  }
-
-  VLOG(2) << "Deallocated collective memory " << location;
-  return absl::OkStatus();
-}
-
 class RcclIdStore {
  public:
   RcclIdStore(int node_id,
