@@ -27,7 +27,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/backends/gpu/runtime/command_buffer_cmd.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
+#include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/service/buffer_assignment.h"
@@ -39,7 +40,7 @@ namespace xla::gpu {
 
 class CommandBufferThunk : public Thunk {
  public:
-  CommandBufferThunk(CommandBufferCmdExecutor commands, ThunkInfo thunk_info,
+  CommandBufferThunk(CommandExecutor commands, ThunkInfo thunk_info,
                      std::unique_ptr<SequentialThunk> thunks = nullptr,
                      bool enable_command_buffers_during_profiling = false);
 
@@ -72,8 +73,7 @@ class CommandBufferThunk : public Thunk {
     // changed since the last update. Returned buffer allocations are sorted by
     // the buffer allocation index.
     std::vector<BufferAllocation::Index> UpdateBufferAllocations(
-        const CommandBufferCmdExecutor& commands,
-        const Thunk::ExecuteParams& params)
+        const CommandExecutor& commands, const Thunk::ExecuteParams& params)
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
     // se::CommandBuffer is not thread safe, and we guard it with a mutex to
@@ -82,8 +82,8 @@ class CommandBufferThunk : public Thunk {
     std::unique_ptr<se::CommandBuffer> command_buffer ABSL_GUARDED_BY(mutex);
 
     // A manager for an external state attached by commands in a command
-    // sequence to a command buffer.
-    CommandBufferCmd::StateManager state ABSL_GUARDED_BY(mutex);
+    // sequence to a `command buffer`.
+    CommandStateManager state ABSL_GUARDED_BY(mutex);
 
     // Mapping from buffer allocation index to the device memory passed at
     // that index to the last call of `commands_.Record(...)` for
@@ -140,7 +140,7 @@ class CommandBufferThunk : public Thunk {
   static void EvictCommandBuffers();
 
   // Commands executor that initializes command buffers on each stream executor.
-  CommandBufferCmdExecutor commands_;
+  CommandExecutor commands_;
 
   // Thunk sequence that executes the same commands as in `commands_` but using
   // thunk mechanism. We use it as a fallback mechanism to work around CUPTI

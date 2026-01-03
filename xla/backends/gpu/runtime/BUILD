@@ -58,6 +58,67 @@ cc_library(
 #===-------------------------------------------------------------------------------------------===//
 
 cc_library(
+    name = "command_state",
+    srcs = ["command_state.cc"],
+    hdrs = ["command_state.h"],
+    deps = [
+        "//xla/stream_executor:command_buffer",
+        "//xla/tsl/lib/gtl:int_type",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:function_ref",
+    ],
+)
+
+xla_cc_test(
+    name = "command_state_test",
+    srcs = ["command_state_test.cc"],
+    deps = [
+        ":command_state",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/profiler/lib:profiler_lock",
+    ],
+)
+
+cc_library(
+    name = "command",
+    srcs = ["command.cc"],
+    hdrs = ["command.h"],
+    deps = [
+        ":command_state",
+        ":thunk",
+        "//xla/runtime:buffer_use",
+        "//xla/runtime:resource_use",
+        "//xla/stream_executor:command_buffer",
+        "//xla/stream_executor:platform",
+    ],
+)
+
+cc_library(
+    name = "command_executor",
+    srcs = ["command_executor.cc"],
+    hdrs = ["command_executor.h"],
+    deps = [
+        ":annotation",
+        ":command",
+        ":command_state",
+        ":thunk",
+        "//xla/runtime:buffer_use",
+        "//xla/runtime:execution_graph",
+        "//xla/runtime:resource_use",
+        "//xla/stream_executor:command_buffer",
+        "//xla/stream_executor:platform",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
+    ],
+)
+
+cc_library(
     name = "command_buffer_cmd",
     srcs = ["command_buffer_cmd.cc"],
     hdrs = ["command_buffer_cmd.h"],
@@ -70,6 +131,9 @@ cc_library(
         ":collective_execution",
         ":collective_permute_thunk",
         ":collective_thunk",
+        ":command",
+        ":command_executor",
+        ":command_state",
         ":copy_thunk",
         ":custom_call_thunk",
         ":dynamic_slice_thunk",
@@ -197,6 +261,7 @@ cc_library(
         ":collective_broadcast_thunk",
         ":collective_permute_thunk",
         ":collective_thunk",
+        ":command",
         ":command_buffer_cmd",
         ":conditional_thunk",
         ":copy_thunk",
@@ -329,6 +394,9 @@ cc_library(
     srcs = ["command_buffer_thunk.cc"],
     hdrs = ["command_buffer_thunk.h"],
     deps = [
+        ":command",
+        ":command_executor",
+        ":command_state",
         ":command_buffer_cmd",
         ":sequential_thunk",  # build_cleaner: keep
         ":thunk",

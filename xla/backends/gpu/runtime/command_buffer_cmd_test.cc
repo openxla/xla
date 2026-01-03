@@ -52,7 +52,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
-#include "xla/tsl/util/safe_reinterpret_cast.h"
 
 namespace xla::gpu {
 
@@ -120,48 +119,6 @@ class FakeCmd : public CommandBufferCmd {
 
   BufferUseVector buffers() const override { return BufferUseVector{}; }
 };
-
-TEST(CommandBufferCmdStateManageTest, GetOrCreateState) {
-  struct StateA : public CommandBufferCmd::State {
-    int32_t value = 0;
-  };
-
-  struct StateB : public CommandBufferCmd::State {
-    float value = 0;
-  };
-
-  // We need a fake command buffer pointer to use as a key.
-  auto* cmd =
-      tsl::safe_reinterpret_cast<CommandBufferCmd*>(std::intptr_t{0x1234567});
-  auto* command_buffer =
-      tsl::safe_reinterpret_cast<se::CommandBuffer*>(std::intptr_t{0x1234567});
-
-  CommandBufferCmd::StateManager state_manager;
-
-  // Create a state of type StateA.
-  auto* stateA0 = state_manager.GetOrNull<StateA>(cmd, command_buffer);
-  ASSERT_EQ(stateA0, nullptr);
-
-  auto* stateA1 = state_manager.GetOrCreate<StateA>(cmd, command_buffer);
-  ASSERT_EQ(stateA1->value, 0);
-  stateA1->value += 42;
-
-  auto* stateA2 = state_manager.GetOrCreate<StateA>(cmd, command_buffer);
-  ASSERT_EQ(stateA2->value, 42);
-  ASSERT_EQ(stateA1, stateA2);
-
-  // StateB has a different type, and has no connection to StateA created above.
-  auto* stateB0 = state_manager.GetOrNull<StateB>(cmd, command_buffer);
-  ASSERT_EQ(stateB0, nullptr);
-
-  auto* stateB1 = state_manager.GetOrCreate<StateB>(cmd, command_buffer);
-  ASSERT_EQ(stateB1->value, 0);
-  stateB1->value += 42.0;
-
-  auto* stateB2 = state_manager.GetOrCreate<StateB>(cmd, command_buffer);
-  ASSERT_EQ(stateB2->value, 42.0);
-  ASSERT_EQ(stateB1, stateB2);
-}
 
 TEST(CommandBufferCmdTest, SerializeExecution) {
   BufferAllocation alloc0(/*index=*/0, /*size=*/1024, /*color=*/0);
@@ -282,7 +239,7 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
-  CommandBufferCmd::StateManager state;
+  CommandStateManager state(nullptr);
 
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
@@ -349,7 +306,7 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   Thunk::ExecutableSource source = {/*text=*/{},
                                     /*binary=*/fatbin};
 
-  CommandBufferCmd::StateManager state;
+  CommandStateManager state(nullptr);
   TF_ASSERT_OK(executor.Initialize({stream_executor, source}, state));
 
   ServiceExecutableRunOptions run_options;
@@ -423,7 +380,7 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
   Thunk::ExecutableSource source = {/*text=*/{},
                                     /*binary=*/fatbin};
 
-  CommandBufferCmd::StateManager state;
+  CommandStateManager state(nullptr);
   TF_ASSERT_OK(executor.Initialize({stream_executor, source}, state));
 
   ServiceExecutableRunOptions run_options;
@@ -489,7 +446,7 @@ TEST(CommandBufferCmdTest, DynamicSliceCopyFusionCmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
-  CommandBufferCmd::StateManager state;
+  CommandStateManager state(nullptr);
 
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
@@ -670,7 +627,7 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   Thunk::ExecutableSource source_empty = {/*text=*/{}, /*binary=*/{}};
   Thunk::ExecutableSource source_fatbin = {/*text=*/{}, /*binary=*/fatbin};
 
-  CommandBufferCmd::StateManager state;
+  CommandStateManager state(nullptr);
   TF_ASSERT_OK(exec_a.Initialize({stream_executor, source_empty}, state));
   TF_ASSERT_OK(exec_b.Initialize({stream_executor, source_fatbin}, state));
   TF_ASSERT_OK(exec_c.Initialize({stream_executor, source_empty}, state));
@@ -782,7 +739,7 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
 
   // Prepare state and params; ChildCmd requires initialization to create a
   // nested buffer.
-  CommandBufferCmd::StateManager state;
+  CommandStateManager state(nullptr);
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b, c}, 0, &allocator);
