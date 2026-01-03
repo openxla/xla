@@ -21,23 +21,13 @@ Note that these errors might occur even if two tensors have the same shape but
 their size in memory can be different if their physical layout (how the data is
 tiled and arranged on the hardware) is different.
 
-These errors are predominantly caused by: - **Checkpoint and XLA configuration
-mismatch** - A model is trained and a checkpoint is saved. The physical layout
-of the weights in that checkpoint is determined by the exact XLA version and
-configuration (e.g. XLA flags) at that time. Later, this checkpoint is loaded in
-a different environment where the configuration has changed. A new flag, a
-different default value, or a change in the model/XLA code can cause the runtime
-to expect a different physical layout for the weights. When the old buffer from
-the checkpoint is passed to the new compiled XLA program, the runtime throws an
-error. - **Hardware/Topology-Specific Layouts** - The XLA compiler is free to
-choose different physical layouts for tensors to optimize performance on
-different hardware. A layout that is optimal for v4 TPU might be different from
-a v5 TPU, or even for different pod slices of the same chip (e.g., 4x4x4 vs
-4x8). The error occurs when a model is compiled with an assumption about one
-topology's layout, but at runtime it is scheduled on a different topology, or
-there is a bug in the compiler's layout logic for a specific piece of hardware.
+These errors are predominantly caused by:
+- **Checkpoint and XLA configuration mismatch**
+  - A model is trained and a checkpoint is saved. The physical layout of the weights in that checkpoint is determined by the exact XLA version and configuration (e.g. XLA flags) at that time. Later, this checkpoint is loaded in a different environment where the configuration has changed. A new flag, a different default value, or a change in the model/XLA code can cause the runtime to expect a different physical layout for the weights. When the old buffer from the checkpoint is passed to the new compiled XLA program, the runtime throws an error.
+- **Hardware/Topology-Specific Layouts**
+  - The XLA compiler is free to choose different physical layouts for tensors to optimize performance on different hardware. A layout that is optimal for v4 TPU might be different from a v5 TPU, or even for different pod slices of the same chip (e.g., 4x4x4 vs 4x8). The error occurs when a model is compiled with an assumption about one topology's layout, but at runtime it is scheduled on a different topology, or there is a bug in the compiler's layout logic for a specific piece of hardware.
 
-## How can a user fix their program when they do happen?
+## Potential fixes
 
 -   Ensure configuration consistency between model export and re-runs from
     checkpoints:
