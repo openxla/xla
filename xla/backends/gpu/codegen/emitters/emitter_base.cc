@@ -273,7 +273,7 @@ absl::StatusOr<FusionEmissionResult> EmitterBase::Emit(
   auto [status_or_entry, cached] =
       ir_emitter_context.kernel_cache().GetWithStatus(
           fusion.fused_instructions_computation(), args.args(),
-          /*discriminator=*/"",
+          /*discriminator=*/"EmitterBase",
           [&]() -> absl::StatusOr<KernelReuseCache::Entry> {
             std::string kernel_name = ir_emitter_context.GetSanitizedUniqueName(
                 std::string(fusion.name()));
