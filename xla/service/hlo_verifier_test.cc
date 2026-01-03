@@ -835,7 +835,8 @@ TEST_F(HloVerifierTestAllowMixedPrecision, DynamicUpdateSliceMixedPrecision) {
   ASSERT_FALSE(status.ok());
   EXPECT_THAT(status.message(),
               HasSubstr("Expected instruction to have shape equal to "
-                        "f32[32,511,2048], actual shape is bf16[32,511,2048]"));
+                        "f32[32,511,2048]{2,1,0}, actual shape is "
+                        "bf16[32,511,2048]{2,1,0}"));
 }
 
 TEST_F(HloVerifierTestLayoutSensitive, AddWithLayoutChangeNotAllowed) {
@@ -1049,7 +1050,7 @@ TEST_F(HloVerifierTest, CopyStartAndCopyDoneWrongType) {
   ASSERT_FALSE(status.ok());
   EXPECT_THAT(status.message(),
               HasSubstr("Expected instruction to have shape equal to "
-                        "(f32[2,3], f32[2,3], u32[])"));
+                        "(f32[2,3]{1,0}, f32[2,3]{1,0}, u32[])"));
 }
 
 TEST_F(HloVerifierTest, CopyStartMultipleCopyDone) {
@@ -2674,7 +2675,7 @@ TEST_F(HloVerifierTest, CollectivePermuteStartAndDoneWrongType) {
   ASSERT_FALSE(status.ok());
   EXPECT_THAT(status.message(),
               HasSubstr("Expected instruction to have shape equal to "
-                        "(f32[2,3], f32[2,3])"));
+                        "(f32[2,3]{1,0:S(1)}, f32[2,3]{1,0:S(1)})"));
 }
 
 TEST_F(HloVerifierTest, CollectivePermuteStartAndMultipleDone) {
@@ -5093,6 +5094,28 @@ TEST_F(HloVerifierTestLayoutSensitive,
   auto status = verifier().Run(module.get()).status();
   ASSERT_FALSE(status.ok());
   EXPECT_THAT(status.message(), HasSubstr("Different aliasing shapes"));
+}
+
+TEST_F(HloVerifierTest, Scan) {
+  const char* const hlo_string = R"(
+  HloModule scan_module
+
+  add {
+    lhs = f32[2] parameter(0)
+    rhs = f32[2] parameter(1)
+    add = f32[2] add(lhs, rhs)
+    ROOT t = (f32[2], f32[2]) tuple(add, add)
+  }
+
+  ENTRY entry {
+    init = f32[2] constant({0, 0})
+    input = f32[4,2] parameter(0)
+    ROOT scan = (f32[2], f32[4,2]) scan(init, input), dimensions={0}, is_associative=true, to_apply=add
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
+  EXPECT_TRUE(verifier().Run(module.get()).status().ok());
 }
 
 }  // namespace
