@@ -617,20 +617,11 @@ cc_library(
     ],
 )
 
-xla_test(
-    name = "cudnn_fused_conv_rewriter_test",
+cc_library(
+    name = "cudnn_fused_conv_rewriter_test_common",
     srcs = ["cudnn_fused_conv_rewriter_test.cc"],
-    backend_tags = {
-        "gpu_a100": [
-            "noasan",
-            "nomsan",
-        ],
-    },
-    backends = [
-        "a100",
-        "amdgpu_any",
-    ] + if_oss(["nvgpu_any"]),
-    shard_count = 10,
+    tags = ["gpu"],
+    testonly = True,
     deps = [
         ":conv_rewriter",
         ":cudnn_fused_conv_rewriter",
@@ -667,6 +658,38 @@ xla_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_test(
+    name = "cudnn_fused_conv_rewriter_test",
+    srcs = [],
+    backend_tags = {
+        "gpu_a100": [
+            "noasan",
+            "nomsan",
+        ],
+    },
+    backends = [
+        "a100",
+        "amdgpu_any",
+    ] + if_oss(["nvgpu_any"]),
+    shard_count = 10,
+    deps = [
+        ":cudnn_fused_conv_rewriter_test_common",
+    ],
+)
+
+xla_test(
+    name = "cudnn_fused_conv_rewriter_autotune_disabled_test",
+    srcs = [],
+    args = ["--xla_gpu_autotune_level=0"],
+    backends = [
+        "amdgpu_any",
+    ],
+    shard_count = 4,
+    deps = [
+        ":cudnn_fused_conv_rewriter_test_common",
     ],
 )
 
