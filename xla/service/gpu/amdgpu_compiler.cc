@@ -26,8 +26,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "llvm/IR/Module.h"
 #include "xla/backends/autotuner/codegen_backend.h"
-#include "xla/backends/gpu/autotuner/cublas.h"
-#include "xla/backends/gpu/autotuner/cublaslt.h"
+#include "xla/backends/gpu/autotuner/hipblaslt.h"
+#include "xla/backends/gpu/autotuner/rocblas.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -259,11 +259,9 @@ absl::Status AMDGPUCompiler::AddConvAndGemmAutotuningPasses(
   pipeline->AddPass<GpuConvAlgorithmPicker>(autotune_config);
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
-  // TODO(b/407494793): - Add proper support for ROCM. Currently the Cublas
-  // backend uses the same API as rocBLAS.
-  backends.push_back(std::make_unique<CublasBackend>(
+  backends.push_back(std::make_unique<RocblasBackend>(
       stream_exec, &debug_options, this, target_config));
-  backends.push_back(std::make_unique<CublasLtBackend>(
+  backends.push_back(std::make_unique<HipblasLtBackend>(
       stream_exec, &debug_options, this, target_config));
   auto should_autotune = [](const HloInstruction& instruction) -> bool {
     return instruction.opcode() == HloOpcode::kCustomCall &&
