@@ -72,6 +72,13 @@ class NcclCommunicator : public GpuCommunicator {
   absl::Status HealthCheck() const final;
   absl::StatusOr<size_t> NumRanks() const final;
 
+  PlatformCommunicatorHandle platform_host_comm() const final {
+    return PlatformCommunicatorHandle{comm_};
+  }
+
+  absl::StatusOr<std::unique_ptr<SymmetricMemory>> CreateSymmetricMemory(
+      se::DeviceAddressBase addr) final;
+
   // Since each XLA buffer is a slice into a larger BFCAllocator chunk, first
   // get the base address of buffer. We will use the base address to keep track
   // of which chunks we have registered.

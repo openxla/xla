@@ -25,8 +25,9 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
-#include "xla/service/collective_ops_utils.h"
+#include "xla/util.h"
 #include "xla/stream_executor/device_address.h"
 
 namespace xla::gpu {
@@ -41,6 +42,33 @@ namespace xla::gpu {
 class GpuCommunicator : public Communicator {
  public:
   ~GpuCommunicator() override = default;
+
+  // Platform-specific handle to the underlying communicator implementation. It
+  // allows exporting collective communication primitives created and owned by
+  // the XLA runtime to external libraries, for example via FFI calls.
+  struct PlatformCommunicatorHandle {
+    void* handle = nullptr;  // will be nullptr if not supported
+  };
+
+  // Returns a platform-spcific handle to the unerdlying communicator object for
+  // host initiated collectives.
+  virtual PlatformCommunicatorHandle platform_host_comm() const {
+    return PlatformCommunicatorHandle{nullptr};
+  }
+
+  // Returns a platform-spcific handle to the unerdlying communicator object for
+  // device initiated collectives.
+  virtual PlatformCommunicatorHandle platform_device_comm() const {
+    return PlatformCommunicatorHandle{nullptr};
+  }
+
+  // Creates a symmetric memory from the existing device address range. This is
+  // a collective operation, and all ranks in a clique must call this operation
+  // in order to make a progress.
+  virtual absl::StatusOr<std::unique_ptr<SymmetricMemory>>
+  CreateSymmetricMemory(se::DeviceAddressBase addr) {
+    return Unimplemented("Symmetric memory is not implemented");
+  }
 
   // Executes f in a group. f should invoke synchronous collective methods like
   // LaunchAllReduce and not asynchronous collective methods like AllReduce.
