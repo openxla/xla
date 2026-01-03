@@ -58,8 +58,50 @@ cc_library(
 #===-------------------------------------------------------------------------------------------===//
 
 cc_library(
+    name = "command_buffer_params",
+    srcs = ["command_buffer_params.cc"],
+    hdrs = ["command_buffer_params.h"],
+    deps = [
+        "//xla/service:buffer_assignment",
+        "//xla/stream_executor:command_buffer",
+        "//xla/tsl/lib/gtl:int_type",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:function_ref",
+    ],
+)
+
+# Header-only target for forward declarations and class definitions.
+# The implementation is in command_buffer_cmd to avoid circular dependencies.
+cc_library(
+    name = "command_buffer_cmd_executor",
+    hdrs = ["command_buffer_cmd_executor.h"],
+    deps = [
+        ":collective_thunk",
+        ":command_buffer_params",
+        ":thunk",
+        "//xla/runtime:buffer_use",
+        "//xla/runtime:execution_graph",
+        "//xla/runtime:resource_use",
+        "//xla/service:buffer_assignment",
+        "//xla/stream_executor:command_buffer",
+        "//xla/stream_executor:stream",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
     name = "command_buffer_cmd",
-    srcs = ["command_buffer_cmd.cc"],
+    srcs = [
+        "command_buffer_cmd.cc",
+        "command_buffer_cmd_executor.cc",
+    ],
     hdrs = ["command_buffer_cmd.h"],
     deps = [
         ":all_gather_thunk",
@@ -70,6 +112,8 @@ cc_library(
         ":collective_execution",
         ":collective_permute_thunk",
         ":collective_thunk",
+        ":command_buffer_cmd_executor",
+        ":command_buffer_params",
         ":copy_thunk",
         ":custom_call_thunk",
         ":dynamic_slice_thunk",
@@ -128,6 +172,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -1005,6 +1050,8 @@ cc_library(
     srcs = ["kernel_thunk.cc"],
     hdrs = ["kernel_thunk.h"],
     deps = [
+        ":command_buffer_cmd_executor",
+        ":command_buffer_params",
         ":print_buffer_contents",
         ":thunk",
         ":thunk_proto_cc",
@@ -2295,6 +2342,9 @@ cc_library(
         ":collective_cliques",
         ":collective_multimem_registry",
         ":collective_params",
+        # Note: command_buffer_params is not a dep here because thunk.h uses
+        # forward declaration. thunk.cc includes it but gets it transitively
+        # from targets that depend on both thunk and command_buffer_params.
         ":thunk_id",
         ":thunk_proto_cc",
         "//xla:executable_run_options",
@@ -2305,6 +2355,7 @@ cc_library(
         "//xla/ffi:execution_context",
         "//xla/hlo/ir:hlo",
         "//xla/runtime:buffer_use",
+        "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
         "//xla/service/gpu:backend_configs_cc",

@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/runtime/buffer_use.h"
+#include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -57,6 +58,9 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+
+// Forward declaration to avoid circular dependencies.
+struct CommandBufferParams;
 
 // Execution stream id allows to specify what Gpu stream Thunk should be using
 // for launching device work (kernels, library calls, etc.). By default all
@@ -89,6 +93,8 @@ TSL_LIB_GTL_DEFINE_INT_TYPE(ExecutionStreamId, uint64_t);
 // shared between a pair of StartThunk and corresponding DoneThunk. It is used
 // to collect async regions for a CommandBufferThunk.
 TSL_LIB_GTL_DEFINE_INT_TYPE(AsyncEventsUniqueId, uint64_t);
+
+using ResourceUseVector = absl::InlinedVector<ResourceUse, 1>;
 
 // Thunk acts as the bridge between IrEmitter and GpuExecutable. It stores the
 // metadata IrEmitter generates for GpuExecutable to invoke an HloInstruction.
@@ -356,26 +362,53 @@ class Thunk {
 
     int64_t execution_id = 0;
 
+    mutable CommandBufferParams* record_params = nullptr;
+
+    // RAII helper to temporarily change record_params and automatically
+    // restore it when the scope exits.
+    class ScopedCommandBufferParams {
+     public:
+      ScopedCommandBufferParams(const ExecuteParams& params,
+                                CommandBufferParams* new_record_params)
+          : params_(params), original_(params.record_params) {
+        params_.record_params = new_record_params;
+      }
+      ~ScopedCommandBufferParams() { params_.record_params = original_; }
+
+      // Non-copyable, non-movable
+      ScopedCommandBufferParams(const ScopedCommandBufferParams&) = delete;
+      ScopedCommandBufferParams& operator=(const ScopedCommandBufferParams&) =
+          delete;
+
+     private:
+      const ExecuteParams& params_;
+      CommandBufferParams* original_;
+    };
+
    private:
     friend class CommandBufferThunk;
 
-    ExecuteParams(const BufferAllocations* buffer_allocations,
-                  se::Stream* stream, se::Stream* command_buffer_trace_stream,
-                  CollectiveParams* collective_params,
-                  CollectiveCliques* collective_cliques,
-                  se::Stream* device_to_host_stream,
-                  se::Stream* host_to_device_stream,
-                  SendDeviceMemoryFunction* send_device_memory_function,
-                  RecvDeviceMemoryFunction* recv_device_memory_function,
-                  const ffi::ExecutionContext* ffi_execution_context,
-                  ExecutionStreamIdMap additional_compute_streams = {},
-                  bool mock_collectives = false, int64_t execution_id = 0);
+    ExecuteParams(
+        const BufferAllocations* buffer_allocations, se::Stream* stream,
+        se::Stream* command_buffer_trace_stream,
+        CollectiveParams* collective_params,
+        CollectiveCliques* collective_cliques,
+        se::Stream* device_to_host_stream, se::Stream* host_to_device_stream,
+        SendDeviceMemoryFunction* send_device_memory_function,
+        RecvDeviceMemoryFunction* recv_device_memory_function,
+        const ffi::ExecutionContext* ffi_execution_context,
+        ExecutionStreamIdMap additional_compute_streams = {},
+        bool mock_collectives = false, int64_t execution_id = 0,
+        CommandBufferParams* record_params = nullptr);
   };
 
   //===--------------------------------------------------------------------===//
 
   Thunk(Kind kind, ThunkInfo thunk_info)
-      : kind_(kind), thunk_info_(std::move(thunk_info)) {}
+      : kind_(kind), thunk_info_(std::move(thunk_info)) {
+    token_ = Resource::Create(Resource::kToken);
+    resources_.push_back(ResourceUse::Write(token_));
+  }
   virtual ~Thunk() = default;
   Thunk(const Thunk&) = delete;
   Thunk& operator=(const Thunk&) = delete;
@@ -492,6 +525,57 @@ class Thunk {
 
   virtual bool IsAsyncDone() const { return false; }
 
+  // Returns true if command requires initialization (has to be recorded at
+  // command buffer thunk initialization).
+  //
+  // Today this is only true for collective commands that might use NCCL for
+  // communication. With NCCL, all participating ranks must record collective
+  // commands at the same time, if some ranks will skip command updates (because
+  // they got lucky and got the same buffer allocations), it will lead to
+  // deadlocks. By forcing the command update at thunk initialization time, we
+  // ensure that all ranks execute NCCL command update.
+  virtual bool command_buffer_requires_initialization() { return false; }
+
+  // Returns true if command supports loop unroll, the while loop can be
+  // unrolled only if it has pre-known trip count and also all commands from the
+  // body commands are unrollable..
+  virtual bool command_buffer_support_loop_unroll() { return true; }
+
+  // This is only true for DynamicSliceCopyFusionCmd when offset is dependents
+  // on loop iteration. As the command of slice operation is access the sliced
+  // memory region that varies across loop iterations, so even the original
+  // buffer allocation is the same, it still requires to do update.
+  virtual bool command_buffer_force_update() { return false; }
+
+  // Return the dependencies of the command from within the executor, if the
+  // command is a source command, it will return the executor dependencies
+  // specified in record_params.
+  std::vector<const se::CommandBuffer::Command*> CommandBufferDependencies(
+      const CommandBufferParams& record_params) const;
+
+  using CreateCommand =
+      absl::FunctionRef<absl::StatusOr<const se::CommandBuffer::Command*>()>;
+
+  using UpdateCommand = absl::FunctionRef<absl::Status(
+      const se::CommandBuffer::Command* command)>;
+
+  absl::Status HandleCmdCreateOrUpdate(CommandBufferParams& record_params,
+                                       CreateCommand create_command,
+                                       UpdateCommand update_command);
+
+  std::shared_ptr<Resource> token() const { return token_; }
+
+  void add_resouce_use(ResourceUse resource_use) {
+    resources_.push_back(resource_use);
+  }
+
+  ResourceUseVector resources() const { return resources_; }
+
+  se::StreamPriority command_buffer_priority() const { return priority_; }
+  void set_command_buffer_priority(se::StreamPriority priority) {
+    priority_ = priority;
+  }
+
  private:
   Kind kind_;
   ThunkInfo thunk_info_;
@@ -502,6 +586,15 @@ class Thunk {
   // sequence in concurrent mode, and we should make sure that it does not
   // violate the control dependency in the original computation.
   std::vector<const Thunk*> control_predecessors_;
+
+  ResourceUseVector resources_;
+
+  // The token resource is used to specify additional dependency across
+  // commands, like control dependency across HLO operators, and LHS scheduling
+  // dependency.
+  std::shared_ptr<Resource> token_;
+
+  se::StreamPriority priority_ = se::StreamPriority::Default;
 };
 
 // A sequence of thunks.

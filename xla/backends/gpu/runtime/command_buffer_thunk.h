@@ -83,7 +83,7 @@ class CommandBufferThunk : public Thunk {
 
     // A manager for an external state attached by commands in a command
     // sequence to a command buffer.
-    CommandBufferCmd::StateManager state ABSL_GUARDED_BY(mutex);
+    CommandBufferStateManager state ABSL_GUARDED_BY(mutex);
 
     // Mapping from buffer allocation index to the device memory passed at
     // that index to the last call of `commands_.Record(...)` for
