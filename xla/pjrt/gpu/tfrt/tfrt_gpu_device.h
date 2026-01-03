@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/literal.h"
 #include "xla/pjrt/gpu/tfrt/gpu_event.h"
+#include "xla/pjrt/gpu/tfrt/stream_accessor_guard.h"
 #include "xla/pjrt/gpu/tfrt/tfrt_gpu_buffer.h"
 #include "xla/pjrt/gpu/tfrt/tracked_gpu_device_buffer.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -132,11 +133,20 @@ class TfrtGpuDevice final : public PjRtDevice {
   // Returns a fresh, PRNG-generated random seed for an XLA computation.
   int GetNewPrngSeed();
 
-  se::Stream* stream() const { return stream_.get(); }
+  se::Stream* stream() const {
+    TfrtGpuStreamAccessorGuard::AssertAllowed();
+    return stream_.get();
+  }
 
-  se::Stream* d2h_stream() const { return d2h_stream_.get(); }
+  se::Stream* d2h_stream() const {
+    TfrtGpuStreamAccessorGuard::AssertAllowed();
+    return d2h_stream_.get();
+  }
 
-  se::StreamExecutor* executor() const { return executor_; }
+  se::StreamExecutor* executor() const {
+    TfrtGpuStreamAccessorGuard::AssertAllowed();
+    return executor_;
+  }
 
   tsl::AsyncValueRef<GpuEvent> SetLastCollectiveLaunchEvent(
       tsl::AsyncValueRef<GpuEvent> event);
