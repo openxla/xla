@@ -644,12 +644,12 @@ stylesheet=<
     // If this edge crosses a fusion cluster boundary, highlight it when the
     // cluster is hovered over.
     if (to_node) {
-      if (from_node->IsFused() &&
+      if (from_node->IsFusedStrict() &&
           from_node->parent()->root_instruction() == from_node) {
         int64_t cluster_id = cluster_ids_.at(from_node->parent());
         add_hover_css_rule("clust", cluster_id, kBlue);
       }
-      if (to_node->IsFused() && to_node->opcode() == HloOpcode::kParameter) {
+      if (to_node->IsFusedStrict() && to_node->opcode() == HloOpcode::kParameter) {
         int64_t cluster_id = cluster_ids_.at(to_node->parent());
         add_hover_css_rule("clust", cluster_id, kRed);
       }
@@ -851,7 +851,7 @@ std::string HloDotDumper::DumpRootTag() {
 
 static const HloConstantInstruction* TryGetFusionParameterConstant(
     const HloInstruction* instr) {
-  if (instr->opcode() != HloOpcode::kParameter || !instr->IsFused()) {
+  if (instr->opcode() != HloOpcode::kParameter || !instr->IsFusedStrict()) {
     return nullptr;
   }
   const HloInstruction* fusion = instr->parent()->FusionInstruction();
@@ -881,7 +881,7 @@ bool HloDotDumper::ShouldMergeIntoUsers(const HloInstruction* instr) const {
   }
   const int kMinUsersToOmit = 3;
   return instr->opcode() == HloOpcode::kParameter && instr->shape().IsTuple() &&
-         !instr->IsFused() &&
+         !instr->IsFusedStrict() &&
          absl::c_count_if(instr->users(),
                           [&](const HloInstruction* user) {
                             return filter_.Show(user);
@@ -1089,7 +1089,7 @@ std::string HloDotDumper::GetInstructionNodeInlinedOperands(
 
   // Special case: fused parameter is fed from a get-tuple-element.  If
   // so, name the tuple index.
-  if (instr->opcode() == HloOpcode::kParameter && instr->IsFused()) {
+  if (instr->opcode() == HloOpcode::kParameter && instr->IsFusedStrict()) {
     const HloInstruction* param_input =
         instr->parent()->FusionInstruction()->operand(
             instr->parameter_number());
@@ -1236,7 +1236,7 @@ ColorScheme HloDotDumper::GetInstructionColor(const HloInstruction* instr) {
     case HloOpcode::kBitcast:
       // Unfused bitcast is free, but fused bitcast should count as a non-free
       // data-movement op (e.g. requires linearization of indices on GPU).
-      if (!instr->IsFused()) {
+      if (!instr->IsFusedStrict()) {
         return kWhite;
       }
       return kGreen;
@@ -1628,7 +1628,7 @@ void HloDotDumper::AddInstructionIncomingEdges(const HloInstruction* instr) {
   // Add edges from instr's operands to instr.  Parameters within fusion
   // expressions are handled specially -- we draw an edge from the corresponding
   // operand on the fusion node itself to the parameter.
-  if (instr->opcode() == HloOpcode::kParameter && instr->IsFused()) {
+  if (instr->opcode() == HloOpcode::kParameter && instr->IsFusedStrict()) {
     // Only add the edge if this is not the outermost computation; otherwise it
     // will lead from a node we're not drawing.
     if (instr->parent() != computation_) {
@@ -1691,7 +1691,7 @@ const HloInstruction* HloDotDumper::GetNodeForEdge(
 bool IsAcfPrameter(const xla::HloInstruction* instruction) {
   // Parameter is fused
   if (instruction->opcode() != xla::HloOpcode::kParameter ||
-      !instruction->IsFused())
+      !instruction->IsFusedStrict())
     return false;
 
   // Parameter piped through and is only consumed by 1 user
