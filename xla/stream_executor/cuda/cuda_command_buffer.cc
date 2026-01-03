@@ -275,12 +275,18 @@ CudaCommandBuffer::CreateConditionalNode(
   VLOG(2) << "Created conditional CUDA graph "
           << cu_params.conditional.phGraph_out[0];
 
+  // Create the nested command buffer and set its parent so that graph_exec()
+  // can walk up the parent chain to find the instantiated graph.
+  // Without this, UpdateWhile crashes with "graph_exec_ is nullptr".
+  auto* nested_buffer = new CudaCommandBuffer(
+      Mode::kNested, stream_exec_, cuda_context_,
+      cu_params.conditional.phGraph_out[0],
+      /*is_owned_graph=*/false);
+  nested_buffer->parent_ = this;
+
   return GraphConditionalNodeHandle{
       FromCudaGraphHandle(node_handle),
-      std::unique_ptr<CudaCommandBuffer>(
-          new CudaCommandBuffer(Mode::kNested, stream_exec_, cuda_context_,
-                                cu_params.conditional.phGraph_out[0],
-                                /*is_owned_graph=*/false))};
+      std::unique_ptr<CudaCommandBuffer>(nested_buffer)};
 #else
   return absl::UnimplementedError("unsupported node type");
 #endif  // CUDA_VERSION >= 12030
