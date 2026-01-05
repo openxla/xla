@@ -320,16 +320,15 @@ absl::Span<std::unique_ptr<Thunk>> CollectAndCheckAsyncRegion(
   return thunks.subspan(0, CheckAsyncRegion(thunks, config));
 }
 
-absl::StatusOr<CommandBufferCmdExecutor::SynchronizationMode>
-GetSynchronizationMode(
+absl::StatusOr<CommandExecutor::SynchronizationMode> GetSynchronizationMode(
     DebugOptions::CommandBufferSchedulingMode scheduling_mode) {
   switch (scheduling_mode) {
     case DebugOptions::SERIALIZE:
-      return CommandBufferCmdExecutor::SynchronizationMode::kSerialize;
+      return CommandExecutor::SynchronizationMode::kSerialize;
     case DebugOptions::CONCURRENT:
-      return CommandBufferCmdExecutor::SynchronizationMode::kConcurrent;
+      return CommandExecutor::SynchronizationMode::kConcurrent;
     case DebugOptions::LHS:
-      return CommandBufferCmdExecutor::SynchronizationMode::kLHS;
+      return CommandExecutor::SynchronizationMode::kLHS;
     default:
       return Internal("Unsupported command buffer scheduling mode: %d",
                       scheduling_mode);
@@ -339,10 +338,10 @@ GetSynchronizationMode(
 absl::StatusOr<std::unique_ptr<CommandBufferThunk>>
 ConvertThunksToCommandBuffer(
     std::vector<std::unique_ptr<Thunk>> thunks_to_convert,
-    CommandBufferCmdExecutor::SynchronizationMode synchronization_mode,
+    CommandExecutor::SynchronizationMode synchronization_mode,
     const DebugOptions& debug_options) {
   TF_ASSIGN_OR_RETURN(
-      CommandBufferCmdExecutor cmd_executor,
+      CommandExecutor cmd_executor,
       ConvertToCommands(thunks_to_convert,
                         ConvertToCommandsOptions{synchronization_mode}));
 
@@ -360,7 +359,7 @@ ConvertThunksToCommandBuffer(
 }
 
 absl::Status FlushCommandBuffer(
-    CommandBufferCmdExecutor::SynchronizationMode synchronization_mode,
+    CommandExecutor::SynchronizationMode synchronization_mode,
     const DebugOptions& debug_options,
     std::vector<std::unique_ptr<Thunk>>& current_command_buffer_thunks,
     std::vector<std::unique_ptr<Thunk>>& new_thunks, bool& changed) {
@@ -420,7 +419,7 @@ absl::StatusOr<bool> CommandBufferConversionPass::Run(
   VLOG(1) << "Module " << module_name_
           << " CommandBufferConfig: " << config.ToString();
   TF_ASSIGN_OR_RETURN(
-      CommandBufferCmdExecutor::SynchronizationMode synchronization_mode,
+      CommandExecutor::SynchronizationMode synchronization_mode,
       GetSynchronizationMode(
           debug_options.xla_gpu_command_buffer_scheduling_mode()));
 

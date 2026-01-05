@@ -155,7 +155,7 @@ void LaunchCommandBufferThunk(stream_executor::StreamExecutor* executor,
                       BufferUse::MemoryAccess::kWrite};
 
   // Prepare commands sequence for constructing command buffer.
-  CommandBufferCmdSequence commands;
+  CommandSequence commands;
   commands.Emplace<LaunchCmd>("AddI32", args, args_access,
                               LaunchDimensions(1, kLength),
                               /*shmem_bytes=*/0);
@@ -163,10 +163,10 @@ void LaunchCommandBufferThunk(stream_executor::StreamExecutor* executor,
                               LaunchDimensions(1, kLength),
                               /*shmem_bytes=*/0);
   TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor cmd_buffer_executor,
-      CommandBufferCmdExecutor::Create(
+      CommandExecutor cmd_buffer_executor,
+      CommandExecutor::Create(
           std::move(commands),
-          CommandBufferCmdExecutor::SynchronizationMode::kConcurrent));
+          CommandExecutor::SynchronizationMode::kConcurrent));
 
   // Construct a thunk with command sequence.
   CommandBufferThunk thunk(std::move(cmd_buffer_executor), Thunk::ThunkInfo());
