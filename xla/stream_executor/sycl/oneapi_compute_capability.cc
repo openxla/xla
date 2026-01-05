@@ -49,8 +49,8 @@ std::string OneAPIComputeCapability::ToString() const {
 }
 
 std::pair<uint32_t, uint32_t> OneAPIComputeCapability::BaseVersionTupleFor(
-    std::string name) {
-  auto architecture = absl::AsciiStrToLower(name);
+    absl::string_view name) {
+  std::string architecture = absl::AsciiStrToLower(name);
   if (architecture == "pvc") {
     return {0xc, 0x3c};
   } else if (architecture == "bmg") {
@@ -61,7 +61,7 @@ std::pair<uint32_t, uint32_t> OneAPIComputeCapability::BaseVersionTupleFor(
   return {0, 0};
 }
 
-uint32_t OneAPIComputeCapability::GenericIPVersionFor(std::string name) {
+uint32_t OneAPIComputeCapability::GenericIPVersionFor(absl::string_view name) {
   auto [gen, ver] = BaseVersionTupleFor(name);
   return (gen << 22) | (ver << 14);
 }

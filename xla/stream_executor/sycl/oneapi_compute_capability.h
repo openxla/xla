@@ -50,7 +50,7 @@ class OneAPIComputeCapability {
       : OneAPIComputeCapability((ip_version >> 22) & 0x3ff,
                                 (ip_version >> 14) & 0xff) {}
 
-  explicit OneAPIComputeCapability(std::string name)
+  explicit OneAPIComputeCapability(absl::string_view name)
       : OneAPIComputeCapability(GenericIPVersionFor(name)) {}
 
   const uint32_t generation() const { return generation_; }
@@ -90,10 +90,11 @@ class OneAPIComputeCapability {
 
   // A utility function that returns the base (generation, version) tuple for
   // the given platform name
-  static std::pair<uint32_t, uint32_t> BaseVersionTupleFor(std::string name);
+  static std::pair<uint32_t, uint32_t> BaseVersionTupleFor(
+      absl::string_view name);
 
   // Return the generic IP version for the given platform name
-  static uint32_t GenericIPVersionFor(std::string name);
+  static uint32_t GenericIPVersionFor(absl::string_view name);
 };
 
 #undef EMIT_COMPUTE_CAPABILITY_FOR
