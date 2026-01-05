@@ -160,7 +160,7 @@ Service::Service(const ServiceOptions& options,
       const auto& description = executor->GetDeviceDescription();
       LOG(INFO) << StrFormat(
           "  StreamExecutor [%d]: %s, %s"
-          " (Driver: %v; Runtime: %v; Tolkit: %v; DNN: %v)",
+          " (Driver: %v; Runtime: %v; Toolkit: %v; DNN: %v)",
           i, description.name(), description.platform_version(),
           description.driver_version(), description.runtime_version(),
           description.compile_time_toolkit_version(),
