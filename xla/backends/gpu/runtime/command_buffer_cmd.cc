@@ -44,6 +44,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
@@ -102,7 +103,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla::gpu {
 
