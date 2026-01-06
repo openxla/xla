@@ -171,6 +171,7 @@ cc_library(
 xla_cc_test(
     name = "async_wrapper_test",
     srcs = ["async_wrapper_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":async_wrapper",
         "//xla:literal",
@@ -327,6 +328,7 @@ cc_library(
 xla_cc_test(
     name = "block_scaling_rewriter_test",
     srcs = ["block_scaling_rewriter_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":block_scaling_rewriter",
         "//xla:error_spec",
@@ -432,6 +434,7 @@ cc_library(
 xla_cc_test(
     name = "conv_rewriter_test",
     srcs = ["conv_rewriter_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":conv_rewriter",
         "//xla:array4d",
@@ -631,6 +634,8 @@ xla_test(
         "amdgpu_any",
     ] + if_oss(["nvgpu_any"]),
     shard_count = 10,
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":conv_rewriter",
         ":cudnn_fused_conv_rewriter",
@@ -761,6 +766,8 @@ xla_test(
     srcs = ["cudnn_norm_rewriter_test.cc"],
     backends = ["gpu"],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":cudnn_norm_rewriter",
         "//xla:error_spec",
@@ -985,6 +992,8 @@ xla_test(
     name = "dot_dimension_sorter_test",
     srcs = ["dot_dimension_sorter_test.cc"],
     backends = ["gpu"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":dot_dimension_sorter",
         "//xla:error_spec",
@@ -1055,6 +1064,8 @@ xla_test(
         "b200",
         "amdgpu_any",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = if_gpu_is_configured(
         [
             ":dot_operand_converter",
@@ -1362,6 +1373,8 @@ xla_test(
     name = "gemm_broadcast_folding_rewriter_test",
     srcs = ["gemm_broadcast_folding_rewriter_test.cc"],
     backends = ["gpu"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":gemm_broadcast_folding_rewriter",
         ":gemm_rewriter",
@@ -1404,6 +1417,8 @@ xla_test(
     name = "gemm_workspace_rewriter_test",
     srcs = ["gemm_workspace_rewriter_test.cc"],
     backends = ["gpu"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":gemm_workspace_rewriter",
         "//xla/hlo/ir:hlo",
@@ -1575,6 +1590,8 @@ xla_test(
     name = "gemm_rewriter_test",
     srcs = ["gemm_rewriter_test.cc"],
     backends = ["gpu"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":gemm_rewriter",
         ":gemm_rewriter_test_lib",
@@ -1607,6 +1624,8 @@ xla_test(
     name = "cublas_gemm_rewriter_test",
     srcs = ["cublas_gemm_rewriter_test.cc"],
     backends = ["gpu"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":gemm_rewriter",
         ":gemm_rewriter_test_lib",
@@ -1636,6 +1655,8 @@ xla_test(
     srcs = ["gemm_rewriter_fp8_test.cc"],
     backends = ["gpu"],
     shard_count = 5,
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":gemm_rewriter",
         ":gemm_rewriter_test_lib",
@@ -1737,6 +1758,7 @@ cc_library(
 xla_cc_test(
     name = "layout_assignment_test",
     srcs = ["layout_assignment_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":layout_assignment",
         "//xla:shape_layout",
@@ -2841,6 +2863,8 @@ xla_test(
     name = "topk_specializer_test",
     srcs = ["topk_specializer_test.cc"],
     backends = ["gpu"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":topk_specializer",
         "//xla:shape_util",
@@ -2883,6 +2907,7 @@ cc_library(
 xla_cc_test(
     name = "topk_splitter_test",
     srcs = ["topk_splitter_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":topk_splitter",
         "//xla/hlo/ir:hlo",
@@ -3456,6 +3481,7 @@ xla_cc_test(
 xla_cc_test(
     name = "scaled_dot_rewriter_test",
     srcs = ["scaled_dot_rewriter_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":scaled_dot_rewriter",
         "//xla:error_spec",
