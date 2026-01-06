@@ -76,7 +76,11 @@ xla_cc_test(
     deps = [
         ":command_state",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/profiler/lib:profiler_lock",
     ],
 )
 
