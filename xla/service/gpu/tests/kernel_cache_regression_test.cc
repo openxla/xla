@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// Tests for kernel cache behavior with different fusion emitters.
+// Regression tests for kernel cache behavior.
 // These tests verify that different emitters (Loop, Triton, etc.) properly
 // namespace their cached kernels to avoid cross-emitter cache collisions.
 
@@ -27,11 +27,10 @@ namespace xla {
 namespace gpu {
 namespace {
 
-class KernelCacheEmitterTest
+class KernelCacheRegressionTest
     : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase> {};
 
-
-TEST_F(KernelCacheEmitterTest, LoopAndTritonFusionsWithIdenticalComputation) {
+TEST_F(KernelCacheRegressionTest, LoopAndTritonFusionsWithIdenticalComputation) {
   constexpr absl::string_view kHloText = R"(
 HloModule test_module
 
@@ -84,9 +83,8 @@ ENTRY main {
 })";
 
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{/*aabs=*/1e-6,
-                                                          /*arel=*/1e-6}));
+                                                            /*arel=*/1e-6}));
 }
-
 
 }  // namespace
 }  // namespace gpu

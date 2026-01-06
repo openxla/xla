@@ -395,17 +395,3 @@ cc_library(
         "@llvm-project//mlir:VectorDialect",
     ],
 )
-
-xla_test(
-    name = "kernel_cache_test",
-    srcs = ["kernel_cache_test.cc"],
-    backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
-    deps = [
-        "//xla:error_spec",
-        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
-        "//xla/tests:hlo_pjrt_test_base",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
