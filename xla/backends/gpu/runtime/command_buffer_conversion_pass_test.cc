@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/cudnn_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/replica_id_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/shaped_slice.h"
@@ -162,6 +163,69 @@ std::unique_ptr<CollectiveDoneThunk> CreateAllGatherDoneThunk(
       static_cast<const AllGatherStartThunk*>(start_thunk)->async_events();
   return std::make_unique<CollectiveDoneThunk>(
       Thunk::kAllGatherDone, Thunk::ThunkInfo(), std::move(async_events),
+      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
+}
+
+std::unique_ptr<NvshmemAllReduceStartThunk> CreateNvshmemAllReduceStartThunk(
+    const BufferAllocation& alloc0, const BufferAllocation& alloc1) {
+  auto create_replica_groups =
+      [](const std::vector<std::vector<int64_t>>& replica_groups) {
+        std::vector<ReplicaGroup> result;
+        result.reserve(replica_groups.size());
+        for (const auto& replica_group : replica_groups) {
+          ReplicaGroup& group = result.emplace_back();
+          for (auto id : replica_group) {
+            group.add_replica_ids(id);
+          }
+        }
+        return result;
+      };
+
+  std::vector<ReplicaGroup> replica_groups =
+      create_replica_groups({{0, 1}, {2, 3}});
+
+  HloModule module("test_module", HloModuleConfig());
+
+  HloComputation::Builder reducer_builder("add");
+  auto reducer_x = reducer_builder.AddInstruction(
+      HloInstruction::CreateParameter(0, ShapeUtil::MakeScalarShape(F32), "x"));
+  auto reducer_y = reducer_builder.AddInstruction(
+      HloInstruction::CreateParameter(1, ShapeUtil::MakeScalarShape(F32), "y"));
+  reducer_builder.AddInstruction(HloInstruction::CreateBinary(
+      ShapeUtil::MakeScalarShape(F32), HloOpcode::kAdd, reducer_x, reducer_y));
+  HloComputation* add_computation =
+      module.AddEmbeddedComputation(reducer_builder.Build());
+
+  auto builder = HloComputation::Builder("test_builder");
+  auto param_shape = ShapeUtil::MakeShape(F32, {4, 4});
+  HloInstruction* param_0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, param_shape, "p0"));
+
+  HloInstruction* all_reduce_start =
+      builder.AddInstruction(HloInstruction::CreateAllReduceStart(
+          ShapeUtil::MakeTupleShape({param_shape, param_shape}), {param_0},
+          add_computation, replica_groups, false, 2, false));
+
+  BufferAllocation::Slice slice0(&alloc0, 0, 16 * 4);
+  BufferAllocation::Slice slice1(&alloc1, 0, 16 * 4);
+
+  CollectiveThunk::Buffer buffer;
+  buffer.source_buffer = slice0;
+  buffer.destination_buffer = slice1;
+
+  return std::make_unique<NvshmemAllReduceStartThunk>(
+      Thunk::ThunkInfo(),
+      static_cast<const HloAllReduceInstruction*>(all_reduce_start),
+      std::vector<CollectiveThunk::Buffer>({buffer}), false);
+}
+
+std::unique_ptr<CollectiveDoneThunk> CreateNvshmemAllReduceDoneThunk(
+    Thunk* start_thunk) {
+  auto async_events =
+      static_cast<const NvshmemAllReduceStartThunk*>(start_thunk)
+          ->async_events();
+  return std::make_unique<CollectiveDoneThunk>(
+      Thunk::kNvshmemAllReduceDone, Thunk::ThunkInfo(), std::move(async_events),
       AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
 }
 
@@ -888,6 +952,119 @@ TEST(CommandBufferConversionPassTest, ConvertTheBodyOfWhileThunk) {
   const auto& thunks_in_command_buffer =
       command_buffer_thunk->thunks()->thunks();
   EXPECT_THAT(thunks_in_command_buffer, ThunkKindsAre(Thunk::kGemm));
+}
+
+TEST(CommandBufferConversionPassTest, ConvertsNvshmemAllReduceToCommandBuffer) {
+  std::vector<std::unique_ptr<Thunk>> thunks;
+  BufferAllocation alloc0(1, 16 * 4, 0);
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  thunks.push_back(CreateNvshmemAllReduceStartThunk(alloc0, alloc1));
+  thunks.push_back(CreateNvshmemAllReduceDoneThunk(thunks.back().get()));
+
+  auto root_thunk =
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
+  ASSERT_EQ(root_thunk->thunks().size(), 2);
+
+  DebugOptions debug_options;
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
+
+  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass("test");
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, nullptr, device_info,
+                       allocator),
+              IsOkAndHolds(true));
+
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
+
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[0].get());
+  const auto& thunks_in_command_buffer =
+      command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(thunks_in_command_buffer,
+              ThunkKindsAre(Thunk::kNvshmemAllReduceStart,
+                            Thunk::kNvshmemAllReduceDone));
+}
+
+TEST(CommandBufferConversionPassTest,
+     ConvertsNvshmemAllReduceMixedWithOtherThunks) {
+  std::vector<std::unique_ptr<Thunk>> thunks;
+  BufferAllocation alloc0(1, 16 * 4, 0);
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  BufferAllocation alloc2(0, 1024, 0);
+
+  thunks.push_back(CreateNvshmemAllReduceStartThunk(alloc0, alloc1));
+  thunks.push_back(CreateNvshmemAllReduceDoneThunk(thunks.back().get()));
+  thunks.push_back(CreateCopyThunk(alloc2));
+  thunks.push_back(CreateNvshmemAllReduceStartThunk(alloc0, alloc1));
+  thunks.push_back(CreateNvshmemAllReduceDoneThunk(thunks.back().get()));
+
+  auto root_thunk =
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
+  ASSERT_EQ(root_thunk->thunks().size(), 5);
+
+  DebugOptions debug_options;
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+
+  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass("test");
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, nullptr, device_info,
+                       allocator),
+              IsOkAndHolds(true));
+
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
+
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[0].get());
+  const auto& thunks_in_command_buffer =
+      command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(
+      thunks_in_command_buffer,
+      ThunkKindsAre(Thunk::kNvshmemAllReduceStart, Thunk::kNvshmemAllReduceDone,
+                    Thunk::kCopy, Thunk::kNvshmemAllReduceStart,
+                    Thunk::kNvshmemAllReduceDone));
+}
+
+TEST(CommandBufferConversionPassTest,
+     ConvertsNvshmemAllReduceAndRegularAllGatherTogether) {
+  std::vector<std::unique_ptr<Thunk>> thunks;
+  BufferAllocation alloc0(1, 16 * 4, 0);
+  BufferAllocation alloc1(1, 16 * 4, 0);
+
+  thunks.push_back(CreateNvshmemAllReduceStartThunk(alloc0, alloc1));
+  thunks.push_back(CreateAllGatherStartThunk(alloc0, alloc1));
+  thunks.push_back(CreateNvshmemAllReduceDoneThunk(thunks[0].get()));
+  thunks.push_back(CreateAllGatherDoneThunk(thunks[1].get()));
+
+  auto root_thunk =
+      std::make_unique<SequentialThunk>(Thunk::ThunkInfo(), std::move(thunks));
+  ASSERT_EQ(root_thunk->thunks().size(), 4);
+
+  DebugOptions debug_options;
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
+
+  se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  FakeErrorAllocator allocator;
+  CommandBufferConversionPass pass("test");
+  ASSERT_THAT(pass.Run(root_thunk.get(), debug_options, nullptr, device_info,
+                       allocator),
+              IsOkAndHolds(true));
+
+  EXPECT_THAT(root_thunk->thunks(), ThunkKindsAre(Thunk::kCommandBuffer));
+
+  const auto* command_buffer_thunk =
+      static_cast<const CommandBufferThunk*>(root_thunk->thunks()[0].get());
+  const auto& thunks_in_command_buffer =
+      command_buffer_thunk->thunks()->thunks();
+  EXPECT_THAT(
+      thunks_in_command_buffer,
+      ThunkKindsAre(Thunk::kNvshmemAllReduceStart, Thunk::kAllGatherStart,
+                    Thunk::kNvshmemAllReduceDone, Thunk::kAllGatherDone));
 }
 
 }  // namespace
