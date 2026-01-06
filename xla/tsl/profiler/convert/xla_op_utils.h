@@ -174,7 +174,7 @@ inline bool IsOffDutyOp(absl::string_view category) {
 // generated the op.
 struct OpSourceInfo {
   std::string source_file;
-  int32_t source_line = -1;
+  int32_t source_line;
   std::string stack_frame;
 
   std::string GetSourceTopLine() const {
