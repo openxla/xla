@@ -36,6 +36,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Support/TypeID.h"
 #include "xla/python/ifrt/support/module_parsing.h"
+#include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "tsl/platform/path.h"
@@ -69,15 +70,16 @@ class InitPassManagerTest : public testing::Test {
     context_.loadAllAvailableDialects();
 
     mlir::OpBuilder builder(&context_);
-    module_ = builder.create<mlir::ModuleOp>(builder.getUnknownLoc());
+    module_ = xla::llvm_ir::CreateMlirModuleOp(builder.getUnknownLoc());
 
     builder.setInsertionPointToStart(module_->getBody());
-    auto func = builder.create<mlir::func::FuncOp>(  //
-        builder.getUnknownLoc(), "program", builder.getFunctionType({}, {}));
+    auto func =
+        mlir::func::FuncOp::create(builder, builder.getUnknownLoc(), "program",
+                                   builder.getFunctionType({}, {}));
     func->setAttr("pw.program", builder.getUnitAttr());
 
     builder.setInsertionPointToStart(func.addEntryBlock());
-    builder.create<mlir::func::ReturnOp>(builder.getUnknownLoc());
+    mlir::func::ReturnOp::create(builder, builder.getUnknownLoc());
   }
 
   absl::StatusOr<std::vector<std::string>> MatchUndeclaredOutputs() {

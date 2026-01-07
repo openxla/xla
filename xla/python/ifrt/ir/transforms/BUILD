@@ -89,6 +89,7 @@ cc_library(
         "//xla/service:compilation_environments",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_proto_cc",
+        "//xla/service/llvm_ir:llvm_util",
         "//xla/service/spmd/shardy:constants",
         "//xla/service/spmd/shardy:utils",
         "//xla/tsl/concurrency:future",
@@ -200,6 +201,7 @@ xla_cc_test(
     deps = [
         ":debug",
         "//xla/python/ifrt/support:module_parsing",
+        "//xla/service/llvm_ir:llvm_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "@com_google_absl//absl/status:status_matchers",
