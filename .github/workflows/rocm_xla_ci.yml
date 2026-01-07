@@ -1,5 +1,6 @@
-name: '[ROCm] OpenXla CI'
-
+name: CI ROCm
+permissions:
+  contents: read
 on:
   pull_request:
   push:
@@ -9,7 +10,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'main' }}
 
 jobs:
   execute-xla-ut:
@@ -22,7 +23,7 @@ jobs:
       - name: Cleanup container
         run: docker rm -f ${{ env.CONTAINER_NAME }} || true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Checkout rocAutomation using local creds
         run: |
