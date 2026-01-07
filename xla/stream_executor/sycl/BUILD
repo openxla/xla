@@ -190,6 +190,7 @@ xla_test(
     use_legacy_runtime = True,
     deps = [
         ":sycl_event",
+        ":sycl_executor",
         ":sycl_platform_id",
         ":sycl_stream",
         "//xla/backends/gpu/runtime:kernel_thunk",
@@ -269,6 +270,54 @@ xla_test(
     ],
 )
 
+cc_library(
+    name = "sycl_executor",
+    srcs = ["sycl_executor.cc"],
+    hdrs = ["sycl_executor.h"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":sycl_kernel",
+        ":sycl_stream",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:fingerprint",
+        "@xla//xla/stream_executor:event",
+        "@xla//xla/stream_executor:platform",
+        "@xla//xla/stream_executor:plugin_registry",
+        "@xla//xla/stream_executor:stream_executor_h",
+        "@xla//xla/stream_executor/gpu:gpu_command_buffer",
+        "@xla//xla/stream_executor/gpu:gpu_executor_header",
+        "@xla//xla/stream_executor/platform:initialize",
+    ],
+)
+
+xla_test(
+    name = "sycl_executor_test",
+    srcs = ["sycl_executor_test.cc"],
+    backends = ["gpu"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":sycl_executor",
+        "//xla/backends/gpu/runtime:kernel_thunk",
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:intel_gpu_compiler",
+        "//xla/tests:llvm_irgen_test_base",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 sycl_library(
     name = "sycl_event",
     srcs = ["sycl_event.cc"],
@@ -331,6 +380,7 @@ xla_test(
         "oneapi-only",
     ],
     deps = [
+        ":sycl_executor",
         ":sycl_timer",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:typed_kernel_factory",
