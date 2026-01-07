@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -2004,6 +2005,57 @@ absl::Status AllReduceCmd::Record(const Thunk::ExecuteParams& execute_params,
 }
 
 CommandBufferCmd::BufferUseVector AllReduceCmd::buffers() const {
+  BufferUseVector buffer_usage;
+  for (auto& buffer : buffers_) {
+    buffer_usage.emplace_back(BufferUse::Read(buffer.source_buffer));
+    buffer_usage.emplace_back(BufferUse::Write(buffer.destination_buffer));
+  }
+  return buffer_usage;
+}
+
+//===----------------------------------------------------------------------===//
+// NvshmemAllReduceCmd
+//===----------------------------------------------------------------------===//
+
+NvshmemAllReduceCmd::NvshmemAllReduceCmd(
+    ExecutionStreamId execution_stream_id,
+    ExecutionStreamId async_from_stream_id, CollectiveConfig config,
+    ReductionKind reduction_kind,
+    absl::Span<const CollectiveThunk::Buffer> buffers)
+    : CollectiveCmd(CommandBufferCmdType::kNvshmemAllReduceCmd,
+                    std::move(config), nullptr),
+      execution_stream_id_(execution_stream_id),
+      async_from_stream_id_(async_from_stream_id),
+      reduction_kind_(reduction_kind),
+      buffers_(buffers.begin(), buffers.end()) {}
+
+absl::StatusOr<const se::CommandBuffer::Command*> NvshmemAllReduceCmd::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& record_params, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
+  TF_ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(execute_params.buffer_allocations, buffers_,
+                             config().operand_element_type));
+
+  VLOG(5) << "NvshmemAllReduceCmd: reduction="
+          << ReductionKindString(reduction_kind_);
+
+  for (size_t i = 0; i < device_buffers.size(); ++i) {
+    VLOG(5) << "  Src: " << buffers_[i].source_buffer << " ("
+            << device_buffers[i].source_buffer.opaque() << ")";
+    VLOG(5) << "  Dst: " << buffers_[i].destination_buffer << " ("
+            << device_buffers[i].destination_buffer.opaque() << ")";
+  }
+
+  return RecordTracedCommand(
+      execute_params, record_params, std::move(record_action), command_buffer,
+      [&](se::Stream* stream) {
+        return RunNvshmemAllReduce(reduction_kind_, device_buffers, *stream);
+      });
+}
+
+CommandBufferCmd::BufferUseVector NvshmemAllReduceCmd::buffers() const {
   BufferUseVector buffer_usage;
   for (auto& buffer : buffers_) {
     buffer_usage.emplace_back(BufferUse::Read(buffer.source_buffer));

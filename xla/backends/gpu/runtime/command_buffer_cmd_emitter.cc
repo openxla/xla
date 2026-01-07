@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/replica_id_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -166,6 +167,30 @@ static absl::StatusOr<Command> Convert(
 static absl::StatusOr<Command> Convert(const AllReduceStartThunk& thunk) {
   return std::make_unique<AllReduceCmd>(thunk.config(), thunk.reduction_kind(),
                                         thunk.buffers(), thunk.async_events());
+}
+
+static absl::StatusOr<Command> Convert(const NvshmemAllReduceStartThunk& thunk,
+                                       ResourceUseVector resources) {
+  auto collective_stream_id =
+      xla::gpu::GetCollectiveStreamId(thunk.async_events() != nullptr);
+  auto nvshmem_execution_stream_id = ExecutionStreamId(
+      thunk.execution_stream_id().value() + collective_stream_id.value());
+
+  return std::make_unique<NvshmemAllReduceCmd>(
+      nvshmem_execution_stream_id, thunk.execution_stream_id(), thunk.config(),
+      thunk.reduction_kind(), thunk.buffers());
+}
+
+static absl::StatusOr<Command> Convert(
+    const NvshmemAllReduceStartThunk& thunk) {
+  auto collective_stream_id =
+      xla::gpu::GetCollectiveStreamId(thunk.async_events() != nullptr);
+  auto nvshmem_execution_stream_id = ExecutionStreamId(
+      thunk.execution_stream_id().value() + collective_stream_id.value());
+
+  return std::make_unique<NvshmemAllReduceCmd>(
+      nvshmem_execution_stream_id, thunk.execution_stream_id(), thunk.config(),
+      thunk.reduction_kind(), thunk.buffers());
 }
 
 static absl::StatusOr<Command> Convert(const ReduceScatterStartThunk& thunk) {
@@ -306,6 +331,8 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
       return append(Convert<CollectiveBroadcastStartThunk>(thunk));
     case Thunk::Kind::kCollectivePermuteStart:
       return append(Convert<CollectivePermuteStartThunk>(thunk));
+    case Thunk::Kind::kNvshmemAllReduceStart:
+      return append(Convert<NvshmemAllReduceStartThunk>(thunk));
     case Thunk::Kind::kPartitionId:
       return append(Convert<PartitionIdThunk>(thunk));
     case Thunk::Kind::kReplicaId:
@@ -329,6 +356,7 @@ static absl::Status AppendCommands(CommandBufferCmdSequence& cmd_sequence,
     case Thunk::Kind::kAllToAllDone:
     case Thunk::Kind::kCollectiveBroadcastDone:
     case Thunk::Kind::kCollectivePermuteDone:
+    case Thunk::Kind::kNvshmemAllReduceDone:
     case Thunk::Kind::kReduceScatterDone:
       if (options.synchronization_mode ==
           CommandBufferCmdExecutor::SynchronizationMode::kLHS) {

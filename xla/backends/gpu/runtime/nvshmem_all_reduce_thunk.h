@@ -84,6 +84,9 @@ absl::Status RunNvshmemAllReduce(GpuCollectives* collectives,
                                  std::vector<DeviceBufferPair>& buffers,
                                  se::Stream& stream);
 
+absl::Status RunNvshmemAllReduce(ReductionKind reduction_kind,
+                                 std::vector<DeviceBufferPair>& buffers,
+                                 se::Stream& stream);
 }  // namespace gpu
 }  // namespace xla
 

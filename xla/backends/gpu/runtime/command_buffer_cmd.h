@@ -106,6 +106,7 @@ class CommandBufferCmdExecutor;  // Forward declaration.
   V(kAsyncDone, "AsyncDone")                                     \
   V(kDynamicSliceFusionCmd, "DynamicSliceFusionCmd")             \
   V(kDynamicSliceCopyFusionCmd, "DynamicSliceCopyFusionCmd")     \
+  V(kNvshmemAllReduceCmd, "NvshmemAllReduceCmd")                 \
   V(kUnknownCmd, "UnknownCmd") \
   // clang-format on
 
@@ -1152,6 +1153,31 @@ class AllReduceCmd : public CollectiveCmd {
   BufferUseVector buffers() const override;
 
  private:
+  ReductionKind reduction_kind_;
+  std::vector<CollectiveThunk::Buffer> buffers_;
+};
+
+//===----------------------------------------------------------------------===//
+// NvshmemAllReduceCmd
+//===----------------------------------------------------------------------===//
+
+class NvshmemAllReduceCmd : public CollectiveCmd {
+ public:
+  NvshmemAllReduceCmd(ExecutionStreamId execution_stream_id,
+                      ExecutionStreamId async_from_stream_id,
+                      CollectiveConfig config, ReductionKind reduction_kind,
+                      absl::Span<const CollectiveThunk::Buffer> buffers);
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
+
+  BufferUseVector buffers() const override;
+
+ private:
+  ExecutionStreamId execution_stream_id_;
+  ExecutionStreamId async_from_stream_id_;
   ReductionKind reduction_kind_;
   std::vector<CollectiveThunk::Buffer> buffers_;
 };
