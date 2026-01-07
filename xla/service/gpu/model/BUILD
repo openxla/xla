@@ -840,13 +840,15 @@ xla_test(
     # TODO(b/372714955): Fix the memory leak!
     args = if_google(["--heap_check="]),
     backends = ["gpu"],
-    local_defines = if_cuda(["GOOGLE_CUDA"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM"]),
     tags = ["pjrt_migration_candidate"],
     use_legacy_runtime = True,
     deps = [
         ":hlo_op_profiler_lib",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/stream_executor/cuda:cuda_platform_id",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:errors",
