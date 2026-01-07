@@ -426,7 +426,7 @@ ENTRY e {
       this, *module->GetComputationWithName("triton_dot"),
       block_level_parameters,
       R"(
-      CHECK: %[[DOT:.*]] = xtile.dot_scaled %[[LHS:.*]] scale %[[LHS_SCALE:.*]], %[[RHS:.*]] scale %[[RHS_SCALE:.*]] {fastMath = true} : tensor<128x128xf8E5M2>, tensor<128x4xi8> * tensor<128x256xf8E5M2>, tensor<256x4xi8> -> tensor<128x256xf32>
+      CHECK: %[[DOT:.*]] = xtile.dot_scaled %[[LHS:.*]] scale %[[LHS_SCALE:.*]], %[[RHS:.*]] scale %[[RHS_SCALE:.*]] {fastMath = true, rhs_k_pack = false} : tensor<128x128xf8E5M2>, tensor<128x4xi8> * tensor<128x256xf8E5M2>, tensor<256x4xi8> -> tensor<128x256xf32>
       CHECK: %[[RES:.*]] = arith.addf %{{.*}}, %[[DOT]] : tensor<128x256xf32>
       )"));
 }

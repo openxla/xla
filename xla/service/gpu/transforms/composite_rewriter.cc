@@ -112,14 +112,14 @@ absl::StatusOr<bool> CompositeRewriter::RewriteComputation(
       continue;
     }
     if (!call->has_frontend_attributes()) {
-      VLOG(3) << "No frontend attributes";
+      LOG(ERROR) << "No frontend attributes";
       continue;
     }
     auto frontend_attrs = call->frontend_attributes().map();
     auto key = "composite.name";
     if (!frontend_attrs.contains(key) ||
         frontend_attrs.at(key) != "xla.scaled_dot") {
-      VLOG(3) << key << " is not xla.scaled_dot: " << frontend_attrs.at(key);
+      LOG(ERROR) << key << " is not xla.scaled_dot: " << frontend_attrs.at(key);
       continue;
     }
     if (!frontend_attrs.contains("composite.attributes")) {
@@ -154,15 +154,20 @@ absl::StatusOr<bool> CompositeRewriter::RewriteComputation(
                             int64_t contracting_dim) {
       auto op_type = operand->shape().element_type();
       auto scale_type = scale->shape().element_type();
-      if ((op_type == F8E4M3FN || op_type == F8E5M2) &&
+      if ((op_type == F8E4M3FN || op_type == F8E5M2 || op_type == F4E2M1FN) &&
           scale_type == F8E8M0FNU) {
         if (contracting_dim >= scale->shape().dimensions_size()) {
+          LOG(ERROR) << "contracting_dim >= scale->shape().dimensions_size()";
           return false;
         }
         int64_t operand_dim_size = operand->shape().dimensions(contracting_dim);
         int64_t scale_dim_size = scale->shape().dimensions(contracting_dim);
 
         if (scale_dim_size == 0 || operand_dim_size % scale_dim_size != 0) {
+          LOG(ERROR) << "scale_dim_size == 0 || operand_dim_size % "
+                        "scale_dim_size != 0 where scale_dim_size = "
+                     << scale_dim_size
+                     << " and operand_dim_size = " << operand_dim_size;
           return false;
         }
         int64_t scale_factor = operand_dim_size / scale_dim_size;
@@ -171,18 +176,33 @@ absl::StatusOr<bool> CompositeRewriter::RewriteComputation(
       if (op_type == BF16 && scale_type == BF16) {
         if (scale->shape().dimensions_size() !=
             operand->shape().dimensions_size()) {
+          LOG(ERROR) << "scale->shape().dimensions_size() != "
+                        "operand->shape().dimensions_size() where "
+                        "scale->shape().dimensions_size() = "
+                     << scale->shape().dimensions_size()
+                     << " and operand->shape().dimensions_size() = "
+                     << operand->shape().dimensions_size();
           return false;
         }
         for (int64_t dim : scale->shape().dimensions()) {
           if (dim != 1) {
+            LOG(ERROR) << "dim != 1 where dim = " << dim;
             return false;
           }
         }
         if (scale->opcode() != HloOpcode::kConstant) {
+          LOG(ERROR) << "scale->opcode() != HloOpcode::kConstant. it is "
+                     << HloOpcodeString(scale->opcode());
           return false;
         }
-        return scale->literal().IsAllFloat(1.0);
+        if (!scale->literal().IsAllFloat(1.0)) {
+          LOG(ERROR) << "scale->literal() is not all 1.0";
+          return false;
+        }
+        return true;
       }
+      LOG(ERROR) << "Unsupported op_type: " << PrimitiveType_Name(op_type)
+                 << " or scale_type: " << PrimitiveType_Name(scale_type);
       return false;
     };
 

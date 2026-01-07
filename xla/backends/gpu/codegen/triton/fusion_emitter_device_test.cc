@@ -5369,6 +5369,45 @@ ENTRY e {
       std::move(optimized_module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
+TEST_F(TritonScaledDotTest, Fp4Succeeds) {
+  if (!GetCudaComputeCapability().IsAtLeastHopper()) {
+    GTEST_SKIP() << "Skipping test for pre-Hopper GPUs.";
+  }
+  constexpr absl::string_view kHloTextTemplate = R"hlo(
+    HloModule jit_scaled_dot_fn
+
+    ENTRY %main.2 {
+      %lhs = f4e2m1fn[1,1024,256]{2,1,0} parameter(0)
+      %rhs = f4e2m1fn[1,256,256]{2,1,0} parameter(1)
+      %lhs_scale = f8e8m0fnu[1,1024,8]{2,1,0} parameter(2)
+      %rhs_scale = f8e8m0fnu[1,8,256]{2,1,0} parameter(3)
+      ROOT %scaled-dot = bf16[1,1024,256]{2,1,0} scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
+          lhs_batch_dims={0},
+          lhs_contracting_dims={2},
+          rhs_batch_dims={0},
+          rhs_contracting_dims={1}
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloTextTemplate));
+  ASSERT_OK_AND_ASSIGN(auto optimized_module,
+                       GetOptimizedModule(std::move(module)));
+  HloComputation* scaled_dot_computation = GetFirstComputationWithInstruction(
+      *optimized_module, HloOpcode::kScaledDot);
+  constexpr absl::string_view kExpectedTritonIr = R"(
+      CHECK: tt.dot_scaled
+      CHECK: tensor<128x128xi8>, tensor<128x8xi8>
+      CHECK: tensor<256x16xi8>, tensor<32x8xi8>
+      CHECK: -> tensor<128x32xf32>
+  )";
+  EXPECT_THAT(CreateTritonIrAndFileCheckForDot(*scaled_dot_computation,
+                                               kExpectedTritonIr),
+              absl_testing::IsOk());
+
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(optimized_module), ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
