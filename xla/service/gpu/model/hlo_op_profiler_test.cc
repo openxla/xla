@@ -20,6 +20,9 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/stream_executor/cuda/cuda_platform_id.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -29,22 +32,21 @@ namespace xla {
 namespace gpu {
 namespace {
 
-#if defined(GOOGLE_CUDA)
-constexpr int kMinClockCyclesAddF32 = 0;
-constexpr int kMinClockCyclesDivideF64 = 280;
-constexpr int kMinClockCyclesSqrtC128 = 1000;
-#elif defined(TENSORFLOW_USE_ROCM)
-constexpr int kMinClockCyclesAddF32 = 0;
-constexpr int kMinClockCyclesDivideF64 = 100;
-constexpr int kMinClockCyclesSqrtC128 = 1000;
-#endif
-
 class HloOpProfilerTest : public HloTestBase {
+ protected:
   void SetUp() override {
-#if !defined(GOOGLE_CUDA) && !defined(TENSORFLOW_USE_ROCM)
-    GTEST_SKIP() << "Not built with --config=cuda or --config=rocm";
-#endif
+    platform_id_ = HloTestBase::GetTestPlatform()->id();
+    if (platform_id_ != se::cuda::kCudaPlatformId &&
+        platform_id_ != se::rocm::kROCmPlatformId) {
+      GTEST_SKIP() << "Not built with --config=cuda or --config=rocm";
+    }
   }
+
+  const int kMinClockCyclesAddF32_ = 0;
+  const int kMinClockCyclesDivideF64_ = 
+      platform_id_ == se::cuda::kCudaPlatformId ? 280 : 100;
+  const int kMinClockCyclesSqrtC128_ = 1000;
+  se::Platform::Id platform_id_;
 };
 
 TEST_F(HloOpProfilerTest, BasicMeasurementsAreCorrect) {
@@ -53,17 +55,17 @@ TEST_F(HloOpProfilerTest, BasicMeasurementsAreCorrect) {
   EXPECT_GT(profiler.MeasureClockCyclesPerOp(HloOpcode::kAdd, F32)
                 .value()
                 .clock_cycles(),
-            kMinClockCyclesAddF32);
+            kMinClockCyclesAddF32_);
   // f64 divide is somewhat slow.
   EXPECT_GT(profiler.MeasureClockCyclesPerOp(HloOpcode::kDivide, F64)
                 .value()
                 .clock_cycles(),
-            kMinClockCyclesDivideF64);
+            kMinClockCyclesDivideF64_);
   // c128 sqrt is slow.
   EXPECT_GT(profiler.MeasureClockCyclesPerOp(HloOpcode::kSqrt, C128)
                 .value()
                 .clock_cycles(),
-            kMinClockCyclesSqrtC128);
+            kMinClockCyclesSqrtC128_);
 }
 
 TEST_F(HloOpProfilerTest, UnsupportedCombinationsDoNotCrash) {
@@ -117,12 +119,7 @@ TEST_F(HloOpProfilerTest, AllSupportedCombinationsAreMeasurable) {
   FloatTypes.insert(MeasurebleInFloat.begin(), MeasurebleInFloat.end());
   HloOpProfiler profiler(test_runner_as_hlo_runner());
 
-  const bool is_rocm = backend()
-      .default_stream_executor()
-      ->GetDeviceDescription()
-      .gpu_compute_capability()
-      .IsRocm();
-
+  const bool is_rocm = platform_id_ == se::rocm::kROCmPlatformId;
   for (const HloOpcode op : HloOpProfiler::AllSupportedOps()) {
     if (!HloOpProfiler::TooFastToMeasure().count(op) &&
         !HloOpProfiler::Unsupported().count(op) &&
