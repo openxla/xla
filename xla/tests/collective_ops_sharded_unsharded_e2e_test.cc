@@ -34,7 +34,6 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/hlo_runner.h"
 #include "xla/tests/collective_ops_e2e_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_utils.h"
@@ -116,11 +115,11 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
   absl::StatusOr<ExecutionResult> ExecuteSharded(
       const std::string& hlo_text, int64_t num_partitions,
       bool enable_enzyme_comms_opt = false) {
-    HloModuleConfig config = GetModuleConfigForTest();
+    HloModuleConfig config = GetModuleConfigForTest(
+        /*replica_count=*/1, /*num_partitions=*/num_partitions);
     DebugOptions opts = GetDebugOptionsForTest();
     opts.set_xla_gpu_enable_triton_gemm(false);
     config.set_debug_options(opts);
-    config.set_num_partitions(num_partitions);
     if (enable_enzyme_comms_opt) {
       config.mutable_debug_options().set_xla_enable_enzyme_comms_opt(true);
     }
