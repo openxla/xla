@@ -729,8 +729,7 @@ TEST(CommandBufferThunkTest, GemmCmd) {
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
   commands.Emplace<GemmCmd>(config.value(), slice_lhs, slice_rhs, slice_out,
-                            slice_workspace,
-                            /*deterministic=*/true);
+                            slice_workspace, /*deterministic=*/true);
   TF_ASSERT_OK_AND_ASSIGN(
       CommandBufferCmdExecutor executor,
       CommandBufferCmdExecutor::Create(std::move(commands), serialize));

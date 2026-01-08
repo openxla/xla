@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/command_buffer_params.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/executable_run_options.h"
@@ -69,6 +70,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
                                  .gpu_executable_run_options()
                                  ->enable_mock_collectives()
                            : false,
+                       /*command_buffer_params=*/nullptr,
                        run_options.run_options().run_id().ToInt());
 }
 
@@ -80,7 +82,9 @@ Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
       params.collective_params, params.collective_cliques,
       params.device_to_host_stream, params.host_to_device_stream,
       params.send_device_memory_function, params.recv_device_memory_function,
-      params.ffi_execution_context, params.additional_compute_streams);
+      params.ffi_execution_context, params.additional_compute_streams,
+      params.mock_collectives, params.command_buffer_params,
+      params.execution_id);
 }
 
 Thunk::ExecuteParams::ExecuteParams(
@@ -92,7 +96,7 @@ Thunk::ExecuteParams::ExecuteParams(
     RecvDeviceMemoryFunction* recv_device_memory_function,
     const ffi::ExecutionContext* ffi_execution_context,
     ExecutionStreamIdMap additional_compute_streams, bool mock_collectives,
-    int64_t execution_id)
+    CommandBufferParams* command_buffer_params, int64_t execution_id)
     : buffer_allocations(buffer_allocations),
       stream(stream),
       command_buffer_trace_stream(command_buffer_trace_stream),
@@ -105,6 +109,7 @@ Thunk::ExecuteParams::ExecuteParams(
       ffi_execution_context(ffi_execution_context),
       additional_compute_streams(additional_compute_streams),
       mock_collectives(mock_collectives),
+      command_buffer_params(command_buffer_params),
       execution_id(execution_id) {}
 
 //===----------------------------------------------------------------------===//

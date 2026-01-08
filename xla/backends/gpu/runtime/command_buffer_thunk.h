@@ -87,7 +87,7 @@ class CommandBufferThunk : public Thunk {
     CommandStateManager state ABSL_GUARDED_BY(mutex);
 
     // Mapping from buffer allocation index to the device memory passed at
-    // that index to the last call of `commands_.Record(...)` for
+    // that index to the last call of `commands_.ExecuteOnStream(...)` for
     // `command_buffer`. We can just use a vector instead of map because
     // `BufferAllocation::Index` is a unique identifier assigned
     // contiguously and thus can be used as array index.

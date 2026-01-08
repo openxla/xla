@@ -148,7 +148,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   absl::MutexLock lock(cmd_buffer->mutex);
 
   // Initialize commands.
-  TF_RETURN_IF_ERROR(commands_.Initialize(params, cmd_buffer->state));
+  TF_RETURN_IF_ERROR(commands_.Initialize(params));
 
   // Always initialize thunks if they are present so we are ready to fall back
   // on them if we detect profiling activity.
@@ -158,7 +158,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
 
   // If there are no thunks, or command buffer does not require initialization,
   // we can mark warm up as done immediately.
-  if ((!thunks_ || !commands_.requires_initialization()) &&
+  if ((!thunks_ || !commands_.command_buffer_requires_initialization()) &&
       !cmd_buffer->warmup_done) {
     cmd_buffer->warmup_done = true;
   }
@@ -183,9 +183,10 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // If commands require initialization, we also record them into the command
   // buffer before execution. This is required to guarantee that collective
   // commands recorded on all participating ranks to avoid deadlocks.
-  if (cmd_buffer->warmup_done && (cmd_buffer->command_buffer->state() ==
-                                      se::CommandBuffer::State::kCreate ||
-                                  commands_.requires_initialization())) {
+  if (cmd_buffer->warmup_done &&
+      (cmd_buffer->command_buffer->state() ==
+           se::CommandBuffer::State::kCreate ||
+       commands_.command_buffer_requires_initialization())) {
     VLOG(3) << "Initialize command buffer on device #"
             << params.executor->device_ordinal()
             << " by recoding command buffer cmd sequence"
@@ -203,13 +204,15 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
     auto updated_allocs =
         cmd_buffer->UpdateBufferAllocations(commands_, execute_params);
 
-    CommandBufferCmd::RecordParams record_params = {
+    CommandBufferParams record_params = {
         .state = cmd_buffer->state,
         .updated_allocs = std::move(updated_allocs),
         .is_initialization = true,
         .command_buffer = cmd_buffer->command_buffer.get(),
     };
-    TF_RETURN_IF_ERROR(commands_.Record(execute_params, record_params));
+    Thunk::ExecuteParams::ScopedCommandBufferParams scoped(execute_params,
+                                                           &record_params);
+    TF_RETURN_IF_ERROR(commands_.ExecuteOnStream(execute_params));
 
     uint64_t end_micros = tsl::Env::Default()->NowMicros();
     VLOG(3) << "Initialized command buffer on device #"
@@ -258,7 +261,7 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
   // the last command buffer execution.
   auto updated_allocs = cmd_buffer->UpdateBufferAllocations(commands_, params);
 
-  if (!updated_allocs.empty() || commands_.force_update()) {
+  if (!updated_allocs.empty() || commands_.command_buffer_force_update()) {
     VLOG(3) << "Update command buffer on device #" << executor->device_ordinal()
             << " by recoding command buffer cmd sequence after "
             << cmd_buffer->num_executions << " executions since last update"
@@ -275,12 +278,14 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
-    CommandBufferCmd::RecordParams record_params = {
+    CommandBufferParams record_params = {
         .state = cmd_buffer->state,
         .updated_allocs = std::move(updated_allocs),
         .command_buffer = cmd_buffer->command_buffer.get(),
     };
-    TF_RETURN_IF_ERROR(commands_.Record(params, record_params));
+    Thunk::ExecuteParams::ScopedCommandBufferParams scoped(params,
+                                                           &record_params);
+    TF_RETURN_IF_ERROR(commands_.ExecuteOnStream(params));
 
     uint64_t end_micros = tsl::Env::Default()->NowMicros();
     VLOG(3) << "Updated command buffer in " << (end_micros - start_micros)

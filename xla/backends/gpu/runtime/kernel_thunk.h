@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/command_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
@@ -55,7 +56,7 @@ namespace gpu {
 // invoke the corresponding kernel.
 //
 // This is thread-compatible.
-class KernelThunk : public Thunk {
+class KernelThunk : public CommandThunk {
  public:
   // Constructs a thunk for the given kernel.
   //

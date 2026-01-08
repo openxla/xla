@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/runtime/buffer_use.h"
+#include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -57,6 +58,9 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+
+// Forward declaration for command buffer parameters.
+struct CommandBufferParams;
 
 // Execution stream id allows to specify what Gpu stream Thunk should be using
 // for launching device work (kernels, library calls, etc.). By default all
@@ -354,6 +358,30 @@ class Thunk {
 
     bool mock_collectives = false;
 
+    // Parameters for recording commands into command buffers.
+    mutable CommandBufferParams* command_buffer_params = nullptr;
+
+    // RAII helper to temporarily change command_buffer_params and automatically
+    // restore it when the scope exits.
+    class ScopedCommandBufferParams {
+     public:
+      ScopedCommandBufferParams(const ExecuteParams& params,
+                                CommandBufferParams* new_command_buffer_params)
+          : params_(params), original_(params.command_buffer_params) {
+        params_.command_buffer_params = new_command_buffer_params;
+      }
+      ~ScopedCommandBufferParams() { params_.command_buffer_params = original_; }
+
+      // Non-copyable, non-movable
+      ScopedCommandBufferParams(const ScopedCommandBufferParams&) = delete;
+      ScopedCommandBufferParams& operator=(const ScopedCommandBufferParams&) =
+          delete;
+
+     private:
+      const ExecuteParams& params_;
+      CommandBufferParams* original_;
+    };
+
     int64_t execution_id = 0;
 
    private:
@@ -369,7 +397,7 @@ class Thunk {
                   RecvDeviceMemoryFunction* recv_device_memory_function,
                   const ffi::ExecutionContext* ffi_execution_context,
                   ExecutionStreamIdMap additional_compute_streams = {},
-                  bool mock_collectives = false, int64_t execution_id = 0);
+                  bool mock_collectives = false, CommandBufferParams* command_buffer_params = nullptr, int64_t execution_id = 0);
   };
 
   //===--------------------------------------------------------------------===//
@@ -380,7 +408,7 @@ class Thunk {
   Thunk(const Thunk&) = delete;
   Thunk& operator=(const Thunk&) = delete;
 
-  virtual std::string ToString(int indent) const { return ""; }
+  virtual std::string ToString(int indent=0) const { return ""; }
   Kind kind() const { return kind_; }
   absl::string_view profile_annotation() const {
     return thunk_info_.profile_annotation;
