@@ -1664,9 +1664,6 @@ class alignas(kInstructionTypeMask + 1) HloInstruction {
   // Returns true if this instruction is fused, ie contained within a fusion
   // instruction.
   bool IsFused() const;
-  // Returns true if this instruction is fused and has an owning fusion
-  // instruction.
-  bool IsFusedStrict() const;
 
   bool IsLoopFusion() const;
   bool IsInputFusion() const;

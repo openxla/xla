@@ -4465,11 +4465,6 @@ bool HloInstruction::IsFused() const {
   return parent_ != nullptr && parent_->IsFusionComputation();
 }
 
-bool HloInstruction::IsFusedStrict() const {
-  return parent_ != nullptr && parent_->IsFusionComputation() &&
-         parent_->FusionInstruction() != nullptr;
-}
-
 bool HloInstruction::IsCustomCall(absl::string_view target) const {
   return opcode() == HloOpcode::kCustomCall && custom_call_target() == target;
 }
