@@ -624,7 +624,7 @@ ENTRY main.49 {
 
 TEST_P(CommandBufferTest, DynamicSliceCopyFusionCmd) {
   if (GpuExecutor() != nullptr) {
-    GTEST_SKIP() << "This test leads to segfault in CommandBuffer";
+    GTEST_SKIP() << "This test leads to segfault in CommandBuffer #36087";
   }
 
   constexpr absl::string_view hlo_text = R"(
