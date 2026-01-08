@@ -217,6 +217,25 @@ absl::Status CheckGapBetweenAnnotatedInstructions(
       // Traverse the HLO graph starting from the frontier instructions and move
       // to the users. If there are gaps in the annotation, the traversal will
       // hit an instruction that is annotated with the same id.
+      auto find_gte_with_index = [](HloInstruction* instr,
+                                    int64_t index) -> HloInstruction* {
+        for (HloInstruction* gte : instr->users()) {
+          if (gte->opcode() == HloOpcode::kGetTupleElement &&
+              gte->tuple_index() == index) {
+            return gte;
+          }
+        }
+        return nullptr;
+      };
+      auto find_operand_index = [](HloInstruction* instr,
+                                   HloInstruction* operand) -> int64_t {
+        for (int64_t i = 0; i < instr->operand_count(); ++i) {
+          if (instr->operand(i) == operand) {
+            return i;
+          }
+        }
+        return -1;
+      };
       while (!stack.empty()) {
         HloInstruction* instr = stack.back();
         stack.pop_back();
@@ -229,7 +248,31 @@ absl::Status CheckGapBetweenAnnotatedInstructions(
                                ->value_or(Annotation{})
                                .ToString();
             };
+            // Skip optimization barriers and simple tuples. Go directly to the
+            // corresponding get-tuple-element.
+            if (user->opcode() == HloOpcode::kOptimizationBarrier) {
+              continue;
+            }
+            if (user->opcode() == HloOpcode::kTuple && !user->users().empty()) {
+              HloInstruction* instr_to_gte = nullptr;
+              if (user->users().size() > 1) {
+                instr_to_gte = user;
+              } else if (user->users().front()->opcode() ==
+                         HloOpcode::kOptimizationBarrier) {
+                instr_to_gte = user->users().front();
+              }
 
+              if (instr_to_gte != nullptr) {
+                int64_t index = find_operand_index(user, instr);
+                if (auto gte = find_gte_with_index(instr_to_gte, index)) {
+                  VLOG(2) << "Gap search is jumping over "
+                          << instr_to_gte->name() << " with index " << index
+                          << ", from " << instr->name() << " to "
+                          << gte->name();
+                  user = gte;
+                }
+              }
+            }
             if (instruction_to_annotation.contains(user) &&
                 instruction_to_annotation.at(user) == annotation) {
               log_inst(user);
