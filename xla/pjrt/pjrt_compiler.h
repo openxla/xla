@@ -80,6 +80,12 @@ inline PjRtPlatformId OneapiId() {
   static const PjRtPlatformId kOneapiId = tsl::Fingerprint64(OneapiName());
   return kOneapiId;
 }
+// Temporarily keep SyclId() as there are references to it in Jaxlib.
+// TODO(intel-tf): Remove this function once Jaxlib is updated to use 
+// OneapId() instead of SyclId()
+inline PjRtPlatformId SyclId() {
+  return OneapiId();
+}
 inline PjRtPlatformId TpuId() {
   static const PjRtPlatformId kTpuId = tsl::Fingerprint64(TpuName());
   return kTpuId;
