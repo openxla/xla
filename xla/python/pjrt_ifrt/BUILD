@@ -28,10 +28,12 @@ cc_library(
     srcs = [
         "xla_compiler.cc",
         "xla_sharding.cc",
+        "xla_sharding_spec.cc",
     ],
     hdrs = [
         "xla_compiler.h",
         "xla_sharding.h",
+        "xla_sharding_spec.h",
     ],
     compatible_with = get_compatible_with_portable(),
     deps = [
@@ -63,7 +65,7 @@ cc_library(
 tf_proto_library(
     name = "xla_host_callback_proto",
     srcs = ["xla_host_callback.proto"],
-    protodeps = [
+    deps = [
         "//xla:xla_data_proto",
         "@com_google_protobuf//:any_proto",
     ],
@@ -72,15 +74,23 @@ tf_proto_library(
 tf_proto_library(
     name = "xla_compiler_proto",
     srcs = ["xla_compiler.proto"],
-    protodeps = ["//xla/pjrt/proto:compile_options_proto"],
+    deps = ["//xla/pjrt/proto:compile_options_proto"],
 )
 
 tf_proto_library(
     name = "xla_sharding_proto",
     srcs = ["xla_sharding.proto"],
-    protodeps = [
+    deps = [
         "//xla:xla_data_proto",
         "//xla/python/ifrt:device_proto",
+    ],
+)
+
+tf_proto_library(
+    name = "xla_sharding_spec_proto",
+    srcs = ["xla_sharding_spec.proto"],
+    protodeps = [
+        "//xla:xla_data_proto",
     ],
 )
 
@@ -96,6 +106,26 @@ cc_library(
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:serdes_version",
         "//xla/python/ifrt:sharding_serdes",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
+    ],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "xla_sharding_spec_serdes",
+    srcs = ["xla_sharding_spec_serdes.cc"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        ":xla_ifrt",
+        ":xla_sharding_spec_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/python/ifrt:serdes",
+        "//xla/python/ifrt:serdes_version",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -122,6 +152,23 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "xla_sharding_spec_serdes_test",
+    srcs = ["xla_sharding_spec_serdes_test.cc"],
+    deps = [
+        ":xla_ifrt",
+        ":xla_sharding_spec_serdes",
+        "//xla/hlo/ir:hlo",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt:serdes",
+        "//xla/python/ifrt:serdes_test_util",
+        "//xla/python/ifrt:serdes_version",
+        "//xla/tsl/platform:statusor",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -163,16 +210,16 @@ cc_library(
 tf_proto_library(
     name = "executable_metadata_proto",
     srcs = ["executable_metadata.proto"],
-    protodeps = [
+    visibility = internal_visibility([
+        ":friends",
+        ":internal",
+    ]),
+    deps = [
         "//xla:xla_data_proto",
         "//xla/python/ifrt:dtype_proto",
         "//xla/python/ifrt:layout_proto",
         "//xla/python/ifrt:shape_proto",
     ],
-    visibility = internal_visibility([
-        ":friends",
-        ":internal",
-    ]),
 )
 
 # TODO(hyeontaek): Move this target out of pjrt_ifrt.
@@ -232,6 +279,25 @@ xla_cc_test(
         "//xla/python/ifrt:basic_device_list",
         "//xla/python/ifrt:device_test_util",
         "//xla/python/ifrt:tuple_impl_test_lib",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/hash:hash_testing",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "xla_sharding_spec_test",
+    size = "small",
+    srcs = ["xla_sharding_spec_test.cc"],
+    deps = [
+        ":xla_ifrt",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:tile_assignment",
+        "//xla/python/ifrt",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/hash:hash_testing",
@@ -502,7 +568,7 @@ xla_cc_test(
 tf_proto_library(
     name = "pjrt_layout_serdes_proto",
     srcs = ["pjrt_layout_serdes.proto"],
-    protodeps = ["//xla:xla_data_proto"],
+    deps = ["//xla:xla_data_proto"],
 )
 
 cc_library(

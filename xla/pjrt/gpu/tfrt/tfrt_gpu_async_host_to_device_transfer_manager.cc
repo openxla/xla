@@ -38,7 +38,6 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
-#include "xla/pjrt/gpu/gpu_topology.pb.h"
 #include "xla/pjrt/gpu/tfrt/gpu_event.h"
 #include "xla/pjrt/gpu/tfrt/tfrt_gpu_client.h"
 #include "xla/pjrt/gpu/tfrt/tfrt_gpu_device.h"
@@ -49,6 +48,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
+#include "xla/service/gpu_topology.pb.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/transfer_manager.h"
@@ -244,7 +244,7 @@ absl::Status TfrtGpuAsyncHostToDeviceTransferManager::TransferLiteralToBuffer(
     CleanUp(buffer_index, std::move(on_done));
   };
   // Enqueue the transfer to the h2d thread.
-  EnqueueWork(client_->blocking_thread_pool(), std::move(h2d_copy));
+  client_->blocking_thread_pool()->Schedule(std::move(h2d_copy));
   return absl::OkStatus();
 }
 
@@ -263,8 +263,7 @@ TfrtGpuAsyncHostToDeviceTransferManager::TransferRawDataToSubBuffer(
   DCHECK(client);
 
   HostMemoryAllocator::OwnedPtr staging_buffer;
-  if (client->should_stage_host_to_device_transfers() &&
-      !client->IsDmaMapped(data, transfer_size)) {
+  if (client->ShouldStageHostToDeviceTransfers(data, transfer_size)) {
     HostMemoryAllocator* host_memory_allocator =
         client->host_memory_allocator();
     if (host_memory_allocator == nullptr) {
@@ -344,7 +343,7 @@ TfrtGpuAsyncHostToDeviceTransferManager::TransferRawDataToSubBuffer(
   // Note: The ordering of transfers enqueued via this method is not
   // guaranteed.  If multiple transfers for the same buffer are submitted,
   // their execution order may vary.
-  EnqueueWork(client_->blocking_thread_pool(), std::move(h2d_copy));
+  client_->blocking_thread_pool()->Schedule(std::move(h2d_copy));
   return absl::OkStatus();
 }
 
@@ -405,7 +404,7 @@ void TfrtGpuAsyncHostToDeviceTransferManager::CleanUp(
   // here is unsafe, as the manager instance could be destroyed after
   // `transfers_in_flight_` is decremented and the mutex released,
   // invalidating member access.
-  EnqueueWork(client->non_blocking_thread_pool(), std::move(on_done));
+  client->non_blocking_thread_pool()->Schedule(std::move(on_done));
 }
 
 }  // namespace xla

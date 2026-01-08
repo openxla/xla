@@ -371,7 +371,8 @@ absl::StatusOr<Autotuner::Config> Autotuner::TuneBestConfig(
         absl::StrCat("Autotuning failed for HLO: ", instr->ToString(),
                      " with error: ", best_result.status().ToString()));
   }
-  VLOG(1) << "Picked best config: " << best_result.value().ToString();
+  VLOG(1) << "Picked best config: "
+          << best_result.value().ToString(/*verbose=*/true);
   return std::move(best_result.value().config);
 }
 
@@ -548,7 +549,12 @@ absl::StatusOr<Autotuner::ConfigResult> Autotuner::PickBestConfig(
     }
   }
 
+  if (best_result == nullptr) {
+    return absl::NotFoundError("No valid config found!");
+  }
+
   if (autotune_config_.optimize_scratch_bytes) {
+    const ConfigResult* fastest_result = best_result;
     int64_t min_scratch_bytes = std::numeric_limits<int64_t>::max();
     absl::Duration duration_limit =
         min_duration +
@@ -568,10 +574,13 @@ absl::StatusOr<Autotuner::ConfigResult> Autotuner::PickBestConfig(
         }
       }
     }
-  }
-
-  if (best_result == nullptr) {
-    return absl::NotFoundError("No valid config found!");
+    if (best_result != fastest_result) {
+      VLOG(2) << "Autotuner picked a slower config to save scratch memory. "
+              << "Fastest config: " << fastest_result->ToString() << ". "
+              << "Selected config: " << best_result->ToString() << ". "
+              << "Tolerance: " << autotune_config_.scratch_bytes_window_size_us
+              << "us.";
+    }
   }
 
   return std::move(*best_result);

@@ -22,7 +22,6 @@ load(
     "//xla/tsl:tsl.bzl",
     "if_cuda_or_rocm",
     "if_google",
-    "tsl_gpu_library",
 )
 load("//xla/tsl:tsl.default.bzl", "filegroup", "tsl_pybind_extension")
 load(
@@ -451,10 +450,10 @@ xla_cc_test(
 tf_proto_library(
     name = "run_hlo_module_proto",
     srcs = ["run_hlo_module.proto"],
-    protodeps = [
+    visibility = ["//visibility:public"],
+    deps = [
         "//xla:xla_data_proto",
     ],
-    visibility = ["//visibility:public"],
 )
 
 xla_py_proto_library(
@@ -709,6 +708,8 @@ xla_test(
     srcs = ["matmul_perf_table_gen_test.cc"],
     backends = ["gpu"],
     local_defines = if_cuda(["GOOGLE_CUDA"]),
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":matmul_perf_table_gen",
         "//xla:xla_data_proto_cc",
@@ -868,6 +869,8 @@ xla_test(
     srcs = ["collective_perf_table_gen_test.cc"],
     backends = ["gpu"],
     local_defines = if_cuda(["GOOGLE_CUDA"]),
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":collective_perf_table_gen",
         "//xla/service/gpu/model:hlo_op_profile_proto_cc",
@@ -986,7 +989,7 @@ xla_cc_binary(
     ],
 )
 
-tsl_gpu_library(
+cc_library(
     name = "xla_compile_lib",
     srcs = ["xla_compile_lib.cc"],
     hdrs = ["xla_compile_lib.h"],
@@ -1015,6 +1018,7 @@ tsl_gpu_library(
         "//xla/service/gpu/autotuning:autotuner_util",
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:device_description_proto_cc",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:stream_executor_memory_allocator",
@@ -1060,6 +1064,8 @@ xla_test(
     data = [
         ":data/add.hlo",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":xla_compile_lib",
         "//xla:util",
@@ -1106,6 +1112,8 @@ xla_test(
         "//xla/backends/gpu/target_config:all_gpu_specs",
         "//xla/service/gpu:gpu_compiler_test_autotune_db.textproto",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":xla_compile_lib",
         "//xla:util",

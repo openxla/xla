@@ -77,6 +77,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
+#include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/pjrt/scoped_async_tracking_event.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
@@ -3345,7 +3346,7 @@ void PjRtCApiBuffer::MakePromiseTrackEvent() {
 Future<> PjRtCApiBuffer::GetReadyFuture() {
   absl::MutexLock l(mu_);
   if (readiness_promise_ == nullptr) {
-    auto [promise, future] = Future<>::MakePromise();
+    auto [promise, future] = MakePromise<>();
     readiness_promise_ = std::move(promise).ToShared();
     readiness_future_ = std::move(future);
     MakePromiseTrackEvent();
@@ -3380,6 +3381,43 @@ PjRtCApiBuffer::AcquireExternalReference() {
       opaque_device_memory_data_pointer_args.device_memory_ptr;
   return std::make_unique<PjRtCApiExternalReference>(client_, this,
                                                      device_memory_ptr);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtBuffer>>
+PjRtCApiBuffer::DonateWithControlDependency(Future<> dependency) {
+  if (client_->pjrt_c_api()->pjrt_api_version.major_version == 0 &&
+      client_->pjrt_c_api()->pjrt_api_version.minor_version < 88) {
+    return Unimplemented(
+        "PJRT_Buffer_DonateWithControlDependency requires PJRT C API version "
+        "0.88 or higher.");
+  }
+  PJRT_Buffer_DonateWithControlDependency_Args args;
+  args.struct_size = PJRT_Buffer_DonateWithControlDependency_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.buffer = c_buffer();
+  const PJRT_Api* api = pjrt_c_api();
+  RETURN_STATUS_IF_PJRT_ERROR(
+      api->PJRT_Buffer_DonateWithControlDependency(&args), api);
+
+  dependency.OnReady([callback = args.dependency_ready_callback,
+                      data = args.callback_data](absl::Status s) {
+    PJRT_Buffer_DonateWithControlDependency_Callback_Args cb_args;
+    cb_args.struct_size =
+        PJRT_Buffer_DonateWithControlDependency_Callback_Args_STRUCT_SIZE;
+    cb_args.callback_data = data;
+    if (s.ok()) {
+      cb_args.error_code = PJRT_Error_Code_OK;
+      cb_args.error_message = nullptr;
+      cb_args.error_message_size = 0;
+    } else {
+      cb_args.error_code = pjrt::StatusCodeToPjrtErrorCode(s.code());
+      cb_args.error_message = s.message().data();
+      cb_args.error_message_size = s.message().size();
+    }
+    callback(&cb_args);
+  });
+  return std::unique_ptr<PjRtBuffer>(
+      std::make_unique<PjRtCApiBuffer>(client_, args.out_buffer));
 }
 
 void PjRtCApiBuffer::CopyToRemoteDevice(

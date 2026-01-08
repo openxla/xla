@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/ffi.h"
+#include "xla/backends/gpu/runtime/collective_multimem_registry.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.pb.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
@@ -44,6 +45,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/matmul_utils.h"
@@ -300,7 +302,7 @@ TEST_F(DynamicSliceThunkTest, SlicedGemm) {
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations(
       {lhs, rhs, out, workspace, lhs_offset_0, lhs_offset_1}, 0, &allocator);
 
@@ -486,7 +488,7 @@ TEST_F(DynamicSliceThunkTest, MultipleSlicedOperandsGemm) {
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations({lhs, rhs, out, workspace, lhs_offset_0,
                                  lhs_offset_1, rhs_offset_0, rhs_offset_1},
                                 0, &allocator);
@@ -634,7 +636,7 @@ TEST_F(DynamicSliceThunkTest, SlicedMemcpy) {
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations(
       {src, dst, offset_0, offset_1, offset_2, offset_3}, 0, &allocator);
 
@@ -823,7 +825,7 @@ TEST_F(DynamicSliceThunkTest, SlicedOutputMemcpy) {
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations(
       {src, dst, src_offset_0, src_offset_1, src_offset_2, src_offset_3,
        dst_offset_0, dst_offset_1, dst_offset_2, dst_offset_3},
@@ -1009,7 +1011,7 @@ TEST_F(DynamicSliceThunkTest, SlicedGemmArbitraryArgumentOrder) {
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations(
       {workspace, lhs, out, rhs, lhs_offset_0, lhs_offset_1}, 0, &allocator);
 
@@ -1181,7 +1183,7 @@ TEST_F(DynamicSliceThunkTest, SlicedGemmArbitraryNumberOfArguments) {
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations(
       {workspace, /*garbage, to be ignored*/ se::DeviceAddressBase(), out, rhs,
        lhs_offset_0, lhs_offset_1, /*garbage, to be ignored*/ rhs, lhs},
@@ -1348,7 +1350,7 @@ TEST_F(DynamicSliceThunkTest, SlicedTupledOperandGemm) {
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations(
       {lhs_whole_buffer, rhs, out, workspace, lhs_offset_0, lhs_offset_1}, 0,
       &allocator);
@@ -1533,7 +1535,7 @@ TEST_F(DynamicSliceThunkTest, SlicedMemcpyOOB) {
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations(
       {src, dst, src_offset_0, src_offset_1, src_offset_2, src_offset_3,
        dst_offset_0, dst_offset_1, dst_offset_2, dst_offset_3},
@@ -1724,7 +1726,7 @@ TEST_F(DynamicSliceThunkTest, SlicedOperandsSameBufferGemm) {
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations({buffer, workspace, lhs_offset_0, lhs_offset_1},
                                 0, &allocator);
 
@@ -1940,12 +1942,21 @@ TEST_F(DynamicSliceThunkTest,
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(executor);
+  run_options.mutable_run_options()->set_stream(stream.get());
+  ASSERT_OK_AND_ASSIGN(
+      CollectiveParams collective_params,
+      CollectiveParams::Create(run_options, /*async_streams=*/{},
+                               LocalDeviceId(executor->device_ordinal())));
+  CollectiveCliqueRequests clique_requests;
+  CollectiveMultimemRegistry multimem_registry(
+      executor, collective_params.global_device_id);
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations allocations(/*buffers=*/{lhs, rhs, out, workspace},
-                                /*device_ordinal=*/0,
+                                /*device_ordinal=*/executor->device_ordinal(),
                                 /*memory_allocator=*/&allocator);
-
-  Thunk::PrepareParams prepare_params{};
+  Thunk::PrepareParams prepare_params{&collective_params, &clique_requests,
+                                      &multimem_registry, executor,
+                                      &allocations};
 
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, /*buffer_allocations=*/allocations, stream.get(),

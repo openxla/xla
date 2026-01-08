@@ -41,6 +41,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_protobuf//:protobuf_lite",
         "@tsl//tsl/platform:protobuf",
     ],
 )
@@ -117,6 +118,7 @@ cc_library(
 xla_cc_test(
     name = "ynn_matcher_test",
     srcs = ["ynn_matcher_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         "//xla:xla_proto_cc",
         "//xla/service:cpu_plugin",

@@ -18,6 +18,7 @@ syntax = "proto3";
 package xla.gpu;
 
 import "xla/backends/gpu/runtime/convolution_filter_thunk.proto";
+import "xla/backends/gpu/runtime/copy_thunk.proto";
 import "xla/backends/gpu/runtime/dynamic_slice_thunk.proto";
 import "xla/backends/gpu/runtime/shaped_slice.proto";
 import "xla/core/host_offloading/host_offloading_executable.proto";
@@ -188,15 +189,9 @@ message WaitForStreamsThunkProto {
 
 message TriangularSolveThunkProto {
   xla.TriangularSolveOptions options = 1;
-  xla.buffer_assignment.BufferAllocationSliceProto a_buffer = 2;
-  xla.buffer_assignment.BufferAllocationSliceProto b_buffer = 3;
-  xla.buffer_assignment.BufferAllocationSliceProto temp_buffer = 4;
-  xla.PrimitiveType type = 5;
-  int64 batch_size = 6;
-  int64 m = 7;
-  int64 n = 8;
-  int64 a_batch_stride = 9;
-  int64 b_batch_stride = 10;
+  ShapedSliceProto a_buffer = 2;
+  ShapedSliceProto b_buffer = 3;
+  ShapedSliceProto temp_buffer = 4;
 }
 
 message ReplicaIdThunkProto {
@@ -344,10 +339,9 @@ message ConvolutionThunkProto {
 }
 
 message ConvolutionReorderThunkProto {
-  ConvolutionFilterDimensions filter_dimensions = 1;
-  xla.buffer_assignment.BufferAllocationSliceProto filter_input = 2;
-  xla.buffer_assignment.BufferAllocationSliceProto filter_output = 3;
-  optional ConvolutionReorderBiasBuffers biases = 4;
+  ShapedSliceProto filter_input = 1;
+  ShapedSliceProto filter_output = 2;
+  optional ConvolutionReorderBiasBuffers biases = 3;
 }
 
 message FftThunkProto {
@@ -435,10 +429,67 @@ message AllToAllStartThunkProto {
   bool p2p_memcpy_enabled = 5;
 }
 
+message RaggedAllToAllStartThunkProto {
+  optional uint64 async_events_unique_id = 1;
+  CollectiveConfigProto collective_config = 2;
+  repeated CollectiveBufferProto buffers = 3;
+
+  int64 num_total_updates = 4;
+  int64 num_input_rows = 5;
+  int64 num_row_elements = 6;
+  bool one_shot_kernel_enabled = 7;
+}
+
+message CollectivePermuteStartThunkProto {
+  optional uint64 async_events_unique_id = 1;
+  repeated CollectiveBufferProto buffers = 2;
+
+  CollectiveConfigProto collective_config = 3;
+  repeated SourceTarget source_target_pairs = 4;
+
+  AsyncStreamKind async_stream_kind = 5;
+  bool p2p_memcpy_enabled = 6;
+}
+
+message SendThunkProto {
+  uint64 async_events_unique_id = 1;
+  CollectiveBufferProto buffer = 2;
+
+  CollectiveConfigProto collective_config = 3;
+  repeated SourceTarget source_target_pairs = 4;
+
+  AsyncStreamKind async_stream_kind = 5;
+  string instruction_name = 6;
+}
+
+message RecvThunkProto {
+  uint64 async_events_unique_id = 1;
+  CollectiveBufferProto buffer = 2;
+
+  CollectiveConfigProto collective_config = 3;
+  repeated SourceTarget source_target_pairs = 4;
+
+  AsyncStreamKind async_stream_kind = 5;
+  string instruction_name = 6;
+}
+
+message CollectiveBroadcastStartThunkProto {
+  optional uint64 async_events_unique_id = 1;
+  repeated CollectiveBufferProto buffers = 2;
+  CollectiveConfigProto collective_config = 3;
+}
+
 message CollectiveDoneThunkProto {
   ThunkKindProto thunk_kind = 1;
   AsyncStreamKind async_stream_kind = 2;
   optional uint64 async_events_unique_id = 3;
+}
+
+message CollectiveGroupThunkProto {
+  ThunkKindProto thunk_kind = 1;
+  repeated ThunkProto thunks = 2;
+  AsyncStreamKind async_stream_kind = 3;
+  optional uint64 async_events_unique_id = 4;
 }
 
 message ThunkProto {
@@ -483,6 +534,13 @@ message ThunkProto {
     AllGatherStartThunkProto all_gather_start_thunk = 38;
     AllReduceStartThunkProto all_reduce_start_thunk = 39;
     AllToAllStartThunkProto all_to_all_start_thunk = 40;
+    RaggedAllToAllStartThunkProto ragged_all_to_all_start_thunk = 41;
+    CollectivePermuteStartThunkProto collective_permute_start_thunk = 42;
+    SendThunkProto send_thunk = 43;
+    RecvThunkProto recv_thunk = 44;
+    CollectiveBroadcastStartThunkProto collective_broadcast_start_thunk = 45;
+    CollectiveGroupThunkProto collective_group_thunk = 46;
+    DynamicMemcpyThunkProto dynamic_memcpy_thunk = 47;
   }
 }
 

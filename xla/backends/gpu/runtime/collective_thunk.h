@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -55,8 +56,8 @@ struct CollectiveConfig {
 
   std::vector<PrimitiveType> operand_element_type;
   std::vector<ReplicaGroup> replica_groups;
-  CollectiveOpGroupMode group_mode;
-  bool use_symmetric_buffer;
+  CollectiveOpGroupMode group_mode = COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA;
+  bool use_symmetric_buffer = false;
 
   CollectiveConfigProto ToProto() const;
   static CollectiveConfig FromProto(const CollectiveConfigProto& proto);

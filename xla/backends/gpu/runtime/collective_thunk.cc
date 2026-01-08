@@ -178,9 +178,6 @@ CollectiveConfig CollectiveConfig::FromProto(
   config.replica_groups.assign(proto.replica_groups().begin(),
                                proto.replica_groups().end());
 
-  absl::c_copy(proto.replica_groups(),
-               std::back_inserter(config.replica_groups));
-
   config.group_mode = proto.group_mode();
   config.use_symmetric_buffer = proto.use_symmetric_buffer();
   return config;
@@ -542,7 +539,6 @@ absl::StatusOr<ThunkProto> CollectiveDoneThunk::ToProto() const {
   if (async_events_id.has_value()) {
     thunk_proto->set_async_events_unique_id(async_events_id->value());
   }
-  thunk_proto->set_async_events_unique_id(async_events_id->value());
   thunk_proto->set_thunk_kind(Thunk::KindToProto(kind()));
   return proto;
 }
