@@ -38,7 +38,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace hlo_sharding_util {
@@ -140,6 +139,118 @@ TEST(HloShardingUtilTest, MoveAndMergeShardingTilesSubGroup) {
       HloSharding::Subgroup(TileAssignment({2 * 5, 3, 1, 7, 11},
                                            {2, 3, 5, 7, 11}, {0, 2, 1, 3, 4}),
                             {OpSharding::MANUAL, OpSharding::REPLICATED}));
+}
+
+TEST(HloShardingUtilTest, MergeShardingDimension) {
+  EXPECT_EQ(MergeShardingDimension(HloSharding::IotaTile({2, 2}), 0),
+            HloSharding::IotaTile({4}));
+
+  {
+    Mesh mesh({2, 2}, {"x", "y"});
+
+    HloSharding result = MergeShardingDimension(
+        HloSharding(test_utils::FromAxisNames(mesh, {{"x"}, {"y"}})), 0);
+
+    EXPECT_EQ(result.named_sharding(),
+              test_utils::FromAxisNames(mesh, {{"x", "y"}}));
+    EXPECT_EQ(result.named_sharding().dimension(0), 4);
+  }
+}
+
+TEST(HloShardingUtilTest, MergeShardingDimensionMultiAxis) {
+  EXPECT_EQ(MergeShardingDimension(HloSharding::IotaTile({2, 2, 2}), 1),
+            HloSharding::IotaTile({2, 4}));
+
+  {
+    Mesh mesh({2, 2, 2}, {"x", "y", "z"});
+
+    HloSharding result = MergeShardingDimension(
+        HloSharding(test_utils::FromAxisNames(mesh, {{"x"}, {"y"}, {"z"}})), 1);
+
+    EXPECT_EQ(result.named_sharding(),
+              test_utils::FromAxisNames(mesh, {{"x"}, {"y", "z"}}));
+    EXPECT_EQ(result.named_sharding().dimension(0), 2);
+    EXPECT_EQ(result.named_sharding().dimension(1), 4);
+  }
+}
+
+TEST(HloShardingUtilTest, MergeShardingDimensionWithEmpty) {
+  EXPECT_EQ(MergeShardingDimension(HloSharding::IotaTile({2, 1}), 0),
+            HloSharding::IotaTile({2}));
+  EXPECT_EQ(MergeShardingDimension(HloSharding::IotaTile({1, 2}), 0),
+            HloSharding::IotaTile({2}));
+
+  {
+    Mesh mesh({2}, {"x"});
+
+    HloSharding result = MergeShardingDimension(
+        HloSharding(test_utils::FromAxisNames(mesh, {{"x"}, {}})), 0);
+
+    EXPECT_EQ(result.named_sharding(),
+              test_utils::FromAxisNames(mesh, {{"x"}}));
+    EXPECT_EQ(result.named_sharding().dimension(0), 2);
+  }
+}
+
+TEST(HloShardingUtilTest, SplitShardingDimension) {
+  EXPECT_EQ(SplitShardingDimension(HloSharding::IotaTile({2, 4}),
+                                   /*dimension=*/1, /*new_dim_size=*/2),
+            HloSharding::IotaTile({2, 2, 2}));
+
+  {
+    Mesh mesh({2, 4}, {"x", "y"});
+
+    HloSharding result = SplitShardingDimension(
+        HloSharding(test_utils::FromAxisNames(mesh, {{"x", "y"}})),
+        /*dimension=*/0, /*new_dim_size=*/2);
+
+    EXPECT_EQ(result.named_sharding(),
+              test_utils::FromAxisNames(mesh, {{"x"}, {"y"}}));
+  }
+}
+
+TEST(HloShardingUtilTest, SplitShardingDimensionMultiAxis) {
+  EXPECT_EQ(SplitShardingDimension(HloSharding::IotaTile({8}),
+                                   /*dimension=*/0, /*new_dim_size=*/4),
+            HloSharding::IotaTile({4, 2}));
+
+  {
+    Mesh mesh({2, 2, 2}, {"x", "y", "z"});
+
+    HloSharding result = SplitShardingDimension(
+        HloSharding(test_utils::FromAxisNames(mesh, {{"x", "y", "z"}})),
+        /*dimension=*/0, /*new_dim_size=*/4);
+
+    EXPECT_EQ(result.named_sharding(),
+              test_utils::FromAxisNames(mesh, {{"x", "y"}, {"z"}}));
+  }
+}
+
+TEST(HloShardingUtilTest, SplitShardingDimensionRemainderMultiAxis) {
+  EXPECT_EQ(SplitShardingDimension(HloSharding::IotaTile({8}),
+                                   /*dimension=*/0, /*new_dim_size=*/2),
+            HloSharding::IotaTile({2, 4}));
+
+  {
+    Mesh mesh({2, 2, 2}, {"x", "y", "z"});
+
+    HloSharding result = SplitShardingDimension(
+        HloSharding(test_utils::FromAxisNames(mesh, {{"x", "y", "z"}})),
+        /*dimension=*/0, /*new_dim_size=*/2);
+
+    EXPECT_EQ(result.named_sharding(),
+              test_utils::FromAxisNames(mesh, {{"x"}, {"y", "z"}}));
+  }
+}
+
+TEST(HloShardingUtilTest, SplitShardingDimensionFailure) {
+  Mesh mesh({2, 3}, {"x", "y"});
+
+  // 2 < 3, so the split is not possible.
+  EXPECT_DEATH(SplitShardingDimension(
+                   HloSharding(test_utils::FromAxisNames(mesh, {{"x", "y"}})),
+                   /*dimension=*/0, /*new_dim_size=*/3),
+               "Could not slice dimension 0 with size 3");
 }
 
 TEST(HloShardingUtilTest, TransposeShardingReplicated) {
@@ -1275,5 +1386,7 @@ TEST_F(HloShardingUtilTestWithHlo, MultipleCallSitesForIota) {
 }
 
 }  // namespace
+
 }  // namespace hlo_sharding_util
+
 }  // namespace xla
