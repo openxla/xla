@@ -61,7 +61,7 @@ message GpuDeviceInfoProto {
   oneof compute_capability {
     CudaComputeCapabilityProto cuda_compute_capability = 16;
     RocmComputeCapabilityProto rocm_compute_capability = 17;
-    OneAPIComputeCapabilityProto oneapi_compute_capability = 20;
+    OneAPIComputeCapabilityProto oneapi_compute_capability = 22;
   }
   int64 registers_per_core_limit = 18;
   int64 registers_per_block_limit = 19;
