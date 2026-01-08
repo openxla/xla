@@ -331,7 +331,7 @@ TEST_F(GpuPerformanceModelBaseTest,
   EXPECT_LT(flops_per_ns, 68000);
 }
 
-TEST_F(GpuPerformanceModelBaseTest, CalculatePeakBF16OpsPerNsH100) {
+TEST_F(GpuPerformanceModelBaseTest, CalculatePeakMatrixBF16OpsPerNsH100) {
   se::DeviceDescription h100_device_info =
       TestGpuDeviceInfo::RTXH100SXMDeviceInfo();
   int64_t flops_per_ns = GpuPerformanceModelBase::CalculatePeakMatrixOpsPerNs(
@@ -341,7 +341,7 @@ TEST_F(GpuPerformanceModelBaseTest, CalculatePeakBF16OpsPerNsH100) {
   EXPECT_LT(flops_per_ns, 991000);
 }
 
-TEST_F(GpuPerformanceModelBaseTest, CalculatePeakF64OpsPerNsH100) {
+TEST_F(GpuPerformanceModelBaseTest, CalculatePeakMatrixF64OpsPerNsH100) {
   se::DeviceDescription h100_device_info =
       TestGpuDeviceInfo::RTXH100SXMDeviceInfo();
   int64_t flops_per_ns = GpuPerformanceModelBase::CalculatePeakMatrixOpsPerNs(
@@ -349,6 +349,26 @@ TEST_F(GpuPerformanceModelBaseTest, CalculatePeakF64OpsPerNsH100) {
   // H100 has a peak of 66.8 TFLOPS/s for FP64.
   EXPECT_GT(flops_per_ns, 66000);
   EXPECT_LT(flops_per_ns, 68000);
+}
+
+TEST_F(GpuPerformanceModelBaseTest, CalculatePeakScalarF32OpsPerNsH100) {
+  se::DeviceDescription h100_device_info =
+      TestGpuDeviceInfo::RTXH100SXMDeviceInfo();
+  int64_t flops_per_ns = GpuPerformanceModelBase::CalculatePeakScalarOpsPerNs(
+      h100_device_info, xla::PrimitiveType::F32);
+  // H100 has a peak of 67 TFLOPS/s for scalar F32.
+  EXPECT_GT(flops_per_ns, 66000);
+  EXPECT_LT(flops_per_ns, 68000);
+}
+
+TEST_F(GpuPerformanceModelBaseTest, CalculatePeakScalarS32OpsPerNsH100) {
+  se::DeviceDescription h100_device_info =
+      TestGpuDeviceInfo::RTXH100SXMDeviceInfo();
+  int64_t ops_per_ns = GpuPerformanceModelBase::CalculatePeakScalarOpsPerNs(
+      h100_device_info, xla::PrimitiveType::S32);
+  // H100 has a peak of 33.5 TFLOPS/s for INT32.
+  EXPECT_GT(ops_per_ns, 33000);
+  EXPECT_LT(ops_per_ns, 35000);
 }
 
 }  // namespace

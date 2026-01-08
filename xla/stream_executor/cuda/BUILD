@@ -1243,6 +1243,34 @@ cc_library(
 )
 
 cc_library(
+    name = "cuda_core_info_table",
+    srcs = ["cuda_core_info_table.cc"],
+    hdrs = ["cuda_core_info_table.h"],
+    deps = [
+        ":cuda_compute_capability",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+xla_cc_test(
+    name = "cuda_core_info_table_test",
+    srcs = ["cuda_core_info_table_test.cc"],
+    deps = [
+        ":cuda_compute_capability",
+        ":cuda_core_info_table",
+        "//xla:xla_data_proto_cc",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu/model:gpu_performance_model_base",
+        "//xla/stream_executor:device_description",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "cuda_executor",
     srcs = [
         "cuda_executor.cc",
@@ -1258,6 +1286,7 @@ cc_library(
         ":cuda_command_buffer",
         ":cuda_compute_capability",
         ":cuda_context",
+        ":cuda_core_info_table",
         ":cuda_event",
         ":cuda_kernel",
         ":cuda_memory_allocator",
