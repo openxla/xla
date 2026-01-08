@@ -47,7 +47,6 @@ cc_library(
 ifrt_proxy_cc_test(
     name = "grpc_server_test",
     srcs = ["grpc_server_test.cc"],
-    tags = ["not_run:arm"],  # TODO(b/326080238): Fix this.
     deps = [
         ":grpc_server",
         "//xla/python/ifrt_proxy/common:grpc_ifrt_service_cc_grpc_proto",
@@ -97,17 +96,16 @@ ifrt_proxy_cc_test(
     name = "grpc_service_impl_test",
     size = "small",
     srcs = ["grpc_service_impl_test.cc"],
-    tags = ["not_run:arm"],  # TODO(b/326080238): Fix this.
     deps = [
         ":grpc_server",
         ":grpc_service_impl",
         ":host_buffer",
-        ":version",
         "//xla/python/ifrt:attribute_map",
         "//xla/python/ifrt:serdes_version",
         "//xla/python/ifrt_proxy/client:grpc_host_buffer",
         "//xla/python/ifrt_proxy/common:grpc_ifrt_service_cc_grpc_proto",
         "//xla/python/ifrt_proxy/common:ifrt_service_proto_cc",
+        "//xla/python/ifrt_proxy/common:versions",
         "//xla/tsl/platform:test",
         "@com_github_grpc_grpc//:grpc++",
         "@com_google_absl//absl/log",
@@ -128,7 +126,6 @@ cc_library(
         ":host_buffer",
         ":host_callback",
         ":ifrt_backend_user_context",
-        ":version",
         "//xla:future",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -188,7 +185,6 @@ ifrt_proxy_cc_test(
         ":host_buffer",
         ":host_callback",
         ":ifrt_backend",
-        ":version",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",

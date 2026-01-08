@@ -503,6 +503,8 @@ xla_test(
         },
         {},
     ),
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":hlo_test_base",
         ":literal_test_util",
@@ -571,7 +573,11 @@ xla_test(
     timeout = "long",
     srcs = ["conv_depthwise_backprop_filter_test.cc"],
     shard_count = 40,
-    tags = ["nozapfhahn"],  # TODO: b/445492433 - Re-enable when it doesn't time out.
+    tags = [
+        "nozapfhahn",
+        "pjrt_migration_candidate",
+    ],  # TODO: b/445492433 - Re-enable when it doesn't time out.
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -594,6 +600,8 @@ xla_test(
         "cpu",
     ],
     shard_count = 23,
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -649,6 +657,8 @@ xla_cc_test(
 xla_test(
     name = "while_test",
     srcs = ["while_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -908,6 +918,8 @@ xla_test(
 xla_test(
     name = "deallocation_test",
     srcs = ["deallocation_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":xla_internal_test_main",
@@ -926,6 +938,8 @@ xla_test(
 xla_test(
     name = "deconstruct_tuple_test",
     srcs = ["deconstruct_tuple_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -1773,6 +1787,8 @@ xla_test(
         "b200",
     ],
     data = ["data/cudnn_reproducer.hlo"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",
@@ -1898,6 +1914,8 @@ xla_test(
         "gpu",
         "interpreter",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -2004,6 +2022,8 @@ xla_test(
 xla_test(
     name = "tuple_test",
     srcs = ["tuple_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_test_base",
@@ -2054,7 +2074,9 @@ xla_test(
     shard_count = 31,
     tags = [
         "optonly",
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -2089,6 +2111,8 @@ xla_test(
         "cpu",
         "gpu",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",
@@ -2142,7 +2166,9 @@ xla_test(
     shard_count = 50,
     tags = [
         "optonly",
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":reduce_window_test_library",
         ":xla_internal_test_main",
@@ -2294,6 +2320,8 @@ xla_test(
 xla_test(
     name = "token_hlo_test",
     srcs = ["token_hlo_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":hlo_test_base",
         ":literal_test_util",
@@ -2496,6 +2524,8 @@ xla_test(
     name = "matrix_ops_simple_test",
     timeout = "long",
     srcs = ["matrix_ops_simple_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -2530,7 +2560,9 @@ xla_test(
         "no_mac",
         "noasan",
         "nosan",
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -2616,6 +2648,8 @@ xla_test(
         "gpu": ["notsan"],  # TODO(b/345034145): Fix tsan error.
     },
     disabled_backends = ["interpreter"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",  # fixdeps: keep
@@ -2791,6 +2825,8 @@ xla_test(
         "gpu",
         "cpu",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":hlo_test_base",
         ":literal_test_util",
@@ -2829,6 +2865,8 @@ xla_test(
     backends = [
         "gpu",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":hlo_test_base",
         ":literal_test_util",
@@ -2860,6 +2898,8 @@ xla_test(
     backends = [
         "gpu",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",
@@ -3219,6 +3259,8 @@ xla_test(
     backends = [
         "gpu",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",
@@ -3255,6 +3297,8 @@ xla_test(
         "cpu",
         "gpu",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",
@@ -3277,6 +3321,7 @@ xla_test(
 xla_test(
     name = "compute_constant_test",
     srcs = ["compute_constant_test.cc"],
+    use_legacy_runtime = True,
     deps = [
         ":literal_test_util",
         ":xla_internal_test_main",
@@ -3302,6 +3347,8 @@ xla_test(
 xla_test(
     name = "client_test",
     srcs = ["client_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -3325,6 +3372,8 @@ xla_test(
 xla_test(
     name = "replay_test",
     srcs = ["replay_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -3373,6 +3422,8 @@ xla_test(
         "cpu",
         "gpu",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":hlo_test_base",
         "//xla:literal_util",
@@ -3395,6 +3446,8 @@ xla_test(
 xla_test(
     name = "round_trip_packed_literal_test",
     srcs = ["round_trip_packed_literal_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -3470,6 +3523,7 @@ xla_test(
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
         ":literal_test_util",
+        ":pjrt_client_registry",
         ":xla_internal_test_main",  # fixdeps: keep
         "//xla:error_spec",
         "//xla:literal",
@@ -3477,18 +3531,21 @@ xla_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description_proto_cc",
         "//xla/tests:xla_test_backend_predicates",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf",
     ],
 )
 
 xla_test(
     name = "local_client_allocation_test",
     srcs = ["local_client_allocation_test.cc"],
+    use_legacy_runtime = True,
     deps = [
         ":literal_test_util",
         ":local_client_test_base",
@@ -3512,6 +3569,7 @@ xla_test(
     tags = [
         "optonly",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":literal_test_util",
         ":local_client_test_base",
@@ -3549,6 +3607,7 @@ xla_test(
         # Outfeed ops are not supported on the interpreter backend.
         "interpreter",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":local_client_test_base",
         ":xla_internal_test_main",
@@ -3584,6 +3643,8 @@ xla_cc_test(
 xla_test(
     name = "round_trip_transfer_test",
     srcs = ["round_trip_transfer_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -3614,6 +3675,8 @@ xla_test(
 xla_test(
     name = "deep_graph_test",
     srcs = ["deep_graph_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":xla_internal_test_main",
@@ -3647,6 +3710,7 @@ xla_test(
     name = "transfer_manager_test",
     srcs = ["transfer_manager_test.cc"],
     shard_count = 15,
+    use_legacy_runtime = True,
     deps = [
         ":literal_test_util",
         ":local_client_test_base",
@@ -3728,6 +3792,7 @@ xla_test(
     srcs = ["test_utils_test.cc"],
     # There is nothing backend specific in this test, so just pick an arbitrary backend.
     backends = ["cpu"],
+    use_legacy_runtime = True,
     deps = [
         ":local_client_test_base",
         ":test_utils",
@@ -4042,6 +4107,8 @@ bzl_library(
 xla_test(
     name = "atan2_test",
     srcs = ["atan2_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         "//xla:error_spec",
@@ -4053,6 +4120,8 @@ xla_test(
 xla_test(
     name = "remainder_test",
     srcs = ["remainder_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         "//xla:error_spec",
@@ -4065,6 +4134,8 @@ xla_test(
 xla_test(
     name = "two_plus_two_simple_test",
     srcs = ["two_plus_two_simple_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -4098,8 +4169,9 @@ cc_library(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt/interpreter:interpreter_client",
         "//xla/service:hlo_runner_pjrt",
-        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
     ],
 )

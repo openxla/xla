@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
@@ -42,7 +43,7 @@ namespace xla::gpu {
 // Unlike `LegacyGpuAotCompilationResult`, this result contains the entire
 // optimized executable, including the Thunks, as opposed to just the optimized
 // HLO.
-class GpuAotCompilationResult : public AotCompilationResult {
+class GpuAotCompilationResult : public CompiledModule {
  public:
   static absl::StatusOr<std::unique_ptr<GpuAotCompilationResult>> FromProto(
       GpuExecutableProto executable) {
@@ -73,7 +74,8 @@ class GpuAotCompilationResult : public AotCompilationResult {
     };
     return GpuExecutable::FromProto(
         executable_, stream_exec->GetDeviceDescription(),
-        stream_exec->GetPlatform()->Name(), symbol_resolver);
+        stream_exec->GetPlatform()->Name(), GetDebugOptionsFromFlags(),
+        symbol_resolver);
   }
 
   const HloModule* optimized_module() const final { return hlo_module_.get(); };

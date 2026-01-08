@@ -18,7 +18,6 @@ load(
     "//xla/tsl:tsl.bzl",
     "internal_visibility",
     "tsl_copts",
-    "tsl_gpu_library",
 )
 load(
     "//xla/tsl/platform:build_config.bzl",
@@ -195,7 +194,7 @@ cc_library(
     ],
 )
 
-tsl_gpu_library(
+cc_library(
     name = "gpu_init",
     hdrs = [
         "gpu_init.h",
@@ -211,7 +210,7 @@ tsl_gpu_library(
     ),
 )
 
-tsl_gpu_library(
+cc_library(
     name = "gpu_init_impl",
     srcs = [
         "gpu_init.cc",
@@ -446,7 +445,7 @@ cc_library(
 tf_proto_library(
     name = "gpu_blas_lt_proto",
     srcs = ["gpu_blas_lt.proto"],
-    protodeps = [
+    deps = [
         "//xla:xla_data_proto",
         "//xla/stream_executor:blas_proto",
     ],

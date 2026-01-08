@@ -2378,16 +2378,15 @@ void HloInstruction::set_single_sharding(const HloSharding& sharding) {
 
 void HloInstruction::SetupDerivedInstruction(
     HloInstruction* derived_instruction) const {
-  if (sharding_ != nullptr &&
-      ShapeUtil::CompatibleKind(shape(), derived_instruction->shape())) {
-    // Only copy sharding if the tuple tree shape of the two instruction is
-    // compatible because copying it between differently shaped instructions
-    // can produce invalid shardings.
-    derived_instruction->set_sharding(*sharding_);
-  } else if (!ShapeUtil::CompatibleKind(shape(),
-                                        derived_instruction->shape())) {
+  if (!ShapeUtil::CompatibleKind(shape(), derived_instruction->shape())) {
     derived_instruction->clear_sharding();
+  } else if (sharding_ != nullptr) {
+    // Only copy sharding if the tuple tree shapes of the two instructions are
+    // compatible. Copying sharding between instructions with incompatible
+    // shapes can produce error.
+    derived_instruction->set_sharding(*sharding_);
   }
+
   derived_instruction->set_metadata(metadata());
   if (has_rare()) {
     derived_instruction->set_result_accuracy(result_accuracy());
@@ -4030,8 +4029,11 @@ void HloInstruction::PrintWithCanonicalNameMap(
     printer->Append(", backend_config=");
     // In the common case that the backend-config is valid-ish JSON, the parser
     // doesn't need it delimited by quotes, so we can print it without
-    // CEsape'ing.  This is much easier to read.
-    if (LexesAsJsonDict(config)) {
+    // CEscape'ing.  This is much easier to read.
+    //
+    // Also, if we are just computing a fingerprint/hash, we do not need to do
+    // any escaping.
+    if (printer->is_hasher() || LexesAsJsonDict(config)) {
       printer->Append(config);
     } else {
       printer->Append("\"");

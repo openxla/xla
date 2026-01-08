@@ -245,48 +245,6 @@ TEST(MeshAndAxisTest, ValidateAxisForMesh) {
       "Sub-axis size must be strictly less than the full axis size");
 }
 
-TEST(MeshAndAxisTest, AxisRefCanCoexist) {
-  auto canCoexist = [](AxisRef a, AxisRef b, bool expected) {
-    EXPECT_EQ(a.CanCoexist(b), expected);
-    EXPECT_EQ(b.CanCoexist(a), expected);
-  };
-
-  canCoexist(AxisRef(0), AxisRef(1), true);
-  canCoexist(AxisRef(0), AxisRef(1, {2, 2}), true);
-  canCoexist(AxisRef(0), AxisRef(0), true);
-  canCoexist(AxisRef(0), AxisRef(0, {2, 2}), true);
-  canCoexist(AxisRef(0, {2, 2}), AxisRef(0, {2, 2}), true);
-  canCoexist(AxisRef(0, {1, 2}), AxisRef(0, {1, 4}), true);
-  canCoexist(AxisRef(0, {1, 2}), AxisRef(0, {2, 4}), true);
-  canCoexist(AxisRef(0, {1, 2}), AxisRef(0, {6, 2}), true);
-  canCoexist(AxisRef(0, {1, 4}), AxisRef(0, {2, 2}), true);
-  canCoexist(AxisRef(0, {1, 4}), AxisRef(0, {2, 4}), true);
-
-  canCoexist(AxisRef(0, {1, 2}), AxisRef(0, {1, 3}), false);
-  canCoexist(AxisRef(0, {1, 2}), AxisRef(0, {3, 2}), false);
-  canCoexist(AxisRef(0, {1, 3}), AxisRef(0, {2, 3}), false);
-}
-
-TEST(MeshAndAxisTest, AxisRefOverlaps) {
-  auto overlaps = [](AxisRef a, AxisRef b, bool expected) {
-    EXPECT_EQ(a.Overlaps(b), expected);
-    EXPECT_EQ(b.Overlaps(a), expected);
-  };
-
-  overlaps(AxisRef(0), AxisRef(0), true);
-  overlaps(AxisRef(0, {2, 4}), AxisRef(0), true);
-  overlaps(AxisRef(0, {2, 2}), AxisRef(0, {2, 2}), true);
-  overlaps(AxisRef(0, {1, 4}), AxisRef(0, {2, 4}), true);
-  overlaps(AxisRef(0, {2, 8}), AxisRef(0, {4, 2}), true);
-  overlaps(AxisRef(2, {1, 4}), AxisRef(2, {1, 2}), true);
-
-  overlaps(AxisRef(0), AxisRef(1), false);
-  overlaps(AxisRef(0), AxisRef(1, {1, 2}), false);
-  overlaps(AxisRef(0, {1, 4}), AxisRef(0, {4, 2}), false);
-  overlaps(AxisRef(0, {1, 4}), AxisRef(0, {8, 2}), false);
-  overlaps(AxisRef(0, {4, 2}), AxisRef(0, {1, 2}), false);
-}
-
 TEST(MeshAndAxisTest, AxisRefCanCoexistWithoutOverlap) {
   auto coexistWithoutOverlap = [](AxisRef a, AxisRef b, bool expected) {
     EXPECT_EQ(a.CanCoexistWithoutOverlap(b), expected);
@@ -360,6 +318,44 @@ TEST(MeshAndAxisTest, AxisRefSize) {
   EXPECT_EQ(AxisRef(1, {3, 11}).size(mesh), 11);
   EXPECT_EQ(AxisRef(2, {1, 5}).size(mesh), 5);
   EXPECT_EQ(AxisRef(2, {5, 13}).size(mesh), 13);
+}
+
+TEST(MeshAndAxisTest, AxisRefCanMerge) {
+  auto checkCanMerge = [](AxisRef a, AxisRef b) {
+    EXPECT_TRUE(a.CanMerge(b));
+    EXPECT_FALSE(b.CanMerge(a));
+  };
+
+  checkCanMerge(AxisRef(0, {1, 2}), AxisRef(0, {2, 4}));
+  checkCanMerge(AxisRef(0, {2, 4}), AxisRef(0, {8, 2}));
+
+  EXPECT_FALSE(AxisRef(0, {1, 2}).CanMerge(AxisRef(0, {1, 2})));
+  EXPECT_FALSE(AxisRef(0, {1, 2}).CanMerge(AxisRef(0, {4, 2})));
+  EXPECT_FALSE(AxisRef(0).CanMerge(AxisRef(0, {1, 2})));
+  EXPECT_FALSE(AxisRef(0, {1, 2}).CanMerge(AxisRef(0)));
+  EXPECT_FALSE(AxisRef(0).CanMerge(AxisRef(0)));
+  EXPECT_FALSE(AxisRef(0).CanMerge(AxisRef(1)));
+  EXPECT_FALSE(AxisRef(0, {1, 2}).CanMerge(AxisRef(1, {2, 4})));
+}
+
+TEST(MeshAndAxisTest, AxisRefMerge) {
+  Mesh mesh({16}, {"a"});
+
+  AxisRef axis_ref1(0, {1, 2});
+  EXPECT_TRUE(axis_ref1.Merge(AxisRef(0, {2, 4}), mesh));
+  EXPECT_EQ(axis_ref1, AxisRef(0, {1, 8}));
+
+  AxisRef axis_ref2(0, {2, 2});
+  EXPECT_TRUE(axis_ref2.Merge(AxisRef(0, {4, 4}), mesh));
+  EXPECT_EQ(axis_ref2, AxisRef(0, {2, 8}));
+
+  AxisRef axis_ref3(0, {1, 8});
+  EXPECT_TRUE(axis_ref3.Merge(AxisRef(0, {8, 2}), mesh));
+  EXPECT_EQ(axis_ref3, AxisRef(0));
+
+  AxisRef axis_ref4(0, {2, 4});
+  EXPECT_FALSE(axis_ref4.Merge(AxisRef(0, {1, 2}), mesh));
+  EXPECT_EQ(axis_ref4, AxisRef(0, {2, 4}));
 }
 
 }  // namespace xla

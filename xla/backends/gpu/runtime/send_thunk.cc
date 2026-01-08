@@ -69,7 +69,7 @@ SendThunk::SendThunk(ThunkInfo thunk_info, const P2PConfig& config,
       buffer_(buffer),
       execution_counters_(config_.validation_kind ==
                                   P2PConfig::ValidationKind::kConditional
-                              ? new ExecutionCounters()
+                              ? std::make_shared<ExecutionCounters>()
                               : nullptr),
       hlo_name_(instr_name) {}
 
@@ -222,6 +222,18 @@ absl::StatusOr<bool> SendThunk::RunCollective(const ExecuteParams& params,
     } else {
       VLOG(3) << "[" << device_ordinal << "] Skipping Send";
     }
+  } else {
+    // TODO(b/324437509): make SendCommand not a TracedCommand but a custom
+    // implementation that traces conditionally.
+    // For now single byte memcpy is ok compromise.
+
+    // If there is no target_id, this is an unmatched sender. We issue a
+    // size-one self-copy as a placeholder to ensure the CUDA Graph
+    // capture remains valid and the stream maintains its sequence.
+    VLOG(3) << absl::StreamFormat(
+        "[%d] %s : Send: Unmatched sender; issuing size-one self-copy",
+        device_ordinal, device_string);
+    RETURN_IF_ERROR(stream.MemcpyD2D(&src_addr, src_addr, 1));
   }
 
   return false;
