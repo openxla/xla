@@ -47,8 +47,14 @@ class NamedSharding {
         : axes_(axes.begin(), axes.end()), is_closed_(is_closed) {}
 
     absl::Span<const AxisRef> axes() const { return axes_; }
+    bool is_closed() const { return is_closed_; }
 
     int64_t getShardedSize(const Mesh& mesh) const;
+
+    // Appends `other` to this dimension sharding. This function assumes that
+    // both the dimension shardings correspond to the same mesh represented by
+    // `mesh` argument.
+    void Append(const DimensionSharding& other, const Mesh& mesh);
 
     // Slice axes of size `slice_size` from this dimension sharding and update
     // this dimension sharding with remaining axes.
@@ -155,9 +161,10 @@ class NamedSharding {
 
   bool IsReplicated() const {
     return !IsMaximal() &&
-           absl::c_all_of(dim_shardings_, [](const DimensionSharding& s) {
-             return s.axes().empty();
-           });
+           absl::c_all_of(
+               dim_shardings_,
+               [](const DimensionSharding& s) { return s.axes().empty(); }) &&
+           unreduced_axes_.empty();
   }
 
   bool IsMaximal() const { return mesh_.IsMaximal(); }

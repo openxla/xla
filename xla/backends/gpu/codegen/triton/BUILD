@@ -320,13 +320,13 @@ cc_library(
         ":lowering_util",
         ":support",
         "//xla:autotuning_proto_cc",
-        "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/codegen/emitters/ir:xla_gpu",
         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
         "//xla/backends/gpu/codegen/triton/transforms:passes",
+        "//xla/codegen:ir_printing",
         "//xla/codegen/emitters/ir:xla",
         "//xla/codegen/emitters/transforms:passes",
         "//xla/codegen/tiling:symbolic_tile_analysis",
@@ -383,7 +383,6 @@ cc_library(
         "@llvm-project//mlir:NVVMToLLVMIRTranslation",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:ROCDLToLLVMIRTranslation",
-        "@llvm-project//mlir:SCFToControlFlow",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:ToLLVMIRTranslation",
@@ -467,7 +466,9 @@ xla_test(
     ],
     tags = [
         "no_mac",
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":test_utils",
         ":xtile_compiler",
@@ -523,7 +524,9 @@ xla_test(
     tags = [
         "large",
         "no_mac",
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
@@ -566,7 +569,9 @@ xla_test(
     shard_count = 30,
     tags = [
         "no_mac",
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":test_utils",
         "//xla:autotuning_proto_cc",
@@ -619,7 +624,9 @@ xla_test(
     shard_count = 10,
     tags = [
         "no_mac",
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":support",
         ":test_utils",
@@ -728,9 +735,11 @@ xla_test(
         "no_mac",
         "no_oss",  # requires-mem:16g tag doesn't work in open source
         "nozapfhahn",  # Times out under coverage
+        "pjrt_migration_candidate",
     ] + if_google([
         "requires-mem:16g",
     ]),
+    use_legacy_runtime = True,
     deps = [
         "//xla:error_spec",
         "//xla:xla_proto_cc",
@@ -752,7 +761,11 @@ xla_test(
         "b200",
         "amdgpu_any",
     ],
-    tags = ["no_mac"],
+    tags = [
+        "no_mac",
+        "pjrt_migration_candidate",
+    ],
+    use_legacy_runtime = True,
     deps = [
         ":support",
         ":test_utils",
@@ -780,6 +793,7 @@ xla_cc_test(
     tags = [
         "gpu",
         "no_mac",
+        "pjrt_migration_candidate",
     ],
     deps = [
         ":test_utils",
@@ -835,7 +849,10 @@ xla_cc_test(
     shard_count = 25,
     # TODO(b/353912594): this test does not need to run on GPU, but it is broken on CPU in OSS.
     # Force it to run on GPU temporarily in order to get important OSS coverage.
-    tags = ["gpu"],
+    tags = [
+        "gpu",
+        "pjrt_migration_candidate",
+    ],
     deps = [
         ":fusion_emitter",
         ":support",
@@ -872,7 +889,11 @@ xla_test(
         "b200",
         "amdgpu_any",
     ],
-    tags = ["no_mac"],
+    tags = [
+        "no_mac",
+        "pjrt_migration_candidate",
+    ],
+    use_legacy_runtime = True,
     deps = [
         ":fusion_emitter",
         ":support",

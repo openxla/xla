@@ -462,10 +462,34 @@ message SendThunkProto {
   string instruction_name = 6;
 }
 
+message RecvThunkProto {
+  uint64 async_events_unique_id = 1;
+  CollectiveBufferProto buffer = 2;
+
+  CollectiveConfigProto collective_config = 3;
+  repeated SourceTarget source_target_pairs = 4;
+
+  AsyncStreamKind async_stream_kind = 5;
+  string instruction_name = 6;
+}
+
+message CollectiveBroadcastStartThunkProto {
+  optional uint64 async_events_unique_id = 1;
+  repeated CollectiveBufferProto buffers = 2;
+  CollectiveConfigProto collective_config = 3;
+}
+
 message CollectiveDoneThunkProto {
   ThunkKindProto thunk_kind = 1;
   AsyncStreamKind async_stream_kind = 2;
   optional uint64 async_events_unique_id = 3;
+}
+
+message CollectiveGroupThunkProto {
+  ThunkKindProto thunk_kind = 1;
+  repeated ThunkProto thunks = 2;
+  AsyncStreamKind async_stream_kind = 3;
+  optional uint64 async_events_unique_id = 4;
 }
 
 message ThunkProto {
@@ -513,7 +537,10 @@ message ThunkProto {
     RaggedAllToAllStartThunkProto ragged_all_to_all_start_thunk = 41;
     CollectivePermuteStartThunkProto collective_permute_start_thunk = 42;
     SendThunkProto send_thunk = 43;
-    DynamicMemcpyThunkProto dynamic_memcpy_thunk = 44;
+    RecvThunkProto recv_thunk = 44;
+    CollectiveBroadcastStartThunkProto collective_broadcast_start_thunk = 45;
+    CollectiveGroupThunkProto collective_group_thunk = 46;
+    DynamicMemcpyThunkProto dynamic_memcpy_thunk = 47;
   }
 }
 

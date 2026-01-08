@@ -28,7 +28,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/algorithm/container.h"
 #include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
@@ -41,7 +40,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/escaping.h"
-#include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -57,6 +55,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_domain_metadata.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/hlo/ir/hlo_op_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
@@ -412,6 +411,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
                                      proto.async_execution_thread().empty()
                                          ? kMainExecutionThread
                                          : proto.async_execution_thread());
+      instruction->set_output_to_operand_aliasing(output_to_operand_aliasing());
       break;
     }
     case HloOpcode::kAsyncUpdate: {
@@ -4029,8 +4029,11 @@ void HloInstruction::PrintWithCanonicalNameMap(
     printer->Append(", backend_config=");
     // In the common case that the backend-config is valid-ish JSON, the parser
     // doesn't need it delimited by quotes, so we can print it without
-    // CEsape'ing.  This is much easier to read.
-    if (LexesAsJsonDict(config)) {
+    // CEscape'ing.  This is much easier to read.
+    //
+    // Also, if we are just computing a fingerprint/hash, we do not need to do
+    // any escaping.
+    if (printer->is_hasher() || LexesAsJsonDict(config)) {
       printer->Append(config);
     } else {
       printer->Append("\"");
@@ -6025,14 +6028,19 @@ const CholeskyOptions& HloInstruction::cholesky_options() const {
 
 const std::vector<std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>>&
 HloInstruction::output_operand_aliasing() const {
-  return Cast<HloCallableInstruction>(this)->output_to_operand_aliasing();
+  const HloAliasible* aliasable = dynamic_cast<const HloAliasible*>(this);
+  CHECK(aliasable != nullptr)
+      << "Instruction does not support aliasing: " << ToShortString();
+  return aliasable->output_to_operand_aliasing();
 }
 
 void HloInstruction::set_output_to_operand_aliasing(
     std::vector<std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>>
         aliasing) {
-  Cast<HloCallableInstruction>(this)->set_output_to_operand_aliasing(
-      std::move(aliasing));
+  HloAliasible* aliasable = dynamic_cast<HloAliasible*>(this);
+  CHECK(aliasable != nullptr)
+      << "Instruction does not support aliasing: " << ToShortString();
+  aliasable->set_output_to_operand_aliasing(std::move(aliasing));
 }
 
 std::shared_ptr<OriginalValue> HloInstruction::original_value() const {
@@ -6054,6 +6062,51 @@ void HloInstruction::CopyOriginalValue(const HloInstruction* instruction,
                                        bool clone, bool issue_warning) {
   ::xla::CopyOriginalValue(/*src_instruction=*/instruction,
                            /*dest_instruction=*/this, clone, issue_warning);
+}
+
+std::vector<HloStackFrame> HloInstruction::GetStackTraceFromMetadata() const {
+  std::vector<HloStackFrame> frames;
+  const OpMetadata& metadata = this->metadata();
+  if (metadata.stack_frame_id() == 0) {
+    return frames;
+  }
+
+  const HloModule* hlo_module = GetModule();
+  if (hlo_module == nullptr) {
+    return frames;
+  }
+
+  int frame_id = metadata.stack_frame_id();
+  while (frame_id != 0) {
+    HloStackFrame frame = hlo_module->get_stack_frame(frame_id);
+    if (frame.empty()) {
+      break;
+    }
+    frame_id = frame.parent_frame_id;
+    frames.push_back(std::move(frame));
+  }
+  return frames;
+}
+
+std::string HloInstruction::GetStackTraceStringFromMetadata(int indent) const {
+  std::vector<std::string> frame_strings;
+  std::string indentation(indent, ' ');
+  for (const auto& frame : GetStackTraceFromMetadata()) {
+    frame_strings.push_back(absl::StrCat(indentation, frame));
+  }
+
+  const OpMetadata& metadata = this->metadata();
+  if (frame_strings.empty() && !metadata.source_file().empty() &&
+      metadata.source_line() != 0) {
+    frame_strings.push_back(absl::StrCat(indentation, metadata.source_file(),
+                                         ":", metadata.source_line()));
+  }
+
+  if (frame_strings.empty()) {
+    return absl::StrCat(indentation, "<no source information>");
+  }
+
+  return absl::StrJoin(frame_strings, "\n");
 }
 
 }  // namespace xla
