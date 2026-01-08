@@ -343,8 +343,6 @@ ConvertThunksToCommandBuffer(
     const DebugOptions& debug_options) {
   bool enable_loop_unroll =
       debug_options.xla_gpu_command_buffer_unroll_loops();
-  VLOG(0) << "ConvertThunksToCommandBuffer: enable_loop_unroll="
-          << enable_loop_unroll;
   TF_ASSIGN_OR_RETURN(
       CommandBufferCmdExecutor cmd_executor,
       ConvertToCommands(thunks_to_convert,
