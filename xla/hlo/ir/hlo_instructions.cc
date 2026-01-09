@@ -337,6 +337,34 @@ HloAsyncInstruction* HloAsyncInstruction::async_chain_done() const {
   return next;
 }
 
+void HloAsyncInstruction::UpdateAsyncChain() {
+  if (this->opcode() == HloOpcode::kAsyncStart) {
+    CHECK_EQ(this->users().size(), 1);
+    CHECK(this->users()[0]->opcode() == HloOpcode::kAsyncUpdate ||
+          this->users()[0]->opcode() == HloOpcode::kAsyncDone);
+    Cast<HloAsyncInstruction>(this)->async_chain_next_ =
+        Cast<HloAsyncInstruction>(this->users()[0]);
+  }
+  if (this->opcode() == HloOpcode::kAsyncUpdate) {
+    CHECK_EQ(this->users().size(), 1);
+    CHECK(this->users()[0]->opcode() == HloOpcode::kAsyncUpdate ||
+          this->users()[0]->opcode() == HloOpcode::kAsyncDone);
+    async_chain_next_ = Cast<HloAsyncInstruction>(this->users()[0]);
+    CHECK_EQ(this->operand_count(), 1);
+    CHECK(this->operand(0)->opcode() == HloOpcode::kAsyncStart ||
+          this->operand(0)->opcode() == HloOpcode::kAsyncUpdate);
+    Cast<HloAsyncInstruction>(this->mutable_operand(0))->async_chain_next_ =
+        this;
+  }
+  if (this->opcode() == HloOpcode::kAsyncDone) {
+    CHECK_EQ(this->operand_count(), 1);
+    CHECK(this->operand(0)->opcode() == HloOpcode::kAsyncStart ||
+          this->operand(0)->opcode() == HloOpcode::kAsyncUpdate);
+    Cast<HloAsyncInstruction>(this->mutable_operand(0))->async_chain_next_ =
+        this;
+  }
+}
+
 std::vector<HloAsyncInstruction*> HloAsyncInstruction::GetAsyncChain() const {
   std::vector<HloAsyncInstruction*> chain;
   HloAsyncInstruction* current = async_chain_start();
@@ -481,22 +509,26 @@ bool HloAsyncStartInstruction::IdenticalSlowPath(
 std::unique_ptr<HloInstruction>
 HloAsyncStartInstruction::CloneWithNewOperandsImpl(
     const Shape& shape, absl::Span<HloInstruction* const> new_operands,
-    HloCloneContext* context) const {
+    HloComputation* new_computation, HloCloneContext* context) const {
   HloModule* module = context != nullptr ? context->module() : GetModule();
   HloComputation* new_wrapped_computation = nullptr;
-  if (context != nullptr) {
-    new_wrapped_computation =
-        context->FindComputation(async_wrapped_computation());
-  }
-  if (new_wrapped_computation == nullptr) {
-    new_wrapped_computation = module->AddEmbeddedComputation(
-        async_wrapped_computation()->Clone("clone", context));
-    // Give the trampoline a trivial schedule if it already had one.
-    if (module->has_schedule() && module->schedule().is_computation_scheduled(
-                                      async_wrapped_computation())) {
-      module->schedule().set_sequence(
-          new_wrapped_computation,
-          new_wrapped_computation->MakeInstructionPostOrder());
+  if (new_computation) {
+    new_wrapped_computation = new_computation;
+  } else {
+    if (context != nullptr) {
+      new_wrapped_computation =
+          context->FindComputation(async_wrapped_computation());
+    }
+    if (new_wrapped_computation == nullptr) {
+      new_wrapped_computation = module->AddEmbeddedComputation(
+          async_wrapped_computation()->Clone("clone", context));
+      // Give the trampoline a trivial schedule if it already had one.
+      if (module->has_schedule() && module->schedule().is_computation_scheduled(
+                                        async_wrapped_computation())) {
+        module->schedule().set_sequence(
+            new_wrapped_computation,
+            new_wrapped_computation->MakeInstructionPostOrder());
+      }
     }
   }
 
@@ -506,6 +538,22 @@ HloAsyncStartInstruction::CloneWithNewOperandsImpl(
   cloned->HloAliasible::set_output_to_operand_aliasing(
       output_to_operand_aliasing());
   return cloned;
+}
+
+std::unique_ptr<HloInstruction>
+HloAsyncStartInstruction::CloneWithNewOperandsImpl(
+    const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+    HloCloneContext* context) const {
+  return CloneWithNewOperandsImpl(shape, new_operands,
+                                  /*new_computation=*/nullptr, context);
+}
+
+std::unique_ptr<HloInstruction>
+HloAsyncStartInstruction::CloneWithNewOperandsAndComputation(
+    const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+    HloComputation* new_computation, HloCloneContext* context) const {
+  return CloneWithNewOperandsImpl(shape, new_operands, new_computation,
+                                  context);
 }
 
 HloCopyStartInstruction::HloCopyStartInstruction(
