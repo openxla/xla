@@ -1571,6 +1571,8 @@ cc_library(
     name = "gpu_compiler",
     srcs = ["gpu_compiler.cc"],
     hdrs = ["gpu_compiler.h"],
+    copts = ["-fexceptions"],
+    features = ["-use_header_modules"],
     tags = ["gpu"],
     deps = [
         ":alias_info",
@@ -1877,6 +1879,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
+        "@nanobind",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
