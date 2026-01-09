@@ -330,14 +330,14 @@ TEST_F(MatmulPerfTableGenTest, ProfilesSmallMatmul) {
   MatmulPerfTableGen gen(cfg);
   DeviceHloInstructionProfiles profiles = gen.ComputeTable();
 
-  EXPECT_EQ(profiles.entries_size(), 1);
-  EXPECT_EQ(profiles.entries().begin()->second.entries_size(), 1);
+  ASSERT_THAT(profiles.entries(), ::testing::SizeIs(1));
+  ASSERT_THAT(profiles.entries().begin()->second.entries(), ::testing::SizeIs(1));
 
   const HloInstructionProfile& entry =
       profiles.entries().begin()->second.entries(0);
 
-  EXPECT_GT(entry.clock_cycles(), 0);
-  EXPECT_GT(entry.flops(), 0);
+  EXPECT_THAT(entry.clock_cycles(), ::testing::Gt(0));
+  EXPECT_THAT(entry.flops(), ::testing::Gt(0));
 }
 
 }  // namespace
