@@ -34,10 +34,11 @@ namespace {
 
 class MatmulPerfTableGenTest : public HloTestBase {
   void SetUp() override {
-    const stream_executor::GpuComputeCapability compute_capability = backend()
-             .default_stream_executor()
-             ->GetDeviceDescription()
-             .gpu_compute_capability();
+    const stream_executor::GpuComputeCapability compute_capability =
+        backend()
+            .default_stream_executor()
+            ->GetDeviceDescription()
+            .gpu_compute_capability();
     if (!compute_capability.IsCuda() && !compute_capability.IsRocm()) {
       GTEST_SKIP() << "Not built with --config=cuda or --config=rocm";
     }
@@ -336,7 +337,8 @@ TEST_F(MatmulPerfTableGenTest, ProfilesSmallMatmul) {
   DeviceHloInstructionProfiles profiles = gen.ComputeTable();
 
   ASSERT_THAT(profiles.entries(), ::testing::SizeIs(1));
-  ASSERT_THAT(profiles.entries().begin()->second.entries(), ::testing::SizeIs(1));
+  ASSERT_THAT(profiles.entries().begin()->second.entries(),
+              ::testing::SizeIs(1));
 
   const HloInstructionProfile& entry =
       profiles.entries().begin()->second.entries(0);

@@ -290,10 +290,10 @@ class RocmKernelTracer : public HloOpProfiler::KernelTracer,
                          public profiler::RocmTraceCollector {
  public:
   RocmKernelTracer()
-      :  rocm_tracer_(&profiler::RocmTracer::GetRocmTracerSingleton()),
-         profiler::RocmTraceCollector(MakeCollectorOptions(
-             profiler::RocmTracer::GetRocmTracerSingleton().NumGpus())),
-         start_timestamp_ns_(profiler::RocmTracer::GetTimestamp()) {
+      : rocm_tracer_(&profiler::RocmTracer::GetRocmTracerSingleton()),
+        profiler::RocmTraceCollector(MakeCollectorOptions(
+            profiler::RocmTracer::GetRocmTracerSingleton().NumGpus())),
+        start_timestamp_ns_(profiler::RocmTracer::GetTimestamp()) {
     CHECK(rocm_tracer_->IsAvailable());
     profiler::RocmTracerOptions options;
     options.max_annotation_strings = 1024 * 1024;
