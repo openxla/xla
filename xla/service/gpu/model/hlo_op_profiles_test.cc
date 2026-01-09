@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <utility>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
@@ -135,11 +136,10 @@ TEST_F(HloOpProfilesTest, GetProfileMI210) {
   auto device_info_mi210 = TestGpuDeviceInfo::AMDMI210DeviceInfo();
 
   const auto& op_profile = hlo_op_profiles->GetProfile(device_info_mi210);
-  ASSERT_TRUE(op_profile.contains(
-      std::make_pair(HloOpcode::kMultiply, PrimitiveType::F32)));
-  EXPECT_EQ(
-      op_profile.at(std::make_pair(HloOpcode::kMultiply, PrimitiveType::F32)),
-      123);
+  EXPECT_THAT(op_profile,
+              ::testing::Contains(::testing::Pair(
+                  std::make_pair(HloOpcode::kMultiply, PrimitiveType::F32),
+                  123)));
 }
 
 }  // namespace
