@@ -4,11 +4,13 @@ common:bzlmod --enable_bzlmod --noenable_workspace
 
 common --incompatible_enable_cc_toolchain_resolution
 common --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
+common --features=layering_check
 
 # TODO: Migrate for https://github.com/bazelbuild/bazel/issues/7260
 common:clang_local --noincompatible_enable_cc_toolchain_resolution
 common:clang_local --@rules_ml_toolchain//common:enable_hermetic_cc=False
 common:clang_local --repo_env USE_HERMETIC_CC_TOOLCHAIN=0
+common:clang_local --features=-layering_check
 
 # Load the TensorFlow bazelrc
 import %workspace%/tensorflow.bazelrc
