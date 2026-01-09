@@ -136,14 +136,9 @@ absl::StatusOr<std::unique_ptr<CudaCommandBuffer>> CudaCommandBuffer::Create(
     Mode mode, StreamExecutor* executor, CudaContext* cuda_context,
     const CommandBuffer* parent) {
   TF_ASSIGN_OR_RETURN(CUgraph graph, CreateGraph());
-<<<<<<< Updated upstream
-  return std::make_unique<CudaCommandBuffer>(mode, executor, cuda_context,
-                                             graph, /*is_owned_graph=*/true);
-=======
   return std::unique_ptr<CudaCommandBuffer>(new CudaCommandBuffer(
       mode, executor, cuda_context, graph, /*is_owned_graph=*/true,
       static_cast<const CudaCommandBuffer*>(parent)));
->>>>>>> Stashed changes
 }
 
 //===----------------------------------------------------------------------===//
