@@ -1,3 +1,7 @@
+#include <cassert>
+
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/tsl/platform/errors.h"
 /* Copyright 2021 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +40,10 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 
 namespace xla {
+
+// Returns the most frequent all-gather dim if it can be a valid gather dim
+// for all shapes involved, else returns 0.
+int64_t FindMostFrequentGatherDim(absl::Span<HloInstruction* const> to_combine);
 
 // Combines instructions with matching keys together.
 //
@@ -99,15 +107,20 @@ absl::StatusOr<bool> CombineInstructionsByKey(
 
       // We do not handle ops that have more than one operand since that is
       // simpler and this pass is the only way to generate such ops.
-      if (instruction->operands().size() != 1) {
+      if (instruction->opcode() != HloOpcode::kAsyncStart &&
+          instruction->operands().size() != 1) {
         VLOG(1) << "Skipping due to " << instruction->operands().size()
                 << " operands";
         keys.erase(it);
         continue;
       }
 
-      TF_RET_CHECK(instruction->shape().IsArray());
-      int64_t instruction_bytes = ShapeUtil::ByteSizeOf(instruction->shape());
+      TF_RET_CHECK(instruction->opcode() == HloOpcode::kAsyncStart ||
+                   instruction->shape().IsArray());
+      int64_t instruction_bytes =
+          instruction->opcode() == HloOpcode::kAsyncStart
+              ? ShapeUtil::ByteSizeOf(instruction->async_chain_done()->shape())
+              : ShapeUtil::ByteSizeOf(instruction->shape());
 
       // If the instruction is greater than the threshold, then we can never
       // combine it with anything.
