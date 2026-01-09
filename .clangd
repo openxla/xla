@@ -1,0 +1,13 @@
+CompileFlags:
+  # Use the compile_commands.json for build flags
+  CompilationDatabase: .
+
+Diagnostics:
+  # Enable strict include checking
+  UnusedIncludes: Strict
+  MissingIncludes: Strict
+
+# Improve code completion and navigation
+Index:
+  Background: Build
+  StandardLibrary: Yes
