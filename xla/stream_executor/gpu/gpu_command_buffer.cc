@@ -80,8 +80,9 @@ int64_t GpuCommandBuffer::AliveExecs() {
 // GpuCommandBuffer implementation
 //===----------------------------------------------------------------------===//
 
-GpuCommandBuffer::GpuCommandBuffer(Mode mode, StreamExecutor* executor)
-    : mode_(mode), executor_(executor) {}
+GpuCommandBuffer::GpuCommandBuffer(Mode mode, StreamExecutor* executor,
+                                   const GpuCommandBuffer* parent)
+    : CommandBuffer(parent), mode_(mode), executor_(executor) {}
 
 absl::Status GpuCommandBuffer::CheckNotFinalized() {
   if (state_ == State::kFinalized)

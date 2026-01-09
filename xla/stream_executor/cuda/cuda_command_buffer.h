@@ -51,17 +51,16 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
  public:
   // Creates a new CUDA command buffer and the underlying CUDA graph.
   static absl::StatusOr<std::unique_ptr<CudaCommandBuffer>> Create(
-      Mode mode, StreamExecutor* executor, CudaContext* cuda_context);
+      Mode mode, StreamExecutor* executor, CudaContext* cuda_context,
+      const CommandBuffer* parent = nullptr);
 
-  std::string ToString() const override;
-
-  ~CudaCommandBuffer() override;
-
- private:
+  // Constructor is public to allow std::make_unique. Prefer using Create()
+  // factory method for creating new command buffers.
   CudaCommandBuffer(Mode mode, StreamExecutor* executor,
                     CudaContext* cuda_context, CUgraph graph,
-                    bool is_owned_graph)
-      : GpuCommandBuffer(mode, executor),
+                    bool is_owned_graph,
+                    const CudaCommandBuffer* parent = nullptr)
+      : GpuCommandBuffer(mode, executor, parent),
         stream_exec_(executor),
         cuda_context_(cuda_context),
         graph_(graph),
@@ -71,6 +70,11 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
             << "; is_owned_graph=" << is_owned_graph_;
   }
 
+  std::string ToString() const override;
+
+  ~CudaCommandBuffer() override;
+
+ private:
   //===--------------------------------------------------------------------===//
   // APIs for launching kernels to update conditional handles.
   //===--------------------------------------------------------------------===//
@@ -175,8 +179,6 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
 
   absl::Status InstantiateGraph() override;
 
-  CommandBuffer* parent() const { return parent_; }
-
   CUgraphExec graph_exec() const;
 
   absl::Status CheckCanBeUpdated() override;
@@ -199,7 +201,6 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
   SetWhileConditionKernel set_while_condition_kernel_;
 
   StreamExecutor* stream_exec_ = nullptr;
-  CudaCommandBuffer* parent_ = nullptr;
 
   CudaContext* cuda_context_;
 

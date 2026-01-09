@@ -288,7 +288,7 @@ class StreamExecutor {
 
   // Creates a new CommandBuffer object.
   virtual absl::StatusOr<std::unique_ptr<CommandBuffer>> CreateCommandBuffer(
-      CommandBuffer::Mode mode) {
+      CommandBuffer::Mode mode, const CommandBuffer* parent = nullptr) {
     return absl::UnimplementedError("Command buffers are not implemented");
   }
 

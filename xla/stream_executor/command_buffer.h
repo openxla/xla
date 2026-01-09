@@ -81,7 +81,8 @@ class CommandBuffer {
   using UpdateCommands =
       absl::AnyInvocable<absl::Status(CommandBuffer* command_buffer)>;
 
-  CommandBuffer() = default;
+  explicit CommandBuffer(const CommandBuffer* parent = nullptr)
+      : parent_(parent) {}
   virtual ~CommandBuffer() = default;
 
   CommandBuffer(const CommandBuffer&) = delete;
@@ -316,11 +317,20 @@ class CommandBuffer {
   // Returns command buffer state.
   virtual State state() const = 0;
 
+  // Returns the parent command buffer, or nullptr if this is a primary
+  // command buffer.
+  virtual const CommandBuffer* parent() const { return parent_; }
+
   virtual std::string ToString() const = 0;
 
   //--------------------------------------------------------------------------//
   // Command buffer tracing API
   //--------------------------------------------------------------------------//
+ protected:
+  // Parent command buffer for nested command buffers, or nullptr for primary
+  // command buffers.
+  const CommandBuffer* parent_ = nullptr;
+
  private:
   friend class TraceCommandBufferFactory;
 

@@ -535,6 +535,7 @@ class TracedCommandBuffer : public CommandState {
       se::StreamExecutor* absl_nonnull executor,
       se::Stream* absl_nonnull stream,
       absl::FunctionRef<absl::Status(se::Stream*)> trace,
+      const se::CommandBuffer* parent = nullptr,
       se::StreamPriority priority = se::StreamPriority::Default);
 
  private:

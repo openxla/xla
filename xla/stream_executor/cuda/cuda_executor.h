@@ -109,7 +109,8 @@ class CudaExecutor : public GpuExecutor {
   absl::StatusOr<std::unique_ptr<Stream>> CreateStream(
       std::optional<std::variant<StreamPriority, int>> priority) override;
   absl::StatusOr<std::unique_ptr<CommandBuffer>> CreateCommandBuffer(
-      CommandBuffer::Mode mode) override;
+      CommandBuffer::Mode mode,
+      const CommandBuffer* parent = nullptr) override;
 
   absl::StatusOr<std::unique_ptr<DeviceDescription>> CreateDeviceDescription()
       const override {

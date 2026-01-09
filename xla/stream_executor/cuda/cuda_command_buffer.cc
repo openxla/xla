@@ -133,10 +133,12 @@ absl::Status GraphInstantiate(CUgraphExec* exec, CUgraph graph) {
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<CudaCommandBuffer>> CudaCommandBuffer::Create(
-    Mode mode, StreamExecutor* executor, CudaContext* cuda_context) {
+    Mode mode, StreamExecutor* executor, CudaContext* cuda_context,
+    const CommandBuffer* parent) {
   TF_ASSIGN_OR_RETURN(CUgraph graph, CreateGraph());
   return std::unique_ptr<CudaCommandBuffer>(new CudaCommandBuffer(
-      mode, executor, cuda_context, graph, /*is_owned_graph=*/true));
+      mode, executor, cuda_context, graph, /*is_owned_graph=*/true,
+      static_cast<const CudaCommandBuffer*>(parent)));
 }
 
 //===----------------------------------------------------------------------===//
@@ -277,10 +279,10 @@ CudaCommandBuffer::CreateConditionalNode(
 
   return GraphConditionalNodeHandle{
       FromCudaGraphHandle(node_handle),
-      std::unique_ptr<CudaCommandBuffer>(
-          new CudaCommandBuffer(Mode::kNested, stream_exec_, cuda_context_,
-                                cu_params.conditional.phGraph_out[0],
-                                /*is_owned_graph=*/false))};
+      std::unique_ptr<CudaCommandBuffer>(new CudaCommandBuffer(
+          Mode::kNested, stream_exec_, cuda_context_,
+          cu_params.conditional.phGraph_out[0],
+          /*is_owned_graph=*/false, /*parent=*/this))};
 #else
   return absl::UnimplementedError("unsupported node type");
 #endif  // CUDA_VERSION >= 12030
@@ -785,7 +787,7 @@ absl::Status CudaCommandBuffer::InstantiateGraph() {
 CUgraphExec CudaCommandBuffer::graph_exec() const {
   const CudaCommandBuffer* current = this;
   while (current->parent_ != nullptr) {
-    current = current->parent_;
+    current = static_cast<const CudaCommandBuffer*>(current->parent_);
   }
   CHECK(current->graph_exec_ != nullptr)
       << "graph_exec_ is nullptr for top level cuda command buffer";

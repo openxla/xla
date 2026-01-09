@@ -41,14 +41,16 @@ class TraceCommandBufferFactory {
   static absl::StatusOr<std::unique_ptr<CommandBuffer>> Create(
       StreamExecutor* executor,
       absl::AnyInvocable<absl::Status(Stream*)> function,
-      CommandBuffer::Mode mode = CommandBuffer::Mode::kNested);
+      CommandBuffer::Mode mode = CommandBuffer::Mode::kNested,
+      const CommandBuffer* parent = nullptr);
 
   // Creates a new command buffer on the given executor by tracing `function`
   // invocation using a user provided stream that will be passed to `function`.
   static absl::StatusOr<std::unique_ptr<CommandBuffer>> Create(
       StreamExecutor* executor, Stream* stream,
       absl::AnyInvocable<absl::Status(Stream*)> function,
-      CommandBuffer::Mode mode = CommandBuffer::Mode::kNested);
+      CommandBuffer::Mode mode = CommandBuffer::Mode::kNested,
+      const CommandBuffer* parent = nullptr);
 };
 
 }  // namespace stream_executor
