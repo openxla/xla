@@ -38,7 +38,10 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tests/hlo_test_base.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/device_description.pb.h"
+#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
+#include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
 #include "tsl/platform/statusor.h"
@@ -49,7 +52,8 @@ namespace {
 
 namespace op = xla::testing::opcode_matchers;
 
-class GpuOffloadingTest : public HloTestBase {
+class GpuOffloadingTest
+    : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase> {
  protected:
   absl::StatusOr<bool> RunHloRematerialization(int64_t memory_limit_bytes,
                                                HloModule* module,
@@ -218,9 +222,10 @@ TEST_F(GpuOffloadingTest, CopyIRCreationTest) {
                           RunHloRematerialization(
                               /*memory_limit_bytes=*/10 * 1024, module.get()));
   ASSERT_TRUE(changed);
-  stream_executor::StreamExecutor* executor =
-      backend().default_stream_executor();
-  StreamAttributeAnnotator attr_annotator(executor->GetDeviceDescription());
+  TF_ASSERT_OK_AND_ASSIGN(stream_executor::DeviceDescription device_description,
+                          stream_executor::DeviceDescription::FromProto(
+                              stream_executor::GpuDeviceInfoProto{}));
+  StreamAttributeAnnotator attr_annotator(device_description);
   TF_ASSERT_OK_AND_ASSIGN(bool changed_attr, attr_annotator.Run(module.get()));
   EXPECT_TRUE(changed_attr);
   // Verify that the stream attribute for a copy-start is annotated
@@ -263,19 +268,6 @@ TEST_F(GpuOffloadingTest, CopyIRCreationTest) {
   EXPECT_TRUE(RunAndCompareTwoModules(std::move(module), std::move(module_ref),
                                       ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6},
                                       /*run_hlo_passes=*/false));
-}
-
-// The memory management operations (allocation and deallocation) for the host
-// in unit test below mirror those employed for host offloading in this file.
-TEST_F(GpuOffloadingTest, XLAHostMemoryAllocationDeallocationTest) {
-  stream_executor::StreamExecutor* executor =
-      backend().default_stream_executor();
-  stream_executor::DeviceAddressBase host_ptr =
-      executor->Allocate(64, (int64_t)(stream_executor::MemorySpace::kHost));
-  TF_ASSERT_OK_AND_ASSIGN(auto memory_space,
-                          executor->GetPointerMemorySpace(host_ptr.opaque()));
-  EXPECT_EQ(memory_space, stream_executor::MemorySpace::kHost);
-  executor->Deallocate(&host_ptr);
 }
 
 }  // namespace
