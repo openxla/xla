@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/runtime/work_cluster.h"
 #include "xla/runtime/work_dimensions.h"
 #include "xla/runtime/work_group.h"
@@ -33,13 +34,15 @@ limitations under the License.
 
 namespace xla {
 
+using gpu::ShapedSlice;
+
 // KernelSpec is a specification of an XLA kernel produced by the XLA codegen.
 // At XLA compilation time, backends instantiates kernel specification into run
 // time instances that can be executed on the device, i.e. on GPU XLA runtime
 // will load kernel PTX on device and instantiate a KernelThunk.
 class KernelSpec {
  public:
-  using Buffers = absl::InlinedVector<BufferAllocation::Slice, 8>;
+  using Buffers = absl::InlinedVector<ShapedSlice, 8>;
 
   KernelSpec(absl::string_view name, NumWorkGroups num_workgroups,
              Buffers argument_buffers, Buffers result_buffers,
@@ -84,12 +87,12 @@ class KernelSpec {
   std::optional<size_t> scratch_bytes() const { return scratch_bytes_; }
 
   // Argument buffers read by the kernel.
-  absl::Span<const BufferAllocation::Slice> argument_buffers() const {
+  absl::Span<const ShapedSlice> argument_buffers() const {
     return argument_buffers_;
   }
 
   // Result buffers written to by the kernel.
-  absl::Span<const BufferAllocation::Slice> result_buffers() const {
+  absl::Span<const ShapedSlice> result_buffers() const {
     return result_buffers_;
   }
 

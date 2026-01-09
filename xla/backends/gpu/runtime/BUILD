@@ -2418,6 +2418,7 @@ cc_library(
     name = "shaped_slice",
     srcs = ["shaped_slice.cc"],
     hdrs = ["shaped_slice.h"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     deps = [
         ":shaped_slice_proto_cc",
         "//xla:shape_util",
