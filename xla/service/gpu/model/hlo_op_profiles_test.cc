@@ -136,10 +136,10 @@ TEST_F(HloOpProfilesTest, GetProfileMI210) {
   auto device_info_mi210 = TestGpuDeviceInfo::AMDMI210DeviceInfo();
 
   const auto& op_profile = hlo_op_profiles->GetProfile(device_info_mi210);
-  EXPECT_THAT(op_profile,
-              ::testing::Contains(::testing::Pair(
-                  std::make_pair(HloOpcode::kMultiply, PrimitiveType::F32),
-                  123)));
+  EXPECT_THAT(
+      op_profile,
+      ::testing::Contains(::testing::Pair(
+          std::make_pair(HloOpcode::kMultiply, PrimitiveType::F32), 123)));
 }
 
 }  // namespace

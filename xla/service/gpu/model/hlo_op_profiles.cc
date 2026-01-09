@@ -60,8 +60,8 @@ namespace gpu {
       return absl::StrCat(profile_name, "_", full_name.back());
     }
     return profile_name;
-  } else if (auto* ptr =
-          device_info.gpu_compute_capability().rocm_compute_capability()) {
+  } else if (auto* ptr = device_info.gpu_compute_capability()
+                             .rocm_compute_capability()) {
     return ptr->gfx_version();
   }
   return "<unknown>";

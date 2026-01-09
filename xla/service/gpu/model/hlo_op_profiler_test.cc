@@ -43,7 +43,7 @@ class HloOpProfilerTest : public HloTestBase {
   }
 
   const int kMinClockCyclesAddF32_ = 0;
-  const int kMinClockCyclesDivideF64_ = 
+  const int kMinClockCyclesDivideF64_ =
       platform_id_ == se::cuda::kCudaPlatformId ? 280 : 100;
   const int kMinClockCyclesSqrtC128_ = 1000;
   se::Platform::Id platform_id_;
