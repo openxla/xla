@@ -193,6 +193,16 @@ std::string NamedSharding::ToString(bool include_metadata) const {
     absl::StrAppend(&result, "}");
   }
 
+  if (!manual_axes_.empty()) {
+    absl::StrAppend(&result, ", manual={");
+    absl::StrAppend(&result,
+                    absl::StrJoin(manual_axes_, ", ",
+                                  [&](std::string* out, const AxisRef& axis) {
+                                    absl::StrAppend(out, axis.ToString(&mesh_));
+                                  }));
+    absl::StrAppend(&result, "}");
+  }
+
   absl::StrAppend(&result, metadata_str);
   absl::StrAppend(&result, "}");
 
@@ -216,6 +226,7 @@ NamedSharding FromAxisNames(
     Mesh mesh, absl::Span<const std::vector<std::string>> dim_shardings,
     absl::Span<const std::string> replicated_axes,
     absl::Span<const std::string> unreduced_axes,
+    absl::Span<const std::string> manual_axes,
     absl::Span<const OpMetadata> metadata) {
   std::map<std::string, int64_t> mesh_axis_to_index;
   for (int64_t i = 0; i < mesh.axis_names().size(); ++i) {
@@ -255,8 +266,17 @@ NamedSharding FromAxisNames(
     unreduced_axes_.push_back(AxisRef(it->second));
   }
 
+  std::vector<AxisRef> manual_axes_;
+  manual_axes_.reserve(manual_axes.size());
+  for (const std::string& axis_name : manual_axes) {
+    auto it = mesh_axis_to_index.find(axis_name);
+    CHECK(it != mesh_axis_to_index.end())
+        << "Axis " << axis_name << " not found in mesh " << mesh.ToString();
+    manual_axes_.push_back(AxisRef(it->second));
+  }
+
   return NamedSharding(mesh, dim_shardings_, replicated_axes_, unreduced_axes_,
-                       metadata);
+                       manual_axes_, metadata);
 }
 }  // namespace test_utils
 }  // namespace xla
