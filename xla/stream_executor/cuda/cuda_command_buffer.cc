@@ -135,8 +135,8 @@ absl::Status GraphInstantiate(CUgraphExec* exec, CUgraph graph) {
 absl::StatusOr<std::unique_ptr<CudaCommandBuffer>> CudaCommandBuffer::Create(
     Mode mode, StreamExecutor* executor, CudaContext* cuda_context) {
   TF_ASSIGN_OR_RETURN(CUgraph graph, CreateGraph());
-  return std::unique_ptr<CudaCommandBuffer>(new CudaCommandBuffer(
-      mode, executor, cuda_context, graph, /*is_owned_graph=*/true));
+  return std::make_unique<CudaCommandBuffer>(mode, executor, cuda_context,
+                                             graph, /*is_owned_graph=*/true);
 }
 
 //===----------------------------------------------------------------------===//
@@ -275,15 +275,13 @@ CudaCommandBuffer::CreateConditionalNode(
   VLOG(2) << "Created conditional CUDA graph "
           << cu_params.conditional.phGraph_out[0];
 
-  auto* nested_cmd_buffer =
-      new CudaCommandBuffer(Mode::kNested, stream_exec_, cuda_context_,
-                            cu_params.conditional.phGraph_out[0],
-                            /*is_owned_graph=*/false);
+  auto nested_cmd_buffer = std::make_unique<CudaCommandBuffer>(
+      Mode::kNested, stream_exec_, cuda_context_,
+      cu_params.conditional.phGraph_out[0], /*is_owned_graph=*/false);
   nested_cmd_buffer->parent_ = this;
 
-  return GraphConditionalNodeHandle{
-      FromCudaGraphHandle(node_handle),
-      std::unique_ptr<CudaCommandBuffer>(nested_cmd_buffer)};
+  return GraphConditionalNodeHandle{FromCudaGraphHandle(node_handle),
+                                    std::move(nested_cmd_buffer)};
 #else
   return absl::UnimplementedError("unsupported node type");
 #endif  // CUDA_VERSION >= 12030
