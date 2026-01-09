@@ -92,10 +92,11 @@ GraphNodeHandle FromHipGraphHandle(hipGraphNode_t handle) {
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<RocmCommandBuffer>> RocmCommandBuffer::Create(
-    Mode mode, StreamExecutor* executor) {
+    Mode mode, StreamExecutor* executor, const CommandBuffer* parent) {
   TF_ASSIGN_OR_RETURN(hipGraph_t graph, CreateGraph());
-  return std::unique_ptr<RocmCommandBuffer>(
-      new RocmCommandBuffer(mode, executor, graph, /*is_owned_graph=*/true));
+  return std::unique_ptr<RocmCommandBuffer>(new RocmCommandBuffer(
+      mode, executor, graph, /*is_owned_graph=*/true,
+      static_cast<const RocmCommandBuffer*>(parent)));
 }
 
 absl::StatusOr<GpuCommandBuffer::GraphConditionalNodeHandle>

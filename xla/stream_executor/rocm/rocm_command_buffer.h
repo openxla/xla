@@ -44,7 +44,8 @@ class RocmCommandBuffer : public GpuCommandBuffer {
  public:
   // Creates a new ROCm command buffer and the underlying HIP graph.
   static absl::StatusOr<std::unique_ptr<RocmCommandBuffer>> Create(
-      Mode mode, StreamExecutor* executor);
+      Mode mode, StreamExecutor* executor,
+      const CommandBuffer* parent = nullptr);
 
   std::string ToString() const override;
 
@@ -52,8 +53,9 @@ class RocmCommandBuffer : public GpuCommandBuffer {
 
  private:
   RocmCommandBuffer(Mode mode, StreamExecutor* executor, hipGraph_t graph,
-                    bool is_owned_graph)
-      : GpuCommandBuffer(mode, executor),
+                    bool is_owned_graph,
+                    const RocmCommandBuffer* parent = nullptr)
+      : GpuCommandBuffer(mode, executor, parent),
         graph_(graph),
         is_owned_graph_(is_owned_graph) {}
 
@@ -164,8 +166,6 @@ class RocmCommandBuffer : public GpuCommandBuffer {
   static_assert(std::is_pointer_v<hipGraph_t>, "hipGraph_t must be a pointer");
   static_assert(std::is_pointer_v<hipGraphExec_t>,
                 "hipGraphExec_t must be a pointer");
-
-  RocmCommandBuffer* parent_ = nullptr;
 
   hipGraph_t graph_ = nullptr;
   bool is_owned_graph_ = true;

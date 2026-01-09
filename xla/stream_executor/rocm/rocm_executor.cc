@@ -1096,9 +1096,10 @@ absl::StatusOr<std::unique_ptr<Stream>> RocmExecutor::CreateStream(
 }
 
 absl::StatusOr<std::unique_ptr<CommandBuffer>>
-RocmExecutor::CreateCommandBuffer(CommandBuffer::Mode mode) {
+RocmExecutor::CreateCommandBuffer(CommandBuffer::Mode mode,
+                                  const CommandBuffer* parent) {
   VLOG(2) << "Create ROCm command buffer (ROCm graph)";
-  return RocmCommandBuffer::Create(mode, this);
+  return RocmCommandBuffer::Create(mode, this, parent);
 }
 
 int RocmExecutor::GetGpuStreamPriority(StreamPriority priority) {

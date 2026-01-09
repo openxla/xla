@@ -32,25 +32,25 @@ absl::StatusOr<std::unique_ptr<CommandBuffer>>
 TraceCommandBufferFactory::Create(
     StreamExecutor* executor,
     absl::AnyInvocable<absl::Status(Stream*)> function,
-    CommandBuffer::Mode mode) {
+    CommandBuffer::Mode mode, const CommandBuffer* parent) {
   TF_ASSIGN_OR_RETURN(auto stream, executor->CreateStream());
   stream->SetName("Command buffer tracer");
   return TraceCommandBufferFactory::Create(executor, stream.get(),
-                                           std::move(function), mode);
+                                           std::move(function), mode, parent);
 }
 
 absl::StatusOr<std::unique_ptr<CommandBuffer>>
 TraceCommandBufferFactory::Create(
     StreamExecutor* executor, Stream* stream,
     absl::AnyInvocable<absl::Status(Stream*)> function,
-    CommandBuffer::Mode mode) {
+    CommandBuffer::Mode mode, const CommandBuffer* parent) {
   if (stream == nullptr)
     return absl::InvalidArgumentError(
         "Can't trace command buffer on a null stream");
 
   // Prepare an empty command buffer instance.
   TF_ASSIGN_OR_RETURN(std::unique_ptr<CommandBuffer> command_buffer,
-                      executor->CreateCommandBuffer(mode));
+                      executor->CreateCommandBuffer(mode, parent));
 
   // Trace and finalize the command buffer.
   TF_RETURN_IF_ERROR(

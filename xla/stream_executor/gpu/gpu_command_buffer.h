@@ -113,7 +113,8 @@ class GpuCommandBuffer : public CommandBuffer {
     std::unique_ptr<CommandBuffer> command_buffer;
   };
 
-  GpuCommandBuffer(Mode mode, StreamExecutor* executor);
+  GpuCommandBuffer(Mode mode, StreamExecutor* executor,
+                   const GpuCommandBuffer* parent = nullptr);
 
   // Bring CreateLaunch and UpdateLaunch template functions into scope.
   using CommandBuffer::CreateLaunch;
@@ -398,7 +399,6 @@ class GpuCommandBuffer : public CommandBuffer {
 
   Mode mode_;
   State state_ = State::kCreate;
-
   StreamExecutor* executor_;  // not owned, must outlive *this
 
   // Track the number of command buffer updates for debugging.

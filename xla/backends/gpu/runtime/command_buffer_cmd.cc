@@ -749,7 +749,7 @@ TracedCommandBuffer::TracedCommandBuffer(
 absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
     const BufferAllocations* buffer_allocation, se::StreamExecutor* executor,
     se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
-    se::StreamPriority priority) {
+    const se::CommandBuffer* parent, se::StreamPriority priority) {
   // Collect memory addresses for relevant allocations.
   absl::InlinedVector<se::DeviceAddressBase, 4> allocs;
   allocs.reserve(allocs_indices_.size());
@@ -787,7 +787,9 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
     if (entries_[i].command_buffer == nullptr) {
       TF_ASSIGN_OR_RETURN(
           entries_[i].command_buffer,
-          se::TraceCommandBufferFactory::Create(executor, stream, trace));
+          se::TraceCommandBufferFactory::Create(
+              executor, stream, trace, se::CommandBuffer::Mode::kNested,
+              parent));
       entries_[i].recorded_allocs.assign(allocs.begin(), allocs.end());
       if (priority != se::StreamPriority::Default) {
         TF_RETURN_IF_ERROR(entries_[i].command_buffer->SetPriority(priority));
@@ -803,7 +805,8 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
   // command buffer.
   TF_ASSIGN_OR_RETURN(
       entries_[capacity_ - 1].command_buffer,
-      se::TraceCommandBufferFactory::Create(executor, stream, trace));
+      se::TraceCommandBufferFactory::Create(
+          executor, stream, trace, se::CommandBuffer::Mode::kNested, parent));
   entries_[capacity_ - 1].recorded_allocs.assign(allocs.begin(), allocs.end());
   VLOG(6) << "Command buffer trace cache does replacement for command "
           << trace_cmd_->ToString();
@@ -833,7 +836,8 @@ absl::Status TracedCommandBufferCmd::RecordTracedCommand(
       auto nested_cmd,
       traced_cmd->GetOrTraceCommandBuffer(
           execute_params.buffer_allocations, execute_params.stream->parent(),
-          execute_params.command_buffer_trace_stream, trace, priority()));
+          execute_params.command_buffer_trace_stream, trace,
+          record_params.command_buffer, priority()));
 
   VLOG(5) << "Record traced command into command buffer: "
           << record_params.command_buffer;
