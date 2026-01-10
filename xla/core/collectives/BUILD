@@ -129,6 +129,7 @@ cc_library(
     hdrs = ["symmetric_memory.h"],
     deps = [
         "//xla:util",
+        "//xla/stream_executor:kernel_args",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",

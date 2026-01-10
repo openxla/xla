@@ -85,8 +85,8 @@ class NcclCommunicator : public GpuCommunicator {
 
   bool SupportsDeviceComm() const final;
 
-  absl::StatusOr<std::unique_ptr<DeviceComm>> CreateDeviceComm(
-      const DeviceCommRequirements& requirements) final;
+  absl::StatusOr<std::unique_ptr<GpuDeviceCommunicator>> CreateDeviceComm(
+      const GpuDeviceCommunicator::Requirements& requirements) final;
 
   absl::StatusOr<std::unique_ptr<SymmetricMemory>> CreateSymmetricMemory(
       se::DeviceAddressBase addr) final;
@@ -267,19 +267,23 @@ class NcclCommunicator : public GpuCommunicator {
 #if NCCL_VERSION_CODE >= 22800
 
 // A device-side NCCL communicator.
-class NcclDeviceComm : public NcclCommunicator::DeviceComm {
+class NcclDeviceComm : public GpuDeviceCommunicator {
  public:
   ~NcclDeviceComm() override;
 
-  // Creates a new instance of a NCCL device communicator from the given host
-  // communicator object.A
-  static absl::StatusOr<std::unique_ptr<NcclDeviceComm>> CreateFrom(
-      const NcclCommunicator& comm,
-      const NcclCommunicator::DeviceCommRequirements& requirements);
+  NcclDeviceComm(NcclDeviceComm&&) = delete;
+  NcclDeviceComm& operator=(NcclDeviceComm&&) = delete;
 
-  NcclCommunicator::PlatformCommunicatorHandle platform_comm() const final;
+  // Creates a new instance of a NCCL device communicator from the given host
+  // communicator object.
+  static absl::StatusOr<std::unique_ptr<NcclDeviceComm>> CreateFrom(
+      const NcclCommunicator& comm, const Requirements& requirements);
+
+  PlatformCommunicatorHandle platform_comm() const final;
 
   std::string ToString() const final;
+
+  PackedKernelArg PackKernelArg() const final;
 
  private:
   explicit NcclDeviceComm(ncclDevComm dev_comm);

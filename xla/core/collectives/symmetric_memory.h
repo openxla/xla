@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_CORE_COLLECTIVES_SYMMETRIC_MEMORY_H_
 
 #include "absl/strings/str_format.h"
+#include "xla/stream_executor/kernel_args.h"
 
 namespace xla {
 
@@ -28,6 +29,11 @@ class SymmetricMemory {
   virtual ~SymmetricMemory() = default;
   virtual std::string ToString() const = 0;
 
+  // A packed kernel argument type for passing symmetric memory to device
+  // kernels (a platform-specific POD data type, happens to be a pointer).
+  using PackedKernelArg = void*;
+  virtual PackedKernelArg PackKernelArg() const = 0;
+
   template <typename Sink>
   friend void AbslStringify(Sink& sink, const SymmetricMemory& mem) {
     absl::Format(&sink, "%s", mem.ToString());
@@ -35,5 +41,13 @@ class SymmetricMemory {
 };
 
 }  // namespace xla
+
+namespace stream_executor {
+template <>
+struct KernelArgPacking<xla::SymmetricMemory*> {
+  using Type = xla::SymmetricMemory::PackedKernelArg;
+  static Type Pack(xla::SymmetricMemory* mem) { return mem->PackKernelArg(); }
+};
+}  // namespace stream_executor
 
 #endif  // XLA_CORE_COLLECTIVES_SYMMETRIC_MEMORY_H_

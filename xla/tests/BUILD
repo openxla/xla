@@ -3037,6 +3037,39 @@ cuda_library(
     alwayslink = True,  # static kernel registation
 )
 
+xla_cc_test(
+    name = "collective_ops_ffi_kernels_test",
+    srcs = ["collective_ops_ffi_kernels_test.cc"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "requires-gpu-nvidia:2",
+    ],
+    deps = [
+        ":collective_ops_ffi_kernels",
+        "//xla:future",
+        "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/backends/gpu/collectives:gpu_collectives",
+        "//xla/backends/gpu/collectives:gpu_collectives_plugin",
+        "//xla/stream_executor/gpu:gpu_kernel_registry",
+        "//xla/backends/gpu/collectives:gpu_communicator",
+        "//xla/core/collectives:clique_id",
+        "//xla/core/collectives:symmetric_memory",
+        "//xla/stream_executor:kernel",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:launch_dim",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_platform",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+    ] + if_cuda_is_configured([
+        ":collective_ops_ffi_kernels_cuda",
+    ]),
+)
+
 xla_test(
     name = "collective_ops_ffi_test",
     srcs = ["collective_ops_ffi_test.cc"],

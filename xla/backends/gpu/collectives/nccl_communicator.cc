@@ -234,8 +234,9 @@ bool NcclCommunicator::SupportsDeviceComm() const {
 #endif  // NCCL_VERSION_CODE >= 22800
 }
 
-absl::StatusOr<std::unique_ptr<NcclCommunicator::DeviceComm>>
-NcclCommunicator::CreateDeviceComm(const DeviceCommRequirements& requirements) {
+absl::StatusOr<std::unique_ptr<GpuDeviceCommunicator>>
+NcclCommunicator::CreateDeviceComm(
+    const GpuDeviceCommunicator::Requirements& requirements) {
 #if NCCL_VERSION_CODE >= 22800
   return NcclDeviceComm::CreateFrom(*this, requirements);
 #else
@@ -924,32 +925,40 @@ NcclDeviceComm::~NcclDeviceComm() {
 }
 
 absl::StatusOr<std::unique_ptr<NcclDeviceComm>> NcclDeviceComm::CreateFrom(
-    const NcclCommunicator& comm,
-    const NcclCommunicator::DeviceCommRequirements& requirements) {
+    const NcclCommunicator& comm, const Requirements& requirements) {
   VLOG(3) << absl::StrFormat(
       "Create NCCL device comm from %s: lsa_barrier_count=%d", comm.ToString(),
       requirements.lsa_barrier_count);
 
   ncclDevCommRequirements reqs{};
+  memset(&reqs, 0, sizeof(reqs));
 #if NCCL_VERSION_CODE >= 22900
   reqs = NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
 #endif
+  reqs.barrierCount = 1;
   reqs.lsaBarrierCount = requirements.lsa_barrier_count;
 
-  ncclDevComm dev_comm;
+  ncclDevComm dev_comm{};
+  memset(&dev_comm, 0, sizeof(ncclDevComm));
   TF_RETURN_IF_ERROR(
       XLA_NCCL_STATUS(ncclDevCommCreate(comm.comm(), &reqs, &dev_comm)));
 
   return absl::WrapUnique(new NcclDeviceComm(dev_comm));
 }
 
-NcclCommunicator::PlatformCommunicatorHandle NcclDeviceComm::platform_comm()
-    const {
+PlatformCommunicatorHandle NcclDeviceComm::platform_comm() const {
   return {const_cast<ncclDevComm*>(&dev_comm_)};
 }
 
 std::string NcclDeviceComm::ToString() const {
   return absl::StrFormat("NcclDeviceComm(ncclDevComm*=%p)", &dev_comm_);
+}
+
+NcclDeviceComm::PackedKernelArg NcclDeviceComm::PackKernelArg() const {
+  PackedKernelArg packed;
+  static_assert(sizeof(ncclDevComm) <= sizeof(PackedKernelArg));
+  std::memcpy(packed.data(), &dev_comm_, sizeof(ncclDevComm));
+  return packed;
 }
 
 #endif  // NCCL_VERSION_CODE >= 22800
