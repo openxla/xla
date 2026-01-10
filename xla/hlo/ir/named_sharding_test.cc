@@ -51,7 +51,8 @@ TEST(NamedShardingTest, AxisNameCtor) {
   NamedSharding sharding =
       test_utils::FromAxisNames(mesh_abcd, /*dim_shardings=*/{{"c"}, {"b"}},
                                 /*replicated_axes=*/{"a"},
-                                /*unreduced_axes=*/{"d"});
+                                /*unreduced_axes=*/{"d"},
+                                /*manual_axes=*/{});
   DimensionSharding ds_c({axis_c}, /*is_closed=*/true);
   DimensionSharding ds_b({axis_b}, /*is_closed=*/true);
   EXPECT_EQ(sharding,
@@ -94,7 +95,7 @@ TEST(NamedShardingTest, Equality) {
   OpMetadata metadata;
   metadata.set_op_name("foo");
   EXPECT_EQ(base, NamedSharding(mesh_abcd, {ds_ab, ds_dc}, {axis_b}, {axis_c},
-                                {metadata}));
+                                {}, {metadata}));
 
   // Different dim_shardings
   EXPECT_NE(base,
@@ -169,7 +170,7 @@ TEST(NamedShardingTest, ToString) {
   metadata1.set_op_name("foo");
   OpMetadata metadata2;
   metadata2.set_op_name("bar");
-  NamedSharding sharding_all(mesh, {ds_a}, {axis_c}, {axis_d},
+  NamedSharding sharding_all(mesh, {ds_a}, {axis_c}, {axis_d}, {},
                              {metadata1, metadata2});
   EXPECT_EQ(
       sharding_all.ToString(),
@@ -414,6 +415,33 @@ TEST(NamedShardingTest, NumDevices) {
   Mesh empty_mesh;
   NamedSharding empty_sharding(empty_mesh);
   EXPECT_EQ(empty_sharding.num_devices(), 0);
+}
+
+TEST(NamedShardingTest, ManualAxes) {
+  Mesh mesh_abcd({2, 4, 3, 8}, {"a", "b", "c", "d"});
+  AxisRef axis_a(0);
+  AxisRef axis_b(1);
+  AxisRef axis_c(2);
+  AxisRef axis_d(3);
+
+  NamedSharding sharding = test_utils::FromAxisNames(
+      mesh_abcd, /*dim_shardings=*/{{"c"}}, /*replicated_axes=*/{"a"},
+      /*unreduced_axes=*/{"d"}, /*manual_axes=*/{"b"});
+
+  DimensionSharding ds_c({axis_c}, /*is_closed=*/true);
+  NamedSharding expected(mesh_abcd, {ds_c}, {axis_a}, {axis_d}, {axis_b});
+
+  EXPECT_EQ(sharding, expected);
+  EXPECT_THAT(sharding.manual_axes(), ElementsAre(axis_b));
+
+  EXPECT_EQ(sharding.ToString(),
+            "{@mesh<a=2,b=4,c=3,d=8>, [{c}], replicated={a}, unreduced={d}, "
+            "manual={b}}");
+
+  NamedSharding sharding_diff_manual = test_utils::FromAxisNames(
+      mesh_abcd, /*dim_shardings=*/{{"c"}}, /*replicated_axes=*/{"a"},
+      /*unreduced_axes=*/{}, /*manual_axes=*/{"b", "d"});
+  EXPECT_NE(sharding, sharding_diff_manual);
 }
 
 }  // namespace
