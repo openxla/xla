@@ -58,6 +58,7 @@ cc_library(
     srcs = ["kernel_spec.cc"],
     hdrs = ["kernel_spec.h"],
     deps = [
+        "//xla/backends/gpu/runtime:shaped_slice",
         "//xla/runtime:work_cluster",
         "//xla/runtime:work_dimensions",
         "//xla/runtime:work_group",
