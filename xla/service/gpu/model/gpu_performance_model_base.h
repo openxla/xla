@@ -217,6 +217,13 @@ class GpuPerformanceModelBase {
   static int64_t CalculatePeakMatrixOpsPerNs(
       const se::DeviceDescription& gpu_device_info, xla::PrimitiveType dtype);
 
+  // Estimates peak performance on the provided dtype using scalar compute units
+  // (i.e. CUDA Cores). The number is calculated assuming each FMA is 2 ops.
+  // Falls back to `CalculateEffectiveFlopsPerNs` if the provided device info
+  // does not have scalar unit information for the given dtype.
+  static int64_t CalculatePeakScalarOpsPerNs(
+      const se::DeviceDescription& gpu_device_info, xla::PrimitiveType dtype);
+
   static absl::Duration ComputeTime(
       const se::DeviceDescription& gpu_device_info, int64_t flops,
       int64_t num_blocks, int64_t num_threads_per_block);
