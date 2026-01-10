@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/ifrt_ops.h"
 #include "xla/python/ifrt/ir/transforms/passes.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
+#include "xla/service/llvm_ir/llvm_util.h"
 
 namespace xla {
 namespace ifrt {
@@ -76,9 +77,9 @@ void IfrtOutlineAtomProgramToModulePass::runOnOperation() {
 
         // Create a ModuleOp and clone callee into it.
         builder.setInsertionPointAfter(callee);
-        auto callee_module = builder.create<mlir::ModuleOp>(
+        auto callee_module = xla::llvm_ir::CreateMlirModuleOp(
             callee->getLoc(), callee.getSymName());
-        callee_module.setVisibility(mlir::SymbolTable::Visibility::Private);
+        callee_module->setVisibility(mlir::SymbolTable::Visibility::Private);
 
         mlir::func::FuncOp cloned_callee;
         // Find all symbols directly or indirectly referenced by callee and copy
@@ -102,7 +103,7 @@ void IfrtOutlineAtomProgramToModulePass::runOnOperation() {
               cloned_func.setSymName(kCalleeMainFuncName);
               cloned_func.setVisibility(mlir::SymbolTable::Visibility::Public);
             }
-            builder.setInsertionPointToEnd(callee_module.getBody());
+            builder.setInsertionPointToEnd(callee_module->getBody());
             builder.insert(cloned_func);
 
             // Check all symbols in function.
@@ -136,7 +137,7 @@ void IfrtOutlineAtomProgramToModulePass::runOnOperation() {
 
         // Replace all uses of old callee.
         mlir::SymbolRefAttr new_symbol = mlir::SymbolRefAttr::get(
-            callee_module.getSymNameAttr(),
+            callee_module->getSymNameAttr(),
             mlir::SymbolRefAttr::get(cloned_callee.getSymNameAttr()));
         // It is sufficient to get the symbols in the main func because
         // ifrt.Call nested within callees are not supported.
