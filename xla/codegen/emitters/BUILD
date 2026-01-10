@@ -282,6 +282,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:symbolic_expr",
         "//xla/runtime:work_cluster",
         "//xla/runtime:work_dimensions",
         "//xla/runtime:work_group",

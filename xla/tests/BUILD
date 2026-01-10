@@ -4246,6 +4246,7 @@ cc_library(
     hdrs = ["hlo_test_base_with_mlir_context.h"],
     deps = [
         ":hlo_test_base",
+        "//xla/hlo/analysis:symbolic_expr",
         "@llvm-project//mlir:IR",
     ],
 )
