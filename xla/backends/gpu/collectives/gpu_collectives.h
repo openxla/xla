@@ -139,11 +139,6 @@ class GpuCollectives : public Collectives {
       stream_executor::DeviceAddressBase buff, PrimitiveType dtype,
       size_t offset, size_t count);
 
-  // TODO(b/410686553): Use smart wrapper instead of void*.
-  virtual absl::StatusOr<void*> Allocate(uint64_t bytes) = 0;
-
-  virtual absl::Status Deallocate(void* buffer) = 0;
-
   struct Topology {
     int32_t node_id;
     int32_t num_nodes;
