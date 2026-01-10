@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -28,6 +29,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/time/time.h"
 #include "stablehlo/dialect/Version.h"
+#include "xla/future.h"
 #include "xla/layout.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
@@ -124,6 +126,14 @@ TEST(PjRtCApiHelperTest, Callback) {
   auto v_2 = converted_kv_store->TryGet("key");
   TF_EXPECT_OK(v.status());
   EXPECT_EQ(*v, "value");
+
+  auto [promise, future] = xla::MakePromise<std::string>();
+  auto v_3 = converted_kv_store->AsyncGet(
+      "key",
+      [promise = std::move(promise).ToShared()](
+          const absl::StatusOr<std::string>& result) { promise->Set(result); });
+  EXPECT_EQ(v_3, nullptr);
+  EXPECT_TRUE(absl::IsUnimplemented(future.Await().status()));
 }
 
 TEST(PjRtCApiHelperTest, ConvertToCLayoutFromStrides) {
