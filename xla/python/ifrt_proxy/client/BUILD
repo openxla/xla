@@ -234,7 +234,6 @@ ifrt_proxy_cc_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@com_google_protobuf//:protobuf",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -330,7 +329,6 @@ ifrt_proxy_cc_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@com_google_protobuf//:protobuf",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -420,7 +418,6 @@ ifrt_proxy_cc_test(
         "@com_google_googletest//:gtest_main",
         "@com_google_protobuf//:protobuf",
         "@llvm-project//llvm:Support",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -473,9 +470,9 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf_lite",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -641,7 +638,6 @@ ifrt_proxy_cc_test(
         "@com_google_protobuf//:protobuf",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -735,6 +731,5 @@ ifrt_proxy_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@com_google_protobuf//:protobuf",
-        "@tsl//tsl/platform:protobuf",
     ],
 )

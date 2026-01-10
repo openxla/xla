@@ -3259,7 +3259,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@com_google_protobuf//:protobuf",
-        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
     ],
 )

@@ -198,6 +198,7 @@ cc_library(
     deps = [
         ":platform",
         ":tstring",
+        "@com_google_absl//absl/base:core_headers",
         "@xla//xla/tsl/platform:types",
     ] + tsl_protobuf_deps(),
 )

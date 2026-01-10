@@ -238,7 +238,6 @@ ifrt_proxy_cc_test(
         "@com_google_protobuf//:protobuf",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 

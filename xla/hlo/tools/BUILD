@@ -92,7 +92,6 @@ xla_cc_binary(
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -106,6 +105,7 @@ xla_cc_binary(
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_protobuf//:json_util",
         "@tsl//tsl/platform:platform_port",
     ],
 )
@@ -132,6 +132,8 @@ xla_cc_binary(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_protobuf//:protobuf",
+        "@com_google_protobuf//src/google/protobuf/io:tokenizer",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
@@ -139,7 +141,6 @@ xla_cc_binary(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TranslateLib",
         "@stablehlo//:stablehlo_passes",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
