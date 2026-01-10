@@ -11,6 +11,7 @@ load(
     "@local_config_sycl//sycl:build_defs.bzl",
     "if_sycl_is_configured",
 )
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(
     "//xla:xla.default.bzl",
     "xla_cc_binary",
@@ -2386,6 +2387,7 @@ xla_test(
 
 cc_library(
     name = "collective_combiner_utils",
+    srcs = ["collective_combiner_utils.cc"],
     hdrs = ["collective_combiner_utils.h"],
     deps = [
         "//xla:shape_util",
@@ -2393,6 +2395,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:hlo_reachability",
         "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
@@ -6342,6 +6345,28 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "collective_combiner_utils_cc",
+    srcs = ["collective_combiner_utils.cc"],
+    hdrs = ["collective_combiner_utils.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/analysis:hlo_reachability",
+        "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
