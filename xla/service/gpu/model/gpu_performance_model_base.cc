@@ -73,6 +73,34 @@ float AdjustBandwidth(const se::DeviceDescription& gpu_device_info,
   return std::min(bandwidth, max_bandwidth);
 }
 
+// Calculates peak operations per nanosecond for a given execution unit
+// description and primitive type. Falls back to effective flops if the
+// description is not available or doesn't support the dtype.
+int64_t CalculatePeakOpsPerNs(const se::DeviceDescription& gpu_device_info,
+                              const se::ExecutionUnitDescription* eu_descr,
+                              xla::PrimitiveType dtype) {
+  std::optional<se::ExecutionUnitDescription::RateInfo> dtype_rates;
+
+  if (eu_descr != nullptr) {
+    dtype_rates = eu_descr->GetRateInfo(dtype);
+  }
+
+  if (!dtype_rates.has_value()) {
+    // Fallback to default flops if the execution unit description is not
+    // available or does not support the given dtype.
+    return GpuPerformanceModelBase::CalculateEffectiveFlopsPerNs(
+        gpu_device_info, /*num_blocks=*/gpu_device_info.core_count(),
+        /*num_threads_per_block=*/gpu_device_info.fpus_per_core());
+  }
+
+  // FMA is counted as 2 ops.
+  double flops_per_ns_per_unit =
+      dtype_rates->clock_rate_ghz * dtype_rates->ops_per_clock * 2;
+  int64_t n_compute_units =
+      gpu_device_info.core_count() * dtype_rates->units_per_core;
+  return flops_per_ns_per_unit * n_compute_units;
+}
+
 }  // namespace
 
 std::optional<EstimateRunTimeData> GpuPerformanceModelCache::Get(
@@ -352,28 +380,14 @@ int64_t GpuPerformanceModelBase::CalculateEffectiveFlopsPerNs(
 /*static*/
 int64_t GpuPerformanceModelBase::CalculatePeakMatrixOpsPerNs(
     const se::DeviceDescription& gpu_device_info, xla::PrimitiveType dtype) {
-  const se::ExecutionUnitDescription* caps =
-      gpu_device_info.matrix_unit_description();
-  std::optional<se::ExecutionUnitDescription::RateInfo> dtype_rates;
+  return CalculatePeakOpsPerNs(
+      gpu_device_info, gpu_device_info.matrix_unit_description(), dtype);
+}
 
-  if (caps != nullptr) {
-    dtype_rates = caps->GetRateInfo(dtype);
-  }
-
-  if (!dtype_rates.has_value()) {
-    // Fallback to default flops if matrix unit description is not available
-    // or does not support the given dtype.
-    return CalculateEffectiveFlopsPerNs(
-        gpu_device_info, /*num_blocks=*/gpu_device_info.core_count(),
-        /*num_threads_per_block=*/gpu_device_info.fpus_per_core());
-  }
-
-  // FMA is counted as 2 ops.
-  double flops_per_ns_per_unit =
-      dtype_rates->clock_rate_ghz * dtype_rates->ops_per_clock * 2;
-  int64_t n_compute_units =
-      gpu_device_info.core_count() * dtype_rates->units_per_core;
-  return flops_per_ns_per_unit * n_compute_units;
+/*static*/ int64_t GpuPerformanceModelBase::CalculatePeakScalarOpsPerNs(
+    const se::DeviceDescription& gpu_device_info, xla::PrimitiveType dtype) {
+  return CalculatePeakOpsPerNs(
+      gpu_device_info, gpu_device_info.scalar_unit_description(), dtype);
 }
 
 /*static*/
