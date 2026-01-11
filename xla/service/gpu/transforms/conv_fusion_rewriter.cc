@@ -181,8 +181,7 @@ void FuseTowardUsers(
   return;
 }
 
-bool IsConvFusionOutputsValid(
-    std::vector<HloInstruction*>& fusion_outputs) {
+bool IsConvFusionOutputsValid(std::vector<HloInstruction*>& fusion_outputs) {
   // at most 2 outputs and at least 1 reduce if there are 2 outputs
   if (fusion_outputs.size() > 2) return false;
   if (fusion_outputs.size() == 2 &&
@@ -193,10 +192,10 @@ bool IsConvFusionOutputsValid(
 }
 
 bool DFSSearch(HloInstruction* hlo, HloReachabilityMap* reachability,
-                std::vector<HloInstruction*>& fusible_users,
-                std::vector<HloInstruction*>& fusion_outputs,
-                absl::flat_hash_map<HloInstruction*, bool>& mark,
-                bool& can_fuse_reduce) {
+               std::vector<HloInstruction*>& fusible_users,
+               std::vector<HloInstruction*>& fusion_outputs,
+               absl::flat_hash_map<HloInstruction*, bool>& mark,
+               bool& can_fuse_reduce) {
   if (auto it = mark.find(hlo); it != mark.end()) return it->second;
   int num_users = fusible_users.size();
   int num_outputs = fusion_outputs.size();
@@ -205,7 +204,7 @@ bool DFSSearch(HloInstruction* hlo, HloReachabilityMap* reachability,
   if (!is_endpoint) {
     for (auto user : hlo->users()) {
       is_subgraph_valid &= DFSSearch(user, reachability, fusible_users,
-                                      fusion_outputs, mark, can_fuse_reduce);
+                                     fusion_outputs, mark, can_fuse_reduce);
       if (!is_subgraph_valid) {
         is_endpoint = true;
         break;
@@ -259,7 +258,7 @@ void GetAllReachableAndFusible(HloInstruction* conv,
   absl::flat_hash_map<HloInstruction*, bool> mark;
   bool can_fuse_reduce = true;
   DFSSearch(conv, reachability, fusible_users, fusion_outputs, mark,
-             can_fuse_reduce);
+            can_fuse_reduce);
   // Remove conv from the users
   fusible_users.pop_back();
   std::reverse(fusible_users.begin(), fusible_users.end());
@@ -431,7 +430,8 @@ absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
 absl::StatusOr<bool> ConvFusionRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  XLA_VLOG_LINES(2, "ConvFusionRewriter::Run(), before:\n" + module->ToString());
+  XLA_VLOG_LINES(2,
+                 "ConvFusionRewriter::Run(), before:\n" + module->ToString());
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
