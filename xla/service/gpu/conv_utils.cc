@@ -247,7 +247,8 @@ ConvolutionDimensionNumbers RestoreDimNumberFromBackwardFilter(
   return dnums_for_layout;
 }
 
-ConvolutionDimensionNumbers RestoreDimNumber(const HloConvolutionInstruction* conv) {
+ConvolutionDimensionNumbers RestoreDimNumber(
+    const HloConvolutionInstruction* conv) {
   ConvKind conv_kind = conv->conv_kind();
   if (conv_kind == ConvKind::WGRAD) {
     return RestoreDimNumberFromBackwardFilter(conv);

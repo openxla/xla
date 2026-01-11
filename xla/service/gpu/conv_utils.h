@@ -34,7 +34,8 @@ ConvolutionDimensionNumbers RestoreDimNumberFromBackwardInput(
     const HloConvolutionInstruction* conv);
 ConvolutionDimensionNumbers RestoreDimNumberFromBackwardFilter(
     const HloConvolutionInstruction* conv);
-ConvolutionDimensionNumbers RestoreDimNumber(const HloConvolutionInstruction* conv);
+ConvolutionDimensionNumbers RestoreDimNumber(
+    const HloConvolutionInstruction* conv);
 
 }  // end namespace gpu
 }  // end namespace xla
