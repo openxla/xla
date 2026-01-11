@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_TRANSFORMS_CONV_FUSION_REWRITER_H_
-#define XLA_SERVICE_GPU_TRANSFORMS_CONV_FUSION_REWRITER_H_
+#ifndef XLA_SERVICE_GPU_TRANSFORMS_CONV_KIND_ASSIGNMENT_H_
+#define XLA_SERVICE_GPU_TRANSFORMS_CONV_KIND_ASSIGNMENT_H_
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
@@ -29,16 +29,17 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// This pass also creats cudnn fusion for convolution.
+// Assign the conv kind for each conv and transform the conv accordingly if
+// needed.
 
-class ConvFusionRewriter : public HloModulePass {
+class ConvKindAssignment : public HloModulePass {
  public:
-  explicit ConvFusionRewriter(
+  explicit ConvKindAssignment(
       const se::GpuComputeCapability& compute_capability,
       se::dnn::VersionInfo dnn_version = se::dnn::VersionInfo{})
-      : compute_capability_(compute_capability), dnn_version_(dnn_version) {};
+      : compute_capability_(compute_capability), dnn_version_(dnn_version){};
 
-  absl::string_view name() const override { return "conv-fusion-rewriter"; }
+  absl::string_view name() const override { return "conv-kind-assignment"; }
 
  protected:
   absl::StatusOr<bool> RunImpl(
@@ -53,4 +54,4 @@ class ConvFusionRewriter : public HloModulePass {
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_TRANSFORMS_CONV_FUSION_REWRITER_H_
+#endif  // XLA_SERVICE_GPU_TRANSFORMS_CONV_KIND_ASSIGNMENT_H_

@@ -1369,7 +1369,7 @@ absl::Status RunLayoutNormalizationPasses(
   layout_normalization_pipeline.AddPass<ReshapeDecomposer>();
   layout_normalization_pipeline.AddPass<HloPassFix<MoveCopyToUsers>>();
   layout_normalization_pipeline.AddPass<LayoutNormalization>(
-      &NormalizeLayoutForGpuCustomCalls, &NormalizeLayoutForGpuCustomFusions);
+      &NormalizeLayoutForGpuCustomCalls);
   // The LayoutAssignment pass may leave behind kCopy instructions which are
   // duplicate or NOPs, so remove them with algebraic simplification and CSE.
   layout_normalization_pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(
@@ -1844,8 +1844,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
     pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
-    pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls,
-                                          &NormalizeLayoutForGpuCustomFusions);
+    pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
     // Remove any redundant operations (such as bitcasts) introduced by layout
     // normalization.
     pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(simplifier_options,
@@ -1918,8 +1917,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
   pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
-  pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls,
-                                        &NormalizeLayoutForGpuCustomFusions);
+  pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
 
   // Layout normalization will create scatters that are not simplified and
   // also have unsorted update_window_dims.
@@ -1955,6 +1953,16 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // duplicate or NOPs, so remove them with algebraic simplification and CSE.
   pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(simplifier_options,
                                                        gpu_version);
+
+  // Rewrite convs into conv fusions.
+  if (!debug_options.xla_gpu_experimental_disable_binary_libraries() &&
+      debug_options.xla_gpu_experimental_enable_conv_fusion()) {
+    se::dnn::VersionInfo dnn_version = gpu_target_config.dnn_version_info;
+    if (stream_exec != nullptr) {
+      TF_ASSIGN_OR_RETURN(dnn_version, GetDnnVersionInfo(stream_exec));
+    }
+    pipeline.AddPass<ConvFusionRewriter>(gpu_version, dnn_version);
+  }
 
   if (debug_options.xla_allow_excess_precision()) {
     // This pass cleans up chains of compiler-generated converts

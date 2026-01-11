@@ -50,8 +50,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
-#include "xla/service/gpu/transforms/conv_rewriter.h"
-#include "xla/service/gpu/transforms/cudnn_fused_conv_rewriter.h"
+#include "xla/service/gpu/transforms/conv_kind_assignment.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/device_description.h"
@@ -72,8 +71,6 @@ namespace m = match;
 using ::testing::HasSubstr;
 using ::testing::Not;
 
-static const std::initializer_list<absl::string_view> kf16f32f64{"f16", "f32",
-                                                                 "f64"};
 static const std::initializer_list<absl::string_view> kf16f32{"f16", "f32"};
 
 class CudnnFusedConvRewriterHloTest : public HloTestBase {
@@ -102,15 +99,12 @@ class CudnnFusedConvRewriterHloTest : public HloTestBase {
         .runtime_version();
   }
 
-  ConvRewriter GetConvRewriter() const {
-    return ConvRewriter(GetCudaComputeCapability(), GetDnnVersion());
+  ConvFusionRewriter GetConvFusionRewriter() const {
+    return ConvFusionRewriter(GetCudaComputeCapability(), GetDnnVersion());
   }
-
-  CudnnFusedConvRewriter GetCudnnFusedConvRewriter() const {
-    return CudnnFusedConvRewriter(GetCudaComputeCapability(), GetDnnVersion(),
-                                  GetToolkitVersion());
+  ConvKindAssignment GetConvKindAssignment() const {
+    return ConvKindAssignment(GetCudaComputeCapability(), GetDnnVersion());
   }
-
   CudnnFusedConvRewriterHloTest()
       : HloTestBase(/*verifier_layout_sensitive=*/false,
                     /*allow_mixed_precision_in_hlo_verifier=*/false,
@@ -155,11 +149,8 @@ class CudnnFusedConvRewriterTest : public GpuCodegenTest {
     debug_opts.add_xla_disable_hlo_passes("cudnn_vectorize_convolutions");
     debug_opts.set_xla_gpu_use_runtime_fusion(true);
     debug_opts.set_xla_gpu_experimental_enable_conv_fusion(true);
-
-    debug_opts.set_xla_dump_to("/workspace/conv_example/hlo12345");
-    debug_opts.set_xla_dump_hlo_pass_re(".*");
-
     config.set_debug_options(debug_opts);
+
 
     auto result = backend().compiler()->RunHloPasses(
         ParseAndReturnVerifiedModule(hlo_string, config).value(),
@@ -180,7 +171,7 @@ class CudnnFusedConvRewriterTest : public GpuCodegenTest {
           absl::StrReplaceAll(hlo_string, {{"TYPE", type}});
       std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
       EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
-      std::cerr << optimized_hlo_string << "\n";
+
       TF_ASSERT_OK_AND_ASSIGN(auto module,
                               ParseAndReturnVerifiedModule(hlo_with_new_type));
       DebugOptions debug_opts = module->config().debug_options();
@@ -194,12 +185,8 @@ class CudnnFusedConvRewriterTest : public GpuCodegenTest {
 
   void TestClamp(absl::string_view pre_hlo_string,
                  absl::string_view post_hlo_string) {
-    std::string alpha_conv_scalar, alpha_side_input_scalar;
-    std::string elementwise_type;
-
     std::string optimized_hlo_string = GetOptimizedHlo(pre_hlo_string);
-    EXPECT_THAT(optimized_hlo_string, Not(HasSubstr("Convert")));
-    EXPECT_THAT(optimized_hlo_string, HasSubstr("__cudnn$conv"));
+    EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
 
     TF_ASSERT_OK_AND_ASSIGN(auto module,
                             ParseAndReturnVerifiedModule(pre_hlo_string));
@@ -222,14 +209,12 @@ class CudnnFusedConvRewriterTest : public GpuCodegenTest {
           absl::StrReplaceAll(hlo_string, {{"TYPE", type}});
       std::string optimized_hlo_string = GetOptimizedHlo(hlo_with_new_type);
       SCOPED_TRACE(optimized_hlo_string);
-      EXPECT_THAT(optimized_hlo_string, HasSubstr(kCudnnConvForwardCallTarget));
-      EXPECT_THAT(optimized_hlo_string,
-                  Not(HasSubstr(kCudnnConvBiasActivationForwardCallTarget)));
+      EXPECT_THAT(optimized_hlo_string, HasSubstr(kCuDnnFusionKind));
     }
   }
 
-  void TestF8(std::string pre_hlo_string, std::string custom_call_string,
-              std::string serialized_graph_string) {
+  void TestF8(std::string pre_hlo_string, std::string fusion_string,
+              std::string fusion_comp_string) {
     if (!IsCuda()) return;
 
     bool fp8_supported = GetDnnVersion() >= se::dnn::VersionInfo{9, 8, 0}
@@ -251,53 +236,21 @@ class CudnnFusedConvRewriterTest : public GpuCodegenTest {
       module->mutable_config().set_debug_options(debug_opts);
       EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{0.15, 0.15}))
           << pre_hlo_string;
-      std::cerr << optimized_hlo_string << "\n";
       absl::StatusOr<bool> filecheck_result =
-          RunFileCheck(optimized_hlo_string, custom_call_string);
+          RunFileCheck(optimized_hlo_string, fusion_string);
       ASSERT_TRUE(filecheck_result.ok()) << filecheck_result.status();
       EXPECT_TRUE(*filecheck_result);
 
-      // fp8 doesn't need serialized graph now
-      // filecheck_result =
-      //     RunFileCheck(optimized_hlo_string, serialized_graph_string);
-      // ASSERT_TRUE(filecheck_result.ok()) << filecheck_result.status();
-      // EXPECT_TRUE(*filecheck_result);
-    } else {
-      // On older architectures, disregard layout information and only verify
-      // the basic configuration of the convolution Custom Call using the number
-      // of operands and the window_size and serialized graph attributes based
-      // on the ConvRewriter and CudnnFusedConvRewriter passes.
-      std::string::size_type p0 = custom_call_string.find(':');
-      std::string::size_type p1 = custom_call_string.find("custom-call");
-      custom_call_string.erase(p0 + 1, p1 - p0 - 2);
-      p0 = custom_call_string.find(", dim_labels");
-      custom_call_string.erase(p0);
-
-      TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                              ParseAndReturnVerifiedModule(pre_hlo_string));
-      TF_ASSERT_OK_AND_ASSIGN(
-          bool changed, RunHloPass(ConvRewriter(se::CudaComputeCapability{
-                                       se::CudaComputeCapability::kHopper, 0}),
-                                   module.get()));
-      EXPECT_TRUE(changed);
-      RunAndFilecheckHloRewrite(
-          module->ToString(HloPrintOptions{}.set_print_operand_shape(false)),
-          CudnnFusedConvRewriter(
-              se::CudaComputeCapability{se::CudaComputeCapability::kHopper, 0},
-              GetDnnVersion(), GetToolkitVersion()),
-          custom_call_string);
-      RunAndFilecheckHloRewrite(
-          module->ToString(HloPrintOptions{}.set_print_operand_shape(false)),
-          CudnnFusedConvRewriter(
-              se::CudaComputeCapability{se::CudaComputeCapability::kHopper, 0},
-              GetDnnVersion(), GetToolkitVersion()),
-          serialized_graph_string);
+      filecheck_result = RunFileCheck(optimized_hlo_string, fusion_comp_string);
+      ASSERT_TRUE(filecheck_result.ok()) << filecheck_result.status();
+      EXPECT_TRUE(*filecheck_result);
     }
+    return;
   }
 
   void TestF8Parameterized(std::string template_pre_hlo_string,
-                           std::string template_custom_call_string,
-                           std::string template_serialized_graph_string) {
+                           std::string template_fusion_string,
+                           std::string template_fusion_comp_string) {
     std::array<absl::string_view, 2> types = {"f8e4m3fn", "f8e5m2"};
     std::array<absl::string_view, 2> clamp_lower = {"-448.", "-57344."};
     std::array<absl::string_view, 2> clamp_upper = {"448.", "57344."};
@@ -310,10 +263,10 @@ class CudnnFusedConvRewriterTest : public GpuCodegenTest {
           replacements["<<OutputType>>"] = types[k];
           replacements["<<ClampLower>>"] = clamp_lower[k];
           replacements["<<ClampUpper>>"] = clamp_upper[k];
-          TestF8(absl::StrReplaceAll(template_pre_hlo_string, replacements),
-                 absl::StrReplaceAll(template_custom_call_string, replacements),
-                 absl::StrReplaceAll(template_serialized_graph_string,
-                                     replacements));
+          TestF8(
+              absl::StrReplaceAll(template_pre_hlo_string, replacements),
+              absl::StrReplaceAll(template_fusion_string, replacements),
+              absl::StrReplaceAll(template_fusion_comp_string, replacements));
         }
       }
     }
@@ -345,23 +298,6 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvOnly) {
 
       conv = TYPE[1,32,9,9] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=1
       ROOT relu = TYPE[1,32,9,9] maximum(zeros, conv)
-    })");
-}
-
-TEST_F(CudnnFusedConvRewriterTest, DontFuseReluWithDepthwiseConv) {
-  // max(0, conv(x, w));
-  TestNotMatchWithAllTypes(R"(
-    HloModule Test
-
-    ENTRY Test {
-      zero = TYPE[] constant(0)
-      zeros = TYPE[1,17,9,9] broadcast(zero), dimensions={}
-
-      input = TYPE[1,17,9,9] parameter(0)
-      filter = TYPE[3,3,1,17] parameter(1)
-
-      conv = TYPE[1,17,9,9] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=17
-      ROOT relu = TYPE[1,17,9,9] maximum(zeros, conv)
     })");
 }
 
@@ -460,26 +396,6 @@ TEST_F(CudnnFusedConvRewriterTest, TestBiasNoRelu) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, DontFuseBiasWithDepthwiseConv) {
-  // conv(x, w) + bias;
-  TestNotMatchWithAllTypes(R"(
-    HloModule Test
-
-    ENTRY Test {
-      zero = TYPE[] constant(0)
-      zeros = TYPE[1,3,3,64] broadcast(zero), dimensions={}
-
-      input = TYPE[1,3,3,64] parameter(0)
-      filter = TYPE[3,3,1,64] parameter(1)
-      bias = TYPE[64] parameter(2)
-
-      conv = TYPE[1,3,3,64] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f, feature_group_count=64
-      broadcasted_bias = TYPE[1,3,3,64] broadcast(bias), dimensions={3}
-      add1 = TYPE[1,3,3,64] add(conv, broadcasted_bias)
-      ROOT relu = TYPE[1,3,3,64] maximum(zeros, add1)
-    })");
-}
-
 TEST_F(CudnnFusedConvRewriterTest, TestElu) {
   // sum = conv(x, w) + bias
   // select(compare(sum, 0, GT), sum, exponential-minus-one(sum));
@@ -495,29 +411,6 @@ TEST_F(CudnnFusedConvRewriterTest, TestElu) {
       bias = TYPE[64] parameter(2)
 
       conv = TYPE[1,3,3,64] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f, feature_group_count=1
-      broadcasted_bias = TYPE[1,3,3,64] broadcast(bias), dimensions={3}
-      sum = TYPE[1,3,3,64] add(conv, broadcasted_bias)
-      cmp = pred[1,3,3,64] compare(sum, zeros), direction=GT
-      expm1 = TYPE[1,3,3,64] exponential-minus-one(sum)
-      ROOT elu = TYPE[1,3,3,64] select(cmp, sum, expm1)
-    })");
-}
-
-TEST_F(CudnnFusedConvRewriterTest, DontFuseEluWithDepthwiseConv) {
-  // sum = conv(x, w) + bias
-  // select(compare(sum, 0, GT), sum, exponential-minus-one(sum));
-  TestNotMatchWithAllTypes(R"(
-    HloModule Test
-
-    ENTRY Test {
-      zero = TYPE[] constant(0)
-      zeros = TYPE[1,3,3,64] broadcast(zero), dimensions={}
-
-      input = TYPE[1,3,3,64] parameter(0)
-      filter = TYPE[3,3,1,64] parameter(1)
-      bias = TYPE[64] parameter(2)
-
-      conv = TYPE[1,3,3,64] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f, feature_group_count=64
       broadcasted_bias = TYPE[1,3,3,64] broadcast(bias), dimensions={3}
       sum = TYPE[1,3,3,64] add(conv, broadcasted_bias)
       cmp = pred[1,3,3,64] compare(sum, zeros), direction=GT
@@ -622,25 +515,6 @@ TEST_F(CudnnFusedConvRewriterTest, TestSideInputOnly) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, DontFuseSideInputWithDepthwiseConv) {
-  // max(0, conv(x, w) + side_input);
-  TestNotMatchWithAllTypes(R"(
-    HloModule Test
-
-    ENTRY Test {
-      zero = TYPE[] constant(0)
-      zeros = TYPE[1,3,3,64] broadcast(zero), dimensions={}
-
-      input = TYPE[1,3,3,64] parameter(0)
-      filter = TYPE[3,3,1,64] parameter(1)
-      side_input = TYPE[1,3,3,64] parameter(2)
-
-      conv = TYPE[1,3,3,64] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f, feature_group_count=64
-      add1 = TYPE[1,3,3,64] add(conv, side_input)
-      ROOT relu = TYPE[1,3,3,64] maximum(zeros, add1)
-    })");
-}
-
 TEST_F(CudnnFusedConvRewriterTest, TestBiasAndSideInput) {
   // max(0, conv(x, w) + side_input + bias);
   TestMatchWithAllTypes(R"(
@@ -683,26 +557,6 @@ TEST_F(CudnnFusedConvRewriterTest, TestScaledConv) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, DontFuseScaledDepthwiseConv) {
-  // max(0, 0.999994934 * conv(x, w));
-  TestNotMatchWithAllTypes(R"(
-    HloModule Test
-
-    ENTRY Test {
-      zero = TYPE[] constant(0)
-      zeros = TYPE[1,17,9,9] broadcast(zero), dimensions={}
-      alpha_conv_scalar = TYPE[] constant(0.999994934)
-
-      input = TYPE[1,17,9,9] parameter(0)
-      filter = TYPE[3,3,1,17] parameter(1)
-
-      conv = TYPE[1,17,9,9] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=17
-      alpha_conv = TYPE[1,17,9,9] broadcast(alpha_conv_scalar), dimensions={}
-      scaled_conv = TYPE[1,17,9,9] multiply(conv, alpha_conv)
-      ROOT relu = TYPE[1,17,9,9] maximum(zeros, scaled_conv)
-    })");
-}
-
 TEST_F(CudnnFusedConvRewriterTest, TestNoCrashOnInf) {
   EXPECT_TRUE(RunAndCompare(R"(
     HloModule Test
@@ -739,28 +593,6 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvAndScaledSideInput) {
       side_input = TYPE[1,3,3,64] parameter(2)
 
       conv = TYPE[1,3,3,64] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f, feature_group_count=1
-      scaled_side_input = TYPE[1,3,3,64] multiply(side_input, alpha_side_input)
-      add1 = TYPE[1,3,3,64] add(conv, scaled_side_input)
-      ROOT relu = TYPE[1,3,3,64] maximum(zeros, add1)
-    })");
-}
-
-TEST_F(CudnnFusedConvRewriterTest, DontFuseDepthwiseConvWithScaledSideInput) {
-  // max(0, conv(x, w) + 0.899994934 * side_input);
-  TestNotMatchWithAllTypes(R"(
-    HloModule Test
-
-    ENTRY Test {
-      zero = TYPE[] constant(0)
-      zeros = TYPE[1,3,3,64] broadcast(zero), dimensions={}
-      alpha_side_input_scalar = TYPE[] constant(0.899994934)
-      alpha_side_input = TYPE[1,3,3,64] broadcast(alpha_side_input_scalar), dimensions={}
-
-      input = TYPE[1,3,3,64] parameter(0)
-      filter = TYPE[3,3,1,64] parameter(1)
-      side_input = TYPE[1,3,3,64] parameter(2)
-
-      conv = TYPE[1,3,3,64] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f, feature_group_count=64
       scaled_side_input = TYPE[1,3,3,64] multiply(side_input, alpha_side_input)
       add1 = TYPE[1,3,3,64] add(conv, scaled_side_input)
       ROOT relu = TYPE[1,3,3,64] maximum(zeros, add1)
@@ -837,35 +669,6 @@ TEST_F(CudnnFusedConvRewriterTest, TestMatchMaxZeroOnly) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, PreservesMetadata) {
-  const char* kHloString = R"(
-    HloModule Test
-
-    ENTRY Test {
-      zero = f32[] constant(0)
-      zeros = f32[1,32,9,9] broadcast(zero), dimensions={}
-
-      input = f32[1,17,9,9] parameter(0)
-      filter = f32[3,3,17,32] parameter(1)
-
-      conv = f32[1,32,9,9] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=1, metadata={op_type="foo" op_name="bar"}
-      ROOT relu = f32[1,32,9,9] maximum(zeros, conv)
-    })";
-
-  const std::string optimized_hlo_string =
-      backend()
-          .compiler()
-          ->RunHloPasses(
-              ParseAndReturnVerifiedModule(kHloString, GetModuleConfigForTest())
-                  .value(),
-              backend().default_stream_executor(), backend().memory_allocator())
-          .value()
-          ->ToString();
-  EXPECT_THAT(optimized_hlo_string,
-              ::testing::ContainsRegex(
-                  R"(custom-call.*metadata=\{op_type="foo" op_name="bar"\})"));
-}
-
 TEST_F(CudnnFusedConvRewriterTest, TestPreservesFeatureGroupCount) {
   // The convolution below would crash if feature_count is not preserved.
   const char* kHloString = R"(
@@ -903,13 +706,15 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvF8) {
        ROOT conv_a = f8e4m3fn[1,16,6,6] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=1
 
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[fusion:%[^ ]+]] = f8e4m3fn[1,16,6,6]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]])
+// CHECK: [[fusion:%[^ ]+]] = f8e4m3fn[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]])
   )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f8e4m3fn]conv();"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: ENTRY
       )");
 }
 
@@ -937,13 +742,18 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputF8) {
        ROOT conv_f8 = f8e4m3fn[1,16,6,6] convert(conv_a_clamped)
 
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[fusion:%[^ ]+]] = f8e4m3fn[1,16,6,6]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]])
+// CHECK: [[fusion:%[^ ]+]] = f8e4m3fn[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]])
   )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[SCALE_UID:[0-9]+]]:[f8e4m3fn]scale([[CONV_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: multiply(
+// CHECK: clamp(
+// CHECK: convert(
+// CHECK: ENTRY
       )");
 }
 
@@ -971,13 +781,18 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvInvscaledOutputF8) {
        ROOT conv_f8 = f8e4m3fn[1,16,6,6] convert(conv_a_clamped)
 
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[fusion:%[^ ]+]] = f8e4m3fn[1,16,6,6]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]])
+// CHECK: [[fusion:%[^ ]+]] = f8e4m3fn[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]])
   )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[SCALE0_UID:[0-9]+]]:[f8e4m3fn]invscale([[CONV_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: divide(
+// CHECK: clamp(
+// CHECK: convert(
+// CHECK: ENTRY
       )");
 }
 
@@ -1011,13 +826,18 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledF8Parameterized) {
        ROOT conv_f8 = <<OutputType>>[1,16,6,6] convert(conv_a_clamped)
 
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[fusion:%[^ ]+]] = <<OutputType>>[1,16,6,6]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]], [[OPERAND4:%[^ ]+]])
+// CHECK: [[fusion:%[^ ]+]] = <<OutputType>>[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]])
       )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[SCALE0_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[SCALE1_UID:[0-9]+]]:[f32]scale([[SCALE0_UID]]);[[SCALE2_UID:[0-9]+]]:[<<OutputType>>]scale([[SCALE1_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: multiply(
+// CHECK: clamp(
+// CHECK: convert(
+// CHECK: ENTRY
       )");
 }
 
@@ -1053,13 +873,18 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledBiasF8) {
        ROOT conv_f8 = f8e4m3fn[1,16,6,6] convert(conv_a_clamped)
 
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[fusion:%[^ ]+]] = f8e4m3fn[1,16,6,6]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]], [[OPERAND4:%[^ ]+]], /*index=5*/[[OPERAND5:%[^ ]+]])
+// CHECK: [[fusion:%[^ ]+]] = f8e4m3fn[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]])
       )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[SCALE0_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[SCALE1_UID:[0-9]+]]:[f32]scale([[SCALE0_UID]]);[[ADD_UID:[0-9]+]]:[f32]add([[SCALE1_UID]]);[[SCALE2_UID:[0-9]+]]:[f8e4m3fn]scale([[ADD_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: add(
+// CHECK: multiply(
+// CHECK: convert(
+// CHECK: ENTRY
       )");
 }
 
@@ -1090,13 +915,17 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledReluF8) {
        ROOT conv_f8 = f8e4m3fn[1,16,6,6] convert(relu_a_clamped)
 
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[fusion:%[^ ]+]] = f8e4m3fn[1,16,6,6]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]])
+// CHECK: [[fusion:%[^ ]+]] = f8e4m3fn[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]])
   )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[RELU_UID:[0-9]+]]:[f32]relu([[CONV_UID]]);[[SCALE0_UID:[0-9]+]]:[f8e4m3fn]scale([[RELU_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: maximum(
+// CHECK: multiply(
+// CHECK: ENTRY
       )");
 }
 
@@ -1129,13 +958,19 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledRelu6F8) {
        ROOT conv_f8 = f8e4m3fn[1,16,6,6] convert(relu6_a_clamped)
 
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[fusion:%[^ ]+]] = f8e4m3fn[1,16,6,6]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]])
+// CHECK: [[fusion:%[^ ]+]] = f8e4m3fn[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]])
   )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[RELU_UID:[0-9]+]]:[f32]relu([[CONV_UID]]);[[MIN_UID:[0-9]+]]:[f32]min([[RELU_UID]]);[[SCALE0_UID:[0-9]+]]:[f8e4m3fn]scale([[MIN_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: clamp(
+// CHECK: multiply(
+// CHECK: clamp(
+// CHECK: convert(
+// CHECK: ENTRY
       )");
 }
 
@@ -1170,13 +1005,20 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledEluF8) {
        ROOT conv_f8 = f8e4m3fn[1,16,6,6] convert(elu_a_clamped)
 
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[cudnn_conv_4_0:%[^ ]+]] = f8e4m3fn[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convForwardGraph"
+// CHECK: [[cudnn_fusion:%[^ ]+]] = f8e4m3fn[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]])
   )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[ELU_UID:[0-9]+]]:[f32]elu([[CONV_UID]]);[[SCALE0_UID:[0-9]+]]:[f8e4m3fn]scale([[ELU_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: compare(
+// CHECK: select(
+// CHECK: multiply(
+// CHECK: clamp(
+// CHECK: convert(
+// CHECK: ENTRY
       )");
 }
 
@@ -1211,13 +1053,20 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledLeakyReluF8) {
        ROOT conv_f8 = f8e4m3fn[1,16,6,6] convert(lrelu_a_clamped)
 
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[cudnn_conv_4_0:%[^ ]+]] = (f8e4m3fn[1,6,6,16]{3,2,1,0}, u8[{{.*}}]{0}) custom-call([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]], [[OPERAND4:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convForwardGraph"
+// CHECK: [[cudnn_fusion:%[^ ]+]] = f8e4m3fn[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]])
   )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[MIN_UID:[0-9]+]]:[f32]min([[CONV_UID]]);[[SCALE0_UID:[0-9]+]]:[f32]scale([[MIN_UID]]);[[MAX_UID:[0-9]+]]:[f32]max([[SCALE0_UID]],[[CONV_UID]]);[[SCALE1_UID:[0-9]+]]:[f8e4m3fn]scale([[MAX_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: compare(
+// CHECK: select(
+// CHECK: multiply(
+// CHECK: clamp(
+// CHECK: convert(
+// CHECK: ENTRY
       )");
 }
 
@@ -1255,19 +1104,24 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvAmaxF8) {
        c2_bcast = f32[1,16,6,6] broadcast(c2), dimensions={}
        conv_a_clamped = f32[1,16,6,6] clamp(c1_bcast, conv_a_scaled, c2_bcast)
        conv_a_clamped_f8 = f8e4m3fn[1,16,6,6] convert(conv_a_clamped)
-       abs_conv_a = f32[1,16,6,6] abs(conv_a)
+       abs_conv_a = f32[1,16,6,6] abs(conv_a_filter_scaled)
        c0 = f32[] constant(-inf)
        amax = f32[] reduce(abs_conv_a, c0), dimensions={0,1,2,3}, to_apply=apply
        ROOT conv_f8 = (f8e4m3fn[1,16,6,6], f32[]) tuple(conv_a_clamped_f8, amax)
-
     })",
-      // custom_call
+      // fusion
       R"(
 // CHECK: [[cudnn_fusion:%[^ ]+]] = (f8e4m3fn[1,6,6,16]{3,2,1,0}, f32[]) fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]], [[OPERAND4:%[^ ]+]])
     )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[SCALE0_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[SCALE1_UID:[0-9]+]]:[f32]scale([[SCALE0_UID]]);[[SCALE2_UID:[0-9]+]]:[f8e4m3fn]scale([[SCALE1_UID]]);[[AMAX_UID:[0-9]+]]:[f32]amax([[SCALE1_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: multiply(
+// CHECK: multiply(
+// CHECK: abs(
+// CHECK: reduce(
+// CHECK: ENTRY
       )");
 }
 
@@ -1313,13 +1167,19 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvReluAmaxF8) {
        amax = f32[] reduce(abs_relu_a, c0), dimensions={0,1,2,3}, to_apply=apply
        ROOT conv_f8 = (f8e4m3fn[1,16,6,6], f32[]) tuple(relu_a_clamped_f8, amax)
     })",
-      // custom_call
+      // fusion
       R"(
 // CHECK: [[cudnn_fusion:%[^ ]+]] = (f8e4m3fn[1,6,6,16]{3,2,1,0}, f32[]) fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]], [[OPERAND4:%[^ ]+]])
     )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[SCALE0_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[SCALE1_UID:[0-9]+]]:[f32]scale([[SCALE0_UID]]);[[RELU_UID:[0-9]+]]:[f32]relu([[SCALE1_UID]]);[[SCALE2_UID:[0-9]+]]:[f8e4m3fn]scale([[RELU_UID]]);[[AMAX_UID:[0-9]+]]:[f32]amax([[RELU_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: multiply(
+// CHECK: multiply(
+// CHECK: maximum(
+// CHECK: reduce(
+// CHECK: ENTRY
       )");
 }
 
@@ -1356,13 +1216,17 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputMultipleUsersF8) {
        ROOT conv_f8 = (f8e4m3fn[1,16,6,6], f8e4m3fn[1,16,6,6]) tuple(conv_a_convert0, conv_a_convert1)
 
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[cudnn_conv_4_0:%[^ ]+]] = (f32[1,6,6,16]{3,2,1,0}, u8[{{.*}}]{0}) fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]])
+// CHECK: [[cudnn_fusion:%[^ ]+]] = f32[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]])
   )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[SCALE_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: multiply({{.*}}
+// CHECK-NEXT: }
+// CHECK: ENTRY
       )");
 }
 
@@ -1393,15 +1257,22 @@ TEST_F(CudnnFusedConvRewriterTest,
        c2_bcast = f32[1,16,6,6] broadcast(c2), dimensions={}
        conv_a_clamped = f32[1,16,6,6] clamp(c1_bcast, conv_a_scaled_sum, c2_bcast)
        ROOT conv_f8 = f8e4m3fn[1,16,6,6] convert(conv_a_clamped)
-
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[cudnn_conv_4_0:%[^ ]+]] = (f8e4m3fn[1,6,6,16]{3,2,1,0}, u8[{{.*}}]{0}) custom-call([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convForwardGraph"
+// CHECK: [[cudnn_fusion:%[^ ]+]] = f8e4m3fn[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]])
   )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[SCALE0_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[SCALE1_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[ADD_UID:[0-9]+]]:[f8e4m3fn]add([[SCALE0_UID]],[[SCALE1_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: multiply(
+// CHECK: multiply(
+// CHECK: add(
+// CHECK: clamp(
+// CHECK: convert({{.*}}
+// CHECK-NEXT: }
+// CHECK: ENTRY
       )");
 }
 
@@ -1436,15 +1307,24 @@ TEST_F(CudnnFusedConvRewriterTest,
        c2_bcast = f32[1,16,6,6] broadcast(c2), dimensions={}
        conv_a_clamped = f32[1,16,6,6] clamp(c1_bcast, conv_a_scaled_sum1, c2_bcast)
        ROOT conv_f8 = f8e4m3fn[1,16,6,6] convert(conv_a_clamped)
-
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[cudnn_conv_4_0:%[^ ]+]] = (f8e4m3fn[1,6,6,16]{3,2,1,0}, u8[{{.*}}]{0}) custom-call([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]], [[OPERAND4:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convForwardGraph"
+// CHECK: [[cudnn_fusion:%[^ ]+]] = f8e4m3fn[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]], [[OPERAND4:%[^ ]+]])
   )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[SCALE0_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[SCALE1_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[ADD0_UID:[0-9]+]]:[f32]add([[SCALE0_UID]],[[SCALE1_UID]]);[[SCALE2_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[ADD1_UID:[0-9]+]]:[f8e4m3fn]add([[ADD0_UID]],[[SCALE2_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: multiply(
+// CHECK: multiply(
+// CHECK: add(
+// CHECK: multiply(
+// CHECK: add(
+// CHECK: clamp(
+// CHECK: convert({{.*}}
+// CHECK-NEXT: }
+// CHECK: ENTRY
       )");
 }
 
@@ -1487,11 +1367,23 @@ TEST_F(CudnnFusedConvRewriterTest,
     })",
       // custom_call
       R"(
-// CHECK: [[cudnn_conv_4_0:%[^ ]+]] = (f8e4m3fn[1,6,6,16]{3,2,1,0}, u8[{{.*}}]{0}) custom-call([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]], [[OPERAND4:%[^ ]+]], /*index=5*/[[OPERAND5:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convForwardGraph"
+// CHECK: [[cudnn_fusion:%[^ ]+]] = f8e4m3fn[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]], [[OPERAND4:%[^ ]+]], /*index=5*/[[OPERAND5:%[^ ]+]])
   )",
       // serialized_graph
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[SCALE0_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[SCALE1_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[ADD0_UID:[0-9]+]]:[f32]add([[SCALE0_UID]],[[SCALE1_UID]]);[[SCALE2_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[SCALE3_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[ADD1_UID:[0-9]+]]:[f32]add([[SCALE2_UID]],[[SCALE3_UID]]);[[ADD2_UID:[0-9]+]]:[f8e4m3fn]add([[ADD0_UID]],[[ADD1_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: multiply(
+// CHECK: multiply(
+// CHECK: add(
+// CHECK: multiply(
+// CHECK: multiply(
+// CHECK: add(
+// CHECK: add(
+// CHECK: clamp(
+// CHECK: convert({{.*}}
+// CHECK-NEXT: }
+// CHECK: ENTRY
       )");
 }
 
@@ -1510,7 +1402,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputUnsupportedUserF8) {
        z_scale = f32[] parameter(2)
        z_scale_bcast = f32[1,16,6,6] broadcast(z_scale), dimensions={}
        conv_a = f32[1,16,6,6] convolution(input_f32, filter_f32), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=1
-       conv_a_cos = f32[1,16,6,6] cosine(conv_a)
+       conv_a_tr = f32[1,16,6,6] transpose(conv_a), dimensions={0,1,2,3}
        conv_a_scaled = f32[1,16,6,6] multiply(conv_a, z_scale_bcast)
        c1 = f32[] constant(-448.)
        c1_bcast = f32[1,16,6,6] broadcast(c1), dimensions={}
@@ -1518,16 +1410,19 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputUnsupportedUserF8) {
        c2_bcast = f32[1,16,6,6] broadcast(c2), dimensions={}
        conv_a_clamped = f32[1,16,6,6] clamp(c1_bcast, conv_a_scaled, c2_bcast)
        conv_a_convert = f8e4m3fn[1,16,6,6] convert(conv_a_clamped)
-       ROOT conv_f8 = (f8e4m3fn[1,16,6,6], f32[1,16,6,6]) tuple(conv_a_convert, conv_a_cos)
+       ROOT conv_f8 = (f8e4m3fn[1,16,6,6], f32[1,16,6,6]) tuple(conv_a_convert, conv_a_tr)
 
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[cudnn_conv_4_0:%[^ ]+]] = (f32[1,6,6,16]{3,2,1,0}, u8[{{.*}}]{0}) custom-call([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convForwardGraph"
+// CHECK: [[cudnn_fusion:%[^ ]+]] = f32[1,6,6,16]{3,2,1,0} fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]])
   )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution({{.*}}
+// CHECK-NEXT: }
+// CHECK: ENTRY
       )");
 }
 
@@ -1548,18 +1443,18 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvAddOperandReachableFromAmaxF8) {
        input = f8e4m3fn[1,128,6,6] parameter(0)
        filter = f8e4m3fn[3,3,128,16] parameter(1)
        input_scale = f32[] parameter(2)
-       input_scale_bcast = f32[1,128,6,6] broadcast(input_scale), dimensions={}
+       input_scale_bcast = f32[1,16,6,6] broadcast(input_scale), dimensions={}
        filter_scale = f32[] parameter(3)
-       filter_scale_bcast = f32[3,3,128,16] broadcast(filter_scale), dimensions={}
+       filter_scale_bcast = f32[1,16,6,6] broadcast(filter_scale), dimensions={}
        input_f32 = f32[1,128,6,6] convert(input)
-       input_unscaled = f32[1,128,6,6] multiply(input_f32, input_scale_bcast)
        filter_f32 = f32[3,3,128,16] convert(filter)
-       filter_unscaled = f32[3,3,128,16] multiply(filter_f32, filter_scale_bcast)
-       conv_a = f32[1,16,6,6] convolution(input_unscaled, filter_unscaled), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=1
+       conv_a = f32[1,16,6,6] convolution(input_f32, filter_f32), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=1
+       conv_a_0 = f32[1,16,6,6] multiply(conv_a, input_scale_bcast)
+       conv_a_1 = f32[1,16,6,6] multiply(conv_a_0, filter_scale_bcast)
        z_scale = f32[] parameter(4)
        z_scale_bcast = f32[1,16,6,6] broadcast(z_scale), dimensions={}
-       conv_a_scaled = f32[1,16,6,6] multiply(conv_a, z_scale_bcast)
-       abs_conv_a = f32[1,16,6,6] abs(conv_a)
+       conv_a_scaled = f32[1,16,6,6] multiply(conv_a_1, z_scale_bcast)
+       abs_conv_a = f32[1,16,6,6] abs(conv_a_1)
        c0 = f32[] constant(-inf)
        amax = f32[] reduce(abs_conv_a, c0), dimensions={0,1,2,3}, to_apply=apply
        amax_bcast = f32[1,16,6,6] broadcast(amax), dimensions={}
@@ -1571,15 +1466,20 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvAddOperandReachableFromAmaxF8) {
        conv_a_clamped = f32[1,16,6,6] clamp(c1_bcast, conv_a_scaled_amax, c2_bcast)
        conv_a_clamped_f8 = f8e4m3fn[1,16,6,6] convert(conv_a_clamped)
        ROOT conv_f8 = (f8e4m3fn[1,16,6,6], f32[]) tuple(conv_a_clamped_f8, amax)
-
     })",
-      // custom_call
+      // fusion
       R"(
-// CHECK: [[cudnn_conv_4_0:%[^ ]+]] = (f32[1,6,6,16]{3,2,1,0}, u8[{{.*}}]{0}) custom-call([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convForwardGraph"
+// CHECK: [[cudnn_fusion:%[^ ]+]] = (f32[1,6,6,16]{3,2,1,0}, f32[]) fusion([[OPERAND0:%[^ ]+]], [[OPERAND1:%[^ ]+]], [[OPERAND2:%[^ ]+]], [[OPERAND3:%[^ ]+]], [[OPERAND4:%[^ ]+]])
     )",
-      // serialized_graph
+      // fusion_comp
       R"(
-// CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f32]conv();[[SCALE0_UID:[0-9]+]]:[f32]scale([[CONV_UID]]);[[SCALE1_UID:[0-9]+]]:[f32]scale([[SCALE0_UID]]);"
+// CHECK: conv_fprop_fusion_comp{{.*}} {
+// CHECK: convolution(
+// CHECK: multiply(
+// CHECK: multiply(
+// CHECK: multiply(
+// CHECK: reduce(
+// CHECK: ENTRY
       )");
 }
 
@@ -1614,7 +1514,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvInt8ToInt8) {
     })",
       // post_hlo
       R"(
-// CHECK: [[cudnn_conv_4_0:%[^ ]+]] = (s8[1,9,9,32]{3,2,1,0}, u8[{{.*}}]{0}) custom-call([[fusion_2_1:%[^ ]+]], [[fusion_1_2:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convForward"
+// CHECK: [[cudnn_fusion:%[^ ]+]] = s8[1,9,9,32]{3,2,1,0} fusion([[fusion_2_1:%[^ ]+]], [[fusion_1_2:%[^ ]+]])
       )");
 }
 
@@ -1638,16 +1538,18 @@ TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToFloat) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
-  ConvRewriter rewriter = GetConvRewriter();
+  ConvKindAssignment assigner = GetConvKindAssignment();
+  TF_ASSERT_OK(RunHloPass(&assigner, m.get()).status());
+
+  ConvFusionRewriter rewriter = GetConvFusionRewriter();
   TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
 
   SCOPED_TRACE(m->ToString());
-  EXPECT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::GetTupleElement(
-                             m::CustomCall({kCudnnConvForwardCallTarget}), 0)
-                             .WithShape(F32, {1, 32, 9, 9})));
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion()
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)
+                     .WithShape(F32, {1, 32, 9, 9})));
 }
 
 TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToInt8BiasSideInput) {
@@ -1671,10 +1573,11 @@ TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToInt8BiasSideInput) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
-  ConvRewriter rewriter = GetConvRewriter();
+  ConvKindAssignment assigner = GetConvKindAssignment();
+  TF_ASSERT_OK(RunHloPass(&assigner, m.get()).status());
+
+  ConvFusionRewriter rewriter = GetConvFusionRewriter();
   TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
 
   // Simplify new `convert`'s that may be added to the graph.
   AlgebraicSimplifier algsimp(AlgebraicSimplifierOptions{});
@@ -1683,11 +1586,9 @@ TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToInt8BiasSideInput) {
   SCOPED_TRACE(m->ToString());
   EXPECT_THAT(
       m->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall({kCudnnConvBiasActivationForwardCallTarget},
-                                   m::Parameter(0), m::Parameter(1),
-                                   m::Parameter(2), m::Parameter(3)),
-                     0)
+      GmockMatch(m::Fusion(m::Parameter(0), m::Parameter(1), m::Broadcast(),
+                           m::Parameter(3))
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)
                      .WithShape(S8, {1, 32, 9, 9})));
 }
 
@@ -1711,10 +1612,11 @@ TEST_F(CudnnFusedConvRewriterHloTest,
     })";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
-  ConvRewriter rewriter = GetConvRewriter();
+  ConvKindAssignment assigner = GetConvKindAssignment();
+  TF_ASSERT_OK(RunHloPass(&assigner, m.get()).status());
+
+  ConvFusionRewriter rewriter = GetConvFusionRewriter();
   TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
 
   // Simplify new `convert`'s that may be added to the graph.
   AlgebraicSimplifier algsimp(AlgebraicSimplifierOptions{});
@@ -1723,11 +1625,9 @@ TEST_F(CudnnFusedConvRewriterHloTest,
   SCOPED_TRACE(m->ToString());
   EXPECT_THAT(
       m->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall({kCudnnConvBiasActivationForwardCallTarget},
-                                   m::Parameter(0), m::Parameter(1),
-                                   m::Parameter(2), m::Parameter(3)),
-                     0)
+      GmockMatch(m::Fusion(m::Parameter(0), m::Parameter(1), m::Broadcast(),
+                           m::Parameter(3))
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)
                      .WithShape(S8, {1, 32, 9, 9})));
 }
 
@@ -1751,33 +1651,22 @@ TEST_F(CudnnFusedConvRewriterHloTest, TestReluAfterConvert) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
-  ConvRewriter rewriter = GetConvRewriter();
+  ConvKindAssignment assigner = GetConvKindAssignment();
+  TF_ASSERT_OK(RunHloPass(&assigner, m.get()).status());
+
+  ConvFusionRewriter rewriter = GetConvFusionRewriter();
   TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
 
   // Simplify new `convert`'s that may be added to the graph.
   AlgebraicSimplifier algsimp(AlgebraicSimplifierOptions{});
   TF_ASSERT_OK(RunHloPass(&algsimp, m.get()).status());
 
   SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
   ASSERT_THAT(
       m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(
-                  &conv, {kCudnnConvBiasActivationForwardCallTarget},
-                  m::Parameter(0),  //
-                  m::Parameter(1),  //
-                  m::Broadcast(
-                      m::ConstantEffectiveScalar(0).WithElementType(F32))),
-              0)
-              .WithShape(S8, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.activation_mode(), se::dnn::kRelu);
+      GmockMatch(m::Fusion(m::Parameter(0), m::Parameter(1))
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)
+                     .WithShape(S8, {1, 32, 9, 9})));
 }
 
 TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToFloatBiasSideInput) {
@@ -1804,10 +1693,11 @@ TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToFloatBiasSideInput) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
-  ConvRewriter rewriter = GetConvRewriter();
+  ConvKindAssignment assigner = GetConvKindAssignment();
+  TF_ASSERT_OK(RunHloPass(&assigner, m.get()).status());
+
+  ConvFusionRewriter rewriter = GetConvFusionRewriter();
   TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
 
   // Simplify new `convert`'s that may be added to the graph.
   AlgebraicSimplifier algsimp(AlgebraicSimplifierOptions{});
@@ -1816,70 +1706,10 @@ TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToFloatBiasSideInput) {
   SCOPED_TRACE(m->ToString());
   EXPECT_THAT(
       m->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall({kCudnnConvBiasActivationForwardCallTarget},
-                                   m::Parameter(0), m::Parameter(1),
-                                   m::Parameter(2), m::Parameter(3)),
-                     0)
+      GmockMatch(m::Fusion(m::Parameter(0), m::Parameter(1), m::Broadcast(),
+                           m::Parameter(3))
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)
                      .WithShape(F32, {1, 32, 9, 9})));
-}
-
-// The ReshapeMover pass changes
-//   reshape(side_input) * alpha -->
-//   reshape(side_input * alpha).
-// Make sure we can pattern-match this.
-TEST_F(CudnnFusedConvRewriterHloTest, Int8SideInputWithScaleAndReshape) {
-  MAYBE_SKIP_TEST("I8");
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      input = s32[1,17,9,9] convert(s8[1,17,9,9] parameter(0))
-      filter = s32[3,3,17,32] convert(s8[3,3,17,32] parameter(1))
-      bias = f32[1,32,9,9] broadcast(f32[32] parameter(2)), dimensions={1}
-      side_input_scale = f32[2592] broadcast(f32[] constant(0.25)), dimensions={}
-      side_input = f32[1,32,9,9] reshape(multiply(f32[2592] convert(s8[2592] parameter(3)), side_input_scale))
-
-      conv = s32[1,32,9,9] convolution(input, filter),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      ROOT root = s8[1,32,9,9] convert(clamp(f32[1,32,9,9] broadcast(f32[] constant(-128)),
-                                             add(add(f32[1,32,9,9] convert(conv), bias), side_input),
-                                             f32[1,32,9,9] broadcast(f32[] constant(127))))
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  // Simplify new `convert`'s that may be added to the graph.
-  HloPassFix<HloPassPipeline> simplify("simplify");
-  simplify.AddPass<AlgebraicSimplifier>(AlgebraicSimplifierOptions{});
-  simplify.AddPass<ReshapeMover>();
-  simplify.AddPass<ConvertMover>();
-  TF_ASSERT_OK(RunHloPass(&simplify, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv = nullptr;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(
-                  &conv, {kCudnnConvBiasActivationForwardCallTarget},
-                  m::Parameter(0),  //
-                  m::Parameter(1),  //
-                  m::Parameter(2),  //
-                  m::Reshape(m::Parameter(3)).WithShape(S8, {1, 32, 9, 9})),
-              0)
-              .WithShape(S8, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.conv_result_scale(), 1);
-  EXPECT_EQ(config.side_input_scale(), 0.25);
 }
 
 TEST_F(CudnnFusedConvRewriterHloTest, FuseAlpha) {
@@ -1903,24 +1733,18 @@ TEST_F(CudnnFusedConvRewriterHloTest, FuseAlpha) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
-  ConvRewriter rewriter = GetConvRewriter();
+  ConvKindAssignment assigner = GetConvKindAssignment();
+  TF_ASSERT_OK(RunHloPass(&assigner, m.get()).status());
+
+  ConvFusionRewriter rewriter = GetConvFusionRewriter();
   TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
 
   SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv = nullptr;
   ASSERT_THAT(
       m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget}),
-              0)
-              .WithShape(F32, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.conv_result_scale(), 42);
+      GmockMatch(m::Fusion(m::Parameter(0), m::Parameter(1))
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)
+                     .WithShape(F32, {1, 32, 9, 9})));
 }
 
 TEST_F(CudnnFusedConvRewriterHloTest, FuseRelu) {
@@ -1942,908 +1766,19 @@ TEST_F(CudnnFusedConvRewriterHloTest, FuseRelu) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
-  ConvRewriter rewriter = GetConvRewriter();
+  ConvKindAssignment assigner = GetConvKindAssignment();
+  TF_ASSERT_OK(RunHloPass(&assigner, m.get()).status());
+
+  ConvFusionRewriter rewriter = GetConvFusionRewriter();
   TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
 
   SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                            m::Parameter(0), m::Parameter(1), m::Parameter(2)),
-              0)
-              .WithShape(F32, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.activation_mode(), se::dnn::kRelu);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, DontFuseReluIfMultipleUses) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] parameter(0)
-      filters = f32[3,3,17,32] parameter(1)
-      bias = f32[1,32,9,9] broadcast(f32[32] parameter(2)), dimensions={1}
-      zeros = f32[1,32,9,9] broadcast(f32[] constant(0)), dimensions={}
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      sum = add(conv, bias)
-      relu = maximum(sum, zeros)
-      not_relu = minimum(sum, zeros)
-      ROOT root = tuple(relu, not_relu)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::Tuple(
-          m::MaximumAnyOrder(
-              m::Broadcast(m::ConstantEffectiveScalar(0)),
-              m::GetTupleElement(
-                  m::CustomCall(
-                      &conv, {kCudnnConvBiasActivationForwardCallTarget},
-                      m::Parameter(0), m::Parameter(1), m::Parameter(2)),
-                  0)
-                  .WithShape(F32, {1, 32, 9, 9})),
-          m::Minimum())));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.activation_mode(), se::dnn::kNone);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, FuseElu) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f16[1,16,9,9] parameter(0)
-      filters = f16[3,3,16,32] parameter(1)
-      bias = f16[32] parameter(2)
-      bias_broadcast = f16[1,32,9,9] broadcast(bias), dimensions={1}
-      zero = f16[] constant(0)
-      zeros = f16[1,32,9,9] broadcast(zero), dimensions={}
-      conv = f16[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      sum = add(conv, bias_broadcast)
-      cmp = compare(sum, zeros), direction=GT
-      expm1 = exponential-minus-one(sum)
-      ROOT elu = select(cmp, sum, expm1)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-  DebugOptions debug_opts = m->config().debug_options();
-  debug_opts.set_xla_gpu_use_runtime_fusion(true);
-  m->mutable_config().set_debug_options(debug_opts);
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  // elu fusion is only active on Ampere+.
-  CudnnFusedConvRewriter fuser{se::CudaComputeCapability(8, 0), GetDnnVersion(),
-                               GetToolkitVersion()};
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                            m::Parameter(0), m::Parameter(1), m::Parameter(2)),
-              0)
-              .WithShape(F16, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.activation_mode(), se::dnn::kElu);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, DontFuseEluIfMultipleUses) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f16[1,16,9,9] parameter(0)
-      filters = f16[3,3,16,32] parameter(1)
-      bias = f16[32] parameter(2)
-      bias_broadcast = f16[1,32,9,9] broadcast(bias), dimensions={1}
-      zero = f16[] constant(0)
-      zeros = f16[1,32,9,9] broadcast(zero), dimensions={}
-      conv = f16[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      sum = add(conv, bias_broadcast)
-      cmp = compare(sum, zeros), direction=GT
-      expm1 = exponential-minus-one(sum)
-      elu = select(cmp, sum, expm1)
-      not_elu = minimum(sum, zeros)
-      ROOT root = tuple(elu, not_elu)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-  DebugOptions debug_opts = m->config().debug_options();
-  debug_opts.set_xla_gpu_use_runtime_fusion(true);
-  m->mutable_config().set_debug_options(debug_opts);
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  auto gte_pattern =
-      m::GetTupleElement(
-          m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                        m::Parameter(0), m::Parameter(1), m::Parameter(2)),
-          0)
-          .WithShape(F16, {1, 32, 9, 9});
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::Tuple(
-          m::Select(m::Compare(gte_pattern,
-                               m::Broadcast(m::ConstantEffectiveScalar(0)))
-                        .WithComparisonDirection(ComparisonDirection::kGt),
-                    gte_pattern,
-                    m::Op()
-                        .WithPredicate(HloPredicateIsOp<HloOpcode::kExpm1>)
-                        .WithOperand(0, gte_pattern)),
-          m::Minimum())));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.activation_mode(), se::dnn::kNone);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, FuseRelu6) {
-  const std::string module_str = R"(
-    HloModule Test
-    ENTRY Test {
-      inputs = f16[1,18,9,9] parameter(0)
-      filters = f16[3,3,18,32] parameter(1)
-      bias = f16[32] parameter(2)
-      bias_broadcast = f16[1,32,9,9] broadcast(bias), dimensions={1}
-      zero = f16[] constant(0)
-      zeros = f16[1,32,9,9] broadcast(zero), dimensions={}
-      sixes = f16[1,32,9,9] broadcast(f16[] constant(6)), dimensions={}
-      conv = f16[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      sum = add(conv, bias_broadcast)
-      ROOT relu = clamp(zeros, sum, sixes)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-  DebugOptions debug_opts = m->config().debug_options();
-  debug_opts.set_xla_gpu_use_runtime_fusion(true);
-  m->mutable_config().set_debug_options(debug_opts);
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  // relu6 fusion is only enabled on Ampere+.
-  CudnnFusedConvRewriter fuser{se::CudaComputeCapability(8, 0), GetDnnVersion(),
-                               GetToolkitVersion()};
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                            m::Parameter(0), m::Parameter(1), m::Parameter(2)),
-              0)
-              .WithShape(F16, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.activation_mode(), se::dnn::kRelu6);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, DontFuseRelu6IfMultipleUses) {
-  const std::string module_str = R"(
-    HloModule Test
-    ENTRY Test {
-      inputs = f16[1,18,9,9] parameter(0)
-      filters = f16[3,3,18,32] parameter(1)
-      bias = f16[1,32,9,9] broadcast(f16[32] parameter(2)), dimensions={1}
-      zeros = f16[1,32,9,9] broadcast(f16[] constant(0)), dimensions={}
-      sixes = f16[1,32,9,9] broadcast(f16[] constant(6)), dimensions={}
-      conv = f16[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      sum = add(conv, bias)
-      relu = clamp(zeros, sum, sixes)
-      not_relu = minimum(sum, zeros)
-      ROOT root = tuple(relu, not_relu)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-  DebugOptions debug_opts = m->config().debug_options();
-  debug_opts.set_xla_gpu_use_runtime_fusion(true);
-  m->mutable_config().set_debug_options(debug_opts);
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::Tuple(
-          m::Clamp(m::Broadcast(m::ConstantEffectiveScalar(0)),
-                   m::GetTupleElement(
-                       m::CustomCall(
-                           &conv, {kCudnnConvBiasActivationForwardCallTarget},
-                           m::Parameter(0), m::Parameter(1), m::Parameter(2)),
-                       0)
-                       .WithShape(F16, {1, 32, 9, 9}),
-                   m::Broadcast(m::ConstantEffectiveScalar(6))),
-          m::Minimum())));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.activation_mode(), se::dnn::kNone);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, FuseLeakyRelu) {
-  const std::string module_str = R"(
-    HloModule Test
-    ENTRY Test {
-      inputs = f16[1,16,9,9] parameter(0)
-      filters = f16[3,3,16,32] parameter(1)
-      bias = f16[1,32,9,9] broadcast(f16[32] parameter(2)), dimensions={1}
-      zeros = f16[1,32,9,9] broadcast(f16[] constant(0)), dimensions={}
-      alphas = f16[1,32,9,9] broadcast(f16[] constant(0.2)), dimensions={}
-      conv = f16[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      sum = add(conv, bias)
-      cmp = compare(sum, zeros), direction=GT
-      mul = multiply(sum, alphas)
-      ROOT leaky_relu = select(cmp, sum, mul)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-  DebugOptions debug_opts = m->config().debug_options();
-  debug_opts.set_xla_gpu_use_runtime_fusion(true);
-  m->mutable_config().set_debug_options(debug_opts);
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  // Leaky-relu fusion is only enabled on Ampere+.
-  CudnnFusedConvRewriter fuser{se::CudaComputeCapability(8, 0), GetDnnVersion(),
-                               GetToolkitVersion()};
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                            m::Parameter(0), m::Parameter(1), m::Parameter(2)),
-              0)
-              .WithShape(F16, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.activation_mode(), se::dnn::kLeakyRelu);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, DontFuseLeakyReluIfMultipleUses) {
-  const std::string module_str = R"(
-    HloModule Test
-    ENTRY Test {
-      inputs = f16[1,16,9,9] parameter(0)
-      filters = f16[3,3,16,32] parameter(1)
-      bias = f16[1,32,9,9] broadcast(f16[32] parameter(2)), dimensions={1}
-      zeros = f16[1,32,9,9] broadcast(f16[] constant(0)), dimensions={}
-      alphas = f16[1,32,9,9] broadcast(f16[] constant(0.2)), dimensions={}
-      conv = f16[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      sum = add(conv, bias)
-      cmp = compare(sum, zeros), direction=GT
-      mul = multiply(sum, alphas)
-      leaky_relu = select(cmp, sum, mul)
-      not_leaky_relu = minimum(sum, zeros)
-      ROOT root = tuple(leaky_relu, not_leaky_relu)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-  DebugOptions debug_opts = m->config().debug_options();
-  debug_opts.set_xla_gpu_use_runtime_fusion(true);
-  m->mutable_config().set_debug_options(debug_opts);
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  auto gte_pattern =
-      m::GetTupleElement(
-          m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                        m::Parameter(0), m::Parameter(1), m::Parameter(2)),
-          0)
-          .WithShape(F16, {1, 32, 9, 9});
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::Tuple(
-          m::Select(m::Compare(gte_pattern,
-                               m::Broadcast(m::ConstantEffectiveScalar(0)))
-                        .WithComparisonDirection(ComparisonDirection::kGt)
-                        .WithOneUse(),
-                    gte_pattern,
-                    m::Multiply(gte_pattern,
-                                m::Broadcast(m::ConstantEffectiveScalar()))),
-          m::Minimum())));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.activation_mode(), se::dnn::kNone);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, DontFuseAlphaIfMultipleUsers) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] parameter(0)
-      filters = f32[3,3,17,32] parameter(1)
-      bias = f32[1,32,9,9] broadcast(f32[32] parameter(2)), dimensions={1}
-      alpha = f32[1,32,9,9] broadcast(f32[] parameter(3)), dimensions={}
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      sum = add(multiply(alpha, conv), bias)
-      ROOT root = tuple(conv, sum)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv1;
-  const HloInstruction* conv2;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::Tuple(
-          m::GetTupleElement(m::CustomCall(&conv1), 0),
-          m::AddAnyOrder(m::Broadcast(m::Parameter(2)),
-                         m::MultiplyAnyOrder(
-                             m::Broadcast(m::Parameter(3)),
-                             m::GetTupleElement(m::CustomCall(&conv2), 0))))));
-  EXPECT_EQ(conv1, conv2);
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv1->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.conv_result_scale(), 1);
-  EXPECT_EQ(config.activation_mode(), se::dnn::kNone);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, DontFuseBiasIfMultipleUsers) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] parameter(0)
-      filters = f32[3,3,17,32] parameter(1)
-      bias = f32[1,32,9,9] broadcast(f32[32] parameter(2)), dimensions={1}
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      ROOT root = tuple(conv, add(conv, bias))
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv1;
-  const HloInstruction* conv2;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::Tuple(
-          m::GetTupleElement(m::CustomCall(&conv1), 0),
-          m::AddAnyOrder(m::Broadcast(m::Parameter(2)),
-                         m::GetTupleElement(m::CustomCall(&conv2), 0)))));
-  EXPECT_EQ(conv1, conv2);
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv1->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.conv_result_scale(), 1);
-  EXPECT_EQ(config.activation_mode(), se::dnn::kNone);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, DontFuseSideInputThroughRelu) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] parameter(0)
-      filters = f32[3,3,17,32] parameter(1)
-      side_input = f32[1,32,9,9] parameter(2)
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      relu = maximum(conv, f32[1,32,9,9] broadcast(f32[] constant(0)))
-      ROOT root = add(relu, side_input)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::AddAnyOrder(
-          m::Parameter(2),
-          m::GetTupleElement(
-              m::CustomCall(&conv, m::Parameter(0), m::Parameter(1),
-                            m::Broadcast(m::ConstantEffectiveScalar(0))),
-              0))));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.conv_result_scale(), 1);
-  EXPECT_EQ(config.activation_mode(), se::dnn::kRelu);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, DontFuseBiasThroughRelu) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] parameter(0)
-      filters = f32[3,3,17,32] parameter(1)
-      bias = f32[1,32,9,9] broadcast(f32[32] parameter(2)), dimensions={1}
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      relu = maximum(conv, f32[1,32,9,9] broadcast(f32[] constant(0)))
-      ROOT root = add(relu, bias)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
   ASSERT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::AddAnyOrder(
-                  m::Broadcast(m::Parameter(2)),
-                  m::GetTupleElement(m::CustomCall(
-                      &conv, m::Parameter(0), m::Parameter(1),
-                      m::Broadcast(m::ConstantEffectiveScalar(0)))))));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.conv_result_scale(), 1);
-  EXPECT_EQ(config.activation_mode(), se::dnn::kRelu);
-}
+              GmockMatch(
 
-TEST_F(CudnnFusedConvRewriterHloTest, DontFuseSideInputIfMultipleUsers) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] parameter(0)
-      filters = f32[3,3,17,32] parameter(1)
-      side_input = f32[1,32,9,9] parameter(2)
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      ROOT root = tuple(conv, add(conv, side_input))
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv1;
-  const HloInstruction* conv2;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::Tuple(
-          m::GetTupleElement(m::CustomCall(&conv1), 0),
-          m::AddAnyOrder(m::Parameter(2),
-                         m::GetTupleElement(m::CustomCall(&conv2), 0)))));
-  EXPECT_EQ(conv1, conv2);
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv1->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.conv_result_scale(), 1);
-  EXPECT_EQ(config.activation_mode(), se::dnn::kNone);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, DontFuseConvertToF16IfMultipleUsers) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] convert(f16[1,17,9,9] parameter(0))
-      filters = f32[3,3,17,32] convert(f16[3,3,17,32] parameter(1))
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      ROOT root = tuple(conv, f16[1,32,9,9] convert(conv))
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv1;
-  const HloInstruction* conv2;
-  ASSERT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Tuple(
-                  m::GetTupleElement(m::CustomCall(&conv1), 0),
-                  m::Convert(m::GetTupleElement(m::CustomCall(&conv2), 0)))));
-  EXPECT_EQ(conv1, conv2);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, DontFuseToS8IfMultipleUsers) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] convert(s8[1,17,9,9] parameter(0))
-      filters = f32[3,3,17,32] convert(s8[3,3,17,32] parameter(1))
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      conv_s8 = s8[1,32,9,9] convert(clamp(
-                  f32[1,32,9,9] broadcast(f32[] constant(-128)),
-                  conv,
-                  f32[1,32,9,9] broadcast(f32[] constant(127))))
-      ROOT root = tuple(conv, conv_s8)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv1;
-  const HloInstruction* conv2;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::Tuple(
-          m::GetTupleElement(m::CustomCall(&conv1), 0),
-          m::Convert(m::Clamp(m::Op(),  //
-                              m::GetTupleElement(m::CustomCall(&conv2), 0),
-                              m::Op())))));
-  EXPECT_EQ(conv1, conv2);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, RemoveConvertByFusingS32ToF32) {
-  MAYBE_SKIP_TEST("I8");
-  const absl::string_view module_str = R"(
-    HloModule Test
-
-    ENTRY test_entry {
-      inputs = s8[1, 17, 9, 9] parameter(0)
-      filters = s8[3, 3, 17, 32] parameter(1)
-      mult_op  = f32[1, 32, 9, 9] parameter(2)
-      conv = s32[1, 32, 9, 9] convolution(inputs, filters), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01
-      ROOT ret = multiply(f32[1, 32, 9, 9] convert(conv), mult_op)
-    })";
-
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-  SCOPED_TRACE(m->ToString());
-  HloInstruction* conv1 = nullptr;
-  // Checks that it removed the Convert inside multiply around conv.
-  ASSERT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Multiply(m::GetTupleElement(m::CustomCall(&conv1)),
-                                     m::Parameter(2))));
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, RemoveConvertByFusingS8ToF32) {
-  MAYBE_SKIP_TEST("I8");
-  const absl::string_view module_str = R"(
-    HloModule Test
-
-    ENTRY test_entry {
-      inputs = s8[1, 17, 9, 9] parameter(0)
-      filters = s8[3, 3, 17, 32] parameter(1)
-      mult_op  = f32[1, 32, 9, 9] parameter(2)
-      conv = convolution(inputs, filters), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01
-      ROOT ret = multiply(f32[1, 32, 9, 9] convert(conv), mult_op)
-    })";
-
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-  SCOPED_TRACE(m->ToString());
-  HloInstruction* conv1 = nullptr;
-  // Checks that it removed the Convert inside multiply around conv.
-  ASSERT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Multiply(m::GetTupleElement(m::CustomCall(&conv1)),
-                                     m::Parameter(2))));
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, RemoveConvertByFusingF32ToS8) {
-  MAYBE_SKIP_TEST("I8");
-  const absl::string_view module_str = R"(
-    HloModule Test
-
-    ENTRY test_entry {
-      inputs = f32[1, 17, 9, 9] parameter(0)
-      filters = f32[3, 3, 17, 32] parameter(1)
-      mult_op  = s8[1, 32, 9, 9] parameter(2)
-      conv = convolution(inputs, filters), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01
-      ROOT ret = multiply(s8[1, 32, 9, 9] convert(conv), mult_op)
-    })";
-
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-  SCOPED_TRACE(m->ToString());
-  HloInstruction* conv1 = nullptr;
-  // Checks that it removed the Convert inside multiply around conv.
-  ASSERT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Multiply(m::GetTupleElement(m::CustomCall(&conv1)),
-                                     m::Parameter(2))));
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, DontRemoveConvertDuetoMultpleUser) {
-  const absl::string_view module_str = R"(
-    HloModule Test
-
-    ENTRY test_entry {
-      inputs = f32[1, 17, 9, 9] parameter(0)
-      filters = f32[3, 3, 17, 32] parameter(1)
-      mult_op  = s8[1, 32, 9, 9] parameter(2)
-      sub_op = s8[1, 32, 9, 9] parameter(3)
-      conv = convolution(inputs, filters), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01
-      another = subtract(s8[1, 32, 9, 9] convert(conv), sub_op)
-      ROOT ret = multiply(s8[1, 32, 9, 9] convert(conv), mult_op)
-    })";
-
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-  SCOPED_TRACE(m->ToString());
-  HloInstruction* conv1 = nullptr;
-  // Checks that it removed the Convert inside multiply around conv.
-  ASSERT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Multiply(
-                  m::Convert(m::GetTupleElement(m::CustomCall(&conv1))),
-                  m::Parameter(2))));
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, FuseBias) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] parameter(0)
-      filters = f32[3,3,17,32] parameter(1)
-      bias = f32[32] parameter(2)
-      bias_broadcast = f32[1,32,9,9] broadcast(bias), dimensions={1}
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      ROOT root = add(conv, bias_broadcast)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall({kCudnnConvBiasActivationForwardCallTarget},
-                            m::Parameter(0), m::Parameter(1), m::Parameter(2)),
-              0)
-              .WithShape(F32, {1, 32, 9, 9})));
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, FuseSideInput) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] parameter(0)
-      filters = f32[3,3,17,32] parameter(1)
-      side_input = f32[1,32,9,9] parameter(2)
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      ROOT root = add(conv, side_input)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                            m::Parameter(0), m::Parameter(1),
-                            m::Broadcast(m::ConstantEffectiveScalar(0))
-                                .WithShape(F32, {32}),
-                            m::Parameter(2)),
-              0)
-              .WithShape(F32, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.side_input_scale(), 1);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, FuseScaledSideInput) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] parameter(0)
-      filters = f32[3,3,17,32] parameter(1)
-      side_input = f32[1,32,9,9] parameter(2)
-      side_input_scale = f32[] constant(42)
-      side_input_scale_broadcast = f32[1,32,9,9] broadcast(side_input_scale), dimensions={}
-      side_input_product = multiply(side_input, side_input_scale_broadcast)
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      ROOT root = add(conv, side_input_product)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                            m::Parameter(0), m::Parameter(1),
-                            m::Broadcast(m::ConstantEffectiveScalar(0))
-                                .WithShape(F32, {32}),
-                            m::Parameter(2)),
-              0)
-              .WithShape(F32, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.side_input_scale(), 42);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, FuseBiasAndSideInput) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] parameter(0)
-      filters = f32[3,3,17,32] parameter(1)
-      bias = f32[32] parameter(2)
-      side_input = f32[1,32,9,9] parameter(3)
-      bias_broadcast = f32[1,32,9,9] broadcast(bias), dimensions={1}
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      sum = add(conv, side_input)
-      ROOT sum2 = add(sum, bias_broadcast)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                            m::Parameter(0), m::Parameter(1), m::Parameter(2),
-                            m::Parameter(3)),
-              0)
-              .WithShape(F32, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.side_input_scale(), 1);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, EffectiveScalarBias) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] parameter(0)
-      filters = f32[3,3,17,32] parameter(1)
-      bias = f32[1,32,9,9] broadcast(f32[] parameter(2)), dimensions={}
-      conv = f32[1,32,9,9] convolution(inputs, filters),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      ROOT root = add(conv, bias)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                            m::Parameter(0), m::Parameter(1),
-                            m::Broadcast(m::Parameter(2)).WithShape(F32, {32})),
-              0)
-              .WithShape(F32, {1, 32, 9, 9})));
+                  m::Fusion(m::Parameter(0), m::Parameter(1), m::Broadcast())
+                      .WithFusionKind(HloInstruction::FusionKind::kCustom)
+                      .WithShape(F32, {1, 32, 9, 9})));
 }
 
 TEST_F(CudnnFusedConvRewriterHloTest, StrengthReduceF32ToF16) {
@@ -2870,379 +1805,17 @@ TEST_F(CudnnFusedConvRewriterHloTest, StrengthReduceF32ToF16) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
 
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
+  ConvKindAssignment assigner = GetConvKindAssignment();
+  TF_ASSERT_OK(RunHloPass(&assigner, m.get()).status());
 
-  // Simplify new `convert`'s that may be added to the graph.
-  AlgebraicSimplifier algsimp(AlgebraicSimplifierOptions{});
-  TF_ASSERT_OK(RunHloPass(&algsimp, m.get()).status());
+  ConvFusionRewriter rewriter = GetConvFusionRewriter();
+  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
 
   SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                            m::Parameter(0), m::Parameter(1), m::Parameter(2),
-                            m::Parameter(3)),
-              0)
-              .WithShape(F16, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.side_input_scale(), 1);
-}
-
-// We should be able to lower this to an f16 convolution even though the
-// f16-ness of the inputs is hidden behind broadcast/transpose/reshape.
-TEST_F(CudnnFusedConvRewriterHloTest, BroadcastReshapeTransposeAfterConvert) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f32[1,17,9,9] reshape(f32[1377] convert(f16[1377] parameter(0)))
-      filters = f32[3,3,17,32] transpose(f32[17,32,3,3] convert(f16[17,32,3,3] parameter(1))), dimensions={2,3,0,1}
-      bias = f16[1,32,9,9] broadcast(f16[32] parameter(2)), dimensions={1}
-      side_input = f16[1,32,9,9] reshape(f16[2592] parameter(3))
-
-      conv_f32 = f32[1,32,9,9] convolution(inputs, filters),
-                 window={size=3x3 pad=1_1x1_1},
-                 dim_labels=bf01_01io->bf01
-      conv_f16 = f16[1,32,9,9] convert(conv_f32)
-      ROOT root = f16[1,32,9,9] add(add(conv_f16, side_input), bias)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  // Simplify new `convert`'s that may be added to the graph.
-  AlgebraicSimplifier algsimp(AlgebraicSimplifierOptions{});
-  TF_ASSERT_OK(RunHloPass(&algsimp, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall(
-                         &conv, {kCudnnConvBiasActivationForwardCallTarget},
-                         m::Convert(m::Reshape(m::Convert(m::Parameter(0))))
-                             .WithElementType(F16),
-                         m::Convert(m::Transpose(m::Convert(m::Parameter(1))))
-                             .WithElementType(F16),
-                         m::Parameter(2), m::Reshape(m::Parameter(3))),
-                     0)
-                     .WithShape(F16, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.side_input_scale(), 1);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, NoStrengthReduceF32ToF16IfBiasIsF32) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f16[1,17,9,9] parameter(0)
-      filters = f16[3,3,17,32] parameter(1)
-      bias = f32[32] parameter(2)
-      side_input = f16[1,32,9,9] parameter(3)
-
-      inputs_f32 = f32[1,17,9,9] convert(inputs)
-      filters_f32 = f32[3,3,17,32] convert(filters)
-      bias_broadcast = f32[1,32,9,9] broadcast(bias), dimensions={1}
-      side_input_f32 = f32[1,32,9,9] convert(side_input)
-      conv = f32[1,32,9,9] convolution(inputs_f32, filters_f32),
-               window={size=3x3 pad=1_1x1_1},
-               dim_labels=bf01_01io->bf01
-      sum = add(conv, side_input_f32)
-      sum2 = add(sum, bias_broadcast)
-      ROOT conv_f16 = f16[1,32,9,9] convert(sum2)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  // Simplify new `convert`'s that may be added to the graph.
-  AlgebraicSimplifier algsimp(AlgebraicSimplifierOptions{});
-  TF_ASSERT_OK(RunHloPass(&algsimp, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  // fp16 convs only support fp16 biases.  Because bias is fp32, it doesn't get
-  // fused in, and we get an fp32 conv.
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::Convert(m::GetTupleElement(
-                         m::CustomCall(
-                             &conv, {kCudnnConvBiasActivationForwardCallTarget},
-                             m::Convert(m::Parameter(0)).WithElementType(F32),
-                             m::Convert(m::Parameter(1)).WithElementType(F32),
-                             m::Parameter(2),
-                             m::Convert(m::Parameter(3)).WithElementType(F32)),
-                         0))
-              .WithShape(F16, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.side_input_scale(), 1);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, F32Constants) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f16[1,2,2,2] parameter(0)
-      filters_f32 = f32[1,1,2,2] constant({{{{1, 2},{3, 4}}}})
-      bias = f16[2] parameter(1)
-      bias_f32 = f32[2] convert(bias)
-      side_input_f32 = f32[1,2,2,2] constant({{
-        {{0.5, 0.25}, {0.125, 0.0625}},
-        {{0.5, 0.25}, {0.125, 0.0625}}
-      }})
-
-      inputs_f32 = f32[1,2,2,2] convert(inputs)
-      bias_broadcast = f32[1,2,2,2] broadcast(bias_f32), dimensions={1}
-      conv = f32[1,2,2,2] convolution(inputs_f32, filters_f32),
-               window={size=1x1}, dim_labels=bf01_01io->bf01
-      sum = add(conv, side_input_f32)
-      sum2 = add(sum, bias_broadcast)
-      ROOT conv_f16 = f16[1,2,2,2] convert(sum2)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  // Simplify new `convert`'s that may be added to the graph, and fold
-  // convert back into constants.
-  AlgebraicSimplifier algsimp(AlgebraicSimplifierOptions{});
-  TF_ASSERT_OK(RunHloPass(&algsimp, m.get()).status());
-  HloConstantFolding constant_folding;
-  TF_ASSERT_OK(RunHloPass(&constant_folding, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall(
-                         &conv, {kCudnnConvBiasActivationForwardCallTarget},
-                         m::Parameter(0), m::Constant().WithElementType(F16),
-                         m::Parameter(1), m::Constant().WithElementType(F16)),
-                     0)
-                     .WithShape(F16, {1, 2, 2, 2})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.side_input_scale(), 1);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, F32ConstantsNotLosslesslyConvertible) {
-  const std::string module_str = R"(
-    HloModule Test
-
-    ENTRY Test {
-      inputs = f16[1,2,2,2] parameter(0)
-      filters_f32 = f32[1,1,2,2] constant({{{{1, 2.123456789},{3, 4}}}})
-      bias = f16[2] parameter(1)
-      bias_f32 = f32[2] convert(bias)
-      side_input_f32 = f32[1,2,2,2] constant({{
-        {{0.1, 0.2}, {0.3, 0.4}},
-        {{0.5, 0.6}, {0.7, 0.8}}
-      }})
-
-      inputs_f32 = f32[1,2,2,2] convert(inputs)
-      bias_broadcast = f32[1,2,2,2] broadcast(bias_f32), dimensions={1}
-      conv = f32[1,2,2,2] convolution(inputs_f32, filters_f32),
-               window={size=1x1}, dim_labels=bf01_01io->bf01
-      sum = add(conv, side_input_f32)
-      sum2 = add(sum, bias_broadcast)
-      ROOT conv_f16 = f16[1,2,2,2] convert(sum2)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  // Simplify new `convert`'s that may be added to the graph, and fold
-  // convert back into constants.
-  AlgebraicSimplifier algsimp(AlgebraicSimplifierOptions{});
-  TF_ASSERT_OK(RunHloPass(&algsimp, m.get()).status());
-  HloConstantFolding constant_folding;
-  TF_ASSERT_OK(RunHloPass(&constant_folding, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  // This doesn't get transformed into an f16 conv because the filters param is
-  // not losslessly expressible as f16.
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::Convert(m::GetTupleElement(
-                         m::CustomCall(
-                             &conv, {kCudnnConvBiasActivationForwardCallTarget},
-                             m::Convert(m::Parameter(0)).WithElementType(F32),
-                             m::Constant().WithElementType(F32),
-                             m::Convert(m::Parameter(1)).WithElementType(F32),
-                             m::Constant().WithElementType(F32)),
-                         0)
-                         .WithShape(F32, {1, 2, 2, 2}))
-              .WithElementType(F16)));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.side_input_scale(), 1);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, FuseReluBeforeConvert) {
-  MAYBE_SKIP_TEST("I8");
-  const std::string module_str = R"(
-  HloModule Test
-
-  ENTRY Test {
-    input = s8[1,17,9,9] parameter(0)
-    filter = s8[3,3,17,32] parameter(1)
-    inputs32 = s32[1,17,9,9] convert(input)
-    filters32 = s32[3,3,17,32] convert(filter)
-
-    conv = s32[1,32,9,9] convolution(inputs32, filters32), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=1
-
-    zero = s32[] constant(0)
-    zeros = s32[1,32,9,9] broadcast(zero), dimensions={}
-    relu = maximum(conv, zeros)
-
-    lower = s32[] constant(-128)
-    lowers = s32[1,32,9,9] broadcast(lower), dimensions={}
-    upper = s32[] constant(127)
-    uppers = s32[1,32,9,9] broadcast(upper), dimensions={}
-
-    clamp = s32[1,32,9,9] clamp(lowers, relu, uppers)
-
-    ROOT convert = s8[1,32,9,9] convert(clamp)
-  })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  // Simplify new `convert`'s that may be added to the graph.
-  AlgebraicSimplifier algsimp(AlgebraicSimplifierOptions{});
-  TF_ASSERT_OK(RunHloPass(&algsimp, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                            m::Parameter(0),  //
-                            m::Parameter(1),  //
-                            m::Broadcast(m::ConstantEffectiveScalar(0))
-                                .WithShape(F32, {32})),
-              0)
-              .WithShape(S8, {1, 32, 9, 9})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          conv->backend_config<GpuBackendConfig>());
-  const CudnnConvBackendConfig& config = gpu_config.cudnn_conv_backend_config();
-  EXPECT_EQ(config.activation_mode(), se::dnn::kRelu);
-}
-
-TEST_F(CudnnFusedConvRewriterHloTest, BiasTypeMatchesConvTypeIfFp) {
-  MAYBE_SKIP_TEST("F64");
-  const std::string module_str = R"(
-  HloModule Test
-
-  ENTRY Test {
-    input = f64[1,17,9,9] parameter(0)
-    filter = f64[3,3,17,32] parameter(1)
-    bias = f64[1,32,9,9] broadcast(f64[32] convert(f32[32] parameter(2))), dimensions={1}
-    conv = f64[1,32,9,9] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, feature_group_count=1
-    ROOT root = f64[1,32,9,9] add(conv, bias)
-  })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ConvRewriter rewriter = GetConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&rewriter, m.get()).status());
-  CudnnFusedConvRewriter fuser = GetCudnnFusedConvRewriter();
-  TF_ASSERT_OK(RunHloPass(&fuser, m.get()).status());
-
-  // Simplify new `convert`'s that may be added to the graph.
-  AlgebraicSimplifier algsimp(AlgebraicSimplifierOptions{});
-  TF_ASSERT_OK(RunHloPass(&algsimp, m.get()).status());
-
-  SCOPED_TRACE(m->ToString());
-  const HloInstruction* conv;
-  ASSERT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(
-          m::GetTupleElement(
-              m::CustomCall(&conv, {kCudnnConvBiasActivationForwardCallTarget},
-                            m::Parameter(0),  //
-                            m::Parameter(1),  //
-                            m::Convert(m::Parameter(2)).WithShape(F64, {32})),
-              0)
-              .WithShape(F64, {1, 32, 9, 9})));
-}
-
-TEST_F(CudnnFusedConvRewriterTest, TestFusedConvInt8ToInt8) {
-  MAYBE_SKIP_TEST("I8");
-  // clamp(max(0, conv(x, w)+bias)); for int8_t
-  TestClamp(
-      // pre_hlo
-      R"(
-    HloModule Test
-
-    ENTRY Test {
-      zero = f32[] constant(0)
-      zeros = f32[1,3,3,64] broadcast(zero), dimensions={}
-
-      input = s8[1,3,3,64] parameter(0)
-      filter = s8[3,3,64,64] parameter(1)
-      bias = f32[64] parameter(2)
-
-      inputs32 = s32[1,3,3,64] convert(input)
-      filters32 = s32[3,3,64,64] convert(filter)
-
-      conv = s32[1,3,3,64] convolution(inputs32, filters32), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f, feature_group_count=1
-
-      convfloat = f32[1,3,3,64] convert(conv)
-      broadcasted_bias = f32[1,3,3,64] broadcast(bias), dimensions={3}
-      add1 = f32[1,3,3,64] add(convfloat, broadcasted_bias)
-      relu = f32[1,3,3,64] maximum(zeros, add1)
-
-      lower = f32[] constant(-128)
-      lowers = f32[1,3,3,64] broadcast(lower), dimensions={}
-      upper = f32[] constant(127)
-      uppers = f32[1,3,3,64] broadcast(upper), dimensions={}
-
-      clamp = f32[1,3,3,64] clamp(lowers, relu, uppers)
-
-      ROOT convert = s8[1,3,3,64] convert(clamp)
-    })",
-      // post_hlo
-      R"(
-// CHECK: [[cudnn_conv_bias_activation_7_0:%[^ ]+]] = (s8[1,3,3,64]{3,2,1,0}, u8[{{[0-9]+}}]{0}) custom-call([[input_1:%[^ ]+]], [[transpose_2:%[^ ]+]], [[bias_3:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convBiasActivationForward"
-      )");
+  ASSERT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Fusion(m::Parameter(0), m::Parameter(1),
+                                   m::Parameter(3), m::Broadcast())
+                             .WithShape(F16, {1, 32, 9, 9})));
 }
 
 // Disabled per b/190854862 or nvbugs/3326122.
@@ -3329,7 +1902,7 @@ TEST_F(CudnnFusedConvRewriterTest,
     })",
       // post_hlo
       R"(
-// CHECK: [[cudnn_conv_bias_activation_11_0:%[^ ]+]] = (s8[1,3,3,64]{3,2,1,0}, u8[{{.*}}]{0}) custom-call([[input_1:%[^ ]+]], [[transpose_2:%[^ ]+]], [[bias_3:%[^ ]+]], [[side_input_4:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convBiasActivationForward"
+// CHECK: [[conv_fusion:%[^ ]+]] = s8[1,3,3,64]{3,2,1,0} fusion([[input_1:%[^ ]+]], [[transpose_2:%[^ ]+]], [[bias_3:%[^ ]+]], [[side_input_4:%[^ ]+]])
       )");
 }
 
@@ -3382,7 +1955,7 @@ TEST_F(CudnnFusedConvRewriterTest,
     })",
       //  post_hlo
       R"(
-// CHECK: [[cudnn_conv_bias_activation_9_0:%[^ ]+]] = (f32[1,3,3,64]{3,2,1,0}, u8[{{.*}}]{0}) custom-call([[input_1:%[^ ]+]], [[transpose_2:%[^ ]+]], [[bias_3:%[^ ]+]], [[side_input_4:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convBiasActivationForward"
+// CHECK: [[cudnn_fusion:%[^ ]+]] = s8[1,3,3,64]{3,2,1,0} fusion([[input_1:%[^ ]+]], [[transpose_2:%[^ ]+]], [[bias_3:%[^ ]+]], [[side_input_4:%[^ ]+]])
       )");
 }
 
@@ -3434,62 +2007,8 @@ TEST_F(CudnnFusedConvRewriterTest,
     })",
       // post_hlo
       R"(
-// CHECK: [[cudnn_conv_bias_activation_9_0:%[^ ]+]] = (f32[1,3,3,64]{3,2,1,0}, u8[{{.*}}]{0}) custom-call([[input_1:%[^ ]+]], [[transpose_2:%[^ ]+]], [[bias_3:%[^ ]+]], [[fusion_1_4:%[^ ]+]]), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target="__cudnn$convBiasActivationForward"
+// CHECK: [[cudnn_fusion:%[^ ]+]] = f32[1,3,3,64]{3,2,1,0} fusion([[input_1:%[^ ]+]], [[transpose_2:%[^ ]+]], [[bias_3:%[^ ]+]], [[fusion_1_4:%[^ ]+]])
       )");
-}
-
-TEST_F(CudnnFusedConvRewriterTest, TestConvInt8ToInt8NoClamp) {
-  MAYBE_SKIP_TEST("I8");
-  // Check that integer convolution without clamp to int8_t is not allowed.
-  // convert<int8_t>(custom_call<int32_t>(int32_x, int32_w,
-  // cudnnConvolutionForward))
-  const std::string module_str = absl::StrFormat(R"(
-    HloModule Test
-
-    ENTRY Test (input: s8[1,17,9,9], filter: s8[3,3,17,32]) -> s8[1,32,9,9] {
-      zero = s8[] constant(0)
-      zeros = s8[1,32,9,9]{3,2,1,0} broadcast(s8[] zero), dimensions={}
-      input = s8[1,17,9,9]{3,2,1,0} parameter(0)
-      filter = s8[3,3,17,32]{3,2,1,0} parameter(1)
-      custom-call = (s32[1,32,9,9]{3,2,1,0}, u8[0]{0}) custom-call(s8[1,17,9,9]{3,2,1,0} input, s8[3,3,17,32]{3,2,1,0} filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, custom_call_target="__cudnn$convForward", backend_config="{\"convResultScale\":1}"
-      get-tuple-element = s32[1,32,9,9]{3,2,1,0} get-tuple-element((s32[1,32,9,9]{3,2,1,0}, u8[0]{0}) custom-call), index=0
-      convert = s8[1,32,9,9]{3,2,1,0} convert(s32[1,32,9,9]{3,2,1,0} get-tuple-element)
-      ROOT relu = s8[1,32,9,9]{3,2,1,0} maximum(s8[1,32,9,9]{3,2,1,0} zeros, s8[1,32,9,9]{3,2,1,0} convert)
-    })");
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ASSERT_FALSE(CudnnFusedConvRewriter(GetCudaComputeCapability(),
-                                      GetDnnVersion(), GetToolkitVersion())
-                   .Run(m.get())
-                   .ok());
-}
-
-TEST_F(CudnnFusedConvRewriterTest, TestFusedConvInt8ToInt8NoClamp) {
-  MAYBE_SKIP_TEST("I8");
-  // Although bias and so on are fused with forward convolution,
-  // it is still not allowed if the output is not clampped/converted to int8_t
-  // max(0, alpha_conv * conv(x, w) + alpha_side * side_input + bias); for
-  // int8_t
-
-  const std::string module_str = absl::StrFormat(R"(
-    HloModule Test
-
-    ENTRY Test (input: s8[1,17,9,9], filter: s8[3,3,17,32]) -> s8[1,32,9,9] {
-      zero = s8[] constant(0)
-      zeros = s8[1,32,9,9]{3,2,1,0} broadcast(s8[] zero), dimensions={}
-      input = s8[1,17,9,9]{3,2,1,0} parameter(0)
-      filter = s8[3,3,17,32]{3,2,1,0} parameter(1)
-      custom-call = (s32[1,32,9,9]{3,2,1,0}, u8[0]{0}) custom-call(s8[1,17,9,9]{3,2,1,0} input, s8[3,3,17,32]{3,2,1,0} filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01, custom_call_target="__cudnn$convForward", backend_config="{\"convResultScale\":1}"
-      get-tuple-element = s32[1,32,9,9]{3,2,1,0} get-tuple-element((s32[1,32,9,9]{3,2,1,0}, u8[0]{0}) custom-call), index=0
-      convert = s8[1,32,9,9]{3,2,1,0} convert(s32[1,32,9,9]{3,2,1,0} get-tuple-element)
-      ROOT relu = s8[1,32,9,9]{3,2,1,0} maximum(s8[1,32,9,9]{3,2,1,0} zeros, s8[1,32,9,9]{3,2,1,0} convert)
-    })");
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
-
-  ASSERT_FALSE(CudnnFusedConvRewriter(GetCudaComputeCapability(),
-                                      GetDnnVersion(), GetToolkitVersion())
-                   .Run(m.get())
-                   .ok());
 }
 
 }  // namespace

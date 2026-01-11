@@ -34,9 +34,6 @@ using CustomCallTransformer =
     std::function<absl::StatusOr<std::optional<HloInstruction*>>(
         HloCustomCallInstruction*)>;
 
-using CustomFusionTransformer =
-    std::function<absl::StatusOr<std::optional<HloInstruction*>>(
-        HloFusionInstruction*)>;
 // Normalize shapes for some subsets of HLOs.
 //
 // A shape is called "normalized" when it's layout is descending, and no
@@ -49,10 +46,8 @@ class LayoutNormalization : public HloModulePass {
   // The provided custom_call_transformer allows backend to specify custom-call
   // transformation rules.
   explicit LayoutNormalization(
-      const CustomCallTransformer& custom_call_transformer = nullptr,
-      const CustomFusionTransformer& custom_fusion_transformer = nullptr)
-      : custom_call_transformer_(custom_call_transformer),
-        custom_fusion_transformer_(custom_fusion_transformer) {}
+      const CustomCallTransformer& custom_call_transformer = nullptr)
+      : custom_call_transformer_(custom_call_transformer) {}
 
   absl::string_view name() const override { return "layout_normalization"; }
 
@@ -63,7 +58,6 @@ class LayoutNormalization : public HloModulePass {
 
  private:
   CustomCallTransformer custom_call_transformer_;
-  CustomFusionTransformer custom_fusion_transformer_;
 };
 
 }  // end namespace xla

@@ -36,12 +36,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/utils/hlo_query.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/conv_utils.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
@@ -154,7 +154,7 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
       if (num_spatial_dimensions > 2) {
         VLOG(2) << "Using NHWC for " << num_spatial_dimensions << "D conv "
                 << instr->ToString() << " on " << cc->ToString();
-        return kAllNCHW;
+        return kAllNHWC;
       }
       return kAllNHWC;
     }
@@ -285,119 +285,41 @@ absl::Status GpuLayoutAssignment::AddBackendConstraintsToDnnConvCustomCall(
   return absl::OkStatus();
 }
 
-void ConvFusionCompPropagateOperandLayout(HloInstruction* instr,
-                                          const Layout& layout) {
-  if (ShapeUtil::IsScalar(instr->shape())) return;
-  *instr->mutable_shape()->mutable_layout() = layout;
-  for (HloInstruction* operand : instr->mutable_operands()) {
-    ConvFusionCompPropagateOperandLayout(operand, layout);
-  }
-}
-
-absl::Status GpuLayoutAssignment::AddBackendConstraintsTocuDNNConvFusion(
-    HloFusionInstruction* fusion, LayoutConstraints* constraints) {
-  Shape input_shape = fusion->operand(0)->shape();
-  Shape filter_shape = fusion->operand(1)->shape();
-  // could be a tuple for fp8 conv amax case
-  Shape output_shape = fusion->shape().IsTuple()
-                           ? fusion->shape().tuple_shapes(0)
-                           : fusion->shape();
-
-  TF_ASSIGN_OR_RETURN(auto gpu_config,
-                      fusion->backend_config<GpuBackendConfig>());
-  const FusionBackendConfig& backend_config =
-      gpu_config.fusion_backend_config();
-  CuDnnFusionConfig_Kind conv_kind =
-      backend_config.cudnn_fusion_config().kind();
-  const HloComputation& computation = *fusion->fused_instructions_computation();
-  HloInstruction* conv = hlo_query::GetFirstInstructionWithOpcode(
-      computation, HloOpcode::kConvolution);
-  CHECK(conv != nullptr);
+absl::Status GpuLayoutAssignment::AddBackendConstraintsTocuDNNConv(
+    HloConvolutionInstruction* conv, LayoutConstraints* constraints) {
+  Shape input_shape = conv->operand(0)->shape();
+  Shape filter_shape = conv->operand(1)->shape();
+  Shape output_shape = conv->shape();
+  ConvolutionDimensionNumbers dnums = RestoreDimNumber(conv);
   {
     DataLayout input;
     FilterLayout filter;
     DataLayout output;
-    // NHWC
     std::tie(input, filter, output) =
-        std::make_tuple(DataLayout::kBatchYXDepth, FilterLayout::kOutputYXInput,
-                        DataLayout::kBatchYXDepth);
+        HeuristicLayoutAssignment(conv, gpu_version_, dnn_version_);
 
-    // Restore dim number
-    const ConvolutionDimensionNumbers& dnums =
-        DynCast<HloConvolutionInstruction>(conv)
-            ->convolution_dimension_numbers();
-    // for fprop, we do nothing, copy directly
-    ConvolutionDimensionNumbers dnums_for_layout = dnums;
-    if (conv_kind == CuDnnFusionConfig::CONV_WGRAD) {
-      dnums_for_layout.set_input_batch_dimension(
-          dnums.input_feature_dimension());
-      dnums_for_layout.set_input_feature_dimension(
-          dnums.input_batch_dimension());
-      dnums_for_layout.set_output_batch_dimension(
-          dnums.output_feature_dimension());
-      dnums_for_layout.set_output_feature_dimension(
-          dnums.output_batch_dimension());
-      dnums_for_layout.set_kernel_input_feature_dimension(
-          dnums.kernel_output_feature_dimension());
-      dnums_for_layout.set_kernel_output_feature_dimension(
-          dnums.kernel_input_feature_dimension());
-    } else if (conv_kind == CuDnnFusionConfig::CONV_DGRAD) {
-      dnums_for_layout.set_kernel_input_feature_dimension(
-          dnums.kernel_output_feature_dimension());
-      dnums_for_layout.set_kernel_output_feature_dimension(
-          dnums.kernel_input_feature_dimension());
-    }
     TF_ASSIGN_OR_RETURN(
         std::tie(*input_shape.mutable_layout(), *filter_shape.mutable_layout(),
                  *output_shape.mutable_layout()),
-        StreamExecutorConvLayoutsToXlaLayouts(dnums_for_layout, input, filter,
-                                              output));
-  }
-  for (HloInstruction* instr : fusion->fused_instructions()) {
-    // Force every non scalar instructions in fusion computation to have same
-    // layout and then overwrite operands of conv with correct layout, this make
-    // sure we set all layouts correctly.
-    if (!ShapeUtil::IsScalar(instr->shape())) {
-      if (instr->shape().IsTuple()) {
-        for (int i = 0; i < fusion->shape().tuple_shapes().size(); ++i) {
-          *instr->mutable_shape()->mutable_tuple_shapes(i)->mutable_layout() =
-              output_shape.layout();
-        }
-      } else {
-        *instr->mutable_shape()->mutable_layout() = output_shape.layout();
-      }
-    }
-  }
-  ConvFusionCompPropagateOperandLayout(conv->mutable_operand(0),
-                                       input_shape.layout());
-  ConvFusionCompPropagateOperandLayout(conv->mutable_operand(1),
-                                       filter_shape.layout());
-
-  for (int k = 0; k < fusion->operand_count(); ++k) {
-    if (!ShapeUtil::IsScalar(fusion->operand(k)->shape())) {
-      TF_RETURN_IF_ERROR(
-          SetOperandLayout(fusion->fused_parameters()[k]->shape(), fusion, k));
-    }
+        StreamExecutorConvLayoutsToXlaLayouts(dnums, input, filter, output));
   }
 
-  if (fusion->shape().IsTuple()) {
-    // We normally only has (output, amax) output tuple
-    for (int i = 0; i < fusion->shape().tuple_shapes().size(); ++i) {
-      if (!ShapeUtil::IsScalar(fusion->shape().tuple_shapes(i))) {
-        TF_ASSIGN_OR_RETURN(
-            const LogicalBuffer* output_buf,
-            points_to_analysis_->GetBufferDefinedAt(fusion, /*index=*/{i}));
-        TF_RETURN_IF_ERROR(SetBufferLayout(output_shape.layout(), *output_buf));
-      }
-    }
-  } else {
-    TF_ASSIGN_OR_RETURN(
-        const LogicalBuffer* output_buf,
-        points_to_analysis_->GetBufferDefinedAt(fusion, /*index=*/{}));
+  TF_RETURN_IF_ERROR(SetOperandLayout(input_shape, conv, 0, /*mandatory=*/true,
+                                      /*dfs=*/true,
+                                      /*priority=*/current_priority() + 1));
+  TF_RETURN_IF_ERROR(SetOperandLayout(filter_shape, conv, 1, /*mandatory=*/true,
+                                      /*dfs=*/true,
+                                      /*priority=*/current_priority() + 1));
 
-    // Set layouts of the instructions' shapes.
-    TF_RETURN_IF_ERROR(SetBufferLayout(output_shape.layout(), *output_buf));
-  }
+  TF_ASSIGN_OR_RETURN(
+      const LogicalBuffer* output_buf,
+      points_to_analysis_->GetBufferDefinedAt(conv, /*index=*/{}));
+
+  // Set layouts of the instructions' shapes.
+  TF_RETURN_IF_ERROR(SetBufferLayout(output_shape.layout(), *output_buf,
+                                     /*mandatory=*/true, /*dfs=*/true,
+                                     /*priority=*/current_priority() + 1));
+
   // Change layouts of instructions inside the fusion computation
   return absl::OkStatus();
 }
@@ -594,19 +516,6 @@ absl::Status GpuLayoutAssignment::AddDotBackendConstraints(
   return absl::OkStatus();
 }
 
-bool IsCuDNNConvolutionFusion(HloInstruction& instr) {
-  if (instr.opcode() != HloOpcode::kFusion) return false;
-  auto gpu_config = instr.backend_config<GpuBackendConfig>();
-  if (!gpu_config.ok()) {
-    return false;
-  }
-  const FusionBackendConfig& backend_config =
-      gpu_config->fusion_backend_config();
-  return backend_config.kind() == kCuDnnFusionKind &&
-         backend_config.has_cudnn_fusion_config() &&
-         backend_config.cudnn_fusion_config().has_kind();
-}
-
 absl::Status GpuLayoutAssignment::AddBackendConstraints(
     LayoutConstraints* constraints) {
   // Add convolution constraints in reverse postorder that the earliest
@@ -621,15 +530,16 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
           Cast<HloCustomCallInstruction>(instruction), constraints));
     }
 
-    if (IsCuDNNConvolutionFusion(*instruction)) {
-      TF_RETURN_IF_ERROR(AddBackendConstraintsTocuDNNConvFusion(
-          Cast<HloFusionInstruction>(instruction), constraints));
-    }
-
     CHECK(!IsCublasGemm(*instruction))
         << "Gemm rewriting should run after layout assignment";
 
-    if (HloPredicateIsOp<HloOpcode::kDot>(instruction)) {
+    if (HloPredicateIsOp<HloOpcode::kConvolution>(instruction)) {
+      CHECK(DynCast<HloConvolutionInstruction>(instruction)->conv_kind() !=
+            HloConvolutionInstruction::ConvKind::UNSET)
+          << "conv-kind-assignment pass should run before this pass.";
+      TF_RETURN_IF_ERROR(AddBackendConstraintsTocuDNNConv(
+          Cast<HloConvolutionInstruction>(instruction), constraints));
+    } else if (HloPredicateIsOp<HloOpcode::kDot>(instruction)) {
       TF_RETURN_IF_ERROR(AddDotBackendConstraints(
           constraints, Cast<HloDotInstruction>(instruction)));
     } else if (HloPredicateIsOp<HloOpcode::kTranspose>(instruction)) {

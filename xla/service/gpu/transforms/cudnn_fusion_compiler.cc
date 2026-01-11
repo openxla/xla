@@ -32,6 +32,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/codegen/emitters/computation_fingerprint.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
@@ -46,6 +48,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/conv_utils.h"
 #include "xla/service/gpu/cudnn_support_utils.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
@@ -58,8 +61,6 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -172,7 +173,9 @@ inline std::optional<fe::DataType_t> ToCudnnDataType(const PrimitiveType type) {
 inline std::optional<fe::DataType_t> GetComputeDataType(
     const PrimitiveType type) {
   fe::DataType_t compute_dtype = fe::DataType_t::FLOAT;
-  if (primitive_util::IsIntegralType(type)) {
+  if (type == F64) {
+    compute_dtype = fe::DataType_t::DOUBLE;
+  } else if (primitive_util::IsIntegralType(type)) {
 #if CUDNN_VERSION >= 90100
     compute_dtype = fe::DataType_t::INT32;
 #else
@@ -366,15 +369,16 @@ class GemmDimensionAdapter {
   const HloInstruction& dot_;
 };
 
+using ConvKind = HloConvolutionInstruction::ConvKind;
+
 class ConvDimensionAdapter {
-  explicit ConvDimensionAdapter(const HloInstruction& conv,
-                                CuDnnFusionConfig_Kind conv_kind,
+  explicit ConvDimensionAdapter(const HloInstruction& conv, ConvKind conv_kind,
                                 ConvolutionDimensionNumbers dums)
       : conv_(conv), conv_kind_(conv_kind), dums_(dums) {}
 
  public:
   const HloInstruction& conv_;
-  CuDnnFusionConfig_Kind conv_kind_;
+  ConvKind conv_kind_;
 
   static absl::StatusOr<std::optional<ConvDimensionAdapter>> Create(
       const HloFusionInstruction& fusion, const HloComputation& computation) {
@@ -384,45 +388,11 @@ class ConvDimensionAdapter {
       VLOG(3) << "Not a Conv fusion.";
       return std::nullopt;
     }
+    ConvKind conv_kind =
+        DynCast<HloConvolutionInstruction>(maybe_conv)->conv_kind();
 
-    // get conv type from backend config
-    TF_ASSIGN_OR_RETURN(auto gpu_config,
-                        fusion.backend_config<GpuBackendConfig>());
-    const FusionBackendConfig& fusion_backend_config =
-        gpu_config.fusion_backend_config();
-    if (!fusion_backend_config.has_cudnn_fusion_config() ||
-        !fusion_backend_config.cudnn_fusion_config().has_kind()) {
-      VLOG(3) << "Can't find cudnn fusion config or conv kind for cudnn conv "
-                 "fusion.";
-      return std::nullopt;
-    }
-    CuDnnFusionConfig_Kind conv_kind =
-        fusion_backend_config.cudnn_fusion_config().kind();
-
-    const ConvolutionDimensionNumbers& dnums =
-        DynCast<HloConvolutionInstruction>(maybe_conv)
-            ->convolution_dimension_numbers();
-    // for fprop, we do nothing, copy directly
-    ConvolutionDimensionNumbers dnums_for_layout = dnums;
-    if (conv_kind == CuDnnFusionConfig::CONV_WGRAD) {
-      dnums_for_layout.set_input_batch_dimension(
-          dnums.input_feature_dimension());
-      dnums_for_layout.set_input_feature_dimension(
-          dnums.input_batch_dimension());
-      dnums_for_layout.set_output_batch_dimension(
-          dnums.output_feature_dimension());
-      dnums_for_layout.set_output_feature_dimension(
-          dnums.output_batch_dimension());
-      dnums_for_layout.set_kernel_input_feature_dimension(
-          dnums.kernel_output_feature_dimension());
-      dnums_for_layout.set_kernel_output_feature_dimension(
-          dnums.kernel_input_feature_dimension());
-    } else if (conv_kind == CuDnnFusionConfig::CONV_DGRAD) {
-      dnums_for_layout.set_kernel_input_feature_dimension(
-          dnums.kernel_output_feature_dimension());
-      dnums_for_layout.set_kernel_output_feature_dimension(
-          dnums.kernel_input_feature_dimension());
-    }
+    ConvolutionDimensionNumbers dnums_for_layout =
+        RestoreDimNumber(DynCast<HloConvolutionInstruction>(maybe_conv));
 
     // make sure input/kernel/output has the same layout
     TF_RET_CHECK(dnums_for_layout.input_batch_dimension() ==
@@ -452,16 +422,15 @@ class ConvDimensionAdapter {
           std::vector<int64_t>(dums_.input_spatial_dimensions_size() + 2, 1);
       return result;
     }
-    // placeholder FP32 data type here, it is not used
+    // Placeholder FP32 data type here, it is not used
     auto desc = se::dnn::TensorDescriptor::For(
         se::dnn::DataType::kFloat, hlo.shape().dimensions(),
         hlo.shape().layout().minor_to_major());
-    // logical layout and physical layout should be the same after layout
+    // Logical layout and physical layout should be the same after layout
     // assignment.
     std::vector<int64_t> logical_dims = desc.dimensions();
     std::vector<int64_t> logical_strides = desc.GetLogicalStrides();
-    // cuDNN conv frontend requires logical layout to be NCHW. return logical
-    // NCHW layout. we shouldn't need to know if this hlo is LHS, RHS or Output,
+    // We shouldn't need to know if this hlo is LHS, RHS or Output,
     // they should have same layout after layout assignment. Use input dums
     // here.
     Result result;
@@ -671,7 +640,14 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
     auto operand = [&hlo_to_cudnn, &hlo](int i) {
       return hlo_to_cudnn[hlo->operand(i)];
     };
-    if (HloPredicateIsOp<HloOpcode::kParameter>(hlo)) {
+
+    if (HloPredicateIsOp<HloOpcode::kConvert>(hlo) && hlo->user_count() == 1 &&
+        HloPredicateIsOp<HloOpcode::kConvolution>(hlo->users()[0])) {
+      // consume converts of inputs to conv, conv can do fp32 = conv(fp8, fp8)
+      // and int32 = conv(int8, int8)
+      hlo_to_cudnn[hlo] = operand(0);
+      continue;
+    } else if (HloPredicateIsOp<HloOpcode::kParameter>(hlo)) {
       CHECK(hlo_to_cudnn.contains(hlo));
       continue;
     } else if (HloPredicateIsOp<HloOpcode::kCustomCall>(hlo)) {
@@ -806,7 +782,9 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
           graph::Matmul_attributes().set_compute_data_type(*compute_dtype));
     } else if (HloPredicateIsOp<HloOpcode::kConvolution>(hlo)) {
       // translate conv windows to cudnn conv attr
-      const Window& window = DynCast<HloConvolutionInstruction>(hlo)->window();
+      std::optional<Window> window_opt = RestoreWindow(DynCast<HloConvolutionInstruction>(hlo));
+      CHECK(window_opt.has_value());
+      Window window = window_opt.value();
       std::vector<int64_t> pre_padding, post_padding, stride, dilation;
       for (int64_t i = 0; i < window.dimensions_size(); ++i) {
         const auto& dim = window.dimensions(i);
@@ -830,15 +808,15 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
             .set_dilation(dilation)
             .set_compute_data_type(compute_dtype.value());
       };
-      if (conv_adapter->conv_kind_ == CuDnnFusionConfig::CONV_FPROP) {
+      if (conv_adapter->conv_kind_ == ConvKind::FPROP) {
         hlo_to_cudnn[hlo] =
             graph.conv_fprop(operand(0), operand(1),
                              set_conv_attr(graph::Conv_fprop_attributes()));
-      } else if (conv_adapter->conv_kind_ == CuDnnFusionConfig::CONV_DGRAD) {
+      } else if (conv_adapter->conv_kind_ == ConvKind::DGRAD) {
         hlo_to_cudnn[hlo] =
             graph.conv_dgrad(operand(0), operand(1),
                              set_conv_attr(graph::Conv_dgrad_attributes()));
-      } else if (conv_adapter->conv_kind_ == CuDnnFusionConfig::CONV_WGRAD) {
+      } else if (conv_adapter->conv_kind_ == ConvKind::WGRAD) {
         // cudnn frontend accepts operand in the order of dout, input, but xla
         // uses reverse order
         hlo_to_cudnn[hlo] =
