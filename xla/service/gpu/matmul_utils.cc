@@ -282,8 +282,6 @@ absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
     PrecisionConfig::Algorithm precision_algorithm,
     std::optional<int64_t> algorithm, int64_t compute_precision, bool grad_x,
     bool grad_y, const se::GpuComputeCapability& gpu_version) {
-  std::cerr << "c_shape: " << c_shape.ToString() << "\n";
-        std::cerr << "output_shape: " << output_shape.ToString() << "\n";
   absl::Span<const int64_t> lhs_col_dims = lhs_contracting_dims;
   TF_ASSIGN_OR_RETURN(
       std::vector<int64_t> lhs_row_dims,

@@ -226,5 +226,6 @@ bool IsAmaxRoot(const HloInstruction& root) {
   return root.IsRoot() && root.opcode() == HloOpcode::kTuple &&
          root.operand(1)->opcode() == HloOpcode::kReduce;
 }
+
 }  // namespace gpu
 }  // namespace xla
