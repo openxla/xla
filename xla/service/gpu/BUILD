@@ -1795,6 +1795,7 @@ cc_library(
         "//xla/service/gpu/transforms:composite_rewriter",
         "//xla/service/gpu/transforms:conv_rewriter",
         "//xla/service/gpu/transforms:convert_triton_gemm_config",
+        "//xla/service/gpu/transforms:conv_kind_assignment",
         "//xla/service/gpu/transforms:conv_fusion_rewriter",
         "//xla/service/gpu/transforms:cudnn_custom_call_converter",
         "//xla/service/gpu/transforms:custom_kernel_fusion_rewriter",
@@ -2242,6 +2243,7 @@ cc_library(
         "//xla/service/gpu/transforms:block_scaling_rewriter",
         "//xla/service/gpu/transforms:conv_padding_legalization",
         "//xla/service/gpu/transforms:conv_rewriter",
+        "//xla/service/gpu/transforms:conv_kind_assignment",
         "//xla/service/gpu/transforms:conv_fusion_rewriter",
         "//xla/service/gpu/transforms:cublas_pad_for_gemms",
         "//xla/service/gpu/transforms:cudnn_custom_call_compiler",
@@ -3175,6 +3177,16 @@ xla_cc_test(
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "conv_utils",
+    srcs = ["conv_utils.cc"],
+    hdrs = ["conv_utils.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:backend_configs_cc",
     ],
 )
 

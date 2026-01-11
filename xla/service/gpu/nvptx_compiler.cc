@@ -87,6 +87,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/algebraic_simplifier.h"
 #include "xla/service/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/service/gpu/transforms/conv_fusion_rewriter.h"
+#include "xla/service/gpu/transforms/conv_kind_assignment.h"
 #include "xla/service/gpu/transforms/conv_padding_legalization.h"
 #include "xla/service/gpu/transforms/conv_rewriter.h"
 #include "xla/service/gpu/transforms/cublas_pad_for_gemms.h"
@@ -204,7 +205,7 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
     if (hlo_module->config()
             .debug_options()
             .xla_gpu_experimental_enable_conv_fusion()) {
-      pipeline.AddPass<ConvFusionRewriter>(gpu_version, dnn_version);
+      pipeline.AddPass<ConvKindAssignment>(gpu_version, dnn_version);
     } else {
       pipeline.AddPass<ConvRewriter>(gpu_version, dnn_version);
       pipeline.AddPass<CudnnFusedConvRewriter>(*cuda_compute_capability,
