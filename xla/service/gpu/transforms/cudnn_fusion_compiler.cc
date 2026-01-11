@@ -782,7 +782,8 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
           graph::Matmul_attributes().set_compute_data_type(*compute_dtype));
     } else if (HloPredicateIsOp<HloOpcode::kConvolution>(hlo)) {
       // translate conv windows to cudnn conv attr
-      std::optional<Window> window_opt = RestoreWindow(DynCast<HloConvolutionInstruction>(hlo));
+      std::optional<Window> window_opt =
+          RestoreWindow(DynCast<HloConvolutionInstruction>(hlo));
       CHECK(window_opt.has_value());
       Window window = window_opt.value();
       std::vector<int64_t> pre_padding, post_padding, stride, dilation;
