@@ -36,8 +36,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
-#include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
@@ -552,11 +552,17 @@ class WhileCmd : public Command {
 
  private:
   BufferAllocation::Slice pred_;
+
   CommandBufferCmdExecutor cond_commands_;
   CommandBufferCmdExecutor body_commands_;
+
   std::optional<int64_t> trip_count_;
   bool enable_loop_unroll_ = false;
   bool is_unrolled_loop_ = false;
+
+  // If while loop unrolling is enabled, this will be a vector or executors
+  // for each iteration executoting `cond` -> `body` commands.
+  std::vector<CommandBufferCmdExecutor> unrolled_commands_;
 };
 
 //===----------------------------------------------------------------------===//

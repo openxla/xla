@@ -1007,6 +1007,7 @@ cc_library(
         "//xla/service:compiler",
         "//xla/service:executable",
         "//xla/service:export_hlo",
+        "//xla/service:gpu_topology",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "//xla/service:platform_util",
@@ -1112,8 +1113,7 @@ xla_test(
         "//xla/backends/gpu/target_config:all_gpu_specs",
         "//xla/service/gpu:gpu_compiler_test_autotune_db.textproto",
     ],
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
+    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":xla_compile_lib",
         "//xla:util",
@@ -1125,7 +1125,7 @@ xla_test(
         "//xla/service/gpu:gpu_symbol_repository",
         "//xla/service/gpu/autotuning:autotuner_util",
         "//xla/stream_executor:device_description_proto_cc",
-        "//xla/tests:hlo_test_base",
+        "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",

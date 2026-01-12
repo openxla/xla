@@ -90,7 +90,6 @@ cc_library(
         "//xla/runtime:buffer_use",
         "//xla/runtime:resource_use",
         "//xla/stream_executor:command_buffer",
-        "//xla/stream_executor:platform",
     ],
 )
 
@@ -166,7 +165,6 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -180,7 +178,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Support",
         "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
@@ -1278,6 +1275,7 @@ cc_library(
     deps = [
         ":shaped_slice",
         ":thunk",
+        "//xla:shape_util",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_address",
@@ -2235,6 +2233,7 @@ cc_library(
     deps = [
         ":thunk",
         ":thunk_proto_cc",
+        "//xla:shape_util",
         "//xla/runtime:buffer_use",
         "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",

@@ -43,7 +43,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
@@ -103,6 +102,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla::gpu {
 
@@ -584,11 +584,10 @@ CommandBufferCmdExecutor::RecordCreate(
     }
 
     // Create new commands by recording them into the command buffer.
-    DCHECK(!state.GetOrNull<RecordState>(command, command_buffer,
-                                         record_params.unroll_iteration))
+    DCHECK(!state.GetOrNull<RecordState>(command, command_buffer))
         << "Record state must be null for " << command->ToString();
-    auto* record_state = state.GetOrCreate<RecordState>(
-        command, command_buffer, record_params.unroll_iteration);
+    auto* record_state =
+        state.GetOrCreate<RecordState>(command, command_buffer);
 
     std::vector<const se::CommandBuffer::Command*> command_dependencies =
         Dependencies(record_params, command_buffer, id);
@@ -704,8 +703,7 @@ absl::Status CommandBufferCmdExecutor::RecordUpdate(
     }
 
     // Update existing commands in the command buffer.
-    auto* record_state = state.GetOrNull<RecordState>(
-        command, command_buffer, record_params.unroll_iteration);
+    auto* record_state = state.GetOrNull<RecordState>(command, command_buffer);
     DCHECK(record_state) << "Record state must be not null for "
                          << command->ToString();
 
@@ -769,8 +767,7 @@ CommandBufferCmdExecutor::Dependencies(const RecordParams& record_params,
   std::vector<const se::CommandBuffer::Command*> dependencies;
   for (CommandId dependency_id : dependencies_ids) {
     auto* record_state = record_params.state.GetOrNull<RecordState>(
-        commands_[dependency_id].get(), command_buffer,
-        record_params.unroll_iteration);
+        commands_[dependency_id].get(), command_buffer);
     DCHECK(record_state) << "Record state must be not null for "
                          << commands_[dependency_id]->ToString();
 
@@ -919,13 +916,11 @@ TracedCommandBufferCmd::RecordTracedCommand(
     se::CommandBuffer* command_buffer,
     absl::FunctionRef<absl::Status(se::Stream*)> trace) {
   auto traced_cmd = record_params.state.GetOrCreate<TracedCommandBuffer>(
-      this, command_buffer,
-      [&] {
+      this, command_buffer, [&] {
         const auto& debug_options = xla::GetDebugOptionsFromFlags();
         return std::make_unique<TracedCommandBuffer>(
             this, buffers(), debug_options.xla_cmd_buffer_trace_cache_size());
-      },
-      record_params.unroll_iteration);
+      });
 
   TF_ASSIGN_OR_RETURN(
       auto nested_cmd,
@@ -973,7 +968,7 @@ ComputationIdCmd::ComputationIdCmd(BufferAllocation::Slice dest, Kind kind)
     : Command(CommandType::kComputationIdCmd), dest_(dest), kind_(kind) {}
 
 Command::BufferUseVector ComputationIdCmd::buffers() const {
-  return {BufferUse::Write(dest_)};
+  return {BufferUse::Write(dest_, ShapeUtil::MakeShape(S32, {}))};
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*> ComputationIdCmd::Record(
@@ -990,8 +985,9 @@ absl::StatusOr<const se::CommandBuffer::Command*> ComputationIdCmd::Record(
       execute_params.collective_params->device_assn->LogicalIdForDevice(
           global_device_id));
 
-  uint32_t value = kind_ == Kind::kReplica ? logical_id.replica_id
-                                           : logical_id.computation_id;
+  uint32_t value = static_cast<uint32_t>(kind_ == Kind::kReplica
+                                             ? logical_id.replica_id
+                                             : logical_id.computation_id);
 
   VLOG(5) << "ComputationIdCmd"
           << ": kind=" << (kind_ == Kind::kReplica ? "replica" : "partition")
@@ -1331,7 +1327,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> Memset32Cmd::Record(
 }
 
 Command::BufferUseVector Memset32Cmd::buffers() const {
-  return {BufferUse::Write(dst_)};
+  return {BufferUse::Write(dst_, ShapeUtil::MakeShape(U32, {}))};
 }
 
 //===----------------------------------------------------------------------===//
@@ -1483,7 +1479,11 @@ absl::Status WhileCmd::Initialize(const Thunk::InitializeParams& params,
       cond_commands_.support_loop_unroll() && trip_count_ != std::nullopt) {
     is_unrolled_loop_ = true;
   }
-  VLOG(3) << "while command trip_count: " << trip_count_.value_or(-1);
+  VLOG(3) << "WhileCmd::Initialize: enable_loop_unroll_=" << enable_loop_unroll_
+          << ", body_support=" << body_commands_.support_loop_unroll()
+          << ", cond_support=" << cond_commands_.support_loop_unroll()
+          << ", trip_count=" << trip_count_.value_or(-1)
+          << ", is_unrolled_loop_=" << is_unrolled_loop_;
   return absl::OkStatus();
 }
 
