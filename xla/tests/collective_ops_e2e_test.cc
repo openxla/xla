@@ -2788,6 +2788,50 @@ TEST_P(AllReduceTest, AsyncAllReduce_F8E4M3FN_TrainingStep_2GPUs) {
   EXPECT_GT(max_abs_diff, 1e-3f);
 }
 
+// Test that FP8 all-reduce fails on pre-Hopper GPUs.
+TEST_P(AllReduceTest, AsyncAllReduce_F8E4M3FN_FailsOnPreHopper) {
+  if (!Capability().IsCuda()) {
+    GTEST_SKIP() << "Test requires CUDA.";
+  }
+  if (Capability().cuda_compute_capability()->IsAtLeast(9, 0)) {
+    GTEST_SKIP() << "Test requires pre-Hopper GPU (compute capability < 9.0).";
+  }
+
+  const absl::string_view kF8ModuleStr = R"(
+  HloModule fp8_allreduce_test
+  add_f8 { x = f8e4m3fn[] parameter(0)  y = f8e4m3fn[] parameter(1)  ROOT add = f8e4m3fn[] add(x, y) }
+  ENTRY test_computation {
+    param_0 = f16[64,128] parameter(0)
+    param_f8 = f8e4m3fn[64,128] convert(param_0)
+    allreduce_f8 = f8e4m3fn[64,128] all-reduce(param_f8), to_apply=add_f8, replica_groups={{0,1}}
+    ROOT result = f16[64,128] convert(allreduce_f8)
+  })";
+
+  const int64_t kNumReplicas = 2;
+  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+      << "Test requires at least " << kNumReplicas << " devices ("
+      << hlo_runner_->device_count() << " available)";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kF8ModuleStr, kNumReplicas));
+
+  Array<Eigen::half> input1({64, 128}), input2({64, 128});
+  input1.FillRandom(Eigen::half(0.1f), 0.5f, /*seed=*/0);
+  input2.FillRandom(Eigen::half(0.1f), 0.5f, /*seed=*/1);
+  Literal input_literal1 = LiteralUtil::CreateFromArray(input1);
+  Literal input_literal2 = LiteralUtil::CreateFromArray(input2);
+
+  auto result = ExecuteReplicated(
+      std::move(module),
+      std::vector<std::vector<Literal*>>{{&input_literal1}, {&input_literal2}});
+
+  EXPECT_FALSE(result.ok())
+      << "FP8 all-reduce should fail on pre-Hopper GPUs, but succeeded.";
+  // NCCL returns ncclInvalidArgument for FP8 reductions on pre-sm90 GPUs.
+  EXPECT_THAT(result.status().message(),
+              ::testing::HasSubstr("FP8 reduction support begins with sm90"));
+}
+
 TEST_P(AllReduceTest, AsyncAllReduce_PRED_2GPUs) {
   const absl::string_view kModuleStr = R"(
   HloModule test
