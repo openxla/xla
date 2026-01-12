@@ -93,22 +93,11 @@ class NamedSharding {
 
   std::string ToString(bool include_metadata = false) const;
 
-  // TODO(b/456212087): Add validation checks
   explicit NamedSharding(Mesh mesh,
                          absl::Span<const DimensionSharding> dim_shardings = {},
                          absl::Span<const AxisRef> replicated_axes = {},
                          absl::Span<const AxisRef> unreduced_axes = {},
-                         absl::Span<const OpMetadata> metadata = {})
-      : mesh_(std::move(mesh)),
-        dim_shardings_(CanonicalizedDimShardings(dim_shardings)),
-        replicated_axes_(replicated_axes.begin(), replicated_axes.end()),
-        unreduced_axes_(unreduced_axes.begin(), unreduced_axes.end()),
-        metadata_(metadata.begin(), metadata.end()) {
-    sharded_sizes_.reserve(dim_shardings_.size());
-    for (const DimensionSharding& dim_sharding : dim_shardings_) {
-      sharded_sizes_.push_back(dim_sharding.getShardedSize(mesh_));
-    }
-  }
+                         absl::Span<const OpMetadata> metadata = {});
 
   const Mesh& mesh() const { return mesh_; }
   absl::Span<const DimensionSharding> dim_shardings() const {

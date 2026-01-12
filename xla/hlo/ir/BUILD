@@ -202,15 +202,23 @@ cc_library(
 
 cc_library(
     name = "named_sharding",
-    srcs = ["named_sharding.cc"],
-    hdrs = ["named_sharding.h"],
+    srcs = [
+        "named_sharding.cc",
+        "named_sharding_verifier.cc",
+    ],
+    hdrs = [
+        "named_sharding.h",
+        "named_sharding_verifier.h",
+    ],
     deps = [
+        ":hlo_op_metadata",
         ":mesh_and_axis",
         ":tile_assignment",
         "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo_op_metadata",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
@@ -461,6 +469,18 @@ xla_cc_test(
         ":named_sharding",
         ":tile_assignment",
         "//xla:xla_data_proto_cc",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "named_sharding_verifier_test",
+    srcs = ["named_sharding_verifier_test.cc"],
+    deps = [
+        ":mesh_and_axis",
+        ":named_sharding",
+        "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
     ],
 )
