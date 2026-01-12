@@ -57,9 +57,9 @@ tf_proto_library(
     name = "backend_configs",
     srcs = ["backend_configs.proto"],
     make_default_target_header_only = True,
-    protodeps = [
-        "//xla:xla_data_proto",
+    deps = [
         "//xla:autotuning_proto",
+        "//xla:xla_data_proto",
         "//xla/tsl/protobuf:dnn_proto",
     ],
 )
@@ -172,7 +172,7 @@ cc_library(
 tf_proto_library(
     name = "launch_dimensions_proto",
     srcs = ["launch_dimensions.proto"],
-    protodeps = ["//xla/stream_executor:launch_dim_proto"],
+    deps = ["//xla/stream_executor:launch_dim_proto"],
 )
 
 xla_cc_test(
@@ -330,10 +330,13 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     local_defines = if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/rocm:rocm_compute_capability",
+        "@com_google_absl//absl/container:flat_hash_map",
     ],
 )
 
@@ -757,15 +760,15 @@ cc_library(
 tf_proto_library(
     name = "gpu_executable_proto",
     srcs = ["gpu_executable.proto"],
-    protodeps = [
+    deps = [
         ":ir_emission_utils_proto",
+        "//xla:shape_util_proto",
         "//xla:xla_data_proto",
         "//xla:xla_proto",
-        "//xla:shape_util_proto",
-        "//xla/service:hlo_proto",
         "//xla/backends/gpu/runtime:thunk_proto",
-        "//xla/stream_executor/cuda:cuda_compute_capability_proto",
+        "//xla/service:hlo_proto",
         "//xla/stream_executor:device_description_proto",
+        "//xla/stream_executor/cuda:cuda_compute_capability_proto",
     ],
 )
 
@@ -795,6 +798,7 @@ xla_cc_test(
         "//xla/service:buffer_value",
         "//xla/service:hlo_module_config",
         "//xla/service:logical_buffer",
+        "//xla/service:xla_debug_info_manager",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream_executor_h",
@@ -1251,7 +1255,7 @@ tf_proto_library(
 tf_proto_library(
     name = "fusion_process_dump_proto",
     srcs = ["fusion_process_dump.proto"],
-    protodeps = [
+    deps = [
         "//xla/stream_executor:device_description_proto",
     ],
 )
@@ -1363,9 +1367,9 @@ cc_library(
 tf_proto_library(
     name = "kernel_reuse_cache_proto",
     srcs = ["kernel_reuse_cache.proto"],
-    protodeps = [
-        "//xla/service:hlo_proto",
+    deps = [
         "//xla:xla_proto",
+        "//xla/service:hlo_proto",
     ],
 )
 
@@ -1761,6 +1765,7 @@ cc_library(
         "//xla/service/gpu/transforms:async_wrapper",
         "//xla/service/gpu/transforms:composite_rewriter",
         "//xla/service/gpu/transforms:conv_rewriter",
+        "//xla/service/gpu/transforms:convert_triton_gemm_config",
         "//xla/service/gpu/transforms:cudnn_custom_call_converter",
         "//xla/service/gpu/transforms:custom_kernel_fusion_rewriter",
         "//xla/service/gpu/transforms:dot_algorithm_rewriter",
@@ -1902,6 +1907,8 @@ xla_test(
     backends = ["gpu"],
     data = ["gpu_compiler_test_autotune_db.textproto"],
     shard_count = 2,
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":alias_info",
         ":backend_configs_cc",
@@ -1998,6 +2005,7 @@ cc_library(
     deps = [
         ":gpu_executable",
         ":gpu_executable_proto_cc",
+        "//xla:debug_options_flags",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",
         "//xla/service:executable",
@@ -2055,6 +2063,7 @@ xla_test(
     name = "gpu_offloading_test",
     srcs = ["gpu_offloading_test.cc"],
     backends = ["gpu"],
+    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":backend_configs_cc",
         "//xla:autotune_results_proto_cc",
@@ -2068,8 +2077,12 @@ xla_test(
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:buffer_value",
         "//xla/service:hlo_cost_analysis",
+        "//xla/service:platform_util",
         "//xla/service/gpu/transforms:stream_attribute_annotator",
-        "//xla/tests:hlo_test_base",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status:statusor",
@@ -2083,7 +2096,11 @@ xla_test(
     name = "auto_sharding_gpu_compiler_test",
     srcs = ["auto_sharding_gpu_compiler_test.cc"],
     backends = ["gpu"],
-    tags = ["no_oss"],  # TODO(b/277355322): Make autosharding work in OSS
+    tags = [
+        "no_oss",
+        "pjrt_migration_candidate",
+    ],  # TODO(b/277355322): Make autosharding work in OSS
+    use_legacy_runtime = True,
     deps = [
         "//xla:xla_data_proto_cc",
         "//xla/hlo/experimental/auto_sharding:auto_sharding_option",
@@ -2238,7 +2255,9 @@ xla_test(
     tags = [
         "cuda-only",
         "nomsan",  # Pulls in precompiled NVIDIA libraries which cause false positives in msan.
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":alias_info",
         ":gpu_constants",
@@ -2282,7 +2301,9 @@ xla_test(
     tags = [
         "cuda-only",
         "nomsan",  # Pulls in precompiled NVIDIA libraries which cause false positives in msan.
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":gpu_executable",
         ":nvptx_compiler_impl",
@@ -2324,6 +2345,7 @@ xla_cc_test(
         "gpu",
         "no_oss",
         "nomsan",  # Pulls in precompiled NVIDIA libraries which cause false positives in msan.
+        "pjrt_migration_candidate",
         "requires-gpu-nvidia",
     ],
     deps = if_cuda_is_configured([
@@ -2341,6 +2363,7 @@ xla_cc_test(
         "//xla/service:compiler",
         "//xla/service:executable",
         "//xla/service:gpu_plugin",
+        "//xla/service:gpu_topology",
         "//xla/service:hlo_runner_interface",
         "//xla/service:platform_util",
         "//xla/stream_executor:platform",
@@ -2398,8 +2421,10 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
-        "//xla/backends/gpu/autotuner:cublas",
-        "//xla/backends/gpu/autotuner:cublaslt",
+        "//xla/backends/gpu/autotuner:block_level_emitter",
+        "//xla/backends/gpu/autotuner:hipblaslt",
+        "//xla/backends/gpu/autotuner:native_emitter",
+        "//xla/backends/gpu/autotuner:rocblas",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
@@ -2414,6 +2439,7 @@ cc_library(
         "//xla/service:call_inliner",
         "//xla/service:compiler",
         "//xla/service:float_support",
+        "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_verifier",
         "//xla/service/gpu/autotuning:autotuner_pass",
@@ -2436,6 +2462,7 @@ cc_library(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -2541,6 +2568,8 @@ xla_test(
         "gpu_hlo_schedule_test.cc",
     ],
     backends = ["gpu"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":alias_info",
         ":gpu_compiler",
@@ -2935,6 +2964,8 @@ xla_test(
         "b200",
         "amdgpu_any",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         "//xla:error_spec",
         "//xla:xla_proto_cc",
@@ -2952,6 +2983,8 @@ xla_test(
     name = "conv_layout_normalization_test",
     srcs = ["conv_layout_normalization_test.cc"],
     backends = ["gpu"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         "//xla:error_spec",
         "//xla/hlo/ir:hlo",
@@ -3124,7 +3157,9 @@ xla_test(
     ],
     tags = [
         "no_mac",
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -3186,7 +3221,9 @@ xla_test(
     tags = [
         "manual",
         "notap",
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         "//xla:literal",
         "//xla:xla_proto_cc",
@@ -3450,12 +3487,14 @@ xla_test(
     tags = [
         "gpu",
         "oneapi-only",
+        "pjrt_migration_candidate",
     ] + if_google([
         # TODO(b/456585142): Currently we don't support building the SYCL backend.
         "notap",
         "nobuilder",
         "manual",
     ]),
+    use_legacy_runtime = True,
     deps = [
         ":intel_gpu_compiler",
         "//xla/tests:hlo_test_base",

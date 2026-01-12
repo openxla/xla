@@ -29,9 +29,11 @@ limitations under the License.
 #include "absl/base/attributes.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/future.h"
 #include "xla/layout.h"
@@ -253,7 +255,8 @@ class CommonPjRtClient : public PjRtClient {
           input_buffers,
       absl::InlinedVector<CommonPjRtBuffer::ScopedHold, 4>& device_buffers,
       PjRtDevice* device, int replica, int partition,
-      absl::Span<const Shape> parameter_device_shapes, bool& is_error);
+      absl::Span<const Shape> parameter_device_shapes, bool& is_error,
+      bool allow_fallback_for_donation = false);
 
   absl::StatusOr<absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>>
   AllocateOutputBuffersWithInputReuse(

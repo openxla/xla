@@ -52,12 +52,12 @@ tf_proto_library(
     name = "hlo_proto",
     srcs = ["hlo.proto"],
     make_default_target_header_only = True,
-    protodeps = [
+    visibility = ["//visibility:public"],
+    deps = [
         "//xla:xla_data_proto",
         "//xla/service:metrics_proto",
         "@com_google_protobuf//:any_proto",
     ],
-    visibility = ["//visibility:public"],
 )
 
 tf_pyclif_proto_library(
@@ -75,19 +75,19 @@ tf_proto_library(
 tf_proto_library(
     name = "hlo_execution_profile_data",
     srcs = ["hlo_execution_profile_data.proto"],
-    protodeps = [":hlo_profile_printer_data"],
+    deps = [":hlo_profile_printer_data"],
 )
 
 tf_proto_library(
     name = "metrics_proto",
     srcs = ["metrics.proto"],
     make_default_target_header_only = True,
-    protodeps = [
+    visibility = ["//visibility:public"],
+    deps = [
         "@com_google_protobuf//:any_proto",
         "@com_google_protobuf//:duration_proto",
         "@com_google_protobuf//:timestamp_proto",
     ],
-    visibility = ["//visibility:public"],
 )
 
 xla_py_proto_library(
@@ -947,6 +947,8 @@ xla_cc_test(
         "//xla:shape_tree",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:mesh_and_axis",
+        "//xla/hlo/ir:named_sharding",
         "//xla/hlo/ir:tile_assignment",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
@@ -1091,6 +1093,7 @@ cc_library(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
     ],
@@ -1112,6 +1115,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:stream_executor_memory_allocator",
         "//xla/stream_executor/host:host_platform_id",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
@@ -1607,12 +1611,14 @@ cc_library(
     visibility = internal_visibility([
         "//xla/internal:hwi_internal",
         "//xla/backends/gpu/runtime:__subpackages__",
+        "//third_party/pathways/configuration:__subpackages__",
     ]),
     deps = [
         ":buffer_value",
         ":compiled_module",
         ":computation_placer",
         ":executable",
+        ":gpu_topology",
         ":hlo_cost_analysis",
         ":hlo_module_config",
         ":metrics_hook_interface",
@@ -1620,7 +1626,6 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla/backends/cpu:target_machine_options",
-        "//xla/backends/gpu/target_config",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/stream_executor:device_address_allocator",
@@ -2326,6 +2331,7 @@ xla_cc_test(
     size = "medium",
     srcs = ["triangular_solve_expander_test.cc"],
     shard_count = 12,
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":triangular_solve_expander",
         "//xla:array2d",
@@ -2785,6 +2791,7 @@ cc_library(
 xla_cc_test(
     name = "scan_loop_accumulator_input_unification_test",
     srcs = ["scan_loop_accumulator_input_unification_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":copy_insertion",
         ":scan_loop_accumulator_input_unification",
@@ -2844,6 +2851,7 @@ cc_library(
 xla_cc_test(
     name = "while_loop_unroller_test",
     srcs = ["while_loop_unroller_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":scheduling_annotations_util",
         ":while_loop_unroller",
@@ -3075,6 +3083,8 @@ cc_library(
 xla_test(
     name = "dynamic_padder_test",
     srcs = ["dynamic_padder_test.cc"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":dynamic_dimension_inference",
         ":dynamic_padder",
@@ -3370,7 +3380,10 @@ cc_library(
 xla_cc_test(
     name = "hlo_execution_profile_test",
     srcs = ["hlo_execution_profile_test.cc"],
-    tags = ["no_mac_arm64"],
+    tags = [
+        "no_mac_arm64",
+        "pjrt_migration_candidate",
+    ],
     deps = [
         ":cpu_plugin",
         ":hlo_cost_analysis",
@@ -3909,6 +3922,7 @@ xla_cc_test(
 xla_cc_test(
     name = "layout_assignment_test",
     srcs = ["layout_assignment_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":computation_layout",
         ":hlo_verifier",
@@ -3966,6 +3980,7 @@ cc_library(
 xla_cc_test(
     name = "hlo_cse_test",
     srcs = ["hlo_cse_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":hlo_cse",
         ":pattern_matcher",
@@ -4207,7 +4222,9 @@ xla_test(
     ],
     tags = [
         "no_windows",  # TODO(b/152037541)
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":elemental_ir_emitter",
         ":hlo_module_config",
@@ -5073,6 +5090,7 @@ cc_library(
 xla_cc_test(
     name = "map_inliner_test",
     srcs = ["map_inliner_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":map_inliner",
         "//xla:literal",
@@ -5354,6 +5372,7 @@ cc_library(
 xla_cc_test(
     name = "topk_rewriter_test",
     srcs = ["topk_rewriter_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":pattern_matcher",
         ":topk_rewriter",
@@ -5529,14 +5548,13 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_protobuf//:any_cc_proto",
+        "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:logging",  # fixdeps: keep
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -5565,16 +5583,18 @@ xla_cc_test(
     deps = [
         ":compilation_environments",
         ":test_compilation_environment_proto_cc",
+        # "@com_google_protobuf//:descriptor_cc_proto" - This target is included in @com_google_protobuf//:protobuf and not available separately in OSS.
+        "@com_google_googletest//:gtest",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_protobuf//:protobuf",
         "//xla:xla_proto_cc",
         "//xla/hlo/testlib:test",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:status_matchers",
-        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -5965,7 +5985,7 @@ tf_proto_library(
     name = "buffer_assignment_proto",
     srcs = ["buffer_assignment.proto"],
     make_default_target_header_only = True,
-    protodeps = [
+    deps = [
         "//xla:xla_data_proto",
     ],
 )
@@ -6038,19 +6058,18 @@ cc_library(
 cc_library(
     name = "time_utils",
     hdrs = ["time_utils.h"],
-    deps = [],
 )
 
 tf_proto_library(
     name = "xla_compile_result_proto",
     srcs = ["xla_compile_result.proto"],
     make_default_target_header_only = True,
-    protodeps = [
+    visibility = ["//visibility:public"],
+    deps = [
         ":hlo_proto",
         "//xla/tsl/protobuf:status_proto",
         "@com_google_protobuf//:duration_proto",
     ],
-    visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -6276,6 +6295,8 @@ cc_library(
         "//learning/pathways/compilation_service:__subpackages__",
         "//tensorflow/core/common_runtime/eager:__subpackages__",
         ":__subpackages__",
+        "//xla/tools:__subpackages__",
+        "//xla/backends/gpu/autotuner:__subpackages__",
     ]),
     deps = [
         ":gpu_topology_proto_cc",

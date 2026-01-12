@@ -181,6 +181,7 @@ cc_library(
         "//xla/service/gpu/kernels:custom_kernel_fusion",
         "//xla/service/gpu/kernels:custom_kernel_fusion_pattern",
         "//xla/service/gpu/transforms:block_scaling_rewriter",
+        "//xla/service/gpu/transforms:convert_triton_gemm_config",
         "//xla/service/gpu/transforms:custom_kernel_fusion_rewriter",
         "//xla/service/gpu/transforms:dot_algorithm_rewriter",
         "//xla/service/gpu/transforms:fusion_wrapper",
@@ -205,6 +206,7 @@ cc_library(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:proto_utils",
         "@com_google_absl//absl/algorithm:container",
@@ -246,7 +248,9 @@ xla_test(
     tags = [
         "cuda-only",
         "no_mac",
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":autotune_cache_key",
         ":autotuner_util",
@@ -497,10 +501,12 @@ cc_library(
         "//xla/service/gpu:ir_emission_utils",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:kernel_stats",
         "//xla/stream_executor:stream",
         "//xla/stream_executor/gpu:redzone_allocator",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -542,6 +548,8 @@ xla_test(
     name = "redzone_buffers_test",
     srcs = ["redzone_buffers_test.cc"],
     backends = ["gpu"],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":redzone_buffers",
         "//xla:shape_util",
@@ -630,7 +638,9 @@ xla_test(
         "cuda-only",
         "noasan",
         "nomsan",
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":autotuner_util",
         ":conv_algorithm_picker",
@@ -662,11 +672,11 @@ xla_test(
 tf_proto_library(
     name = "gpu_autotuning_proto",
     srcs = ["gpu_autotuning.proto"],
-    protodeps = [
-        "//xla/service/gpu:backend_configs",
+    deps = [
+        "//xla:autotuning_proto",
         "//xla:xla_data_proto",
         "//xla/service:hlo_proto",
-        "//xla:autotuning_proto",
+        "//xla/service/gpu:backend_configs",
     ],
 )
 
@@ -674,7 +684,10 @@ xla_cc_test(
     name = "autotuner_util_test",
     srcs = ["autotuner_util_test.cc"],
     data = ["//xla/backends/gpu/target_config:all_gpu_specs"],
-    tags = ["gpu"],
+    tags = [
+        "gpu",
+        "pjrt_migration_candidate",
+    ],
     deps = [
         ":autotune_cache_key",
         ":autotuner_status_key",
@@ -719,6 +732,7 @@ cc_library(
     hdrs = ["autotuner_pass.h"],
     tags = ["gpu"],
     deps = [
+        "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner",
         "//xla/backends/autotuner:autotuner_cache_interface",

@@ -13,6 +13,7 @@ load(
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_oss", "internal_visibility", "tsl_copts")
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla/tsl/platform:build_config_root.bzl", "if_static")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -110,6 +111,38 @@ cc_library(
     ],
 )
 
+tf_proto_library(
+    name = "oneapi_compute_capability_proto",
+    srcs = ["oneapi_compute_capability.proto"],
+    make_default_target_header_only = True,
+)
+
+cc_library(
+    name = "oneapi_compute_capability",
+    srcs = ["oneapi_compute_capability.cc"],
+    hdrs = ["oneapi_compute_capability.h"],
+    deps = [
+        ":oneapi_compute_capability_proto_cc",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_test(
+    name = "oneapi_compute_capability_test",
+    srcs = ["oneapi_compute_capability_test.cc"],
+    backends = ["gpu"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ],
+    deps = [
+        ":oneapi_compute_capability",
+        ":oneapi_compute_capability_proto_cc",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 xla_cc_test(
     name = "sycl_status_test",
     srcs = ["sycl_status_test.cc"],
@@ -152,7 +185,9 @@ xla_test(
     tags = [
         "gpu",
         "oneapi-only",
+        "pjrt_migration_candidate",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":sycl_event",
         ":sycl_platform_id",

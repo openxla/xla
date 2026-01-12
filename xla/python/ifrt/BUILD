@@ -118,6 +118,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/container:node_hash_set",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -214,12 +215,12 @@ cc_library(
 tf_proto_library(
     name = "execute_options_proto",
     srcs = ["execute_options.proto"],
-    protodeps = [":attribute_map_proto"],
     visibility = internal_visibility([
         ":friends",
         ":internal",
         ":users",
     ]),
+    deps = [":attribute_map_proto"],
 )
 
 xla_cc_test(
@@ -264,12 +265,12 @@ xla_cc_test(
 tf_proto_library(
     name = "layout_proto",
     srcs = ["layout.proto"],
-    protodeps = [":serdes_proto"],
     visibility = internal_visibility([
         ":friends",
         ":internal",
         ":users",
     ]),
+    deps = [":serdes_proto"],
 )
 
 xla_cc_test(
@@ -844,16 +845,16 @@ xla_cc_test(
 tf_proto_library(
     name = "array_spec_proto",
     srcs = ["array_spec.proto"],
-    protodeps = [
-        ":dtype_proto",
-        ":shape_proto",
-        ":sharding_proto",
-    ],
     visibility = internal_visibility([
         ":friends",
         ":internal",
         ":users",
     ]),
+    deps = [
+        ":dtype_proto",
+        ":shape_proto",
+        ":sharding_proto",
+    ],
 )
 
 xla_cc_test(
@@ -957,13 +958,15 @@ xla_cc_test(
 tf_proto_library(
     name = "remap_plan_proto",
     srcs = ["remap_plan.proto"],
-    protodeps = [":array_spec_proto"],
     visibility = internal_visibility([
         ":friends",
         ":internal",
         ":users",
     ]),
-    deps = [":device_proto"],
+    deps = [
+        ":array_spec_proto",
+        ":device_proto",
+    ],
 )
 
 xla_cc_test(
@@ -1030,27 +1033,27 @@ tf_proto_library(
 tf_proto_library(
     name = "sharding_proto",
     srcs = ["sharding.proto"],
-    protodeps = [":serdes_proto"],
     visibility = internal_visibility([
         ":friends",
         ":internal",
         ":users",
     ]),
+    deps = [":serdes_proto"],
 )
 
 tf_proto_library(
     name = "sharding_serdes_proto",
     srcs = ["sharding_serdes.proto"],
-    protodeps = [
-        ":device_proto",
-        ":shape_proto",
-        "//xla/python/ifrt/ir:sharding_param_proto",
-    ],
     visibility = internal_visibility([
         ":friends",
         ":internal",
         ":users",
     ]),
+    deps = [
+        ":device_proto",
+        ":shape_proto",
+        "//xla/python/ifrt/ir:sharding_param_proto",
+    ],
 )
 
 tf_proto_library(
@@ -1153,15 +1156,15 @@ cc_library(
 tf_proto_library(
     name = "custom_call_program_proto",
     srcs = ["custom_call_program.proto"],
-    protodeps = [
-        ":array_spec_proto",
-        ":device_proto",
-    ],
     visibility = internal_visibility([
         ":friends",
         ":internal",
         ":users",
     ]),
+    deps = [
+        ":array_spec_proto",
+        ":device_proto",
+    ],
 )
 
 cc_library(

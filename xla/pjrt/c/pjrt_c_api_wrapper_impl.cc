@@ -397,7 +397,7 @@ void PJRT_Error_Message(PJRT_Error_Message_Args* args) {
   if (!struct_size_check.ok()) {
     LOG(ERROR) << struct_size_check.message();
   }
-  if (args->struct_size >= PJRT_STRUCT_SIZE(PJRT_Error_Destroy_Args, error)) {
+  if (args->struct_size >= PJRT_STRUCT_SIZE(PJRT_Error_Message_Args, error)) {
     const absl::Status* status = &args->error->status;
     args->message = status->message().data();
     args->message_size = status->message().size();
@@ -734,7 +734,7 @@ PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferData(
       "PJRT_AsyncHostToDeviceTransferManager_TransferData_Args",
       PJRT_AsyncHostToDeviceTransferManager_TransferData_Args_STRUCT_SIZE,
       args->struct_size));
-  auto [promise, future] = xla::Future<>::MakePromise();
+  auto [promise, future] = xla::MakePromise();
   absl::AnyInvocable<void() &&> on_done_with_d2h_transfer =
       [promise = std::move(promise)]() mutable { promise.Set(); };
   PJRT_RETURN_IF_ERROR(
@@ -761,7 +761,7 @@ PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferLiteral(
       static_cast<const char*>(args->data), shape);
   xla::BorrowingLiteral* literal_ptr = literal.get();
 
-  auto [promise, future] = xla::Future<>::MakePromise();
+  auto [promise, future] = xla::MakePromise();
   absl::AnyInvocable<void() &&> on_done_with_d2h_transfer =
       [promise = std::move(promise), literal = std::move(literal)]() mutable {
         promise.Set();
@@ -1173,7 +1173,7 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
     }
   }
 
-  auto [promise, future] = xla::Future<>::MakePromise();
+  auto [promise, future] = xla::MakePromise();
 
   absl::AnyInvocable<void() &&> on_done_with_host_buffer =
       [promise = std::move(promise)]() mutable { promise.Set(); };
@@ -2320,7 +2320,7 @@ PJRT_Error* PJRT_Buffer_CopyRawToHostFuture(
       "PJRT_Buffer_CopyRawToHostFuture_Args",
       PJRT_Buffer_CopyRawToHostFuture_Args_STRUCT_SIZE, args->struct_size));
 
-  auto [promise, future] = xla::Future<void*>::MakePromise();
+  auto [promise, future] = xla::MakePromise<void*>();
   xla::Future<> wrapped_promise = args->buffer->buffer->CopyRawToHostFuture(
       future, args->offset, args->transfer_size);
   args->event = new PJRT_Event{std::move(wrapped_promise)};
@@ -2519,7 +2519,7 @@ PJRT_Error* PJRT_Buffer_DonateWithControlDependency(
       PJRT_Buffer_DonateWithControlDependency_Args_STRUCT_SIZE,
       args->struct_size));
 
-  auto [promise, future] = xla::Future<>::MakePromise();
+  auto [promise, future] = xla::MakePromise();
   PJRT_ASSIGN_OR_RETURN(
       std::unique_ptr<xla::PjRtBuffer> out_buffer,
       args->buffer->buffer->DonateWithControlDependency(std::move(future)));
@@ -2657,6 +2657,25 @@ PJRT_Error* PJRT_Event_OnReady(PJRT_Event_OnReady_Args* args) {
     callback(error, user_arg);
   };
   args->event->future.OnReady(impl_callback);
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Event_Create(PJRT_Event_Create_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Event_Create", PJRT_Event_Create_Args_STRUCT_SIZE,
+      args->struct_size));
+  auto [promise, future] = xla::MakePromise();
+  args->event = new PJRT_Event{std::move(future), std::move(promise)};
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Event_Set(PJRT_Event_Set_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Event_Set", PJRT_Event_Set_Args_STRUCT_SIZE, args->struct_size));
+  absl::Status status(
+      PjrtErrorCodeToStatusCode(args->error_code),
+      absl::string_view(args->error_message, args->error_message_size));
+  args->event->promise.Set(std::move(status));
   return nullptr;
 }
 
@@ -3336,6 +3355,9 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       pjrt::PJRT_Executable_GetCompileOptions,
       /*PJRT_Buffer_DonateWithControlDependency=*/
       pjrt::PJRT_Buffer_DonateWithControlDependency,
+
+      /*PJRT_Event_Create=*/pjrt::PJRT_Event_Create,
+      /*PJRT_Event_Set=*/pjrt::PJRT_Event_Set,
   };
 }
 

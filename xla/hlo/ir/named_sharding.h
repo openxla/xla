@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_HLO_IR_NAMED_SHARDING_H_
 
 #include <cstdint>
+#include <optional>
+#include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -39,6 +41,12 @@ class NamedSharding {
       return axes_ == other.axes_ && is_closed_ == other.is_closed_;
     }
 
+    bool operator!=(const DimensionSharding& other) const {
+      return !(*this == other);
+    }
+
+    std::string ToString(const Mesh* mesh = nullptr) const;
+
     // Note that by default we assume closed sharding.
     explicit DimensionSharding() : is_closed_(true) {};
 
@@ -46,8 +54,25 @@ class NamedSharding {
         : axes_(axes.begin(), axes.end()), is_closed_(is_closed) {}
 
     absl::Span<const AxisRef> axes() const { return axes_; }
+    bool is_closed() const { return is_closed_; }
 
     int64_t getShardedSize(const Mesh& mesh) const;
+
+    // Appends `other` to this dimension sharding. This function assumes that
+    // both the dimension shardings correspond to the same mesh represented by
+    // `mesh` argument.
+    void Append(const DimensionSharding& other, const Mesh& mesh);
+
+    // Slice axes of size `slice_size` from this dimension sharding and update
+    // this dimension sharding with remaining axes.
+    //
+    // Axes can only be sliced from major to minor.
+    // For example, given an input {a, b, c}, we can slice it as
+    // 1. {a} + {b, c}
+    // 2. {a, b} + {c}
+    // or other slices with sub-axis, we cannot slice it to {a, c} + {b}.
+    std::optional<DimensionSharding> Slice(const Mesh& mesh,
+                                           int64_t slice_size);
 
    private:
     std::vector<AxisRef> axes_;
@@ -65,6 +90,8 @@ class NamedSharding {
   bool operator!=(const NamedSharding& other) const {
     return !(*this == other);
   }
+
+  std::string ToString(bool include_metadata = false) const;
 
   // TODO(b/456212087): Add validation checks
   explicit NamedSharding(Mesh mesh,
@@ -143,9 +170,10 @@ class NamedSharding {
 
   bool IsReplicated() const {
     return !IsMaximal() &&
-           absl::c_all_of(dim_shardings_, [](const DimensionSharding& s) {
-             return s.axes().empty();
-           });
+           absl::c_all_of(
+               dim_shardings_,
+               [](const DimensionSharding& s) { return s.axes().empty(); }) &&
+           unreduced_axes_.empty();
   }
 
   bool IsMaximal() const { return mesh_.IsMaximal(); }
@@ -173,6 +201,11 @@ class NamedSharding {
   // we can remove this field.
   std::vector<int64_t> sharded_sizes_;
 };
+
+std::ostream& operator<<(std::ostream& out,
+                         const NamedSharding::DimensionSharding& sharding);
+
+std::ostream& operator<<(std::ostream& out, const NamedSharding& sharding);
 
 // Contains test only helper functions.
 namespace test_utils {

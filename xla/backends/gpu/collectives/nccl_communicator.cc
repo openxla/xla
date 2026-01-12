@@ -35,14 +35,15 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/nccl/nccl.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/collectives/nccl_errors.h"
+#include "xla/backends/gpu/collectives/nccl_symmetric_memory.h"
 #include "xla/backends/gpu/collectives/single_threaded_executor.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
+#include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/device_address.h"
@@ -55,6 +56,14 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
+
+// Include NCCL after XLA headers.
+#include "third_party/nccl/nccl.h"
+
+#if NCCL_VERSION_CODE >= 22800
+// Device initiated collective operations were added in NCCL 2.28.0.
+#include "third_party/nccl/nccl_device.h"
+#endif  // NCCL_VERSION_CODE >= 22800
 
 namespace xla::gpu {
 namespace {
@@ -176,7 +185,7 @@ class NcclCommunicator::NcclRegisteredBufferHandle
         XLA_NCCL_RETURN_IF_ERROR(ncclCommDeregister(comm_.comm(), handle_));
         return comm_.PollUntilDone();
       };
-      return executor_ ? Future<>::MakeOn(*executor_, f).Await() : f();
+      return executor_ ? MakeFutureOn<void>(*executor_, f).Await() : f();
 #else
       return Unimplemented(
           "[%d] NCCL version does not support ncclCommDeregister",
@@ -197,7 +206,7 @@ class NcclCommunicator::NcclRegisteredBufferHandle
             ncclCommWindowDeregister(comm_.comm(), *(ncclWindow_t*)(handle_)));
         return comm_.PollUntilDone();
       };
-      return executor_ ? Future<>::MakeOn(*executor_, f).Await() : f();
+      return executor_ ? MakeFutureOn<void>(*executor_, f).Await() : f();
 #else
       return Unimplemented(
           "[%d] NCCL version does not support ncclCommWindowDeregister",
@@ -213,6 +222,38 @@ class NcclCommunicator::NcclRegisteredBufferHandle
   bool symmetric_handle_;
   int device_ordinal_;
 };
+
+//==-----------------------------------------------------------------------===//
+// NCCL Device Communicator
+//==-----------------------------------------------------------------------===//
+
+bool NcclCommunicator::SupportsDeviceComm() const {
+#if NCCL_VERSION_CODE >= 22800
+  return true;
+#else
+  return false;
+#endif  // NCCL_VERSION_CODE >= 22800
+}
+
+absl::StatusOr<std::unique_ptr<NcclCommunicator::DeviceComm>>
+NcclCommunicator::CreateDeviceComm(const DeviceCommRequirements& requirements) {
+#if NCCL_VERSION_CODE >= 22800
+  return NcclDeviceComm::CreateFrom(*this, requirements);
+#else
+  return Unimplemented(
+      "NCCL version %d does not support collective communication",
+      NCCL_VERSION_CODE);
+#endif  // NCCL_VERSION_CODE >= 22800
+}
+
+//==-----------------------------------------------------------------------===//
+// NCCL Symmetric Memory
+//==-----------------------------------------------------------------------===//
+
+absl::StatusOr<std::unique_ptr<SymmetricMemory>>
+NcclCommunicator::CreateSymmetricMemory(se::DeviceAddressBase addr) {
+  return NcclSymmetricMemory::Create(comm_, addr);
+}
 
 //==-----------------------------------------------------------------------===//
 // NCCL Communicator
@@ -244,7 +285,7 @@ absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
   // single threaded executor.
   auto executor = std::make_unique<SingleThreadedExecutor>(env);
   TF_ASSIGN_OR_RETURN(ncclComm_t comm,
-                      Future<ncclComm_t>::MakeOn(*executor, f).Await());
+                      MakeFutureOn<ncclComm_t>(*executor, f).Await());
   return absl::WrapUnique(new NcclCommunicator(comm, std::move(executor)));
 }
 
@@ -855,15 +896,63 @@ absl::Status NcclCommunicator::PollUntilDone() const {
 
 Future<> NcclCommunicator::Execute(
     absl::AnyInvocable<absl::Status() &&> f) const {
-  return executor_ ? Future<>::MakeOn(*executor_, std::move(f))
+  return executor_ ? MakeFutureOn<void>(*executor_, std::move(f))
                    : Future<>(std::move(f)());
 }
 
 template <typename T>
 Future<T> NcclCommunicator::Execute(
     absl::AnyInvocable<absl::StatusOr<T>() &&> f) const {
-  return executor_ ? Future<T>::MakeOn(*executor_, std::move(f))
+  return executor_ ? MakeFutureOn<T>(*executor_, std::move(f))
                    : Future<T>(std::move(f)());
 }
+
+//===----------------------------------------------------------------------===//
+// NCCL device communicator
+//===----------------------------------------------------------------------===//
+
+#if NCCL_VERSION_CODE >= 22800
+
+NcclDeviceComm::NcclDeviceComm(ncclDevComm dev_comm) : dev_comm_(dev_comm) {}
+
+NcclDeviceComm::~NcclDeviceComm() {
+  VLOG(3) << absl::StrFormat("Destroy NCCL device comm %s constructed for %s",
+                             this->ToString(), comm_->ToString());
+  auto status = XLA_NCCL_STATUS(ncclDevCommDestroy(comm_->comm(), &dev_comm_));
+  if (!status.ok()) {
+    LOG(ERROR) << "Failed to destroy device comm: " << status.message();
+  }
+}
+
+absl::StatusOr<std::unique_ptr<NcclDeviceComm>> NcclDeviceComm::CreateFrom(
+    const NcclCommunicator& comm,
+    const NcclCommunicator::DeviceCommRequirements& requirements) {
+  VLOG(3) << absl::StrFormat(
+      "Create NCCL device comm from %s: lsa_barrier_count=%d", comm.ToString(),
+      requirements.lsa_barrier_count);
+
+  ncclDevCommRequirements reqs{};
+#if NCCL_VERSION_CODE >= 22900
+  reqs = NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
+#endif
+  reqs.lsaBarrierCount = requirements.lsa_barrier_count;
+
+  ncclDevComm dev_comm;
+  TF_RETURN_IF_ERROR(
+      XLA_NCCL_STATUS(ncclDevCommCreate(comm.comm(), &reqs, &dev_comm)));
+
+  return absl::WrapUnique(new NcclDeviceComm(dev_comm));
+}
+
+NcclCommunicator::PlatformCommunicatorHandle NcclDeviceComm::platform_comm()
+    const {
+  return {const_cast<ncclDevComm*>(&dev_comm_)};
+}
+
+std::string NcclDeviceComm::ToString() const {
+  return absl::StrFormat("NcclDeviceComm(ncclDevComm*=%p)", &dev_comm_);
+}
+
+#endif  // NCCL_VERSION_CODE >= 22800
 
 }  // namespace xla::gpu

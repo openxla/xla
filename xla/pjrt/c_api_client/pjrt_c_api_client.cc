@@ -77,6 +77,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
+#include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/pjrt/scoped_async_tracking_event.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
@@ -2885,36 +2886,6 @@ bool PjRtCApiLoadedExecutable::IsDeleted() const {
   return args.is_deleted;
 }
 
-absl::StatusOr<std::string> PjRtCApiLoadedExecutable::FingerprintExecutable()
-    const {
-  absl::StatusOr<std::string> fingerprint =
-      executable_->FingerprintExecutable();
-  if (fingerprint.ok()) {
-    return *fingerprint;
-  }
-  if (fingerprint.status().code() != absl::StatusCode::kUnimplemented) {
-    return fingerprint.status();
-  }
-
-  // Fallback and call PJRT_LoadedEecutable_Fingerprint until the plugins
-  // implement new PJRT_Executable_Fingerprint API within the compatibility
-  // window.
-  // TODO(yeounoh): To be removed after 01/20/2024.
-  PJRT_LoadedExecutable_Fingerprint_Args args;
-  args.struct_size = PJRT_LoadedExecutable_Fingerprint_Args_STRUCT_SIZE;
-  args.extension_start = nullptr;
-  args.executable = c_loaded_executable();
-  const PJRT_Api* c_api = pjrt_c_api();
-  std::unique_ptr<PJRT_Error, pjrt::PJRT_ErrorDeleter> error(
-      c_api->PJRT_LoadedExecutable_Fingerprint(&args),
-      pjrt::MakeErrorDeleter(c_api));
-  if (error) {
-    return ::pjrt::PjrtErrorToStatus(error.get(), c_api);
-  }
-  return std::string(args.executable_fingerprint,
-                     args.executable_fingerprint_size);
-}
-
 // ---------------------------------- Buffers ----------------------------------
 
 PjRtCApiBuffer::PjRtCApiBuffer(PjRtCApiClient* client, PJRT_Buffer* buffer)
@@ -3345,7 +3316,7 @@ void PjRtCApiBuffer::MakePromiseTrackEvent() {
 Future<> PjRtCApiBuffer::GetReadyFuture() {
   absl::MutexLock l(mu_);
   if (readiness_promise_ == nullptr) {
-    auto [promise, future] = Future<>::MakePromise();
+    auto [promise, future] = MakePromise<>();
     readiness_promise_ = std::move(promise).ToShared();
     readiness_future_ = std::move(future);
     MakePromiseTrackEvent();
