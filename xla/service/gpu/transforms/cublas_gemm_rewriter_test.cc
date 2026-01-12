@@ -1639,19 +1639,18 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-  if (!IsCuda()) {
-    MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4], {{.*}}: bf16[4]) -> bf16[2,4] {
-    ; CHECK-DAG:    bf16[2,3]{1,0}
-    ; CHECK-DAG:    bf16[3,4]{1,0}
-    )");
-
-  } else {
+  if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
     ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4], {{.*}}: bf16[4]) -> bf16[2,4] {
     ; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_6x0_5
     ; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_5x0_4
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4], {{.*}}: bf16[4]) -> bf16[2,4] {
+    ; CHECK-DAG:    bf16[2,3]{1,0}
+    ; CHECK-DAG:    bf16[3,4]{1,0}
+    )");
   }
 }
 
@@ -2437,18 +2436,18 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{5e-5, 1e-5}));
-  if (!IsCuda()) {
-  MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4]) -> bf16[2,4] {
-    ; CHECK-DAG:    bf16[2,3]{1,0}
-    ; CHECK-DAG:    bf16[3,4]{1,0}
-    )");
-  } else {
+  if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
     ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4]) -> bf16[2,4] {
     ; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_6x0_5
     ; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_5x0_4
       )");
+  } else {
+  MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4]) -> bf16[2,4] {
+    ; CHECK-DAG:    bf16[2,3]{1,0}
+    ; CHECK-DAG:    bf16[3,4]{1,0}
+    )");
   }
 }
 
@@ -2623,18 +2622,18 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-  if (!IsCuda()) {
-    MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
-    ; CHECK-DAG:    f16[6,12]{1,0}
-    ; CHECK-DAG:    f16[12,6]{1,0}
-    )");
-  } else {
+  if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
     ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
     ; CHECK-DAG:    f16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
     ; CHECK-DAG:    f16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
+    ; CHECK-DAG:    f16[6,12]{1,0}
+    ; CHECK-DAG:    f16[12,6]{1,0}
+    )");
   }
 }
 
@@ -2680,18 +2679,18 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
-  if (!IsCuda()) {
-    MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6]) -> f16[6,6] {
-    ; CHECK-DAG:    f16[6,12]{1,0}
-    ; CHECK-DAG:    f16[12,6]{1,0}
-    )");
-  } else {
+  if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
     ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6]) -> f16[6,6] {
     ; CHECK-DAG:    f16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
     ; CHECK-DAG:    f16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6]) -> f16[6,6] {
+    ; CHECK-DAG:    f16[6,12]{1,0}
+    ; CHECK-DAG:    f16[12,6]{1,0}
+    )");
   }
 }
 
@@ -2788,18 +2787,18 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-  if (!IsCuda()) {
-    MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
-    ; CHECK-DAG:   f16[6,12]{1,0}
-    ; CHECK-DAG:   f16[12,6]{1,0}
-    )");
-  } else {
+  if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
     ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
     ; CHECK-DAG:   f16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
     ; CHECK-DAG:   f16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
+    ; CHECK-DAG:   f16[6,12]{1,0}
+    ; CHECK-DAG:   f16[12,6]{1,0}
+    )");
   }
 }
 
@@ -2938,18 +2937,18 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-  if (!IsCuda()) {
-    MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG:  ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
-    ; CHECK-DAG:    bf16[6,12]{1,0}
-    ; CHECK-DAG:    bf16[12,6]{1,0}
-    )");
-  } else {
+  if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
     ; CHECK-DAG:  ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
     ; CHECK-DAG:    bf16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
     ; CHECK-DAG:    bf16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG:  ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
+    ; CHECK-DAG:    bf16[6,12]{1,0}
+    ; CHECK-DAG:    bf16[12,6]{1,0}
+    )");
   }
 }
 
@@ -3002,18 +3001,18 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
-  if (!IsCuda()){
-    MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6]) -> bf16[6,6] {
-    ; CHECK-DAG:     bf16[6,12]{1,0}
-    ; CHECK-DAG:     bf16[12,6]{1,0}
-    )");
-  } else {
+  if (IsCuda()){
     MatchOptimizedHlo(hlo_text, R"(
     ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6]) -> bf16[6,6] {
     ; CHECK-DAG:     bf16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
     ; CHECK-DAG:     bf16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6]) -> bf16[6,6] {
+    ; CHECK-DAG:     bf16[6,12]{1,0}
+    ; CHECK-DAG:     bf16[12,6]{1,0}
+    )");
   }
 }
 
@@ -3073,18 +3072,18 @@ ENTRY test {
 
 )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-  if (!IsCuda()) {
-    MatchOptimizedHlo(hlo_text, R"(
-    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
-    ; CHECK-DAG:     bf16[6,12]{1,0}
-    ; CHECK-DAG:     bf16[12,6]{1,0}
-    )");
-  } else {
+  if (IsCuda()) {
     MatchOptimizedHlo(hlo_text, R"(
     ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
     ; CHECK-DAG:     bf16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
     ; CHECK-DAG:     bf16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
+    ; CHECK-DAG:     bf16[6,12]{1,0}
+    ; CHECK-DAG:     bf16[12,6]{1,0}
+    )");
   }
 }
 
