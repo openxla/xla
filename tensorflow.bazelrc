@@ -310,6 +310,7 @@ common:sycl_hermetic --config=sycl
 common:sycl_hermetic --repo_env=SYCL_BUILD_HERMETIC=1
 common:sycl_hermetic --repo_env=ONEAPI_VERSION=2025.1
 common:sycl_hermetic --repo_env=OS=ubuntu_24.10
+common:sycl_hermetic --copt=-Wno-implicit-float-size-conversion
 
 # Options to disable default on features
 common:nonccl --define=no_nccl_support=true

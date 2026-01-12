@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_DUMP_H_
 #define XLA_SERVICE_DUMP_H_
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -25,6 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/Operation.h"
+#include "riegeli/bytes/writer.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/tsl/platform/env.h"
@@ -232,6 +234,24 @@ std::optional<std::string> DumpNonDefaultDebugOptions(
 // are received from DefaultDebugOptionsIgnoringFlags().
 // TODO: move this to xla/debug_options_flags.cc
 std::string GetNonDefaultDebugOptions(const DebugOptions& debug_options);
+
+// Creates a `riegeli::Writer` that will write data to a dump file. The file
+// path is determined by the `debug_options` and `filename`.
+//
+// Using a `riegeli::Writer` can be used to avoid intermediate copies when
+// dumping data.
+absl::StatusOr<std::unique_ptr<riegeli::Writer>> CreateRiegeliDumpWriter(
+    const DebugOptions& debug_options, absl::string_view filename);
+
+// Creates a `riegeli::Writer` that will write data to a dump file. The file
+// path is determined by the `debug_options`, `module`, and `filename`.
+//
+// Using a `riegeli::Writer` can be used to avoid intermediate copies when
+// dumping data.
+absl::StatusOr<std::unique_ptr<riegeli::Writer>>
+CreatePerModuleRiegeliDumpWriter(const HloModule& module,
+                                 const DebugOptions& debug_options,
+                                 absl::string_view filename);
 
 }  // namespace xla
 
