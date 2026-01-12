@@ -66,6 +66,8 @@ toc:
   # This is the default tab for the Debugging section.
   - title: Dump HLO Computations
     path: /xla/hlo_dumps
+  - Debug OOM errors with XProf
+    path: xla/oom_debugging
 - title: Contributing
   # These should be in alphabetical order unless otherwise noted.
   section:
