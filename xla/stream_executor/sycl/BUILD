@@ -268,6 +268,8 @@ cc_library(
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:fingerprint",
         "@xla//xla/stream_executor:event",
+        "@xla//xla/stream_executor:generic_memory_allocation",
+        "@xla//xla/stream_executor:generic_memory_allocator",
         "@xla//xla/stream_executor:platform",
         "@xla//xla/stream_executor:plugin_registry",
         "@xla//xla/stream_executor:stream_executor_h",
