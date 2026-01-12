@@ -16,10 +16,10 @@ limitations under the License.
 #include "xla/tests/collective_ops_ffi_kernels.h"
 
 #include "absl/base/casts.h"
+#include "third_party/nccl/nccl.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
 #include "xla/stream_executor/kernel_spec.h"
-#include "third_party/nccl/nccl.h"
 
 #if NCCL_VERSION_CODE >= 22800
 // Device initiated collective operations were added in NCCL 2.28.0.
@@ -39,6 +39,10 @@ bool SupportsCollectiveKernels() {
 template <typename T>
 static __global__ void InPlaceAllReduce(ncclDevComm dev_comm, ncclWindow_t win,
                                         size_t offset, size_t count) {
+  ncclLsaBarrierSession<ncclCoopCta> bar(ncclCoopCta(), dev_comm,
+                                         ncclTeamTagLsa(), blockIdx.x);
+  bar.sync(ncclCoopCta(), cuda::memory_order_relaxed);
+
   const int rank = dev_comm.lsaRank, nRanks = dev_comm.lsaSize;
   const int globalTid = threadIdx.x + blockDim.x * (rank + blockIdx.x * nRanks);
   const int globalNthreads = blockDim.x * gridDim.x * nRanks;
@@ -54,6 +58,8 @@ static __global__ void InPlaceAllReduce(ncclDevComm dev_comm, ncclWindow_t win,
       outputPtr[o] = v;
     }
   }
+
+  bar.sync(ncclCoopCta(), cuda::memory_order_release);
 }
 #else
 template <typename T>

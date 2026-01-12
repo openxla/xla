@@ -163,9 +163,6 @@ TEST(CollectiveOpsFfiKernelsTest, CollectiveKernelLaunch) {
   ASSERT_OK(kernel1.Launch(thread_dims, block_dims, stream1.get(),
                            dev_comm1.get(), symm1.get(), offset, num_elements));
 
-  ASSERT_OK(stream0->BlockHostUntilDone());
-  ASSERT_OK(stream1->BlockHostUntilDone());
-
   // Copy data back to host and check it was all-reduced
   std::vector<int32_t> data0(num_elements, 0);
   std::vector<int32_t> data1(num_elements, 0);

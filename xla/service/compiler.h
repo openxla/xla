@@ -285,12 +285,8 @@ class Compiler {
   static absl::StatusOr<std::unique_ptr<Compiler>> GetForPlatform(
       se::Platform::Id platform_id);
 
-  // Only here because we can't make cross cutting changes across TF and XLA.
-  // TODO: b/465773559 - Remove this after we update the TF caller.
-  [[deprecated("Use the overload that takes a platform ID instead.")]]
-  inline static absl::StatusOr<std::unique_ptr<Compiler>> GetForPlatform(
-      const se::Platform* platform) {
-    return GetForPlatform(platform->id());
+  static bool ExistsForPlatform(const se::Platform* platform) {
+    return GetPlatformCompilerFactories()->contains(platform->id());
   }
 
   // Returns a function that computes the size in bytes of the logical

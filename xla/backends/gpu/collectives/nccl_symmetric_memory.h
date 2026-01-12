@@ -17,9 +17,9 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_COLLECTIVES_NCCL_SYMMETRIC_MEMORY_H_
 
 #include "absl/status/statusor.h"
+#include "third_party/nccl/nccl.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/stream_executor/device_address.h"
-#include "third_party/nccl/nccl.h"
 
 namespace xla::gpu {
 
@@ -36,7 +36,7 @@ class NcclSymmetricMemory final : public SymmetricMemory {
 
   std::string ToString() const final;
 
-  void* PackKernelArg() const final;
+  PackedKernelArg PackKernelArg() const final;
 
  private:
   NcclSymmetricMemory(ncclComm_t comm, ncclWindow_t win,

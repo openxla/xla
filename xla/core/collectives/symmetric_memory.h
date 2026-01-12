@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_CORE_COLLECTIVES_SYMMETRIC_MEMORY_H_
 #define XLA_CORE_COLLECTIVES_SYMMETRIC_MEMORY_H_
 
+#include <string>
+
 #include "absl/strings/str_format.h"
 #include "xla/stream_executor/kernel_args.h"
 

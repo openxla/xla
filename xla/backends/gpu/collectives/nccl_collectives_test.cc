@@ -15,17 +15,23 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/nccl_collectives.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include <memory>
+#include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "absl/log/check.h"
+#include "absl/status/statusor.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/core/collectives/clique_id.h"
+#include "xla/core/collectives/collectives.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
+#include "xla/runtime/device_id.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_allocator.h"
 #include "xla/stream_executor/memory_space.h"
@@ -34,6 +40,8 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/executor.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 
 namespace xla::gpu {
@@ -145,7 +153,7 @@ TEST(NcclCollectivesTest, CreateDeviceComm) {
   }
 
   GpuDeviceCommunicator::Requirements reqs;
-  reqs.lsa_barrier_count = 16;
+  reqs.lsa_barrier_count = 8;
 
   // Because creating device comms is a collective operation, we must call
   // it from a thead pool to avoid deadlocks.

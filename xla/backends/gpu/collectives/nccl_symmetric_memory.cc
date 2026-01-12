@@ -22,9 +22,9 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "third_party/nccl/nccl.h"
 #include "xla/backends/gpu/collectives/nccl_errors.h"
 #include "xla/stream_executor/device_address.h"
-#include "third_party/nccl/nccl.h"
 
 namespace xla::gpu {
 
@@ -57,6 +57,9 @@ std::string NcclSymmetricMemory::ToString() const {
       addr_.opaque(), addr_.size());
 }
 
-void* NcclSymmetricMemory::PackKernelArg() const { return win_; }
+NcclSymmetricMemory::PackedKernelArg NcclSymmetricMemory::PackKernelArg()
+    const {
+  return win_;
+}
 
 }  // namespace xla::gpu

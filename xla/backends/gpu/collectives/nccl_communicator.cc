@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/collectives/nccl_errors.h"
@@ -42,6 +43,7 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
+#include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/device_address.h"
@@ -54,7 +56,14 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
-#include "third_party/gpus/cuda/include/cuda.h"
+
+// Include NCCL after XLA headers.
+#include "third_party/nccl/nccl.h"
+
+#if NCCL_VERSION_CODE >= 22800
+// Device initiated collective operations were added in NCCL 2.28.0.
+#include "third_party/nccl/nccl_device.h"
+#endif  // NCCL_VERSION_CODE >= 22800
 
 // Include NCCL after XLA headers.
 #include "third_party/nccl/nccl.h"
@@ -114,14 +123,15 @@ static absl::StatusOr<ncclDataType_t> ToNcclDataType(PrimitiveType dtype,
       return ncclFloat64;
     case S16:
     case U16:
-      // For reductions we expect 16 bit integer types to be promoted to 32-bit.
+      // For reductions we expect 16 bit integer types to be promoted to
+      // 32-bit.
       if (is_reduction_op) {
         return absl::InvalidArgumentError(
             absl::StrFormat("Unsupported data type for reduction operation: %s",
                             primitive_util::LowercasePrimitiveTypeName(dtype)));
       }
-      // For collectives that just move data around, we can use ncclFloat16 for
-      // 16-bit integer data types.
+      // For collectives that just move data around, we can use ncclFloat16
+      // for 16-bit integer data types.
       return ncclFloat16;
     case BF16:
       return ncclBfloat16;
@@ -192,7 +202,8 @@ class NcclCommunicator::NcclRegisteredBufferHandle
 #endif  // NCCL_VERSION_CODE >= 21901
     } else {
       VLOG(3) << absl::StreamFormat(
-          "[%d] Deregister symmetric buffer for NCCL communicator; handle=%p; "
+          "[%d] Deregister symmetric buffer for NCCL communicator; "
+          "handle=%p; "
           "comm=%p",
           device_ordinal_, handle_, comm_.comm_);
 #if (NCCL_VERSION_CODE >= 22700)
@@ -238,7 +249,7 @@ absl::StatusOr<std::unique_ptr<GpuDeviceCommunicator>>
 NcclCommunicator::CreateDeviceComm(
     const GpuDeviceCommunicator::Requirements& requirements) {
 #if NCCL_VERSION_CODE >= 22800
-  return NcclDeviceComm::CreateFrom(*this, requirements);
+  return NcclDeviceCommunicator::CreateFrom(*this, requirements);
 #else
   return Unimplemented(
       "NCCL version %d does not support collective communication",
@@ -260,6 +271,7 @@ NcclCommunicator::CreateSymmetricMemory(se::DeviceAddressBase addr) {
 //==-----------------------------------------------------------------------===//
 
 absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
+    se::StreamExecutor* stream_executor,
     absl::AnyInvocable<absl::StatusOr<ncclComm_t>()> make_comm, bool is_async,
     std::atomic_bool* cancel, tsl::Env& env) {
   auto f = [cancel, &make_comm]() -> absl::StatusOr<ncclComm_t> {
@@ -277,7 +289,8 @@ absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
     // If this NcclCommunicator is synchronous, construct ncclComm_t in the
     // calling thread.
     TF_ASSIGN_OR_RETURN(ncclComm_t comm, f());
-    return absl::WrapUnique(new NcclCommunicator(comm, nullptr));
+    return absl::WrapUnique(
+        new NcclCommunicator(stream_executor, comm, nullptr));
   }
 
   // If this NcclCommunicator is asynchronous, then all operations on the
@@ -286,7 +299,8 @@ absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
   auto executor = std::make_unique<SingleThreadedExecutor>(env);
   TF_ASSIGN_OR_RETURN(ncclComm_t comm,
                       MakeFutureOn<ncclComm_t>(*executor, f).Await());
-  return absl::WrapUnique(new NcclCommunicator(comm, std::move(executor)));
+  return absl::WrapUnique(
+      new NcclCommunicator(stream_executor, comm, std::move(executor)));
 }
 
 NcclCommunicator::~NcclCommunicator() {
@@ -301,8 +315,8 @@ NcclCommunicator::~NcclCommunicator() {
       return absl::OkStatus();
     }
 
-    // Note that we intentionally don't call PollUntilDone. Once comm_ has been
-    // destroyed, we can no longer safely touch it.
+    // Note that we intentionally don't call PollUntilDone. Once comm_ has
+    // been destroyed, we can no longer safely touch it.
     VLOG(1) << "Destroy " << *this;
     return XLA_NCCL_STATUS(ncclCommDestroy(comm_));
   };
@@ -681,8 +695,8 @@ absl::Status NcclCommunicator::LaunchAllGather(
   return absl::OkStatus();
 }
 
-// If all buffers are contiguous returns a device address range that covers all
-// of them, otherwise returns an empty optional.
+// If all buffers are contiguous returns a device address range that covers
+// all of them, otherwise returns an empty optional.
 static std::optional<se::DeviceAddressBase> IsContinguous(
     absl::Span<const se::DeviceAddressBase> buffers) {
   if (buffers.empty()) {
@@ -794,7 +808,8 @@ absl::Status NcclCommunicator::LaunchCollectivePermute(
 
   VLOG(3) << absl::StreamFormat(
       "[%d] Launch NCCL CollectivePermute operation; send_buffer=%p; "
-      "recv_buffer=%p; dtype=%s; source_rank=%s; target_ranks=[%s]; count=%d; "
+      "recv_buffer=%p; dtype=%s; source_rank=%s; target_ranks=[%s]; "
+      "count=%d; "
       "comm=%p; stream=%p",
       stream->parent()->device_ordinal(), send_buffer.opaque(),
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
@@ -882,8 +897,8 @@ absl::Status NcclCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
 }
 
 std::string NcclCommunicator::ToString() const {
-  // comm_ should not be "touched" outside of executor_, but we are printing the
-  // pointer itself and not touching the value, so this is safe.
+  // comm_ should not be "touched" outside of executor_, but we are printing
+  // the pointer itself and not touching the value, so this is safe.
   return absl::StrFormat("NcclCommunicator(ncclComm_t=%p)", comm_);
 }
 
@@ -913,22 +928,32 @@ Future<T> NcclCommunicator::Execute(
 
 #if NCCL_VERSION_CODE >= 22800
 
-NcclDeviceComm::NcclDeviceComm(ncclDevComm dev_comm) : dev_comm_(dev_comm) {}
+NcclDeviceCommunicator::NcclDeviceCommunicator(const NcclCommunicator* comm,
+                                               ncclDevComm dev_comm)
+    : comm_(comm), dev_comm_(dev_comm) {}
 
-NcclDeviceComm::~NcclDeviceComm() {
+NcclDeviceCommunicator::~NcclDeviceCommunicator() {
   VLOG(3) << absl::StrFormat("Destroy NCCL device comm %s constructed for %s",
                              this->ToString(), comm_->ToString());
+
+  DCHECK(comm_ && comm_->stream_executor()) << "StreamExecutor is unavailable";
+  auto activation = comm_->stream_executor()->Activate();
+
   auto status = XLA_NCCL_STATUS(ncclDevCommDestroy(comm_->comm(), &dev_comm_));
   if (!status.ok()) {
     LOG(ERROR) << "Failed to destroy device comm: " << status.message();
   }
 }
 
-absl::StatusOr<std::unique_ptr<NcclDeviceComm>> NcclDeviceComm::CreateFrom(
-    const NcclCommunicator& comm, const Requirements& requirements) {
+absl::StatusOr<std::unique_ptr<NcclDeviceCommunicator>>
+NcclDeviceCommunicator::CreateFrom(const NcclCommunicator& comm,
+                                   const Requirements& requirements) {
   VLOG(3) << absl::StrFormat(
       "Create NCCL device comm from %s: lsa_barrier_count=%d", comm.ToString(),
       requirements.lsa_barrier_count);
+
+  DCHECK(comm.stream_executor()) << "StreamExecutor is unavailable";
+  auto activation = comm.stream_executor()->Activate();
 
   ncclDevCommRequirements reqs{};
   memset(&reqs, 0, sizeof(reqs));
@@ -939,22 +964,22 @@ absl::StatusOr<std::unique_ptr<NcclDeviceComm>> NcclDeviceComm::CreateFrom(
   reqs.lsaBarrierCount = requirements.lsa_barrier_count;
 
   ncclDevComm dev_comm{};
-  memset(&dev_comm, 0, sizeof(ncclDevComm));
   TF_RETURN_IF_ERROR(
       XLA_NCCL_STATUS(ncclDevCommCreate(comm.comm(), &reqs, &dev_comm)));
 
-  return absl::WrapUnique(new NcclDeviceComm(dev_comm));
+  return absl::WrapUnique(new NcclDeviceCommunicator(&comm, dev_comm));
 }
 
-PlatformCommunicatorHandle NcclDeviceComm::platform_comm() const {
+PlatformCommunicatorHandle NcclDeviceCommunicator::platform_comm() const {
   return {const_cast<ncclDevComm*>(&dev_comm_)};
 }
 
-std::string NcclDeviceComm::ToString() const {
-  return absl::StrFormat("NcclDeviceComm(ncclDevComm*=%p)", &dev_comm_);
+std::string NcclDeviceCommunicator::ToString() const {
+  return absl::StrFormat("NcclDeviceCommunicator(ncclDevComm*=%p)", &dev_comm_);
 }
 
-NcclDeviceComm::PackedKernelArg NcclDeviceComm::PackKernelArg() const {
+NcclDeviceCommunicator::PackedKernelArg NcclDeviceCommunicator::PackKernelArg()
+    const {
   PackedKernelArg packed;
   static_assert(sizeof(ncclDevComm) <= sizeof(PackedKernelArg));
   std::memcpy(packed.data(), &dev_comm_, sizeof(ncclDevComm));

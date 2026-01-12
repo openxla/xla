@@ -135,6 +135,19 @@ static absl::StatusOr<ncclUniqueId> AsNcclUniqueId(const CliqueId& clique_id) {
   return id;
 }
 
+// Collect stream executors from all Device ranks. Returns an error if the
+// device is not a `GpuCollectives` device.
+static absl::StatusOr<std::vector<se::StreamExecutor*>> GetStreamExecutors(
+    absl::Span<const NcclCollectives::DeviceRank> ranks) {
+  std::vector<se::StreamExecutor*> stream_executors(ranks.size());
+  for (size_t i = 0; i < ranks.size(); ++i) {
+    auto* device = tsl::down_cast<GpuCollectives::Device*>(ranks[i].device);
+    TF_RET_CHECK(device) << "Device must be GpuCollectives::Device";
+    stream_executors[i] = device->stream_executor();
+  }
+  return stream_executors;
+}
+
 absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
 NcclCollectives::CreateCommunicatorsWithCancel(
     const CliqueKey& clique_key, const std::optional<CliqueIds>& clique_ids,
@@ -163,18 +176,18 @@ NcclCollectives::CreateCommunicatorsWithCancel(
         "asynchronous execution.");
   }
 
+  TF_ASSIGN_OR_RETURN(auto stream_executors, GetStreamExecutors(ranks));
+
   // make_comm returns a new ncclComm_t.
   auto make_comm = [&](int i) -> absl::StatusOr<ncclComm_t> {
     VLOG(1) << "Initialize NCCL communicator for rank #" << ranks[i].rank
             << " of " << clique_key.num_devices()
             << "; fingerprint(id)=" << clique_ids->fingerprint()
             << "; size(id)=" << clique_ids->data().size();
-    auto* device = tsl::down_cast<GpuCollectives::Device*>(ranks[i].device);
-    TF_RET_CHECK(device != nullptr);
-    auto activate_context = device->stream_executor()->Activate();
+    auto activate_context = stream_executors[i]->Activate();
 
     TF_ASSIGN_OR_RETURN(ncclConfig_t comm_config,
-                        AsNcclConfig(gpu_config, device->stream_executor()));
+                        AsNcclConfig(gpu_config, stream_executors[i]));
 
     TF_ASSIGN_OR_RETURN(auto nccl_unique_id, AsNcclUniqueId(clique_ids->at(0)));
     ncclComm_t comm;
@@ -194,7 +207,8 @@ NcclCollectives::CreateCommunicatorsWithCancel(
     for (size_t i = 0; i < ranks.size(); ++i) {
       pool.Schedule([&, i]() {
         absl::StatusOr<std::unique_ptr<NcclCommunicator>> comm =
-            NcclCommunicator::Create(std::bind(make_comm, i),
+            NcclCommunicator::Create(stream_executors[i],
+                                     std::bind(make_comm, i),
                                      gpu_config.async_execution, cancel);
         if (!comm.ok()) {
           absl::call_once(once, [&] { status = comm.status(); });
@@ -227,15 +241,14 @@ NcclCollectives::SplitCommunicatorsWithCancel(
                         comms.size(), keys.size()));
   }
 
+  TF_ASSIGN_OR_RETURN(auto stream_executors, GetStreamExecutors(ranks));
+
   const auto& gpu_config =
       tsl::down_cast<const GpuCollectives::Config&>(config);
 
   auto make_comm = [&](int i) -> absl::StatusOr<ncclComm_t> {
-    auto* device = tsl::down_cast<GpuCollectives::Device*>(ranks[i].device);
-    TF_RET_CHECK(device != nullptr);
-
     TF_ASSIGN_OR_RETURN(ncclConfig_t comm_config,
-                        AsNcclConfig(gpu_config, device->stream_executor()));
+                        AsNcclConfig(gpu_config, stream_executors[i]));
 
     VLOG(1) << "Split NCCL communicator " << comms[i] << " with color " << color
             << " and key " << keys[i];
@@ -254,7 +267,8 @@ NcclCollectives::SplitCommunicatorsWithCancel(
     for (size_t i = 0; i < comms.size(); ++i) {
       pool.Schedule([&, i]() {
         absl::StatusOr<std::unique_ptr<NcclCommunicator>> comm =
-            NcclCommunicator::Create(std::bind(make_comm, i),
+            NcclCommunicator::Create(stream_executors[i],
+                                     std::bind(make_comm, i),
                                      gpu_config.async_execution, cancel);
         if (!comm.ok()) {
           absl::call_once(once, [&] { status = comm.status(); });
