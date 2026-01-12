@@ -42,15 +42,22 @@ suggesting, or modifying code within the
 
 4.  **Testing**:
     *   Write unit tests using `EXPECT_EQ`, `EXPECT_TRUE`, etc.
-    *   Use `HloTestBase` or `HloRunner` for compiler pass tests locally where possible.
+    *   Use `HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>` or
+        `HloHardwareIndependentTestBase` for compiler pass tests locally where
+        possible.
     *   Ensure tests are deterministic and do not flake.
 
 5.  **BUILD targets**:
     * When defining BUILD targets prefer these XLA specific rules:
-        *   Instead of `proto_library` use `tf_proto_library`. Theres no need
+        *   Instead of `proto_library` use `tf_proto_library`. There is no need
             to define language specific targets with `tf_proto_library`.
         *   Instead of `cc_test` use `xla_cc_test`.
 
 6.  **Explicit Typing**:
     *   **Avoid `auto`** in public headers or complex logic chains.
-    *   Prefer explicit types for readability, especially for common types.
+
+7.  **Compiler Phases & Invariants**:
+    *   **Phase Ordering**: Understand where your pass or change sits in the pipeline (e.g., Optimizations, Layout Assignment, Fusion).
+    *   **Invariants**: Respect the invariants of the current phase.
+        *   *Example*: Do not generate `kCustomCall` instructions before the relevant expansion pass if they are not supported by the HLO verifier at that stage.
+        *   *Example*: Do not rely on layout information before Layout Assignment.
