@@ -569,6 +569,8 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Transforms",
+        "@riegeli//riegeli/bytes:cfile_writer",
+        "@riegeli//riegeli/bytes:writer",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
@@ -586,9 +588,12 @@ xla_cc_test(
     stamp = 1,
     deps = [
         ":buffer_assignment",
+        ":buffer_value",
         ":dump",
         ":hlo_module_config",
+        ":logical_buffer",
         "//xla:debug_options_flags",
+        "//xla:shape_util",
         "//xla:xla_proto_cc",
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_ordering",
@@ -608,7 +613,6 @@ xla_cc_test(
         "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
