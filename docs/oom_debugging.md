@@ -1,6 +1,6 @@
 # Debug OOM errors with XProf
 
-Out of memory (OOM) errors occur when your accelerator memory capacity is exhausted. This can be High Bandwidth Memory (HBM) in GPUs, and HBM, Vector Memory (VMEM), etc. in TPUs.
+Out Of Memory (OOM) errors occur when your accelerator memory capacity is exhausted. This can be High Bandwidth Memory (HBM) in GPUs, and HBM, Vector Memory (VMEM), etc. in TPUs.
 
 This page describes how to use **XProf's Memory Viewer tool** to visualize your program's memory usage, identify peak usage instances, and debug OOM errors. This involves the following steps:
 
