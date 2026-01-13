@@ -4233,6 +4233,7 @@ xla_test(
         "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:shape_util",
         "//xla:types",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:test",
