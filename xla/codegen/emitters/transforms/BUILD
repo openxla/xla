@@ -138,6 +138,7 @@ cc_library(
         "@llvm-project//mlir:MathToLLVM",
         "@llvm-project//mlir:MemRefToLLVM",
         "@llvm-project//mlir:NVVMDialect",
+        "@llvm-project//mlir:ROCDLDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFToControlFlow",
         "@llvm-project//mlir:Support",

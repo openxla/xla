@@ -1,5 +1,5 @@
 // RUN: emitters_opt %s --allow-unregistered-dialect -split-input-file \
-// RUN:   -xla-lower-to-llvm="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx90a:sramecc+:xnack\"}' target_type=gpu" \
+// RUN:   -xla-lower-to-llvm-gpu="gpu_device_info='rocm_compute_capability {gcn_arch_name: \"gfx90a:sramecc+:xnack\"}'" \
 // RUN:   | FileCheck %s --check-prefix=CHECK-GFX90A
 
 module {

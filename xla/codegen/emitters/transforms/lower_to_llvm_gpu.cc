@@ -40,6 +40,7 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // IWYU pragma: keep
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"  // IWYU pragma: keep
+#include "mlir/Dialect/LLVMIR/ROCDLDialect.h"  // IWYU pragma: keep
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Location.h"
