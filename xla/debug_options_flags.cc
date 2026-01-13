@@ -254,7 +254,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   // Despite the name, fast min/max on GPUs does not seem to be any faster, and
   // adds very counter-intuitive "NaN-swallowing" behavior.
   opts.set_xla_gpu_enable_fast_min_max(false);
-  opts.set_xla_gpu_strict_conv_algorithm_picker(true);
 
   opts.set_xla_allow_excess_precision(true);
   opts.set_xla_force_host_platform_device_count(1);
@@ -475,13 +474,19 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_use_raft_select_k(false);
 
   opts.add_xla_gpu_experimental_autotune_backends(
-      DebugOptions::AUTOTUNE_BACKEND_CUDNN);
-  opts.add_xla_gpu_experimental_autotune_backends(
       DebugOptions::AUTOTUNE_BACKEND_TRITON);
   opts.add_xla_gpu_experimental_autotune_backends(
       DebugOptions::AUTOTUNE_BACKEND_CUBLAS);
   opts.add_xla_gpu_experimental_autotune_backends(
       DebugOptions::AUTOTUNE_BACKEND_CUBLASLT);
+  opts.add_xla_gpu_experimental_autotune_backends(
+      DebugOptions::AUTOTUNE_BACKEND_CUDNN);
+  opts.add_xla_gpu_experimental_autotune_backends(
+      DebugOptions::AUTOTUNE_BACKEND_ROCBLAS);
+  opts.add_xla_gpu_experimental_autotune_backends(
+      DebugOptions::AUTOTUNE_BACKEND_HIPBLASLT);
+  opts.add_xla_gpu_experimental_autotune_backends(
+      DebugOptions::AUTOTUNE_BACKEND_MIOPEN);
 
   opts.set_xla_cpu_collective_call_warn_stuck_seconds(20);
   opts.set_xla_cpu_collective_call_terminate_timeout_seconds(40);
@@ -1264,12 +1269,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_crash_on_verification_failures(),
       "Crashes the program on extra verification failures, e.g. cuDNN cross "
       "checking failures"));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_strict_conv_algorithm_picker",
-      bool_setter_for(&DebugOptions::set_xla_gpu_strict_conv_algorithm_picker),
-      debug_options->xla_gpu_strict_conv_algorithm_picker(),
-      "Upgrades warnings to failures when all algorithms fail conv "
-      "autotuning."));
+  flag_list->push_back(tsl::Flag("xla_gpu_strict_conv_algorithm_picker",
+                                 noop_flag_setter<bool>, false,
+                                 "[Deprecated, do not use]."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_autotune_level",
       int32_setter_for(&DebugOptions::set_xla_gpu_autotune_level),
