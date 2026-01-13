@@ -28,13 +28,6 @@ limitations under the License.
 
 namespace xla::gpu {
 
-bool SupportsCollectiveKernels() {
-#if NCCL_VERSION_CODE >= 22800
-  return true;  // NCCL_VERSION_CODE >= 22800
-#endif
-  return false;
-}
-
 #if NCCL_VERSION_CODE >= 22800
 template <typename T>
 static __global__ void InPlaceAllReduce(ncclDevComm dev_comm, ncclWindow_t win,
@@ -66,8 +59,8 @@ template <typename T>
 static __global__ void InPlaceAllReduce(void* dev_comm, ncclWindow_t win,
                                         size_t offset, size_t count) {
   // If device-initiated collectives are not supported, in-place all reduce
-  // becomes a no-op kernel. It's up to the caller to check that XLA was
-  // compiled with correct version of NCCL via `SupportsCollectiveKernels`.
+  // becomes a no-op kernel. It's up to the caller to check that GPU
+  // communicator supports device-initiated collective operations.
 }
 #endif
 

@@ -32,10 +32,6 @@ class GpuDeviceCommunicator;
 
 namespace xla::gpu {
 
-// Returns true if XLA was compiled with NCCL version that supports collective
-// kernels.
-bool SupportsCollectiveKernels();
-
 // Simple LSA all-reduce kernel from NCCL documentation:
 // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/deviceapi.html#simple-lsa-kernel
 struct CollectiveInPlaceAllReduce {
