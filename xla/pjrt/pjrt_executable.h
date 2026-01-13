@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "google/protobuf/descriptor.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -144,6 +145,9 @@ struct CompileOptions {
   static absl::StatusOr<CompileOptions> FromProto(
       const CompileOptionsProto& proto);
 };
+
+// Returns true if the compilation is an early exit compilation.
+bool IsEarlyExitCompilation(const xla::CompileOptions& compile_options);
 
 struct LoadOptions {
   // Origin of the subslice of the target topology to run computation on.

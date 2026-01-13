@@ -68,7 +68,6 @@ limitations under the License.
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/autotuning/autotuner_pass.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
-#include "xla/service/gpu/autotuning/conv_algorithm_picker.h"
 #include "xla/service/gpu/autotuning/gemm_fusion_autotuner.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
@@ -328,12 +327,13 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
 // enabled.
 bool NVPTXCompiler::RequiresCollectiveScheduleLinearizer(
     const HloModule* module, se::StreamExecutor* stream_exec) {
-  if (stream_exec == nullptr || !GpuConvAlgorithmPicker::IsEnabled(module)) {
+  if (stream_exec == nullptr ||
+      module->config().debug_options().xla_gpu_autotune_level() == 0) {
     return false;
   }
   for (const HloComputation* comp : module->MakeNonfusionComputations()) {
     for (const HloInstruction* inst : comp->instructions()) {
-      if (GpuConvAlgorithmPicker::IsCandidate(inst)) {
+      if (IsCustomCallToDnnConvolution(*inst)) {
         return true;
       }
     }
@@ -374,7 +374,8 @@ absl::Status NVPTXCompiler::AddConvAndGemmAutotuningPasses(
       std::unique_ptr<AutotunerPass> autotuner_pass,
       AutotunerPass::Create(std::move(backends), debug_options, stream_exec,
                             thread_pool, should_autotune, target_config,
-                            options.device_allocator));
+                            options.device_allocator,
+                            /*optimize_scratch_bytes=*/true));
   pipeline->AddPass(std::move(autotuner_pass));
 
   // After autotuning, update GEMM workspace sizes to match the exact

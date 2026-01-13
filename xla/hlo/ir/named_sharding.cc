@@ -18,15 +18,89 @@ limitations under the License.
 #include <cstdint>
 #include <map>
 #include <numeric>
+#include <optional>
+#include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/log/check.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_op_metadata.h"
 #include "xla/hlo/ir/mesh_and_axis.h"
 
 namespace xla {
+
+void NamedSharding::DimensionSharding::Append(
+    const NamedSharding::DimensionSharding& other, const Mesh& mesh) {
+  if (other.axes_.empty()) {
+    return;
+  }
+  if (axes_.empty()) {
+    axes_ = other.axes_;
+    return;
+  }
+
+  // Merge last element of `axes_` with first element of `other.axes_`
+  if (!axes_.back().Merge(other.axes_.front(), mesh)) {
+    axes_.push_back(other.axes_.front());
+  }
+
+  axes_.insert(axes_.end(), other.axes_.begin() + 1, other.axes_.end());
+}
+
+std::optional<NamedSharding::DimensionSharding>
+NamedSharding::DimensionSharding::Slice(const Mesh& mesh, int64_t slice_size) {
+  if (slice_size == 1) {
+    return DimensionSharding({}, is_closed_);
+  }
+  if (getShardedSize(mesh) % slice_size != 0) {
+    return std::nullopt;
+  }
+
+  int64_t axis_index = 0;
+  std::vector<AxisRef> sliced_axes, remaining_axes;
+
+  for (; axis_index < axes().size(); ++axis_index) {
+    const AxisRef& curr_axis = axes()[axis_index];
+    int64_t curr_axis_size = curr_axis.size(mesh);
+
+    if (slice_size == curr_axis_size) {
+      sliced_axes =
+          std::vector<AxisRef>(axes().begin(), axes().begin() + axis_index + 1);
+      slice_size = 1;
+      break;
+    }
+    if (slice_size % curr_axis_size == 0) {
+      slice_size /= curr_axis_size;
+    } else if (curr_axis_size % slice_size == 0) {
+      sliced_axes =
+          std::vector<AxisRef>(axes().begin(), axes().begin() + axis_index);
+      int64_t sliced_axis_pre_size =
+          curr_axis.sub_axis_info() ? curr_axis.sub_axis_info()->pre_size : 1;
+      sliced_axes.push_back(AxisRef(curr_axis.mesh_axis_index(),
+                                    {sliced_axis_pre_size, slice_size}));
+      remaining_axes.push_back(AxisRef(
+          curr_axis.mesh_axis_index(),
+          {sliced_axis_pre_size * slice_size, curr_axis_size / slice_size}));
+      slice_size = 1;
+      break;
+    } else {
+      return std::nullopt;
+    }
+  }
+
+  if (slice_size != 1) {
+    return std::nullopt;
+  }
+
+  remaining_axes.insert(remaining_axes.end(), axes().begin() + axis_index + 1,
+                        axes().end());
+  axes_ = std::move(remaining_axes);
+  return NamedSharding::DimensionSharding(sliced_axes, is_closed_);
+}
 
 int64_t NamedSharding::DimensionSharding::getShardedSize(
     const Mesh& mesh) const {
@@ -34,6 +108,104 @@ int64_t NamedSharding::DimensionSharding::getShardedSize(
                          [&mesh](int64_t cur, const AxisRef& axis) {
                            return cur * axis.size(mesh);
                          });
+}
+
+std::string NamedSharding::DimensionSharding::ToString(const Mesh* mesh) const {
+  std::string result = "{";
+  absl::StrAppend(
+      &result,
+      absl::StrJoin(axes_, ", ", [mesh](std::string* out, const AxisRef& axis) {
+        absl::StrAppend(out, axis.ToString(mesh));
+      }));
+
+  if (!is_closed_) {
+    if (axes_.empty()) {
+      absl::StrAppend(&result, "?");
+    } else {
+      absl::StrAppend(&result, ", ?");
+    }
+  }
+
+  absl::StrAppend(&result, "}");
+  return result;
+}
+
+std::string NamedSharding::ToString(bool include_metadata) const {
+  std::string result = "{";
+
+  std::string metadata_str;
+  if (include_metadata && !metadata_.empty()) {
+    metadata_str = ", metadata={";
+    absl::StrAppend(
+        &metadata_str,
+        absl::StrJoin(
+            metadata_, ", ", [&](std::string* out, const auto& metadata) {
+              absl::StrAppend(out, "{", OpMetadataToString(metadata), "}");
+            }));
+    absl::StrAppend(&metadata_str, "}");
+  }
+
+  // Special cases.
+  if (IsReplicated() && replicated_axes_.empty()) {
+    absl::StrAppend(&result, "replicated");
+    absl::StrAppend(&result, metadata_str);
+    absl::StrAppend(&result, "}");
+    return result;
+  }
+
+  if (IsMaximal()) {
+    absl::StrAppend(&result, "maximal device=");
+    absl::StrAppend(&result, *mesh_.device_assignment().array().begin());
+    absl::StrAppend(&result, metadata_str);
+    absl::StrAppend(&result, "}");
+    return result;
+  }
+
+  absl::StrAppend(&result, mesh_.ToString());
+
+  // Dimension sharding.
+  absl::StrAppend(&result, ", [");
+  absl::StrAppend(
+      &result,
+      absl::StrJoin(dim_shardings_, ", ",
+                    [&](std::string* out, const DimensionSharding& ds) {
+                      absl::StrAppend(out, ds.ToString(&mesh_));
+                    }));
+  absl::StrAppend(&result, "]");
+
+  if (!replicated_axes_.empty()) {
+    absl::StrAppend(&result, ", replicated={");
+    absl::StrAppend(&result,
+                    absl::StrJoin(replicated_axes_, ", ",
+                                  [&](std::string* out, const AxisRef& axis) {
+                                    absl::StrAppend(out, axis.ToString(&mesh_));
+                                  }));
+    absl::StrAppend(&result, "}");
+  }
+
+  if (!unreduced_axes_.empty()) {
+    absl::StrAppend(&result, ", unreduced={");
+    absl::StrAppend(&result,
+                    absl::StrJoin(unreduced_axes_, ", ",
+                                  [&](std::string* out, const AxisRef& axis) {
+                                    absl::StrAppend(out, axis.ToString(&mesh_));
+                                  }));
+    absl::StrAppend(&result, "}");
+  }
+
+  absl::StrAppend(&result, metadata_str);
+  absl::StrAppend(&result, "}");
+
+  return result;
+}
+
+std::ostream& operator<<(std::ostream& out,
+                         const NamedSharding::DimensionSharding& sharding) {
+  return out << sharding.ToString();
+}
+
+std::ostream& operator<<(std::ostream& out, const NamedSharding& sharding) {
+  return out << sharding.ToString();
 }
 
 namespace test_utils {

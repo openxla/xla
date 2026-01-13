@@ -50,7 +50,7 @@ std::unique_ptr<tsl::protobuf::Message> Compiler::ComputeDefaultBackendConfig(
 }
 
 // Define a default version where metadata is not used.
-absl::StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
+absl::StatusOr<std::vector<std::unique_ptr<CompiledModule>>>
 Compiler::CompileAheadOfTime(
     std::unique_ptr<HloModule> hlo_module, const AotCompilationOptions& options,
     std::unique_ptr<AotCompilationMetadata>* metadata) {
@@ -87,16 +87,16 @@ Compiler::GetPlatformCompilers() {
 }
 
 /* static */ absl::StatusOr<std::unique_ptr<Compiler>> Compiler::GetForPlatform(
-    const se::Platform* platform) {
+    se::Platform::Id platform_id) {
   absl::MutexLock lock(platform_compiler_mutex_);
 
-  auto* factories = GetPlatformCompilerFactories();
-  auto it = factories->find(platform->id());
+  absl::flat_hash_map<se::Platform::Id, Compiler::CompilerFactory>* factories =
+      GetPlatformCompilerFactories();
+  auto it = factories->find(platform_id);
   if (it == factories->end()) {
     return NotFound(
-        "could not find registered compiler for platform %s -- was support for "
-        "that platform linked in?",
-        platform->Name());
+        "could not find registered compiler for the platform -- was support "
+        "for that platform linked in?");
   }
   return it->second();
 }

@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -153,10 +152,11 @@ limitations under the License.
 #include "xla/service/llvm_ir/buffer_assignment_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/launch_dim.h"
-#include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -844,9 +844,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitNormThunk(
     TF_ASSIGN_OR_RETURN(dscale_slice, GetAllocationSliceForHlo(instr, {1}));
     TF_ASSIGN_OR_RETURN(dbias_slice, GetAllocationSliceForHlo(instr, {2}));
   }
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice scratch_slice,
-                      GetAllocationSliceForHlo(
-                          instr, {instr->shape().tuple_shapes_size() - 1}));
+  TF_ASSIGN_OR_RETURN(
+      ShapedSlice scratch_slice,
+      GetShapedSliceForHlo(instr, {instr->shape().tuple_shapes_size() - 1}));
 
   GpuNormDescriptor descriptor;
   descriptor.backend_config = backend_config;
@@ -854,6 +854,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitNormThunk(
   descriptor.x_shape = instr->operand(0)->shape();
   descriptor.scale_shape = instr->operand(1)->shape();
   descriptor.y_or_dx_shape = ShapeUtil::GetSubshape(instr->shape(), {0});
+  descriptor.scratch_shape = scratch_slice.shape;
+
   if (backend_config.kind() ==
           xla::gpu::CudnnNormBackendConfig::LAYER_FWD_INFER ||
       backend_config.kind() ==
@@ -880,7 +882,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitNormThunk(
                         std::move(descriptor), x_slice, scale_slice,
                         y_or_dx_slice, bias_slice, expectation_slice,
                         norm_factor_slice, dy_slice, dscale_slice, dbias_slice,
-                        scratch_slice));
+                        scratch_slice.slice));
   return GetThunkSequence(std::move(thunk));
 }
 
@@ -1905,7 +1907,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectiveGroupStartThunk(
   ThunkSequence thunks;
   for (const HloInstruction* nested_instruction :
        instr->async_wrapped_computation()->instructions()) {
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         auto comp_thunks,
         EmitHloInstruction(nested_instruction, /*emit_group_thunks=*/true));
     AppendThunkSequence(thunks, comp_thunks);
@@ -1919,9 +1921,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectiveGroupStartThunk(
     }
   }
   auto thunk = std::make_unique<CollectiveGroupThunk>(
-      instr, Thunk::Kind::kGroupStart, std::move(thunks),
-      stream_kind.value_or(AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
-      ir_emitter_context_->GetNextThunkId());
+      Thunk::ThunkInfo::WithProfileAnnotation(
+          instr, ir_emitter_context_->GetNextThunkId()),
+      Thunk::Kind::kGroupStart, std::move(thunks),
+      stream_kind.value_or(AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
 
   GetCollectivesAsyncEvents().insert({instr, thunk->async_events()});
   return GetThunkSequence(std::move(thunk));
@@ -2194,7 +2197,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCopyStartThunk(
                       GetAllocationSliceForHlo(src, {}));
   const Shape& shape = copy_start_instr->shape();
   CHECK(shape.IsTuple());
-  int host_memory_space = static_cast<int>(stream_executor::MemoryType::kHost);
+  int host_memory_space = static_cast<int>(stream_executor::MemorySpace::kHost);
   TF_ASSIGN_OR_RETURN(bool is_dst_host_memory,
                       ShapeHasHostMemorySpace(shape, 0, host_memory_space));
   TF_ASSIGN_OR_RETURN(bool is_src_host_memory,
@@ -2204,7 +2207,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCopyStartThunk(
         absl::StrFormat("Copy-start %s doesn't have correct host memory space "
                         "color S(%d)",
                         copy_start_instr->ToString(),
-                        static_cast<int>(stream_executor::MemoryType::kHost)));
+                        static_cast<int>(stream_executor::MemorySpace::kHost)));
   }
   const ExecutionStreamAssignment& stream_assignment =
       ir_emitter_context_->execution_stream_assignment();
@@ -2476,6 +2479,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitAsyncDone(
       return EmitCollectiveAsyncDone(Thunk::kCollectiveBroadcastDone, instr);
     case HloOpcode::kCollectivePermute:
       return EmitCollectiveAsyncDone(Thunk::kCollectivePermuteDone, instr);
+    case HloOpcode::kRecv:
+      return EmitCollectiveAsyncDone(Thunk::kRecvDone, instr);
+    case HloOpcode::kSend:
+      return EmitCollectiveAsyncDone(Thunk::kSendDone, instr);
     case HloOpcode::kFusion: {
       auto collective_hero = GetCollectiveHeroForDynamicSliceFusion(
           Cast<HloFusionInstruction>(wrapped));

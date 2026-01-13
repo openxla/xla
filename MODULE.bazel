@@ -4,7 +4,7 @@ module(name = "xla")
 # Bazel module dependencies
 
 # go/keep-sorted start
-bazel_dep(name = "abseil-cpp", version = "20250814.0", repo_name = "com_google_absl")
+bazel_dep(name = "abseil-cpp", version = "20250814.1", repo_name = "com_google_absl")
 bazel_dep(name = "abseil-py", version = "2.1.0", repo_name = "absl_py")
 bazel_dep(name = "bazel_features", version = "1.36.0")
 bazel_dep(name = "bazel_skylib", version = "1.8.1")
@@ -45,9 +45,9 @@ bazel_dep(name = "rules_ml_toolchain")
 # echo "sha256-${HASH}"
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-B4AvIZFqETvnj/IRCJEjm9UYOtCdjEL2+bBOTgv6VQU=",
-    strip_prefix = "rules_ml_toolchain-802e0dbbcc3cd82ac5b0accbff6f95b70106d0d1",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/802e0dbbcc3cd82ac5b0accbff6f95b70106d0d1.tar.gz"],
+    integrity = "sha256-0EtINPmm8jM8JUkwCr5UeLHN46rBg4UyMXOmRrQJpfA=",
+    strip_prefix = "rules_ml_toolchain-7e588e5b21e91bce5c3b9786e177c2579330b9aa",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/7e588e5b21e91bce5c3b9786e177c2579330b9aa.tar.gz"],
 )
 
 # TODO: Upstream the patch?
@@ -66,8 +66,6 @@ single_version_override(
         "//third_party/absl:build_dll.patch",
         "//third_party/absl:endian.patch",
         "//third_party/absl:rules_cc.patch",
-        "//third_party/absl:check_op.patch",
-        "//third_party/absl:check_op_2.patch",
     ],
 )
 
