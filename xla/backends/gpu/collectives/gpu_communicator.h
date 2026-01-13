@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_COLLECTIVES_GPU_COMMUNICATOR_H_
 #define XLA_BACKENDS_GPU_COLLECTIVES_GPU_COMMUNICATOR_H_
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
