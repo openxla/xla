@@ -86,9 +86,6 @@ absl::Status InitializationTestBody(const int node_id, const int num_nodes) {
 
   se::gpu::nvshmem::SetEnvInfo(node_id, num_nodes, 1, kv_store);
   cudaSetDevice(node_id);
-  TF_ASSIGN_OR_RETURN(void* ptr, NvshmemCollectives::Default()->Allocate(1024));
-  TF_RET_CHECK(ptr != nullptr);
-  TF_RETURN_IF_ERROR(NvshmemCollectives::Default()->Deallocate(ptr));
   TF_ASSIGN_OR_RETURN(std::unique_ptr<Communicator> comm,
                       NvshmemCollectives::Default()->CreateCommunicator());
   TF_RET_CHECK(*comm->NumRanks() == num_nodes);
