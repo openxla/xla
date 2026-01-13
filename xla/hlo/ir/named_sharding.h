@@ -137,6 +137,9 @@ class NamedSharding {
     return mesh_.device_assignment().num_elements();
   }
 
+  // TODO: Add contract
+  TileAssignment ToTileAssignment() const;
+
  private:
   friend class HloSharding;
 

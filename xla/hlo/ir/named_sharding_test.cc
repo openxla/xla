@@ -15,10 +15,15 @@ limitations under the License.
 
 #include "xla/hlo/ir/named_sharding.h"
 
+#include <cstdint>
+#include <memory>
 #include <optional>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/algorithm/container.h"
+#include "absl/types/span.h"
+#include "xla/array.h"
 #include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/xla_data.pb.h"
@@ -28,6 +33,13 @@ namespace {
 
 using DimensionSharding = NamedSharding::DimensionSharding;
 using ::testing::ElementsAre;
+
+Array<int64_t> MakeArray(absl::Span<const int64_t> dimensions,
+                         absl::Span<const int64_t> contents) {
+  Array<int64_t> a(dimensions);
+  absl::c_copy(contents, a.begin());
+  return a;
+}
 
 TEST(NamedShardingTest, CanonicalizedDimShardings) {
   Mesh mesh_abcd({2, 4}, {"a", "b"});
@@ -414,6 +426,122 @@ TEST(NamedShardingTest, NumDevices) {
   Mesh empty_mesh;
   NamedSharding empty_sharding(empty_mesh);
   EXPECT_EQ(empty_sharding.num_devices(), 0);
+}
+
+TEST(NamedShardingToTileAssignmentTest, Replicated) {
+  Mesh mesh({2, 4, 3, 8}, {"a", "b", "c", "d"});
+  NamedSharding ns(mesh);
+  EXPECT_EQ(ns.ToTileAssignment(), TileAssignment());
+}
+
+TEST(NamedShardingToTileAssignmentTest, Maximal) {
+  Mesh mesh(5);
+  NamedSharding ns(mesh);
+  EXPECT_EQ(ns.ToTileAssignment(), TileAssignment(5));
+}
+
+TEST(NamedShardingToTileAssignmentTest, SimpleIotaTile) {
+  Mesh mesh({16}, {"a"});
+  NamedSharding ns = test_utils::FromAxisNames(mesh, {{"a"}, {}});
+  EXPECT_EQ(ns.ToTileAssignment(), TileAssignment({16, 1}));
+}
+
+TEST(NamedShardingToTileAssignmentTest, MeshWithIotaReshapeTranspose) {
+  Mesh mesh(TileAssignment({2, 4}, {4, 2}, {1, 0}), {"a", "b"});
+  NamedSharding ns = test_utils::FromAxisNames(mesh, {{"b"}, {"a"}});
+  EXPECT_EQ(ns.ToTileAssignment(), TileAssignment({4, 2}));
+}
+
+TEST(NamedShardingToTileAssignmentTest, ResultantMeshWithIotaReshapeTranspose) {
+  Mesh mesh(TileAssignment({2, 4}, {4, 2}, {1, 0}), {"a", "b"});
+  NamedSharding ns = test_utils::FromAxisNames(mesh, {{"a"}, {"b"}});
+  TileAssignment tile_assignment = ns.ToTileAssignment();
+  EXPECT_TRUE(tile_assignment.iota());
+  EXPECT_EQ(tile_assignment, TileAssignment({2, 4}, {4, 2}, {1, 0}));
+}
+
+TEST(NamedShardingToTileAssignmentTest, MeshWithDeviceList) {
+  Mesh mesh(MakeArray({2, 2, 2}, {0, 2, 4, 6, 1, 3, 5, 7}), {"a", "b", "c"});
+  NamedSharding ns =
+      test_utils::FromAxisNames(mesh, {{"c"}, {"a", "b"}}, {}, {});
+  EXPECT_EQ(ns.ToTileAssignment(),
+            TileAssignment(std::make_shared<const Array<int64_t>>(
+                MakeArray({2, 4}, {0, 4, 1, 5, 2, 6, 3, 7}))));
+}
+
+TEST(NamedShardingToTileAssignmentTest, PartialTile) {
+  Mesh mesh({2, 4, 4}, {"a", "b", "c"});
+  NamedSharding ns = test_utils::FromAxisNames(mesh, {{}, {"a"}},
+                                               /*replicated_axes=*/{"b", "c"});
+  EXPECT_EQ(ns.ToTileAssignment(), TileAssignment({1, 2, 16}));
+}
+
+TEST(NamedShardingToTileAssignmentTest, TransposedIota1) {
+  Mesh mesh({2, 4, 4}, {"a", "b", "c"});
+  NamedSharding ns = test_utils::FromAxisNames(mesh, {{"c"}, {"a", "b"}});
+  EXPECT_EQ(ns.ToTileAssignment(), TileAssignment({4, 8}, {8, 4}, {1, 0}));
+}
+
+TEST(NamedShardingToTileAssignmentTest, TransposedIota2) {
+  Mesh mesh({2, 4, 4}, {"a", "b", "c"});
+  NamedSharding ns = test_utils::FromAxisNames(mesh, {{"b"}, {"a", "c"}});
+  EXPECT_EQ(ns.ToTileAssignment(),
+            TileAssignment({4, 8}, {2, 4, 4}, {1, 0, 2}));
+}
+
+TEST(NamedShardingToTileAssignmentTest, PartialWithTranspose) {
+  Mesh mesh({2, 4, 4}, {"a", "b", "c"});
+  NamedSharding ns = test_utils::FromAxisNames(mesh, {{}, {"a", "c"}},
+                                               /*replicated_axes=*/{"b"});
+  EXPECT_EQ(ns.ToTileAssignment(),
+            TileAssignment({1, 8, 4}, {2, 4, 4}, {0, 2, 1}));
+}
+
+TEST(NamedShardingToTileAssignmentTest, Unreduced) {
+  Mesh mesh({2, 2}, {"a", "b"});
+  NamedSharding ns = test_utils::FromAxisNames(mesh, {{"a"}, {}}, {},
+                                               /*unreduced_axes=*/{"b"});
+  EXPECT_EQ(ns.ToTileAssignment(), TileAssignment({2, 1, 2}));
+}
+
+class NamedShardingToTileAssignmentSplitAxesTest : public ::testing::Test {
+ protected:
+  Mesh mesh_{{16, 4}, {"a", "b"}};
+  AxisRef a12_{0, {1, 2}};
+  AxisRef a24_{0, {2, 4}};
+  AxisRef a82_{0, {8, 2}};
+  AxisRef b_{1};
+};
+
+TEST_F(NamedShardingToTileAssignmentSplitAxesTest, SplitAxes1) {
+  DimensionSharding ds({b_, a12_}, /*is_closed=*/true);
+  NamedSharding ns(mesh_, {ds});
+  EXPECT_EQ(ns.ToTileAssignment(),
+            TileAssignment({8, 8}, {2, 8, 4}, {2, 0, 1}));
+}
+
+TEST_F(NamedShardingToTileAssignmentSplitAxesTest, SplitAxes2) {
+  DimensionSharding ds({b_, a24_}, /*is_closed=*/true);
+  NamedSharding ns(mesh_, {ds});
+  EXPECT_EQ(ns.ToTileAssignment(),
+            TileAssignment({16, 4}, {2, 4, 2, 4}, {3, 1, 0, 2}));
+}
+
+TEST_F(NamedShardingToTileAssignmentSplitAxesTest, SplitAxes3) {
+  DimensionSharding ds_a({a12_, a82_}, /*is_closed=*/true);
+  DimensionSharding ds_b({a24_, b_}, /*is_closed=*/true);
+  NamedSharding ns(mesh_, {ds_a, ds_b});
+  EXPECT_EQ(ns.ToTileAssignment(),
+            TileAssignment({4, 16}, {2, 4, 2, 4}, {0, 2, 1, 3}));
+}
+
+TEST_F(NamedShardingToTileAssignmentSplitAxesTest,
+       ReplicatedUnreducedWithSplitAxes) {
+  DimensionSharding ds_a({b_}, /*is_closed=*/true);
+  NamedSharding ns(mesh_, {ds_a, DimensionSharding()},
+                   /*replicated_axes=*/{a24_}, /*unreduced_axes=*/{a12_});
+  EXPECT_EQ(ns.ToTileAssignment(),
+            TileAssignment({4, 1, 2, 8}, {2, 4, 2, 4}, {3, 0, 1, 2}));
 }
 
 }  // namespace
