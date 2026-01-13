@@ -96,7 +96,7 @@ absl::Status Autotune(HloModule& module, const std::string& cache_dir,
   }
 
   TF_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler,
-                      xla::Compiler::GetForPlatform(platform));
+                      xla::Compiler::GetForPlatform(platform->id()));
   se::StreamExecutor* stream_executor = platform->ExecutorForDevice(0).value();
   DebugOptions debug_options = GetDebugOptionsFromFlags();
   Compiler::GpuTargetConfig target_config(stream_executor);
@@ -109,7 +109,7 @@ absl::Status Autotune(HloModule& module, const std::string& cache_dir,
                            &target_config, mlir_context);
 
   std::unique_ptr<se::DeviceAddressAllocator> allocator =
-      std::make_unique<stream_executor::StreamExecutorMemoryAllocator>(
+      std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
           stream_executor);
   auto profiler =
       GpuProfiler::Create(stream_executor, ProfileOptions(), allocator.get());

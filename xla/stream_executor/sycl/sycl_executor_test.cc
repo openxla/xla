@@ -15,11 +15,10 @@ limitations under the License.
 
 #include "xla/stream_executor/sycl/sycl_executor.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <fstream>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/debug_options_flags.h"
 #include "xla/service/executable.h"
