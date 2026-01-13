@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -156,18 +157,25 @@ class AxisRef {
 
   bool operator!=(const xla::AxisRef& other) const { return !(*this == other); }
 
-  std::string ToString(const Mesh& mesh) const;
+  std::string ToString(const Mesh* mesh = nullptr) const;
 
   AxisRefProto ToProto() const;
 
   static AxisRef FromProto(const AxisRefProto& proto);
 
-  bool CanCoexist(const AxisRef& other) const;
-  bool Overlaps(const AxisRef& other) const;
   bool CanCoexistWithoutOverlap(const AxisRef& other) const;
+
+  // Returns true if this AxisRef can be merged with the `other`, i.e., they are
+  // consecutive sub-axes of same full axis and this sub-axis is major to other.
+  bool CanMerge(const AxisRef& other) const;
+
+  // Returns true if this AxisRef is merged with the `other` and this AxisRef
+  // is updated, otherwise returns false.
+  bool Merge(const AxisRef& other, const Mesh& mesh);
 
   // Validates that the given mesh is compatible for this axis ref.
   absl::Status Validate(const Mesh& mesh) const;
+
   int64_t mesh_axis_index() const { return mesh_axis_index_; }
   std::optional<SubAxis> sub_axis_info() const { return sub_axis_info_; }
 
@@ -176,6 +184,10 @@ class AxisRef {
  private:
   absl::Status ValidateAxisRef();
 };
+
+std::ostream& operator<<(std::ostream& out, const Mesh& mesh);
+
+std::ostream& operator<<(std::ostream& out, const AxisRef& axis);
 
 bool AxesCanCoexistWithoutOverlap(absl::Span<const AxisRef> axes);
 

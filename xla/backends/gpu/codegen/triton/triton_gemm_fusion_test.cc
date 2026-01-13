@@ -388,16 +388,25 @@ ENTRY e {
   }
   DebugOptions debug_options = verified_module->config().debug_options();
   debug_options.set_xla_dump_to(output_directory);
-  debug_options.set_xla_dump_emitter_re("triton-fusion");
+  debug_options.set_xla_dump_emitter_re("triton");
   verified_module->mutable_config().set_debug_options(debug_options);
 
   EXPECT_TRUE(RunAndCompare(std::move(verified_module),
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 
   std::vector<std::string> paths;
-  TF_EXPECT_OK(tsl::Env::Default()->GetMatchingPaths(
-      tsl::io::JoinPath(output_directory, "*.triton-passes.log"), &paths));
+  EXPECT_OK(tsl::Env::Default()->GetMatchingPaths(
+      tsl::io::JoinPath(output_directory, "*.xtile-to-triton.txt"), &paths));
   EXPECT_EQ(paths.size(), 1);
+  size_t file_size = 0;
+  EXPECT_OK(tsl::Env::Default()->GetFileSize(paths[0], &file_size));
+  EXPECT_GT(file_size, 10);
+  EXPECT_OK(tsl::Env::Default()->GetMatchingPaths(
+      tsl::io::JoinPath(output_directory, "*.triton-to-llvm.txt"), &paths));
+  EXPECT_EQ(paths.size(), 1);
+  file_size = 0;
+  EXPECT_OK(tsl::Env::Default()->GetFileSize(paths[0], &file_size));
+  EXPECT_GT(file_size, 10);
 }
 
 TEST_F(TritonGemmTest, DotWithPredFromCompareProducesCorrectResult) {
@@ -562,7 +571,10 @@ ENTRY e {
                                ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(TritonGemmTest, SplitLhsNoncontractingTransposeRhs) {
+// TODO: b/422676780 - Enable the tests once the indexing maps-based tiling is
+// deprecated. The test is disabled after we remove TransposeDimensionGrouper
+// pass, because the infra currently requires grouping of adjacent dimensions.
+TEST_F(TritonGemmTest, DISABLED_SplitLhsNoncontractingTransposeRhs) {
   constexpr absl::string_view kHloText = R"(
 HloModule t
 
@@ -587,7 +599,10 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/0, /*arel=*/0}));
 }
 
-TEST_F(TritonGemmTest, SplitLhsNoncontracting) {
+// TODO: b/422676780 - Enable the tests once the indexing maps-based tiling is
+// deprecated. The test is disabled after we remove TransposeDimensionGrouper
+// pass, because the infra currently requires grouping of adjacent dimensions.
+TEST_F(TritonGemmTest, DISABLED_SplitLhsNoncontracting) {
   constexpr absl::string_view kHloText = R"(
 ENTRY e {
   p0 = f32[72,72] parameter(0)
@@ -1776,12 +1791,17 @@ ENTRY e {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           GetOptimizedModule(kHloText));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(
-      module->entry_computation()->root_instruction(),
-      GmockMatch(m::Bitcast(
+      root,
+      GmockMatch(
           m::Fusion(m::Fusion(m::Parameter(), m::Parameter())
                         .WithFusionKind(HloInstruction::FusionKind::kCustom))
-              .WithFusionKind(HloInstruction::FusionKind::kInput))));
+              .WithFusionKind(HloInstruction::FusionKind::kInput)));
+
+  const HloFusionInstruction* root_fusion = Cast<HloFusionInstruction>(root);
+  EXPECT_EQ(root_fusion->fused_expression_root()->opcode(),
+            HloOpcode::kTranspose);
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }

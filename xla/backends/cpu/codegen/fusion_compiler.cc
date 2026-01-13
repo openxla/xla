@@ -22,6 +22,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/base/config.h"  // IWYU pragma: keep
 #include "absl/functional/function_ref.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -49,7 +50,7 @@ limitations under the License.
 #include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVMPass.h"
 #include "mlir/Conversion/VectorToSCF/VectorToSCF.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Affine/Passes.h"
+#include "mlir/Dialect/Affine/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Transforms/BufferDeallocationOpInterfaceImpl.h"
 #include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
@@ -195,6 +196,7 @@ static void AddGenericLoweringPasses(mlir::OpPassManager& pm,
                                      bool fast_min_max) {
   pm.addNestedPass<mlir::func::FuncOp>(
       emitters::CreateSimplifyArithPass(fast_min_max));
+  pm.addPass(emitters::CreateExpandIntegerPowerPass());
   pm.addPass(emitters::CreateSimplifyAffinePass());
   pm.addPass(mlir::createCanonicalizerPass());
 
@@ -294,6 +296,13 @@ static void AddBufferizationPasses(mlir::OpPassManager& pm) {
   pm.addNestedPass<mlir::func::FuncOp>(
       mlir::bufferization::createBufferHoistingPass());
   pm.addPass(mlir::memref::createFoldMemRefAliasOpsPass());
+
+#ifdef ABSL_HAVE_MEMORY_SANITIZER
+  // We must initialize allocs to ensure that we don't get false positives from
+  // msan due to inconsistent instrumentation: memcpy will be instrumented
+  // but all other instructions will not.
+  pm.addPass(CreateInitializeAllocsPass());
+#endif  // ABSL_HAVE_MEMORY_SANITIZER
 
   mlir::bufferization::PromoteBuffersToStackPassOptions
       buffer_promotion_options;

@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
@@ -351,6 +352,13 @@ bool IsConvolutionOpSupportedByYnn(const HloInstruction* instr) {
   // No base dilation for now.
   if ((window.dimensions(0).base_dilation() != 1) ||
       (window.dimensions(1).base_dilation() != 1)) {
+    return false;
+  }
+
+  // TODO(b/474103597): we might be able to do this using negative strides,
+  // but this feature is rarely used and considered for deprecation.
+  if ((window.dimensions(0).window_reversal() != 0) ||
+      (window.dimensions(1).window_reversal() != 0)) {
     return false;
   }
 

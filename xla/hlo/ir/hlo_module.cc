@@ -45,9 +45,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "highwayhash/arch_specific.h"
-#include "highwayhash/hh_types.h"
-#include "highwayhash/highwayhash.h"
 #include "llvm/ADT/STLExtras.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -541,46 +538,6 @@ absl::Cord HloModule::ToCord(const HloPrintOptions& options) const {
   Print(&printer, options);
   return std::move(printer).ToCord();
 }
-
-namespace {
-// Generated using openssl rand.
-static constexpr highwayhash::HHKey kDefaultKey = {
-    0x9e0433b546e065d2ull,
-    0x0e7ecad49e703760ull,
-    0x83d29f20dae229b0ull,
-    0x40c1ce3ff9d19a42ull,
-};
-
-// HighwayHashPrinter is a Printer that computes the fingerprint of the added
-// data using a HighwayHash hasher.
-class HighwayHashPrinter : public Printer {
- public:
-  HighwayHashPrinter() : hasher_(kDefaultKey) {}
-
-  void Append(const absl::AlphaNum& a) override {
-    hasher_.Append(a.data(), a.size());
-  }
-
-  void AppendInt64List(absl::Span<const int64_t> list,
-                       bool _ /*leading_comma*/) override {
-    // Instead of separators, prefix with the length. This is fine since
-    // there's no way for the caller to distinguish between the two.
-    const uint64_t num = list.size();
-    hasher_.Append(reinterpret_cast<const char*>(&num), sizeof(num));
-    hasher_.Append(reinterpret_cast<const char*>(list.data()),
-                   list.size() * sizeof(list[0]));
-  }
-
-  uint64_t ToFingerprint() {
-    highwayhash::HHResult64 result;
-    hasher_.Finalize(&result);
-    return result;
-  }
-
- private:
-  highwayhash::HighwayHashCatT<HH_TARGET_PREFERRED> hasher_;
-};
-}  // namespace
 
 uint64_t HloModule::ToFingerprint(
     const HloPrintOptions& options,
@@ -1483,6 +1440,10 @@ void HloModule::Clone(const std::string& suffix, HloCloneContext* context,
   module->buffer_donor_config() = buffer_donor_config();
   module->set_is_dynamic(is_dynamic());
   module->set_frontend_attributes(frontend_attributes());
+  *module->metadata() = metadata();
+  // The canonical module id should be the same as the unique id from the
+  // module. We don't want to copy the id from the other metadata.
+  module->metadata()->set_canonical_module_id(module->unique_id());
   if (has_schedule() && schedule().Verify().ok()) {
     HloSchedule clone_schedule(module);
     for (HloComputation* computation : computations()) {
