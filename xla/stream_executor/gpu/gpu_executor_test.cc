@@ -32,12 +32,6 @@ limitations under the License.
 
 namespace stream_executor {
 
-// TODO(intel-tf): Support GetPointerMemorySpace for host memory.
-#define SKIP_IF_SYCL_POINTER_MEMORY_SPACE_UNSUPPORTED()            \
-  if (GetPlatform()->Name() == "SYCL") {                           \
-    GTEST_SKIP() << "SYCL does not support GetPointerMemorySpace"; \
-  }
-
 class GpuExecutorTest : public testing::Test {
  public:
   Platform* GetPlatform() {
@@ -47,10 +41,13 @@ class GpuExecutorTest : public testing::Test {
   }
 };
 
+// TODO(intel-tf): Support GetPointerMemorySpace for host memory.
 using GetPointerMemorySpaceTest = GpuExecutorTest;
 
 TEST_F(GetPointerMemorySpaceTest, Host) {
-  SKIP_IF_SYCL_POINTER_MEMORY_SPACE_UNSUPPORTED();
+  if (GetPlatform()->Name() == "SYCL") {
+    GTEST_SKIP() << "SYCL does not support GetPointerMemorySpace";
+  }
   StreamExecutor* executor = GetPlatform()->ExecutorForDevice(0).value();
   TF_ASSERT_OK_AND_ASSIGN(auto host_ptr, executor->HostMemoryAllocate(64));
   TF_ASSERT_OK_AND_ASSIGN(auto memory_space, executor->GetPointerMemorySpace(
@@ -59,7 +56,9 @@ TEST_F(GetPointerMemorySpaceTest, Host) {
 }
 
 TEST_F(GetPointerMemorySpaceTest, HostAllocatedWithMemoryKind) {
-  SKIP_IF_SYCL_POINTER_MEMORY_SPACE_UNSUPPORTED();
+  if (GetPlatform()->Name() == "SYCL") {
+    GTEST_SKIP() << "SYCL does not support GetPointerMemorySpace";
+  }
   StreamExecutor* executor = GetPlatform()->ExecutorForDevice(0).value();
   DeviceAddressBase host_ptr = executor->Allocate(
       64, static_cast<int64_t>(stream_executor::MemorySpace::kHost));
@@ -71,7 +70,9 @@ TEST_F(GetPointerMemorySpaceTest, HostAllocatedWithMemoryKind) {
 }
 
 TEST_F(GetPointerMemorySpaceTest, Device) {
-  SKIP_IF_SYCL_POINTER_MEMORY_SPACE_UNSUPPORTED();
+  if (GetPlatform()->Name() == "SYCL") {
+    GTEST_SKIP() << "SYCL does not support GetPointerMemorySpace";
+  }
   StreamExecutor* executor = GetPlatform()->ExecutorForDevice(0).value();
   auto mem = executor->Allocate(64);
   ASSERT_NE(mem, nullptr);
@@ -125,7 +126,5 @@ TEST_F(HostMemoryAllocateTest, TooBig) {
     EXPECT_FALSE(should_fail.ok());
   }
 }
-
-#undef SKIP_IF_SYCL_POINTER_MEMORY_SPACE_UNSUPPORTED
 
 }  // namespace stream_executor
