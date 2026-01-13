@@ -818,9 +818,7 @@ ENTRY triton_computation {
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
   bool crashes_on_failure = data_type == PrimitiveType::F8E4M3FN ||
-                            data_type == PrimitiveType::F8E5M2 ||
-                            data_type == PrimitiveType::F8E5M2FNUZ ||
-                            data_type == PrimitiveType::F8E4M3FNUZ;
+                            data_type == PrimitiveType::F8E5M2;
   RunSupportTest(
       std::move(ti), /*output_tile_sizes=*/{1}, cc,
       crashes_on_failure ? ExpectedFailMode::kCrash : ExpectedFailMode::kFail);
@@ -891,9 +889,7 @@ ENTRY triton_computation {
       ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
 
   bool crashes_on_failure = data_type == PrimitiveType::F8E4M3FN ||
-                            data_type == PrimitiveType::F8E5M2 ||
-                            data_type == PrimitiveType::F8E5M2FNUZ ||
-                            data_type == PrimitiveType::F8E4M3FNUZ;
+                            data_type == PrimitiveType::F8E5M2;
   RunSupportTest(
       std::move(ti), /*output_tile_sizes=*/{1}, cc,
       crashes_on_failure ? ExpectedFailMode::kCrash : ExpectedFailMode::kFail);

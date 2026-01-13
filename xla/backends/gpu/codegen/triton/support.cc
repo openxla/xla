@@ -47,8 +47,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-namespace {
-
 bool IsTritonSupportedDataType(PrimitiveType type,
                                const se::GpuComputeCapability& gpu_version) {
   switch (type) {
@@ -76,6 +74,8 @@ bool IsTritonSupportedDataType(PrimitiveType type,
       return false;
   }
 }
+
+namespace {
 
 // Set of unary elementwise ops that are genuinely supported by Triton.
 absl::flat_hash_set<HloOpcode> TritonSupportedUnaryElementwiseOps(
