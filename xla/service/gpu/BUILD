@@ -486,7 +486,7 @@ cc_library(
         "//xla/backends/gpu/runtime:collective_multimem",
         "//xla/backends/gpu/runtime:collective_permute_thunk",
         "//xla/backends/gpu/runtime:collective_thunk",
-        "//xla/backends/gpu/runtime:command_buffer_cmd",
+        "//xla/backends/gpu/runtime:command_executor",
         "//xla/backends/gpu/runtime:command_buffer_cmd_emitter",
         "//xla/backends/gpu/runtime:command_buffer_thunk",
         "//xla/backends/gpu/runtime:conditional_thunk",
