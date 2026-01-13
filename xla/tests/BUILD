@@ -3096,7 +3096,6 @@ xla_test(
         "//xla/ffi",
         "//xla/ffi:ffi_api",
         "//xla/ffi/api:c_api",
-        "//xla/service:collective_ops_utils",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream",
         "//xla/tsl/lib/core:status_test_util",
