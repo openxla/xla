@@ -58,25 +58,31 @@ namespace xla::error {
 // - an Enum value ErrorCode::kBinaryTooLarge that can be used in the XLA
 // codebase to uniquely identify error sources.
 
-#define XLA_ERROR_CODE_LIST(X)                                          \
-  /* go/keep-sorted start */                                            \
-  /* E00xx - Generic Error Codes mimicking absl::Status codes. */       \
-  X("E0000", Cancelled, absl::StatusCode::kCancelled)                   \
-  X("E0001", Unknown, absl::StatusCode::kUnknown)                       \
-  X("E0002", InvalidArgument, absl::StatusCode::kInvalidArgument)       \
-  X("E0003", DeadlineExceeded, absl::StatusCode::kDeadlineExceeded)     \
-  X("E0004", NotFound, absl::StatusCode::kNotFound)                     \
-  X("E0005", AlreadyExists, absl::StatusCode::kAlreadyExists)           \
-  X("E0006", PermissionDenied, absl::StatusCode::kPermissionDenied)     \
-  X("E0007", ResourceExhausted, absl::StatusCode::kResourceExhausted)   \
-  X("E0008", FailedPrecondition, absl::StatusCode::kFailedPrecondition) \
-  X("E0009", Aborted, absl::StatusCode::kAborted)                       \
-  X("E0010", OutOfRange, absl::StatusCode::kOutOfRange)                 \
-  X("E0011", Unimplemented, absl::StatusCode::kUnimplemented)           \
-  X("E0012", Internal, absl::StatusCode::kInternal)                     \
-  X("E0013", Unavailable, absl::StatusCode::kUnavailable)               \
-  X("E0014", DataLoss, absl::StatusCode::kDataLoss)                     \
-  X("E0015", Unauthenticated, absl::StatusCode::kUnauthenticated)       \
+#define XLA_ERROR_CODE_LIST(X)                                                \
+  /* go/keep-sorted start */                                                  \
+  /* E00xx - Generic Error Codes mimicking absl::Status codes. */             \
+  X("E0000", Cancelled, absl::StatusCode::kCancelled)                         \
+  X("E0001", Unknown, absl::StatusCode::kUnknown)                             \
+  X("E0002", InvalidArgument, absl::StatusCode::kInvalidArgument)             \
+  X("E0003", DeadlineExceeded, absl::StatusCode::kDeadlineExceeded)           \
+  X("E0004", NotFound, absl::StatusCode::kNotFound)                           \
+  X("E0005", AlreadyExists, absl::StatusCode::kAlreadyExists)                 \
+  X("E0006", PermissionDenied, absl::StatusCode::kPermissionDenied)           \
+  X("E0007", ResourceExhausted, absl::StatusCode::kResourceExhausted)         \
+  X("E0008", FailedPrecondition, absl::StatusCode::kFailedPrecondition)       \
+  X("E0009", Aborted, absl::StatusCode::kAborted)                             \
+  X("E0010", OutOfRange, absl::StatusCode::kOutOfRange)                       \
+  X("E0011", Unimplemented, absl::StatusCode::kUnimplemented)                 \
+  X("E0012", Internal, absl::StatusCode::kInternal)                           \
+  X("E0013", Unavailable, absl::StatusCode::kUnavailable)                     \
+  X("E0014", DataLoss, absl::StatusCode::kDataLoss)                           \
+  X("E0015", Unauthenticated, absl::StatusCode::kUnauthenticated)             \
+                                                                              \
+  X("E0100", RuntimeBufferAllocationFailure,                                  \
+    absl::StatusCode::kResourceExhausted)                                     \
+  X("E0101", RuntimeProgramAllocationFailure,                                 \
+    absl::StatusCode::kResourceExhausted)                                     \
+  X("E0102", RuntimeProgramInputMismatch, absl::StatusCode::kInvalidArgument) \
   /* go/keep-sorted end */
 
 // Enum that enumerates all XLA error codes.
@@ -129,6 +135,40 @@ inline std::string GetErrorUrl(ErrorCode code) {
   }
 
   return absl::StrCat("https://openxla.org/xla/errors/error_", id);
+}
+
+// Returns the error message with the standard XLA Error Code formatting:
+// "EXXXX: ErrorName:\n<Original Message>\nSee <URL> for more details."
+inline std::string FormatMessageWithCode(absl::string_view message,
+                                         ErrorCode code) {
+  return absl::StrCat(GetErrorCodeAndName(code), ":\n", message, "\nSee ",
+                      GetErrorUrl(code), " for more details.");
+}
+
+// Wraps an existing status with the standard XLA Error Code formatting:
+// "EXXXX: ErrorName:\n<Original Message>\nSee <URL> for more details."
+inline absl::Status AnnotateWithCode(const absl::Status& original,
+                                     ErrorCode code) {
+  if (original.ok()) {
+    return original;
+  }
+
+  absl::Status new_status(original.code(),
+                          FormatMessageWithCode(original.message(), code));
+
+  // Copy over the payloads and source locations from the original status.
+  original.ForEachPayload(
+      [&new_status](absl::string_view type_url, const absl::Cord& payload) {
+        new_status.SetPayload(type_url, payload);
+      });
+
+#if defined(PLATFORM_GOOGLE)
+  for (const auto& loc : original.GetSourceLocations()) {
+    new_status.AddSourceLocation(loc);
+  }
+#endif  // PLATFORM_GOOGLE
+
+  return new_status;
 }
 
 // The following three macros implement a factory pattern for creating

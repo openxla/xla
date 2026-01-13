@@ -126,9 +126,9 @@ static absl::StatusOr<ncclDataType_t> ToNcclDataType(PrimitiveType dtype,
       // For reductions we expect 16 bit integer types to be promoted to
       // 32-bit.
       if (is_reduction_op) {
-        return absl::InvalidArgumentError(
-            absl::StrFormat("Unsupported data type for reduction operation: %s",
-                            primitive_util::LowercasePrimitiveTypeName(dtype)));
+        return InvalidArgument(
+            "Unsupported data type for reduction operation: %s",
+            primitive_util::LowercasePrimitiveTypeName(dtype));
       }
       // For collectives that just move data around, we can use ncclFloat16
       // for 16-bit integer data types.
@@ -136,9 +136,8 @@ static absl::StatusOr<ncclDataType_t> ToNcclDataType(PrimitiveType dtype,
     case BF16:
       return ncclBfloat16;
     default:
-      return absl::InvalidArgumentError(
-          absl::StrFormat("Unsupported data type: %s",
-                          primitive_util::LowercasePrimitiveTypeName(dtype)));
+      return InvalidArgument("Unsupported data type: %s",
+                             primitive_util::LowercasePrimitiveTypeName(dtype));
   }
 }
 
@@ -347,7 +346,7 @@ absl::Status NcclCommunicator::HealthCheck() const {
   return ExecuteAwait([this]() -> absl::Status {
     VLOG(5) << "Get last async error for NCCL communicator: " << *this;
     if (canceling_.load()) {
-      return absl::FailedPreconditionError("NcclCommunicator aborted");
+      return FailedPrecondition("NcclCommunicator aborted");
     }
 
     ncclResult_t async_err;
@@ -365,7 +364,7 @@ absl::StatusOr<size_t> NcclCommunicator::NumRanks() const {
   return ExecuteAwait<size_t>([this]() -> absl::StatusOr<size_t> {
     VLOG(5) << "Get the number of ranks in NCCL communicator: " << *this;
     if (canceling_.load()) {
-      return absl::FailedPreconditionError("NcclCommunicator aborted");
+      return FailedPrecondition("NcclCommunicator aborted");
     }
 
     // We intentionally don't call PollUntilDone. ncclCommCount is
@@ -423,7 +422,7 @@ NcclCommunicator::RegisterBuffer(stream_executor::DeviceAddressBase buffer,
               "comm=%p",
               device_ordinal, buffer.opaque(), buffer.size(), comm_);
           if (canceling_.load()) {
-            return absl::FailedPreconditionError("NcclCommunicator aborted");
+            return FailedPrecondition("NcclCommunicator aborted");
           }
           void* handle = nullptr;
           XLA_NCCL_RETURN_IF_ERROR(
@@ -617,7 +616,7 @@ absl::Status NcclCommunicator::LaunchBroadcast(
     se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
     PrimitiveType dtype, size_t count, RankId root, const Executor& executor) {
   if (canceling_.load()) {
-    return absl::FailedPreconditionError("NcclCommunicator aborted");
+    return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
 
@@ -645,7 +644,7 @@ absl::Status NcclCommunicator::LaunchReduceScatter(
     PrimitiveType dtype, size_t count, ReductionKind reduction_kind,
     const Executor& executor) {
   if (canceling_.load()) {
-    return absl::FailedPreconditionError("NcclCommunicator aborted");
+    return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
 
@@ -673,7 +672,7 @@ absl::Status NcclCommunicator::LaunchAllGather(
     se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
     PrimitiveType dtype, size_t count, const Executor& executor) {
   if (canceling_.load()) {
-    return absl::FailedPreconditionError("NcclCommunicator aborted");
+    return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
 
@@ -726,7 +725,7 @@ absl::Status NcclCommunicator::LaunchAllToAll(
     absl::InlinedVector<se::DeviceAddressBase, 4> recv_buffers,
     PrimitiveType dtype, size_t count, const Executor& executor) {
   if (canceling_.load()) {
-    return absl::FailedPreconditionError("NcclCommunicator aborted");
+    return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
 
@@ -847,7 +846,7 @@ absl::Status NcclCommunicator::LaunchSend(se::DeviceAddressBase send_buffer,
                                           RankId peer,
                                           const Executor& executor) {
   if (canceling_.load()) {
-    return absl::FailedPreconditionError("NcclCommunicator aborted");
+    return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
 
@@ -874,7 +873,7 @@ absl::Status NcclCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
                                           RankId peer,
                                           const Executor& executor) {
   if (canceling_.load()) {
-    return absl::FailedPreconditionError("NcclCommunicator aborted");
+    return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
 
@@ -933,8 +932,9 @@ NcclDeviceCommunicator::NcclDeviceCommunicator(const NcclCommunicator* comm,
     : comm_(comm), dev_comm_(dev_comm) {}
 
 NcclDeviceCommunicator::~NcclDeviceCommunicator() {
-  VLOG(3) << absl::StrFormat("Destroy NCCL device comm %s constructed for %s",
-                             this->ToString(), comm_->ToString());
+  VLOG(3) << absl::StreamFormat(
+      "Destroy NCCL device comm %s constructed for %s", this->ToString(),
+      comm_->ToString());
 
   DCHECK(comm_ && comm_->stream_executor()) << "StreamExecutor is unavailable";
   auto activation = comm_->stream_executor()->Activate();
@@ -948,7 +948,7 @@ NcclDeviceCommunicator::~NcclDeviceCommunicator() {
 absl::StatusOr<std::unique_ptr<NcclDeviceCommunicator>>
 NcclDeviceCommunicator::CreateFrom(const NcclCommunicator& comm,
                                    const Requirements& requirements) {
-  VLOG(3) << absl::StrFormat(
+  VLOG(3) << absl::StreamFormat(
       "Create NCCL device comm from %s: lsa_barrier_count=%d", comm.ToString(),
       requirements.lsa_barrier_count);
 
