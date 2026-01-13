@@ -66,10 +66,27 @@ memory::dims GetPrimitiveParameter(
 }
 
 dnnl::memory::format_tag GetFormatTag(const int dims) {
-  return (dims == 3)   ? dnnl::memory::format_tag::nwc
-         : (dims == 4) ? dnnl::memory::format_tag::nhwc
-         : (dims == 5) ? dnnl::memory::format_tag::ndhwc
-                       : dnnl::memory::format_tag::undef;
+  switch (dims) {
+    case 3:
+      return dnnl::memory::format_tag::nwc;
+    case 4:
+      return dnnl::memory::format_tag::nhwc;
+    case 5:
+      return dnnl::memory::format_tag::ndhwc;
+    default:
+      return dnnl::memory::format_tag::undef;
+  }
+}
+
+// Expands the memory descriptor to include the feature group dimension for
+// grouped convolutions
+void ExpandDescriptorWithGroups(dnnl::memory::desc& mem_desc, uint64_t groups) {
+  if (groups > 1) {
+    memory::dims corr_dims = mem_desc.get_dims();
+    corr_dims.insert(corr_dims.begin(), 1, groups);
+    corr_dims[1] = corr_dims[1] / groups;
+    mem_desc = mem_desc.reshape(corr_dims);
+  }
 }
 
 dnnl::memory::desc OneDnnConvolutionOptWeightsDesc(
@@ -162,12 +179,7 @@ dnnl::memory::desc OneDnnConvolutionOptWeightsDesc(
   memory::desc new_ker_md = weights_md.permute_axes(std::get<1>(permutations));
   memory::desc new_res_md = output_md.permute_axes(std::get<2>(permutations));
 
-  if (groups > 1) {
-    memory::dims corr_dims = new_ker_md.get_dims();
-    corr_dims.insert(corr_dims.begin(), 1, groups);
-    corr_dims[1] = corr_dims[1] / groups;
-    new_ker_md = new_ker_md.reshape(corr_dims);
-  }
+  ExpandDescriptorWithGroups(new_ker_md, groups);
 
   return OneDnnConvolutionOptWeightsDesc(engine, new_inp_md, new_ker_md,
                                          bias_md, new_res_md, strides,
@@ -196,12 +208,7 @@ dnnl::memory::desc GetSrcWeightMemDesc<kOnednnConvConfig>(
       conv_config.kernel().filter().input_feature_dim(),
       conv_config.kernel().filter().spatial_dims()));
 
-  if (groups > 1) {
-    memory::dims corr_dims = weight_md.get_dims();
-    corr_dims.insert(corr_dims.begin(), 1, groups);
-    corr_dims[1] = corr_dims[1] / groups;
-    weight_md = weight_md.reshape(corr_dims);
-  }
+  ExpandDescriptorWithGroups(weight_md, groups);
 
   return weight_md;
 }
@@ -263,12 +270,7 @@ std::unique_ptr<convolution_forward::primitive_desc> CreateConvolutionPrimDesc(
 
   uint64_t groups = conv_config.feature_groups();
 
-  if (groups > 1) {
-    memory::dims corr_dims = new_ker_md.get_dims();
-    corr_dims.insert(corr_dims.begin(), 1, groups);
-    corr_dims[1] = corr_dims[1] / groups;
-    new_ker_md = new_ker_md.reshape(corr_dims);
-  }
+  ExpandDescriptorWithGroups(new_ker_md, groups);
 
   std::vector<memory::desc> fused_mds;
   for (const Shape& shape : fused_shapes) {
@@ -355,12 +357,7 @@ void ExecuteOneDnnConvolution(absl::Span<MemrefInfoHandler> arguments,
                               memory::format_tag::any);
   } else {
     new_ker_md = ker_md.permute_axes(std::get<1>(permutations));
-    if (groups > 1) {
-      memory::dims corr_dims = new_ker_md.get_dims();
-      corr_dims.insert(corr_dims.begin(), 1, groups);
-      corr_dims[1] = corr_dims[1] / groups;
-      new_ker_md = new_ker_md.reshape(corr_dims);
-    }
+    ExpandDescriptorWithGroups(new_ker_md, groups);
   }
 
   const int64_t num_fused_operands = arguments.size() - 2;
