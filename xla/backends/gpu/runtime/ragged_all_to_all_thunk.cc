@@ -56,11 +56,11 @@ limitations under the License.
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -238,7 +238,7 @@ RaggedAllToAllStartThunk::RaggedAllToAllStartThunk(
     std::shared_ptr<AsyncEvents> async_events,
     std::vector<CollectiveThunk::Buffer> buffers, bool one_shot_kernel_enabled)
     : CollectiveThunk(Thunk::kRaggedAllToAllStart, thunk_info, async_events,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
+                      false),
       config_(config),
       buffers_(std::move(buffers)),
       one_shot_kernel_enabled_(one_shot_kernel_enabled) {

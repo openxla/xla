@@ -44,9 +44,9 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -57,14 +57,13 @@ SendThunk::SendThunk(ThunkInfo thunk_info, const HloSendInstruction* instr,
     : SendThunk(std::move(thunk_info),
                 GetP2PConfigForSendRecv(instr, instr->operand(0)->shape(),
                                         replica_count, partition_count),
-                std::make_shared<CollectiveThunk::AsyncEvents>(),
-                GetStreamKindForP2P(instr), buffer, instr->name()) {}
+                std::make_shared<CollectiveThunk::AsyncEvents>(), buffer,
+                instr->name()) {}
 
 SendThunk::SendThunk(ThunkInfo thunk_info, const P2PConfig& config,
                      std::shared_ptr<AsyncEvents> async_events,
-                     AsyncStreamKind stream_kind, const Buffer& buffer,
-                     absl::string_view instr_name)
-    : CollectiveThunk(Thunk::kSend, thunk_info, async_events, stream_kind),
+                     const Buffer& buffer, absl::string_view instr_name)
+    : CollectiveThunk(Thunk::kSend, thunk_info, async_events, true),
       config_(config),
       buffer_(buffer),
       execution_counters_(config_.validation_kind ==
@@ -85,7 +84,7 @@ absl::Status SendThunk::Initialize(const InitializeParams& params) {
 absl::StatusOr<bool> SendThunk::ConditionalShouldRun(
     const ExecuteParams& params, int64_t current_id, int64_t target_id) const {
   se::StreamExecutor* executor = params.stream->parent();
-  TF_ASSIGN_OR_RETURN(int64_t* counter,
+  TF_ASSIGN_OR_RETURN(int64_t * counter,
                       execution_counters_->GetCounter(
                           executor, params.collective_params->run_id));
   auto it = config_.source_target_to_bounds.find(
@@ -127,8 +126,7 @@ absl::StatusOr<std::unique_ptr<SendThunk>> SendThunk::FromProto(
 
   return std::make_unique<SendThunk>(
       std::move(thunk_info), P2PConfig{config, std::move(id_to_source_target)},
-      async_events, thunk_proto.async_stream_kind(), buffer,
-      thunk_proto.instruction_name());
+      async_events, buffer, thunk_proto.instruction_name());
 }
 
 absl::StatusOr<ThunkProto> SendThunk::ToProto() const {
@@ -160,7 +158,6 @@ absl::StatusOr<ThunkProto> SendThunk::ToProto() const {
   thunk_proto->mutable_source_target_pairs()->Assign(
       source_target_pairs.begin(), source_target_pairs.end());
 
-  thunk_proto->set_async_stream_kind(GetAsyncStreamKind());
   thunk_proto->set_instruction_name(hlo_name_);
   return proto;
 }

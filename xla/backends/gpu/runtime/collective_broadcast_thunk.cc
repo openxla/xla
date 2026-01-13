@@ -38,9 +38,9 @@ limitations under the License.
 #include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -48,8 +48,7 @@ CollectiveBroadcastStartThunk::CollectiveBroadcastStartThunk(
     ThunkInfo thunk_info, CollectiveConfig config,
     std::shared_ptr<AsyncEvents> async_events, std::vector<Buffer> buffers)
     : CollectiveThunk(Thunk::kCollectiveBroadcastStart, thunk_info,
-                      async_events,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
+                      async_events, false),
       config_(config),
       buffers_(std::move(buffers)) {}
 

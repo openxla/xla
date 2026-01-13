@@ -46,11 +46,11 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -148,8 +148,7 @@ absl::Status RunAllReduce(ReductionKind reduction_kind,
 AllReduceReduceScatterThunkBase::AllReduceReduceScatterThunkBase(
     Thunk::Kind kind, ThunkInfo thunk_info, AllReduceConfig config,
     std::vector<Buffer> buffers, bool is_sync)
-    : CollectiveThunk(kind, thunk_info, is_sync,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
+    : CollectiveThunk(kind, thunk_info, is_sync, false),
       config_(std::move(config)),
       buffers_(std::move(buffers)) {
   CHECK_EQ(config_.config.operand_element_type.size(), buffers_.size());
@@ -159,8 +158,7 @@ AllReduceReduceScatterThunkBase::AllReduceReduceScatterThunkBase(
     Thunk::Kind kind, ThunkInfo thunk_info, AllReduceConfig config,
     std::vector<Buffer> buffers,
     std::shared_ptr<CollectiveThunk::AsyncEvents> async_events)
-    : CollectiveThunk(kind, thunk_info, async_events,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
+    : CollectiveThunk(kind, thunk_info, async_events, false),
       config_(std::move(config)),
       buffers_(std::move(buffers)) {
   CHECK_EQ(config_.config.operand_element_type.size(), buffers_.size());
