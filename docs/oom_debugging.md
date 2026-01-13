@@ -1,8 +1,8 @@
 # Debug OOM errors with XProf
 
-Out Of Memory (OOM) errors occur when your accelerator memory capacity is exhausted. This can be High Bandwidth Memory (HBM) in GPUs, and HBM, Vector Memory (VMEM), etc. in TPUs.
+Out Of Memory (OOM) errors occur when the accelerator's (GPU or TPU) High Bandwidth Memory (HBM) capacity is exhausted. Some common causes for OOM issues and debugging techniques are detailed in [E1000 - Compile Time HBM OOM documentation](./errors/error_1000.md) and  [JAX documentation on GPU memory allocation](https://docs.jax.dev/en/latest/gpu_memory_allocation.html#common-causes-of-oom-failures).
 
-This page describes how to use **XProf's Memory Viewer tool** to visualize your program's memory usage, identify peak usage instances, and debug OOM errors. This involves the following steps:
+This page describes how to use **XProf's Memory Viewer tool** to visualize your JAX program's memory usage, identify peak usage instances, and debug OOM errors. This involves the following steps:
 
 1. Run your program with [`jax.profiler.trace`](https://docs.jax.dev/en/latest/_autosummary/jax.profiler.trace.html#jax.profiler.trace) to capture the profile.
 2. Start XProf in the background, and use the [Memory Viewer tool](https://openxla.org/xprof/memory_viewer) to view memory utilization details.
@@ -50,18 +50,14 @@ xprof --logdir=/tmp/xprof/ --port=6006
 
 Go to the instance (on a local machine, at `http://localhost:6006`). In the _Tools_ dropdown, select _Memory Viewer_, and in the Memory Viewer tool window, select _HBM_ in the _Memory Types_ dropdown (usually selected by default).
 
-<!-- TODO: Update image to one without overlapping text -->
+![XProf Memory Viewer page for the above example program](images/oom_debugging_example_memory_viewer.png)
 
-[XProf Memory Viewer page for the above example program](images/oom_debugging_example_memory_viewer.png)
+The [XProf: Memory Viewer tool documentation](https://openxla.org/xprof/memory_viewer#memory_viewer_components) describes the components of the tool and the information presented.
 
-Go through [Xprof: Memory Viewer tool documentation](https://openxla.org/xprof/memory_viewer) for more details on each section.
+Focus on the _HLO Ops at Peak Memory Allocation_ section that shows three buffer charts at the peak memory usage point. The buffer includes:
+* Program Inputs and Outputs: Training batches, optimizer states, etc.
+* TensorCore and SparseCore Temporaries: Dynamic memory required for intermediate calculations (like activations, gradients, etc.)
 
-At a high-level:
-* Textual overview: Gives helpful information on peak allocation
-* HLO Ops at Peak Memory Allocation Time, by Buffer Size: Shows the (left-most block) `cutlass_gemm_with_upcast` fusion operation had the highest peak memory usage.
+You can hover on the buffer charts to get more details about the Op like it's size, shape, allocation type, and more. This can help you identify and evaluate Ops that may have high or long-lasting temporaries, any large input/intermediate/output tensors that have inefficient padding, etc., that are contributing to the peak memory and need to be adjusted or optimized.
 
-## Further reading
-
-Some common causes for OOM issues and debugging techniques are detailed in the [JAX documentation: GPU memory allocation](https://docs.jax.dev/en/latest/gpu_memory_allocation.html#common-causes-of-oom-failures). You can also refer to specific error code documentation for debugging options:
-* [E1000 - Compile Time HBM OOM](./errors/error_1000.md)
-* [E1001 - Compile Time Scoped Vmem OOM](./errors/error_1001.md)
+Learn specific debugging techniques in [E1000: Debugging](https://openxla.org/xla/errors/error_1000#debugging).
