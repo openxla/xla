@@ -36,8 +36,6 @@ On a TPU-machine, this program fails with:
 XlaRuntimeError: RESOURCE_EXHAUSTED: Allocation (size=107374182400) would exceed memory (size=17179869184) :: #allocation7 [shape = 'u8[327680,327680]{1,0:T(8,128)(4,1)}', space=hbm, size = 0xffffffffffffffff, tag = 'output of xor_convert_fusion@{}'] :: <no-hlo-instruction>
 ```
 
-The error message clearly states that the output size exceed the available memory, and profile should be available at `/tmp/xprof/`.
-
 (On a GPU-machine, the error looks like: `XlaRuntimeError: RESOURCE_EXHAUSTED: Out of memory while trying to allocate 214748364800 bytes.`)
 
 ## Run XProf
