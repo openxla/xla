@@ -19,7 +19,6 @@ limitations under the License.
 #include <set>
 #include <string>
 #include <utility>
-#include <variant>
 
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
@@ -57,7 +56,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/sanitize_constant_names.h"
 #include "xla/service/gpu/transforms/topk_specializer.h"
 #include "xla/service/gpu/transforms/topk_splitter.h"
-#include "xla/service/gpu/transforms/transpose_dimension_grouper.h"
 #include "xla/service/gpu/transforms/windowed_einsum_handler.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/platform_util.h"
@@ -176,7 +174,6 @@ class GpuOptProvider : public CompiledOptProvider {
     RegisterPass<gpu::SanitizeConstantNames>();
     RegisterPass<gpu::TopKSplitter>();
     RegisterPass<gpu::TopkSpecializer>(gpu_compute_capability);
-    RegisterPass<gpu::TransposeDimensionGrouper>();
     RegisterPass<gpu::WindowedEinsumHandler>();
     // go/keep-sorted end
     if (debug_config.xla_gpu_experimental_collective_cse_distance_threshold() >
@@ -205,18 +202,17 @@ class GpuOptProvider : public CompiledOptProvider {
     TF_ASSIGN_OR_RETURN(se::Platform * platform,
                         PlatformUtil::GetPlatform(GetPlatformName()));
     TF_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler,
-                        Compiler::GetForPlatform(platform));
+                        Compiler::GetForPlatform(platform->id()));
 
     auto* gpu_compiler = static_cast<gpu::GpuCompiler*>(compiler.get());
     std::unique_ptr<gpu::GpuAliasInfo> alias_info =
         gpu_compiler->GetAliasInfo(device_description);
     if (!optimized_module->has_schedule()) {
-      TF_ASSIGN_OR_RETURN(
-          gpu::ScheduleMetadata schedule_metadata,
-          gpu::ScheduleGpuModule(
-              optimized_module, gpu_compiler->GetPointerSize(),
-              device_description, gpu_compiler->symbolic_expr_context(),
-              alias_info.get()));
+      TF_ASSIGN_OR_RETURN(gpu::ScheduleMetadata schedule_metadata,
+                          gpu::ScheduleGpuModule(
+                              optimized_module, gpu_compiler->GetPointerSize(),
+                              device_description, gpu_compiler->mlir_context(),
+                              alias_info.get()));
       TF_RETURN_IF_ERROR(gpu_compiler->RunPostSchedulingPipelines(
           optimized_module, schedule_metadata.scheduler_mem_limit,
           device_description, alias_info.get()));

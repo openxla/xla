@@ -24,6 +24,8 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
+#include "xla/pjrt/proto/executable_metadata.pb.h"
+#include "xla/pjrt/proto/execute_options.pb.h"
 #include "xla/service/computation_placer.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -33,14 +35,13 @@ limitations under the License.
 namespace xla {
 namespace {
 
-using ::tsl::testing::StatusIs;
-
 TEST(CompileOptionsTest, Serialization) {
   CompileOptions src;
   src.compile_portable_executable = true;
   src.parameter_is_tupled_arguments = true;
   src.profile_version = 1;
   src.argument_layouts = {ShapeUtil::MakeShape(S32, {1})};
+  src.matrix_unit_operand_precision = PrecisionConfig::HIGHEST;
   src.allow_in_place_mlir_modification = true;
   ExecutableBuildOptions build_option;
   build_option.set_device_assignment(DeviceAssignment(1, 1));
@@ -71,6 +72,7 @@ TEST(CompileOptionsTest, Defaults) {
   EXPECT_EQ(src.compile_portable_executable, false);
   EXPECT_EQ(src.parameter_is_tupled_arguments, false);
   EXPECT_EQ(src.allow_in_place_mlir_modification, false);
+  EXPECT_EQ(src.matrix_unit_operand_precision, PrecisionConfig::DEFAULT);
 }
 
 TEST(ExecuteOptionsTest, Serialization) {

@@ -20,7 +20,6 @@ limitations under the License.
 #include <initializer_list>
 #include <iterator>
 #include <memory>
-#include <numeric>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -28,6 +27,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/attributes.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -66,7 +66,7 @@ void TransposeIfNecessary(
     return;
   }
   std::vector<int> permutation(mem_desc.get_ndims());
-  std::iota(permutation.begin(), permutation.end(), 0);
+  absl::c_iota(permutation, 0);
   int counter = 0;
   for (auto it = dimensions.begin(); it != dimensions.end(); it++) {
     permutation[*it - 1] = counter++;
@@ -109,7 +109,7 @@ dnnl::memory::desc OneDnnMatMulOptWeightsDesc(
 
   // extend bias rank to match result rank
   auto missed_rank = output_md.get_ndims() - bias_md.get_ndims();
-  XLA_LIGHTWEIGHT_CHECK(missed_rank >= 0);
+  CHECK_GE(missed_rank, 0);
   if (!bias_md.is_zero() && missed_rank > 0) {
     auto bias_dims = bias_md.get_dims();
     bias_dims.insert(bias_dims.begin(), missed_rank, 1);

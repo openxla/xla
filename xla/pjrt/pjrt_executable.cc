@@ -34,12 +34,14 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "google/protobuf/descriptor.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/debug_options_flags.h"
 #include "xla/layout.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
+#include "xla/pjrt/proto/executable_metadata.pb.h"
 #include "xla/pjrt/proto/execute_options.pb.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
@@ -83,6 +85,7 @@ absl::StatusOr<CompileOptionsProto> CompileOptions::ToProto() const {
     }
   }
   output.set_allow_in_place_mlir_modification(allow_in_place_mlir_modification);
+  output.set_matrix_unit_operand_precision(matrix_unit_operand_precision);
   output.set_parameter_is_tupled_arguments(parameter_is_tupled_arguments);
   TF_ASSIGN_OR_RETURN(*output.mutable_executable_build_options(),
                       executable_build_options.ToProto());
@@ -126,6 +129,7 @@ absl::StatusOr<CompileOptions> CompileOptions::FromProto(
   }
   output.allow_in_place_mlir_modification =
       proto.allow_in_place_mlir_modification();
+  output.matrix_unit_operand_precision = proto.matrix_unit_operand_precision();
   output.parameter_is_tupled_arguments = proto.parameter_is_tupled_arguments();
   TF_ASSIGN_OR_RETURN(
       ExecutableBuildOptions executable_build_options,
@@ -142,6 +146,18 @@ absl::StatusOr<CompileOptions> CompileOptions::FromProto(
         Compiler::GpuTargetConfig::FromProto(proto.target_config()));
   }
   return output;
+}
+
+bool IsEarlyExitCompilation(const xla::CompileOptions& compile_options) {
+  for (int i = compile_options.env_option_overrides.size() - 1; i >= 0; --i) {
+    const auto& [k, v] = compile_options.env_option_overrides[i];
+    if (k == "xla_early_exit_with_layouts") {
+      return std::get<bool>(v);
+    }
+  }
+  return compile_options.executable_build_options.has_debug_options() &&
+         compile_options.executable_build_options.debug_options()
+             .xla_early_exit_with_layouts();
 }
 
 MultiSliceConfig::~MultiSliceConfig() = default;

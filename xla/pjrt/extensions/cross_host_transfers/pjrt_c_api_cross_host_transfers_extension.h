@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_common.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,7 +35,7 @@ extern "C" {
 // CrossHostSendBuffers and CrossHostReceiveBuffers. These methods allow PjRt
 // clients to implement various optimizations for cross-host transfers.
 
-#define PJRT_API_CROSS_HOST_TRANSFERS_EXTENSION_VERSION 2
+#define PJRT_API_CROSS_HOST_TRANSFERS_EXTENSION_VERSION 4
 
 // ---------------------------------- Methods ----------------------------------
 
@@ -82,9 +83,21 @@ typedef PJRT_Error* PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers(
 
 // The structs and methods below correspond to the original cross-host transfers
 // API.
+typedef void (*PJRT_Transfers_CrossHostOnCanceledCallback)(PJRT_Error* error,
+                                                           void* user_arg);
+
+typedef void (*PJRT_Transfers_CrossHostSendCancelNotifier)(
+    const char* serialized_descriptor, size_t serialized_descriptor_size,
+    PJRT_Error_Code reason, const char* error_message,
+    size_t error_message_size,
+    PJRT_Transfers_CrossHostOnCanceledCallback on_canceled,
+    void* on_canceled_user_arg, void* user_arg);
+
 typedef void (*PJRT_Transfers_CrossHostRecvNotifier)(
     PJRT_Error* error, const char** serialized_descriptors,
-    size_t* descriptors_sizes, size_t num_descriptors, void* user_arg);
+    size_t* descriptors_sizes, size_t num_descriptors, void* user_arg,
+    PJRT_Transfers_CrossHostSendCancelNotifier cancel_notifier,
+    void* cancel_notifier_user_arg);
 
 struct PJRT_Transfers_CrossHostRecvNotifierInfo {
   void* user_arg;
@@ -112,15 +125,26 @@ PJRT_DEFINE_STRUCT_TRAITS(
 typedef PJRT_Error* PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers(
     PJRT_Transfers_PJRT_Client_MakeCrossHostReceiveBuffers_Args* args);
 
+typedef void (*PJRT_Transfers_CrossHostRemoteSendCallback)(
+    PJRT_Error* error, bool sends_were_enqueued, void* user_arg);
+
+struct PJRT_Transfers_CrossHostRemoteSendCallbackInfo {
+  void* user_arg;
+  PJRT_Transfers_CrossHostRemoteSendCallback on_done;
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Transfers_CrossHostRemoteSendCallbackInfo,
+                          on_done);
+
 struct PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args {
   size_t struct_size;
   PJRT_Extension_Base* extension_start;
   PJRT_Buffer* buffer;
   const char* serialized_descriptor;
   size_t serialized_descriptor_size;
+  PJRT_Transfers_CrossHostRemoteSendCallbackInfo on_done;
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args,
-                          serialized_descriptor_size);
+                          on_done);
 
 typedef void PJRT_Buffer_CopyToRemoteDevice(
     PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args* args);
@@ -151,6 +175,11 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_CrossHostTransfers_Extension,
 namespace pjrt {
 PJRT_CrossHostTransfers_Extension CreateCrossHostTransfersExtension(
     PJRT_Extension_Base* next = nullptr);
+PJRT_Transfers_CrossHostRecvNotifierInfo CppCrossHostRecvNotifierToC(
+    const PJRT_Api* c_api, xla::PjRtCrossHostRecvNotifier cpp_notifier);
+PJRT_Transfers_CrossHostRemoteSendCallbackInfo
+CppCrossHostRemoteSendCallbackToC(
+    const PJRT_Api* c_api, xla::PjRtBuffer::RemoteSendCallback cpp_callback);
 }  // namespace pjrt
 
 #endif  // XLA_PJRT_EXTENSIONS_CROSS_HOST_TRANSFERS_PJRT_C_API_CROSS_HOST_TRANSFERS_EXTENSION_H_

@@ -73,6 +73,7 @@ xla_test(
     ],
     deps = [
         ":kernel_name_tracer",
+        "//xla/backends/gpu/runtime:command",
         "//xla/backends/gpu/runtime:command_buffer_cmd",
         "//xla/backends/gpu/runtime:command_buffer_thunk",
         "//xla/backends/gpu/runtime:thunk",
@@ -82,7 +83,7 @@ xla_test(
         "//xla/service:platform_util",
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:launch_dimensions",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",

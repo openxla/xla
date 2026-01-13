@@ -27,7 +27,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/gpu/alias_info.h"
@@ -166,13 +165,11 @@ ENTRY entry {
   EXPECT_TRUE(hlo_module->has_entry_computation());
 
   auto mlir_context = std::make_unique<mlir::MLIRContext>();
-  auto symbolic_expr_context =
-      std::make_unique<SymbolicExprContext>(mlir_context.get());
   auto scheduler_config = GetDefaultSchedulerConfig();
   auto latency_estimator = std::make_unique<AnalyticalLatencyEstimator>(
       scheduler_config, std::make_unique<ApproximateLatencyEstimator>(),
       dev_info, HloCostAnalysis::DefaultShapeSize,
-      hlo_module->entry_computation(), symbolic_expr_context.get());
+      hlo_module->entry_computation(), mlir_context.get());
   auto alias_info = GetAliasInfo();
   EXPECT_TRUE(RunScheduler(hlo_module.get(), scheduler_config, alias_info.get(),
                            std::move(latency_estimator))

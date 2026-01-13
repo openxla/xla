@@ -52,6 +52,8 @@ def LinalgElementwiseToVectorPass : Pass<"xtile-cpu-linalg-elementwise-to-vector
   let constructor = "CreateLinalgElementwiseToVectorPass()";
 
   let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect",
     "mlir::vector::VectorDialect",
   ];
 }
@@ -91,4 +93,52 @@ def FuseElementwisePass : Pass<"xtile-cpu-fuse-elementwise"> {
     that contain multiple instructions. This allows for fewer matrializations
     and fewer temporary allocations in bufferization.
   }];
+}
+
+def VectorToScalarPass : Pass<"xtile-cpu-vector-to-scalar"> {
+  let summary = "Convert vector ops to scalar ops where possible.";
+
+  let description = [{
+    This pass converts elementwise vector ops to scalar ops if the operation
+    acts on a single element.
+  }];
+
+  let dependentDialects = [
+    "::mlir::vector::VectorDialect",
+  ];
+}
+
+
+def UnpackSubByteVectorWritePass : Pass<"xtile-cpu-unpack-sub-byte-vector-write"> {
+  let summary = "Unpacks sub-byte vector writes.";
+
+  let description = [{
+    The default lowering of vector.transfer_write of subbyte types reflects that
+    of llvm vector store instructions, i.e it writes the packed data directly.
+    The semantics we use in the CPU lowering is that it will unpack the data
+    into a series of bytes and store them separately. This pass implements that
+    by using unrolling the transfer_write into individual elements.
+  }];
+
+  let dependentDialects = [
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+  ];
+}
+
+def InitializeAllocsPass : Pass<"xtile-cpu-initialize-allocs"> {
+  let summary = "Initializes allocations.";
+
+  let description = [{
+    We don't currently have the infrastructure to instrument JIT kernels fully
+    with msan, therefore to avoid false positives we initialize all allocated
+    memory to set values.
+
+    Integer values will be initialized with all high bits and floats with NaNs.
+  }];
+
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "::mlir::scf::SCFDialect",
+  ];
 }
