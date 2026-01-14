@@ -1362,6 +1362,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
     const RecordParams& record_params, RecordAction record_action,
     se::CommandBuffer* command_buffer) {
   VLOG(5) << "Record ChildCmd " << child_commands_.size() << " commands";
+
   auto record_fn = [&](se::CommandBuffer* command_buffer) {
     return child_commands_
         .RecordCreate(execute_params, record_params, command_buffer,
