@@ -549,33 +549,8 @@ ENTRY triton_computation {
     return captured_in == compare || captured_out == compare;
   };
 
-  bool crashes_on_failure = false;
-  if (data_type_in != data_type_out && any_is(PrimitiveType::F8E4M3FN) &&
-      cc.IsCuda() && !cc.cuda_compute_capability()->IsAtLeastHopper()) {
-    crashes_on_failure |= any_is(F16) || any_is(BF16) || any_is(F32);
-
-    // Crashes due to unsupported/unspecified rounding mode.
-    crashes_on_failure |= (data_type_in == PrimitiveType::F8E4M3FN &&
-                           data_type_out == PrimitiveType::F64);
-
-    crashes_on_failure |=
-        any_is(PrimitiveType::F8E4M3FN) && any_is(PrimitiveType::F8E5M2);
-  }
-
-  if (cc.IsCuda()) {
-    // Crashes due to unsupported/unspecified rounding mode.
-    crashes_on_failure |= (data_type_in == PrimitiveType::F64 &&
-                          (data_type_out == PrimitiveType::F8E4M3FN ||
-                            data_type_out == PrimitiveType::F8E5M2));
-
-    // Crashes due to unsupported conversion.
-    crashes_on_failure |= (data_type_out == PrimitiveType::F64 &&
-                          (data_type_in == PrimitiveType::F8E4M3FN ||
-                            data_type_in == PrimitiveType::F8E5M2));
-  }
   RunSupportTest(
-      std::move(ti), /*output_tile_sizes=*/{1, 32}, cc,
-      crashes_on_failure ? ExpectedFailMode::kCrash : ExpectedFailMode::kFail);
+      std::move(ti), /*output_tile_sizes=*/{1, 32}, cc);
 }
 
 constexpr std::array kTestedOpsConvert = {HloOpcode::kConvert};
@@ -613,14 +588,7 @@ ENTRY triton_computation {
                                      data_type, opcode));
 
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (cc.IsCuda()) {
-    if (opcode == HloOpcode::kDivide &&
-        (data_type == PrimitiveType::BF16 || data_type == PrimitiveType::F16 ||
-         data_type == PrimitiveType::F8E5M2 ||
-         data_type == PrimitiveType::F8E4M3FN)) {
-      fail_mode = ExpectedFailMode::kCrash;
-    }
-  } else {
+  if (cc.IsRocm()) {
     if (((opcode == HloOpcode::kMaximum || opcode == HloOpcode::kMinimum) &&
          (data_type == PrimitiveType::F8E5M2 ||
           data_type == PrimitiveType::F8E4M3FN || 
@@ -657,14 +625,7 @@ ENTRY triton_computation {
                                      data_type, opcode));
 
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (cc.IsCuda()) {
-    if (opcode == HloOpcode::kDivide &&
-        (data_type == PrimitiveType::BF16 || data_type == PrimitiveType::F16 ||
-         data_type == PrimitiveType::F8E5M2 ||
-         data_type == PrimitiveType::F8E4M3FN)) {
-      fail_mode = ExpectedFailMode::kCrash;
-    }
-  } else {
+  if (cc.IsRocm()) {
     if (((opcode == HloOpcode::kMaximum || opcode == HloOpcode::kMinimum) &&
          (data_type == PrimitiveType::F8E5M2 ||
           data_type == PrimitiveType::F8E4M3FN ||
@@ -780,9 +741,10 @@ ENTRY triton_computation {
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
-  bool crashes_on_failure = data_type == PrimitiveType::F8E4M3FN ||
-                            data_type == PrimitiveType::F8E5M2;
+  bool crashes_on_failure = false;
   if (cc.IsRocm()) {
+    crashes_on_failure |= (data_type == PrimitiveType::F8E4M3FN ||
+                            data_type == PrimitiveType::F8E5M2);
     crashes_on_failure |= (data_type == PrimitiveType::F8E5M2FNUZ ||
                            data_type == PrimitiveType::F8E4M3FNUZ);
   }
@@ -856,9 +818,10 @@ ENTRY triton_computation {
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
 
-  bool crashes_on_failure = data_type == PrimitiveType::F8E4M3FN ||
-                            data_type == PrimitiveType::F8E5M2;
+  bool crashes_on_failure = false;
   if (cc.IsRocm()) {
+    crashes_on_failure |= (data_type == PrimitiveType::F8E4M3FN ||
+                            data_type == PrimitiveType::F8E5M2);
     crashes_on_failure |= (data_type == PrimitiveType::F8E5M2FNUZ ||
                            data_type == PrimitiveType::F8E4M3FNUZ);
   }
@@ -978,16 +941,13 @@ ENTRY triton_computation {
 
   // TODO(b/361526623): Reduce the cases where emitter crashes.
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (opcode == HloOpcode::kDivide && (data_type == BF16 ||
-                                       data_type == F16)) {
-    fail_mode = ExpectedFailMode::kCrash;
+  if (cc.IsRocm()) {
+    if (data_type == F8E4M3FN || data_type == F8E5M2 ||
+        data_type == PrimitiveType::F8E5M2FNUZ ||
+        data_type == PrimitiveType::F8E4M3FNUZ) {
+      fail_mode = ExpectedFailMode::kCrash;
+    }
   }
-  if (data_type == F8E4M3FN || data_type == F8E5M2 ||
-      data_type == PrimitiveType::F8E5M2FNUZ ||
-      data_type == PrimitiveType::F8E4M3FNUZ) {
-    fail_mode = ExpectedFailMode::kFailOrCrash;
-  }
-
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc, fail_mode);
 }
 

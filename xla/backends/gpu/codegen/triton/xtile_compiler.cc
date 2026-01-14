@@ -235,18 +235,9 @@ absl::Status ValidateUsedTypes(
   std::vector<PrimitiveType> fusion_data_types;
   const HloComputation* computation = fusion->fused_instructions_computation();
   for (const HloInstruction* instr : computation->instructions()) {
-    std::optional<PrimitiveType> type =
-        instr->shape().IsTuple() ?
-          std::nullopt :
-          std::make_optional(instr->shape().element_type());
-    if (type.has_value()) {
-      if (!IsTritonSupportedDataType(type.value(),
-          device_info.gpu_compute_capability())) {
-          primitive_util::LowercasePrimitiveTypeName(type.value());
-        return absl::UnimplementedError(
-          absl::StrCat("Type is not supported: ",
-            primitive_util::LowercasePrimitiveTypeName(type.value())));
-      }
+    if(!IsTritonSupportedInstruction(
+          *instr, device_info.gpu_compute_capability())) {
+        return absl::UnimplementedError("Not supported instruction");
     }
   }
 }
