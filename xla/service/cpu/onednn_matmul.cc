@@ -43,7 +43,6 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
-#include "xla/service/cpu/runtime_lightweight_check.h"
 #include "xla/shape.h"
 #include "tsl/platform/cpu_info.h"
 
