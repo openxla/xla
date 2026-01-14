@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <string>
 #include <vector>
 
@@ -48,9 +49,6 @@ limitations under the License.
 
 namespace mlir {
 namespace triton {
-namespace nvidia_gpu {
-struct ClusterInfo;
-}
 }  // namespace triton
 }  // namespace mlir
 
@@ -59,7 +57,6 @@ namespace gpu {
 
 struct TritonWrapperResult {
   int64_t shmem_bytes = 0;
-  std::optional<se::ClusterDim> cluster_dim;
   se::gpu::TmaMetadata tma_metadata;
   se::ThreadDim thread_dims;
 
@@ -69,6 +66,8 @@ struct TritonWrapperResult {
   std::vector<llvm::Metadata*> nvvm_annotations;
   std::unique_ptr<llvm::Module> llvm_module;
 };
+
+std::ostream& operator<<(std::ostream& os, const TritonWrapperResult& result);
 
 // Load the MLIR dialects required for Triton IR generation.
 void LoadMlirDialectsForTriton(mlir::MLIRContext& mlir_context);
@@ -142,10 +141,11 @@ absl::StatusOr<Tiling> TilingFromAnnotatedFusion(
 //
 // The `fusion` instruction should be the one that was used to create the shared
 // dialect module.
-absl::Status LowerXTileToTriton(mlir::ModuleOp xtile_dialect_module,
-                                mlir::MLIRContext& mlir_context,
-                                const HloFusionInstruction& fusion,
-                                const se::DeviceDescription& device_info);
+absl::Status LowerXTileToTriton(
+    mlir::ModuleOp xtile_dialect_module, mlir::MLIRContext& mlir_context,
+    const HloFusionInstruction& fusion,
+    const se::DeviceDescription& device_info,
+    const BlockLevelParameters& block_level_parameters);
 
 }  // namespace ir_emitter_triton_internal
 }  // namespace gpu

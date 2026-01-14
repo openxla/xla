@@ -60,7 +60,7 @@ struct AutotuneConfig {
   // scratch_bytes_window_size_us window.
   bool optimize_scratch_bytes = true;
   // Window size in microseconds to consider for scratch bytes optimization.
-  int scratch_bytes_window_size_us = 4;
+  int scratch_bytes_window_size_us = 2;
   // If true, the autotuner will return an error if the best config for a
   // certain instruction is not in the cache.
   bool expect_all_instructions_in_cache = false;
@@ -87,6 +87,10 @@ struct AutotuneConfig {
   // If true, dump the autotuned instructions to the modules's xla_dump_to or
   // to stdout if not set.
   bool dump_hlos = false;
+  // Whether to allow or discard configs that ptxas warns will spill registers.
+  bool allow_reg_spills = false;
+
+  std::string ToString() const;
 };
 
 class Autotuner {
@@ -206,6 +210,8 @@ class Autotuner {
   std::optional<Failure> CheckBuffers(InputBuffers& input_buffers,
                                       ScopedShapedBuffer& output,
                                       ScopedShapedBuffer& reference);
+  absl::Status IsValidExecutable(
+      const absl::StatusOr<std::unique_ptr<Executable>>& executable) const;
 
   void LogConfigResults(const HloInstruction& instr,
                         const std::vector<ConfigResult>& results);

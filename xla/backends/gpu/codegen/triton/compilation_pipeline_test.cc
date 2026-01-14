@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
 
-#include <algorithm>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -25,6 +24,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/strings/str_join.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 
@@ -41,7 +41,8 @@ TEST(CompilationPipelineTest, UnswitchLoopsAfterLICM) {
 
   CreateTritonXlaPipeline(&pm, stream_executor::CudaComputeCapability(),
                           /*rewrite_int4=*/false, /*allow_tma=*/true,
-                          /*num_stages=*/1);
+                          /*num_stages=*/1,
+                          /*warp_specialization_allowed=*/true);
 
   std::vector<std::string> pass_names;
   for (const mlir::Pass& pass : pm.getPasses()) {

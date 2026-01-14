@@ -4,7 +4,6 @@ load("//xla/tsl:tsl.bzl", "if_google", "if_windows", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
-load("//xla/tsl/xnnpack:build_defs.bzl", "if_ynnpack")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -22,7 +21,8 @@ package_group(
 filegroup(
     name = "runtime_srcs",
     srcs = [
-        "convolution_lib_f16.cc",
+        "convolution_lib_f16_2d.cc",
+        "convolution_lib_f16_3d.cc",
         "convolution_lib_f32.cc",
         "dot_lib_c128.cc",
         "dot_lib_c64.cc",
@@ -154,22 +154,20 @@ tf_proto_library(
     srcs = ["thunk.proto"],
     create_grpc_library = True,
     make_default_target_header_only = True,
-    protodeps = [
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla:xla_data_proto",
         "//xla/backends/cpu:xnn_fusion_options_proto",
         "//xla/backends/cpu:ynn_fusion_options_proto",
         "//xla/service:buffer_assignment_proto",
-        "//xla:xla_data_proto",
         "//xla/service:hlo_proto",
-        "@com_google_protobuf//:any_proto",
     ],
-    visibility = ["//visibility:public"],
 )
 
 cc_library(
     name = "thunk",
     srcs = ["thunk.cc"],
     hdrs = ["thunk.h"],
-    defines = if_ynnpack(["XLA_YNNPACK"]),
     deps = [
         ":buffer_allocations",
         ":function_library",
@@ -177,8 +175,8 @@ cc_library(
         "//xla:executable_run_options",
         "//xla/backends/cpu/collectives:cpu_collectives",
         "//xla/backends/cpu/collectives:in_process_collectives",
-        "//xla/backends/cpu/runtime/xnnpack:xnn_interop",
-        "//xla/backends/cpu/runtime/xnnpack:xnn_threadpool",
+        "//xla/backends/cpu/runtime/ynnpack:ynn_interop",
+        "//xla/backends/cpu/runtime/ynnpack:ynn_threadpool",
         "//xla/ffi:execution_context",
         "//xla/runtime:buffer_use",
         "//xla/runtime:device_id",
@@ -198,10 +196,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/lib:traceme_encode",
-    ] + if_ynnpack([
-        "//xla/backends/cpu/runtime/ynnpack:ynn_interop",
-        "//xla/backends/cpu/runtime/ynnpack:ynn_threadpool",
-    ]),
+    ],
 )
 
 cc_library(
@@ -280,6 +275,7 @@ xla_cc_test(
         ":thunk_testlib",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:shape_util",
         "//xla/runtime:buffer_use",
         "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",
@@ -324,6 +320,7 @@ cc_library(
         ":thunk_executor",
         "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_address",
@@ -345,6 +342,7 @@ xla_cc_test(
         ":thunk",
         ":thunk_testlib",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/runtime:buffer_use",
         "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",
@@ -399,14 +397,15 @@ cc_library(
 cc_library(
     name = "convolution_lib",
     srcs = [
-        "convolution_lib_f16.cc",
+        "convolution_lib_f16_2d.cc",
+        "convolution_lib_f16_3d.cc",
         "convolution_lib_f32.cc",
     ],
     hdrs = ["convolution_lib.h"],
     copts = runtime_copts(),
     visibility = internal_visibility([":friends"]),
     deps = [
-        "//xla/backends/cpu/runtime:work_queue",
+        ":work_queue",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/framework/contraction:eigen_contraction_kernel",
         "//xla/tsl/framework/convolution:eigen_helpers",
@@ -861,6 +860,7 @@ cc_library(
     hdrs = ["logical_id_thunk.h"],
     deps = [
         ":thunk",
+        "//xla:shape_util",
         "//xla:status_macros",
         "//xla/runtime:buffer_use",
         "//xla/runtime:device_id",
@@ -932,7 +932,6 @@ xla_cc_test(
         "//xla/service:buffer_assignment",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1025,6 +1024,7 @@ cc_library(
     deps = [
         ":rng_state_lib",
         ":thunk",
+        "//xla:shape_util",
         "//xla:util",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
@@ -1202,6 +1202,7 @@ cc_library(
     deps = [
         ":thunk",
         ":topk_lib",
+        "//xla:shape_util",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_address",
@@ -1250,11 +1251,10 @@ cc_library(
         ":while_thunk",
         "//xla:shape_util",
         "//xla:util",
-        "//xla/backends/cpu:xnn_fusion_options_proto_cc",
+        "//xla/backends/cpu:ynn_emitter",
         "//xla/backends/cpu:ynn_fusion_options_proto_cc",
-        "//xla/backends/cpu/runtime/xnnpack:xnn_convolution_thunk",
-        "//xla/backends/cpu/runtime/xnnpack:xnn_dot_thunk",
-        "//xla/backends/cpu/runtime/xnnpack:xnn_fusion_thunk",
+        "//xla/backends/cpu/runtime/ynnpack:ynn_fusion_thunk",
+        "//xla/backends/cpu/runtime/ynnpack:ynn_interop",
         "//xla/hlo/ir:hlo",
         "//xla/runtime:resource_use",
         "//xla/runtime:work_group",
@@ -1275,11 +1275,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
-    ] + if_ynnpack([
-        "//xla/backends/cpu/runtime/ynnpack:ynn_fusion_thunk",
-        "//xla/backends/cpu:ynn_emitter",
-        "//xla/backends/cpu/runtime/ynnpack:ynn_interop",
-    ]),
+    ],
 )
 
 cc_library(
@@ -1314,7 +1310,6 @@ xla_cc_test(
 xla_cc_test(
     name = "thunk_sequence_serdes_test",
     srcs = ["thunk_sequence_serdes_test.cc"],
-    local_defines = if_ynnpack(["XLA_YNNPACK"]),
     deps = [
         ":all_gather_thunk",
         ":all_reduce_thunk",
@@ -1349,9 +1344,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
-        "//xla/backends/cpu/runtime/xnnpack:xnn_convolution_thunk",
-        "//xla/backends/cpu/runtime/xnnpack:xnn_dot_thunk",
-        "//xla/backends/cpu/runtime/xnnpack:xnn_fusion_thunk",
+        "//xla/backends/cpu/runtime/ynnpack:ynn_fusion_thunk",
         "//xla/ffi",
         "//xla/ffi:ffi_api",
         "//xla/runtime:resource_use",
@@ -1372,9 +1365,7 @@ xla_cc_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:casts",
-    ] + if_ynnpack([
-        "//xla/backends/cpu/runtime/ynnpack:ynn_fusion_thunk",
-    ]),
+    ],
 )
 
 cc_library(

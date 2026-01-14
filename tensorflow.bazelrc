@@ -189,10 +189,11 @@ common:mkl_aarch64_threadpool -c opt
 # This is an alias for the mkl_aarch64_threadpool build.
 common:mkl_aarch64 --config=mkl_aarch64_threadpool
 
-# Default CUDA, CUDNN and NVSHMEM versions.
+# Default CUDA, CUDNN, NCCL and NVSHMEM versions.
 common:cuda_version --repo_env=HERMETIC_CUDA_VERSION="12.9.1"
 common:cuda_version --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
 common:cuda_version --repo_env=HERMETIC_NVSHMEM_VERSION="3.2.5"
+common:cuda_version --repo_env=HERMETIC_NCCL_VERSION="2.27.7"
 
 # CUDA: This config refers to building CUDA op kernels with nvcc.
 common:cuda --repo_env TF_NEED_CUDA=1
@@ -274,8 +275,6 @@ common:rocm_base --copt=-Wno-gnu-offsetof-extensions
 common:rocm_base --crosstool_top=@local_config_rocm//crosstool:toolchain
 common:rocm_base --define=using_rocm_hipcc=true
 common:rocm_base --define=tensorflow_mkldnn_contraction_kernel=0
-common:rocm_base --define=xnn_enable_avxvnniint8=false
-common:rocm_base --define=xnn_enable_avx512fp16=false
 common:rocm_base --repo_env TF_NEED_ROCM=1
 
 common:rocm_clang_official --config=rocm_base
@@ -289,7 +288,7 @@ common:rocm_ci --config=rocm
 
 common:rocm_ci_hermetic --dynamic_mode=off
 common:rocm_ci_hermetic --config=rocm_clang_official
-common:rocm_ci_hermetic --repo_env="ROCM_DISTRO_VERSION=rocm_7.10.0_gfx94X"
+common:rocm_ci_hermetic --repo_env="ROCM_DISTRO_VERSION=rocm_7.10.0_gfx90X"
 common:rocm_ci_hermetic --@local_config_rocm//rocm:rocm_path_type=hermetic
 
 # This config option is used for SYCL as GPU backend.
@@ -300,6 +299,7 @@ common:sycl --define=tensorflow_mkldnn_contraction_kernel=0
 common:sycl --cxxopt=-std=c++17
 common:sycl --host_cxxopt=-std=c++17
 common:sycl --repo_env=SYCL_BUILD_HERMETIC=0
+common:sycl --copt=-Wno-implicit-float-size-conversion
 
 # Enable Clang for host and icpx for SYCL
 common:icpx_clang --repo_env TF_ICPX_CLANG=1
@@ -531,12 +531,6 @@ common:rbe_linux_cpu_clang_local --crosstool_top="@local_config_cuda//crosstool:
 common:rbe_linux_cpu_clang_local --extra_toolchains="@local_config_cuda//crosstool:toolchain-linux-x86_64"
 common:rbe_linux_cpu_clang_local --repo_env=CC="/usr/lib/llvm-18/bin/clang"
 common:rbe_linux_cpu_clang_local --repo_env=TF_SYSROOT="/dt9"
-
-# Download CUDA/CUDNN redistributions to preserve the repositories cache between
-# CPU and GPU builds.
-# TODO(ybaturina): Uncomment when RBE is ready to support this.
-# common:rbe_linux_cpu --repo_env USE_CUDA_REDISTRIBUTIONS=1
-# common:rbe_linux_cpu --config=cuda_version
 
 common:rbe_linux_cuda --config=cuda_clang_official
 common:rbe_linux_cuda --config=rbe_linux_cpu

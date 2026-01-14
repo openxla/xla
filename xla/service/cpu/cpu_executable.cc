@@ -103,12 +103,6 @@ absl::StatusOr<std::unique_ptr<CpuExecutable>> CpuExecutable::Create(
       executable->thunks_,
       ThunkExecutor::Create(std::move(thunks), thunk_executor_options));
 
-  // Find if the thunk sequence contains any XNN fusion thunks. If we do have
-  // any, we will prepare the XNNPACK thread pool for them at run time.
-  executable->thunks_->thunk_sequence().ForEach([&](const Thunk& thunk) {
-    executable->has_xnn_fusions_ |= thunk.kind() == Thunk::Kind::kXnnFusion;
-  });
-
   // Find if the thunk sequence contains any YNN fusion thunks. If we do have
   // any, we will prepare the YNNPACK thread pool for them at run time.
   executable->thunks_->thunk_sequence().ForEach([&](const Thunk& thunk) {
@@ -165,7 +159,7 @@ static absl::StatusOr<MaybeOwningDeviceAddress> MemoryForAllocation(
   if (allocation.is_entry_computation_parameter()) {
     se::DeviceAddressBase out = arguments[allocation.parameter_number()]
                                     .Buffer(allocation.param_shape_index())
-                                    .AsDeviceMemoryBase();
+                                    .AsDeviceAddress();
     CHECK_LE(allocation.size(), out.size())
         << "Size mismatch on param " << allocation.parameter_number()
         << " at shape index " << allocation.param_shape_index().ToString();
@@ -175,7 +169,7 @@ static absl::StatusOr<MaybeOwningDeviceAddress> MemoryForAllocation(
     VLOG(3) << "allocation is a constant";
     if (allocation.index() < constants.size()) {
       return MaybeOwningDeviceAddress(
-          constants[allocation.index()].AsDeviceMemoryBase());
+          constants[allocation.index()].AsDeviceAddress());
     }
     return MaybeOwningDeviceAddress{se::DeviceAddressBase{}};
   } else if (allocation.is_thread_local()) {
@@ -245,8 +239,7 @@ absl::Status CpuExecutable::ExecuteThunks(
   VLOG(3) << absl::StrFormat("  Number of buffer allocations: %u",
                              buffers.size());
   auto mem_printer = [](std::string* out, const MaybeOwningDeviceAddress& mem) {
-    absl::StrAppend(out,
-                    absl::StrFormat("%p", mem.AsDeviceMemoryBase().opaque()));
+    absl::StrAppend(out, absl::StrFormat("%p", mem.AsDeviceAddress().opaque()));
   };
   VLOG(3) << absl::StrFormat("  Buffer allocations: [%s]",
                              absl::StrJoin(buffers, ", ", mem_printer));
@@ -261,12 +254,6 @@ absl::Status CpuExecutable::ExecuteThunks(
   // Prepare for executing XLA custom calls.
   TF_ASSIGN_OR_RETURN(Thunk::CustomCallExecuteParams custom_call_execute_params,
                       Thunk::CustomCallExecuteParams::Create(run_options));
-
-  // Prepare for executing XNNPACK fusions.
-  std::optional<Thunk::XnnParams> xnn_params;
-  if (has_xnn_fusions()) {
-    TF_ASSIGN_OR_RETURN(xnn_params, Thunk::XnnParams::Create(run_options));
-  }
 
   // Prepare for executing YNNPACK fusions.
   std::optional<Thunk::YnnParams> ynn_params;
@@ -287,7 +274,6 @@ absl::Status CpuExecutable::ExecuteThunks(
       &task_runner,
       &collective_execute_params,
       &custom_call_execute_params,
-      xnn_params ? &*xnn_params : nullptr,
       ynn_params ? &*ynn_params : nullptr};
 
   auto executed_event = thunks_->Execute(execute_params);
@@ -383,9 +369,9 @@ absl::StatusOr<ExecutionOutput> CpuExecutable::CreateResultShapedBuffer(
         result_buffer = allocated_buffer.Release();
         MaybeOwningDeviceAddress& registered_buffer = buffers[buffer_index];
         CHECK_EQ(result_buffer.size(),
-                 registered_buffer.AsDeviceMemoryBase().size());
+                 registered_buffer.AsDeviceAddress().size());
         std::memcpy(/*dest=*/result_buffer.opaque(),
-                    /*src=*/registered_buffer.AsDeviceMemoryBase().opaque(),
+                    /*src=*/registered_buffer.AsDeviceAddress().opaque(),
                     /*n=*/result_buffer.size());
         registered_buffer = result_buffer;
       }
@@ -398,7 +384,7 @@ absl::StatusOr<ExecutionOutput> CpuExecutable::CreateResultShapedBuffer(
         result_buffer = owned_buffer->Release();
         buffer = result_buffer;
       } else {
-        result_buffer = buffer.AsDeviceMemoryBase();
+        result_buffer = buffer.AsDeviceAddress();
         result.AddAliasedIndex(index);
       }
     }

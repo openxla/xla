@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
+#include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
@@ -49,6 +50,8 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/logical_buffer.h"
+#include "xla/service/xla_debug_info_manager.h"
+#include "xla/shape.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -145,6 +148,7 @@ TEST(GpuExecutableTest, RunThunkPasses) {
   auto create_executable = [&]() {
     Thunk::ThunkInfo thunk_info;
     BufferAllocation alloc(0, 1024, 0);
+    Shape shape = ShapeUtil::MakeShape(S32, {256});
     BufferAllocation::Slice slice(&alloc, 0, 1024);
 
     ThunkSequence thunk_sequence;
@@ -157,7 +161,8 @@ TEST(GpuExecutableTest, RunThunkPasses) {
         /*shmem_bytes=*/0,
         /*tma_metadata=*/se::gpu::TmaMetadata()));
     thunk_sequence.push_back(std::make_unique<DeviceToDeviceCopyThunk>(
-        thunk_info, slice, slice, 1024));
+        thunk_info, ShapedSlice{slice, shape}, ShapedSlice{slice, shape},
+        1024));
 
     GpuExecutable::Params params;
     params.executable = std::make_unique<SequentialThunk>(
@@ -391,6 +396,7 @@ TEST(GpuExecutableTest, DumpsMetadataListProto) {
   auto create_executable = [&]() {
     BufferAllocation alloc(0, 1024, 0);
     BufferAllocation::Slice slice(&alloc, 0, 1024);
+    Shape shape = ShapeUtil::MakeShape(S32, {256});
 
     ThunkSequence thunk_sequence;
     thunk_sequence.push_back(std::make_unique<KernelThunk>(
@@ -402,7 +408,8 @@ TEST(GpuExecutableTest, DumpsMetadataListProto) {
         /*shmem_bytes=*/0,
         /*tma_metadata=*/se::gpu::TmaMetadata()));
     thunk_sequence.push_back(std::make_unique<DeviceToDeviceCopyThunk>(
-        ThunkInfoWithId(456), slice, slice, 1024));
+        ThunkInfoWithId(456), ShapedSlice{slice, shape},
+        ShapedSlice{slice, shape}, 1024));
 
     GpuExecutable::Params params;
     params.executable = std::make_unique<SequentialThunk>(
@@ -484,7 +491,8 @@ TEST(GpuExecutableTest, ProtoConversion) {
 
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuExecutable> reconstructed_executable,
-      GpuExecutable::FromProto(proto, device_description, "TEST_PLATFORM"));
+      GpuExecutable::FromProto(proto, device_description, "TEST_PLATFORM",
+                               DebugOptions()));
   EXPECT_THAT(reconstructed_executable->text(), "test_asm_text");
   EXPECT_THAT(reconstructed_executable->binary(), ElementsAre(1, 2, 3));
   EXPECT_THAT(
@@ -511,6 +519,8 @@ TEST(GpuExecutableTest, GpuExecutableDump) {
   auto create_executable = [&]() {
     ThunkSequence thunk_sequence;
     BufferAllocation::Slice slice(&alloc, 0, 1024);
+    Shape shape = ShapeUtil::MakeShape(S32, {256});
+
     thunk_sequence.push_back(std::make_unique<KernelThunk>(
         ThunkInfoWithId(123),
         /*kernel_name=*/"test_kernel",
@@ -520,7 +530,8 @@ TEST(GpuExecutableTest, GpuExecutableDump) {
         /*shmem_bytes=*/0,
         /*tma_metadata=*/se::gpu::TmaMetadata()));
     thunk_sequence.push_back(std::make_unique<DeviceToDeviceCopyThunk>(
-        ThunkInfoWithId(456), slice, slice, 1024));
+        ThunkInfoWithId(456), ShapedSlice{slice, shape},
+        ShapedSlice{slice, shape}, 1024));
 
     GpuExecutable::Params params;
     params.executable = std::make_unique<SequentialThunk>(
@@ -602,7 +613,7 @@ TEST(GpuExecutableTest, FromProtoWithSymbolResolver) {
                 kernel_args_packing_spec {
                   kernel_arguments {
                     relocations {
-                      type: TYPE_BITS64_ABSOLUTE
+                      kind: KIND_BITS64_ABSOLUTE
                       argument_index: 0
                       offset: 0
                     }
@@ -637,7 +648,7 @@ TEST(GpuExecutableTest, FromProtoWithSymbolResolver) {
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuExecutable> executable,
       GpuExecutable::FromProto(proto, device_description, "TEST_PLATFORM",
-                               symbol_resolver));
+                               DebugOptions(), symbol_resolver));
 
   const CustomKernelThunk* custom_kernel_thunk =
       dynamic_cast<const CustomKernelThunk*>(
@@ -719,6 +730,72 @@ TEST(GpuExecutableTest, ToProtoReturnsUnchangedThunkGraph) {
   TF_ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto, executable->ToProto());
   ASSERT_TRUE(proto.thunk().has_sequential_thunk());
   EXPECT_THAT(proto.thunk().sequential_thunk().thunks(), SizeIs(5));
+}
+
+TEST(GpuExecutableTest, FromProtoRegistersHloModuleWithDebugInfoManager) {
+  const auto proto = ParseTextProtoOrDie<GpuExecutableProto>(R"pb(
+    module_name: "test_module"
+    gpu_compute_capability: {
+      cuda_compute_capability: { major: 9 minor: 0 feature_extension: NONE }
+    }
+    hlo_module_with_config {
+      config {
+        entry_computation_layout {
+          parameters { element_type: F32 dimensions: 1 }
+          parameter_names: "parameter"
+        }
+      }
+      hlo_module {
+        name: "test_module"
+        entry_computation_name: "test_computation"
+        host_program_shape {
+          parameters { element_type: F32 dimensions: 1 }
+          parameter_names: "parameter"
+        }
+        computations {
+          name: "test_computation"
+          instructions {
+            name: "test_instruction"
+            opcode: "parameter"
+            shape: { element_type: F32 dimensions: 1 }
+          }
+        }
+      }
+    }
+    thunk {
+      thunk_info { thunk_id: 1 }
+      sequential_thunk {
+        thunks {
+          thunk_info { thunk_id: 2 }
+          host_send_done_thunk { channel_id: 123 async_events_unique_id: 1 }
+        }
+      }
+    }
+  )pb");
+
+  stream_executor::DeviceDescription device_description;
+  device_description.set_gpu_compute_capability(
+      se::GpuComputeCapability{se::CudaComputeCapability::Hopper()});
+
+  DebugOptions debug_options;
+  debug_options.set_xla_gpu_executable_embed_debug_info(true);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> executable,
+      GpuExecutable::FromProto(proto, device_description, "TEST_PLATFORM",
+                               debug_options));
+  ASSERT_TRUE(executable->has_module());
+  EXPECT_TRUE(XlaDebugInfoManager::Get()->TracksModule(
+      executable->module().unique_id()));
+
+  debug_options.set_xla_gpu_executable_embed_debug_info(false);
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> executable_without_debug_info_manager,
+      GpuExecutable::FromProto(proto, device_description, "TEST_PLATFORM",
+                               debug_options));
+  ASSERT_TRUE(executable_without_debug_info_manager->has_module());
+  EXPECT_FALSE(XlaDebugInfoManager::Get()->TracksModule(
+      executable_without_debug_info_manager->module().unique_id()));
 }
 
 }  // namespace

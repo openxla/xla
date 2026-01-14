@@ -107,6 +107,9 @@ using ::testing::IsEmpty;
 using ::testing::IsSupersetOf;
 using ::testing::Matches;
 using ::testing::Not;
+using ::testing::NotNull;
+using ::testing::Pointee;
+using ::testing::Property;
 using ::testing::SizeIs;
 using ::testing::StartsWith;
 using ::testing::TempDir;
@@ -392,6 +395,13 @@ ENTRY e {
 
 class PersistedAutotuningTest : public HloTestBase {
  protected:
+  void SetUp() override {
+    AutotunerUtil::ClearAutotuneResults();
+    xla_gpu_dump_autotune_results_to_ = GetUniqueTempFilePath(".txt");
+  }
+
+  void TearDown() override { AutotunerUtil::ClearAutotuneResults(); }
+
   static constexpr absl::string_view kHloText = R"(
 HloModule t
 
@@ -425,7 +435,6 @@ ENTRY e {
 
 TEST_F(PersistedAutotuningTest, WriteResultsOnEachCompilation) {
   constexpr absl::string_view kInvalidTextProto = "Invalid!";
-  xla_gpu_dump_autotune_results_to_ = GetUniqueTempFilePath(".txt");
 
   // Check that it writes the results on the first compilation.
   TF_EXPECT_OK(GetOptimizedModule(kHloText).status());
@@ -453,6 +462,22 @@ TEST_F(PersistedAutotuningTest, WriteResultsOnEachCompilation) {
     EXPECT_TRUE(tsl::protobuf::TextFormat::ParseFromString(autotune_results_str,
                                                            &results));
   }
+}
+
+TEST_F(PersistedAutotuningTest, SingleOperationGetsAutotuned) {
+  TF_EXPECT_OK(GetOptimizedModule(R"(
+e {
+  a = f32[64,128] parameter(0)
+  t = f32[128,64] transpose(a), dimensions={1,0}
+})")
+                   .status());
+
+  TF_ASSERT_OK_AND_ASSIGN(std::string autotune_results_str,
+                          ReadNonEmptyFile(xla_gpu_dump_autotune_results_to_));
+  AutotuneResults results;
+  EXPECT_TRUE(tsl::protobuf::TextFormat::ParseFromString(autotune_results_str,
+                                                         &results));
+  EXPECT_THAT(results.results(), Not(IsEmpty()));
 }
 
 int64_t CountCopies(const HloComputation& computation) {
@@ -940,19 +965,18 @@ TEST_P(AotCompilationTest, CompileAndLoadAotResult) {
                                    GetModuleConfigForTest()));
 
   TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<std::unique_ptr<AotCompilationResult>> aot_results,
+      std::vector<std::unique_ptr<CompiledModule>> aot_results,
       compiler_->CompileAheadOfTime(std::move(add_1_hlo), *aot_options_));
   ASSERT_THAT(aot_results, SizeIs(1));
 
   TF_ASSERT_OK_AND_ASSIGN(std::string serialized_aot_result,
                           std::move(aot_results[0])->SerializeAsString());
   TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<AotCompilationResult> aot_result,
+      std::unique_ptr<CompiledModule> aot_result,
       compiler_->LoadAotCompilationResult(serialized_aot_result));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Executable> executable,
-      std::move(*aot_result).LoadExecutable(compiler_, stream_exec_));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                          std::move(*aot_result).LoadExecutable(stream_exec_));
   std::unique_ptr<OpaqueExecutable> wrapped_executable =
       test_runner_as_hlo_runner().WrapExecutable(std::move(executable));
 
@@ -985,12 +1009,11 @@ TEST_P(AotCompilationTest, ExportAndImportAotResult) {
       std::unique_ptr<Executable> executable,
       compiler_->RunBackend(std::move(add_1_hlo), stream_exec_,
                             /*device_allocator=*/nullptr));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<AotCompilationResult> aot_result,
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<CompiledModule> aot_result,
                           compiler_->Export(executable.get()));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Executable> new_executable,
-      std::move(*aot_result).LoadExecutable(compiler_, stream_exec_));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> new_executable,
+                          std::move(*aot_result).LoadExecutable(stream_exec_));
   std::unique_ptr<OpaqueExecutable> wrapped_executable =
       test_runner_as_hlo_runner().WrapExecutable(std::move(new_executable));
 
@@ -1001,6 +1024,31 @@ TEST_P(AotCompilationTest, ExportAndImportAotResult) {
                           test_runner_as_hlo_runner().ExecuteWithExecutable(
                               wrapped_executable.get(), {&literal_input}));
   EXPECT_TRUE(LiteralTestUtil::Equal(result, literal_expected_result));
+}
+
+TEST_P(AotCompilationTest, EarlyExitWithLayouts) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> add_1_hlo,
+      ParseAndReturnVerifiedModule(R"hlo(
+    add1 {
+      p = s32[] parameter(0)
+      c = s32[] constant(1)
+      ROOT a = s32[] add(p, c)
+    }
+
+    ENTRY e {
+      p = s32[] parameter(0)
+      ROOT r = s32[] fusion(p), kind=kLoop, calls=add1
+    })hlo",
+                                   GetModuleConfigForTest()));
+
+  aot_options_->set_early_exit_point(
+      AotCompilationOptions::EarlyExitPoint::kAfterLayoutAssignment);
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<CompiledModule>> aot_results,
+      compiler_->CompileAheadOfTime(std::move(add_1_hlo), *aot_options_));
+  EXPECT_THAT(aot_results, ElementsAre(Pointee(Property(
+                               &CompiledModule::optimized_module, NotNull()))));
 }
 
 class KernelCacheTest : public HloTestBase {
@@ -1145,19 +1193,18 @@ ENTRY e {
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                             ParseAndReturnVerifiedModule(hlo));
     TF_ASSERT_OK_AND_ASSIGN(
-        std::vector<std::unique_ptr<AotCompilationResult>> aot_results,
+        std::vector<std::unique_ptr<CompiledModule>> aot_results,
         compiler->CompileAheadOfTime(std::move(module), aot_options));
 
     TF_ASSERT_OK_AND_ASSIGN(std::string serialized_aot_result,
                             aot_results[0]->SerializeAsString());
     TF_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<AotCompilationResult> aot_result,
+        std::unique_ptr<CompiledModule> aot_result,
         compiler->LoadAotCompilationResult(serialized_aot_result));
 
     TF_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Executable> executable,
-        std::move(*aot_result)
-            .LoadExecutable(compiler, aot_options.executor()));
+        std::move(*aot_result).LoadExecutable(aot_options.executor()));
     std::unique_ptr<OpaqueExecutable> wrapped_executable =
         test_runner_as_hlo_runner().WrapExecutable(std::move(executable));
 
@@ -1797,38 +1844,14 @@ TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
   VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
 }
 
-TEST_F(PassOrderTest, NestGemmFusionRunsAfterGemmFusionAutotuner) {
-  // NestGemmFusion expect to see __triton_gemm custom call with a backend
-  // config created by gemm_fusion_autotuner.
-  VerifyPassOrder("gemm-fusion-autotuner", "nest_gemm_fusion");
+TEST_F(PassOrderTest, HoistFusedBitcastsRunsAfterAutotuner) {
+  VerifyPassRunsAtLeastOnceBefore("autotuner", "hoist-fused-bitcasts");
 }
 
-TEST_F(PassOrderTest, TransposeDimensionGrouperRunsBeforeGemmRewriter) {
-  if (!get_cuda_cc().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "triton-gemm-rewriter requires at least Ampere to run.";
-  }
-  if (!optimized_module_) {
-    CompileModule(GetModuleConfigForTest());
-  }
-  // DebugOptions options = GetDebugOptionsForTest();
-  // options.set_xla_gpu_enable_triton_gemm(true);
-  // SetDebugOptions(options);
-  // Verify that transpose-dimension-grouper runs immediately before
-  // triton-gemm-rewriter. We want to keep them close together to avoid the
-  // possibility of new passes to rewrite the transpose and make it
-  // not compatible with the generic triton emitter.
-  // Simple VerifyPassOrder does not work here as we want to check that passes
-  // are run next to each other, also transpose-dimension-grouper runs one more
-  // time after the gemm rewriter.
-  CHECK(optimized_module_);
-  std::string previous_pass_name;
-  for (const HloPassMetadata& pass_metadata :
-       optimized_module_->metadata().proto().pass_metadata()) {
-    if (pass_metadata.pass_name() == "triton-gemm-rewriter") {
-      EXPECT_EQ(previous_pass_name, "transpose-dimension-grouper");
-    }
-    previous_pass_name = pass_metadata.pass_name();
-  }
+TEST_F(PassOrderTest, NestGemmFusionRunsAfterHoistFusedBitcasts) {
+  // NestGemmFusion expect to see __triton_gemm custom call with a backend
+  // config created by gemm_fusion_autotuner.
+  VerifyPassOrder("hoist-fused-bitcasts", "nest_gemm_fusion");
 }
 
 TEST_F(PassOrderTest,
@@ -2019,6 +2042,10 @@ TEST_F(GpuCompilerTest, DynamicSliceFusionReduceScatterMultipleBuffers) {
   )";
   EXPECT_THAT(RunFileCheck(m->ToString(), kExpected),
               absl_testing::IsOkAndHolds(true));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                          backend().compiler()->RunBackend(
+                              std::move(m), backend().default_stream_executor(),
+                              /*device_allocator=*/nullptr));
 }
 
 TEST_F(GpuCompilerTest, CompilingSortsWorksWithoutDevice) {
@@ -2056,7 +2083,7 @@ ENTRY %main {
   EXPECT_CALL(mock_log,
               Log(absl::LogSeverity::kWarning, EndsWith("/gpu_compiler.cc"),
                   StartsWith("Using fallback sort algorithm")))
-      .Times(2);
+      .Times(1);
 
   // StartCapturingLogs has to be called even if we expect not to capture any
   // logs.

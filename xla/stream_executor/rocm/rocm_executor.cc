@@ -63,7 +63,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_args.h"
-#include "xla/stream_executor/kernel_argument_packing_spec.h"
+#include "xla/stream_executor/kernel_args_packing_spec.h"
 #include "xla/stream_executor/kernel_metadata.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -729,13 +729,13 @@ absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
             spec.kernel_args_packing()));
   } else {
     const auto& packing_spec =
-        std::get<KernelArgumentsPackingSpec>(spec.kernel_args_packing());
+        std::get<KernelArgsPackingSpec>(spec.kernel_args_packing());
     rocm_kernel->set_args_packing([packing_spec](const Kernel& kernel,
                                                  const KernelArgs& args) {
       const auto& mem_args =
           stream_executor::Cast<stream_executor::KernelArgsDeviceAddressArray>(
               &args);
-      return packing_spec.BuildArguments(mem_args->device_memory_args(),
+      return packing_spec.BuildArguments(mem_args->device_addr_args(),
                                          args.number_of_shared_bytes());
     });
   }
@@ -779,12 +779,12 @@ absl::StatusOr<ModuleHandle> RocmExecutor::LoadModuleFromHsaco(
 }
 
 DeviceAddressBase RocmExecutor::Allocate(uint64_t size, int64_t memory_space) {
-  switch (static_cast<MemoryType>(memory_space)) {
-    case MemoryType::kCollective:
-    case MemoryType::kDevice:
+  switch (static_cast<MemorySpace>(memory_space)) {
+    case MemorySpace::kCollective:
+    case MemorySpace::kDevice:
       return DeviceAddressBase(
           DeviceAllocate(rocm_context_, size, /*is_fine_grained*/ false), size);
-    case MemoryType::kP2P:
+    case MemorySpace::kP2P:
       // On the ROCm platform, differences in cache design (e.g., coherence
       // protocol) can cause cache coherence issues for some archs (e.g., MI200)
       // when using normal device memory. To avoid these problems, we use
@@ -792,7 +792,7 @@ DeviceAddressBase RocmExecutor::Allocate(uint64_t size, int64_t memory_space) {
       // the correctness.
       return DeviceAddressBase(
           DeviceAllocate(rocm_context_, size, /*is_fine_grained*/ true), size);
-    case MemoryType::kHost:
+    case MemorySpace::kHost:
       if (auto result = HostAllocate(rocm_context_, size); result.ok()) {
         return DeviceAddressBase(*result, size);
       }
@@ -811,9 +811,9 @@ void RocmExecutor::Deallocate(DeviceAddressBase* mem) {
 }
 
 absl::StatusOr<std::unique_ptr<MemoryAllocator>>
-RocmExecutor::CreateMemoryAllocator(MemoryType type) {
+RocmExecutor::CreateMemoryAllocator(MemorySpace type) {
   switch (type) {
-    case MemoryType::kUnified:
+    case MemorySpace::kUnified:
       return std::make_unique<GenericMemoryAllocator>(
           [this](uint64_t size)
               -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
@@ -841,7 +841,7 @@ RocmExecutor::CreateMemoryAllocator(MemoryType type) {
                   }
                 });
           });
-    case MemoryType::kCollective:
+    case MemorySpace::kCollective:
       return std::make_unique<GenericMemoryAllocator>(
           [](uint64_t size)
               -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
@@ -868,7 +868,7 @@ RocmExecutor::CreateMemoryAllocator(MemoryType type) {
                   }
                 });
           });
-    case MemoryType::kHost:
+    case MemorySpace::kHost:
       return std::make_unique<GenericMemoryAllocator>([this](uint64_t size) {
         return AllocateHostMemory(rocm_context_, size);
       });
@@ -1242,7 +1242,7 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
   return std::make_unique<DeviceDescription>(std::move(desc));
 }
 
-absl::StatusOr<MemoryType> RocmExecutor::GetPointerMemorySpace(
+absl::StatusOr<MemorySpace> RocmExecutor::GetPointerMemorySpace(
     const void* ptr) {
   hipDeviceptr_t pointer =
       reinterpret_cast<hipDeviceptr_t>(const_cast<void*>(ptr));
@@ -1252,9 +1252,9 @@ absl::StatusOr<MemoryType> RocmExecutor::GetPointerMemorySpace(
   if (result == hipSuccess) {
     switch (value) {
       case hipMemoryTypeDevice:
-        return MemoryType::kDevice;
+        return MemorySpace::kDevice;
       case hipMemoryTypeHost:
-        return MemoryType::kHost;
+        return MemorySpace::kHost;
       default:
         return absl::InternalError(
             absl::StrCat("unknown memory space provided by ROCM API: ", value));

@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/service/export_hlo.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/gpu_symbol_repository.h"
+#include "xla/service/gpu_topology.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/platform_util.h"
@@ -90,11 +91,14 @@ static absl::StatusOr<std::string> CompileGpuExecutable(
       stream_executor::PlatformManager::PlatformWithName(platform_name));
   const bool aot = target_config.has_value();
 
-  TF_ASSIGN_OR_RETURN(auto gpu_compiler, Compiler::GetForPlatform(platform));
+  TF_ASSIGN_OR_RETURN(auto gpu_compiler,
+                      Compiler::GetForPlatform(platform->id()));
 
   if (aot) {
     AotCompilationOptions aot_options(platform->id());
-    aot_options.set_gpu_target_config(*target_config);
+    GpuTopology topology =
+        GetSingleDeviceGpuTopology(/*platform_version=*/"", *target_config);
+    aot_options.set_gpu_topology(topology);
     // We need the optimized module, so we call RunHloPasses ourselves above.
     aot_options.set_run_backend_only(true);
 
@@ -112,7 +116,7 @@ static absl::StatusOr<std::string> CompileGpuExecutable(
   TF_ASSIGN_OR_RETURN(stream_executor::StreamExecutor * stream_executor,
                       platform->ExecutorForDevice(0));
   auto allocator =
-      std::make_unique<stream_executor::StreamExecutorMemoryAllocator>(
+      std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
           stream_executor);
   compile_options.device_allocator = allocator.get();
 

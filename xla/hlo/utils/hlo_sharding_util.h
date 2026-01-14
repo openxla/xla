@@ -99,8 +99,8 @@ bool IsSubTilingOrEqualSharding(const Shape& shape,
 // sharding with same preference level.
 bool IsShardingMoreSpecific(const HloSharding& lhs, const HloSharding& rhs);
 
-// Tries to refine `to_merge` by combining with `old`. Returns if the final
-// `to_merge` is more specific than `old`.
+// Tries to refine `dst` by merging `to_merge` into it. Returns if the final
+// `dst` is more specific than `to_merge`.
 bool MergeSharding(const HloSharding& to_merge, HloSharding* dst,
                    bool may_combine_partial_sharding);
 
@@ -126,9 +126,8 @@ HloSharding FindCommonSharding(
 HloSharding MoveAndMergeShardingTiles(const HloSharding& sharding,
                                       int64_t source_dim, int64_t target_dim);
 
-// Returns the HloSharding with the tile dimensions and tile assignment
-// transposed based on the specified dimension numbers. In case of a tile
-// maximal sharding returns the original sharding.
+// Returns the HloSharding transposed based on the specified dimension numbers.
+// In case of a tile maximal sharding returns the original sharding.
 HloSharding TransposeSharding(const HloSharding& sharding,
                               absl::Span<const int64_t> dimensions);
 

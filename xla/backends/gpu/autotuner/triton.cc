@@ -25,7 +25,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
-#include "xla/backends/gpu/codegen/triton/tma_utils.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -41,17 +40,19 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/split_k_gemm_rewriter.h"
+#include "xla/service/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/service/gpu/transforms/fusion_wrapper.h"
+#include "xla/service/gpu/transforms/hoist_fused_bitcasts.h"
 #include "xla/service/gpu/transforms/nest_gemm_fusion.h"
 #include "xla/service/gpu/transforms/priority_fusion.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -142,17 +143,21 @@ TritonBackend::GetSupportedConfigsForDot(const HloInstruction* instr) {
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
 TritonBackend::GetSupportedConfigsForScaledDot(const HloInstruction* instr) {
   std::vector<std::unique_ptr<BackendConfig>> configs;
-  for (int block_m = 16; block_m <= 256; block_m *= 2) {
-    for (int block_n = 16; block_n <= 256; block_n *= 2) {
-      auto any = std::make_unique<google::protobuf::Any>();
-      any->PackFrom(TritonGemmConfig(block_m, block_n,
-                                     /*block_k=*/128, /*split_k=*/1,
-                                     /*num_stages=*/1,
-                                     /*num_warps=*/4,
-                                     /*num_ctas=*/1,
-                                     /*is_tma_allowed=*/false)
-                        .ToProto());
-      configs.push_back(std::move(any));
+
+  // TODO(b/436988479): fine tune the search space.
+  for (int block_m = 128; block_m <= 256; block_m *= 2) {
+    for (int block_n = 32; block_n <= 256; block_n *= 2) {
+      for (int block_k = 128; block_k <= 256; block_k *= 2) {
+        auto any = std::make_unique<google::protobuf::Any>();
+        any->PackFrom(TritonGemmConfig(block_m, block_n,
+                                       /*block_k=*/block_k, /*split_k=*/1,
+                                       /*num_stages=*/1,
+                                       /*num_warps=*/4,
+                                       /*num_ctas=*/1,
+                                       /*is_tma_allowed=*/false)
+                          .ToProto());
+        configs.push_back(std::move(any));
+      }
     }
   }
   return configs;
@@ -221,9 +226,15 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
   // into fusions.
   FusionWrapper fusion_wrapper(gpu_device_info);
   TF_RETURN_IF_ERROR(fusion_wrapper.Run(hlo_module.get()).status());
-
-  NestGemmFusion nest_gemm_fusion(gpu_device_info, mlir_context_);
-  TF_RETURN_IF_ERROR(nest_gemm_fusion.Run(hlo_module.get()).status());
+  TF_RETURN_IF_ERROR(HoistFusedBitcasts().Run(hlo_module.get()).status());
+  if (debug_options().xla_gpu_unsupported_disable_nested_gemm_fusions()) {
+    ConvertTritonGemmConfig convert_triton_gemm_config(gpu_device_info,
+                                                       mlir_context_);
+    RETURN_IF_ERROR(convert_triton_gemm_config.Run(hlo_module.get()).status());
+  } else {
+    NestGemmFusion nest_gemm_fusion(gpu_device_info, mlir_context_);
+    RETURN_IF_ERROR(nest_gemm_fusion.Run(hlo_module.get()).status());
+  }
   return hlo_module;
 }
 

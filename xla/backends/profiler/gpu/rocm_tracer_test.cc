@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/rocm_tracer.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -185,7 +186,7 @@ TEST(RocmTracerTest, CapturesHipEvents) {
   HIP_ASSERT_OK(hipDeviceSynchronize());
 
   tracer.Disable();
-  hipFree(device_data);
+  HIP_ASSERT_OK(hipFree(device_data));
 
 #undef HIP_ASSERT_OK
 

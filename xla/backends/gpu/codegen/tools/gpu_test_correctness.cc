@@ -35,11 +35,12 @@ limitations under the License.
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/indexing_map_serialization.h"
 #include "xla/hlo/analysis/indexing_test_utils.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/shape.h"
-#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
+#include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
 
 struct Flags {
   std::string input_file = "";
@@ -55,7 +56,7 @@ namespace xla {
 namespace gpu {
 namespace {
 
-using CorrectnessTest = HloTestBase;
+using CorrectnessTest = HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>;
 
 const Shape& GetFirstArrayShape(const Shape& shape) {
   if (shape.IsArray()) {

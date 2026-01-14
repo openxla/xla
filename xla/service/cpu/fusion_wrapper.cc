@@ -18,6 +18,7 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/tiled/tiled_fusion_emitter.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace cpu {
@@ -87,6 +88,13 @@ bool FusionWrapper::MustWrapInstruction(const HloInstruction& instruction) {
     case HloOpcode::kXor:
       return using_new_fusion_emitter_;
     case HloOpcode::kCopy:
+      // If it is a simple copy with no change in layout then it is more
+      // efficient to use the default copy thunk which will just be a simple
+      // large memcpy.
+      if (instruction.shape() == instruction.operand(0)->shape()) {
+        return false;
+      }
+
       if (use_tiled_emitter_) {
         PrimitiveType type = instruction.shape().element_type();
         return IsSupportedTilingType(type);

@@ -17,9 +17,8 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <optional>
+#include <ostream>
 #include <string>
-#include <system_error>  // NOLINT
 #include <utility>
 #include <vector>
 
@@ -38,7 +37,6 @@ limitations under the License.
 #include "llvm/IR/Module.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
@@ -46,7 +44,6 @@ limitations under the License.
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/IndexToLLVM/IndexToLLVM.h"
-#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
@@ -69,7 +66,6 @@ limitations under the License.
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Verifier.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
@@ -90,6 +86,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/codegen/emitters/ir/xla_dialect.h"
 #include "xla/codegen/emitters/transforms/passes.h"
+#include "xla/codegen/ir_printing.h"
 #include "xla/codegen/xtile/ir/transforms/passes.h"
 #include "xla/codegen/xtile/ir/xtile_dialect.h"
 #include "xla/hlo/builder/xla_builder.h"
@@ -107,7 +104,6 @@ limitations under the License.
 #include "xla/service/gpu/model/triton_emitter_constraints.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/llvm_util.h"
-#include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
@@ -119,7 +115,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 
@@ -305,7 +300,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
   }
 
   TF_RETURN_IF_ERROR(ir_emitter_triton_internal::LowerXTileToTriton(
-      triton_module.get(), mlir_context, *fusion, device_info));
+      triton_module.get(), mlir_context, *fusion, device_info,
+      block_level_parameters));
 
   VLOG(6) << GetModuleIrString(triton_module.get());
   if (DumpingEnabledForHloModule(*hlo_computation->parent()) &&
@@ -327,6 +323,22 @@ absl::Status CheckAtLeastAmpere(const se::GpuComputeCapability& gpu_cc) {
                      cuda_cc->ToString(), "."));
   }
   return absl::OkStatus();
+}
+
+std::ostream& operator<<(std::ostream& os, const TritonWrapperResult& result) {
+  os << "\nTritonWrapperResult: " << "\n";
+  os << "  shmem_bytes: " << result.shmem_bytes << "\n";
+  auto tma_metadata = result.tma_metadata.ToProto();
+  os << "  tma_metadata: {\n";
+  for (const auto& tma_entry : tma_metadata.arg_index_to_tma_info()) {
+    os << "    " << tma_entry.first << " : " << tma_entry.second.DebugString()
+       << "\n";
+  }
+  os << "  }\n";
+  os << "  thread_dims: " << result.thread_dims.ToString() << "\n";
+  os << "  nvvm_annotations: " << result.nvvm_annotations.size() << "\n";
+  os << "  llvm_module: " << result.llvm_module->getName().str() << "\n";
+  return os;
 }
 
 absl::StatusOr<TritonWrapperResult> TritonWrapper(
@@ -374,55 +386,14 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   should_verify = true;
 #endif
 
-  bool should_dump_mlir_passes =
-      hlo_config.debug_options().xla_enable_dumping() &&
-      DumpingEnabledForHloModule(hlo_module) &&
-      DumpingEnabledForEmitter("triton-fusion", hlo_config.debug_options());
-
   mlir::PassManager pm(&mlir_context);
+  EnableIRPrintingIfRequested(pm, &mlir_context, hlo_module, kernel_name,
+                              "triton-to-llvm");
   pm.enableVerifier(should_verify);
-
-  std::optional<llvm::raw_fd_ostream> log_stream;
-  if (should_dump_mlir_passes) {
-    std::string outputs_dir = hlo_config.debug_options().xla_dump_to();
-    if (outputs_dir == "sponge") {
-      if (!tsl::io::GetTestUndeclaredOutputsDir(&outputs_dir)) {
-        LOG(ERROR) << "Failed to get test undeclared outputs dir. Lets skip "
-                      "dumping triton passes.";
-        outputs_dir = "";
-      }
-    }
-    if (!outputs_dir.empty()) {
-      const std::string basename =
-          absl::StrCat(absl::string_view(tsl::io::Basename(hlo_module.name())),
-                       ".", kernel_name, ".triton-passes.log");
-      std::string path = tsl::io::JoinPath(outputs_dir, basename);
-      std::error_code err;
-      log_stream.emplace(path, err, llvm::sys::fs::OF_None);
-      if (err) {
-        log_stream.reset();
-        LOG(ERROR) << "Failed to dump triton passes to " << path << ": "
-                   << err.message();
-      } else {
-        pm.getContext()->disableMultithreading();
-        auto print_always = [](mlir::Pass*, mlir::Operation*) { return true; };
-        pm.enableIRPrinting(/*shouldPrintBeforePass=*/print_always,
-                            /*shouldPrintAfterPass=*/print_always,
-                            /*printModuleScope=*/true,
-                            /*printAfterOnlyOnChange=*/false,
-                            /*printAfterOnlyOnFailure=*/true, *log_stream);
-      }
-    } else {
-      LOG(ERROR)
-          << "--xla_dump_emitter_re=triton-fusion is set, but neither "
-          << "the environment variable TEST_UNDECLARED_OUTPUTS_DIR nor the "
-          << "flag --xla_dump_to is set, so the llvm dumps are disabled.";
-    }
-  }
-
-  CreateTritonXlaPipeline(&pm, gpu_cc, /*rewrite_int4=*/is_xla_fusion,
-                          block_level_parameters.is_tma_allowed,
-                          block_level_parameters.num_stages);
+  CreateTritonXlaPipeline(
+      &pm, gpu_cc, /*rewrite_int4=*/is_xla_fusion,
+      block_level_parameters.is_tma_allowed, block_level_parameters.num_stages,
+      block_level_parameters.is_warp_specialization_allowed);
 
   int num_warps = block_level_parameters.num_warps;
   int num_ctas = block_level_parameters.num_ctas;
@@ -432,9 +403,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
         "(num_warps, num_ctas, num_stages) must be positive, but got: (",
         num_warps, ", ", num_ctas, ", ", num_stages, ")"));
   }
-  mlir::triton::nvidia_gpu::ClusterInfo cluster_info;
-  CreateTritonPipeline(&pm, gpu_cc, num_warps, num_ctas, num_stages,
-                       cluster_info);
+  CreateTritonPipeline(&pm, gpu_cc, num_warps, num_ctas, num_stages);
 
   // Triton generates pointers to the global address space, while XLA needs a
   // kernel signature with pointers to the generic address space.
@@ -496,24 +465,6 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     }
   }
 
-  // `cluster_info` must be read after pm.run().
-  std::optional<se::ClusterDim> cluster_dim;
-  if (block_level_parameters.num_ctas > 1) {
-    VLOG(3) << "num_ctas: " << block_level_parameters.num_ctas
-            << ", cluster_info: " << cluster_info.clusterDimX << ","
-            << cluster_info.clusterDimY << "," << cluster_info.clusterDimZ;
-    if (cluster_info.clusterDimX > 1 || cluster_info.clusterDimY > 1 ||
-        cluster_info.clusterDimZ > 1) {
-      cluster_dim =
-          se::ClusterDim(cluster_info.clusterDimX, cluster_info.clusterDimY,
-                         cluster_info.clusterDimZ);
-    }
-  } else {
-    TF_RET_CHECK(cluster_info.clusterDimX == 1 &&
-                 cluster_info.clusterDimY == 1 &&
-                 cluster_info.clusterDimZ == 1);
-  }
-
   SmallVector<mlir::LLVM::LLVMFuncOp> func_ops;
   for (auto func : triton_module.getOps<mlir::LLVM::LLVMFuncOp>()) {
     // Custom calls will also match to LLVMFuncOp, so we are only interested in
@@ -535,10 +486,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   // - TMA metadata.
   // - Total threads per block. Computed from module attributes.
   // - Captured NVVM annotations.
-  TritonWrapperResult result = {shared_mem_bytes,
-                                cluster_dim,
-                                tma_metadata,
-                                thread_dims,
+  TritonWrapperResult result = {shared_mem_bytes, tma_metadata, thread_dims,
                                 captured_nvvm_annotations,
                                 std::move(ll_triton_module)};
   return result;
@@ -555,20 +503,25 @@ std::string GetLibdevicePath(const HloModuleConfig& hlo_config,
 
 namespace ir_emitter_triton_internal {
 
-absl::Status LowerXTileToTriton(mlir::ModuleOp xtile_dialect_module,
-                                mlir::MLIRContext& mlir_context,
-                                const HloFusionInstruction& fusion,
-                                const se::DeviceDescription& device_info) {
+absl::Status LowerXTileToTriton(
+    mlir::ModuleOp xtile_dialect_module, mlir::MLIRContext& mlir_context,
+    const HloFusionInstruction& fusion,
+    const se::DeviceDescription& device_info,
+    const BlockLevelParameters& block_level_parameters) {
   {
+    const HloModule& hlo_module = *fusion.GetModule();
     // Convert xTile ops to Triton ops.
     mlir::PassManager pm(&mlir_context);
+    EnableIRPrintingIfRequested(pm, &mlir_context, hlo_module, fusion.name(),
+                                "xtile-to-triton");
     // Disable verifier because the Triton code may be invalid due to the
     // unsupported types.
     pm.enableVerifier(/*enabled=*/false);
-    pm.addPass(xtile::createConvertElementwise0DTensorToScalarPass());
     pm.addPass(mlir::triton::xla::CreateArithFP8ConversionToTritonPass());
     pm.addPass(mlir::triton::xla::CreateTensorLowerToTritonPass());
-    pm.addPass(mlir::triton::xla::CreateStableHLOLowerToTritonPass());
+    pm.addPass(mlir::triton::xla::CreateStableHLOLowerToTritonPass(
+        block_level_parameters.is_warp_specialization_allowed));
+    pm.addPass(xtile::createConvertElementwise0DTensorToScalarPass());
     pm.addPass(mlir::triton::xla::CreateXTileLowerToTritonPass());
 
     std::string libdevice_path =
@@ -589,33 +542,40 @@ absl::Status LowerXTileToTriton(mlir::ModuleOp xtile_dialect_module,
     }
   }
 
-  if (fusion.GetModule()
-          ->config()
-          .debug_options()
-          .xla_gpu_experimental_scaled_dot_with_triton()) {
-    // Convert unsupported types before verification.
+  {
+    if (fusion.GetModule()
+            ->config()
+            .debug_options()
+            .xla_gpu_experimental_scaled_dot_with_triton()) {
+      // Convert unsupported types before verification.
+      mlir::PassManager pm(&mlir_context);
+
+      EnableIRPrintingIfRequested(pm, &mlir_context, *fusion.GetModule(),
+                                  fusion.name(),
+                                  "convert-scaled-dot-unsupported-types");
+      pm.addPass(
+          mlir::triton::xla::CreateTritonXLAConvertUnsupportedTypesPass());
+      if (mlir::failed(pm.run(xtile_dialect_module))) {
+        return CreateInternalError(
+            "Failed to fix unsupported types in Triton module for fusion:",
+            &fusion, xtile_dialect_module);
+      }
+    }
+
+    if (mlir::failed(mlir::verify(xtile_dialect_module))) {
+      return CreateInternalError("Failed to verify Triton module for fusion:",
+                                 &fusion, xtile_dialect_module);
+    }
     mlir::PassManager pm(&mlir_context);
-    pm.addPass(mlir::triton::xla::CreateTritonXLAConvertUnsupportedTypesPass());
+    EnableIRPrintingIfRequested(pm, &mlir_context, *fusion.GetModule(),
+                                fusion.name(), "canonicalize-cse");
+    pm.addPass(mlir::createCanonicalizerPass());
+    pm.addPass(mlir::createCSEPass());
     if (mlir::failed(pm.run(xtile_dialect_module))) {
-      return CreateInternalError(
-          "Failed to fix unsupported types in Triton module for fusion:",
-          &fusion, xtile_dialect_module);
+      return CreateInternalError("Failed to create Triton module for fusion:",
+                                 &fusion, xtile_dialect_module);
     }
   }
-
-  if (mlir::failed(mlir::verify(xtile_dialect_module))) {
-    return CreateInternalError("Failed to verify Triton module for fusion:",
-                               &fusion, xtile_dialect_module);
-  }
-  mlir::PassManager pm(&mlir_context);
-
-  pm.addPass(mlir::createCanonicalizerPass());
-  pm.addPass(mlir::createCSEPass());
-  if (mlir::failed(pm.run(xtile_dialect_module))) {
-    return CreateInternalError("Failed to create Triton module for fusion:",
-                               &fusion, xtile_dialect_module);
-  }
-
   return absl::OkStatus();
 }
 
