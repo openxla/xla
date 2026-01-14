@@ -68,6 +68,7 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "tsl/platform/host_info.h"
 #include "tsl/platform/thread_annotations.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -1077,6 +1078,13 @@ const char* GetCuptiErrorString(CuptiInterface* cupti_interface,
   return err_str;
 }
 
+bool& IsCuptiHardwareEventSystemEnabled() {
+  // This flag can not flip to true once per process. Once enabled, it will stay
+  // enabled until the process is terminated.
+  static bool is_enabled = false;
+  return is_enabled;
+}
+
 }  // namespace
 
 CuptiTracer::CuptiTracer(CuptiInterface* cupti_interface)
@@ -1447,19 +1455,31 @@ absl::Status CuptiTracer::EnableActivityTracing() {
                    << err;
     }
     if (option_->enable_activity_hardware_tracing) {
-      auto err = cupti_interface_->ActivityEnableHWTrace(true);
-      if (err == CUPTI_ERROR_NOT_SUPPORTED) {
-        LOG(INFO)
-            << "CUPTI activity HW trace not enabled due to not supported on "
-               "this platform!";
-      } else if (err != CUPTI_SUCCESS) {
-        LOG(WARNING)
-            << "Fail to enable CUPTI activity HW trace, CUPTI ERROR CODE:"
-            << err << " (" << GetCuptiErrorString(cupti_interface_, err) << ")";
+      if (IsCuptiHardwareEventSystemEnabled()) {
+        LOG(INFO) << "CUPTI activity HW trace already enabled.";
       } else {
-        LOG(INFO) << "CUPTI activity HW trace successfully enabled.";
+        auto err = cupti_interface_->ActivityEnableHWTrace(true);
+        if (err == CUPTI_ERROR_NOT_SUPPORTED) {
+          LOG(INFO)
+              << "CUPTI activity HW trace not enabled due to not supported on "
+                 "this platform!";
+        } else if (err != CUPTI_SUCCESS) {
+          LOG(WARNING)
+              << "Fail to enable CUPTI activity HW trace, CUPTI ERROR CODE:"
+              << err << " (" << GetCuptiErrorString(cupti_interface_, err)
+              << ")";
+        } else {
+          LOG(INFO) << "CUPTI activity HW trace successfully enabled.";
+          IsCuptiHardwareEventSystemEnabled() = true;
+        }
+      }
+    } else {
+      if (IsCuptiHardwareEventSystemEnabled()) {
+        LOG(INFO)
+            << "CUPTI activity HW trace already enabled, continue with it.";
       }
     }
+
     RETURN_IF_CUPTI_ERROR(ActivityRegisterCallbacks(
         RequestCuptiActivityBuffer, ProcessCuptiActivityBuffer));
     VLOG(1) << "Enabling activity tracing for "
@@ -1496,22 +1516,6 @@ absl::Status CuptiTracer::DisableActivityTracing() {
       RETURN_IF_CUPTI_ERROR(ActivityDisable(activity));
     }
     option_->activities_selected.clear();
-
-    if (option_->enable_activity_hardware_tracing) {
-      auto err = cupti_interface_->ActivityEnableHWTrace(false);
-      // CUPTI_ERROR_NOT_SUPPORTED here is ok as it already handled/logged
-      // in EnableActivityTracing.
-      if (err == CUPTI_ERROR_NOT_SUPPORTED) {
-        LOG(INFO) << "CUPTI activity HW trace not disabled due to not "
-                     "supported on this platform!";
-      } else if (err != CUPTI_SUCCESS) {
-        LOG(WARNING)
-            << "Fail to disable CUPTI activity HW trace, CUPTI ERROR CODE:"
-            << err << " (" << GetCuptiErrorString(cupti_interface_, err) << ")";
-      } else {
-        LOG(INFO) << "CUPTI activity HW trace successfully disabled.";
-      }
-    }
 
     VLOG(1) << "Flushing CUPTI activity buffer";
     RETURN_IF_CUPTI_ERROR(ActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED));

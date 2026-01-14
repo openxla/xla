@@ -27,6 +27,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "rocm/include/miopen/miopen.h"
 #include "xla/stream_executor/device_address.h"
@@ -36,6 +37,7 @@ limitations under the License.
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/protobuf/dnn.pb.h"
 
 namespace stream_executor {
 namespace gpu {
@@ -292,16 +294,12 @@ class MIOpenSupport : public dnn::DnnSupport {
       dnn::ConvolutionKind kind, dnn::DataType input_type,
       dnn::DataType output_type, Stream* stream,
       const dnn::BatchDescriptor& input_descriptor,
-      DeviceAddressBase input_data,
       const dnn::FilterDescriptor& filter_descriptor,
-      DeviceAddressBase filter_data,
       const dnn::BatchDescriptor& output_descriptor,
-      DeviceAddressBase output_data,
       const dnn::ConvolutionDescriptor& convolution_descriptor,
-      ScratchAllocator* scratch_allocator,
-      std::vector<dnn::ProfileResult>* out_algorithms);
+      std::vector<dnn::ProfileResult>* out_algorithms, size_t maxSolutionCount);
 
-  absl::Status GetMIOpenConvolveAlgorithmsFindMode(
+  absl::Status PopulateMIOpenFindDb(
       dnn::ConvolutionKind kind, dnn::DataType input_type,
       dnn::DataType output_type, Stream* stream,
       const dnn::BatchDescriptor& input_descriptor,
@@ -311,8 +309,7 @@ class MIOpenSupport : public dnn::DnnSupport {
       const dnn::BatchDescriptor& output_descriptor,
       DeviceAddressBase output_data,
       const dnn::ConvolutionDescriptor& convolution_descriptor,
-      ScratchAllocator* scratch_allocator,
-      std::vector<dnn::ProfileResult>* out_algorithms);
+      ScratchAllocator* scratch_allocator);
 
   bool GetRnnAlgorithms(
       std::vector<dnn::AlgorithmDesc>* out_algorithms) override;
@@ -510,13 +507,6 @@ class MIOpenSupport : public dnn::DnnSupport {
 
  private:
   StreamExecutor* parent_;  // Parent executor object. Not owned.
-
-  // Flag to indicate whether Get*Algorithm routines should only return
-  // the best algorithm (as opposed to a list of all applicable ones)
-  bool return_best_algo_only_;
-
-  // Flag to indicate whether to use Immediate (or Find) mode for Convolutions
-  bool use_immediate_mode_;
 
   // Provide access to the MIOpen handle.
   std::unique_ptr<class MIOpenAccess> miopen_;

@@ -208,7 +208,6 @@ xla_cc_test(
     srcs = ["constraint_expression_test.cc"],
     deps = [
         ":constraint_expression",
-        "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/analysis:indexing_test_utils",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/types:span",
@@ -226,6 +225,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",

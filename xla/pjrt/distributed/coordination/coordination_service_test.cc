@@ -78,12 +78,10 @@ KeyValueEntry CreateKv(const std::string& key, const std::string& value) {
   return kv;
 }
 
-CoordinationServiceConfig GetCoordinationServiceConfig(int num_tasks) {
-  CoordinationServiceConfig config;
-  config.set_service_type(kCoordinationServiceType);
-  CoordinatedJob* job = config.mutable_coordinated_job_list()->Add();
-  job->set_name("worker");
-  job->set_num_tasks(num_tasks);
+CoordinationService::Config GetCoordinationServiceConfig(int num_tasks) {
+  CoordinationService::Config config;
+  config.job_name = "worker";
+  config.num_tasks = num_tasks;
   return config;
 }
 
@@ -103,16 +101,6 @@ class TestCoordinationClient : public CoordinationClient {
     done(absl::OkStatus());
   }
 
-  void ReportErrorToTaskAsync(tsl::CallOptions* call_opts,
-                              const ReportErrorToTaskRequest* request,
-                              ReportErrorToTaskResponse* response,
-                              tsl::StatusCallback done) override {
-    absl::MutexLock l(mu_);
-    status_ = absl::Status(static_cast<absl::StatusCode>(request->error_code()),
-                           request->error_message());
-    done(absl::OkStatus());
-  }
-
 #define UNIMPLEMENTED(method)                                              \
   void method##Async(const method##Request* request,                       \
                      method##Response* response, tsl::StatusCallback done) \
@@ -120,10 +108,7 @@ class TestCoordinationClient : public CoordinationClient {
     done(absl::UnimplementedError(#method "Async"));                       \
   }
 
-  UNIMPLEMENTED(WaitForAllTasks);
   UNIMPLEMENTED(ResetTask);
-  UNIMPLEMENTED(ReportErrorToService);
-  UNIMPLEMENTED(GetTaskState);
   UNIMPLEMENTED(InsertKeyValue);
   UNIMPLEMENTED(TryGetKeyValue);
   UNIMPLEMENTED(IncrementKeyValue);
@@ -168,7 +153,8 @@ class CoordinationBarrierTest : public ::testing::Test {
       tasks_.push_back(task);
       clients_.push_back(std::move(client));
     }
-    CoordinationServiceConfig config = GetCoordinationServiceConfig(num_tasks);
+    CoordinationService::Config config =
+        GetCoordinationServiceConfig(num_tasks);
 
     coord_service_ =
         std::make_unique<CoordinationService>(tsl::Env::Default(), config);
@@ -232,24 +218,22 @@ class CoordinateTwoTasksTest : public ::testing::Test {
       bool enable_register_barrier = false,
       bool set_worker_job_recoverable = false,
       bool allow_new_incarnation_to_reconnect = false) {
-    CoordinationServiceConfig config =
+    CoordinationService::Config config =
         GetCoordinationServiceConfig(/*num_tasks=*/2);
-    config.set_heartbeat_timeout_in_ms(kHeartbeatTimeout /
-                                       absl::Milliseconds(1));
+    config.heartbeat_timeout = kHeartbeatTimeout;
     if (set_worker_job_recoverable) {
-      config.mutable_recoverable_jobs()->Add("worker");
+      task_0_.set_recoverable(true);
+      task_1_.set_recoverable(true);
     }
     if (enable_shutdown_barrier) {
-      config.set_shutdown_barrier_timeout_in_ms(kShutdownBarrierTimeout /
-                                                absl::Milliseconds(1));
+      config.shutdown_barrier_timeout = kShutdownBarrierTimeout;
     }
     if (enable_register_barrier) {
-      config.set_cluster_register_with_barrier(true);
-      config.set_cluster_register_timeout_in_ms(absl::Seconds(1) /
-                                                absl::Milliseconds(1));
+      config.cluster_register_with_barrier = true;
+      config.cluster_register_timeout = absl::Seconds(1);
     }
     if (allow_new_incarnation_to_reconnect) {
-      config.set_allow_new_incarnation_to_reconnect(true);
+      config.allow_new_incarnation_to_reconnect = true;
     }
     // Init service.
     coord_service_ =
@@ -283,19 +267,8 @@ TEST_F(CoordinateTwoTasksTest, TestStandaloneService) {
   task_2.set_task_id(2);
 
   ASSERT_OK(coord_service_->RegisterTask(task_0_, incarnation_0_));
-  absl::Notification wait_for_all;
-  coord_service_->WaitForAllTasks(task_0_, {}, [&](absl::Status s) {
-    ASSERT_OK(s);
-    wait_for_all.Notify();
-  });
   // Not all tasks have registered, so must not be notified here.
-  ASSERT_FALSE(wait_for_all.HasBeenNotified());
   ASSERT_OK(coord_service_->RegisterTask(task_1_, incarnation_1_));
-  coord_service_->WaitForAllTasks(task_1_, {},
-                                  [&](absl::Status s) { ASSERT_OK(s); });
-  // All tasks have registered.
-  wait_for_all.WaitForNotification();
-
   ASSERT_OK(coord_service_->RecordHeartbeat(task_0_, incarnation_0_));
   ASSERT_OK(coord_service_->RecordHeartbeat(task_1_, incarnation_1_));
   EXPECT_THAT(coord_service_->RecordHeartbeat(task_2, IncarnationId(0)),
@@ -308,68 +281,11 @@ TEST_F(CoordinateTwoTasksTest, TestStandaloneService) {
               StatusIs(absl::StatusCode::kAborted));
 }
 
-TEST(CoordinationServiceTest, TestCoordinatedJobs) {
-  CoordinatedTask chief;
-  chief.set_job_name("chief");
-  chief.set_task_id(0);
-  CoordinatedTask task_0;
-  task_0.set_job_name("worker");
-  task_0.set_task_id(0);
-  CoordinatedTask task_1;
-  task_1.set_job_name("worker");
-  task_1.set_task_id(1);
-  CoordinatedTask evaluator;
-  evaluator.set_job_name("evaluator");
-  evaluator.set_task_id(0);
-
-  CoordinationServiceConfig config;
-  config.set_service_type(kCoordinationServiceType);
-  CoordinatedJob* chief_job = config.mutable_coordinated_job_list()->Add();
-  chief_job->set_name("chief");
-  chief_job->set_num_tasks(1);
-  CoordinatedJob* worker_job = config.mutable_coordinated_job_list()->Add();
-  worker_job->set_name("worker");
-  worker_job->set_num_tasks(2);
-
-  auto coord_service =
-      std::make_unique<CoordinationService>(tsl::Env::Default(), config);
-
-  // Each coordinated task registers and waits for other tasks.
-  absl::Notification register_chief;
-  ASSERT_OK(coord_service->RegisterTask(chief, IncarnationId(0)));
-  coord_service->WaitForAllTasks(chief, {}, [&](absl::Status s) {
-    ASSERT_OK(s);
-    register_chief.Notify();
-  });
-  absl::Notification register_task0;
-  ASSERT_OK(coord_service->RegisterTask(task_0, IncarnationId(0)));
-  coord_service->WaitForAllTasks(task_0, {}, [&](absl::Status s) {
-    ASSERT_OK(s);
-    register_task0.Notify();
-  });
-  absl::Notification register_task1;
-  ASSERT_OK(coord_service->RegisterTask(task_1, IncarnationId(0)));
-  coord_service->WaitForAllTasks(task_1, {}, [&](absl::Status s) {
-    ASSERT_OK(s);
-    register_task1.Notify();
-  });
-  // All tasks in the coordinated jobs have registered.
-  register_chief.WaitForNotification();
-  register_task0.WaitForNotification();
-  register_task1.WaitForNotification();
-
-  // Registering the evaluator task is unexpected
-  absl::Status status =
-      coord_service->RegisterTask(evaluator, IncarnationId(0));
-
-  EXPECT_THAT(status, StatusIs(absl::StatusCode::kInvalidArgument));
-}
-
 // RegisterTask() may succeed in the service, but the agent response times out.
 // In this case, the agent would retry Connect() and should succeed if it has
 // the same incarnation.
 TEST(CoordinationServiceTest, RegisterTask_AlreadyConnected_Succeeds) {
-  const CoordinationServiceConfig config =
+  const CoordinationService::Config config =
       GetCoordinationServiceConfig(/*num_tasks=*/1);
   CoordinatedTask task_0;
   task_0.set_job_name("worker");
@@ -388,7 +304,7 @@ TEST(CoordinationServiceTest, RegisterTask_AlreadyConnected_Succeeds) {
 
 TEST(CoordinationServiceTest,
      RegisterTask_AlreadyConnectedDifferentIncarnation_Fails) {
-  const CoordinationServiceConfig config =
+  const CoordinationService::Config config =
       GetCoordinationServiceConfig(/*num_tasks=*/1);
   CoordinatedTask task_0;
   task_0.set_job_name("worker");
@@ -408,7 +324,7 @@ TEST(CoordinationServiceTest,
 }
 
 TEST(CoordinationServiceTest, RegisterTask_AlreadyInError_Fails) {
-  CoordinationServiceConfig config =
+  CoordinationService::Config config =
       GetCoordinationServiceConfig(/*num_tasks=*/1);
   CoordinatedTask task_0;
   task_0.set_job_name("worker");
@@ -854,7 +770,7 @@ TEST_F(CoordinateTwoTasksTest, TestSetGetValues) {
 }
 
 TEST(CoordinationServiceTest, TryGetKeyValue) {
-  const CoordinationServiceConfig config =
+  const CoordinationService::Config config =
       GetCoordinationServiceConfig(/*num_tasks=*/1);
   std::unique_ptr<CoordinationService> coord_service =
       std::make_unique<CoordinationService>(tsl::Env::Default(), config);
@@ -876,7 +792,7 @@ TEST(CoordinationServiceTest, TryGetKeyValue) {
 }
 
 TEST(CoordinationServiceTest, IncrementKeyValue) {
-  const CoordinationServiceConfig config =
+  const CoordinationService::Config config =
       GetCoordinationServiceConfig(/*num_tasks=*/1);
   std::unique_ptr<CoordinationService> coord_service =
       std::make_unique<CoordinationService>(tsl::Env::Default(), config);
@@ -971,123 +887,6 @@ TEST_F(CoordinateTwoTasksTest,
 }
 
 }  // namespace
-
-// Verify that coordination service can gather each task's device info and
-// propagate the aggregated cluster device info correctly.
-TEST(CoordinationServiceTest, ListClusterDevices_TfDevice) {
-  const CoordinationServiceConfig config =
-      GetCoordinationServiceConfig(/*num_tasks=*/3);
-  CoordinatedTask task_0;
-  task_0.set_job_name("worker");
-  task_0.set_task_id(0);
-  CoordinatedTask task_1;
-  task_1.set_job_name("worker");
-  task_1.set_task_id(1);
-  CoordinatedTask task_2;
-  task_2.set_job_name("worker");
-  task_2.set_task_id(2);
-  absl::Status status = absl::OkStatus();
-  std::unique_ptr<CoordinationService> coord_service =
-      std::make_unique<CoordinationService>(tsl::Env::Default(), config);
-  absl::Notification n;
-  // Map fake devices to each task.
-  DeviceInfo local_devices_0;
-  DeviceInfo local_devices_1;
-  DeviceInfo local_devices_2;
-  local_devices_0.mutable_device()->Add()->PackFrom(
-      CreateTestDevice("task0_device0"));
-  local_devices_0.mutable_device()->Add()->PackFrom(
-      CreateTestDevice("task0_device1"));
-  local_devices_1.mutable_device()->Add()->PackFrom(
-      CreateTestDevice("task1_device0"));
-  local_devices_2.mutable_device()->Add()->PackFrom(
-      CreateTestDevice("task2_device0"));
-
-  // Each task sends its device info.
-  DeviceInfo cluster_devices;
-  coord_service->WaitForAllTasks(task_0, local_devices_0,
-                                 [&](absl::Status s) { ASSERT_OK(s); });
-  coord_service->WaitForAllTasks(task_1, local_devices_1,
-                                 [&](absl::Status s) { ASSERT_OK(s); });
-  coord_service->WaitForAllTasks(task_2, local_devices_2, [&](absl::Status s) {
-    ASSERT_OK(s);
-    // Gather the cluster device info.
-    coord_service->state_mu_.AssertHeld();
-    cluster_devices = coord_service->ListClusterDevices();
-    n.Notify();
-  });
-  n.WaitForNotification();
-
-  DeviceInfo expected_cluster_devices;
-  auto expected_devices = expected_cluster_devices.mutable_device();
-  expected_devices->Add(local_devices_0.device().begin(),
-                        local_devices_0.device().end());
-  expected_devices->Add(local_devices_1.device().begin(),
-                        local_devices_1.device().end());
-  expected_devices->Add(local_devices_2.device().begin(),
-                        local_devices_2.device().end());
-  EXPECT_THAT(cluster_devices, EqualsProto(expected_cluster_devices));
-}
-
-// Task devices should not be added twice if same task calls WaitForAllDevices()
-// twice.
-TEST(CoordinationServiceTest, ListClusterDevices_DevicesAreNotAddedTwice) {
-  const CoordinationServiceConfig config =
-      GetCoordinationServiceConfig(/*num_tasks=*/2);
-  CoordinatedTask task_0;
-  task_0.set_job_name("worker");
-  task_0.set_task_id(0);
-  CoordinatedTask task_1;
-  task_1.set_job_name("worker");
-  task_1.set_task_id(1);
-  absl::Status status = absl::OkStatus();
-  absl::Status initial_wait_for_all_tasks_status;
-  std::unique_ptr<CoordinationService> coord_service =
-      std::make_unique<CoordinationService>(tsl::Env::Default(), config);
-  absl::Notification n;
-  // Map fake devices to each task.
-  DeviceInfo local_devices_0;
-  DeviceInfo local_devices_1;
-  local_devices_0.mutable_device()->Add()->PackFrom(
-      CreateTestDevice("task0_device0"));
-  local_devices_0.mutable_device()->Add()->PackFrom(
-      CreateTestDevice("task0_device1"));
-  local_devices_1.mutable_device()->Add()->PackFrom(
-      CreateTestDevice("task1_device0"));
-  // Task0 sends device info.
-  DeviceInfo cluster_devices;
-  coord_service->WaitForAllTasks(
-      task_0, local_devices_0,
-      [&initial_wait_for_all_tasks_status](absl::Status s) {
-        initial_wait_for_all_tasks_status = s;
-      });
-
-  // Task0 sends device info again.
-  coord_service->WaitForAllTasks(task_0, local_devices_0,
-                                 [](absl::Status s) { ASSERT_OK(s); });
-  coord_service->WaitForAllTasks(task_1, local_devices_1,
-                                 [coord_service = coord_service.get(),
-                                  &cluster_devices, &n](absl::Status s) {
-                                   ASSERT_OK(s);
-                                   // Gather the cluster device info.
-                                   coord_service->state_mu_.AssertHeld();
-                                   cluster_devices =
-                                       coord_service->ListClusterDevices();
-                                   n.Notify();
-                                 });
-  n.WaitForNotification();
-
-  // No duplicates found.
-  DeviceInfo expected_cluster_devices;
-  auto expected_devices = expected_cluster_devices.mutable_device();
-  expected_devices->Add(local_devices_0.device().begin(),
-                        local_devices_0.device().end());
-  expected_devices->Add(local_devices_1.device().begin(),
-                        local_devices_1.device().end());
-  EXPECT_THAT(cluster_devices, EqualsProto(expected_cluster_devices));
-  EXPECT_THAT(initial_wait_for_all_tasks_status,
-              StatusIs(absl::StatusCode::kCancelled));
-}
 
 TEST_F(CoordinationBarrierTest, Barrier) {
   const std::string barrier_id = "barrier_id";
@@ -2107,70 +1906,6 @@ TEST_F(CoordinateTwoTasksTest,
   // as normal.
   EXPECT_THAT(*s0, StatusIs(absl::StatusCode::kOk));
   EXPECT_THAT(*s1, StatusIs(absl::StatusCode::kOk));
-}
-
-TEST(CoordinationServiceTest, RecoverableAndNonRecoverableTasks) {
-  CoordinationServiceConfig config;
-  config.set_service_type(kCoordinationServiceType);
-  // Workers are recoverable, chief is not.
-  config.mutable_recoverable_jobs()->Add("worker");
-  CoordinatedTask chief;
-  chief.set_job_name("chief");
-  chief.set_task_id(0);
-  CoordinatedTask task_0;
-  task_0.set_job_name("worker");
-  task_0.set_task_id(0);
-  CoordinatedTask task_1;
-  task_1.set_job_name("worker");
-  task_1.set_task_id(1);
-  CoordinatedJob* chief_job = config.mutable_coordinated_job_list()->Add();
-  chief_job->set_name("chief");
-  chief_job->set_num_tasks(1);
-  CoordinatedJob* worker_job = config.mutable_coordinated_job_list()->Add();
-  worker_job->set_name("worker");
-  worker_job->set_num_tasks(2);
-
-  std::unique_ptr<CoordinationService> coord_service =
-      std::make_unique<CoordinationService>(tsl::Env::Default(), config);
-
-  // Each coordinated task registers and polls for errors.
-  ASSERT_OK(coord_service->RegisterTask(chief, IncarnationId(0)));
-  ASSERT_OK(coord_service->RegisterTask(task_0, IncarnationId(0)));
-  ASSERT_OK(coord_service->RegisterTask(task_1, IncarnationId(0)));
-  // These callbacks may be invoked after this test (e.g. cancellations during
-  // coord service dtor), so we use shared pointers to extend their lifetimes
-  // beyond the test to avoid use-after-free errors.
-  absl::Status s_chief, s0, s1;
-  coord_service->PollForErrorAsync(
-      chief, [&s_chief](const absl::Status& status) { s_chief = status; });
-  coord_service->PollForErrorAsync(
-      task_0, [&s0](const absl::Status& status) { s0 = status; });
-  coord_service->PollForErrorAsync(
-      task_1, [&s1](const absl::Status& status) { s1 = status; });
-
-  // Recoverable task hits error.
-  ASSERT_OK(coord_service->ReportTaskError(task_0,
-                                           absl::InternalError("test_error")));
-  // Since no error propagation for recoverable tasks, other tasks should work
-  // as normal.
-  EXPECT_THAT(s_chief, StatusIs(absl::StatusCode::kOk));
-  EXPECT_THAT(s0, StatusIs(absl::StatusCode::kOk));
-  EXPECT_THAT(s1, StatusIs(absl::StatusCode::kOk));
-
-  // TODO(b/342448688): Revisit this test, and think about shutdown barrier
-  // interactions.
-  ASSERT_OK(coord_service->ResetTask(task_0));
-  ASSERT_OK(coord_service->RegisterTask(task_0, IncarnationId(1)));
-  coord_service->PollForErrorAsync(
-      task_0, [&s0](const absl::Status& status) { s0 = status; });
-
-  // Non-recoverable task hits error.
-  ASSERT_OK(
-      coord_service->ReportTaskError(chief, absl::InternalError("test_error")));
-  // Error propagates to all tasks.
-  EXPECT_THAT(s_chief, StatusIs(absl::StatusCode::kInternal));
-  EXPECT_THAT(s0, StatusIs(absl::StatusCode::kInternal));
-  EXPECT_THAT(s1, StatusIs(absl::StatusCode::kInternal));
 }
 
 TEST_F(CoordinateTwoTasksTest,

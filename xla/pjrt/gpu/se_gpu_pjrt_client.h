@@ -42,9 +42,8 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
-#include "xla/pjrt/gpu/gpu_topology.h"
-#include "xla/pjrt/gpu/gpu_topology.pb.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
+#include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -56,6 +55,8 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
+#include "xla/service/gpu_topology.h"
+#include "xla/service/gpu_topology.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
 #include "xla/stream_executor/device_address_allocator.h"
@@ -110,7 +111,7 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       std::string platform_name, LocalClient* client,
       std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices,
       int process_index, std::unique_ptr<se::DeviceAddressAllocator> allocator,
-      std::unique_ptr<tsl::Allocator> host_memory_allocator,
+      std::unique_ptr<HostMemoryAllocator> host_memory_allocator,
       bool should_stage_host_to_device_transfers,
       std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options,
       std::shared_ptr<KeyValueStoreInterface> kv_store,
@@ -189,8 +190,9 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
 
   absl::StatusOr<PjRtStreamExecutorExecutionOutput> RunAsync(
       LocalExecutable& exec, PjRtDevice* device,
-      std::vector<ShapeTree<PjRtStreamExecutorExecutionInput>> arguments,
-      ExecutableRunOptions run_options) override;
+      std::vector<PjRtStreamExecutorExecutionInput> flat_arguments,
+      ExecutableRunOptions run_options_inp, bool parameter_is_tupled_arguments,
+      absl::Span<const Shape> executable_parameter_shapes) override;
 
   absl::Status UpdateCompileOptionsInternal(
       CompileOptions* options, ExecutableExtras* returned_extras,
@@ -212,7 +214,7 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       PjRtDevice* device, std::vector<PjRtBuffer*> buffers,
       std::vector<PjRtGlobalDeviceId> dst_global_device_ids,
       std::vector<CrossHostTransferKey> transfer_keys,
-      std::vector<std::shared_ptr<Future<>::Promise>> promises);
+      std::vector<std::shared_ptr<Promise<>>> promises);
 
   struct PrepareReceiveBufferResult {
     std::unique_ptr<PjRtBuffer> buffer;

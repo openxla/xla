@@ -36,8 +36,6 @@ using tensorflow::GetKeyValueDirRequest;
 using tensorflow::GetKeyValueDirResponse;
 using tensorflow::GetKeyValueRequest;
 using tensorflow::GetKeyValueResponse;
-using tensorflow::GetTaskStateRequest;
-using tensorflow::GetTaskStateResponse;
 using tensorflow::HeartbeatRequest;
 using tensorflow::HeartbeatResponse;
 using tensorflow::IncrementKeyValueRequest;
@@ -48,18 +46,12 @@ using tensorflow::PollForErrorRequest;
 using tensorflow::PollForErrorResponse;
 using tensorflow::RegisterTaskRequest;
 using tensorflow::RegisterTaskResponse;
-using tensorflow::ReportErrorToServiceRequest;
-using tensorflow::ReportErrorToServiceResponse;
-using tensorflow::ReportErrorToTaskRequest;
-using tensorflow::ReportErrorToTaskResponse;
 using tensorflow::ResetTaskRequest;
 using tensorflow::ResetTaskResponse;
 using tensorflow::ShutdownTaskRequest;
 using tensorflow::ShutdownTaskResponse;
 using tensorflow::TryGetKeyValueRequest;
 using tensorflow::TryGetKeyValueResponse;
-using tensorflow::WaitForAllTasksRequest;
-using tensorflow::WaitForAllTasksResponse;
 using tensorflow::WatchJobStateRequest;
 using tensorflow::WatchJobStateResponse;
 
@@ -79,10 +71,6 @@ class CoordinationClient {
                               HeartbeatResponse* response,
                               tsl::StatusCallback done) = 0;
 
-  virtual void WaitForAllTasksAsync(const WaitForAllTasksRequest* request,
-                                    WaitForAllTasksResponse* response,
-                                    tsl::StatusCallback done) = 0;
-
   virtual void ShutdownTaskAsync(tsl::CallOptions* call_opts,
                                  const ShutdownTaskRequest* request,
                                  ShutdownTaskResponse* response,
@@ -91,19 +79,6 @@ class CoordinationClient {
   virtual void ResetTaskAsync(const ResetTaskRequest* request,
                               ResetTaskResponse* response,
                               tsl::StatusCallback done) = 0;
-
-  virtual void ReportErrorToTaskAsync(tsl::CallOptions* call_opts,
-                                      const ReportErrorToTaskRequest* request,
-                                      ReportErrorToTaskResponse* response,
-                                      tsl::StatusCallback done) = 0;
-
-  virtual void ReportErrorToServiceAsync(
-      const ReportErrorToServiceRequest* request,
-      ReportErrorToServiceResponse* response, tsl::StatusCallback done) = 0;
-
-  virtual void GetTaskStateAsync(const GetTaskStateRequest* request,
-                                 GetTaskStateResponse* response,
-                                 tsl::StatusCallback done) = 0;
 
   virtual void WatchJobStateAsync(tsl::CallOptions* call_opts,
                                   const WatchJobStateRequest* request,

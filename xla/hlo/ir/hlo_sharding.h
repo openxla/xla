@@ -20,7 +20,6 @@ limitations under the License.
 #define XLA_HLO_IR_HLO_SHARDING_H_
 
 #include <cstdint>
-#include <map>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -545,9 +544,8 @@ class HloSharding {
   // Gets the total number of tiles including subgroups and partial replication.
   int64_t TotalNumTiles() const;
   // Gets the number of tiles. If it has partial replication, this will not
-  // equal the device count.
+  // equal the device count. This method is not defined for tuple shardings.
   int64_t NumTiles() const;
-  int64_t NumTilesLeaf() const;
   // Like NumTiles() but considers only some specific dimensions passed as
   // argument
   int64_t NumTiles(absl::Span<const int64_t> dims) const;
@@ -563,7 +561,7 @@ class HloSharding {
       return (it - subgroup_types_.begin()) + TiledDataRank();
     }
     if (replicate_on_last_tile_dim_) {
-      return tile_assignment_.num_dimensions() - 1;
+      return num_dimensions() - 1;
     }
     return -1;
   }
@@ -587,19 +585,10 @@ class HloSharding {
   }
 
   // Returns the data rank for tiled sharding. It doesn't include subgroup dims.
+  // This method is not defined for tuple shardings.
   int64_t TiledDataRank() const {
-    CHECK(IsTiled());
-    int64_t rank = tile_assignment_.num_dimensions();
-    if (ReplicateOnLastTileDim()) {
-      rank--;
-    }
-    rank -= subgroup_types_.size();
-    return rank;
-  }
-  int64_t TiledDataRankLeaf() const {
-    DCHECK(!IsTuple());
     CHECK(IsTiledLeaf());
-    int64_t rank = tile_assignment_.num_dimensions();
+    int64_t rank = num_dimensions();
     if (ReplicateOnLastTileDim()) {
       rank--;
     }

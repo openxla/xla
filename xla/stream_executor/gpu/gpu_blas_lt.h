@@ -30,8 +30,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/shape.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.pb.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
@@ -44,7 +46,8 @@ absl::StatusOr<xla::PrimitiveType> AsXlaPrimitiveType(blas::DataType dtype);
 
 absl::StatusOr<blas::ComputationType> GetBlasComputationType(
     xla::PrecisionConfig::Algorithm algorithm, xla::PrimitiveType lhs_dtype,
-    xla::PrimitiveType output_dtype, int64_t compute_precision);
+    xla::PrimitiveType output_dtype, int64_t compute_precision,
+    const GpuComputeCapability& cc);
 
 // Returns the type for the alpha and beta scalars.
 blas::DataType GetScaleType(blas::DataType c_type,
@@ -81,6 +84,8 @@ struct MatrixLayout {  // plain MatrixLayout which is extended with create
   static absl::StatusOr<MatrixLayout> FromProto(
       const xla::GemmConfigProto::MatrixLayout& proto);
   xla::GemmConfigProto::MatrixLayout ToProto() const;
+
+  xla::Shape ToShape() const;
 };
 
 // compact version of the matrix layout to be used to pass matrices

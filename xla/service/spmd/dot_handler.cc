@@ -293,7 +293,7 @@ DotDimensionIndexMapping ComputeDimensionIndexMapping(
                                   output_to_lhs_indices, output_to_rhs_indices};
 }
 
-std::vector<std::vector<int64_t>> GetPartitionGroupsForReplication(
+CollectiveDeviceList GetPartitionGroupsForReplication(
     const HloSharding& sharding, absl::Span<const int64_t> replication_dims) {
   int64_t group_size = 1;
   for (int64_t i : replication_dims) {
@@ -312,7 +312,7 @@ std::vector<std::vector<int64_t>> GetPartitionGroupsForReplication(
         }
         partition_groups[group_id].push_back(partition);
       });
-  return partition_groups;
+  return CollectiveDeviceList(partition_groups);
 }
 
 // Returns true iff all of the following conditions are simultaneously true:
@@ -973,11 +973,8 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       // 0 -> 1, 1 -> 2, 2 -> 3, ...
       pre_sd_pairs[source] = {source, (source + 1) % num_partitions};
     }
-    extra_buffer =
-        lhs.state()
-            .collective_ops_creator.create_cross_partition_collective_permute(
-                b, extra_buffer, pre_sd_pairs,
-                (*lhs.state().next_channel_id)++);
+    extra_buffer = lhs.state().collective_ops_creator.create_collective_permute(
+        b, extra_buffer, pre_sd_pairs, (*lhs.state().next_channel_id)++);
   }
 
   auto iteration = b->AddInstruction(
@@ -1469,10 +1466,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
                         : windowed_op_is_lhs                 ? l
                                                              : r;
     auto ccw_cp_output =
-        lhs.state()
-            .collective_ops_creator.create_cross_partition_collective_permute(
-                &body_b, ccw_cp_input, ccw_sd_pairs,
-                (*lhs.state().next_channel_id)++);
+        lhs.state().collective_ops_creator.create_collective_permute(
+            &body_b, ccw_cp_input, ccw_sd_pairs,
+            (*lhs.state().next_channel_id)++);
     if (operands_sharded_at_contracting_dims) {
       o = ccw_cp_output;
     } else if (windowed_op_is_lhs) {
@@ -1482,10 +1478,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
     }
     auto cw_cp_input = extra_inout;
     auto cw_cp_output =
-        lhs.state()
-            .collective_ops_creator.create_cross_partition_collective_permute(
-                &body_b, cw_cp_input, cw_sd_pairs,
-                (*lhs.state().next_channel_id)++);
+        lhs.state().collective_ops_creator.create_collective_permute(
+            &body_b, cw_cp_input, cw_sd_pairs,
+            (*lhs.state().next_channel_id)++);
 
     TF_ASSIGN_OR_RETURN(
         auto outputs,
@@ -1504,10 +1499,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
                    : windowed_op_is_lhs                 ? next_l
                                                         : next_r;
     ccw_cp_output =
-        lhs.state()
-            .collective_ops_creator.create_cross_partition_collective_permute(
-                &body_b, ccw_cp_input, ccw_sd_pairs,
-                (*lhs.state().next_channel_id)++);
+        lhs.state().collective_ops_creator.create_collective_permute(
+            &body_b, ccw_cp_input, ccw_sd_pairs,
+            (*lhs.state().next_channel_id)++);
     if (operands_sharded_at_contracting_dims) {
       o = ccw_cp_output;
     } else if (windowed_op_is_lhs) {
@@ -1517,10 +1511,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
     }
     auto next_cw_cp_input = cw_cp_output;
     auto next_cw_cp_output =
-        lhs.state()
-            .collective_ops_creator.create_cross_partition_collective_permute(
-                &body_b, next_cw_cp_input, cw_sd_pairs,
-                (*lhs.state().next_channel_id)++);
+        lhs.state().collective_ops_creator.create_collective_permute(
+            &body_b, next_cw_cp_input, cw_sd_pairs,
+            (*lhs.state().next_channel_id)++);
 
     TF_ASSIGN_OR_RETURN(outputs,
                         get_partial_bid_results(next_l, next_r, o, cw_cp_output,
@@ -1545,19 +1538,16 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
             source, (source - 2 + num_partitions) % num_partitions};
       }
 
-      o = lhs.state()
-              .collective_ops_creator.create_cross_partition_collective_permute(
-                  &body_b, o, output_sd_pairs,
-                  (*lhs.state().next_channel_id)++);
+      o = lhs.state().collective_ops_creator.create_collective_permute(
+          &body_b, o, output_sd_pairs, (*lhs.state().next_channel_id)++);
 
       TF_ASSIGN_OR_RETURN(extra_inout,
                           get_partial_unid_result(l, r, extra_inout, i));
 
       extra_inout =
-          lhs.state()
-              .collective_ops_creator.create_cross_partition_collective_permute(
-                  &body_b, extra_inout, output_sd_pairs,
-                  (*lhs.state().next_channel_id)++);
+          lhs.state().collective_ops_creator.create_collective_permute(
+              &body_b, extra_inout, output_sd_pairs,
+              (*lhs.state().next_channel_id)++);
 
       // i+2
       i = body_b.AddInstruction(HloInstruction::CreateBinary(
@@ -1585,10 +1575,8 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       auto next_r = r;
       auto cp_input = windowed_op_is_lhs ? l : r;
       auto cp_output =
-          lhs.state()
-              .collective_ops_creator.create_cross_partition_collective_permute(
-                  &body_b, cp_input, sd_pairs,
-                  (*lhs.state().next_channel_id)++);
+          lhs.state().collective_ops_creator.create_collective_permute(
+              &body_b, cp_input, sd_pairs, (*lhs.state().next_channel_id)++);
       if (windowed_op_is_lhs) {
         next_l = cp_output;
       } else {
@@ -1606,11 +1594,8 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       auto second_next_l = next_l;
       auto second_next_r = next_r;
       cp_input = windowed_op_is_lhs ? next_l : next_r;
-      cp_output =
-          lhs.state()
-              .collective_ops_creator.create_cross_partition_collective_permute(
-                  &body_b, cp_input, sd_pairs,
-                  (*lhs.state().next_channel_id)++);
+      cp_output = lhs.state().collective_ops_creator.create_collective_permute(
+          &body_b, cp_input, sd_pairs, (*lhs.state().next_channel_id)++);
       if (windowed_op_is_lhs) {
         second_next_l = cp_output;
       } else {
@@ -1672,9 +1657,8 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
                               (source + loop_partitions - 1) % loop_partitions +
                                   (source / loop_partitions) * loop_partitions};
         }
-        lhs.state()
-            .collective_ops_creator.create_cross_partition_collective_permute(
-                &cp_b, p, sd_pairs, (*lhs.state().next_channel_id)++);
+        lhs.state().collective_ops_creator.create_collective_permute(
+            &cp_b, p, sd_pairs, (*lhs.state().next_channel_id)++);
       }
       SpmdBuilder ncp_b("last_iteration_noop", original_hlo);
       {
@@ -1754,16 +1738,13 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
         extra_buffer->shape(), while_loop, 3));
     if (options.bidirectional_windowed_einsum && num_partitions % 4 == 0) {
       extra_result =
-          lhs.state()
-              .collective_ops_creator.create_cross_partition_collective_permute(
-                  b, extra_result, extra_sd_pairs,
-                  (*lhs.state().next_channel_id)++);
+          lhs.state().collective_ops_creator.create_collective_permute(
+              b, extra_result, extra_sd_pairs,
+              (*lhs.state().next_channel_id)++);
     }
     if (options.unroll_windowed_einsum && num_partitions % 2 == 0) {
-      result =
-          lhs.state()
-              .collective_ops_creator.create_cross_partition_collective_permute(
-                  b, result, extra_sd_pairs, (*lhs.state().next_channel_id)++);
+      result = lhs.state().collective_ops_creator.create_collective_permute(
+          b, result, extra_sd_pairs, (*lhs.state().next_channel_id)++);
     }
     result = b->AddInstruction(HloInstruction::CreateBinary(
         result->shape(), HloOpcode::kAdd, result, extra_result));
@@ -2595,9 +2576,19 @@ absl::StatusOr<HloInstruction*> PartitionDotGroupOnNonContractingImpl(
     if (!other.sharding().ReplicateOnLastTileDim() || !device_group_match) {
       other = other.Reshard(target_sharding);
     }
+
+    DimensionVector dims_to_replicate = other_grouped->group_dims;
+    for (auto it = dims_to_replicate.begin(); it != dims_to_replicate.end();) {
+      if (*it >= other.base_shape().dimensions().size()) {
+        it = dims_to_replicate.erase(it);
+      } else {
+        ++it;
+      }
+    }
+
     partially_replicated_other =
         other.Reshard(hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
-            other.sharding(), other_grouped->group_dims));
+            other.sharding(), dims_to_replicate));
     top_level_sharding_to_reset.emplace_back(
         partially_replicated_other, partially_replicated_other.sharding());
     partially_replicated_other.set_sharding(other_grouped->sharding);
@@ -3385,18 +3376,16 @@ bool PrioritizeContractingDimensionsPartitioning(
        other_non_contracting_dims) {
     ag_replication_dims.push_back(lhs_matching_iterations ? dim.rhs : dim.lhs);
   }
+
   auto all_gather_subgroups =
       GetPartitionGroupsForReplication(other_sharding, ag_replication_dims);
   auto reduce_scatter_subgroups = GetPartitionGroupsForReplication(
       outer_output_tmp_sharding, output_slice_dims);
   const double all_gather_time_in_ms = visitor->GetCommunicationTimeInMilliSec(
-      all_gather_bytes,
-      CollectiveDeviceList(visitor->CreateReplicaGroups(all_gather_subgroups)));
+      all_gather_bytes, all_gather_subgroups);
   const double reduce_scatter_time_in_ms =
-      visitor->GetCommunicationTimeInMilliSec(
-          reduce_scatter_bytes,
-          CollectiveDeviceList(
-              visitor->CreateReplicaGroups(reduce_scatter_subgroups)));
+      visitor->GetCommunicationTimeInMilliSec(reduce_scatter_bytes,
+                                              reduce_scatter_subgroups);
 
   Shape other_original_shape = other_hlo->shape();
   *other_hlo->mutable_shape() =

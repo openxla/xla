@@ -121,13 +121,6 @@ limitations under the License.
 #define DEBUG_TYPE "xla-translate"
 
 using ::int64_t;
-using ::tsl::int16;
-using ::tsl::int32;
-using ::tsl::int8;
-using ::tsl::uint16;
-using ::tsl::uint32;
-using ::tsl::uint64;
-using ::tsl::uint8;
 
 // All Module level and Function level attributes must be included in:
 //   xla/mlir_hlo/utils/unregistered_attributes.h
@@ -2962,6 +2955,8 @@ LogicalResult ExportXlaOp(RngBitGeneratorOp op, OpLoweringContext ctx) {
   return mlir::success();
 }
 
+// ScanOp is not yet supported in StableHLO.
+
 LogicalResult ExportXlaOp(ScatterOp op, OpLoweringContext ctx) {
   auto& value_map = *ctx.values;
   xla::XlaComputationId update_computation;
@@ -4827,6 +4822,32 @@ LogicalResult ExportXlaOp(RngOp op, OpLoweringContext ctx) {
     return success();
   }
   return failure();
+}
+
+LogicalResult ExportXlaOp(ScanOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+  xla::XlaComputationId body;
+  if (failed(ctx.converter->LowerRegionAsComputation(&op.getBody(), body))) {
+    return failure();
+  }
+
+  llvm::SmallVector<xla::XlaOp> inputs;
+  if (failed(GetTuple(op, op.getInputs(), ctx, inputs))) {
+    return failure();
+  }
+
+  llvm::SmallVector<xla::XlaOp> inits;
+  if (failed(GetTuple(op, op.getInits(), ctx, inits))) {
+    return failure();
+  }
+
+  xla::XlaOp result =
+      xla::Scan(inputs, inits, body, op.getDimension(), op.getIsReverse());
+
+  for (int i = 0; i < op.getNumResults(); ++i) {
+    value_map[op.getResult(i)] = xla::GetTupleElement(result, i);
+  }
+  return success();
 }
 
 LogicalResult ExportXlaOp(ScatterOp op, OpLoweringContext ctx) {
