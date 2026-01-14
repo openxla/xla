@@ -224,6 +224,10 @@ BlockLevelEmitterBackend::GetSupportedConfigs(const HloInstruction& instr) {
     }
     std::vector<std::unique_ptr<BackendConfig>> configs;
     configs.push_back(std::move(config.value()));
+    if (stream_executor::gpu::IsTmaAvailableForDevice(
+            target_config().device_description)) {
+      ExtendConfigsWithTma(configs);
+    }
     return configs;
   }
 
