@@ -1,6 +1,6 @@
 # Error code: E2001
 
-**Category:** Compile Time: Unsupported RHS DataType on Hardware
+**Category:** Compile Time: Mosaic Unsupported RHS DataType on Hardware
 
 This error occurs when the data type used for the **Right-Hand Side (RHS)**
 operand in a matrix multiplication (e.g., `jax.lax.dot_general`, `jax.lax.conv`,
