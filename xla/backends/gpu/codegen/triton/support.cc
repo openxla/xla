@@ -167,7 +167,11 @@ CodegenDecision IsTritonSupportedConversion(
     return error_message();
   }
 
-  auto supported_fp8_types = {F8E4M3FN, F8E5M2, F8E4M3FNUZ, F8E5M2FNUZ};
+  std::vector<PrimitiveType> supported_fp8_types = {F8E4M3FN, F8E5M2};
+  if (gpu_version.IsRocm()) {
+        supported_fp8_types.insert(supported_fp8_types.end(),
+                                   {F8E4M3FNUZ, F8E5M2FNUZ});
+  }
   bool is_input_fp8 = absl::c_linear_search(supported_fp8_types, input);
   bool is_output_fp8 = absl::c_linear_search(supported_fp8_types, output);
   bool is_f8_conversion = is_input_fp8 && is_output_fp8;

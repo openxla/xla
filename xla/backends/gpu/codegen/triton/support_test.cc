@@ -337,10 +337,6 @@ using BitcastOrReshapeTest = TritonSupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(BitcastOrReshapeTest, IsTritonSupportedBitcastOrReshape) {
   auto [data_type, opcode, cc] = GetParam();
-  if (cc.IsCuda() && ((data_type == F8E5M2FNUZ) ||
-                      (data_type == F8E4M3FNUZ))) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $0[1,16,4] parameter(0)
@@ -354,11 +350,6 @@ ENTRY triton_computation {
 
 TEST_P(BitcastOrReshapeTest, IsTritonSupported0DBitcastOrReshape) {
   auto [data_type, opcode, cc] = GetParam();
-  if(cc.IsCuda() &&
-     absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-     data_type)) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $0[1,1,1] parameter(0)
@@ -432,11 +423,6 @@ using UnaryElementwiseTest = TritonSupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(UnaryElementwiseTest, IsTritonSupportedUnaryElementwise) {
   auto [data_type, opcode, cc] = GetParam();
-  if(cc.IsCuda() &&
-     absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-     data_type)) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   const std::string kDefaultHloTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $0[33,68] parameter(0)
@@ -538,14 +524,6 @@ class ConvertTest
 
 TEST_P(ConvertTest, Convert) {
   auto [data_type_in, data_type_out, cc] = GetParam();
-
-  if(cc.IsCuda() &&
-     (absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-      data_type_in) ||
-      absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-      data_type_out))) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   const std::string hlo_text = absl::Substitute(
       R"(
 ENTRY triton_computation {
@@ -613,11 +591,6 @@ using BinaryElementwiseTest = TritonSupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(BinaryElementwiseTest, IsTritonSupportedBinaryElementwise) {
   auto [data_type, opcode, cc] = GetParam();
-  if(cc.IsCuda() &&
-     absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-     data_type)) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $0[11,63] parameter(0)
@@ -662,11 +635,6 @@ ENTRY triton_computation {
 
 TEST_P(BinaryElementwiseTest, IsTritonSupportedBinaryElementwise0D) {
   auto [data_type, opcode, cc] = GetParam();
-  if(cc.IsCuda() &&
-     absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-     data_type)) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $0[] parameter(0)
@@ -741,11 +709,6 @@ using TernaryElementwiseTest = TritonSupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(TernaryElementwiseTest, IsTritonSupportedTernaryElementwise) {
   auto [data_type, opcode, cc] = GetParam();
-  if(cc.IsCuda() &&
-     absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-                           data_type)) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $2[13,63] parameter(0)
@@ -1049,11 +1012,6 @@ using TransposeTest = TritonSupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(TransposeTest, LoadTranspose3D) {
   auto [data_type, opcode, cc] = GetParam();
-  if(cc.IsCuda() &&
-     absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-     data_type)) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $0[125,127,37] parameter(0)
@@ -1081,11 +1039,6 @@ using SliceTest = TritonSupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(SliceTest, ContinuousSlice) {
   auto [data_type, opcode, cc] = GetParam();
-  if(cc.IsCuda() &&
-     absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-     data_type)) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   const std::string kHloTestTemplate = (R"(
 ENTRY triton_computation {
   p = $0[128,32] parameter(0)
@@ -1535,11 +1488,6 @@ using BroadcastTest = TritonSupportTestWithTypeAndDeviceParam;
 
 TEST_P(BroadcastTest, Broadcast) {
   auto [data_type, cc] = GetParam();
-  if(cc.IsCuda() &&
-     absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-     data_type)) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   input = $0[35,131] parameter(0)
@@ -1563,11 +1511,6 @@ using ParameterTest = TritonSupportTestWithTypeAndDeviceParam;
 
 TEST_P(ParameterTest, Parameter) {
   auto [data_type, cc] = GetParam();
-  if(cc.IsCuda() &&
-     absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-     data_type)) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   std::string hlo_test_template =
       R"(
 ENTRY triton_computation {
@@ -1601,11 +1544,6 @@ TEST_P(ConstantTest, ConstantEffectiveScalar) {
   // The IsTritonSupportedReduction effectively tests the scalar constant
   // support.
   auto [data_type, cc] = GetParam();
-  if(cc.IsCuda() &&
-     absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-     data_type)) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   const std::string kHloTestTemplate = absl::Substitute(R"(
 ENTRY triton_computation {
   ROOT const = $$0[1,1] constant({{$0}})
@@ -1995,13 +1933,6 @@ TEST_P(DotTypesTest, Dot) {
   // Testing B[] = dot(A[], A[]).
   auto [result_type, input_type, cc] = GetParam();
 
-  if(cc.IsCuda() &&
-     (absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-      result_type) ||
-      absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-      input_type))) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
   if (input_type == F8E4M3FN || result_type == F8E4M3FN) {
     if (auto* cuda_cc = cc.cuda_compute_capability();
@@ -2793,14 +2724,6 @@ ENTRY triton_computation {
 
 TEST_P(BitcastConvertTest, BitcastConvertDisguisedAsBitcast) {
   auto [data_type_in, data_type_out, cc] = GetParam();
-
-  if(cc.IsCuda() &&
-     (absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-      data_type_in) ||
-      absl::c_linear_search(std::vector{F8E5M2FNUZ, F8E4M3FNUZ},
-      data_type_out))) {
-    GTEST_SKIP() << "F8E4M3FNUZ and F8E5M2FNUZ not supported on Cuda";
-  }
 
   if (primitive_util::IsComplexType(data_type_in) !=
       primitive_util::IsComplexType(data_type_out)) {
