@@ -39,6 +39,8 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "riegeli/bytes/string_writer.h"
+#include "riegeli/bytes/writer.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/annotation.h"
@@ -102,9 +104,12 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/util/split_proto/split_executable_and_options_writer.h"
+#include "xla/util/split_proto/split_gpu_executable_writer.h"
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -1382,24 +1387,26 @@ absl::Status GpuExecutable::DumpExecutableIfEnabled(
   }
 
   TF_ASSIGN_OR_RETURN(GpuExecutableProto gpu_executable_proto, ToProto());
-  std::string serialized_proto = gpu_executable_proto.SerializeAsString();
-  if (serialized_proto.empty()) {
-    return absl::InternalError("Failed to serialize GPU executable proto");
-  }
-
   ExecutableAndOptionsProto dump_proto;
-  *dump_proto.mutable_serialized_executable() = std::move(serialized_proto);
+  TF_RETURN_IF_ERROR(
+      WriteSplitGpuExecutable(std::move(gpu_executable_proto),
+                              std::make_unique<riegeli::StringWriter<>>(
+                                  dump_proto.mutable_serialized_executable())));
   TF_ASSIGN_OR_RETURN(
       *dump_proto.mutable_compile_options()->mutable_executable_build_options(),
       CreateSerializableBuildOptionsProto(options));
 
-  constexpr absl::string_view kDumpFilename = "gpu_executable";
+  constexpr absl::string_view kDumpFilename = "gpu_executable.riegeli";
+  std::unique_ptr<riegeli::Writer> writer;
   if (has_module()) {
-    DumpPerModuleProtobufToFile(module(), dump_proto, debug_options,
-                                kDumpFilename);
+    ASSIGN_OR_RETURN(writer, CreatePerModuleRiegeliDumpWriter(
+                                 module(), debug_options, kDumpFilename));
   } else {
-    DumpProtobufToFile(dump_proto, debug_options, kDumpFilename);
+    ASSIGN_OR_RETURN(writer,
+                     CreateRiegeliDumpWriter(debug_options, kDumpFilename));
   }
+  RETURN_IF_ERROR(
+      WriteSplitExecutableAndOptions(dump_proto, std::move(writer)));
 
   return absl::OkStatus();
 }
