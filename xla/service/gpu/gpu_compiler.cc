@@ -323,7 +323,6 @@ limitations under the License.
 #include "tsl/platform/cpu_info.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -1968,8 +1967,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         tsl::Env::Default(), debug_opts.xla_gpu_target_config_filename(),
         &gpu_target_config_string));
     stream_executor::GpuTargetConfigProto gpu_target_config_proto;
-    if (!tsl::protobuf::TextFormat::ParseFromString(gpu_target_config_string,
-                                                    &gpu_target_config_proto)) {
+    if (!google::protobuf::TextFormat::ParseFromString(gpu_target_config_string,
+                                             &gpu_target_config_proto)) {
       return absl::FailedPreconditionError(
           "Failed to parse GpuTargetConfigProto");
     }
@@ -2665,8 +2664,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
 
   if (DumpingEnabledForHloModule(*module)) {
     std::string textproto;
-    tsl::protobuf::TextFormat::PrintToString(gpu_target_config.ToProto(),
-                                             &textproto);
+    google::protobuf::TextFormat::PrintToString(gpu_target_config.ToProto(), &textproto);
     DumpToFileInDirOrStdout(*module, "", "gpu_target_config.pbtxt", textproto);
   }
 

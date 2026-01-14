@@ -127,10 +127,12 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:any_cc_proto",
+        "@com_google_protobuf//:differencer",
+        "@com_google_protobuf//:protobuf",
         "@com_google_protobuf//:protobuf_lite",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:fingerprint",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -305,7 +307,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:human_readable_json",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 

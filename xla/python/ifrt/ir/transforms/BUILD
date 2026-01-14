@@ -127,7 +127,6 @@ cc_library(
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 

@@ -45,7 +45,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_protobuf//:protobuf",
-        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:tstring",
     ],
 )

@@ -371,6 +371,5 @@ xla_cc_test(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@stablehlo//:stablehlo_ops",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
