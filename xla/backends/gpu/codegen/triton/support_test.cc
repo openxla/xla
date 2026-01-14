@@ -587,18 +587,7 @@ ENTRY triton_computation {
                                          : kHloTestTemplate,
                                      data_type, opcode));
 
-  ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (cc.IsRocm()) {
-    if (((opcode == HloOpcode::kMaximum || opcode == HloOpcode::kMinimum) &&
-         (data_type == PrimitiveType::F8E5M2 ||
-          data_type == PrimitiveType::F8E4M3FN || 
-          data_type == PrimitiveType::F8E5M2FNUZ ||
-          data_type == PrimitiveType::F8E4M3FNUZ))) {
-      fail_mode = ExpectedFailMode::kCrash;
-    }
-  }
-
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc, fail_mode);
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc);
 }
 
 TEST_P(BinaryElementwiseTest, IsTritonSupportedBinaryElementwise0D) {
@@ -624,18 +613,7 @@ ENTRY triton_computation {
                                          : kHloTestTemplate,
                                      data_type, opcode));
 
-  ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (cc.IsRocm()) {
-    if (((opcode == HloOpcode::kMaximum || opcode == HloOpcode::kMinimum) &&
-         (data_type == PrimitiveType::F8E5M2 ||
-          data_type == PrimitiveType::F8E4M3FN ||
-          data_type == PrimitiveType::F8E5M2FNUZ ||
-          data_type == PrimitiveType::F8E4M3FNUZ))) {
-      fail_mode = ExpectedFailMode::kCrash;
-    }
-  }
-
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{}, cc, fail_mode);
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{}, cc);
 }
 
 constexpr std::array kTestedOpsBinaryElementwise = {
@@ -687,19 +665,7 @@ ENTRY triton_computation {
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(hlo_text, data_type, opcode));
 
-  bool skip_failure_branch_to_avoid_crash = false;
-  if (cc.IsRocm()) {
-    skip_failure_branch_to_avoid_crash =
-        (opcode == HloOpcode::kClamp || opcode == HloOpcode::kSelect) &&
-        (data_type == PrimitiveType::F8E5M2 ||
-         data_type == PrimitiveType::F8E4M3FN ||
-         data_type == PrimitiveType::F8E5M2FNUZ ||
-         data_type == PrimitiveType::F8E4M3FNUZ);
-  }
-
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc,
-                 skip_failure_branch_to_avoid_crash ? ExpectedFailMode::kCrash
-                                                    : ExpectedFailMode::kFail);
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 32}, cc);
 }
 
 constexpr std::array kTestedOpsTernaryElementwise = {HloOpcode::kSelect,
@@ -741,17 +707,9 @@ ENTRY triton_computation {
   TF_ASSERT_OK_AND_ASSIGN(
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
-  bool crashes_on_failure = false;
-  if (cc.IsRocm()) {
-    crashes_on_failure |= (data_type == PrimitiveType::F8E4M3FN ||
-                            data_type == PrimitiveType::F8E5M2);
-    crashes_on_failure |= (data_type == PrimitiveType::F8E5M2FNUZ ||
-                           data_type == PrimitiveType::F8E4M3FNUZ);
-  }
 
   RunSupportTest(
-      std::move(ti), /*output_tile_sizes=*/{1}, cc,
-      crashes_on_failure ? ExpectedFailMode::kCrash : ExpectedFailMode::kFail);
+      std::move(ti), /*output_tile_sizes=*/{1}, cc);
 }
 
 TEST_F(ReduceTest, IsTritonSupportedReductionWithMultidimensionalTile) {
@@ -818,17 +776,8 @@ ENTRY triton_computation {
       TestedInstruction ti,
       ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
 
-  bool crashes_on_failure = false;
-  if (cc.IsRocm()) {
-    crashes_on_failure |= (data_type == PrimitiveType::F8E4M3FN ||
-                            data_type == PrimitiveType::F8E5M2);
-    crashes_on_failure |= (data_type == PrimitiveType::F8E5M2FNUZ ||
-                           data_type == PrimitiveType::F8E4M3FNUZ);
-  }
-
   RunSupportTest(
-      std::move(ti), /*output_tile_sizes=*/{1}, cc,
-      crashes_on_failure ? ExpectedFailMode::kCrash : ExpectedFailMode::kFail);
+      std::move(ti), /*output_tile_sizes=*/{1}, cc);
 }
 
 TEST_P(ReduceTest,
@@ -939,16 +888,7 @@ ENTRY triton_computation {
                           ParseTemplateAndGetInstruction(
                               kHloTestTemplate, data_type, HloOpcode::kReduce));
 
-  // TODO(b/361526623): Reduce the cases where emitter crashes.
-  ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
-  if (cc.IsRocm()) {
-    if (data_type == F8E4M3FN || data_type == F8E5M2 ||
-        data_type == PrimitiveType::F8E5M2FNUZ ||
-        data_type == PrimitiveType::F8E4M3FNUZ) {
-      fail_mode = ExpectedFailMode::kCrash;
-    }
-  }
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc, fail_mode);
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
 }
 
 std::vector<HloOpcode> ExcludeOps(absl::Span<const HloOpcode> all_ops,
