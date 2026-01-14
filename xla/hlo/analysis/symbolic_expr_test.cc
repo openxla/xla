@@ -22,8 +22,12 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/base/log_severity.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/scoped_mock_log.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/StringRef.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/indexing_test_utils.h"
@@ -53,6 +57,11 @@ struct SymbolicExprTest : public ::testing::Test {
   SymbolicExpr c3;
   SymbolicExpr c2;
   SymbolicExpr c5;
+
+  SymbolicExpr ParseExpr(absl::string_view expr, int64_t num_dims = -1) {
+    absl::string_view s = expr;
+    return ParseSymbolicExpr(&s, &ctx, num_dims);
+  }
 };
 
 TEST_F(SymbolicExprTest, CreateAndPrint) {
@@ -79,20 +88,61 @@ TEST_F(SymbolicExprTest, PrintWithDifferentNumDimensions) {
 TEST_F(SymbolicExprTest, ParseAndPrint) {
   const std::string kStringContainingAllOperators =
       "((((v0 + 42) * max(min(v1, 2), 0)) floordiv 2) ceildiv 2)";
-  SymbolicExpr parsed_expr =
-      ParseSymbolicExpr(kStringContainingAllOperators, &ctx);
+  SymbolicExpr parsed_expr = ParseExpr(kStringContainingAllOperators);
   ASSERT_NE(parsed_expr, nullptr);
   EXPECT_THAT(parsed_expr.ToString(),
               MatchIndexingString(kStringContainingAllOperators));
 }
 
 TEST_F(SymbolicExprTest, ParseAndPrint_Invalid) {
-  EXPECT_DEATH(ParseSymbolicExpr("1 + ", &ctx), "Unexpected end of expression");
-  EXPECT_DEATH(ParseSymbolicExpr("max(1, )", &ctx),
-               "Failed to parse expression");
-  EXPECT_DEATH(ParseSymbolicExpr("(1 + 2", &ctx), "Missing parenthesis");
-  EXPECT_DEATH(ParseSymbolicExpr("foo(3, 4)", &ctx),
-               "Failed to parse expression");
+  absl::ScopedMockLog log(absl::MockLogDefault::kDisallowUnexpected);
+  log.StartCapturingLogs();
+
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, testing::_,
+                       "Unexpected end of expression at: \"\""));
+  EXPECT_EQ(ParseExpr("1 + "), SymbolicExpr());
+
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, testing::_,
+                       "Failed to parse expression at: \")\""));
+  EXPECT_EQ(ParseExpr("max(1, )"), SymbolicExpr());
+
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, testing::_,
+                       "Missing parenthesis at: \"\""));
+  EXPECT_EQ(ParseExpr("(1 + 2"), SymbolicExpr());
+
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, testing::_,
+                       "Failed to parse expression at: \"foo(3, 4)\""));
+  EXPECT_EQ(ParseExpr("foo(3, 4)"), SymbolicExpr());
+}
+
+TEST_F(SymbolicExprTest, ParseWithVariableMap) {
+  llvm::DenseMap<llvm::StringRef, SymbolicExpr> variable_map;
+  variable_map["foo"] = v0;
+  variable_map["bar"] = v1;
+
+  absl::string_view expr_str = "foo + bar * 2";
+  SymbolicExpr expr = ParseSymbolicExpr(&expr_str, &ctx, variable_map);
+  EXPECT_EQ(expr, v0 + v1 * 2);
+  EXPECT_TRUE(expr_str.empty());
+
+  absl::ScopedMockLog log(absl::MockLogDefault::kDisallowUnexpected);
+  log.StartCapturingLogs();
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, testing::_,
+                       "Failed to parse expression at: \"baz\""));
+  expr_str = "baz";
+  EXPECT_EQ(ParseSymbolicExpr(&expr_str, &ctx, variable_map), SymbolicExpr());
+}
+
+TEST_F(SymbolicExprTest, ParseDimsAndSymbols) {
+  EXPECT_EQ(ParseExpr("d0"), v0);
+  EXPECT_EQ(ParseExpr("s0", /*num_dims=*/2), CreateSymbolicVariable(2, &ctx));
+
+  absl::ScopedMockLog log(absl::MockLogDefault::kDisallowUnexpected);
+  log.StartCapturingLogs();
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, testing::_,
+                       "Symbol cannot be parsed because number of dimensions "
+                       "is not set. at: \"0\""));
+  EXPECT_EQ(ParseExpr("s0", /*num_dims=*/0), SymbolicExpr());
 }
 
 TEST_F(SymbolicExprTest, ConstantFolding) {
@@ -151,9 +201,8 @@ INSTANTIATE_TEST_SUITE_P(PositiveAndNegative, SymbolicExprEvaluateDivModTest,
                          Combine(Values(5, -5, 4, -4), Values(2, -2)));
 
 TEST_F(SymbolicExprTest, ReplaceVariables) {
-  SymbolicExpr expr_to_sub = ParseSymbolicExpr("(v0 + v1)", &ctx);
-  std::vector<SymbolicExpr> substitutions{{},
-                                          ParseSymbolicExpr("(v2 * 10)", &ctx)};
+  SymbolicExpr expr_to_sub = ParseExpr("(v0 + v1)");
+  std::vector<SymbolicExpr> substitutions{{}, ParseExpr("(v2 * 10)")};
   SymbolicExpr result = expr_to_sub.ReplaceVariables(substitutions);
   EXPECT_EQ(result.ToString(), "(v0 + (v2 * 10))");
 }
