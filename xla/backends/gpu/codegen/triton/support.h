@@ -66,6 +66,11 @@ CodegenDecision IsTritonSupportedComputation(
 // `kTritonGemmFusionKind`.
 bool IsTritonFusedComputation(const HloComputation& computation);
 
+// Returns `CodegenDecision`'s equivalent of `true` if data type
+// is supported by the Triton emitters for the given compute capability.
+bool IsTritonSupportedDataType(PrimitiveType type,
+                               const se::GpuComputeCapability& gpu_version);
+
 namespace internal {
 // TODO(b/363981282): Remove the function below once all ops are tested via
 // HLOs. This is exposed for testing purposes only and will be removed in the

@@ -224,12 +224,35 @@ absl::Status IsTritonSupportedFusion(const HloFusionInstruction& fusion,
   return absl::OkStatus();
 }
 
+absl::Status ValidateUsedTypes(
+    const HloFusionInstruction* fusion,
+    const se::DeviceDescription& device_info) {
+  std::vector<PrimitiveType> fusion_data_types;
+  const HloComputation* computation = fusion->fused_instructions_computation();
+  for (const HloInstruction* instr : computation->instructions()) {
+    std::optional<PrimitiveType> type =
+        instr->shape().IsTuple() ?
+          std::nullopt :
+          std::make_optional(instr->shape().element_type());
+    if (type.has_value()) {
+      if (!IsTritonSupportedDataType(type.value(),
+          device_info.gpu_compute_capability())) {
+          primitive_util::LowercasePrimitiveTypeName(type.value());
+        return absl::UnimplementedError(
+          absl::StrCat("Type is not supported: ",
+            primitive_util::LowercasePrimitiveTypeName(type.value())));
+      }
+    }
+  }
+}
+
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
     absl::string_view fn_name, const HloFusionInstruction* fusion,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     MLIRContext& mlir_context) {
   TF_RETURN_IF_ERROR(IsTritonSupportedFusion(*fusion, device_info));
+  TF_RETURN_IF_ERROR(ValidateUsedTypes(fusion, device_info));
 
   LoadMlirDialectsForTriton(mlir_context);
 
