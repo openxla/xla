@@ -74,44 +74,49 @@ TEST(NamedShardingTest, Equality) {
   AxisRef axis_b(1, {2, 2});
   AxisRef axis_c(2);
   AxisRef axis_d(3, {4, 2});
+  AxisRef axis_b_rem(1, {1, 2});
+  AxisRef axis_d_rem(3, {1, 4});
 
   DimensionSharding ds_ab({axis_a, axis_b}, /*is_closed=*/true);
   DimensionSharding ds_ab_open({axis_a, axis_b}, /*is_closed=*/false);
   DimensionSharding ds_dc({axis_d, axis_c}, /*is_closed=*/true);
 
   NamedSharding base(mesh_abcd, /*dim_shardings=*/{ds_ab, ds_dc},
-                     /*replicated_axes=*/{axis_b},
-                     /*unreduced_axes=*/{axis_c});
+                     /*replicated_axes=*/{axis_b_rem},
+                     /*unreduced_axes=*/{axis_d_rem});
 
-  EXPECT_EQ(base, NamedSharding(mesh_abcd, {ds_ab, ds_dc}, {axis_b}, {axis_c}));
+  EXPECT_EQ(base, NamedSharding(mesh_abcd, {ds_ab, ds_dc}, {axis_b_rem},
+                                {axis_d_rem}));
 
   // Equal even with different mesh axis names
   Mesh mesh_cadb({2, 4, 3, 8}, {"c", "a", "d", "b"});
-  EXPECT_EQ(base,
-            NamedSharding(mesh_cadb, {ds_ab, ds_dc}, {axis_b}, {axis_c}, {}));
+  EXPECT_EQ(base, NamedSharding(mesh_cadb, {ds_ab, ds_dc}, {axis_b_rem},
+                                {axis_d_rem}, {}));
 
   // Equal even with different metadata.
   OpMetadata metadata;
   metadata.set_op_name("foo");
-  EXPECT_EQ(base, NamedSharding(mesh_abcd, {ds_ab, ds_dc}, {axis_b}, {axis_c},
-                                {metadata}));
+  EXPECT_EQ(base, NamedSharding(mesh_abcd, {ds_ab, ds_dc}, {axis_b_rem},
+                                {axis_d_rem}, {metadata}));
 
   // Different dim_shardings
+  EXPECT_NE(base, NamedSharding(mesh_abcd, {ds_ab_open, ds_dc}, {axis_b_rem},
+                                {axis_d_rem}));
+  EXPECT_NE(base, NamedSharding(mesh_abcd, {ds_dc, ds_ab}, {axis_b_rem},
+                                {axis_d_rem}));
   EXPECT_NE(base,
-            NamedSharding(mesh_abcd, {ds_ab_open, ds_dc}, {axis_b}, {axis_c}));
-  EXPECT_NE(base, NamedSharding(mesh_abcd, {ds_dc, ds_ab}, {axis_b}, {axis_c}));
-  EXPECT_NE(base, NamedSharding(mesh_abcd, {ds_ab}, {axis_b}, {axis_c}));
+            NamedSharding(mesh_abcd, {ds_ab}, {axis_b_rem}, {axis_d_rem}));
 
   // Different replicated_axes
-  EXPECT_NE(base, NamedSharding(mesh_abcd, {ds_ab, ds_dc}, {axis_d}, {axis_c}));
+  EXPECT_NE(base, NamedSharding(mesh_abcd, {ds_ab, ds_dc}, {}, {axis_d_rem}));
 
   // Different unreduced_axes
-  EXPECT_NE(base, NamedSharding(mesh_abcd, {ds_ab, ds_dc}, {axis_b}, {axis_a}));
+  EXPECT_NE(base, NamedSharding(mesh_abcd, {ds_ab, ds_dc}, {axis_b_rem}, {}));
 
   // Different mesh shape
-  Mesh mesh_diff_shape({2, 4, 3, 9}, {"a", "b", "c", "d"});
-  EXPECT_NE(base,
-            NamedSharding(mesh_diff_shape, {ds_ab, ds_dc}, {axis_b}, {axis_c}));
+  Mesh mesh_diff_shape({2, 4, 3, 16}, {"a", "b", "c", "d"});
+  EXPECT_NE(base, NamedSharding(mesh_diff_shape, {ds_ab, ds_dc}, {axis_b_rem},
+                                {axis_d_rem}));
 }
 
 TEST(NamedShardingTest, ToString) {

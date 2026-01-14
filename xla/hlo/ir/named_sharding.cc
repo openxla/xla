@@ -30,8 +30,26 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_op_metadata.h"
 #include "xla/hlo/ir/mesh_and_axis.h"
+#include "xla/hlo/ir/named_sharding_verifier.h"
 
 namespace xla {
+
+NamedSharding::NamedSharding(Mesh mesh,
+                             absl::Span<const DimensionSharding> dim_shardings,
+                             absl::Span<const AxisRef> replicated_axes,
+                             absl::Span<const AxisRef> unreduced_axes,
+                             absl::Span<const OpMetadata> metadata)
+    : mesh_(std::move(mesh)),
+      dim_shardings_(CanonicalizedDimShardings(dim_shardings)),
+      replicated_axes_(replicated_axes.begin(), replicated_axes.end()),
+      unreduced_axes_(unreduced_axes.begin(), unreduced_axes.end()),
+      metadata_(metadata.begin(), metadata.end()) {
+  CHECK_OK(VerifyNamedSharding(*this));
+  sharded_sizes_.reserve(dim_shardings_.size());
+  for (const DimensionSharding& dim_sharding : dim_shardings_) {
+    sharded_sizes_.push_back(dim_sharding.getShardedSize(mesh_));
+  }
+}
 
 void NamedSharding::DimensionSharding::Append(
     const NamedSharding::DimensionSharding& other, const Mesh& mesh) {
