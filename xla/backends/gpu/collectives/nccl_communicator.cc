@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
 #include "xla/primitive_util.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -84,18 +85,21 @@ static size_t ToNcclCount(PrimitiveType dtype, size_t count) {
   return primitive_util::IsComplexType(dtype) ? count * 2 : count;
 }
 
-static absl::StatusOr<ncclDataType_t> ToNcclDataType(PrimitiveType dtype,
-                                                     bool is_reduction_op) {
+static absl::StatusOr<ncclDataType_t> ToNcclDataType(
+    PrimitiveType dtype, bool is_reduction_op, se::CudaComputeCapability cc) {
   switch (dtype) {
     case S8:
     case F8E5M2FNUZ:
     case F8E4M3FNUZ:
     case F8E8M0FNU:
       return ncclInt8;
+    // For pre-Hopper FP8 reductions, let NCCL throw appropriate errors.
     case F8E5M2:
-      return ncclFloat8e5m2;
+      return (cc.IsAtLeastHopper() || is_reduction_op) ? ncclFloat8e5m2
+                                                       : ncclInt8;
     case F8E4M3FN:
-      return ncclFloat8e4m3;
+      return (cc.IsAtLeastHopper() || is_reduction_op) ? ncclFloat8e4m3
+                                                       : ncclInt8;
     case PRED:
     case U8:
       return ncclUint8;
@@ -588,7 +592,11 @@ absl::Status NcclCommunicator::LaunchAllReduce(
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
       count, reduction_kind, comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, /*is_reduction_op=*/true,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclAllReduce(
       send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
@@ -616,7 +624,11 @@ absl::Status NcclCommunicator::LaunchBroadcast(
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
       count, root.value(), comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, false,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclBroadcast(
       send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
@@ -644,7 +656,11 @@ absl::Status NcclCommunicator::LaunchReduceScatter(
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
       count, reduction_kind, comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, /*is_reduction_op=*/true,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclReduceScatter(
       send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
@@ -671,7 +687,11 @@ absl::Status NcclCommunicator::LaunchAllGather(
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
       count, comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, false,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclAllGather(
       send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
@@ -750,7 +770,11 @@ absl::Status NcclCommunicator::LaunchAllToAll(
         send_buffers.size(), num_ranks);
   }
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, false,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
 #if NCCL_VERSION_CODE >= 22800
   // If send and receive buffers are contiguous we can use all-to-all API from
@@ -802,7 +826,11 @@ absl::Status NcclCommunicator::LaunchCollectivePermute(
       source_rank ? absl::StrCat(source_rank->value()) : "<empty>",
       absl::StrJoin(target_ranks, ", ", rank_formatter), count, comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, false,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   // Short-circuit if there is no source or target rank.
   if (!source_rank && target_ranks.empty()) {
@@ -844,7 +872,11 @@ absl::Status NcclCommunicator::LaunchSend(se::DeviceAddressBase send_buffer,
       primitive_util::LowercasePrimitiveTypeName(dtype), count, peer.value(),
       comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, false,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(
       ncclSend(send_buffer.opaque(), ToNcclCount(dtype, count), nccl_dtype,
@@ -871,7 +903,11 @@ absl::Status NcclCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
       primitive_util::LowercasePrimitiveTypeName(dtype), count, peer.value(),
       comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, false,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(
       ncclRecv(recv_buffer.opaque(), ToNcclCount(dtype, count), nccl_dtype,
