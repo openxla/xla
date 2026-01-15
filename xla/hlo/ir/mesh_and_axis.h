@@ -157,6 +157,22 @@ class AxisRef {
 
   bool operator!=(const xla::AxisRef& other) const { return !(*this == other); }
 
+  bool operator<(const xla::AxisRef& other) const {
+    if (mesh_axis_index_ != other.mesh_axis_index_) {
+      return mesh_axis_index_ < other.mesh_axis_index_;
+    }
+    if (sub_axis_info_.has_value() != other.sub_axis_info_.has_value()) {
+      return !sub_axis_info_.has_value();
+    }
+    if (sub_axis_info_.has_value()) {
+      if (sub_axis_info_->pre_size != other.sub_axis_info_->pre_size) {
+        return sub_axis_info_->pre_size < other.sub_axis_info_->pre_size;
+      }
+      return sub_axis_info_->size < other.sub_axis_info_->size;
+    }
+    return false;
+  }
+
   std::string ToString(const Mesh* mesh = nullptr) const;
 
   AxisRefProto ToProto() const;

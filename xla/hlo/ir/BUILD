@@ -207,6 +207,7 @@ cc_library(
     deps = [
         ":mesh_and_axis",
         ":tile_assignment",
+        "//xla:array",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo_op_metadata",
         "@com_google_absl//absl/algorithm:container",
@@ -460,7 +461,10 @@ xla_cc_test(
         ":mesh_and_axis",
         ":named_sharding",
         ":tile_assignment",
+        "//xla:array",
         "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
     ],
 )
