@@ -282,7 +282,8 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
   return std::make_unique<CuDnnCmd>(thunk.arguments(), thunk.graph());
 }
 
-static absl::StatusOr<Command> Convert(const ConvolutionThunk& thunk) {
+static absl::StatusOr<std::unique_ptr<Command>> Convert(
+    const ConvolutionThunk& thunk) {
   return std::make_unique<ConvolutionCmd>(thunk);
 }
 

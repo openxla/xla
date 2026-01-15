@@ -634,7 +634,7 @@ class ConvolutionCmd : public TracedCommandBufferCmd {
   ConvolutionCmd(const ConvolutionThunk& conv_thunk);
 
   absl::Status Initialize(const Thunk::InitializeParams& params,
-                          StateManager& state) override;
+                          CommandStateManager& state) override;
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,

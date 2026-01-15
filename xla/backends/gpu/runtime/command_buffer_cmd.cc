@@ -1758,14 +1758,14 @@ Command::BufferUseVector CublasLtCmd::buffers() const {
 
 ConvolutionCmd::ConvolutionCmd(
     const ConvolutionThunk& thunk)
-    : TracedCommandBufferCmd(CommandBufferCmdType::kConvolutionCmd),
+    : TracedCommandBufferCmd(CommandType::kConvolutionCmd),
       operand_buffers_(thunk.operand_buffers_),
       result_buffers_(thunk.result_buffers_),
       scratch_buffer_(thunk.scratch_buffer_),
       config_(thunk.config_) {}
 
 absl::Status ConvolutionCmd::Initialize(const Thunk::InitializeParams& params,
-                          StateManager& state) {
+                          CommandStateManager& state) {
   // populate cache of ConvRunner
   cache_.GetOrCreate(config_, params.stream);
   return absl::OkStatus();
@@ -1786,18 +1786,18 @@ absl::StatusOr<const se::CommandBuffer::Command*> ConvolutionCmd::Record(
       });
 }
 
-CommandBufferCmd::BufferUseVector ConvolutionCmd::buffers() const {
+Command::BufferUseVector ConvolutionCmd::buffers() const {
   
   BufferUseVector buffer_usage;
   buffer_usage.reserve(operand_buffers_.size() + result_buffers_.size() + 1);
 
   for (const auto& buffer : operand_buffers_) {
-    buffer_usage.push_back({buffer.slice, MemoryAccess::kRead});
+    buffer_usage.push_back(BufferUse::Read(buffer.slice));
   }
   for (const auto& buffer : result_buffers_) {
-    buffer_usage.push_back({buffer.slice, MemoryAccess::kWrite});
+    buffer_usage.push_back(BufferUse::Write(buffer.slice));
   }
-  buffer_usage.push_back({scratch_buffer_, MemoryAccess::kWrite});
+  buffer_usage.push_back(BufferUse::Write(scratch_buffer_));
   return buffer_usage;
 }
 
