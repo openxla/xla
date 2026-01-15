@@ -79,8 +79,6 @@ namespace xla {
 namespace gpu {
 namespace {
 
-namespace se = ::stream_executor;
-
 using emitters::ApplyIndexing;
 using llvm::SmallVector;
 using mlir::AffineExpr;
@@ -101,28 +99,14 @@ namespace mt = ::mlir::tensor;
 namespace mv = ::mlir::vector;
 
 constexpr int kTileSize = 32;
-
-// Helper functions to get backend-specific configuration values.
-inline int GetNumRowsForDevice(const se::DeviceDescription& device) {
-  if (device.gpu_compute_capability().IsRocm()) {
-    return 8;
-  } else {
-    return 4;
-  }
-}
-
-inline int GetMaxVectorizedBytesForDevice(const se::DeviceDescription& device) {
-  if (device.gpu_compute_capability().IsRocm()) {
-    return 16;
-  } else {
-    return 4;
-  }
-}
-
-inline int64_t GetNumThreadsPerBlockForDevice(
-    const se::DeviceDescription& device) {
-  return static_cast<int64_t>(GetNumRowsForDevice(device)) * kTileSize;
-}
+// Default values (CUDA and other backends).
+constexpr int kNumRows = 4;
+constexpr int64_t kNumThreadsPerBlock = kNumRows * kTileSize;  // 128
+constexpr int kMaxVectorizedBytes = 4;
+// ROCm-specific configuration.
+constexpr int kNumRowsRocm = 8;
+constexpr int64_t kNumThreadsPerBlockRocm = kNumRowsRocm * kTileSize;  // 256
+constexpr int kMaxVectorizedBytesRocm = 16;
 
 // Reads the 2D vector tile <vector_size x vector_size> from the shared memory
 // at the given indices.
@@ -169,7 +153,9 @@ TransposeFusionBase::TransposeFusionBase(const HloFusionAnalysis& analysis,
     : analysis_(analysis),
       mlir_context_(mlir_context),
       num_threads_per_block_(
-          GetNumThreadsPerBlockForDevice(analysis.device_info())) {}
+          analysis.device_info().gpu_compute_capability().IsRocm()
+              ? kNumThreadsPerBlockRocm
+              : kNumThreadsPerBlock) {}
 
 absl::Status TransposeFusionBase::EmitEntryFunction(
     const emitters::PartitionedComputations& computations,
@@ -214,7 +200,9 @@ TransposeFusion::TransposeFusion(const HloFusionAnalysis& analysis,
       input_shape_(
           Permute(transpose_.dimensions, InversePermutation(permutation_))),
       base_block_size_(kTileSize),
-      num_rows_(GetNumRowsForDevice(analysis.device_info())) {
+      num_rows_(analysis.device_info().gpu_compute_capability().IsRocm()
+                    ? kNumRowsRocm
+                    : kNumRows) {
   ConstHloInstructionSet transposes_to_tile;
   int index = 0;
   int64_t shmem_usage = 0;
@@ -272,7 +260,9 @@ TransposeFusion::TransposeFusion(const HloFusionAnalysis& analysis,
     // the input dimensions are divisible by the vector size. Vectorizing loads
     // for large data types does not help (there's already enough parallelism).
     const auto& device = analysis_.device_info();
-    int max_vectorized_bytes = GetMaxVectorizedBytesForDevice(device);
+    int max_vectorized_bytes = device.gpu_compute_capability().IsRocm()
+                                   ? kMaxVectorizedBytesRocm
+                                   : kMaxVectorizedBytes;
     for (int vec_size = max_vectorized_bytes / max_element_bytes; vec_size > 1;
          vec_size /= 2) {
       int elems_per_thread = vec_size * vec_size;
