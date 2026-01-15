@@ -39,11 +39,14 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace hlo_sharding_util {
 namespace {
+
+using NamedSharding = xla::NamedSharding;
+using DimensionSharding = xla::NamedSharding::DimensionSharding;
+using AxisRef = xla::AxisRef;
 
 TEST(HloShardingUtilTest, MergeShardingIfCompatible1) {
   HloSharding to_merge =
@@ -1461,6 +1464,58 @@ TEST_F(HloShardingUtilTestWithHlo, MultipleCallSitesForIota) {
                               ->root_instruction(),
                           *call_graph),
       std::nullopt);
+}
+
+TEST(HloShardingUtilTest, IsSubTilingOrEqualShardingNamedSharding) {
+  Mesh mesh({2, 2}, {"x", "y"});
+  HloSharding s_x(NamedSharding(
+      mesh, {DimensionSharding({AxisRef(0)}, /*is_closed=*/true)}));
+  HloSharding s_y(NamedSharding(
+      mesh, {DimensionSharding({AxisRef(1)}, /*is_closed=*/true)}));
+  HloSharding s_xy(NamedSharding(
+      mesh, {DimensionSharding({AxisRef(0), AxisRef(1)}, /*is_closed=*/true)}));
+  HloSharding s_empty(
+      NamedSharding(mesh, {DimensionSharding({}, /*is_closed=*/true)}));
+
+  EXPECT_TRUE(IsSubTilingOrEqualNamedSharding(s_x, s_x));
+  EXPECT_TRUE(IsSubTilingOrEqualNamedSharding(s_xy, s_x));
+  EXPECT_FALSE(IsSubTilingOrEqualNamedSharding(s_y, s_x));
+  EXPECT_FALSE(IsSubTilingOrEqualNamedSharding(s_empty, s_x));
+  EXPECT_TRUE(IsSubTilingOrEqualNamedSharding(s_x, s_empty));
+  EXPECT_FALSE(IsSubTilingOrEqualNamedSharding(s_x, s_xy));
+}
+
+TEST(HloShardingUtilTest, IsSubTilingOrEqualShardingNamedShardingOrder) {
+  Mesh mesh({2, 2}, {"x", "y"});
+  HloSharding s_x(NamedSharding(
+      mesh, {DimensionSharding({AxisRef(0)}, /*is_closed=*/true)}));
+  HloSharding s_xy(NamedSharding(
+      mesh, {DimensionSharding({AxisRef(0), AxisRef(1)}, /*is_closed=*/true)}));
+  HloSharding s_yx(NamedSharding(
+      mesh, {DimensionSharding({AxisRef(1), AxisRef(0)}, /*is_closed=*/true)}));
+
+  EXPECT_FALSE(IsSubTilingOrEqualNamedSharding(s_yx, s_x));
+  EXPECT_TRUE(IsSubTilingOrEqualNamedSharding(s_xy, s_x));
+}
+
+TEST(HloShardingUtilTest, IsSubTilingOrEqualNamedShardingSubAxes) {
+  Mesh mesh({4, 2}, {"x", "y"});
+  HloSharding s_x_full(NamedSharding(
+      mesh, {DimensionSharding({AxisRef(0)}, /*is_closed=*/true)}));
+  HloSharding s_x_part1(NamedSharding(
+      mesh, {DimensionSharding({AxisRef(0, {1, 2})}, /*is_closed=*/true)}));
+  HloSharding s_x_part2(NamedSharding(
+      mesh, {DimensionSharding({AxisRef(0, {2, 2})}, /*is_closed=*/true)}));
+  HloSharding s_x_part1_y(
+      NamedSharding(mesh, {DimensionSharding({AxisRef(0, {1, 2}), AxisRef(1)},
+                                             /*is_closed=*/true)}));
+
+  EXPECT_TRUE(IsSubTilingOrEqualNamedSharding(s_x_part1, s_x_part1));
+  EXPECT_FALSE(IsSubTilingOrEqualNamedSharding(s_x_part1, s_x_part2));
+  EXPECT_TRUE(IsSubTilingOrEqualNamedSharding(s_x_full, s_x_part1));
+  EXPECT_FALSE(IsSubTilingOrEqualNamedSharding(s_x_part1, s_x_full));
+  EXPECT_TRUE(IsSubTilingOrEqualNamedSharding(s_x_part1_y, s_x_part1));
+  EXPECT_FALSE(IsSubTilingOrEqualNamedSharding(s_x_part1_y, s_x_part2));
 }
 
 }  // namespace
