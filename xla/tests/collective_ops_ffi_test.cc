@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
+#include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/reduction_kind.h"
@@ -68,7 +69,6 @@ static ReplicaGroup AllDevices() {
 // This is a prepare handler that tells XLA:GPU runtime what collective cliques
 // should be acquired before the execution starts. All collective operations
 // must let XLA:GPU runtime know what cliques they need ahead of time.
-template <bool device_comm>
 static absl::Status PrepareAllReduce(
     const CollectiveParams* collective_params,
     CollectiveCliqueRequests* clique_requests) {
@@ -82,15 +82,42 @@ static absl::Status PrepareAllReduce(
           CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
           AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
 
-  // Maybe ask for a device communicator.
-  CollectiveCliqueRequests::CliqueRequirements requirements;
-  if (device_comm) {
-    requirements.dev_comm = GpuDeviceCommunicator::Requirements{8};
-  }
-
   // Ask XLA:GPU runtime to acquire a clique for this key. Later we will be able
   // to get access to it from the execute handler.
+  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key));
+
+  return absl::OkStatus();
+}
+
+// This is a prepare handler for device-initiated collective operation which
+// in addition to the clique asks for device comms and symmetric memory.
+static absl::Status PrepareDeviceAllReduce(
+    ffi::BufferR0<U32> src, ffi::Result<ffi::BufferR0<U32>> dst,
+    const CollectiveParams* collective_params,
+    CollectiveCliqueRequests* clique_requests,
+    CollectiveMemoryRequests* memory_requests) {
+  TF_RET_CHECK(collective_params && clique_requests);
+
+  // Request a clique that covers all devices (this test runs on 2 gpus).
+  TF_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetGpuCliqueKey(
+          *collective_params, {AllDevices()},
+          CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
+          AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+
+  // Ask for a device communicator with 8 lsa barriers.
+  CollectiveCliqueRequests::CliqueRequirements requirements;
+  requirements.dev_comm = GpuDeviceCommunicator::Requirements{8};
+
+  // Request XLA:GPU runtime to acquire a clique for this key. Later we will be
+  // able to get access to it from the execute handler.
   TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key, requirements));
+
+  TF_RETURN_IF_ERROR(memory_requests->RequestSymmetricAddress(
+      clique_key, src.device_memory()));
+  TF_RETURN_IF_ERROR(memory_requests->RequestSymmetricAddress(
+      clique_key, dst->device_memory()));
 
   return absl::OkStatus();
 }
@@ -122,8 +149,7 @@ static absl::Status AllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
   return future.Await();
 }
 
-XLA_FFI_DEFINE_HANDLER(kPrepareAllReduce,
-                       PrepareAllReduce</*device_comm=*/false>,
+XLA_FFI_DEFINE_HANDLER(kPrepareAllReduce, PrepareAllReduce,
                        ffi::Ffi::BindPrepare()
                            .Ctx<ffi::CollectiveParams>()
                            .Ctx<ffi::CollectiveCliqueRequests>());
@@ -136,11 +162,13 @@ XLA_FFI_DEFINE_HANDLER(kAllReduce, AllReduce,
                            .Ctx<ffi::CollectiveParams>()
                            .Ctx<ffi::CollectiveCliques>());
 
-XLA_FFI_DEFINE_HANDLER(kPrepareDeviceAllReduce,
-                       PrepareAllReduce</*device_comm=*/true>,
+XLA_FFI_DEFINE_HANDLER(kPrepareDeviceAllReduce, PrepareDeviceAllReduce,
                        ffi::Ffi::BindPrepare()
+                           .Arg<ffi::BufferR0<U32>>()  // src
+                           .Ret<ffi::BufferR0<U32>>()  // dst
                            .Ctx<ffi::CollectiveParams>()
-                           .Ctx<ffi::CollectiveCliqueRequests>());
+                           .Ctx<ffi::CollectiveCliqueRequests>()
+                           .Ctx<ffi::CollectiveMemoryRequests>());
 
 // TODO(ezhulenev): It's not yet a real device-initiated all reduce as support
 // for symmetric memory requests is not yet implemented.

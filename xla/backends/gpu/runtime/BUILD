@@ -1812,6 +1812,41 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "collective_memory_requests",
+    srcs = ["collective_memory_requests.cc"],
+    hdrs = ["collective_memory_requests.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        "//xla:util",
+        "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/service:buffer_assignment",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor:device_address",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+    ],
+)
+
+xla_cc_test(
+    name = "collective_memory_requests_test",
+    srcs = ["collective_memory_requests_test.cc"],
+    deps = [
+        ":collective_memory_requests",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/runtime:device_id",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor:device_address",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
+    ],
+)
+
+cc_library(
     name = "collective_multimem",
     srcs = ["collective_multimem.cc"],
     hdrs = ["collective_multimem.h"],
@@ -2426,6 +2461,7 @@ cc_library(
     deps = [
         ":collective_clique_requests",
         ":collective_cliques",
+        ":collective_memory_requests",
         ":collective_multimem_registry",
         ":collective_params",
         ":thunk_id",

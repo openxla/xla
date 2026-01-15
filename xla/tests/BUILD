@@ -3089,6 +3089,7 @@ xla_test(
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/backends/gpu/runtime:collective_clique_requests",
+        "//xla/backends/gpu/runtime:collective_memory_requests",
         "//xla/backends/gpu/runtime:collective_cliques",
         "//xla/backends/gpu/runtime:collective_execution",
         "//xla/backends/gpu/runtime:collective_params",
