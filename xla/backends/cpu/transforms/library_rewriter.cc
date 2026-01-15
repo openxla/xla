@@ -268,11 +268,11 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
                              FusionDirectionToString(dir));
     }
 
-    // If `instr` is another fusion of the same library type, fuse it.
-    // We don't need to add its neighbors to the frontier because anything that
-    // can be fused would have already been fused into `instr`.
-    // TODO(intel-tf): Check if merge fusions are beneficial for oneDNN.
-    if (lib->fusion_kind() != kOneDnnFusionKind &&
+    // If `instr` is another fusion of the same library type and the library
+    // supports merging fusions, fuse it. We don't need to add its neighbors to
+    // the frontier because anything that can be fused would have already been
+    // fused into `instr`.
+    if (lib->ShouldMergeFusions() &&
         IsCustomFusionWithKind(instr, lib->fusion_kind())) {
       TF_ASSIGN_OR_RETURN(fusion,
                           MergeFusionInstructions(
@@ -280,6 +280,9 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
       continue;
     }
 
+    // [TODO]: Make this generic with keeping track of fusion state, i.e.,
+    // number of special ops already in fusion, and checking if library can
+    // still fuse additional same kind of op.
     if (lib->fusion_kind() == kOneDnnFusionKind &&
         instr->opcode() == HloOpcode::kDot) {
       VLOG(4) << "  Only one dot op is allowed in oneDNN fusion";

@@ -77,6 +77,11 @@ class OneDnnMatcher : public LibraryMatcher {
     return fused_op_count >= kMaxOneDnnFusionSize;
   }
 
+  // oneDNN library does not support merging fusions.
+  // TODO(intel-tf): Evaluate if merging fusions has performance benefit for
+  // oneDNN.
+  bool ShouldMergeFusions() override { return false; }
+
   // Returns a prefix string for the fusion op's name.
   std::string fusion_prefix() const override { return "onednn_"; }
 

@@ -79,6 +79,9 @@ class LibraryMatcher {
   // the maximum fusion size is already reached.
   virtual bool ReachedMaxFusionSize(int fused_op_count) { return false; }
 
+  // Return true if the library supports merging fusions.
+  virtual bool ShouldMergeFusions() { return true; }
+
   // Returns a prefix string for the fusion op's name.
   virtual std::string fusion_prefix() const { return ""; }
 

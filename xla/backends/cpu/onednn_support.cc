@@ -53,16 +53,16 @@ bool IsOneDnnSupportedLayout(const Shape& shape) {
 
 bool IsOneDnnSupportedTypeAndLayout(const HloInstruction* hlo,
                                     const TargetMachineFeatures* cpu_features) {
-  if (!IsOneDnnSupportedDType(hlo->shape().element_type(), cpu_features) ||
-      !IsOneDnnSupportedLayout(hlo->shape())) {
+  auto is_supported = [cpu_features](const HloInstruction* hlo) {
+    return IsOneDnnSupportedDType(hlo->shape().element_type(), cpu_features) &&
+           IsOneDnnSupportedLayout(hlo->shape());
+  };
+
+  if (!is_supported(hlo)) {
     return false;
   }
   return (std::all_of(hlo->operands().begin(), hlo->operands().end(),
-                      [cpu_features](const HloInstruction* op) {
-                        return (IsOneDnnSupportedDType(
-                                    op->shape().element_type(), cpu_features) &&
-                                IsOneDnnSupportedLayout(op->shape()));
-                      }));
+                      is_supported));
 }
 
 absl::StatusOr<bool> IsDotSupportedByOneDnn(
