@@ -40,8 +40,8 @@ struct ConvRunnerCache {
   ConvRunnerCache(const ConvRunnerCache&) = delete;
   ConvRunnerCache& operator=(const ConvRunnerCache&) = delete;
 
-  std::pair< RunConvOptions, bool > GetOrCreate(
-                        const GpuConvConfig& config, const se::Stream* stream);
+  RunConvOptions GetOrCreate(const GpuConvConfig& config, 
+                             const se::Stream* stream);
 private:
   absl::Mutex mu_;
   absl::flat_hash_map<const se::StreamExecutor*,

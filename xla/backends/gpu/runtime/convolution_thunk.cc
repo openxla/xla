@@ -71,7 +71,7 @@ ConvolutionThunk::ConvolutionThunk(ThunkInfo thunk_info,
       descriptor_(std::move(descriptor)),
       config_(std::move(config)) {}
 
-std::pair< RunConvOptions, bool > ConvRunnerCache::GetOrCreate(
+RunConvOptions ConvRunnerCache::GetOrCreate(
           const GpuConvConfig& config, const se::Stream* stream) {
   absl::MutexLock lock(mu_);
   auto [it, inserted] = cache_.emplace(stream->parent(), 
@@ -79,7 +79,7 @@ std::pair< RunConvOptions, bool > ConvRunnerCache::GetOrCreate(
   if (inserted) {
     it->second = std::make_unique<GenericConvRunner>(config);
   }
-  return std::pair{ RunConvOptions{ nullptr, it->second.get() }, inserted };
+  return RunConvOptions{ nullptr, it->second.get() };
 }
 
 absl::Status RunConvolutionOnStream(const Thunk::ExecuteParams& params,
@@ -113,7 +113,7 @@ absl::Status RunConvolutionOnStream(const Thunk::ExecuteParams& params,
   VLOG(5) << "scratch buffer: " << scratch_buffer 
           << " addr: " << scratch.opaque();
 
-  auto [opts, runner_created] = cache.GetOrCreate(config, stream);
+  auto opts = cache.GetOrCreate(config, stream);
   TF_RETURN_IF_ERROR(RunGpuConv(config, absl::MakeSpan(operand_se_buffers),
                                 absl::MakeSpan(result_se_buffers), scratch,
                                 stream, opts));
