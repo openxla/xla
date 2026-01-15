@@ -156,9 +156,18 @@ H AbslHashValue(H h, const SymbolicExpr& expr) {
 // called before any SymbolicExprs are created.
 void RegisterSymbolicExprStorage(mlir::MLIRContext* mlir_context);
 
-// Free functions to create SymbolicExpr.
-SymbolicExpr ParseSymbolicExpr(absl::string_view expr_str,
-                               mlir::MLIRContext* mlir_context);
+// Parses a symbolic expression from `expr_str`. Advances `expr_str` past the
+// parsed expression. Returns the parsed expression or null if parsing failed.
+// `num_dims` specifies the number of dimension variables. It is used to
+// determine a variable index from a symbol id (i.e. var_id(s0) = num_dims).
+SymbolicExpr ParseSymbolicExpr(absl::string_view* expr_str,
+                               mlir::MLIRContext* mlir_context,
+                               int64_t num_dims = -1);
+// Uses `variable_map` to resolve variable names to symbolic expressions. If a
+// variable name is found in the map, the corresponding SymbolicExpr is used.
+SymbolicExpr ParseSymbolicExpr(
+    absl::string_view* expr_str, mlir::MLIRContext* mlir_context,
+    const llvm::DenseMap<llvm::StringRef, SymbolicExpr>& variable_map);
 SymbolicExpr CreateSymbolicConstant(int64_t value,
                                     mlir::MLIRContext* mlir_context);
 SymbolicExpr CreateSymbolicVariable(int64_t var_id,
