@@ -81,6 +81,7 @@ xla_cc_test(
         ":intrinsic",
         ":simple_jit_runner",
         "//xla:xla_data_proto_cc",
+        "//xla/codegen/intrinsic:type",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
