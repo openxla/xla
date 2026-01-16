@@ -3837,6 +3837,7 @@ xla_test(
         ":thunk",
         ":thunk_id",
         "//xla:types",
+        "//xla:util",
         "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
