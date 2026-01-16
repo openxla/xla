@@ -495,13 +495,9 @@ absl::Status ExecuteThunksImpl(
   // Acquire collective cliques requested by thunks.
   CollectiveCliques collective_cliques;
   if (!mock_collectives) {
-    TF_ASSIGN_OR_RETURN(
-        collective_cliques,
-        AcquireCollectiveCliques(
-            collective_params, collective_clique_requests,
-            debug_options
-                ? debug_options->xla_gpu_collectives_use_persistent_cliques()
-                : false));
+    TF_ASSIGN_OR_RETURN(collective_cliques,
+                        AcquireCollectiveCliques(collective_params,
+                                                 collective_clique_requests));
   }
 
   TF_RETURN_IF_ERROR(multimem_registry.Build());
@@ -523,12 +519,12 @@ absl::Status ExecuteThunksImpl(
     TF_RETURN_IF_ERROR(thunk_sequence.Initialize(initialize_params));
   }
 
-  // Maybe join a round of rendezvous after thunk initialization. We do this
-  // only in presence of newly acquired collective cliques which means that we
-  // have collective operations and clique initialization is famous for
-  // introducing deadlocks if we try to execute it concurrently with other
-  // potentially memory-allocating operations.
-  if (collective_cliques.num_transient_cliques() > 0) {
+  // Join a round of rendezvous after thunk initialization. We do this only in
+  // presence of newly acquired collective cliques which means that we have
+  // collective operations and clique initialization is famous for introducing
+  // deadlocks if we try to execute it concurrently with other potentially
+  // memory-allocating operations.
+  if (!collective_cliques.empty()) {
     TF_RETURN_IF_ERROR(
         RendezvousAfterInitialization(run_options, debug_options));
   }
