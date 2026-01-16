@@ -165,6 +165,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/time",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:macros",
         "@xla//xla/tsl/platform:types",
@@ -1392,6 +1393,7 @@ tsl_cc_test(
     deps = [
         ":numbers",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:test",
         "@xla//xla/tsl/platform:types",
