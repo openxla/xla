@@ -1844,8 +1844,8 @@ TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
   VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
 }
 
-TEST_F(PassOrderTest, HoistFusedBitcastsRunsAfterGemmFusionAutotuner) {
-  VerifyPassOrder("gemm-fusion-autotuner", "hoist-fused-bitcasts");
+TEST_F(PassOrderTest, HoistFusedBitcastsRunsAfterAutotuner) {
+  VerifyPassRunsAtLeastOnceBefore("autotuner", "hoist-fused-bitcasts");
 }
 
 TEST_F(PassOrderTest, NestGemmFusionRunsAfterHoistFusedBitcasts) {
@@ -2042,6 +2042,10 @@ TEST_F(GpuCompilerTest, DynamicSliceFusionReduceScatterMultipleBuffers) {
   )";
   EXPECT_THAT(RunFileCheck(m->ToString(), kExpected),
               absl_testing::IsOkAndHolds(true));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                          backend().compiler()->RunBackend(
+                              std::move(m), backend().default_stream_executor(),
+                              /*device_allocator=*/nullptr));
 }
 
 TEST_F(GpuCompilerTest, CompilingSortsWorksWithoutDevice) {

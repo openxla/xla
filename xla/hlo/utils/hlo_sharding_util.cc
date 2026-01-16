@@ -21,7 +21,6 @@ limitations under the License.
 #include <cstdlib>
 #include <functional>
 #include <iterator>
-#include <map>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -65,7 +64,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace hlo_sharding_util {
@@ -808,6 +806,7 @@ HloSharding TransposeSharding(const HloSharding& sharding,
         sharding.named_sharding().mesh(), transposed_dim_shardings,
         sharding.named_sharding().replicated_axes(),
         sharding.named_sharding().unreduced_axes(),
+        sharding.named_sharding().manual_axes(),
         sharding.named_sharding().metadata()));
   }
 
@@ -1114,6 +1113,7 @@ HloSharding PropagateShardingAlongDimsAndReplicateOthers(
         source_sharding.named_sharding().mesh(), target_dim_shardings,
         source_sharding.named_sharding().replicated_axes(),
         source_sharding.named_sharding().unreduced_axes(),
+        source_sharding.named_sharding().manual_axes(),
         source_sharding.named_sharding().metadata()));
   }
 
@@ -1544,7 +1544,8 @@ HloSharding PartiallyReplicateTiledShardingOnDims(
     return HloSharding(NamedSharding(
         sharding.named_sharding().mesh(), dim_shardings,
         sharding.named_sharding().replicated_axes(),
-        sharding.named_sharding().unreduced_axes(), sharding.metadata()));
+        sharding.named_sharding().unreduced_axes(),
+        sharding.named_sharding().manual_axes(), sharding.metadata()));
   }
 
   int64_t group_count = 1;
@@ -1613,7 +1614,8 @@ HloSharding ReplicateAllDataDims(const HloSharding& sharding,
     return HloSharding(NamedSharding(
         sharding.named_sharding().mesh(), dim_shardings,
         sharding.named_sharding().replicated_axes(),
-        sharding.named_sharding().unreduced_axes(), sharding.metadata()));
+        sharding.named_sharding().unreduced_axes(),
+        sharding.named_sharding().manual_axes(), sharding.metadata()));
   }
 
   if (sharding.IsManual()) {
@@ -1667,7 +1669,8 @@ HloSharding RemoveShapeDimensions(const HloSharding& sharding,
     return HloSharding(NamedSharding(
         sharding.named_sharding().mesh(), new_dim_shardings,
         sharding.named_sharding().replicated_axes(),
-        sharding.named_sharding().unreduced_axes(), sharding.metadata()));
+        sharding.named_sharding().unreduced_axes(),
+        sharding.named_sharding().manual_axes(), sharding.metadata()));
   }
 
   DimensionVector new_tile_shape;
@@ -1719,7 +1722,8 @@ std::optional<HloSharding> TransposeShardingWithCollapsedDims(
     return HloSharding(NamedSharding(
         source.named_sharding().mesh(), new_dim_shardings,
         source.named_sharding().replicated_axes(),
-        source.named_sharding().unreduced_axes(), source.metadata()));
+        source.named_sharding().unreduced_axes(),
+        source.named_sharding().manual_axes(), source.metadata()));
   }
 
   if (src_to_tgt.size() < source.num_dimensions()) {
@@ -2622,6 +2626,26 @@ HloSharding SplitShardingDimension(const HloSharding& sharding,
   CHECK_GT(sharding.TiledDataRank(), dimension);
   CHECK_EQ(sharding.dimension(dimension) % new_dim_size, 0)
       << "dim size " << new_dim_size;
+
+  if (sharding.UseNamedShardingLeaf()) {
+    const NamedSharding& named_sharding = sharding.named_sharding();
+    std::vector<NamedSharding::DimensionSharding> new_dim_shardings(
+        named_sharding.dim_shardings().begin(),
+        named_sharding.dim_shardings().end());
+
+    std::optional<NamedSharding::DimensionSharding> sliced =
+        new_dim_shardings[dimension].Slice(named_sharding.mesh(), new_dim_size);
+    CHECK(sliced.has_value()) << "Could not slice dimension " << dimension
+                              << " with size " << new_dim_size;
+
+    new_dim_shardings.insert(new_dim_shardings.begin() + dimension, *sliced);
+
+    return HloSharding(NamedSharding(
+        named_sharding.mesh(), new_dim_shardings,
+        named_sharding.replicated_axes(), named_sharding.unreduced_axes(),
+        named_sharding.manual_axes(), named_sharding.metadata()));
+  }
+
   DimensionVector dimensions(sharding.dimensions().begin(),
                              sharding.dimensions().end());
   int64_t current_dimension = dimensions[dimension];
@@ -2637,7 +2661,22 @@ HloSharding SplitShardingDimension(const HloSharding& sharding,
 
 HloSharding MergeShardingDimension(const HloSharding& sharding,
                                    int64_t dimension) {
-  CHECK_GT(sharding.TiledDataRank(), dimension);
+  CHECK_GT(sharding.TiledDataRank(), dimension + 1);
+  if (sharding.UseNamedShardingLeaf()) {
+    const NamedSharding& named_sharding = sharding.named_sharding();
+    std::vector<NamedSharding::DimensionSharding> merged_dim_shardings(
+        named_sharding.dim_shardings().begin(),
+        named_sharding.dim_shardings().end());
+
+    merged_dim_shardings[dimension].Append(merged_dim_shardings[dimension + 1],
+                                           named_sharding.mesh());
+    merged_dim_shardings.erase(merged_dim_shardings.begin() + dimension + 1);
+
+    return HloSharding(NamedSharding(
+        named_sharding.mesh(), merged_dim_shardings,
+        named_sharding.replicated_axes(), named_sharding.unreduced_axes(),
+        named_sharding.manual_axes(), named_sharding.metadata()));
+  }
   DimensionVector dimensions(sharding.dimensions().begin(),
                              sharding.dimensions().end());
   dimensions[dimension] *= dimensions[dimension + 1];

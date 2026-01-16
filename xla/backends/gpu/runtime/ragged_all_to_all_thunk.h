@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_handle.h"
@@ -88,6 +89,18 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
 
   absl::StatusOr<ThunkProto> ToProto() const override;
 
+  BufferUses buffer_uses() const override {
+    BufferUses uses;
+    uses.reserve(buffers_.size() * 2);
+    for (const Buffer& buffer : buffers_) {
+      uses.push_back(BufferUse::Read(buffer.source_buffer.slice,
+                                     buffer.source_buffer.shape));
+      uses.push_back(BufferUse::Write(buffer.destination_buffer.slice,
+                                      buffer.destination_buffer.shape));
+    }
+    return uses;
+  }
+
  protected:
   absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
                                      const GpuCliqueKey& clique_key,
@@ -126,6 +139,10 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
     // kernel.
     std::unique_ptr<se::Event> end_event;
 
+    // Pointer to a collection of values from all participating devices.
+    // Initialized only when the clique consists only of local devices.
+    std::shared_ptr<std::vector<RendezvousValue>> rendezvous_values;
+
     StreamState(int device_ordinal, RankId rank)
         : device_ordinal(device_ordinal), rank(rank) {}
   };
@@ -133,17 +150,15 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
   // Executes the rendezvous before the kernel start.
   // Inserts CUDA events into the stream to ensure that all devices have reached
   // the start event before the kernel starts.
-  absl::StatusOr<std::shared_ptr<std::vector<RendezvousValue>>>
-  RendezvousBeforeKernelStart(const GpuCliqueKey& clique_key,
-                              se::Stream& stream, const StreamState& state,
-                              const se::DeviceAddressBase& output_buffer);
+  absl::Status RendezvousBeforeKernelStart(const GpuCliqueKey& clique_key,
+                                           se::Stream& stream,
+                                           const StreamState& state);
 
   // Executes the rendezvous after the kernel finish. Waits for all devices to
   // reach the end event.
-  absl::Status RendezvousAfterKernelFinish(
-      const GpuCliqueKey& clique_key, se::Stream& stream,
-      const StreamState& state,
-      const std::vector<RendezvousValue>& rendezvous_values);
+  absl::Status RendezvousAfterKernelFinish(const GpuCliqueKey& clique_key,
+                                           se::Stream& stream,
+                                           const StreamState& state);
 
   absl::Status RunOneShotRaggedAllToAll(
       const GpuCliqueKey& clique_key, se::Stream& stream,

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_TESTS_COLLECTIVE_OPS_E2E_TEST_BASE_H_
-#define XLA_TESTS_COLLECTIVE_OPS_E2E_TEST_BASE_H_
+#ifndef XLA_SERVICE_GPU_TESTS_COLLECTIVE_OPS_E2E_TEST_BASE_H_
+#define XLA_SERVICE_GPU_TESTS_COLLECTIVE_OPS_E2E_TEST_BASE_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -29,14 +29,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/literal.h"
-#include "xla/service/backend.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/hlo_runner.h"
 #include "xla/service/hlo_runner_interface.h"
+#include "xla/service/hlo_runner_pjrt.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/stream_executor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -48,6 +45,16 @@ class CollectiveOpsE2ETestBase : public HloHardwareIndependentTestBase {
  public:
   CollectiveOpsE2ETestBase(size_t memory_size, size_t collectives_memory_size) {
     SetupHloRunner(memory_size, collectives_memory_size);
+  }
+
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options =
+        HloHardwareIndependentTestBase::GetDebugOptionsForTest();
+
+    // Disable autotuning which is unnecessary.
+    debug_options.set_xla_gpu_autotune_level(0);
+
+    return debug_options;
   }
 
   struct ExecutionResult {
@@ -68,6 +75,11 @@ class CollectiveOpsE2ETestBase : public HloHardwareIndependentTestBase {
       const std::vector<std::vector<Literal*>>& arguments,
       bool run_hlo_passes = true);
 
+  absl::StatusOr<std::vector<Literal>> ExecuteReplicated(
+      OpaqueExecutable* executable,
+      const std::vector<std::vector<Literal*>>& arguments,
+      bool run_hlo_passes = true);
+
   const se::GpuComputeCapability& Capability() {
     return gpu_compute_capability_;
   }
@@ -83,7 +95,7 @@ class CollectiveOpsE2ETestBase : public HloHardwareIndependentTestBase {
   }
 
  protected:
-  std::unique_ptr<HloRunner> hlo_runner_;
+  std::unique_ptr<HloRunnerPjRt> hlo_runner_;
   se::GpuComputeCapability gpu_compute_capability_;
 
  private:
@@ -117,4 +129,4 @@ class CollectiveOpsWithFlagsBase : public CollectiveOpsE2ETestBase {
 
 }  // namespace xla
 
-#endif  // XLA_TESTS_COLLECTIVE_OPS_E2E_TEST_BASE_H_
+#endif  // XLA_SERVICE_GPU_TESTS_COLLECTIVE_OPS_E2E_TEST_BASE_H_

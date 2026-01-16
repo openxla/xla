@@ -15,18 +15,37 @@ limitations under the License.
 
 #include "xla/tests/collective_ops_ffi_kernels.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <optional>
+#include <utility>
+#include <vector>
 
+#include <gmock/gmock.h>
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/core/collectives/clique_id.h"
+#include "xla/core/collectives/collectives.h"
+#include "xla/core/collectives/rank_id.h"
+#include "xla/future.h"
+#include "xla/runtime/device_id.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
 #include "xla/stream_executor/launch_dim.h"
+#include "xla/stream_executor/memory_allocation.h"
+#include "xla/stream_executor/memory_allocator.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/concurrency/executor.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/threadpool.h"
 
@@ -39,7 +58,7 @@ CreateCommunicators(se::StreamExecutor* executor0,
   GpuCollectives::Device device0(executor0);
   GpuCollectives::Device device1(executor1);
 
-  auto* collectives = GpuCollectives::Default("CUDA");
+  GpuCollectives* collectives = GpuCollectives::Default("CUDA");
 
   TF_ASSIGN_OR_RETURN(CliqueId clique_id, collectives->CreateUniqueCliqueId());
   CliqueIds clique_ids(clique_id);

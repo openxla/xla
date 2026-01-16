@@ -36,10 +36,10 @@ limitations under the License.
 #include "xla/ffi/ffi_api.h"
 #include "xla/future.h"
 #include "xla/literal.h"
+#include "xla/service/gpu/tests/collective_ops_e2e_test_base.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tests/collective_ops_e2e_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -79,8 +79,7 @@ static absl::Status PrepareAllReduce(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(
           *collective_params, {AllDevices()},
-          CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
-          AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+          CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID, false));
 
   // Ask XLA:GPU runtime to acquire a clique for this key. Later we will be able
   // to get access to it from the execute handler.
@@ -135,8 +134,7 @@ static absl::Status AllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(
           *collective_params, {AllDevices()},
-          CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
-          AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+          CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID, false));
 
   // Get the communicator for the requested clique.
   TF_ASSIGN_OR_RETURN(Communicator * comm,

@@ -22,9 +22,9 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
-#include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/recv_thunk.h"
 #include "xla/backends/gpu/runtime/send_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -40,6 +40,8 @@ limitations under the License.
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -98,6 +100,7 @@ ENTRY computation {
 
   const int64_t kElementSize = sizeof(DataT);
   const int64_t kTotalDataBytes = kNumElements * kElementSize;
+  Shape shape = ShapeUtil::MakeShape(S32, {kNumElements});
 
   // Use RoundUpTo to calculate the actual size needed for one buffer.
   const int64_t kAlignedSliceBytes =
@@ -114,8 +117,8 @@ ENTRY computation {
                                       kAlignedSliceBytes);
 
   CollectiveThunk::Buffer buffer = {/*element_count=*/kNumElements,
-                                    /*source_buffer=*/input_slice,
-                                    /*destination_buffer=*/input_slice,
+                                    /*source_buffer=*/{input_slice, shape},
+                                    /*destination_buffer=*/{input_slice, shape},
                                     /*source_memory_space=*/0,
                                     /*destination_memory_space=*/0};
 
@@ -130,8 +133,7 @@ ENTRY computation {
   send_thunk->set_async_events(async_events);
 
   auto send_done_thunk = std::make_unique<CollectiveDoneThunk>(
-      Kind::kSendDone, Thunk::ThunkInfo{}, async_events,
-      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
+      Kind::kSendDone, Thunk::ThunkInfo{}, async_events);
 
   ThunkSequence thunk_sequence;
   thunk_sequence.push_back(std::move(send_thunk));
@@ -186,6 +188,7 @@ ENTRY computation {
   using DataT = int32_t;
   constexpr int64_t kNumElements = 8;
   constexpr int64_t kAlignmentBytes = kXlaAllocatedBufferAlignBytes;
+  Shape shape = ShapeUtil::MakeShape(S32, {kNumElements});
 
   const int64_t kElementSize = sizeof(DataT);
   const int64_t kTotalDataBytes = kNumElements * kElementSize;
@@ -206,8 +209,8 @@ ENTRY computation {
 
   // Use designated initializers if possible, or format for clarity.
   CollectiveThunk::Buffer buffer = {/*element_count=*/kNumElements,
-                                    /*source_buffer=*/input_slice,
-                                    /*destination_buffer=*/input_slice,
+                                    /*source_buffer=*/{input_slice, shape},
+                                    /*destination_buffer=*/{input_slice, shape},
                                     /*source_memory_space=*/0,
                                     /*destination_memory_space=*/0};
 
@@ -222,8 +225,7 @@ ENTRY computation {
   recv_thunk->set_async_events(async_events);
 
   auto recv_done_thunk = std::make_unique<CollectiveDoneThunk>(
-      Kind::kRecvDone, Thunk::ThunkInfo{}, async_events,
-      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
+      Kind::kRecvDone, Thunk::ThunkInfo{}, async_events);
 
   ThunkSequence thunk_sequence;
   thunk_sequence.push_back(std::move(recv_thunk));

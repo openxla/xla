@@ -117,6 +117,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -297,6 +298,7 @@ cc_library(
     hdrs = ["pjrt_client.h"],
     visibility = internal_visibility(["//xla:friends"]),
     deps = [
+        ":pjrt_abi_version",
         ":pjrt_common",
         ":pjrt_compiler",
         ":pjrt_device_description",
@@ -542,6 +544,18 @@ cc_library(
         "//xla/pjrt/proto:pjrt_value_type_proto_cc",
         "//xla/tsl/lib/gtl:int_type",
         "@com_google_absl//absl/container:inlined_vector",
+    ],
+)
+
+cc_library(
+    name = "pjrt_abi_version",
+    hdrs = ["pjrt_abi_version.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        ":pjrt_common",
+        "//xla/pjrt/proto:pjrt_abi_version_proto_cc",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
