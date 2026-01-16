@@ -44,10 +44,7 @@ def tf_gpu_tests_tags():
 
 # terminology changes: saving tf_cuda_* for compatibility
 def tf_cuda_tests_tags():
-    if is_cuda_configured():
-        return ["requires-gpu-cuda", "gpu"] + gpu_test_tags()
-    else:
-        return []
+    return tf_gpu_tests_tags()
 
 def tf_has_tag(kwargs, tag):
     return ("tags" in kwargs and kwargs["tags"] != None and tag in kwargs["tags"])
