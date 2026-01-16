@@ -33,10 +33,7 @@ namespace gpu {
 
 class ConvFusionRewriter : public HloModulePass {
  public:
-  explicit ConvFusionRewriter(
-      const se::GpuComputeCapability& compute_capability,
-      se::dnn::VersionInfo dnn_version = se::dnn::VersionInfo{})
-      : compute_capability_(compute_capability), dnn_version_(dnn_version) {};
+  explicit ConvFusionRewriter() {};
 
   absl::string_view name() const override { return "conv-fusion-rewriter"; }
 
@@ -44,10 +41,6 @@ class ConvFusionRewriter : public HloModulePass {
   absl::StatusOr<bool> RunImpl(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
-
- private:
-  const se::GpuComputeCapability compute_capability_;
-  const se::dnn::VersionInfo dnn_version_;
 };
 
 }  // namespace gpu

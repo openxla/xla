@@ -100,7 +100,7 @@ class CudnnFusedConvRewriterHloTest : public HloTestBase {
   }
 
   ConvFusionRewriter GetConvFusionRewriter() const {
-    return ConvFusionRewriter(GetCudaComputeCapability(), GetDnnVersion());
+    return ConvFusionRewriter();
   }
   ConvKindAssignment GetConvKindAssignment() const {
     return ConvKindAssignment(GetCudaComputeCapability(), GetDnnVersion());
