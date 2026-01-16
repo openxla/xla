@@ -513,7 +513,7 @@ HloInstruction* ConvertBatchGroupedToFeatureGroupedConvolution(
   return computation->AddInstruction(std::move(new_conv));
 }
 
-static absl::StatusOr<HloInstruction*> AssignConvKindHelper(
+static absl::StatusOr<HloInstruction*> AssignConvKind(
     HloInstruction* conv, const se::GpuComputeCapability& cc,
     const se::dnn::VersionInfo& dnn_version,
     std::vector<HloInstruction*>& fusion_outputs) {
@@ -541,7 +541,7 @@ absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv,
   std::vector<HloInstruction*> fusion_outputs;
   TF_ASSIGN_OR_RETURN(
       HloInstruction * conv_with_kind,
-      AssignConvKindHelper(conv, cc, dnn_version, fusion_outputs));
+      AssignConvKind(conv, cc, dnn_version, fusion_outputs));
   if (conv == nullptr) {
     return false;
   }

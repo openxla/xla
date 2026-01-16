@@ -357,8 +357,7 @@ HloInstruction* CreateGpuConvFusion(
 // Helper function to create a fusion instruction to replace the given
 // conv instruction
 static absl::StatusOr<HloInstruction*> CreateConvFusionHelper(
-    HloInstruction* conv, const se::GpuComputeCapability& cc,
-    const se::dnn::VersionInfo& dnn_version,
+    HloInstruction* conv,
     std::vector<HloInstruction*>& fusion_outputs) {
   CHECK(DynCast<HloConvolutionInstruction>(conv)->conv_kind() !=
         ConvKind::UNSET)
@@ -376,14 +375,12 @@ static absl::StatusOr<HloInstruction*> CreateConvFusionHelper(
 }
 
 // Tries to rewrite convolution and fusible instructions into cudnn fusion.
-absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv,
-                                      const se::GpuComputeCapability& cc,
-                                      const se::dnn::VersionInfo& dnn_version) {
+absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv) {
   CHECK_EQ(conv->opcode(), HloOpcode::kConvolution);
   std::vector<HloInstruction*> fusion_outputs;
   TF_ASSIGN_OR_RETURN(
       HloInstruction * conv_fusion,
-      CreateConvFusionHelper(conv, cc, dnn_version, fusion_outputs));
+      CreateConvFusionHelper(conv, fusion_outputs));
   if (conv_fusion == nullptr) {
     return false;
   }
@@ -405,12 +402,7 @@ absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv,
   return true;
 }
 
-// Rewrites the convolutions in the given computation into calls to
-// cudnn/miopen.
-// Returns true if it made any changes.
-absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
-                                      const se::GpuComputeCapability& cc,
-                                      const se::dnn::VersionInfo dnn_version) {
+absl::StatusOr<bool> RunOnComputation(HloComputation* computation) {
   std::vector<HloInstruction*> convs;
   for (auto* hlo : computation->instructions()) {
     if (HloPredicateIsOp<HloOpcode::kConvolution>(hlo)) {
@@ -420,7 +412,7 @@ absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
 
   bool changed = false;
   for (HloInstruction* conv : convs) {
-    TF_ASSIGN_OR_RETURN(bool result, RunOnInstruction(conv, cc, dnn_version));
+    TF_ASSIGN_OR_RETURN(bool result, RunOnInstruction(conv));
     changed |= result;
   }
   return changed;
@@ -437,7 +429,7 @@ absl::StatusOr<bool> ConvFusionRewriter::RunImpl(
        module->MakeNonfusionComputations(execution_threads)) {
     TF_ASSIGN_OR_RETURN(
         bool result,
-        RunOnComputation(computation, compute_capability_, dnn_version_));
+        RunOnComputation(computation));
     changed |= result;
   }
   XLA_VLOG_LINES(2, "ConvFusionRewriter::Run(), after:\n" + module->ToString());

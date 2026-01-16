@@ -60,6 +60,13 @@ HloPassPipeline FusionPipeline(
       "hlo verifier (debug)");
 
   fusion.AddPass<SortIotaFusion>();
+
+  // Rewrite convs into conv fusions.
+  if (!debug_options.xla_gpu_experimental_disable_binary_libraries() &&
+      debug_options.xla_gpu_experimental_enable_conv_fusion()) {
+    pipeline.AddPass<ConvFusionRewriter>();
+  }
+
   GpuHloCostAnalysis::Options cost_analysis_options{
       shape_size_bytes_function,
       /*per_second_rates=*/{},

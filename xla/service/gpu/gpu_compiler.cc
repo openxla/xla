@@ -1954,16 +1954,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(simplifier_options,
                                                        gpu_version);
 
-  // Rewrite convs into conv fusions.
-  if (!debug_options.xla_gpu_experimental_disable_binary_libraries() &&
-      debug_options.xla_gpu_experimental_enable_conv_fusion()) {
-    se::dnn::VersionInfo dnn_version = gpu_target_config.dnn_version_info;
-    if (stream_exec != nullptr) {
-      TF_ASSIGN_OR_RETURN(dnn_version, GetDnnVersionInfo(stream_exec));
-    }
-    pipeline.AddPass<ConvFusionRewriter>(gpu_version, dnn_version);
-  }
-
   if (debug_options.xla_allow_excess_precision()) {
     // This pass cleans up chains of compiler-generated converts
     // (i.e. f32 -> bf16 -> f32) that have been produced by the algebraic
