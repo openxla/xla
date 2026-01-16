@@ -999,6 +999,19 @@ constexpr int kMaxContractingDimSizeForSliceFusion = 1024;
 // Let input and output data volumes of a fusion grow by small amounts.
 constexpr int kIoToleranceBytes = 1024;
 
+// Returns true if all users of the given operand are kSlice operations
+// with the same shape as `slice_shape`.
+bool AllUsersAreSlicesWithSameShape(const HloInstruction& operand,
+                                    const Shape& slice_shape) {
+  for (const HloInstruction* user : operand.users()) {
+    if (user->opcode() != HloOpcode::kSlice ||
+        !ShapeUtil::SameDimensions(user->shape(), slice_shape)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Tells that fusing an instruction as an input is efficient.
 bool IsInputWorthFusing(const HloInstruction& hlo,
                         const DotProperties& properties) {
@@ -1016,6 +1029,7 @@ bool IsInputWorthFusing(const HloInstruction& hlo,
       hlo_query::AllOperandsAreParametersOrConstants(hlo)) {
     return true;
   }
+
   // Explanation:
   // * Operand user count > 1 - if the producer of the slice has a single user
   //   the slice can be fused into the producer instead of here.
@@ -1023,14 +1037,18 @@ bool IsInputWorthFusing(const HloInstruction& hlo,
   //   which may outweigh the benefit of fusing it in the first place. Small
   //   contracting dimension almost never benefits from splitting it, so we
   //   allow the fusion.
-
+  // * AllUsersAreSlicesWithSameShape - slices of the same shape can be
+  //   fused into the producer by the multi output fusion pass.
+  //
   // TODO: b/393299275 - Remove the contracting dim size restriction once the
   // new emitter lands and we can support slices in contracting dimension with
   // splits.
   if (hlo.opcode() == HloOpcode::kSlice && hlo.operand(0)->user_count() > 1 &&
-      properties.contracting_dim_size <= kMaxContractingDimSizeForSliceFusion) {
+      properties.contracting_dim_size <= kMaxContractingDimSizeForSliceFusion &&
+      !AllUsersAreSlicesWithSameShape(*hlo.operand(0), hlo.shape())) {
     return true;
   }
+
   const bool enable_subchannel_dequantisation_fusion =
       hlo.GetModule()
           ->config()

@@ -21,7 +21,6 @@ limitations under the License.
 #include <cstdlib>
 #include <cstring>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -46,6 +45,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "unsupported/Eigen/CXX11/Tensor"
+#include "google/protobuf/text_format.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/local_client.h"
@@ -56,16 +56,16 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/maybe_owning.h"
+#include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/topology_util.h"
 #include "xla/pjrt/gpu/gpu_helpers.h"
-#include "xla/pjrt/gpu/gpu_topology.h"
-#include "xla/pjrt/gpu/gpu_topology.pb.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
 #include "xla/pjrt/gpu/tfrt/gpu_event.h"
 #include "xla/pjrt/gpu/tfrt/tfrt_gpu_client.h"
 #include "xla/pjrt/gpu/tfrt/tfrt_gpu_device.h"
+#include "xla/pjrt/gpu/tfrt/thread_checker.h"
 #include "xla/pjrt/gpu/tfrt/tracked_gpu_device_buffer.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -77,6 +77,8 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/gpu_topology.h"
+#include "xla/service/gpu_topology.pb.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/transfer_manager.h"
 #include "xla/shape.h"
@@ -88,6 +90,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/async_value.h"
@@ -97,12 +100,10 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
-#include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/fingerprint.h"
-#include "tsl/platform/protobuf.h"
 #include "tsl/profiler/lib/traceme.h"
 
 #if defined(PLATFORM_WINDOWS)
@@ -133,7 +134,7 @@ absl::StatusOr<std::shared_ptr<se::Event>> CreateCudaEvent(
 }
 
 Future<> CreateFutureForEvent(tsl::AsyncValueRef<xla::GpuEvent> event) {
-  auto [promise, future] = Future<>::MakePromise();
+  auto [promise, future] = MakePromise<>();
   auto done_fn = [promise = std::move(promise), event]() mutable {
     if (const absl::Status* error = event.GetErrorIfPresent()) {
       VLOG(3) << "Setting future: " << *error;
@@ -214,17 +215,6 @@ absl::StatusOr<std::unique_ptr<TfrtGpuBuffer>> AllocateTfrtGpuDestinationBuffer(
                                                std::move(definition_event),
                                                std::move(ready_event)),
       client, device, memory_space);
-}
-
-void EnqueueWork(tsl::thread::ThreadPool* pool,
-                 absl::AnyInvocable<void() &&> callee) {
-  // TSL TheadPool expects std::function that must be copyable, so we are
-  // forced to do a little bit of manual memory management here.
-  pool->Schedule(
-      [ptr = new absl::AnyInvocable<void() &&>(std::move(callee))]() {
-        std::move (*ptr)();
-        delete ptr;
-      });
 }
 
 bool IsAllZeros(const DeviceAssignment& assignment) {
@@ -396,8 +386,7 @@ class TfrtGpuCopyToDeviceStream : public CopyToDeviceStream {
 
 // Converts PjRt SendCallbacks to an XLA StreamExecutor send function.
 SendDeviceMemoryFunction ConvertSendCallbacksToSendFunction(
-    int replica, const ExecuteOptions& options,
-    tsl::thread::ThreadPool* thread_pool) {
+    int replica, const ExecuteOptions& options, AsyncWorkRunner* runner) {
   // Check if we have callbacks registered for the given replica.
   if (replica >= options.send_callbacks.size()) {
     return [replica](int64_t channel_id, se::Stream*, const Shape&,
@@ -413,7 +402,7 @@ SendDeviceMemoryFunction ConvertSendCallbacksToSendFunction(
   // SendCallbacks registered for a device ordinal. Can be empty.
   absl::Span<const SendCallback> callbacks = options.send_callbacks[replica];
 
-  return [callbacks, thread_pool](
+  return [callbacks, runner](
              int64_t channel_id, se::Stream* stream, const Shape& shape,
              const se::DeviceAddressBase& src,
              const absl::flat_hash_map<std::string, std::string>&)
@@ -436,7 +425,7 @@ SendDeviceMemoryFunction ConvertSendCallbacksToSendFunction(
         tsl::MakeConstructedAsyncValueRef<std::unique_ptr<se::Event>>(
             std::move(se_event));
 
-    thread_pool->Schedule([done_event, stream, src, channel_id, shape, send] {
+    runner->Schedule([done_event, stream, src, channel_id, shape, send] {
       tsl::profiler::TraceMe trace([&] {
         return tsl::profiler::TraceMeEncode("TfrtGpuExecutable::Send",
                                             {{"channel_id", channel_id}});
@@ -674,11 +663,43 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
 
     // The stream in the allocator will be used during compilation.
     se::Stream* stream = device->stream();
-    TF_ASSIGN_OR_RETURN(auto allocator,
-                        CreateAllocatorForDevice(executor, allocator_config));
+
+    std::unique_ptr<tsl::Allocator> allocator;
+    if ((allocator_config.kind == GpuAllocatorConfig::Kind::kDefault ||
+         allocator_config.kind == GpuAllocatorConfig::Kind::kBFC) &&
+        allocator_config.preallocate) {
+      GpuAllocatorConfig device_allocator_config = allocator_config;
+      // Assert that CUDA alloc/free calls are not made on the caller thread.
+      auto visitor = [](void*, int index, size_t) {
+        TfrtGpuThreadChecker::AssertCudaCallAllowedOnThisThread();
+      };
+      device_allocator_config.sub_allocator_alloc_visitors.push_back(visitor);
+      device_allocator_config.sub_allocator_free_visitors.push_back(visitor);
+
+      TF_ASSIGN_OR_RETURN(allocator, CreateAllocatorForDevice(
+                                         executor, device_allocator_config));
+
+      // Immediately expand the allocator instead of on the first allocation so
+      // that we can control the thread on which the expansion happens. This
+      // works because the BFC allocator with preallocation expands its pool to
+      // the configured size on first allocation.
+      allocator->DeallocateRaw(
+          allocator->AllocateRaw(tsl::Allocator::kAllocatorAlignment, 1));
+    } else {
+#ifdef PLATFORM_GOOGLE
+      LOG(WARNING)
+          << "TFRT GPU is running without preallocation; this may cause CUDA "
+             "calls to happen inline on the calling thread any time the "
+             "allocator runs out of memory and has to expand synchronously, "
+             "which is problematic if the calling thread is a fiber";
+#endif
+      TF_ASSIGN_OR_RETURN(allocator,
+                          CreateAllocatorForDevice(executor, allocator_config));
+    }
     allocators.emplace_back(
         std::move(allocator), stream,
-        /*memory_space=*/static_cast<int>(se::MemoryType::kDevice),
+        /*memory_space=*/
+        static_cast<int>(stream_executor::MemorySpace::kDevice),
         executor->device_ordinal(), executor->GetPlatform());
 
     TF_ASSIGN_OR_RETURN(
@@ -694,7 +715,7 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
     TF_ASSIGN_OR_RETURN(auto host_allocator, GetGpuHostAllocator(executor));
     allocators.emplace_back(
         std::move(host_allocator), stream,
-        /*memory_space=*/static_cast<int>(se::MemoryType::kHost),
+        /*memory_space=*/static_cast<int>(stream_executor::MemorySpace::kHost),
         executor->device_ordinal(), executor->GetPlatform());
   }
   return MaybeOwning<se::DeviceAddressAllocator>(
@@ -929,17 +950,6 @@ absl::StatusOr<std::vector<absl::string_view>> MemoryKindsFromShape(
     result.push_back(element_memory_kind);
   }
   return result;
-}
-
-// Enqueue to a thread pool when all `values` are ready.
-void EnqueueWorkWhenReady(
-    tsl::thread::ThreadPool* pool,
-    absl::Span<const tsl::RCReference<tsl::AsyncValue>> values,
-    absl::AnyInvocable<void()> callee) {
-  tsl::RunWhenReady(values, [pool, callee = std::move(callee)]() mutable {
-    VLOG(3) << "EnqueueWork: pool: " << pool;
-    EnqueueWork(pool, std::move(callee));
-  });
 }
 
 absl::flat_hash_map<GlobalDeviceId, IncarnationId> GetLatestIncarnations(

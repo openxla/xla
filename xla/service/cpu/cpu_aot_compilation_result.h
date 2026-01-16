@@ -100,7 +100,7 @@ class CpuAotCompilationOptions : public AotCompilationOptions {
 };
 
 // This class represents the result of a CPU AOT compilation.
-class CpuAotCompilationResult : public AotCompilationResult {
+class CpuAotCompilationResult : public CompiledModule {
  public:
   static absl::StatusOr<std::unique_ptr<CpuAotCompilationResult>> Create(
       const HloModule* hlo_module, const BufferAssignment* buffer_assignment,
@@ -115,8 +115,6 @@ class CpuAotCompilationResult : public AotCompilationResult {
   absl::StatusOr<std::string> SerializeAsString() const override {
     return proto_.SerializeAsString();
   }
-
-  using AotCompilationResult::LoadExecutable;
 
   absl::StatusOr<std::unique_ptr<Executable>>
       LoadExecutable(const se::StreamExecutor* stream_exec) && override;

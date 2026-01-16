@@ -24,7 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/attributes.h"
 #include "absl/base/nullability.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/log.h"
@@ -34,6 +33,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/xla_builder.h"
+#include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -139,6 +139,12 @@ class HloRunnerAgnosticTestBase : public HloHardwareIndependentTestBase {
       absl::string_view hlo_text, const HloModuleConfig& config,
       const HloParserOptions& parser_options = HloParserOptions()) const;
 
+  // Builds an HLO module from the given XlaComputation using the given
+  // execution options.
+  absl::StatusOr<std::unique_ptr<HloModule>> HloModuleFromXlaComputation(
+      const XlaComputation& computation,
+      const ExecutionOptions& execution_options) const;
+
   // Builds an HLO module from the given XlaBuilder using the given
   // execution options.
   absl::StatusOr<std::unique_ptr<HloModule>> HloModuleFromXlaBuilder(
@@ -157,6 +163,35 @@ class HloRunnerAgnosticTestBase : public HloHardwareIndependentTestBase {
   absl::StatusOr<std::unique_ptr<OpaqueExecutable>> CreateExecutable(
       std::unique_ptr<HloModule> module, bool run_hlo_passes) {
     return test_runner_->CreateExecutable(std::move(module), run_hlo_passes);
+  }
+
+  // Parse the given hlo_text and compile the resulting module to an executable.
+  // Returns the HloModule and the corresponding executable that owns it.
+  absl::StatusOr<std::pair<const HloModule*, std::unique_ptr<OpaqueExecutable>>>
+  GetOptimizedModuleForExecutable(absl::string_view hlo_text,
+                                  const HloModuleConfig& config) {
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+                        ParseAndReturnVerifiedModule(hlo_text, config));
+    TF_ASSIGN_OR_RETURN(
+        std::unique_ptr<OpaqueExecutable> executable,
+        CreateExecutable(std::move(module), /*run_hlo_passes=*/true));
+    TF_ASSIGN_OR_RETURN(const HloModule* optimized_module,
+                        test_runner_->HloModuleFromWrapped(executable.get()));
+    return {{optimized_module, std::move(executable)}};
+  }
+
+  // Compiles the given hlo_text to an executable, and returns a clone of the
+  // optimized HloModule.
+  absl::StatusOr<std::unique_ptr<HloModule>> GetOptimizedModule(
+      absl::string_view hlo_text, const HloModuleConfig& config) {
+    TF_ASSIGN_OR_RETURN(auto module_and_executable,
+                        GetOptimizedModuleForExecutable(hlo_text, config));
+    return module_and_executable.first->Clone();
+  }
+
+  absl::StatusOr<std::unique_ptr<HloModule>> GetOptimizedModule(
+      absl::string_view hlo_text) {
+    return GetOptimizedModule(hlo_text, GetModuleConfigForTest());
   }
 
   // Executes the given module on multiple devices.
@@ -268,6 +303,12 @@ class HloRunnerAgnosticTestBase : public HloHardwareIndependentTestBase {
       absl::Span<const Literal* const> arguments,
       const std::optional<ErrorSpec>& error, bool run_hlo_passes = true);
 
+  // Executes the two executables using fake arguments and compares the results.
+  // Returns whether the results are near or equal.
+  ::testing::AssertionResult RunAndCompareTwoExecutables(
+      OpaqueExecutable* executable_0, OpaqueExecutable* executable_1,
+      const std::optional<ErrorSpec>& error);
+
   // Executes an hlo module with fake inputs on multiple devices.
   ::testing::AssertionResult RunReplicated(
       absl::string_view hlo_string, bool run_hlo_passes = true,
@@ -296,7 +337,7 @@ class HloRunnerAgnosticTestBase : public HloHardwareIndependentTestBase {
   bool swallow_execution_errors() const { return swallow_execution_errors_; }
 
  private:
-  // Runs the two module with or without running hlo oasses and compares
+  // Runs the two module with or without running hlo passes and compares
   // the results. Returns whether the results are near or equal. If any
   // error happens before the results are computed, returns the error status.
   absl::StatusOr<::testing::AssertionResult>
@@ -312,6 +353,15 @@ class HloRunnerAgnosticTestBase : public HloHardwareIndependentTestBase {
       std::unique_ptr<HloModule> module_0, std::unique_ptr<HloModule> module_1,
       absl::Span<const Literal* const> arguments,
       const std::optional<ErrorSpec>& error, bool run_hlo_passes);
+
+  // Executes the two executables and compares the results. Returns whether the
+  // results are near or equal. If any error happens before the results are
+  // computed, returns the error status.
+  absl::StatusOr<::testing::AssertionResult>
+  RunAndCompareTwoExecutablesInternal(
+      OpaqueExecutable* executable_0, OpaqueExecutable* executable_1,
+      absl::Span<const Literal* const> arguments,
+      const std::optional<ErrorSpec>& error);
 
   std::unique_ptr<HloRunnerInterface> test_runner_;
   DeviceShapeRepresentationFn device_shape_representation_fn_;

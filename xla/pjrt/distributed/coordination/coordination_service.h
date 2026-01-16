@@ -80,20 +80,17 @@ class CoordinationService {
     // service recording the state change and the agent stopping heartbeats.
     absl::Duration heartbeat_timeout = absl::Seconds(10);
 
-    // The list of `CoordinatedJob`s that will register in coordination service.
-    std::vector<tensorflow::CoordinatedJob> coordinated_job_list;
+    // The name of the job.
+    std::string job_name;
+
+    // The number of tasks in the job.
+    int32_t num_tasks;
 
     // Denotes how long to wait for all coordination agents to reach the
     // barriers (after the first shutdown request) before disconnecting
     // together. If set to 0, no barrier is imposed upon shutdown and each
     // worker can disconnect individually.
     absl::Duration shutdown_barrier_timeout = absl::ZeroDuration();
-
-    // The list of jobs which are recoverable. If a task in this list fails,
-    // it will not propagate error to other tasks.
-    // If empty, no jobs will be recoverable and every task failure will cause
-    // error propagation to other tasks.
-    absl::flat_hash_set<std::string> recoverable_jobs;
 
     // If a task restarts with a new incarnation, we may allow it to reconnect
     // silently. This is useful when we know that a task can immediately resume
@@ -144,15 +141,6 @@ class CoordinationService {
   void RegisterTaskAsync(const tensorflow::CoordinatedTask& task,
                          IncarnationId incarnation, tsl::StatusCallback done);
 
-  // Wait for all tasks to be up and running, and register local device
-  // info. The callback is invoked when all tasks are up and registered, or some
-  // error occurs.
-  // Each task's local devices will be appended in a deterministic order, and
-  // post-processed by the callback in SetDeviceAggregationFunction() (if set).
-  void WaitForAllTasks(const tensorflow::CoordinatedTask& task,
-                       const tensorflow::DeviceInfo& devices,
-                       tsl::StatusCallback done);
-
   // Disconnects task from the service. If `shutdown_barrier_timeout_in_ms` is
   // specified in the config, blocks until all tasks reach the barrier before
   // disconnecting together.
@@ -177,12 +165,10 @@ class CoordinationService {
                                IncarnationId incarnation);
 
   // Set a task in error state permanently.
+  //
+  // TODO: mwhittaker - Remove this. It's only used for testing.
   absl::Status ReportTaskError(const tensorflow::CoordinatedTask& task,
                                const absl::Status& error);
-
-  // Get the state and the error status of the tasks.
-  std::vector<tensorflow::CoordinatedTaskStateInfo> GetTaskState(
-      const std::vector<tensorflow::CoordinatedTask>& task);
 
   // Watches the state and the error status of the job.
   using WatchJobStateCallback = absl::AnyInvocable<void(
@@ -562,13 +548,6 @@ class CoordinationService {
     // Sets the error and returns true if the task state is not ERROR.
     // Otherwise, don't overwrite the error and return false.
     bool SetError(const absl::Status& status);
-    tensorflow::DeviceInfo GetDeviceInfo() { return devices_; }
-    void CollectDeviceInfo(const tensorflow::DeviceInfo& devices) {
-      devices_ = devices;
-    }
-    // Checks if task has called WaitForAllTasks() previously, which gathers the
-    // local device info.
-    bool DeviceInfoIsCollected() { return !devices_.device().empty(); }
 
     // This is used to propagate state changes (disconnect, error) to ongoing
     // barriers.
@@ -599,7 +578,6 @@ class CoordinationService {
     // accounts for the lag time between the service recording the state change
     // and the agent stopping heartbeats/error polling.
     uint64_t disconnect_grace_period_us_ = 0;
-    tensorflow::DeviceInfo devices_;
     // For now, we assume there won't be many simultaneous barriers so we simply
     // use a set.
     absl::flat_hash_set<std::string> ongoing_barriers_for_task_;
@@ -652,8 +630,6 @@ class CoordinationService {
   std::function<tensorflow::DeviceInfo(const tensorflow::DeviceInfo& devices)>
       post_aggregate_device_fn_;
 
-  const std::string device_propagation_barrier_id_ =
-      absl::StrCat("WaitForAllTasks::", service_incarnation_.value());
   const std::string shutdown_barrier_id_ =
       absl::StrCat("Shutdown::", service_incarnation_.value());
   std::vector<tensorflow::CoordinatedTask> shutdown_barrier_tasks_

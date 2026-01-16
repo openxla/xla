@@ -337,6 +337,37 @@ HloAsyncInstruction* HloAsyncInstruction::async_chain_done() const {
   return next;
 }
 
+void HloAsyncInstruction::UpdateAsyncChain() {
+  auto update_chain = [this]() {
+    if (this->users().size() == 1) {
+      // If this instruction has more than one user, assuming async_chain_next_
+      // is already pointing to the correct user and the other users are
+      // transient.
+      CHECK(this->users()[0]->opcode() == HloOpcode::kAsyncUpdate ||
+            this->users()[0]->opcode() == HloOpcode::kAsyncDone);
+      Cast<HloAsyncInstruction>(this)->async_chain_next_ =
+          Cast<HloAsyncInstruction>(this->users()[0]);
+    }
+  };
+  auto update_operand_chain = [this]() {
+    CHECK_EQ(this->operand_count(), 1);
+    CHECK(this->operand(0)->opcode() == HloOpcode::kAsyncStart ||
+          this->operand(0)->opcode() == HloOpcode::kAsyncUpdate);
+    Cast<HloAsyncInstruction>(this->mutable_operand(0))->async_chain_next_ =
+        this;
+  };
+  if (this->opcode() == HloOpcode::kAsyncStart) {
+    update_chain();
+  }
+  if (this->opcode() == HloOpcode::kAsyncUpdate) {
+    update_operand_chain();
+    update_chain();
+  }
+  if (this->opcode() == HloOpcode::kAsyncDone) {
+    update_operand_chain();
+  }
+}
+
 std::vector<HloAsyncInstruction*> HloAsyncInstruction::GetAsyncChain() const {
   std::vector<HloAsyncInstruction*> chain;
   HloAsyncInstruction* current = async_chain_start();
@@ -425,6 +456,16 @@ HloInstructionProto HloAsyncStartInstruction::ToProto() const {
                                            HloInstruction::kMainExecutionThread
                                        ? ""
                                        : async_execution_thread_);
+  for (const auto& pair : output_to_operand_aliasing()) {
+    auto aliasing = proto.add_output_operand_aliasing();
+    aliasing->set_operand_index(pair.second.first);
+    for (int64_t index : pair.first) {
+      aliasing->add_output_shape_index(index);
+    }
+    for (int64_t index : pair.second.second) {
+      aliasing->add_operand_shape_index(index);
+    }
+  }
   return proto;
 }
 
@@ -440,6 +481,32 @@ void HloAsyncStartInstruction::PrintExtraAttributesImpl(
       async_wrapped_computation()->CanExpandIntoSingleInstruction()) {
     async_wrapped_instruction()->PrintExtraAttributes(printer, options);
   }
+
+  if (!output_to_operand_aliasing().empty()) {
+    printer.Next([this](Printer* printer) {
+      printer->Append("output_to_operand_aliasing={");
+      AppendJoin(printer, output_to_operand_aliasing(), ", ",
+                 [](Printer* printer, auto& pair) {
+                   AppendCat(printer, pair.first.ToString(), ": (",
+                             pair.second.first, ", ");
+                   AppendCat(printer, pair.second.second.ToString(), ")");
+                 });
+      printer->Append("}");
+    });
+  }
+}
+
+bool HloAsyncStartInstruction::IdenticalSlowPath(
+    const HloInstruction& other,
+    absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
+        eq_computations) const {
+  const auto& casted_other =
+      static_cast<const HloAsyncStartInstruction&>(other);
+  return HloAsyncInstruction::opcode() == other.opcode() &&
+         eq_computations(HloAsyncInstruction::async_wrapped_computation(),
+                         other.async_wrapped_computation()) &&
+         output_to_operand_aliasing() ==
+             casted_other.output_to_operand_aliasing();
 }
 
 std::unique_ptr<HloInstruction>
@@ -464,9 +531,12 @@ HloAsyncStartInstruction::CloneWithNewOperandsImpl(
     }
   }
 
-  return std::make_unique<HloAsyncStartInstruction>(
-      opcode(), shape, new_operands, new_wrapped_computation,
-      async_execution_thread_);
+  auto cloned = std::make_unique<HloAsyncStartInstruction>(
+      HloAsyncInstruction::opcode(), shape, new_operands,
+      new_wrapped_computation, async_execution_thread_);
+  cloned->HloAliasible::set_output_to_operand_aliasing(
+      output_to_operand_aliasing());
+  return cloned;
 }
 
 HloCopyStartInstruction::HloCopyStartInstruction(
@@ -918,10 +988,10 @@ HloRecvDoneInstruction::CloneWithNewOperandsImpl(
 HloCollectiveInstruction::HloCollectiveInstruction(
     HloOpcode opcode, const Shape& shape,
     absl::Span<HloInstruction* const> operands,
-    const CollectiveDeviceList& device_list, bool constrain_layout,
+    const CollectiveDeviceListBase& device_list, bool constrain_layout,
     const std::optional<int64_t>& channel_id)
     : HloChannelInstruction(opcode, shape, channel_id),
-      device_list_(device_list),
+      device_list_(device_list.Clone()),
       constrain_layout_(constrain_layout) {
   for (auto operand : operands) {
     AppendOperand(operand);
@@ -930,7 +1000,23 @@ HloCollectiveInstruction::HloCollectiveInstruction(
 
 HloInstructionProto HloCollectiveInstruction::ToProto() const {
   HloInstructionProto proto = HloChannelInstruction::ToProto();
-  *proto.mutable_collective_device_list() = device_list_.ToProto();
+
+  if (const CollectiveDeviceList* device_list_v1 =
+          dynamic_cast<const CollectiveDeviceList*>(device_list_.get())) {
+    *proto.mutable_collective_device_list() = device_list_v1->ToProto();
+  } else if (const IotaReplicaGroupList* device_list_v2 =
+                 dynamic_cast<const IotaReplicaGroupList*>(
+                     device_list_.get())) {
+    *proto.mutable_iota_collective_device_list() = device_list_v2->ToProto();
+  } else if (const MeshAxesReplicaGroupList* device_list_v3 =
+                 dynamic_cast<const MeshAxesReplicaGroupList*>(
+                     device_list_.get())) {
+    *proto.mutable_mesh_axes_replica_group_list() = device_list_v3->ToProto();
+  } else {
+    LOG(FATAL) << "Unknown or missing CollectiveDeviceList type in "
+                  "HloCollectiveInstruction";
+  }
+
   proto.set_constrain_layout(constrain_layout_);
   return proto;
 }
@@ -940,10 +1026,10 @@ void HloCollectiveInstruction::PrintExtraAttributesImpl(
   HloChannelInstruction::PrintExtraAttributesImpl(printer, options);
   printer.Next([this, &options](Printer* printer) {
     VLOG(4) << name() << " replica_groups="
-            << device_list_.ToString(options.print_full_replica_group_list());
+            << device_list_->ToString(options.print_full_replica_group_list());
 
     printer->Append("replica_groups=");
-    device_list_.Print(printer, options.print_full_replica_group_list());
+    device_list_->Print(printer, options.print_full_replica_group_list());
   });
   if (constrain_layout_) {
     printer.Next(
@@ -969,7 +1055,7 @@ bool HloCollectiveInstruction::IdenticalSlowPathIgnoringChannelIdValues(
 HloAllGatherInstruction::HloAllGatherInstruction(
     HloOpcode opcode, const Shape& shape,
     absl::Span<HloInstruction* const> operands, int64_t all_gather_dimension,
-    const CollectiveDeviceList& device_list, bool constrain_layout,
+    const CollectiveDeviceListBase& device_list, bool constrain_layout,
     const std::optional<int64_t>& channel_id, bool use_global_device_ids)
     : HloCollectiveInstruction(opcode, shape, operands, device_list,
                                constrain_layout, channel_id),
@@ -1029,9 +1115,9 @@ bool HloAllGatherInstruction::IdenticalSlowPathIgnoringChannelIdValues(
 HloAllReduceInstructionBase::HloAllReduceInstructionBase(
     HloOpcode opcode, const Shape& shape,
     absl::Span<HloInstruction* const> operands,
-    HloComputation* reduce_computation, const CollectiveDeviceList& device_list,
-    bool constrain_layout, const std::optional<int64_t>& channel_id,
-    bool use_global_device_ids)
+    HloComputation* reduce_computation,
+    const CollectiveDeviceListBase& device_list, bool constrain_layout,
+    const std::optional<int64_t>& channel_id, bool use_global_device_ids)
     : HloCollectiveInstruction(opcode, shape, operands, device_list,
                                constrain_layout, channel_id),
       use_global_device_ids_(use_global_device_ids) {
@@ -1090,9 +1176,10 @@ HloAllReduceInstruction::CloneWithNewOperandsImpl(
 
 HloReduceScatterInstruction::HloReduceScatterInstruction(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
-    HloComputation* reduce_computation, const CollectiveDeviceList& device_list,
-    bool constrain_layout, const std::optional<int64_t>& channel_id,
-    bool use_global_device_ids, int64_t scatter_dimension)
+    HloComputation* reduce_computation,
+    const CollectiveDeviceListBase& device_list, bool constrain_layout,
+    const std::optional<int64_t>& channel_id, bool use_global_device_ids,
+    int64_t scatter_dimension)
     : HloAllReduceInstructionBase(
           HloOpcode::kReduceScatter, shape, operands, reduce_computation,
           device_list, constrain_layout, channel_id, use_global_device_ids),
@@ -1145,7 +1232,7 @@ HloReduceScatterInstruction::CloneWithNewOperandsImpl(
 
 HloAllToAllInstruction::HloAllToAllInstruction(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
-    const CollectiveDeviceList& device_list, bool constrain_layout,
+    const CollectiveDeviceListBase& device_list, bool constrain_layout,
     const std::optional<int64_t>& channel_id,
     const std::optional<int64_t>& split_dimension)
     : HloCollectiveInstruction(HloOpcode::kAllToAll, shape, operands,
@@ -1200,7 +1287,7 @@ bool HloAllToAllInstruction::IdenticalSlowPathIgnoringChannelIdValues(
 
 HloRaggedAllToAllInstruction::HloRaggedAllToAllInstruction(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
-    const CollectiveDeviceList& device_list,
+    const CollectiveDeviceListBase& device_list,
     const std::optional<int64_t>& channel_id)
     : HloCollectiveInstruction(HloOpcode::kRaggedAllToAll, shape, operands,
                                device_list,
@@ -1235,7 +1322,7 @@ void HloRaggedAllToAllInstruction::PrintExtraAttributesImpl(
 HloCollectiveBroadcastInstruction::HloCollectiveBroadcastInstruction(
     HloOpcode opcode, const Shape& shape,
     absl::Span<HloInstruction* const> operands,
-    const CollectiveDeviceList& device_list, bool constrain_layout,
+    const CollectiveDeviceListBase& device_list, bool constrain_layout,
     const std::optional<int64_t>& channel_id)
     : HloCollectiveInstruction(opcode, shape, operands, device_list,
                                constrain_layout, channel_id) {}
@@ -1456,6 +1543,76 @@ std::unique_ptr<HloInstruction> HloReduceInstruction::CloneWithNewOperandsImpl(
   CHECK_EQ(new_operands.size() % 2, 0);
   return std::make_unique<HloReduceInstruction>(shape, new_operands,
                                                 dimensions(), to_apply());
+}
+
+HloScanInstruction::HloScanInstruction(const Shape& shape,
+                                       absl::Span<HloInstruction* const> inputs,
+                                       absl::Span<HloInstruction* const> inits,
+                                       HloComputation* to_apply,
+                                       int64_t scan_dimension, bool is_reverse,
+                                       TriState is_associative)
+    : HloDimensionsInstruction(HloOpcode::kScan, shape, {scan_dimension}),
+      is_reverse_(is_reverse),
+      is_associative_(is_associative),
+      num_carries_(inits.size()) {
+  for (auto* input : inputs) {
+    AppendOperand(input);
+  }
+  for (auto* init : inits) {
+    AppendOperand(init);
+  }
+  AppendComputation(to_apply);
+}
+
+HloInstructionProto HloScanInstruction::ToProto() const {
+  HloInstructionProto proto = HloInstruction::ToProto();
+  for (int64_t dimension : dimensions_) {
+    proto.add_dimensions(dimension);
+  }
+  proto.set_is_reverse(is_reverse_);
+  proto.set_is_associative(is_associative_);
+  proto.set_num_carries(num_carries_);
+  return proto;
+}
+
+void HloScanInstruction::PrintExtraAttributesImpl(
+    AttributePrinter& printer, const HloPrintOptions& options) const {
+  printer.Next([this](Printer* printer) {
+    printer->Append("dimensions={");
+    AppendJoin(printer, dimensions(), ",");
+    printer->Append("}");
+  });
+  if (is_reverse_) {
+    printer.Next([](Printer* printer) { printer->Append("is_reverse=true"); });
+  }
+  if (is_associative_ != TRI_STATE_UNSPECIFIED) {
+    printer.Next([this](Printer* printer) {
+      printer->Append("is_associative=");
+      printer->Append(is_associative_ == TRI_STATE_TRUE ? "true" : "false");
+    });
+  }
+}
+
+bool HloScanInstruction::IdenticalSlowPath(
+    const HloInstruction& other,
+    absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
+        eq_computations) const {
+  const auto& casted_other = static_cast<const HloScanInstruction&>(other);
+  return dimensions() == casted_other.dimensions() &&
+         is_reverse() == casted_other.is_reverse() &&
+         is_associative() == casted_other.is_associative() &&
+         eq_computations(to_apply(), casted_other.to_apply());
+}
+
+std::unique_ptr<HloInstruction> HloScanInstruction::CloneWithNewOperandsImpl(
+    const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+    HloCloneContext* context) const {
+  int64_t num_carries = this->num_carries();
+  int64_t num_inputs = new_operands.size() - num_carries;
+  return std::make_unique<HloScanInstruction>(
+      shape, new_operands.subspan(0, num_inputs),
+      new_operands.subspan(num_inputs, num_carries), to_apply(),
+      scan_dimension(), is_reverse(), is_associative());
 }
 
 HloSortInstruction::HloSortInstruction(
@@ -1978,10 +2135,6 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
     auto* new_computation = CHECK_NOTNULL(instruction_to_append->GetModule())
                                 ->AddEmbeddedComputation(builder.Build());
     AppendComputation(new_computation);
-    if (opcode() == HloOpcode::kFusion) {
-      new_computation->SetFusionInstruction(this);
-    }
-
     clone = called_computation_root();
   } else {
     // When add_output is false, instruction_to_append is necessarily an
@@ -2212,31 +2365,6 @@ HloFusionInstruction::HloFusionInstruction(
     : HloCallableInstruction(HloOpcode::kFusion, shape, operands,
                              fusion_computation, prefix),
       fusion_kind_(fusion_kind) {
-  fusion_computation->SetFusionInstruction(this);
-}
-
-HloFusionInstruction::~HloFusionInstruction() {
-  ClearFusionComputationInstruction();
-}
-
-void HloFusionInstruction::ClearFusionComputationInstruction() {
-  // Each fusion calls a single computation, but we use called_computations()
-  // instead of fused_instructions_computation(), because the order in which
-  // things get destructed can vary; the fusion computation's back-pointer may
-  // already be null, which violates a check in
-  // fused_instructions_computation.
-  for (HloComputation* computation : called_computations()) {
-    // Some passes that rewrite fusions may reassign a fusion computation to a
-    // different fusion instruction as this instruction gets destructed.
-    if (computation->FusionInstruction() == this) {
-      computation->SetFusionInstruction(nullptr);
-    }
-  }
-}
-
-void HloFusionInstruction::ClearCalledComputations() {
-  ClearFusionComputationInstruction();
-  HloInstruction::ClearCalledComputations();
 }
 
 HloInstruction*
@@ -2492,11 +2620,7 @@ void HloFusionInstruction::MergeFusionInstructionIntoMultiOutput(
 
 HloComputation* HloFusionInstruction::fused_instructions_computation() const {
   CHECK_EQ(called_computations().size(), 1);
-  auto* fused_instructions_computation = called_computations().front();
-  CHECK(fused_instructions_computation->IsFusionComputation())
-      << "Computation " << fused_instructions_computation->name()
-      << " is not a fusion kind";
-  return fused_instructions_computation;
+  return called_computations().front();
 }
 
 HloInstruction* HloFusionInstruction::fused_expression_root() const {

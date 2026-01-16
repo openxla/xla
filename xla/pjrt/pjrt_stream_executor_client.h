@@ -345,8 +345,13 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   HostMemoryAllocator* host_memory_allocator() const {
     return host_memory_allocator_.get();
   }
-  bool should_stage_host_to_device_transfers() const {
-    return should_stage_host_to_device_transfers_;
+
+  bool ShouldStageHostToDeviceTransfers(const void* data, int64_t size) {
+    // Allocating multi-gigabyte pinned buffers can be very slow. In that case,
+    // using a staging buffer is probably worse than not using one.
+    // TODO(phawkins): add chunking for transfers.
+    return should_stage_host_to_device_transfers_ &&
+           size < (int64_t{1} << 30) && !IsDmaMapped(data, size);
   }
 
   virtual gpu::GpuExecutableRunOptions* gpu_run_options(
@@ -354,12 +359,11 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
     return gpu_run_options_.get();
   }
 
-  tsl::thread::ThreadPool* thread_pool() { return &thread_pool_; }
-
   virtual absl::StatusOr<PjRtStreamExecutorExecutionOutput> RunAsync(
       LocalExecutable& exec, PjRtDevice* device,
-      std::vector<ShapeTree<PjRtStreamExecutorExecutionInput>> arguments,
-      ExecutableRunOptions run_options);
+      std::vector<PjRtStreamExecutorExecutionInput> flat_arguments,
+      ExecutableRunOptions run_options, bool parameter_is_tupled_arguments,
+      absl::Span<const Shape> executable_parameter_shapes);
 
   void ThenRecordEvent(BufferSequencingEventRef event,
                        LocalDeviceState* local_device,
@@ -396,12 +400,12 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
       const Shape& on_device_shape, PjRtMemorySpace* memory_space,
       tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
       absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
-          definition_device_events,
-      bool raw_buffer_is_mutable) override;
+          definition_device_events) override;
 
   absl::StatusOr<std::pair<tsl::RCReference<CommonPjRtRawBuffer>,
                            PjRtFulfillAliasRawBufferCallback>>
-  CreateRawBufferChannel(PjRtMemorySpace* memory_space) override;
+  CreateRawBufferChannel(PjRtMemorySpace* memory_space,
+                         size_t on_device_bytes_count) override;
 
   absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> LinearizeInto(
       const LiteralSlice& literal, const xla::Shape& device_shape,
@@ -513,7 +517,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
 
   std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options_;
 
-  tsl::thread::ThreadPool thread_pool_;
+  tsl::thread::ThreadPool compile_thread_pool_;
   std::unique_ptr<AsyncWorkRunner> async_work_runner_;
 
   absl::Mutex transpose_mu_;
@@ -668,14 +672,12 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
   virtual absl::Span<int const> ParametersThatMustBeDonated(
       int executable_idx) const;
 
-  virtual absl::StatusOr<
-      std::vector<ShapeTree<PjRtStreamExecutorExecutionInput>>>
-  MakeExecutionInputsAndWaitForEvents(
+  virtual absl::StatusOr<std::vector<PjRtStreamExecutorExecutionInput>>
+  MakeExecutionInputs(
       int device_ordinal, const ExecuteOptions& options,
       absl::Span<const Shape> executable_parameter_shapes,
       absl::Span<PjRtBuffer* const> argument_handles,
-      absl::Span<const CommonPjRtBuffer::ScopedHold> device_buffers,
-      absl::flat_hash_set<BufferSequencingEvent*>& events) const;
+      absl::Span<const CommonPjRtBuffer::ScopedHold> device_buffers) const;
 
   absl::StatusOr<ShapeTree<tsl::AsyncValueRef<RawSEDeviceMemory>>>
   EnqueueExecution(

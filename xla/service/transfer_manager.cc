@@ -152,7 +152,8 @@ absl::Status TransferManager::ReadDynamicShapes(
   TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
 
   TF_ASSIGN_OR_RETURN(
-      auto compiler, Compiler::GetForPlatform(stream->parent()->GetPlatform()));
+      auto compiler,
+      Compiler::GetForPlatform(stream->parent()->GetPlatform()->id()));
   TF_RETURN_IF_ERROR(device_buffer->buffers().ForEachElementWithStatus(
       [&](const ShapeIndex& index,
           const se::DeviceAddressBase& buffer) -> absl::Status {
@@ -295,7 +296,7 @@ absl::Status TransferManager::WriteRootTupleIndexTable(
     return absl::OkStatus();
   }
   se::DeviceAddressBase device_memory =
-      buffer_tree.element({}).AsDeviceMemoryBase();
+      buffer_tree.element({}).AsDeviceAddress();
   TF_RET_CHECK(GetByteSizeRequirement(buffer_tree.shape()) ==
                device_memory.size());
 
@@ -303,7 +304,7 @@ absl::Status TransferManager::WriteRootTupleIndexTable(
   elements.reserve(ShapeUtil::TupleElementCount(buffer_tree.shape()));
   for (int64_t i = 0; i < ShapeUtil::TupleElementCount(buffer_tree.shape());
        ++i) {
-    elements.push_back(buffer_tree.element({i}).AsDeviceMemoryBase());
+    elements.push_back(buffer_tree.element({i}).AsDeviceAddress());
   }
   return WriteSingleTupleIndexTable(stream, elements, buffer_tree.shape(),
                                     &device_memory);

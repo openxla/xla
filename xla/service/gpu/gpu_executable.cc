@@ -772,7 +772,7 @@ absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
       } else {
         return std::get<absl::Span<ExecutionInput>>(arguments)[param_no]
             .Buffer(allocation.param_shape_index())
-            .AsDeviceMemoryBase();
+            .AsDeviceAddress();
       }
     }();
     if (registered_buffer.is_null() && registered_buffer.size() > 0) {
@@ -1283,11 +1283,13 @@ absl::StatusOr<GpuExecutableProto> GpuExecutable::ToProto() const {
 absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
     const GpuExecutableProto& proto,
     const se::DeviceDescription& device_description,
-    absl::string_view platform_name,
+    absl::string_view platform_name, DebugOptions debug_options,
     const std::optional<stream_executor::KernelLoaderSpec::SymbolResolver>&
         symbol_resolver) {
   Params params;
-  params.enable_debug_info_manager = false;
+  params.debug_options = std::move(debug_options);
+  params.enable_debug_info_manager =
+      params.debug_options.xla_gpu_executable_embed_debug_info();
   params.asm_text = proto.asm_text();
   const std::string& binary = proto.binary();
   params.binary.assign(binary.begin(), binary.end());

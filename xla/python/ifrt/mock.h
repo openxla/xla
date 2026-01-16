@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/no_destructor.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -158,6 +159,11 @@ class MockClient : public llvm::RTTIExtends<MockClient, Client> {
               (absl::Span<const ValueRef> values), (final));
   MOCK_METHOD(absl::StatusOr<tsl::RCReference<Tuple>>, MakeTuple,
               (absl::Span<ValueRef> values), (final));
+  MOCK_METHOD(
+      void, CancelExecution,
+      (xla::ifrt::LoadedExecutable::CancellationHandle cancellation_handle,
+       absl::Status error),
+      (final));
   MOCK_METHOD(absl::string_view, runtime_type, (), (const, final));
   MOCK_METHOD(absl::string_view, platform_name, (), (const, final));
   MOCK_METHOD(absl::string_view, platform_version, (), (const, final));
@@ -190,6 +196,13 @@ class MockClient : public llvm::RTTIExtends<MockClient, Client> {
   MOCK_METHOD(absl::StatusOr<CustomLayoutRef>, GetDefaultLayout,
               (DType dtype, const Shape& shape, const ShardingRef& sharding),
               (const, final));
+  MOCK_METHOD(
+      absl::StatusOr<std::unique_ptr<xla::ifrt::DeviceAttributeSubscription>>,
+      SubscribeToAttributeChanges,
+      (absl::Span<xla::ifrt::Device* const> devices,
+       std::optional<absl::Span<const std::string>> attribute_names,
+       xla::ifrt::OnDeviceAttributeChangeCallback callback),
+      (final));
   // LINT.ThenChange(mock.cc:MockClientDelegation)
 
   xla::ifrt::Client* delegated() const { return delegated_.get(); }
@@ -236,6 +249,7 @@ class MockDevice : public Device {
   MOCK_METHOD(bool, IsAddressable, (), (const, final));
   MOCK_METHOD(int, ProcessIndex, (), (const, final));
   MOCK_METHOD(DeviceId, Id, (), (const, final));
+  MOCK_METHOD(absl::string_view, PlatformName, (), (const, final));
   MOCK_METHOD(absl::string_view, Kind, (), (const, final));
   MOCK_METHOD((const AttributeMap&), Attributes, (), (const, final));
   MOCK_METHOD(absl::StatusOr<Memory*>, DefaultMemory, (), (const, final));

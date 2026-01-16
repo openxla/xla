@@ -498,6 +498,7 @@ MakePjRtDevicesFromGlobalTopology(PjRtClient* client,
       }
     }
 
+    std::string platform_name(pjrt_client->platform_name());
     const bool node_is_me = process_index == global_topology.my_process_index;
     for (const DeviceProto& device_proto : node.devices()) {
       absl::flat_hash_map<std::string, PjRtDeviceAttribute> attributes;
@@ -536,7 +537,7 @@ MakePjRtDevicesFromGlobalTopology(PjRtClient* client,
         }
       }
       auto ifrt_device = std::make_unique<PjRtDevice>(
-          client, ifrt_device_id, device_proto.device_kind(),
+          client, ifrt_device_id, platform_name, device_proto.device_kind(),
           std::move(to_string), std::move(debug_string), process_index,
           std::move(attributes), pjrt_device);
       devices.push_back(std::move(ifrt_device));
@@ -658,7 +659,7 @@ absl::StatusOr<ArrayRef> AssembleStringArrayFromSingleDeviceStringArrays(
       arrays.size(), std::move(buffer_backing_store));
 
   auto [buffers_promise, buffers_future] =
-      tsl::Future<BasicStringArray::Buffers>::MakePromise();
+      tsl::MakePromise<BasicStringArray::Buffers>();
 
   auto buffer_copier = [state = buffer_copying_state,
                         promise = std::move(buffers_promise).ToShared()](
@@ -858,6 +859,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> PjRtClient::Create(
   client->kv_store_ = std::move(options.kv_store);
   client->cross_host_transfer_timeout_ = options.cross_host_transfer_timeout;
   client->transfer_server_factory_ = std::move(options.transfer_server_factory);
+  client->force_dcn_cross_host_transfers_ =
+      options.force_dcn_cross_host_transfers;
 
   if (client->pjrt_client()->plugin_attributes().has_value()) {
     auto attrs = client->pjrt_client()->plugin_attributes()->attributes;
@@ -1292,7 +1295,7 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::CopyArrays(
     }
     return new_arrays;
   }
-  if (pjrt_supports_cross_host_transfers_) {
+  if (pjrt_supports_cross_host_transfers_ && !force_dcn_cross_host_transfers_) {
     return CopyArraysForCrossHost(arrays, src_devices, dst_devices,
                                   memory_kind);
   }
@@ -1582,7 +1585,7 @@ absl::Status PjRtClient::CrossHostSendBuffers(
   // TODO(emilyaf): Use an async version of KeyValueStore::Get or query batched
   // keys together to reduce the number of threads used.
   for (int i = 0; i < keys.size(); ++i) {
-    auto [promise, descriptor_future] = tsl::Future<std::string>::MakePromise();
+    auto [promise, descriptor_future] = tsl::MakePromise<std::string>();
     work_queue_->Schedule(
         [this, k = keys[i], promise = std::move(promise).ToShared()]() mutable {
           std::string key = absl::StrCat(kKeyPrefix, k.value());

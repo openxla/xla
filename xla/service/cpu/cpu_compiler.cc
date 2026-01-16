@@ -781,17 +781,25 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     return false;
   };
   pipeline.AddPass<ConvolutionGroupConverter>(
-      /*should_expand=*/[](HloInstruction* conv) { return true; }, cost_model,
+      /*should_expand=*/
+      [&library_supports_convolution](HloInstruction* conv) {
+        return !library_supports_convolution(*conv);
+      },
+      cost_model,
       /*convert_batch_groups_only=*/true);
-  auto feature_group_should_expand = [](HloInstruction* conv) {
-    switch (conv->shape().element_type()) {
-      case F16:
-      case F32:
-        return false;
-      default:
-        return true;
-    }
-  };
+  auto feature_group_should_expand =
+      [&library_supports_convolution](HloInstruction* conv) {
+        if (library_supports_convolution(*conv)) {
+          return false;
+        }
+        switch (conv->shape().element_type()) {
+          case F16:
+          case F32:
+            return false;
+          default:
+            return true;
+        }
+      };
   pipeline.AddPass<ConvolutionGroupConverter>(
       feature_group_should_expand, cost_model,
       /*convert_batch_groups_only=*/false);
@@ -2083,7 +2091,7 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
   return std::unique_ptr<Executable>(std::move(cpu_executable));
 }
 
-absl::StatusOr<std::vector<std::unique_ptr<AotCompilationResult>>>
+absl::StatusOr<std::vector<std::unique_ptr<CompiledModule>>>
 CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
                                 const AotCompilationOptions& aot_options) {
   auto llvm_options = llvm_ir::ExtractXlaBackendExtraOptions(
@@ -2147,7 +2155,7 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
   std::unique_ptr<llvm::TargetMachine> target_machine =
       target_machine_builder();
 
-  std::vector<std::unique_ptr<AotCompilationResult>> results;
+  std::vector<std::unique_ptr<CompiledModule>> results;
   VLOG(1) << "Compiling ahead-of-time: " << hlo_module->name();
   if (hlo_module->has_schedule()) {
     return results;
@@ -2166,7 +2174,7 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
   return std::move(results);
 }
 
-absl::StatusOr<std::unique_ptr<AotCompilationResult>>
+absl::StatusOr<std::unique_ptr<CompiledModule>>
 CpuCompiler::CompileAheadOfTimeThunks(
     std::unique_ptr<HloModule> module,
     IrCompiler::TargetMachineBuilder target_machine_builder,
@@ -2246,7 +2254,7 @@ HloCostAnalysis::ShapeSizeFunction CpuCompiler::ShapeSizeBytesFunction() const {
   return CpuExecutable::ShapeSizeBytes;
 }
 
-absl::StatusOr<std::unique_ptr<AotCompilationResult>> CpuCompiler::Export(
+absl::StatusOr<std::unique_ptr<CompiledModule>> CpuCompiler::Export(
     Executable* executable) {
   auto* cpu_executable = tensorflow::down_cast<CpuExecutable*>(executable);
   if (!cpu_executable)
@@ -2284,7 +2292,7 @@ absl::StatusOr<std::unique_ptr<AotCompilationResult>> CpuCompiler::Export(
       cpu_executable->target_machine_options().ToProto());
 }
 
-absl::StatusOr<std::unique_ptr<AotCompilationResult>>
+absl::StatusOr<std::unique_ptr<CompiledModule>>
 CpuCompiler::LoadAotCompilationResult(
     const std::string& serialized_aot_result) {
   return CpuAotLoader::LoadAotCompilationResult(serialized_aot_result);

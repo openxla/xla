@@ -543,7 +543,7 @@ std::vector<int64_t> GetBlockCounts(absl::Span<const int64_t> shape,
 }
 
 PackedTranspose::PackedTranspose(const HloFusionAnalysis& analysis,
-                                 const TransposeSpec& spec,
+                                 const PackedTransposeDescription& spec,
                                  absl::Span<const int64_t> output_block_tile,
                                  int64_t num_shmem_groups,
                                  MLIRContext* mlir_context)
@@ -585,7 +585,16 @@ PackedTranspose::PackedTranspose(const HloFusionAnalysis& analysis,
 
 std::optional<IndexingMap> PackedTranspose::ComputeThreadIdToOutputIndexing(
     int64_t root_index, MLIRContext* mlir_context) const {
-  return GetOutputIndexing(mlir_context);
+  auto map = GetOutputIndexing(mlir_context);
+  auto hero_shape = analysis_.fusion_hero(root_index).shape();
+  if (!ShapeUtil::SameDimensions(hero_shape, spec_.original_output_shape())) {
+    auto bitcast =
+        GetBitcastMap(spec_.original_output_shape(), hero_shape, mlir_context);
+    map = ComposeIndexingMaps(map, bitcast);
+    map.Simplify();
+    map.RemoveUnusedSymbols();
+  }
+  return map;
 }
 
 std::optional<std::vector<IndexingMap>>
@@ -593,7 +602,17 @@ PackedTranspose::ComputeThreadIdToInputIndexing(
     int64_t root_index, MLIRContext* mlir_context) const {
   const auto& hero = analysis_.fusion_hero(root_index).instruction();
   if (GetDescriptionForTiledTransposeEmitter(hero)) {
-    return std::vector<IndexingMap>{GetInputIndexing(mlir_context)};
+    auto map = GetInputIndexing(mlir_context);
+    auto operand_shape = hero.operand(0)->shape();
+    if (!ShapeUtil::SameDimensions(operand_shape,
+                                   spec_.original_input_shape())) {
+      auto bitcast = GetBitcastMap(spec_.original_input_shape(), operand_shape,
+                                   mlir_context);
+      map = ComposeIndexingMaps(map, bitcast);
+      map.Simplify();
+      map.RemoveUnusedSymbols();
+    }
+    return std::vector<IndexingMap>{map};
   }
   std::vector<IndexingMap> result;
   result.reserve(hero.operand_count());
@@ -631,36 +650,55 @@ PackedTranspose::WriteResult PackedTranspose::EmitWriteToShMemMlir(
   IndexingMap shmem_write_indexing = GetShmemWriteIndexing(mlir_context_);
 
   int64_t shmem_dim = kNumShmemBanks * vector_size_;
-  SmallVector<Value> shmem_tensors;
+
+  // Allocate all shared memory tensors upfront (one per transpose).
+  SmallVector<Value> shmem_inits;
   for (auto* transpose : shmem_transposes_) {
     Type elem_type = emitters::PrimitiveTypeToMlirType(
         transpose->shape().element_type(), builder);
     Value shmem = AllocateSharedOp::create(
         builder, RankedTensorType::get({shmem_dim, shmem_dim}, elem_type));
-
-    auto tids_and_bids = EmitThreadAndBlockIds(builder);
-    Value updated_shmem =
-        emitters::EmitXlaLoopOp(
-            builder, tids_and_bids, shmem, input_indexing,
-            [&](ImplicitLocOpBuilder& nested_b, ValueRange ivs,
-                ValueRange input_indices,
-                ValueRange iter_arg) -> SmallVector<Value> {
-              Value input_element =
-                  emitters::ProvideParameter(root_computation, transpose,
-                                             /*operand_index=*/0, input_indices,
-                                             call_target_provider,
-                                             entry_function, nested_b)
-                      .front();
-              auto shmem_indices = emitters::ApplyIndexing(
-                  shmem_write_indexing, tids_and_bids, ivs, nested_b);
-              return nested_b
-                  .create<mt::InsertOp>(input_element, iter_arg.front(),
-                                        shmem_indices)
-                  ->getResults();
-            })
-            .front();
-    shmem_tensors.push_back(updated_shmem);
+    shmem_inits.push_back(shmem);
   }
+
+  // Create a single loop that writes to all shared memory tensors.
+  auto tids_and_bids = EmitThreadAndBlockIds(builder);
+  SmallVector<Value> shmem_tensors = emitters::EmitXlaLoopOp(
+      builder, tids_and_bids, shmem_inits, input_indexing,
+      [&](ImplicitLocOpBuilder& nested_b, ValueRange ivs,
+          ValueRange input_indices,
+          ValueRange iter_args) -> SmallVector<Value> {
+        SmallVector<Value> updated_shmems;
+        auto shmem_indices = emitters::ApplyIndexing(
+            shmem_write_indexing, tids_and_bids, ivs, nested_b);
+
+        // Process all transposes in a single loop iteration.
+        for (auto [transpose, shmem_tensor] :
+             llvm::zip(shmem_transposes_, iter_args)) {
+          // Compute bitcasted indices for this specific transpose if needed.
+          ValueRange indices = input_indices;
+          SmallVector<Value> indices_storage;
+          if (!ShapeUtil::SameDimensions(transpose->operand(0)->shape(),
+                                         spec_.original_input_shape())) {
+            auto map =
+                GetBitcastMap(spec_.original_input_shape(),
+                              transpose->operand(0)->shape(), mlir_context_);
+            indices_storage =
+                emitters::ApplyIndexing(map, input_indices, {}, nested_b);
+            indices = indices_storage;
+          }
+
+          Value input_element =
+              emitters::ProvideParameter(root_computation, transpose,
+                                         /*operand_index=*/0, indices,
+                                         call_target_provider, entry_function,
+                                         nested_b)
+                  .front();
+          updated_shmems.push_back(nested_b.create<mt::InsertOp>(
+              input_element, shmem_tensor, shmem_indices));
+        }
+        return updated_shmems;
+      });
 
   // Produce all side outputs and then write them.
   int num_inputs = fusion.fused_instructions_computation()->num_parameters();
@@ -676,8 +714,8 @@ PackedTranspose::WriteResult PackedTranspose::EmitWriteToShMemMlir(
     auto* root_tuple = fusion.fused_expression_root();
     for (auto root : side_output_roots_) {
       auto indexing = ComposeIndexingMaps(
-          input_indexing,
-          GetBitcastMap(spec_.input_shape(), root->shape(), mlir_context_));
+          input_indexing, GetBitcastMap(spec_.original_input_shape(),
+                                        root->shape(), mlir_context_));
       indexing.Simplify();
       side_output_indices.push_back(ApplyIndexing(
           indexing, thread_and_block_ids, symbol_values, nested_b));
@@ -864,7 +902,7 @@ IndexingMap PackedTranspose::GetInputIndexing(MLIRContext* mlir_context) const {
 
   // Actual indexing.
   auto canonical_input_shape_to_real_shape = GetBitcastMap(
-      spec_.canonical_input_shape, spec_.input_shape(), mlir_context);
+      spec_.canonical_input_shape, spec_.original_input_shape(), mlir_context);
   // When we compose, the constraints w.r.t. to the input dimension sizes will
   // be added.
   auto input_indexing = ComposeIndexingMaps(
@@ -1000,8 +1038,9 @@ IndexingMap PackedTranspose::GetOutputIndexing(
   canonical_output_indexing.Simplify();
 
   // Actual indexing.
-  auto canonical_output_shape_to_real_shape = GetBitcastMap(
-      spec_.canonical_output_shape, spec_.output_shape(), mlir_context);
+  auto canonical_output_shape_to_real_shape =
+      GetBitcastMap(spec_.canonical_output_shape, spec_.original_output_shape(),
+                    mlir_context);
   // When we compose, the constraints w.r.t. to the output dimension sizes will
   // be added.
   auto output_indexing = ComposeIndexingMaps(
@@ -1012,8 +1051,7 @@ IndexingMap PackedTranspose::GetOutputIndexing(
 
 std::unique_ptr<EmitterBase> CreateTransposeFusion(
     const HloFusionAnalysis& analysis, MLIRContext* mlir_context) {
-  auto spec = GetTransposeSpec(
-      Cast<HloTransposeInstruction>(analysis.tiled_transpose().instr));
+  PackedTransposeDescription spec(analysis.tiled_transpose());
   auto packed_transpose_tile = GetPackedTransposeTileSizes(spec);
   if (packed_transpose_tile.ok()) {
     return std::make_unique<PackedTranspose>(
