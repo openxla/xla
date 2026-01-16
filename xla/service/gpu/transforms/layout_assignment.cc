@@ -161,6 +161,8 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
   }
 
   const bool isFloat16 = (input_ty == F16) || (input_ty == BF16);
+  Shape conv_shape = instr->shape().IsTuple() ? instr->shape().tuple_shapes(0)
+                                              : instr->shape();
   if (const auto* cuda_compute_capability =
           gpu_version.cuda_compute_capability()) {
     // CUDA:
@@ -169,8 +171,7 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
     bool is_volta =
         cuda_compute_capability &&
         cuda_compute_capability->IsAtLeast(se::CudaComputeCapability::kVolta);
-    if (!isFloat16 || !is_volta ||
-        instr->shape().tuple_shapes(0).dimensions().size() != 4) {
+    if (!isFloat16 || !is_volta || conv_shape.dimensions().size() != 4) {
       return kAllNCHW;
     }
   } else if (auto rocm_compute_capability =
@@ -182,8 +183,7 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
     CHECK_OK(tsl::ReadBoolFromEnvVar("TF_USE_ROCM_NHWC",
                                      /*default_val=*/false, &is_enabled));
     if (!isFloat16 || (!rocm_compute_capability->has_nhwc_layout_support()) ||
-        instr->shape().tuple_shapes(0).dimensions().size() != 4 ||
-        !is_enabled) {
+        conv_shape.dimensions().size() != 4 || !is_enabled) {
       return kAllNCHW;
     }
   }
@@ -296,7 +296,7 @@ absl::Status GpuLayoutAssignment::AddBackendConstraintsTocuDNNConv(
     FilterLayout filter;
     DataLayout output;
     std::tie(input, filter, output) =
-        HeuristicLayoutAssignment(conv, gpu_version_, dnn_version_);
+        HeuristicLayoutAssignment(conv, gpu_version_);
 
     TF_ASSIGN_OR_RETURN(
         std::tie(*input_shape.mutable_layout(), *filter_shape.mutable_layout(),
