@@ -73,7 +73,7 @@ using ::testing::Not;
 
 static const std::initializer_list<absl::string_view> kf16f32{"f16", "f32"};
 
-class CudnnFusedConvRewriterHloTest : public HloTestBase {
+class ConvFusionRewriterHloTest : public HloTestBase {
  public:
   bool IsCuda() const {
     return backend()
@@ -105,13 +105,13 @@ class CudnnFusedConvRewriterHloTest : public HloTestBase {
   ConvKindAssignment GetConvKindAssignment() const {
     return ConvKindAssignment(GetCudaComputeCapability(), GetDnnVersion());
   }
-  CudnnFusedConvRewriterHloTest()
+  ConvFusionRewriterHloTest()
       : HloTestBase(/*verifier_layout_sensitive=*/false,
                     /*allow_mixed_precision_in_hlo_verifier=*/false,
                     /*instruction_can_change_layout_func=*/{}) {}
 };
 
-class CudnnFusedConvRewriterTest : public GpuCodegenTest {
+class ConvFusionRewriterTest : public GpuCodegenTest {
  public:
   bool IsCuda() const {
     return backend()
@@ -284,7 +284,7 @@ class CudnnFusedConvRewriterTest : public GpuCodegenTest {
     }                                                             \
   } while (0)
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvOnly) {
+TEST_F(ConvFusionRewriterTest, TestConvOnly) {
   // max(0, conv(x, w));
   TestMatchWithAllTypes(R"(
     HloModule Test
@@ -301,7 +301,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvOnly) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestBias) {
+TEST_F(ConvFusionRewriterTest, TestBias) {
   // max(0, conv(x, w) + bias);
   TestMatchWithAllTypes(R"(
     HloModule Test
@@ -321,7 +321,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestBias) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, Test3D) {
+TEST_F(ConvFusionRewriterTest, Test3D) {
   // max(0, conv(x, w) + bias);
   std::string body = R"(
     HloModule Test
@@ -353,7 +353,7 @@ TEST_F(CudnnFusedConvRewriterTest, Test3D) {
   if (!IsCuda()) TestMatchWithAllTypes(body + elu);
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestBiasMultiCall) {
+TEST_F(ConvFusionRewriterTest, TestBiasMultiCall) {
   // max(0, conv(x, w) + bias);
   std::string code = R"(
     HloModule Test
@@ -380,7 +380,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestBiasMultiCall) {
   TestMatchWithAllTypes(absl::StrReplaceAll(code, replacements));
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestBiasNoRelu) {
+TEST_F(ConvFusionRewriterTest, TestBiasNoRelu) {
   // conv(x, w) + bias;
   TestMatchWithAllTypes(R"(
     HloModule Test
@@ -396,7 +396,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestBiasNoRelu) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestElu) {
+TEST_F(ConvFusionRewriterTest, TestElu) {
   // sum = conv(x, w) + bias
   // select(compare(sum, 0, GT), sum, exponential-minus-one(sum));
   TestMatchWithAllTypes(R"(
@@ -419,7 +419,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestElu) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestRelu6) {
+TEST_F(ConvFusionRewriterTest, TestRelu6) {
   if (IsCuda() && !GetCudaComputeCapability().IsAtLeast(
                       se::CudaComputeCapability::kAmpere)) {
     GTEST_SKIP() << "Conv-Bias-Relu6 fusion is supported and recommended with "
@@ -447,7 +447,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestRelu6) {
 // At time of writing, cudnn runtime fusion cannot handle f16 convs with an odd
 // number of input/output channels.  Check that we don't try to run this conv
 // with runtime fusion (or, if we do, that it works!).
-TEST_F(CudnnFusedConvRewriterTest, TestRelu6OddChannels) {
+TEST_F(ConvFusionRewriterTest, TestRelu6OddChannels) {
   if (IsCuda() && !GetCudaComputeCapability().IsAtLeast(
                       se::CudaComputeCapability::kAmpere)) {
     GTEST_SKIP() << "Conv-Bias-Relu6 fusion is supported and recommended with "
@@ -468,7 +468,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestRelu6OddChannels) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestLeakyRelu) {
+TEST_F(ConvFusionRewriterTest, TestLeakyRelu) {
   if (IsCuda() && !GetCudaComputeCapability().IsAtLeast(
                       se::CudaComputeCapability::kAmpere)) {
     GTEST_SKIP()
@@ -496,7 +496,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestLeakyRelu) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestSideInputOnly) {
+TEST_F(ConvFusionRewriterTest, TestSideInputOnly) {
   // max(0, conv(x, w) + side_input);
   TestMatchWithAllTypes(R"(
     HloModule Test
@@ -515,7 +515,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestSideInputOnly) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestBiasAndSideInput) {
+TEST_F(ConvFusionRewriterTest, TestBiasAndSideInput) {
   // max(0, conv(x, w) + side_input + bias);
   TestMatchWithAllTypes(R"(
     HloModule Test
@@ -537,7 +537,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestBiasAndSideInput) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestScaledConv) {
+TEST_F(ConvFusionRewriterTest, TestScaledConv) {
   // max(0, 0.999994934 * conv(x, w));
   TestMatchWithAllTypes(R"(
     HloModule Test
@@ -557,7 +557,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestScaledConv) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestNoCrashOnInf) {
+TEST_F(ConvFusionRewriterTest, TestNoCrashOnInf) {
   EXPECT_TRUE(RunAndCompare(R"(
     HloModule Test
 
@@ -577,7 +577,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestNoCrashOnInf) {
                             ErrorSpec{0.01}));
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvAndScaledSideInput) {
+TEST_F(ConvFusionRewriterTest, TestConvAndScaledSideInput) {
   // max(0, conv(x, w) + 0.899994934 * side_input);
   TestMatchWithAllTypes(R"(
     HloModule Test
@@ -599,7 +599,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvAndScaledSideInput) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestScaledConvAndScaledSideInput) {
+TEST_F(ConvFusionRewriterTest, TestScaledConvAndScaledSideInput) {
   // max(0, 0.999994934 * conv(x, w) + 0.899994934 * side_input);
   TestMatchWithAllTypes(R"(
     HloModule Test
@@ -624,7 +624,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestScaledConvAndScaledSideInput) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestScaledConvAndScaledSideInputWithBias) {
+TEST_F(ConvFusionRewriterTest, TestScaledConvAndScaledSideInputWithBias) {
   // max(0, 0.999994934 * conv(x, w) + 0.899994934 * side_input + bias);
   TestMatchWithAllTypes(R"(
     HloModule Test
@@ -652,7 +652,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestScaledConvAndScaledSideInputWithBias) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestMatchMaxZeroOnly) {
+TEST_F(ConvFusionRewriterTest, TestMatchMaxZeroOnly) {
   // max(0.1, conv(x, w)) shouldn't match.
   TestNotMatchWithAllTypes(R"(
     HloModule Test
@@ -669,7 +669,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestMatchMaxZeroOnly) {
     })");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestPreservesFeatureGroupCount) {
+TEST_F(ConvFusionRewriterTest, TestPreservesFeatureGroupCount) {
   // The convolution below would crash if feature_count is not preserved.
   const char* kHloString = R"(
     HloModule jaxpr_computation__6.19
@@ -693,7 +693,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestPreservesFeatureGroupCount) {
   EXPECT_TRUE(RunAndCompare(kHloString, ErrorSpec{0.01}));
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvF8) {
+TEST_F(ConvFusionRewriterTest, TestConvF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -718,7 +718,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvF8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputF8) {
+TEST_F(ConvFusionRewriterTest, TestConvScaledOutputF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -757,7 +757,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputF8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvInvscaledOutputF8) {
+TEST_F(ConvFusionRewriterTest, TestConvInvscaledOutputF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -796,7 +796,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvInvscaledOutputF8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvScaledF8Parameterized) {
+TEST_F(ConvFusionRewriterTest, TestConvScaledF8Parameterized) {
   MAYBE_SKIP_TEST("F8");
   TestF8Parameterized(
       // pre_hlo
@@ -841,7 +841,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledF8Parameterized) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvScaledBiasF8) {
+TEST_F(ConvFusionRewriterTest, TestConvScaledBiasF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -888,7 +888,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledBiasF8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvScaledReluF8) {
+TEST_F(ConvFusionRewriterTest, TestConvScaledReluF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -929,7 +929,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledReluF8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvScaledRelu6F8) {
+TEST_F(ConvFusionRewriterTest, TestConvScaledRelu6F8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -974,7 +974,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledRelu6F8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvScaledEluF8) {
+TEST_F(ConvFusionRewriterTest, TestConvScaledEluF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -1022,7 +1022,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledEluF8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvScaledLeakyReluF8) {
+TEST_F(ConvFusionRewriterTest, TestConvScaledLeakyReluF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -1070,7 +1070,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledLeakyReluF8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvAmaxF8) {
+TEST_F(ConvFusionRewriterTest, TestConvAmaxF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -1125,7 +1125,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvAmaxF8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvReluAmaxF8) {
+TEST_F(ConvFusionRewriterTest, TestConvReluAmaxF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -1183,7 +1183,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvReluAmaxF8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputMultipleUsersF8) {
+TEST_F(ConvFusionRewriterTest, TestConvScaledOutputMultipleUsersF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -1230,8 +1230,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputMultipleUsersF8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest,
-       TestConvScaledOutputMultipleUsersInGraphAddF8) {
+TEST_F(ConvFusionRewriterTest, TestConvScaledOutputMultipleUsersInGraphAddF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -1276,7 +1275,7 @@ TEST_F(CudnnFusedConvRewriterTest,
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest,
+TEST_F(ConvFusionRewriterTest,
        TestConvScaledOutputMultipleUsersInGraphDoubleAddF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
@@ -1328,7 +1327,7 @@ TEST_F(CudnnFusedConvRewriterTest,
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest,
+TEST_F(ConvFusionRewriterTest,
        TestConvScaledOutputMultipleUsersInGraphTripleAddF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
@@ -1387,7 +1386,7 @@ TEST_F(CudnnFusedConvRewriterTest,
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputUnsupportedUserF8) {
+TEST_F(ConvFusionRewriterTest, TestConvScaledOutputUnsupportedUserF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -1426,7 +1425,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvScaledOutputUnsupportedUserF8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvAddOperandReachableFromAmaxF8) {
+TEST_F(ConvFusionRewriterTest, TestConvAddOperandReachableFromAmaxF8) {
   MAYBE_SKIP_TEST("F8");
   TestF8(
       // pre_hlo
@@ -1483,7 +1482,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvAddOperandReachableFromAmaxF8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest, TestConvInt8ToInt8) {
+TEST_F(ConvFusionRewriterTest, TestConvInt8ToInt8) {
   MAYBE_SKIP_TEST("I8");
   // max(0, clamp(conv(x, w)))); for int8_t
   TestClamp(
@@ -1518,7 +1517,7 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvInt8ToInt8) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToFloat) {
+TEST_F(ConvFusionRewriterHloTest, TestConvInt8ToFloat) {
   MAYBE_SKIP_TEST("I8");
   const std::string module_str = R"(
     HloModule Test
@@ -1552,7 +1551,7 @@ TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToFloat) {
                      .WithShape(F32, {1, 32, 9, 9})));
 }
 
-TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToInt8BiasSideInput) {
+TEST_F(ConvFusionRewriterHloTest, TestConvInt8ToInt8BiasSideInput) {
   MAYBE_SKIP_TEST("I8");
   const std::string module_str = R"(
     HloModule Test
@@ -1592,8 +1591,7 @@ TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToInt8BiasSideInput) {
                      .WithShape(S8, {1, 32, 9, 9})));
 }
 
-TEST_F(CudnnFusedConvRewriterHloTest,
-       TestConvInt8ToInt8BiasSideInputWithoutClamp) {
+TEST_F(ConvFusionRewriterHloTest, TestConvInt8ToInt8BiasSideInputWithoutClamp) {
   MAYBE_SKIP_TEST("I8");
   const std::string module_str = R"(
     HloModule Test
@@ -1631,7 +1629,7 @@ TEST_F(CudnnFusedConvRewriterHloTest,
                      .WithShape(S8, {1, 32, 9, 9})));
 }
 
-TEST_F(CudnnFusedConvRewriterHloTest, TestReluAfterConvert) {
+TEST_F(ConvFusionRewriterHloTest, TestReluAfterConvert) {
   MAYBE_SKIP_TEST("I8");
   const std::string module_str = R"(
     HloModule Test
@@ -1669,7 +1667,7 @@ TEST_F(CudnnFusedConvRewriterHloTest, TestReluAfterConvert) {
                      .WithShape(S8, {1, 32, 9, 9})));
 }
 
-TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToFloatBiasSideInput) {
+TEST_F(ConvFusionRewriterHloTest, TestConvInt8ToFloatBiasSideInput) {
   MAYBE_SKIP_TEST("I8");
   const std::string module_str = R"(
     HloModule Test
@@ -1712,7 +1710,7 @@ TEST_F(CudnnFusedConvRewriterHloTest, TestConvInt8ToFloatBiasSideInput) {
                      .WithShape(F32, {1, 32, 9, 9})));
 }
 
-TEST_F(CudnnFusedConvRewriterHloTest, FuseAlpha) {
+TEST_F(ConvFusionRewriterHloTest, FuseAlpha) {
   MAYBE_SKIP_TEST("I8");
   const std::string module_str = R"(
     HloModule Test
@@ -1747,7 +1745,7 @@ TEST_F(CudnnFusedConvRewriterHloTest, FuseAlpha) {
                      .WithShape(F32, {1, 32, 9, 9})));
 }
 
-TEST_F(CudnnFusedConvRewriterHloTest, FuseRelu) {
+TEST_F(ConvFusionRewriterHloTest, FuseRelu) {
   const std::string module_str = R"(
     HloModule Test
 
@@ -1781,7 +1779,7 @@ TEST_F(CudnnFusedConvRewriterHloTest, FuseRelu) {
                       .WithShape(F32, {1, 32, 9, 9})));
 }
 
-TEST_F(CudnnFusedConvRewriterHloTest, StrengthReduceF32ToF16) {
+TEST_F(ConvFusionRewriterHloTest, StrengthReduceF32ToF16) {
   const std::string module_str = R"(
     HloModule Test
 
@@ -1819,7 +1817,7 @@ TEST_F(CudnnFusedConvRewriterHloTest, StrengthReduceF32ToF16) {
 }
 
 // Disabled per b/190854862 or nvbugs/3326122.
-TEST_F(CudnnFusedConvRewriterTest, DISABLED_TestFusedConvInt8ToFloat) {
+TEST_F(ConvFusionRewriterTest, DISABLED_TestFusedConvInt8ToFloat) {
   MAYBE_SKIP_TEST("I8");
   // max(0, convert<float>(conv<int32_t>(int8_x),
   // conv<int32_t>(int8_w))+float_bias)); int8_t to float via bias.
@@ -1854,7 +1852,7 @@ TEST_F(CudnnFusedConvRewriterTest, DISABLED_TestFusedConvInt8ToFloat) {
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest,
+TEST_F(ConvFusionRewriterTest,
        TestFusedConvWithScaledInt8SideInputBiasInt8ToInt8) {
   MAYBE_SKIP_TEST("I8");
   // clamp(max(0, alpha_conv * conv(x, w) + alpha_side *
@@ -1906,7 +1904,7 @@ TEST_F(CudnnFusedConvRewriterTest,
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest,
+TEST_F(ConvFusionRewriterTest,
        TestFusedConvWithScaledFloatSideInputBiasInt8ToInt8) {
   MAYBE_SKIP_TEST("I8");
   // From:
@@ -1959,7 +1957,7 @@ TEST_F(CudnnFusedConvRewriterTest,
       )");
 }
 
-TEST_F(CudnnFusedConvRewriterTest,
+TEST_F(ConvFusionRewriterTest,
        TestFusedConvWithScaledInt8SideInputBiasInt8ToFloat) {
   MAYBE_SKIP_TEST("I8");
   // From:
