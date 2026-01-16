@@ -69,9 +69,6 @@ absl::Status CheckTypes(HloInstruction* conv, const se::GpuComputeCapability cc,
     PrimitiveType type = shape.element_type();
     if (!primitive_util::IsFloatingPointType(type) &&
         !primitive_util::IsIntegralType(type)) {
-      // Among integral types, only S8 is supported. But
-      // CudnnFusedConvFusionRewriter may rewrite convolutions of wider types
-      // into S8 convolutions, so allow all integral convolutions here.
       return Unimplemented(
           "Convolutions must have floating-point or integral operands/outputs, "
           "but got convolution with type %s: %s",
@@ -552,9 +549,6 @@ absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv,
   return true;
 }
 
-// Rewrites the convolutions in the given computation into calls to
-// cudnn/miopen.
-// Returns true if it made any changes.
 absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
                                       const se::GpuComputeCapability& cc,
                                       const se::dnn::VersionInfo dnn_version) {
