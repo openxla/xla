@@ -47,6 +47,8 @@ limitations under the License.
 #include "mlir/Transforms/LocationSnapshot.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/text_format.h"
+#include "riegeli/bytes/cfile_writer.h"
+#include "riegeli/bytes/writer.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -1237,6 +1239,24 @@ absl::Status DumpProtoToDirectory(const tsl::protobuf::Message& message,
   }
   *full_path = tsl::io::JoinPath(directory, safe_file_name);
   return tsl::WriteBinaryProto(env, *full_path, message);
+}
+
+absl::StatusOr<std::unique_ptr<riegeli::Writer>>
+CreatePerModuleRiegeliDumpWriter(const HloModule& module,
+                                 const DebugOptions& debug_options,
+                                 absl::string_view filename) {
+  return CreateRiegeliDumpWriter(
+      debug_options, FilenameFor(module, TimestampFor(module), filename));
+}
+
+absl::StatusOr<std::unique_ptr<riegeli::Writer>> CreateRiegeliDumpWriter(
+    const DebugOptions& debug_options, absl::string_view filename) {
+  CanonicalDebugOptions opts(debug_options);
+  std::optional<std::string> file_path = GetDumpFilePath(filename, opts);
+  if (!file_path.has_value()) {
+    return absl::InvalidArgumentError("Failed to get dump file path");
+  }
+  return std::make_unique<riegeli::CFileWriter<>>(*file_path);
 }
 
 }  // namespace xla

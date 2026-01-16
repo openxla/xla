@@ -95,3 +95,4 @@ build:warnings --copt=-Wno-builtin-macro-redefined
 build:warnings --copt=-Wno-macro-redefined
 build:warnings --copt=-Wno-deprecated-register
 build:warnings --copt=-Wno-register
+build:warnings --copt=-Wno-unused-result
