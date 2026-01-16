@@ -472,6 +472,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_gpu_experimental_scaled_dot_with_triton(false);
   opts.set_xla_gpu_experimental_use_raft_select_k(false);
+  opts.set_xla_gpu_experimental_all_fusions_with_triton(false);
 
   opts.add_xla_gpu_experimental_autotune_backends(
       DebugOptions::AUTOTUNE_BACKEND_TRITON);
@@ -2395,6 +2396,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "  'cudnn,triton' (overwrites defaults)\n"
       "  '+cudnn,-cublas' (adds/removes from defaults)\n"
       "Available: cudnn, triton, cublas, cublaslt."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_all_fusions_with_triton",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_all_fusions_with_triton),
+      debug_options->xla_gpu_experimental_all_fusions_with_triton(),
+      "Experimental: If true, autotune all fusions with block level emitter."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_gemm_autotuner_override_file",
       string_setter_for(
