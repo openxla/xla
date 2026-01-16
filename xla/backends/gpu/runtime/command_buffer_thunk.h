@@ -61,6 +61,11 @@ class CommandBufferThunk : public Thunk {
 
   std::string ToString(int indent) const override;
 
+  // Returns buffer allocation indices referenced by commands in this thunk.
+  absl::Span<const BufferAllocation::Index> allocs_indices() const {
+    return commands_.allocs_indices();
+  }
+
  private:
   // Command buffer instantiated on a `se::StreamExecutor` instance, and
   // auxiliary state required for efficient command buffer updates.
@@ -115,8 +120,7 @@ class CommandBufferThunk : public Thunk {
   // Command buffer thunk owns commands buffers instantiated on all executors.
   struct State {
     absl::Mutex mutex;
-    absl::flat_hash_map<se::StreamExecutor*,
-                        std::shared_ptr<ExecutorCommandBuffer>>
+    absl::flat_hash_map<se::StreamExecutor*, std::shared_ptr<ExecutorCommandBuffer>>
         command_buffers ABSL_GUARDED_BY(mutex);
   };
 
@@ -155,6 +159,8 @@ class CommandBufferThunk : public Thunk {
   // Command buffer thunk state allocated in heap to allow global (per-process)
   // management of instantiated command buffers.
   std::shared_ptr<State> state_;
+
+  bool enable_command_buffer_va_remapping_;
 };
 
 }  // namespace xla::gpu
