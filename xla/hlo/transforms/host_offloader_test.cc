@@ -4701,6 +4701,76 @@ TEST_F(HostOffloaderTest,
   EXPECT_TRUE(host_offload_utils::ComputeTypeIsHost(a_copy));
 }
 
+// Test that when MoveToHost custom call is the root, entry_computation_layout
+// is correctly set to host memory space.
+TEST_F(HostOffloaderTest, SingleOutputToHost) {
+  const std::string& hlo_string = R"(
+HloModule test
+
+ENTRY main {
+  %param = f32[3]{0} parameter(0)
+  %multiply = f32[3]{0} multiply(%param, %param)
+  ROOT %custom-call = f32[3]{0} custom-call(%multiply), custom_call_target="MoveToHost"
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloader(module.get()));
+  EXPECT_TRUE(changed);
+
+  // Verify the single output has host memory space in entry_computation_layout
+  const ComputationLayout& comp_layout = module->entry_computation_layout();
+  const Shape& result_shape = comp_layout.result_layout().shape();
+  TestShapeHasMemorySpace(result_shape, Layout::kHostMemorySpace);
+
+  // Verify MoveToHost custom call was removed
+  EXPECT_FALSE(HaveRemainingOffloadAnnotations(module.get()));
+
+  XLA_VLOG_LINES(1, module->ToString());
+}
+
+// Test that tuple outputs can have mixed memory spaces.
+TEST_F(HostOffloaderTest, TupleOutputWithMoveToHost) {
+  const std::string& hlo_string = R"(
+HloModule test
+
+ENTRY main {
+  %param = f32[3]{0} parameter(0)
+  %multiply = f32[3]{0} multiply(%param, %param)
+  %custom-call.1 = f32[3]{0} custom-call(%multiply), custom_call_target="MoveToDevice"
+  %add = f32[3]{0} add(%param, %param)
+  %custom-call.2 = f32[3]{0} custom-call(%add), custom_call_target="MoveToHost"
+  ROOT %tuple = (f32[3]{0}, f32[3]{0}) tuple(%custom-call.1, %custom-call.2)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloader(module.get()));
+  EXPECT_TRUE(changed);
+
+  // Verify the second tuple element has host memory space in
+  // entry_computation_layout
+  const ComputationLayout& comp_layout = module->entry_computation_layout();
+  const Shape& result_shape = comp_layout.result_layout().shape();
+  ASSERT_TRUE(result_shape.IsTuple());
+  ASSERT_EQ(result_shape.tuple_shapes_size(), 2);
+
+  // First element should be device memory (default)
+  const Shape& elem0_shape = result_shape.tuple_shapes(0);
+  TestShapeHasMemorySpace(elem0_shape, Layout::kDefaultMemorySpace);
+
+  // Second element should be host memory
+  const Shape& elem1_shape = result_shape.tuple_shapes(1);
+  TestShapeHasMemorySpace(elem1_shape, Layout::kHostMemorySpace);
+
+  // Verify MoveToHost/MoveToDevice custom calls were removed
+  EXPECT_FALSE(HaveRemainingOffloadAnnotations(module.get()));
+
+  XLA_VLOG_LINES(1, module->ToString());
+}
+
 }  // namespace
 
 }  // namespace xla
