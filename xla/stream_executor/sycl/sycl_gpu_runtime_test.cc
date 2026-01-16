@@ -270,6 +270,131 @@ TEST_F(SyclGpuRuntimeTest, TestSyclGetRecentEventFromStream) {
   EXPECT_EQ(stream_handle, nullptr);
 }
 
+TEST_F(SyclGpuRuntimeTest, TestSyclMemcopyAsync_DeviceToHost) {
+  constexpr int kCount = 10;
+  TF_ASSERT_OK_AND_ASSIGN(
+      StreamPtr stream_handle,
+      SyclStreamPool::GetOrCreateStream(kDefaultDeviceOrdinal,
+                                        /*enable_multiple_streams=*/false));
+  ASSERT_NE(stream_handle, nullptr);
+
+  TF_ASSERT_OK_AND_ASSIGN(void* src_device,
+                          AllocateAndInitDeviceBuffer(kCount, 0xDEADC0DE));
+  TF_ASSERT_OK_AND_ASSIGN(void* dst_host, AllocateHostBuffer(kCount));
+
+  ASSERT_TRUE(SyclMemcpyAsync(stream_handle.get(), dst_host, src_device,
+                              sizeof(int) * kCount,
+                              SyclMemcpyKind::kSyclMemcpyDeviceToHost)
+                  .ok());
+
+  // Synchronize the stream to ensure the copy is complete before checking
+  // results.
+  ASSERT_TRUE(SyclStreamSynchronize(stream_handle.get()).ok());
+
+  // Check the results after synchronization.
+  VerifyIntBuffer(dst_host, kCount, 0xDEADC0DE);
+
+  FreeAndNullify(src_device);
+  FreeAndNullify(dst_host);
+
+  // Destroy the stream after use.
+  ASSERT_TRUE(
+      SyclStreamPool::DestroyStream(kDefaultDeviceOrdinal, stream_handle).ok());
+  EXPECT_EQ(stream_handle, nullptr);
+}
+
+TEST_F(SyclGpuRuntimeTest, TestSyclMemcopyAsync_HostToDeviceAndBack) {
+  constexpr int kCount = 10;
+  TF_ASSERT_OK_AND_ASSIGN(
+      StreamPtr stream_handle,
+      SyclStreamPool::GetOrCreateStream(kDefaultDeviceOrdinal,
+                                        /*enable_multiple_streams=*/false));
+  ASSERT_NE(stream_handle, nullptr);
+
+  TF_ASSERT_OK_AND_ASSIGN(void* src_host,
+                          AllocateAndInitHostBuffer(kCount, 0xDEADC0DE));
+  TF_ASSERT_OK_AND_ASSIGN(void* dst_device, AllocateDeviceBuffer(kCount));
+
+  ASSERT_TRUE(SyclMemcpyAsync(stream_handle.get(), dst_device, src_host,
+                              sizeof(int) * kCount,
+                              SyclMemcpyKind::kSyclMemcpyHostToDevice)
+                  .ok());
+
+  // Clear out the host buffer to ensure data is copied back correctly.
+  // Before that, synchronize to ensure the first copy is done.
+  ASSERT_TRUE(SyclStreamSynchronize(stream_handle.get()).ok());
+  for (int i = 0; i < kCount; ++i) {
+    static_cast<int*>(src_host)[i] = 0;
+  }
+
+  ASSERT_TRUE(SyclMemcpyAsync(stream_handle.get(), src_host, dst_device,
+                              sizeof(int) * kCount,
+                              SyclMemcpyKind::kSyclMemcpyDeviceToHost)
+                  .ok());
+
+  // Synchronize the stream to ensure the copy is complete before checking
+  // results.
+  ASSERT_TRUE(SyclStreamSynchronize(stream_handle.get()).ok());
+
+  // Check the results after synchronization.
+  VerifyIntBuffer(src_host, kCount, 0xDEADC0DE);
+
+  FreeAndNullify(src_host);
+  FreeAndNullify(dst_device);
+
+  // Destroy the stream after use.
+  ASSERT_TRUE(
+      SyclStreamPool::DestroyStream(kDefaultDeviceOrdinal, stream_handle).ok());
+  EXPECT_EQ(stream_handle, nullptr);
+}
+
+TEST_F(SyclGpuRuntimeTest, TestSyclMemcopyAsync_DeviceToDeviceAndBackToHost) {
+  constexpr int kCount = 10;
+  TF_ASSERT_OK_AND_ASSIGN(
+      StreamPtr stream_handle,
+      SyclStreamPool::GetOrCreateStream(kDefaultDeviceOrdinal,
+                                        /*enable_multiple_streams=*/false));
+  ASSERT_NE(stream_handle, nullptr);
+
+  // Allocate device buffers that reside on the same device.
+  TF_ASSERT_OK_AND_ASSIGN(void* src_device,
+                          AllocateAndInitDeviceBuffer(kCount, 0xDEADC0DE));
+  TF_ASSERT_OK_AND_ASSIGN(void* dst_device,
+                          AllocateAndInitDeviceBuffer(kCount, 0));
+
+  ASSERT_TRUE(SyclMemcpyAsync(stream_handle.get(), dst_device, src_device,
+                              sizeof(int) * kCount,
+                              SyclMemcpyKind::kSyclMemcpyDeviceToDevice)
+                  .ok());
+
+  // Synchronize to ensure the device-to-device copy is done before copying
+  // back to host.
+  ASSERT_TRUE(SyclStreamSynchronize(stream_handle.get()).ok());
+
+  TF_ASSERT_OK_AND_ASSIGN(void* dst_host, AllocateAndInitHostBuffer(kCount, 0));
+
+  // Verify the copy by reading back to host.
+  ASSERT_TRUE(SyclMemcpyAsync(stream_handle.get(), dst_host, dst_device,
+                              sizeof(int) * kCount,
+                              SyclMemcpyKind::kSyclMemcpyDeviceToHost)
+                  .ok());
+
+  // Synchronize the stream to ensure the copy is complete before checking
+  ASSERT_TRUE(SyclStreamSynchronize(stream_handle.get()).ok());
+
+  // Check the results after synchronization.
+  VerifyIntBuffer(dst_host, kCount, 0xDEADC0DE);
+
+  FreeAndNullify(src_device);
+  FreeAndNullify(dst_device);
+  FreeAndNullify(dst_host);
+
+  // Destroy the stream after use.
+  ASSERT_TRUE(
+      SyclStreamPool::DestroyStream(kDefaultDeviceOrdinal, stream_handle).ok());
+  EXPECT_EQ(stream_handle, nullptr);
+}
+
 TEST_F(SyclGpuRuntimeTest, TestMemcopyDeviceToHost) {
   constexpr int kCount = 12;
   TF_ASSERT_OK_AND_ASSIGN(void* src_device,
