@@ -364,6 +364,20 @@ tsl::AsyncValueRef<YnnFusionThunk::ExecuteEvent> YnnFusionThunk::Execute(
                       ynn_executable_pool_.GetOrCreate(GetYnnThreadpool(params),
                                                        arguments_buffers));
 
+  if (concurrency_ == 0) {
+    // This should be done as part of initialization, but we don't have a
+    // runtime to query until after we call `Execute`. Therefore,
+    // `ExecuteMayBlock` will not return the correct value until after at least
+    // the first `Execute` call.
+    size_t concurrency_size = sizeof(concurrency_);
+    int concurrency = 0;
+    YNN_RETURN_IF_ERROR(ynn_query_runtime(executable->runtime.get(),
+                                          ynn_runtime_property_concurrency,
+                                          &concurrency, &concurrency_size));
+    concurrency_ = concurrency;
+    VLOG(3) << absl::StreamFormat("  concurrency=%d", concurrency);
+  }
+
   // If YNN graph doesn't capture any of the arguments by value, we can execute
   // XnnExecutable immediately.
   if (captured_arguments_ids_.empty()) {
