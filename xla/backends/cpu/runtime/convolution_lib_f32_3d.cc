@@ -15,5 +15,8 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/convolution_lib.h"
 
-XLA_CPU_DEFINE_CONV2D(Eigen::half);
-XLA_CPU_DEFINE_CONV3D(Eigen::half);
+#if defined(TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL)
+#include "xla/tsl/framework/contraction/eigen_contraction_kernel.h"  // IWYU pragma: keep
+#endif
+
+XLA_CPU_DEFINE_CONV3D(float);

@@ -65,14 +65,6 @@ limitations under the License.
 #include "third_party/nccl/nccl_device.h"
 #endif  // NCCL_VERSION_CODE >= 22800
 
-// Include NCCL after XLA headers.
-#include "third_party/nccl/nccl.h"
-
-#if NCCL_VERSION_CODE >= 22800
-// Device initiated collective operations were added in NCCL 2.28.0.
-#include "third_party/nccl/nccl_device.h"
-#endif  // NCCL_VERSION_CODE >= 22800
-
 namespace xla::gpu {
 namespace {
 
@@ -960,7 +952,7 @@ NcclDeviceCommunicator::CreateFrom(const NcclCommunicator& comm,
 #if NCCL_VERSION_CODE >= 22900
   reqs = NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
 #endif
-  reqs.barrierCount = 1;
+  reqs.barrierCount = requirements.lsa_barrier_count;
   reqs.lsaBarrierCount = requirements.lsa_barrier_count;
 
   ncclDevComm dev_comm{};

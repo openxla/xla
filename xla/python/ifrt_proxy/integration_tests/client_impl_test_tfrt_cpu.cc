@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/cpu/runtime/convolution_lib.h"
+#include <gtest/gtest.h>
+#include "xla/python/ifrt_proxy/integration_tests/scoped_pjrt_cpu_via_proxy.h"
 
-#if defined(TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL)
-#include "xla/tsl/framework/contraction/eigen_contraction_kernel.h"  // IWYU pragma: keep
-#endif
-
-XLA_CPU_DEFINE_CONV2D(float);
-XLA_CPU_DEFINE_CONV3D(float);
+int main(int argc, char** argv) {
+  testing::InitGoogleTest(&argc, argv);
+  xla::ifrt::proxy::test_util::ScopedPjRtCpuViaProxy scoped_pjrt_cpu_via_proxy;
+  return RUN_ALL_TESTS();
+}

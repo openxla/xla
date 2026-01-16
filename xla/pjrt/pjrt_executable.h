@@ -134,6 +134,9 @@ struct CompileOptions {
   absl::Status ApplyOptionFromString(
       const tsl::protobuf::FieldDescriptor* field, const std::string& value);
 
+  // Compiler variant to indicate which compiler is invoked.
+  std::optional<std::string> compiler_variant = std::nullopt;
+
   static absl::StatusOr<EnvironmentOptionOverrides> LoadEnvOptionOverrides(
       const google::protobuf::Map<std::string, xla::OptionOverrideProto>&
           env_option_overrides);
@@ -313,6 +316,7 @@ struct CompiledMemoryStats {
   // How much argument is reused for output.
   int64_t alias_size_in_bytes = 0;
   int64_t temp_size_in_bytes = 0;
+  int64_t total_size_in_bytes = 0;
 
   // Host memory usage stats.
   int64_t host_generated_code_size_in_bytes = 0;
