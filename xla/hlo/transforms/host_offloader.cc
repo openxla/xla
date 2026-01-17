@@ -334,26 +334,29 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
 
     // Check if this path ends at the output of the entry computation.
     if (instruction->IsRoot() && instruction->parent()->IsEntryComputation()) {
-      const Shape& output_shape = ShapeUtil::GetSubshape(
-          instruction->GetModule()->entry_computation_layout().result_shape(),
-          instruction_and_shape_index.shape_index);
+      ComputationLayout* comp_layout =
+          instruction->GetModule()->mutable_entry_computation_layout();
+      const Shape& output_shape =
+          ShapeUtil::GetSubshape(comp_layout->result_layout().shape(),
+                                 instruction_and_shape_index.shape_index);
       CHECK(output_shape.has_layout())
           << "Expecting output shape of entry computation to have a layout.";
-      if (output_shape.layout().memory_space() == Layout::kHostMemorySpace) {
-        VLOG(2) << absl::StreamFormat(
-            "Memory offloaded starting from %s is output streamed",
-            starting_instruction_and_index.ToString());
-        continue;
+
+      // When a host memory offload path reaches the entry computation root,
+      // we need to ensure entry_computation_layout reflects the host memory
+      // space. Set the layout to match the actual memory space of the output.
+      if (output_shape.layout().memory_space() != Layout::kHostMemorySpace) {
+        Layout new_layout = output_shape.layout();
+        new_layout.set_memory_space(Layout::kHostMemorySpace);
+        comp_layout->mutable_result_layout()->ResetLayout(
+            new_layout, instruction_and_shape_index.shape_index);
+        changed = true;
+        VLOG(2) << "Set entry computation output to host memory space";
       }
-      if (VLOG_IS_ON(1)) {
-        LOG(INFO) << "Instruction trace leading to error:";
-        PrintTrace(instruction_and_shape_index, previous);
-      }
-      return error::CompileTimeHostOffloadOutputLocationMismatch(
-          "Tensor which is moved to host (starting from %s) "
-          "is returned from the entry computation but the "
-          "layout for this output is not set to host memory.",
-          starting_instruction->name());
+      VLOG(2) << absl::StreamFormat(
+          "Memory offloaded starting from %s is output streamed",
+          starting_instruction_and_index.ToString());
+      continue;
     }
     // Push successors onto the queue to be visited.
     TF_ASSIGN_OR_RETURN(
@@ -503,6 +506,20 @@ absl::StatusOr<bool> HostOffloader::HandleMoveToHostCustomCall(
       SetMemorySpace(copy_to_host->mutable_shape(), Layout::kHostMemorySpace);
       TF_RETURN_IF_ERROR(
           custom_call_instruction->ReplaceAllUsesWith(copy_to_host));
+      // When MoveToHost custom call is the root, we replace it with a copy
+      // that has host memory space. We must also update
+      // entry_computation_layout to match the actual output memory space.
+      ComputationLayout* comp_layout = custom_call_instruction->GetModule()
+                                           ->mutable_entry_computation_layout();
+      const Shape& result_shape = comp_layout->result_layout().shape();
+      CHECK(result_shape.has_layout())
+          << "Expecting result shape to have a layout.";
+      if (result_shape.layout().memory_space() != Layout::kHostMemorySpace) {
+        Layout new_layout = result_shape.layout();
+        new_layout.set_memory_space(Layout::kHostMemorySpace);
+        comp_layout->mutable_result_layout()->ResetLayout(new_layout,
+                                                          /*shape_index=*/{});
+      }
       VLOG(2) << absl::StreamFormat(
           "Custom call \"%s\" is entry computation root. Inserted copy \"%s\" "
           "and replaced root instruction.",
