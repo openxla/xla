@@ -1837,7 +1837,9 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/backends/gpu/collectives:gpu_communicator",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -1851,7 +1853,43 @@ xla_cc_test(
         ":collective_clique_requests",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/backends/gpu/collectives:gpu_communicator",
         "//xla/runtime:device_id",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
+    ],
+)
+
+cc_library(
+    name = "collective_memory_requests",
+    srcs = ["collective_memory_requests.cc"],
+    hdrs = ["collective_memory_requests.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        "//xla:util",
+        "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/service:buffer_assignment",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor:device_address",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+    ],
+)
+
+xla_cc_test(
+    name = "collective_memory_requests_test",
+    srcs = ["collective_memory_requests_test.cc"],
+    deps = [
+        ":collective_memory_requests",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/runtime:device_id",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor:device_address",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
@@ -1941,6 +1979,7 @@ cc_library(
         "//xla/backends/gpu/collectives:gpu_clique",
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/backends/gpu/collectives:gpu_cliques",
+        "//xla/backends/gpu/collectives:gpu_communicator",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/runtime:device_id",
@@ -1949,6 +1988,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -2470,6 +2510,7 @@ cc_library(
     deps = [
         ":collective_clique_requests",
         ":collective_cliques",
+        ":collective_memory_requests",
         ":collective_multimem_registry",
         ":collective_params",
         ":thunk_id",

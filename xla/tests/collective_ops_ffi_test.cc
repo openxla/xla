@@ -14,16 +14,20 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
+#include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/reduction_kind.h"
@@ -40,6 +44,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 
@@ -47,7 +52,7 @@ class CollectiveOpsTestFFI : public CollectiveOpsE2ETestBase {
  public:
   CollectiveOpsTestFFI()
       : CollectiveOpsE2ETestBase(/*memory_size=*/1 * kMB,
-                                 /*collectives_memory_size=*/0) {}
+                                 /*collectives_memory_size=*/1 * kMB) {}
 };
 
 static constexpr int64_t kNumReplicas = 2;
@@ -79,6 +84,39 @@ static absl::Status PrepareAllReduce(
   // Ask XLA:GPU runtime to acquire a clique for this key. Later we will be able
   // to get access to it from the execute handler.
   TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key));
+
+  return absl::OkStatus();
+}
+
+// This is a prepare handler for device-initiated collective operation which
+// in addition to the clique asks for device comms and symmetric memory.
+static absl::Status PrepareDeviceAllReduce(
+    ffi::BufferR0<U32> src, ffi::Result<ffi::BufferR0<U32>> dst,
+    const CollectiveParams* collective_params,
+    CollectiveCliqueRequests* clique_requests,
+    CollectiveMemoryRequests* memory_requests) {
+  TF_RET_CHECK(collective_params && clique_requests);
+
+  // Request a clique that covers all devices (this test runs on 2 gpus).
+  TF_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetGpuCliqueKey(
+          *collective_params, {AllDevices()},
+          CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
+          AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+
+  // Ask for a device communicator with 8 lsa barriers.
+  CollectiveCliqueRequests::CliqueRequirements requirements;
+  requirements.dev_comm = GpuDeviceCommunicator::Requirements{8};
+
+  // Request XLA:GPU runtime to acquire a clique for this key. Later we will be
+  // able to get access to it from the execute handler.
+  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key, requirements));
+
+  TF_RETURN_IF_ERROR(memory_requests->RequestSymmetricAddress(
+      clique_key, src.device_memory()));
+  TF_RETURN_IF_ERROR(memory_requests->RequestSymmetricAddress(
+      clique_key, dst->device_memory()));
 
   return absl::OkStatus();
 }
@@ -122,6 +160,24 @@ XLA_FFI_DEFINE_HANDLER(kAllReduce, AllReduce,
                            .Ctx<ffi::CollectiveParams>()
                            .Ctx<ffi::CollectiveCliques>());
 
+XLA_FFI_DEFINE_HANDLER(kPrepareDeviceAllReduce, PrepareDeviceAllReduce,
+                       ffi::Ffi::BindPrepare()
+                           .Arg<ffi::BufferR0<U32>>()  // src
+                           .Ret<ffi::BufferR0<U32>>()  // dst
+                           .Ctx<ffi::CollectiveParams>()
+                           .Ctx<ffi::CollectiveCliqueRequests>()
+                           .Ctx<ffi::CollectiveMemoryRequests>());
+
+// TODO(ezhulenev): It's not yet a real device-initiated all reduce as support
+// for symmetric memory requests is not yet implemented.
+XLA_FFI_DEFINE_HANDLER(kDeviceAllReduce, AllReduce,
+                       ffi::Ffi::Bind()
+                           .Ctx<ffi::Stream>()
+                           .Arg<ffi::BufferR0<U32>>()  // src
+                           .Ret<ffi::BufferR0<U32>>()  // dst
+                           .Ctx<ffi::CollectiveParams>()
+                           .Ctx<ffi::CollectiveCliques>());
+
 // Register handler bundle for the custom all-reduce operation.
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$all_reduce", "gpu",
                          XLA_FFI_Handler_Bundle{
@@ -131,6 +187,17 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$all_reduce", "gpu",
                              /*execute=*/kAllReduce,
                          });
 
+// Register handler bundle for the custom all-reduce operation with
+// device-initiated collective kernels.
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$device_all_reduce",
+                         "gpu",
+                         XLA_FFI_Handler_Bundle{
+                             /*instantiate=*/nullptr,
+                             /*prepare=*/kPrepareDeviceAllReduce,
+                             /*initialize=*/nullptr,
+                             /*execute=*/kDeviceAllReduce,
+                         });
+
 TEST_F(CollectiveOpsTestFFI, AllReduce) {
   if (hlo_runner_->device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
@@ -138,7 +205,7 @@ TEST_F(CollectiveOpsTestFFI, AllReduce) {
   }
 
   constexpr absl::string_view hlo_string = R"(
-      HloModule m
+      HloModule m, replica_count=2
 
       ENTRY test_computation {
         id = u32[] replica-id()
@@ -151,8 +218,53 @@ TEST_F(CollectiveOpsTestFFI, AllReduce) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(hlo_string, kNumReplicas));
 
-  TF_ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
-                          ExecuteReplicated(std::move(module)));
+  TF_ASSERT_OK_AND_ASSIGN(
+      ExecutionResult execution_result,
+      ExecuteReplicated(std::move(module),
+                        /*arguments=*/std::vector<Literal*>(),
+                        /*run_hlo_passes=*/false));
+
+  absl::Span<const Literal> results = execution_result.results;
+  ASSERT_EQ(results.size(), kNumReplicas);
+
+  // sum [0, num_devices)
+  const uint32_t expected = kNumReplicas * (kNumReplicas - 1) / 2;
+  for (int i = 0; i < kNumReplicas; ++i) {
+    LiteralTestUtil::ExpectR0Equal<uint32_t>(expected, results[i]);
+  }
+}
+
+TEST_F(CollectiveOpsTestFFI, DeviceAllReduce) {
+  if (hlo_runner_->device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << hlo_runner_->device_count() << " available)";
+  }
+
+  GpuCollectives* collectives = GpuCollectives::Default("CUDA");
+  if (!collectives || !collectives->SupportsDeviceComm()) {
+    GTEST_SKIP() << "GPU collectives do not support device communication";
+  }
+
+  constexpr absl::string_view hlo_string = R"(
+      HloModule m, replica_count=2
+
+      ENTRY test_computation {
+        id = u32[] replica-id()
+        in = u32[]{:S(1)} copy(id)
+        ROOT all-reduce = u32[]{:S(1)} custom-call(in),
+          custom_call_target="__xla_test$$device_all_reduce",
+          api_version=API_VERSION_TYPED_FFI
+      }
+    )";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(hlo_string, kNumReplicas));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      ExecutionResult execution_result,
+      ExecuteReplicated(std::move(module),
+                        /*arguments=*/std::vector<Literal*>(),
+                        /*run_hlo_passes=*/false));
 
   absl::Span<const Literal> results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);

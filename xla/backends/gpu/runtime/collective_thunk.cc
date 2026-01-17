@@ -56,10 +56,10 @@ limitations under the License.
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 namespace {
@@ -343,7 +343,7 @@ absl::Status CollectiveThunk::Prepare(const PrepareParams& params) {
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*params.collective_params, config().replica_groups,
                       config().group_mode, is_p2p_));
-  return params.clique_requests->RequestClique(clique_key);
+  return params.collective_clique_requests->RequestClique(clique_key);
 }
 
 absl::Status CollectiveThunk::Initialize(const InitializeParams& params) {
