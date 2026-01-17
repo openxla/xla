@@ -1302,6 +1302,28 @@ absl::Status AlgebraicSimplifierVisitor::HandleBitcast(
     return absl::OkStatus();
   }
 
+  // Simplify bitcast(unary_elementwise(bitcast(x))) to
+  // bitcast(unary_elementwise(x)).
+  if (HloInstruction* unary_op, * inner_bitcast;
+      Match(bitcast,
+            m::Bitcast(m::Op(&unary_op)
+                           .WithPredicate([](const HloInstruction* instr) {
+                             return instr->IsElementwise() &&
+                                    instr->operand_count() == 1 &&
+                                    ShapeUtil::SameElementType(
+                                        instr->shape(),
+                                        instr->operand(0)->shape());
+                           })
+                           .WithOperand(0, m::Bitcast(&inner_bitcast)))) &&
+      unary_op->user_count() == 1) {
+    // bitcast(unary(bitcast(x))) -> bitcast(unary(x))
+    auto new_unary = unary_op->parent()->AddInstruction(
+        unary_op->CloneWithNewOperands(inner_bitcast->operand(0)->shape(),
+                                       {inner_bitcast->mutable_operand(0)}));
+    return ReplaceWithNewInstruction(
+        bitcast, HloInstruction::CreateBitcast(bitcast->shape(), new_unary));
+  }
+
   // If a bitcast feeds a bitcast, make it a single bitcast.
   // Make sure the whole chain of bitcasts is optimized.
   if (bitcast->operand(0)->opcode() == HloOpcode::kBitcast) {
