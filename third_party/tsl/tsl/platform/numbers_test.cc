@@ -22,6 +22,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/str_cat.h"
+#include "absl/time/time.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/types.h"
 
@@ -125,6 +126,10 @@ TEST(HumanReadableElapsedTime, Basic) {
   EXPECT_EQ(HumanReadableElapsedTime(78840000.0), "2.5 years");
   EXPECT_EQ(HumanReadableElapsedTime(382386614.40), "12.1 years");
   EXPECT_EQ(HumanReadableElapsedTime(DBL_MAX), "5.7e+300 years");
+}
+
+TEST(HumanReadableElapsedTime, Duration) {
+  EXPECT_EQ(HumanReadableElapsedTime(absl::Milliseconds(120)), "120 ms");
 }
 
 TEST(safe_strto32, Int32s) {
