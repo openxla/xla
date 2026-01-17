@@ -19,7 +19,8 @@ limitations under the License.
 namespace xla {
 namespace profiler {
 
-void AddPluginMetadata(tensorflow::profiler::XSpace* space) {
+void AddPluginMetadata(tensorflow::profiler::XSpace* space,
+                       const tensorflow::ProfileOptions& /*options*/) {
   // This is a no-op in the OSS build.
 }
 

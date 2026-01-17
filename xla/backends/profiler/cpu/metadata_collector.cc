@@ -38,7 +38,8 @@ namespace {
 // Thread-safety: This class is go/thread-compatible.
 class MetadataCollector : public tsl::profiler::ProfilerInterface {
  public:
-  MetadataCollector() = default;
+  explicit MetadataCollector(const tensorflow::ProfileOptions& options)
+      : options_(options) {}
 
   absl::Status Start() override {
     if (!trace_active_) {
@@ -57,10 +58,24 @@ class MetadataCollector : public tsl::profiler::ProfilerInterface {
   }
 
   absl::Status CollectData(tsl::profiler::XSpace* space) override {
+    tsl::profiler::XPlane* plane = tsl::profiler::FindOrAddMutablePlaneWithName(
+        space, tsl::profiler::kMetadataPlaneName);
+    tsl::profiler::XPlaneBuilder xp(plane);
+
+    tsl::profiler::XStatMetadata* jax_version_metadata =
+        xp.GetOrCreateStatMetadata(tsl::profiler::GetStatTypeStr(
+            tsl::profiler::StatType::kMetadataJaxVersion));
+    xp.AddStatValue(*jax_version_metadata, options_.jax_version().empty()
+                                               ? "unknown"
+                                               : options_.jax_version());
+    tsl::profiler::XStatMetadata* jaxlib_version_metadata =
+        xp.GetOrCreateStatMetadata(tsl::profiler::GetStatTypeStr(
+            tsl::profiler::StatType::kMetadataJaxlibVersion));
+    xp.AddStatValue(*jaxlib_version_metadata, options_.jaxlib_version().empty()
+                                                  ? "unknown"
+                                                  : options_.jaxlib_version());
+
     if (!debug_info_.empty()) {
-      tsl::profiler::XPlane* plane =
-          tsl::profiler::FindOrAddMutablePlaneWithName(
-              space, tsl::profiler::kMetadataPlaneName);
       MetadataXPlaneBuilder metadata_plane(plane);
       for (auto& hlo_proto : debug_info_) {
         metadata_plane.AddHloProto(hlo_proto->hlo_module().id(), *hlo_proto);
@@ -73,6 +88,7 @@ class MetadataCollector : public tsl::profiler::ProfilerInterface {
 
  private:
   std::vector<std::unique_ptr<xla::HloProto>> debug_info_;
+  tensorflow::ProfileOptions options_;
   bool trace_active_ = false;
 
   MetadataCollector(const MetadataCollector&) = delete;
@@ -81,8 +97,9 @@ class MetadataCollector : public tsl::profiler::ProfilerInterface {
 
 std::unique_ptr<tsl::profiler::ProfilerInterface> CreatMetadataCollector(
     const tensorflow::ProfileOptions& options) {
-  return options.enable_hlo_proto() ? std::make_unique<MetadataCollector>()
-                                    : nullptr;
+  return options.enable_hlo_proto()
+             ? std::make_unique<MetadataCollector>(options)
+             : nullptr;
 }
 
 }  // namespace

@@ -381,9 +381,9 @@ enum StatType {
   kMetadataLibtpuVersion,
   kMetadataCudaRuntimeVersion,
   kMetadataCudaDriverVersion,
-  kLastStatType = kMetadataCudaDriverVersion,
-  // kMetadataJaxVersion,
-  // kMetadataJaxlibVersion,
+  kMetadataJaxVersion,
+  kMetadataJaxlibVersion,
+  kLastStatType = kMetadataJaxlibVersion,
 };
 
 enum MegaScaleStatType : uint8_t {

@@ -16,11 +16,13 @@ limitations under the License.
 #ifndef XLA_BACKENDS_PROFILER_PLUGIN_PLUGIN_METADATA_H_
 #define XLA_BACKENDS_PROFILER_PLUGIN_PLUGIN_METADATA_H_
 
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
-void AddPluginMetadata(tensorflow::profiler::XSpace* space);
+void AddPluginMetadata(tensorflow::profiler::XSpace* space,
+                       const tensorflow::ProfileOptions& options);
 }
 }  // namespace xla
 
