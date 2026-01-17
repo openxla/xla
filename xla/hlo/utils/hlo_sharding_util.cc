@@ -197,9 +197,66 @@ void GatherScatterDims::FillOutputDimsWithIndicesDims(
   }
 }
 
+bool IsSubTilingOrEqualNamedSharding(const HloSharding& potential_subsharding,
+                                     const HloSharding& sharding) {
+  if (sharding.IsTileMaximal()) {
+    return true;
+  }
+  if (potential_subsharding.IsTileMaximal()) {
+    return false;
+  }
+
+  const NamedSharding& sub_named_sharding =
+      potential_subsharding.named_sharding();
+  const NamedSharding& named_sharding = sharding.named_sharding();
+  const Mesh& sub_mesh = sub_named_sharding.mesh();
+  const Mesh& mesh = named_sharding.mesh();
+
+  if (!sub_named_sharding.manual_axes().empty() ||
+      !named_sharding.manual_axes().empty() ||
+      !sub_mesh.DeviceAssignmentEquals(mesh) ||
+      sub_named_sharding.num_dimensions() != named_sharding.num_dimensions()) {
+    return false;
+  }
+
+  for (int64_t i = 0; i < named_sharding.num_dimensions(); ++i) {
+    const NamedSharding::DimensionSharding& dim =
+        named_sharding.dim_sharding(i);
+    if (dim.axes().empty()) {
+      continue;
+    }
+    NamedSharding::DimensionSharding sub_dim_remaining =
+        sub_named_sharding.dim_sharding(i);
+
+    for (const AxisRef& axis : dim.axes()) {
+      int64_t size = axis.size(mesh);
+      std::optional<NamedSharding::DimensionSharding> sliced =
+          sub_dim_remaining.Slice(sub_mesh, size);
+      if (!sliced || sliced->axes().size() != 1 || sliced->axes()[0] != axis) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 bool IsSubTilingOrEqualSharding(const Shape& potential_sharded_shape,
                                 const HloSharding& potential_subsharding,
                                 const HloSharding& sharding) {
+  if (potential_subsharding.UseNamedShardingLeaf() &&
+      sharding.UseNamedShardingLeaf()) {
+    if (potential_subsharding.named_sharding().num_dimensions() !=
+        potential_sharded_shape.dimensions().size()) {
+      return false;
+    }
+    return IsSubTilingOrEqualNamedSharding(potential_subsharding, sharding);
+  }
+
+  if (potential_subsharding.UseNamedShardingLeaf() !=
+      sharding.UseNamedShardingLeaf()) {
+    return false;
+  }
+
   // Some early exit cases.
   // If any manual sharding return false.
   if (potential_subsharding.IsManual() || sharding.IsManual()) {
