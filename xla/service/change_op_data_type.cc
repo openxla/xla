@@ -17,7 +17,13 @@ limitations under the License.
 
 #include <optional>
 
+#include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/service/hlo_creation_utils.h"
+#include "xla/xla_data.pb.h"
 
 #ifdef XLA_ONEDNN
 #include "xla/service/cpu/onednn_contraction_rewriter.h"
