@@ -911,11 +911,11 @@ xla_test(
     backends = [
         "a100",
         "h100",
+        "amdgpu_any",
     ],
-    tags = ["cuda-only"],
+    tags = ["gpu"],
     use_legacy_runtime = True,
     deps = [
-        ":cublas",
         ":custom_kernel",
         ":fission_backend",
         ":gpu_codegen_backend",
@@ -929,19 +929,23 @@ xla_test(
         "//xla/service:executable",
         "//xla/service:platform_util",
         "//xla/service/gpu:alias_info",
-        "//xla/service/gpu:nvptx_compiler_impl",
         "//xla/service/gpu/transforms:custom_kernel_fusion_rewriter",
         "//xla/service/gpu/transforms:dot_algorithm_rewriter",
         "//xla/service/gpu/transforms:gemm_rewriter",
         "//xla/service/gpu/transforms:scaled_dot_rewriter",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
-    ],
+    ] + if_cuda_is_configured([
+        ":cublas",
+    ]) + if_rocm_is_configured([
+        ":rocblas",
+    ]),
 )
 
 cc_library(
