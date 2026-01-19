@@ -107,7 +107,7 @@ class CustomKernelBackendTest : public HloHardwareIndependentTestBase {
   CustomKernelBackendTest()
       : platform_(PlatformUtil::GetDefaultPlatform().value()),
         stream_executor_(platform_->ExecutorForDevice(0).value()),
-        compiler_(Compiler::GetForPlatform(platform_).value()),
+        compiler_(Compiler::GetForPlatform(platform_->id()).value()),
         target_config_(stream_executor_),
         backend_(stream_executor_, &debug_options_, compiler_.get(),
                  &target_config_) {}

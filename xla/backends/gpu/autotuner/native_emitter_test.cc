@@ -94,7 +94,7 @@ class NativeEmitterBackendTest : public HloHardwareIndependentTestBase {
       : platform_(PlatformUtil::GetDefaultPlatform().value()),
         stream_executor_(platform_->ExecutorForDevice(0).value()),
         target_config_(stream_executor_),
-        compiler_(Compiler::GetForPlatform(platform_).value()),
+        compiler_(Compiler::GetForPlatform(platform_->id()).value()),
         backend_(&debug_options_, compiler_.get(), &target_config_) {}
 
   DebugOptions debug_options_;
