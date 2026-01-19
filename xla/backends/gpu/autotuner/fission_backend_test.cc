@@ -51,8 +51,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 
-
-
 namespace xla {
 namespace gpu {
 
@@ -187,7 +185,6 @@ class FissionTest : public HloHardwareIndependentTestBase,
         .IsRocm();
   }
 
-
   // Static helper to create a BLAS backend (Cublas on CUDA, Rocblas on ROCm).
   static std::unique_ptr<GpuCodegenBackend> CreateCublasBackend(
       se::StreamExecutor* stream_executor, const DebugOptions* debug_options,
@@ -243,9 +240,9 @@ class FissionTest : public HloHardwareIndependentTestBase,
         target_config_(stream_executor_),
         device_description_(stream_executor_->GetDeviceDescription()),
         rewriter_pipeline_(GetParam().pipeline_factory(device_description_)),
-        base_codegen_backend_(GetParam().backend_factory(
-            stream_executor_, &debug_options_, compiler_.get(),
-            &target_config_)),
+        base_codegen_backend_(
+            GetParam().backend_factory(stream_executor_, &debug_options_,
+                                       compiler_.get(), &target_config_)),
         fission_backend_(std::make_unique<FissionBackend>(
             &debug_options_, compiler_.get(), &target_config_,
             std::move(base_codegen_backend_), std::move(rewriter_pipeline_),
@@ -273,9 +270,9 @@ class CublasFissionBackendTest : public HloHardwareIndependentTestBase {
         device_description_(stream_executor_->GetDeviceDescription()),
         rewriter_pipeline_(
             FissionTest::GetCublasRewriterPipeline(device_description_)),
-        base_codegen_backend_(FissionTest::CreateCublasBackend(
-            stream_executor_, &debug_options_, compiler_.get(),
-            &target_config_)),
+        base_codegen_backend_(
+            FissionTest::CreateCublasBackend(stream_executor_, &debug_options_,
+                                             compiler_.get(), &target_config_)),
         fission_backend_(std::make_unique<FissionBackend>(
             &debug_options_, compiler_.get(), &target_config_,
             std::move(base_codegen_backend_), std::move(rewriter_pipeline_),
@@ -336,9 +333,8 @@ TEST_P(FissionTest, GetSupportedConfigsUnsupportedFusion) {
 TEST_P(FissionTest, GetDefaultConfig) {
   const std::string& test_name = GetParam().test_name;
   // Skip CUDA-only tests on ROCm.
-  if (IsRocm(stream_executor_) &&
-      (test_name == "TritonFusion_CublasLt_F8" ||
-       test_name == "TritonFusion_CustomKernel")) {
+  if (IsRocm(stream_executor_) && (test_name == "TritonFusion_CublasLt_F8" ||
+                                   test_name == "TritonFusion_CustomKernel")) {
     GTEST_SKIP() << test_name << " is not supported on ROCm";
   }
 
@@ -351,9 +347,8 @@ TEST_P(FissionTest, GetDefaultConfig) {
 TEST_P(FissionTest, Compile) {
   const std::string& test_name = GetParam().test_name;
   // Skip CUDA-only tests on ROCm.
-  if (IsRocm(stream_executor_) &&
-      (test_name == "TritonFusion_CublasLt_F8" ||
-       test_name == "TritonFusion_CustomKernel")) {
+  if (IsRocm(stream_executor_) && (test_name == "TritonFusion_CublasLt_F8" ||
+                                   test_name == "TritonFusion_CustomKernel")) {
     GTEST_SKIP() << test_name << " is not supported on ROCm";
   }
 
@@ -371,9 +366,8 @@ TEST_P(FissionTest, Compile) {
 TEST_P(FissionTest, ApplyConfig) {
   const std::string& test_name = GetParam().test_name;
   // Skip CUDA-only tests on ROCm.
-  if (IsRocm(stream_executor_) &&
-      (test_name == "TritonFusion_CublasLt_F8" ||
-       test_name == "TritonFusion_CustomKernel")) {
+  if (IsRocm(stream_executor_) && (test_name == "TritonFusion_CublasLt_F8" ||
+                                   test_name == "TritonFusion_CustomKernel")) {
     GTEST_SKIP() << test_name << " is not supported on ROCm";
   }
 

@@ -107,7 +107,6 @@ class TritonBackendTest : public HloHardwareIndependentTestBase {
   std::unique_ptr<Compiler> compiler_;
   TritonBackend backend_;
   mlir::MLIRContext mlir_context_;
-
 };
 
 TEST_F(TritonBackendTest, GetSupportedConfigs) {

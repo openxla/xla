@@ -125,8 +125,8 @@ TEST_F(CustomKernelBackendTest, CanCreateCublasBackend) {
 
 TEST_F(CustomKernelBackendTest, GetSupportedConfigsFromCustomKernelFusion) {
   bool is_rocm = stream_executor_->GetDeviceDescription()
-        .gpu_compute_capability()
-        .IsRocm();
+                     .gpu_compute_capability()
+                     .IsRocm();
   if (is_rocm) {
     GTEST_SKIP() << "Cutlass kernels are not supported on ROCm";
   }
