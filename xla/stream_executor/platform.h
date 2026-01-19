@@ -48,6 +48,8 @@ class Platform {
   // Returns metadata about the Platforms ID.
   class IdInfo {
    public:
+    virtual ~IdInfo() = default;
+
     using NameGetter = absl::string_view (*)(const IdInfo&);
 
     explicit constexpr IdInfo(NameGetter name_getter)
