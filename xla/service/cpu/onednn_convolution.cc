@@ -80,7 +80,7 @@ dnnl::memory::format_tag GetFormatTag(const int dims) {
 
 // Expands the memory descriptor to include the feature group dimension for
 // grouped convolutions
-void ExpandDescriptorWithGroups(dnnl::memory::desc& mem_desc, uint64_t groups) {
+void ExpandDescriptorWithGroups(uint64_t groups, dnnl::memory::desc& mem_desc) {
   if (groups > 1) {
     memory::dims corr_dims = mem_desc.get_dims();
     corr_dims.insert(corr_dims.begin(), 1, groups);
@@ -179,7 +179,7 @@ dnnl::memory::desc OneDnnConvolutionOptWeightsDesc(
   memory::desc new_ker_md = weights_md.permute_axes(std::get<1>(permutations));
   memory::desc new_res_md = output_md.permute_axes(std::get<2>(permutations));
 
-  ExpandDescriptorWithGroups(new_ker_md, groups);
+  ExpandDescriptorWithGroups(groups, new_ker_md);
 
   return OneDnnConvolutionOptWeightsDesc(engine, new_inp_md, new_ker_md,
                                          bias_md, new_res_md, strides,
@@ -208,7 +208,7 @@ dnnl::memory::desc GetSrcWeightMemDesc<kOnednnConvConfig>(
       conv_config.kernel().filter().input_feature_dim(),
       conv_config.kernel().filter().spatial_dims()));
 
-  ExpandDescriptorWithGroups(weight_md, groups);
+  ExpandDescriptorWithGroups(groups, weight_md);
 
   return weight_md;
 }
@@ -270,7 +270,7 @@ std::unique_ptr<convolution_forward::primitive_desc> CreateConvolutionPrimDesc(
 
   uint64_t groups = conv_config.feature_groups();
 
-  ExpandDescriptorWithGroups(new_ker_md, groups);
+  ExpandDescriptorWithGroups(groups, new_ker_md);
 
   std::vector<memory::desc> fused_mds;
   for (const Shape& shape : fused_shapes) {
@@ -357,7 +357,7 @@ void ExecuteOneDnnConvolution(absl::Span<MemrefInfoHandler> arguments,
                               memory::format_tag::any);
   } else {
     new_ker_md = ker_md.permute_axes(std::get<1>(permutations));
-    ExpandDescriptorWithGroups(new_ker_md, groups);
+    ExpandDescriptorWithGroups(groups, new_ker_md);
   }
 
   const int64_t num_fused_operands = arguments.size() - 2;
