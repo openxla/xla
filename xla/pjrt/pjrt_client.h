@@ -28,6 +28,7 @@ limitations under the License.
 
 #include "absl/base/attributes.h"
 #include "absl/base/macros.h"
+#include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -196,6 +197,13 @@ class PjRtDevice {
   virtual const absl::flat_hash_map<std::string, PjRtDeviceAttribute>&
   Attributes() const {
     return description().Attributes();
+  }
+
+  // Convenience function to get an attribute of type `T` from `Attributes()`.
+  // Returns `nullptr` if the attribute is not found or has a different type.
+  template <typename T>
+  const T* absl_nullable GetAttribute(absl::string_view name) const {
+    return description().GetAttribute<T>(name);
   }
 
   // Returns a scoped event that the caller uses to tell the PjRtClient that

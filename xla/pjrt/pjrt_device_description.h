@@ -17,7 +17,9 @@ limitations under the License.
 #define XLA_PJRT_PJRT_DEVICE_DESCRIPTION_H_
 
 #include <string>
+#include <variant>
 
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -82,6 +84,17 @@ class PjRtDeviceDescription {
   // reference will remain valid for the lifetime of the PjRtDevice.
   virtual const absl::flat_hash_map<std::string, PjRtDeviceAttribute>&
   Attributes() const = 0;
+
+  // Convenience function to get an attribute of type `T` from `Attributes()`.
+  // Returns `nullptr` if the attribute is not found or has a different type.
+  template <typename T>
+  const T* absl_nullable GetAttribute(absl::string_view name) const {
+    const auto it = Attributes().find(name);
+    if (it == Attributes().end()) {
+      return nullptr;
+    }
+    return std::get_if<T>(&it->second);
+  }
 
   // Returns all memory spaces attached to this device.
   // The memory spaces are in no particular order.

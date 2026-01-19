@@ -1292,13 +1292,11 @@ TEST(StreamExecutorGpuClientTest, GpuDeviceSharedMemoryInfo) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(DefaultOptions()));
   for (const auto& device : client->devices()) {
-    auto value = static_cast<PjRtStreamExecutorDevice*>(device)
-                     ->description()
-                     .Attributes()
-                     .find("shared_memory_per_block_optin")
-                     ->second;
-    int64_t shared_memory_per_block_optin = std::get<int64_t>(value);
-    EXPECT_GT(shared_memory_per_block_optin, 0);
+    auto* const shared_memory_per_block_optin =
+        static_cast<PjRtStreamExecutorDevice*>(device)->GetAttribute<int64_t>(
+            "shared_memory_per_block_optin");
+    ASSERT_NE(shared_memory_per_block_optin, nullptr);
+    EXPECT_GT(*shared_memory_per_block_optin, 0);
   }
 }
 
@@ -1353,10 +1351,11 @@ TEST(StreamExecutorGpuClientTest, MockNcclClientTest) {
   EXPECT_EQ(client->device_count(), devices_per_host * num_nodes);
   for (int i = 0; i < client->device_count(); i++) {
     auto device = client->devices()[i];
-    auto partition_index =
-        std::get<int64_t>(device->Attributes().at("partition_index"));
+    auto* const partition_index =
+        device->GetAttribute<int64_t>("partition_index");
+    ASSERT_NE(partition_index, nullptr);
     auto host_index = device->process_index();
-    EXPECT_EQ(partition_index, host_index);
+    EXPECT_EQ(*partition_index, host_index);
   }
 }
 
@@ -3355,9 +3354,9 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
   TF_RET_CHECK(client->platform_name() == "cuda");
   TF_ASSIGN_OR_RETURN(
       se::CudaComputeCapability cc,
-      se::CudaComputeCapability::FromString(std::get<std::string>(
-          client->addressable_devices().front()->Attributes().at(
-              "compute_capability"))));
+      se::CudaComputeCapability::FromString(
+          *client->addressable_devices().front()->GetAttribute<std::string>(
+              "compute_capability")));
   if (!cc.IsAtLeastAmpere()) {
     return absl::FailedPreconditionError("Ampere+ GPU required");
   }
