@@ -162,6 +162,8 @@ class RcclCommunicator::RcclRegisteredBufferHandle
         symmetric_handle_(symmetric_handle),
         device_ordinal_(device_ordinal) {}
 
+  void* GetHandle() const override { return handle_; }
+
   ~RcclRegisteredBufferHandle() override {
     if (auto status = Unregister(); !status.ok()) {
       LOG(ERROR) << status.message();
