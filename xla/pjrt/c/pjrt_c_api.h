@@ -624,14 +624,23 @@ typedef enum {
 // tensorflow::CoordinatedTaskStateInfo.
 struct PJRT_ProcessInfo {
   size_t struct_size;
+  const char* job_name;
+  bool recoverable;
   int task_id;
   uint64_t incarnation_id;
   PJRT_ProcessState state;
   int error_code;
   const char* error_message;
   size_t error_message_size;
+  bool error_is_reported;
+  const char* error_source_job_name;
+  size_t error_source_job_name_size;
+  int error_source_task_id;
+  bool error_source_task_recoverable;
 };
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_ProcessInfo, error_message_size);
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_ProcessInfo, error_source_task_recoverable);
+
+
 
 struct PJRT_Client_UpdateGlobalProcessInfo_Args {
   size_t struct_size;
