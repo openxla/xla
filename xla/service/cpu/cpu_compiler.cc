@@ -809,7 +809,6 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
       /*rewrite_grad_op=*/true);
   pipeline.AddPass<LogisticExpander>();
   pipeline.AddPass<ConditionalCanonicalizer>();
-  pipeline.AddPass<DynamicDimensionSimplifier>();
 
   if (module->config()
           .debug_options()

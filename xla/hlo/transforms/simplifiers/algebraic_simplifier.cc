@@ -6341,6 +6341,9 @@ absl::Status AlgebraicSimplifierVisitor::HandleReshape(
 
   // Merge reshapes.
   if (HloOpcode::kReshape == operand->opcode()) {
+    if (ReplaceInstructionIfCompatible(reshape, operand->mutable_operand(0))) {
+      return absl::OkStatus();
+    }
     return ReplaceWithNewInstruction(
         reshape, HloInstruction::CreateReshape(reshape->shape(),
                                                operand->mutable_operand(0)));
@@ -6477,6 +6480,10 @@ absl::Status AlgebraicSimplifierVisitor::HandleReshape(
     auto opt_dims =
         ReshapeLeavesDimensionsUnmodified(reshape, operand->dimensions());
     if (opt_dims.has_value()) {
+      if (ReplaceInstructionIfCompatible(reshape,
+                                         operand->mutable_operand(0))) {
+        return absl::OkStatus();
+      }
       return ReplaceWithNewInstruction(
           reshape,
           HloInstruction::CreateBroadcast(

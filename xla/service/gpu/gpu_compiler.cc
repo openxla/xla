@@ -728,7 +728,6 @@ absl::Status RunOptimizationPasses(
 
   pipeline.AddPass<LogisticExpander>();
   pipeline.AddPass<ConditionalCanonicalizer>();
-  pipeline.AddPass<DynamicDimensionSimplifier>();
 
   if (debug_options.xla_reduce_window_rewrite_base_length() != 0) {
     pipeline.AddPass<HloPassFix<ReduceWindowRewriter>>(

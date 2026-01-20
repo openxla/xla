@@ -455,7 +455,7 @@ TEST_F(AlgebraicSimplifierTest, NotEliminateReshapeTransposeChain2) {
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Reshape()));
+              GmockMatch(m::Parameter(0)));
   VLOG(2) << "Module after: " << m->ToString();
 }
 
@@ -13291,6 +13291,166 @@ TEST_F(AlgebraicSimplifierTest, ImagWithDynamicNonComplexInput) {
   EXPECT_THAT(root, GmockMatch(m::Broadcast(m::Constant())));
   EXPECT_TRUE(root->shape().is_dynamic_dimension(0));
   EXPECT_EQ(root->shape().dimensions(0), 8);
+}
+
+TEST_F(AlgebraicSimplifierTest, ForwardConcat) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[1] parameter(0)
+      p1 = s32[1] parameter(1)
+      p2 = s32[1] parameter(2)
+      concat1 = s32[2] concatenate(p0, p1), dimensions={0}
+      ROOT concat2 = s32[3] concatenate(concat1, p2), dimensions={0}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Concatenate(m::Parameter(0), m::Parameter(1),
+                                        m::Parameter(2))));
+}
+
+TEST_F(AlgebraicSimplifierTest, DoNotForwardConcatMultipleDims) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[1, 1] parameter(0)
+      p1 = s32[1, 1] parameter(1)
+      p2 = s32[2, 1] parameter(2)
+      concat1 = s32[2, 1] concatenate(p0, p1), dimensions={0}
+      ROOT concat2 = s32[2, 2] concatenate(concat1, p2), dimensions={1}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_FALSE(simplifier.Run(m.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest, ForwardConcatSlice) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[1] parameter(0)
+      p1 = s32[1] parameter(1)
+      p2 = s32[1] parameter(2)
+      concat = s32[3] concatenate(p0, p1, p2), dimensions={0}
+      ROOT slice = s32[1] slice(concat), slice={[1:2]}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(1)));
+}
+
+TEST_F(AlgebraicSimplifierTest, ForwardConcatSliceSizeMismatch) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[1] parameter(0)
+      p1 = s32[1] parameter(1)
+      p2 = s32[1] parameter(2)
+      concat = s32[3] concatenate(p0, p1, p2), dimensions={0}
+      ROOT slice = s32[2] slice(concat), slice={[1:3]}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifier simplifier(default_options_);
+  // First run creates slice(concat(p1, p2)).
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  // Second run removes the identity slice.
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Concatenate(m::Parameter(1), m::Parameter(2))));
+}
+
+TEST_F(AlgebraicSimplifierTest, ForwardConcatSliceStrided) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[1] parameter(0)
+      p1 = s32[1] parameter(1)
+      p2 = s32[1] parameter(2)
+      concat = s32[3] concatenate(p0, p1, p2), dimensions={0}
+      ROOT slice = s32[1] slice(concat), slice={[1:2:2]}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_is_layout_sensitive(false);
+  AlgebraicSimplifier simplifier(options);
+  // Simplification should happen.
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  // Run again to ensure it converges if multiple steps are needed.
+  EXPECT_TRUE(simplifier.Run(m.get()).ok());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(1)));
+}
+
+TEST_F(AlgebraicSimplifierTest, BroadcastReshapeForwarding) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[] parameter(0)
+      broadcast = s32[1] broadcast(p0), dimensions={}
+      ROOT reshape = s32[] reshape(broadcast)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(0)));
+}
+
+TEST_F(AlgebraicSimplifierTest, ReshapeReshapeForwarding) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[] parameter(0)
+      reshape = s32[1] reshape(p0)
+      ROOT reshape2 = s32[] reshape(reshape)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(0)));
+}
+
+TEST_F(AlgebraicSimplifierTest, ReshapeReshapeForwardingShapeMismatch) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[1, 1] parameter(0)
+      reshape = s32[1] reshape(p0)
+      ROOT reshape2 = s32[] reshape(reshape)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Reshape(m::Parameter(0))));
+}
+
+TEST_F(AlgebraicSimplifierTest, IdConvertRemoving) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = s32[1] parameter(0)
+      ROOT reshape2 = s32[1] convert(p0)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(0)));
 }
 
 }  // namespace
