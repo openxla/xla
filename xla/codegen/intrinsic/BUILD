@@ -373,6 +373,7 @@ xla_cc_test(
         ":rsqrt",
         ":simple_jit_runner",
         ":test_matchers",
+        ":type",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/base:no_destructor",
