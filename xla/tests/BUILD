@@ -3461,7 +3461,6 @@ xla_test(
         ":hlo_test_base",
         "//xla:literal_util",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/ir:hlo_module_group",
         "//xla/hlo/testlib:test_helpers",
         "//xla/service:backend",
         "//xla/service:llvm_compiler",
