@@ -2042,6 +2042,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@riegeli//riegeli/bytes:string_writer",
+        "@tsl//tsl/platform:stacktrace",
     ],
 )
 
