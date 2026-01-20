@@ -74,6 +74,8 @@ class Communicator {
     // handle).
     using PackedKernelArg = std::array<std::byte, 256>;
     virtual PackedKernelArg PackKernelArg() const = 0;
+
+    virtual void* GetHandle() const = 0;
   };
 
   // Register `buffer_range` once for efficient collective operations (i.e. on

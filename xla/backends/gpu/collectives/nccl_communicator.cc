@@ -173,6 +173,10 @@ class NcclCommunicator::NcclRegisteredBufferHandle
         symmetric_handle_(symmetric_handle),
         device_ordinal_(device_ordinal) {}
 
+  bool IsSymmetricHandle() const { return symmetric_handle_; }
+
+  void* GetHandle() const override { return handle_; }
+
   ~NcclRegisteredBufferHandle() override {
     if (auto status = Unregister(); !status.ok()) {
       LOG(ERROR) << status.message();
@@ -892,6 +896,69 @@ absl::Status NcclCommunicator::LaunchCollectivePermute(
   }
 
   TF_RETURN_IF_ERROR(GroupStart());
+
+#if NCCL_VERSION_CODE >= 22900
+  TF_ASSIGN_OR_RETURN(auto send_range,
+                      stream->parent()->GetMemoryRange(send_buffer));
+  TF_ASSIGN_OR_RETURN(auto recv_range,
+                      stream->parent()->GetMemoryRange(recv_buffer));
+  bool use_nccl_put = false;
+  Communicator::RegisteredBufferHandle* recv_buffer_handle_ptr;
+  {
+    absl::MutexLock lock(registered_buffers_.mu);
+    auto send_buffer_handle =
+        registered_buffers_.range_to_handle.find(send_range.opaque());
+    auto recv_buffer_handle =
+        registered_buffers_.range_to_handle.find(recv_range.opaque());
+    use_nccl_put =
+        send_buffer_handle != registered_buffers_.range_to_handle.end() &&
+        recv_buffer_handle != registered_buffers_.range_to_handle.end() &&
+        (dynamic_cast<NcclRegisteredBufferHandle*>(
+             send_buffer_handle->second.get()))
+            ->IsSymmetricHandle() &&
+        (dynamic_cast<NcclRegisteredBufferHandle*>(
+             recv_buffer_handle->second.get()))
+            ->IsSymmetricHandle();
+    recv_buffer_handle_ptr = recv_buffer_handle->second.get();
+  }
+
+  if (use_nccl_put) {
+    ncclWindow_t real_handle =
+        (ncclWindow_t)((dynamic_cast<NcclRegisteredBufferHandle*>(
+                            recv_buffer_handle_ptr))
+                           ->GetHandle());
+
+    for (const auto& target_rank : target_ranks) {
+      // Call put to send to receiving rank
+      int64_t recv_window_offset =
+          (uint8_t*)recv_buffer.opaque() - (uint8_t*)recv_range.opaque();
+      // Put data with signal to peer's receive buffer
+      VLOG(3) << absl::StreamFormat(
+          "[%d] Launching NCCL CollectivePermute operation using "
+          "ncclPutSignal.",
+          stream->parent()->device_ordinal());
+
+      XLA_NCCL_RETURN_IF_ERROR(ncclPutSignal(
+          send_buffer.opaque(), ToNcclCount(dtype, count), nccl_dtype,
+          target_rank.value(), real_handle, recv_window_offset,
+          /*sigIdx=*/0, /*ctx=*/0, /*flags=*/0, comm_, AsCudaStream(stream)));
+      TF_RETURN_IF_ERROR(GroupEnd());
+      return absl::OkStatus();
+    }
+    TF_RETURN_IF_ERROR(GroupEnd());
+    // Wait for signal from sender
+    if (source_rank) {
+      ncclWaitSignalDesc_t wait_desc = {
+          .opCnt = 1,
+          .peer = static_cast<int>(source_rank->value()),
+          .sigIdx = 0,
+          .ctx = 0};
+      XLA_NCCL_RETURN_IF_ERROR(
+          ncclWaitSignal(/*nDesc=*/1, &wait_desc, comm_, AsCudaStream(stream)));
+    }
+    return absl::OkStatus();
+  }
+#endif  // NCCL_VERSION_CODE >= 22900
 
   if (source_rank) {
     XLA_NCCL_RETURN_IF_ERROR(

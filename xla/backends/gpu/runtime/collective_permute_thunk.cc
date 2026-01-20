@@ -58,12 +58,12 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 namespace {
@@ -384,6 +384,9 @@ absl::Status RunCollectivePermute(P2PConfig::SourceTargetRanks source_target,
     target_ranks.push_back(*source_target.target);
   }
 
+  TF_RETURN_IF_ERROR(MaybeRegisterBuffers(stream.parent(), buffers, &comm,
+                                          use_symmetric_buffer));
+
   // GroupStart/End API is needed if we need to dispatch multiple NCCL kernels
   // for multiple buffers.
   if (buffers.size() <= 1) {
@@ -397,8 +400,6 @@ absl::Status RunCollectivePermute(P2PConfig::SourceTargetRanks source_target,
       TF_RETURN_IF_ERROR(future.Await());
     }
   } else {
-    TF_RETURN_IF_ERROR(MaybeRegisterBuffers(stream.parent(), buffers, &comm,
-                                            use_symmetric_buffer));
     auto* gpu_comm = tsl::down_cast<GpuCommunicator*>(&comm);
     auto future = gpu_comm->GroupExecute(
         [&source_target, &buffers, &src_addrs, &dest_addrs, &target_ranks,
