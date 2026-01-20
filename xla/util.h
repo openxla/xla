@@ -46,7 +46,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/math/math_util.h"
 #include "xla/tsl/platform/errors.h"  // IWYU pragma: keep
@@ -58,6 +57,7 @@ limitations under the License.
 #include "tsl/platform/casts.h"
 #include "tsl/platform/ml_dtypes.h"
 #include "tsl/platform/protobuf.h"
+#include "Eigen/Core"
 
 namespace xla {
 
@@ -290,7 +290,9 @@ absl::Status AppendStatus(absl::Status prior, absl::string_view context);
   }
 #endif
 
+XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Aborted);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Cancelled);
+XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(DeadlineExceeded);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(FailedPrecondition);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Internal);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(InvalidArgument);
