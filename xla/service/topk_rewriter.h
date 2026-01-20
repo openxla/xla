@@ -66,6 +66,10 @@ class TopkRewriter : public HloModulePass {
   // call if profitable. Returns the custom call if one was created.
   absl::StatusOr<HloInstruction*> TransformPatternToCustomCall(
       HloInstruction* inst);
+
+  // Converts a TopK instruction to a CustomCall.
+  absl::StatusOr<HloInstruction*> TransformTopKToCustomCall(
+      HloInstruction* inst);
 };
 
 class TopkDecomposer : public HloModulePass {

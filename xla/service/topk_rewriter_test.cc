@@ -703,5 +703,61 @@ ENTRY TopK {
   EXPECT_TRUE(changed);
 }
 
+TEST_F(TopkRewriterTest, TopkRewriterDirectConversion) {
+  const std::string hlo_string = R"(
+HloModule topk
+
+ENTRY TopK {
+  x = f32[10,10]{0,1} parameter(0)
+  ROOT topk = (f32[10,2]{0,1}, s32[10,2]{0,1}) topk(x), k=2, largest=true
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  TopkRewriter rewriter(
+      [](const HloSortInstruction*, int64_t) { return true; });
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  // Verify it is a custom call "TopK"
+  auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root,
+              GmockMatch(m::Tuple(
+                  m::GetTupleElement(m::CustomCall(m::Parameter(0)), 0),
+                  m::GetTupleElement(m::CustomCall(m::Parameter(0)), 1))));
+  const HloInstruction* cc = root->operand(0)->operand(0);
+  EXPECT_THAT(cc->custom_call_target(), "TopK");
+}
+
+TEST_F(TopkRewriterTest, TopkDecomposerValuesOnly) {
+  const std::string hlo_string = R"(
+HloModule topk
+
+ENTRY TopK {
+  x = f32[10,10]{0,1} parameter(0)
+  topk = (f32[10,2]{0,1}, s32[10,2]{0,1}) topk(x), k=2, largest=true
+  ROOT values = f32[10,2]{0,1} get-tuple-element(topk), index=0
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, TopkDecomposer().Run(module.get()));
+  EXPECT_TRUE(changed);
+  TF_ASSERT_OK(HloDCE().Run(module.get()).status());
+
+  // Should contain Sort(Values), but NO Iota.
+  auto root = module->entry_computation()->root_instruction();
+  // Expect Slice(Sort(Parameter))
+  EXPECT_THAT(root, GmockMatch(m::Slice(m::Sort(m::Parameter(0)))));
+
+  // Verify Sort does not have Iota operand.
+  auto* slice = root;
+  auto* sort = slice->operand(0);
+  ASSERT_EQ(sort->opcode(), HloOpcode::kSort);
+  EXPECT_EQ(sort->operand_count(), 1);
+}
+
 }  // namespace
 }  // namespace xla
