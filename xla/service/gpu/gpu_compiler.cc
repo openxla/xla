@@ -583,8 +583,6 @@ absl::Status RunSPMDPasses(
   }
 }
 
-namespace {
-
 absl::Status SetHostDeviceType(HloInstruction* instr) {
   ASSIGN_OR_RETURN(auto backend_config,
                    instr->backend_config<GpuBackendConfig>());
@@ -611,12 +609,10 @@ bool BackendConfigDeviceTypeIsHost(HloInstruction* instr) {
   return backend_config->device_type() == DEVICE_TYPE_HOST;
 }
 
-}  // namespace
-
 absl::Status RunOptimizationPasses(
     HloModule* hlo_module, const GpuTargetConfig& gpu_target_config,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
-    absl::string_view platform_name, bool enable_sort_rewriter) {
+    bool enable_sort_rewriter) {
   const DebugOptions& debug_options = hlo_module->config().debug_options();
   se::GpuComputeCapability gpu_version =
       gpu_target_config.device_description.gpu_compute_capability();
@@ -674,8 +670,7 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<PermutationSortExpander>();
 
   if (enable_sort_rewriter) {
-    pipeline.AddPass<SortRewriter>(gpu_target_config.device_description,
-                                   std::string{platform_name});
+    pipeline.AddPass<SortRewriter>(gpu_target_config.device_description);
   }
   // Comparison total order expander
   pipeline.AddPass<ComparisonExpander>(std::array{std::make_pair(BF16, F32)});
@@ -690,7 +685,8 @@ absl::Status RunOptimizationPasses(
   // Rewrite Cholesky.
   pipeline.AddPass<CholeskyExpander>();
 
-  if (RequireDeterminism(hlo_module->config())) {
+  if (RequireDeterminism(hlo_module->config()) ||
+      debug_options.xla_gpu_enable_scatter_determinism_expander()) {
     // Scatter can be indeterministic if indices are not unique or a non
     // associative combiner function is used. Eliminate these Scatter ops.
     if (debug_options.xla_gpu_enable_scatter_determinism_expander()) {
@@ -768,8 +764,7 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<DynamicPadder>(dynamic_padder_options);
   // SortRewriter needs to run before StableSortExpander.
   if (enable_sort_rewriter) {
-    pipeline.AddPass<SortRewriter>(gpu_target_config.device_description,
-                                   gpu_target_config.platform_name);
+    pipeline.AddPass<SortRewriter>(gpu_target_config.device_description);
   }
   // Expand the sort op to support stable sorting if required.
   pipeline.AddPass<StableSortExpander>();
@@ -1428,6 +1423,30 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
 
   return absl::OkStatus();
 }
+
+// CollectivesScheduleLinearizer enforces a total ordering between collectives
+// to work around divergence in executables introduced due to auto tuning,
+// specifically the use of extra scratch space for convolutions. This
+// function decides whether to apply this pass. If convolutions are present in
+// the code and we are using "online" autotuning (i.e., not AOT) we need to
+// use the pass, else we do not need to enable the pass.
+bool RequiresCollectiveScheduleLinearizer(const HloModule* module,
+                                          se::StreamExecutor* stream_exec) {
+  if (stream_exec == nullptr ||
+      module->config().debug_options().xla_gpu_autotune_level() == 0) {
+    return false;
+  }
+  for (const HloComputation* comp : module->MakeNonfusionComputations()) {
+    for (const HloInstruction* inst : comp->instructions()) {
+      if (IsCustomCallToDnnConvolution(*inst)) {
+        return true;
+      }
+    }
+  }
+  // No convolution auto-tuning candidates found in the module.
+  return false;
+}
+
 }  // namespace
 
 AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
@@ -1571,9 +1590,9 @@ absl::Status GpuCompiler::OptimizeHloModule(
                     "compile with a GPU present.";
     enable_sort_rewriter = false;
   }
-  RETURN_IF_ERROR(RunOptimizationPasses(
-      hlo_module, gpu_target_config, layout_insensitive_algsimp_opts,
-      platform->Name(), enable_sort_rewriter));
+  RETURN_IF_ERROR(RunOptimizationPasses(hlo_module, gpu_target_config,
+                                        layout_insensitive_algsimp_opts,
+                                        enable_sort_rewriter));
   se::GpuComputeCapability gpu_version =
       device_description.gpu_compute_capability();
   int device_count = GetNumVisibleDevices(options, stream_exec, platform);
@@ -2590,17 +2609,18 @@ GpuCompiler::CompileToBackendResult(
   CompileModuleResults compile_module_results;
 
   {
-    xla::llvm_ir::LLVMCommandLineOptionsLock llvm_options_lock(
+    xla::llvm_ir::LLVMCommandLineOptionsReleasableLock llvm_options_lock(
         GetLLVMCommandLineOptions(module->config().debug_options()));
     BufferValue::SizeFunction buffer_size_bytes_function =
         BufferSizeBytesFunction();
     // Compile the module to thnks and llvm IR.
-    ASSIGN_OR_RETURN(compile_module_results,
-                     CompileModuleToLlvmIr(
-                         module, llvm_context, target_triple_, data_layout_,
-                         *platform, gpu_device_info, alias_info.get(),
-                         std::move(buffer_size_bytes_function),
-                         /*split_constants_module=*/use_cache));
+    ASSIGN_OR_RETURN(
+        compile_module_results,
+        CompileModuleToLlvmIr(
+            module, llvm_context, target_triple_, data_layout_, *platform,
+            gpu_device_info, alias_info.get(),
+            std::move(buffer_size_bytes_function), llvm_options_lock,
+            /*split_constants_module=*/use_cache));
   }
 
   if (user_pre_optimization_hook_) {
@@ -3213,7 +3233,11 @@ GpuCompiler::LoadExecutableFromAotResult(
     RETURN_IF_ERROR(LoadCache(ir_emitter_context, cache_file_path));
   }
 
-  ThunkEmitter thunk_emitter(&ir_emitter_context);
+  // We're not emitting any code, so we can start out with the LLVM options
+  // lock released.
+  llvm_ir::LLVMCommandLineOptionsReleasableLock llvm_options_lock =
+      llvm_ir::LLVMCommandLineOptionsReleasableLock::CreateReleasedLock();
+  ThunkEmitter thunk_emitter(&ir_emitter_context, &llvm_options_lock);
   ASSIGN_OR_RETURN(auto sequential_thunk,
                    thunk_emitter.EmitHloEntryComputation(hlo_module.get()));
 

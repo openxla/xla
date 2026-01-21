@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
+#include "xla/service/gpu/autotuning/autotuner_status_key.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/tools/hlo_decomposer.h"
@@ -191,15 +192,31 @@ absl::Status Autotuner::Autotune(HloModule* module,
   }
 
   // 2. Shard and get instructions to autotune for current shard.
+  // Sort the instructions by fingerprint to ensure deterministic sharding.
+  std::vector<tsl::Fprint128> sorted_fingerprints;
+  for (const auto& [fingerprint, _] : all_instructions_by_fingerprint) {
+    sorted_fingerprints.push_back(fingerprint);
+  }
+  std::sort(sorted_fingerprints.begin(), sorted_fingerprints.end(),
+            [](const tsl::Fprint128& a, const tsl::Fprint128& b) {
+              if (a.high64 != b.high64) {
+                return a.high64 < b.high64;
+              }
+              return a.low64 < b.low64;
+            });
+
   const size_t bucket_size =
-      std::ceil(static_cast<double>(all_instructions_by_fingerprint.size()) /
+      std::ceil(static_cast<double>(sorted_fingerprints.size()) /
                 static_cast<double>(total_shards));
   const size_t start = bucket_size * my_shard_index;
-  const size_t end =
-      std::min(start + bucket_size, all_instructions_by_fingerprint.size());
-  InstructionsByFingerprint instructions_by_fingerprint(
-      std::next(all_instructions_by_fingerprint.begin(), start),
-      std::next(all_instructions_by_fingerprint.begin(), end));
+  const size_t end = std::min(start + bucket_size, sorted_fingerprints.size());
+
+  InstructionsByFingerprint instructions_by_fingerprint;
+  for (size_t i = start; i < end; ++i) {
+    const tsl::Fprint128& fingerprint = sorted_fingerprints[i];
+    instructions_by_fingerprint[fingerprint] =
+        all_instructions_by_fingerprint.at(fingerprint);
+  }
 
   // 3. Autotune instructions for this shard. Use cached configs if available,
   // otherwise autotune and cache the best config.
@@ -293,8 +310,11 @@ absl::StatusOr<Autotuner::Config> Autotuner::GetConfig(HloInstruction* instr) {
   }
 
   if (autotune_config_.expect_all_instructions_in_cache) {
-    return absl::NotFoundError("No cached config found for HLO instr: " +
-                               instr->ToString());
+    absl::Status s = absl::NotFoundError(
+        "No cached config found for HLO instr: " + instr->ToString());
+    tsl::errors::InsertPayloads(
+        s, {{std::string(gpu::kAutotuneCacheRequiredErrorPayloadKey), ""}});
+    return s;
   }
 
   if (autotune_config_.use_default_config) {

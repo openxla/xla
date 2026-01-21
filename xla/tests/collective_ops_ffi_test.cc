@@ -69,6 +69,7 @@ static ReplicaGroup AllDevices() {
 // This is a prepare handler that tells XLA:GPU runtime what collective cliques
 // should be acquired before the execution starts. All collective operations
 // must let XLA:GPU runtime know what cliques they need ahead of time.
+template <bool device_comm>
 static absl::Status PrepareAllReduce(
     const CollectiveParams* collective_params,
     CollectiveCliqueRequests* clique_requests) {
@@ -81,9 +82,15 @@ static absl::Status PrepareAllReduce(
           *collective_params, {AllDevices()},
           CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID, false));
 
+  // Maybe ask for a device communicator.
+  CollectiveCliqueRequests::CliqueRequirements requirements;
+  if (device_comm) {
+    requirements.dev_comm = GpuDeviceCommunicator::Requirements{8};
+  }
+
   // Ask XLA:GPU runtime to acquire a clique for this key. Later we will be able
   // to get access to it from the execute handler.
-  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key));
+  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key, requirements));
 
   return absl::OkStatus();
 }
@@ -147,7 +154,8 @@ static absl::Status AllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
   return future.Await();
 }
 
-XLA_FFI_DEFINE_HANDLER(kPrepareAllReduce, PrepareAllReduce,
+XLA_FFI_DEFINE_HANDLER(kPrepareAllReduce,
+                       PrepareAllReduce</*device_comm=*/false>,
                        ffi::Ffi::BindPrepare()
                            .Ctx<ffi::CollectiveParams>()
                            .Ctx<ffi::CollectiveCliqueRequests>());

@@ -47,7 +47,7 @@ TEST(CollectiveMemoryRequestsTest, OrderedRequests) {
   TF_ASSERT_OK(requests.RequestSymmetricAllocation(k0, 0));
   TF_ASSERT_OK(requests.RequestSymmetricAllocation(k0, 1));
   TF_ASSERT_OK(requests.RequestSymmetricAllocation(k1, 0));
-  TF_ASSERT_OK(requests.RequestSymmetricAllocation(k2, slice));
+  TF_ASSERT_OK(requests.RequestSymmetricAddress(k2, slice));
 
   // Check that we create symmetric memories according to the GPU clique key
   // ordering.

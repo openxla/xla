@@ -92,6 +92,7 @@ limitations under the License.
 #include "xla/pjrt/tracked_device_buffer.h"
 #include "xla/pjrt/worker_thread.h"
 #include "xla/runtime/device_id.h"
+#include "xla/runtime/process_id.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
@@ -1582,6 +1583,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     device_proto->set_core_count(desc->core_count());
     device_proto->set_shared_memory_per_block_optin(
         desc->shared_memory_per_block_optin());
+    device_proto->set_numa_node(desc->numa_node());
 
     stream_executor::DeviceInterconnectInfo info =
         desc->device_interconnect_info();
@@ -1636,7 +1638,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   }
 
   absl::btree_map<LocalDeviceId, GlobalDeviceId> gpu_device_ids;
-  absl::flat_hash_map<GlobalDeviceId, int> device_to_node;
+  absl::flat_hash_map<GlobalDeviceId, ProcessId> device_to_process;
   int curr_partition_index = -1;
   int curr_process_index = -1;
   int curr_process_index_in_partition = 0;
@@ -1656,7 +1658,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
       }
 
       GlobalDeviceId global_device_id(device_proto.global_device_id());
-      device_to_node[global_device_id] = node.node_id();
+      device_to_process[global_device_id] = node.node_id();
       std::unique_ptr<LocalDeviceState> local_device;
       if (node.node_id() == node_id) {
         auto it = local_device_states.find(device_proto.local_device_ordinal());
@@ -1676,7 +1678,8 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
           device_proto.compute_capability(), device_proto.core_count(),
           device_proto.shared_memory_per_block_optin(),
           device_proto.local_device_ordinal(), node.node_id(),
-          curr_process_index_in_partition, device_proto.partition_index());
+          curr_process_index_in_partition, device_proto.partition_index(),
+          device_proto.numa_node());
       devices.push_back(std::move(device));
     }
   }
@@ -1695,9 +1698,14 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     return absl::InternalError("Failed to get GPU collectives");
   }
 
-  TF_RETURN_IF_ERROR(gpu_collectives->InitializeTopology(
-      {node_id, global_topology.nodes().size(), local_device_states.size(),
-       kv_store, device_to_node, gpu_executable_run_options}));
+  size_t num_processes = global_topology.nodes().size();
+  TF_ASSIGN_OR_RETURN(
+      auto clique_id_callback,
+      gpu_collectives->InitializeTopology({ProcessId(node_id), num_processes,
+                                           local_device_states.size(), kv_store,
+                                           device_to_process}));
+  gpu_executable_run_options->set_clique_id_callback(
+      std::move(clique_id_callback));
 
   TF_ASSIGN_OR_RETURN(GpuTopologyProto gpu_topology,
                       BuildGpuTopology(global_topology));
@@ -1722,14 +1730,15 @@ StreamExecutorGpuDevice::StreamExecutorGpuDevice(
     std::string device_kind, std::string device_vendor,
     std::string compute_capability, int core_count,
     int shared_memory_per_block_optin, int local_device_id, int process_index,
-    int process_index_in_partition, int partition_index)
+    int process_index_in_partition, int partition_index, int numa_node)
     : PjRtStreamExecutorDevice(
           id, std::move(local_device_state), local_device_id, process_index,
           process_index_in_partition, partition_index, std::move(device_kind)),
       device_vendor_(std::move(device_vendor)) {
   StreamExecutorGpuTopologyDescription::SetupDeviceDescription(
       description(), device_vendor_, compute_capability, core_count,
-      static_cast<int64_t>(shared_memory_per_block_optin), partition_index);
+      static_cast<int64_t>(shared_memory_per_block_optin), partition_index,
+      numa_node);
 }
 
 absl::string_view StreamExecutorGpuDevice::device_vendor() const {
@@ -1875,7 +1884,8 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
         ordinal_and_device.first, std::move(ordinal_and_device.second),
         desc.name(), desc.device_vendor(), MakeComputeCapabilityString(&desc),
         desc.core_count(), desc.shared_memory_per_block_optin(),
-        ordinal_and_device.second->local_device_id().value(), node_id);
+        ordinal_and_device.second->local_device_id().value(), node_id,
+        desc.numa_node());
     devices.push_back(std::move(device));
   }
   return devices;

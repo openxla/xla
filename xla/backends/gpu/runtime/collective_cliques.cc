@@ -22,8 +22,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/no_destructor.h"
-#include "absl/base/thread_annotations.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
