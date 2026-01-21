@@ -60,6 +60,7 @@ jobs:
             --shm-size=16G \
             --cap-add=SYS_PTRACE \
             --security-opt=seccomp=unconfined \
+            --tmpfs /root/.cache/bazel:rw,exec,size=100g \
             -v ${{ github.workspace }}:/workspace \
             -v ${{ github.workspace }}/rocAutomation/resources/certificates:/tf/certificates:ro \
             -v ${{ github.workspace }}/rocAutomation/resources/upstream-xla-data/rocm_tag_filters.sh:/workspace/build_tools/rocm/rocm_tag_filters.sh:ro \
