@@ -662,9 +662,6 @@ message DebugOptions {
   // Experimentally disables binary libraries in GPU compiler passes.
   optional bool xla_gpu_experimental_disable_binary_libraries = 329;
 
-  // Experimentally enable rewriting conv as fusion in GPU compiler passes.
-  optional bool xla_gpu_experimental_enable_conv_fusion = 445;
-
   // Dump FDO profiles in a binary format to a separate file.
   optional bool xla_gpu_experimental_dump_fdo_profiles = 338;
 
@@ -689,6 +686,9 @@ message DebugOptions {
   // Enables an experimental feature to record checksums of selected thunk
   // inputs/outputs.
   optional bool xla_gpu_experimental_enable_checksum_tracing_on_thunks = 414;
+
+  // Experimentally enable rewriting conv as fusion in GPU compiler passes.
+  optional bool xla_gpu_experimental_enable_conv_fusion = 445;
 
   // If true, enable autotuning between the native & triton fusion emitters.
   optional bool xla_gpu_experimental_enable_fusion_autotuner = 409;
