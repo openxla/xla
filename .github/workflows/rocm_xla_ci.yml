@@ -45,7 +45,7 @@ jobs:
       - name: Checkout rocAutomation using local creds
         run: |
           rm -rf rocAutomation
-          git clone -b xla-ci-exclusion-list-refactor https://github.com/ROCm/rocAutomation.git rocAutomation
+          git clone -b jenkins-pipelines https://github.com/ROCm/rocAutomation.git rocAutomation
 
       - name: Start Container
         run: |
