@@ -51,6 +51,7 @@ jobs:
         run: |
           docker run -dt \
             --name ${{ env.CONTAINER_NAME }} \
+            --init \
             --network=host \
             --device=/dev/dri \
             --device=/dev/kfd \
@@ -91,4 +92,6 @@ jobs:
 
       - name: Cleanup container
         if: always()
-        run: docker rm -f ${{ env.CONTAINER_NAME }} || true
+        run: |
+           docker stop --time=60 ${{ env.CONTAINER_NAME }} || true
+           docker rm -f ${{ env.CONTAINER_NAME }} || true
