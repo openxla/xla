@@ -167,7 +167,8 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBuffer {
       std::vector<tsl::RCReference<tsl::AsyncValue>> dependencies,
       tsl::RCReference<CommonPjRtRawBuffer> dst_raw_buffer,
       tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
-      tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise);
+      tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
+      ::tsl::AsyncValueRef<bool> allocation_event);
 };
 
 }  // namespace xla
