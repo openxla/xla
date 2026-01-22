@@ -16,9 +16,9 @@ limitations under the License.
 #include "xla/stream_executor/sycl/sycl_blas_lt.h"
 
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
-#include "xla/stream_executor/platform/initialize.h"
 
 namespace stream_executor {
 namespace sycl {
