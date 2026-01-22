@@ -93,7 +93,7 @@ class GpuClique : public Clique {
   // the clique.
   bool peer_access_enabled_;
 
-  // Cancellatio token shared with all communicators in the clique.
+  // Cancellation token shared with all communicators in the clique.
   std::shared_ptr<CancellationToken> cancel_;
 
   // We keep device communicators in a sorted container to guarantee that they
