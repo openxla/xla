@@ -1949,8 +1949,10 @@ TEST_F(DynamicSliceThunkTest,
       CollectiveParams::Create(run_options, /*async_streams=*/{},
                                LocalDeviceId(executor->device_ordinal())));
 
-  se::StreamExecutorAddressAllocator allocator(executor);
-  BufferAllocations allocations({}, 0, &allocator);
+  stream_executor::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations allocations(/*buffers=*/{lhs, rhs, out, workspace},
+                                /*device_ordinal=*/executor->device_ordinal(),
+                                /*memory_allocator=*/&allocator);
 
   CollectiveCliqueRequests clique_requests;
   CollectiveMemoryRequests memory_requests(allocations);

@@ -1578,7 +1578,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     device_proto->set_local_device_ordinal(ordinal_and_device.first);
     device_proto->set_name(desc->name());
     device_proto->set_vendor(desc->device_vendor());
-    auto compute_capability = MakeComputeCapabilityString(desc.get());
+    auto compute_capability = MakeComputeCapabilityAttributeString(*desc);
     device_proto->set_compute_capability(compute_capability);
     device_proto->set_core_count(desc->core_count());
     device_proto->set_shared_memory_per_block_optin(
@@ -1710,19 +1710,6 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   TF_ASSIGN_OR_RETURN(GpuTopologyProto gpu_topology,
                       BuildGpuTopology(global_topology));
   return std::make_pair(std::move(devices), gpu_topology);
-}
-
-std::string MakeComputeCapabilityString(const se::DeviceDescription* desc) {
-  se::GpuComputeCapability cc = desc->gpu_compute_capability();
-  if (cc.IsCuda()) {
-    auto* nvcc = cc.cuda_compute_capability();
-    return absl::StrCat(nvcc->major, ".", nvcc->minor);
-  }
-  if (cc.IsRocm()) {
-    auto* rocmcc = cc.rocm_compute_capability();
-    return rocmcc->gfx_version();
-  }
-  return "unknown";
 }
 
 StreamExecutorGpuDevice::StreamExecutorGpuDevice(
@@ -1882,8 +1869,9 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
         ordinal_and_device.second->executor()->GetDeviceDescription();
     auto device = std::make_unique<StreamExecutorGpuDevice>(
         ordinal_and_device.first, std::move(ordinal_and_device.second),
-        desc.name(), desc.device_vendor(), MakeComputeCapabilityString(&desc),
-        desc.core_count(), desc.shared_memory_per_block_optin(),
+        desc.name(), desc.device_vendor(),
+        MakeComputeCapabilityAttributeString(desc), desc.core_count(),
+        desc.shared_memory_per_block_optin(),
         ordinal_and_device.second->local_device_id().value(), node_id,
         desc.numa_node());
     devices.push_back(std::move(device));
@@ -2038,14 +2026,8 @@ StreamExecutorGpuClient::RunAsync(
 
   std::set<se::DeviceAddressBase> buffers_in_result;
 
-  xla::ShapeTree<tsl::AsyncValueRef<RawSEDeviceMemory>> results(
-      gpu_exec->result_shape());
-
-  for (auto& p : results) {
-    const ShapeIndex& index = p.first;
-    if (!gpu_exec->output_info().contains(index)) {
-      continue;
-    }
+  auto make_result = [&](const ShapeIndex& index)
+      -> absl::StatusOr<tsl::AsyncValueRef<RawSEDeviceMemory>> {
     const gpu::GpuExecutable::OutputInfo& output_info =
         gpu_exec->output_info().at(index);
     const BufferAllocation* allocation =
@@ -2073,9 +2055,8 @@ StreamExecutorGpuClient::RunAsync(
         // donate a buffer; the aliasing information describes which buffers
         // may alias, not buffers that must alias.
         buffers_in_result.insert(input.buf->mem());
-        p.second = input.buf;
         input.is_donated = false;
-        continue;
+        return input.buf;
       } else if (!output_info.passthrough &&
                  !ShapeUtil::GetSubshape(gpu_exec->result_shape(), index)
                       .IsTuple()) {
@@ -2113,11 +2094,24 @@ StreamExecutorGpuClient::RunAsync(
     }
     buffers_in_result.insert(result_buffer);
 
-    p.second = RawSEDeviceMemory::Create(
+    return RawSEDeviceMemory::Create(
         result_buffer,
         tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
             ->local_device_state(),
         memory_allocator);
+  };
+
+  std::vector<tsl::AsyncValueRef<RawSEDeviceMemory>> results;
+  if (gpu_exec->result_shape().IsTuple()) {
+    int tuple_count = gpu_exec->result_shape().tuple_shapes().size();
+    results.reserve(tuple_count);
+    for (int i = 0; i < tuple_count; ++i) {
+      TF_ASSIGN_OR_RETURN(auto arr, make_result({i}));
+      results.push_back(std::move(arr));
+    }
+  } else {
+    TF_ASSIGN_OR_RETURN(auto arr, make_result({}));
+    results.push_back(std::move(arr));
   }
 
   TF_RETURN_IF_ERROR(gpu_exec->ExecuteThunks(buffer_allocations, run_options));
