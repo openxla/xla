@@ -411,10 +411,12 @@ void PjRtStreamExecutorRawBuffer::CopyTo(
     tsl::RCReference<PjRtDeviceEventPromise> definition_event_promise,
     tsl::RCReference<PjRtDeviceEventPromise> src_usage_event_promise,
     ::tsl::AsyncValueRef<bool> allocation_event) {
-  if (allocation_event) {
+  bool is_intra_client =
+      dst_raw_buffer->memory_space()->client() == memory_space()->client();
+  if (!is_intra_client && allocation_event) {
     allocation_event.SetStateConcrete();
   }
-  if (dst_raw_buffer->memory_space()->client() == memory_space()->client()) {
+  if (is_intra_client) {
     IntraClientCopyToWithDependencies(
         /*dependencies=*/{}, std::move(dst_raw_buffer),
         std::move(definition_event_promise), std::move(src_usage_event_promise),
@@ -592,6 +594,10 @@ void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
           return;
         }
 
+        if (allocation_event) {
+          allocation_event.SetStateConcrete();
+        }
+
         auto dst_buffer =
             tensorflow::down_cast<const PjRtStreamExecutorRawBuffer*>(
                 dst_raw_buffer.get())
@@ -603,18 +609,12 @@ void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
                                         dst_buffer_mem.size());
         if (!status.ok()) {
           client->SetEventAsError(usage_event, status);
-          if (allocation_event) {
-            allocation_event.SetError(status);
-          }
           return;
         }
 
         client->ThenRecordEvent(usage_event, local_device,
                                 std::move(event_or).value(), stream);
         usage_event.AndThen([src_buffer, dst_buffer]() {});
-        if (allocation_event) {
-          allocation_event.SetStateConcrete();
-        }
       });
 
   definition_event_promise->Set(
