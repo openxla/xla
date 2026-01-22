@@ -23,7 +23,7 @@ namespace xla::gpu {
 // Cancellation token shared between all communicators in a GPU clique and
 // allows coordinated cancellation of all of them in presence of communication
 // errors. When one communicator in a clique fails, all communicators in the
-// same clique are safely cancelled.
+// same clique are safely cancelled. This class is thread safe.
 //
 // See JAX details: https://docs.jax.dev/en/latest/fault_tolerance.html
 class CancellationToken {

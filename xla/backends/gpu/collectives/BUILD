@@ -481,6 +481,7 @@ cc_library(
     ],
     visibility = ["//visibility:private"],
     deps = [
+        ":cancellation_token",
         ":gpu_collectives",
         ":gpu_communicator",
         ":nccl_errors",

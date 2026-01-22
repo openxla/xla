@@ -70,9 +70,9 @@ class GpuClique : public Clique {
 
   // Cancels all communicators in the clique.
   //
-  // Cancellation signals all communicators in the clique that it they will be
-  // aborted next, and that the should gracefully cancel all pending collective
-  // operations and do not start any new one.
+  // Cancellation signals all communicators in the clique that they will be
+  // aborted next, and that they should gracefully cancel all pending collective
+  // operations and not start any new ones.
   void Cancel();
 
   // Returns true if the clique was cancelled.
