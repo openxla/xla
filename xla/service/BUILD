@@ -538,6 +538,7 @@ cc_library(
     srcs = ["dump.cc"],
     hdrs = ["dump.h"],
     deps = [
+        ":dump_options",
         ":hlo_graph_dumper",
         ":hlo_proto_cc",
         ":hlo_proto_util",
@@ -569,6 +570,8 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Transforms",
+        "@riegeli//riegeli/bytes:fd_writer",
+        "@riegeli//riegeli/bytes:writer",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
@@ -579,6 +582,61 @@ cc_library(
     ]),
 )
 
+cc_library(
+    name = "dump_options",
+    srcs = ["dump_options.cc"],
+    hdrs = ["dump_options.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla:xla_proto_cc",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:regexp",
+    ],
+)
+
+cc_library(
+    name = "riegeli_dump_writer",
+    srcs = ["riegeli_dump_writer.cc"],
+    hdrs = ["riegeli_dump_writer.h"],
+    deps = [
+        ":dump",
+        ":dump_options",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@riegeli//riegeli/bytes:fd_writer",
+        "@riegeli//riegeli/bytes:writer",
+        "@tsl//tsl/platform:path",
+    ],
+)
+
+xla_cc_test(
+    name = "riegeli_dump_writer_test",
+    srcs = ["riegeli_dump_writer_test.cc"],
+    deps = [
+        ":hlo_module_config",
+        ":riegeli_dump_writer",
+        "//xla:debug_options_flags",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/testing:temporary_directory",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:path",
+    ],
+)
+
 xla_cc_test(
     name = "dump_test",
     srcs = ["dump_test.cc"],
@@ -586,9 +644,12 @@ xla_cc_test(
     stamp = 1,
     deps = [
         ":buffer_assignment",
+        ":buffer_value",
         ":dump",
         ":hlo_module_config",
+        ":logical_buffer",
         "//xla:debug_options_flags",
+        "//xla:shape_util",
         "//xla:xla_proto_cc",
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_ordering",
@@ -608,7 +669,6 @@ xla_cc_test(
         "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -959,7 +1019,6 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:parse_text_proto",
         "//xla/tsl/util/proto:proto_matchers",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
@@ -1090,6 +1149,7 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/stream_executor/rocm:rocm_platform_id",
+        "//xla/stream_executor/sycl:sycl_platform_id",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
@@ -1097,6 +1157,21 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_cc_test(
+    name = "platform_util_test",
+    srcs = ["platform_util_test.cc"],
+    deps = [
+        ":platform_util",
+        "//xla/stream_executor/cuda:cuda_platform_id",
+        "//xla/stream_executor/host:host_platform_id",
+        "//xla/stream_executor/rocm:rocm_platform_id",
+        "//xla/stream_executor/sycl:sycl_platform_id",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -1893,20 +1968,6 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
-    name = "hlo_module_group_test",
-    srcs = ["hlo_module_group_test.cc"],
-    deps = [
-        ":hlo_proto_cc",
-        "//xla/hlo/ir:hlo_module_group",
-        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
-        "//xla/hlo/testlib:test",
-        "//xla/hlo/utils:hlo_matchers",
-        "//xla/tests:xla_internal_test_main",
-        "//xla/tsl/lib/core:status_test_util",
-    ],
-)
-
 cc_library(
     name = "hlo_module_util",
     srcs = ["hlo_module_util.cc"],
@@ -2235,6 +2296,38 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "scan_expander",
+    srcs = ["scan_expander.cc"],
+    hdrs = ["scan_expander.h"],
+    deps = [
+        ":call_inliner",
+        "//xla:comparison_util",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/transforms/expanders:op_expander_pass",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_cc_test(
+    name = "scan_expander_test",
+    srcs = ["scan_expander_test.cc"],
+    deps = [
+        ":hlo_module_config",
+        ":scan_expander",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:test",
+        "//xla/tests:xla_internal_test_main",
     ],
 )
 
@@ -3082,6 +3175,7 @@ cc_library(
     ],
 )
 
+# TODO(b/475838852): Re-enable once fixed.
 xla_test(
     name = "dynamic_padder_test",
     srcs = ["dynamic_padder_test.cc"],
@@ -3794,7 +3888,6 @@ cc_library(
     deps = [
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/ir:hlo_module_group",
         "//xla/hlo/pass:hlo_pass",
         "//xla/tsl/platform:errors",
         "@com_google_absl//absl/container:flat_hash_set",

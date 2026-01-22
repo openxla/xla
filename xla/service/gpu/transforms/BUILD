@@ -9,7 +9,7 @@ load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_oss")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
-    "tf_gpu_tests_tags",
+    "tf_cuda_tests_tags",
 )
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
@@ -1847,7 +1847,7 @@ lit_test_suite(
     ),
     cfg = "//xla:lit.cfg.py",
     data = ["//xla/backends/gpu/target_config:all_gpu_specs"],
-    default_tags = tf_gpu_tests_tags(),
+    default_tags = ["cuda-only"] + tf_cuda_tests_tags(),
     tools = [
         "//xla/tools:hlo-opt",
         "@llvm-project//llvm:FileCheck",
@@ -2752,11 +2752,11 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:hlo_runner_interface",
         "//xla/service:pattern_matcher",
-        "//xla/service:platform_util",
         "//xla/service/gpu:cublas_cudnn",
         "//xla/service/gpu:gpu_device_info_for_tests",
-        "//xla/stream_executor:platform",
+        "//xla/stream_executor:device_description",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
         "//xla/tests:hlo_pjrt_test_base",
         "//xla/tsl/platform:statusor",

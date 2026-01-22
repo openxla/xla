@@ -229,9 +229,10 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
 absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     const HloModule* hlo_module, llvm::LLVMContext* llvm_context,
     const std::string& target_triple, const std::string& data_layout,
-    const se::Platform* platform, const se::DeviceDescription& device_desc,
+    se::Platform::Id platform_id, const se::DeviceDescription& device_desc,
     const GpuAliasInfo* alias_info,
     BufferValue::SizeFunction buffer_size_bytes_function,
+    llvm_ir::LLVMCommandLineOptionsReleasableLock& llvm_options_lock,
     bool split_constants_module) {
   tsl::profiler::TraceMe traceme("CompileModuleToLlvmIr");
   const bool use_cache =
@@ -258,10 +259,10 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   std::unique_ptr<mlir::MLIRContext> mlir_context = CreateMlirContext();
   IrEmitterContext ir_emitter_context(
       hlo_module, results.buffer_assignment.get(),
-      results.execution_stream_assignment.get(), platform->Name(), device_desc,
-      mlir_context.get(), llvm_context, /*emit_kernels=*/true,
+      results.execution_stream_assignment.get(), platform_id->ToName(),
+      device_desc, mlir_context.get(), llvm_context, /*emit_kernels=*/true,
       llvm::Triple(target_triple), data_layout);
-  ThunkEmitter thunk_emitter(&ir_emitter_context);
+  ThunkEmitter thunk_emitter(&ir_emitter_context, &llvm_options_lock);
 
   const DebugOptions& options = hlo_module->config().debug_options();
   ScopedAnnotation annotation(Phase("XlaEmitLlvmIr", hlo_module));
@@ -292,7 +293,7 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     results.llvm_module_constants = thunk_emitter.ConsumeConstantsModule();
   }
 
-  RemoveUnusedAndUninitializedGlobals(platform->id(), options,
+  RemoveUnusedAndUninitializedGlobals(platform_id, options,
                                       split_constants_module
                                           ? results.llvm_module_constants.get()
                                           : results.llvm_module.get(),

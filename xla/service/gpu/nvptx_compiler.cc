@@ -70,7 +70,6 @@ limitations under the License.
 #include "xla/service/float_support.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/autotuning/autotuner_pass.h"
-#include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -323,25 +322,6 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
   return absl::OkStatus();
 }
 
-// Linearize collective schedule under if online autotuning of convolutions is
-// enabled.
-bool NVPTXCompiler::RequiresCollectiveScheduleLinearizer(
-    const HloModule* module, se::StreamExecutor* stream_exec) {
-  if (stream_exec == nullptr ||
-      module->config().debug_options().xla_gpu_autotune_level() == 0) {
-    return false;
-  }
-  for (const HloComputation* comp : module->MakeNonfusionComputations()) {
-    for (const HloInstruction* inst : comp->instructions()) {
-      if (IsCustomCallToDnnConvolution(*inst)) {
-        return true;
-      }
-    }
-  }
-  // No convolution auto-tuning candidates found in the module.
-  return false;
-}
-
 absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
 NVPTXCompiler::GetCodegenBackends(
     se::StreamExecutor* stream_exec,
@@ -426,10 +406,7 @@ NVPTXCompiler::GetCodegenBackends(
 
 namespace {
 
-// Returns true if the instruction is a fusion that would go through the native
-// emitter, but may benefit from going through the block-level emitter.
-// Currently, we only do this for reductions and transposes.
-bool ShouldAutotuneBetweenFusionEmitters(const HloInstruction& instruction) {
+bool ShouldAutotuneBetweenFusionEmittersAny(const HloInstruction& instruction) {
   if (instruction.opcode() != HloOpcode::kFusion) {
     return false;
   }
@@ -445,6 +422,15 @@ bool ShouldAutotuneBetweenFusionEmitters(const HloInstruction& instruction) {
                      HloPredicateIsOp<HloOpcode::kScatter>)) {
     return false;
   }
+  return true;
+}
+
+// Returns true if the instruction is a fusion that would go through the native
+// emitter, but may benefit from going through the block-level emitter.
+// Currently, we only do this for reductions and transposes.
+bool ShouldAutotuneBetweenFusionEmitters(const HloInstruction& instruction) {
+  if (!ShouldAutotuneBetweenFusionEmittersAny(instruction)) return false;
+  auto fusion = Cast<const HloFusionInstruction>(&instruction);
   return absl::c_any_of(
       fusion->fused_instructions_computation()->instructions(),
       HloPredicateIsOp<HloOpcode::kReduce, HloOpcode::kTranspose>);
@@ -477,14 +463,18 @@ absl::Status NVPTXCompiler::AddFusionAutotuningPass(
       /*use_default_config=*/true);
   backends.push_back(std::move(ble_backend));
 
+  auto should_autotune =
+      debug_options.xla_gpu_experimental_all_fusions_with_triton()
+          ? ShouldAutotuneBetweenFusionEmittersAny
+          : ShouldAutotuneBetweenFusionEmitters;
+
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<AutotunerPass> autotuner_pass,
-      AutotunerPass::Create(std::move(backends), debug_options, stream_executor,
-                            thread_pool, ShouldAutotuneBetweenFusionEmitters,
-                            target_config, options.device_allocator,
-                            /*optimize_scratch_bytes=*/false,
-                            MultiProcessKeyValueStore(),
-                            /*allow_reg_spills=*/true));
+      AutotunerPass::Create(
+          std::move(backends), debug_options, stream_executor, thread_pool,
+          should_autotune, target_config, options.device_allocator,
+          /*optimize_scratch_bytes=*/false, MultiProcessKeyValueStore(),
+          /*allow_reg_spills=*/true));
   pipeline->AddPass(std::move(autotuner_pass));
   return absl::OkStatus();
 }

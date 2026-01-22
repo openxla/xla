@@ -55,10 +55,12 @@ limitations under the License.
 #include "xla/service/computation_placer.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu_topology.h"
+#include "xla/service/gpu_topology.pb.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -103,9 +105,6 @@ absl::StatusOr<std::unique_ptr<TfrtGpuBuffer>> AllocateTfrtGpuDestinationBuffer(
     const Shape& on_host_shape, tsl::AsyncValueRef<GpuEvent> definition_event,
     TfrtGpuDevice* device, TfrtGpuClient* client, PjRtMemorySpace* memory_space,
     int64_t pack_size = 0);
-
-std::string MakeComputeCapabilityString(
-    const stream_executor::DeviceDescription* desc);
 
 bool IsAllZeros(const DeviceAssignment& assignment);
 

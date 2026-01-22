@@ -43,6 +43,24 @@ limitations under the License.
 
 namespace xla {
 
+std::optional<IotaReplicaGroupList>
+CollectiveDeviceListBase::MaybeConvertToIotaReplicaGroupList() const {
+  switch (version()) {
+    case CollectiveDeviceListVersion::kIota:
+      if (typeid(*this) == typeid(IotaReplicaGroupList)) {
+        return static_cast<const IotaReplicaGroupList&>(*this);
+      }
+      return static_cast<const CollectiveDeviceList&>(*this)
+          .iota_replica_group_list();
+    case CollectiveDeviceListVersion::kMeshAxes:
+      return static_cast<const MeshAxesReplicaGroupList&>(*this)
+          .ToIotaReplicaGroupList();
+    case CollectiveDeviceListVersion::kListOfLists:
+    default:
+      return std::nullopt;
+  }
+}
+
 std::string ReplicaGroupsToString(
     absl::Span<const ReplicaGroup> replica_groups) {
   std::vector<std::string> replica_group_str;
@@ -294,7 +312,6 @@ IotaReplicaGroupList MeshAxesReplicaGroupList::ToIotaReplicaGroupList() const {
   CHECK(mesh_.device_assignment().iota().has_value());
   std::vector<int64_t> reshape_dims, reindexed_grouped_axes;
   std::tie(reshape_dims, reindexed_grouped_axes) = ComputeReindexedAxes();
-
   std::vector<int> transpose_perm;
   for (int64_t reshape_dim = 0; reshape_dim < reshape_dims.size();
        ++reshape_dim) {
@@ -306,8 +323,11 @@ IotaReplicaGroupList MeshAxesReplicaGroupList::ToIotaReplicaGroupList() const {
     transpose_perm.push_back(grouped_axis);
   }
 
+  TileAssignment ta =
+      mesh_.device_assignment().Reshape(reshape_dims).Transpose(transpose_perm);
+  CHECK(ta.iota().has_value());
   return IotaReplicaGroupList(num_replica_groups(), num_devices_per_group(),
-                              reshape_dims, transpose_perm);
+                              *ta.iota());
 }
 
 CollectiveDeviceList MeshAxesReplicaGroupList::ToCollectiveDeviceList() const {

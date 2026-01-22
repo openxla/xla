@@ -70,6 +70,7 @@ cc_library(
     hdrs = ["event_loop.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
@@ -231,7 +232,6 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",

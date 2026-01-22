@@ -106,6 +106,7 @@ cc_library(
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/runtime:device_id",
+        "//xla/runtime:process_id",
         "//xla/service:buffer_assignment",
         "//xla/service:compiler",
         "//xla/service:computation_placer_hdr",
@@ -162,6 +163,7 @@ cc_library(
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:fingerprint",
+        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
@@ -641,6 +643,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 
