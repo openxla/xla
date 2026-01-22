@@ -239,14 +239,7 @@ ConvolutionMatch MatchBackwardFilter(HloInstruction* conv) {
   // Step 2: match paddings and dimension numbers of the forward convolution.
   const ConvolutionDimensionNumbers& conv_dnums =
       conv->convolution_dimension_numbers();
-  auto input_batch_dim = conv_dnums.input_batch_dimension();
-  auto input_feature_dim = conv_dnums.input_feature_dimension();
-  auto input_spatial_dims = conv_dnums.input_spatial_dimensions();
-  auto kernel_input_feature_dim = conv_dnums.kernel_input_feature_dimension();
-  auto kernel_output_feature_dim = conv_dnums.kernel_output_feature_dimension();
   auto kernel_spatial_dims = conv_dnums.kernel_spatial_dimensions();
-  auto output_batch_dim = conv_dnums.output_batch_dimension();
-  auto output_feature_dim = conv_dnums.output_feature_dimension();
   auto output_spatial_dims = conv_dnums.output_spatial_dimensions();
   for (const WindowDimension& window_dim : conv->window().dimensions()) {
     if (window_dim.stride() != 1) {
@@ -536,9 +529,8 @@ absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv,
                                       const se::dnn::VersionInfo& dnn_version) {
   CHECK_EQ(conv->opcode(), HloOpcode::kConvolution);
   std::vector<HloInstruction*> fusion_outputs;
-  TF_ASSIGN_OR_RETURN(
-      HloInstruction * conv_with_kind,
-      AssignConvKind(conv, cc, dnn_version, fusion_outputs));
+  TF_ASSIGN_OR_RETURN(HloInstruction * conv_with_kind,
+                      AssignConvKind(conv, cc, dnn_version, fusion_outputs));
   if (conv == nullptr) {
     return false;
   }

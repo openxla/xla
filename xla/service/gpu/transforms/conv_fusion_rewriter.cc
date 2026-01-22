@@ -342,8 +342,7 @@ HloInstruction* CreateGpuConvFusion(
       roots.push_back(it->second);
       shapes.push_back(output->shape());
     }
-    HloInstruction* tuple =
-        builder.AddInstruction(HloInstruction::CreateTuple(roots));
+    builder.AddInstruction(HloInstruction::CreateTuple(roots));
     root_shape = ShapeUtil::MakeTupleShape(shapes);
   }
   HloComputation* new_computation =
@@ -357,8 +356,7 @@ HloInstruction* CreateGpuConvFusion(
 // Helper function to create a fusion instruction to replace the given
 // conv instruction
 static absl::StatusOr<HloInstruction*> CreateConvFusionHelper(
-    HloInstruction* conv,
-    std::vector<HloInstruction*>& fusion_outputs) {
+    HloInstruction* conv, std::vector<HloInstruction*>& fusion_outputs) {
   CHECK(DynCast<HloConvolutionInstruction>(conv)->conv_kind() !=
         ConvKind::UNSET)
       << "conv-kind-assignment pass should run before this pass.";
@@ -378,9 +376,8 @@ static absl::StatusOr<HloInstruction*> CreateConvFusionHelper(
 absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv) {
   CHECK_EQ(conv->opcode(), HloOpcode::kConvolution);
   std::vector<HloInstruction*> fusion_outputs;
-  TF_ASSIGN_OR_RETURN(
-      HloInstruction * conv_fusion,
-      CreateConvFusionHelper(conv, fusion_outputs));
+  TF_ASSIGN_OR_RETURN(HloInstruction * conv_fusion,
+                      CreateConvFusionHelper(conv, fusion_outputs));
   if (conv_fusion == nullptr) {
     return false;
   }
@@ -427,9 +424,7 @@ absl::StatusOr<bool> ConvFusionRewriter::RunImpl(
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
-    TF_ASSIGN_OR_RETURN(
-        bool result,
-        RunOnComputation(computation));
+    TF_ASSIGN_OR_RETURN(bool result, RunOnComputation(computation));
     changed |= result;
   }
   XLA_VLOG_LINES(2, "ConvFusionRewriter::Run(), after:\n" + module->ToString());

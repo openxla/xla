@@ -15,11 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/transforms/conv_kind_assignment.h"
 
-#include <gtest/gtest.h>
-
 #include <optional>
 #include <string>
 
+#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
