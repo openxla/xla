@@ -33,7 +33,7 @@ namespace gpu {
 
 class ConvFusionRewriter : public HloModulePass {
  public:
-  explicit ConvFusionRewriter() {};
+  explicit ConvFusionRewriter(){};
 
   absl::string_view name() const override { return "conv-fusion-rewriter"; }
 

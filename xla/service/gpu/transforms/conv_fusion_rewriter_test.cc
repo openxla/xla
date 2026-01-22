@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/transforms/conv_fusion_rewriter.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <array>
 #include <initializer_list>
 #include <memory>
@@ -25,13 +22,14 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
-#include "tsl/platform/statusor.h"
 #include "xla/comparison_util.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -61,6 +59,7 @@ limitations under the License.
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -150,7 +149,6 @@ class ConvFusionRewriterTest : public GpuCodegenTest {
     debug_opts.set_xla_gpu_use_runtime_fusion(true);
     debug_opts.set_xla_gpu_experimental_enable_conv_fusion(true);
     config.set_debug_options(debug_opts);
-
 
     auto result = backend().compiler()->RunHloPasses(
         ParseAndReturnVerifiedModule(hlo_string, config).value(),
