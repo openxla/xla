@@ -1163,7 +1163,7 @@ absl::Status GpuExecutable::ExecuteThunks(
   ModuleIdentifier unique_id = has_module() ? module().unique_id() : -1;
   Thunk::ExecutableSource executable_source = {text_, binary_,
                                                dnn_compiled_graphs_};
-  bool collective_use_minimal_resource = true;
+  bool collective_use_minimal_resource = false;
   if (has_module()) {
     ASSIGN_OR_RETURN(collective_use_minimal_resource,
                      ShouldCollectiveUseMinimalResource(module()));
