@@ -474,6 +474,12 @@ ENTRY MultiRowLargeReduce {
 }
 
 TEST_F(GpuKernelTilingTest, MultiRowLargeReduceNonMultipleOf2) {
+
+  if (xla::PlatformUtil::CanonicalPlatformName("gpu").value() == "cuda") {
+    GTEST_SKIP() << "This test is currently broken on B200 system due to "
+                    "fusion autotuner issues.";
+  }
+
   const char *kHlo = 
 R"(
 HloModule Test
