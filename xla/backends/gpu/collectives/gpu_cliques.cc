@@ -385,7 +385,6 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
     // cancellation token between multiple racing clique initializations, but
     // this is ok, as they use the same set of devices and share a fate.
     std::shared_ptr<CancellationToken> cancel = nullptr;
-
     {
       VLOG(3) << absl::StrFormat(
           "[%s] [ranks=%s] Checking clique %v for staleness",

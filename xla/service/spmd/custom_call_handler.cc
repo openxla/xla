@@ -132,7 +132,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallTopK(
         partitioned_input.state().b);
     std::vector<int64_t> reshape_dimensions(sharding.dimensions().begin(),
                                             sharding.dimensions().end());
-    reshape_dimensions.push_back(reshape_dimensions.back());
+    reshape_dimensions.push_back(reshape_dimensions[sort_dim]);
     reshape_dimensions[sort_dim] = 1;
     auto reshape_tile_assignment =
         sharding.tile_assignment().Reshape(reshape_dimensions);
@@ -315,7 +315,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_RotateRight(
       }
       if (shard_distance != 0) {
         std::vector<std::pair<int64_t, int64_t>> pairs;
-        hlo->sharding().tile_assignment().Each(
+        hlo->sharding().EachTile(
             [&](absl::Span<const int64_t> indices, int64_t device) {
               if (indices[dim] >= participating_shards) {
                 return;

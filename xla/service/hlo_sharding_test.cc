@@ -159,36 +159,106 @@ TEST_F(HloShardingTest, IotaProtoRoundTrip) {
   EXPECT_THAT(sharding.ToProto(), EqualsProto(proto));
 }
 
-TEST_F(HloShardingTest, Tile) {
-  {
-    // Test should fail because of a duplicate tile assignment.
-    HloSharding sharding =
-        HloSharding::Tile(Array<int64_t>({2, 2}, {0, 0, 2, 3}));
-    EXPECT_IS_NOT_OK(sharding.Validate(ShapeUtil::MakeShape(F32, {4, 6}),
-                                       /*num_devices=*/4));
-  }
+TEST_F(HloShardingTest, NamedShardingTupleProtoRoundTrip) {
+  auto proto = ParseTextProtoOrDie<OpSharding>(R"pb(
+    type: TUPLE
+    tuple_shardings {
+      named_sharding {
+        mesh {
+          axes { name: "a" size: 2 }
+          axes { name: "b" size: 4 }
+        }
+        dim_shardings {
+          axes {
+            mesh_axis_index: 0
+            sub_axis_info { pre_size: 1 size: 2 }
+          }
+          is_closed: true
+        }
+        dim_shardings {
+          axes { mesh_axis_index: 1 }
+          is_closed: false
+        }
+      }
+    }
+    tuple_shardings {
+      named_sharding {
+        mesh {
+          axes { name: "a" size: 2 }
+          axes { name: "b" size: 4 }
+        }
+        dim_shardings {
+          axes {
+            mesh_axis_index: 0
+            sub_axis_info { pre_size: 2 size: 2 }
+          }
+          is_closed: true
+        }
+        dim_shardings {
+          axes { mesh_axis_index: 1 }
+          is_closed: false
+        }
+      }
+    }
+  )pb");
 
+  HloSharding sharding = HloSharding::FromProto(proto).value();
+
+  EXPECT_THAT(sharding.ToProto(), EqualsProto(proto));
+}
+
+using TileTest = HloShardingTest;
+TEST_F(TileTest, FailsWithDuplicateDeviceInTileAssignment) {
+  HloSharding sharding =
+      HloSharding::Tile(Array<int64_t>({2, 2}, {0, 0, 2, 3}));
+  EXPECT_IS_NOT_OK(sharding.Validate(ShapeUtil::MakeShape(F32, {4, 6}),
+                                     /*num_devices=*/4));
+  // No need to test NamedSharding here as constructing Mesh with duplicate
+  // device ids is not valid.
+}
+
+TEST_F(TileTest, FailsWhenDeviceUsedGreaterThanNumDevices) {
+  HloSharding sharding =
+      HloSharding::Tile(Array<int64_t>({2, 2}, {0, 1, 2, 3}));
+  EXPECT_IS_NOT_OK(sharding.Validate(ShapeUtil::MakeShape(U32, {4, 6}),
+                                     /*num_devices=*/2));
   {
-    // Test should fail because of more devices used than `num_device`.
-    HloSharding sharding =
-        HloSharding::Tile(Array<int64_t>({2, 2}, {0, 1, 2, 3}));
-    EXPECT_IS_NOT_OK(sharding.Validate(ShapeUtil::MakeShape(U32, {4, 6}),
+    Mesh mesh({2, 2}, {"x", "y"});
+    NamedSharding named_sharding =
+        test_utils::FromAxisNames(mesh, {{"x"}, {"y"}});
+    HloSharding sharding(named_sharding);
+
+    EXPECT_IS_NOT_OK(sharding.Validate(ShapeUtil::MakeShape(F32, {4, 6}),
                                        /*num_devices=*/2));
   }
+}
 
+TEST_F(TileTest, FailsWhenNotAllDevicesArePresentInTileAssignment) {
+  HloSharding sharding =
+      HloSharding::Tile(Array<int64_t>({2, 2}, {0, 1, 2, 3}));
+  EXPECT_IS_NOT_OK(sharding.Validate(ShapeUtil::MakeShape(U32, {4, 6}),
+                                     /*num_devices=*/5));
   {
-    // Test should fail because not all devices present in tile assignment.
-    HloSharding sharding =
-        HloSharding::Tile(Array<int64_t>({2, 2}, {0, 1, 2, 3}));
-    EXPECT_IS_NOT_OK(sharding.Validate(ShapeUtil::MakeShape(U32, {4, 6}),
+    Mesh mesh({2, 2}, {"x", "y"});
+    NamedSharding named_sharding =
+        test_utils::FromAxisNames(mesh, {{"x"}, {"y"}});
+    HloSharding sharding(named_sharding);
+
+    EXPECT_IS_NOT_OK(sharding.Validate(ShapeUtil::MakeShape(F32, {4, 6}),
                                        /*num_devices=*/5));
   }
+}
 
-  {
-    // Test should pass.
-    Shape shape = ShapeUtil::MakeShape(U32, {4, 5});
-    HloSharding sharding =
-        HloSharding::Tile(Array<int64_t>({2, 2}, {0, 3, 2, 1}));
+TEST_F(TileTest, PassesValidationAndMatchesTileInfo) {
+  Shape shape = ShapeUtil::MakeShape(U32, {4, 5});
+  HloSharding sharding =
+      HloSharding::Tile(Array<int64_t>({2, 2}, {0, 3, 2, 1}));
+  EXPECT_IS_OK(sharding.Validate(ShapeUtil::MakeShape(F32, {3, 5}),
+                                 /*num_devices=*/4));
+  Mesh mesh(Array<int64_t>({2, 2}, {0, 3, 2, 1}), {"x", "y"});
+  HloSharding named_sharding(test_utils::FromAxisNames(mesh, {{"x"}, {"y"}}));
+
+  for (const HloSharding& sharding : {sharding, named_sharding}) {
     EXPECT_IS_OK(sharding.Validate(ShapeUtil::MakeShape(F32, {3, 5}),
                                    /*num_devices=*/4));
 
@@ -235,6 +305,78 @@ TEST_F(HloShardingTest, Tile) {
   }
 }
 
+struct HloShardingComparisonTestParam {
+  // Shardings to compare.
+  HloSharding sharding1;
+  HloSharding sharding2;
+  // Shape to apply the shardings on.
+  Shape shape;
+  // If both shardings should compare equal.
+  bool is_equivalent;
+};
+
+class HloShardingComparisonTest
+    : public HloShardingTest,
+      public ::testing::WithParamInterface<HloShardingComparisonTestParam> {};
+
+TEST_P(HloShardingComparisonTest, TileEquivalence) {
+  const HloSharding& sharding1 = GetParam().sharding1;
+  const HloSharding& sharding2 = GetParam().sharding2;
+  const Shape& shape = GetParam().shape;
+  const bool is_equivalent = GetParam().is_equivalent;
+  const int num_devices = sharding1.num_devices();
+
+  EXPECT_IS_OK(sharding1.Validate(shape, num_devices));
+  EXPECT_IS_OK(sharding2.Validate(shape, num_devices));
+
+  auto get_tile_info = [&](const HloSharding& sharding, int64_t device) {
+    return std::make_tuple(sharding.TileIndexForDevice(device),
+                           sharding.TileOffsetForDevice(shape, device),
+                           sharding.TileLimitForDevice(shape, device),
+                           sharding.TileShape(shape, device));
+  };
+
+  bool tiles_equivalent = true;
+  for (int i = 0; i < num_devices; ++i) {
+    if (get_tile_info(sharding1, i) != get_tile_info(sharding2, i)) {
+      tiles_equivalent = false;
+      break;
+    }
+  }
+  EXPECT_EQ(tiles_equivalent, is_equivalent)
+      << sharding1 << " vs " << sharding2;
+}
+
+INSTANTIATE_TEST_SUITE_P(TileEquivalence, HloShardingComparisonTest, [] {
+  const Mesh mesh_a2b2({2, 2}, {"a", "b"});
+  const Mesh mesh_a2b3({2, 3}, {"a", "b"});
+  return ::testing::Values(
+      HloShardingComparisonTestParam{
+          HloSharding::IotaTile({2, 2}),
+          HloSharding(test_utils::FromAxisNames(mesh_a2b2, {{"a"}, {"b"}})),
+          ShapeUtil::MakeShape(U32, {2, 3}), true},
+      HloShardingComparisonTestParam{
+          HloSharding::IotaTile({2, 2}),
+          HloSharding(test_utils::FromAxisNames(mesh_a2b2, {{"b"}, {"a"}})),
+          ShapeUtil::MakeShape(U32, {2, 3}), false},
+      HloShardingComparisonTestParam{
+          HloSharding::IotaTile({2, 2}, {2, 2}, {1, 0}),
+          HloSharding(test_utils::FromAxisNames(mesh_a2b2, {{"b"}, {"a"}})),
+          ShapeUtil::MakeShape(U32, {2, 3}), true},
+      HloShardingComparisonTestParam{
+          HloSharding::IotaTile({6}),
+          HloSharding(test_utils::FromAxisNames(mesh_a2b3, {{"a", "b"}})),
+          ShapeUtil::MakeShape(U32, {13}), true},
+      HloShardingComparisonTestParam{
+          HloSharding::IotaTile({6}),
+          HloSharding(test_utils::FromAxisNames(mesh_a2b3, {{"b", "a"}})),
+          ShapeUtil::MakeShape(U32, {13}), false},
+      HloShardingComparisonTestParam{
+          HloSharding::IotaTile({6}, {2, 3}, {1, 0}),
+          HloSharding(test_utils::FromAxisNames(mesh_a2b3, {{"b", "a"}})),
+          ShapeUtil::MakeShape(U32, {13}), true});
+}());
+
 TEST_F(HloShardingTest, EachTile) {
   auto validate = [](const Shape& shape,
                      const HloSharding& sharding) -> absl::Status {
@@ -254,12 +396,28 @@ TEST_F(HloShardingTest, EachTile) {
     HloSharding sharding = HloSharding::Tile(TileAssignment({6, 1}));
     Shape shape = ShapeUtil::MakeShape(U32, {12, 20});
     TF_EXPECT_OK(validate(shape, sharding));
+
+    {
+      Mesh mesh({6}, {"x"});
+      NamedSharding named_sharding =
+          test_utils::FromAxisNames(mesh, {{"x"}, {}});
+
+      TF_EXPECT_OK(validate(shape, HloSharding(named_sharding)));
+    }
   }
   {
     // 6-way sharded along axis 0, 1-way sharded along axis 1.
     HloSharding sharding = HloSharding::Tile(TileAssignment({6, 1}));
     Shape shape = ShapeUtil::MakeShape(U32, {11, 20});
     TF_EXPECT_OK(validate(shape, sharding));
+
+    {
+      Mesh mesh({6}, {"x"});
+      NamedSharding named_sharding =
+          test_utils::FromAxisNames(mesh, {{"x"}, {}});
+
+      TF_EXPECT_OK(validate(shape, HloSharding(named_sharding)));
+    }
   }
   {
     // 2-way sharded along axis 0, 1-way sharded along axis 1, each shard
@@ -267,6 +425,14 @@ TEST_F(HloShardingTest, EachTile) {
     HloSharding sharding = HloSharding::PartialTile(TileAssignment({2, 1, 3}));
     Shape shape = ShapeUtil::MakeShape(U32, {10, 20});
     TF_EXPECT_OK(validate(shape, sharding));
+
+    {
+      Mesh mesh({2, 3}, {"x", "y"});
+      NamedSharding named_sharding =
+          test_utils::FromAxisNames(mesh, {{"x"}, {}});
+
+      TF_EXPECT_OK(validate(shape, HloSharding(named_sharding)));
+    }
   }
   {
     // 2-way sharded along axis 0, 1-way sharded along axis 1, each shard
@@ -275,6 +441,14 @@ TEST_F(HloShardingTest, EachTile) {
                                                  {OpSharding::REPLICATED});
     Shape shape = ShapeUtil::MakeShape(U32, {10, 20});
     TF_EXPECT_OK(validate(shape, sharding));
+
+    {
+      Mesh mesh({2, 3}, {"x", "y"});
+      NamedSharding named_sharding = test_utils::FromAxisNames(
+          mesh, {{"x"}, {}}, /*replicated_axes=*/{"y"});
+
+      TF_EXPECT_OK(validate(shape, HloSharding(named_sharding)));
+    }
   }
 }
 
