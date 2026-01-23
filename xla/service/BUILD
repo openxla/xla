@@ -469,6 +469,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/analysis:tuple_points_to_analysis",
         "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/hlo/ir:hlo",
@@ -1149,6 +1150,7 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/stream_executor/rocm:rocm_platform_id",
+        "//xla/stream_executor/sycl:sycl_platform_id",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
@@ -1156,6 +1158,21 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_cc_test(
+    name = "platform_util_test",
+    srcs = ["platform_util_test.cc"],
+    deps = [
+        ":platform_util",
+        "//xla/stream_executor/cuda:cuda_platform_id",
+        "//xla/stream_executor/host:host_platform_id",
+        "//xla/stream_executor/rocm:rocm_platform_id",
+        "//xla/stream_executor/sycl:sycl_platform_id",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -2404,12 +2421,15 @@ cc_library(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "triangular_solve_expander_test",
     size = "medium",
     srcs = ["triangular_solve_expander_test.cc"],
+    backends = ["cpu"],
     shard_count = 12,
-    tags = ["pjrt_migration_candidate"],
+    tags = [
+        "test_migrated_to_hlo_runner_pjrt",
+    ],
     deps = [
         ":triangular_solve_expander",
         "//xla:array2d",
@@ -2417,7 +2437,7 @@ xla_cc_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:reference_util",
-        "//xla/tests:hlo_test_base",
+        "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:statusor",

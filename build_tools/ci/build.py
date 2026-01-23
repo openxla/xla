@@ -380,7 +380,6 @@ Build(
         "-//xla/service/gpu/...",
         # eigen is not windows compatible
         "-//xla/codegen/intrinsic/cpp:eigen_unary_test",
-        "-//xla/codegen/intrinsic/cpp:eigen_unary_ll_generator",
     ),
     build_tag_filters=windows_x86_tag_filter,
     test_tag_filters=windows_x86_tag_filter,
@@ -830,26 +829,9 @@ Build(
         color="yes",
     ),
     override_repository=dict(
-        local_xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
+        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
     ),
     repo_env={"USE_PYWRAP_RULES": "True"},
-    extra_setup_commands=(
-        # This is pretty devious - but we have to do some adhoc extra Copybara
-        # work here to get XLA into the shape TF expects. b/407638223
-        # pyformat:disable
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            "-type", "f",
-            "-exec", "sed", "-i", "s/@xla/@local_xla/g", "{}", "+",
-        ],
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            "-type", "f",
-            "-exec", "sed", "-i", "s/@tsl/@local_tsl/g", "{}", "+",
-        ],
-    ),
 )
 
 Build(
@@ -868,7 +850,7 @@ Build(
     build_tag_filters=tensorflow_gpu_tag_filters,
     test_tag_filters=tensorflow_gpu_tag_filters,
     override_repository=dict(
-        local_xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
+        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
     ),
     options=dict(
         verbose_failures=True,
@@ -878,24 +860,7 @@ Build(
         color="yes",
     ),
     repo_env={"USE_PYWRAP_RULES": "True"},
-    extra_setup_commands=(
-        # This is pretty devious - but we have to do some adhoc extra Copybara
-        # work here to get XLA into the shape TF expects. b/407638223
-        # pyformat:disable
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            "-type", "f",
-            "-exec", "sed", "-i", "s/@xla/@local_xla/g", "{}", "+",
-        ],
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            "-type", "f",
-            "-exec", "sed", "-i", "s/@tsl/@local_tsl/g", "{}", "+",
-        ],
-        ["nvidia-smi"],
-    ),
+    extra_setup_commands=(["nvidia-smi"],),
 )
 
 
