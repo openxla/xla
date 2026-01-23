@@ -206,7 +206,8 @@ absl::StatusOr<bool> ShouldCollectiveUseMinimalResource(
                             inst->backend_config<GpuBackendConfig>());
 
         bool is_sync = gpu_backend_config.collective_backend_config().is_sync();
-        int64_t total_size = ShapeUtil::ElementsInRecursive(inst->shape());
+        int64_t total_size =
+            ShapeUtil::ByteSizeOfElementsRecursive(inst->shape());
 
         if (is_sync) {
           sync_collective_count++;
@@ -1700,7 +1701,7 @@ absl::Status GpuExecutable::ExecuteThunks(
       command_buffer_allocation_indexes_.size(),
       use_command_buffer_va_remapping);
 
-  bool collective_use_minimal_resource = true;
+  bool collective_use_minimal_resource = false;
   if (has_module()) {
     ASSIGN_OR_RETURN(collective_use_minimal_resource,
                      ShouldCollectiveUseMinimalResource(module()));

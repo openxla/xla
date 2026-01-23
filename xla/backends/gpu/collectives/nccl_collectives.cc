@@ -59,12 +59,12 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -250,14 +250,16 @@ static absl::StatusOr<ncclConfig_t> AsNcclConfig(
   int nccl_version;
   XLA_NCCL_RETURN_IF_ERROR(ncclGetVersion(&nccl_version));
 
-#if (NCCL_VERSION_CODE >= 22800)
   if (xla::GetDebugOptionsFromFlags()
           .xla_gpu_experimental_enable_nccl_symmetric_buffers() &&
       config.use_minimal_resource) {
+#if (NCCL_VERSION_CODE >= 22800)
     VLOG(1) << "Setting CTAPolicy to NCCL_CTA_POLICY_ZERO";
     comm_config.CTAPolicy = NCCL_CTA_POLICY_ZERO;
-  }
+#else
+    VLOG(1) << "Requires NCCL version >= 2.28 to use NCCL_CTA_POLICY_ZERO";
 #endif
+  }
 
   if (config.max_nchannels > 0) {
     VLOG(1) << "Maximum number of channels is set to: " << comm_config.maxCTAs;
