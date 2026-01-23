@@ -533,10 +533,9 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
     CHECK(!IsCublasGemm(*instruction))
         << "Gemm rewriting should run after layout assignment";
 
-    if (HloPredicateIsOp<HloOpcode::kConvolution>(instruction)) {
-      CHECK(DynCast<HloConvolutionInstruction>(instruction)->conv_kind() !=
-            HloConvolutionInstruction::ConvKind::UNSET)
-          << "conv-kind-assignment pass should run before this pass.";
+    if (HloPredicateIsOp<HloOpcode::kConvolution>(instruction) &&
+        DynCast<HloConvolutionInstruction>(instruction)->conv_kind() !=
+            HloConvolutionInstruction::ConvKind::UNSET) {
       TF_RETURN_IF_ERROR(AddBackendConstraintsTocuDNNConv(
           Cast<HloConvolutionInstruction>(instruction), constraints));
     } else if (HloPredicateIsOp<HloOpcode::kDot>(instruction)) {
