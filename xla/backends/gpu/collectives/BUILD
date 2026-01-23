@@ -231,6 +231,7 @@ xla_cc_test(
         "requires-gpu-nvidia:2",
     ],
     deps = [
+        ":cancellation_token",
         ":gpu_clique_key",
         ":gpu_collectives",
         ":gpu_communicator",
