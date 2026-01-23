@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/sycl/sycl_executor.h"
 
-#include <unistd.h>
-
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -43,6 +41,7 @@ limitations under the License.
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/statusor.h"
+#include <unistd.h>
 
 namespace stream_executor::sycl {
 
