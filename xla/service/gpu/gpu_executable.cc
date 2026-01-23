@@ -1642,7 +1642,7 @@ absl::Status GpuExecutable::ExecuteThunks(
       command_buffer_allocation_indexes_.size(),
       enable_command_buffer_va_remapping);
 
-  bool collective_use_minimal_resource = true;
+  bool collective_use_minimal_resource = false;
   if (has_module()) {
     ASSIGN_OR_RETURN(collective_use_minimal_resource,
                      ShouldCollectiveUseMinimalResource(module()));
