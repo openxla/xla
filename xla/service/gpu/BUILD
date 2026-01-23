@@ -657,7 +657,6 @@ cc_library(
     name = "buffer_allocations",
     srcs = ["buffer_allocations.cc"],
     hdrs = ["buffer_allocations.h"],
-    compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_address",

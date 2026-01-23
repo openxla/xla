@@ -1868,7 +1868,6 @@ cc_library(
     name = "collective_memory_requests",
     srcs = ["collective_memory_requests.cc"],
     hdrs = ["collective_memory_requests.h"],
-    compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla:util",
         "//xla/backends/gpu/collectives:gpu_clique_key",
