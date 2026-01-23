@@ -357,9 +357,10 @@ HloInstruction* CreateGpuConvFusion(
 // conv instruction
 static absl::StatusOr<HloInstruction*> CreateConvFusionHelper(
     HloInstruction* conv, std::vector<HloInstruction*>& fusion_outputs) {
-  CHECK(DynCast<HloConvolutionInstruction>(conv)->conv_kind() !=
-        ConvKind::UNSET)
-      << "conv-kind-assignment pass should run before this pass.";
+  if (DynCast<HloConvolutionInstruction>(conv)->conv_kind() ==
+      ConvKind::UNSET) {
+    return nullptr;
+  }
   HloInstruction* conv_fusion = CreateGpuConvFusion(conv, fusion_outputs);
 
   if (conv_fusion) {
