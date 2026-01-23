@@ -137,10 +137,10 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
   XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
       "[run=%v] Acquire %d collective cliques for global device id %v; "
       "max number of channels for collectives %d; max number of "
-      "channels for p2p %d; use_minimal_resource=%s",
+      "channels for p2p %d; use_minimal_resource=%v",
       params.run_id, ordered_cliques.size(), params.global_device_id,
       params.collective_max_nchannels, params.p2p_max_nchannels,
-      params.collective_use_minimal_resource ? "true" : "false");
+      params.collective_use_minimal_resource);
 
   for (size_t i = 0; i < ordered_cliques.size(); ++i) {
     const CollectiveCliqueRequests::CliqueRequest& r = ordered_cliques[i];

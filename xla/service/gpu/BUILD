@@ -732,6 +732,7 @@ cc_library(
         "//xla/runtime:device_id",
         "//xla/runtime:hang_watchdog",
         "//xla/service:buffer_assignment",
+        "//xla/service:collective_ops_utils",
         "//xla/service:computation_layout",
         "//xla/service:dump",
         "//xla/service:executable",
