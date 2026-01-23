@@ -183,6 +183,7 @@ cc_library(
         "//xla/python/ifrt:serdes_version",
         "//xla/python/ifrt:serdes_week_4_old_version_accessor",
         "//xla/python/pjrt_ifrt:xla_executable_version",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
@@ -585,5 +586,14 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+    ],
+)
+
+tf_proto_library(
+    name = "serialized_executable_metadata_proto",
+    srcs = ["serialized_executable_metadata.proto"],
+    visibility = ["//learning/brain/research/ifrt:__subpackages__"],
+    deps = [
+        ":ifrt_ir_compile_options_proto",
     ],
 )

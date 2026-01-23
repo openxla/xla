@@ -380,7 +380,6 @@ Build(
         "-//xla/service/gpu/...",
         # eigen is not windows compatible
         "-//xla/codegen/intrinsic/cpp:eigen_unary_test",
-        "-//xla/codegen/intrinsic/cpp:eigen_unary_ll_generator",
     ),
     build_tag_filters=windows_x86_tag_filter,
     test_tag_filters=windows_x86_tag_filter,
@@ -717,8 +716,7 @@ Build(
         "//jax/experimental/jax2tf/tests:jax2tf_test_cpu",
         "//tests/multiprocess:cpu_tests",
         "//jax/experimental/jax2tf/tests/multiprocess:cpu_tests",
-        "//jaxlib/tools:jaxlib_wheel_size_test",
-        "//:jax_wheel_size_test",
+        "//jaxlib/tools:check_cpu_wheel_sources_test",
     ),
     test_env=dict(
         JAX_NUM_GENERATED_CASES=25,
@@ -741,8 +739,7 @@ Build(
         "//jax/experimental/jax2tf/tests:jax2tf_test_cpu",
         "//tests/multiprocess:cpu_tests",
         "//jax/experimental/jax2tf/tests/multiprocess:cpu_tests",
-        "//jaxlib/tools:jaxlib_wheel_size_test",
-        "//:jax_wheel_size_test",
+        "//jaxlib/tools:check_cpu_wheel_sources_test",
     ),
     test_env=dict(
         JAX_NUM_GENERATED_CASES=25,
@@ -768,10 +765,7 @@ Build(
         "//tests:backend_independent_tests",
         "//tests/pallas:gpu_tests",
         "//tests/pallas:backend_independent_tests",
-        "//jaxlib/tools:jax_cuda_plugin_wheel_size_test",
-        "//jaxlib/tools:jax_cuda_pjrt_wheel_size_test",
-        "//jaxlib/tools:jaxlib_wheel_size_test",
-        "//:jax_wheel_size_test",
+        "//jaxlib/tools:check_gpu_wheel_sources_test",
     ),
     build_tag_filters=("-multiaccelerator",),
     test_tag_filters=("-multiaccelerator",),
@@ -835,26 +829,9 @@ Build(
         color="yes",
     ),
     override_repository=dict(
-        local_xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
+        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
     ),
     repo_env={"USE_PYWRAP_RULES": "True"},
-    extra_setup_commands=(
-        # This is pretty devious - but we have to do some adhoc extra Copybara
-        # work here to get XLA into the shape TF expects. b/407638223
-        # pyformat:disable
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            "-type", "f",
-            "-exec", "sed", "-i", "s/@xla/@local_xla/g", "{}", "+",
-        ],
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            "-type", "f",
-            "-exec", "sed", "-i", "s/@tsl/@local_tsl/g", "{}", "+",
-        ],
-    ),
 )
 
 Build(
@@ -873,7 +850,7 @@ Build(
     build_tag_filters=tensorflow_gpu_tag_filters,
     test_tag_filters=tensorflow_gpu_tag_filters,
     override_repository=dict(
-        local_xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
+        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
     ),
     options=dict(
         verbose_failures=True,
@@ -883,24 +860,7 @@ Build(
         color="yes",
     ),
     repo_env={"USE_PYWRAP_RULES": "True"},
-    extra_setup_commands=(
-        # This is pretty devious - but we have to do some adhoc extra Copybara
-        # work here to get XLA into the shape TF expects. b/407638223
-        # pyformat:disable
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            "-type", "f",
-            "-exec", "sed", "-i", "s/@xla/@local_xla/g", "{}", "+",
-        ],
-        [
-            "find",
-            f"{_GITHUB_WORKSPACE}/openxla/xla",
-            "-type", "f",
-            "-exec", "sed", "-i", "s/@tsl/@local_tsl/g", "{}", "+",
-        ],
-        ["nvidia-smi"],
-    ),
+    extra_setup_commands=(["nvidia-smi"],),
 )
 
 
