@@ -14,7 +14,7 @@ IncludeCategories:
   - Regex:    '^<g(test|mock)/.*>$'
     Priority: 2
     SortPriority: 2
-  # absl headers    
+  # absl headers
   - Regex:    '^"absl/.*"$'
     Priority: 2
     SortPriority: 3
@@ -26,22 +26,26 @@ IncludeCategories:
   - Regex:    '^"mlir/.*"$'
     Priority: 2
     SortPriority: 5
+  # riegeli headers
+  - Regex:    '^"riegeli/.*"$'
+    Priority: 2
+    SortPriority: 6
   # third_party libraries
   - Regex:    '^"third_party/.*"$'
     Priority: 2
-    SortPriority: 6
+    SortPriority: 7
   # google (protobuf, etc.) headers
   - Regex:    '^"google/.*"$'
     Priority: 2
-    SortPriority: 7
+    SortPriority: 8
   # xla headers (including xla/tsl)
   - Regex:    '^"xla/.*"$'
     Priority: 2
-    SortPriority: 8
+    SortPriority: 9
   # tsl headers (without xla/ prefix)
   - Regex:    '^"tsl/.*"$'
     Priority: 2
-    SortPriority: 9
+    SortPriority: 10
   # Default catch-all for any other headers
   - Regex:    '.*'
     Priority: 2
