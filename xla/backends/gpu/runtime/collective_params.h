@@ -46,7 +46,7 @@ struct CollectiveParams {
       absl::Span<se::Stream* const> async_streams,
       LocalDeviceId local_device_id, int64_t collective_max_nchannels = 0,
       int64_t p2p_max_nchannels = 0,
-      bool collective_use_minimal_resource = true);
+      bool collective_use_minimal_resource = false);
 
   GpuCollectives* collectives;
   se::StreamExecutor* executor;

@@ -121,7 +121,7 @@ class GpuCollectives : public Collectives {
     // Decides whether communicators will be created to minimize resource
     // utilization (i.e SM) during runtime. This is mainly used for overlapping
     // with compute to avoid taking up compute resources.
-    bool use_minimal_resource = true;
+    bool use_minimal_resource = false;
   };
 
   // A cancelable version of Collectives::CreateCommunicators.
