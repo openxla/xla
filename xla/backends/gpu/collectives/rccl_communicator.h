@@ -43,7 +43,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/xla_data.pb.h"
-#include "rocm/rocm_config.h"  // IWYU pragma: keep
 
 #if (TF_ROCM_VERSION >= 50200)
 #include "rocm/include/rccl/rccl.h"
