@@ -68,6 +68,53 @@ void SetMemorySpace(Shape* shape, int64_t memory_space_color) {
   shape->mutable_layout()->set_memory_space(memory_space_color);
 }
 
+// Returns true if the layout has explicit customizations that indicate it was
+// explicitly set by the user rather than being a default layout. We check:
+// - tiles_size(): User-specified tiling configuration (e.g., T(2,128))
+// - index_primitive_type(): Custom indexing for sparse/ragged arrays
+// - pointer_primitive_type(): Custom pointer representation
+// - element_size_in_bits(): Packed/compressed element sizes
+// If any of these are set, we must not modify the memory space, as doing so
+// could break user expectations or cause layout incompatibilities.
+bool IsLayoutExplicitlyCustomized(const Layout& layout) {
+  return layout.tiles_size() > 0 ||
+         layout.index_primitive_type() != PRIMITIVE_TYPE_INVALID ||
+         layout.pointer_primitive_type() != PRIMITIVE_TYPE_INVALID ||
+         layout.element_size_in_bits() != 0;
+}
+
+// Validates that the entry computation layout at the given shape_index can
+// accept host memory space, and updates it if needed. Returns true if the
+// layout was updated. Returns an error if the layout was explicitly customized
+// by the user with a non-host memory space.
+absl::StatusOr<bool> EnsureEntryLayoutIsHostMemory(
+    ComputationLayout* comp_layout, const ShapeIndex& shape_index,
+    absl::string_view context_for_error) {
+  const Shape& output_shape =
+      ShapeUtil::GetSubshape(comp_layout->result_layout().shape(), shape_index);
+  CHECK(output_shape.has_layout())
+      << "Expecting output shape of entry computation to have a layout.";
+
+  // Already host memory - no change needed.
+  if (output_shape.layout().memory_space() == Layout::kHostMemorySpace) {
+    return false;
+  }
+
+  // Check if user explicitly customized the layout.
+  if (IsLayoutExplicitlyCustomized(output_shape.layout())) {
+    return error::CompileTimeHostOffloadOutputLocationMismatch(
+        "Tensor which is moved to host (%s) is returned from the entry "
+        "computation but the layout for this output is not set to host memory.",
+        context_for_error);
+  }
+
+  // Safe to update - layout was not explicitly customized.
+  Layout new_layout = output_shape.layout();
+  new_layout.set_memory_space(Layout::kHostMemorySpace);
+  comp_layout->mutable_result_layout()->ResetLayout(new_layout, shape_index);
+  return true;
+}
+
 bool SetBuffersToMemorySpaceColor(
     const std::vector<InstructionAndShapeIndex>& buffers_to_set_to_host_memory,
     int64_t memory_space_color) {
@@ -334,26 +381,36 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
 
     // Check if this path ends at the output of the entry computation.
     if (instruction->IsRoot() && instruction->parent()->IsEntryComputation()) {
-      const Shape& output_shape = ShapeUtil::GetSubshape(
-          instruction->GetModule()->entry_computation_layout().result_shape(),
-          instruction_and_shape_index.shape_index);
-      CHECK(output_shape.has_layout())
-          << "Expecting output shape of entry computation to have a layout.";
-      if (output_shape.layout().memory_space() == Layout::kHostMemorySpace) {
+      ComputationLayout* comp_layout =
+          instruction->GetModule()->mutable_entry_computation_layout();
+
+      absl::StatusOr<bool> result = EnsureEntryLayoutIsHostMemory(
+          comp_layout, instruction_and_shape_index.shape_index,
+          absl::StrFormat("starting from %s", starting_instruction->name()));
+
+      if (!result.ok()) {
+        // User explicitly set incompatible layout - show trace and error.
+        if (VLOG_IS_ON(1)) {
+          LOG(INFO) << "Instruction trace leading to error:";
+          PrintTrace(instruction_and_shape_index, previous);
+        }
+        return result.status();
+      }
+
+      if (*result) {
+        // Layout was updated.
+        changed = true;
+        VLOG(2) << absl::StreamFormat(
+            "Memory offloaded starting from %s is output streamed (layout "
+            "updated)",
+            starting_instruction_and_index.ToString());
+      } else {
+        // Layout was already host memory.
         VLOG(2) << absl::StreamFormat(
             "Memory offloaded starting from %s is output streamed",
             starting_instruction_and_index.ToString());
-        continue;
       }
-      if (VLOG_IS_ON(1)) {
-        LOG(INFO) << "Instruction trace leading to error:";
-        PrintTrace(instruction_and_shape_index, previous);
-      }
-      return error::CompileTimeHostOffloadOutputLocationMismatch(
-          "Tensor which is moved to host (starting from %s) "
-          "is returned from the entry computation but the "
-          "layout for this output is not set to host memory.",
-          starting_instruction->name());
+      continue;
     }
     // Push successors onto the queue to be visited.
     TF_ASSIGN_OR_RETURN(
@@ -503,6 +560,17 @@ absl::StatusOr<bool> HostOffloader::HandleMoveToHostCustomCall(
       SetMemorySpace(copy_to_host->mutable_shape(), Layout::kHostMemorySpace);
       TF_RETURN_IF_ERROR(
           custom_call_instruction->ReplaceAllUsesWith(copy_to_host));
+      // When MoveToHost custom call is the root, we replace it with a copy
+      // that has host memory space. We must also update
+      // entry_computation_layout to match, but only if the layout wasn't
+      // explicitly customized by the user.
+      ComputationLayout* comp_layout = custom_call_instruction->GetModule()
+                                           ->mutable_entry_computation_layout();
+      TF_RETURN_IF_ERROR(EnsureEntryLayoutIsHostMemory(
+                             comp_layout, /*shape_index=*/{},
+                             absl::StrFormat("custom call \"%s\"",
+                                             custom_call_instruction->name()))
+                             .status());
       VLOG(2) << absl::StreamFormat(
           "Custom call \"%s\" is entry computation root. Inserted copy \"%s\" "
           "and replaced root instruction.",
