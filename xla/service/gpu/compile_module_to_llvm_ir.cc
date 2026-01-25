@@ -70,6 +70,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
+#include "xla/stream_executor/sycl/sycl_platform_id.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -101,6 +102,7 @@ void RemoveUnusedAndUninitializedGlobals(
     const std::vector<GpuExecutable::ConstantInfo>& constants) {
   bool supports_runtime_managed_constants =
       platform_id != se::rocm::kROCmPlatformId &&
+      platform_id != se::sycl::kSyclPlatformId &&
       options.xla_gpu_enable_shared_constants();
   if (!supports_runtime_managed_constants) {
     return;

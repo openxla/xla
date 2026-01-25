@@ -736,6 +736,19 @@ GpuExecutable::ResolveConstantGlobals(se::Stream* stream) {
         submitted_mem_copies = true;
       }
     } else {
+      // Constant could have zero allocation size, for example, an empty slice
+      // on some platforms.
+      bool skip_for_empty_content = false;
+      if (info.allocation_index != -1 &&
+          info.allocation_index < GetAllocations().size()) {
+        skip_for_empty_content =
+            GetAllocations()[info.allocation_index]->size() == 0;
+      }
+      if (skip_for_empty_content) {
+        VLOG(3) << "Skipping allocation of global " << info.symbol_name
+                << " since it has zero size.";
+        continue;
+      }
       // The constant was not defined in the PTX and therefore must be both
       // allocated and initialized by XLA here.
       CHECK(!info.content.span().empty());
