@@ -814,6 +814,8 @@ message DebugOptions {
   // rewrite).
   optional int64 xla_gpu_gemm_rewrite_size_threshold = 283;
 
+  optional bool xla_gpu_experimental_enable_cublaslt_swish_fusion = 502;
+
   // If true, we generate debug info when compiling PTX. This is useful for
   // profiling and debugging.
   optional bool xla_gpu_generate_debug_info = 348;

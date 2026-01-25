@@ -806,7 +806,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     }
 
     const auto is_rocm = gpu_version_.IsRocm();
-    if (is_rocm &&
+    const bool swishFusionEnabled =
+        instr->GetModule()
+            ->config()
+            .debug_options()
+            .xla_gpu_experimental_enable_cublaslt_swish_fusion();
+    if (swishFusionEnabled && is_rocm &&
         toolkit_version_ >= stream_executor::SemanticVersion{7, 0, 0}) {
       // Attempt to match approximate Swish activation
       // (https://flax.readthedocs.io/en/v0.5.3/_autosummary/flax.linen.swish.html),

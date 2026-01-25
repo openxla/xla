@@ -374,6 +374,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_nccl_collective_max_nchannels(0);
   opts.set_xla_gpu_nccl_p2p_max_nchannels(0);
   opts.set_xla_gpu_multi_streamed_windowed_einsum(true);
+  opts.set_xla_gpu_experimental_enable_cublaslt_swish_fusion(true);
 
   opts.set_xla_gpu_experimental_stream_annotation(true);
   // Minimum combined size of matrices in matrix multiplication to
@@ -2323,6 +2324,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "(minimum combined number of elements of both matrices "
       "in non-batch dimensions to be considered for a rewrite)."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_cublaslt_swish_fusion",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_enable_cublaslt_swish_fusion),
+      debug_options->xla_gpu_experimental_enable_cublaslt_swish_fusion(),
+      "Enable fusion of the swish activiation with cublaslt gemm."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_use_embeded_device_lib",
       bool_setter_for(&DebugOptions::set_xla_gpu_use_embeded_device_lib),
       debug_options->xla_gpu_use_embeded_device_lib(),
@@ -2966,8 +2973,7 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
           "xla_gpu_all_reduce_combine_threshold_bytes",
           "xla_gpu_autotune_level",
           "xla_gpu_collective_permute_decomposer_threshold",
-          "xla_gpu_cublas_fallback",
-          "xla_gpu_dot_merger_threshold_mb",
+          "xla_gpu_cublas_fallback", "xla_gpu_dot_merger_threshold_mb",
           "xla_gpu_enable_dynamic_slice_fusion",
           "xla_gpu_enable_latency_hiding_scheduler",
           "xla_gpu_enable_pipelined_all_gather",
