@@ -181,8 +181,11 @@ void ComputationPlacer::RegisterComputationPlacer(
   absl::MutexLock lock(placer_mutex);
   PlacerFactoryMap& placers = GetPlatformComputationPlacers();
   if (placers.find(id) != placers.end()) {
-    LOG(WARNING) << "Computation placer creation function is already "
-                    "registered for this platform";
+    // Silently skip re-registration instead of warning - this can happen
+    // legitimately when multiple libraries are loaded
+    VLOG(1) << "Computation placer already registered for this platform, "
+               "skipping";
+    return;
   }
   placers[id].creation_function = creation_function;
 }
