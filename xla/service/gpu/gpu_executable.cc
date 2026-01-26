@@ -1160,12 +1160,6 @@ absl::Status GpuExecutable::ExecuteThunks(
   Thunk::ExecutableSource executable_source = {text_, binary_,
                                                dnn_compiled_graphs_};
 
-<<<<<<< HEAD
-  RETURN_IF_ERROR(ExecuteThunksImpl(
-      has_module() ? &module_config().debug_options() : nullptr, module_name_,
-      unique_id, *thunks_, executable_source, run_options, buffer_allocations,
-      block_host_until_done, execution_stream_ids_));
-=======
   se::StreamExecutor* executor = run_options->stream()->parent();
 
   // Check if command buffer VA remapping is enabled.
@@ -1411,7 +1405,6 @@ absl::Status GpuExecutable::ExecuteThunks(
         block_host_until_done, execution_stream_ids_));
   }
 
->>>>>>> a3738b52e9 (update free command buffer implementation)
   return absl::OkStatus();
 }
 
