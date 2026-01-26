@@ -31,8 +31,8 @@ namespace xla::gpu {
 
 bool IsP2PStreamKind(AsyncStreamKind stream_kind);
 
-inline constexpr int64_t kAsyncStreamTotal =
-    static_cast<int64_t>(AsyncStreamKind::ASYNC_STREAM_KIND_MEMCPYP2P) + 1;
+// 4 (compute) + 2 (collective) + 1
+inline constexpr int64_t kAsyncStreamTotal = 7;
 
 // Strongly-typed wrapper to represent collective stream ID.
 TSL_LIB_GTL_DEFINE_INT_TYPE(CollectiveStreamId, uint64_t);
