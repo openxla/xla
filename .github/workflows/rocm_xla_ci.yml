@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   execute-xla-ut:
-    runs-on: linux-x86-64-4gpu-amd
+    runs-on: linux-x64-mi210-64-2gpu-amd
     env:
       DOCKER_IMAGE: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
       CONTAINER_NAME: xla-runner
