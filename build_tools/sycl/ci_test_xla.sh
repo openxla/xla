@@ -17,10 +17,9 @@
 # This script builds and executes tests. It can be run only on a system that
 # has an Intel GPU with the appropriate driver and oneAPI tools installed.
 # Hermetic build is not currently fully supported for executing tests.
-#./configure.py --backend=SYCL --host_compiler=CLANG --sycl_compiler=ICPX
-# adding --cxxopt=-DTENSORFLOW_USE_SYCL (TODO: Intel, temp fix for SYCL platform issue)
+./configure.py --backend=SYCL --host_compiler=CLANG --sycl_compiler=ICPX
 bazel test \
-      --config=sycl_hermetic --cxxopt=-DTENSORFLOW_USE_SYCL --verbose_failures -c opt \
+      --verbose_failures -c opt \
       --build_tag_filters=gpu,oneapi-only,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-oneapi \
       --test_tag_filters=gpu,oneapi-only,requires-gpu-intel,-requires-gpu-amd,-requires-gpu-nvidia,-no_oss,-cuda-only,-rocm-only,-no-oneapi \
       //xla/stream_executor/sycl/...
