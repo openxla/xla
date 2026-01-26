@@ -1365,7 +1365,7 @@ absl::Status GpuExecutable::ExecuteThunks(
         mapped_buffers.push_back(mapped_address);
       }
 
-      executor->VmmSetAccess(&va_ranges->va_address);
+      TF_RETURN_IF_ERROR(executor->VmmSetAccess(&va_ranges->va_address));
     }
 
     BufferAllocations remapped_buffer_allocations(
