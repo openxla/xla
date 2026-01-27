@@ -43,7 +43,7 @@ jobs:
       - name: Checkout rocAutomation using local creds
         run: |
           rm -rf rocAutomation
-          git clone -b jenkins-pipelines https://github.com/ROCm/rocAutomation.git rocAutomation
+          git clone -b handle_infra_failures https://github.com/ROCm/rocAutomation.git rocAutomation
 
       - name: Start Container
         run: |
@@ -76,18 +76,17 @@ jobs:
           docker exec ${{ env.CONTAINER_NAME }} bash -c "/opt/rocm/bin/rocminfo"
 
       - name: Test XLA [single_gpu]
-        # Exit 0=success, 78=infra failure (warning)
         run: |
-          docker exec ${{ env.CONTAINER_NAME }} \
-            bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_single_gpu --local_test_jobs=2 --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL=linux_x64_gpu_gfx90a" && exit 0
-          ec=$?; [[ $ec -eq 78 ]] && echo "::warning::Infra failure (exit $ec)" && echo ":warning: **single_gpu**: Infra failure (exit $ec)" >> $GITHUB_STEP_SUMMARY && exit 0; exit $ec
+          docker exec \
+            ${{ env.CONTAINER_NAME }} \
+            bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_single_gpu --local_test_jobs=2 --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL=linux_x64_gpu_gfx90a"
 
       - name: Test XLA [multi_gpu]
         if: always()
         run: |
-          docker exec ${{ env.CONTAINER_NAME }} \
-            bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_multi_gpu --strategy=TestRunner=local --local_test_jobs=2" && exit 0
-          ec=$?; [[ $ec -eq 78 ]] && echo "::warning::Infra failure (exit $ec)" && echo ":warning: **multi_gpu**: Infra failure (exit $ec)" >> $GITHUB_STEP_SUMMARY && exit 0; exit $ec
+          docker exec \
+            ${{ env.CONTAINER_NAME }} \
+            bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_multi_gpu --strategy=TestRunner=local --local_test_jobs=2"
 
       - name: Cleanup container
         if: always()

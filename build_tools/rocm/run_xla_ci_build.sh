@@ -15,14 +15,13 @@
 #
 # ==============================================================================
 
+set -e
 set -x
 
 SCRIPT_DIR=$(realpath $(dirname $0))
 TAG_FILTERS=$($SCRIPT_DIR/rocm_tag_filters.sh),-skip_rocprofiler_sdk,-no_oss,-oss_excluded,-oss_serial
 
 mkdir -p /tf/pkg
-BEP_JSON="/tmp/bep.json"
-INFRA_EXIT_CODE="${INFRA_EXIT_CODE:-78}"
 
 for arg in "$@"; do
     if [[ "$arg" == "--config=ci_multi_gpu" ]]; then
@@ -34,12 +33,9 @@ for arg in "$@"; do
 done
 
 SCRIPT_DIR=$(dirname $0)
-
-set +e
 bazel --bazelrc="$SCRIPT_DIR/rocm_xla_ci.bazelrc" test \
     --build_tag_filters=$TAG_FILTERS \
     --test_tag_filters=$TAG_FILTERS \
-    --build_event_json_file="$BEP_JSON" \
     --profile=/tf/pkg/profile.json.gz \
     --keep_going \
     --test_env=TF_TESTS_PER_GPU=1 \
@@ -47,17 +43,3 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla_ci.bazelrc" test \
     --test_output=errors \
     --run_under=//build_tools/rocm:parallel_gpu_execute \
     "$@"
-
-BAZEL_EXIT_CODE=$?
-set -e
-
-# Classify and exit: 0 = success, INFRA_EXIT_CODE = infra failure, other = build/test failure
-if [[ $BAZEL_EXIT_CODE -eq 0 ]]; then
-    exit 0
-elif [[ -f "$BEP_JSON" ]] && jq -e 'select(.aborted.reason) | .aborted.reason | test("REMOTE_FAILURE|OUT_OF_MEMORY|INTERNAL|LOADING_FAILURE|NO_ANALYZE|NO_BUILD")' "$BEP_JSON" >/dev/null 2>&1; then
-    echo "::warning::Infrastructure failure detected (exit code: $BAZEL_EXIT_CODE)"
-    exit $INFRA_EXIT_CODE
-else
-    echo "::error::Build/test failure (exit code: $BAZEL_EXIT_CODE)"
-    exit $BAZEL_EXIT_CODE
-fi
