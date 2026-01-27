@@ -39,7 +39,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal_util.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
@@ -50,7 +50,7 @@ namespace xla {
 namespace {
 
 namespace op = xla::testing::opcode_matchers;
-using TopkRewriterTest = HloTestBase;
+using TopkRewriterTest = HloPjRtTestBase;
 
 std::string getComparator() {
   return R"(
@@ -639,8 +639,11 @@ ENTRY cluster {
                 absl_testing::IsOkAndHolds(true));
     EXPECT_THAT(TopkDecomposer().Run(module), absl_testing::IsOkAndHolds(true));
   };
-  EXPECT_TRUE(
-      RunAndCompare(std::move(source_module), std::nullopt, round_trip));
+  auto source_module_clone = source_module->Clone();
+  round_trip(source_module_clone.get());
+  EXPECT_TRUE(RunAndCompareTwoModules(std::move(source_module),
+                                      std::move(source_module_clone),
+                                      std::nullopt, /*run_hlo_passes=*/true));
 }
 
 TEST_F(TopkRewriterTest, DecomposerStability) {
@@ -668,8 +671,11 @@ ENTRY cluster {
                 absl_testing::IsOkAndHolds(true));
     EXPECT_THAT(TopkDecomposer().Run(module), absl_testing::IsOkAndHolds(true));
   };
-  EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(source_module), std::nullopt,
-                                       round_trip));
+  auto source_module_clone = source_module->Clone();
+  round_trip(source_module_clone.get());
+  EXPECT_TRUE(RunAndCompareTwoModules(std::move(source_module),
+                                      std::move(source_module_clone),
+                                      std::nullopt, /*run_hlo_passes=*/false));
 }
 
 TEST_F(TopkRewriterTest, TopKDecomposition) {
