@@ -14,9 +14,10 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/service/hlo_execution_profile.h"
+
 #include "absl/strings/str_cat.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/hlo_pjrt_test_base.h"
 
 namespace xla {
 namespace {
@@ -25,7 +26,7 @@ using absl::StrCat;
 using ::testing::AllOf;
 using ::testing::ContainsRegex;
 
-class HloExecutionProfileTest : public HloTestBase {};
+class HloExecutionProfileTest : public HloPjRtTestBase {};
 
 TEST_F(HloExecutionProfileTest, Basic) {
   auto hlo_module = ParseAndReturnVerifiedModule(R"(
@@ -64,10 +65,7 @@ TEST_F(HloExecutionProfileTest, Basic) {
   execution_profile.SetCyclesTakenBy(add_instruction, add_cycles);
   execution_profile.SetCyclesTakenBy(dot_instruction, dot_cycles);
 
-  float clock_rate_ghz = backend()
-                             .default_stream_executor()
-                             ->GetDeviceDescription()
-                             .clock_rate_ghz();
+  float clock_rate_ghz = 1.0;
   EXPECT_THAT(execution_profile.ToString(clock_rate_ghz),
               AllOf(ContainsRegex(StrCat(dot_cycles, " cycles.*%",
                                          dot_instruction->name())),
