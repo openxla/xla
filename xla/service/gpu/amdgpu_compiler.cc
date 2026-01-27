@@ -227,7 +227,7 @@ AMDGPUCompiler::CompileTargetBinary(
     return Unimplemented("relocatable target binary is not implemented");
   }
 
-  std::vector<uint8_t> hsaco;
+  amdgpu::HsacoResult hsaco_result;
   {
     // This may print multiple lines per HLO compilation because of the
     // parallelized compilation of LLVM modules.
@@ -235,13 +235,16 @@ AMDGPUCompiler::CompileTargetBinary(
         "AMDGPUCompiler::CompileTargetBinary - CompileToHsaco",
         module_config.debug_options().xla_enable_scoped_logging_timers());
     TF_ASSIGN_OR_RETURN(
-        hsaco, amdgpu::CompileToHsaco(
-                   llvm_module, device_description.gpu_compute_capability(),
-                   module_config.debug_options(),
-                   module_config.compilation_cache_key()));
+        hsaco_result,
+        amdgpu::CompileToHsaco(llvm_module,
+                               device_description.gpu_compute_capability(),
+                               module_config.debug_options(),
+                               module_config.compilation_cache_key()));
   }
 
-  return BackendCompileResult{"", std::move(hsaco)};
+  return BackendCompileResult{"", std::move(hsaco_result.hsaco),
+                              /*dnn_compiled_graphs=*/{},
+                              std::move(hsaco_result.module_stats)};
 }
 
 std::vector<std::string> AMDGPUCompiler::GetLLVMCommandLineOptions(
