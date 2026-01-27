@@ -277,6 +277,10 @@ def _tag_filters_for_compute_capability(
 
 rocm_tag_filters = (
     "-no_gpu",
+    "-skip_rocprofiler_sdk",
+    "-no_oss",
+    "-oss_excluded",
+    "-oss_serial",
     "-requires-gpu-intel",
     "-requires-gpu-nvidia",
     "-cuda-only",
@@ -295,7 +299,7 @@ rocm_tag_filters = (
     "-requires-gpu-sm90-only",
 )
 
-rocm_test_filter_regex = "-ConvolutionHloTest.TestFusedConv3D:ConvolutionHloTest.TestFusedConv2D:HostMemoryAllocateTest.Numa:CollectiveOpsTestFFI.DeviceAllReduce"
+rocm_test_filters = "-ConvolutionHloTest.TestFusedConv3D:ConvolutionHloTest.TestFusedConv2D:HostMemoryAllocateTest.Numa:CollectiveOpsTestFFI.DeviceAllReduce"
 
 rocm_excluded_targets = (
     "-//xla/service/gpu/tests:bitcast-convert.hlo.test_mi200",
@@ -357,18 +361,29 @@ Build(
     configs=("rocm_ci", "rocm_rbe", "ci_single_gpu"),
     target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_excluded_targets,
     build_tag_filters=rocm_tag_filters,
-    test_tag_filters=rocm_tag_filters,
-    options={
-        **_DEFAULT_BAZEL_OPTIONS,
-        "test_filter": rocm_test_filter_regex,
-        "spawn_strategy": "local",
-        "remote_download_outputs": "minimal",
-        "local_test_jobs": 2,
-        "//xla/tsl:ci_build": True,
+    test_tag_filters=rocm_tag_filters + ("gpu", "-multi_gpu"),
+    test_env={"TF_TESTS_PER_GPU": 1, "TF_GPU_COUNT": 1},
+    action_env={
+        "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true --xla_gpu_force_compilation_parallelism=16"
     },
     repo_env={
         "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942,gfx950",
         "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
+        "ROCM_PATH": "/opt/rocm",
+    },
+  options={
+        **_DEFAULT_BAZEL_OPTIONS,
+        "test_filter": rocm_test_filters,
+        "keep_going": True,
+        "test_output": "errors",
+        "run_under": "//build_tools/rocm:parallel_gpu_execute",
+        "test_timeout": "920,2400,7200,9600",
+        "test_sharding_strategy": "disabled",
+        "flaky_test_attempts": 3,
+        "spawn_strategy": "local",
+        "remote_download_outputs": "minimal",
+        "local_test_jobs": 2,
+        "//xla/tsl:ci_build": True,
     },
 )
 
@@ -378,18 +393,32 @@ Build(
     configs=("rocm_ci", "rocm_rbe", "ci_multi_gpu"),
     target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_excluded_targets,
     build_tag_filters=rocm_tag_filters,
-    test_tag_filters=rocm_tag_filters,
-    options={
-        **_DEFAULT_BAZEL_OPTIONS,
-        "test_filter": rocm_test_filter_regex,
-        "spawn_strategy": "local",
-        "remote_download_outputs": "minimal",
-        "local_test_jobs": 2,
-        "//xla/tsl:ci_build": True,
+    test_tag_filters=rocm_tag_filters + ("multi_gpu",),
+    test_env={"TF_TESTS_PER_GPU": 1, "TF_GPU_COUNT": 8},
+    action_env={
+        "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true --xla_gpu_force_compilation_parallelism=16",
+        "NCCL_MAX_NCHANNELS": 1,
     },
     repo_env={
         "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942,gfx950",
         "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
+        "ROCM_PATH": "/opt/rocm",
+    },
+    options={
+        **_DEFAULT_BAZEL_OPTIONS,
+        "test_filter": rocm_test_filters,
+        "spawn_strategy": "local",
+        "remote_download_outputs": "minimal",
+        "local_test_jobs": 2,
+        "//xla/tsl:ci_build": True,
+        "strategy": "TestRunner=local",
+        "keep_going": True,
+        "test_output": "errors",
+        "run_under": "//build_tools/rocm:parallel_gpu_execute",
+        "test_timeout": "920,2400,7200,9600",
+        "test_sharding_strategy": "disabled",
+        "flaky_test_attempts": 3,
+
     },
 )
 
