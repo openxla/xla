@@ -88,6 +88,13 @@ jobs:
             ${{ env.CONTAINER_NAME }} \
             bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_multi_gpu --strategy=TestRunner=local --local_test_jobs=2"
 
+      - name: BuildDir info
+        if: always()
+        run: |
+          docker exec \
+            ${{ env.CONTAINER_NAME }} \
+            bash -c "du -sh /root/.cache/*"
+
       - name: Cleanup container
         if: always()
         run: |
