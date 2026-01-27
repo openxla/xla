@@ -76,18 +76,18 @@ jobs:
           docker exec ${{ env.CONTAINER_NAME }} bash -c "/opt/rocm/bin/rocminfo"
 
       - name: Test XLA [single_gpu]
-        # Exit 0=success, 78=infra failure, 124=timeout - only 78/124 are warnings
+        # Exit 0=success, 78=infra failure (warning)
         run: |
-          timeout 2400 docker exec ${{ env.CONTAINER_NAME }} \
+          docker exec ${{ env.CONTAINER_NAME }} \
             bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_single_gpu --local_test_jobs=2 --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL=linux_x64_gpu_gfx90a" && exit 0
-          ec=$?; [[ $ec -eq 78 || $ec -eq 124 ]] && echo "::warning::Infra/timeout (exit $ec)" && exit 0; exit $ec
+          ec=$?; [[ $ec -eq 78 ]] && echo "::warning::Infra failure (exit $ec)" && echo ":warning: **single_gpu**: Infra failure (exit $ec)" >> $GITHUB_STEP_SUMMARY && exit 0; exit $ec
 
       - name: Test XLA [multi_gpu]
         if: always()
         run: |
-          timeout 2400 docker exec ${{ env.CONTAINER_NAME }} \
+          docker exec ${{ env.CONTAINER_NAME }} \
             bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_multi_gpu --strategy=TestRunner=local --local_test_jobs=2" && exit 0
-          ec=$?; [[ $ec -eq 78 || $ec -eq 124 ]] && echo "::warning::Infra/timeout (exit $ec)" && exit 0; exit $ec
+          ec=$?; [[ $ec -eq 78 ]] && echo "::warning::Infra failure (exit $ec)" && echo ":warning: **multi_gpu**: Infra failure (exit $ec)" >> $GITHUB_STEP_SUMMARY && exit 0; exit $ec
 
       - name: Cleanup container
         if: always()
