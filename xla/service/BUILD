@@ -5727,6 +5727,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -5970,6 +5971,13 @@ xla_aot_compile_cpu(
     module = "xla_aot_compile_test.mlir",
 )
 
+# This model won't run. It is just used to test that the target features are propagated correctly.
+xla_aot_compile_cpu(
+    name = "xla_aot_compile_test_cpu_executable_with_target_config",
+    module = "xla_aot_compile_test.mlir",
+    target_features = "+avx2,+fma",
+)
+
 xla_aot_compile_cpu(
     name = "xla_aot_compile_stablehlo_test_cpu_executable",
     module = "xla_aot_compile_stablehlo_test.mlir",
@@ -6012,10 +6020,12 @@ xla_aot_compile_gpu_runtime_autotuning(
 xla_cc_test(
     name = "xla_aot_compile_cpu_test",
     srcs = ["xla_aot_compile_cpu_test.cc"],
-    data = [":xla_aot_compile_test_cpu_executable"],
+    data = [
+        ":xla_aot_compile_test_cpu_executable",
+        ":xla_aot_compile_test_cpu_executable_with_target_config",
+    ],
     tags = [
         "no_oss",
-        "notap",
     ],
     deps = [
         ":cpu_plugin",
@@ -6027,6 +6037,8 @@ xla_cc_test(
         "//xla/client:client_library",
         "//xla/client:executable_build_options",
         "//xla/client:local_client",
+        "//xla/service/cpu:cpu_aot_compilation_result",
+        "//xla/service/cpu:cpu_aot_loader",
         "//xla/service/cpu:cpu_compiler",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/types:span",

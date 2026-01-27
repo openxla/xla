@@ -38,10 +38,10 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
-#include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_target.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
+#include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -949,7 +949,8 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
         thunk_info, call_target_name, std::move(ops), std::move(res),
         std::move(attributes),
         called_computations.empty() ? nullptr : called_computations[0],
-        ir_emitter_context.platform_name());
+        ir_emitter_context.platform_name(),
+        ir_emitter_context.gpu_compute_capability());
   };
 
   auto legacy_thunk =

@@ -59,6 +59,10 @@ cc_library(
     name = "device_description",
     srcs = ["device_description.cc"],
     hdrs = ["device_description.h"],
+    visibility = internal_visibility([
+        "//third_party/py/jax:__subpackages__",
+        ":friends",
+    ]),
     deps = [
         ":device_description_proto_cc",
         ":launch_dim",
@@ -75,7 +79,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
     ],
 )
 

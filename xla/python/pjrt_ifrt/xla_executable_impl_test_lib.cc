@@ -855,6 +855,22 @@ TEST(ExecutableTest, ExecutableSerialization) {
   }
   EXPECT_EQ(deserialized_executable->name(), "add_sub");
 
+  ASSERT_OK_AND_ASSIGN(
+      xla::CompiledMemoryStats deserialized_compiled_memory_stats,
+      deserialized_executable->GetCompiledMemoryStats());
+  ASSERT_OK_AND_ASSIGN(xla::CompiledMemoryStats loaded_compiled_memory_stats,
+                       loaded_executable->GetCompiledMemoryStats());
+
+  // Temporary workaround for some implementations not round-tripping the
+  // CompiledMemoryStats upon executable deserialization.
+  loaded_compiled_memory_stats.serialized_buffer_assignment = "";
+  loaded_compiled_memory_stats.peak_memory_in_bytes = 0;
+  deserialized_compiled_memory_stats.serialized_buffer_assignment = "";
+  deserialized_compiled_memory_stats.peak_memory_in_bytes = 0;
+
+  EXPECT_THAT(deserialized_compiled_memory_stats.ToProto(),
+              EqualsProto(loaded_compiled_memory_stats.ToProto()));
+
   // Execute the deserialized executable.
   xla::ifrt::DType dtype(xla::ifrt::DType::kS32);
   xla::ifrt::Shape shard_shape({1, 3});

@@ -131,24 +131,6 @@ enum ThunkKindProto {
   THUNK_KIND_WHILE = 73;
 }
 
-message CopyThunkProto {
-  ShapedSliceProto source_buffer = 1;
-  ShapedSliceProto destination_buffer = 2;
-  int64 mem_size = 3;
-}
-
-message DeviceToHostCopyThunkProto {
-  CopyThunkProto copy_thunk = 1;
-}
-
-message HostToDeviceCopyThunkProto {
-  CopyThunkProto copy_thunk = 1;
-}
-
-message DeviceToDeviceCopyThunkProto {
-  CopyThunkProto copy_thunk = 1;
-}
-
 message ConditionalThunkProto {
   ShapedSliceProto branch_index_buffer = 1;
   repeated SequentialThunkProto branch_thunks = 2;
@@ -308,13 +290,11 @@ message CublasLtMatmulThunkProto {
 }
 
 message CubSortThunkProto {
-  xla.PrimitiveType type = 1;
-  optional xla.PrimitiveType value_type = 3;
-  repeated xla.buffer_assignment.BufferAllocationSliceProto operands = 4;
-  repeated xla.buffer_assignment.BufferAllocationSliceProto results = 5;
-  xla.buffer_assignment.BufferAllocationSliceProto scratch = 6;
-  bool descending = 7;
-  int64 batch_size = 8;
+  repeated ShapedSliceProto operands = 1;
+  repeated ShapedSliceProto results = 2;
+  xla.buffer_assignment.BufferAllocationSliceProto scratch = 3;
+  bool descending = 4;
+  int64 batch_size = 5;
 }
 
 message NormThunkProto {

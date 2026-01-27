@@ -76,16 +76,20 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/convolution_filter_thunk.pb.h"
 #include "xla/backends/gpu/runtime/convolution_reorder_thunk.h"
 #include "xla/backends/gpu/runtime/convolution_thunk.h"
+#include "xla/backends/gpu/runtime/copy_done_thunk.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/cub_sort_thunk.h"
 #include "xla/backends/gpu/runtime/cudnn_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
+#include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
+#include "xla/backends/gpu/runtime/device_to_host_copy_thunk.h"
 #include "xla/backends/gpu/runtime/fft_thunk.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
 #include "xla/backends/gpu/runtime/host_send_recv_thunk.h"
+#include "xla/backends/gpu/runtime/host_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/infeed_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/norm_thunk.h"
@@ -944,24 +948,22 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCubDeviceRadixSort(
     return Internal("Invalid number of operands for radix sort");
   }
 
-  absl::InlinedVector<BufferAllocation::Slice, 2> operands;
+  absl::InlinedVector<ShapedSlice, 2> operands;
   for (int i = 0; i < instr->operand_count(); ++i) {
-    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice operand,
-                        GetAllocationSliceForHlo(instr->operand(i), {}));
+    TF_ASSIGN_OR_RETURN(ShapedSlice operand,
+                        GetShapedSliceForHlo(instr->operand(i), {}));
     operands.push_back(operand);
   }
 
-  absl::InlinedVector<BufferAllocation::Slice, 2> results;
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice result,
-                      GetAllocationSliceForHlo(instr, {0}));
+  absl::InlinedVector<ShapedSlice, 2> results;
+  TF_ASSIGN_OR_RETURN(ShapedSlice result, GetShapedSliceForHlo(instr, {0}));
   results.push_back(result);
 
   BufferAllocation::Slice scratch;
   if (instr->operand_count() == 1) {
     TF_ASSIGN_OR_RETURN(scratch, GetAllocationSliceForHlo(instr, {1}));
   } else {
-    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice result,
-                        GetAllocationSliceForHlo(instr, {1}));
+    TF_ASSIGN_OR_RETURN(ShapedSlice result, GetShapedSliceForHlo(instr, {1}));
     results.push_back(result);
     TF_ASSIGN_OR_RETURN(scratch, GetAllocationSliceForHlo(instr, {2}));
   }
@@ -974,10 +976,6 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCubDeviceRadixSort(
       CubSortThunk::Create(
           Thunk::ThunkInfo::WithProfileAnnotation(
               instr, ir_emitter_context_->GetNextThunkId()),
-          operand_shape.element_type(),
-          instr->operand_count() == 2
-              ? std::optional(instr->operand(1)->shape().element_type())
-              : std::nullopt,
           operands, results, scratch, options.descending(),
           Product(operand_shape.dimensions()) /
               operand_shape.dimensions(operand_shape.dimensions().size() - 1),
@@ -1067,7 +1065,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
         call_target_name, std::move(operands), std::move(results),
         std::move(attributes),
         called_computations.empty() ? nullptr : called_computations[0],
-        ir_emitter_context_->platform_name());
+        ir_emitter_context_->platform_name(),
+        ir_emitter_context_->gpu_compute_capability());
   };
 
   auto legacy_thunk =
