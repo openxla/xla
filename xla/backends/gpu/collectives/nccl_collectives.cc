@@ -235,7 +235,7 @@ NcclCollectives::CreateCommunicatorsWithCancel(
         "CliqueIds size must be 1 for NCCL communicator initialization");
   }
   VLOG(1) << absl::StreamFormat(
-      "[%s] ranks=[%s] Initialize NCCL (version %d.%d.%d) "
+      "[%s] [ranks=%s] Initialize NCCL (version %d.%d.%d) "
       "communicators for %d local devices (out of %d global devices); "
       "fingerprint(id)=%v",
       DeviceOrdinalsToString(ranks), DeviceRanksToString(ranks), NCCL_MAJOR,
@@ -313,7 +313,7 @@ NcclCollectives::SplitCommunicatorsWithCancel(
   };
 
   VLOG(1) << absl::StreamFormat(
-      "[%s] ranks=[%s] Split %d NCCL communicators using color %d and "
+      "[%s] [ranks=%s] Split %d NCCL communicators using color %d and "
       "keys [%s]",
       DeviceOrdinalsToString(ranks), DeviceRanksToString(ranks), comms.size(),
       color, absl::StrJoin(keys, ",", rank_formatter));

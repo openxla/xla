@@ -46,7 +46,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/math/math_util.h"
 #include "xla/tsl/platform/errors.h"  // IWYU pragma: keep
@@ -58,6 +57,7 @@ limitations under the License.
 #include "tsl/platform/casts.h"
 #include "tsl/platform/ml_dtypes.h"
 #include "tsl/platform/protobuf.h"
+#include "Eigen/Core"
 
 namespace xla {
 
@@ -130,7 +130,7 @@ struct TimerStats {
 };
 
 inline std::string XlaFormatDevice(int device_ordinal) {
-  return absl::StrFormat("device=[%d] ", device_ordinal);
+  return absl::StrFormat("[%d] ", device_ordinal);
 }
 
 #define XLA_VLOG_DEVICE(level, device_ordinal) \
