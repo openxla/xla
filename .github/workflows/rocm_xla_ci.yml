@@ -76,17 +76,18 @@ jobs:
           docker exec ${{ env.CONTAINER_NAME }} bash -c "/opt/rocm/bin/rocminfo"
 
       - name: Test XLA [single_gpu]
+        # Exit 78 = infra failure (warning), other non-zero = build/test failure (error)
         run: |
-          docker exec \
-            ${{ env.CONTAINER_NAME }} \
-            bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_single_gpu --local_test_jobs=2 --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL=linux_x64_gpu_gfx90a"
+          docker exec ${{ env.CONTAINER_NAME }} \
+            bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_single_gpu --local_test_jobs=2 --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL=linux_x64_gpu_gfx90a" \
+            || [[ $? -eq 78 ]]
 
       - name: Test XLA [multi_gpu]
         if: always()
         run: |
-          docker exec \
-            ${{ env.CONTAINER_NAME }} \
-            bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_multi_gpu --strategy=TestRunner=local --local_test_jobs=2"
+          docker exec ${{ env.CONTAINER_NAME }} \
+            bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_multi_gpu --strategy=TestRunner=local --local_test_jobs=2" \
+            || [[ $? -eq 78 ]]
 
       - name: Cleanup container
         if: always()
