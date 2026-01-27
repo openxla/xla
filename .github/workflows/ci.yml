@@ -79,6 +79,18 @@ jobs:
             repo: "openxla/xla",
           },
           {
+            pool: "linux-x86-64-1gpu-amd",
+            container: "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa",
+            name: "XLA Linux x86 GPU ROCm Single",
+            repo: "openxla/xla",
+          },
+          {
+            pool: "linux-x86-64-8gpu-amd",
+            container: "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa",
+            name: "XLA Linux x86 GPU ROCm Multi",
+            repo: "openxla/xla",
+          },
+          {
             pool: "linux-x86-n2-16",
             container: "gcr.io/tensorflow-sigs/build:latest-python3.11",
             name: "JAX Linux x86 CPU",

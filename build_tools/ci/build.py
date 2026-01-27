@@ -113,6 +113,8 @@ class BuildType(enum.Enum):
   XLA_LINUX_X86_GPU_L4_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_8X_H100_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_ONEAPI_GITHUB_ACTIONS = enum.auto()
+  XLA_LINUX_X86_GPU_ROCM_SINGLE_GITHUB_ACTIONS = enum.auto()
+  XLA_LINUX_X86_GPU_ROCM_MULTI_GITHUB_ACTIONS = enum.auto()
 
   # Presubmit builds for regression testing.
   XLA_LINUX_ARM64_CPU_48_VCPU_PRESUBMIT_GITHUB_ACTIONS = enum.auto()
@@ -273,6 +275,123 @@ def _tag_filters_for_compute_capability(
   tag_filters += ("-requires-gpu-intel",)
   return tag_filters
 
+rocm_tag_filters = (
+    "-no_gpu",
+    "-requires-gpu-intel",
+    "-requires-gpu-nvidia",
+    "-cuda-only",
+    "-oneapi-only",
+    "-requires-gpu-sm60",
+    "-requires-gpu-sm60-only",
+    "-requires-gpu-sm70",
+    "-requires-gpu-sm70-only",
+    "-requires-gpu-sm80",
+    "-requires-gpu-sm80-only",
+    "-requires-gpu-sm86",
+    "-requires-gpu-sm86-only",
+    "-requires-gpu-sm89",
+    "-requires-gpu-sm89-only",
+    "-requires-gpu-sm90",
+    "-requires-gpu-sm90-only",
+)
+
+rocm_test_filter_regex = "-ConvolutionHloTest.TestFusedConv3D:ConvolutionHloTest.TestFusedConv2D:HostMemoryAllocateTest.Numa:CollectiveOpsTestFFI.DeviceAllReduce"
+
+rocm_excluded_targets = (
+    "-//xla/service/gpu/tests:bitcast-convert.hlo.test_mi200",
+    "-//xla/service/gpu/tests:calling_convention.hlo.test_mi200",
+    "-//xla/service/gpu/tests:dot_bf16.hlo.test_mi200",
+    "-//xla/service/gpu/tests:kernel_reuse.hlo.test_mi200",
+    "-//xla/service/gpu/tests:offload_scan_output.hlo.test_mi200",
+    "-//xla/service/gpu/tests:pad_to_static.hlo.test_mi200",
+    "-//xla/service/gpu/tests:reduce-precision.hlo.test_mi200",
+    "-//xla/service/gpu/tests:reduce_fold_zero_add.hlo.test_mi200",
+    "-//xla/service/gpu/tests:rng_get_and_update_state.hlo.test_mi200",
+    "-//xla/service/gpu/tests:slice_to_dynamic.hlo.test_mi200",
+    "-//xla/service/gpu/tests:sorting.hlo.test_mi200",
+    "-//xla/service/gpu/tests:sub_byte_collectives.hlo.test_mi200",
+    "-//xla/service/gpu/tests:triton_calling_convention.hlo.test_mi200",
+    "-//xla/service/gpu/tests:triton_naming.hlo.test_mi200",
+    "-//xla/service/gpu/tests:zero_clamp_abs_index.hlo.test_mi200",
+    "-//xla/stream_executor/gpu:gpu_executor_test_amdgpu_any_notfrt",
+    "-//xla/tests:iota_test_amdgpu_any",
+    "-//xla/tests:iota_test_amdgpu_any_notfrt",
+    "-//xla/backends/gpu/codegen/emitters/tests:reduce_row/mof_scalar_variadic.hlo.test",
+    "-//xla/backends/gpu/codegen/emitters/tests:reduce_row/side_output_broadcast.hlo.test",
+    "-//xla/backends/gpu/codegen/triton:dot_algorithms_test_amdgpu_any",
+    "-//xla/backends/gpu/codegen/triton:fusion_emitter_device_test_amdgpu_any",
+    "-//xla/backends/gpu/codegen/triton:fusion_emitter_int4_device_test_amdgpu_any",
+    "-//xla/backends/gpu/codegen/triton:fusion_emitter_parametrized_test_amdgpu_any",
+    "-//xla/backends/gpu/codegen/triton:support_legacy_test_amdgpu_any",
+    "-//xla/backends/gpu/codegen/triton:support_test",
+    "-//xla/backends/gpu/codegen/triton:triton_gemm_fusion_test_amdgpu_any",
+    "-//xla/backends/gpu/runtime:command_buffer_conversion_pass_test_amdgpu_any",
+    "-//xla/backends/gpu/runtime:command_buffer_conversion_pass_test_amdgpu_any_notfrt",
+    "-//xla/pjrt/c:pjrt_c_api_gpu_test_amdgpu_any",
+    "-//xla/pjrt/c:pjrt_c_api_gpu_test_amdgpu_any_notfrt",
+    "-//xla/service/gpu:dot_algorithm_support_test_amdgpu_any",
+    "-//xla/service/gpu/tests:gpu_kernel_tiling_test_amdgpu_any",
+    "-//xla/service/gpu/tests:gpu_triton_custom_call_test_amdgpu_any",
+    "-//xla/service/gpu/transforms:cublas_gemm_rewriter_test_amdgpu_any",
+    "-//xla/service/gpu/transforms:cudnn_fused_conv_rewriter_autotune_disabled_test_amdgpu_any",
+    "-//xla/service/gpu/transforms:layout_assignment_a100.hlo.test",
+    "-//xla/service/gpu/transforms:layout_assignment_h100.hlo.test",
+    "-//xla/service/gpu/transforms:layout_assignment_v100.hlo.test",
+    "-//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any",
+    "-//xla/service/gpu/transforms:triton_fusion_numerics_verifier_test_amdgpu_any_notfrt",
+    "-//xla/stream_executor/gpu:buffer_debug_log_test_amdgpu_any",
+    "-//xla/stream_executor/gpu:buffer_debug_log_test_amdgpu_any_notfrt",
+    "-//xla/tests:convolution_autotune_disabled_test_amdgpu_any",
+    "-//xla/tests:convolution_autotune_disabled_test_amdgpu_any_notfrt",
+    "-//xla/tools/multihost_hlo_runner:hlo_runner_main_build_test",
+    "-//xla/service/gpu/transforms:dot_dimension_sorter_test_amdgpu_any",
+    "-//xla/pjrt/gpu:se_gpu_pjrt_client_test_amdgpu_any",
+    "-//xla/tests:collective_ops_sharded_unsharded_e2e_test_amdgpu_any",
+    "-//xla/tests:collective_ops_sharded_unsharded_e2e_test_amdgpu_any_notfrt",
+    "-//xla/tools:xla_deviceless_compile_lib_test",
+)
+
+Build(
+    type_=BuildType.XLA_LINUX_X86_GPU_ROCM_SINGLE_GITHUB_ACTIONS,
+    repo="openxla/xla",
+    configs=("rocm_ci", "rocm_rbe", "ci_single_gpu"),
+    target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_excluded_targets,
+    build_tag_filters=rocm_tag_filters,
+    test_tag_filters=rocm_tag_filters,
+    options={
+        **_DEFAULT_BAZEL_OPTIONS,
+        "test_filter": rocm_test_filter_regex,
+        "spawn_strategy": "local",
+        "remote_download_outputs": "minimal",
+        "local_test_jobs": 2,
+        "//xla/tsl:ci_build": True,
+    },
+    repo_env={
+        "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942,gfx950",
+        "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
+    },
+)
+
+Build(
+    type_=BuildType.XLA_LINUX_X86_GPU_ROCM_MULTI_GITHUB_ACTIONS,
+    repo="openxla/xla",
+    configs=("rocm_ci", "rocm_rbe", "ci_multi_gpu"),
+    target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_excluded_targets,
+    build_tag_filters=rocm_tag_filters,
+    test_tag_filters=rocm_tag_filters,
+    options={
+        **_DEFAULT_BAZEL_OPTIONS,
+        "test_filter": rocm_test_filter_regex,
+        "spawn_strategy": "local",
+        "remote_download_outputs": "minimal",
+        "local_test_jobs": 2,
+        "//xla/tsl:ci_build": True,
+    },
+    repo_env={
+        "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942,gfx950",
+        "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
+    },
+)
 
 nvidia_gpu_filters = (
     "-no_oss",
@@ -313,7 +432,6 @@ def nvidia_gpu_build_with_compute_capability(
       repo_env={"TF_CUDA_COMPUTE_CAPABILITIES": f"{compute_capability/10}"},
       extra_setup_commands=(["nvidia-smi"],),
   )
-
 
 cpu_x86_tag_filter = (
     "-no_oss",
