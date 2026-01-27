@@ -125,7 +125,7 @@ void AwaitAndLogIfStuck(RendezvousStateSynchronization& state, int32_t id,
       LOG(ERROR) << absl::StreamFormat(
           "[id=%d] This thread is unstuck waiting for `%s` after %s. Threads "
           "joined rendezvous with significant delay, system can be overloaded "
-          "and theads make progess at different rate. Warning above was a "
+          "and threads make progress at different rate. Warning above was a "
           "false-positive. Perhaps the timeout is too short.",
           id, name, absl::FormatDuration(rendezvous_end - rendezvous_start));
     }
