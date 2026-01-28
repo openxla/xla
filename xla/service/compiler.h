@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/service/metrics_hook_interface.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_address_allocator.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/threadpool.h"
@@ -326,7 +327,7 @@ class Compiler {
   // Creates an `Executable` based on the given `aot_result`.
   virtual absl::StatusOr<std::unique_ptr<Executable>>
   LoadExecutableFromAotResult(const CompiledModule& aot_result,
-                              const se::StreamExecutor& stream_exec) {
+                              const se::DeviceDescription& device_description) {
     return Unimplemented("LoadExecutableFromAotResult unimplemented");
   }
 

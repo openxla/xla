@@ -1838,6 +1838,8 @@ cc_library(
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
         "//xla/service/llvm_ir:llvm_command_line_options",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/host:host_platform_id",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
