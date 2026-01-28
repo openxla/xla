@@ -24,6 +24,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/status/status_matchers.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
@@ -318,7 +319,7 @@ TEST_F(TfrtGpuBufferTest, CopyPoisonedBuffer) {
 
       EXPECT_THAT(
           dst_buffer->GetReadyFuture().Await(),
-          testing::status::StatusIs(absl::StatusCode::kInternal, errmsg));
+          absl_testing::StatusIs(absl::StatusCode::kInternal, errmsg));
     }
   }
 }
