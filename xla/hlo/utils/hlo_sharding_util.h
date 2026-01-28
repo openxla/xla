@@ -89,6 +89,11 @@ bool IsSubTilingOrEqualSharding(const Shape& shape,
                                 const HloSharding& potential_subsharding,
                                 const HloSharding& sharding);
 
+// Determines if `potential_subsharding` is a subsharding of `sharding` for
+// named sharding.
+bool IsSubTilingOrEqualNamedSharding(const HloSharding& potential_subsharding,
+                                     const HloSharding& sharding);
+
 // Returns true if the lhs sharding is preferable over the rhs sharding.
 // The most specific sharding is tile maximal followed by single device tile
 // maximal and finally replicated. This order aims to primarily reduce memory
