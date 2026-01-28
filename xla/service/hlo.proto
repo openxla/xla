@@ -414,6 +414,9 @@ message HloInstructionProto {
 
   // Whether the scan instruction is associative.
   TriState is_associative = 96;
+
+  // Conv kind
+  xla.ConvKind conv_kind = 97;
 }
 
 // Serialization of HloComputation.

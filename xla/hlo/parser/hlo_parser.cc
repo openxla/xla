@@ -310,6 +310,7 @@ class HloParserImpl : public HloParser {
     kComparisonType,
     kWindow,
     kConvolutionDimensionNumbers,
+    kConvKind,
     kSharding,
     kFrontendAttributes,
     kStatisticsViz,
@@ -586,6 +587,7 @@ class HloParserImpl : public HloParser {
   bool ParseComparisonDirection(ComparisonDirection* result);
   bool ParseComparisonType(Comparison::Type* result);
   bool ParseFusionKind(HloInstruction::FusionKind* result);
+  bool ParseConvKind(ConvKind* result);
   bool ParseRandomDistribution(RandomDistribution* result);
   bool ParseRandomAlgorithm(RandomAlgorithm* result);
   bool ParsePrecision(PrecisionConfig::Precision* result);
@@ -2517,6 +2519,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       optional<ConvolutionDimensionNumbers> dnums;
       optional<int64_t> feature_group_count;
       optional<int64_t> batch_group_count;
+      optional<ConvKind> conv_kind;
       attrs["window"] = {/*required=*/false, AttrTy::kWindow, &window};
       attrs["dim_labels"] = {/*required=*/true,
                              AttrTy::kConvolutionDimensionNumbers, &dnums};
@@ -2527,6 +2530,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       optional<std::vector<PrecisionConfig::Precision>> operand_precision;
       attrs["operand_precision"] = {/*required=*/false, AttrTy::kPrecisionList,
                                     &operand_precision};
+      attrs["conv_kind"] = {/*required=*/false, AttrTy::kConvKind, &conv_kind};
       if ((!preset_operands &&
            !ParseOperands(&operands, builder, /*expected_size=*/2)) ||
           !ParseAttributes(attrs, allow_attributes, shape)) {
@@ -2557,10 +2561,14 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
           })) {
         return nullptr;
       }
-      return builder->AddInstruction(HloInstruction::CreateConvolve(
+      auto conv = builder->AddInstruction(HloInstruction::CreateConvolve(
           *shape, /*lhs=*/operands[0], /*rhs=*/operands[1],
           feature_group_count.value(), batch_group_count.value(), *window,
           *dnums, precision_config));
+      if (conv_kind) {
+        DynCast<HloConvolutionInstruction>(conv)->set_conv_kind(*conv_kind);
+      }
+      return conv;
     }
     case HloOpcode::kFft: {
       optional<FftType> fft_type;
@@ -5374,6 +5382,14 @@ bool HloParserImpl::ParseAttributeHelper(
             ->emplace(result);
         return true;
       }
+      case AttrTy::kConvKind: {
+        ConvKind result;
+        if (!ParseConvKind(&result)) {
+          return false;
+        }
+        static_cast<optional<ConvKind>*>(attr_out_ptr)->emplace(result);
+        return true;
+      }
       case AttrTy::kBracedInt64List: {
         std::vector<int64_t> result;
         if (!ParseInt64List(TokKind::kLbrace, TokKind::kRbrace, TokKind::kComma,
@@ -7194,6 +7210,19 @@ bool HloParserImpl::ParseComparisonType(Comparison::Type* result) {
     return TokenError(StrFormat("expects comparison type but sees: %s", val));
   }
   *result = status_or_result.value();
+  lexer_.Lex();
+  return true;
+}
+
+bool HloParserImpl::ParseConvKind(ConvKind* result) {
+  VLOG(kDebugLevel) << "ParseConvKind";
+  if (lexer_.GetKind() != TokKind::kIdent) {
+    return TokenError("expects conv kind");
+  }
+  std::string val = lexer_.GetStrVal();
+  if (!ConvKind_Parse(val, result) || !ConvKind_IsValid(*result)) {
+    return TokenError(StrFormat("expects conv kind but sees: %s", val));
+  }
   lexer_.Lex();
   return true;
 }

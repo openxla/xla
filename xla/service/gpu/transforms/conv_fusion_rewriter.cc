@@ -270,7 +270,6 @@ void GetAllReachableAndFusible(HloInstruction* conv,
   }
 }
 
-using ConvKind = HloConvolutionInstruction::ConvKind;
 HloInstruction* CreateGpuConvFusion(
     HloInstruction* conv, std::vector<HloInstruction*>& fusion_outputs) {
   HloComputation* computation = conv->parent();

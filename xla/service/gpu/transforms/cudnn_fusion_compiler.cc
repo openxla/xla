@@ -369,8 +369,6 @@ class GemmDimensionAdapter {
   const HloInstruction& dot_;
 };
 
-using ConvKind = HloConvolutionInstruction::ConvKind;
-
 class ConvDimensionAdapter {
   explicit ConvDimensionAdapter(const HloInstruction& conv, ConvKind conv_kind,
                                 ConvolutionDimensionNumbers dums)

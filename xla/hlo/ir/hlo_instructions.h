@@ -1956,7 +1956,6 @@ class HloConvolutionInstruction : public HloInstruction {
       const Window& window,
       const ConvolutionDimensionNumbers& dimension_numbers,
       const PrecisionConfig& precision_config);
-  enum class ConvKind { UNSET, FPROP, WGRAD, DGRAD };
 
   const Window& window() const override { return window_; }
   void set_window(const Window& window) override { window_ = window; }

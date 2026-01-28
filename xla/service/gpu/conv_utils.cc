@@ -206,7 +206,6 @@ std::optional<Window> RestoreWindowFromBackwardInput(
   return new_window;
 }
 
-using ConvKind = HloConvolutionInstruction::ConvKind;
 std::optional<Window> RestoreWindow(const HloConvolutionInstruction* conv) {
   ConvKind conv_kind = conv->conv_kind();
   if (conv_kind == ConvKind::WGRAD) {

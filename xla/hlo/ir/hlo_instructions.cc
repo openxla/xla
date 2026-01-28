@@ -3083,7 +3083,8 @@ HloConvolutionInstruction::HloConvolutionInstruction(
       batch_group_count_(batch_group_count),
       window_(window),
       convolution_dimension_numbers_(dimension_numbers),
-      precision_config_(precision_config) {
+      precision_config_(precision_config),
+      conv_kind_(ConvKind::UNSET) {
   if (window_util::HasBaseDilation(window)) {
     SetAndSanitizeName(StrCat(name(), "-base-dilated"));
   }
@@ -3113,6 +3114,7 @@ void HloConvolutionInstruction::ToProto(HloInstructionProto* proto) const {
   proto->set_feature_group_count(feature_group_count_);
   proto->set_batch_group_count(batch_group_count_);
   *proto->mutable_precision_config() = precision_config_;
+  proto->set_conv_kind(conv_kind_);
 }
 
 void HloConvolutionInstruction::PrintExtraAttributesImpl(
@@ -3141,7 +3143,7 @@ void HloConvolutionInstruction::PrintExtraAttributesImpl(
 
   if (conv_kind_ != ConvKind::UNSET) {
     printer.Next([this](Printer* printer) {
-      AppendCat(printer, "conv_kind=", conv_kind_);
+      AppendCat(printer, "conv_kind=", ConvKind_Name(conv_kind_));
     });
   }
   PrintPrecisionConfig(printer, precision_config_);
