@@ -21,7 +21,6 @@ limitations under the License.
 #include <cstdlib>
 #include <functional>
 #include <iterator>
-#include <map>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -65,7 +64,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace hlo_sharding_util {
@@ -313,13 +311,12 @@ bool IsSubTilingOrEqualSharding(const Shape& potential_sharded_shape,
   };
   // Collect the start offsets for each tile for the sharding we are evaluating
   // against.
-  sharding.tile_assignment().Each(
-      [&](absl::Span<const int64_t> indices, int64_t device) {
-        auto indices_per_device = get_sharding_offsets(device);
-        for (int64_t i = 0; i < tiled_data_rank; ++i) {
-          indices_per_device[i] = base_tile[i] * indices[i];
-        }
-      });
+  sharding.EachTile([&](absl::Span<const int64_t> indices, int64_t device) {
+    auto indices_per_device = get_sharding_offsets(device);
+    for (int64_t i = 0; i < tiled_data_rank; ++i) {
+      indices_per_device[i] = base_tile[i] * indices[i];
+    }
+  });
   // Compare the start offsets and the end offset of the tiles for each device.
   auto& potential_ta = potential_subsharding.tile_assignment().array();
   absl::Status ok_if_no_violation = potential_ta.EachStatus(
@@ -737,12 +734,27 @@ HloSharding FindCommonSharding(absl::Span<const HloSharding> shardings,
 HloSharding MoveAndMergeShardingTiles(const HloSharding& sharding,
                                       int64_t source_dim, int64_t target_dim) {
   CHECK(sharding.IsTiled());
-
   CHECK_NE(source_dim, target_dim);
   CHECK_GE(source_dim, 0);
   CHECK_GE(target_dim, 0);
   CHECK_LT(source_dim, sharding.TiledDataRank());
   CHECK_LT(target_dim, sharding.TiledDataRank());
+
+  if (sharding.UseNamedShardingLeaf()) {
+    const NamedSharding& named_sharding = sharding.named_sharding();
+    std::vector<NamedSharding::DimensionSharding> new_dim_shardings(
+        named_sharding.dim_shardings().begin(),
+        named_sharding.dim_shardings().end());
+
+    new_dim_shardings[target_dim].Append(new_dim_shardings[source_dim],
+                                         named_sharding.mesh());
+    new_dim_shardings[source_dim] = NamedSharding::DimensionSharding();
+
+    return HloSharding(NamedSharding(
+        named_sharding.mesh(), std::move(new_dim_shardings),
+        named_sharding.replicated_axes(), named_sharding.unreduced_axes(),
+        named_sharding.manual_axes(), named_sharding.metadata()));
+  }
 
   // There are 3 steps to move and merge the sharding tiles. Given the sharding
   // with tile assignment [a, b, c, d, e], source_dim = 1, target_dim = 3, the
@@ -789,6 +801,29 @@ HloSharding TransposeSharding(const HloSharding& sharding,
   if (sharding.IsTileMaximal() || sharding.IsManual()) {
     return sharding;
   }
+
+  if (sharding.UseNamedShardingLeaf()) {
+    // For NamedSharding, subgroup dimensions (e.g., for replication) are
+    // handled separately from data dimensions. The `dimensions` parameter here
+    // only permutes data dimensions, so its size must match the tensor rank.
+    // This differs from the tile-based HloSharding format, where subgroup
+    // dimensions are part of the tile assignment.
+    CHECK_EQ(sharding.num_dimensions(), dimensions.size());
+
+    std::vector<NamedSharding::DimensionSharding> transposed_dim_shardings(
+        sharding.num_dimensions());
+    for (int64_t i = 0; i < dimensions.size(); ++i) {
+      transposed_dim_shardings[dimensions[i]] =
+          sharding.named_sharding().dim_sharding(i);
+    }
+    return HloSharding(NamedSharding(
+        sharding.named_sharding().mesh(), transposed_dim_shardings,
+        sharding.named_sharding().replicated_axes(),
+        sharding.named_sharding().unreduced_axes(),
+        sharding.named_sharding().manual_axes(),
+        sharding.named_sharding().metadata()));
+  }
+
   std::vector<int> perm_dimensions(dimensions.begin(), dimensions.end());
   // Add subgroup dims if missing.
   if (sharding.TiledDataRank() == dimensions.size()) {
@@ -1092,6 +1127,7 @@ HloSharding PropagateShardingAlongDimsAndReplicateOthers(
         source_sharding.named_sharding().mesh(), target_dim_shardings,
         source_sharding.named_sharding().replicated_axes(),
         source_sharding.named_sharding().unreduced_axes(),
+        source_sharding.named_sharding().manual_axes(),
         source_sharding.named_sharding().metadata()));
   }
 
@@ -1522,7 +1558,8 @@ HloSharding PartiallyReplicateTiledShardingOnDims(
     return HloSharding(NamedSharding(
         sharding.named_sharding().mesh(), dim_shardings,
         sharding.named_sharding().replicated_axes(),
-        sharding.named_sharding().unreduced_axes(), sharding.metadata()));
+        sharding.named_sharding().unreduced_axes(),
+        sharding.named_sharding().manual_axes(), sharding.metadata()));
   }
 
   int64_t group_count = 1;
@@ -1591,7 +1628,8 @@ HloSharding ReplicateAllDataDims(const HloSharding& sharding,
     return HloSharding(NamedSharding(
         sharding.named_sharding().mesh(), dim_shardings,
         sharding.named_sharding().replicated_axes(),
-        sharding.named_sharding().unreduced_axes(), sharding.metadata()));
+        sharding.named_sharding().unreduced_axes(),
+        sharding.named_sharding().manual_axes(), sharding.metadata()));
   }
 
   if (sharding.IsManual()) {
@@ -1621,10 +1659,11 @@ HloSharding RemoveShapeDimensions(const HloSharding& sharding,
   }
 
   if (sharding.UseNamedShardingLeaf()) {
-    // Check to ensure subgroup dimensions are not passed in dims_to_remove as
-    // named sharding doesn't handle them as part of dim_shardings but separate
-    // replicated, unreduced axes as opposed to tile hlo sharding format which
-    // uses tile dimensions to represent subgroup dimensions as well.
+    // For NamedSharding, subgroup dimensions (e.g., for replication) are
+    // handled separately from data dimensions. The `dimensions` parameter here
+    // only permutes data dimensions, so its size must match the tensor rank.
+    // This differs from the tile-based HloSharding format, where subgroup
+    // dimensions are part of the tile assignment.
     DCHECK(
         std::all_of(dims_to_remove.begin(), dims_to_remove.end(),
                     [&](int64_t i) { return i < sharding.num_dimensions(); }));
@@ -1644,7 +1683,8 @@ HloSharding RemoveShapeDimensions(const HloSharding& sharding,
     return HloSharding(NamedSharding(
         sharding.named_sharding().mesh(), new_dim_shardings,
         sharding.named_sharding().replicated_axes(),
-        sharding.named_sharding().unreduced_axes(), sharding.metadata()));
+        sharding.named_sharding().unreduced_axes(),
+        sharding.named_sharding().manual_axes(), sharding.metadata()));
   }
 
   DimensionVector new_tile_shape;
@@ -1663,12 +1703,87 @@ HloSharding RemoveShapeDimensions(const HloSharding& sharding,
                                      sharding.metadata());
 }
 
+HloSharding AddShapeDimensions(const HloSharding& sharding,
+                               int64_t insertion_index, int64_t num_dims) {
+  CHECK_GE(insertion_index, 0);
+  CHECK_LE(insertion_index, sharding.TiledDataRank());
+  if (sharding.IsTileMaximal() || num_dims == 0) {
+    return sharding;
+  }
+
+  if (sharding.UseNamedShardingLeaf()) {
+    absl::Span<const NamedSharding::DimensionSharding> dim_shardings =
+        sharding.named_sharding().dim_shardings();
+    std::vector<NamedSharding::DimensionSharding> new_dim_shardings;
+    new_dim_shardings.reserve(dim_shardings.size() + num_dims);
+    new_dim_shardings.insert(new_dim_shardings.end(), dim_shardings.begin(),
+                             dim_shardings.begin() + insertion_index);
+    new_dim_shardings.insert(new_dim_shardings.end(), num_dims,
+                             NamedSharding::DimensionSharding());
+    new_dim_shardings.insert(new_dim_shardings.end(),
+                             dim_shardings.begin() + insertion_index,
+                             dim_shardings.end());
+
+    return HloSharding(NamedSharding(
+        sharding.named_sharding().mesh(), new_dim_shardings,
+        sharding.named_sharding().replicated_axes(),
+        sharding.named_sharding().unreduced_axes(),
+        sharding.named_sharding().manual_axes(), sharding.metadata()));
+  }
+
+  absl::Span<const int64_t> dims = sharding.dimensions();
+  DimensionVector new_tile_shape;
+  new_tile_shape.reserve(dims.size() + num_dims);
+  new_tile_shape.insert(new_tile_shape.end(), dims.begin(),
+                        dims.begin() + insertion_index);
+  new_tile_shape.insert(new_tile_shape.end(), num_dims, 1);
+  new_tile_shape.insert(new_tile_shape.end(), dims.begin() + insertion_index,
+                        dims.end());
+
+  TileAssignment new_tile = sharding.tile_assignment().Reshape(new_tile_shape);
+  return sharding.ReplicateOnLastTileDim()
+             ? HloSharding::PartialTile(new_tile, sharding.metadata())
+             : HloSharding::Subgroup(new_tile, sharding.subgroup_types(),
+                                     sharding.metadata());
+}
+
 std::optional<HloSharding> TransposeShardingWithCollapsedDims(
     const HloSharding& source, absl::Span<int64_t const> src_to_tgt,
     absl::Span<int64_t const> tgt_to_src) {
   if (source.IsTileMaximal() || source.IsManual()) {
     return source;
   }
+
+  if (source.UseNamedShardingLeaf()) {
+    // For NamedSharding, subgroup dimensions (e.g., for replication) are
+    // handled separately from data dimensions. The `dimensions` parameter here
+    // only permutes data dimensions, so its size must match the tensor rank.
+    // This differs from the tile-based HloSharding format, where subgroup
+    // dimensions are part of the tile assignment.
+    CHECK_EQ(source.num_dimensions(), src_to_tgt.size());
+
+    for (int64_t i = 0; i < src_to_tgt.size(); ++i) {
+      if (src_to_tgt[i] < 0 && source.dimension(i) > 1) {
+        return std::nullopt;
+      }
+    }
+
+    std::vector<NamedSharding::DimensionSharding> new_dim_shardings(
+        tgt_to_src.size());
+    for (int64_t i = 0; i < tgt_to_src.size(); ++i) {
+      if (tgt_to_src[i] >= 0) {
+        new_dim_shardings[i] =
+            source.named_sharding().dim_sharding(tgt_to_src[i]);
+      }
+    }
+
+    return HloSharding(NamedSharding(
+        source.named_sharding().mesh(), new_dim_shardings,
+        source.named_sharding().replicated_axes(),
+        source.named_sharding().unreduced_axes(),
+        source.named_sharding().manual_axes(), source.metadata()));
+  }
+
   if (src_to_tgt.size() < source.num_dimensions()) {
     // Add missing subgroup dims.
     DimensionVector new_src_to_tgt(src_to_tgt.begin(), src_to_tgt.end());
@@ -2322,7 +2437,7 @@ PartialReplicatedGroupShardingWithAssignedDeviceGroups(
   std::vector<DimensionVector> device_to_index(
       Product(sharding.dimensions()),
       DimensionVector(sharding.num_dimensions()));
-  sharding.tile_assignment().Each(
+  sharding.EachTile(
       [&device_to_index](absl::Span<const int64_t> indices, int64_t device) {
         device_to_index[device].assign(indices.begin(), indices.end());
       });
@@ -2569,6 +2684,26 @@ HloSharding SplitShardingDimension(const HloSharding& sharding,
   CHECK_GT(sharding.TiledDataRank(), dimension);
   CHECK_EQ(sharding.dimension(dimension) % new_dim_size, 0)
       << "dim size " << new_dim_size;
+
+  if (sharding.UseNamedShardingLeaf()) {
+    const NamedSharding& named_sharding = sharding.named_sharding();
+    std::vector<NamedSharding::DimensionSharding> new_dim_shardings(
+        named_sharding.dim_shardings().begin(),
+        named_sharding.dim_shardings().end());
+
+    std::optional<NamedSharding::DimensionSharding> sliced =
+        new_dim_shardings[dimension].Slice(named_sharding.mesh(), new_dim_size);
+    CHECK(sliced.has_value()) << "Could not slice dimension " << dimension
+                              << " with size " << new_dim_size;
+
+    new_dim_shardings.insert(new_dim_shardings.begin() + dimension, *sliced);
+
+    return HloSharding(NamedSharding(
+        named_sharding.mesh(), new_dim_shardings,
+        named_sharding.replicated_axes(), named_sharding.unreduced_axes(),
+        named_sharding.manual_axes(), named_sharding.metadata()));
+  }
+
   DimensionVector dimensions(sharding.dimensions().begin(),
                              sharding.dimensions().end());
   int64_t current_dimension = dimensions[dimension];
@@ -2584,7 +2719,22 @@ HloSharding SplitShardingDimension(const HloSharding& sharding,
 
 HloSharding MergeShardingDimension(const HloSharding& sharding,
                                    int64_t dimension) {
-  CHECK_GT(sharding.TiledDataRank(), dimension);
+  CHECK_GT(sharding.TiledDataRank(), dimension + 1);
+  if (sharding.UseNamedShardingLeaf()) {
+    const NamedSharding& named_sharding = sharding.named_sharding();
+    std::vector<NamedSharding::DimensionSharding> merged_dim_shardings(
+        named_sharding.dim_shardings().begin(),
+        named_sharding.dim_shardings().end());
+
+    merged_dim_shardings[dimension].Append(merged_dim_shardings[dimension + 1],
+                                           named_sharding.mesh());
+    merged_dim_shardings.erase(merged_dim_shardings.begin() + dimension + 1);
+
+    return HloSharding(NamedSharding(
+        named_sharding.mesh(), merged_dim_shardings,
+        named_sharding.replicated_axes(), named_sharding.unreduced_axes(),
+        named_sharding.manual_axes(), named_sharding.metadata()));
+  }
   DimensionVector dimensions(sharding.dimensions().begin(),
                              sharding.dimensions().end());
   dimensions[dimension] *= dimensions[dimension + 1];
@@ -2599,8 +2749,12 @@ HloSharding MergeShardingDimension(const HloSharding& sharding,
 std::shared_ptr<const HloSharding> CreateTupleSharding(
     const Shape& shape, absl::Span<const HloInstruction* const> elements) {
   bool any_sharding = false;
+  bool any_named_sharding = false;
   for (const HloInstruction* element : elements) {
-    any_sharding |= element->has_sharding();
+    if (element->has_sharding()) {
+      any_sharding = true;
+      any_named_sharding |= element->sharding().UseNamedShardingLeaf();
+    }
   }
   if (!any_sharding) {
     return nullptr;
@@ -2612,7 +2766,7 @@ std::shared_ptr<const HloSharding> CreateTupleSharding(
     if (element->has_sharding()) {
       sub_shardings.push_back(element->sharding());
     } else {
-      sub_shardings.push_back(HloSharding::Replicate());
+      sub_shardings.push_back(HloSharding::Replicate({}, any_named_sharding));
     }
   }
   return std::make_shared<const HloSharding>(
@@ -2718,7 +2872,8 @@ Shape TileShape(const HloSharding& sharding, const Shape& shape) {
 }
 
 Shape TileLeafShape(const HloSharding& sharding, const Shape& shape) {
-  if (sharding.IsTileMaximal() || sharding.IsManual() || sharding.IsUnknown()) {
+  if (sharding.IsTileMaximal() || sharding.IsManual() || sharding.IsUnknown() ||
+      sharding.IsUnreduced()) {
     return shape;
   }
   if (!shape.IsArray()) {

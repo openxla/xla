@@ -104,6 +104,7 @@ cc_library(
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -111,6 +112,15 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "llvm_command_line_options_test",
+    srcs = ["llvm_command_line_options_test.cc"],
+    deps = [
+        ":llvm_command_line_options",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -306,11 +316,13 @@ xla_cc_test(
 xla_cc_test(
     name = "llvm_util_test",
     srcs = ["llvm_util_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":llvm_util",
         "//xla:error_spec",
         "//xla:literal",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
         "//xla/tests:hlo_test_base",

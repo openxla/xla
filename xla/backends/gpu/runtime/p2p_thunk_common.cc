@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
@@ -93,7 +94,7 @@ P2PConfig GetP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
                                   const Shape& shape, int64_t replica_count,
                                   int64_t partition_count) {
   P2PConfig p2p_config;
-  auto& config = p2p_config.config;
+  CollectiveConfig& config = p2p_config.config;
 
   config.operand_element_type.push_back(shape.element_type());
   config.group_mode = GetCollectiveOpGroupMode(
@@ -127,8 +128,7 @@ P2PConfig GetP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
   }
 
   std::vector<ReplicaGroup> replica_groups = statusor.value();
-  P2PConfig::ValidationKind validation_kind = P2PConfig::ValidationKind::kValid;
-  p2p_config.validation_kind = validation_kind;
+  p2p_config.validation_kind = P2PConfig::ValidationKind::kValid;
   for (const ReplicaGroup& replica_group : replica_groups) {
     int64_t source = replica_group.replica_ids(0);
     int64_t target = replica_group.replica_ids(1);

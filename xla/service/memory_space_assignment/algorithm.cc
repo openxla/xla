@@ -221,13 +221,18 @@ std::vector<HloUse> FindCrossProgramPrefetchUses(
             [&](const std::pair<HloOperandIndex, ShapeIndex>& in_place_pair) {
               if (in_place_pair.first.operand_number == use.operand_number &&
                   in_place_pair.first.operand_index == use.operand_index) {
-                return use.instruction != root_instruction &&
-                       absl::c_all_of(
-                           alias_analysis.dataflow_analysis()
-                               .GetUniqueValueAt(use.instruction,
-                                                 in_place_pair.second)
-                               .GetUses(),
-                           use_does_not_live_out);
+                if (use.instruction == root_instruction) {
+                  return false;
+                }
+                for (const HloUse& nested_use :
+                     alias_analysis.dataflow_analysis()
+                         .GetUniqueValueAt(use.instruction,
+                                           in_place_pair.second)
+                         .GetUses()) {
+                  if (nested_use != use && !use_does_not_live_out(nested_use)) {
+                    return false;
+                  }
+                }
               }
               return true;
             });
@@ -4440,6 +4445,8 @@ void MsaAlgorithm::UpdateAllocationRequirementForUseAliases(
           << (aliased_allocation ? aliased_allocation->ToString()
                                  : "couldn't find the aliased allocation");
 
+  if (!aliased_allocation) return;
+
   for (const HloPosition& aliased_position : use.aliases) {
     AddAliasedRequiredAssignment(aliased_position.instruction,
                                  aliased_position.index, aliased_allocation);
@@ -6415,7 +6422,8 @@ AllocationResult MsaAlgorithm::AllocateSegment(AllocationRequest& request) {
   }
 
   // Finally, try to prefetch the buffer into alternate memory.
-  if (request.allow_prefetch &&
+  if ((request.allow_prefetch ||
+       request.require_end_colored_in_alternate_memory) &&
       !request.allocation_value->requires_contiguous_allocation() &&
       !request.only_extend_existing_allocation &&
       required_memory_space_at_end != MemorySpace::kDefault &&
@@ -6490,7 +6498,18 @@ AllocationResult MsaAlgorithm::AllocateSegment(AllocationRequest& request) {
     result_mark(prefetch_result, allocation_result);
   }
 
-  CHECK(!request.require_end_colored_in_alternate_memory);
+  CHECK(!request.require_end_colored_in_alternate_memory)
+      << "Failed to allocate end in alternate memory, even though its "
+         "required. "
+         "requires_contiguous_allocation: "
+      << request.allocation_value->requires_contiguous_allocation()
+      << " only_extend_existing_allocation: "
+      << request.only_extend_existing_allocation
+      << " require_end_colored_in_default_memory: "
+      << request.require_end_colored_in_default_memory
+      << " required_memory_space_at_end: "
+      << (required_memory_space_at_end == MemorySpace::kDefault ? "default"
+                                                                : "alternate");
 
   // If the end assignment was required to be in alternate memory but that
   // wasn't possible, then this allocation is invalid.
@@ -7305,7 +7324,7 @@ AllocationResult MsaAlgorithm::PrefetchWithResourceConstraints(
   //                                   Start   Done
 
   VLOG(5) << "Considering prefetch of "
-          << request.allocation_value->defining_instruction()->ToString()
+          << request.allocation_value->ToShortString()
           << (request.preferred_offset
                   ? absl::StrCat(", with a preferred offset of ",
                                  request.preferred_offset->offset, ".")

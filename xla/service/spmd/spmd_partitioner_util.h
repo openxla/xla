@@ -595,22 +595,9 @@ HloInstruction* PadDataFromWindowReshard(
 
 // Generates partition groups (groups of devices that will communicate via a
 // collective) from sharding and provided replication_dims.
-std::vector<std::vector<int64_t>> GetPartitionGroupsForReplication(
+// Callers should use GetPartitionGroupsForReplication instead of this function.
+CollectiveDeviceList GetListOfListsPartitionGroupsForReplication(
     const HloSharding& sharding, absl::Span<const int64_t> replication_dims);
-
-// Generates partition groups (groups of devices that will communicate via a
-// collective) across provided target dims with provided group sizes in vector
-// of vector format (legacy format).
-std::vector<std::vector<int64_t>> GetPartitionGroupsAcrossTargetDims(
-    const HloSharding& sharding, std::vector<int64_t> target_dims,
-    std::vector<int64_t> group_sizes);
-
-// Generates partition groups (groups of devices that will communicate via a
-// collective) across provided target dims with provided group sizes in iota
-// format from sharding.
-std::optional<IotaReplicaGroupList> GetIotaPartitionGroupsAcrossTargetDims(
-    const HloSharding& sharding, std::vector<int64_t> target_dims,
-    std::vector<int64_t> group_sizes);
 
 // Generates partition groups (groups of devices that will communicate via a
 // collective) in iota format from sharding and provided replication_dims.
@@ -623,8 +610,36 @@ std::optional<IotaReplicaGroupList> GetIotaPartitionGroupsAcrossTargetDims(
 // format is only possible if the device list generated covers all partitions.
 // The generated device list can cover all partitions if the provided
 // sharding covers all partitions.
+// Callers should use GetPartitionGroupsForReplication instead of this function.
 std::optional<IotaReplicaGroupList> GetIotaPartitionGroupsForReplication(
     const HloSharding& sharding, absl::Span<const int64_t> replication_dims);
+
+// Generates mesh-based (V3) partition groups for replication across the axes
+// corresponding to the provided replication dims.
+// Callers should use GetPartitionGroupsForReplication instead of this function.
+std::optional<MeshAxesReplicaGroupList>
+GetMeshAxesPartitionGroupsForReplication(
+    const HloSharding& sharding, absl::Span<const int64_t> replication_dims);
+
+// Generates partition groups (groups of devices that will communicate via a
+// collective) from the sharding and provided replication_dims. Will prioritize
+// generating V3 format and fallback to V2 or V1 if needed.
+std::unique_ptr<CollectiveDeviceListBase> GetPartitionGroupsForReplication(
+    const HloSharding& sharding, absl::Span<const int64_t> replication_dims);
+
+// Generates partition groups (groups of devices that will communicate via a
+// collective) across provided target dims with provided group sizes in vector
+// of vector format (legacy format).
+CollectiveDeviceList GetPartitionGroupsAcrossTargetDims(
+    const HloSharding& sharding, std::vector<int64_t> target_dims,
+    std::vector<int64_t> group_sizes);
+
+// Generates partition groups (groups of devices that will communicate via a
+// collective) across provided target dims with provided group sizes in iota
+// format from sharding.
+std::optional<IotaReplicaGroupList> GetIotaPartitionGroupsAcrossTargetDims(
+    const HloSharding& sharding, std::vector<int64_t> target_dims,
+    std::vector<int64_t> group_sizes);
 
 // Generates mesh-based (V3) partition groups across the provided target dims
 // with the provided group sizes. The group sizes must divide their
@@ -637,12 +652,6 @@ std::optional<MeshAxesReplicaGroupList>
 GetMeshAxesPartitionGroupsAcrossTargetDims(const HloSharding& sharding,
                                            std::vector<int64_t> target_dims,
                                            std::vector<int64_t> group_sizes);
-
-// Generates mesh-based (V3) partition groups for replication across the axes
-// corresponding to the provided replication dims.
-std::optional<MeshAxesReplicaGroupList>
-GetMeshAxesPartitionGroupsForReplication(
-    const HloSharding& sharding, absl::Span<const int64_t> replication_dims);
 
 // Expands partition group list across all replicas. Expects that provided
 // partition_group_list utilizes all the partitions.

@@ -79,6 +79,8 @@ common --@rules_python//python/config_settings:precompile=force_disabled
 # would conflict with our protobuf linkage.
 #common --define=use_fast_cpp_protos=true
 
+common --incompatible_default_to_explicit_init_py
+
 # For local build, without dependency on rbe
 common:linux_cpu --config=avx_linux
 common:linux_cpu --linkopt=-lrt
@@ -189,10 +191,11 @@ common:mkl_aarch64_threadpool -c opt
 # This is an alias for the mkl_aarch64_threadpool build.
 common:mkl_aarch64 --config=mkl_aarch64_threadpool
 
-# Default CUDA, CUDNN and NVSHMEM versions.
+# Default CUDA, CUDNN, NCCL and NVSHMEM versions.
 common:cuda_version --repo_env=HERMETIC_CUDA_VERSION="12.9.1"
 common:cuda_version --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
 common:cuda_version --repo_env=HERMETIC_NVSHMEM_VERSION="3.2.5"
+common:cuda_version --repo_env=HERMETIC_NCCL_VERSION="2.27.7"
 
 # CUDA: This config refers to building CUDA op kernels with nvcc.
 common:cuda --repo_env TF_NEED_CUDA=1
@@ -287,7 +290,7 @@ common:rocm_ci --config=rocm
 
 common:rocm_ci_hermetic --dynamic_mode=off
 common:rocm_ci_hermetic --config=rocm_clang_official
-common:rocm_ci_hermetic --repo_env="ROCM_DISTRO_VERSION=rocm_7.10.0_gfx94X"
+common:rocm_ci_hermetic --repo_env="ROCM_DISTRO_VERSION=rocm_7.10.0_gfx90X"
 common:rocm_ci_hermetic --@local_config_rocm//rocm:rocm_path_type=hermetic
 
 # This config option is used for SYCL as GPU backend.
@@ -558,7 +561,22 @@ common:rbe_win_base --nobuild_runfile_links
 common:rbe_win_base --define=override_eigen_strong_inline=true
 
 common:rbe_windows_x86_cpu_2022 --config=rbe_win_base --config=windows_x86_cpu_2022
+
+# Override the remote instance and BES instance names to use the new RBE pools
+common:rbe_windows_x86_cpu_2022 --remote_instance_name=projects/ml-oss-rbe-general/instances/default_instance
+common:rbe_windows_x86_cpu_2022 --bes_instance_name="ml-oss-rbe-general"
+
+common:rbe_windows_x86_cpu_2022 --host_platform="//tensorflow/tools/toolchains/win2022:windows_ltsc2022_clang_new"
+common:rbe_windows_x86_cpu_2022 --extra_execution_platforms="//tensorflow/tools/toolchains/win2022:windows_ltsc2022_clang_new"
+common:rbe_windows_x86_cpu_2022 --platforms="//tensorflow/tools/toolchains/win2022:windows_ltsc2022_clang_new"
+
 common:rbe_xla_windows_x86_cpu_2022 --config=rbe_win_base --config=xla_windows_x86_cpu_2022
+common:rbe_xla_windows_x86_cpu_2022 --remote_instance_name=projects/ml-oss-rbe-general/instances/default_instance
+common:rbe_xla_windows_x86_cpu_2022 --bes_instance_name="ml-oss-rbe-general"
+
+common:rbe_xla_windows_x86_cpu_2022 --host_platform="//tools/toolchains/win2022:windows_ltsc2022_clang_new"
+common:rbe_xla_windows_x86_cpu_2022 --extra_execution_platforms="//tools/toolchains/win2022:windows_ltsc2022_clang_new"
+common:rbe_xla_windows_x86_cpu_2022 --platforms="//tools/toolchains/win2022:windows_ltsc2022_clang_new"
 
 # END TF REMOTE BUILD EXECUTION OPTIONS
 

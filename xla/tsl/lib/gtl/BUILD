@@ -34,7 +34,10 @@ package(
         "//tensorflow/core/profiler/convert:__pkg__",
         # xprof /convert and /utils uses map_util and top_n
         "//third_party/xprof/convert:__pkg__",
+        "//third_party/xprof/convert/megascale_perfetto:__pkg__",
         "//third_party/xprof/utils:__pkg__",
+        # Pathways uses int_type.
+        "//learning/pathways/ifrt/sidecar:__pkg__",
     ]),
     licenses = ["notice"],
 )
@@ -98,6 +101,7 @@ cc_library(
     deps = [
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:types",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )
 
@@ -247,6 +251,7 @@ tsl_cc_test(
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:types",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:hash",
     ],

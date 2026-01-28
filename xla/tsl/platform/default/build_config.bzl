@@ -176,7 +176,8 @@ def tf_proto_library(
         create_service = False,  # @unused
         create_java_proto = False,  # @unused
         create_kotlin_proto = False,  # @unused
-        create_go_proto = False):  # @unused
+        create_go_proto = False,  # @unused
+        **kwargs):
     """A macro generating protobuf and/or gRPC stubs for C++ and Python.
 
     It is a backward-compatible (with old TF-custom protobuf and gGRPC rules) macro which wraps a
@@ -216,6 +217,7 @@ def tf_proto_library(
       create_java_proto: Obsolete.
       create_kotlin_proto: Obsolete.
       create_go_proto: Obsolete.
+      **kwargs: Other arguments to pass to the proto library.
     """
 
     native.filegroup(
@@ -235,13 +237,14 @@ def tf_proto_library(
         deps = deps + protodeps + [
             proto_lib
             for proto_lib in well_known_proto_libs()
-            if proto_lib not in protodeps
+            if proto_lib not in (deps + protodeps)
         ],
         exports = exports,
         compatible_with = compatible_with,
         visibility = visibility,
         testonly = testonly,
         tags = tags,
+        **kwargs
     )
 
     cc_proto_name = name + "_cc"

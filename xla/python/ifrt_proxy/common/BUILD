@@ -81,21 +81,21 @@ tf_proto_library(
 tf_proto_library(
     name = "ifrt_service_proto",
     srcs = ["ifrt_service.proto"],
-    protodeps = [
+    deps = [
         ":types_proto",
-        # copybara:uncomment "@com_google_protobuf//:any_proto",
         "//xla:xla_data_proto",
         "//xla/pjrt/proto:executable_metadata_proto",
-        "//xla/pjrt/proto:execute_options_proto",
         "//xla/python/ifrt:array_spec_proto",
         "//xla/python/ifrt:attribute_map_proto",
         "//xla/python/ifrt:dtype_proto",
         "//xla/python/ifrt:execute_options_proto",
+        "//xla/python/ifrt:layout_proto",
         "//xla/python/ifrt:remap_plan_proto",
         "//xla/python/ifrt:serdes_proto",
         "//xla/python/ifrt:shape_proto",
         "//xla/python/ifrt:sharding_proto",
         "//xla/tsl/protobuf:status_proto",
+        "@com_google_protobuf//:any_proto",
     ],
 )
 
@@ -107,7 +107,7 @@ tf_proto_library(
     create_grpc_library = True,
     create_java_proto = False,
     create_kotlin_proto = False,
-    protodeps = [
+    deps = [
         ":ifrt_service_proto",
         "//xla/python/ifrt:attribute_map_proto",
     ],
@@ -193,9 +193,11 @@ cc_library(
     name = "common_serdes",
     deps = [
         "//xla/python/ifrt:custom_call_program_serdes",
+        "//xla/python/ifrt:layout_serdes",
         "//xla/python/ifrt:plugin_program_serdes",
         "//xla/python/ifrt/hlo:hlo_program_serdes",
         "//xla/python/ifrt/ir:ifrt_ir_program_serdes",
+        "//xla/python/pjrt_ifrt:pjrt_layout_serdes",
         "//xla/python/pjrt_ifrt:xla_sharding_serdes",
     ],
     alwayslink = True,

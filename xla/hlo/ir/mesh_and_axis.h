@@ -19,13 +19,12 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/log/check.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
@@ -92,31 +91,11 @@ class Mesh {
 
   bool operator!=(const Mesh& other) const { return !(*this == other); }
 
-  std::string ToString() const {
-    std::string mesh_str = "@mesh";
-    // Add the mesh axes names and sizes.
-    std::vector<std::string> formatted_axes_names;
-    formatted_axes_names.reserve(axes_names_.size());
-    for (int64_t i = 0; i < axes_names_.size(); ++i) {
-      formatted_axes_names.push_back(
-          absl::StrCat(axes_names_[i], "=", device_assignment_.dim(i)));
-    }
-
-    // Add the device assignment if it is not an iota case.
-    std::optional<IotaTileAssignment> iota = device_assignment_.iota();
-    std::string device_assignment_str = "";
-    if (!(iota.has_value() && iota->reshape_dims().size() == 1)) {
-      device_assignment_str =
-          absl::StrCat("(", device_assignment_.ArrayToString(), ")");
-    }
-    absl::StrAppend(&mesh_str, "<", absl::StrJoin(formatted_axes_names, ","),
-                    ">", device_assignment_str);
-    return mesh_str;
-  }
-
   bool DeviceAssignmentEquals(const Mesh& other) const {
     return device_assignment_ == other.device_assignment_;
   }
+
+  std::string ToString() const;
 
   MeshProto ToProto() const;
 
@@ -150,6 +129,11 @@ class AxisRef {
     int64_t pre_size;
     int64_t size;
     int64_t next_pre_size() const { return pre_size * size; }
+
+    template <typename H>
+    friend H AbslHashValue(H h, const SubAxis& s) {
+      return H::combine(std::move(h), s.pre_size, s.size);
+    }
   };
 
   // Index corresponding to axis in the mesh. It should be a valid index into
@@ -178,27 +162,30 @@ class AxisRef {
 
   bool operator!=(const xla::AxisRef& other) const { return !(*this == other); }
 
-  std::string ToString(const Mesh& mesh) const {
-    CHECK_GE(mesh_axis_index_, 0);
-    CHECK_LT(mesh_axis_index_, mesh.axis_names().size());
-    std::string axis_str = mesh.axis_names()[mesh_axis_index()];
-    if (sub_axis_info_.has_value()) {
-      absl::StrAppend(&axis_str, ":(", sub_axis_info_->pre_size, ")",
-                      sub_axis_info_->size);
-    }
-    return axis_str;
+  template <typename H>
+  friend H AbslHashValue(H h, const AxisRef& a) {
+    return H::combine(std::move(h), a.mesh_axis_index_, a.sub_axis_info_);
   }
+
+  std::string ToString(const Mesh* mesh = nullptr) const;
 
   AxisRefProto ToProto() const;
 
   static AxisRef FromProto(const AxisRefProto& proto);
 
-  bool CanCoexist(const AxisRef& other) const;
-  bool Overlaps(const AxisRef& other) const;
   bool CanCoexistWithoutOverlap(const AxisRef& other) const;
+
+  // Returns true if this AxisRef can be merged with the `other`, i.e., they are
+  // consecutive sub-axes of same full axis and this sub-axis is major to other.
+  bool CanMerge(const AxisRef& other) const;
+
+  // Returns true if this AxisRef is merged with the `other` and this AxisRef
+  // is updated, otherwise returns false.
+  bool Merge(const AxisRef& other, const Mesh& mesh);
 
   // Validates that the given mesh is compatible for this axis ref.
   absl::Status Validate(const Mesh& mesh) const;
+
   int64_t mesh_axis_index() const { return mesh_axis_index_; }
   std::optional<SubAxis> sub_axis_info() const { return sub_axis_info_; }
 
@@ -208,12 +195,18 @@ class AxisRef {
   absl::Status ValidateAxisRef();
 };
 
+std::ostream& operator<<(std::ostream& out, const Mesh& mesh);
+
+std::ostream& operator<<(std::ostream& out, const AxisRef& axis);
+
 bool AxesCanCoexistWithoutOverlap(absl::Span<const AxisRef> axes);
 
-// The span of axes is valid if (1) all axes are valid for the given mesh, and
-// (2) the axes can coexist without overlap.
+// The span of axes is valid if (1) all axes are valid for the given mesh,
+// (2) the axes can coexist without overlap, and (3) mergeable neighbors are
+// merged if `allow_mergeable_neighbors` is false.
 absl::Status ValidateSpanOfAxes(absl::Span<const AxisRef> axes,
-                                const Mesh& mesh);
+                                const Mesh& mesh,
+                                bool allow_mergeable_neighbors = false);
 
 }  // namespace xla
 

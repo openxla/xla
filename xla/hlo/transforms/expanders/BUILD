@@ -129,40 +129,6 @@ cc_library(
 )
 
 cc_library(
-    name = "real_imag_expander",
-    srcs = ["real_imag_expander.cc"],
-    hdrs = ["real_imag_expander.h"],
-    deps = [
-        ":op_expander_pass",
-        "//xla:literal_util",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
-    ],
-)
-
-xla_cc_test(
-    name = "real_imag_expander_test",
-    size = "small",
-    srcs = ["real_imag_expander_test.cc"],
-    deps = [
-        ":real_imag_expander",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:types",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
-        "//xla/hlo/testlib:pattern_matcher_gmock",
-        "//xla/hlo/testlib:test",
-        "//xla/hlo/utils:hlo_matchers",
-        "//xla/service:hlo_creation_utils",
-        "//xla/service:pattern_matcher",
-        "//xla/tsl/lib/core:status_test_util",
-        "@com_google_googletest//:gtest",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_library(
     name = "eigh_expander",
     srcs = ["eigh_expander.cc"],
     hdrs = ["eigh_expander.h"],
@@ -381,6 +347,7 @@ cc_library(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -634,6 +601,33 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "convolution_type_canonicalizer",
+    srcs = ["convolution_type_canonicalizer.cc"],
+    hdrs = ["convolution_type_canonicalizer.h"],
+    deps = [
+        ":op_expander_pass",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "convolution_type_canonicalizer_test",
+    srcs = ["convolution_type_canonicalizer_test.cc"],
+    deps = [
+        ":convolution_type_canonicalizer",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/utils:hlo_matchers",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

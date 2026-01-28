@@ -21,8 +21,10 @@ package_group(
 filegroup(
     name = "runtime_srcs",
     srcs = [
-        "convolution_lib_f16.cc",
-        "convolution_lib_f32.cc",
+        "convolution_lib_f16_2d.cc",
+        "convolution_lib_f16_3d.cc",
+        "convolution_lib_f32_2d.cc",
+        "convolution_lib_f32_3d.cc",
         "dot_lib_c128.cc",
         "dot_lib_c64.cc",
         "dot_lib_f16.cc",
@@ -153,15 +155,14 @@ tf_proto_library(
     srcs = ["thunk.proto"],
     create_grpc_library = True,
     make_default_target_header_only = True,
-    protodeps = [
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla:xla_data_proto",
         "//xla/backends/cpu:xnn_fusion_options_proto",
         "//xla/backends/cpu:ynn_fusion_options_proto",
         "//xla/service:buffer_assignment_proto",
-        "//xla:xla_data_proto",
         "//xla/service:hlo_proto",
-        "@com_google_protobuf//:any_proto",
     ],
-    visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -275,6 +276,7 @@ xla_cc_test(
         ":thunk_testlib",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:shape_util",
         "//xla/runtime:buffer_use",
         "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",
@@ -396,14 +398,16 @@ cc_library(
 cc_library(
     name = "convolution_lib",
     srcs = [
-        "convolution_lib_f16.cc",
-        "convolution_lib_f32.cc",
+        "convolution_lib_f16_2d.cc",
+        "convolution_lib_f16_3d.cc",
+        "convolution_lib_f32_2d.cc",
+        "convolution_lib_f32_3d.cc",
     ],
     hdrs = ["convolution_lib.h"],
     copts = runtime_copts(),
     visibility = internal_visibility([":friends"]),
     deps = [
-        "//xla/backends/cpu/runtime:work_queue",
+        ":work_queue",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/framework/contraction:eigen_contraction_kernel",
         "//xla/tsl/framework/convolution:eigen_helpers",
@@ -858,6 +862,7 @@ cc_library(
     hdrs = ["logical_id_thunk.h"],
     deps = [
         ":thunk",
+        "//xla:shape_util",
         "//xla:status_macros",
         "//xla/runtime:buffer_use",
         "//xla/runtime:device_id",
@@ -929,7 +934,6 @@ xla_cc_test(
         "//xla/service:buffer_assignment",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1022,6 +1026,7 @@ cc_library(
     deps = [
         ":rng_state_lib",
         ":thunk",
+        "//xla:shape_util",
         "//xla:util",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
@@ -1199,6 +1204,7 @@ cc_library(
     deps = [
         ":thunk",
         ":topk_lib",
+        "//xla:shape_util",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_address",

@@ -2095,7 +2095,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         const se::blas::ComputationType compute_type,
         se::gpu::GetBlasComputationType(
             instr.precision_config().algorithm(), a_dtype, output_type,
-            stream_executor::blas::kDefaultComputePrecision));
+            stream_executor::blas::kDefaultComputePrecision, gpu_version_));
     se::blas::DataType scale_type =
         se::gpu::GetScaleType(output_dtype, compute_type);
 
@@ -2193,10 +2193,10 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return false;
     }
 
-    TF_ASSIGN_OR_RETURN(
-        const se::blas::ComputationType compute_type,
-        se::gpu::GetBlasComputationType(
-            algorithm, a_dtype, instr.shape().element_type(), max_precision));
+    TF_ASSIGN_OR_RETURN(const se::blas::ComputationType compute_type,
+                        se::gpu::GetBlasComputationType(
+                            algorithm, a_dtype, instr.shape().element_type(),
+                            max_precision, gpu_version_));
     se::blas::DataType scale_type =
         se::gpu::GetScaleType(output_dtype, compute_type);
 
@@ -2596,7 +2596,7 @@ absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
   TF_RETURN_IF_ERROR(computation->Accept(&visitor));
   GemmWorkspaceRewriteVisitor workspace_visitor(gpu_version);
   TF_RETURN_IF_ERROR(computation->Accept(&workspace_visitor));
-  return visitor.changed();
+  return visitor.changed() || workspace_visitor.changed();
 }
 
 }  // anonymous namespace
