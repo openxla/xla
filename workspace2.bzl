@@ -127,7 +127,6 @@ def _tf_toolchains():
     clang6_configure(name = "local_config_clang6")
     cc_download_clang_toolchain(name = "local_config_download_clang")
     tensorrt_configure(name = "local_config_tensorrt")
-    git_configure(name = "local_config_git")
     python_configure(name = "local_config_python")
     rocm_configure(name = "local_config_rocm")
     sycl_init_repository()
