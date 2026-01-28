@@ -47,6 +47,7 @@ namespace {
 
 using dnnl::algorithm;
 using dnnl::convolution_forward;
+using dnnl::engine;
 using dnnl::memory;
 using dnnl::primitive;
 using dnnl::prop_kind;
@@ -180,8 +181,9 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
 
   memory::desc bias_md = memory::desc();
 
+  int fused_operand_idx = 0;
   dnnl::post_ops post_ops =
-      PopulateOneDnnPostOps(dnnl::engine(dnnl::engine::kind::cpu, 0), fused_mds,
+      PopulateOneDnnPostOps(fused_operand_idx, dnnl::engine(dnnl::engine::kind::cpu, 0), fused_mds,
                             &conv_config.fusions(), nullptr, &bias_md);
 
   memory::desc any_ker_md =
@@ -204,6 +206,14 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
     attrs.set_post_ops(post_ops);
   }
 
+  QuantizationParams qparams;
+  qparams.negated_src_zp = conv_config.quant_config().negated_src_zp();
+  qparams.inversed_dst_scale = conv_config.quant_config().inversed_dst_scale();
+  const bool conv_groups = conv_config.feature_groups() > 1;
+  dnnl::engine cpu_engine(dnnl::engine::kind::cpu, 0);
+  AddQuantParamArgs(/*is_conv=*/true, conv_groups, attrs, fused_operand_idx,
+                    cpu_engine, fused_mds, any_inp_md, any_ker_md, any_res_md,
+                    nullptr, &qparams);
   return std::make_unique<convolution_forward::primitive_desc>(
       dnnl::engine(dnnl::engine::kind::cpu, 0), prop_kind::forward_inference,
       algorithm::convolution_direct, any_inp_md, any_ker_md, bias_md,
@@ -274,9 +284,10 @@ void ExecuteOneDnnConvolution(absl::Span<MemrefInfoHandler> arguments,
 
   memory::desc bias_md = memory::desc();
 
-  dnnl::post_ops post_ops =
-      PopulateOneDnnPostOps(cpu_engine, fused_mds, &conv_config.fusions(),
-                            &fused_operands_ref, &bias_md);
+  int fused_operand_idx = 0;
+  dnnl::post_ops post_ops = PopulateOneDnnPostOps(
+      fused_operand_idx, cpu_engine, fused_mds, &conv_config.fusions(),
+      &fused_operands_ref, &bias_md);
 
   auto any_ker_md =
       memory::desc(new_ker_md.get_dims(), new_ker_md.get_data_type(),
@@ -297,6 +308,14 @@ void ExecuteOneDnnConvolution(absl::Span<MemrefInfoHandler> arguments,
   if (post_ops.len() > 0) {
     attrs.set_post_ops(post_ops);
   }
+
+  QuantizationParams qparams;
+  qparams.negated_src_zp = conv_config.quant_config().negated_src_zp();
+  qparams.inversed_dst_scale = conv_config.quant_config().inversed_dst_scale();
+  const bool conv_groups = conv_config.feature_groups() > 1;
+  AddQuantParamArgs(/*is_conv=*/true, conv_groups, attrs, fused_operand_idx,
+                    cpu_engine, fused_mds, any_inp_md, any_ker_md, any_res_md,
+                    &fused_operands_ref, &qparams);
 
   auto conv_pd = std::make_unique<convolution_forward::primitive_desc>(
       cpu_engine, prop_kind::forward_inference, algorithm::convolution_direct,

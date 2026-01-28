@@ -25,7 +25,7 @@ namespace xla {
 namespace cpu {
 
 constexpr auto kOnednnMatmulConfig =
-    BackendConfigOneofCase::kOnednnMatmulConfig;
+    BackendConfig::BackendConfigOneofCase::kOnednnMatmulConfig;
 
 Shape OneDnnMatMulOptWeightsShape(const Shape& input_shape,
                                   const Shape& weights_shape,
@@ -43,7 +43,8 @@ void ExecuteOneDnnMatMul(absl::Span<MemrefInfoHandler> arguments,
 template <>
 struct PrimitiveTrait<kOnednnMatmulConfig> {
   using pointer_type = xla::cpu::OneDnnMatMulConfig*;
-  static const BackendConfigOneofCase kConfigVal = kOnednnMatmulConfig;
+  static const BackendConfig::BackendConfigOneofCase kConfigVal =
+      kOnednnMatmulConfig;
 };
 
 }  // namespace cpu
