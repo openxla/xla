@@ -29,10 +29,12 @@ limitations under the License.
 
 namespace xla::gpu {
 
-bool IsP2PStreamKind(AsyncStreamKind stream_kind);
+inline constexpr int kNumComputeStreams = 4;
+inline constexpr int kNumCollectiveStreams = 2;
+inline constexpr int kAsyncStreamTotal =
+    kNumComputeStreams + kNumCollectiveStreams + 1;
 
-// 4 (compute) + 2 (collective) + 1
-inline constexpr int64_t kAsyncStreamTotal = 7;
+bool IsP2PStreamKind(AsyncStreamKind stream_kind);
 
 // Strongly-typed wrapper to represent collective stream ID.
 TSL_LIB_GTL_DEFINE_INT_TYPE(CollectiveStreamId, uint64_t);

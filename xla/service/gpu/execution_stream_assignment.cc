@@ -58,7 +58,8 @@ bool is_pipelined_p2p(HloInstruction* instruction) {
 }
 
 // Returns dedicated P2P stream ID based on _xla_send_recv_pipeline attribute.
-// Uses separate streams for pipeline 0/1 to avoid deadlocks in cyclic patterns.
+// Uses separate streams (1 and 2) for pipeline 0/1 to avoid deadlocks in cyclic
+// patterns, stream 0 is the main stream.
 ExecutionStreamId get_p2p_stream_id(HloInstruction* instruction) {
   const auto& fe_map = instruction->frontend_attributes().map();
   auto it = fe_map.find(kSendRecvPipelineAttr);

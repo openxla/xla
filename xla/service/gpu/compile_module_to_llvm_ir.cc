@@ -128,12 +128,12 @@ CompileModuleResults InitializeResults(const HloModule* hlo_module) {
       std::make_unique<ExecutionStreamAssignment>(
           hlo_module,
           ExecutionStreamAssignmentOptions{
-              /*number_of_compute_execution_streams=*/4,
+              kNumComputeStreams,
               /*number_of_collective_execution_streams=*/
               hlo_module->config()
                       .debug_options()
                       .xla_gpu_experimental_enable_collective_multi_streaming()
-                  ? 2
+                  ? kNumCollectiveStreams
                   : 1,
           });
   return results;
