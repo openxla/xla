@@ -1,3 +1,4 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/backends/cpu/nanort:package_groups.bzl", "xla_cpu_nanort_packages")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
@@ -242,4 +243,11 @@ xla_cc_test(
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
     ],
+)
+
+bzl_library(
+    name = "package_groups_bzl",
+    srcs = ["package_groups.bzl"],
+    parse_tests = False,
+    visibility = ["//visibility:private"],
 )
