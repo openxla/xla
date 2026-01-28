@@ -106,7 +106,7 @@ TEST_F(ConvUtilsTest, BackwardFilterConvolveWithPaddedActivations) {
       module->AddEntryComputation(builder.Build());
   HloConvolutionInstruction* root_conv =
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction());
-  root_conv->set_conv_kind(HloConvolutionInstruction::ConvKind::WGRAD);
+  root_conv->set_conv_kind(ConvKind::WGRAD);
 
   const Window restored_conv_window =
       *RestoreWindowFromBackwardFilter(root_conv);
@@ -178,7 +178,7 @@ TEST_F(ConvUtilsTest, BackwardInputConvolveEvenPadding) {
       module->AddEntryComputation(builder.Build());
   HloConvolutionInstruction* root_conv =
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction());
-  root_conv->set_conv_kind(HloConvolutionInstruction::ConvKind::WGRAD);
+  root_conv->set_conv_kind(ConvKind::WGRAD);
 
   const Window restored_conv_window =
       *RestoreWindowFromBackwardInput(root_conv);
@@ -234,7 +234,7 @@ TEST_F(ConvUtilsTest, BackwardInputConvolveUnevenPaddingOnGradients) {
       module->AddEntryComputation(builder.Build());
   HloConvolutionInstruction* root_conv =
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction());
-  root_conv->set_conv_kind(HloConvolutionInstruction::ConvKind::DGRAD);
+  root_conv->set_conv_kind(ConvKind::DGRAD);
   const Window restored_conv_window =
       *RestoreWindowFromBackwardInput(root_conv);
   const ConvolutionDimensionNumbers restored_dims =
@@ -287,7 +287,7 @@ TEST_F(ConvUtilsTest, BackwardInputConvolveUnevenPaddingOnActivations) {
       module->AddEntryComputation(builder.Build());
   HloConvolutionInstruction* root_conv =
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction());
-  root_conv->set_conv_kind(HloConvolutionInstruction::ConvKind::DGRAD);
+  root_conv->set_conv_kind(ConvKind::DGRAD);
   const WindowDimension& backward_conv_col_dim =
       RestoreWindowFromBackwardInput(root_conv)->dimensions(1);
   const ConvolutionDimensionNumbers restored_dims =

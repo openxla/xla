@@ -535,7 +535,7 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
 
     if (HloPredicateIsOp<HloOpcode::kConvolution>(instruction) &&
         DynCast<HloConvolutionInstruction>(instruction)->conv_kind() !=
-            HloConvolutionInstruction::ConvKind::UNSET) {
+            ConvKind::UNSET) {
       TF_RETURN_IF_ERROR(AddBackendConstraintsTocuDNNConv(
           Cast<HloConvolutionInstruction>(instruction), constraints));
     } else if (HloPredicateIsOp<HloOpcode::kDot>(instruction)) {

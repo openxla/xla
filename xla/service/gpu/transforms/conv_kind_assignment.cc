@@ -114,7 +114,6 @@ absl::Status CheckTypes(HloInstruction* conv, const se::GpuComputeCapability cc,
 }
 
 using ConvolutionMatch = std::optional<HloInstruction*>;
-using ConvKind = HloConvolutionInstruction::ConvKind;
 
 // Determine whether conv2d is equal to conv1d.
 bool MaybeConv1dToConv2d(HloInstruction* conv) {

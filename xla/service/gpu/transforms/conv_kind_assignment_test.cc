@@ -126,7 +126,7 @@ TEST_F(ConvKindAssignmentTest, BackwardFilterConvolve) {
   Window conv_window = default_conv_window_;
   conv_window.mutable_dimensions(1)->set_size(2);
   conv_window.mutable_dimensions(1)->set_window_dilation(2);
-  auto* conv = builder.AddInstruction(HloInstruction::CreateConvolve(
+  builder.AddInstruction(HloInstruction::CreateConvolve(
       ShapeInference::InferConvolveShape(
           activations->shape(), gradients->shape(), /*feature_group_count=*/1,
           /*batch_group_count=*/1, conv_window,
@@ -144,7 +144,7 @@ TEST_F(ConvKindAssignmentTest, BackwardFilterConvolve) {
   EXPECT_THAT(
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction())
           ->conv_kind(),
-      HloConvolutionInstruction::ConvKind::WGRAD);
+      ConvKind::WGRAD);
 }
 
 TEST_F(ConvKindAssignmentTest,
@@ -176,7 +176,7 @@ TEST_F(ConvKindAssignmentTest,
   EXPECT_THAT(
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction())
           ->conv_kind(),
-      HloConvolutionInstruction::ConvKind::FPROP);
+      ConvKind::FPROP);
 }
 
 // Extracted from block35 training.
@@ -208,7 +208,7 @@ TEST_F(ConvKindAssignmentTest, BackwardFilterConvolveWithPaddedActivations) {
   EXPECT_THAT(
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction())
           ->conv_kind(),
-      HloConvolutionInstruction::ConvKind::WGRAD);
+      ConvKind::WGRAD);
 }
 
 // Extracted from inception v3 training.
@@ -239,7 +239,7 @@ TEST_F(ConvKindAssignmentTest, BackwardFilterConvolveWithPaddedGradients) {
   EXPECT_THAT(
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction())
           ->conv_kind(),
-      HloConvolutionInstruction::ConvKind::WGRAD);
+      ConvKind::WGRAD);
 }
 
 TEST_F(ConvKindAssignmentTest, BackwardFilterConvolveWithUnevenPadding) {
@@ -269,7 +269,7 @@ TEST_F(ConvKindAssignmentTest, BackwardFilterConvolveWithUnevenPadding) {
   EXPECT_THAT(
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction())
           ->conv_kind(),
-      HloConvolutionInstruction::ConvKind::WGRAD);
+      ConvKind::WGRAD);
 }
 
 TEST_F(ConvKindAssignmentTest, BackwardInputConvolveEvenPadding) {
@@ -325,7 +325,7 @@ TEST_F(ConvKindAssignmentTest, BackwardInputConvolveEvenPadding) {
   EXPECT_THAT(
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction())
           ->conv_kind(),
-      HloConvolutionInstruction::ConvKind::DGRAD);
+      ConvKind::DGRAD);
 }
 
 // Convolve([abc], [x], base_dilation=2)
@@ -364,7 +364,7 @@ TEST_F(ConvKindAssignmentTest, BackwardInputConvolve1x1Filter) {
   EXPECT_THAT(
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction())
           ->conv_kind(),
-      HloConvolutionInstruction::ConvKind::DGRAD);
+      ConvKind::DGRAD);
 }
 
 // BackwardInputConvolve([abc], [x], stride=1) is equivalent to
@@ -400,7 +400,7 @@ TEST_F(ConvKindAssignmentTest,
   EXPECT_THAT(
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction())
           ->conv_kind(),
-      HloConvolutionInstruction::ConvKind::FPROP);
+      ConvKind::FPROP);
 }
 
 // Extracted from Inception V3 training.
@@ -456,7 +456,7 @@ TEST_F(ConvKindAssignmentTest, BackwardInputConvolveUnevenPaddingOnGradients) {
   EXPECT_THAT(
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction())
           ->conv_kind(),
-      HloConvolutionInstruction::ConvKind::DGRAD);
+      ConvKind::DGRAD);
 }
 
 // Similar to BackwardInputConvolveUnevenPadding, but the low padding of the
@@ -499,7 +499,7 @@ TEST_F(ConvKindAssignmentTest, BackwardInputConvolveLowPaddingTooLarge) {
   EXPECT_THAT(
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction())
           ->conv_kind(),
-      HloConvolutionInstruction::ConvKind::FPROP);
+      ConvKind::FPROP);
 }
 
 // Extracted from Resnet-50.
@@ -556,7 +556,7 @@ TEST_F(ConvKindAssignmentTest,
   EXPECT_THAT(
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction())
           ->conv_kind(),
-      HloConvolutionInstruction::ConvKind::DGRAD);
+      ConvKind::DGRAD);
 }
 
 // For simplicity, we focus on the column dimension and ignore other dimensions.
@@ -609,7 +609,7 @@ TEST_F(ConvKindAssignmentTest,
   EXPECT_THAT(
       DynCast<HloConvolutionInstruction>(entry_computation->root_instruction())
           ->conv_kind(),
-      HloConvolutionInstruction::ConvKind::FPROP);
+      ConvKind::FPROP);
 }
 
 // Check that we will materialize a reversed version of a constant in order to
@@ -640,7 +640,7 @@ TEST_F(ConvKindAssignmentTest, BackwardInputConvolveConstantFilter) {
   EXPECT_THAT(DynCast<HloConvolutionInstruction>(
                   m->entry_computation()->root_instruction())
                   ->conv_kind(),
-              HloConvolutionInstruction::ConvKind::DGRAD);
+              ConvKind::DGRAD);
 }
 
 TEST_F(ConvKindAssignmentTest, TestBackwardFilterPatternMatch) {
@@ -661,7 +661,7 @@ TEST_F(ConvKindAssignmentTest, TestBackwardFilterPatternMatch) {
   EXPECT_THAT(DynCast<HloConvolutionInstruction>(
                   m->entry_computation()->root_instruction())
                   ->conv_kind(),
-              HloConvolutionInstruction::ConvKind::WGRAD);
+              ConvKind::WGRAD);
 }
 
 TEST_F(ConvKindAssignmentTest, TestBackwardFilterPatternNoMatch) {
@@ -682,7 +682,7 @@ TEST_F(ConvKindAssignmentTest, TestBackwardFilterPatternNoMatch) {
   EXPECT_THAT(DynCast<HloConvolutionInstruction>(
                   m->entry_computation()->root_instruction())
                   ->conv_kind(),
-              HloConvolutionInstruction::ConvKind::FPROP);
+              ConvKind::FPROP);
 }
 
 TEST_F(ConvKindAssignmentTest, TestConv1dBackwardFilterPatternMatch) {
@@ -704,7 +704,7 @@ TEST_F(ConvKindAssignmentTest, TestConv1dBackwardFilterPatternMatch) {
   EXPECT_THAT(DynCast<HloConvolutionInstruction>(
                   m->entry_computation()->root_instruction())
                   ->conv_kind(),
-              HloConvolutionInstruction::ConvKind::WGRAD);
+              ConvKind::WGRAD);
 }
 
 TEST_F(ConvKindAssignmentTest, TestConv1dBackwardInputPatternMatch) {
@@ -726,7 +726,7 @@ TEST_F(ConvKindAssignmentTest, TestConv1dBackwardInputPatternMatch) {
   EXPECT_THAT(DynCast<HloConvolutionInstruction>(
                   m->entry_computation()->root_instruction())
                   ->conv_kind(),
-              HloConvolutionInstruction::ConvKind::DGRAD);
+              ConvKind::DGRAD);
 }
 
 TEST_F(ConvKindAssignmentTest, ForwardConvolutionWithWindowDilation) {
@@ -746,7 +746,7 @@ TEST_F(ConvKindAssignmentTest, ForwardConvolutionWithWindowDilation) {
   EXPECT_THAT(DynCast<HloConvolutionInstruction>(
                   m->entry_computation()->root_instruction())
                   ->conv_kind(),
-              HloConvolutionInstruction::ConvKind::FPROP);
+              ConvKind::FPROP);
 }
 
 TEST_F(ConvKindAssignmentTest, TestInvalidTypes) {
