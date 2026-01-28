@@ -210,15 +210,13 @@ CreateOneDnnPrimDesc<dnnl::convolution_forward::primitive_desc>(
       any_res_md, strides, rhs_dilations, pad_left, pad_right, attrs);
 }
 
-void ExecuteOneDnnConvolution(absl::Span<MemrefInfoHandler> arguments,
-                              absl::Span<MemrefInfoHandler> results,
-                              OneDnnConvolutionConfig conv_config,
+void ExecuteOneDnnConvolution(OneDnnConvolutionConfig conv_config,
                               const dnnl::engine& cpu_engine,
                               dnnl::stream& onednn_stream,
-                              OneDnnResources& resources) {
-  MemrefInfo inp_minfo(arguments[0].get());
-  MemrefInfo ker_minfo(arguments[1].get());
-  MemrefInfo res_minfo(results[0].get());
+                              OneDnnPrimResources& resources) {
+  MemrefInfo inp_minfo(resources.arg_memrefs[0].get());
+  MemrefInfo ker_minfo(resources.arg_memrefs[1].get());
+  MemrefInfo res_minfo(resources.result_memrefs[0].get());
 
   memory::desc inp_md = inp_minfo.GetOneDnnMemDesc();
   memory::desc ker_md = ker_minfo.GetOneDnnMemDesc();
@@ -254,11 +252,11 @@ void ExecuteOneDnnConvolution(absl::Span<MemrefInfoHandler> arguments,
     new_ker_md = new_ker_md.reshape(corr_dims);
   }
 
-  const int64_t num_fused_operands = arguments.size() - 2;
+  const int64_t num_fused_operands = resources.arg_memrefs.size() - 2;
   std::vector<memory::desc> fused_mds;
   std::vector<void*> fused_bufs;
   for (int64_t i = 0; i < num_fused_operands; ++i) {
-    MemrefInfo operand_minfo(arguments[i + 2].get());
+    MemrefInfo operand_minfo(resources.arg_memrefs[i + 2].get());
     memory::desc mem_desc = operand_minfo.GetOneDnnMemDesc();
     if (mem_desc.get_ndims() == new_res_md.get_ndims()) {
       mem_desc = mem_desc.permute_axes(ComputePermutations(
@@ -327,8 +325,8 @@ void ExecuteOneDnnConvolution(absl::Span<MemrefInfoHandler> arguments,
       {DNNL_ARG_DST, resources.dst_mem}};
 
   if (conv_config.optimization_config().user_scratchpad()) {
-    CHECK_GT(results.size(), 1);
-    MemrefInfo scratch_minfo(results[1].get());
+    CHECK_GT(resources.result_memrefs.size(), 1);
+    MemrefInfo scratch_minfo(resources.result_memrefs[1].get());
 
     size_t required_size = conv_pd->scratchpad_desc().get_size();
     size_t provided_size = scratch_minfo.GetOneDnnDims()[0];  // bytes (u8)
