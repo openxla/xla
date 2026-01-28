@@ -50,30 +50,6 @@ using se::gpu::BlasLt;
 
 namespace {
 
-absl::StatusOr<BlasLt::Epilogue> AsBlasLtEpilogue(
-    GemmBackendConfig_Epilogue epilogue) {
-  switch (epilogue) {
-    case GemmBackendConfig::DEFAULT:
-      return BlasLt::Epilogue::kDefault;
-    case GemmBackendConfig::RELU:
-      return BlasLt::Epilogue::kReLU;
-    case GemmBackendConfig::GELU:
-      return BlasLt::Epilogue::kGELU;
-    case GemmBackendConfig::GELU_AUX:
-      return BlasLt::Epilogue::kGELUWithAux;
-    case GemmBackendConfig::BIAS:
-      return BlasLt::Epilogue::kBias;
-    case GemmBackendConfig::BIAS_RELU:
-      return BlasLt::Epilogue::kBiasThenReLU;
-    case GemmBackendConfig::BIAS_GELU:
-      return BlasLt::Epilogue::kBiasThenGELU;
-    case GemmBackendConfig::BIAS_GELU_AUX:
-      return BlasLt::Epilogue::kBiasThenGELUWithAux;
-    default:
-      return absl::InternalError("Unsupported Epilogue.");
-  }
-}
-
 // Visitor that updates workspace sizes for cuBLASLt GEMM operations
 // based on the selected algorithm's actual workspace requirement.
 class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
@@ -127,7 +103,7 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
 
     // Get the epilogue
     ASSIGN_OR_RETURN(BlasLt::Epilogue epilogue,
-                     AsBlasLtEpilogue(config.epilogue()));
+                     gpublas_lt::AsBlasLtEpilogue(config.epilogue()));
 
     // Create a stream to query algorithms
     ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
