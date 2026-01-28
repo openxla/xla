@@ -25,7 +25,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   execute-xla-ut:
@@ -56,6 +56,9 @@ jobs:
       - name: ROCm info
         if: always()
         run: /opt/rocm/bin/rocminfo
+
+      - name: Check df
+        run: df -h
 
       - name: Test XLA [single_gpu]
         run: |
