@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/container/btree_map.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -48,6 +49,7 @@ class GpuClique : public Clique {
 
   const GpuCliqueKey& key() const { return key_; }
   const std::optional<CliqueIds>& ids() const { return ids_; }
+  absl::Time created() const { return created_; }
   bool peer_access_enabled() const { return peer_access_enabled_; }
 
   // Returns a device communicator for a given rank and requirements if it's in
@@ -89,6 +91,9 @@ class GpuClique : public Clique {
   GpuCliqueKey key_;
   std::optional<CliqueIds> ids_;
 
+  // Time when the clique was created.
+  absl::Time created_;
+
   // True if peer device memory access is possible between all local devices in
   // the clique.
   bool peer_access_enabled_;
@@ -113,6 +118,7 @@ class LockableGpuClique : public Lockable<GpuClique, GpuClique::LockableName> {
       absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators,
       bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel);
 
+  absl::Time created() const;
   std::string DebugString() const;
 
   // Checks for async errors for all the communicators in the clique without

@@ -27,6 +27,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -47,6 +49,7 @@ GpuClique::GpuClique(
     : Clique(std::move(communicators)),
       key_(key),
       ids_(ids),
+      created_(absl::Now()),
       peer_access_enabled_(peer_access_enabled),
       cancel_(std::move(cancel)) {}
 
@@ -138,6 +141,8 @@ absl::Status LockableGpuClique::HealthCheck() const {
 absl::Status LockableGpuClique::Abort() { return mutable_value().Abort(); }
 
 void LockableGpuClique::Cancel() { mutable_value().Cancel(); }
+
+absl::Time LockableGpuClique::created() const { return value().created(); }
 
 std::string LockableGpuClique::DebugString() const {
   return absl::StrFormat("LockableGpuClique: %s", value().DebugString());

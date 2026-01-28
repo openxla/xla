@@ -326,6 +326,7 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
   auto initialize = [&](absl::Span<const RendezvousArg* const> args)
       -> absl::StatusOr<LockableGpuClique::Lock> {
     tsl::profiler::TraceMe trace("InitializeGpuClique");
+    absl::Time initialize_start = absl::Now();
 
     TF_ASSIGN_OR_RETURN(CliqueIds clique_ids, clique_id_callback(clique_key));
 
@@ -354,8 +355,8 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
                         EnablePeerAccess(clique_key, ranks));
 
     VLOG(3) << absl::StreamFormat(
-        "[%s] [ranks=%s] Create GPU communicators for clique %v; "
-        "nroots=%lld; fingerprint(id)=%d, peer_access_enabled=%d",
+        "[%s] [ranks=%s] Create GPU communicators: clique=%v; size(id)=%lld; "
+        "fingerprint(id)=%d, peer_access_enabled=%d",
         DeviceOrdinalsToString(ranks), DeviceRanksToString(ranks), clique_key,
         clique_ids.size(), clique_ids.fingerprint(), peer_access_enabled);
 
@@ -405,9 +406,10 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
     }
 
     VLOG(3) << absl::StreamFormat(
-        "[%s] [ranks=%s] Created GPU communicators for clique %v; "
-        "nroots=%lld; fingerprint(id)=%d, peer_access_enabled=%d",
-        DeviceOrdinalsToString(ranks), DeviceRanksToString(ranks), clique_key,
+        "[%s] [ranks=%s] Created %d GPU communicators in %s: clique=%v; "
+        "size(id)=%lld; fingerprint(id)=%d, peer_access_enabled=%d",
+        DeviceOrdinalsToString(ranks), DeviceRanksToString(ranks), comms.size(),
+        absl::FormatDuration(absl::Now() - initialize_start), clique_key,
         clique_ids.size(), clique_ids.fingerprint(), peer_access_enabled);
 
     // Put constructed clique into the per-process state.
@@ -543,6 +545,7 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
   auto split = [&](absl::Span<const RankPair* const> rank_pairs)
       -> absl::StatusOr<LockableGpuClique::Lock> {
     tsl::profiler::TraceMe trace("SplitGpuClique");
+    absl::Time split_start = absl::Now();
 
     // Collect mapping from ranks in parent clique to ranks in a new clique.
     absl::btree_map<RankId, RankId> rank_mapping;
@@ -595,8 +598,8 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
     }
 
     VLOG(3) << absl::StreamFormat(
-        "[%s] [ranks=%s] Create GPU communicators for clique %v; "
-        "parent=%v; color=%d; peer_access_enabled=%d; rank_mapping=[%s]",
+        "[%s] [ranks=%s] Create GPU communicators: clique=%v; parent=%v; "
+        "color=%d; peer_access_enabled=%d; rank_mapping=[%s]",
         DeviceOrdinalsToString(ranks), DeviceRanksToString(ranks), clique_key,
         parent_clique_key, color, peer_access_enabled,
         absl::StrJoin(rank_mapping, ",", rank_mapping_formatter));
@@ -646,9 +649,10 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
     }
 
     VLOG(3) << absl::StreamFormat(
-        "[%s] [ranks=%s] Created GPU communicators for clique %v; "
+        "[%s] [ranks=%s] Created %d GPU communicators in %s: clique=%v; "
         "parent=%v; color=%d; peer_access_enabled=%d; rank_mapping=[%s]",
-        DeviceOrdinalsToString(ranks), DeviceRanksToString(ranks), clique_key,
+        DeviceOrdinalsToString(ranks), DeviceRanksToString(ranks), comms.size(),
+        absl::FormatDuration(absl::Now() - split_start), clique_key,
         parent_clique_key, color, peer_access_enabled,
         absl::StrJoin(rank_mapping, ",", rank_mapping_formatter));
 
@@ -704,18 +708,33 @@ InitializeGpuClique(GpuCollectives* collectives, se::StreamExecutor* device,
 
 //===----------------------------------------------------------------------===//
 
+static std::vector<GlobalDeviceId> FlattenDeviceGroups(
+    absl::Span<const std::vector<GlobalDeviceId>> device_groups) {
+  std::vector<GlobalDeviceId> devices;
+  if (!device_groups.empty()) {
+    devices.reserve(device_groups.size() * device_groups[0].size());
+  }
+  for (const std::vector<GlobalDeviceId>& group : device_groups) {
+    devices.insert(devices.end(), group.begin(), group.end());
+  }
+  absl::c_sort(devices);
+  return devices;
+}
+
 absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireGpuClique(
     GpuCollectives* collectives, se::StreamExecutor* device, RunId run_id,
     const GpuCliqueKey& clique_key,
+    absl::Span<const std::vector<GlobalDeviceId>> device_groups,
     const GpuCollectives::CliqueIdCallback& clique_id_callback, RankId rank,
     const AcquiredCliquesMap& acquired_cliques, int64_t max_nchannels) {
-  int64_t num_local_participants = clique_key.num_local_participants();
   VLOG(2) << absl::StreamFormat(
-      "[%d] [rank=%v] Acquire GPU clique %v; run=%v; "
-      "local_participants=%d; acquired_cliques=%d; max_channels=%d",
-      device->device_ordinal(), rank, clique_key, run_id,
-      num_local_participants, acquired_cliques.size(), max_nchannels);
+      "[%d] [rank=%v] [run=%v] Acquire GPU clique %v; device_groups=%d:[%s]; "
+      "acquired_cliques=%d; max_channels=%d",
+      device->device_ordinal(), rank, run_id, clique_key, device_groups.size(),
+      HumanReadableDeviceGroups(device_groups), acquired_cliques.size(),
+      max_nchannels);
 
+  int64_t num_local_participants = clique_key.num_local_participants();
   tsl::profiler::TraceMe trace([&] {
     return tsl::profiler::TraceMeEncode(
         "AcquireGpuClique", {{"device", device->device_ordinal()},
@@ -723,6 +742,28 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireGpuClique(
                              {"num_local_participants", num_local_participants},
                              {"clique_key", clique_key}});
   });
+
+  // Maybe find if we acquired a clique with communicators that we can split.
+  static const int64_t enable_nccl_comm_splitting =
+      GetDebugOptionsFromFlags().xla_gpu_enable_nccl_comm_splitting();
+
+  // To be able to split from existing clique, clique key must be a subset of
+  // the already acquired clique, and device groups must cover all devices in
+  // the split-from clique, as all ranks must make a split call. XLA currently
+  // doesn't support partial splitting.
+  std::shared_ptr<LockableGpuClique::Lock> split_from = nullptr;
+  if (enable_nccl_comm_splitting) {
+    for (auto& [acquired_clique_key, acquired_clique] : acquired_cliques) {
+      if (clique_key.IsSubsetOf(acquired_clique_key) &&
+          acquired_clique_key.devices() == FlattenDeviceGroups(device_groups)) {
+        VLOG(5) << absl::StreamFormat(
+            "[%d] [rank=%v] Found split candidate for %v from %v",
+            device->device_ordinal(), rank, clique_key, acquired_clique_key);
+        split_from = acquired_clique;
+        break;
+      }
+    }
+  }
 
   // Get the clique lock via the rendezvous to guarantee that all clique
   // members participate in XLA run.
@@ -743,10 +784,39 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireGpuClique(
             auto lockable_clique = [&]() -> LockableGpuClique* {
               absl::MutexLock lock(state.mu);
               auto it = state.cliques.find(clique_key);
+
+              // There is no GPU clique for a given key.
+              if (it == state.cliques.end()) {
+                return nullptr;
+              }
+
+              // GPU clique for a given key exists, but it was created before
+              // the potential split candidate. We don't know the state of all
+              // other ranks, so to avoid potential deadlock we are going to
+              // erase existing clique and acquire a new one by splitting the
+              // `split_from` clique.
+              //
+              // Example: imagine 4 distributed processes
+              //
+              //   (1) [0,1] do an all-reduce (device_groups=[[0,1]])
+              //   (2) [0,1,2,3] do an all-reduce (device_groups=[[0,1,2,3]])
+              //   (3) [0,1,2,3] do an all-reduce (device_groups=[[0,1],[2,3]])
+              //
+              // When (3) will be executed, ranks [0,1] will already have a
+              // clique acquired earlier, but ranks [2,3] will try to initiate
+              // a communicator split. This will lead to deadlock.
+              if (split_from &&
+                  it->second.created() < (*split_from)->created()) {
+                state.cliques.erase(clique_key);
+                return nullptr;
+              }
+
+              // If the clique is stale (one one participating processes already
+              // died), we return a nullptr, as the clique will have to be
+              // re-created.
               absl::Status stale =
                   CheckCliqueIsntStaleImpl(state.task_state_infos, clique_key);
-              return it == state.cliques.end() || !stale.ok() ? nullptr
-                                                              : &it->second;
+              return stale.ok() ? &it->second : nullptr;
             }();
 
             return lockable_clique ? lockable_clique->Acquire()
@@ -759,10 +829,6 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireGpuClique(
     return clique;
   }
 
-  // Maybe find if we acquired a clique with communicators that we can split.
-  static const int64_t enable_nccl_comm_splitting =
-      xla::GetDebugOptionsFromFlags().xla_gpu_enable_nccl_comm_splitting();
-
   // We enable resource sharing between parent and split communicators by
   // default because that's the only reason why we use comm splitting.
   //
@@ -771,24 +837,15 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireGpuClique(
   config.split_share = true;
   config.max_nchannels = max_nchannels;
   config.blocking_communicators =
-      xla::GetDebugOptionsFromFlags().xla_gpu_nccl_blocking_communicators();
+      GetDebugOptionsFromFlags().xla_gpu_nccl_blocking_communicators();
   config.async_execution =
-      xla::GetDebugOptionsFromFlags().xla_gpu_nccl_async_execution();
+      GetDebugOptionsFromFlags().xla_gpu_nccl_async_execution();
 
-  if (enable_nccl_comm_splitting) {
-    for (auto& [acquired_clique_key, acquired_clique] : acquired_cliques) {
-      // If the participant group is empty, we won't know if there are other
-      // ranks involved in the split. Proceed to normal initialization.
-      if (clique_key.IsSubsetOf(acquired_clique_key) &&
-          !clique_key.ParticipantGroups().empty()) {
-        return InitializeGpuClique(collectives, device, run_id, clique_key,
-                                   acquired_clique, num_local_participants,
-                                   rank, config);
-      } else if (clique_key.ParticipantGroups().empty()) {
-        LOG(WARNING) << "Found empty participant groups."
-                     << " Skip splitting communicators.";
-      }
-    }
+  // Split from the already acquired clique.
+  if (split_from) {
+    return InitializeGpuClique(collectives, device, run_id, clique_key,
+                               split_from, num_local_participants, rank,
+                               config);
   }
 
   // If we can't split any of the acquired cliques, create a new one.
