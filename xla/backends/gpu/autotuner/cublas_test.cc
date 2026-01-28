@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/blas.h"
@@ -235,6 +236,64 @@ TEST_F(CublasBackendTest, Compile) {
   absl::StatusOr<std::unique_ptr<Executable>> executable = backend_.Compile(
       *(module->entry_computation()->root_instruction()), *config);
   EXPECT_THAT(executable, IsOk());
+}
+
+TEST_F(CublasBackendTest, ScaledDotConfigsHaveCuBlasFallback) {
+  const char kHlo[] = R"(
+  HloModule module
+
+  ENTRY main {
+    %arg0 = f32[1024,1024]{1,0} parameter(0)
+    %arg1 = f32[1024,1024]{1,0} parameter(1)
+    %custom-call = (f32[1024,1024]{1,0}, s8[0]{0}) custom-call(%arg0, %arg1),
+    custom_call_target="__cublas$gemm",
+    backend_config={
+      "gemm_backend_config":{
+        "dot_dimension_numbers":
+          {
+            "lhs_contracting_dimensions":["1"],
+            "rhs_contracting_dimensions":["0"],
+            "lhs_batch_dimensions":[],
+            "rhs_batch_dimensions":[]
+        }
+      }
+    }
+    ROOT %get-tuple-element = f32[1024,1024]{1,0} get-tuple-element(%custom-call), index=0
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(kHlo));
+  const HloInstruction* instr =
+      hlo_module->entry_computation()->root_instruction()->operand(0);
+
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(*instr);
+  EXPECT_THAT(configs, IsOkAndHolds(Not(IsEmpty())));
+}
+
+TEST_F(CublasBackendTest, Fp8CublasltFallbackSupport) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(kCublasLtCustomCallHlo));
+  const HloInstruction* instr =
+      hlo_module->entry_computation()->root_instruction()->operand(0);
+
+  CublasBackend backend(stream_executor_, &debug_options_, &compiler_,
+                        &target_config_, /*fp8_lt_fallback=*/true);
+
+  CublasBackendConfig config_proto;
+  config_proto.set_algorithm(-1);
+  google::protobuf::Any any;
+  any.PackFrom(config_proto);
+
+  TF_EXPECT_OK(backend.ApplyConfig(*hlo_module->entry_computation()
+                                        ->root_instruction()
+                                        ->mutable_operands()
+                                        .at(0),
+                                   any));
+
+  auto gpu_config = instr->backend_config<GpuBackendConfig>();
+  ASSERT_TRUE(gpu_config.ok());
+  EXPECT_EQ(gpu_config->gemm_backend_config().selected_algorithm(), 0);
 }
 
 }  // namespace gpu
