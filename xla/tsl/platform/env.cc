@@ -529,6 +529,20 @@ absl::Status WriteStringToFile(Env* env, const std::string& fname,
   return s;
 }
 
+absl::Status AppendStringToFile(Env* env, const std::string& fname,
+                                absl::string_view data) {
+  std::unique_ptr<WritableFile> file;
+  absl::Status s = env->NewAppendableFile(fname, &file);
+  if (!s.ok()) {
+    return s;
+  }
+  s = file->Append(data);
+  if (s.ok()) {
+    s = file->Close();
+  }
+  return s;
+}
+
 absl::Status FileSystemCopyFile(FileSystem* src_fs, const std::string& src,
                                 FileSystem* target_fs,
                                 const std::string& target) {
