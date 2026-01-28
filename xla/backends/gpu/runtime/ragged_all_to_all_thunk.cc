@@ -56,11 +56,11 @@ limitations under the License.
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -298,9 +298,9 @@ absl::Status RaggedAllToAllStartThunk::Initialize(
     }
   }
 
-  ASSIGN_OR_RETURN(
-      const GpuCliqueKey clique_key,
-      GetCollectiveGpuCliqueKey(*params.collective_params, config_.config));
+  ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                   GetCollectiveGpuCliqueKey(*params.collective_params,
+                                             config_.config, /*is_p2p=*/false));
   const std::optional<RankId> rank =
       clique_key.rank(params.collective_params->global_device_id);
 
