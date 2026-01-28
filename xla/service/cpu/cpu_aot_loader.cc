@@ -45,6 +45,8 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/host/host_platform_id.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -148,7 +150,7 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuAotLoader::LoadExecutable(
 
 absl::StatusOr<std::unique_ptr<Executable>> CpuAotLoader::LoadExecutable(
     CompiledModule&& compilation_result) {
-  return std::move(compilation_result).LoadExecutable(/*executor=*/nullptr);
+  return std::move(compilation_result).LoadExecutable();
 }
 
 absl::StatusOr<std::unique_ptr<CompiledModule>>

@@ -1675,7 +1675,8 @@ cc_library(
     deps = [
         ":buffer_assignment",
         "//xla/hlo/ir:hlo",
-        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:platform",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
     ],
@@ -1706,6 +1707,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:device_description",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:env",
