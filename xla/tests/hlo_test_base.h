@@ -102,12 +102,9 @@ class ABSL_DEPRECATED(
     : public HloRunnerAgnosticReferenceMixin<HloRunnerAgnosticTestBase> {
  public:
   // Compiles the given `hlo` with optimizations, and verifies that optimized
-  // HLO matches the given FileCheck pattern. Optionally, return the optimized
-  // HLO module in optimized_module which can be useful for further checks.
-  void MatchOptimizedHlo(
-      absl::string_view hlo, absl::string_view pattern,
-      bool print_operand_shape = false,
-      std::unique_ptr<HloModule>* optimized_module = nullptr);
+  // HLO matches the given FileCheck pattern.
+  void MatchOptimizedHlo(absl::string_view hlo, absl::string_view pattern,
+                         bool print_operand_shape = false);
 
   // Like MatchOptimizedHlo, but checks operand shapes as well.
   void MatchOptimizedHloWithShapes(absl::string_view hlo,

@@ -24,15 +24,8 @@ limitations under the License.
 namespace xla {
 namespace cpu {
 
-class MatmulTest : public HloTestBase,
-                   public ::testing::WithParamInterface<
-                       std::tuple<PrimitiveType, PrimitiveType>> {
+class MatmulTest : public HloTestBase {
  protected:
-  PrimitiveType dtype_;
-  std::string dtypeString_;
-  float atol_;
-  float rtol_;
-
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_cpu_experimental_onednn_custom_call(true);
@@ -135,17 +128,6 @@ class MatmulTest : public HloTestBase,
     ; CHECK-DAG:   }
     ; CHECK:     }
     )";
-  const char* fused_matmul_bias_relu_ = R"(
-    ; CHECK:     custom_call_target="__onednn$matmul",
-    ; CHECK:       backend_config={
-    ; CHECK-DAG:     "outer_dimension_partitions":[],
-    ; CHECK-DAG:     "onednn_matmul_config":{
-    ; CHECK-DAG:       "fusions":{
-    ; CHECK-DAG:         "ops":["BIAS","RELU"]
-    ; CHECK-DAG:     }
-    ; CHECK-DAG:   }
-    ; CHECK:     }
-    )";
   const char* fused_matmul_bias_sigmoid_rewrite_str_ = R"(
     ; CHECK:     custom_call_target="__onednn$matmul",
     ; CHECK:       backend_config={
@@ -180,77 +162,6 @@ class MatmulTest : public HloTestBase,
     ; CHECK-NOT: transpose(%{{[a-z,A-Z,0-9,_,\.]*}}),
     ; CHECK:     custom_call_target="__onednn$matmul",
     )";
-};
-
-class QuantizedMatmulTest : public MatmulTest {
- protected:
-  PrimitiveType quant_dtype_;
-  std::string quant_dtype_str_;
-  int clamp_min_;
-  int clamp_max_;
-
-  QuantizedMatmulTest() : MatmulTest() {
-    dtype_ = std::get<0>(GetParam());
-    quant_dtype_ = std::get<1>(GetParam());
-    dtypeString_ = primitive_util::LowercasePrimitiveTypeName(dtype_);
-    quant_dtype_str_ = primitive_util::LowercasePrimitiveTypeName(quant_dtype_);
-    atol_ = rtol_ = 1e-2;
-    if (quant_dtype_ == S8) {
-      clamp_min_ = -128;
-      clamp_max_ = 127;
-    } else {
-      // U8 case
-      clamp_min_ = 0;
-      clamp_max_ = 255;
-    }
-  }
-
-  void SetUp() override {
-    MatmulTest::SetUp();
-    if (!IsSupportedType(quant_dtype_)) {
-      GTEST_SKIP() << "CPU does not support " << quant_dtype_str_;
-    }
-  }
-
-  void RunCompareAndMatchOptimizedHlo(
-      const absl::string_view outline, const std::string& match_str,
-      std::vector<PrimitiveType>& operand0_types,
-      std::vector<PrimitiveType>& operand1_types,
-      std::vector<PrimitiveType>& result_types) {
-    const std::string matmul_module_str = absl::StrReplaceAll(
-        outline, {{"$dtype", dtypeString_},
-                  {"$quant_dtype", quant_dtype_str_},
-                  {"$clamp_min", std::to_string(clamp_min_)},
-                  {"$clamp_max", std::to_string(clamp_max_)}});
-    EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{atol_, rtol_}));
-    std::unique_ptr<HloModule> optimized_module;
-    MatchOptimizedHlo(matmul_module_str, match_str,
-                      /*print_operand_shape=*/false, &optimized_module);
-    CheckCustomCallTypes(optimized_module, operand0_types, operand1_types,
-                         result_types);
-  }
-
-  void CheckCustomCallTypes(std::unique_ptr<HloModule>& module,
-                            std::vector<PrimitiveType>& operand0_types,
-                            std::vector<PrimitiveType>& operand1_types,
-                            std::vector<PrimitiveType>& result_types) {
-    std::vector<HloInstruction*> custom_calls =
-        FindInstructions(module.get(), HloOpcode::kCustomCall);
-    if (custom_calls.size() == 0) {
-      FAIL() << "CustomCall not found in the optimized module";
-    }
-    for (int i = 0; i < custom_calls.size(); ++i) {
-      EXPECT_EQ(custom_calls[i]->operand(0)->shape().element_type(),
-                operand0_types[i]);
-      EXPECT_EQ(custom_calls[i]->operand(1)->shape().element_type(),
-                operand1_types[i]);
-      auto actual_type =
-          custom_calls[i]->shape().IsTuple()
-              ? custom_calls[i]->shape().tuple_shapes(0).element_type()
-              : custom_calls[i]->shape().element_type();
-      EXPECT_EQ(actual_type, result_types[i]);
-    }
-  }
 };
 
 TEST_F(MatmulTest, SimpleTestF32) {
@@ -1994,85 +1905,6 @@ TEST_F(MatmulTest, MulTanhMul) {
   ; CHECK:     }
   )");
 }
-
-TEST_P(QuantizedMatmulTest, DequantizeMatMulBiasReluRequantizeConstWeights) {
-  const char* module_str = R"(
-HloModule quant.matmul.test
-ENTRY quant.matmul.test {
-  constant.7 = $dtype[] constant($clamp_min)
-  broadcast.49 = $dtype[1024,512] broadcast(constant.7), dimensions={}
-  broadcast.13 = $dtype[1024,256] broadcast(constant.7), dimensions={}
-  arg0.1 = $dtype[1024,256] parameter(0), parameter_replication={false}
-  constant = $dtype[] constant(2.5)
-  broadcast = $dtype[1024,256] broadcast(constant), dimensions={}
-  multiply = $dtype[1024,256] multiply(arg0.1, broadcast)
-  constant.5 = $dtype[] constant(3)
-  broadcast.6 = $dtype[1024,256] broadcast(constant.5), dimensions={}
-  add.12 = $dtype[1024,256] add(multiply, broadcast.6)
-  constant.8 = $dtype[] constant($clamp_max)
-  broadcast.14 = $dtype[1024,256] broadcast(constant.8), dimensions={}
-  clamp.15 = $dtype[1024,256] clamp(broadcast.13, add.12, broadcast.14)
-  round-nearest-even.16 = $dtype[1024,256] round-nearest-even(clamp.15)
-  convert.17 = $quant_dtype[1024,256] convert(round-nearest-even.16)
-  convert.26 = s32[1024,256] convert(convert.17)
-  constant.2 = s32[] constant(-3)
-  broadcast.1 = s32[1024,256] broadcast(constant.2), dimensions={}
-  add = s32[1024,256] add(convert.26, broadcast.1)
-  convert.28 = $dtype[1024,256] convert(add)
-  constant.21 = $dtype[] constant(0.4)
-  broadcast.22 = $dtype[1024,256] broadcast(constant.21), dimensions={}
-  multiply.29 = $dtype[1024,256] multiply(convert.28, broadcast.22)
-  constant.30 = $dtype[256,512] constant({...})
-  dot.31 = $dtype[1024,512] dot(multiply.29, constant.30), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-  constant.33 = $dtype[512] constant({...})
-  broadcast.34 = $dtype[1024,512] broadcast(constant.33), dimensions={1}
-  add.35 = $dtype[1024,512] add(dot.31, broadcast.34)
-  constant.36 = $dtype[] constant(0)
-  broadcast.37 = $dtype[1024,512] broadcast(constant.36), dimensions={}
-  maximum.38 = $dtype[1024,512] maximum(add.35, broadcast.37)
-  constant.1 = $dtype[] constant(11.1111107)
-  broadcast.2 = $dtype[1024,512] broadcast(constant.1), dimensions={}
-  multiply.1 = $dtype[1024,512] multiply(maximum.38, broadcast.2)
-  constant.41 = $dtype[] constant(7)
-  broadcast.42 = $dtype[1024,512] broadcast(constant.41), dimensions={}
-  add.48 = $dtype[1024,512] add(multiply.1, broadcast.42)
-  broadcast.50 = $dtype[1024,512] broadcast(constant.8), dimensions={}
-  clamp.51 = $dtype[1024,512] clamp(broadcast.49, add.48, broadcast.50)
-  round-nearest-even.52 = $dtype[1024,512] round-nearest-even(clamp.51)
-  convert.53 = $quant_dtype[1024,512] convert(round-nearest-even.52)
-  convert.62 = s32[1024,512] convert(convert.53)
-  constant.6 = s32[] constant(-7)
-  broadcast.3 = s32[1024,512] broadcast(constant.6), dimensions={}
-  add.1 = s32[1024,512] add(convert.62, broadcast.3)
-  convert.64 = $dtype[1024,512] convert(add.1)
-  constant.57 = $dtype[] constant(0.09)
-  broadcast.58 = $dtype[1024,512] broadcast(constant.57), dimensions={}
-  multiply.65 = $dtype[1024,512] multiply(convert.64, broadcast.58)
-  constant.66 = $dtype[512,2048] constant({...})
-  ROOT dot.67 = $dtype[1024,2048] dot(multiply.65, constant.66), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-})";
-
-  std::vector<PrimitiveType> operand0_types = {quant_dtype_, quant_dtype_};
-  std::vector<PrimitiveType> operand1_types = {S8, S8};
-  std::vector<PrimitiveType> result_types = {quant_dtype_, dtype_};
-  RunCompareAndMatchOptimizedHlo(module_str, fused_matmul_bias_relu_,
-                                 operand0_types, operand1_types, result_types);
-}
-
-INSTANTIATE_TEST_SUITE_P(
-    OneDnnQuantMatmulTestSuite, QuantizedMatmulTest,
-    // TODO(intel-tf): Add BF16 type when quantization supports it.
-    ::testing::Combine(::testing::Values(F32), ::testing::Values(S8, U8)),
-    [](const ::testing::TestParamInfo<QuantizedMatmulTest::ParamType>& info) {
-      auto test_name =
-          primitive_util::LowercasePrimitiveTypeName(std::get<0>(info.param)) +
-          "_" +
-          primitive_util::LowercasePrimitiveTypeName(std::get<1>(info.param));
-      std::transform(test_name.begin(), test_name.end(), test_name.begin(),
-                     [](auto c) { return std::toupper(c); });
-      return test_name;
-    });
-
 
 }  // namespace cpu
 }  // namespace xla

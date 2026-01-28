@@ -30,30 +30,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
-#include "xla/service/cpu/runtime_lightweight_check.h"
-#include "xla/tsl/util/onednn_threadpool.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/cpu_info.h"
-#include "xla/service/cpu/backend_config.pb.h"
 
 namespace xla {
 namespace cpu {
-
-struct QuantizationParams {
-  QuantizationParams()
-      : src_zp_vec(1),
-        dst_zp_vec(1),
-        dst_scale_vec(1),
-        quant_operands(false),
-        quant_result(false) {}
-  std::vector<int> src_zp_vec;
-  std::vector<int> dst_zp_vec;
-  std::vector<float> dst_scale_vec;
-  bool quant_operands;
-  bool quant_result;
-  bool negated_src_zp;
-  bool inversed_dst_scale;
-};
 
 inline bool IsSupportedType(xla::PrimitiveType dtype) {
   using tsl::port::CPUFeature;
@@ -70,11 +51,6 @@ inline bool IsSupportedType(xla::PrimitiveType dtype) {
               (TestCPUFeature(CPUFeature::AVX512_FP16) ||
                TestCPUFeature(CPUFeature::AMX_FP16))) ||
              TestCPUFeature(CPUFeature::AVX_NE_CONVERT);
-    case S8:
-    case U8:
-      return TestCPUFeature(CPUFeature::AVX_VNNI_INT8) ||
-             TestCPUFeature(CPUFeature::AVX512_VNNI) ||
-             TestCPUFeature(CPUFeature::AMX_INT8);
     default:
       return false;
   }
@@ -90,42 +66,26 @@ struct FusedOperandsRef {
   std::vector<std::pair<int, dnnl::memory>>& postop_args;
 };
 
-std::unique_ptr<tsl::OneDnnThreadPool> CreateOneDnnThreadPool(
-    const Eigen::ThreadPoolDevice* threadpool_device);
-
-dnnl::stream MakeOneDnnStream(
-    const dnnl::engine& cpu_engine,
-    dnnl::threadpool_interop::threadpool_iface* thread_pool);
+typedef BackendConfig::BackendConfigOneofCase BackendConfigOneofCase;
 
 // These template functions must have explicit specialization at the definition
 // site.
 template <typename PrimDesc>
 std::unique_ptr<PrimDesc> CreateOneDnnPrimDesc(HloInstruction*);
 
-template <BackendConfig::BackendConfigOneofCase config,
-          typename TransformationType = void>
+template <BackendConfigOneofCase config, typename TransformationType = void>
 struct PrimitiveTrait;
 
-template <BackendConfig::BackendConfigOneofCase config>
+template <BackendConfigOneofCase config>
 typename PrimitiveTrait<config>::pointer_type GetKernelConfig(
     absl::StatusOr<BackendConfig>*);
 
 dnnl::post_ops PopulateOneDnnPostOps(
-    int& fused_operand_idx, const dnnl::engine& cpu_engine,
+    const dnnl::engine& cpu_engine,
     const std::vector<dnnl::memory::desc>& fused_mds,
     const OneDnnFusionConfig* fusion_config,
     FusedOperandsRef* fused_operands_ref = nullptr,
     dnnl::memory::desc* bias_md = nullptr);
-
-void AddQuantParamArgs(bool is_conv, bool conv_groups,
-                       dnnl::primitive_attr& attrs, int& fused_operand_idx,
-                       const dnnl::engine& cpu_engine,
-                       const std::vector<dnnl::memory::desc>& fused_mds,
-                       const dnnl::memory::desc& input_md,
-                       const dnnl::memory::desc& weights_md,
-                       const dnnl::memory::desc& output_md,
-                       FusedOperandsRef* fused_operands_ref = nullptr,
-                       QuantizationParams* qparams = nullptr);
 
 }  // namespace cpu
 }  // namespace xla

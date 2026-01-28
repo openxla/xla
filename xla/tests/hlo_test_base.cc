@@ -176,15 +176,16 @@ HloTestBase::HloTestBase(
 
 se::DeviceAddressAllocator* HloTestBase::GetAllocator() {
   if (allocator_ == nullptr) {
-    allocator_ = std::make_unique<se::StreamExecutorMemoryAllocator>(
-        backend().default_stream_executor());
+    allocator_ =
+        std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
+            backend().default_stream_executor());
   }
   return allocator_.get();
 }
 
-void HloTestBase::MatchOptimizedHlo(
-    absl::string_view hlo, absl::string_view pattern, bool print_operand_shape,
-    std::unique_ptr<HloModule>* optimized_module_out) {
+void HloTestBase::MatchOptimizedHlo(absl::string_view hlo,
+                                    absl::string_view pattern,
+                                    bool print_operand_shape) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
                           GetOptimizedModule(hlo));
   HloPrintOptions print_opts;
@@ -193,9 +194,6 @@ void HloTestBase::MatchOptimizedHlo(
       RunFileCheck(optimized_module->ToString(print_opts), pattern);
   TF_ASSERT_OK(filecheck_result.status());
   EXPECT_TRUE(filecheck_result.value());
-  if (optimized_module_out) {
-    *optimized_module_out = std::move(optimized_module);
-  }
 }
 
 absl::StatusOr<std::unique_ptr<HloModule>> HloTestBase::GetOptimizedModule(
