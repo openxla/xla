@@ -29,67 +29,56 @@ concurrency:
 
 jobs:
   execute-xla-ut:
-    runs-on: linux-x64-mi210-64-2gpu-amd
+    runs-on: linux-x86-64-4gpu-amd
     env:
-      DOCKER_IMAGE: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
-      CONTAINER_NAME: xla-runner
+      AMD_GPU_TARGETS: 'gfx90a,gfx942,gfx950'
+    container:
+      image: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
+      options: >-
+        --device=/dev/kfd
+        --device=/dev/dri
+        --group-add video
+        --cap-add=SYS_PTRACE
+        --security-opt seccomp=unconfined
+        --tmpfs /root/.cache/bazel:rw,exec,size=80g
+        --shm-size 16G
     steps:
-      # Pre-clean up in case a previous run crashed
-      - name: Cleanup container
-        run: docker rm -f ${{ env.CONTAINER_NAME }} || true
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Checkout rocAutomation using local creds
-        run: |
-          rm -rf rocAutomation
-          git clone -b jenkins-pipelines https://github.com/ROCm/rocAutomation.git rocAutomation
-
-      - name: Start Container
-        run: |
-          docker run -dt \
-            --name ${{ env.CONTAINER_NAME }} \
-            --init \
-            --network=host \
-            --device=/dev/dri \
-            --device=/dev/kfd \
-            --group-add $(getent group render | cut -d: -f3) \
-            --group-add $(getent group video | cut -d: -f3) \
-            --ipc=host \
-            --shm-size=16G \
-            --cap-add=SYS_PTRACE \
-            --security-opt=seccomp=unconfined \
-            --tmpfs /root/.cache/bazel:rw,exec,size=80g \
-            -v ${{ github.workspace }}:/workspace \
-            -v ${{ github.workspace }}/rocAutomation/resources/certificates:/tf/certificates:ro \
-            -v ${{ github.workspace }}/rocAutomation/resources/upstream-xla-data/rocm_tag_filters.sh:/workspace/build_tools/rocm/rocm_tag_filters.sh:ro \
-            -v ${{ github.workspace }}/rocAutomation/resources/upstream-xla-data/execute_ci_build.sh:/workspace/build_tools/rocm/execute_ci_build.sh:ro \
-            -w /workspace \
-            ${{ env.DOCKER_IMAGE }}
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: CPU Info
-        run: |
-          docker exec ${{ env.CONTAINER_NAME }} bash -c "lscpu"
+        if: always()
+        run: lscpu
+
+      - name: Memory Info
+        if: always()
+        run: lsmem
 
       - name: ROCm info
-        run: |
-          docker exec ${{ env.CONTAINER_NAME }} bash -c "/opt/rocm/bin/rocminfo"
+        if: always()
+        run: /opt/rocm/bin/rocminfo
+
+      - name: Check data
+        run: ls -alsh /data
 
       - name: Test XLA [single_gpu]
         run: |
-          docker exec \
-            ${{ env.CONTAINER_NAME }} \
-            bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_single_gpu --local_test_jobs=2 --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL=linux_x64_gpu_gfx90a"
+            build_tools/rocm/run_xla_ci_build.sh \
+              --config=rocm_ci \
+              --config=ci_single_gpu \
+              --local_test_jobs=2 \
+              --action_env=TF_ROCM_AMDGPU_TARGETS=${{ env.AMD_GPU_TARGETS }} \
+              --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL=linux_x64_gpu_gfx90a \
+              -- \
+              //xla/...
 
       - name: Test XLA [multi_gpu]
         if: always()
         run: |
-          docker exec \
-            ${{ env.CONTAINER_NAME }} \
-            bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_multi_gpu --strategy=TestRunner=local --local_test_jobs=2"
-
-      - name: Cleanup container
-        if: always()
-        run: |
-           docker stop --time=60 ${{ env.CONTAINER_NAME }} || true
-           docker rm -f ${{ env.CONTAINER_NAME }} || true
+            build_tools/rocm/run_xla_ci_build.sh \
+              --config=rocm_ci \
+              --config=ci_multi_gpu \
+              --strategy=TestRunner=local \
+              --action_env=TF_ROCM_AMDGPU_TARGETS=${{ env.AMD_GPU_TARGETS }} \
+              --local_test_jobs=2 \
+              -- \
+              //xla/...
