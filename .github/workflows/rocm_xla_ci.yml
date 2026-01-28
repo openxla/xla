@@ -57,9 +57,6 @@ jobs:
         if: always()
         run: /opt/rocm/bin/rocminfo
 
-      - name: Check data
-        run: ls -alsh /data
-
       - name: Test XLA [single_gpu]
         run: |
             build_tools/rocm/run_xla_ci_build.sh \
