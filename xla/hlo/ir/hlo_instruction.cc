@@ -980,6 +980,9 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
           std::max<int64_t>(proto.feature_group_count(), 1),
           std::max<int64_t>(proto.batch_group_count(), 1), proto.window(),
           proto.convolution_dimension_numbers(), precision_config);
+
+      DynCast<HloConvolutionInstruction>(instruction.get())
+          ->set_conv_kind(proto.conv_kind());
       break;
     }
     case HloOpcode::kReduceWindow:
