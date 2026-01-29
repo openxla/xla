@@ -78,7 +78,6 @@ jobs:
               //xla/...
 
       - name: Test XLA [multi_gpu]
-        if: always()
         run: |
             build_tools/rocm/execute_ci_build.sh \
               --config=rocm_ci \
