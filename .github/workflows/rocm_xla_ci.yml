@@ -57,18 +57,20 @@ jobs:
         if: always()
         run: /opt/rocm/bin/rocminfo
 
-      - name: Check df
+      - name: Setup build environment
         run: |
           mkdir -p /tf/certificates
-          wget https://raw.githubusercontent.com/ROCm/rocAutomation/refs/heads/jenkins-pipelines/resources/certificates/ci-cert.crt?token=GHSAT0AAAAAADKIZWJ3KRVONV5SHS5UHQB62L3HPSA -O /tf/certificats/ci-cert.crt
-          wget https://raw.githubusercontent.com/ROCm/rocAutomation/refs/heads/jenkins-pipelines/resources/certificates/ci-cert.key?token=GHSAT0AAAAAADKIZWJ2P3IULTAFOCSPOZZI2L3HYEQ -O /tf/certificates/rocm/ci-cert.key
+          wget https://raw.githubusercontent.com/ROCm/rocAutomation/refs/heads/jenkins-pipelines/resources/certificates/ci-cert.crt?token=GHSAT0AAAAAADKIZWJ3KRVONV5SHS5UHQB62L3HPSA -O /tf/certificates/ci-cert.crt
+          wget https://raw.githubusercontent.com/ROCm/rocAutomation/refs/heads/jenkins-pipelines/resources/certificates/ci-cert.key?token=GHSAT0AAAAAADKIZWJ2P3IULTAFOCSPOZZI2L3HYEQ -O /tf/certificates/ci-cert.key
           wget https://raw.githubusercontent.com/ROCm/rocAutomation/refs/heads/jenkins-pipelines/resources/upstream-xla-data/execute_ci_build.sh?token=GHSAT0AAAAAADKIZWJ2HRLSY2VIVVXLS2BU2L3H2CQ -O build_tools/rocm/execute_ci_build.sh
+          chmod +x build_tools/rocm/execute_ci_build.sh
 
       - name: Test XLA [single_gpu]
         run: |
             build_tools/rocm/execute_ci_build.sh \
               --config=rocm_ci \
               --config=ci_single_gpu \
+              --config=rocm_rbe \
               --local_test_jobs=2 \
               --action_env=TF_ROCM_AMDGPU_TARGETS=${{ env.AMD_GPU_TARGETS }} \
               --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL=linux_x64_gpu_gfx90a \
@@ -81,6 +83,7 @@ jobs:
             build_tools/rocm/execute_ci_build.sh \
               --config=rocm_ci \
               --config=ci_multi_gpu \
+              --config=rocm_rbe \
               --strategy=TestRunner=local \
               --action_env=TF_ROCM_AMDGPU_TARGETS=${{ env.AMD_GPU_TARGETS }} \
               --local_test_jobs=2 \
