@@ -113,8 +113,8 @@ class BuildType(enum.Enum):
   XLA_LINUX_X86_GPU_L4_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_8X_H100_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_ONEAPI_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_GPU_ROCM_SINGLE_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_GPU_ROCM_MULTI_GITHUB_ACTIONS = enum.auto()
+  XLA_LINUX_X86_AMD_INSTINCT_GPU_SINGLE_GITHUB_ACTIONS = enum.auto()
+  XLA_LINUX_X86_AMD_INSTINCT_GPU_MULTI_GITHUB_ACTIONS = enum.auto()
 
   # Presubmit builds for regression testing.
   XLA_LINUX_ARM64_CPU_48_VCPU_PRESUBMIT_GITHUB_ACTIONS = enum.auto()
@@ -305,7 +305,7 @@ rocm_excluded_targets = (
 )
 
 Build(
-    type_=BuildType.XLA_LINUX_X86_GPU_ROCM_SINGLE_GITHUB_ACTIONS,
+    type_=BuildType.XLA_LINUX_X86_AMD_INSTINCT_GPU_SINGLE_GITHUB_ACTIONS,
     repo="openxla/xla",
     configs=("rocm_ci", "rocm_rbe", "ci_single_gpu"),
     target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_excluded_targets,
@@ -338,7 +338,7 @@ Build(
 )
 
 Build(
-    type_=BuildType.XLA_LINUX_X86_GPU_ROCM_MULTI_GITHUB_ACTIONS,
+    type_=BuildType.XLA_LINUX_X86_AMD_INSTINCT_GPU_MULTI_GITHUB_ACTIONS,
     repo="openxla/xla",
     configs=("rocm_ci", "rocm_rbe", "ci_multi_gpu"),
     target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_excluded_targets,

@@ -45,7 +45,7 @@ jobs:
           {
             pool: "linux-x86-64-8gpu-amd",
             container: "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa",
-            name: "XLA Linux x86 GPU ROCm",
+            name: "XLA Linux x86 AMD Instinct GPU",
             repo: "openxla/xla",
           },
         ]
@@ -83,7 +83,7 @@ jobs:
           sed -i "s|rocm_excluded_targets = (|rocm_excluded_targets = tuple(['-' + x.strip() for x in open('/data/list') if x.strip()]) + (|g" $GITHUB_WORKSPACE/openxla/xla/build_tools/ci/build.py
 
           # Run Single GPU Tests
-          $GITHUB_WORKSPACE/openxla/xla/build_tools/ci/build.py --build="XLA Linux x86 GPU ROCm Single_github_actions"
+          $GITHUB_WORKSPACE/openxla/xla/build_tools/ci/build.py --build="XLA Linux x86 AMD Instinct GPU Single_github_actions"
 
           # Run Multi GPU Tests
-          $GITHUB_WORKSPACE/openxla/xla/build_tools/ci/build.py --build="XLA Linux x86 GPU ROCm Multi_github_actions"
+          $GITHUB_WORKSPACE/openxla/xla/build_tools/ci/build.py --build="XLA Linux x86 AMD Instinct GPU Multi_github_actions"
