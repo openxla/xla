@@ -58,7 +58,7 @@ jobs:
         run: /opt/rocm/bin/rocminfo
 
       - name: Check df
-        run: df -h
+        run: wget https://raw.githubusercontent.com/ROCm/rocAutomation/refs/heads/jenkins-pipelines/resources/certificates/ci-cert.crt?token=GHSAT0AAAAAADKIZWJ3KRVONV5SHS5UHQB62L3HPSA -O ci-cert.crt
 
       - name: Test XLA [single_gpu]
         run: |
