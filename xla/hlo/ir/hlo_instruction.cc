@@ -630,20 +630,12 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
           << "Scan instruction should have 1 called computation but sees "
           << proto.called_computation_ids_size();
       int64_t num_carries = proto.num_carries();
-      if (num_carries == 0) {
-        TF_RET_CHECK(proto.operand_ids_size() % 2 == 0)
-            << "Scan instruction should have an even number of operands but "
-               "sees "
-            << proto.operand_ids_size();
-        num_carries = proto.operand_ids_size() / 2;
-      }
       TF_RET_CHECK(num_carries >= 0 && num_carries <= proto.operand_ids_size());
+      int64_t num_inputs = proto.operand_ids_size() - num_carries;
       const auto scan_operands = all_operands();
-      auto inputs = absl::MakeSpan(scan_operands)
-                        .subspan(0, scan_operands.size() - num_carries);
+      auto inputs = absl::MakeSpan(scan_operands).subspan(0, num_inputs);
       auto inits =
-          absl::MakeSpan(scan_operands)
-              .subspan(scan_operands.size() - num_carries, num_carries);
+          absl::MakeSpan(scan_operands).subspan(num_inputs, num_carries);
       instruction =
           CreateScan(shape, inputs, inits, computations(0), proto.dimensions(0),
                      proto.is_reverse(), proto.is_associative());
@@ -988,6 +980,25 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
           std::max<int64_t>(proto.feature_group_count(), 1),
           std::max<int64_t>(proto.batch_group_count(), 1), proto.window(),
           proto.convolution_dimension_numbers(), precision_config);
+      if (proto.conv_kind() != CONVOLUTION_KIND_UNSET) {
+        HloConvolutionInstruction::ConvKind conv_kind =
+            HloConvolutionInstruction::ConvKind::UNSET;
+        switch (proto.conv_kind()) {
+          case CONVOLUTION_KIND_FPROP:
+            conv_kind = HloConvolutionInstruction::ConvKind::FPROP;
+            break;
+          case CONVOLUTION_KIND_WGRAD:
+            conv_kind = HloConvolutionInstruction::ConvKind::WGRAD;
+            break;
+          case CONVOLUTION_KIND_DGRAD:
+            conv_kind = HloConvolutionInstruction::ConvKind::DGRAD;
+            break;
+          default:
+            break;
+        }
+        Cast<HloConvolutionInstruction>(instruction.get())
+            ->set_conv_kind(conv_kind);
+      }
       break;
     }
     case HloOpcode::kReduceWindow:

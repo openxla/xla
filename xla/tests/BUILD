@@ -2113,15 +2113,15 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
+    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
-        ":hlo_test_base",
+        ":hlo_pjrt_interpreter_reference_mixin",
+        ":hlo_pjrt_test_base",
         ":xla_internal_test_main",
         "//xla:error_spec",
         "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:test",
+        "@com_google_googletest//:gtest",
     ],
 )
 
@@ -3069,6 +3069,7 @@ xla_test(
         "//xla/backends/gpu/runtime:collective_cliques",
         "//xla/backends/gpu/runtime:collective_execution",
         "//xla/backends/gpu/runtime:collective_memory_requests",
+        "//xla/backends/gpu/runtime:collective_multimem",
         "//xla/backends/gpu/runtime:collective_params",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:reduction_kind",
