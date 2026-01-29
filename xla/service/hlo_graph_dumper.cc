@@ -1368,8 +1368,8 @@ std::string HloDotDumper::GetInstructionNodeMetadata(
   }
   if (instr->metadata().stack_frame_id() != 0) {
     auto hlo_module = instr->parent()->parent();
-    int frame_id = instr->metadata().stack_frame_id();
-    while (frame_id != 0) {
+    StackFrameId frame_id{instr->metadata().stack_frame_id()};
+    while (frame_id.valid()) {
       HloModule::StackFrame frame = hlo_module->get_stack_frame(frame_id);
       if (frame.empty()) {
         break;
