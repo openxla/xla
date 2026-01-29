@@ -90,7 +90,8 @@ static absl::Status PrepareAllReduce(
 
   // Ask XLA:GPU runtime to acquire a clique for this key. Later we will be able
   // to get access to it from the execute handler.
-  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key, requirements));
+  TF_RETURN_IF_ERROR(clique_requests->RequestClique(
+      clique_key, /*device_groups=*/{{}}, requirements));
 
   return absl::OkStatus();
 }
@@ -118,7 +119,8 @@ static absl::Status PrepareDeviceAllReduce(
 
   // Request XLA:GPU runtime to acquire a clique for this key. Later we will be
   // able to get access to it from the execute handler.
-  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key, requirements));
+  TF_RETURN_IF_ERROR(clique_requests->RequestClique(
+      clique_key, /*device_groups=*/{{}}, requirements));
 
   TF_RETURN_IF_ERROR(memory_requests->RequestSymmetricAddress(
       clique_key, src.device_memory()));

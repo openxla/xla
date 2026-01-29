@@ -47,11 +47,9 @@ CollectiveStreamId GetCollectiveStreamId(
 // Clique key for identifying a particular collectives clique on a GPU backend.
 class GpuCliqueKey : public CliqueKey {
  public:
-  explicit GpuCliqueKey(
-      std::vector<GlobalDeviceId> devices, int64_t num_local_participants,
-      bool is_p2p = false,
-      std::vector<std::vector<GlobalDeviceId>> participant_groups = {},
-      std::vector<IncarnationId> incarnations = {});
+  explicit GpuCliqueKey(std::vector<GlobalDeviceId> devices,
+                        int64_t num_local_participants, bool is_p2p = false,
+                        std::vector<IncarnationId> incarnations = {});
 
   GpuCliqueKey(const GpuCliqueKey&) = default;
   GpuCliqueKey& operator=(const GpuCliqueKey&) = default;
@@ -60,8 +58,6 @@ class GpuCliqueKey : public CliqueKey {
   GpuCliqueKey& operator=(GpuCliqueKey&&) = default;
 
   CollectiveStreamId stream_id() const;
-
-  std::vector<std::vector<GlobalDeviceId>> ParticipantGroups() const;
 
   // Returns true if this clique is a subset of `other`: both cliques have the
   // same `stream_id` and all clique devices are part of `other` clique.
@@ -101,25 +97,8 @@ class GpuCliqueKey : public CliqueKey {
  private:
   void HashValue(absl::HashState state) const final;
 
-  // See comment on `num_local_participants()`.
   int64_t num_local_participants_;
   bool is_p2p_;
-
-  // The full list of groups across all devices which this clique is a part of.
-  //
-  // When GPU communicator splitting is enabled, this is used to distinguish
-  // which cliques can be reused from the cache or must be split in order to
-  // prevent a deadlock situation.
-  //
-  // For example, imagine we have a communicator with devices = [0,1] and
-  // groups = [0, 1] Later on, we may want to create communicators [0, 1] and
-  // [2, 3] by splitting [0, 1, 2, 3] If ranks 0 and 1 reuse the existing
-  // [0, 1] clique but ranks 2 and 3 initiate a split, there will be a deadlock
-  // since ranks 2, 3 and will be waiting forever for 0, 1 to join the split.
-  //
-  // Having the participating groups as part of the cache key will prevent such
-  // situations
-  std::vector<std::vector<GlobalDeviceId>> participant_groups_;
 
   std::vector<IncarnationId> incarnations_;
 };

@@ -166,7 +166,7 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
     TF_ASSIGN_OR_RETURN(
         std::shared_ptr<LockableGpuClique::Lock> clique,
         AcquireGpuClique(params.collectives, params.executor, params.run_id,
-                         r.key,
+                         r.key, r.device_groups,
                          params.clique_id_callback ? *params.clique_id_callback
                                                    : default_clique_id_callback,
                          *rank, cliques_map, max_channels));
