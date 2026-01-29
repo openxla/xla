@@ -58,11 +58,15 @@ jobs:
         run: /opt/rocm/bin/rocminfo
 
       - name: Check df
-        run: wget https://raw.githubusercontent.com/ROCm/rocAutomation/refs/heads/jenkins-pipelines/resources/certificates/ci-cert.crt?token=GHSAT0AAAAAADKIZWJ3KRVONV5SHS5UHQB62L3HPSA -O ci-cert.crt
+        run: |
+          mkdir -p /tf/certificates
+          wget https://raw.githubusercontent.com/ROCm/rocAutomation/refs/heads/jenkins-pipelines/resources/certificates/ci-cert.crt?token=GHSAT0AAAAAADKIZWJ3KRVONV5SHS5UHQB62L3HPSA -O /tf/certificats/ci-cert.crt
+          wget https://raw.githubusercontent.com/ROCm/rocAutomation/refs/heads/jenkins-pipelines/resources/certificates/ci-cert.key?token=GHSAT0AAAAAADKIZWJ2P3IULTAFOCSPOZZI2L3HYEQ -O /tf/certificates/rocm/ci-cert.key
+          wget https://raw.githubusercontent.com/ROCm/rocAutomation/refs/heads/jenkins-pipelines/resources/upstream-xla-data/execute_ci_build.sh?token=GHSAT0AAAAAADKIZWJ2HRLSY2VIVVXLS2BU2L3H2CQ -O build_tools/rocm/execute_ci_build.sh
 
       - name: Test XLA [single_gpu]
         run: |
-            build_tools/rocm/run_xla_ci_build.sh \
+            build_tools/rocm/execute_ci_build.sh \
               --config=rocm_ci \
               --config=ci_single_gpu \
               --local_test_jobs=2 \
@@ -74,7 +78,7 @@ jobs:
       - name: Test XLA [multi_gpu]
         if: always()
         run: |
-            build_tools/rocm/run_xla_ci_build.sh \
+            build_tools/rocm/execute_ci_build.sh \
               --config=rocm_ci \
               --config=ci_multi_gpu \
               --strategy=TestRunner=local \
