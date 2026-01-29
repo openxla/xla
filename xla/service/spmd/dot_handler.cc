@@ -293,28 +293,6 @@ DotDimensionIndexMapping ComputeDimensionIndexMapping(
                                   output_to_lhs_indices, output_to_rhs_indices};
 }
 
-CollectiveDeviceList GetPartitionGroupsForReplication(
-    const HloSharding& sharding, absl::Span<const int64_t> replication_dims) {
-  int64_t group_size = 1;
-  for (int64_t i : replication_dims) {
-    group_size *= ShardCountAtDim(sharding, i);
-  }
-  std::vector<std::vector<int64_t>> partition_groups(sharding.num_devices() /
-                                                     group_size);
-  sharding.tile_assignment().Each(
-      [&](absl::Span<const int64_t> indices, int64_t partition) {
-        int64_t group_id = 0;
-        for (int64_t i = 0; i < indices.size(); ++i) {
-          if (!absl::c_linear_search(replication_dims, i)) {
-            group_id *= ShardCountAtDim(sharding, i);
-            group_id += indices[i];
-          }
-        }
-        partition_groups[group_id].push_back(partition);
-      });
-  return CollectiveDeviceList(partition_groups);
-}
-
 // Returns true iff all of the following conditions are simultaneously true:
 // 1) 'lhs/rhs_sharding' have different partition counts on a dimension in
 //    'dims'.
@@ -2036,14 +2014,6 @@ absl::StatusOr<HloInstruction*> PartitionBaseCaseAfterPartialMatch(
       hlo_sharding_util::TransposeShardingWithCollapsedDims(
           rhs_sharding, indices_map.rhs_to_lhs_indices,
           indices_map.lhs_to_rhs_indices);
-  auto lhs_sharding_transposed_to_match_output =
-      hlo_sharding_util::TransposeShardingWithCollapsedDims(
-          lhs_sharding, indices_map.lhs_to_output_indices,
-          indices_map.output_to_lhs_indices);
-  auto rhs_sharding_transposed_to_match_output =
-      hlo_sharding_util::TransposeShardingWithCollapsedDims(
-          rhs_sharding, indices_map.rhs_to_output_indices,
-          indices_map.output_to_rhs_indices);
   auto output_sharding_transposed_to_match_lhs =
       hlo_sharding_util::TransposeShardingWithCollapsedDims(
           output_sharding, indices_map.output_to_lhs_indices,
@@ -2052,36 +2022,6 @@ absl::StatusOr<HloInstruction*> PartitionBaseCaseAfterPartialMatch(
       hlo_sharding_util::TransposeShardingWithCollapsedDims(
           output_sharding, indices_map.output_to_rhs_indices,
           indices_map.rhs_to_output_indices);
-
-  // LHS and RHS have the same partitioned contracting dimensions.
-  if (lhs_contracting_partitions == rhs_contracting_partitions &&
-      lhs_contracting_partitions == num_partitions) {
-    // Pad both sides with zero, since NaN at one side cannot be masked by zero
-    // on the other side.
-    if (ShapeSizeInBytes(lhs.base_shape()) <
-        ShapeSizeInBytes(rhs.base_shape())) {
-      lhs = lhs.Reshard(*rhs_sharding_transposed_to_match_lhs);
-    } else {
-      rhs = rhs.Reshard(*lhs_sharding_transposed_to_match_rhs);
-    }
-
-    lhs = lhs.PadWithZero();
-    rhs = rhs.PadWithZero();
-    TF_ASSIGN_OR_RETURN(auto dot, create_sharded_dot(lhs, rhs, b, conv_window));
-    std::vector<int64_t> lhs_contracting_dims;
-    lhs_contracting_dims.reserve(dims_mapping.contracting_dims.size());
-    for (const auto& cd : dims_mapping.contracting_dims) {
-      lhs_contracting_dims.push_back(cd.lhs);
-    }
-    auto ar = lhs.state().partitioner->AllReduceAlongShardingDims(
-        b, dot, lhs.sharding(), lhs.state().next_channel_id,
-        lhs_contracting_dims, lhs.state().collective_ops_creator,
-        MakeBinaryAdd(output_base_shape.element_type(), module));
-    ar->set_sharding(HloSharding::Replicate());
-    return PartitionedHlo(ar, output_base_shape, lhs.state())
-        .Reshard(output_sharding)
-        .hlo();
-  }
 
   // Output is batch partitioned.
   if (output_batch_partitions == num_partitions) {
@@ -3429,10 +3369,10 @@ bool PrioritizeContractingDimensionsPartitioning(
   auto reduce_scatter_subgroups = GetPartitionGroupsForReplication(
       outer_output_tmp_sharding, output_slice_dims);
   const double all_gather_time_in_ms = visitor->GetCommunicationTimeInMilliSec(
-      all_gather_bytes, all_gather_subgroups);
+      all_gather_bytes, *all_gather_subgroups);
   const double reduce_scatter_time_in_ms =
       visitor->GetCommunicationTimeInMilliSec(reduce_scatter_bytes,
-                                              reduce_scatter_subgroups);
+                                              *reduce_scatter_subgroups);
 
   Shape other_original_shape = other_hlo->shape();
   *other_hlo->mutable_shape() =

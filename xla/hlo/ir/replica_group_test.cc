@@ -350,13 +350,13 @@ TEST(MeshAxesReplicaGroupListTest, ValidatesIncompatibleAxes) {
         MeshAxesReplicaGroupList index_out_of_bounds(
             mesh, /*axes=*/{AxisRef(0, {8, 2})});
       },
-      "Pre-size and size must divide the full axis size");
+      "Sub-axis next_pre_size must divide the full axis size");
   EXPECT_DEATH(
       {
         MeshAxesReplicaGroupList index_out_of_bounds(
             mesh, /*axes=*/{AxisRef(0, {2, 8})});
       },
-      "Pre-size and size must divide the full axis size");
+      "Sub-axis next_pre_size must divide the full axis size");
   EXPECT_DEATH(
       {
         MeshAxesReplicaGroupList index_out_of_bounds(
@@ -429,6 +429,20 @@ TEST(MeshAxesReplicaGroupListTest, ToReplicaGroupV2) {
   EXPECT_EQ(replica_group_d_2_3_d_1_2.flattened_replica_groups(),
             replica_group_d_2_3_d_1_2.ToIotaReplicaGroupList()
                 .flattened_replica_groups());
+}
+
+TEST(MeshAxesReplicaGroupListTest, ToReplicaGroupV2WithComplexMesh) {
+  Mesh mesh(TileAssignment(/*dims=*/{8, 2}, /*reshape_dims=*/{2, 4, 2},
+                           /*transpose_perm=*/{2, 1, 0}),
+            {"a", "b"});
+
+  MeshAxesReplicaGroupList replica_group_a(mesh, {AxisRef(0)});
+  EXPECT_EQ(replica_group_a.ToIotaReplicaGroupList().flattened_replica_groups(),
+            replica_group_a.flattened_replica_groups());
+
+  MeshAxesReplicaGroupList replica_group_b(mesh, {AxisRef(1)});
+  EXPECT_EQ(replica_group_b.ToIotaReplicaGroupList().flattened_replica_groups(),
+            replica_group_b.flattened_replica_groups());
 }
 
 TEST(MeshAxesReplicaGroupListTest, ToCollectiveDeviceList) {

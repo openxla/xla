@@ -48,7 +48,6 @@ xla_cc_test(
     tags = ["pjrt_migration_candidate"],
     deps = [
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/ir:hlo_module_group",
         "//xla/service:compiler",
         "//xla/service:cpu_plugin",
         "//xla/service:executable",
@@ -79,6 +78,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/service:cpu_plugin",
         "//xla/service/cpu:cpu_instruction_fusion",

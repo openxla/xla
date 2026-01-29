@@ -75,6 +75,7 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/runtime/device_id.h"
+#include "xla/runtime/process_id.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/gpu_topology.h"
@@ -748,20 +749,6 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     local_topology.set_partition_index(*partition_index);
   }
 
-  auto make_compute_capability_string =
-      [](const stream_executor::DeviceDescription* desc) -> std::string {
-    stream_executor::GpuComputeCapability cc = desc->gpu_compute_capability();
-    if (cc.IsCuda()) {
-      auto* nvcc = cc.cuda_compute_capability();
-      return absl::StrCat(nvcc->major, ".", nvcc->minor);
-    }
-    if (cc.IsRocm()) {
-      auto* rocmcc = cc.rocm_compute_capability();
-      return rocmcc->gfx_version();
-    }
-    return "unknown";
-  };
-
   for (se::StreamExecutor* executor :
        xla_client->backend().stream_executors()) {
     const se::Platform* platform = executor->GetPlatform();
@@ -774,7 +761,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     device_proto->set_name(desc->name());
     device_proto->set_vendor(desc->device_vendor());
     device_proto->set_compute_capability(
-        make_compute_capability_string(desc.get()));
+        stream_executor::MakeComputeCapabilityAttributeString(*desc));
     device_proto->set_core_count(desc->core_count());
 
     // TODO: hhb
@@ -835,7 +822,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   }
 
   absl::btree_map<LocalDeviceId, GlobalDeviceId> gpu_device_ids;
-  absl::flat_hash_map<GlobalDeviceId, int> device_to_node;
+  absl::flat_hash_map<GlobalDeviceId, ProcessId> device_to_process;
   int curr_partition_index = -1;
   int curr_process_index = -1;
   int curr_process_index_in_partition = 0;
@@ -855,7 +842,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
       }
 
       GlobalDeviceId global_device_id(device_proto.global_device_id());
-      device_to_node[global_device_id] = node.node_id();
+      device_to_process[global_device_id] = ProcessId(node.node_id());
       TfrtGpuDevice::Options options;
       if (node.node_id() == node_id) {
         gpu_device_ids[LocalDeviceId(device_proto.local_device_ordinal())] =
@@ -907,10 +894,14 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     return absl::InternalError("Failed to get GPU collectives");
   }
 
-  TF_RETURN_IF_ERROR(gpu_collectives->InitializeTopology(
-      {node_id, global_topology.nodes().size(),
-       xla_client->backend().stream_executors().size(), kv_store,
-       device_to_node, gpu_executable_run_options}));
+  size_t num_processes = global_topology.nodes().size();
+  TF_ASSIGN_OR_RETURN(auto clique_id_callback,
+                      gpu_collectives->InitializeTopology(
+                          {ProcessId(node_id), num_processes,
+                           xla_client->backend().stream_executors().size(),
+                           kv_store, device_to_process}));
+  gpu_executable_run_options->set_clique_id_callback(
+      std::move(clique_id_callback));
 
   TF_ASSIGN_OR_RETURN(GpuTopologyProto gpu_topology,
                       BuildGpuTopology(global_topology));

@@ -90,13 +90,6 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
                           GetParticipatingDevicesGroups(
                               *params.device_assn, replica_groups, group_mode));
     }
-
-    if (params.collectives->IsGlobalConfig() &&
-        (participants.size() != params.device_assn->replica_count())) {
-      return InvalidArgument(
-          "Partial replica groups are not allowed when using NCCL_COMM_ID "
-          "environment configuration.");
-    }
   }
 
   // Remove trivial group that contains all participants, as we do not want to
@@ -107,8 +100,6 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
 
   int64_t num_local_participants =
       GetNumLocalParticipants(params, participants);
-
-  GlobalDeviceId root_device = GlobalDeviceId(-1);
 
   absl::flat_hash_set<IncarnationId> unique_incarnations;
   if (params.incarnations) {
@@ -126,7 +117,7 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
   absl::c_sort(incarnations);
 
   return GpuCliqueKey(std::move(participants), num_local_participants, is_p2p,
-                      std::move(participant_groups), root_device, incarnations);
+                      std::move(participant_groups), incarnations);
 }
 
 }  // namespace xla::gpu

@@ -131,24 +131,6 @@ enum ThunkKindProto {
   THUNK_KIND_WHILE = 73;
 }
 
-message CopyThunkProto {
-  ShapedSliceProto source_buffer = 1;
-  ShapedSliceProto destination_buffer = 2;
-  int64 mem_size = 3;
-}
-
-message DeviceToHostCopyThunkProto {
-  CopyThunkProto copy_thunk = 1;
-}
-
-message HostToDeviceCopyThunkProto {
-  CopyThunkProto copy_thunk = 1;
-}
-
-message DeviceToDeviceCopyThunkProto {
-  CopyThunkProto copy_thunk = 1;
-}
-
 message ConditionalThunkProto {
   ShapedSliceProto branch_index_buffer = 1;
   repeated SequentialThunkProto branch_thunks = 2;
@@ -308,13 +290,11 @@ message CublasLtMatmulThunkProto {
 }
 
 message CubSortThunkProto {
-  xla.PrimitiveType type = 1;
-  optional xla.PrimitiveType value_type = 3;
-  repeated xla.buffer_assignment.BufferAllocationSliceProto operands = 4;
-  repeated xla.buffer_assignment.BufferAllocationSliceProto results = 5;
-  xla.buffer_assignment.BufferAllocationSliceProto scratch = 6;
-  bool descending = 7;
-  int64 batch_size = 8;
+  repeated ShapedSliceProto operands = 1;
+  repeated ShapedSliceProto results = 2;
+  xla.buffer_assignment.BufferAllocationSliceProto scratch = 3;
+  bool descending = 4;
+  int64 batch_size = 5;
 }
 
 message NormThunkProto {
@@ -374,8 +354,8 @@ message CustomKernelThunkProto {
 
 message CollectiveBufferProto {
   int64 element_count = 1;
-  xla.buffer_assignment.BufferAllocationSliceProto source_buffer = 2;
-  xla.buffer_assignment.BufferAllocationSliceProto destination_buffer = 3;
+  ShapedSliceProto source_buffer = 2;
+  ShapedSliceProto destination_buffer = 3;
   int64 source_memory_space = 4;
   int64 destination_memory_space = 5;
 }
@@ -417,6 +397,13 @@ message AllReduceStartThunkProto {
   string kernel_name = 7;
   bool collective_kernel_enabled = 8;
   bool is_async = 9;
+}
+
+message ReduceScatterStartThunkProto {
+  optional uint64 async_events_unique_id = 1;
+  CollectiveConfigProto collective_config = 2;
+  repeated CollectiveBufferProto buffers = 3;
+  ReductionKindProto reduction_kind = 4;
 }
 
 message AllToAllStartThunkProto {
@@ -527,14 +514,15 @@ message ThunkProto {
     CollectiveDoneThunkProto collective_done_thunk = 37;
     AllGatherStartThunkProto all_gather_start_thunk = 38;
     AllReduceStartThunkProto all_reduce_start_thunk = 39;
-    AllToAllStartThunkProto all_to_all_start_thunk = 40;
-    RaggedAllToAllStartThunkProto ragged_all_to_all_start_thunk = 41;
-    CollectivePermuteStartThunkProto collective_permute_start_thunk = 42;
-    SendThunkProto send_thunk = 43;
-    RecvThunkProto recv_thunk = 44;
-    CollectiveBroadcastStartThunkProto collective_broadcast_start_thunk = 45;
-    CollectiveGroupThunkProto collective_group_thunk = 46;
-    DynamicMemcpyThunkProto dynamic_memcpy_thunk = 47;
+    ReduceScatterStartThunkProto reduce_scatter_start_thunk = 40;
+    AllToAllStartThunkProto all_to_all_start_thunk = 41;
+    RaggedAllToAllStartThunkProto ragged_all_to_all_start_thunk = 42;
+    CollectivePermuteStartThunkProto collective_permute_start_thunk = 43;
+    SendThunkProto send_thunk = 44;
+    RecvThunkProto recv_thunk = 45;
+    CollectiveBroadcastStartThunkProto collective_broadcast_start_thunk = 46;
+    CollectiveGroupThunkProto collective_group_thunk = 47;
+    DynamicMemcpyThunkProto dynamic_memcpy_thunk = 48;
   }
 }
 

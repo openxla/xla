@@ -73,6 +73,7 @@ limitations under the License.
 #include "xla/python/ifrt/hlo/hlo_program.h"
 #include "xla/python/ifrt/index.h"
 #include "xla/python/ifrt/index_domain.h"
+#include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/program.h"
 #include "xla/python/ifrt/remap_plan.h"
@@ -1220,13 +1221,13 @@ class NanoCompiler final
 
   using ifrt::Compiler::Compile;
 
-  absl::StatusOr<ifrt::LoadedExecutableRef> CompileAndLoad(
+  tsl::Future<ifrt::LoadedExecutableRef> CompileAndLoad(
       std::unique_ptr<ifrt::Program> program,
       std::unique_ptr<ifrt::CompileOptions> options) override {
     return NanoExecutable::Create(client_, std::move(program));
   }
 
-  absl::StatusOr<ifrt::ExecutableRef> Compile(
+  tsl::Future<ifrt::ExecutableRef> Compile(
       std::unique_ptr<ifrt::Program> program, const ifrt::Topology& topology,
       std::unique_ptr<ifrt::CompileOptions> options) override {
     return absl::UnimplementedError("Partial compilation is not implemented.");
@@ -1238,7 +1239,7 @@ class NanoCompiler final
     return absl::UnimplementedError("Not implemented");
   }
 
-  absl::StatusOr<ifrt::LoadedExecutableRef> DeserializeLoadedExecutable(
+  tsl::Future<ifrt::LoadedExecutableRef> DeserializeLoadedExecutable(
       absl::string_view serialized,
       std::unique_ptr<ifrt::DeserializeExecutableOptions> options) override {
     return absl::UnimplementedError(
@@ -1349,8 +1350,14 @@ ifrt::ShardingRef NanoIfrtClient::default_sharding() const {
 absl::StatusOr<ifrt::ArrayRef> NanoIfrtClient::MakeArrayFromHostBuffer(
     const void* data, ifrt::DType dtype, ifrt::Shape shape,
     std::optional<absl::Span<const int64_t>> byte_strides,
-    ifrt::ShardingRef sharding, HostBufferSemantics semantics,
+    ifrt::ShardingRef sharding, ifrt::LayoutRef layout,
+    HostBufferSemantics semantics,
     std::function<void()> on_done_with_host_buffer) {
+  if (layout != nullptr) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "NanoIfrtClient does not support custom layouts, but got layout: %v",
+        *layout));
+  }
   bool make_copy = false;
   switch (semantics) {
     case HostBufferSemantics::kImmutableUntilTransferCompletes:

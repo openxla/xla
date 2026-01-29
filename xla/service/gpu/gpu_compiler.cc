@@ -29,6 +29,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/call_once.h"
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -291,6 +292,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/memory_annotations.h"
 #include "xla/service/reduce_scatter_reassociate.h"
+#include "xla/service/scan_expander.h"
 #include "xla/service/scatter_determinism_expander.h"
 #include "xla/service/scatter_expander.h"
 #include "xla/service/scatter_simplifier.h"
@@ -318,6 +320,7 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
@@ -396,14 +399,24 @@ bool IsDevicelessCompilation(const Compiler::CompileOptions& options,
   return options.early_exit_with_layouts || stream_exec == nullptr;
 }
 
-int GetNumVisibleDevices(const Compiler::CompileOptions& options,
-                         const se::StreamExecutor* stream_exec,
-                         const se::Platform* platform) {
+absl::StatusOr<int> GetNumVisibleDevices(
+    const Compiler::CompileOptions& options,
+    const se::StreamExecutor* stream_exec, se::Platform::Id platform_id) {
   if (IsDevicelessCompilation(options, stream_exec) &&
       options.gpu_topology.has_value()) {
     return options.gpu_topology->num_devices_per_host();
   }
-  return platform->VisibleDeviceCount();
+
+  absl::StatusOr<se::Platform*> platform =
+      se::PlatformManager::PlatformWithId(platform_id);
+  if (!platform.ok()) {
+    return absl::Status(
+        platform.status().code(),
+        absl::StrCat(
+            platform.status().message(),
+            ". Are you missing gpu_plugin or stream_executor dependency?"));
+  }
+  return platform.value()->VisibleDeviceCount();
 }
 
 }  // namespace
@@ -503,6 +516,7 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
   pre_spmd_pipeline.AddPass<CuDnnCustomCallConverter>();
   pre_spmd_pipeline.AddPass<CompositeRewriter>();
   pre_spmd_pipeline.AddPass<ConvertMemoryPlacementToInternalAnnotations>();
+  pre_spmd_pipeline.AddPass<ScanExpander>();
   pre_spmd_pipeline.AddPass<FlattenCallGraph>();
   pre_spmd_pipeline.AddPass<CallInliner>(
       /*single_call_site=*/false, /*update_domain=*/false,
@@ -582,8 +596,6 @@ absl::Status RunSPMDPasses(
   }
 }
 
-namespace {
-
 absl::Status SetHostDeviceType(HloInstruction* instr) {
   ASSIGN_OR_RETURN(auto backend_config,
                    instr->backend_config<GpuBackendConfig>());
@@ -610,12 +622,10 @@ bool BackendConfigDeviceTypeIsHost(HloInstruction* instr) {
   return backend_config->device_type() == DEVICE_TYPE_HOST;
 }
 
-}  // namespace
-
 absl::Status RunOptimizationPasses(
     HloModule* hlo_module, const GpuTargetConfig& gpu_target_config,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
-    absl::string_view platform_name, bool enable_sort_rewriter) {
+    bool enable_sort_rewriter) {
   const DebugOptions& debug_options = hlo_module->config().debug_options();
   se::GpuComputeCapability gpu_version =
       gpu_target_config.device_description.gpu_compute_capability();
@@ -673,8 +683,7 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<PermutationSortExpander>();
 
   if (enable_sort_rewriter) {
-    pipeline.AddPass<SortRewriter>(gpu_target_config.device_description,
-                                   std::string{platform_name});
+    pipeline.AddPass<SortRewriter>(gpu_target_config.device_description);
   }
   // Comparison total order expander
   pipeline.AddPass<ComparisonExpander>(std::array{std::make_pair(BF16, F32)});
@@ -689,7 +698,8 @@ absl::Status RunOptimizationPasses(
   // Rewrite Cholesky.
   pipeline.AddPass<CholeskyExpander>();
 
-  if (RequireDeterminism(hlo_module->config())) {
+  if (RequireDeterminism(hlo_module->config()) ||
+      debug_options.xla_gpu_enable_scatter_determinism_expander()) {
     // Scatter can be indeterministic if indices are not unique or a non
     // associative combiner function is used. Eliminate these Scatter ops.
     if (debug_options.xla_gpu_enable_scatter_determinism_expander()) {
@@ -767,8 +777,7 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<DynamicPadder>(dynamic_padder_options);
   // SortRewriter needs to run before StableSortExpander.
   if (enable_sort_rewriter) {
-    pipeline.AddPass<SortRewriter>(gpu_target_config.device_description,
-                                   gpu_target_config.platform_name);
+    pipeline.AddPass<SortRewriter>(gpu_target_config.device_description);
   }
   // Expand the sort op to support stable sorting if required.
   pipeline.AddPass<StableSortExpander>();
@@ -1219,7 +1228,7 @@ void AddDoubleBufferingPasses(const HloModule& module,
   }
   if (opts.xla_gpu_enable_while_loop_unrolling() ==
       DebugOptions::WHILE_LOOP_UNROLLING_FULL_UNROLL) {
-    LOG_IF(WARNING, unroll_strategy != std::nullopt)
+    LOG_IF(WARNING, unroll_strategy.has_value())
         << "Overriding double buffering set via "
            "`xla_gpu_enable_while_loop_double_buffering` flag.";
     unroll_strategy = DoubleBufferLoopUnrolling::UnrollStrategy::kFullUnroll;
@@ -1230,7 +1239,7 @@ void AddDoubleBufferingPasses(const HloModule& module,
       !opts.xla_gpu_enable_while_loop_double_buffering()) {
     unroll_strategy = DoubleBufferLoopUnrolling::UnrollStrategy::kAuto;
   }
-  if (unroll_strategy != std::nullopt) {
+  if (unroll_strategy.has_value()) {
     pipeline.AddPass<WhileLoopSimplifier>();
     pipeline.AddPass<DoubleBufferLoopUnrolling>(*unroll_strategy);
     pipeline.AddPass<TupleSimplifier>();
@@ -1333,7 +1342,8 @@ absl::Status RunPostFusionSimplificationPasses(
 absl::Status RunPostFusionVerificationPasses(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
     const GpuCompiler::CompileOptions& options,
-    const GpuTargetConfig& gpu_target_config, mlir::MLIRContext* mlir_context) {
+    const GpuTargetConfig& gpu_target_config, const AliasInfo* alias_info,
+    mlir::MLIRContext* mlir_context) {
   HloPassPipeline pipeline("post-fusion-verification-pipeline optimization");
 
   if (hlo_module->config()
@@ -1342,7 +1352,7 @@ absl::Status RunPostFusionVerificationPasses(
     DeviceOrDevicelessConfig device_config =
         GetDeviceConfig(stream_exec, options, gpu_target_config);
     if (!device_config.IsDeviceless()) {
-      pipeline.AddPass<TritonFusionNumericsVerifier>(device_config,
+      pipeline.AddPass<TritonFusionNumericsVerifier>(device_config, alias_info,
                                                      mlir_context);
     }
   }
@@ -1401,14 +1411,12 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
   const DebugOptions& opts = hlo_module->config().debug_options();
   if (opts.xla_gpu_enable_dynamic_slice_fusion()) {
     HloPassPipeline pipeline("dynamic-slice");
-    ASSIGN_OR_RETURN(se::Platform * platform,
-                     se::PlatformManager::PlatformWithId(platform_id));
     pipeline.AddPass<GpuReduceScatterCombiner>(
         kDefaultReduceScatterCombineThreshold,
         opts.xla_gpu_reduce_scatter_combine_threshold_bytes(),
         kCombineThresholdCount,
         opts.xla_gpu_enable_reduce_scatter_combine_by_dim());
-    pipeline.AddPass<DynamicSliceFusionRewriter>(platform->Name());
+    pipeline.AddPass<DynamicSliceFusionRewriter>(platform_id);
     pipeline.AddPass<AsyncWrapper>([](const HloInstruction* instr) {
       if (!IsDynamicSliceFusion(instr)) {
         return false;
@@ -1427,6 +1435,30 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
 
   return absl::OkStatus();
 }
+
+// CollectivesScheduleLinearizer enforces a total ordering between collectives
+// to work around divergence in executables introduced due to auto tuning,
+// specifically the use of extra scratch space for convolutions. This
+// function decides whether to apply this pass. If convolutions are present in
+// the code and we are using "online" autotuning (i.e., not AOT) we need to
+// use the pass, else we do not need to enable the pass.
+bool RequiresCollectiveScheduleLinearizer(const HloModule* module,
+                                          se::StreamExecutor* stream_exec) {
+  if (stream_exec == nullptr ||
+      module->config().debug_options().xla_gpu_autotune_level() == 0) {
+    return false;
+  }
+  for (const HloComputation* comp : module->MakeNonfusionComputations()) {
+    for (const HloInstruction* inst : comp->instructions()) {
+      if (IsCustomCallToDnnConvolution(*inst)) {
+        return true;
+      }
+    }
+  }
+  // No convolution auto-tuning candidates found in the module.
+  return false;
+}
+
 }  // namespace
 
 AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
@@ -1556,9 +1588,6 @@ absl::Status GpuCompiler::OptimizeHloModule(
   // Dump the HLO module after SPMD partitioning. There should be no more Python
   // callbacks at this point.
   DumpHloModuleIfEnabled(*hlo_module, "after_spmd_partitioner");
-  ASSIGN_OR_RETURN(
-      const stream_executor::Platform* platform,
-      stream_executor::PlatformManager::PlatformWithId(PlatformId()));
 
   // SortRewriter needs to ask the device how much scratch space is needed,
   // which isn't feasible if we don't have a device.
@@ -1570,12 +1599,13 @@ absl::Status GpuCompiler::OptimizeHloModule(
                     "compile with a GPU present.";
     enable_sort_rewriter = false;
   }
-  RETURN_IF_ERROR(RunOptimizationPasses(
-      hlo_module, gpu_target_config, layout_insensitive_algsimp_opts,
-      platform->Name(), enable_sort_rewriter));
+  RETURN_IF_ERROR(RunOptimizationPasses(hlo_module, gpu_target_config,
+                                        layout_insensitive_algsimp_opts,
+                                        enable_sort_rewriter));
   se::GpuComputeCapability gpu_version =
       device_description.gpu_compute_capability();
-  int device_count = GetNumVisibleDevices(options, stream_exec, platform);
+  ASSIGN_OR_RETURN(int device_count,
+                   GetNumVisibleDevices(options, stream_exec, platform_id_));
   RETURN_IF_ERROR(RunCollectiveOptimizationPasses(
       hlo_module, options, layout_insensitive_algsimp_opts, gpu_version,
       device_count, pointer_size_));
@@ -1630,8 +1660,9 @@ absl::Status GpuCompiler::OptimizeHloModule(
           gpu_target_config.platform_name == "ROCM"),
       gpu_version, gpu_target_config));
 
-  RETURN_IF_ERROR(RunPostFusionVerificationPasses(
-      hlo_module, stream_exec, options, gpu_target_config, &mlir_context_));
+  RETURN_IF_ERROR(RunPostFusionVerificationPasses(hlo_module, stream_exec,
+                                                  options, gpu_target_config,
+                                                  alias_info, &mlir_context_));
 
   RETURN_IF_ERROR(
       RunCollectiveScheduleLinearizerPasses(hlo_module, stream_exec));
@@ -1653,7 +1684,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
     pipeline.AddPass<FusionWrapper>(gpu_target_config.device_description);
     RETURN_IF_ERROR(AddFusionAutotuningPass(
         &pipeline, hlo_module, options, thread_pool.get_mutable(), stream_exec,
-        &gpu_target_config, ShapeSizeBytesFunction()));
+        &gpu_target_config, ShapeSizeBytesFunction(), options.key_value_store));
     RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   }
 
@@ -1794,12 +1825,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
           cuda_cc->IsAtLeast(se::CudaComputeCapability::kAmpere)) ||
          rocm_cc != nullptr)) {
       pipeline.AddPass<GemvRewriter>();
-      // Transpose dimension grouper simplifies the dimensions of the transpose
-      // and enables the symbolic tiling analysis for the generic emitter to
-      // find the possible tiling. It should run before the gemm rewriter has
-      // introduced the nested fusions. We also want to keep it close to the
-      // gemm rewriter to avoid the possibility of new passes to rewrite the
-      // transpose.
       pipeline.AddPass<GemmFusion>(gpu_version);
       pipeline.AddPass<GemmFusionSwapOperands>();
     } else if (cuda_cc != nullptr &&
@@ -1882,8 +1907,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   TF_RETURN_IF_ERROR(AddConvAndGemmAutotuningPass(
       &pipeline, hlo_module, gpu_version, options, autotune_config, thread_pool,
       stream_exec, &gpu_target_config, options.key_value_store,
-      gpu_target_config.device_description.runtime_version(), debug_options,
-      &mlir_context_, ShapeSizeBytesFunction()));
+      gpu_target_config.device_description.runtime_version(), alias_info,
+      debug_options, &mlir_context_, ShapeSizeBytesFunction()));
   // After autotuning, update GEMM workspace sizes to match the exact
   // requirements of the selected algorithms, potentially reducing memory usage.
   pipeline.AddPass<GemmWorkspaceRewriter>(gpu_version, stream_exec);
@@ -2565,16 +2590,6 @@ GpuCompiler::CompileToBackendResult(
       RunPostSchedulingPipelines(module, schedule_metadata.scheduler_mem_limit,
                                  gpu_device_info, alias_info.get()));
 
-  absl::StatusOr<se::Platform*> platform =
-      se::PlatformManager::PlatformWithId(PlatformId());
-  if (!platform.ok()) {
-    return absl::Status(
-        platform.status().code(),
-        absl::StrCat(
-            platform.status().message(),
-            ". Are you missing gpu_plugin or stream_executor dependency?"));
-  }
-
   ASSIGN_OR_RETURN(bool can_use_link_modules,
                    CanUseLinkModules(module->config(), gpu_device_info));
   const bool split_modules =
@@ -2589,17 +2604,18 @@ GpuCompiler::CompileToBackendResult(
   CompileModuleResults compile_module_results;
 
   {
-    xla::llvm_ir::LLVMCommandLineOptionsLock llvm_options_lock(
+    xla::llvm_ir::LLVMCommandLineOptionsReleasableLock llvm_options_lock(
         GetLLVMCommandLineOptions(module->config().debug_options()));
     BufferValue::SizeFunction buffer_size_bytes_function =
         BufferSizeBytesFunction();
     // Compile the module to thnks and llvm IR.
-    ASSIGN_OR_RETURN(compile_module_results,
-                     CompileModuleToLlvmIr(
-                         module, llvm_context, target_triple_, data_layout_,
-                         *platform, gpu_device_info, alias_info.get(),
-                         std::move(buffer_size_bytes_function),
-                         /*split_constants_module=*/use_cache));
+    ASSIGN_OR_RETURN(
+        compile_module_results,
+        CompileModuleToLlvmIr(
+            module, llvm_context, target_triple_, data_layout_, PlatformId(),
+            gpu_device_info, alias_info.get(),
+            std::move(buffer_size_bytes_function), llvm_options_lock,
+            /*split_constants_module=*/use_cache));
   }
 
   if (user_pre_optimization_hook_) {
@@ -2798,30 +2814,57 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
   // compilation.
   CHECK_EQ(options.PlatformId(), PlatformId());
 
+  CompileOptions compile_options;
+  compile_options.device_allocator = options.device_allocator();
+  compile_options.gpu_topology = options.gpu_topology();
+  compile_options.early_exit_with_layouts =
+      options.early_exit_point() ==
+      AotCompilationOptions::EarlyExitPoint::kAfterLayoutAssignment;
+
+  ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_hlo_module,
+                   RunHloPassesIfNeeded(std::move(hlo_module),
+                                        options.executor(), compile_options));
+
   if (options.early_exit_point() !=
       AotCompilationOptions::EarlyExitPoint::kNone) {
-    return EarlyExitCompileAheadOfTime(std::move(hlo_module), options);
+    std::vector<std::unique_ptr<CompiledModule>> results;
+    results.push_back(std::make_unique<EarlyExitCompilationResult>(
+        std::move(optimized_hlo_module)));
+    return results;
   }
 
-  if (hlo_module->config()
+  if (optimized_hlo_module->config()
           .debug_options()
           .xla_gpu_experimental_aot_compiled_thunks()) {
-    return NewCompileAheadOfTime(std::move(hlo_module), options);
+    return NewCompileAheadOfTime(std::move(optimized_hlo_module),
+                                 options.executor(), compile_options);
   }
 
-  return LegacyCompileAheadOfTime(std::move(hlo_module), options);
+  return LegacyCompileAheadOfTime(std::move(optimized_hlo_module), options);
+}
+
+absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPassesIfNeeded(
+    std::unique_ptr<HloModule> hlo_module,
+    se::StreamExecutor* absl_nullable executor,
+    const CompileOptions& compile_options) {
+  if (hlo_module->has_schedule()) {
+    return hlo_module;
+  }
+
+  tsl::profiler::ScopedAnnotation annotation{[&] {
+    return absl::StrFormat("XlaCompile:#module=%s,program_id=%d#",
+                           hlo_module->name(), hlo_module->unique_id());
+  }};
+  return RunHloPasses(std::move(hlo_module), executor, compile_options);
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<CompiledModule>>>
 GpuCompiler::NewCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
-                                   const AotCompilationOptions& options) {
-  CompileOptions compile_options;
-  compile_options.device_allocator = options.device_allocator();
-  compile_options.gpu_topology = options.gpu_topology();
-
+                                   se::StreamExecutor* executor,
+                                   const CompileOptions& compile_options) {
   ASSIGN_OR_RETURN(
       std::unique_ptr<Executable> executable,
-      RunBackend(std::move(hlo_module), options.executor(), compile_options));
+      RunBackend(std::move(hlo_module), executor, compile_options));
 
   std::vector<std::unique_ptr<CompiledModule>> results;
   TF_ASSIGN_OR_RETURN(results.emplace_back(), Export(executable.get()));
@@ -2829,45 +2872,8 @@ GpuCompiler::NewCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<CompiledModule>>>
-GpuCompiler::EarlyExitCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
-                                         const AotCompilationOptions& options) {
-  bool early_exit_with_layouts =
-      options.early_exit_point() ==
-      AotCompilationOptions::EarlyExitPoint::kAfterLayoutAssignment;
-  CompileOptions compile_options;
-  compile_options.device_allocator = options.device_allocator();
-  compile_options.gpu_topology = options.gpu_topology();
-  compile_options.early_exit_with_layouts = early_exit_with_layouts;
-
-  std::vector<std::unique_ptr<CompiledModule>> results;
-  TF_ASSIGN_OR_RETURN(
-      auto optimized_module,
-      RunHloPasses(std::move(hlo_module), options.executor(), compile_options));
-  results.push_back(std::make_unique<EarlyExitCompilationResult>(
-      std::move(optimized_module)));
-  return std::move(results);
-}
-
-absl::StatusOr<std::vector<std::unique_ptr<CompiledModule>>>
 GpuCompiler::LegacyCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
                                       const AotCompilationOptions& options) {
-  std::unique_ptr<HloModule> optimized_module;
-
-  if (!hlo_module->has_schedule()) {
-    tsl::profiler::ScopedAnnotation annotation{[&] {
-      return absl::StrFormat("XlaCompile:#module=%s,program_id=%d#",
-                             hlo_module->name(), hlo_module->unique_id());
-    }};
-    CompileOptions compile_options;
-    compile_options.device_allocator = options.device_allocator();
-    compile_options.gpu_topology = options.gpu_topology();
-    ASSIGN_OR_RETURN(optimized_module,
-                     RunHloPasses(std::move(hlo_module), options.executor(),
-                                  compile_options));
-  } else {
-    optimized_module = std::move(hlo_module);
-  }
-
   std::optional<Compiler::GpuTargetConfig> target_config;
   if (options.gpu_topology().has_value() &&
       options.gpu_topology()->has_gpu_target_config()) {
@@ -2880,7 +2886,7 @@ GpuCompiler::LegacyCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
   llvm::LLVMContext llvm_context;
   ASSIGN_OR_RETURN(
       CompileResultWithMetadata res,
-      CompileToBackendResult(optimized_module.get(), &llvm_context,
+      CompileToBackendResult(hlo_module.get(), &llvm_context,
                              {options.device_allocator()}, gpu_device_info));
 
   // Create GpuThunkAotCompilationResult if thunk runtime is enabled.
@@ -2888,8 +2894,7 @@ GpuCompiler::LegacyCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
   TF_ASSIGN_OR_RETURN(
       results.emplace_back(),
       LegacyGpuAotCompilationResult::FromModule(
-          optimized_module.get(),
-          res.compile_module_results.buffer_assignment.get(),
+          hlo_module.get(), res.compile_module_results.buffer_assignment.get(),
           res.backend_result.asm_text, res.backend_result.binary,
           res.backend_result.dnn_compiled_graphs, pointer_size_, this));
 
@@ -3162,7 +3167,8 @@ GpuCompiler::LoadAotCompilationResult(
 
 absl::StatusOr<std::unique_ptr<Executable>>
 GpuCompiler::LoadExecutableFromAotResult(
-    const CompiledModule& aot_result, const se::StreamExecutor& stream_exec) {
+    const CompiledModule& aot_result,
+    const se::DeviceDescription& device_description) {
   tsl::profiler::TraceMe traceme("LoadExecutableFromAotResult");
 
   const auto* gpu_aot_result =
@@ -3183,16 +3189,12 @@ GpuCompiler::LoadExecutableFromAotResult(
   std::vector<uint8_t> binary(proto.binary().begin(), proto.binary().end());
 
   // Build the executable, which should be a thunk sequence.
-  ASSIGN_OR_RETURN(se::Platform * platform,
-                   se::PlatformManager::PlatformWithId(PlatformId()));
-  std::string platform_name = platform->Name();
+  absl::string_view platform_name = PlatformId()->ToName();
 
-  const se::DeviceDescription& gpu_device_info =
-      stream_exec.GetDeviceDescription();
   llvm::LLVMContext llvm_context;
 
   // Recreate BufferAssignment from proto.
-  std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(gpu_device_info);
+  std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(device_description);
   ASSIGN_OR_RETURN(
       std::unique_ptr<BufferAssignment> buffer_assignment,
       BufferAssignment::FromProto(proto.buffer_assignment(), hlo_module.get(),
@@ -3200,7 +3202,7 @@ GpuCompiler::LoadExecutableFromAotResult(
 
   IrEmitterContext ir_emitter_context(
       hlo_module.get(), buffer_assignment.get(), &execution_stream_assignment,
-      platform_name, gpu_device_info, mlir_context(), &llvm_context,
+      platform_name, device_description, mlir_context(), &llvm_context,
       /*emit_kernels=*/false, llvm::Triple(target_triple()), data_layout());
 
   absl::string_view cache_file_path =
@@ -3212,7 +3214,11 @@ GpuCompiler::LoadExecutableFromAotResult(
     RETURN_IF_ERROR(LoadCache(ir_emitter_context, cache_file_path));
   }
 
-  ThunkEmitter thunk_emitter(&ir_emitter_context);
+  // We're not emitting any code, so we can start out with the LLVM options
+  // lock released.
+  llvm_ir::LLVMCommandLineOptionsReleasableLock llvm_options_lock =
+      llvm_ir::LLVMCommandLineOptionsReleasableLock::CreateReleasedLock();
+  ThunkEmitter thunk_emitter(&ir_emitter_context, &llvm_options_lock);
   ASSIGN_OR_RETURN(auto sequential_thunk,
                    thunk_emitter.EmitHloEntryComputation(hlo_module.get()));
 
@@ -3229,7 +3235,7 @@ GpuCompiler::LoadExecutableFromAotResult(
 
   {
     tsl::profiler::TraceMe traceme("CreateGpuExecutable");
-    std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(gpu_device_info);
+    std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(device_description);
     return GpuExecutable::Create(GpuExecutable::Params{
         /*asm_text=*/proto.asm_text(),
         /*binary=*/binary,
@@ -3245,7 +3251,7 @@ GpuCompiler::LoadExecutableFromAotResult(
         /*buffer_assignment=*/std::move(buffer_assignment),
         /*alias_info=*/std::move(alias_info),
         /*debug_options=*/std::move(debug_options),
-        /*device_description=*/gpu_device_info,
+        /*device_description=*/device_description,
         /*debug_module=*/std::move(hlo_module),
         /*enable_debug_info_manager=*/true});
   }
@@ -3258,11 +3264,11 @@ absl::Status GpuCompiler::AddConvAndGemmAutotuningPass(
     se::StreamExecutor* stream_exec,
     const Compiler::GpuTargetConfig* target_config,
     const MultiProcessKeyValueStore& key_value_store,
-    const se::SemanticVersion& toolkit_version,
+    const se::SemanticVersion& toolkit_version, const AliasInfo* alias_info,
     const DebugOptions& debug_options, mlir::MLIRContext* mlir_context,
     HloCostAnalysis::ShapeSizeFunction shape_size_fn) {
   TF_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<CodegenBackend>> backends,
-                      GetCodegenBackends(stream_exec, target_config,
+                      GetCodegenBackends(stream_exec, target_config, alias_info,
                                          debug_options, mlir_context));
 
   bool do_not_autotune_cublas_and_cudnn =

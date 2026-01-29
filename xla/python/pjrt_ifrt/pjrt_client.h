@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/remap_plan.h"
 #include "xla/python/ifrt/shape.h"
@@ -69,7 +70,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/unbounded_work_queue.h"
 
 namespace xla {
 namespace ifrt {
@@ -130,6 +130,8 @@ class PjRtCompatibleClient
 class PjRtClient final
     : public llvm::RTTIExtends<PjRtClient, PjRtCompatibleClient> {
  public:
+  static constexpr absl::string_view kRuntimeType = "pjrt_ifrt";
+
   struct CreateOptions {
     std::shared_ptr<xla::PjRtClient> pjrt_client;
 
@@ -223,8 +225,10 @@ class PjRtClient final
   absl::StatusOr<ArrayRef> MakeArrayFromHostBuffer(
       const void* data, DType dtype, Shape shape,
       std::optional<absl::Span<const int64_t>> byte_strides,
-      ShardingRef sharding, HostBufferSemantics semantics,
+      ShardingRef sharding, LayoutRef layout, HostBufferSemantics semantics,
       std::function<void()> on_done_with_host_buffer) override;
+  // Expose the base class's `MakeArrayFromHostBuffer` overloads.
+  using xla::ifrt::Client::MakeArrayFromHostBuffer;
 
   absl::StatusOr<std::vector<ArrayRef>> MakeArraysFromHostBufferShards(
       absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
@@ -261,7 +265,7 @@ class PjRtClient final
       xla::ifrt::LoadedExecutable::CancellationHandle cancellation_handle,
       absl::Status error) override {}
 
-  absl::string_view runtime_type() const override { return "pjrt_ifrt"; }
+  absl::string_view runtime_type() const override { return kRuntimeType; }
 
   absl::string_view platform_name() const override {
     DCHECK(this);
@@ -402,7 +406,8 @@ class PjRtClient final
   // (source, destination) pairs is cross-host.
   absl::StatusOr<std::vector<ArrayRef>> CopyArraysForCrossHost(
       absl::Span<ArrayRef> arrays, DeviceListRef src_devices,
-      DeviceListRef dst_devices, std::optional<MemoryKind> memory_kind);
+      DeviceListRef dst_devices, std::optional<MemoryKind> memory_kind,
+      ArrayCopySemantics semantics);
 
   // Extracts receive descriptors from a key-value store and sends buffers to a
   // remote device. This is used when the backend does not implement the
@@ -459,10 +464,6 @@ class PjRtClient final
   absl::Mutex shutting_down_mu_;
   bool shutting_down_ ABSL_GUARDED_BY(shutting_down_mu_) = false;
   std::unique_ptr<tsl::Thread> global_process_info_thread_;
-
-  // A work queue for dispatching background work. Enqueued work items can
-  // access the members of this class, so work_queue_ should be built last.
-  std::unique_ptr<tsl::UnboundedWorkQueue> work_queue_;
 
   friend class PjRtClientPeer;
 };

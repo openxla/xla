@@ -67,13 +67,13 @@ def clean_dep(target):
     """
 
     # A repo-relative label is resolved relative to the file in which the
-    # Label() call appears, e.g. @local_tsl or tsl.
+    # Label() call appears, e.g. @tsl or tsl.
     # TODO(ddunleavy): update this during and after go/moving-tsl-into-xla-lsc
     label = Label(target)
     not_yet_moved = ["concurrency", "framework", "lib", "platform", "profiler", "protobuf"]
 
     if any([label.package.startswith("tsl/" + dirname) for dirname in not_yet_moved]):
-        return "@tsl//" + label.package + ":" + label.name
+        return Label("@tsl//" + label.package + ":" + label.name)
     else:
         return str(label)
 
@@ -146,7 +146,7 @@ def if_libtpu(if_true, if_false = []):
     """Shorthand for select()ing whether to build backend support for TPUs when building libtpu.so"""
     return select({
         # copybara:uncomment_begin(different config setting in OSS)
-        # "//tools/cc_target_os:gce": if_true,
+        # "//xla/tsl:libtpu_on_gce": if_true,
         # copybara:uncomment_end_and_comment_begin
         clean_dep("//xla/tsl:with_tpu_support"): if_true,
         # copybara:comment_end

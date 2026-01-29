@@ -625,8 +625,13 @@ CommonPjRtClient::AllocateOutputBuffersWithInputReuse(
     if (num_input_pjrt_buffers > 1 && alias->parameter_index.size() == 1) {
       parameter_index = alias->parameter_index[0];
     }
-    return input_device_buffer_holds[parameter_index].type() !=
-           CommonPjRtBuffer::ScopedHold::kDonation;
+    if (input_device_buffer_holds[parameter_index].type() !=
+        CommonPjRtBuffer::ScopedHold::kDonation) {
+      return true;
+    }
+    auto& buffer =
+        input_device_buffer_holds[parameter_index].buffer()->raw_buffer();
+    return buffer && !buffer->is_mutable();
   };
   std::vector<size_t> output_buffer_sizes;
   for (int i = 0; i < output_leaf_shapes.size(); ++i) {
@@ -653,10 +658,9 @@ CommonPjRtClient::AllocateOutputBuffersWithInputReuse(
       }
       TF_ASSIGN_OR_RETURN(int64_t on_device_bytes,
                           GetOnDeviceBytesCount(memory_space, leaf_shape));
-      TF_ASSIGN_OR_RETURN(auto raw_buffer,
-                          AllocateRawBuffer(memory_space, on_device_bytes,
-                                            /*retry_on_oom=*/false,
-                                            /*allocate_after=*/{}));
+      TF_ASSIGN_OR_RETURN(auto raw_buffer, AllocateRawBufferForExecute(
+                                               memory_space, on_device_bytes,
+                                               /*retry_on_oom=*/false));
       buffers.push_back(std::move(raw_buffer));
     } else {
       // a tuple output element alias to input. There are 3 supported cases.
@@ -1671,7 +1675,22 @@ Future<> CommonPjRtBufferImpl::ToLiteralImpl(
                   return;
                 }
               }
-
+              // Fast path for token shape, no need to copy in this case.
+              // Already checked that the shape is compatible with the literal.
+              if (shape.element_type() == TOKEN) {
+                // A sanity check to ensure token buffers have no data.
+                if (raw_buffer->GetOnDeviceSizeInBytes() != 0) {
+                  notify_all(absl::InternalError(absl::StrFormat(
+                      "Token buffer should have zero bytes, but has size %d.",
+                      raw_buffer->GetOnDeviceSizeInBytes())));
+                  return;
+                }
+                if (device_promise) {
+                  device_promise->SetReady();
+                }
+                promise.Set();
+                return;
+              }
               raw_buffer->CopyToLiteralAsync(std::move(promise), device_promise,
                                              literal, std::move(shape));
             };

@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,7 +26,6 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
-#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -257,6 +255,11 @@ HloSharding ReplicateAllDataDims(const HloSharding& sharding,
 HloSharding RemoveShapeDimensions(const HloSharding& sharding,
                                   absl::Span<const int64_t> dims_to_remove);
 
+// Returns a sharding that adds `num_dims` sharding dimensions of size 1 (i.e
+// replicated) at `insertion_index`.
+HloSharding AddShapeDimensions(const HloSharding& sharding,
+                               int64_t insertion_index, int64_t num_dims);
+
 // Similar to TransposeSharding(), but allows removing/adding non-partitioned
 // dimensions. In src_to_tgt and tgt_to_src, -1 represents a non-existing
 // dimension.
@@ -454,15 +457,27 @@ bool DeviceGroupsAreMatch(GroupedSharding& lhs, GroupedSharding& rhs,
                           bool ignore_group_order = true);
 
 // Spawns a new dimension by splitting an existing dimension and generating a
-// new dimension to its right of the passed down size. The original dimension
-// will be of size "original_dim_size / new_dim_size". The original dimension
-// size needs to be divisible by new_dim_size.
+// new dimension to its right.
+//
+// The original dimension size needs to be divisible by `new_dim_size`.
+//
+// The new dimension to its right of the passed down size
+// will be of size `original_dim_size / new_dim_size`.
+//
+// For named sharding, the sharding at `dimension` is split into two.
+// The dimension at `dimension` will correspond to the sliced axes of size
+// `new_dim_size` (prefix), and the remaining axes (suffix) will be moved to the
+// new dimension at `dimension + 1`.
 HloSharding SplitShardingDimension(const HloSharding& sharding,
                                    int64_t dimension, int64_t new_dim_size);
 
-// Merges a dimension
-// to its left. The new dimension will be of size
-// dimensions[dimension] * dimensions[dimension+1}.
+// Merges the sharding axes at `dimension` and `dimension + 1`.
+//
+// The new dimension at `dimension` will be of size
+// `dimensions[dimension]` * `dimensions[dimension+1]`.
+//
+// For named sharding, the axes at `dimension + 1` are appended
+// to the axes at `dimension`.
 HloSharding MergeShardingDimension(const HloSharding& sharding,
                                    int64_t dimension);
 

@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/native_emitter.h"
 #include "xla/backends/gpu/autotuner/rocblas.h"
 #include "xla/backends/gpu/autotuner/triton.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -58,7 +59,6 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_pass.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/autotuning/gemm_fusion_autotuner.h"
-#include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/llvm_gpu_backend/amdgpu_backend.h"
@@ -229,29 +229,10 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
   return absl::OkStatus();
 }
 
-// Linearize collective schedule under if online autotuning of convolutions is
-// enabled.
-bool AMDGPUCompiler::RequiresCollectiveScheduleLinearizer(
-    const HloModule* module, se::StreamExecutor* stream_exec) {
-  if (stream_exec == nullptr ||
-      module->config().debug_options().xla_gpu_autotune_level() == 0) {
-    return false;
-  }
-  for (const HloComputation* comp : module->MakeNonfusionComputations()) {
-    for (const HloInstruction* inst : comp->instructions()) {
-      if (IsCustomCallToDnnConvolution(*inst)) {
-        return true;
-      }
-    }
-  }
-  // No convolution auto-tuning candidates found in the module.
-  return false;
-}
-
 absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
 AMDGPUCompiler::GetCodegenBackends(
     se::StreamExecutor* stream_exec,
-    const Compiler::GpuTargetConfig* target_config,
+    const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
     const DebugOptions& debug_options, mlir::MLIRContext* mlir_context) {
   std::vector<std::unique_ptr<CodegenBackend>> backends;
 
@@ -275,7 +256,7 @@ AMDGPUCompiler::GetCodegenBackends(
 
   if (is_backend_enabled(DebugOptions::AUTOTUNE_BACKEND_TRITON)) {
     backends.push_back(std::make_unique<TritonBackend>(
-        &debug_options, this, target_config, mlir_context));
+        &debug_options, this, target_config, alias_info, mlir_context));
   }
 
   if (debug_options.xla_gpu_experimental_disable_binary_libraries()) {
@@ -364,7 +345,8 @@ absl::Status AMDGPUCompiler::AddFusionAutotuningPass(
     const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
     stream_executor::StreamExecutor* stream_executor,
     const Compiler::GpuTargetConfig* target_config,
-    HloCostAnalysis::ShapeSizeFunction shape_size_fn) {
+    HloCostAnalysis::ShapeSizeFunction shape_size_fn,
+    const MultiProcessKeyValueStore& key_value_store) {
   if (stream_executor == nullptr) {
     return absl::OkStatus();
   }
@@ -389,8 +371,7 @@ absl::Status AMDGPUCompiler::AddFusionAutotuningPass(
       AutotunerPass::Create(std::move(backends), debug_options, stream_executor,
                             thread_pool, ShouldAutotuneBetweenFusionEmitters,
                             target_config, options.device_allocator,
-                            /*optimize_scratch_bytes=*/false,
-                            MultiProcessKeyValueStore(),
+                            /*optimize_scratch_bytes=*/false, key_value_store,
                             /*allow_reg_spills=*/true));
   pipeline->AddPass(std::move(autotuner_pass));
   return absl::OkStatus();

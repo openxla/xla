@@ -97,7 +97,7 @@ using ::mlir::MLIRContext;
 // `ComputeOutputTilingInfo` creates a new instance of this struct.
 struct OutputTilingInfo {
   // The number of output tiles for each dimension of the root indexing.
-  // For example, ,if dimensions are [29, 16] and tile size is [4, 8] then
+  // For example, if dimensions are [29, 16] and tile size is [4, 8] then
   // `num_output_tiles_per_dim` will be [8, 2] = [29 ceildiv 4, 16 ceildiv 8].
   llvm::SmallVector<int64_t> num_output_tiles_per_dim;
 
@@ -107,7 +107,7 @@ struct OutputTilingInfo {
   // The dimensions of the indexing map correspond to the dimensions passed
   // to `ComputeOutputTilingInfo` and the number of dimensions is equal to the
   // size of `num_output_tiles_per_dim`. For example above it would look like:
-  //   `(pid_0, pid_1){rt0, rt1, ..} -> (<tile 0 offset>, <tile 1 offset>)`.
+  //   `(pid_0, pid_1){rt0, rt1, ..} -> (<tile offset 0>, <tile offset 1>)`.
   IndexingMap output_tile_offset_indexing;
 
   // The subset of tiling parameters that are active for this tiling, in
@@ -118,12 +118,12 @@ struct OutputTilingInfo {
   // order specified in `active_tiling_parameters`. For the example in
   // `output_tile_offset_indexing`, and with `active_tiling_parameters` set to
   // {0, 1} (row-major order), it would look like:
-  //   `(d0){rt0, rt1, ..} -> (<tile 0 offset>, <tile 1 offset>)`.
+  //   `(d0){rt0, rt1, ..} -> (<tile offset 1>, <tile offset 1>)`.
   // where pid_0 is replaced by (d0 floordiv 2) and pid_1 is replaced by
   // (d0 mod 2) in tile offset expressions.
   IndexingMap linear_output_tile_offset_indexing;
 
-  std::string ToString(const absl::string_view field_separator = "\n") {
+  std::string ToString(const absl::string_view field_separator = "\n") const {
     return absl::StrCat(
         "num_output_tiles_per_dim: ", num_output_tiles_per_dim.size(),
         field_separator, absl::StrJoin(num_output_tiles_per_dim, ", "),
@@ -1088,6 +1088,46 @@ struct ComposeIndexingResult {
 // and having mapping of C, we want to find the mapping of `foo` as operand B
 // operand in `bar`.
 // See comments in `ComposeIndexingMaps` for the details of the result.
+// Computed as follows:
+// 1. Composition: Merges the consumer's mapping with the operation's local
+//    logic. The first consumer is the ROOT of the fusion.
+// 2. Contracted Dim Replacement: Converts "hidden" symbols (like dot
+//    contractions) into global tiling parameters.
+// Eg:
+//   fused_computation {
+//     %p0 = f32[10, 20] parameter(0)
+//     %p1 = f32[20, 30] parameter(1)
+//     %neg = f32[10, 20] negate(%p0)
+//     ROOT %dot = f32[10, 30] dot(%neg, %p1),
+//       lhs_contracting_dims={1}, rhs_contracting_dims={0}
+//   }
+// Global Iteration Space
+// ----------------------
+//   d0: Contraction (K=20), d1: Output Rows (M=10), d2: Output Cols (N=30)
+// 1. %dot
+// ----------------------
+// The root %dot anchors the analysis to the global tiling parameters.
+// Root: (d0, d1, d2) -> (d1, d2)  // Parameters -> Output Coordinates
+//   a. Processing %operand.0 (%neg):
+//      Consumer Map: (d0, d1, d2) -> (d1, d2)  // The mapping from the root
+//      Operand Mapping:  (i, j)[s0] -> (i, s0) // Dot Output -> LHS Input
+//      Contracted Dim Replacement: (i, j, s0) -> (i, s0)
+//                                  // Symbol s0 is replaced by global parameter
+//                                  // d0.
+//      Result Map:   (d0, d1, d2) -> (d1, d0)  // Row d1 (M), Col d0 (K)
+//   b. Processing %operand.1 (%p1):
+//      Consumer Map: (d0, d1, d2) -> (d1, d2)  // The mapping from the root
+//      Operand Mapping:  (i, j)[s0] -> (s0, j) // Dot Output -> RHS Input
+//      Contracted Dim Replacement: (i, j, s0) -> (i, s0)
+//                                  // Symbol s0 is replaced by global parameter
+//                                  // d0.
+//      Result Map:   (d0, d1, d2) -> (d0, d2)  // Row d0 (K), Col d2 (N)
+// 2. %neg
+// ----------------------
+//   a. Processing operand.0 (%p0):
+//      Consumer Map: (d0, d1, d2) -> (d1, d0)  // The requirement derived in 1a
+//      Operand Mapping:  (i, j) -> (i, j)      // Negate is elementwise
+//      Result Map:   (d0, d1, d2) -> (d1, d0)  // Pass through.
 ComposeIndexingResult ComposeInstructionIndexing(
     SymbolicTiledHloInstruction* tiled_hlo_instruction,
     const OperandIndexing& operand_indexing,
@@ -1191,6 +1231,46 @@ std::vector<OperandIndexingSet> GetOperandIndexingMaps(
 
 }  // namespace
 
+// Computes symbolic tiles for all instructions in a fusion graph by
+// propagating mapping backward from the root to the parameters.
+//
+// 1. Initialize: Start a worklist with the "real root" instruction, which
+//    anchors the analysis to global tiling parameters (e.g., M, N, K).
+// 2. Propagate & Resolve: For each instruction, compose its mapping with
+//    operand-local indexing. This step automatically replaces hidden
+//    reduction symbols (like Dot contractions) by global tiling parameters.
+// 3. Deduplicate (CSE): Store tiled instructions in a unique set based on
+//    their HLO pointer and IndexingMap. Identical mappings are
+//    automatically merged, and new unique instructions are added to the
+//    worklist.
+// 4. Encapsulate Fusions: Process nested fusions recursively. They serve as
+//    index map boundary; nested fusion parameters are not re-tiled relative to
+//    the outer scope.
+// 5. Finalize: Sort the resulting graph in define-before-use order and
+//    aggregate all derived constraints into a single TilingSpecification.
+//
+// Eg:
+// nested_computation {
+//   p0 = f32[128] parameter(0)
+//   ROOT neg = f32[128] negate(p0)
+// }
+// fused_computation {
+//   p0 = f32[128] parameter(0)
+//   p1 = f32[128] parameter(1)
+//   %exp = f32[128] exp(p1)
+//   %a = f32[128] fusion(p0), kind=kLoop, calls=nested_computation
+//   ROOT add = f32[128] add(%a, %exp)
+// }
+//
+// 1. The analysis starts at 'add'.
+// 2. Encountering '%a' triggers a recursive AnalyzeNestedFusion call.
+// 3. '%a' is added to the worklist as a SymbolicTiledHloFusionInstruction,
+//    encapsulating its own internal analysis.
+// 4. %exp is added to the worklist as a SymbolicTiledHloInstruction.
+// 5. '%a' is popped, the loop hits a 'continue' to stop at the fusion boundary,
+//    since it was already analyzed as a nested fusion,
+// 6. %exp is popped, its operand is a parameter, so it maps to a fusion
+//    parameter, and we are done.
 /*static*/ SymbolicTileAnalysisOrError SymbolicTileAnalysis::AnalyzeFusionImpl(
     const HloFusionAdaptor& fusion,
     const TilingSpecification::ParameterMapping& parameter_mapping,
@@ -1224,7 +1304,9 @@ std::vector<OperandIndexingSet> GetOperandIndexingMaps(
       continue;
     }
     if (tiled_hlo_instruction->hlo()->opcode() == HloOpcode::kFusion) {
-      continue;  // Don't analyze parameter operands of nested fusions.
+      // Don't analyze parameter operands of nested fusions.
+      // Check example in function docstring to see why this is needed.
+      continue;
     }
 
     auto operands_indexing =

@@ -20,10 +20,10 @@ limitations under the License.
 #include <optional>
 #include <ostream>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/tile_assignment.h"
@@ -46,6 +46,10 @@ class NamedSharding {
     }
 
     std::string ToString(const Mesh* mesh = nullptr) const;
+
+    NamedShardingProto::DimensionSharding ToProto() const;
+    static DimensionSharding FromProto(
+        const NamedShardingProto::DimensionSharding& proto);
 
     // Note that by default we assume closed sharding.
     explicit DimensionSharding() : is_closed_(true) {};
@@ -94,24 +98,15 @@ class NamedSharding {
 
   std::string ToString(bool include_metadata = false) const;
 
-  // TODO(b/456212087): Add validation checks
+  NamedShardingProto ToProto() const;
+  static NamedSharding FromProto(const NamedShardingProto& proto);
+
   explicit NamedSharding(Mesh mesh,
                          absl::Span<const DimensionSharding> dim_shardings = {},
                          absl::Span<const AxisRef> replicated_axes = {},
                          absl::Span<const AxisRef> unreduced_axes = {},
                          absl::Span<const AxisRef> manual_axes = {},
-                         absl::Span<const OpMetadata> metadata = {})
-      : mesh_(std::move(mesh)),
-        dim_shardings_(CanonicalizedDimShardings(dim_shardings)),
-        replicated_axes_(replicated_axes.begin(), replicated_axes.end()),
-        unreduced_axes_(unreduced_axes.begin(), unreduced_axes.end()),
-        manual_axes_(manual_axes.begin(), manual_axes.end()),
-        metadata_(metadata.begin(), metadata.end()) {
-    sharded_sizes_.reserve(dim_shardings_.size());
-    for (const DimensionSharding& dim_sharding : dim_shardings_) {
-      sharded_sizes_.push_back(dim_sharding.getShardedSize(mesh_));
-    }
-  }
+                         absl::Span<const OpMetadata> metadata = {});
 
   const Mesh& mesh() const { return mesh_; }
   absl::Span<const DimensionSharding> dim_shardings() const {
@@ -141,20 +136,23 @@ class NamedSharding {
     return mesh_.device_assignment().num_elements();
   }
 
- private:
-  friend class HloSharding;
+  bool IsReplicated() const {
+    return !IsMaximal() && AllDimShardingsEmpty(dim_shardings_) &&
+           unreduced_axes_.empty() && manual_axes_.empty();
+  }
 
-  std::vector<DimensionSharding> CanonicalizedDimShardings(
-      absl::Span<const DimensionSharding> dim_shardings) const {
-    bool all_dims_empty = absl::c_all_of(
-        dim_shardings,
-        [](const DimensionSharding& ds) { return ds.axes().empty(); });
+  bool IsMaximal() const { return mesh_.IsMaximal(); }
 
-    if (all_dims_empty) {
-      return {};
-    }
-    return std::vector<DimensionSharding>(dim_shardings.begin(),
-                                          dim_shardings.end());
+  bool IsManual() const {
+    return !IsMaximal() && AllDimShardingsEmpty(dim_shardings_) &&
+           replicated_axes_.empty() && unreduced_axes_.empty() &&
+           mesh_.ContainsAllMeshAxesInOrder(manual_axes_);
+  }
+
+  bool IsUnreduced() const {
+    return !IsMaximal() && AllDimShardingsEmpty(dim_shardings_) &&
+           replicated_axes_.empty() && manual_axes_.empty() &&
+           mesh_.ContainsAllMeshAxesInOrder(unreduced_axes_);
   }
 
   // Creates a sharding with empty mesh and no sharding axes depicting it is
@@ -174,15 +172,31 @@ class NamedSharding {
                          /*manual_axes=*/{}, metadata);
   }
 
-  bool IsReplicated() const {
-    return !IsMaximal() &&
-           absl::c_all_of(
-               dim_shardings_,
-               [](const DimensionSharding& s) { return s.axes().empty(); }) &&
-           unreduced_axes_.empty();
+ private:
+  friend class HloSharding;
+
+  void InitShardedSizes() {
+    sharded_sizes_.reserve(dim_shardings_.size());
+    for (const DimensionSharding& dim_sharding : dim_shardings_) {
+      sharded_sizes_.push_back(dim_sharding.getShardedSize(mesh_));
+    }
   }
 
-  bool IsMaximal() const { return mesh_.IsMaximal(); }
+  bool AllDimShardingsEmpty(
+      absl::Span<const DimensionSharding> dim_shardings) const {
+    return absl::c_all_of(dim_shardings, [](const DimensionSharding& s) {
+      return s.axes().empty();
+    });
+  }
+
+  std::vector<DimensionSharding> CanonicalizedDimShardings(
+      absl::Span<const DimensionSharding> dim_shardings) const {
+    if (AllDimShardingsEmpty(dim_shardings)) {
+      return {};
+    }
+    return std::vector<DimensionSharding>(dim_shardings.begin(),
+                                          dim_shardings.end());
+  }
 
   // Returns true if the tile size is the same as the input size.
   //
@@ -213,6 +227,17 @@ std::ostream& operator<<(std::ostream& out,
                          const NamedSharding::DimensionSharding& sharding);
 
 std::ostream& operator<<(std::ostream& out, const NamedSharding& sharding);
+
+// Verifies that the `NamedSharding` is valid.
+// Checks:
+// - All axis indices are within mesh bounds.
+// - All sub-axes are valid (pre-size * size divides the full axis size).
+// - For a single vector of axes, mergeable neighbors is not allowed.
+// - For the concat(all axes), we check (1) no overlap, and (2) all axes can
+//   co-exist.
+// - Replicated axes and unreduced axes are sorted by mesh axis index and
+//   sub-axis pre-size.
+absl::Status VerifyNamedSharding(const NamedSharding& named_sharding);
 
 // Contains test only helper functions.
 namespace test_utils {

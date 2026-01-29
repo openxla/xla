@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_COLLECTIVES_NCCL_COMMUNICATOR_H_
 #define XLA_BACKENDS_GPU_COLLECTIVES_NCCL_COMMUNICATOR_H_
 
-#include <atomic>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -30,15 +29,21 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/core/collectives/reduction_kind.h"
+#include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/xla_data.pb.h"
 
 // Include NCCL after XLA headers.
 #include "third_party/nccl/nccl.h"
@@ -63,8 +68,9 @@ class NcclCommunicator : public GpuCommunicator {
   // asynchronously on a separate thread. Otherwise, they are performed
   // synchronously on the calling thread.
   static absl::StatusOr<std::unique_ptr<NcclCommunicator>> Create(
+      se::StreamExecutor* stream_executor,
       absl::AnyInvocable<absl::StatusOr<ncclComm_t>()> make_comm,
-      bool is_async = false, std::atomic_bool* cancel = nullptr,
+      std::shared_ptr<CancellationToken> cancel, bool is_async = false,
       tsl::Env& env = *tsl::Env::Default());
 
   ~NcclCommunicator() override;
@@ -85,8 +91,8 @@ class NcclCommunicator : public GpuCommunicator {
 
   bool SupportsDeviceComm() const final;
 
-  absl::StatusOr<std::unique_ptr<DeviceComm>> CreateDeviceComm(
-      const DeviceCommRequirements& requirements) final;
+  absl::StatusOr<std::unique_ptr<GpuDeviceCommunicator>> CreateDeviceComm(
+      const GpuDeviceCommunicator::Requirements& requirements) final;
 
   absl::StatusOr<std::unique_ptr<SymmetricMemory>> CreateSymmetricMemory(
       se::DeviceAddressBase addr) final;
@@ -141,6 +147,8 @@ class NcclCommunicator : public GpuCommunicator {
 
   ncclComm_t comm() const { return comm_; }
 
+  se::StreamExecutor* stream_executor() const { return stream_executor_; }
+
  private:
   absl::StatusOr<std::unique_ptr<RegisteredBufferHandle>> RegisterBuffer(
       se::DeviceAddressBase buffer, int device_ordinal,
@@ -148,9 +156,16 @@ class NcclCommunicator : public GpuCommunicator {
 
   class NcclRegisteredBufferHandle;
 
-  NcclCommunicator(ncclComm_t comm, std::unique_ptr<tsl::Executor> executor)
-      : comm_(comm), executor_(std::move(executor)) {
-    VLOG(1) << "Created " << *this;
+  NcclCommunicator(se::StreamExecutor* stream_executor, ncclComm_t comm,
+                   std::unique_ptr<tsl::Executor> executor,
+                   std::shared_ptr<CancellationToken> cancel)
+      : stream_executor_(stream_executor),
+        comm_(comm),
+        executor_(std::move(executor)),
+        cancel_(std::move(cancel)) {
+    VLOG(1) << absl::StreamFormat("[%d] Created NCCL communicator %s",
+                                  stream_executor_->device_ordinal(),
+                                  this->ToString());
   }
 
   absl::Status GroupStart();
@@ -219,6 +234,11 @@ class NcclCommunicator : public GpuCommunicator {
     return Execute<T>(std::move(f)).Await();
   }
 
+  // The stream executor (underlying GPU device) on which this communicator is
+  // instantiated. We need to know the stream executor to be able to active
+  // context for all operations that create or destroy device comms.
+  se::StreamExecutor* stream_executor_;
+
   // Underlying NCCL communicator.
   ncclComm_t comm_;
 
@@ -240,7 +260,7 @@ class NcclCommunicator : public GpuCommunicator {
   std::unique_ptr<tsl::Executor> executor_;
 
   // Should all pending collectives cancel?
-  std::atomic_bool canceling_ = false;
+  std::shared_ptr<CancellationToken> cancel_;
 
   // Has comm_ been aborted?
   bool aborted_ = false;
@@ -267,22 +287,26 @@ class NcclCommunicator : public GpuCommunicator {
 #if NCCL_VERSION_CODE >= 22800
 
 // A device-side NCCL communicator.
-class NcclDeviceComm : public NcclCommunicator::DeviceComm {
+class NcclDeviceCommunicator : public GpuDeviceCommunicator {
  public:
-  ~NcclDeviceComm() override;
+  ~NcclDeviceCommunicator() override;
+
+  NcclDeviceCommunicator(NcclDeviceCommunicator&&) = delete;
+  NcclDeviceCommunicator& operator=(NcclDeviceCommunicator&&) = delete;
 
   // Creates a new instance of a NCCL device communicator from the given host
-  // communicator object.A
-  static absl::StatusOr<std::unique_ptr<NcclDeviceComm>> CreateFrom(
-      const NcclCommunicator& comm,
-      const NcclCommunicator::DeviceCommRequirements& requirements);
+  // communicator object.
+  static absl::StatusOr<std::unique_ptr<NcclDeviceCommunicator>> CreateFrom(
+      const NcclCommunicator& comm, const Requirements& requirements);
 
-  NcclCommunicator::PlatformCommunicatorHandle platform_comm() const final;
+  PlatformCommunicatorHandle platform_comm() const final;
 
   std::string ToString() const final;
 
+  PackedKernelArg PackKernelArg() const final;
+
  private:
-  explicit NcclDeviceComm(ncclDevComm dev_comm);
+  NcclDeviceCommunicator(const NcclCommunicator* comm, ncclDevComm dev_comm);
 
   const NcclCommunicator* comm_;
   ncclDevComm dev_comm_;

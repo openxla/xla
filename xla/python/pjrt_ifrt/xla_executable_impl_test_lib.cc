@@ -159,8 +159,10 @@ absl::StatusOr<LoadedExecutableRef> CompileOnDevices(
       std::make_unique<XlaCompileOptions>(compile_options, device_list);
   TF_ASSIGN_OR_RETURN(
       auto loaded_executable,
-      compiler->CompileAndLoad(std::make_unique<HloProgram>(*module),
-                               std::move(xla_compile_options)));
+      compiler
+          ->CompileAndLoad(std::make_unique<HloProgram>(*module),
+                           std::move(xla_compile_options))
+          .Await());
   if (!serialize) {
     return loaded_executable;
   }
@@ -168,8 +170,10 @@ absl::StatusOr<LoadedExecutableRef> CompileOnDevices(
                       loaded_executable->Serialize());
   auto options = std::make_unique<XlaDeserializeExecutableOptions>();
   options->devices = std::move(device_list);
-  return compiler->DeserializeLoadedExecutable(std::move(serialized_executable),
-                                               std::move(options));
+  return compiler
+      ->DeserializeLoadedExecutable(std::move(serialized_executable),
+                                    std::move(options))
+      .Await();
 }
 
 class LoadedExecutableImplTest
@@ -808,10 +812,11 @@ TEST(ExecutableTest, ExecutableSerialization) {
                           client->MakeDeviceList(devices));
   auto options = std::make_unique<xla::ifrt::XlaDeserializeExecutableOptions>();
   options->devices = device_list;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto deserialized_executable,
-      client->GetDefaultCompiler()->DeserializeLoadedExecutable(
-          *serialized_executable, std::move(options)));
+  TF_ASSERT_OK_AND_ASSIGN(auto deserialized_executable,
+                          client->GetDefaultCompiler()
+                              ->DeserializeLoadedExecutable(
+                                  *serialized_executable, std::move(options))
+                              .Await());
 
   TF_ASSERT_OK_AND_ASSIGN(auto loaded_output_layouts,
                           loaded_executable->GetOutputLayouts());
@@ -849,6 +854,22 @@ TEST(ExecutableTest, ExecutableSerialization) {
                     (*deserialized_parameter_shardings)[i]));
   }
   EXPECT_EQ(deserialized_executable->name(), "add_sub");
+
+  ASSERT_OK_AND_ASSIGN(
+      xla::CompiledMemoryStats deserialized_compiled_memory_stats,
+      deserialized_executable->GetCompiledMemoryStats());
+  ASSERT_OK_AND_ASSIGN(xla::CompiledMemoryStats loaded_compiled_memory_stats,
+                       loaded_executable->GetCompiledMemoryStats());
+
+  // Temporary workaround for some implementations not round-tripping the
+  // CompiledMemoryStats upon executable deserialization.
+  loaded_compiled_memory_stats.serialized_buffer_assignment = "";
+  loaded_compiled_memory_stats.peak_memory_in_bytes = 0;
+  deserialized_compiled_memory_stats.serialized_buffer_assignment = "";
+  deserialized_compiled_memory_stats.peak_memory_in_bytes = 0;
+
+  EXPECT_THAT(deserialized_compiled_memory_stats.ToProto(),
+              EqualsProto(loaded_compiled_memory_stats.ToProto()));
 
   // Execute the deserialized executable.
   xla::ifrt::DType dtype(xla::ifrt::DType::kS32);
