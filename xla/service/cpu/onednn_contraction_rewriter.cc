@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
+#include "xla/literal_util.h"
 #include "xla/literal.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
@@ -220,7 +221,11 @@ bool IsScalar(const HloInstruction* instr) {
   return ShapeUtil::IsEffectiveScalar(instr->shape());
 }
 
-std::optional<float> GetConstantValueAsFloat32(const HloInstruction* inst) {
+bool IsVector(const HloInstruction* instr) {
+  return instr->shape().dimensions_size() == 1;
+}
+
+std::optional<float> GetScalarConstantValue(const HloInstruction* inst) {
   if (!IsScalar(inst)) {
     return std::nullopt;
   }
@@ -231,6 +236,8 @@ std::optional<float> GetConstantValueAsFloat32(const HloInstruction* inst) {
       return inst->literal().GetFirstElement<bfloat16>();
     case F32:
       return inst->literal().GetFirstElement<float>();
+    case S32:
+      return inst->literal().GetFirstElement<int32_t>();
     default:
       return std::nullopt;
   }
@@ -596,11 +603,282 @@ bool OneDnnContractionRewriter::ShouldRewriteConv(
   return true;
 }
 
+inline bool S32ToF32(const HloInstruction* instr) {
+  return instr->shape().element_type() == F32 &&
+         instr->operand(0)->shape().element_type() == S32;
+}
+
+inline bool Int8ToS32(const HloInstruction* instr) {
+  auto input_type = instr->operand(0)->shape().element_type();
+  return instr->shape().element_type() == S32 &&
+         (input_type == S8 || input_type == U8);
+}
+
+inline bool F32ToInt8(const HloInstruction* instr) {
+  auto output_type = instr->shape().element_type();
+  return instr->operand(0)->shape().element_type() == F32 &&
+         (output_type == S8 || output_type == U8);
+}
+
+inline auto Int8ToS32Pattern(HloInstruction** quant_input) {
+  return m::Convert(m::Op(quant_input)).WithPredicate(Int8ToS32);
+}
+
+inline auto AddZPPattern(HloInstruction** quant_input, HloInstruction** zp) {
+  return m::AddAnyOrder(Int8ToS32Pattern(quant_input),
+                        m::Broadcast(m::Constant(zp)));
+}
+
+inline auto S32ToF32WithOptionalAddZP(HloInstruction** quant_input,
+                                      HloInstruction** zp) {
+  return m::Convert(m::AnyOf<HloInstruction>(AddZPPattern(quant_input, zp),
+                                             Int8ToS32Pattern(quant_input)))
+      .WithPredicate(S32ToF32);
+}
+
+template <typename Pattern>
+auto OptionalCopyAndBitcastPattern(Pattern pattern, HloInstruction** copy,
+                                   HloInstruction** bitcast) {
+  return m::AnyOf<HloInstruction>(m::Copy(copy, m::Bitcast(bitcast, pattern)),
+                                  m::Bitcast(bitcast, pattern), pattern);
+}
+
+// The Dequantize pattern (the Bitcast -> Copy nodes are not part of the
+// original Dequantize pattern but are added by the layout assignment pass):
+// Convert(INT8->S32)   Broadcast(Negated-ZP-Constant)
+//                   | |
+//                   Add
+//                    |
+//             Convert(S32->F32)   Broadcast(Scale-Constant)
+//                            |    |
+//                           Multiply
+//                              |
+//                           Bitcast
+//                              |
+//                            Copy
+auto DequantizePattern(HloInstruction** quant_input, HloInstruction** scale,
+                       HloInstruction** zp, HloInstruction** copy,
+                       HloInstruction** bitcast) {
+  auto deq_pattern = m::AnyOf<HloInstruction>(
+      m::MultiplyAnyOrder(S32ToF32WithOptionalAddZP(quant_input, zp),
+                          m::Broadcast(m::Constant(scale))),
+      S32ToF32WithOptionalAddZP(quant_input, zp));
+  // Layout assignment pass may insert Transpose | Bitcast -> Copy pattern.
+  // For now we only handle Bitcast -> Copy assuming Transpose was replaced with
+  // Bitcast by AlgebraicSimplifier.
+  return OptionalCopyAndBitcastPattern(deq_pattern, copy, bitcast);
+}
+
+auto OptionalAddZPAndMultiplyScale(HloInstruction** scale, HloInstruction** zp,
+                                   HloInstruction** input_custom_call) {
+  auto multiply_scale = m::MultiplyAnyOrder(m::Op(input_custom_call),
+                                            m::Broadcast(m::Constant(scale)));
+  auto add_zp = m::AddAnyOrder(
+      m::AnyOf<HloInstruction>(multiply_scale, m::Op(input_custom_call)),
+      m::Broadcast(m::Constant(zp)));
+  return m::AnyOf<HloInstruction>(add_zp, multiply_scale,
+                                  m::Op(input_custom_call));
+}
+
+// The Quantize pattern
+//                         Input Broadcast(Inversed-Scale-Constant)
+//                           |    |
+//                          Multiply Broadcast(ZP-Constant)
+//                               \   /
+// Broadcast(Clamp-Min-Constant)  Add   Broadcast(Clamp-Max-Constant)
+//                             \   |   /
+//                               Clamp
+//                                 |
+//                         RoundNearestEven
+//                                 |
+//                         Convert(F32->INT8)
+auto QuantizePattern(HloInstruction** scale, HloInstruction** zp,
+                     HloInstruction** input_custom_call,
+                     HloInstruction** clamp_min, HloInstruction** clamp_max) {
+  auto quant_pattern =
+      m::Convert(
+          m::Op()
+              .WithOpcode(HloOpcode::kRoundNearestEven)
+              .WithOperand(0, m::Clamp(m::Broadcast(m::Constant(clamp_min)),
+                                       OptionalAddZPAndMultiplyScale(
+                                           scale, zp, input_custom_call),
+                                       m::Broadcast(m::Constant(clamp_max)))))
+          .WithPredicate(F32ToInt8);
+  return quant_pattern;
+}
+
+void PrepareQuantizationInstrs(
+    HloInstruction* contraction_instr, HloInstruction* quant_src,
+    HloInstruction* quant_wei, HloInstruction* copy_src,
+    HloInstruction* copy_wei, HloInstruction* bitcast_src,
+    HloInstruction* bitcast_wei, HloInstruction** src_scale,
+    HloInstruction** src_zp, HloInstruction** wei_scale,
+    HloInstruction** wei_zp, HloInstruction** new_copy_src,
+    HloInstruction** new_copy_wei) {
+  auto create_bitcast_copy = [&](HloInstruction* quant_operand,
+                                 HloInstruction* bitcast, HloInstruction* copy,
+                                 HloInstruction*& new_bitcast,
+                                 HloInstruction*& new_copy) {
+    auto quant_type = quant_operand->shape().element_type();
+    if (bitcast) {
+      new_bitcast =
+          contraction_instr->AddInstruction(HloInstruction::CreateBitcast(
+              ShapeUtil::ChangeElementType(bitcast->shape(), quant_type),
+              quant_operand));
+      if (copy) {
+        new_copy =
+            contraction_instr->AddInstruction(HloInstruction::CreateUnary(
+                ShapeUtil::ChangeElementType(copy->shape(), quant_type),
+                HloOpcode::kCopy, new_bitcast));
+      } else {
+        // There is no copy after bitcast.
+        new_copy = new_bitcast;
+      }
+    } else {
+      new_copy = contraction_instr->AddInstruction(HloInstruction::CreateUnary(
+          ShapeUtil::ChangeElementType(copy->shape(), quant_type),
+          HloOpcode::kCopy, quant_operand));
+    }
+  };
+
+  HloInstruction *new_bitcast_src = nullptr, *new_bitcast_wei = nullptr;
+  // We need to add bitcast and copy instructions that were in the original
+  // pattern after each operand. It is possible that bitcast is not followed
+  // by copy, we will handle that inside create_bitcast_copy also.
+  if (copy_src != nullptr || bitcast_src != nullptr) {
+    create_bitcast_copy(quant_src, bitcast_src, copy_src, new_bitcast_src,
+                        *new_copy_src);
+  } else {
+    *new_copy_src = quant_src;
+  }
+  if (copy_wei != nullptr || bitcast_wei != nullptr) {
+    create_bitcast_copy(quant_wei, bitcast_wei, copy_wei, new_bitcast_wei,
+                        *new_copy_wei);
+  } else {
+    *new_copy_wei = quant_wei;
+  }
+
+  const float scale = 1.0;
+  const int zp = 0;
+  auto set_default_value = [&]<typename T>(HloInstruction*& instr, T value) {
+    instr = contraction_instr->AddInstruction(
+        HloInstruction::CreateConstant(LiteralUtil::CreateR0<T>(value)));
+  };
+  // If scale and/or zp are not found. That means they had a default values
+  // that were optimized out. Hence, we set a default value of 1.0 and 0 for
+  // scale and zp respectively.
+  if (*src_scale == nullptr) {
+    set_default_value(*src_scale, scale);
+  }
+  if (*src_zp == nullptr) {
+    set_default_value(*src_zp, zp);
+  }
+  if (*wei_scale == nullptr) {
+    set_default_value(*wei_scale, scale);
+  }
+  if (*wei_zp == nullptr) {
+    set_default_value(*wei_zp, zp);
+  }
+}
+
+// Check if the Quantize and Dequantize pairs have the same scale and zero point
+// values.
+bool ValidateQDQParams(HloInstruction* dequant_input,
+                       HloInstruction* dequant_scale,
+                       HloInstruction* dequant_zp) {
+  HloInstruction *quant_zp = nullptr, *quant_scale = nullptr, *input = nullptr,
+                 *clamp_min = nullptr, *clamp_max = nullptr;
+
+  bool quant_pattern = Match(
+      dequant_input,
+      QuantizePattern(&quant_scale, &quant_zp, &input, &clamp_min, &clamp_max));
+
+  // We expect scale/zp to match between Quantize and Dequantize ops. We
+  // validate that only if Quantize op exists, otherwise fusing only Dequantize
+  // op is functionally correct although not a typical use case.
+  if (quant_pattern) {
+    // If scale is missing, it may be optimized out. Assume default value of
+    // 1.0.
+    auto quant_scale_value =
+        quant_scale ? GetScalarConstantValue(quant_scale) : 1.0;
+    auto dequant_scale_value =
+        dequant_scale ? GetScalarConstantValue(dequant_scale) : 1.0;
+
+    if (quant_scale_value && dequant_scale_value) {
+      // Assume that scale for quantize has been inverted by some earlier pass.
+      float quant_scale_native_value = 1.0 / quant_scale_value.value();
+      float dequant_scale_native_value = dequant_scale_value.value();
+      if (quant_scale_native_value != dequant_scale_native_value) {
+        return false;
+      }
+    } else {
+      return false;
+    }
+
+    // If zp is missing, it may be optimized out. Assume default value of 0.
+    auto quant_zp_value = quant_zp ? GetScalarConstantValue(quant_zp) : 0;
+    auto dequant_zp_value = dequant_zp ? GetScalarConstantValue(dequant_zp) : 0;
+    if (quant_zp_value && dequant_zp_value) {
+      int32_t quant_zp_native_value = quant_zp_value.value();
+      // Assume that zp for dequantize has been negated by some earlier pass.
+      int32_t dequant_zp_native_value = -dequant_zp_value.value();
+      if (quant_zp_native_value != dequant_zp_native_value) {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool ValidateQuantizationParams(HloInstruction* quant_src,
+                                HloInstruction* quant_wei,
+                                HloInstruction* src_scale,
+                                HloInstruction* src_zp,
+                                HloInstruction* wei_scale,
+                                HloInstruction* wei_zp) {
+  if (!ValidateQDQParams(quant_src, src_scale, src_zp) ||
+      !ValidateQDQParams(quant_wei, wei_scale, wei_zp)) {
+    return false;
+  }
+
+  if (!src_scale || !src_zp || !wei_zp) return false;
+  // oneDNN only supports scalar scale and zero-point for src and dst.
+  if (!IsScalar(src_scale) || !IsScalar(src_zp)) return false;
+
+  // Weights scale can only be scalar or vector
+  if (!IsScalar(wei_scale) && !IsVector(wei_scale)) return false;
+
+  // oneDNN only supports zero-point=0 for weights.
+  auto wei_zp_value = GetScalarConstantValue(wei_zp);
+  if (!wei_zp_value || wei_zp_value.value() != 0) return false;
+
+  return true;
+}
+
 class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
  public:
-  OneDnnContractionRewriteVisitor(bool graph_enabled)
-      : graph_enabled_(graph_enabled) {}
-
+  OneDnnContractionRewriteVisitor(bool graph_enabled, int intra_op_parallelism,
+                           const tsl::thread::ThreadPool* compile_threadpool)
+      : graph_enabled_(graph_enabled), intra_op_parallelism_(intra_op_parallelism > 0
+                                  ? intra_op_parallelism
+                                  : tsl::port::MaxParallelism()),
+        evaluator_(/*max_loop_iterations=*/0) {
+    if (compile_threadpool) {
+      threadpool_device_.reset(
+          new Eigen::ThreadPoolDevice(compile_threadpool->AsEigenThreadPool(),
+                                      compile_threadpool->NumThreads()));
+    } else {
+      threadpool_handle_.reset(new tsl::thread::ThreadPool(
+          tsl::Env::Default(), "XLACpuCompile", tsl::port::MaxParallelism()));
+      threadpool_device_.reset(
+          new Eigen::ThreadPoolDevice(threadpool_handle_->AsEigenThreadPool(),
+                                      threadpool_handle_->NumThreads()));
+    }
+    // Set oneDNN concurrency settings (which is thread-local)
+    OneDnnThreadPool::set_onednn_max_threads(intra_op_parallelism_);
+  }
   // Matches patterns for possible MatMul fusions that are supported by oneDNN
   // library. Matched HLO instruction(s) are replaced by custom call.
   absl::Status HandleDot(HloInstruction* instr) override {
@@ -628,16 +906,76 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     int64_t lhs_dim_k = dot_dim_numbers.lhs_contracting_dimensions(0);
     int64_t rhs_dim_k = dot_dim_numbers.rhs_contracting_dimensions(0);
 
-    HloInstruction* matmul_call =
-        dot_instr->AddInstruction(HloInstruction::CreateCustomCall(
-            output_shape,
-            {dot_instr->mutable_operand(0), dot_instr->mutable_operand(1)},
-            "__onednn$matmul"));
+    HloInstruction *quant_src = nullptr, *src_scale = nullptr,
+                      *src_zp = nullptr, *quant_wei = nullptr,
+                      *wei_scale = nullptr, *wei_zp = nullptr, *copy_src = nullptr,
+                      *bitcast_src = nullptr, *copy_wei = nullptr,
+                      *bitcast_wei = nullptr, *matmul_call = nullptr,
+                      *new_copy_src = nullptr, *new_copy_wei = nullptr;
 
-    // Set additional info via config, e.g., transpose and fusion info.
+    // Try to match uniform_dequantize_pattern -> dot.
+    // This will be replaced with onednn_custom_call[int8 in, f32 out].
+    bool quant_lhs =
+        Match(instr, m::Op().WithOperand(
+                         0, DequantizePattern(&quant_src, &src_scale, &src_zp,
+                                              &copy_src, &bitcast_src)));
+
+    bool quant_rhs =
+        quant_lhs
+            ? Match(instr,
+                    m::Op().WithOperand(
+                        1, DequantizePattern(&quant_wei, &wei_scale, &wei_zp,
+                                             &copy_wei, &bitcast_wei)))
+            : false;
+
+    bool should_rewrite_int8 = false;
+    if (quant_lhs) {
+      should_rewrite_int8 = true;
+      if (!quant_rhs) {
+        // Weights (in QDQ form) are consatnt folded into F32 by earlier
+        // optimization passes, we need to quantize them.
+        if (rhs_dim_k == rhs_shape.dimensions_size() - 2) {
+          // Channel dim is expected to be the last dimension in the shape.
+          // TODO(intel-tf): Add support for the transposed case.
+          const int channel_dim = rhs_shape.dimensions_size() - 1;
+          absl::Status status = QuantizeWeights(instr, channel_dim, &quant_wei,
+                                                &wei_scale, &wei_zp);
+          should_rewrite_int8 = status.ok();
+        } else {
+          should_rewrite_int8 = false;
+        }
+      }
+      if (should_rewrite_int8) {
+        PrepareQuantizationInstrs(instr, quant_src, quant_wei, copy_src,
+                                  copy_wei, bitcast_src, bitcast_wei,
+                                  &src_scale, &src_zp, &wei_scale, &wei_zp,
+                                  &new_copy_src, &new_copy_wei);
+        should_rewrite_int8 =
+            should_rewrite_int8 &&
+            ValidateQuantizationParams(quant_src, quant_wei, src_scale, src_zp,
+                                       wei_scale, wei_zp);
+      }
+    }
     BackendConfig backend_config;
     OneDnnMatMulConfig* matmul_config =
         backend_config.mutable_onednn_matmul_config();
+
+    if (should_rewrite_int8) {
+      // The uniform_dequantize pattern being matched assumes the zp of src was
+      // negated by some earlier optimization pass.
+      matmul_config->mutable_quant_config()->set_negated_src_zp(quant_lhs);
+      matmul_call = instr->AddInstruction(HloInstruction::CreateCustomCall(
+          output_shape,
+          {new_copy_src, new_copy_wei, src_scale, src_zp, wei_scale, wei_zp},
+          "__onednn$matmul"));
+    } else {
+      matmul_call = dot_instr->AddInstruction(HloInstruction::CreateCustomCall(
+          output_shape,
+          {dot_instr->mutable_operand(0), dot_instr->mutable_operand(1)},
+          "__onednn$matmul"));
+    }
+
+    // Set additional info via config, e.g., transpose and fusion info.
     bool transpose_a = (lhs_dim_k + 1 != lhs_shape.dimensions().size());
     bool transpose_b = (rhs_dim_k + 2 != rhs_shape.dimensions().size());
     matmul_config->set_transpose_a(transpose_a);
@@ -701,10 +1039,64 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
           conv_dims.output_spatial_dimensions()[i]);
     }
 
-    HloInstruction* custom_call =
-        conv->AddInstruction(HloInstruction::CreateCustomCall(
-            output_shape, {conv->mutable_operand(0), conv->mutable_operand(1)},
-            "__onednn$convolution"));
+    HloInstruction *quant_src = nullptr, *src_scale = nullptr,
+                   *src_zp = nullptr, *quant_wei = nullptr,
+                   *wei_scale = nullptr, *wei_zp = nullptr, *copy_src = nullptr,
+                   *bitcast_src = nullptr, *copy_wei = nullptr,
+                   *bitcast_wei = nullptr, *custom_call = nullptr,
+                   *new_copy_src = nullptr, *new_copy_wei = nullptr;
+
+    // Try to match uniform_dequantize_pattern -> convolution.
+    // This will be replaced with onednn_custom_call[int8 in, f32 out].
+    bool quant_lhs =
+        Match(conv, m::Op().WithOperand(
+                        0, DequantizePattern(&quant_src, &src_scale, &src_zp,
+                                             &copy_src, &bitcast_src)));
+
+    bool quant_rhs =
+        quant_lhs
+            ? Match(conv,
+                    m::Op().WithOperand(
+                        1, DequantizePattern(&quant_wei, &wei_scale, &wei_zp,
+                                             &copy_wei, &bitcast_wei)))
+            : false;
+
+    bool should_rewrite_int8 = false;
+    if (quant_lhs) {
+      should_rewrite_int8 = true;
+      if (!quant_rhs) {
+        // Weights (in QDQ form) are consatnt folded into F32 by earlier
+        // optimization passes, we need to quantize them.
+        const int channel_dim = conv_dims.output_feature_dimension();
+        absl::Status status =
+            QuantizeWeights(conv, channel_dim, &quant_wei, &wei_scale, &wei_zp);
+        should_rewrite_int8 = status.ok();
+      }
+      if (should_rewrite_int8) {
+        PrepareQuantizationInstrs(conv, quant_src, quant_wei, copy_src,
+                                  copy_wei, bitcast_src, bitcast_wei,
+                                  &src_scale, &src_zp, &wei_scale, &wei_zp,
+                                  &new_copy_src, &new_copy_wei);
+        should_rewrite_int8 =
+            should_rewrite_int8 &&
+            ValidateQuantizationParams(quant_src, quant_wei, src_scale, src_zp,
+                                       wei_scale, wei_zp);
+      }
+    }
+
+    if (should_rewrite_int8) {
+      // The uniform_dequantize pattern being matched assumes the zp of src was
+      // negated by some earlier optimization pass.
+      conv_config->mutable_quant_config()->set_negated_src_zp(quant_lhs);
+      custom_call = conv->AddInstruction(HloInstruction::CreateCustomCall(
+          output_shape,
+          {new_copy_src, new_copy_wei, src_scale, src_zp, wei_scale, wei_zp},
+          "__onednn$convolution"));
+    } else {
+      custom_call = conv->AddInstruction(HloInstruction::CreateCustomCall(
+          output_shape, {conv->mutable_operand(0), conv->mutable_operand(1)},
+          "__onednn$convolution"));
+    }
 
     TF_RETURN_IF_ERROR(custom_call->set_backend_config(backend_config));
     TF_RETURN_IF_ERROR(ReplaceInstruction(conv, custom_call));
@@ -750,8 +1142,22 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
       }
 
       std::vector<HloInstruction*> new_operands;
-      for (auto operand : contraction->operands()) {
-        new_operands.push_back(operand);
+      auto contraction_operand = contraction->operand(0);
+      bool quant_contraction =
+          contraction_operand->shape().element_type() == S8 ||
+          contraction_operand->shape().element_type() == U8;
+      const int kNumQuantOperands = 4;
+      const auto contraction_num_operands = contraction->operands().size();
+      if (quant_contraction) {
+        // Start with only adding the non int8-related operands to make sure
+        // int8-related operands are always at the end.
+        for (int i = 0; i < contraction_num_operands - kNumQuantOperands; ++i) {
+          new_operands.push_back(contraction->operands()[i]);
+        }
+      } else {
+        for (auto operand : contraction->operands()) {
+          new_operands.push_back(operand);
+        }
       }
 
       // At this point, the addend could have one of the following
@@ -839,6 +1245,14 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
         new_operands.push_back(addend);
       } else {
         return absl::OkStatus();
+      }
+
+      // Add back the int8-related operands
+      if (quant_contraction) {
+        for (int i = contraction_num_operands - kNumQuantOperands;
+             i < contraction_num_operands; ++i) {
+          new_operands.push_back(contraction->operands()[i]);
+        }
       }
 
       auto custom_call = Cast<HloCustomCallInstruction>(
@@ -1004,6 +1418,30 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     return absl::OkStatus();
   }
 
+  // This is a heuristic to check if Multiply op is possibly part of Quantize
+  // pattern.
+  bool MultiplyInQuantizePattern(HloInstruction* instr) {
+    auto user_instr = [&](HloInstruction* instr) {
+      return (instr && instr->user_count() == 1) ? instr->users()[0] : nullptr;
+    };
+    auto level1 = user_instr(instr);
+    auto level2 = user_instr(level1);
+    auto level3 = user_instr(level2);
+    auto level4 = user_instr(level3);
+    if (level1 && level2 && level3 && level4) {
+      std::vector<HloOpcode> ops{level1->opcode(), level2->opcode(),
+                                 level3->opcode(), level4->opcode()};
+      // We don't check for Add instr as it is optional in the pattern.
+      if (std::find(ops.begin(), ops.end(), HloOpcode::kClamp) != ops.end() &&
+          std::find(ops.begin(), ops.end(), HloOpcode::kRoundNearestEven) !=
+              ops.end() &&
+          std::find(ops.begin(), ops.end(), HloOpcode::kConvert) != ops.end()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   auto SigmoidActivation(HloInstruction* instr, HloInstruction** src) {
     return Match(instr,
                  m::Divide(BcastConstScalar(1.0),
@@ -1054,9 +1492,13 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
                     .WithOneUser(),
                 m::Broadcast(m::Constant(&constant)));
 
+    // Don't fuse Multiply if it is part of Quantize pattern. The pattern will
+    // be handled later by Requantize fusion.
+    if (MultiplyInQuantizePattern(instr)) return absl::OkStatus();
+
     if (Match(instr, pattern)) {
       std::vector<HloInstruction*> new_operands;
-      auto constant_value = GetConstantValueAsFloat32(constant);
+      auto constant_value = GetScalarConstantValue(constant);
       if (!constant_value) {
         return absl::OkStatus();
       }
@@ -1278,8 +1720,215 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     return absl::OkStatus();
   }
 
+absl::Status QuantizeWeights(HloInstruction* instr, const int channel_dim,
+                               HloInstruction** quant_wei,
+                               HloInstruction** wei_scale,
+                               HloInstruction** wei_zp) {
+    auto rhs = instr->operand(1);
+    auto rhs_shape = rhs->shape();
+    const auto rhs_type = rhs_shape.element_type();
+    if (rhs_type != F32) {
+      return absl::FailedPreconditionError(
+          "Could not quantize weights! F32 weights type was expected.");
+    }
+
+    Literal weights_literal;
+    if (!evaluator_.TryEvaluate(rhs, &weights_literal)) {
+      return absl::FailedPreconditionError(
+          "Could not quantize weights! Constant evaluation failed.");
+    }
+
+    // Channel dim is expected to be the last dimension in the shape.
+    if (channel_dim != rhs_shape.dimensions().size() - 1) {
+      return absl::FailedPreconditionError(
+          "Could not quantize weights! Quantization axis is not supported.");
+    }
+
+    const int channel_dim_size = rhs_shape.dimensions(channel_dim);
+    std::vector<float> scales(channel_dim_size);
+    const int rhs_size = ShapeUtil::ElementsIn(rhs_shape);
+    using NativeT = typename primitive_util::PrimitiveTypeToNative<F32>::type;
+    NativeT* data = (NativeT*)(weights_literal.untyped_data());
+    // Compute the weights' scales per channel_dim
+    // TODO(intel-tf): Parallelize this loop to reduce compilation time.
+    for (int i = 0; i < channel_dim_size; i++) {
+      NativeT max = 0;
+      for (int j = 0; j < rhs_size; j += channel_dim_size) {
+        const NativeT abs_value = std::abs(data[j + i]);
+        if (abs_value > max) {
+          max = abs_value;
+        }
+      }
+      scales[i] = max / 127.0;
+    }
+    dnnl::engine cpu_engine(dnnl::engine::kind::cpu, 0);
+    auto src_md = ShapeToMemDesc(rhs_shape);
+    auto dst_md = dnnl::memory::desc(
+        src_md.get_dims(), dnnl::memory::data_type::s8, src_md.get_strides());
+    auto src_mem =
+        dnnl::memory(src_md, cpu_engine, weights_literal.untyped_data());
+    auto scaled_rhs = Literal(ShapeUtil::ChangeElementType(rhs_shape, S8));
+    auto dst_mem = dnnl::memory(dst_md, cpu_engine, scaled_rhs.untyped_data());
+    auto dst_scales_mem = dnnl::memory({{channel_dim_size},
+                                        dnnl::memory::data_type::f32,
+                                        dnnl::memory::format_tag::x},
+                                       cpu_engine, scales.data());
+
+    dnnl::primitive_attr reorder_attr;
+    auto mask = 1 << channel_dim;
+    reorder_attr.set_scales_mask(DNNL_ARG_DST, mask);
+    auto reorder_desc = dnnl::reorder::primitive_desc(
+        cpu_engine, src_md, cpu_engine, dst_md, reorder_attr);
+    dnnl::reorder reorder_prim(reorder_desc);
+    std::unordered_map<int, dnnl::memory> reorder_args;
+    reorder_args.insert({DNNL_ARG_SRC, src_mem});
+    reorder_args.insert({DNNL_ARG_DST, dst_mem});
+    reorder_args.insert({DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, dst_scales_mem});
+    auto onednn_threadpool = std::make_unique<OneDnnThreadPool>(
+        threadpool_device_->getPool(), /*is_async=*/true);
+    auto onednn_stream = dnnl::threadpool_interop::make_stream(
+        cpu_engine, onednn_threadpool.get());
+    reorder_prim.execute(onednn_stream, reorder_args);
+    onednn_stream.wait();
+
+    *quant_wei = instr->AddInstruction(
+        HloInstruction::CreateConstant(std::move(scaled_rhs)));
+    *wei_scale = instr->AddInstruction(
+        HloInstruction::CreateConstant(LiteralUtil::CreateR1<float>(scales)));
+    std::vector<int> zp{0};
+    *wei_zp = instr->AddInstruction(
+        HloInstruction::CreateConstant(LiteralUtil::CreateR1<int>(zp)));
+    return absl::OkStatus();
+  }
+
  private:
   bool graph_enabled_;
+  int intra_op_parallelism_;
+  HloEvaluator evaluator_;
+  std::unique_ptr<tsl::thread::ThreadPool> threadpool_handle_;
+  std::unique_ptr<Eigen::ThreadPoolDevice> threadpool_device_;
+};
+
+class OneDnnContractionRequantizeVisitor : public DfsHloRewriteVisitor {
+ public:
+  absl::Status HandleCustomCall(HloInstruction* custom_call) override {
+    HloInstruction *contraction = nullptr, *input_custom_call = nullptr,
+                   *scale = nullptr, *zp = nullptr, *clamp_min = nullptr,
+                   *clamp_max = nullptr;
+
+    if (Match(custom_call, OneDnnFusibleInstr(&contraction))) {
+      // Try to match the requantize case:
+      // onednn_custom_call[int8 in, f32 out] -> uniform_quantize_pattern ->
+      //        onednn_custom_call[int8 in, f32 out].
+      // This will be replaced by
+      // onednn_custom_call[int8 in, int8 out] -> onednn_custom_call[int8 in,
+      // f32 out]
+      bool requant_contraction = Match(
+          custom_call,
+          m::Op()
+              .WithOpcode(HloOpcode::kCustomCall)
+              .WithOperand(0, QuantizePattern(&scale, &zp, &input_custom_call,
+                                              &clamp_min, &clamp_max)));
+      if (!Match(input_custom_call, OneDnnFusibleInstr(&input_custom_call))) {
+        return absl::OkStatus();
+      }
+
+      if (requant_contraction && input_custom_call) {
+        auto input_custom_call_operands = input_custom_call->operands();
+        auto src_type = input_custom_call_operands[0]->shape().element_type();
+        auto wei_type = input_custom_call_operands[1]->shape().element_type();
+        // Make sure the operands of input_custom_call are quantized.
+        if ((src_type != S8 && src_type != U8) || wei_type != S8) {
+          return absl::OkStatus();
+        }
+
+        const float default_scale = 1.0;
+        const int default_zp = 0;
+        auto set_default_value = [&]<typename T>(HloInstruction*& instr,
+                                                 T value) {
+          instr = contraction->AddInstruction(
+              HloInstruction::CreateConstant(LiteralUtil::CreateR0<T>(value)));
+        };
+        // If scale and/or zp are not found. That means they had a default
+        // values that were optimized out. Hence, we set a default value of 1.0
+        // and 0 for scale and zp respectively.
+        if (scale == nullptr) {
+          set_default_value(scale, default_scale);
+        }
+        if (zp == nullptr) {
+          set_default_value(zp, default_zp);
+        }
+
+        std::vector<HloInstruction*> requant_call_operands;
+        for (auto operand : input_custom_call_operands) {
+          requant_call_operands.push_back(operand);
+        }
+        requant_call_operands.push_back(scale);
+        requant_call_operands.push_back(zp);
+
+        auto quant_type = custom_call->operands()[0]->shape().element_type();
+        auto clamp_min_value = GetScalarConstantValue(clamp_min);
+        auto clamp_max_value = GetScalarConstantValue(clamp_max);
+        if (!clamp_min_value || !clamp_max_value) {
+          return absl::OkStatus();
+        }
+        // Currently we only expect below clamp values.
+        // For S8, clamp_min = -128 or -127, clamp_max = 127
+        // For U8, clamp_min = 0, clamp_max = 255 or 254
+        auto min = clamp_min_value.value();
+        auto max = clamp_max_value.value();
+        if (quant_type == S8 &&
+            (!(min == -128.0 || min == -127.0) || max != 127.0)) {
+          return absl::OkStatus();
+        }
+        if (quant_type == U8 && (min != 0 || !(max == 254.0 || max == 255.0))) {
+          return absl::OkStatus();
+        }
+        auto requant_contraction_call =
+            Cast<HloCustomCallInstruction>(input_custom_call->AddInstruction(
+                input_custom_call->CloneWithNewOperands(
+                    ShapeUtil::ChangeElementType(input_custom_call->shape(),
+                                                 quant_type),
+                    requant_call_operands)));
+
+        TF_ASSIGN_OR_RETURN(
+            auto backend_config,
+            requant_contraction_call->backend_config<BackendConfig>());
+
+        // The uniform_quantize pattern being matched assumes the scale of dst
+        // was inversed by some earlier optimization pass.
+        if (backend_config.has_onednn_conv_config()) {
+          OneDnnConvolutionConfig* conv_config =
+              backend_config.mutable_onednn_conv_config();
+          conv_config->mutable_quant_config()->set_inversed_dst_scale(
+              requant_contraction);
+        } else if (backend_config.has_onednn_matmul_config()) {
+          OneDnnMatMulConfig* matmul_config =
+              backend_config.mutable_onednn_matmul_config();
+          matmul_config->mutable_quant_config()->set_inversed_dst_scale(
+              requant_contraction);
+        } else {
+          return absl::OkStatus();
+        }
+
+        requant_contraction_call->set_backend_config(backend_config);
+
+        const int size = custom_call->operands().size();
+        std::vector<HloInstruction*> new_operands(size);
+        new_operands[0] = requant_contraction_call;
+        for (int i = 1; i < size; ++i) {
+          new_operands[i] = custom_call->operands()[i];
+        }
+        auto new_contraction_call = Cast<HloCustomCallInstruction>(
+            custom_call->AddInstruction(custom_call->CloneWithNewOperands(
+                custom_call->shape(), new_operands)));
+
+        TF_RETURN_IF_ERROR(
+            ReplaceInstruction(custom_call, new_contraction_call));
+      }
+    }
+    return absl::OkStatus();
+  }
 };
 
 class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
@@ -1534,19 +2183,24 @@ EMIT_SET_BACKEND_CONFIG_SPECIALIZATION(
 absl::StatusOr<bool> OneDnnContractionRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  XLA_VLOG_LINES(3, "OneDnnContractionRewriter::RunImpl(), before:\n" +
-                        module->ToString());
-  OneDnnContractionRewriteVisitor visitor(graph_enabled_);
+  XLA_VLOG_LINES(
+      3, "OneDnnContractionRewriter::Run(), before:\n" + module->ToString());
+  OneDnnContractionRewriteVisitor visitor(graph_enabled_, intra_op_parallelism_,
+                                           compile_threadpool_);
   TF_ASSIGN_OR_RETURN(auto result,
                       visitor.RunOnModule(module, execution_threads));
+
+  OneDnnContractionRequantizeVisitor requantize_visitor;
+  TF_ASSIGN_OR_RETURN(auto requantize_result, requantize_visitor.RunOnModule(
+                                                  module, execution_threads));
 
   OneDnnPostRewriteVisitor reorder_visitor(intra_op_parallelism_,
                                            compile_threadpool_);
   TF_ASSIGN_OR_RETURN(auto result2,
                       reorder_visitor.RunOnModule(module, execution_threads));
   XLA_VLOG_LINES(
-      3, "OneDnnContractionRewriter::RunImpl(), after:\n" + module->ToString());
-  return {result || result2};
+      3, "OneDnnContractionRewriter::Run(), after:\n" + module->ToString());
+  return {result || requantize_result || result2};
 }
 
 }  // namespace cpu
