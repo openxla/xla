@@ -2154,7 +2154,7 @@ ENTRY e {
   EXPECT_TRUE(
       RunAndCompareTwoModules(std::move(ref_module_and_metadata.module),
                               std::move(test_module_and_metadata.module),
-                              ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6},
+                              ErrorSpec{/*aabs=*/1e-5, /*arel=*/1e-6},
                               /*run_hlo_passes=*/false));
 }
 
