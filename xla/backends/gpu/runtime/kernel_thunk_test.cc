@@ -469,9 +469,9 @@ TEST_P(KernelThunkTmaPTXTest, TmaPTX) {
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
 
-  auto execute_params =
-      Thunk::ExecuteParams::Create(run_options, buffer_allocations,
-                                   stream.get(), nullptr, nullptr, nullptr, {});
+  auto execute_params = Thunk::ExecuteParams::Create(
+      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
+      nullptr, {});
 
   const bool use_command_buffer = GetParam();
 

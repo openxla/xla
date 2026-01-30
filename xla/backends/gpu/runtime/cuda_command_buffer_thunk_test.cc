@@ -188,8 +188,9 @@ TEST(CommandBufferThunkTest, CuDnnCmd) {
   stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations(operands, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
   TF_ASSERT_OK(thunk.Initialize(

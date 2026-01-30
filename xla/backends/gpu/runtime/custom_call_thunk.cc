@@ -63,10 +63,10 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/platform.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -235,15 +235,16 @@ static CallOptions BuildInstantiateCallOptions(
   CallOptions options{};
   options.execution_state = execution_state;
   options.backend_options = CallOptions::GpuOptions{
-      /*.stream = */ nullptr,
-      /*.allocator = */ nullptr,
-      /*.collective_params = */ nullptr,
-      /*.collective_clique_requests = */ nullptr,
-      /*.collective_memory_requests = */ nullptr,
-      /*.collective_multimem_requests = */ nullptr,
-      /*.collective_multimem_provider = */ nullptr,
-      /*.collective_cliques = */ nullptr,
-      /*.gpu_target_config = */ gpu_compute_capability,
+      /*.stream=*/nullptr,
+      /*.allocator=*/nullptr,
+      /*.collective_params=*/nullptr,
+      /*.collective_clique_requests=*/nullptr,
+      /*.collective_memory_requests=*/nullptr,
+      /*.collective_multimem_requests=*/nullptr,
+      /*.collective_multimem_provider=*/nullptr,
+      /*.collective_cliques=*/nullptr,
+      /*.collective_memory=*/nullptr,
+      /*.gpu_target_config=*/gpu_compute_capability,
   };
   return options;
 }
@@ -450,6 +451,7 @@ CallOptions CustomCallThunk::BuildCallOptions(
     const CollectiveMultimemProvider* absl_nullable
         collective_multimem_provider,
     const CollectiveCliques* absl_nullable collective_cliques,
+    const CollectiveMemory* absl_nullable collective_memory,
     const ffi::ExecutionContext* absl_nullable execution_context) {
   int32_t device_ordinal = -1;
   se::DeviceAddressAllocator* allocator = nullptr;
@@ -470,7 +472,7 @@ CallOptions CustomCallThunk::BuildCallOptions(
       CallOptions::GpuOptions{
           stream, allocator, collective_params, collective_clique_requests,
           collective_memory_requests, collective_multimem_requests,
-          collective_multimem_provider, collective_cliques,
+          collective_multimem_provider, collective_cliques, collective_memory,
           gpu_compute_capability},
       called_computation_,
       execution_context,
@@ -487,7 +489,8 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
     CollectiveMultimemRequests* absl_nullable collective_multimem_requests,
     const CollectiveMultimemProvider* absl_nullable
         collective_multimem_provider,
-    const CollectiveCliques* absl_nullable collective_cliques) {
+    const CollectiveCliques* absl_nullable collective_cliques,
+    const CollectiveMemory* absl_nullable collective_memory) {
   if (handler == nullptr) {
     return absl::InternalError("FFI execute handler is not set");
   }
@@ -501,7 +504,7 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
       run_id, stream, buffer_allocations, collective_params,
       collective_clique_requests, collective_memory_requests,
       collective_multimem_requests, collective_multimem_provider,
-      collective_cliques, execution_context);
+      collective_cliques, collective_memory, execution_context);
   return Call(handler, *call_frame, options, stage);
 }
 
@@ -515,7 +518,8 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
     CollectiveMultimemRequests* absl_nullable collective_multimem_requests,
     const CollectiveMultimemProvider* absl_nullable
         collective_multimem_provider,
-    const CollectiveCliques* absl_nullable collective_cliques) {
+    const CollectiveCliques* absl_nullable collective_cliques,
+    const CollectiveMemory* absl_nullable collective_memory) {
   if (stage != xla::ffi::ExecutionStage::kPrepare &&
       !(buffer_allocations && stream)) {
     return absl::InternalError("buffer allocations and stream are required");
@@ -526,7 +530,7 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
       run_id, stream, buffer_allocations, collective_params,
       collective_clique_requests, collective_memory_requests,
       collective_multimem_requests, collective_multimem_provider,
-      collective_cliques, execution_context);
+      collective_cliques, collective_memory, execution_context);
   return Call(handler, *call_frame, options, stage);
 }
 
@@ -548,7 +552,8 @@ absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {
           /*collective_memory_requests=*/params.collective_memory_requests,
           /*collective_multimem_requests=*/params.multimem_registry,
           /*collective_multimem_provider=*/nullptr,
-          /*collective_cliques=*/nullptr);
+          /*collective_cliques=*/nullptr,
+          /*collective_memory=*/nullptr);
     }
     if (const auto* owned_bundle =
             std::get_if<OwnedHandlerBundle>(&bundle_.value());
@@ -563,7 +568,8 @@ absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {
           /*collective_memory_requests=*/params.collective_memory_requests,
           /*collective_multimem_requests=*/params.multimem_registry,
           /*collective_multimem_provider=*/nullptr,
-          /*collective_cliques=*/nullptr);
+          /*collective_cliques=*/nullptr,
+          /*collective_memory=*/nullptr);
     }
   }
 
@@ -586,7 +592,7 @@ absl::Status CustomCallThunk::Initialize(const InitializeParams& params) {
           /*collective_memory_requests=*/nullptr,
           /*collective_multimem_requests=*/nullptr,
           /*collective_multimem_provider=*/params.multicast_memory_registry,
-          params.collective_cliques);
+          params.collective_cliques, params.collective_memory);
     }
     if (const auto* owned_bundle =
             std::get_if<OwnedHandlerBundle>(&bundle_.value());
@@ -599,7 +605,7 @@ absl::Status CustomCallThunk::Initialize(const InitializeParams& params) {
           /*collective_memory_requests=*/nullptr,
           /*collective_multimem_requests=*/nullptr,
           /*collective_multimem_provider=*/params.multicast_memory_registry,
-          params.collective_cliques);
+          params.collective_cliques, params.collective_memory);
     }
   }
   return absl::OkStatus();
@@ -622,7 +628,8 @@ absl::Status CustomCallThunk::ExecuteOnStream(const ExecuteParams& params) {
           params.collective_params, /*collective_clique_requests=*/nullptr,
           /*collective_memory_requests=*/nullptr,
           /*collective_multimem_requests=*/nullptr,
-          /*collective_multimem_provider=*/nullptr, params.collective_cliques);
+          /*collective_multimem_provider=*/nullptr, params.collective_cliques,
+          params.collective_memory);
     }
     if (const auto* owned_bundle =
             std::get_if<OwnedHandlerBundle>(&bundle_.value());
@@ -636,7 +643,8 @@ absl::Status CustomCallThunk::ExecuteOnStream(const ExecuteParams& params) {
           params.collective_params, /*collective_clique_requests=*/nullptr,
           /*collective_memory_requests=*/nullptr,
           /*collective_multimem_requests=*/nullptr,
-          /*collective_multimem_provider=*/nullptr, params.collective_cliques);
+          /*collective_multimem_provider=*/nullptr, params.collective_cliques,
+          params.collective_memory);
     }
   }
 
