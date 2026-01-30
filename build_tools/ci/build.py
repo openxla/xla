@@ -113,6 +113,8 @@ class BuildType(enum.Enum):
   XLA_LINUX_X86_GPU_L4_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_8X_H100_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_ONEAPI_GITHUB_ACTIONS = enum.auto()
+  XLA_LINUX_X86_AMD_INSTINCT_GPU_SINGLE_GITHUB_ACTIONS = enum.auto()
+  XLA_LINUX_X86_AMD_INSTINCT_GPU_MULTI_GITHUB_ACTIONS = enum.auto()
 
   # Presubmit builds for regression testing.
   XLA_LINUX_ARM64_CPU_48_VCPU_PRESUBMIT_GITHUB_ACTIONS = enum.auto()
@@ -273,6 +275,79 @@ def _tag_filters_for_compute_capability(
   tag_filters += ("-requires-gpu-intel",)
   return tag_filters
 
+rocm_tag_filters = ()
+
+rocm_test_filters = ""
+
+rocm_excluded_targets = ()
+
+Build(
+    type_=BuildType.XLA_LINUX_X86_AMD_INSTINCT_GPU_SINGLE_GITHUB_ACTIONS,
+    repo="openxla/xla",
+    configs=("rocm_ci", "rocm_rbe", "ci_single_gpu"),
+    target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_excluded_targets,
+    build_tag_filters=rocm_tag_filters,
+    test_tag_filters=rocm_tag_filters + ("gpu", "-multi_gpu"),
+    test_env={"TF_TESTS_PER_GPU": 1, "TF_GPU_COUNT": 8},
+    action_env={
+        "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true --xla_gpu_force_compilation_parallelism=16"
+    },
+    repo_env={
+        "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942,gfx950",
+        "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
+        "TF_ROCM_RBE_DOCKER_IMAGE": "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa",
+        "ROCM_PATH": "/opt/rocm",
+    },
+  options={
+        **_DEFAULT_BAZEL_OPTIONS,
+        "test_filter": rocm_test_filters,
+        "keep_going": True,
+        "test_output": "errors",
+        "run_under": "//build_tools/rocm:parallel_gpu_execute",
+        "test_timeout": "920,2400,7200,9600",
+        "test_sharding_strategy": "disabled",
+        "flaky_test_attempts": 3,
+        "spawn_strategy": "local",
+        "remote_download_outputs": "minimal",
+        "local_test_jobs": 8,
+        "//xla/tsl:ci_build": True,
+    },
+)
+
+Build(
+    type_=BuildType.XLA_LINUX_X86_AMD_INSTINCT_GPU_MULTI_GITHUB_ACTIONS,
+    repo="openxla/xla",
+    configs=("rocm_ci", "rocm_rbe", "ci_multi_gpu"),
+    target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_excluded_targets,
+    build_tag_filters=rocm_tag_filters,
+    test_tag_filters=rocm_tag_filters + ("multi_gpu",),
+    test_env={"TF_TESTS_PER_GPU": 1, "TF_GPU_COUNT": 8},
+    action_env={
+        "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true --xla_gpu_force_compilation_parallelism=16",
+        "NCCL_MAX_NCHANNELS": 1,
+    },
+    repo_env={
+        "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942,gfx950",
+        "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
+        "TF_ROCM_RBE_DOCKER_IMAGE": "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa",
+        "ROCM_PATH": "/opt/rocm",
+    },
+    options={
+        **_DEFAULT_BAZEL_OPTIONS,
+        "test_filter": rocm_test_filters,
+        "spawn_strategy": "local",
+        "remote_download_outputs": "minimal",
+        "local_test_jobs": 1,
+        "//xla/tsl:ci_build": True,
+        "strategy": "TestRunner=local",
+        "keep_going": True,
+        "test_output": "errors",
+        "run_under": "//build_tools/rocm:parallel_gpu_execute",
+        "test_timeout": "920,2400,7200,9600",
+        "test_sharding_strategy": "disabled",
+        "flaky_test_attempts": 3,
+    },
+)
 
 nvidia_gpu_filters = (
     "-no_oss",
