@@ -340,7 +340,9 @@ absl::StatusOr<se::Event*> CollectiveThunk::AsyncEvents::GetEvent(
 
 absl::Status CollectiveThunk::Prepare(const PrepareParams& params) {
   TF_RET_CHECK(params.collective_params &&
-               params.collective_params->device_assn);
+               params.collective_params->device_assn)
+      << "Collective parameters and device assignment are required for "
+         "collective thunk execution";
 
   ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,

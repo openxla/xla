@@ -27,8 +27,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/time/clock.h"
-#include "absl/time/time.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -45,13 +43,14 @@ namespace xla::gpu {
 GpuClique::GpuClique(
     GpuCliqueKey key, std::optional<CliqueIds> ids,
     absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators,
-    bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel)
+    bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel,
+    const GpuClique* parent)
     : Clique(std::move(communicators)),
       key_(key),
       ids_(ids),
-      created_(absl::Now()),
       peer_access_enabled_(peer_access_enabled),
-      cancel_(std::move(cancel)) {}
+      cancel_(std::move(cancel)),
+      parent_(parent) {}
 
 std::optional<GpuDeviceCommunicator*> GpuClique::device_comm(
     RankId rank, const GpuDeviceCommunicator::Requirements& reqs) const {
@@ -130,9 +129,10 @@ std::string GpuClique::LockableName::ToString(const GpuClique& clique) {
 LockableGpuClique::LockableGpuClique(
     GpuCliqueKey clique_key, std::optional<CliqueIds> clique_ids,
     absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators,
-    bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel)
+    bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel,
+    const GpuClique* parent)
     : Lockable(std::move(clique_key), clique_ids, std::move(communicators),
-               peer_access_enabled, std::move(cancel)) {}
+               peer_access_enabled, std::move(cancel), parent) {}
 
 absl::Status LockableGpuClique::HealthCheck() const {
   return value().HealthCheck();
@@ -142,7 +142,9 @@ absl::Status LockableGpuClique::Abort() { return mutable_value().Abort(); }
 
 void LockableGpuClique::Cancel() { mutable_value().Cancel(); }
 
-absl::Time LockableGpuClique::created() const { return value().created(); }
+bool LockableGpuClique::HasParent(const GpuClique* parent) const {
+  return this->value().parent() == parent;
+}
 
 std::string LockableGpuClique::DebugString() const {
   return absl::StrFormat("LockableGpuClique: %s", value().DebugString());

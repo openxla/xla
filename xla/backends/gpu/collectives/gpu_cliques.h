@@ -88,6 +88,13 @@ absl::Status CheckCliqueIsntStale(const GpuCliqueKey& clique_key);
 absl::Status UpdateGlobalProcessInfo(
     absl::Span<tensorflow::CoordinatedTaskStateInfo> infos);
 
+namespace internal {
+// Destroys all cliques that were acquired for the given process. This is
+// internal API that must be used carefully, primarily in test, as it might
+// lead to data corruptions and segfaults.
+void DestroyAcquiredCliques();
+}  // namespace internal
+
 }  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_COLLECTIVES_GPU_CLIQUES_H_
