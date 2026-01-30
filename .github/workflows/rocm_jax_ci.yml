@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   execute-jax-ut:
-    runs-on: linux-mi250-4
+    runs-on: linux-x64-mi210-64-2gpu-amd
     env:
       ROCM_VERSION: '7'
       JAX_VERSION: '0.8.2'
