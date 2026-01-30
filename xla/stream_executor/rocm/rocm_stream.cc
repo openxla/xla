@@ -342,8 +342,9 @@ absl::Status LaunchRocmKernel(
   }
   TF_RETURN_IF_ERROR(
       ToStatus(res, absl::StrCat("Failed to launch ROCm kernel: ", kernel_name,
-                                 " with block dimensions: ", block_dim_x, "x",
-                                 block_dim_y, "x", block_dim_z)));
+                  "; grid: ", grid_dim_x, "x", grid_dim_y, "x", grid_dim_z,
+                  "; block: ", block_dim_x, "x", block_dim_y, "x", block_dim_z,
+                  "; shared_mem: ", shared_mem_bytes)));
 
   VLOG(2) << "successfully launched kernel";
   return absl::OkStatus();
