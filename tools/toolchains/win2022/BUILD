@@ -1,3 +1,5 @@
+load("@rules_java//java/toolchains:java_runtime.bzl", "java_runtime")
+
 licenses(["restricted"])
 
 package(default_visibility = ["//visibility:public"])
