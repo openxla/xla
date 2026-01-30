@@ -25,7 +25,6 @@ limitations under the License.
 #include "absl/container/btree_map.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/time/time.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -45,11 +44,11 @@ class GpuClique : public Clique {
   GpuClique(
       GpuCliqueKey key, std::optional<CliqueIds> ids,
       absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators,
-      bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel);
+      bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel,
+      const GpuClique* parent = nullptr);
 
   const GpuCliqueKey& key() const { return key_; }
   const std::optional<CliqueIds>& ids() const { return ids_; }
-  absl::Time created() const { return created_; }
   bool peer_access_enabled() const { return peer_access_enabled_; }
 
   // Returns a device communicator for a given rank and requirements if it's in
@@ -80,6 +79,9 @@ class GpuClique : public Clique {
   // Returns true if the clique was cancelled.
   bool IsCancelled() const;
 
+  // Returns a parent clique iff *this one was created by clique splitting.
+  const GpuClique* parent() const { return parent_; }
+
  private:
   friend LockableGpuClique;
 
@@ -91,15 +93,15 @@ class GpuClique : public Clique {
   GpuCliqueKey key_;
   std::optional<CliqueIds> ids_;
 
-  // Time when the clique was created.
-  absl::Time created_;
-
   // True if peer device memory access is possible between all local devices in
   // the clique.
   bool peer_access_enabled_;
 
   // Cancellation token shared with all communicators in the clique.
   std::shared_ptr<CancellationToken> cancel_;
+
+  // A parent GPU clique iff *this clique was constructed by split operation.
+  const GpuClique* parent_;
 
   // We keep device communicators in a sorted container to guarantee that they
   // are destroyed in determenistic order.
@@ -116,9 +118,12 @@ class LockableGpuClique : public Lockable<GpuClique, GpuClique::LockableName> {
   LockableGpuClique(
       GpuCliqueKey clique_key, std::optional<CliqueIds> clique_ids,
       absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators,
-      bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel);
+      bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel,
+      const GpuClique* parent = nullptr);
 
-  absl::Time created() const;
+  // Returns if *this lockable clique has a given parent.
+  bool HasParent(const GpuClique* parent) const;
+
   std::string DebugString() const;
 
   // Checks for async errors for all the communicators in the clique without
