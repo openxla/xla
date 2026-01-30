@@ -321,7 +321,7 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
   auto execute_params = Thunk::ExecuteParams::Create(
       run_options, buffer_allocations, stream.get(),
       /*command_buffer_trace_stream=*/nullptr, &collective_params,
-      /*collective_cliques=*/nullptr);
+      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr);
   TF_RETURN_IF_ERROR(metadata.thunk->ExecuteOnStream(execute_params));
   return output_buffer;
 }

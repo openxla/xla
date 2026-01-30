@@ -280,11 +280,11 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
   se::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
+
   CommandStateManager state;
-
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
-
   Command::RecordParams record_params = {state};
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -352,8 +352,9 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   se::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -425,8 +426,9 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
   se::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -485,11 +487,11 @@ TEST(CommandBufferCmdTest, DynamicSliceCopyFusionCmd) {
   se::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
+
   CommandStateManager state;
-
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
-
   Command::RecordParams record_params = {state};
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -674,8 +676,9 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   se::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b, c}, 0, &allocator);
 
-  Thunk::ExecuteParams exec_params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams exec_params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -782,8 +785,9 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
 
   // allocations already created above
   ServiceExecutableRunOptions run_options;
-  Thunk::ExecuteParams exec_params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams exec_params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -821,8 +825,9 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   TF_ASSERT_OK(stream->MemZero(&c2, byte_length));
 
   BufferAllocations allocations2({a2, b, c2}, 0, &allocator);
-  Thunk::ExecuteParams exec_params2 = Thunk::ExecuteParams::Create(
-      run_options, allocations2, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams exec_params2 =
+      Thunk::ExecuteParams::Create(run_options, allocations2, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   // Indicate which allocations changed to ensure update is not skipped.
   std::vector<BufferAllocation::Index> updated_allocs = {0, 2};

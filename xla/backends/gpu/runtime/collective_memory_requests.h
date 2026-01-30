@@ -70,6 +70,8 @@ class CollectiveMemoryRequests {
 
   size_t size() const { return allocations_.size(); }
 
+  const BufferAllocations& buffers() const { return buffers_; }
+
  private:
   const BufferAllocations& buffers_;
   absl::flat_hash_map<GpuCliqueKey, SymmetricAllocations> allocations_;

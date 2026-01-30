@@ -32,11 +32,15 @@ class GpuDeviceCommunicator;
 
 namespace xla::gpu {
 
-// Simple LSA all-reduce kernel from NCCL documentation:
+// Simple LSA all-reduce kernel derived from NCCL documentation:
 // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/deviceapi.html#simple-lsa-kernel
 struct CollectiveInPlaceAllReduce {
-  using KernelType =
-      se::TypedKernel<GpuDeviceCommunicator*, SymmetricMemory*, size_t, size_t>;
+  using KernelType = se::TypedKernel<GpuDeviceCommunicator*,  // dev_comm
+                                     SymmetricMemory*,        // src_win
+                                     SymmetricMemory*,        // dst_win
+                                     size_t,                  // src_offset
+                                     size_t,                  // dst_offset
+                                     size_t>;                 // count
 };
 
 }  // namespace xla::gpu
