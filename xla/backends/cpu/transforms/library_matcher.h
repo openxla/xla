@@ -22,11 +22,11 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla::cpu {
 
@@ -74,6 +74,13 @@ class LibraryMatcher {
   virtual PrimitiveType LibraryOpOutputType(const HloInstruction* instr) {
     return instr->shape().element_type();
   }
+
+  // Returns true if there is a limit on the number of ops in the fusion and
+  // the maximum fusion size is already reached.
+  virtual bool ReachedMaxFusionSize(int fused_op_count) { return false; }
+
+  // Return true if the library supports merging fusions.
+  virtual bool ShouldMergeFusions() { return true; }
 
   // Returns a prefix string for the fusion op's name.
   virtual std::string fusion_prefix() const { return ""; }
