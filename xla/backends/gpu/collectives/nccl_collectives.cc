@@ -228,6 +228,12 @@ bool NcclCollectives::SupportsDeviceComm() const {
   return NCCL_VERSION_CODE >= 22800;
 }
 
+size_t NcclCollectives::SymmetricMemoryAlignment() const {
+  // TODO(ezhulenev): Query memory requirements from NCCL. Alignment might not
+  // be the only one.
+  return 4096;
+}
+
 static absl::StatusOr<ncclConfig_t> AsNcclConfig(
     const GpuCollectives::Config& config,
     const se::StreamExecutor* stream_executor) {

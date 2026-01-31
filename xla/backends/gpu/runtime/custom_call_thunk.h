@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
+#include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/c_api.h"
@@ -212,6 +213,7 @@ class CustomCallThunk : public Thunk {
       const CollectiveMultimemProvider* absl_nullable
           collective_multimem_provider,
       const CollectiveCliques* absl_nullable collective_cliques,
+      const CollectiveMemory* absl_nullable collective_memory,
       const ffi::ExecutionContext* absl_nullable execution_context);
 
   absl::Status ExecuteFfiHandler(
@@ -224,7 +226,8 @@ class CustomCallThunk : public Thunk {
       CollectiveMultimemRequests* absl_nullable collective_multimem_requests,
       const CollectiveMultimemProvider* absl_nullable
           collective_multimem_provider,
-      const CollectiveCliques* absl_nullable collective_cliques);
+      const CollectiveCliques* absl_nullable collective_cliques,
+      const CollectiveMemory* absl_nullable collective_memory);
 
   absl::Status ExecuteFfiHandler(
       RunId run_id, xla::ffi::Ffi& handler, xla::ffi::ExecutionStage stage,
@@ -236,7 +239,8 @@ class CustomCallThunk : public Thunk {
       CollectiveMultimemRequests* absl_nullable collective_multimem_requests,
       const CollectiveMultimemProvider* absl_nullable
           collective_multimem_provider,
-      const CollectiveCliques* absl_nullable collective_cliques);
+      const CollectiveCliques* absl_nullable collective_cliques,
+      const CollectiveMemory* absl_nullable collective_memory);
 
   // API version of the custom call. If not set, it means the custom call thunk
   // was initialized from a non-registered function pointer and can't be

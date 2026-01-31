@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/tests/collective_ops_ffi_kernels.h"
 
+#include <cstddef>
+#include <cstdint>
+
 #include "absl/base/casts.h"
 #include "third_party/nccl/nccl.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
@@ -30,8 +33,10 @@ namespace xla::gpu {
 
 #if NCCL_VERSION_CODE >= 22800
 template <typename T>
-static __global__ void InPlaceAllReduce(ncclDevComm dev_comm, ncclWindow_t win,
-                                        size_t offset, size_t count) {
+static __global__ void InPlaceAllReduce(ncclDevComm dev_comm,
+                                        ncclWindow_t src_win,
+                                        ncclWindow_t dst_win, size_t src_offset,
+                                        size_t dst_offset, size_t count) {
   ncclLsaBarrierSession<ncclCoopCta> bar(ncclCoopCta(), dev_comm,
                                          ncclTeamTagLsa(), blockIdx.x);
   bar.sync(ncclCoopCta(), cuda::memory_order_relaxed);
@@ -43,11 +48,13 @@ static __global__ void InPlaceAllReduce(ncclDevComm dev_comm, ncclWindow_t win,
   for (size_t o = globalTid; o < count; o += globalNthreads) {
     T v = 0;
     for (int peer = 0; peer < nRanks; peer++) {
-      T* inputPtr = static_cast<T*>(ncclGetLsaPointer(win, offset, peer));
+      T* inputPtr =
+          static_cast<T*>(ncclGetLsaPointer(src_win, src_offset, peer));
       v += inputPtr[o];
     }
     for (int peer = 0; peer < nRanks; peer++) {
-      T* outputPtr = static_cast<T*>(ncclGetLsaPointer(win, offset, peer));
+      T* outputPtr =
+          static_cast<T*>(ncclGetLsaPointer(dst_win, dst_offset, peer));
       outputPtr[o] = v;
     }
   }
@@ -56,8 +63,9 @@ static __global__ void InPlaceAllReduce(ncclDevComm dev_comm, ncclWindow_t win,
 }
 #else
 template <typename T>
-static __global__ void InPlaceAllReduce(void* dev_comm, ncclWindow_t win,
-                                        size_t offset, size_t count) {
+static __global__ void InPlaceAllReduce(void* dev_comm, ncclWindow_t src_win,
+                                        ncclWindow_t dst_win, size_t src_offset,
+                                        size_t dst_offset, size_t count) {
   // If device-initiated collectives are not supported, in-place all reduce
   // becomes a no-op kernel. It's up to the caller to check that GPU
   // communicator supports device-initiated collective operations.
