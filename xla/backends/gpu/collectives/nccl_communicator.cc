@@ -167,6 +167,10 @@ class NcclCommunicator::NcclRegisteredBufferHandle
         symmetric_handle_(symmetric_handle),
         device_ordinal_(device_ordinal) {}
 
+  bool IsSymmetricHandle() const { return symmetric_handle_; }
+
+  void* GetHandle() const override { return handle_; }
+
   ~NcclRegisteredBufferHandle() override {
     if (auto status = Unregister(); !status.ok()) {
       LOG(ERROR) << status.message();
@@ -817,6 +821,55 @@ absl::Status NcclCommunicator::LaunchCollectivePermute(
   }
 
   TF_RETURN_IF_ERROR(GroupStart());
+
+#if NCCL_VERSION_CODE >= 22900
+  if (target_ranks.size() == 1) {
+    TF_ASSIGN_OR_RETURN(auto send_range,
+                        stream->parent()->GetMemoryRange(send_buffer));
+    TF_ASSIGN_OR_RETURN(auto recv_range,
+                        stream->parent()->GetMemoryRange(recv_buffer));
+    bool use_nccl_put = false;
+    absl::MutexLock lock(registered_buffers_.mu);
+    auto send_buffer_handle =
+        registered_buffers_.range_to_handle.find(send_range.opaque());
+    auto recv_buffer_handle =
+        registered_buffers_.range_to_handle.find(recv_range.opaque());
+    use_nccl_put =
+        send_buffer_handle != registered_buffers_.range_to_handle.end() &&
+        recv_buffer_handle != registered_buffers_.range_to_handle.end() &&
+        (dynamic_cast<NcclRegisteredBufferHandle*>(
+             send_buffer_handle->second.get()))
+            ->IsSymmetricHandle() &&
+        (dynamic_cast<NcclRegisteredBufferHandle*>(
+             recv_buffer_handle->second.get()))
+            ->IsSymmetricHandle();
+    if (use_nccl_put) {
+      // Wait for signal from sender
+      if (source_rank) {
+        ncclWaitSignalDesc_t wait_desc = {
+            .opCnt = 1,
+            .peer = static_cast<int>(source_rank->value()),
+            .sigIdx = 0,
+            .ctx = 0};
+        XLA_NCCL_RETURN_IF_ERROR(ncclWaitSignal(/*nDesc=*/1, &wait_desc, comm_,
+                                                AsCudaStream(stream)));
+      }
+
+      // Call put to send to receiving rank
+      int64_t recv_window_offset =
+          (uint8_t*)recv_buffer.opaque() - (uint8_t*)recv_range.opaque();
+      // Put data with signal to peer's receive buffer
+      XLA_NCCL_RETURN_IF_ERROR(ncclPutSignal(
+          send_buffer.opaque(), ToNcclCount(dtype, count), nccl_dtype,
+          target_ranks[0].value(),
+          *(ncclWindow_t*)recv_buffer_handle->second->GetHandle(),
+          recv_window_offset,
+          /*sigIdx=*/0, /*ctx=*/0, /*flags=*/0, comm_, AsCudaStream(stream)));
+      TF_RETURN_IF_ERROR(GroupEnd());
+      return absl::OkStatus();
+    }
+  }
+#endif  // NCCL_VERSION_CODE >= 22900
 
   if (source_rank) {
     XLA_NCCL_RETURN_IF_ERROR(
