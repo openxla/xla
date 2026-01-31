@@ -18,8 +18,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "nvidia/include/NVGPUToLLVM/NVGPUToLLVMPass.h"
-#include "nvidia/include/TritonNVIDIAGPUToLLVM/Passes.h"
 #include "absl/base/call_once.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -69,6 +67,8 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/cuda_root_path.h"
 #include "tsl/platform/path.h"
+#include "nvidia/include/NVGPUToLLVM/NVGPUToLLVMPass.h"
+#include "nvidia/include/TritonNVIDIAGPUToLLVM/Passes.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonNvidiaGPU/Transforms/Passes.h"
@@ -244,7 +244,7 @@ absl::StatusOr<CompilationResult> Compile(absl::string_view module,
   TF_ASSIGN_OR_RETURN(auto ptx, LLVMToPTX(*module_op, arch_name));
 
   return CompilationResult{
-      ptx,
+      AsmText{ptx},
       shared_mem_bytes,
   };
 }
