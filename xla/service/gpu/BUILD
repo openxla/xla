@@ -1795,6 +1795,7 @@ cc_library(
         "//xla/service/gpu/transforms:composite_rewriter",
         "//xla/service/gpu/transforms:conv_rewriter",
         "//xla/service/gpu/transforms:convert_triton_gemm_config",
+        "//xla/service/gpu/transforms:conv_kind_assignment",
         "//xla/service/gpu/transforms:cudnn_custom_call_converter",
         "//xla/service/gpu/transforms:custom_kernel_fusion_rewriter",
         "//xla/service/gpu/transforms:dot_algorithm_rewriter",
@@ -2243,6 +2244,7 @@ cc_library(
         "//xla/service/gpu/transforms:block_scaling_rewriter",
         "//xla/service/gpu/transforms:conv_padding_legalization",
         "//xla/service/gpu/transforms:conv_rewriter",
+        "//xla/service/gpu/transforms:conv_kind_assignment",
         "//xla/service/gpu/transforms:cublas_pad_for_gemms",
         "//xla/service/gpu/transforms:cudnn_custom_call_compiler",
         "//xla/service/gpu/transforms:cudnn_fused_conv_rewriter",
@@ -3046,6 +3048,7 @@ xla_test(
     ],
 )
 
+
 cc_library(
     name = "hlo_algorithm_denylist",
     srcs = ["hlo_algorithm_denylist.cc"],
@@ -3179,6 +3182,30 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "conv_utils",
+    srcs = ["conv_utils.cc"],
+    hdrs = ["conv_utils.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:backend_configs_cc",
+    ],
+)
+
+xla_cc_test(
+    name = "conv_utils_test",
+    srcs = ["conv_utils_test.cc"],
+    deps = [
+        ":conv_utils",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:test",
+        "//xla/hlo/testlib:test_helpers",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
     name = "conv_layout_normalization",
     srcs = ["conv_layout_normalization.cc"],
     hdrs = ["conv_layout_normalization.h"],
@@ -3189,6 +3216,8 @@ cc_library(
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_creation_utils",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:ir_emission_utils",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:statusor",
