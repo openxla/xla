@@ -502,6 +502,7 @@ cc_library(
         "//xla/core/collectives:rank_id",
         "//xla/core/collectives:reduction_kind",
         "//xla/core/collectives:symmetric_memory",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:stream",
