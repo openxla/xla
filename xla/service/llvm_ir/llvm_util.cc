@@ -580,17 +580,22 @@ void SetDereferenceableMetadataForLoad(llvm::LoadInst* load,
 llvm::Instruction* AddRangeMetadata(int32_t lower, int32_t upper,
                                     llvm::Instruction* inst,
                                     llvm::Module* module) {
-  if (llvm::Triple(module->getTargetTriple()).isSPIR()) {
-    return inst;
-  }
   llvm::LLVMContext& context = inst->getParent()->getContext();
-  llvm::IntegerType* i32 = llvm::Type::getInt32Ty(context);
+  llvm::IntegerType* int_type = llvm::Type::getInt32Ty(context);
+  if (llvm::Triple(module->getTargetTriple()).isSPIROrSPIRV()) {
+    // SPIRV builtins might return int of varying widths
+    int_type = llvm::dyn_cast<llvm::IntegerType>(inst->getType());
+    if (!int_type) {
+      return inst;
+    }
+  }
   inst->setMetadata(
       llvm::LLVMContext::MD_range,
-      llvm::MDNode::get(
-          context,
-          {llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(i32, lower)),
-           llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(i32, upper))}));
+      llvm::MDNode::get(context,
+                        {llvm::ConstantAsMetadata::get(
+                             llvm::ConstantInt::get(int_type, lower)),
+                         llvm::ConstantAsMetadata::get(
+                             llvm::ConstantInt::get(int_type, upper))}));
   return inst;
 }
 
