@@ -850,6 +850,13 @@ message ConvolutionDimensionNumbers {
   // Next = 13
 }
 
+enum ConvKind {
+  UNSET = 0;
+  FPROP = 1;
+  WGRAD = 2;
+  DGRAD = 3;
+}
+
 enum PaddingType {
   PADDING_INVALID = 0;
   PADDING_VALID = 1;  // Only valid portion of the base are covered.
