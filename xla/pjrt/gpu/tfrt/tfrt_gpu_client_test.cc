@@ -483,7 +483,7 @@ TEST_F(TfrtGpuClientTest, AcquireDonation) {
   TfrtGpuClient* tfrt_client =
       tensorflow::down_cast<TfrtGpuClient*>(client_.get());
   TfrtGpuDevice* device =
-      tensorflow::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
+      absl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,

@@ -94,7 +94,7 @@ TEST_F(TfrtGpuBufferTest, CreateBuffer) {
 TEST_F(TfrtGpuBufferTest, AcquireExternalReference) {
   Shape on_device_shape = ShapeUtil::MakeShapeWithType<int32_t>({4, 4});
   TfrtGpuDevice* device =
-      tensorflow::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
+      absl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
