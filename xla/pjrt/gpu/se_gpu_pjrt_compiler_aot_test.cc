@@ -120,7 +120,7 @@ TEST(StreamExecutorGpuCompilerTest, SuccessAotCompileXlaAndLoad) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(GpuClientOptions()));
   auto se_client = absl::WrapUnique(
-      tensorflow::down_cast<StreamExecutorGpuClient*>(client.release()));
+      absl::down_cast<StreamExecutorGpuClient*>(client.release()));
   Compiler::GpuTargetConfig gpu_target_config{
       se_client->client()->backend().default_stream_executor()};
   StreamExecutorGpuCompiler compiler(se_client->client()->platform()->id());
