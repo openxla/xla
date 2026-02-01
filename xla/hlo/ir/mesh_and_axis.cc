@@ -243,12 +243,12 @@ AxisRefProto AxisRef::ToProto() const {
 }
 
 AxisRef AxisRef::FromProto(const AxisRefProto& proto) {
-  AxisRef axis_ref(proto.mesh_axis_index());
   if (proto.has_sub_axis_info()) {
-    axis_ref.sub_axis_info_ = {proto.sub_axis_info().pre_size(),
-                               proto.sub_axis_info().size()};
+    return AxisRef(proto.mesh_axis_index(),
+                   SubAxis{proto.sub_axis_info().pre_size(),
+                           proto.sub_axis_info().size()});
   }
-  return axis_ref;
+  return AxisRef(proto.mesh_axis_index());
 }
 
 AxisRef::AxisRef(int64_t mesh_axis_index) : mesh_axis_index_(mesh_axis_index) {}

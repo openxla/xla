@@ -301,6 +301,14 @@ TEST(MeshAndAxisTest, ValidateAxisForMesh) {
       { CHECK_OK(AxisRef(1, {1, 3 * 11}).Validate(mesh)); },
       "Sub-axis size must be strictly less than the full axis size.*"
       "Sub-axis size: 33, Axis size: 33");
+
+  AxisRefProto invalid_pre_size_proto;
+  invalid_pre_size_proto.set_mesh_axis_index(0);
+  invalid_pre_size_proto.mutable_sub_axis_info()->set_pre_size(0);
+  invalid_pre_size_proto.mutable_sub_axis_info()->set_size(2);
+  EXPECT_DEATH(
+      { CHECK_OK(AxisRef::FromProto(invalid_pre_size_proto).Validate(mesh)); },
+      "sub-axis pre-size must be >= 1");
 }
 
 TEST(MeshAndAxisTest, AxisRefCanCoexistWithoutOverlap) {
