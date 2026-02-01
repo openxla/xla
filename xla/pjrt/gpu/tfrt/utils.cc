@@ -478,7 +478,7 @@ SendDeviceMemoryFunction ConvertSendCallbacksToSendFunction(
 RecvDeviceMemoryFunction ConvertRecvCallbacksToRecvFunction(
     int replica, const ExecuteOptions& options) {
   // Check if we have callbacks registered for the given replica.
-  if (replica >= options.send_callbacks.size()) {
+  if (replica >= options.recv_callbacks.size()) {
     return [replica](int64_t channel_id, se::Stream*, const Shape&,
                      se::DeviceAddressBase*,
                      const absl::flat_hash_map<std::string, std::string>&) {
