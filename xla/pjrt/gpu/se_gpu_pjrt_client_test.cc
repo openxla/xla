@@ -2926,7 +2926,7 @@ TEST(StreamExecutorGpuClientTest, EventCaching) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(DefaultOptions()));
   auto* async_work_runner =
-      absl::down_cast<PjRtStreamExecutorClient*>(client.get())
+      tensorflow::down_cast<PjRtStreamExecutorClient*>(client.get())
           ->async_work_runner();
   const auto& device = client->addressable_devices()[0];
   LocalDeviceState* local_device_state =
