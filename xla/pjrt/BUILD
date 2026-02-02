@@ -1233,7 +1233,6 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:ToLLVMIRTranslation",
         "@triton//:TritonDialects",
-        "@triton//:TritonNvidiaGPUTransforms",
         "@triton//:TritonTransforms",
         "@triton//third_party/nvidia:NVGPUToLLVM",
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
