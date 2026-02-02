@@ -39,7 +39,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
-#include "third_party/triton/bin/RegisterTritonDialects.h"
+#include "bin/RegisterTritonDialects.h"
 
 namespace {
 
