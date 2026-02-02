@@ -610,10 +610,10 @@ absl::Status WriteBinaryProto(Env* env, const std::string& fname,
   return WriteStringToFile(env, fname, serialized);
 }
 
-absl::Status ReadBinaryProto(Env* env, const std::string& fname,
+absl::Status ReadBinaryProto(Env* env, absl::string_view fname,
                              protobuf::MessageLite* proto) {
   std::unique_ptr<RandomAccessFile> file;
-  TF_RETURN_IF_ERROR(env->NewRandomAccessFile(fname, &file));
+  TF_RETURN_IF_ERROR(env->NewRandomAccessFile(std::string(fname), &file));
   std::unique_ptr<FileStream> stream(new FileStream(file.get()));
   protobuf::io::CodedInputStream coded_stream(stream.get());
 

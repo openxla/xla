@@ -669,7 +669,7 @@ absl::Status WriteBinaryProto(Env* env, const std::string& fname,
 
 /// Reads contents of named file and parse as binary encoded proto data
 /// and store into `*proto`.
-absl::Status ReadBinaryProto(Env* env, const std::string& fname,
+absl::Status ReadBinaryProto(Env* env, absl::string_view fname,
                              protobuf::MessageLite* proto);
 
 /// Write the text representation of "proto" to the named file.
