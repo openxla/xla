@@ -30,6 +30,7 @@ limitations under the License.
 #include <thread>
 #include <vector>
 
+#include "absl/strings/string_view.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/ram_file_system.h"
 #include "xla/tsl/platform/windows/wide_char.h"
@@ -99,9 +100,9 @@ class WindowsEnv : public Env {
     LOG(FATAL) << "Env::Default() must not be destroyed";
   }
 
-  bool MatchPath(const string& path, const string& pattern) override {
-    std::wstring ws_path(Utf8ToWideChar(path));
-    std::wstring ws_pattern(Utf8ToWideChar(pattern));
+  bool MatchPath(absl::string_view path, absl::string_view pattern) override {
+    std::wstring ws_path(Utf8ToWideChar(std::string(path)));
+    std::wstring ws_pattern(Utf8ToWideChar(std::string(pattern)));
     return PathMatchSpecW(ws_path.c_str(), ws_pattern.c_str()) == TRUE;
   }
 
