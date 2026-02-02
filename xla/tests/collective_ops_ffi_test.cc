@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
@@ -40,6 +41,7 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/literal.h"
 #include "xla/service/gpu/tests/collective_ops_e2e_test_base.h"
+#include "xla/service/rendezvous.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
@@ -130,6 +132,33 @@ static absl::Status PrepareDeviceAllReduce(
   return absl::OkStatus();
 }
 
+// This is a prepare handler for device-initiated collective operation which
+// uses collective multimem to access peer devics.
+static absl::Status PrepareMulticastAllReduce(
+    ffi::BufferR0<U32> src, ffi::Result<ffi::BufferR0<U32>> dst,
+    const CollectiveParams* collective_params,
+    CollectiveMemoryRequests* memory_requests) {
+  TF_RET_CHECK(collective_params && memory_requests);
+
+  // Request a clique that covers all devices (this test runs on 2 gpus).
+  TF_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetGpuCliqueKey(
+          *collective_params, {AllDevices()},
+          CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
+          AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+
+  // Request src buffer to be mapped to multimem on the given clique.
+  //
+  // IMPORTANT: We don't request the clique itself, because multimem addresses
+  // accessible directly to kernels without a need for support from the
+  // underlying collective library.
+  TF_RETURN_IF_ERROR(memory_requests->RequestMulticastAddress(
+      clique_key, src.device_memory()));
+
+  return absl::OkStatus();
+}
+
 // FFI handler that uses XLA:GPU collectives API to perform an all reduce. This
 // is just a test that demonstrates how to use XLA:GPU collectives API in an FFI
 // handler, builtin all-reduce is a much better option.
@@ -189,13 +218,64 @@ static absl::Status DeviceAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
   TF_ASSIGN_OR_RETURN(
       auto kernel,
       se::gpu::GpuKernelRegistry::GetGlobalRegistry()
-          .LoadKernel<CollectiveInPlaceAllReduce>(collective_params->executor));
+          .LoadKernel<SymmetricAllReduce>(collective_params->executor));
 
   se::BlockDim block_dims(1);
   se::ThreadDim thread_dims(8);
 
   TF_RETURN_IF_ERROR(kernel.Launch(thread_dims, block_dims, stream, dev_comm,
                                    sym_src, sym_dst, src_offset, dst_offset,
+                                   src.element_count()));
+
+  // Wait for kernel to finish before destructor will unload it.
+  return stream->BlockHostUntilDone();
+}
+
+// FFI handler that launches device kernel that does all-reduce using multicast
+// memory access.
+static absl::Status MulticastAllReduce(
+    se::Stream* stream, ffi::BufferR0<U32> src,
+    ffi::Result<ffi::BufferR0<U32>> dst,
+    const CollectiveParams* collective_params,
+    const CollectiveMemory* collective_memory) {
+  TF_RET_CHECK(collective_params && collective_memory);
+
+  TF_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetGpuCliqueKey(
+          *collective_params, {AllDevices()},
+          CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID,
+          AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+
+  auto rank = clique_key.rank(collective_params->global_device_id);
+  auto [src_mmem, src_offset] = collective_memory->FindMultimemAddress(
+      clique_key, *rank, src.device_memory());
+
+  TF_RET_CHECK(src_mmem != nullptr);
+
+  // Load custom kernel that does device-initiated collectives.
+  TF_ASSIGN_OR_RETURN(
+      auto kernel,
+      se::gpu::GpuKernelRegistry::GetGlobalRegistry()
+          .LoadKernel<MultimemAllReduce>(collective_params->executor));
+
+  // Create device addresses from multimem pointer.
+  auto src_addr =
+      se::DeviceAddress<uint32_t>::MakeFromByteSize(src_mmem, src.size_bytes());
+
+  // Because we laucnh a trivial kernel we use a device-side rendezvous to make
+  // sure that both devices will execute the kernel together after inputs become
+  // ready on both devices. Any real kernel must use device-side barriers.
+  static constexpr int32_t kKey = 0;
+  const int32_t* key = &kKey;
+  TF_RETURN_IF_ERROR(Rendezvous<const int32_t*>(
+      "MulticastAllReduce", key, 2, absl::Seconds(1), absl::Seconds(5)));
+
+  se::BlockDim block_dims(1);
+  se::ThreadDim thread_dims(8);
+
+  TF_RETURN_IF_ERROR(kernel.Launch(thread_dims, block_dims, stream, src_addr,
+                                   dst->device_memory(), src_offset,
                                    src.element_count()));
 
   // Wait for kernel to finish before destructor will unload it.
@@ -232,6 +312,21 @@ XLA_FFI_DEFINE_HANDLER(kDeviceAllReduce, DeviceAllReduce,
                            .Ctx<ffi::CollectiveCliques>()
                            .Ctx<ffi::CollectiveMemory>());
 
+XLA_FFI_DEFINE_HANDLER(kPrepareMulticastAllReduce, PrepareMulticastAllReduce,
+                       ffi::Ffi::BindPrepare()
+                           .Arg<ffi::BufferR0<U32>>()  // src
+                           .Ret<ffi::BufferR0<U32>>()  // dst
+                           .Ctx<ffi::CollectiveParams>()
+                           .Ctx<ffi::CollectiveMemoryRequests>());
+
+XLA_FFI_DEFINE_HANDLER(kMulticastAllReduce, MulticastAllReduce,
+                       ffi::Ffi::Bind()
+                           .Ctx<ffi::Stream>()
+                           .Arg<ffi::BufferR0<U32>>()  // src
+                           .Ret<ffi::BufferR0<U32>>()  // dst
+                           .Ctx<ffi::CollectiveParams>()
+                           .Ctx<ffi::CollectiveMemory>());
+
 // Register handler bundle for the custom all-reduce operation.
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$all_reduce", "gpu",
                          XLA_FFI_Handler_Bundle{
@@ -250,6 +345,17 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$device_all_reduce",
                              /*prepare=*/kPrepareDeviceAllReduce,
                              /*initialize=*/nullptr,
                              /*execute=*/kDeviceAllReduce,
+                         });
+
+// Register handler bundle for the custom all-reduce operation with
+// device-initiated collective kernels that use multimem addresses.
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$multimem_all_reduce",
+                         "gpu",
+                         XLA_FFI_Handler_Bundle{
+                             /*instantiate=*/nullptr,
+                             /*prepare=*/kPrepareMulticastAllReduce,
+                             /*initialize=*/nullptr,
+                             /*execute=*/kMulticastAllReduce,
                          });
 
 static absl::Status PrepareMultimemKernel(
@@ -397,6 +503,46 @@ TEST_F(CollectiveOpsTestFFI, DeviceAllReduce) {
 
   // sum [0, num_devices)
   const uint32_t expected = kNumReplicas * (kNumReplicas - 1) / 2;
+  for (int i = 0; i < kNumReplicas; ++i) {
+    LiteralTestUtil::ExpectR0Equal<uint32_t>(expected, results[i]);
+  }
+}
+
+TEST_F(CollectiveOpsTestFFI, MulticastAllReduce) {
+  if (hlo_runner_->device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << hlo_runner_->device_count() << " available)";
+  }
+
+  if (!IsHopperAndHigher()) {
+    GTEST_SKIP() << "Test requires Hopper+";
+  }
+
+  constexpr absl::string_view hlo_string = R"(
+      HloModule m, replica_count=2
+
+      ENTRY test_computation {
+        c0 = u32[] constant(1)
+        in = u32[]{:S(1)} copy(c0)
+        ROOT all-reduce = u32[] custom-call(in),
+          custom_call_target="__xla_test$$multimem_all_reduce",
+          api_version=API_VERSION_TYPED_FFI
+      }
+    )";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(hlo_string, kNumReplicas));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      ExecutionResult execution_result,
+      ExecuteReplicated(std::move(module),
+                        /*arguments=*/std::vector<Literal*>(),
+                        /*run_hlo_passes=*/false));
+
+  absl::Span<const Literal> results = execution_result.results;
+  ASSERT_EQ(results.size(), kNumReplicas);
+
+  const uint32_t expected = 2;
   for (int i = 0; i < kNumReplicas; ++i) {
     LiteralTestUtil::ExpectR0Equal<uint32_t>(expected, results[i]);
   }

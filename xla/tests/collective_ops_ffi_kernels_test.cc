@@ -170,10 +170,10 @@ TEST(CollectiveOpsFfiKernelsTest, CollectiveKernelLaunch) {
   // Load collective kernels on both executors.
   ASSERT_OK_AND_ASSIGN(auto kernel0,
                        se::gpu::GpuKernelRegistry::GetGlobalRegistry()
-                           .LoadKernel<CollectiveInPlaceAllReduce>(executor0));
+                           .LoadKernel<SymmetricAllReduce>(executor0));
   ASSERT_OK_AND_ASSIGN(auto kernel1,
                        se::gpu::GpuKernelRegistry::GetGlobalRegistry()
-                           .LoadKernel<CollectiveInPlaceAllReduce>(executor1));
+                           .LoadKernel<SymmetricAllReduce>(executor1));
 
   se::BlockDim block_dims(1);
   se::ThreadDim thread_dims(8);

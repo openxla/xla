@@ -20,16 +20,19 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/gpu/multicast_memory.h"
 
 namespace xla::gpu {
 
@@ -37,11 +40,21 @@ namespace xla::gpu {
 // requests collected from all thunks at prepare stage.
 class CollectiveMemory {
  public:
+  // Collective memory maps whole allocation at the given index to one of the
+  // supported collective memory types.
   using Key = std::pair<GpuCliqueKey, BufferAllocation::Index>;
 
-  explicit CollectiveMemory(
+  // A multicast memory and a mapping from a participating rank to the mapped
+  // virtual memory pointer.
+  struct MappedMulticastMemory {
+    std::shared_ptr<se::gpu::MulticastMemory> multicast_memory;
+    absl::btree_map<RankId, void*> mapped_ptrs_;
+  };
+
+  CollectiveMemory(
       const BufferAllocations& buffers,
-      absl::flat_hash_map<Key, std::unique_ptr<SymmetricMemory>> sym_memories);
+      absl::flat_hash_map<Key, std::unique_ptr<SymmetricMemory>> sym_memories,
+      absl::flat_hash_map<Key, MappedMulticastMemory> mcast_memories);
 
   // Returns a symmetric memory and offset in that symmetric memory that
   // corresponds to the given buffer allocation index.
@@ -53,9 +66,22 @@ class CollectiveMemory {
   std::pair<SymmetricMemory*, size_t> FindSymmetricMemory(
       const GpuCliqueKey& clique, se::DeviceAddressBase addr) const;
 
+  // Returns a multimem address and offset from that multimem address that
+  // corresponds to the given buffer allocation index.
+  std::pair<void*, size_t> FindMultimemAddress(
+      const GpuCliqueKey& clique, RankId rank,
+      BufferAllocation::Index allocation) const;
+
+  // Returns a multimem address and offset from that multimem address that
+  // corresponds to the given device address.
+  std::pair<void*, size_t> FindMultimemAddress(
+      const GpuCliqueKey& clique, RankId rank,
+      se::DeviceAddressBase addr) const;
+
  public:
   const BufferAllocations& buffers_;
   absl::flat_hash_map<Key, std::unique_ptr<SymmetricMemory>> sym_memories_;
+  absl::flat_hash_map<Key, MappedMulticastMemory> mcast_memories_;
 };
 
 // Acquires collective memory using the given collective parameters for all
