@@ -1630,6 +1630,19 @@ absl::Status BufferAssigner::AssignSingleHloBuffer(
         buffers_to_assign_sequentially,
     std::vector<BufferAllocation::Index>* allocation_indices,
     BufferAssignment* assignment) {
+  if (opts_.must_not_live_out &&
+      assignment->alias_analysis().BufferLivesOut(*hlo_buffer)) {
+    for (const HloValue* value : hlo_buffer->values()) {
+      if ((*opts_.must_not_live_out)(assignment->alias_analysis(),
+                                     value->instruction(), value->index())) {
+        return absl::FailedPreconditionError(
+            absl::StrCat("Buffer lives out but must_not_live_out returned true "
+                         "for ",
+                         value->defining_position().ToString(),
+                         ", buffer: ", hlo_buffer->ToString()));
+      }
+    }
+  }
   const int64_t buffer_size = assignment->HloBufferSize(*hlo_buffer);
   for (const HloValue* value : hlo_buffer->values()) {
     if (value->instruction()->opcode() == HloOpcode::kConstant) {

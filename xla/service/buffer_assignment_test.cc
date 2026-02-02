@@ -4345,5 +4345,57 @@ TEST(ComputeTotalAllocationBytesTest, LargeAllocations) {
   EXPECT_EQ(ComputeTotalAllocationBytes(proto, /*memory_color=*/0), 1LL << 34);
 }
 
+TEST_F(BufferAssignmentTest, LiveOutMustNotLiveOutError) {
+  absl::string_view hlo_string = R"hlo(
+HloModule module
+
+sum {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT add = f32[] add(a, b)
+}
+
+while_body {
+  param = (f32[4]) parameter(0)
+  gte = f32[4] get-tuple-element(param), index=0
+  ar = f32[4] all-reduce(gte), to_apply=sum
+  ROOT t = (f32[4]) tuple(ar)
+}
+
+while_cond {
+  param = (f32[4]) parameter(0)
+  ROOT constant = pred[] constant(true)
+}
+
+ENTRY entry {
+  p = f32[4] parameter(0)
+  t = (f32[4]) tuple(p)
+  w = (f32[4]) while(t), condition=while_cond, body=while_body
+  ROOT gte = f32[4] get-tuple-element(w), index=0
+}
+)hlo";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  BufferAssigner::Options opts;
+  opts.must_not_live_out = [](const HloAliasAnalysis&,
+                              const HloInstruction* instruction,
+                              const ShapeIndex&) {
+    return instruction->opcode() == HloOpcode::kAllReduce;
+  };
+
+  auto status = BufferAssigner::Run(
+      module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
+      &BufferSizeBytes, &alias_info_, [](LogicalBuffer::Color) { return 1; },
+      std::move(opts));
+
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.status().code(), absl::StatusCode::kFailedPrecondition);
+  EXPECT_THAT(
+      status.status().message(),
+      HasSubstr("Buffer lives out but must_not_live_out returned true"));
+}
+
 }  // namespace
 }  // namespace xla
