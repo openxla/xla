@@ -921,6 +921,10 @@ message DebugOptions {
   // multi-thread mode.
   optional bool xla_gpu_require_exclusive_lock = 347;
 
+  // Maximum number of trace events for ROCm GPU profiling. Limits memory
+  // usage during profiling on AMD GPUs.
+  optional int64 xla_gpu_rocm_max_trace_events = 448;
+
   optional ShapeChecks xla_gpu_shape_checks = 170;
 
   // If true, shards the autotuning work between participating compiler
@@ -1364,7 +1368,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 448
+  // Next id: 449
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

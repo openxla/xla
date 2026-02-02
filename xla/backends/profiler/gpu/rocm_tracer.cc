@@ -131,13 +131,14 @@ bool RocmTracer::IsAvailable() const {
 
 void RocmTracer::Enable(const RocmTracerOptions& options,
                         RocmTraceCollector* collector) {
-  absl::MutexLock lock(collector_mutex_);
+  absl::MutexLock lock(&collector_mutex_);
   if (collector_ != nullptr) {
     LOG(WARNING) << "ROCM tracer is already running!";
     return;
   }
   options_ = options;
   collector_ = collector;
+  AnnotationMap(options_->max_annotation_strings);
   api_tracing_enabled_ = true;
   activity_tracing_enabled_ = true;
   rocprofiler_start_context(context_);
