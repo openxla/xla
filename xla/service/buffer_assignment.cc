@@ -23,6 +23,7 @@ limitations under the License.
 #include <deque>
 #include <iterator>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <ostream>
 #include <set>
@@ -1330,6 +1331,49 @@ void BufferAssignment::ToProto(BufferAssignmentProto* proto) const {
     proto->add_buffer_allocations()->Swap(&proto_allocation);
     for (const HeapSimulatorTrace& heap_trace : allocation.HeapTraces()) {
       *proto->add_heap_simulator_traces() = heap_trace;
+    }
+  }
+}
+
+void BufferAssignment::MemoryUsageReportToProto(MemoryUsageReportProto* proto,
+                                                float percentile,
+                                                int64_t more_than_k) const {
+  int64_t total_size = std::accumulate(
+      allocations_.begin(), allocations_.end(), int64_t{0},
+      [](int64_t sum, const auto& a) { return sum + a.size(); });
+  proto->set_total_bytes(total_size);
+
+  auto allocations = allocations_;
+  std::sort(allocations.begin(), allocations.end(),
+            [](const BufferAllocation& a, const BufferAllocation& b) {
+              if (a.size() > b.size()) {
+                return true;
+              }
+              if (a.size() < b.size()) {
+                return false;
+              }
+              return a.index() < b.index();
+            });
+
+  int64_t cumulative_size = 0;
+  int64_t index = 0;
+  for (const auto& allocation : allocations) {
+    cumulative_size += allocation.size();
+    auto* entry = proto->add_allocation_entries();
+    entry->set_index(allocation.index());
+    entry->set_size(allocation.size());
+    entry->set_cumulative_size(cumulative_size);
+    if (total_size > 0) {
+      entry->set_cumulative_percentage(static_cast<double>(cumulative_size) /
+                                       total_size);
+    } else {
+      entry->set_cumulative_percentage(0.0);
+    }
+
+    if (++index > more_than_k &&
+        static_cast<double>(total_size - cumulative_size) <
+            total_size * percentile) {
+      break;
     }
   }
 }

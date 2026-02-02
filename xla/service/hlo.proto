@@ -756,6 +756,21 @@ message HloModuleGroupProto {
   repeated HloModuleProto hlo_modules = 2;
 }
 
+// Serialization of memory usage report.
+message MemoryUsageReportProto {
+  // Total bytes used across all allocations.
+  int64 total_bytes = 1;
+
+  // Individual allocation entries sorted by size (largest first).
+  message AllocationEntry {
+    int64 index = 1;
+    int64 size = 2;
+    int64 cumulative_size = 3;
+    double cumulative_percentage = 4;
+  }
+  repeated AllocationEntry allocation_entries = 2;
+}
+
 // Serialization of BufferAssignment.
 message BufferAssignmentProto {
   // Alias represents a source LogicalBuffer, and the buffer location that

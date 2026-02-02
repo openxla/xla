@@ -577,6 +577,11 @@ class BufferAssignment {
       const BufferAssignmentProto& proto, const HloModule* module,
       BufferValue::SizeFunction buffer_size, const AliasInfo* alias_info);
 
+  // Generates a proto representation of the memory usage report.
+  void MemoryUsageReportToProto(MemoryUsageReportProto* proto,
+                                float percentile = 0.05,
+                                int64_t more_than_k = 50) const;
+
   // Returns string representation of buffer assignment statistics. Also
   // calculates and returns the total fragmentation.
   std::string StatsString(const AliasInfo* alias_info) const;
