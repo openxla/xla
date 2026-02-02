@@ -277,12 +277,11 @@ def _tag_filters_for_compute_capability(
 nvidia_gpu_filters = (
     "-no_oss",
     "requires-gpu-nvidia",
-    "gpu",
     "-rocm-only",
     "-oneapi-only",
 )
 
-nvidia_single_gpu_filters = nvidia_gpu_filters + ("-multi_gpu",)
+nvidia_single_gpu_filters = nvidia_gpu_filters + ("-multi_gpu", "gpu")
 
 nvidia_only_multi_gpu_filters = nvidia_gpu_filters + ("multi_gpu",)
 
