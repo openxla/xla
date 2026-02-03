@@ -1296,6 +1296,7 @@ xla_cc_test(
         "//xla/stream_executor/gpu:gpu_init_impl",
         "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
     ],

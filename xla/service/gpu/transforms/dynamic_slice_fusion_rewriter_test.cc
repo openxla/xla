@@ -17,8 +17,10 @@ limitations under the License.
 
 #include <cstddef>
 #include <optional>
+#include <string>
 
 #include <gtest/gtest.h>
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/ffi/ffi.h"
