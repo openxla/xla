@@ -1136,6 +1136,7 @@ cc_library(
     name = "platform_util",
     srcs = ["platform_util.cc"],
     hdrs = ["platform_util.h"],
+    copts = tsl_copts(),
     deps = [
         ":compiler",
         "//xla:debug_options_flags",
