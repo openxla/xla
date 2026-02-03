@@ -175,7 +175,9 @@ class StatelessAutotunerTest : public HloTestBase {
  public:
   StatelessAutotunerTest()
       : HloTestBase(/*verifier_layout_sensitive=*/true,
-                    /*allow_mixed_precision_in_hlo_verifier=*/false) {}
+                    /*allow_mixed_precision_in_hlo_verifier=*/false) {
+    RegisterSymbolicExprStorage(&mlir_context_);
+  }
 
   se::SemanticVersion GetToolkitVersion() const {
     return backend()
