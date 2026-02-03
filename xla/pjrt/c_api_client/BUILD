@@ -59,6 +59,7 @@ cc_library(
         "//xla/pjrt:pjrt_layout",
         "//xla/pjrt:scoped_async_tracking_event",
         "//xla/pjrt:string_utils",
+        "//xla/pjrt/c:pjrt_c_api_callback_extension_hdrs",
         "//xla/pjrt/c:pjrt_c_api_ffi_extension_hdrs",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
