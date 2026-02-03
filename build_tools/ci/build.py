@@ -23,6 +23,7 @@ To update the goldens associated with this file, run:
   ```PYTHONDONTWRITEBYTECODE=1 python3 build.py \
       --dump_commands > golden_commands.txt```
 """
+
 import argparse
 import dataclasses
 import enum
@@ -258,12 +259,29 @@ class Build:
     return cmds
 
 
+_CUDA_COMPUTE_CAPABILITIES = (60, 70, 80, 90, 100)
+
+
+def _tag_filters_only_for_compute_capability(
+    compute_capability: int,
+) -> Tuple[str, ...]:
+  """Returns the tag exclude filters for the given compute capability."""
+  tag_filters = ()
+  for cc in _CUDA_COMPUTE_CAPABILITIES:
+    if compute_capability != cc:
+      tag_filters += (f"-requires-gpu-sm{cc}",)
+      tag_filters += (f"-requires-gpu-sm{cc}-only",)
+  tag_filters += ("-requires-gpu-amd",)
+  tag_filters += ("-requires-gpu-intel",)
+  return tag_filters
+
+
 def _tag_filters_for_compute_capability(
     compute_capability: int,
 ) -> Tuple[str, ...]:
   """Returns the tag filters for the given compute capability."""
   tag_filters = (f"requires-gpu-sm{compute_capability}-only",)
-  for cc in (60, 70, 80, 90, 100):
+  for cc in _CUDA_COMPUTE_CAPABILITIES:
     if compute_capability >= cc:
       tag_filters += (f"requires-gpu-sm{cc}",)
     else:
@@ -274,16 +292,14 @@ def _tag_filters_for_compute_capability(
   return tag_filters
 
 
-nvidia_gpu_filters = (
+nvidia_single_gpu_filters = (
     "-no_oss",
     "requires-gpu-nvidia",
     "-rocm-only",
     "-oneapi-only",
+    "-multi_gpu",
+    "gpu",
 )
-
-nvidia_single_gpu_filters = nvidia_gpu_filters + ("-multi_gpu", "gpu")
-
-nvidia_only_multi_gpu_filters = nvidia_gpu_filters + ("multi_gpu",)
 
 
 def nvidia_gpu_build_with_compute_capability(
@@ -293,22 +309,44 @@ def nvidia_gpu_build_with_compute_capability(
     compute_capability: int,
     multi_gpu: bool = False,
 ) -> Build:
-  extra_gpu_tags = _tag_filters_for_compute_capability(compute_capability)
-  filter_tags = (
-      nvidia_only_multi_gpu_filters if multi_gpu else nvidia_single_gpu_filters
-  )
+  """Returns a build for a Nvidia GPU build with the given compute capability."""
+  if multi_gpu:
+    options = {
+        "//xla/tsl:ci_build": True,
+        **_DEFAULT_BAZEL_OPTIONS,
+    }
+    nvidia_only_multi_gpu_filters = (
+        "-no_oss",
+        "-rocm-only",
+        "-oneapi-only",
+        "multi_gpu",
+        "-xla_nvgpu_any",
+    )
+    build_tag_filters = nvidia_only_multi_gpu_filters
+    test_tag_filters = (
+        nvidia_only_multi_gpu_filters
+        + _tag_filters_only_for_compute_capability(compute_capability)
+    )
+  else:
+    options = {
+        "run_under": "//build_tools/ci:parallel_gpu_execute",
+        "//xla/tsl:ci_build": True,
+        **_DEFAULT_BAZEL_OPTIONS,
+    }
+    build_tag_filters = nvidia_single_gpu_filters
+    test_tag_filters = (
+        nvidia_single_gpu_filters
+        + _tag_filters_for_compute_capability(compute_capability)
+    )
+
   return Build(
       type_=type_,
       repo="openxla/xla",
       target_patterns=_XLA_DEFAULT_TARGET_PATTERNS,
       configs=configs,
-      test_tag_filters=filter_tags + extra_gpu_tags,
-      build_tag_filters=filter_tags,
-      options={
-          "run_under": "//build_tools/ci:parallel_gpu_execute",
-          "//xla/tsl:ci_build": True,
-          **_DEFAULT_BAZEL_OPTIONS,
-      },
+      test_tag_filters=test_tag_filters,
+      build_tag_filters=build_tag_filters,
+      options=options,
       repo_env={"TF_CUDA_COMPUTE_CAPABILITIES": f"{compute_capability/10}"},
       extra_setup_commands=(["nvidia-smi"],),
   )
