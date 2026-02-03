@@ -349,7 +349,6 @@ xla_test(
     name = "block_scaling_rewriter_execution_test",
     srcs = ["block_scaling_rewriter_execution_test.cc"],
     backends = ["b200"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":block_scaling_rewriter",
         "//xla:error_spec",
@@ -366,7 +365,6 @@ xla_test(
     name = "block_scaling_rewriter_cudnn_test",
     srcs = ["block_scaling_rewriter_cudnn_test.cc"],
     backends = ["b200"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":block_scaling_rewriter",
         "//xla:error_spec",
@@ -2289,7 +2287,6 @@ xla_test(
         "reduction_layout_normalizer_test.cc",
     ],
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":reduction_layout_normalizer",
         "//xla:error_spec",
@@ -2707,9 +2704,6 @@ xla_test(
     backends = [
         "gpu",
     ],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":estimate_cub_scratch_size",
         ":sort_rewriter",
@@ -2758,10 +2752,7 @@ xla_test(
     name = "estimate_cub_scratch_size_test",
     srcs = ["estimate_cub_scratch_size_test.cc"],
     backends = ["h100"],
-    tags = [
-        "cuda-only",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["cuda-only"],
     deps = [
         ":estimate_cub_scratch_size",
         "//xla:xla_data_proto_cc",
@@ -3081,7 +3072,6 @@ xla_test(
         "b200",
         "amdgpu_any",
     ],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":triton_fusion_numerics_verifier",
         "//xla:shape_util",

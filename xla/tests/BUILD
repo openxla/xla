@@ -551,9 +551,6 @@ xla_test(
         "conv_depthwise_test.cc",
     ],
     shard_count = 30,
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":conv_depthwise_common",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -622,9 +619,6 @@ xla_test(
 xla_test(
     name = "check_execution_arity_test",
     srcs = ["check_execution_arity_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -693,9 +687,6 @@ xla_test(
 xla_test(
     name = "axpy_simple_test",
     srcs = ["axpy_simple_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -712,9 +703,6 @@ xla_test(
 xla_test(
     name = "map_test",
     srcs = ["map_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -746,10 +734,7 @@ xla_test(
     timeout = "long",
     srcs = ["params_test.cc"],
     shard_count = 15,
-    tags = [
-        "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -774,9 +759,6 @@ xla_test(
 xla_test(
     name = "pred_test",
     srcs = ["pred_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -792,9 +774,6 @@ xla_test(
 xla_test(
     name = "select_test",
     srcs = ["select_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -813,7 +792,6 @@ xla_test(
     name = "conditional_test",
     srcs = ["conditional_test.cc"],
     shard_count = 2,
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -842,9 +820,6 @@ xla_test(
 xla_test(
     name = "unary_op_test",
     srcs = ["unary_op_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -870,9 +845,6 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -892,9 +864,6 @@ xla_test(
     name = "scalar_computations_test",
     srcs = ["scalar_computations_test.cc"],
     shard_count = 32,
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -967,9 +936,6 @@ xla_test(
     name = "array_elementwise_ops_test",
     srcs = ["array_elementwise_ops_test.cc"],
     shard_count = 25,
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1014,9 +980,6 @@ cc_library(
 xla_test(
     name = "reduce_precision_test",
     srcs = ["reduce_precision_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1037,9 +1000,6 @@ xla_test(
 xla_test(
     name = "fft_test",
     srcs = ["fft_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -1059,10 +1019,7 @@ xla_test(
             "--xla_cpu_multi_thread_eigen=false",
         ],
     },
-    tags = [
-        "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["optonly"],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -1083,10 +1040,7 @@ xla_test(
         "b200": ["broken"],
     },
     shard_count = 20,
-    tags = [
-        "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1154,7 +1108,6 @@ xla_test(
         "optonly",
         # TODO(b/151340488): Timed out on 2020-03-12.
         "nozapfhahn",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":client_library_test_runner_mixin",
@@ -1213,7 +1166,6 @@ xla_test(
     tags = [
         "nozapfhahn",
         "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":client_library_test_runner_mixin",
@@ -1254,9 +1206,6 @@ xla_test(
     name = "gather_operation_test",
     srcs = ["gather_operation_test.cc"],
     shard_count = 20,
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -1291,9 +1240,6 @@ xla_test(
         "gpu",
         "interpreter",
     ],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_test_base",
         "//xla/service:platform_util",
@@ -1307,9 +1253,6 @@ xla_test(
 xla_test(
     name = "scatter_test",
     srcs = ["scatter_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -1339,9 +1282,6 @@ xla_test(
         "--xla_gpu_enable_scatter_determinism_expander",
     ],
     backends = ["gpu"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -1379,10 +1319,7 @@ xla_test(
         "b200": ["broken"],
     },
     shard_count = 50,
-    tags = [
-        "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1424,9 +1361,6 @@ xla_test(
 xla_test(
     name = "transpose_test",
     srcs = ["transpose_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1448,9 +1382,6 @@ xla_test(
 xla_test(
     name = "constants_test",
     srcs = ["constants_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1484,7 +1415,6 @@ xla_test(
         "optonly",
         # Timed out on 2020-07-18
         "nozapfhahn",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":client_library_test_runner_mixin",
@@ -1525,10 +1455,7 @@ xla_test(
         "gpu",
     ],
     shard_count = 40,
-    tags = [
-        "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1560,7 +1487,6 @@ xla_test(
     tags = [
         "cuda-only",
         "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":client_library_test_runner_mixin",
@@ -1591,10 +1517,7 @@ xla_test(
     args = ["--xla_gpu_autotune_level=0"],
     backends = ["gpu"],
     shard_count = 40,
-    tags = [
-        "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1628,10 +1551,7 @@ xla_test(
     args = ["--xla_gpu_autotune_level=0"],
     backends = ["gpu"],
     shard_count = 40,
-    tags = [
-        "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1658,7 +1578,6 @@ xla_test(
     backend_args = {"gpu": ["--xla_backend_extra_options=xla_gpu_experimental_conv_disable_layout_heuristic"]},
     backends = ["gpu"],
     shard_count = 25,
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1692,10 +1611,7 @@ xla_test(
     backend_args = {"gpu": ["--xla_backend_extra_options=xla_gpu_experimental_conv_disable_layout_heuristic"]},
     backends = ["gpu"],
     shard_count = 25,
-    tags = [
-        "cuda-only",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["cuda-only"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1724,9 +1640,6 @@ xla_test(
         "cpu": ["nomsan"],
     },
     shard_count = 30,
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1752,9 +1665,6 @@ xla_test(
     timeout = "long",
     srcs = ["convolution_dimension_numbers_test.cc"],
     shard_count = 4,
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1806,7 +1716,6 @@ xla_test(
         "interpreter",
     ],
     shard_count = 40,
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1842,9 +1751,6 @@ xla_test(
     name = "bfloat16_test",
     srcs = ["bfloat16_test.cc"],
     shard_count = 5,
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1863,9 +1769,6 @@ xla_test(
 xla_test(
     name = "float8_test",
     srcs = ["float8_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1885,9 +1788,6 @@ xla_test(
     backends = [
         "cpu",
         "gpu",
-    ],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":client_library_test_runner_mixin",
@@ -1913,7 +1813,6 @@ xla_test(
         "gpu",
         "interpreter",
     ],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -1930,9 +1829,6 @@ xla_test(
     timeout = "long",
     srcs = ["slice_test.cc"],
     shard_count = 50,
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1958,9 +1854,6 @@ xla_test(
 xla_test(
     name = "multidimensional_slice_test",
     srcs = ["multidimensional_slice_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1980,9 +1873,7 @@ xla_test(
     srcs = ["dynamic_ops_test.cc"],
     aot_compile_test = False,
     shard_count = 4,
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ] + if_oss(["not_run:arm"]),
+    tags = if_oss(["not_run:arm"]),
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2049,9 +1940,6 @@ xla_test(
 xla_test(
     name = "vector_ops_reduce_test",
     srcs = ["vector_ops_reduce_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2071,10 +1959,7 @@ xla_test(
     name = "reduce_test",
     srcs = ["reduce_test.cc"],
     shard_count = 31,
-    tags = [
-        "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2110,7 +1995,6 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -2183,7 +2067,6 @@ xla_test(
         "no_mac",  # b/194731834
         "nozapfhahn",
         "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":client_library_test_runner_mixin",
@@ -2208,9 +2091,6 @@ xla_test(
 xla_test(
     name = "copy_test",
     srcs = ["copy_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2243,7 +2123,6 @@ xla_test(
         "cpu",
         "interpreter",
     ],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -2265,9 +2144,6 @@ xla_test(
 xla_test(
     name = "sort_test",
     srcs = ["sort_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -2283,9 +2159,6 @@ xla_test(
 xla_test(
     name = "topk_test",
     srcs = ["topk_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -2301,9 +2174,6 @@ xla_test(
     name = "runtime_topk_test",
     srcs = ["runtime_topk_test.cc"],
     backends = ["cpu"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_test_base",
         ":literal_test_util",
@@ -2319,9 +2189,6 @@ xla_test(
 xla_test(
     name = "token_hlo_test",
     srcs = ["token_hlo_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -2340,9 +2207,6 @@ xla_test(
 xla_test(
     name = "call_test",
     srcs = ["call_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2366,7 +2230,6 @@ xla_test(
     name = "custom_call_test",
     srcs = ["custom_call_test.cc"],
     backends = ["cpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2413,9 +2276,6 @@ xla_test(
 xla_test(
     name = "binop_scaling_test",
     srcs = ["binop_scaling_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2433,9 +2293,6 @@ xla_test(
 xla_test(
     name = "broadcast_simple_test",
     srcs = ["broadcast_simple_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2461,7 +2318,6 @@ xla_test(
 xla_test(
     name = "pad_test",
     srcs = ["pad_test.cc"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2489,9 +2345,6 @@ xla_test(
 xla_test(
     name = "fmax_fmin_test",
     srcs = ["fmax_fmin_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2508,9 +2361,6 @@ xla_test(
 xla_test(
     name = "log_test",
     srcs = ["log_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2527,7 +2377,6 @@ xla_test(
     name = "matrix_ops_simple_test",
     timeout = "long",
     srcs = ["matrix_ops_simple_test.cc"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2592,9 +2441,6 @@ xla_test(
     name = "rng_test",
     srcs = ["rng_test.cc"],
     backends = ["cpu"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_test_base",
         "//xla:literal",
@@ -2614,9 +2460,6 @@ xla_test(
     name = "reshape_test",
     srcs = ["reshape_test.cc"],
     shard_count = 30,
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2667,9 +2510,6 @@ xla_test(
 xla_test(
     name = "reverse_test",
     srcs = ["reverse_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":client_library_test_runner_utils",
@@ -2695,9 +2535,6 @@ xla_test(
     name = "stochastic_convert_test",
     srcs = ["stochastic_convert_test.cc"],
     backends = ["cpu"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -2716,9 +2553,6 @@ xla_test(
 xla_test(
     name = "vector_ops_simple_test",
     srcs = ["vector_ops_simple_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2740,9 +2574,6 @@ xla_test(
 xla_test(
     name = "concat_test",
     srcs = ["concat_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":client_library_test_runner_utils",
@@ -2766,9 +2597,6 @@ xla_test(
 xla_test(
     name = "convert_test",
     srcs = ["convert_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2798,9 +2626,6 @@ xla_test(
     disabled_backends = [
         # All reduce is not supported on the interpreter backend.
         "interpreter",
-    ],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":hlo_pjrt_test_base",
@@ -2902,7 +2727,6 @@ xla_test(
     backends = [
         "gpu",
     ],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":hlo_pjrt_test_base",
         ":xla_internal_test_main",
@@ -3219,9 +3043,6 @@ xla_test(
 xla_test(
     name = "collective_pipeliner_execution_test",
     srcs = ["collective_pipeliner_execution_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_test_base",
         ":xla_internal_test_main",
@@ -3251,7 +3072,6 @@ xla_test(
         ],
     },
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":hlo_pjrt_test_base",
         ":literal_test_util",
@@ -3275,9 +3095,6 @@ xla_test(
 xla_test(
     name = "bitcast_convert_test",
     srcs = ["bitcast_convert_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -3314,9 +3131,6 @@ xla_test(
 xla_test(
     name = "floor_ceil_test",
     srcs = ["floor_ceil_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -3387,7 +3201,6 @@ xla_test(
 xla_test(
     name = "client_test",
     srcs = ["client_test.cc"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -3409,7 +3222,6 @@ xla_test(
 xla_test(
     name = "replay_test",
     srcs = ["replay_test.cc"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -3432,9 +3244,6 @@ xla_test(
 xla_test(
     name = "broadcast_test",
     srcs = ["broadcast_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_test_base",
         ":literal_test_util",
@@ -3512,9 +3321,6 @@ xla_test(
         "gpu",
         "interpreter",
     ],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -3554,7 +3360,6 @@ xla_test(
     name = "multioutput_fusion_test",
     srcs = ["multioutput_fusion_test.cc"],
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -3696,7 +3501,6 @@ xla_test(
 xla_test(
     name = "reshape_motion_test",
     srcs = ["reshape_motion_test.cc"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -3711,7 +3515,6 @@ xla_test(
 xla_test(
     name = "deep_graph_test",
     srcs = ["deep_graph_test.cc"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -3784,9 +3587,6 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -3802,9 +3602,6 @@ xla_test(
     srcs = ["sample_file_test.cc"],
     backends = ["gpu"],
     data = ["isolated_convolution.hlo"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_test_base",
         ":hlo_runner_agnostic_reference_mixin",
@@ -3852,9 +3649,6 @@ xla_test(
         "cpu": ["optonly"],
     },
     shard_count = 50,
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -3896,7 +3690,6 @@ xla_test(
     tags = [
         # Disabled in OSS until nvidia publicly releases a fixed ptxas.
         "no_oss",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -3914,9 +3707,6 @@ xla_test(
 xla_test(
     name = "get_dimension_size_test",
     srcs = ["get_dimension_size_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -3938,9 +3728,6 @@ xla_test(
     backend_tags = {
         "gpu": ["notsan"],  # TODO(b/345034145): Fix tsan error.
     },
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_test_base",
         ":xla_internal_test_main",  # fixdeps: keep
@@ -3959,10 +3746,7 @@ xla_test(
     srcs = ["triangular_solve_test.cc"],
     real_hardware_only = True,
     shard_count = 50,
-    tags = [
-        "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -3990,10 +3774,7 @@ xla_test(
     name = "cholesky_test",
     srcs = ["cholesky_test.cc"],
     shard_count = 20,
-    tags = [
-        "optonly",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -4016,9 +3797,6 @@ xla_test(
 xla_test(
     name = "constant_reduction_function_test",
     srcs = ["constant_reduction_function_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -4042,9 +3820,6 @@ xla_cc_test(
 xla_test(
     name = "numerics_test",
     srcs = ["numerics_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -4068,9 +3843,6 @@ xla_test(
     backend_tags = {
         "gpu": ["notsan"],
     },
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_test_base",
         ":literal_test_util",
@@ -4092,9 +3864,6 @@ xla_test(
 xla_test(
     name = "batch_norm_grad_test",
     srcs = ["batch_norm_grad_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_test_base",
         ":xla_internal_test_main",  # fixdeps: keep
@@ -4109,9 +3878,6 @@ xla_test(
 xla_test(
     name = "batch_norm_training_test",
     srcs = ["batch_norm_training_test.cc"],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":hlo_pjrt_test_base",
         ":xla_internal_test_main",  # fixdeps: keep
@@ -4147,7 +3913,6 @@ bzl_library(
 xla_test(
     name = "atan2_test",
     srcs = ["atan2_test.cc"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -4161,7 +3926,6 @@ xla_test(
 xla_test(
     name = "remainder_test",
     srcs = ["remainder_test.cc"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -4175,7 +3939,6 @@ xla_test(
 xla_test(
     name = "two_plus_two_simple_test",
     srcs = ["two_plus_two_simple_test.cc"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",

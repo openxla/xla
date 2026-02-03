@@ -202,7 +202,6 @@ xla_test(
     tags = [
         # TODO(intel-tf): Remove it when macro substitutions for SYCL are available in xla/stream_executor/sycl/*.
         "no-oneapi",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         "//xla:array",
@@ -1942,7 +1941,6 @@ xla_test(
     backends = ["gpu"],
     data = ["gpu_compiler_test_autotune_db.textproto"],
     shard_count = 2,
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":alias_info",
         ":backend_configs_cc",
@@ -2159,7 +2157,6 @@ xla_test(
     name = "gpu_offloading_test",
     srcs = ["gpu_offloading_test.cc"],
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":backend_configs_cc",
         "//xla:autotune_results_proto_cc",

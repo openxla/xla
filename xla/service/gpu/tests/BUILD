@@ -107,7 +107,6 @@ xla_test(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = [
         "no-oneapi",  # TODO(intel-tf): Enable this test for SYCL when IntelGpuCompiler is implemented.
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = if_gpu_is_configured(
         #keep sorted
@@ -134,7 +133,6 @@ xla_test(
     name = "element_wise_row_vectorization_test",
     srcs = ["element_wise_row_vectorization_test.cc"],
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         "//xla:error_spec",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
@@ -163,7 +161,7 @@ xla_test(
     srcs = ["async_kernel_launch_test.cc"],
     backends = ["gpu"],
     # "requires-net:external" tag allows uploading `xprof` results.
-    tags = if_google(["requires-net:external"]) + ["test_migrated_to_hlo_runner_pjrt"],
+    tags = if_google(["requires-net:external"]),
     deps = [
         "//xla:debug_options_flags",
         "//xla:error_spec",
@@ -185,7 +183,6 @@ xla_test(
     backends = ["gpu"],
     # TSAN reports a false positive for the test due to noninstrumented CUDA library code.
     env = {"TSAN_OPTIONS": "ignore_noninstrumented_modules=1"},
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         "//xla:error_spec",
         "//xla:literal",
@@ -642,7 +639,6 @@ xla_test(
         "manual",
         "no_oss",
         "notap",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         "//xla:debug_options_flags",
@@ -671,7 +667,6 @@ xla_test(
     name = "ragged_dot_test",
     srcs = ["ragged_dot_test.cc"],
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         "//xla:error_spec",
         "//xla:literal_util",
@@ -687,7 +682,6 @@ xla_test(
     name = "regression_dot_test",
     srcs = ["regression_dot_test.cc"],
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         "//xla:error_spec",
         "//xla:literal_util",
@@ -855,7 +849,6 @@ xla_test(
     name = "in_place_op_test",
     srcs = ["in_place_op_test.cc"],
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
@@ -906,7 +899,6 @@ xla_test(
     ] + if_oss([
         "nvgpu_any",
     ]),
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         "//xla:error_spec",
         "//xla:xla_proto_cc",
@@ -924,10 +916,7 @@ xla_test(
     srcs = ["gpu_cub_sort_test.cc"],
     backends = ["gpu"],
     shard_count = 15,
-    tags = [
-        "nodebug",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["nodebug"],
     deps = [
         "//xla:error_spec",
         "//xla:shape_util",
@@ -1021,7 +1010,6 @@ xla_test(
     data = ["test_autotune_cache.textproto"],
     env = {"XLA_FLAGS": "--xla_gpu_load_autotune_results_from=" +
                         "$(execpath test_autotune_cache.textproto)"},
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":simple_optimization_test",
         "//xla/tests:xla_internal_test_main",
@@ -1044,7 +1032,6 @@ xla_test(
     env = {"XLA_FLAGS": "--xla_gpu_load_autotune_results_from=TEST_WORKSPACE/" +
                         package_name() +
                         "/test_autotune_cache.textproto"},
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":simple_optimization_test",
         "//xla/tests:xla_internal_test_main",
@@ -1064,7 +1051,6 @@ xla_test(
                         "TEST_UNDECLARED_OUTPUTS_DIR/autotune_cache.textproto"},
     # Sharding must be disabled to correctly dump the autotune cache for all test.
     shard_count = 1,
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":simple_optimization_test",
         "//xla/tests:xla_internal_test_main",
@@ -1103,7 +1089,6 @@ xla_test(
     name = "nop_custom_call_test",
     srcs = ["nop_custom_call_test.cc"],
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         "//xla:literal",
         "//xla:literal_util",
@@ -1119,10 +1104,7 @@ xla_test(
     name = "ptx_kernel_test",
     srcs = ["ptx_kernel_test.cc"],
     backends = ["gpu"],
-    tags = [
-        "cuda-only",
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
+    tags = ["cuda-only"],
     deps = [
         "//xla:literal",
         "//xla/tests:hlo_pjrt_test_base",

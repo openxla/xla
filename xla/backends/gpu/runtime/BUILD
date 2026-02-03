@@ -2931,7 +2931,6 @@ xla_test(
     name = "while_thunk_test",
     srcs = ["while_thunk_test.cc"],
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":sequential_thunk",
         ":thunk",
@@ -3979,7 +3978,6 @@ xla_test(
     name = "runtime_intrinsics_test",
     srcs = ["runtime_intrinsics_test.cc"],
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":runtime_intrinsics",
         "//xla:literal",
