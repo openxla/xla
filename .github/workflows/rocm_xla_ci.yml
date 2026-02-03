@@ -86,7 +86,7 @@ jobs:
         run: |
           docker exec \
             ${{ env.CONTAINER_NAME }} \
-            bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_multi_gpu --config=xla_mgpu --strategy=TestRunner=local --local_test_jobs=1 --repo_env=TF_ROCM_RBE_DOCKER_IMAGE=${{ env.DOCKER_IMAGE }}"
+            bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_multi_gpu --strategy=TestRunner=local --local_test_jobs=1 --repo_env=TF_ROCM_RBE_DOCKER_IMAGE=${{ env.DOCKER_IMAGE }}"
 
       - name: Cleanup container
         if: always()
