@@ -154,6 +154,7 @@ cc_library(
         ":pjrt_executable",
         ":raw_buffer",
         ":utils",
+        "//xla:executable_run_options",
         "//xla:future",
         "//xla:literal",
         "//xla:shape_util",
