@@ -112,11 +112,12 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBuffer {
   PjRtStreamExecutorRawBuffer(
       PjRtStreamExecutorClient* client, PjRtMemorySpace* memory_space,
       LocalDeviceState* local_device,
-      tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer)
+      tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer, size_t buffer_size)
       : client_(client),
         memory_space_(memory_space),
         local_device_(local_device),
-        device_buffer_(device_buffer) {}
+        device_buffer_(device_buffer),
+        buffer_size_(buffer_size) {}
 
   PjRtMemorySpace* memory_space() const override { return memory_space_; }
 
@@ -135,9 +136,7 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBuffer {
     return device_buffer_->opaque();
   }
 
-  size_t GetOnDeviceSizeInBytes() const override {
-    return device_buffer_->mem().size();
-  }
+  size_t GetOnDeviceSizeInBytes() const override { return buffer_size_; }
 
   ShapedBuffer AsShapedBuffer(const xla::Shape&);
 
@@ -181,6 +180,7 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBuffer {
   PjRtMemorySpace* memory_space_;
   LocalDeviceState* local_device_;
   tsl::AsyncValueRef<RawSEDeviceMemory> device_buffer_;
+  size_t buffer_size_;
 
   void IntraClientCopyToWithDependencies(
       std::vector<tsl::RCReference<tsl::AsyncValue>> dependencies,

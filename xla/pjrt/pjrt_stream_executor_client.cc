@@ -513,7 +513,7 @@ PjRtStreamExecutorClient::AllocateRawBuffer(
         local_device->compute_stream()->parent(), mem->mem()));
   }
   return tsl::MakeRef<PjRtStreamExecutorRawBuffer>(
-      this, memory_space, local_device, std::move(mem));
+      this, memory_space, local_device, std::move(mem), on_device_bytes_count);
 }
 
 absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
@@ -526,7 +526,7 @@ PjRtStreamExecutorClient::AllocateRawBufferForExecute(
                       device->GetLocalDeviceState());
   auto mem = RawSEDeviceMemory::CreateDelayedMemory();
   return tsl::MakeRef<PjRtStreamExecutorRawBuffer>(
-      this, memory_space, local_device, std::move(mem));
+      this, memory_space, local_device, std::move(mem), on_device_bytes_count);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
@@ -570,7 +570,8 @@ PjRtStreamExecutorClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
                       device->GetLocalDeviceState());
   auto raw_buffer = tsl::MakeRef<PjRtStreamExecutorRawBuffer>(
       this, memory_space, local_device,
-      tsl::AsyncValueRef<RawSEDeviceMemory>(buffer_promise));
+      tsl::AsyncValueRef<RawSEDeviceMemory>(buffer_promise),
+      on_device_bytes_count);
 
   auto buffer_promise_cb =
       [buffer_promise = std::move(buffer_promise), memory_space](
@@ -921,8 +922,9 @@ PjRtStreamExecutorClient::CreateViewOfDeviceBuffer(
   CHECK_EQ(memory_space->devices().size(), 1);
   auto* device = memory_space->devices().front();
 
+  size_t buffer_size = ShapeUtil::ByteSizeOf(shape);
   auto buffer = RawSEDeviceMemory::CreateForeign(
-      se::DeviceAddressBase(device_ptr, ShapeUtil::ByteSizeOf(shape)),
+      se::DeviceAddressBase(device_ptr, buffer_size),
       std::move(on_delete_callback));
 
   TF_ASSIGN_OR_RETURN(LocalDeviceState * local_device,
@@ -946,7 +948,7 @@ PjRtStreamExecutorClient::CreateViewOfDeviceBuffer(
   auto device_buffer = std::make_unique<TrackedDeviceBuffer>(
       device,
       tsl::MakeRef<PjRtStreamExecutorRawBuffer>(
-          this, memory_space, local_device, std::move(buffer)),
+          this, memory_space, local_device, std::move(buffer), buffer_size),
       definition_events);
   return std::unique_ptr<PjRtBuffer>(std::make_unique<CommonPjRtBufferImpl>(
       shape, std::move(device_buffer), memory_space));

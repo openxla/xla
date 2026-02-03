@@ -276,7 +276,7 @@ PjRtStreamExecutorRawBuffer::RemoveDynamicShapeMetadataIfPresent(
   size_t size = transfer_manager->GetByteSizeRequirement(logical_shape);
   return tsl::MakeRef<PjRtStreamExecutorRawBuffer>(
       client_, memory_space_, local_device_,
-      RawSEDeviceMemory::CreateSlice(device_buffer_, 0, size));
+      RawSEDeviceMemory::CreateSlice(device_buffer_, 0, size), size);
 }
 
 void PjRtStreamExecutorRawBuffer::CopyToLiteralAsync(
