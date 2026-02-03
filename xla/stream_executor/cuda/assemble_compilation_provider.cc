@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_provider_options.h"
 #include "xla/stream_executor/cuda/composite_compilation_provider.h"
+#include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/cuda/defer_relocatable_compilation_compilation_provider.h"
 #include "xla/stream_executor/cuda/driver_compilation_provider.h"
 #include "xla/stream_executor/cuda/nvjitlink_compilation_provider.h"
@@ -38,8 +39,12 @@ limitations under the License.
 #include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/stream_executor/cuda/subprocess_compilation.h"
 #include "xla/stream_executor/cuda/subprocess_compilation_provider.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/semantic_version.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 
 namespace stream_executor::cuda {
 namespace {
@@ -129,6 +134,12 @@ std::string ToDebugString(const absl::StatusOr<T>& status_or) {
   return std::string{status_or.status().message()};
 }
 
+absl::Status IsGpuAvailable() {
+  ASSIGN_OR_RETURN(Platform * platform,
+                   PlatformManager::PlatformWithId(kCudaPlatformId));
+  return platform->ExecutorForDevice(0).status();
+}
+
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<CompilationProvider>>
@@ -158,7 +169,7 @@ AssembleCompilationProvider(const CompilationProviderOptions& options) {
                    parallel_compilation_support_is_desired));
 
   const bool has_driver_compilation_support =
-      options.enable_driver_compilation();
+      options.enable_driver_compilation() && IsGpuAvailable().ok();
   append_to_decision_log(absl::StrCat("Driver compilation is enabled: ",
                                       has_driver_compilation_support));
 
