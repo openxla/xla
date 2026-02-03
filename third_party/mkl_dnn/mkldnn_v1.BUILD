@@ -5,7 +5,7 @@ load(
     "if_mkl",
     "if_mkl_ml",
     "if_mkldnn_openmp",
-    "mkl_dnn_cpu_gpu",
+    "onednn_cpu_gpu",
     "convert_cl_to_cpp",
     "convert_header_to_cpp"
 )
@@ -252,12 +252,12 @@ cc_library(
 
 alias(
     name = "mkl_dnn",
-    actual = mkl_dnn_cpu_gpu(),
+    actual = onednn_cpu_gpu(),
     visibility = ["//visibility:public"],
 )
 
 cc_library(
-    name = "mkl_dnn_cpu",
+    name = "onednn_cpu",
     srcs = glob(
         [
             "src/common/*.cpp",
@@ -304,7 +304,7 @@ cc_library(
 )
 
 sycl_library(
-    name = "mkl_dnn_gpu_sycl",
+    name = "onednn_gpu",
     srcs = glob(
         [
             "src/common/*.cpp",

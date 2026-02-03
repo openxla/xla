@@ -110,7 +110,7 @@ def mkl_deps():
     return select({
         Label("//xla/tsl/mkl:build_with_mkl_aarch64"): ["@mkl_dnn_acl_compatible//:mkl_dnn_acl"],
         Label("//xla/tsl:linux_x86_64"): ["@onednn//:mkl_dnn"],
-        Label("//xla/tsl:windows"): ["@onednn//:mkl_dnn_cpu"],
+        Label("//xla/tsl:windows"): ["@onednn//:onednn_cpu"],
         "//conditions:default": [],
     })
 
@@ -128,15 +128,15 @@ def mkl_dep():
     return select({
         Label("//xla/tsl/mkl:build_with_mkl_aarch64"): "@mkl_dnn_acl_compatible//:mkl_dnn_acl",
         Label("//xla/tsl:linux_x86_64"): "@onednn//:mkl_dnn",
-        Label("//xla/tsl:windows"): "@onednn//:mkl_dnn_cpu",
+        Label("//xla/tsl:windows"): "@onednn//:onednn_cpu",
         "//conditions:default": "//xla/tsl/mkl:dummy_mkl_dnn",
     })
 
-def mkl_dnn_cpu_gpu():
+def onednn_cpu_gpu():
     return select({
-        Label("@rules_ml_toolchain//common:is_sycl_enabled"): "@onednn//:mkl_dnn_gpu_sycl",
-        Label("//xla/tsl:linux_x86_64_with_onednn_async"): "@onednn_async//:mkl_dnn_cpu",
-        "//conditions:default": "@onednn//:mkl_dnn_cpu",
+        Label("@rules_ml_toolchain//common:is_sycl_enabled"): "@onednn//:onednn_gpu",
+        Label("//xla/tsl:linux_x86_64_with_onednn_async"): "@onednn_async//:onednn_cpu",
+        "//conditions:default": "@onednn//:onednn_cpu",
     })
 
 def if_onednn_async(if_true, if_false = []):
