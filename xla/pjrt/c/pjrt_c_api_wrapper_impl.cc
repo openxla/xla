@@ -63,11 +63,14 @@ limitations under the License.
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/pjrt/raw_buffer.h"
+#include "xla/pjrt/scoped_async_tracking_event.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/distributed_runtime/call_options.h"
+#include "xla/tsl/distributed_runtime/coordination/coordination_service_agent.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -332,6 +335,15 @@ class CApiKeyValueStore : public xla::KeyValueStoreInterface {
     return result;
   }
 
+  std::shared_ptr<tsl::CallOptions> AsyncGet(
+      absl::string_view key,
+      tsl::CoordinationServiceAgent::StatusOrValueCallback done) override {
+    absl::Status status = absl::UnimplementedError(
+        "AsyncGet is not supported in CApiKeyValueStore.");
+    done(status);
+    return nullptr;
+  }
+
   absl::Status Set(absl::string_view key, absl::string_view value) override {
     PJRT_CallbackError callback_error = [](PJRT_Error_Code code,
                                            const char* message,
@@ -396,7 +408,7 @@ void PJRT_Error_Message(PJRT_Error_Message_Args* args) {
   if (!struct_size_check.ok()) {
     LOG(ERROR) << struct_size_check.message();
   }
-  if (args->struct_size >= PJRT_STRUCT_SIZE(PJRT_Error_Destroy_Args, error)) {
+  if (args->struct_size >= PJRT_STRUCT_SIZE(PJRT_Error_Message_Args, error)) {
     const absl::Status* status = &args->error->status;
     args->message = status->message().data();
     args->message_size = status->message().size();
@@ -733,7 +745,7 @@ PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferData(
       "PJRT_AsyncHostToDeviceTransferManager_TransferData_Args",
       PJRT_AsyncHostToDeviceTransferManager_TransferData_Args_STRUCT_SIZE,
       args->struct_size));
-  auto [promise, future] = xla::Future<>::MakePromise();
+  auto [promise, future] = xla::MakePromise();
   absl::AnyInvocable<void() &&> on_done_with_d2h_transfer =
       [promise = std::move(promise)]() mutable { promise.Set(); };
   PJRT_RETURN_IF_ERROR(
@@ -760,7 +772,7 @@ PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferLiteral(
       static_cast<const char*>(args->data), shape);
   xla::BorrowingLiteral* literal_ptr = literal.get();
 
-  auto [promise, future] = xla::Future<>::MakePromise();
+  auto [promise, future] = xla::MakePromise();
   absl::AnyInvocable<void() &&> on_done_with_d2h_transfer =
       [promise = std::move(promise), literal = std::move(literal)]() mutable {
         promise.Set();
@@ -771,6 +783,48 @@ PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferLiteral(
           args->buffer_index, *literal_ptr,
           std::move(on_done_with_d2h_transfer)));
   args->done_with_h2d_transfer = new PJRT_Event{std::move(future)};
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Device_PoisonExecution(
+    PJRT_Device_PoisonExecution_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Device_PoisonExecution_Args",
+      PJRT_Device_PoisonExecution_Args_STRUCT_SIZE, args->struct_size));
+
+  absl::Status error = absl::Status(
+      pjrt::PjrtErrorCodeToStatusCode(args->error_code),
+      absl::string_view(args->error_message, args->error_message_size));
+
+  PJRT_ASSIGN_OR_RETURN(args->poisoned, args->device->device->PoisonExecution(
+                                            args->launch_id, error));
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Device_CreateAsyncTrackingEvent(
+    PJRT_Device_CreateAsyncTrackingEvent_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Device_CreateAsyncTrackingEvent_Args",
+      PJRT_Device_CreateAsyncTrackingEvent_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  absl::string_view description(args->description, args->description_size);
+  std::unique_ptr<xla::ScopedAsyncTrackingEvent> event =
+      args->device->device->CreateAsyncTrackingEvent(description);
+  if (event == nullptr) {
+    args->event = nullptr;
+  } else {
+    args->event = new PJRT_AsyncTrackingEvent{std::move(event)};
+  }
+  return nullptr;
+}
+
+PJRT_Error* PJRT_AsyncTrackingEvent_Destroy(
+    PJRT_AsyncTrackingEvent_Destroy_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_AsyncTrackingEvent_Destroy_Args",
+      PJRT_AsyncTrackingEvent_Destroy_Args_STRUCT_SIZE, args->struct_size));
+  delete args->event;
   return nullptr;
 }
 
@@ -1130,7 +1184,7 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
     }
   }
 
-  auto [promise, future] = xla::Future<>::MakePromise();
+  auto [promise, future] = xla::MakePromise();
 
   absl::AnyInvocable<void() &&> on_done_with_host_buffer =
       [promise = std::move(promise)]() mutable { promise.Set(); };
@@ -2025,11 +2079,37 @@ PJRT_Error* PJRT_Executable_Serialize(PJRT_Executable_Serialize_Args* args) {
   return nullptr;
 }
 
+PJRT_Error* PJRT_Executable_GetCompileOptions(
+    PJRT_Executable_GetCompileOptions_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Executable_GetCompileOptions_Args",
+      PJRT_Executable_GetCompileOptions_Args_STRUCT_SIZE, args->struct_size));
+  PJRT_ASSIGN_OR_RETURN(xla::CompileOptions options,
+                        args->executable->executable->GetCompileOptions());
+  PJRT_ASSIGN_OR_RETURN(xla::CompileOptionsProto options_proto,
+                        options.ToProto());
+  std::string serialized = options_proto.SerializeAsString();
+
+  PJRT_SerializedCompileOptions* serialized_options =
+      new PJRT_SerializedCompileOptions;
+  serialized_options->serialized = std::move(serialized);
+  args->serialized_compile_options = serialized_options;
+  args->serialized_bytes = serialized_options->serialized.data();
+  args->serialized_bytes_size = serialized_options->serialized.size();
+  args->serialized_compile_options_deleter =
+      +[](PJRT_SerializedCompileOptions* options) { delete options; };
+  return nullptr;
+}
+
 PJRT_Error* PJRT_Executable_GetCompiledMemoryStats(
     PJRT_Executable_GetCompiledMemoryStats_Args* args) {
+  // TODO(b/475848769): Make this check stricter after 12week compatibility
+  // window is over.
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
-      "PJRT_Executable_Serialize_Args",
-      PJRT_Executable_Serialize_Args_STRUCT_SIZE, args->struct_size));
+      "PJRT_Executable_GetCompiledMemoryStats_Args",
+      PJRT_STRUCT_SIZE(PJRT_Executable_GetCompiledMemoryStats_Args,
+                       peak_memory_in_bytes),
+      args->struct_size));
   PJRT_ASSIGN_OR_RETURN(auto memory_stats,
                         args->executable->executable->GetCompiledMemoryStats());
   args->generated_code_size_in_bytes =
@@ -2045,6 +2125,13 @@ PJRT_Error* PJRT_Executable_GetCompiledMemoryStats(
   args->host_alias_size_in_bytes = memory_stats.host_alias_size_in_bytes;
   args->host_temp_size_in_bytes = memory_stats.host_temp_size_in_bytes;
   args->peak_memory_in_bytes = memory_stats.peak_memory_in_bytes;
+  // TODO(b/475848769): Remove after 12week compatibility window is over.
+  // Only fill the new field if the caller's struct is large enough.
+  if (args->struct_size >=
+      PJRT_Executable_GetCompiledMemoryStats_Args_STRUCT_SIZE) {
+    args->total_size_in_bytes = memory_stats.total_size_in_bytes;
+  }
+  args->total_size_in_bytes = memory_stats.total_size_in_bytes;
   return nullptr;
 }
 
@@ -2248,6 +2335,50 @@ PJRT_Error* PJRT_Buffer_CopyRawToHost(PJRT_Buffer_CopyRawToHost_Args* args) {
   return nullptr;
 }
 
+PJRT_Error* PJRT_Buffer_CopyRawToHostFuture(
+    PJRT_Buffer_CopyRawToHostFuture_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Buffer_CopyRawToHostFuture_Args",
+      PJRT_Buffer_CopyRawToHostFuture_Args_STRUCT_SIZE, args->struct_size));
+
+  auto [promise, future] = xla::MakePromise<void*>();
+  xla::Future<> wrapped_promise = args->buffer->buffer->CopyRawToHostFuture(
+      future, args->offset, args->transfer_size);
+  args->event = new PJRT_Event{std::move(wrapped_promise)};
+
+  typedef absl::AnyInvocable<void(
+      PJRT_Buffer_CopyRawToHostFuture_Callback_Args*) &&>
+      Callback;
+  auto callback = new Callback(
+      [promise = std::move(promise)](
+          PJRT_Buffer_CopyRawToHostFuture_Callback_Args* args) mutable {
+        absl::Status status = ActualStructSizeIsGreaterOrEqual(
+            "PJRT_Buffer_CopyRawToHostFuture_Callback_Args",
+            PJRT_Buffer_CopyRawToHostFuture_Callback_Args_STRUCT_SIZE,
+            args->struct_size);
+        if (!status.ok()) {
+          promise.Set(status);
+          return;
+        }
+        if (args->error_code != PJRT_Error_Code_OK) {
+          absl::Status error = absl::Status(
+              pjrt::PjrtErrorCodeToStatusCode(args->error_code),
+              absl::string_view(args->error_message, args->error_message_size));
+          promise.Set(std::move(error));
+          return;
+        }
+        promise.Set(args->dst);
+      });
+  args->callback_data = callback;
+  args->future_ready_callback =
+      +[](PJRT_Buffer_CopyRawToHostFuture_Callback_Args* args) {
+        auto* callback = reinterpret_cast<Callback*>(args->callback_data);
+        std::move (*callback)(args);
+        delete callback;
+      };
+  return nullptr;
+}
+
 PJRT_Error* PJRT_Buffer_CopyToDevice(PJRT_Buffer_CopyToDevice_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_CopyToDevice_Args",
@@ -2308,6 +2439,7 @@ PJRT_Error* PJRT_Buffer_ToHostBuffer(PJRT_Buffer_ToHostBuffer_Args* args) {
 
   if (args->dst == nullptr) {
     args->dst_size = host_buffer_size;
+    args->event = nullptr;
     return nullptr;
   }
 
@@ -2399,6 +2531,40 @@ PJRT_Error* PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
       std::unique_ptr<xla::PjRtBuffer::ExternalReference> external_reference,
       args->buffer->buffer->AcquireExternalReference());
   args->device_memory_ptr = external_reference->OpaqueDeviceMemoryDataPointer();
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Buffer_DonateWithControlDependency(
+    PJRT_Buffer_DonateWithControlDependency_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Buffer_DonateWithControlDependency_Args",
+      PJRT_Buffer_DonateWithControlDependency_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  auto [promise, future] = xla::MakePromise();
+  PJRT_ASSIGN_OR_RETURN(
+      std::unique_ptr<xla::PjRtBuffer> out_buffer,
+      args->buffer->buffer->DonateWithControlDependency(std::move(future)));
+
+  struct CallbackData {
+    xla::Promise<> promise;
+  };
+  args->out_buffer =
+      new PJRT_Buffer{std::move(out_buffer), args->buffer->client};
+  args->callback_data = new CallbackData{std::move(promise)};
+  args->dependency_ready_callback =
+      [](PJRT_Buffer_DonateWithControlDependency_Callback_Args* args) {
+        auto* data = static_cast<CallbackData*>(args->callback_data);
+        if (args->error_code == PJRT_Error_Code_OK) {
+          data->promise.Set();
+        } else {
+          absl::Status status(
+              pjrt::PjrtErrorCodeToStatusCode(args->error_code),
+              absl::string_view(args->error_message, args->error_message_size));
+          data->promise.Set(std::move(status));
+        }
+        delete data;
+      };
   return nullptr;
 }
 
@@ -2513,6 +2679,25 @@ PJRT_Error* PJRT_Event_OnReady(PJRT_Event_OnReady_Args* args) {
     callback(error, user_arg);
   };
   args->event->future.OnReady(impl_callback);
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Event_Create(PJRT_Event_Create_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Event_Create", PJRT_Event_Create_Args_STRUCT_SIZE,
+      args->struct_size));
+  auto [promise, future] = xla::MakePromise();
+  args->event = new PJRT_Event{std::move(future), std::move(promise)};
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Event_Set(PJRT_Event_Set_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Event_Set", PJRT_Event_Set_Args_STRUCT_SIZE, args->struct_size));
+  absl::Status status(
+      PjrtErrorCodeToStatusCode(args->error_code),
+      absl::string_view(args->error_message, args->error_message_size));
+  args->event->promise.Set(std::move(status));
   return nullptr;
 }
 
@@ -2636,7 +2821,7 @@ PJRT_Error* PJRT_TopologyDescription_Deserialize(
   }
 
   PJRT_ASSIGN_OR_RETURN(xla::PjRtCompiler * compiler,
-                        xla::GetPjRtCompiler(proto.platform_name()));
+                        xla::GetDefaultPjRtCompiler(proto.platform_name()));
   std::string serialized_topology_str(args->serialized_topology,
                                       args->serialized_topology_size);
   PJRT_ASSIGN_OR_RETURN(
@@ -3181,6 +3366,20 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       pjrt::PJRT_Client_CreateErrorBuffer,
       /*PJRT_AsyncHostToDeviceTransferManager_TransferLiteral=*/
       pjrt::PJRT_AsyncHostToDeviceTransferManager_TransferLiteral,
+      /*PJRT_Buffer_CopyRawToHostFuture=*/
+      pjrt::PJRT_Buffer_CopyRawToHostFuture,
+      /*PJRT_Device_PoisonExecution=*/pjrt::PJRT_Device_PoisonExecution,
+      /*PJRT_Device_CreateAsyncTrackingEvent=*/
+      pjrt::PJRT_Device_CreateAsyncTrackingEvent,
+      /*PJRT_AsyncTrackingEvent_Destroy=*/
+      pjrt::PJRT_AsyncTrackingEvent_Destroy,
+      /*PJRT_Executable_GetCompileOptions=*/
+      pjrt::PJRT_Executable_GetCompileOptions,
+      /*PJRT_Buffer_DonateWithControlDependency=*/
+      pjrt::PJRT_Buffer_DonateWithControlDependency,
+
+      /*PJRT_Event_Create=*/pjrt::PJRT_Event_Create,
+      /*PJRT_Event_Set=*/pjrt::PJRT_Event_Set,
   };
 }
 

@@ -1639,11 +1639,19 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-  MatchOptimizedHlo(hlo_text, R"(
-; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4], {{.*}}: bf16[4]) -> bf16[2,4] {
-; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_6x0_5
-; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_5x0_4
+  if (IsCuda()) {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4], {{.*}}: bf16[4]) -> bf16[2,4] {
+    ; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_6x0_5
+    ; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_5x0_4
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4], {{.*}}: bf16[4]) -> bf16[2,4] {
+    ; CHECK-DAG:    bf16[2,3]{1,0}
+    ; CHECK-DAG:    bf16[3,4]{1,0}
+    )");
+  }
 }
 
 TEST_F(CublasLtGemmRewriteTest, ReluActivation) {
@@ -2428,11 +2436,19 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{5e-5, 1e-5}));
-  MatchOptimizedHlo(hlo_text, R"(
-; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4]) -> bf16[2,4] {
-; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_6x0_5
-; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_5x0_4
+  if (IsCuda()) {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4]) -> bf16[2,4] {
+    ; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_6x0_5
+    ; CHECK-DAG:    bf16[8,8]{1,0} pad({{.*}}), padding=0_5x0_4
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[2,3], {{.*}}: bf16[3,4]) -> bf16[2,4] {
+    ; CHECK-DAG:    bf16[2,3]{1,0}
+    ; CHECK-DAG:    bf16[3,4]{1,0}
+    )");
+  }
 }
 
 TEST_F(CublasLtGemmRewriteTest, ApproxGeluActivationBitcast) {
@@ -2467,7 +2483,9 @@ ENTRY test {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(Capability(), GetToolkitVersion());
+  GemmRewriterOptions options;
+  options.enable_cublaslt = true;
+  GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
@@ -2544,7 +2562,9 @@ ENTRY test {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(Capability(), GetToolkitVersion());
+  GemmRewriterOptions options;
+  options.enable_cublaslt = true;
+  GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
@@ -2602,13 +2622,19 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-  MatchOptimizedHlo(hlo_text,
-                    R"(
-
-; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
-; CHECK-DAG:    f16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
-; CHECK-DAG:    f16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
+  if (IsCuda()) {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
+    ; CHECK-DAG:    f16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
+    ; CHECK-DAG:    f16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
+    ; CHECK-DAG:    f16[6,12]{1,0}
+    ; CHECK-DAG:    f16[12,6]{1,0}
+    )");
+  }
 }
 
 // For F16, the operands are padded on GPUs with Tensor Cores (i.e. Volta and
@@ -2653,11 +2679,19 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
-  MatchOptimizedHlo(hlo_text, R"(
-; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6]) -> f16[6,6] {
-; CHECK-DAG:    f16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
-; CHECK-DAG:    f16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
+  if (IsCuda()) {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6]) -> f16[6,6] {
+    ; CHECK-DAG:    f16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
+    ; CHECK-DAG:    f16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6]) -> f16[6,6] {
+    ; CHECK-DAG:    f16[6,12]{1,0}
+    ; CHECK-DAG:    f16[12,6]{1,0}
+    )");
+  }
 }
 
 TEST_F(CublasLtGemmRewriteTest, MatrixBiasReluActivationF16) {
@@ -2753,11 +2787,19 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-  MatchOptimizedHlo(hlo_text, R"(
-; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
-; CHECK-DAG:   f16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
-; CHECK-DAG:   f16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
+  if (IsCuda()) {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
+    ; CHECK-DAG:   f16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
+    ; CHECK-DAG:   f16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: f16[6,12], {{.*}}: f16[12,6], {{.*}}: f16[6]) -> f16[6,6] {
+    ; CHECK-DAG:   f16[6,12]{1,0}
+    ; CHECK-DAG:   f16[12,6]{1,0}
+    )");
+  }
 }
 
 // For bfloat16, the sizes of all dimensions of the operands are required to be
@@ -2827,7 +2869,9 @@ ENTRY test {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(Capability(), GetToolkitVersion());
+  GemmRewriterOptions options;
+  options.enable_cublaslt = GetDebugOptionsForTest().xla_gpu_enable_cublaslt();
+  GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
@@ -2893,11 +2937,19 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-  MatchOptimizedHlo(hlo_text, R"(
-; CHECK-DAG:  ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
-; CHECK-DAG:    bf16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
-; CHECK-DAG:    bf16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
+  if (IsCuda()) {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG:  ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
+    ; CHECK-DAG:    bf16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
+    ; CHECK-DAG:    bf16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG:  ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
+    ; CHECK-DAG:    bf16[6,12]{1,0}
+    ; CHECK-DAG:    bf16[12,6]{1,0}
+    )");
+  }
 }
 
 // For bfloat16, the operands are padded if necessary on Ampere and newer
@@ -2949,11 +3001,19 @@ ENTRY test {
 })";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
-  MatchOptimizedHlo(hlo_text, R"(
-; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6]) -> bf16[6,6] {
-; CHECK-DAG:     bf16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
-; CHECK-DAG:     bf16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
+  if (IsCuda()) {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6]) -> bf16[6,6] {
+    ; CHECK-DAG:     bf16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
+    ; CHECK-DAG:     bf16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6]) -> bf16[6,6] {
+    ; CHECK-DAG:     bf16[6,12]{1,0}
+    ; CHECK-DAG:     bf16[12,6]{1,0}
+    )");
+  }
 }
 
 // For bfloat16, the operands are padded if necessary on Ampere and newer
@@ -3012,11 +3072,19 @@ ENTRY test {
 
 )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
-  MatchOptimizedHlo(hlo_text, R"(
-; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
-; CHECK-DAG:     bf16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
-; CHECK-DAG:     bf16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
+  if (IsCuda()) {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
+    ; CHECK-DAG:     bf16[8,16]{1,0} pad({{.*}}), padding=0_2x0_4
+    ; CHECK-DAG:     bf16[16,8]{1,0} pad({{.*}}), padding=0_4x0_2
       )");
+  } else {
+    MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-DAG: ENTRY %test ({{.*}}: bf16[6,12], {{.*}}: bf16[12,6], {{.*}}: bf16[6]) -> bf16[6,6] {
+    ; CHECK-DAG:     bf16[6,12]{1,0}
+    ; CHECK-DAG:     bf16[12,6]{1,0}
+    )");
+  }
 }
 
 TEST_F(CublasLtGemmRewriteTest, VectorBiasReluActivationF64) {
@@ -3145,7 +3213,9 @@ ENTRY test {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(Capability(), GetToolkitVersion());
+  GemmRewriterOptions options;
+  options.enable_cublaslt = true;
+  GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   SCOPED_TRACE(module->ToString());
   EXPECT_TRUE(changed);
@@ -3434,7 +3504,9 @@ ENTRY %test (x: f32[2,3,4], y: f32[4,5,7], z: f32[7]) -> f32[2,3,5,7] {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text, config));
 
-  GemmRewriter pass(Capability(), GetToolkitVersion());
+  GemmRewriterOptions options;
+  options.enable_cublaslt = true;
+  GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 

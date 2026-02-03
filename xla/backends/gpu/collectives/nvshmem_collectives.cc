@@ -25,7 +25,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "third_party/nvshmem/nvshmem.h"   // IWYU pragma: keep
 #include "third_party/nvshmem/nvshmemx.h"  // IWYU pragma: keep
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/nvshmem_communicator.h"
+#include "xla/core/collectives/clique_id.h"
+#include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
 #include "xla/core/collectives/communicator.h"
@@ -48,7 +51,7 @@ bool NvshmemCollectives::IsInitialized() const {
 
 NvshmemCollectives* NvshmemCollectives::Default() {
   absl::StatusOr<Collectives*> collectives =
-      CollectivesRegistry::Get("gpu", "nvshmem");
+      CollectivesRegistry::Get("CUDA", "nvshmem");
   CHECK_OK(collectives) << "Failed to get NVSHMEM collectives";  // Crash OK
 
   if (auto* nvshmem_collectives =
@@ -59,11 +62,12 @@ NvshmemCollectives* NvshmemCollectives::Default() {
   LOG(FATAL) << "Unsupported collectives implementation for NVSHMEM";
 }
 
-absl::Status NvshmemCollectives::InitializeTopology(Topology topology) {
-  se::gpu::nvshmem::SetEnvInfo(topology.node_id, topology.num_nodes,
+absl::StatusOr<GpuCollectives::CliqueIdCallback>
+NvshmemCollectives::InitializeTopology(const Topology& topology) {
+  se::gpu::nvshmem::SetEnvInfo(topology.process_id, topology.num_processes,
                                topology.device_count_per_process,
                                topology.kv_store);
-  return absl::OkStatus();
+  return [](const CliqueKey&) { return CliqueIds(CliqueId("")); };
 }
 
 absl::StatusOr<void*> NvshmemCollectives::Allocate(uint64_t bytes) {
@@ -98,5 +102,5 @@ NvshmemCollectives::CreateCommunicator() {
 
 // NvshmemCollectives currently does not implement GpuCollectives, so it cannot
 // be used as a host-side collectives library. Therefore, set priority to -100.
-XLA_COLLECTIVES_REGISTER("gpu", "nvshmem", -100,
+XLA_COLLECTIVES_REGISTER("CUDA", "nvshmem", -100,
                          std::make_unique<xla::gpu::NvshmemCollectives>());

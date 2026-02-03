@@ -181,8 +181,10 @@ cc_library(
     ],
     deps = [
         ":error_windows",
-        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -198,6 +200,7 @@ cc_library(
         "@tsl//tsl/platform:demangle.h",
         "@tsl//tsl/platform:host_info.h",
         "@tsl//tsl/platform:init_main.h",
+        "@tsl//tsl/platform:macros.h",
         "@tsl//tsl/platform:mem.h",
         "@tsl//tsl/platform:numa.h",
         "@tsl//tsl/platform:snappy.h",
@@ -213,11 +216,15 @@ cc_library(
         "//xla/tsl/platform:byte_order",
         "//xla/tsl/platform:dynamic_annotations",
         "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
         "//xla/tsl/platform:types",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/time",
         "@snappy",
         "@tsl//tsl/platform",
+        "@tsl//tsl/platform:macros",
     ],
 )
 

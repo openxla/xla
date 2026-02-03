@@ -30,6 +30,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -51,6 +52,7 @@ limitations under the License.
 #include "xla/service/hlo_value.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/memory_space_assignment/memory_space_assignment.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 
 namespace xla {
@@ -493,6 +495,9 @@ class BufferAssignment {
   // the slice cannot be determined at compile time then an error is returned.
   absl::StatusOr<BufferAllocation::Slice> GetUniqueSlice(
       const HloInstruction* instruction, const ShapeIndex& index) const;
+  absl::StatusOr<Shape> GetShapeForUniqueSlice(
+      const HloInstruction* instruction, const ShapeIndex& index) const;
+
   // Like GetUniqueSlice but fixes the index to the top-level of the shape
   // (index = {}).
   absl::StatusOr<BufferAllocation::Slice> GetUniqueTopLevelSlice(
@@ -567,6 +572,7 @@ class BufferAssignment {
 
   // Convert BufferAssignment to or from a proto.
   BufferAssignmentProto ToProto() const;
+  void ToProto(BufferAssignmentProto* proto) const;
   static absl::StatusOr<std::unique_ptr<BufferAssignment>> FromProto(
       const BufferAssignmentProto& proto, const HloModule* module,
       BufferValue::SizeFunction buffer_size, const AliasInfo* alias_info);
@@ -719,6 +725,12 @@ class BufferAssigner {
   using PrivateStacks = absl::flat_hash_map<BufferValue::Color,
                                             std::vector<const HloComputation*>>;
 
+  // The order in which to process buffers during buffer assignment.
+  enum class BufferOrder {
+    kBiggestFirst,  // Process the biggest buffers first.
+    kTopological,   // Process buffers in topological order.
+  };
+
   // Options for BufferAssigner::Run.
   struct Options {
     // If true, allocate buffers for constant instructions.
@@ -741,6 +753,7 @@ class BufferAssigner {
         heap_buffer_interval_compare;
     std::optional<BufferAssignment::BufferIsolationOptions> isolation_options;
     std::optional<BufferValue::Color> temp_buffer_color;
+    BufferOrder buffer_order = BufferOrder::kBiggestFirst;
   };
 
   static Colorer DefaultColorer() {

@@ -1067,6 +1067,8 @@ message NamedShardingProto {
   // A sharding can have unreduced axes, meaning the tensor is unreduced
   // along these axes.
   repeated AxisRefProto unreduced_axes = 5;
+  // A list of axes that is controlled by the users.
+  repeated AxisRefProto manual_axes = 7;
 
   // This field is used to track the source of this sharding, usually derived
   // from instructions. Multple metadata may be populated if sharding is
@@ -1383,6 +1385,10 @@ message WhileLoopBackendConfig {
   // This lets us distinguish between an unknown induction variable (or none)
   // and tuple index 0.
   KnownInductionVariable known_induction_variable = 3;
+
+  // Variables that should be treated as induction variables for dynamic memcpy
+  // analysis, even though they are not the primary induction variable.
+  repeated int64 dynamic_variable_tuple_indices = 4;
 }
 
 // Specifies a pair of output/operand buffers that alias each other for

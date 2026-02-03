@@ -63,7 +63,6 @@ MpmdLoadedExecutable::MpmdLoadedExecutable(
         absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>>
         mpmd_addressable_devices,
     absl::StatusOr<std::optional<std::string>> fingerprint,
-    tsl::Future<> ready_future,
     std::vector<tsl::RCReference<xla::ifrt::LoadedHostCallback>>
         loaded_host_callbacks,
     std::vector<uint64_t> loaded_host_callback_handles)
@@ -73,14 +72,12 @@ MpmdLoadedExecutable::MpmdLoadedExecutable(
   loaded_executable_ = std::make_unique<ifrt::proxy::LoadedExecutable>(
       client, rpc_helper, handle, std::move(name), num_devices,
       std::move(devices), std::move(addressable_devices),
-      std::move(fingerprint), std::move(ready_future),
-      std::move(loaded_host_callbacks),
+      std::move(fingerprint), std::move(loaded_host_callbacks),
       std::move(loaded_host_callback_handles));
 
   tsl::profiler::TraceMe traceme_ifrt_entrypoint(
       "IfrtProxyEntrypointMpmdLoadedExecutableCreate");
-  auto [promise, future] =
-      tsl::Future<std::shared_ptr<MpmdMetadata>>::MakePromise();
+  auto [promise, future] = tsl::MakePromise<std::shared_ptr<MpmdMetadata>>();
   mpmd_metadata_future_ = std::move(future);
 
   auto req = std::make_unique<LoadedExecutableMpmdMetadataRequest>();

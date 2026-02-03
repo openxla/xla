@@ -42,9 +42,7 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "xla/pjrt/distributed/coordination/coordination_client.h"
 #include "xla/pjrt/distributed/coordination/coordination_service_error_util.h"
-#include "xla/tsl/distributed_runtime/call_options.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
@@ -61,16 +59,12 @@ namespace {
 using tensorflow::CoordinatedTask;
 using tensorflow::CoordinatedTaskState;
 using tensorflow::CoordinatedTaskStateInfo;
-using tensorflow::CoordinationServiceConfig;
-using tensorflow::CoordinationServiceError;
 using tensorflow::DeviceInfo;
 using tensorflow::KeyValueEntry;
 
 constexpr char kClusterRegisterBarrierId[] =
     "[Init]Wait_for_all_tasks_to_register";
 constexpr absl::Duration kDevicePropagationTimeout = absl::Hours(1);
-constexpr int kDefaultHeartbeatTimeoutMs = 10 * 1000;  // 10 seconds
-constexpr int kServiceToClientTimeoutMs = 10 * 1000;   // 10 seconds
 constexpr size_t kOngoingBarriersSoftLimit = 20;
 constexpr char kHealthCheckThread[] = "CoordinationServiceHealthCheck";
 // Limit the number of stragglers we log to avoid `RESOURCE_EXHAUSTED` errors in
@@ -104,7 +98,9 @@ absl::Status MakeShutdownBarrierError(const absl::Status& error) {
 
 void CoordinationService::ErrorPollingState::SetError(
     const absl::Status& error) {
-  if (responded_) return;
+  if (responded_) {
+    return;
+  }
   responded_ = true;
   error_ = error;
   for (auto& [_, done_cb] : done_callbacks_) {
@@ -125,7 +121,9 @@ void CoordinationService::ErrorPollingState::RemoveTask(
 void CoordinationService::ErrorPollingState::AddTask(
     const CoordinatedTask& task, tsl::StatusCallback&& done) {
   // Do not allow to insert a task if the service has already responded.
-  if (Responded()) return;
+  if (Responded()) {
+    return;
+  }
   polling_task_names_.insert(GetTaskName(task));
   RemoveTask(task, "new request from the same task");
   done_callbacks_[task] = done;
@@ -149,7 +147,9 @@ void CoordinationService::TaskState::Disconnect(
 }
 
 bool CoordinationService::TaskState::SetError(const absl::Status& status) {
-  if (state_ == CoordinatedTaskState::TASKSTATE_ERROR) return false;
+  if (state_ == CoordinatedTaskState::TASKSTATE_ERROR) {
+    return false;
+  }
   state_ = CoordinatedTaskState::TASKSTATE_ERROR;
   status_ = status;
   return true;
@@ -157,7 +157,9 @@ bool CoordinationService::TaskState::SetError(const absl::Status& status) {
 
 absl::Status CoordinationService::TaskState::RecordHeartbeat(
     IncarnationId task_incarnation) {
-  if (!status_.ok()) return status_;
+  if (!status_.ok()) {
+    return status_;
+  }
   // Record heartbeat.
   if (task_incarnation_ == task_incarnation) {
     absl::MutexLock l(last_heartbeat_mu_);
@@ -167,14 +169,13 @@ absl::Status CoordinationService::TaskState::RecordHeartbeat(
   // Task incarnation mismatch!
   if (IsRecoverable()) {
     return absl::OkStatus();  // Ignore, but don't record new heartbeat.
-  } else {
-    return MakeCoordinationError(absl::AbortedError(absl::StrCat(
-        task_name_, " Heartbeat: Incarnation ID mismatch: expecting ",
-        task_incarnation_.value(), " but got ", task_incarnation.value(),
-        ". The task has restarted and likely crashed earlier - check for any "
-        "earlier errors or any scheduler events (e.g. preemption, eviction) to "
-        "debug further.")));
   }
+  return MakeCoordinationError(absl::AbortedError(absl::StrCat(
+      task_name_, " Heartbeat: Incarnation ID mismatch: expecting ",
+      task_incarnation_.value(), " but got ", task_incarnation.value(),
+      ". The task has restarted and likely crashed earlier - check for any "
+      "earlier errors or any scheduler events (e.g. preemption, eviction) to "
+      "debug further.")));
 }
 
 int64_t CoordinationService::TaskState::TimeSinceLastHeartbeatMs() {
@@ -200,29 +201,12 @@ bool CoordinationService::TaskState::IsDisconnectedBeyondGracePeriod() {
          tsl::Env::Default()->NowMicros() > disconnect_grace_period_us_;
 }
 
-CoordinationService::CoordinationService(
-    tsl::Env* env, const CoordinationServiceConfig& config)
-    : env_(*env),
-      heartbeat_timeout_ms_([&config]() -> uint64_t {
-        return config.heartbeat_timeout_in_ms() > 0
-                   ? config.heartbeat_timeout_in_ms()
-                   : kDefaultHeartbeatTimeoutMs;
-      }()),
-      cluster_register_with_barrier_(config.cluster_register_with_barrier()),
-      cluster_register_timeout_(
-          absl::Milliseconds(config.cluster_register_timeout_in_ms())),
-      shutdown_barrier_timeout_(
-          absl::Milliseconds(config.shutdown_barrier_timeout_in_ms())),
-      allow_new_incarnation_to_reconnect_(
-          config.allow_new_incarnation_to_reconnect()) {
+CoordinationService::CoordinationService(tsl::Env* env, const Config& config)
+    : env_(*env), config_(config) {
   LOG(INFO) << "Initializing CoordinationService";
-  recoverable_jobs_ = absl::flat_hash_set<std::string>(
-      config.recoverable_jobs().cbegin(), config.recoverable_jobs().cend());
-  for (const auto& job : config.coordinated_job_list()) {
-    for (int i = 0; i < job.num_tasks(); ++i) {
-      const std::string task_name = GetTaskName(job.name(), i);
-      cluster_state_.emplace(task_name, std::make_unique<TaskState>(task_name));
-    }
+  for (int i = 0; i < config.num_tasks; ++i) {
+    const std::string task_name = GetTaskName(config.job_name, i);
+    cluster_state_.emplace(task_name, std::make_unique<TaskState>(task_name));
   }
   StartCheckStaleness();
 }
@@ -237,7 +221,8 @@ void CoordinationService::CheckHeartbeatTimeout() {
       continue;
     }
     const bool is_stale =
-        task_state->TimeSinceLastHeartbeatMs() > heartbeat_timeout_ms_;
+        absl::Milliseconds(task_state->TimeSinceLastHeartbeatMs()) >
+        config_.heartbeat_timeout;
     VLOG(10) << "Checking staleness for " << task_name
              << " stale?=" << is_stale;
     if (is_stale) {
@@ -598,7 +583,7 @@ void CoordinationService::RegisterTaskAsync(const CoordinatedTask& task,
   const auto task_status = task_cluster_state->GetStatus();
 
   if (task_state == CoordinatedTaskState::TASKSTATE_DISCONNECTED ||
-      ((allow_new_incarnation_to_reconnect_ ||
+      ((config_.allow_new_incarnation_to_reconnect ||
         task_cluster_state->IsRecoverable()) &&
        (absl::IsUnavailable(task_status) &&
         task_status.GetPayload(CoordinationErrorPayloadKey())))) {
@@ -609,7 +594,7 @@ void CoordinationService::RegisterTaskAsync(const CoordinatedTask& task,
     //   an unavailable error state, but has now restarted (possibly with
     //   a new incarnation). This is only allowed if configured with
     //   `allow_new_incarnation_to_reconnect`.
-    if (cluster_register_with_barrier_) {
+    if (config_.cluster_register_with_barrier) {
       // Impose barrier so that all tasks can register together.
       // Note: it is possible that the same task restarts multiple times and
       // registers itself with new incarnations.
@@ -633,7 +618,7 @@ void CoordinationService::RegisterTaskAsync(const CoordinatedTask& task,
       }
       BarrierAsyncLocked(
           kClusterRegisterBarrierId, kUniqueBarrierCounter,
-          cluster_register_timeout_, task, {},
+          config_.cluster_register_timeout, task, {},
           ConnectAfterBarrierPasses(task_name, incarnation, std::move(done)));
       ClusterStateUpdated();
       return;
@@ -645,7 +630,8 @@ void CoordinationService::RegisterTaskAsync(const CoordinatedTask& task,
     done(absl::OkStatus());
     ClusterStateUpdated();
     return;
-  } else if (task_state == CoordinatedTaskState::TASKSTATE_CONNECTED) {
+  }
+  if (task_state == CoordinatedTaskState::TASKSTATE_CONNECTED) {
     // This may happen if the service processes the initial RegisterTask(),
     // but the agent did not receive the response so the agent retries again.
     if (task_cluster_state->GetTaskIncarnation() == incarnation ||
@@ -659,12 +645,11 @@ void CoordinationService::RegisterTaskAsync(const CoordinatedTask& task,
       done(absl::OkStatus());
       ClusterStateUpdated();
       return;
-    } else {
-      error_message =
-          absl::StrCat(task_name,
-                       " unexpectedly tried to connect with a different "
-                       "incarnation. It has likely restarted.");
     }
+    error_message =
+        absl::StrCat(task_name,
+                     " unexpectedly tried to connect with a different "
+                     "incarnation. It has likely restarted.");
   } else {
     // This task is already in error, which implies it has registered
     // previously.
@@ -683,35 +668,11 @@ void CoordinationService::RegisterTaskAsync(const CoordinatedTask& task,
   done(error);
 }
 
-void CoordinationService::WaitForAllTasks(const CoordinatedTask& task,
-                                          const DeviceInfo& devices,
-                                          tsl::StatusCallback done) {
-  {
-    absl::MutexLock l(state_mu_);
-    if (ServiceHasStopped()) {
-      done(MakeCoordinationError(absl::InternalError(
-          "Coordination service has stopped. WaitForAllTasks() failed.")));
-      return;
-    }
-    const auto& task_state = cluster_state_.find(GetTaskName(task));
-    // Collect task device info for the first time that task
-    // has called WaitForAllTasks(). This will be aggregated when the barrier
-    // passes.
-    if (task_state != cluster_state_.end() &&
-        !task_state->second->DeviceInfoIsCollected()) {
-      task_state->second->CollectDeviceInfo(devices);
-    }
-  }
-  BarrierAsync(device_propagation_barrier_id_, kUniqueBarrierCounter,
-               kDevicePropagationTimeout, task, {},
-               [done = std::move(done)](const absl::Status& s,
-                                        int64_t unused_counter) { done(s); });
-}
-
 void CoordinationService::ShutdownTaskAsync(const CoordinatedTask& task,
                                             tsl::StatusCallback done) {
   VLOG(3) << "Task " << GetTaskName(task) << " invoked ShutdownTaskAsync()";
-  if (shutdown_barrier_timeout_ > absl::ZeroDuration() && !task.recoverable()) {
+  if (config_.shutdown_barrier_timeout > absl::ZeroDuration() &&
+      !task.recoverable()) {
     // Impose shutdown barrier so that all (non-recoverable) tasks can
     // disconnect together.
     // Notes:
@@ -725,7 +686,7 @@ void CoordinationService::ShutdownTaskAsync(const CoordinatedTask& task,
     //    all tasks.
     auto shutdown_tasks = GetTasksForShutdownBarrier();
     BarrierAsync(shutdown_barrier_id_, kUniqueBarrierCounter,
-                 shutdown_barrier_timeout_, task, shutdown_tasks,
+                 config_.shutdown_barrier_timeout, task, shutdown_tasks,
                  [done = std::move(done)](const absl::Status& s,
                                           int64_t unused_counter) {
                    if (s.ok()) {
@@ -763,7 +724,8 @@ absl::Status CoordinationService::DisconnectTask(const CoordinatedTask& task) {
         absl::StrCat("Coordination service has stopped. DisconnectTask() "
                      "failed for task_name=",
                      task_name)));
-  } else if (!cluster_state_.contains(task_name)) {
+  }
+  if (!cluster_state_.contains(task_name)) {
     return MakeCoordinationError(absl::InvalidArgumentError(absl::StrCat(
         "Unexpected disconnect request with task_name=", task_name)));
   }
@@ -776,7 +738,8 @@ absl::Status CoordinationService::DisconnectTask(const CoordinatedTask& task) {
 
   // Disconnect task.
   task_state->Disconnect(
-      /*grace_period_duration_us=*/heartbeat_timeout_ms_ * 1000);
+      /*grace_period_duration_us=*/absl::ToInt64Microseconds(
+          config_.heartbeat_timeout));
   LeaveOngoingBarriers(task, "task disconnected");
   RefreshAliveness();
   error_polling_state_.RemoveTask(task, "task has disconnected.");
@@ -800,11 +763,13 @@ absl::Status CoordinationService::ReportTaskError(const CoordinatedTask& task,
   if (ServiceHasStopped()) {
     return MakeCoordinationError(absl::InternalError(
         "Coordination service has stopped. ReportTaskError() failed."));
-  } else if (!cluster_state_.contains(task_name)) {
+  }
+  if (!cluster_state_.contains(task_name)) {
     return MakeCoordinationError(absl::InvalidArgumentError(
         absl::StrCat("Unexpected request from task ", task_name)));
-  } else if (cluster_state_[task_name]->GetState() !=
-             CoordinatedTaskState::TASKSTATE_CONNECTED) {
+  }
+  if (cluster_state_[task_name]->GetState() !=
+      CoordinatedTaskState::TASKSTATE_CONNECTED) {
     return MakeCoordinationError(absl::FailedPreconditionError(
         "The task is not connected or already has an error."));
   }
@@ -827,19 +792,6 @@ CoordinatedTaskStateInfo CoordinationService::CreateTaskStateInfo(
     info.mutable_error_payload()->set_is_reported_error(false);
   }
   return info;
-}
-
-std::vector<CoordinatedTaskStateInfo> CoordinationService::GetTaskState(
-    const std::vector<CoordinatedTask>& tasks) {
-  std::vector<CoordinatedTaskStateInfo> states_info;
-  states_info.reserve(tasks.size());
-
-  absl::MutexLock l(state_mu_);
-  for (const auto& task : tasks) {
-    states_info.push_back(
-        CreateTaskStateInfo(task, *cluster_state_[GetTaskName(task)]));
-  }
-  return states_info;
 }
 
 std::vector<CoordinatedTaskStateInfo> CoordinationService::GetJobState(
@@ -896,7 +848,8 @@ absl::Status CoordinationService::RecordHeartbeat(const CoordinatedTask& task,
         "gracefully. Check the task leader's logs for an earlier error or "
         "scheduler events (e.g. preemption, eviction) to debug the root "
         "cause.")));
-  } else if (!cluster_state_.contains(task_name)) {
+  }
+  if (!cluster_state_.contains(task_name)) {
     return MakeCoordinationError(absl::InvalidArgumentError(
         absl::StrCat("Unexpected heartbeat request from task: ", task_name,
                      ". This usually implies a configuration error.")));
@@ -907,7 +860,8 @@ absl::Status CoordinationService::RecordHeartbeat(const CoordinatedTask& task,
         "Unexpected heartbeat request from an already-in-error task: ",
         task_name,
         " with existing error: ", task_state->GetStatus().ToString())));
-  } else if (task_state->IsDisconnectedBeyondGracePeriod()) {
+  }
+  if (task_state->IsDisconnectedBeyondGracePeriod()) {
     // We accept heartbeats for a short grace period to account for the lag
     // time between the service recording the state change and the agent
     // stopping heartbeats.
@@ -933,8 +887,7 @@ absl::Status CoordinationService::RecordHeartbeat(const CoordinatedTask& task,
 bool CoordinationService::AllTasksAreRecoverable(
     const std::vector<CoordinatedTask>& tasks) {
   for (const auto& task : tasks) {
-    if (!cluster_state_[GetTaskName(task)]->IsRecoverable() &&
-        !isRecoverableJob(task.job_name())) {
+    if (!cluster_state_[GetTaskName(task)]->IsRecoverable()) {
       return false;
     }
   }
@@ -978,7 +931,9 @@ std::string NormalizeKey(absl::string_view orig_key) {
   // Parse all characters
   while (*src) {
     // Skip leading slashes
-    while (*src == '/') src++;
+    while (*src == '/') {
+      src++;
+    }
     // Copy over all non-slash characters
     while (*src && *src != '/') {
       *dst++ = *src++;
@@ -989,7 +944,9 @@ std::string NormalizeKey(absl::string_view orig_key) {
     }
   }
   // If ending with slash, remove the trailing slash
-  if (dst > norm_key.begin() && *(dst - 1) == '/') dst--;
+  if (dst > norm_key.begin() && *(dst - 1) == '/') {
+    dst--;
+  }
   norm_key.resize(dst - norm_key.begin());
   return norm_key;
 }
@@ -1280,7 +1237,6 @@ void CoordinationService::BarrierAsyncLocked(
       task.recoverable() && counter == 0 &&
       // Not a special once-only barrier.
       barrier_id != kClusterRegisterBarrierId &&
-      barrier_id != device_propagation_barrier_id_ &&
       barrier_id != shutdown_barrier_id_) {
     should_initialize_new_instance = true;
     // Use the service's counter to initialize the new barrier.
@@ -1417,9 +1373,6 @@ void CoordinationService::PassBarrier(BarrierState* barrier,
   LOG(INFO) << "Barrier(" << BarrierName(*barrier)
             << ") has passed with status: " << result;
   // Special hook for device propagation barrier to set global device ids.
-  if (barrier->id == device_propagation_barrier_id_) {
-    AggregateClusterDevices();
-  }
   for (const auto& task_at_barrier : barrier->tasks_at_barrier) {
     // Clean up task state (used as error hooks).
     const CoordinatedTask& task = task_at_barrier.first;
@@ -1443,7 +1396,8 @@ void CoordinationService::PassBarrier(BarrierState* barrier,
            "some tasks were never scheduled, or 3) scheduling delays. Consider "
            "setting a longer initialization timeout if such delays are "
            "expected, the timeout is currently set to: "
-        << cluster_register_timeout_ << ".\n\nOriginal error: " << result;
+        << config_.cluster_register_timeout
+        << ".\n\nOriginal error: " << result;
     return;
   }
   // Special hook for shutdown barrier to disconnect tasks at the barrier and
@@ -1739,33 +1693,6 @@ void CoordinationService::ReachBarrier(BarrierState* barrier,
   }
 };
 
-void CoordinationService::AggregateClusterDevices() {
-  assert(cluster_devices_.device_size() == 0);
-  std::vector<CoordinatedTask> ordered_tasks;
-  // Sort by task name to set deterministic order for cluster devices.
-  ordered_tasks.reserve(cluster_state_.size());
-  for (const auto& task : cluster_state_) {
-    ordered_tasks.push_back(GetTaskFromName(task.first));
-  }
-  std::sort(ordered_tasks.begin(), ordered_tasks.end(),
-            [](const CoordinatedTask& task1, const CoordinatedTask& task2) {
-              if (task1.job_name() != task2.job_name()) {
-                return task1.job_name() < task2.job_name();
-              }
-              return task1.task_id() < task2.task_id();
-            });
-
-  // Aggregate to global device list.
-  for (const auto& task : ordered_tasks) {
-    cluster_devices_.MergeFrom(
-        cluster_state_[GetTaskName(task)]->GetDeviceInfo());
-  }
-
-  if (post_aggregate_device_fn_ != nullptr) {
-    cluster_devices_ = post_aggregate_device_fn_(cluster_devices_);
-  }
-}
-
 void CoordinationService::DisconnectAllNonRecoverableTasks() {
   for (const auto& [task_name, state] : cluster_state_) {
     if (state->IsRecoverable()) {
@@ -1825,11 +1752,6 @@ void CoordinationService::CompleteShutdownAfterBarrier(
     // there is a new service instance.
     SetAllTasksError(shutdown_error);
   }
-}
-
-bool CoordinationService::isRecoverableJob(
-    const absl::string_view task_name) const {
-  return recoverable_jobs_.find(task_name) != recoverable_jobs_.end();
 }
 
 void CoordinationService::SendErrorPollingResponseOrFailAllTasks(

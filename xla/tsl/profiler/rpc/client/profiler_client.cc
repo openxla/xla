@@ -24,6 +24,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "grpcpp/client_context.h"
+#include "grpcpp/create_channel.h"
 #include "grpcpp/grpcpp.h"  // IWYU pragma: keep
 #include "grpcpp/security/credentials.h"
 #include "grpcpp/support/channel_arguments.h"
@@ -38,12 +40,16 @@ namespace tsl {
 namespace profiler {
 namespace {
 
+using tensorflow::ContinuousProfilingResponse;
+using tensorflow::GetSnapshotRequest;
 using tensorflow::MonitorRequest;
 using tensorflow::MonitorResponse;
 using tensorflow::NewProfileSessionRequest;
 using tensorflow::NewProfileSessionResponse;
 using tensorflow::ProfileRequest;
 using tensorflow::ProfileResponse;
+using tensorflow::StopContinuousProfilingRequest;
+using tensorflow::StopContinuousProfilingResponse;
 
 inline absl::Status FromGrpcStatus(const ::grpc::Status& s) {
   return s.ok() ? absl::OkStatus()
@@ -76,6 +82,40 @@ absl::Status ProfileGrpc(const std::string& service_address,
       CreateStub<tensorflow::grpc::ProfilerService>(service_address);
   TF_RETURN_IF_ERROR(
       FromGrpcStatus(stub->Profile(&context, request, response)));
+  return absl::OkStatus();
+}
+
+absl::Status ContinuousProfilingGrpc(const std::string& service_address,
+                                     const ProfileRequest& request,
+                                     ContinuousProfilingResponse* response) {
+  ::grpc::ClientContext context;
+  std::unique_ptr<tensorflow::grpc::ProfilerService::Stub> stub =
+      CreateStub<tensorflow::grpc::ProfilerService>(service_address);
+  TF_RETURN_IF_ERROR(FromGrpcStatus(
+      stub->StartContinuousProfiling(&context, request, response)));
+  return absl::OkStatus();
+}
+
+absl::Status StopContinuousProfilingGrpc(
+    const std::string& service_address,
+    const StopContinuousProfilingRequest& request,
+    StopContinuousProfilingResponse* response) {
+  ::grpc::ClientContext context;
+  std::unique_ptr<tensorflow::grpc::ProfilerService::Stub> stub =
+      CreateStub<tensorflow::grpc::ProfilerService>(service_address);
+  TF_RETURN_IF_ERROR(FromGrpcStatus(
+      stub->StopContinuousProfiling(&context, request, response)));
+  return absl::OkStatus();
+}
+
+absl::Status GetSnapshotGrpc(const std::string& service_address,
+                             const GetSnapshotRequest& request,
+                             ProfileResponse* response) {
+  ::grpc::ClientContext context;
+  std::unique_ptr<tensorflow::grpc::ProfilerService::Stub> stub =
+      CreateStub<tensorflow::grpc::ProfilerService>(service_address);
+  TF_RETURN_IF_ERROR(
+      FromGrpcStatus(stub->GetSnapshot(&context, request, response)));
   return absl::OkStatus();
 }
 

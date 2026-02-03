@@ -45,9 +45,9 @@ cc_library(
 xla_cc_test(
     name = "cpu_aot_export_test",
     srcs = ["cpu_aot_export_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/ir:hlo_module_group",
         "//xla/service:compiler",
         "//xla/service:cpu_plugin",
         "//xla/service:executable",
@@ -70,6 +70,7 @@ xla_cc_test(
 xla_cc_test(
     name = "cpu_fusion_test",
     srcs = ["cpu_fusion_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         "//xla:error_spec",
         "//xla:literal",
@@ -77,6 +78,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/service:cpu_plugin",
         "//xla/service/cpu:cpu_instruction_fusion",
@@ -104,6 +106,7 @@ xla_cc_test(
 xla_cc_test(
     name = "cpu_external_constants_test",
     srcs = ["cpu_external_constants_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":cpu_codegen_test_main",
         "//xla:array2d",
@@ -119,6 +122,7 @@ xla_cc_test(
 xla_cc_test(
     name = "cpu_noalias_test",
     srcs = ["cpu_noalias_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":cpu_codegen_test_main",
         "//xla:literal",
@@ -165,6 +169,10 @@ xla_test(
 xla_cc_test(
     name = "cpu_intrinsic_test",
     srcs = ["cpu_intrinsic_test.cc"],
+    # The objective of this test to ensure that LLVM auto vectorization kicks in. This is not
+    # necessary with the tiled emitter which explicitly creates vector instructions.
+    env = {"XLA_FLAGS": "--xla_backend_extra_options=xla_cpu_disable_tiled_emitter"},
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":cpu_codegen_test_main",
         "//xla:shape_util",
@@ -185,6 +193,7 @@ xla_cc_test(
 xla_cc_test(
     name = "tree_reduction_rewriter_test",
     srcs = ["tree_reduction_rewriter_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":cpu_codegen_test_main",
         "//xla/hlo/ir:hlo",
@@ -202,6 +211,7 @@ xla_cc_test(
 xla_cc_test(
     name = "cpu_infeed_test",
     srcs = ["cpu_infeed_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         "//xla:error_spec",
         "//xla:literal",
@@ -226,6 +236,7 @@ xla_cc_test(
 xla_cc_test(
     name = "cpu_literal_caching_test",
     srcs = ["cpu_literal_caching_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":cpu_codegen_test_main",
         "//xla/hlo/ir:hlo",
@@ -239,6 +250,7 @@ xla_cc_test(
 xla_cc_test(
     name = "cpu_spmd_compile_test",
     srcs = ["cpu_spmd_compile_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":cpu_codegen_test_main",
         "//xla:debug_options_flags",
@@ -255,6 +267,10 @@ xla_cc_test(
 xla_cc_test(
     name = "cpu_vectorization_test",
     srcs = ["cpu_vectorization_test.cc"],
+    # The objective of this test to ensure that LLVM auto vectorization kicks in. This is not
+    # necessary with the tiled emitter which explicitly creates vector instructions.
+    env = {"XLA_FLAGS": "--xla_backend_extra_options=xla_cpu_disable_tiled_emitter"},
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":cpu_codegen_test_main",
         "//xla:shape_util",
@@ -279,6 +295,7 @@ xla_cc_test(
 xla_cc_test(
     name = "cpu_while_test",
     srcs = ["cpu_while_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":cpu_codegen_test_main",
         "//xla:literal",
@@ -304,6 +321,7 @@ onednn_cc_test(
     tags = [
         "no_oss",
         "notap",
+        "pjrt_migration_candidate",
     ],
     deps = [
         "//xla:error_spec",
@@ -324,6 +342,7 @@ onednn_cc_test(
         # TODO: reenable once onednn is supported by the thunk runtime.
         "no_oss",
         "notap",
+        "pjrt_migration_candidate",
     ],
     deps = [
         "//xla:literal",
@@ -372,6 +391,7 @@ xla_cc_test(
         # TODO: reenable once onednn is supported by the thunk runtime.
         "no_oss",
         "notap",
+        "pjrt_migration_candidate",
     ],
     deps = [
         "//xla:error_spec",
@@ -392,6 +412,7 @@ xla_cc_test(
         # TODO: reenable once onednn is supported by the thunk runtime.
         "no_oss",
         "notap",
+        "pjrt_migration_candidate",
     ],
     deps = [
         "//xla:shape_util",
@@ -414,6 +435,7 @@ xla_cc_test(
 onednn_graph_cc_test(
     name = "onednn_fusion_test",
     srcs = ["onednn_fusion_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         "//xla:error_spec",
         "//xla/backends/cpu:onednn_support",
@@ -430,6 +452,7 @@ onednn_graph_cc_test(
 xla_cc_test(
     name = "cpu_copy_test",
     srcs = ["cpu_copy_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":cpu_codegen_test_main",
         "//xla:literal",

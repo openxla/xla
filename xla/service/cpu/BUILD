@@ -177,7 +177,6 @@ cc_library(
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_ordering",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/ir:hlo_module_group",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/transforms:literal_canonicalizer",
@@ -455,6 +454,7 @@ xla_test(
 xla_cc_test(
     name = "cpu_compiler_internals_test",
     srcs = ["cpu_compiler_internals_test.cc"],
+    tags = ["pjrt_migration_candidate"],
     deps = [
         ":cpu_compiler_pure",
         "//xla/backends/cpu/codegen/emitters:cpu_fusion_emitter_config",
@@ -480,6 +480,8 @@ xla_test(
     backends = [
         "cpu",
     ],
+    tags = ["pjrt_migration_candidate"],
+    use_legacy_runtime = True,
     deps = [
         ":cpu_aot_compilation_result",
         ":test_header_helper",
@@ -511,10 +513,10 @@ xla_test(
 tf_proto_library(
     name = "executable_proto",
     srcs = ["executable.proto"],
-    protodeps = [
-        "//xla/service:hlo_proto",
+    deps = [
         "//xla:xla_proto",
         "//xla/backends/cpu/runtime:thunk_proto",
+        "//xla/service:hlo_proto",
     ],
 )
 
@@ -696,10 +698,8 @@ cc_library(
         ":elemental_ir_emitter",
         ":ir_emission_utils",
         ":ir_function",
-        ":onednn_config_proto_cc",
         ":parallel_loop_emitter",
         "//xla:literal",
-        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
@@ -725,7 +725,6 @@ cc_library(
         "//xla/service/llvm_ir:tuple_ops",
         "//xla/tsl/lib/math:math_util",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/cleanup",
@@ -744,7 +743,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
         "@llvm-project//mlir:IR",
-    ] + if_onednn([":onednn_memory_util"]),
+    ],
 )
 
 cc_library(
@@ -870,6 +869,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "//xla/service:pattern_matcher",
+        "//xla/service:shaped_slice",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_address",
         "//xla/tsl/platform:env",
@@ -1047,6 +1047,7 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/utils:hlo_matchers",
@@ -1069,11 +1070,13 @@ cc_library(
     deps = [
         ":cpu_options",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/codegen/emitters:elemental_hlo_to_mlir",
         "//xla/hlo/ir:hlo",
         "//xla/service:fusion_node_indexing_evaluation",
         "//xla/service:hlo_module_config",
         "//xla/service:instruction_fusion",
+        "//xla/service:pattern_matcher",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -1266,6 +1269,7 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -1308,7 +1312,6 @@ xla_cc_test(
         "//xla:util",
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/ir:hlo_module_group",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test",
         "//xla/service:compiler",
@@ -1352,7 +1355,7 @@ tf_proto_library(
 tf_proto_library(
     name = "backend_config_proto",
     srcs = ["backend_config.proto"],
-    protodeps = [
+    deps = [
         ":onednn_config_proto",
         "//xla/backends/cpu:xnn_fusion_options_proto",
         "//xla/backends/cpu:ynn_fusion_options_proto",
@@ -1364,7 +1367,6 @@ onednn_cc_library(
     srcs = ["onednn_util.cc"],
     hdrs = [
         "onednn_util.h",
-        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],

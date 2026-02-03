@@ -20,7 +20,6 @@ limitations under the License.
 #define XLA_HLO_IR_HLO_SHARDING_H_
 
 #include <cstdint>
-#include <map>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -175,6 +174,9 @@ class HloSharding {
   // has usually a special meaning, with dedicated handling logic.
   static bool IsReservedDevice(int64_t device) { return device < 0; }
 
+  // Convert NamedSharding (HloShardingV3) to HloShardingV2.
+  static HloSharding V3ToV2Sharding(const NamedSharding& named_sharding);
+
   OpSharding ToProto() const;
 
   // Prints the string representation of this sharding.Note that this string
@@ -241,9 +243,7 @@ class HloSharding {
   bool IsManualLeaf() const {
     DCHECK(!IsTuple());
     if (UseNamedShardingLeaf()) {
-      // ManualSharding is represented by separate ManualComputationOp in named
-      // sharding format.
-      return false;
+      return named_sharding_->IsManual();
     }
     return manual_;
   }
@@ -267,13 +267,16 @@ class HloSharding {
 
   bool IsUnreduced() const {
     if (!IsTuple()) {
-      return unreduced_;
+      return IsUnreducedLeaf();
     }
     return absl::c_all_of(tuple_elements_,
                           [](const HloSharding& s) { return s.IsUnreduced(); });
   }
   bool IsUnreducedLeaf() const {
     DCHECK(!IsTuple());
+    if (UseNamedShardingLeaf()) {
+      return named_sharding_->IsUnreduced();
+    }
     return unreduced_;
   }
 
@@ -365,6 +368,17 @@ class HloSharding {
   // Returns true if the sharding defines an operation on the given device.
   bool UsesDevice(int64_t device) const;
 
+  // Returns the device assignment for the sharding.
+  //
+  // For NamedSharding we convert it to tile based HloShardingV2 and then return
+  // the device assignment.
+  TileAssignment device_assignment() const {
+    if (UseNamedShardingLeaf()) {
+      return V3ToV2Sharding(*named_sharding_).device_assignment();
+    }
+    return tile_assignment_;
+  }
+
   // Returns the tile that should be executed on the given device.
   // REQUIRES: !IsTuple()
   std::vector<int64_t> TileIndexForDevice(int64_t device) const;
@@ -387,6 +401,14 @@ class HloSharding {
   std::vector<int64_t> TileLimitForDevice(const Shape& shape,
                                           int64_t device) const;
 
+  // Invokes a callback with the (tile_index, device_id) for each tile in the
+  // sharding.
+  //
+  // For NamedSharding we convert it to tile based HloShardingV2 and then invoke
+  // callback on the tile based sharding.
+  void EachTile(
+      absl::FunctionRef<void(absl::Span<const int64_t>, int64_t)> f) const;
+
   // Invokes a callback with the (device_index, tile_offset, tile_limit) for
   // each tile in the sharding. tile_offset is the offset within the specified
   // shape dims of the tile that should be executed on device_index, tile_limit
@@ -395,6 +417,9 @@ class HloSharding {
   // REQUIRES: !IsManual()
   // REQUIRES: !IsUnknown()
   // REQUIRES: !maximal_
+  //
+  // For NamedSharding we convert it to tile based HloShardingV2 and then invoke
+  // callback on the tile based sharding.
   absl::Status EachTile(
       absl::Span<const int64_t> dims,
       absl::FunctionRef<void(int64_t, absl::Span<const int64_t>,
@@ -545,9 +570,8 @@ class HloSharding {
   // Gets the total number of tiles including subgroups and partial replication.
   int64_t TotalNumTiles() const;
   // Gets the number of tiles. If it has partial replication, this will not
-  // equal the device count.
+  // equal the device count. This method is not defined for tuple shardings.
   int64_t NumTiles() const;
-  int64_t NumTilesLeaf() const;
   // Like NumTiles() but considers only some specific dimensions passed as
   // argument
   int64_t NumTiles(absl::Span<const int64_t> dims) const;
@@ -563,7 +587,7 @@ class HloSharding {
       return (it - subgroup_types_.begin()) + TiledDataRank();
     }
     if (replicate_on_last_tile_dim_) {
-      return tile_assignment_.num_dimensions() - 1;
+      return num_dimensions() - 1;
     }
     return -1;
   }
@@ -587,19 +611,10 @@ class HloSharding {
   }
 
   // Returns the data rank for tiled sharding. It doesn't include subgroup dims.
+  // This method is not defined for tuple shardings.
   int64_t TiledDataRank() const {
-    CHECK(IsTiled());
-    int64_t rank = tile_assignment_.num_dimensions();
-    if (ReplicateOnLastTileDim()) {
-      rank--;
-    }
-    rank -= subgroup_types_.size();
-    return rank;
-  }
-  int64_t TiledDataRankLeaf() const {
-    DCHECK(!IsTuple());
     CHECK(IsTiledLeaf());
-    int64_t rank = tile_assignment_.num_dimensions();
+    int64_t rank = num_dimensions();
     if (ReplicateOnLastTileDim()) {
       rank--;
     }

@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
+#include "xla/hlo/ir/hlo_original_value_util.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
@@ -183,6 +184,7 @@ bool CanInferShape(HloOpcode code) {
     case HloOpcode::kRoundNearestAfz:
     case HloOpcode::kRoundNearestEven:
     case HloOpcode::kRsqrt:
+    case HloOpcode::kScan:
     case HloOpcode::kScaledDot:
     case HloOpcode::kScatter:
     case HloOpcode::kSelect:
@@ -341,6 +343,7 @@ class HloParserImpl : public HloParser {
     kOriginalValue,
     kOriginalValueRecoveryTable,
     kMode,
+    kConvKind,
   };
 
   struct AttrConfig {
@@ -585,6 +588,7 @@ class HloParserImpl : public HloParser {
   bool ParseComparisonType(Comparison::Type* result);
   bool ParseFusionKind(HloInstruction::FusionKind* result);
   bool ParseRandomDistribution(RandomDistribution* result);
+  bool ParseConvKind(HloConvolutionInstruction::ConvKind* result);
   bool ParseRandomAlgorithm(RandomAlgorithm* result);
   bool ParsePrecision(PrecisionConfig::Precision* result);
   bool ParseAlgorithm(PrecisionConfig::Algorithm* result);
@@ -1933,7 +1937,8 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
             *shape, operands, *to_apply, device_list,
             constrain_layout ? *constrain_layout : false, channel_id,
             use_global_device_ids ? *use_global_device_ids : false));
-      } else if (opcode == HloOpcode::kReduceScatter) {
+      }
+      if (opcode == HloOpcode::kReduceScatter) {
         return builder->AddInstruction(HloInstruction::CreateReduceScatter(
             *shape, operands, *to_apply, device_list,
             constrain_layout ? *constrain_layout : false, channel_id,
@@ -2103,6 +2108,15 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       optional<std::string> async_execution_thread;
       attrs["async_execution_thread"] = {/*required=*/false, AttrTy::kString,
                                          &async_execution_thread};
+
+      optional<
+          std::vector<std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>>>
+          output_to_operand_aliasing;
+      if (opcode == HloOpcode::kAsyncStart) {
+        attrs["output_to_operand_aliasing"] = {/*required=*/false,
+                                               AttrTy::kInstructionAliasing,
+                                               &output_to_operand_aliasing};
+      }
       if (async_wrapped_opcode) {
         // Only generate async-wrapper for async-start.
         if (opcode == HloOpcode::kAsyncStart) {
@@ -2177,14 +2191,21 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
           return nullptr;
         }
       }
+
       if (opcode == HloOpcode::kAsyncStart) {
         // async_execution_thread only needs to be populated for async-start,
         // as the rest of the async chain will reference the root op.
         if (!async_execution_thread) {
           async_execution_thread = HloInstruction::kMainExecutionThread;
         }
-        return builder->AddInstruction(HloInstruction::CreateAsyncStart(
+        auto instr = builder->AddInstruction(HloInstruction::CreateAsyncStart(
             *shape, operands, *async_computation, *async_execution_thread));
+
+        if (output_to_operand_aliasing.has_value()) {
+          Cast<HloAsyncStartInstruction>(instr)->set_output_to_operand_aliasing(
+              std::move(*output_to_operand_aliasing));
+        }
+        return instr;
       }
       if (opcode == HloOpcode::kAsyncUpdate) {
         return builder->AddInstruction(
@@ -2498,6 +2519,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       optional<ConvolutionDimensionNumbers> dnums;
       optional<int64_t> feature_group_count;
       optional<int64_t> batch_group_count;
+      optional<HloConvolutionInstruction::ConvKind> conv_kind;
       attrs["window"] = {/*required=*/false, AttrTy::kWindow, &window};
       attrs["dim_labels"] = {/*required=*/true,
                              AttrTy::kConvolutionDimensionNumbers, &dnums};
@@ -2505,6 +2527,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
                                       &feature_group_count};
       attrs["batch_group_count"] = {/*required=*/false, AttrTy::kInt64,
                                     &batch_group_count};
+      attrs["conv_kind"] = {/*required=*/false, AttrTy::kConvKind, &conv_kind};
       optional<std::vector<PrecisionConfig::Precision>> operand_precision;
       attrs["operand_precision"] = {/*required=*/false, AttrTy::kPrecisionList,
                                     &operand_precision};
@@ -2538,6 +2561,14 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
           })) {
         return nullptr;
       }
+      auto convolution = builder->AddInstruction(HloInstruction::CreateConvolve(
+          *shape, /*lhs=*/operands[0], /*rhs=*/operands[1],
+          feature_group_count.value(), batch_group_count.value(), *window,
+          *dnums, precision_config));
+      if (conv_kind) {
+        Cast<HloConvolutionInstruction>(convolution)->set_conv_kind(*conv_kind);
+      }
+      return convolution;
       return builder->AddInstruction(HloInstruction::CreateConvolve(
           *shape, /*lhs=*/operands[0], /*rhs=*/operands[1],
           feature_group_count.value(), batch_group_count.value(), *window,
@@ -2692,6 +2723,95 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       }
       return builder->AddInstruction(
           HloInstruction::CreateMap(*shape, operands, *to_apply));
+    }
+    case HloOpcode::kScan: {
+      optional<HloComputation*> to_apply;
+      attrs["to_apply"] = {/*required=*/true, AttrTy::kHloComputation,
+                           &to_apply};
+      optional<std::vector<int64_t>> dimensions;
+      attrs["dimensions"] = {/*required=*/true, AttrTy::kBracedInt64List,
+                             &dimensions};
+      optional<bool> is_reverse = false;
+      attrs["is_reverse"] = {/*required=*/false, AttrTy::kBool, &is_reverse};
+      optional<bool> is_associative = false;
+      attrs["is_associative"] = {/*required=*/false, AttrTy::kBool,
+                                 &is_associative};
+      if ((!preset_operands && !ParseOperands(&operands, builder)) ||
+          !ParseAttributes(attrs, allow_attributes, shape)) {
+        return nullptr;
+      }
+      if (dimensions->empty()) {
+        TokenError("expects at least 1 dimension");
+        return nullptr;
+      }
+
+      // Infer num_carries by matching the operands from the right to the
+      // parameters of to_apply.
+      int64_t num_carries = 0;
+      HloComputation* computation = *to_apply;
+      if (operands.size() != computation->num_parameters()) {
+        TokenError(StrCat("expects ", operands.size(),
+                          " operands to match the number of parameters of "
+                          "to_apply, but to_apply has ",
+                          computation->num_parameters(), " parameters"));
+        return nullptr;
+      }
+      for (int i = operands.size() - 1; i >= 0; --i) {
+        if (ShapeUtil::Compatible(
+                operands[i]->shape(),
+                computation->parameter_instruction(i)->shape())) {
+          num_carries++;
+        } else {
+          break;
+        }
+      }
+
+      if (num_carries == 0) {
+        TokenError("expects at least one carry operand");
+        return nullptr;
+      }
+      if (num_carries == operands.size()) {
+        TokenError("expects at least one input operand");
+        return nullptr;
+      }
+
+      if (!maybe_infer_shape([&]() -> absl::StatusOr<Shape> {
+            int64_t num_inputs = operands.size() - num_carries;
+            const Shape& root_shape =
+                to_apply.value()->root_instruction()->shape();
+            if (!root_shape.IsTuple()) {
+              return InvalidArgument("Scan computation result must be a tuple");
+            }
+
+            if (root_shape.tuple_shapes().size() != operands.size()) {
+              return InvalidArgument(
+                  "Scan computation result must be a tuple of size %d",
+                  operands.size());
+            }
+
+            std::vector<Shape> result_shapes;
+            result_shapes.reserve(operands.size());
+            for (int i = 0; i < num_inputs; ++i) {
+              const Shape& input_shape = operands[i]->shape();
+              Shape output_shape = input_shape;
+              output_shape.set_element_type(
+                  root_shape.tuple_shapes(i).element_type());
+              result_shapes.push_back(output_shape);
+            }
+            for (int i = num_inputs; i < operands.size(); ++i) {
+              result_shapes.push_back(root_shape.tuple_shapes(i));
+            }
+            return ShapeUtil::MakeTupleShape(result_shapes);
+          })) {
+        return nullptr;
+      }
+
+      int64_t num_inputs = operands.size() - num_carries;
+      return builder->AddInstruction(HloInstruction::CreateScan(
+          *shape, absl::MakeSpan(operands).subspan(0, num_inputs),
+          absl::MakeSpan(operands).subspan(num_inputs, num_carries), *to_apply,
+          dimensions->at(0), *is_reverse,
+          *is_associative ? TRI_STATE_TRUE : TRI_STATE_FALSE));
     }
     case HloOpcode::kReduce: {
       optional<HloComputation*> reduce_computation;
@@ -4181,7 +4301,8 @@ bool HloParserImpl::ParseBooleanListOrSingleBoolean(BoolList* boolean_list) {
       boolean_list->push_back(true);
       lexer_.Lex();
       return true;
-    } else if (lexer_.GetKind() == TokKind::kw_false) {
+    }
+    if (lexer_.GetKind() == TokKind::kw_false) {
       boolean_list->push_back(false);
       lexer_.Lex();
       return true;
@@ -5265,6 +5386,16 @@ bool HloParserImpl::ParseAttributeHelper(
             ->emplace(result);
         return true;
       }
+      case AttrTy::kConvKind: {
+        HloConvolutionInstruction::ConvKind result;
+        if (!ParseConvKind(&result)) {
+          return false;
+        }
+        static_cast<optional<HloConvolutionInstruction::ConvKind>*>(
+            attr_out_ptr)
+            ->emplace(result);
+        return true;
+      }
       case AttrTy::kBracedInt64List: {
         std::vector<int64_t> result;
         if (!ParseInt64List(TokKind::kLbrace, TokKind::kRbrace, TokKind::kComma,
@@ -5681,7 +5812,7 @@ bool HloParserImpl::ParseWindow(Window* window, bool expect_outer_curlies) {
         return ParseDxD("lhs_dilate", &lhs_dilate);
       }
       if (field_name == "rhs_dilate") {
-        return ParseDxD("rls_dilate", &rhs_dilate);
+        return ParseDxD("rhs_dilate", &rhs_dilate);
       }
       if (field_name == "pad") {
         return ParseWindowPad(&pad);
@@ -5786,7 +5917,8 @@ bool HloParserImpl::ParseConvolutionDimensionNumbers(
       char c = lhs[i];
       if (c == '?') {
         continue;
-      } else if (c == 'b') {
+      }
+      if (c == 'b') {
         dnums->set_input_batch_dimension(i);
       } else if (c == 'f') {
         dnums->set_input_feature_dimension(i);
@@ -5814,7 +5946,8 @@ bool HloParserImpl::ParseConvolutionDimensionNumbers(
       char c = rhs[i];
       if (c == '?') {
         continue;
-      } else if (c == 'i') {
+      }
+      if (c == 'i') {
         dnums->set_kernel_input_feature_dimension(i);
       } else if (c == 'o') {
         dnums->set_kernel_output_feature_dimension(i);
@@ -5842,7 +5975,8 @@ bool HloParserImpl::ParseConvolutionDimensionNumbers(
       char c = out[i];
       if (c == '?') {
         continue;
-      } else if (c == 'b') {
+      }
+      if (c == 'b') {
         dnums->set_output_batch_dimension(i);
       } else if (c == 'f') {
         dnums->set_output_feature_dimension(i);
@@ -7098,6 +7232,27 @@ bool HloParserImpl::ParseFusionKind(HloInstruction::FusionKind* result) {
                                 val, status_or_result.status().message()));
   }
   *result = status_or_result.value();
+  lexer_.Lex();
+  return true;
+}
+
+bool HloParserImpl::ParseConvKind(HloConvolutionInstruction::ConvKind* result) {
+  VLOG(kDebugLevel) << "ParseConvKind";
+  if (lexer_.GetKind() != TokKind::kIdent) {
+    return TokenError("expects convolution kind");
+  }
+  std::string val = lexer_.GetStrVal();
+  if (val == "fprop") {
+    *result = HloConvolutionInstruction::ConvKind::FPROP;
+  } else if (val == "wgrad") {
+    *result = HloConvolutionInstruction::ConvKind::WGRAD;
+  } else if (val == "dgrad") {
+    *result = HloConvolutionInstruction::ConvKind::DGRAD;
+  } else if (val == "unset") {
+    *result = HloConvolutionInstruction::ConvKind::UNSET;
+  } else {
+    return TokenError(StrFormat("expects convolution kind but sees: %s", val));
+  }
   lexer_.Lex();
   return true;
 }

@@ -59,6 +59,7 @@ namespace {
 
 namespace LLVM = ::mlir::LLVM;
 namespace arith = ::mlir::arith;
+namespace se = stream_executor;
 namespace vector = ::mlir::vector;
 
 template <typename SourceOp>
@@ -560,8 +561,8 @@ class ConvertFloatAMDPass
   void runOnOperation() override {
     if (!gpu_device_info_.empty()) {
       se::GpuDeviceInfoProto device_info;
-      CHECK(tsl::protobuf::TextFormat::ParseFromString(gpu_device_info_,
-                                                       &device_info));
+      CHECK(
+          google::protobuf::TextFormat::ParseFromString(gpu_device_info_, &device_info));
       absl::StatusOr<se::DeviceDescription> device_description =
           se::DeviceDescription::FromProto(device_info);
       CHECK_OK(device_description.status());

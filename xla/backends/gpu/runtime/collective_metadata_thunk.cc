@@ -23,6 +23,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
@@ -30,6 +32,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_clique_rendezvous.h"
 #include "xla/backends/gpu/runtime/collective_multimem.h"
+#include "xla/backends/gpu/runtime/collective_multimem_registry.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -70,58 +73,92 @@ CollectiveConfig CollectiveMetadataThunk::GetCollectiveConfig(
     }
   }
 
-  config.group_mode =
-      CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA;
+  config.group_mode = CollectiveOpGroupMode::
+      COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA_AND_PARTITION;
 
   return config;
 }
 
-absl::Status CollectiveMetadataThunk::ConstructCollectiveMetadata(
+absl::StatusOr<std::vector<void*>> CollectiveMetadataThunk::CollectParamToPeers(
     const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
-    std::vector<se::DeviceAddressBase> parameters,
-    std::shared_ptr<CollectiveMultimem> multimem,
-    se::DeviceAddressBase destination) {
+    const std::vector<se::DeviceAddressBase>& parameters) {
+  std::vector<void*> param_to_peers_ptrs;
+
   size_t num_parameters = parameters.size();
-
-  using DeviceParameters = std::vector<se::DeviceAddressBase>;
-
   // Exchange device parameters with all ranks in the clique.
   TF_ASSIGN_OR_RETURN(
       auto device_parameters,
       GpuCliqueRendezvous::Join(clique_key, rank, std::move(parameters)));
 
   // Collect pointers to device buffers from all participating ranks.
-  std::vector<void*> param_to_peers_ptrs;
+  param_to_peers_ptrs.reserve(num_parameters * clique_key.num_devices());
+
+  absl::flat_hash_map<int, std::vector<se::DeviceAddressBase>>
+      peer_to_parameters(clique_key.num_devices());
+
+  using DeviceParameters = std::vector<se::DeviceAddressBase>;
+
   for (auto peer = RankId(0); peer < RankId(clique_key.num_devices()); ++peer) {
     TF_ASSIGN_OR_RETURN(const DeviceParameters& peer_parameters,
                         device_parameters->at<DeviceParameters>(peer));
-    for (se::DeviceAddressBase peer_parameter : peer_parameters) {
-      param_to_peers_ptrs.push_back(peer_parameter.opaque());
+    peer_to_parameters[peer.value()] = std::move(peer_parameters);
+  }
+
+  for (int parameter = 0; parameter < num_parameters; ++parameter) {
+    for (int peer = 0; peer < clique_key.num_devices(); ++peer) {
+      param_to_peers_ptrs.push_back(
+          peer_to_parameters[peer][parameter].opaque());
     }
   }
 
-  // Check that all participants have the same number of parameters.
-  TF_RET_CHECK(param_to_peers_ptrs.size() ==
-               num_parameters * clique_key.num_local_participants());
+  return param_to_peers_ptrs;
+}
 
+absl::StatusOr<CollectiveKernelMetadata>
+CollectiveMetadataThunk::CreateCollectiveMetadata(
+    const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
+    std::shared_ptr<CollectiveMultimem> multimem) {
+  CollectiveKernelMetadata metadata;
+  metadata.rank = rank.value();
+  metadata.multicast_buffer_ptr =
+      multimem ? multimem->mapped_ptr(rank) : nullptr;
+  return metadata;
+}
+
+absl::Status CollectiveMetadataThunk::CopyCollectiveMetadataToDevice(
+    se::Stream* stream, CollectiveKernelMetadata metadata,
+    const std::vector<void*>& param_to_peers_ptrs,
+    se::DeviceAddressBase destination) {
   const int64_t param_to_peers_ptrs_size =
       param_to_peers_ptrs.size() * sizeof(void*);
   se::DeviceAddressBase param_to_peers_ptrs_buffer = destination.GetByteSlice(
       sizeof(CollectiveKernelMetadata), param_to_peers_ptrs_size);
 
-  CollectiveKernelMetadata metadata;
-  metadata.rank = rank.value();
-  metadata.multicast_buffer_ptr =
-      multimem ? multimem->mapped_ptr(rank) : nullptr;
   metadata.param_to_peers =
       reinterpret_cast<void**>(param_to_peers_ptrs_buffer.opaque());
-
   TF_RETURN_IF_ERROR(stream->Memcpy(&destination, &metadata,
                                     sizeof(CollectiveKernelMetadata)));
   TF_RETURN_IF_ERROR(stream->Memcpy(&param_to_peers_ptrs_buffer,
                                     param_to_peers_ptrs.data(),
                                     param_to_peers_ptrs_size));
-  return stream->BlockHostUntilDone();
+  return absl::OkStatus();
+}
+
+absl::Status CollectiveMetadataThunk::ConstructCollectiveMetadata(
+    const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
+    const std::vector<se::DeviceAddressBase>& parameters,
+    std::shared_ptr<CollectiveMultimem> multimem,
+    se::DeviceAddressBase destination) {
+  std::vector<void*> param_to_peers_ptrs;
+  TF_ASSIGN_OR_RETURN(
+      param_to_peers_ptrs,
+      CollectParamToPeers(clique_key, rank, stream, parameters));
+  TF_ASSIGN_OR_RETURN(
+      CollectiveKernelMetadata metadata,
+      CreateCollectiveMetadata(clique_key, rank, stream, multimem));
+  TF_RETURN_IF_ERROR(CopyCollectiveMetadataToDevice(
+      stream, metadata, param_to_peers_ptrs, destination));
+  return absl::OkStatus();
 }
 
 /* static */ absl::StatusOr<se::DeviceAddressBase>
@@ -141,6 +178,36 @@ CollectiveMetadataThunk::GetParameterDeviceMemoryBase(
   return ptr_table_base.GetByteSlice(
       (parameter_index * num_devices) * sizeof(void*),
       /*size_bytes=*/num_devices * sizeof(void*));
+}
+
+absl::Status CollectiveMetadataThunk::Prepare(const PrepareParams& params) {
+  // We currently support only a single memory space for multimem parameters.
+  // So we just pick the first one here.
+  auto fast_memory_parameter =
+      absl::c_find_if(parameters_, [](const Buffer& parameter) {
+        return parameter.memory_space == xla::Layout::kGenericFastMemorySpace;
+      });
+  if (fast_memory_parameter == parameters_.end()) {
+    return absl::OkStatus();
+  }
+
+  se::DeviceAddressBase memory_range;
+  TF_ASSIGN_OR_RETURN(memory_range,
+                      params.executor->GetMemoryRange(
+                          params.buffer_allocations->GetDeviceAddress(
+                              fast_memory_parameter->slice)));
+
+  // Since there is no parameter in the collective memory space, we don't need
+  // to set up the collective multimem.
+  if (memory_range.is_null()) {
+    return absl::OkStatus();
+  }
+  TF_ASSIGN_OR_RETURN(
+      const GpuCliqueKey clique_key,
+      GetCollectiveGpuCliqueKey(*params.collective_params, collective_config_,
+                                /*include_participant_groups=*/false));
+  params.multimem_registry->Request({clique_key, /*map_to=*/memory_range});
+  return absl::OkStatus();
 }
 
 absl::Status CollectiveMetadataThunk::Initialize(
@@ -164,14 +231,22 @@ absl::Status CollectiveMetadataThunk::Initialize(
       params.buffer_allocations->GetDeviceAddress(result_);
 
   GlobalDeviceId global_device_id = params.collective_params->global_device_id;
+
+  TF_ASSIGN_OR_RETURN(auto multimem, GetCollectiveMultimem(clique_key, params));
+
   std::optional<RankId> rank = clique_key.rank(global_device_id);
+  TF_RET_CHECK(rank.has_value());
 
-  TF_ASSIGN_OR_RETURN(auto multimem,
-                      AllocateMultimem(clique_key, *rank, params));
-
-  return ConstructCollectiveMetadata(clique_key, *rank, params.stream,
-                                     std::move(parameters), std::move(multimem),
-                                     result_ptr);
+  TF_ASSIGN_OR_RETURN(
+      std::vector<void*> param_to_peers_ptrs,
+      CollectParamToPeers(clique_key, *rank, params.stream, parameters));
+  TF_ASSIGN_OR_RETURN(
+      CollectiveKernelMetadata metadata,
+      CreateCollectiveMetadata(clique_key, *rank, params.stream, multimem));
+  TF_RETURN_IF_ERROR(CopyCollectiveMetadataToDevice(
+      params.stream, metadata, param_to_peers_ptrs, result_ptr));
+  TF_RETURN_IF_ERROR(params.stream->BlockHostUntilDone());
+  return absl::OkStatus();
 }
 
 absl::Status CollectiveMetadataThunk::ExecuteOnStream(
@@ -180,9 +255,8 @@ absl::Status CollectiveMetadataThunk::ExecuteOnStream(
 }
 
 absl::StatusOr<std::shared_ptr<CollectiveMultimem>>
-CollectiveMetadataThunk::AllocateMultimem(const GpuCliqueKey& clique_key,
-                                          RankId rank,
-                                          const InitializeParams& params) {
+CollectiveMetadataThunk::GetCollectiveMultimem(const GpuCliqueKey& clique_key,
+                                               const InitializeParams& params) {
   se::DeviceAddressBase memory_range;
   for (const Buffer& parameter : parameters_) {
     if (parameter.memory_space == xla::Layout::kGenericFastMemorySpace) {
@@ -200,10 +274,9 @@ CollectiveMetadataThunk::AllocateMultimem(const GpuCliqueKey& clique_key,
     return nullptr;
   }
 
+  const MultimemRequest request{clique_key, memory_range};
   TF_ASSIGN_OR_RETURN(std::shared_ptr<CollectiveMultimem> collective_multimem,
-                      CollectiveMultimem::Allocate(params.executor, clique_key,
-                                                   rank, memory_range));
-
+                      params.multicast_memory_registry->Get(request));
   absl::MutexLock lock(mutex_);
   return (collective_multimem_[params.executor] =
               std::move(collective_multimem));

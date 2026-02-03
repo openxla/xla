@@ -535,6 +535,7 @@ exports_files(
         "init_main.h",
         "logging.h",
         "mem.h",
+        "macros.h",
         "net.h",
         "numa.h",
         "snappy.h",
@@ -667,7 +668,7 @@ filegroup(
 cc_library(
     name = "net",
     textual_hdrs = ["net.h"],
-    deps = tf_windows_aware_platform_deps("net"),
+    deps = tf_windows_aware_platform_deps("net") + ["@com_google_absl//absl/base:core_headers"],
 )
 
 cc_library(
@@ -689,10 +690,13 @@ cc_library(
         "snappy.h",
     ],
     deps = tf_windows_aware_platform_deps("platform_port") + [
+        ":macros",
         ":platform",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/time",
         "@xla//xla/tsl/platform:byte_order",
         "@xla//xla/tsl/platform:dynamic_annotations",
+        "@xla//xla/tsl/platform:macros",
         "@xla//xla/tsl/platform:types",
     ],
 )
@@ -1256,6 +1260,17 @@ tsl_cc_test(
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:env",
         "@xla//xla/tsl/platform:env_impl",
+        "@xla//xla/tsl/platform:test",
+    ],
+)
+
+tsl_cc_test(
+    name = "init_main_test",
+    size = "small",
+    srcs = ["init_main_test.cc"],
+    deps = [
+        ":platform_port",
+        ":test_main",
         "@xla//xla/tsl/platform:test",
     ],
 )

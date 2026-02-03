@@ -48,10 +48,10 @@
 #include "xla/python/ifrt_proxy/client/mock_client_session.h"
 #include "xla/python/ifrt_proxy/client/mock_host_buffer.h"
 #include "xla/python/ifrt_proxy/client/rpc_helper.h"
-#include "xla/python/ifrt_proxy/client/version.h"
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
 #include "xla/python/ifrt_proxy/common/test_utils.h"
 #include "xla/python/ifrt_proxy/common/types.h"
+#include "xla/python/ifrt_proxy/common/versions.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -77,7 +77,7 @@ namespace {
 
 IfrtProxyVersion Version() {
   IfrtProxyVersion version;
-  version.set_protocol_version(kClientMaxVersion);
+  version.set_protocol_version(protocol_version::kClientMax);
   version.set_ifrt_serdes_version_number(
       SerDesVersion::current().version_number().value());
   return version;
@@ -147,7 +147,6 @@ TEST_F(LoadedExecutableTest, Metadata) {
       /*num_devices=*/2, /*devices=*/{},
       /*addressable_devices=*/{},
       /*fingerprint=*/"fingerprint",
-      /*ready_future=*/tsl::Future<>(absl::OkStatus()),
       /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
 
   EXPECT_EQ(requests_queue.Pop()
@@ -229,7 +228,6 @@ TEST_F(LoadedExecutableTest, Execute) {
       &client, rpc_helper_, /*handle=*/1234, /*name=*/"foo",
       /*num_devices=*/2, /*devices=*/{}, /*addressable_devices=*/{},
       /*fingerprint=*/"fingerprint",
-      /*ready_future=*/tsl::Future<>(absl::OkStatus()),
       /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
 
   xla::ifrt::LoadedExecutable::ExecuteOptions exec_options;
@@ -396,7 +394,6 @@ TEST_F(LoadedExecutableTest, DeviceTime) {
       &client, rpc_helper_, /*handle=*/1234, /*name=*/"foo",
       /*num_devices=*/1, /*devices=*/{}, /*addressable_devices=*/{},
       /*fingerprint=*/"fingerprint",
-      /*ready_future=*/tsl::Future<>(absl::OkStatus()),
       /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
 
   xla::ifrt::LoadedExecutable::ExecuteOptions exec_options;

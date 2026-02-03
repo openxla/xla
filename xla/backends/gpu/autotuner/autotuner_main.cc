@@ -36,11 +36,13 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/gpu_profiler.h"
 #include "xla/backends/gpu/autotuner/legacy_cache.h"
 #include "xla/debug_options_flags.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/service/compiler.h"
+#include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/platform.h"
@@ -53,6 +55,7 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
+#include "tsl/platform/casts.h"
 #include "tsl/platform/cpu_info.h"
 #include "tsl/platform/init_main.h"
 
@@ -96,8 +99,11 @@ absl::Status Autotune(HloModule& module, const std::string& cache_dir,
   }
 
   TF_ASSIGN_OR_RETURN(std::unique_ptr<Compiler> compiler,
-                      xla::Compiler::GetForPlatform(platform));
+                      xla::Compiler::GetForPlatform(platform->id()));
   se::StreamExecutor* stream_executor = platform->ExecutorForDevice(0).value();
+  auto* gpu_compiler = tensorflow::down_cast<GpuCompiler*>(compiler.get());
+  auto alias_info =
+      gpu_compiler->GetAliasInfo(stream_executor->GetDeviceDescription());
   DebugOptions debug_options = GetDebugOptionsFromFlags();
   Compiler::GpuTargetConfig target_config(stream_executor);
 
@@ -106,10 +112,10 @@ absl::Status Autotune(HloModule& module, const std::string& cache_dir,
                       registry.FindObject<GetCodegenBackends>(platform->id()));
   std::vector<std::unique_ptr<CodegenBackend>> backends =
       get_codegen_backends(stream_executor, &debug_options, compiler.get(),
-                           &target_config, mlir_context);
+                           &target_config, alias_info.get(), mlir_context);
 
   std::unique_ptr<se::DeviceAddressAllocator> allocator =
-      std::make_unique<stream_executor::StreamExecutorMemoryAllocator>(
+      std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
           stream_executor);
   auto profiler =
       GpuProfiler::Create(stream_executor, ProfileOptions(), allocator.get());
@@ -137,7 +143,7 @@ absl::Status Autotune(HloModule& module, const std::string& cache_dir,
                                           target_config.device_description);
   }
 
-  AutotuneConfig autotune_config;
+  xla::AutotuneConfig autotune_config;
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<Autotuner> autotuner,
       Autotuner::Create(std::move(backends), std::move(profiler),
@@ -181,6 +187,7 @@ int main(int argc, char* argv[]) {
   auto module = xla::gpu::GetModule(hlo_file);
   CHECK_OK(module.status());
   mlir::MLIRContext mlir_context;
+  xla::RegisterSymbolicExprStorage(&mlir_context);
   CHECK_OK(xla::gpu::Autotune(*module.value(), cache_dir, autotune_cache_mode,
                               &mlir_context));
   std::cout << module.value()->ToString() << std::endl;

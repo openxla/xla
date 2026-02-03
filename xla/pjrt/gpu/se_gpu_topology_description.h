@@ -24,13 +24,13 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/pjrt/gpu/gpu_topology.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_device_dimensions.h"
 #include "xla/pjrt/pjrt_stream_executor_device_description.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
+#include "xla/service/gpu_topology.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -72,7 +72,7 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
       PjRtStreamExecutorDeviceDescription& description,
       const std::string& device_vendor, const std::string& compute_capability,
       int core_count, int64_t shared_memory_per_block_optin,
-      int partition_index);
+      int partition_index, int numa_node);
 
   std::vector<std::unique_ptr<const PjRtDeviceDescription>> DeviceDescriptions()
       const override;

@@ -30,12 +30,9 @@ limitations under the License.
 
 namespace xla::gpu {
 
-// A callback to get a unique clique id.
-//
-// TODO(b/380457503): Delete this alias and switch to
-// GpuCollectives::CliqueIdCallback.
+// A callback to get a unique clique ids.
 using CliqueIdCallback =  // NOLINT
-    std::function<absl::StatusOr<CliqueId>(const CliqueKey&)>;
+    std::function<absl::StatusOr<CliqueIds>(const CliqueKey&)>;
 
 // GPU-specific executable options.
 // We keep these separate from ExecutableRunOptions to avoid adding
@@ -92,7 +89,7 @@ class GpuExecutableRunOptions {
   bool enable_mock_collectives_ = false;
   std::optional<DeviceIdMap> gpu_global_device_ids_;
   CliqueIdCallback clique_id_callback_;
-  GpuCollectives* collectives_;
+  GpuCollectives* collectives_ = nullptr;
   std::optional<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
       incarnations_;
 };

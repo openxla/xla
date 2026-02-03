@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
+#include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
@@ -68,8 +69,8 @@ absl::StatusOr<tsl::RCReference<BasicStringArray>> BasicStringArray::Create(
     return absl::InvalidArgumentError("Got buffers_ future is invalid");
   }
 
-  auto [buffers_promise, buffers_future] = tsl::Future<Buffers>::MakePromise();
-  auto [ready_promise, ready_future] = tsl::Future<>::MakePromise();
+  auto [buffers_promise, buffers_future] = tsl::MakePromise<Buffers>();
+  auto [ready_promise, ready_future] = tsl::MakePromise<>();
 
   // Buffers when the become ready must be consistent with the sharding. For
   // instance, Buffers.size() (the number of per-shard spans of absl::Cords)
@@ -213,7 +214,7 @@ BasicStringArray::DisassembleIntoSingleDeviceArrays(
 
   for (int i = 0; i < num_shards; ++i) {
     std::tie(buffer_promises.emplace_back(), buffer_futures.emplace_back()) =
-        tsl::Future<Buffers>::MakePromise();
+        tsl::MakePromise<Buffers>();
 
     auto current_shard_strings = std::make_shared<PerShardStringStore>();
     per_shard_strings.push_back(current_shard_strings);
@@ -276,8 +277,7 @@ tsl::Future<> BasicStringArray::CopyToHostBuffer(
         sharding_->devices()->size())));
   }
 
-  auto [copy_completion_promise, copy_completion_future] =
-      tsl::Future<>::MakePromise();
+  auto [copy_completion_promise, copy_completion_future] = tsl::MakePromise<>();
 
   buffers_.OnReady(
       [copy_completion_promise = std::move(copy_completion_promise),
@@ -329,7 +329,7 @@ absl::StatusOr<ArrayRef> BasicStringArray::Copy(
 
   auto string_store = std::make_shared<StringStore>();
   auto on_done_with_buffer = [string_store]() {};
-  auto [buffers_promise, buffers_future] = tsl::Future<Buffers>::MakePromise();
+  auto [buffers_promise, buffers_future] = tsl::MakePromise<Buffers>();
 
   auto copier = [string_store = std::move(string_store),
                  buffers_promise = std::move(buffers_promise)](
@@ -378,7 +378,7 @@ absl::StatusOr<ArrayRef> BasicStringArray::FullyReplicatedShard(
 
   auto string_store = std::make_shared<StringStore>();
   auto on_done_with_buffer = [string_store]() {};
-  auto [buffers_promise, buffers_future] = tsl::Future<Buffers>::MakePromise();
+  auto [buffers_promise, buffers_future] = tsl::MakePromise<Buffers>();
 
   auto copier = [string_store = std::move(string_store),
                  buffers_promise = std::move(buffers_promise)](
@@ -411,6 +411,8 @@ absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>>
 BasicStringArray::pjrt_layout() const {
   return absl::UnimplementedError("String arrays do not support PjRtLayout");
 }
+
+LayoutRef BasicStringArray::layout() const { return nullptr; }
 
 std::string BasicStringArray::DebugString() const {
   DCHECK(this);

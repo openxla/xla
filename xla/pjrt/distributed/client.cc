@@ -36,6 +36,8 @@ limitations under the License.
 #include "xla/pjrt/distributed/coordination/grpc_coordination_client.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/runtime/device_id.h"
+#include "xla/tsl/distributed_runtime/call_options.h"
+#include "xla/tsl/distributed_runtime/coordination/coordination_service_agent.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
@@ -56,6 +58,14 @@ class DistributedRuntimeCoordinationServiceClient
   absl::Status Shutdown() override;
   absl::StatusOr<std::string> BlockingKeyValueGet(
       absl::string_view key, absl::Duration timeout) override;
+
+  // Async version of `BlockingKeyValueGet`. The `done` callback is invoked when
+  // the key-value becomes available.
+  // The caller can cancel the underlying RPC call with the `StartCancel()` and
+  // `ClearCancelCallback()` methods on the returned `CallOptions`.
+  std::shared_ptr<tsl::CallOptions> AsyncKeyValueGet(
+      absl::string_view key,
+      tsl::CoordinationServiceAgent::StatusOrValueCallback done) override;
   absl::StatusOr<std::string> KeyValueTryGet(absl::string_view key) override;
   absl::StatusOr<int64_t> KeyValueIncrement(absl::string_view key,
                                             int64_t increment) override;
@@ -78,7 +88,7 @@ class DistributedRuntimeCoordinationServiceClient
 
  private:
   std::unique_ptr<CoordinationServiceAgent> coord_agent_;
-  tensorflow::CoordinationServiceConfig config_;
+  CoordinationServiceAgent::Config config_;
   absl::Duration min_connect_barrier_timeout_;
   int task_id_;
 };
@@ -87,30 +97,27 @@ DistributedRuntimeCoordinationServiceClient::
     DistributedRuntimeCoordinationServiceClient(
         std::shared_ptr<::grpc::Channel> channel, const Options& options) {
   // Convert options to coordination config.
-  tensorflow::CoordinationServiceConfig config;
-  config.set_service_type("standalone");
-  config.set_service_leader("/job:jax_worker/task:0");
-  config.set_cluster_register_timeout_in_ms(
-      absl::ToInt64Milliseconds(options.init_timeout));
-  config.set_heartbeat_timeout_in_ms(
-      absl::ToInt64Milliseconds(options.heartbeat_timeout));
-  config.set_cluster_register_with_barrier(true);
-  config.set_shutdown_barrier_timeout_in_ms(
-      absl::ToInt64Milliseconds(options.shutdown_timeout));
-  config.set_agent_destruction_without_shutdown(
-      !options.shutdown_on_destruction);
-  config.set_poll_for_error_from_service_at_startup(
-      options.poll_for_error_from_service_at_startup);
+  CoordinationServiceAgent::Config config;
+  config.service_leader = "/job:jax_worker/task:0";
+  if (options.init_timeout > absl::ZeroDuration()) {
+    config.cluster_register_timeout = options.init_timeout;
+  }
+  config.heartbeat_timeout = options.heartbeat_timeout;
+  config.shutdown_barrier_timeout = options.shutdown_timeout;
+  config.agent_destruction_without_shutdown = !options.shutdown_on_destruction;
+  config.poll_for_error_from_service_at_startup =
+      options.poll_for_error_from_service_at_startup;
 
   std::unique_ptr<CoordinationClient> leader_client;
   leader_client.reset(NewGrpcCoordinationClient(channel));
-  coord_agent_ = CreateCoordinationServiceAgent();
-  const absl::Status status = coord_agent_->Initialize(
+  auto agent = CoordinationServiceAgent::Create(
       options.env, "jax_worker", options.node_id, config,
       std::move(leader_client), options.missed_heartbeat_callback,
       options.recoverable);
-  if (!status.ok()) {
-    LOG(ERROR) << "Coordination agent failed to initialize: " << status;
+  if (!agent.ok()) {
+    LOG(ERROR) << "Coordination agent failed to initialize: " << agent.status();
+  } else {
+    coord_agent_ = *std::move(agent);
   }
   task_id_ = options.node_id;
   config_ = config;
@@ -132,7 +139,7 @@ absl::Status DistributedRuntimeCoordinationServiceClient::Connect() {
            "scheduled, or 3) scheduling delays. Consider setting a longer "
            "initialization timeout if such delays are expected, the timeout is "
            "currently set to: "
-        << absl::Milliseconds(config_.cluster_register_timeout_in_ms())
+        << config_.cluster_register_timeout
         << ".\n\nOriginal runtime error: " << s;
   } else {
     LOG(ERROR) << "Failed to connect to distributed JAX controller: " << s;
@@ -151,6 +158,13 @@ absl::StatusOr<std::string>
 DistributedRuntimeCoordinationServiceClient::BlockingKeyValueGet(
     absl::string_view key, absl::Duration timeout) {
   return coord_agent_->GetKeyValue(key, timeout);
+}
+
+std::shared_ptr<tsl::CallOptions>
+DistributedRuntimeCoordinationServiceClient::AsyncKeyValueGet(
+    absl::string_view key,
+    tsl::CoordinationServiceAgent::StatusOrValueCallback done) {
+  return coord_agent_->GetKeyValueAsync(key, std::move(done));
 }
 
 absl::StatusOr<std::string>
@@ -289,6 +303,13 @@ class DistributedKeyValueStore : public KeyValueStoreInterface {
 
   absl::Status Set(absl::string_view key, absl::string_view value) override {
     return client_->KeyValueSet(absl::StrCat(prefix_, key), value);
+  }
+
+  std::shared_ptr<tsl::CallOptions> AsyncGet(
+      absl::string_view key,
+      tsl::CoordinationServiceAgent::StatusOrValueCallback done) override {
+    return client_->AsyncKeyValueGet(absl::StrCat(prefix_, key),
+                                     std::move(done));
   }
 
  private:

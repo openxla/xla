@@ -25,11 +25,13 @@ limitations under the License.
 #include "llvm/TargetParser/Triple.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/target_constants.h"
@@ -81,6 +83,7 @@ ENTRY entry {
   llvm::Triple triple(nvptx::TargetTriple());
   std::string data_layout = nvptx::DataLayout();
   mlir::MLIRContext mlir_context;
+  RegisterSymbolicExprStorage(&mlir_context);
 
   BlockLevelParameters block_level_parameters;
   block_level_parameters.output_tile_sizes = {{1, 1}};
@@ -160,6 +163,7 @@ ENTRY entry {
   const se::DeviceDescription dev_info =
       TestGpuDeviceInfo::RTXA6000DeviceInfo();
   mlir::MLIRContext mlir_context;
+  RegisterSymbolicExprStorage(&mlir_context);
 
   EXPECT_OK(
       CreateTritonModule("test_fn", triton_fusion, dev_info,
@@ -234,6 +238,7 @@ ENTRY entry {
   llvm::Triple triple(nvptx::TargetTriple());
   std::string data_layout = nvptx::DataLayout();
   mlir::MLIRContext mlir_context;
+  RegisterSymbolicExprStorage(&mlir_context);
   TF_ASSERT_OK_AND_ASSIGN(
       TritonWrapperResult result,
       TritonWrapper("test_fn", fusion, se::CudaComputeCapability::Blackwell(),

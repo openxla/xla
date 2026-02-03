@@ -43,9 +43,10 @@ tf_proto_library(
     name = "device_description_proto",
     srcs = ["device_description.proto"],
     make_default_target_header_only = True,
-    protodeps = [
+    deps = [
         "//xla:autotune_results_proto",
         "//xla/stream_executor/cuda:cuda_compute_capability_proto",
+        "//xla/stream_executor/sycl:oneapi_compute_capability_proto",
     ],
 )
 
@@ -58,18 +59,26 @@ cc_library(
     name = "device_description",
     srcs = ["device_description.cc"],
     hdrs = ["device_description.h"],
+    visibility = internal_visibility([
+        "//third_party/py/jax:__subpackages__",
+        ":friends",
+    ]),
     deps = [
         ":device_description_proto_cc",
         ":launch_dim",
         ":semantic_version",
+        "//xla:xla_data_proto_cc",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/rocm:rocm_compute_capability",
+        "//xla/stream_executor/sycl:oneapi_compute_capability",
         "//xla/tsl/lib/math:math_util",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -229,6 +238,7 @@ cc_library(
         ":platform",
         ":stream",
         "//xla/hlo/testlib:test",
+        "//xla/stream_executor/sycl:oneapi_compute_capability",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -381,8 +391,10 @@ cc_library(
     hdrs = ["platform.h"],
     deps = [
         ":device_description",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -642,7 +654,7 @@ cc_library(
     deps = [
         ":kernel",
         ":kernel_args",
-        ":kernel_argument_packing_spec",
+        ":kernel_args_packing_spec",
         ":kernel_spec_proto_cc",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/functional:function_ref",
@@ -657,14 +669,14 @@ cc_library(
 tf_proto_library(
     name = "kernel_spec_proto",
     srcs = ["kernel_spec.proto"],
-    protodeps = [":kernel_argument_packing_spec_proto"],
+    deps = [":kernel_args_packing_spec_proto"],
 )
 
 xla_cc_test(
     name = "kernel_spec_test",
     srcs = ["kernel_spec_test.cc"],
     deps = [
-        ":kernel_argument_packing_spec",
+        ":kernel_args_packing_spec",
         ":kernel_spec",
         ":kernel_spec_proto_cc",
         "//xla/tsl/platform:statusor",
@@ -693,16 +705,16 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "kernel_argument_packing_spec",
-    srcs = ["kernel_argument_packing_spec.cc"],
-    hdrs = ["kernel_argument_packing_spec.h"],
+    name = "kernel_args_packing_spec",
+    srcs = ["kernel_args_packing_spec.cc"],
+    hdrs = ["kernel_args_packing_spec.h"],
     deps = [
         ":device_address",
+        ":kernel_args",
         ":kernel_args_packed_vector",
-        ":kernel_argument_packing_spec_proto_cc",
+        ":kernel_args_packing_spec_proto_cc",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:safe_reinterpret_cast",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
@@ -711,17 +723,17 @@ cc_library(
 )
 
 tf_proto_library(
-    name = "kernel_argument_packing_spec_proto",
-    srcs = ["kernel_argument_packing_spec.proto"],
+    name = "kernel_args_packing_spec_proto",
+    srcs = ["kernel_args_packing_spec.proto"],
 )
 
 xla_cc_test(
-    name = "kernel_argument_packing_spec_test",
-    srcs = ["kernel_argument_packing_spec_test.cc"],
+    name = "kernel_args_packing_spec_test",
+    srcs = ["kernel_args_packing_spec_test.cc"],
     deps = [
         ":device_address",
-        ":kernel_args_packed_vector",
-        ":kernel_argument_packing_spec",
+        ":kernel_args",
+        ":kernel_args_packing_spec",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:safe_reinterpret_cast",
         "//xla/tsl/util/proto:parse_text_proto",
@@ -846,6 +858,7 @@ cc_library(
 
 cc_library(
     name = "command_buffer",
+    srcs = ["command_buffer.cc"],
     hdrs = ["command_buffer.h"],
     visibility = [":internal"],
     deps = [
@@ -855,10 +868,16 @@ cc_library(
         ":kernel",
         ":launch_dim",
         ":platform",
+        "//xla/tsl/lib/gtl:int_type",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -1020,9 +1039,7 @@ cc_library(
         "@com_google_absl//absl/functional:overload",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/meta:type_traits",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -1112,6 +1129,7 @@ xla_cc_test(
         ":semantic_version",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/rocm:rocm_compute_capability",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],

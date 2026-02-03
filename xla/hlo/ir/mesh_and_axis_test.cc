@@ -187,12 +187,13 @@ TEST(MeshAndAxisTest, ValidatesAxisRef) {
 TEST(MeshAndAxisTest, ValidatesMesh) {
   EXPECT_DEATH(
       { Mesh mesh_dims_axes_mismatch({2, 3, 4}, {"x", "y"}); },
-      "Number of axes names must match number of dimensions");
+      "Number of axes names must match number of dimensions in the device "
+      "assignment. Number of axes names: 2, Number of dimensions: 3");
 
   Array2D<int64_t> negative_device_ids({{0, 1, 2}, {3, -4, 5}});
   EXPECT_DEATH(
       { Mesh mesh_invalid_non_iota(negative_device_ids, {"x", "y"}); },
-      "Mesh device ids must be non-negative");
+      "Mesh device ids must be non-negative. Device id: -4");
 
   Array2D<int64_t> invalid_non_iota_device_ids({{10, 11, 12}, {13, 14, 15}});
   EXPECT_DEATH(
@@ -203,14 +204,50 @@ TEST(MeshAndAxisTest, ValidatesMesh) {
       {
         Mesh mesh_with_duplicate_axis_names({1, 2, 3, 4}, {"x", "y", "z", "x"});
       },
-      "Mesh has duplicate axis names");
+      "Mesh has duplicate axis names. Duplicate axis name: x");
 
   EXPECT_DEATH(
       { Mesh mesh_with_empty_dims(TileAssignment({}), {}); },
       "Mesh must have at least one axis");
 }
 
-TEST(MeshAndAxisTest, MeshAxesToString) {
+TEST(MeshAndAxisTest, FromProtoValidation) {
+  {
+    MeshProto proto;
+    auto* axis = proto.add_axes();
+    axis->set_name("x");
+    axis->set_size(1);
+
+    // 1 axis of size 1, but 2 device IDs.
+    proto.add_device_ids(0);
+    proto.add_device_ids(1);
+
+    EXPECT_DEATH(
+        Mesh::FromProto(proto),
+        "Number of device ids must match the product of mesh axis sizes");
+  }
+
+  {
+    MeshProto proto;
+    auto* axis = proto.add_axes();
+    axis->set_name("x");
+    axis->set_size(0);
+
+    proto.add_device_ids(0);
+
+    EXPECT_DEATH(Mesh::FromProto(proto), "Mesh axis size must be positive");
+  }
+
+  {
+    MeshProto proto;
+    proto.add_device_ids(0);
+    proto.add_device_ids(1);
+    EXPECT_DEATH(Mesh::FromProto(proto),
+                 "Maximal mesh must have exactly 1 device id");
+  }
+}
+
+TEST(MeshAndAxisTest, MeshToString) {
   Mesh mesh_uvw({10, 12, 15}, {"u", "v", "w"});
   EXPECT_EQ(mesh_uvw.ToString(), "@mesh<u=10,v=12,w=15>");
 
@@ -218,12 +255,29 @@ TEST(MeshAndAxisTest, MeshAxesToString) {
       TileAssignment(/*dims=*/{2, 4, 4, 2}, /*reshape_dims=*/{1, 4, 1, 16},
                      /*transpose_perm=*/{2, 3, 0, 1}),
       {"a", "b", "c", "d"});
-  EXPECT_EQ(mesh_abcd.ToString(), "@mesh<a=2,b=4,c=4,d=2>([4,16]T(1,0))");
+  EXPECT_EQ(mesh_abcd.ToString(),
+            "@mesh<a=2,b=4,c=4,d=2>, device_ids=([4,16]T(1,0))");
 
   Array<int64_t> array({{8, 3, 7, 5, 4, 2, 6, 0, 1, 9}});
   array.Reshape({10});
   Mesh mesh_ooo(array, {"ooo"});
-  EXPECT_EQ(mesh_ooo.ToString(), "@mesh<ooo=10>(8,3,7,5,4,2,6,0,1,9)");
+  EXPECT_EQ(mesh_ooo.ToString(),
+            "@mesh<ooo=10>, device_ids=(8,3,7,5,4,2,6,0,1,9)");
+
+  Mesh maximal_mesh(5);
+  EXPECT_EQ(maximal_mesh.ToString(), "@maximal_mesh<device_id=5>");
+}
+
+TEST(MeshAndAxisTest, AxisRefToString) {
+  EXPECT_EQ(AxisRef(1).ToString(), "1");
+  EXPECT_EQ(AxisRef(2, {3, 4}).ToString(), "2:(3)4");
+
+  Mesh mesh({10, 12, 15}, {"u", "v", "w"});
+  EXPECT_EQ(AxisRef(0).ToString(&mesh), "u");
+  EXPECT_EQ(AxisRef(1).ToString(&mesh), "v");
+  EXPECT_EQ(AxisRef(2).ToString(&mesh), "w");
+  EXPECT_EQ(AxisRef(0, {1, 2}).ToString(&mesh), "u:(1)2");
+  EXPECT_EQ(AxisRef(1, {3, 4}).ToString(&mesh), "v:(3)4");
 }
 
 TEST(MeshAndAxisTest, ValidateAxisForMesh) {
@@ -231,60 +285,30 @@ TEST(MeshAndAxisTest, ValidateAxisForMesh) {
 
   EXPECT_DEATH(
       { CHECK_OK(AxisRef(3, {1, 2}).Validate(mesh)); },
-      "Axis index must be less than number of axes");
+      "Axis index must be less than number of axes.*"
+      "Axis index: 3, Number of axes: 3");
 
   EXPECT_DEATH(
       { CHECK_OK(AxisRef(0, {5, 19}).Validate(mesh)); },
-      "Pre-size and size must divide the full axis size");
+      "Sub-axis next_pre_size must divide the full axis size.*"
+      "Next pre-size: 95, Axis size: 14");
   EXPECT_DEATH(
       { CHECK_OK(AxisRef(0, {2, 5}).Validate(mesh)); },
-      "Pre-size and size must divide the full axis size");
+      "Sub-axis next_pre_size must divide the full axis size.*"
+      "Next pre-size: 10, Axis size: 14");
 
   EXPECT_DEATH(
       { CHECK_OK(AxisRef(1, {1, 3 * 11}).Validate(mesh)); },
-      "Sub-axis size must be strictly less than the full axis size");
-}
+      "Sub-axis size must be strictly less than the full axis size.*"
+      "Sub-axis size: 33, Axis size: 33");
 
-TEST(MeshAndAxisTest, AxisRefCanCoexist) {
-  auto canCoexist = [](AxisRef a, AxisRef b, bool expected) {
-    EXPECT_EQ(a.CanCoexist(b), expected);
-    EXPECT_EQ(b.CanCoexist(a), expected);
-  };
-
-  canCoexist(AxisRef(0), AxisRef(1), true);
-  canCoexist(AxisRef(0), AxisRef(1, {2, 2}), true);
-  canCoexist(AxisRef(0), AxisRef(0), true);
-  canCoexist(AxisRef(0), AxisRef(0, {2, 2}), true);
-  canCoexist(AxisRef(0, {2, 2}), AxisRef(0, {2, 2}), true);
-  canCoexist(AxisRef(0, {1, 2}), AxisRef(0, {1, 4}), true);
-  canCoexist(AxisRef(0, {1, 2}), AxisRef(0, {2, 4}), true);
-  canCoexist(AxisRef(0, {1, 2}), AxisRef(0, {6, 2}), true);
-  canCoexist(AxisRef(0, {1, 4}), AxisRef(0, {2, 2}), true);
-  canCoexist(AxisRef(0, {1, 4}), AxisRef(0, {2, 4}), true);
-
-  canCoexist(AxisRef(0, {1, 2}), AxisRef(0, {1, 3}), false);
-  canCoexist(AxisRef(0, {1, 2}), AxisRef(0, {3, 2}), false);
-  canCoexist(AxisRef(0, {1, 3}), AxisRef(0, {2, 3}), false);
-}
-
-TEST(MeshAndAxisTest, AxisRefOverlaps) {
-  auto overlaps = [](AxisRef a, AxisRef b, bool expected) {
-    EXPECT_EQ(a.Overlaps(b), expected);
-    EXPECT_EQ(b.Overlaps(a), expected);
-  };
-
-  overlaps(AxisRef(0), AxisRef(0), true);
-  overlaps(AxisRef(0, {2, 4}), AxisRef(0), true);
-  overlaps(AxisRef(0, {2, 2}), AxisRef(0, {2, 2}), true);
-  overlaps(AxisRef(0, {1, 4}), AxisRef(0, {2, 4}), true);
-  overlaps(AxisRef(0, {2, 8}), AxisRef(0, {4, 2}), true);
-  overlaps(AxisRef(2, {1, 4}), AxisRef(2, {1, 2}), true);
-
-  overlaps(AxisRef(0), AxisRef(1), false);
-  overlaps(AxisRef(0), AxisRef(1, {1, 2}), false);
-  overlaps(AxisRef(0, {1, 4}), AxisRef(0, {4, 2}), false);
-  overlaps(AxisRef(0, {1, 4}), AxisRef(0, {8, 2}), false);
-  overlaps(AxisRef(0, {4, 2}), AxisRef(0, {1, 2}), false);
+  AxisRefProto invalid_pre_size_proto;
+  invalid_pre_size_proto.set_mesh_axis_index(0);
+  invalid_pre_size_proto.mutable_sub_axis_info()->set_pre_size(0);
+  invalid_pre_size_proto.mutable_sub_axis_info()->set_size(2);
+  EXPECT_DEATH(
+      { CHECK_OK(AxisRef::FromProto(invalid_pre_size_proto).Validate(mesh)); },
+      "sub-axis pre-size must be >= 1");
 }
 
 TEST(MeshAndAxisTest, AxisRefCanCoexistWithoutOverlap) {
@@ -360,6 +384,44 @@ TEST(MeshAndAxisTest, AxisRefSize) {
   EXPECT_EQ(AxisRef(1, {3, 11}).size(mesh), 11);
   EXPECT_EQ(AxisRef(2, {1, 5}).size(mesh), 5);
   EXPECT_EQ(AxisRef(2, {5, 13}).size(mesh), 13);
+}
+
+TEST(MeshAndAxisTest, AxisRefCanMerge) {
+  auto checkCanMerge = [](AxisRef a, AxisRef b) {
+    EXPECT_TRUE(a.CanMerge(b));
+    EXPECT_FALSE(b.CanMerge(a));
+  };
+
+  checkCanMerge(AxisRef(0, {1, 2}), AxisRef(0, {2, 4}));
+  checkCanMerge(AxisRef(0, {2, 4}), AxisRef(0, {8, 2}));
+
+  EXPECT_FALSE(AxisRef(0, {1, 2}).CanMerge(AxisRef(0, {1, 2})));
+  EXPECT_FALSE(AxisRef(0, {1, 2}).CanMerge(AxisRef(0, {4, 2})));
+  EXPECT_FALSE(AxisRef(0).CanMerge(AxisRef(0, {1, 2})));
+  EXPECT_FALSE(AxisRef(0, {1, 2}).CanMerge(AxisRef(0)));
+  EXPECT_FALSE(AxisRef(0).CanMerge(AxisRef(0)));
+  EXPECT_FALSE(AxisRef(0).CanMerge(AxisRef(1)));
+  EXPECT_FALSE(AxisRef(0, {1, 2}).CanMerge(AxisRef(1, {2, 4})));
+}
+
+TEST(MeshAndAxisTest, AxisRefMerge) {
+  Mesh mesh({16}, {"a"});
+
+  AxisRef axis_ref1(0, {1, 2});
+  EXPECT_TRUE(axis_ref1.Merge(AxisRef(0, {2, 4}), mesh));
+  EXPECT_EQ(axis_ref1, AxisRef(0, {1, 8}));
+
+  AxisRef axis_ref2(0, {2, 2});
+  EXPECT_TRUE(axis_ref2.Merge(AxisRef(0, {4, 4}), mesh));
+  EXPECT_EQ(axis_ref2, AxisRef(0, {2, 8}));
+
+  AxisRef axis_ref3(0, {1, 8});
+  EXPECT_TRUE(axis_ref3.Merge(AxisRef(0, {8, 2}), mesh));
+  EXPECT_EQ(axis_ref3, AxisRef(0));
+
+  AxisRef axis_ref4(0, {2, 4});
+  EXPECT_FALSE(axis_ref4.Merge(AxisRef(0, {1, 2}), mesh));
+  EXPECT_EQ(axis_ref4, AxisRef(0, {2, 4}));
 }
 
 }  // namespace xla

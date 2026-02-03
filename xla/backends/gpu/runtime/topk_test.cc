@@ -111,14 +111,16 @@ TEST_P(TopKKernelTest, TopKFloat) {
   TF_ASSERT_OK(
       stream->MemZero(&output_indices, k * batch_size * sizeof(uint32_t)));
 
-  auto custom_kernel = GetTopKKernel("topk", PrimitiveType::F32, n, k,
-                                     batch_size, platform->Name(), 32);
+  TF_ASSERT_OK_AND_ASSIGN(auto desc, platform->DescriptionForDevice(0));
+  auto custom_kernel =
+      GetTopKKernel("topk", PrimitiveType::F32, n, k, batch_size,
+                    platform->Name(), desc->threads_per_warp());
 
   TF_ASSERT_OK_AND_ASSIGN(auto kernel,
                           executor->LoadKernel(custom_kernel->kernel_spec()));
 
   // Launch topk kernel with device memory arguments.
-  se::KernelArgsDeviceMemoryArray arr(
+  stream_executor::KernelArgsDeviceAddressArray arr(
       std::vector<se::DeviceAddressBase>(
           {input_buffer, output_values, output_indices}),
       custom_kernel->shared_memory_bytes());
@@ -165,14 +167,16 @@ TEST_P(TopKKernelTest, TopKPackedNegative) {
   TF_ASSERT_OK(
       stream->MemZero(&output_indices, k * batch_size * sizeof(uint32_t)));
 
-  auto custom_kernel = GetTopKKernel("topk", PrimitiveType::F32, n, k,
-                                     batch_size, platform->Name(), 32);
+  TF_ASSERT_OK_AND_ASSIGN(auto desc, platform->DescriptionForDevice(0));
+  auto custom_kernel =
+      GetTopKKernel("topk", PrimitiveType::F32, n, k, batch_size,
+                    platform->Name(), desc->threads_per_warp());
 
   TF_ASSERT_OK_AND_ASSIGN(auto kernel,
                           executor->LoadKernel(custom_kernel->kernel_spec()));
 
   // Launch topk kernel with device memory arguments.
-  se::KernelArgsDeviceMemoryArray arr(
+  stream_executor::KernelArgsDeviceAddressArray arr(
       std::vector<se::DeviceAddressBase>(
           {input_buffer, output_values, output_indices}),
       custom_kernel->shared_memory_bytes());
@@ -200,8 +204,10 @@ TEST_P(TopKKernelTest, EnsureSerializable) {
   const auto [n_kb, k, batch_size, offset] = GetParam();
   const size_t n = n_kb * 1024 + offset;
 
-  auto custom_kernel = GetTopKKernel("topk", PrimitiveType::F32, n, k,
-                                     batch_size, platform->Name(), 32);
+  TF_ASSERT_OK_AND_ASSIGN(auto desc, platform->DescriptionForDevice(0));
+  auto custom_kernel =
+      GetTopKKernel("topk", PrimitiveType::F32, n, k, batch_size,
+                    platform->Name(), desc->threads_per_warp());
 
   stream_executor::gpu::VerifyKernelIsSerializable(custom_kernel->kernel_spec(),
                                                    platform->id());

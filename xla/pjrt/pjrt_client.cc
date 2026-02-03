@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 
 namespace xla {
@@ -57,6 +58,18 @@ absl::StatusOr<std::uintptr_t> PjRtClient::UnsafeBufferPointer(
       buffer->AcquireExternalReference());
   const void* ptr = external_reference_hold->OpaqueDeviceMemoryDataPointer();
   return absl::bit_cast<std::uintptr_t>(ptr);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtClient::BufferFromHostBuffer(
+    const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
+    std::optional<absl::Span<int64_t const>> byte_strides,
+    HostBufferSemantics host_buffer_semantics,
+    absl::AnyInvocable<void() &&> on_done_with_host_buffer,
+    PjRtBuffer* donated_dst, const Layout* device_layout) {
+  return BufferFromHostBuffer(data, type, dims, byte_strides,
+                              host_buffer_semantics,
+                              std::move(on_done_with_host_buffer),
+                              donated_dst->memory_space(), device_layout);
 }
 
 Future<> PjRtBuffer::CopyRawToHostFuture(Future<void*> dst, int64_t offset,
@@ -141,7 +154,7 @@ xla::Future<std::shared_ptr<Literal>> PjRtBuffer::ToLiteral() {
   if (!host_shape.ok()) {
     return xla::Future<std::shared_ptr<Literal>>(host_shape.status());
   }
-  auto [promise, future] = xla::Future<std::shared_ptr<Literal>>::MakePromise();
+  auto [promise, future] = xla::MakePromise<std::shared_ptr<Literal>>();
   auto shared_literal = std::make_shared<Literal>();
   Literal* literal = shared_literal.get();
   LazyToLiteral([literal, host_shape = *std::move(

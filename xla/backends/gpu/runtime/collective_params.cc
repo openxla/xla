@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_params.h"
 
 #include <cstdint>
+#include <string>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
@@ -60,9 +61,11 @@ absl::StatusOr<CollectiveParams> CollectiveParams::Create(
   const GpuExecutableRunOptions* gpu_options =
       run_options.run_options().gpu_executable_run_options();
 
+  const std::string& platform_name =
+      run_options.run_options().stream()->parent()->GetPlatform()->Name();
   auto* collectives = gpu_options && gpu_options->collectives()
                           ? gpu_options->collectives()
-                          : GpuCollectives::Default();
+                          : GpuCollectives::Default(platform_name);
 
   auto* device_id_map = gpu_options && gpu_options->gpu_global_device_ids()
                             ? &*gpu_options->gpu_global_device_ids()
@@ -92,7 +95,7 @@ CollectiveParams::CollectiveParams(
     absl::Span<se::Stream* const> async_streams, LocalDeviceId local_device_id,
     GlobalDeviceId global_device_id, const DeviceAssignment* device_assn,
     const GlobalDeviceIdMap* global_device_id_map,
-    const CliqueIdCallback* nccl_clique_id_callback,
+    const CliqueIdCallback* clique_id_callback,
     const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations,
     int64_t collective_max_nchannels, int64_t p2p_max_nchannels)
     : collectives(collectives),
@@ -103,7 +106,7 @@ CollectiveParams::CollectiveParams(
       global_device_id(global_device_id),
       device_assn(device_assn),
       global_device_id_map(global_device_id_map),
-      nccl_clique_id_callback(nccl_clique_id_callback),
+      clique_id_callback(clique_id_callback),
       incarnations(incarnations),
       collective_max_nchannels(collective_max_nchannels),
       p2p_max_nchannels(p2p_max_nchannels) {}

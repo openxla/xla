@@ -32,13 +32,16 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
+#include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/python/pjrt_ifrt/pjrt_layout.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 
@@ -167,6 +170,7 @@ class PjRtArray final
 
   absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> pjrt_layout()
       const override;
+  LayoutRef layout() const override;
 
   UserContextRef user_context() const override { return user_context_; }
 
@@ -182,6 +186,12 @@ class PjRtArray final
   absl::StatusOr<ArrayRef> Copy(
       std::optional<xla::ifrt::DeviceListRef> devices,
       std::optional<xla::ifrt::MemoryKind> memory_kind,
+      ArrayCopySemantics semantics);
+
+  // Copies the `PjRtArray`'s buffer at `index` and returns the copied buffer.
+  // The returned buffer has the given destination device and memory kind.
+  absl::StatusOr<std::shared_ptr<PjRtBuffer>> CopySinglePjRtBuffer(
+      int index, Device* dst_device, std::optional<MemoryKind> dst_memory_kind,
       ArrayCopySemantics semantics);
 
   tsl::Future<> GetReadyFuture() const override;
@@ -214,7 +224,7 @@ class PjRtArray final
   std::variant<Shape, DynamicShape> shape_;
   ShardingRef sharding_;
   PjRtBuffers pjrt_buffers_;
-  std::shared_ptr<const xla::PjRtLayout> layout_;
+  std::shared_ptr<const xla::ifrt::PjRtLayout> layout_;
   const xla::ifrt::UserContextRef user_context_;
   bool is_deleted_ = false;
 };

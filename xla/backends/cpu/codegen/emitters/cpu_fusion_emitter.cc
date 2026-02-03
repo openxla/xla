@@ -227,8 +227,8 @@ absl::StatusOr<mlir::func::FuncOp> EmitEntryFunctionApi(
   }
 
   builder.setInsertionPointToStart(fusion_module.getBody());
-  auto entry_func = builder.create<FuncOp>(
-      loc, entry_function_name,
+  auto entry_func = FuncOp::create(
+      builder, loc, entry_function_name,
       mlir::FunctionType::get(context, param_types, result_types),
       /*sym_visibility=*/mlir::StringAttr{},
       mlir::ArrayAttr::get(context, arg_attrs),
@@ -240,7 +240,6 @@ absl::StatusOr<mlir::func::FuncOp> EmitEntryFunctionApi(
   return entry_func;
 }
 
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 absl::StatusOr<emitters::CallTargetProvider> EmitCallTargets(
     mlir::ModuleOp module, const HloFusionInstruction& fusion,
     const emitters::PartitionedComputations& computations,

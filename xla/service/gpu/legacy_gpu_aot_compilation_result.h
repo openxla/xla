@@ -30,7 +30,8 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/platform.h"
 
 namespace xla {
 namespace gpu {
@@ -44,7 +45,7 @@ namespace gpu {
 // This class is considered legacy and is expected to be replaced by a
 // new AOT result type as part of the runtime split. The new type will
 // encapsulate the compilation up to the Thunks generation stage.
-class LegacyGpuAotCompilationResult : public AotCompilationResult {
+class LegacyGpuAotCompilationResult : public CompiledModule {
  public:
   static absl::StatusOr<std::unique_ptr<LegacyGpuAotCompilationResult>>
   FromModule(const HloModule* hlo_module,
@@ -63,8 +64,15 @@ class LegacyGpuAotCompilationResult : public AotCompilationResult {
 
   absl::StatusOr<std::string> SerializeAsString() const override;
 
-  absl::StatusOr<std::unique_ptr<Executable>>
-      LoadExecutable(const se::StreamExecutor* stream_exec) && override;
+  absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable() && final {
+    return absl::UnimplementedError(
+        "LoadExecutable without parameters not supported");
+  }
+
+  absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable(
+      se::Platform::Id platform_id,
+      const se::DeviceDescription& device_description) &&
+      override;
 
   const HloModule* optimized_module() const override { return module_.get(); }
   std::shared_ptr<HloModule> shared_optimized_module() override {
@@ -91,15 +99,22 @@ class LegacyGpuAotCompilationResult : public AotCompilationResult {
   Compiler* compiler_;
 };
 
-class EarlyExitCompilationResult : public AotCompilationResult {
+class EarlyExitCompilationResult : public CompiledModule {
  public:
   explicit EarlyExitCompilationResult(std::unique_ptr<HloModule> module)
       : module_(std::move(module)) {}
 
   absl::StatusOr<std::string> SerializeAsString() const override;
 
-  absl::StatusOr<std::unique_ptr<Executable>>
-      LoadExecutable(const se::StreamExecutor* stream_exec) && override;
+  absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable() && final {
+    return absl::UnimplementedError(
+        "LoadExecutable without parameters not supported");
+  }
+
+  absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable(
+      se::Platform::Id platform_id,
+      const se::DeviceDescription& device_description) &&
+      override;
 
   const HloModule* optimized_module() const override { return module_.get(); }
   std::shared_ptr<HloModule> shared_optimized_module() override {

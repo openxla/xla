@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <numeric>
 #include <utility>
 #include <vector>
 
@@ -29,6 +28,7 @@ limitations under the License.
 #include "absl/functional/any_invocable.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/cpu/runtime/dot_dims.h"
 #include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
@@ -103,9 +103,39 @@ static absl::StatusOr<uint32_t> DefineTensorValue(ynn_subgraph_t subgraph,
   return tensor_id;
 }
 
-static absl::StatusOr<uint32_t> DefineConstant(
-    ynn_subgraph_t subgraph, std::vector<std::unique_ptr<Literal>>& literals,
-    const HloInstruction* instr) {
+namespace {
+
+class Literals {
+  absl::Mutex mutex_;
+  std::vector<std::unique_ptr<Literal>> literals_;
+
+ public:
+  Literals() = default;
+
+  Literals(const Literals&) = delete;
+  Literals& operator=(const Literals&) = delete;
+
+  Literals(Literals&& rhs) : literals_(std::move(rhs.literals_)) {}
+
+  Literals& operator=(Literals&& rhs) {
+    if (this != &rhs) {
+      literals_ = std::move(rhs.literals_);
+    }
+    return *this;
+  }
+
+  const void* Add(std::unique_ptr<Literal> literal) {
+    absl::MutexLock lock(mutex_);
+    literals_.push_back(std::move(literal));
+    return literals_.back()->untyped_data();
+  }
+};
+
+}  // anonymous namespace
+
+static absl::StatusOr<uint32_t> DefineConstant(ynn_subgraph_t subgraph,
+                                               Literals& literals,
+                                               const HloInstruction* instr) {
   // We do not support instructions with multiple results (tuples).
   if (!instr->shape().IsArray()) {
     return Internal("Unsupported YNNPACK instruction shape: %s",
@@ -117,8 +147,7 @@ static absl::StatusOr<uint32_t> DefineConstant(
 
   uint32_t tensor_id = YNN_INVALID_VALUE_ID;
 
-  literals.push_back(instr->literal().CloneToUnique());
-  const void* value = literals.back()->untyped_data();
+  const void* value = literals.Add(instr->literal().CloneToUnique());
 
   YNN_RETURN_IF_ERROR(ynn_define_tensor_value(
       subgraph, type, dims.size(), dims.data(), /*data=*/value,
@@ -246,13 +275,64 @@ static absl::StatusOr<uint32_t> DefineReduceOp(ynn_subgraph_t subgraph,
   return out;
 }
 
+static absl::StatusOr<uint32_t> DefineDotOp(ynn_subgraph_t subgraph,
+                                            TensorIdMap& tensor_ids,
+                                            const HloInstruction* instr) {
+  VLOG(3) << absl::StreamFormat("Define tensor value for dot op: %s",
+                                instr->ToString());
+  CHECK_EQ(instr->opcode(), HloOpcode::kDot);
+  const HloInstruction* lhs = instr->operand(0);
+  const HloInstruction* rhs = instr->operand(1);
+  CHECK_EQ(lhs->shape().element_type(), instr->shape().element_type());
+  CHECK_EQ(rhs->shape().element_type(), instr->shape().element_type());
+
+  TF_ASSIGN_OR_RETURN(auto lhs_id, FindTensorValue(tensor_ids, lhs));
+  TF_ASSIGN_OR_RETURN(auto rhs_id, FindTensorValue(tensor_ids, rhs));
+  TF_ASSIGN_OR_RETURN(auto output_id, DefineTensorValue(subgraph, instr));
+
+  const Shape& lhs_shape = lhs->shape();
+  const Shape& rhs_shape = rhs->shape();
+  const Shape& out_shape = instr->shape();
+
+  DotDimensionNumbers dot_dimensions = instr->dot_dimension_numbers();
+  TF_ASSIGN_OR_RETURN(DotShape dot_shape, GetDotShape(dot_dimensions, lhs_shape,
+                                                      rhs_shape, out_shape));
+
+  TF_ASSIGN_OR_RETURN(DotCanonicalDims dot_canonical_dims,
+                      GetDotCanonicalDims(dot_dimensions, dot_shape));
+
+  const size_t b_rank = rhs_shape.dimensions().size();
+  const bool transpose_b = !dot_canonical_dims.rhs_canonical;
+
+  if (transpose_b) {
+    uint32_t rhs_id_transposed = YNN_INVALID_VALUE_ID;
+    std::array<int32_t, YNN_MAX_TENSOR_RANK> perm;
+    absl::c_iota(perm, 0);
+    CHECK_LT(b_rank, YNN_MAX_TENSOR_RANK);
+    CHECK_GE(b_rank, 2);
+    std::swap(perm[b_rank - 1], perm[b_rank - 2]);
+    ynn_status status = ynn_define_static_transpose(
+        subgraph,
+        /*num_dims=*/b_rank, perm.data(), rhs_id, &rhs_id_transposed,
+        /*flags=*/0);
+    if (status != ynn_status_success) {
+      return status;
+    }
+    rhs_id = rhs_id_transposed;
+  }
+
+  YNN_RETURN_IF_ERROR(ynn_define_dot(subgraph, /*num_k_dims=*/1, lhs_id, rhs_id,
+                                     YNN_INVALID_VALUE_ID, &output_id,
+                                     /*flags=*/0));
+  return output_id;
+}
+
 //===----------------------------------------------------------------------===//
 // Emit YNNPACK subgraph for the given HLO computation.
 //===----------------------------------------------------------------------===//
 
 static absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
-    const HloComputation* computation,
-    std::vector<std::unique_ptr<Literal>>& literals) {
+    const HloComputation* computation, Literals& literals) {
   VLOG(3) << "Emit YNNPACK subgraph for computation: " << computation->name();
 
   TF_ASSIGN_OR_RETURN(
@@ -320,6 +400,16 @@ static absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
                             DefineBitcastOp(subgraph.get(), tensor_ids, instr));
       } break;
 
+      case HloOpcode::kDot: {
+        if (!IsDotSupportedByYnn(instr).value_or(false)) {
+          return InvalidArgument(
+              "Unsupported dot instruction in YNN fusion: %s",
+              instr->ToString());
+        }
+        TF_ASSIGN_OR_RETURN(tensor_ids[instr],
+                            DefineDotOp(subgraph.get(), tensor_ids, instr));
+      } break;
+
       case HloOpcode::kReduce: {
         TF_ASSIGN_OR_RETURN(tensor_ids[instr],
                             DefineReduceOp(subgraph.get(), tensor_ids, instr));
@@ -370,18 +460,65 @@ static ynn_status DefineBatchMatrixMultiply(ynn_subgraph_t subgraph,
 }
 
 static ynn_status DefineConvolution(
-    ynn_subgraph_t subgraph, ynn_type input1_id_type, uint32_t input1_id,
-    uint32_t input2_id, uint32_t output_id,
-    const std::vector<int32_t>& stencil_axes,
-    const std::vector<int32_t> new_axes,
-    const std::vector<size_t>& stencil_dims,
-    const std::vector<size_t>& stencil_strides,
-    const std::vector<size_t>& stencil_dilations,
+    ynn_subgraph_t subgraph, ynn_type input1_id_type, ynn_type output_id_type,
+    uint32_t input1_id, uint32_t input2_id, uint32_t output_id,
+    const std::vector<size_t>& filter_dims, const std::vector<size_t>& out_dims,
+    size_t feature_group_count, size_t input_channels,
+    size_t kernel_output_channels, std::vector<int32_t> stencil_axes,
+    std::vector<size_t> stencil_dims, std::vector<size_t> stencil_strides,
+    std::vector<size_t> stencil_dilations,
     const std::vector<int64_t>& padding_lows,
     const std::vector<int64_t>& padding_highs) {
-  uint32_t stencil_id = YNN_INVALID_VALUE_ID;
-
+  size_t num_k_dims = stencil_dims.size() + 1;
   ynn_status status;
+
+  // We will need to create an intermediate buffer for the output if it's
+  // grouped convolution.
+  uint32_t output_unfused_id =
+      feature_group_count != 1 ? YNN_INVALID_VALUE_ID : output_id;
+
+  if (feature_group_count != 1) {
+    uint32_t split_id = YNN_INVALID_VALUE_ID;
+    CHECK_EQ(filter_dims.size(), 4);
+    // [kh, kw, ci/g, co] -> [kh, kw, ci/g, g, co/g].
+    size_t filter_split[] = {feature_group_count,
+                             kernel_output_channels / feature_group_count};
+    status =
+        ynn_define_split_dim(subgraph, /*axis=*/-1, /*num_splits=*/2,
+                             filter_split, input2_id, &split_id, /*flags=*/0);
+    if (status != ynn_status_success) {
+      return status;
+    }
+    input2_id = split_id;
+
+    uint32_t transposed_filter_id = YNN_INVALID_VALUE_ID;
+    // [kh, kw, ci/g, g, co/g] -> [g, kh, kw, ci/g, co/g]
+    int32_t swap_co_ci[5] = {3, 0, 1, 2, 4};
+    status =
+        ynn_define_static_transpose(subgraph, /*rank=*/5, swap_co_ci, input2_id,
+                                    &transposed_filter_id, /*flags=*/0);
+
+    if (status != ynn_status_success) {
+      return status;
+    }
+    input2_id = transposed_filter_id;
+
+    // Create intermediate output buffer.
+    std::vector<size_t> unfused_dims(out_dims.begin(), out_dims.end() - 1);
+    unfused_dims.push_back(feature_group_count);
+    unfused_dims.push_back(1);
+    unfused_dims.push_back(kernel_output_channels / feature_group_count);
+    status = ynn_define_tensor_value(subgraph, output_id_type,
+                                     /*rank=*/out_dims.size() + 2,
+                                     /*dims=*/unfused_dims.data(),
+                                     /*data=*/nullptr,
+                                     /*zero_point_id=*/YNN_INVALID_VALUE_ID,
+                                     /*scale_id=*/YNN_INVALID_VALUE_ID,
+                                     /*flags=*/0, &output_unfused_id);
+    if (status != ynn_status_success) {
+      return status;
+    }
+  }
 
   // If any of paddings is not zero, define a padding value and pad the input.
   if (absl::c_any_of(padding_lows, [](int32_t i) { return i != 0; }) ||
@@ -413,6 +550,28 @@ static ynn_status DefineConvolution(
     padding_id = YNN_INVALID_VALUE_ID;
   }
 
+  std::vector<int32_t> new_axes;
+
+  if (feature_group_count != 1) {
+    // (n, h, w, c) -> (n, h, w, [g, 1,] kh, kw, c / g)
+    stencil_dims.push_back(feature_group_count);
+    stencil_dims.push_back(1);
+    stencil_axes.push_back(3);
+    stencil_axes.push_back(3);
+    // We need to insert stencil dimensions [kh, kw] right before the channel
+    // dimension and [g, 1] before stencil dimensions.
+    new_axes = {-3, -2, -5, -4};
+    stencil_strides.push_back(1);
+    stencil_strides.push_back(1);
+    stencil_dilations.push_back(input_channels / feature_group_count);
+    stencil_dilations.push_back(1);
+  } else {
+    // We need to insert stencil dimensions [kh, kw] right before the channel
+    // dimension.
+    new_axes = {-3, -2};
+  }
+
+  uint32_t stencil_id = YNN_INVALID_VALUE_ID;
   // Make a stenciled view of the input [n, h, w, ci] -> [n, h, w, kh, kw, ci].
   status = ynn_define_stencil_copy(
       subgraph, /*num_stencils=*/stencil_dims.size(), stencil_axes.data(),
@@ -422,16 +581,35 @@ static ynn_status DefineConvolution(
   if (status != ynn_status_success) {
     return status;
   }
-  return ynn_define_dot(subgraph, /*num_k_dims=*/stencil_dims.size() + 1,
-                        stencil_id, input2_id, YNN_INVALID_VALUE_ID, &output_id,
-                        /*flags=*/0);
+
+  status = ynn_define_dot(subgraph, num_k_dims, stencil_id, input2_id,
+                          YNN_INVALID_VALUE_ID, &output_unfused_id,
+                          /*flags=*/0);
+
+  if (status != ynn_status_success) {
+    return status;
+  }
+
+  if (feature_group_count > 1) {
+    // The output of the grouped convolution is [n, h, w, g, 1, co/g], so we
+    // need to fuse three of the innermost dimensions.
+    status = ynn_define_fuse_dim(subgraph, /*axis=*/-3, /*axes_count=*/3,
+                                 output_unfused_id, &output_id,
+                                 /*flags=*/0);
+    if (status != ynn_status_success) {
+      return status;
+    }
+  }
+
+  return status;
 }
 
 static absl::StatusOr<YnnSubgraph> EmitYnnDotSubgraph(
-    const HloDotInstruction* dot,
-    std::vector<std::unique_ptr<Literal>>& literals,
+    const HloDotInstruction* dot, Literals& literals,
     absl::Span<const se::DeviceAddressBase> arguments_buffers,
     bool capture_rhs) {
+  // TODO(b/468895209): Use the fusion emitter above instead of replicating the
+  // logic here.
   TF_ASSIGN_OR_RETURN(
       YnnSubgraph subgraph, CreateYnnSubgraph([&](ynn_subgraph_t* subgraph) {
         return ynn_create_subgraph(
@@ -502,8 +680,7 @@ static absl::StatusOr<YnnSubgraph> EmitYnnDotSubgraph(
 }
 
 static absl::StatusOr<YnnSubgraph> EmitYnnConvolutionSubgraph(
-    const HloConvolutionInstruction* conv,
-    std::vector<std::unique_ptr<Literal>>& literals,
+    const HloConvolutionInstruction* conv, Literals& literals,
     absl::Span<const se::DeviceAddressBase> arguments_buffers) {
   TF_ASSIGN_OR_RETURN(
       YnnSubgraph subgraph, CreateYnnSubgraph([&](ynn_subgraph_t* subgraph) {
@@ -562,7 +739,6 @@ static absl::StatusOr<YnnSubgraph> EmitYnnConvolutionSubgraph(
       conv->convolution_dimension_numbers();
 
   std::vector<int32_t> stencil_axes(conv_window_dims_size);
-  std::vector<int32_t> new_axes(conv_window_dims_size);
   std::vector<size_t> stencil_dims(conv_window_dims_size);
   std::vector<size_t> stencil_strides(conv_window_dims_size);
   std::vector<size_t> stencil_dilations(conv_window_dims_size);
@@ -573,17 +749,21 @@ static absl::StatusOr<YnnSubgraph> EmitYnnConvolutionSubgraph(
     stencil_axes[i] = conv_dimensions.input_spatial_dimensions(i);
     stencil_dims[i] = conv_window.dimensions(i).size();
     stencil_strides[i] = conv_window.dimensions(i).stride();
-    stencil_dilations[i] = 1;
+    stencil_dilations[i] = conv_window.dimensions(i).window_dilation();
     padding_lows[i] = conv_window.dimensions(i).padding_low();
     padding_highs[i] = conv_window.dimensions(i).padding_high();
   }
 
-  std::iota(new_axes.begin(), new_axes.end(), lhs_dims.size() - 1);
-
-  YNN_RETURN_IF_ERROR(
-      DefineConvolution(subgraph.get(), ynn_lhs_type, lhs_id, rhs_id, out_id,
-                        stencil_axes, new_axes, stencil_dims, stencil_strides,
-                        stencil_dilations, padding_lows, padding_highs));
+  YNN_RETURN_IF_ERROR(DefineConvolution(
+      subgraph.get(), ynn_lhs_type, ynn_out_type, lhs_id, rhs_id, out_id,
+      rhs_dims, out_dims, conv->feature_group_count(),
+      conv->operand(0)->shape().dimensions(
+          conv_dimensions.input_feature_dimension()),
+      conv->operand(1)->shape().dimensions(
+          conv_dimensions.kernel_output_feature_dimension()),
+      std::move(stencil_axes), std::move(stencil_dims),
+      std::move(stencil_strides), std::move(stencil_dilations), padding_lows,
+      padding_highs));
 
   ynn_status status = ynn_optimize_subgraph(
       subgraph.get(), /*threadpool=*/nullptr, /*flags=*/0);
@@ -611,7 +791,7 @@ EmitYnnFusionBuilder(const HloComputation* computation) {
   }
 
   return
-      [computation, literals = std::vector<std::unique_ptr<Literal>>()](
+      [computation, literals = Literals()](
           absl::Span<const se::DeviceAddressBase> arguments_buffers) mutable {
         return EmitYnnSubgraph(computation, literals);
       };
@@ -621,7 +801,7 @@ absl::StatusOr<absl::AnyInvocable<absl::StatusOr<YnnSubgraph>(
     absl::Span<const se::DeviceAddressBase> arguments_buffers)>>
 EmitYnnDotBuilder(const HloDotInstruction* dot, bool capture_rhs) {
   return
-      [dot, capture_rhs, literals = std::vector<std::unique_ptr<Literal>>()](
+      [dot, capture_rhs, literals = Literals()](
           absl::Span<const se::DeviceAddressBase> arguments_buffers) mutable {
         return EmitYnnDotSubgraph(dot, literals, arguments_buffers,
                                   capture_rhs);
@@ -632,7 +812,7 @@ absl::StatusOr<absl::AnyInvocable<absl::StatusOr<YnnSubgraph>(
     absl::Span<const se::DeviceAddressBase> arguments_buffers)>>
 EmitYnnConvolutionBuilder(const HloConvolutionInstruction* conv) {
   return
-      [conv, literals = std::vector<std::unique_ptr<Literal>>()](
+      [conv, literals = Literals()](
           absl::Span<const se::DeviceAddressBase> arguments_buffers) mutable {
         return EmitYnnConvolutionSubgraph(conv, literals, arguments_buffers);
       };
