@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/numeric/bits.h"
 #include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -50,6 +51,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -4017,6 +4019,18 @@ absl::Status AlgebraicSimplifierVisitor::HandleDot(HloInstruction* dot) {
       options_.enable_dot_to_multiply_rewrite() &&
       dnums.lhs_contracting_dimensions_size() == 0) {
     return RewriteAsMultiplyDotWithZeroLhsContractingDim(dot, lhs, rhs, dnums);
+  }
+
+  if (dot->user_count() == 1 &&
+      dot->users().front()->IsCustomCall("Sharding")) {
+    const HloInstruction* user = dot->users().front();
+    if (user->has_frontend_attributes()) {
+      std::optional<std::string> sharding_attr =
+          user->get_frontend_attribute(HloSharding::kShardingFrontendAttrName);
+      if (sharding_attr && absl::StrContains(*sharding_attr, "unreduced")) {
+        return absl::OkStatus();
+      }
+    }
   }
 
   // Reorder nested dots with associativity using flops as a heuristic
