@@ -416,12 +416,8 @@ def xla_test(
         # Ensure that the tags are consistent with the runtime used.
         if "pjrt_migration_candidate" in this_backend_tags and not use_legacy_runtime:
             fail("xla_tests that do not use the legacy runtime configuration should not be tagged `pjrt_migration_candidate`.")
-
-        # TODO: b/382779188 - Remove this tag once we have fully moved to tagging candidates instead.
-        if "test_migrated_to_hlo_runner_pjrt" in this_backend_tags and use_legacy_runtime:
-            fail("xla_tests that use the legacy runtime configuration should not be tagged `test_migrated_to_hlo_runner_pjrt`.")
-        if "test_migrated_to_hlo_runner_pjrt" in this_backend_tags and "pjrt_migration_candidate" in this_backend_tags:
-            fail("xla_tests should not be tagged both `test_migrated_to_hlo_runner_pjrt` and `pjrt_migration_candidate`. These states are mutually exclusive.")
+        if "test_migrated_to_hlo_runner_pjrt" in this_backend_tags:
+            fail("The `test_migrated_to_hlo_runner_pjrt` tag is deprecated and should no longer be used.")
 
         modifiers = backend.split("_")
         device = modifiers.pop(0)
