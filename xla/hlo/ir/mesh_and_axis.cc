@@ -120,7 +120,8 @@ std::string Mesh::ToString() const {
   // Add the device assignment if it is not an iota case.
   std::optional<IotaTileAssignment> iota = device_assignment_.iota();
   std::string device_assignment_str = "";
-  if (!(iota.has_value() && iota->reshape_dims().size() == 1)) {
+  bool simple_iota = iota.has_value() && iota->reshape_dims().size() == 1;
+  if (!simple_iota && device_assignment_.num_elements() != 0) {
     device_assignment_str =
         absl::StrCat(", device_ids=(", device_assignment_.ArrayToString(), ")");
   }

@@ -248,6 +248,9 @@ TEST(MeshAndAxisTest, FromProtoValidation) {
 }
 
 TEST(MeshAndAxisTest, MeshToString) {
+  Mesh empty_mesh;
+  EXPECT_EQ(empty_mesh.ToString(), "@mesh<>");
+
   Mesh mesh_uvw({10, 12, 15}, {"u", "v", "w"});
   EXPECT_EQ(mesh_uvw.ToString(), "@mesh<u=10,v=12,w=15>");
 

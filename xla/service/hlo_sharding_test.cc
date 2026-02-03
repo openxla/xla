@@ -701,9 +701,8 @@ TEST_F(HloShardingTest, Hash) {
 using ShardingWithMetadataParamType =
     std::tuple<std::vector<OpMetadata>, std::string>;
 
-TEST_P(HloShardingRepresentationTest, ToStringReplicatedTest) {
-  bool use_named_sharding = GetParam();
-  HloSharding sharding = HloSharding::Replicate({}, use_named_sharding);
+TEST_F(HloShardingTest, ToStringReplicatedTest) {
+  HloSharding sharding = HloSharding::Replicate({});
   EXPECT_EQ(sharding.ToString(), "{replicated}");
 }
 
@@ -727,9 +726,8 @@ INSTANTIATE_TEST_SUITE_P(
             ListMetadata(),
             "{replicated metadata={{op_name=\"b\"}, {op_name=\"c\"}}}")));
 
-TEST_P(HloShardingRepresentationTest, ToStringAssignDeviceTest) {
-  bool use_named_sharding = GetParam();
-  HloSharding sharding = HloSharding::AssignDevice(7, {}, use_named_sharding);
+TEST_F(HloShardingTest, ToStringAssignDeviceTest) {
+  HloSharding sharding = HloSharding::AssignDevice(7);
   EXPECT_EQ(sharding.ToString(), "{maximal device=7}");
 }
 

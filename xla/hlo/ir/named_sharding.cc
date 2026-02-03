@@ -227,23 +227,35 @@ std::string NamedSharding::ToString(bool include_metadata) const {
     absl::StrAppend(&metadata_str, "}");
   }
 
+  absl::StrAppend(&result, mesh_.ToString());
+
   // Special cases.
   if (IsReplicated() && replicated_axes_.empty()) {
-    absl::StrAppend(&result, "replicated");
+    absl::StrAppend(&result, ", replicated");
     absl::StrAppend(&result, metadata_str);
     absl::StrAppend(&result, "}");
     return result;
   }
 
   if (IsMaximal()) {
-    absl::StrAppend(&result, "maximal device=");
-    absl::StrAppend(&result, *mesh_.device_assignment().array().begin());
     absl::StrAppend(&result, metadata_str);
     absl::StrAppend(&result, "}");
     return result;
   }
 
-  absl::StrAppend(&result, mesh_.ToString());
+  if (IsUnreduced()) {
+    absl::StrAppend(&result, ", unreduced");
+    absl::StrAppend(&result, metadata_str);
+    absl::StrAppend(&result, "}");
+    return result;
+  }
+
+  if (IsManual()) {
+    absl::StrAppend(&result, ", manual");
+    absl::StrAppend(&result, metadata_str);
+    absl::StrAppend(&result, "}");
+    return result;
+  }
 
   // Dimension sharding.
   absl::StrAppend(&result, ", [");
