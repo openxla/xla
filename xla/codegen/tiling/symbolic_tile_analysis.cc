@@ -610,6 +610,13 @@ bool ShouldDerivationSimplifyPointDimensions(const HloFusionAdaptor& fusion) {
       continue;
     }
 
+    // With pad, we will have a larger tile size than the size of the operand
+    // dimension, so we need to propagate this size and it should not be
+    // simplified away.
+    if (HloPredicateIsOp<HloOpcode::kPad>(&instruction_adaptor.instruction())) {
+      return false;
+    }
+
     // We're OK with simplifying point dimensions if they occur only in the
     // batch dimensions of a dot, but not if they occur in the contracting or
     // or non-contracting dimensions. That's because batch dimensions are
