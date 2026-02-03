@@ -248,13 +248,17 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
   // not any new instructions created during the fusion process.
   std::queue<std::pair<HloInstruction*, FusionDirection>> frontier;
 
+  FusionDirection direction = FusionDirection::kBoth;
+
   // TODO(intel-tf): Restrict fusion direction for oneDNN till future
   // release of oneDNN library with both fusion direction support.
-  AddFusionCandidates(fusion, fusion,
-                      (lib->fusion_kind() == kOneDnnFusionKind)
-                          ? FusionDirection::kDown
-                          : FusionDirection::kBoth,
-                      frontier);
+#if XLA_ONEDNN_USE_GRAPH_API
+  if (lib->fusion_kind() == kOneDnnFusionKind) {
+     direction = FusionDirection::kDown;
+  }
+#endif // XLA_ONEDNN_USE_GRAPH_API
+
+  AddFusionCandidates(fusion, fusion, direction, frontier);
 
   // Track the number of operations added to the fusion.
   int fused_op_count = 0;
@@ -283,11 +287,13 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
     // [TODO]: Make this generic with keeping track of fusion state, i.e.,
     // number of special ops already in fusion, and checking if library can
     // still fuse additional same kind of op.
+#if XLA_ONEDNN_USE_GRAPH_API
     if (lib->fusion_kind() == kOneDnnFusionKind &&
         instr->opcode() == HloOpcode::kDot) {
       VLOG(4) << "  Only one dot op is allowed in oneDNN fusion";
       break;
     }
+#endif // XLA_ONEDNN_USE_GRAPH_API
 
     if (lib->ReachedMaxFusionSize(fused_op_count)) {
       VLOG(4) << "  Reached max fusion size: " << fused_op_count;
