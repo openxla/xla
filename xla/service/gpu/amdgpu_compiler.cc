@@ -314,10 +314,7 @@ AMDGPUCompiler::CompileTargetBinary(
 
 namespace {
 
-// Returns true if the instruction is a fusion that would go through the native
-// emitter, but may benefit from going through the block-level emitter.
-// Currently, we only do this for reductions and transposes.
-bool ShouldAutotuneBetweenFusionEmitters(const HloInstruction& instruction) {
+bool ShouldAutotuneBetweenFusionEmittersAny(const HloInstruction& instruction) {
   if (instruction.opcode() != HloOpcode::kFusion) {
     return false;
   }
@@ -333,6 +330,15 @@ bool ShouldAutotuneBetweenFusionEmitters(const HloInstruction& instruction) {
                      HloPredicateIsOp<HloOpcode::kScatter>)) {
     return false;
   }
+  return true;
+}
+
+// Returns true if the instruction is a fusion that would go through the native
+// emitter, but may benefit from going through the block-level emitter.
+// Currently, we only do this for reductions and transposes.
+bool ShouldAutotuneBetweenFusionEmitters(const HloInstruction& instruction) {
+  if (!ShouldAutotuneBetweenFusionEmittersAny(instruction)) return false;
+  auto fusion = Cast<const HloFusionInstruction>(&instruction);
   return absl::c_any_of(
       fusion->fused_instructions_computation()->instructions(),
       HloPredicateIsOp<HloOpcode::kReduce, HloOpcode::kTranspose>);
@@ -366,11 +372,16 @@ absl::Status AMDGPUCompiler::AddFusionAutotuningPass(
       /*use_default_config=*/true);
   backends.push_back(std::move(ble_backend));
 
+  auto should_autotune =
+      debug_options.xla_gpu_experimental_all_fusions_with_triton()
+          ? ShouldAutotuneBetweenFusionEmittersAny
+          : ShouldAutotuneBetweenFusionEmitters;
+
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<AutotunerPass> autotuner_pass,
       AutotunerPass::Create(std::move(backends), debug_options, stream_executor,
-                            thread_pool, ShouldAutotuneBetweenFusionEmitters,
-                            target_config, options.device_allocator,
+                            thread_pool, should_autotune, target_config,
+                            options.device_allocator,
                             /*optimize_scratch_bytes=*/false, key_value_store,
                             /*allow_reg_spills=*/true));
   pipeline->AddPass(std::move(autotuner_pass));
