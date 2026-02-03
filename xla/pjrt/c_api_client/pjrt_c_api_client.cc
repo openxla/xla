@@ -3324,6 +3324,10 @@ void PjRtCApiBuffer::MakePromiseTrackEvent() {
 }
 
 Future<> PjRtCApiBuffer::GetReadyFuture() {
+  if (IsDeleted()) {
+    return Future<>(InvalidArgument(
+        "GetReadyFuture() called on deleted or donated buffer"));
+  }
   absl::MutexLock l(mu_);
   if (readiness_promise_ == nullptr) {
     auto [promise, future] = MakePromise<>();
