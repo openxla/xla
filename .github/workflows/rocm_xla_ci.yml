@@ -55,8 +55,8 @@ jobs:
         image: ${{ matrix.job_info.container }}
         volumes:
           - /data/list:/data/list
-          - /data/data1:/data/data1
-          - /data/data2:/data/data2
+          - /data/ci-cert.crt:/data/ci-cert.crt
+          - /data/ci-cert.key:/data/ci-cert.key
     defaults:
       run:
         shell: bash
