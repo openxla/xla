@@ -81,7 +81,7 @@ CollectiveConfig CollectiveMetadataThunk::GetCollectiveConfig(
 
 absl::StatusOr<std::vector<void*>> CollectiveMetadataThunk::CollectParamToPeers(
     const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
-    const std::vector<se::DeviceAddressBase>& parameters) {
+    std::vector<se::DeviceAddressBase> parameters) {
   std::vector<void*> param_to_peers_ptrs;
 
   size_t num_parameters = parameters.size();
@@ -141,23 +141,6 @@ absl::Status CollectiveMetadataThunk::CopyCollectiveMetadataToDevice(
   TF_RETURN_IF_ERROR(stream->Memcpy(&param_to_peers_ptrs_buffer,
                                     param_to_peers_ptrs.data(),
                                     param_to_peers_ptrs_size));
-  return absl::OkStatus();
-}
-
-absl::Status CollectiveMetadataThunk::ConstructCollectiveMetadata(
-    const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
-    const std::vector<se::DeviceAddressBase>& parameters,
-    std::shared_ptr<CollectiveMultimem> multimem,
-    se::DeviceAddressBase destination) {
-  std::vector<void*> param_to_peers_ptrs;
-  TF_ASSIGN_OR_RETURN(
-      param_to_peers_ptrs,
-      CollectParamToPeers(clique_key, rank, stream, parameters));
-  TF_ASSIGN_OR_RETURN(
-      CollectiveKernelMetadata metadata,
-      CreateCollectiveMetadata(clique_key, rank, stream, multimem));
-  TF_RETURN_IF_ERROR(CopyCollectiveMetadataToDevice(
-      stream, metadata, param_to_peers_ptrs, destination));
   return absl::OkStatus();
 }
 
@@ -237,9 +220,9 @@ absl::Status CollectiveMetadataThunk::Initialize(
   std::optional<RankId> rank = clique_key.rank(global_device_id);
   TF_RET_CHECK(rank.has_value());
 
-  TF_ASSIGN_OR_RETURN(
-      std::vector<void*> param_to_peers_ptrs,
-      CollectParamToPeers(clique_key, *rank, params.stream, parameters));
+  TF_ASSIGN_OR_RETURN(std::vector<void*> param_to_peers_ptrs,
+                      CollectParamToPeers(clique_key, *rank, params.stream,
+                                          std::move(parameters)));
   TF_ASSIGN_OR_RETURN(
       CollectiveKernelMetadata metadata,
       CreateCollectiveMetadata(clique_key, *rank, params.stream, multimem));

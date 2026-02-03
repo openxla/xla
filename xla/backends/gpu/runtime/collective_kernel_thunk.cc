@@ -306,9 +306,18 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
     state->metadata = params.executor->Allocate(
         sizeof(CollectiveKernelMetadata) + param_to_peers_ptrs_size_bytes, 0);
 
-    return CollectiveMetadataThunk::ConstructCollectiveMetadata(
-        clique_key, state->rank, params.stream, std::move(parameters),
-        state->collective_multimem, state->metadata);
+    std::vector<void*> param_to_peers_ptrs;
+    TF_ASSIGN_OR_RETURN(
+        param_to_peers_ptrs,
+        CollectiveMetadataThunk::CollectParamToPeers(
+            clique_key, state->rank, params.stream, std::move(parameters)));
+    TF_ASSIGN_OR_RETURN(CollectiveKernelMetadata metadata,
+                        CollectiveMetadataThunk::CreateCollectiveMetadata(
+                            clique_key, state->rank, params.stream,
+                            state->collective_multimem));
+    TF_RETURN_IF_ERROR(CollectiveMetadataThunk::CopyCollectiveMetadataToDevice(
+        params.stream, metadata, param_to_peers_ptrs, state->metadata));
+    return absl::OkStatus();
   }
 
   return absl::OkStatus();

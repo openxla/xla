@@ -71,7 +71,7 @@ class CollectiveMetadataThunk : public Thunk {
   // The size of the returned vector is num_parameters * num_devices.
   static absl::StatusOr<std::vector<void*>> CollectParamToPeers(
       const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
-      const std::vector<se::DeviceAddressBase>& parameters);
+      std::vector<se::DeviceAddressBase> parameters);
 
   // Constructs and places the collective metadata on the device.
   // All participants should call this method to construct their local
@@ -85,19 +85,6 @@ class CollectiveMetadataThunk : public Thunk {
   static absl::Status CopyCollectiveMetadataToDevice(
       se::Stream* stream, CollectiveKernelMetadata metadata,
       const std::vector<void*>& param_to_peers_ptrs,
-      se::DeviceAddressBase destination);
-
-  // Constructs and places the collective metadata on the device.
-  // All participants should call this method to construct their local
-  // metadata.
-  // Method needed for backward compatibility with the Mosaic custom call
-  // implementation.
-  // TODO(patrios): Remove this method once Mosaic is updated to use the
-  // new collective metadata construction flow.
-  static absl::Status ConstructCollectiveMetadata(
-      const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
-      const std::vector<se::DeviceAddressBase>& parameters,
-      std::shared_ptr<CollectiveMultimem> multimem,
       se::DeviceAddressBase destination);
 
  private:
