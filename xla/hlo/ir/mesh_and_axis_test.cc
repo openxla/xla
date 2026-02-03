@@ -249,26 +249,26 @@ TEST(MeshAndAxisTest, FromProtoValidation) {
 
 TEST(MeshAndAxisTest, MeshToString) {
   Mesh empty_mesh;
-  EXPECT_EQ(empty_mesh.ToString(), "@mesh<>");
+  EXPECT_EQ(empty_mesh.ToString(), "mesh[]");
 
   Mesh mesh_uvw({10, 12, 15}, {"u", "v", "w"});
-  EXPECT_EQ(mesh_uvw.ToString(), "@mesh<u=10,v=12,w=15>");
+  EXPECT_EQ(mesh_uvw.ToString(), "mesh[u=10,v=12,w=15]");
 
   Mesh mesh_abcd(
       TileAssignment(/*dims=*/{2, 4, 4, 2}, /*reshape_dims=*/{1, 4, 1, 16},
                      /*transpose_perm=*/{2, 3, 0, 1}),
       {"a", "b", "c", "d"});
   EXPECT_EQ(mesh_abcd.ToString(),
-            "@mesh<a=2,b=4,c=4,d=2>, device_ids=([4,16]T(1,0))");
+            "mesh[a=2,b=4,c=4,d=2], device_ids=([4,16]T(1,0))");
 
   Array<int64_t> array({{8, 3, 7, 5, 4, 2, 6, 0, 1, 9}});
   array.Reshape({10});
   Mesh mesh_ooo(array, {"ooo"});
   EXPECT_EQ(mesh_ooo.ToString(),
-            "@mesh<ooo=10>, device_ids=(8,3,7,5,4,2,6,0,1,9)");
+            "mesh[ooo=10], device_ids=(8,3,7,5,4,2,6,0,1,9)");
 
   Mesh maximal_mesh(5);
-  EXPECT_EQ(maximal_mesh.ToString(), "@maximal_mesh<device_id=5>");
+  EXPECT_EQ(maximal_mesh.ToString(), "maximal_mesh[device_id=5]");
 }
 
 TEST(MeshAndAxisTest, AxisRefToString) {

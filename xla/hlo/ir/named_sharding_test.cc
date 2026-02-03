@@ -175,39 +175,39 @@ TEST(NamedShardingTest, ToString) {
   DimensionSharding ds_c({axis_c}, /*is_closed=*/true);
   NamedSharding sharding_dim(mesh, {ds_c, ds_ab_open});
   EXPECT_EQ(sharding_dim.ToString(),
-            "{@mesh<a=2,b=4,c=3,d=8>, [{c}, {a, b:(2)2, ?}]}");
+            "{mesh[a=2,b=4,c=3,d=8], [{c}, {a, b:(2)2, ?}]}");
 
   NamedSharding sharding_fully_replicated = NamedSharding::Replicate();
-  EXPECT_EQ(sharding_fully_replicated.ToString(), "{@mesh<>, replicated}");
+  EXPECT_EQ(sharding_fully_replicated.ToString(), "{mesh[], replicated}");
   NamedSharding sharding_fully_replicated_with_mesh(mesh);
   EXPECT_EQ(sharding_fully_replicated_with_mesh.ToString(),
-            "{@mesh<a=2,b=4,c=3,d=8>, replicated}");
+            "{mesh[a=2,b=4,c=3,d=8], replicated}");
   NamedSharding sharding_replicated =
       test_utils::FromAxisNames(mesh, {}, {"c"});
   EXPECT_EQ(sharding_replicated.ToString(),
-            "{@mesh<a=2,b=4,c=3,d=8>, [], replicated={c}}");
+            "{mesh[a=2,b=4,c=3,d=8], [], replicated={c}}");
 
   Mesh maximal_mesh(5);
   NamedSharding maximal_sharding(maximal_mesh);
-  EXPECT_EQ(maximal_sharding.ToString(), "{@maximal_mesh<device_id=5>}");
+  EXPECT_EQ(maximal_sharding.ToString(), "{maximal_mesh[device_id=5]}");
 
   NamedSharding sharding_fully_unreduced =
       test_utils::FromAxisNames(mesh, {}, {}, {"a", "b", "c", "d"});
   EXPECT_EQ(sharding_fully_unreduced.ToString(),
-            "{@mesh<a=2,b=4,c=3,d=8>, unreduced}");
+            "{mesh[a=2,b=4,c=3,d=8], unreduced}");
   NamedSharding sharding_unreduced =
       test_utils::FromAxisNames(mesh, {}, {}, {"d:(4)2"});
   EXPECT_EQ(sharding_unreduced.ToString(),
-            "{@mesh<a=2,b=4,c=3,d=8>, [], unreduced={d:(4)2}}");
+            "{mesh[a=2,b=4,c=3,d=8], [], unreduced={d:(4)2}}");
 
   NamedSharding sharding_fully_manual =
       test_utils::FromAxisNames(mesh, {}, {}, {}, {"a", "b", "c", "d"});
   EXPECT_EQ(sharding_fully_manual.ToString(),
-            "{@mesh<a=2,b=4,c=3,d=8>, manual}");
+            "{mesh[a=2,b=4,c=3,d=8], manual}");
   NamedSharding sharding_manual =
       test_utils::FromAxisNames(mesh, {}, {}, {}, {"d:(4)2"});
   EXPECT_EQ(sharding_manual.ToString(),
-            "{@mesh<a=2,b=4,c=3,d=8>, [], manual={d:(4)2}}");
+            "{mesh[a=2,b=4,c=3,d=8], [], manual={d:(4)2}}");
 
   Mesh non_iota_mesh(
       TileAssignment(/*dims=*/{2, 4, 4, 2}, /*reshape_dims=*/{1, 4, 1, 16},
@@ -216,7 +216,7 @@ TEST(NamedShardingTest, ToString) {
   NamedSharding sharding_non_iota =
       test_utils::FromAxisNames(non_iota_mesh, {{"a"}});
   EXPECT_EQ(sharding_non_iota.ToString(),
-            "{@mesh<a=2,b=4,c=4,d=2>, device_ids=([4,16]T(1,0)), [{a}]}");
+            "{mesh[a=2,b=4,c=4,d=2], device_ids=([4,16]T(1,0)), [{a}]}");
 
   OpMetadata metadata1;
   metadata1.set_op_name("foo");
@@ -225,10 +225,10 @@ TEST(NamedShardingTest, ToString) {
   NamedSharding sharding_all = test_utils::FromAxisNames(
       mesh, {{"a"}}, {"c"}, {"d:(4)2"}, {"b:(2)2"}, {metadata1, metadata2});
   EXPECT_EQ(sharding_all.ToString(),
-            "{@mesh<a=2,b=4,c=3,d=8>, [{a}], replicated={c}, "
+            "{mesh[a=2,b=4,c=3,d=8], [{a}], replicated={c}, "
             "unreduced={d:(4)2}, manual={b:(2)2}}");
   EXPECT_EQ(sharding_all.ToString(/*include_metadata=*/true),
-            "{@mesh<a=2,b=4,c=3,d=8>, [{a}], replicated={c}, "
+            "{mesh[a=2,b=4,c=3,d=8], [{a}], replicated={c}, "
             "unreduced={d:(4)2}, manual={b:(2)2}, metadata={{op_name=\"foo\"}, "
             "{op_name=\"bar\"}}}");
 }
