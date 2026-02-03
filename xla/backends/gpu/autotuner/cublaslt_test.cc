@@ -158,6 +158,10 @@ TEST_F(CublasLtBackendTest, GetDefaultConfig) {
       backend_.GetDefaultConfig(
           (*module->entry_computation()->root_instruction()->operand(0)));
   EXPECT_THAT(config, absl_testing::IsOk());
+  CublasLtBackendConfig config_proto;
+  ASSERT_TRUE(config.value()->UnpackTo(&config_proto));
+  EXPECT_THAT(config_proto.algorithm(), 0);
+  EXPECT_THAT(config_proto.autotune_workspace_size(), 4194304);
 }
 
 TEST_F(CublasLtBackendTest, GetDefaultConfigFailsWithoutACublasLtCustomCall) {
