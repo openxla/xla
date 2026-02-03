@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -888,16 +889,29 @@ class AsyncCopyStep {
   virtual ~AsyncCopyStep() = default;
 
   bool operator<(const AsyncCopyStep& rhs) const {
+    // Sort AsyncCopySteps to maintain FIFO order and prioritize evictions.
+    //
+    // The sort order is:
+    // 1. schedule_before_time (earlier is scheduled first)
+    // 2. schedule_after_time (earlier is scheduled first)
+    // 3. evictions (destination != kAlternate) before prefetches
+    //    (destination == kAlternate).
+    //
+    // Evictions are scheduled first to free up alternate memory. This is
+    // required for correctness when an eviction's source buffer overlaps with
+    // a prefetch's destination buffer.
     std::optional<StartPhase> lhs_start_phase = start_phase();
     auto lhs_tuple = std::make_tuple(
         done_phase().schedule_before_time,
         (lhs_start_phase.has_value() ? lhs_start_phase->schedule_after_time
-                                     : done_phase().schedule_before_time));
+                                     : done_phase().schedule_before_time),
+        destination_memory_space() == MemorySpace::kAlternate);
     std::optional<StartPhase> rhs_start_phase = rhs.start_phase();
     auto rhs_tuple = std::make_tuple(
         rhs.done_phase().schedule_before_time,
         (rhs_start_phase.has_value() ? rhs_start_phase->schedule_after_time
-                                     : rhs.done_phase().schedule_before_time));
+                                     : rhs.done_phase().schedule_before_time),
+        destination_memory_space() == MemorySpace::kAlternate);
 
     return lhs_tuple < rhs_tuple;
   }
@@ -907,6 +921,7 @@ class AsyncCopyStep {
   virtual std::optional<StartPhase> start_phase() const = 0;
   virtual void set_start_phase_schedule_after_time(int64_t schedule_after) = 0;
   virtual DonePhase done_phase() const = 0;
+  virtual MemorySpace destination_memory_space() const = 0;
 
  protected:
   AsyncCopyStep() = default;
@@ -937,6 +952,10 @@ class AsyncCopyStepForCopyAllocation : public AsyncCopyStep {
   DonePhase done_phase() const override {
     return {copy_allocation_->copy_done_schedule_before(),
             copy_allocation_->copy_done()};
+  }
+
+  MemorySpace destination_memory_space() const override {
+    return copy_allocation_->memory_space();
   }
 
  private:
@@ -983,6 +1002,10 @@ class AsyncCopyStepForSlice : public AsyncCopyStep {
     return phase;
   }
 
+  MemorySpace destination_memory_space() const override {
+    return sliced_copy_allocation_->memory_space();
+  }
+
  private:
   SlicedCopyAllocation* sliced_copy_allocation_ = nullptr;
   size_t slice_index_;
@@ -1009,6 +1032,10 @@ class AsyncCopyStepForSliceConcat : public AsyncCopyStep {
   DonePhase done_phase() const override {
     return {sliced_copy_allocation_->earliest_available_time(),
             sliced_copy_allocation_->concat()};
+  }
+
+  MemorySpace destination_memory_space() const override {
+    return sliced_copy_allocation_->memory_space();
   }
 
  private:
@@ -1054,6 +1081,7 @@ void MemorySpaceAssignment::ScheduleAsynchronousCopies() {
     for (std::unique_ptr<AsyncCopyStep>& async_copy_step : async_copy_steps) {
       std::optional<AsyncCopyStep::StartPhase> start_phase =
           async_copy_step->start_phase();
+      int64_t schedule_after_time = std::numeric_limits<int64_t>::min();
       if (start_phase.has_value()) {
         // If the copy start doesn't happen to be scheduled at the correct
         // computation, delay it until the correct computation starts.
@@ -1080,11 +1108,16 @@ void MemorySpaceAssignment::ScheduleAsynchronousCopies() {
         start_phase = async_copy_step->start_phase();
         schedule_after_[start_phase->schedule_after_time].push_back(
             start_phase->instruction);
+        schedule_after_time = start_phase->schedule_after_time;
       }
 
       AsyncCopyStep::DonePhase done_phase = async_copy_step->done_phase();
       schedule_before_[done_phase.schedule_before_time].push_back(
           done_phase.instruction);
+      if (schedule_after_time == (done_phase.schedule_before_time - 1)) {
+        jit_copy_start_to_copy_done_[start_phase->instruction] =
+            done_phase.instruction;
+      }
     }
   }
 }
@@ -1199,8 +1232,16 @@ absl::Status MemorySpaceAssignment::FixSchedule() {
         HloComputation* computation = new_instruction->parent();
         if (computation_to_stats.contains(computation)) {
           ComputationStats& stats = computation_to_stats[computation];
-          InsertInstructionAndEnsureOperandsInserted(
-              new_instruction, &stats.sequence, &stats.inserted_instructions);
+          auto jit_copy_done_it =
+              jit_copy_start_to_copy_done_.find(new_instruction);
+          if (jit_copy_done_it != jit_copy_start_to_copy_done_.end()) {
+            InsertInstructionAndEnsureOperandsInserted(
+                jit_copy_done_it->second, &stats.sequence,
+                &stats.inserted_instructions);
+          } else {
+            InsertInstructionAndEnsureOperandsInserted(
+                new_instruction, &stats.sequence, &stats.inserted_instructions);
+          }
         }
       }
     }

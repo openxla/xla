@@ -1556,6 +1556,8 @@ std::vector<const HloValue*> MsaAlgorithm::GenerateJointProcessedValues(
 void MsaAlgorithm::UpdateSyncDataMovementCandidatesForJointProcessedValues(
     const std::vector<const HloValue*>& joint_processed_values) {
   absl::flat_hash_set<const HloInstruction*> replaceable_sync_instructions;
+  // TODO(subhankarshah): We never insert anything into
+  // do_not_touch_instructions. Check if this is intended.
   absl::flat_hash_set<const HloInstruction*> do_not_touch_instructions;
   for (const HloValue* value : joint_processed_values) {
     for (const auto& use : value->GetUses()) {
@@ -5828,6 +5830,25 @@ void MsaAlgorithm::UncommitPendingChunks(
       }
     }
   }
+  for (const auto& allocation : reserved_allocations_pending_release_) {
+    MsaBufferInterval interval =
+        MsaBufferInterval{/*buffer=*/nullptr,
+                          /*size=*/allocation->chunk().size,
+                          /*start=*/allocation->start_time(),
+                          /*end=*/allocation->end_time(),
+                          /*colocations=*/{},
+                          /*need_allocation=*/true};
+    Chunk chunk_candidate = FindChunkCandidate(
+        interval, /*preferred_offset=*/allocation->chunk().offset);
+    CHECK_EQ(chunk_candidate.offset, allocation->chunk().offset);
+    CommitChunk(interval, chunk_candidate);
+    allocation->reserve_chunk_in_interval_tree();
+    repack_allocation_blocks_.push_back(MakeRepackAllocationBlock(
+        allocation->start_time(), allocation->end_time(), chunk_candidate.size,
+        chunk_candidate.offset, allocation));
+    repack_allocation_blocks_.back().next_colocated =
+        &(repack_allocation_blocks_.back());
+  }
   ClearPendingChunks();
 }
 
@@ -5911,6 +5932,7 @@ void MsaAlgorithm::ClearPendingChunks() {
   pending_required_assignments_.clear();
   aliased_offset_map_.clear();
   aliased_offsets_.clear();
+  reserved_allocations_pending_release_.clear();
 }
 
 bool MsaAlgorithm::IsInstructionPendingReplacements(
@@ -6054,9 +6076,6 @@ void MsaAlgorithm::CheckAndUpdateForDualLiveAllocationValues(
 
 void MsaAlgorithm::ReleaseReservedAllocationForAlternateMemoryColorings(
     ReservedAllocation* reserved_allocation) {
-  // We check if the reserved chunk is still reserved because this might
-  // be a retry of the same allocation request and the chunk might have
-  // been released in the previous attempt.
   if (!reserved_allocation->is_chunk_reserved_in_interval_tree()) {
     return;
   }
@@ -6065,6 +6084,7 @@ void MsaAlgorithm::ReleaseReservedAllocationForAlternateMemoryColorings(
                               reserved_allocation->end_time(),
                               reserved_allocation->chunk()));
   reserved_allocation->chunk_freed_in_interval_tree();
+  reserved_allocations_pending_release_.push_back(reserved_allocation);
   size_t original_size = repack_allocation_blocks_.size();
   repack_allocation_blocks_.remove_if(
       [reserved_allocation](
@@ -7017,10 +7037,14 @@ AllocationResult MsaAlgorithm::Evict(const AllocationRequest& request,
 
   if (force_evict) {
     VLOG(3) << "Forcing evicting.";
+    int64_t inclusive_eviction_start_time = prev_allocation->end_time() + 1;
     AddAsyncCopyOrOtherMemOp(
         *prev_allocation, MemorySpace::kDefault,
-        /*chunk=*/std::nullopt, prev_allocation->end_time() - 1,
-        request.end_time, prev_allocation->end_time() + 1,
+        /*chunk=*/std::nullopt,
+        /*exclusive_start_time=*/
+        InclusiveToExclusiveStartTime(inclusive_eviction_start_time),
+        request.end_time,
+        /*copy_done_schedule_before_time=*/prev_allocation->end_time() + 1,
         request.allocation_value->mutable_allocation_sequence(),
         /*aliased_offset=*/nullptr, 0);
     return AllocationResult::kSuccess;
