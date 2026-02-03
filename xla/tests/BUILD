@@ -2318,6 +2318,7 @@ xla_test(
 xla_test(
     name = "pad_test",
     srcs = ["pad_test.cc"],
+    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
