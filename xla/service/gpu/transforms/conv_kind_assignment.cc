@@ -504,10 +504,9 @@ HloInstruction* ConvertBatchGroupedToFeatureGroupedConvolution(
   return computation->AddInstruction(std::move(new_conv));
 }
 
-static absl::StatusOr<HloInstruction*> AssignConvKind(
+absl::StatusOr<HloInstruction*> AssignConvKind(
     HloInstruction* conv, const se::GpuComputeCapability& cc,
-    const se::dnn::VersionInfo& dnn_version,
-    std::vector<HloInstruction*>& fusion_outputs) {
+    const se::dnn::VersionInfo& dnn_version) {
   TF_RETURN_IF_ERROR(CheckTypes(conv, cc, dnn_version));
   if (ConvolutionMatch m = MatchBackwardInput(conv)) {
     conv = CreateGpuConv(ConvKind::DGRAD, conv, conv->mutable_operand(0), *m);
@@ -524,14 +523,13 @@ static absl::StatusOr<HloInstruction*> AssignConvKind(
   return conv;
 }
 
-// Tries to rewrite convolution and fusible instructions into cudnn fusion.
+// Tries to assign conv kind(fprop/dgrad/wgrad) to conv instruction.
 absl::StatusOr<bool> RunOnInstruction(HloInstruction* conv,
                                       const se::GpuComputeCapability& cc,
                                       const se::dnn::VersionInfo& dnn_version) {
   CHECK_EQ(conv->opcode(), HloOpcode::kConvolution);
-  std::vector<HloInstruction*> fusion_outputs;
   TF_ASSIGN_OR_RETURN(HloInstruction * conv_with_kind,
-                      AssignConvKind(conv, cc, dnn_version, fusion_outputs));
+                      AssignConvKind(conv, cc, dnn_version));
   if (conv == nullptr) {
     return false;
   }
