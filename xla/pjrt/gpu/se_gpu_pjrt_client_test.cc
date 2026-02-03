@@ -3465,7 +3465,7 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
   if (node_id < num_nodes_using_cache) {
     debug_options.set_xla_gpu_experimental_autotune_cache_mode(
         DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
-    debug_options.set_xla_gpu_experimental_autotuner_cache_dir(cache_dir);
+    debug_options.set_xla_gpu_per_fusion_autotune_cache_dir(cache_dir);
   }
 
   const char* kHlo = R"(

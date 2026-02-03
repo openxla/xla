@@ -127,10 +127,13 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
         allocator);
   }
 
+  std::string cache_dir = debug_options.xla_gpu_per_fusion_autotune_cache_dir();
+  if (cache_dir.empty()) {
+    cache_dir = debug_options.xla_gpu_experimental_autotuner_cache_dir();
+  }
   std::unique_ptr<AutotunerCacheInterface> cache =
       std::make_unique<LegacyCache>(
-          debug_options.xla_gpu_experimental_autotuner_cache_dir(),
-          debug_options.xla_gpu_experimental_autotune_cache_mode(),
+          cache_dir, debug_options.xla_gpu_experimental_autotune_cache_mode(),
           target_config->device_description);
 
   TF_ASSIGN_OR_RETURN(
