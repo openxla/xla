@@ -1,0 +1,47 @@
+# Overlay BUILD for @roc_mori//src/shmem. Symlinked over the extracted
+# tarball's src/shmem/BUILD.bazel by tf_http_archive (see workspace.bzl).
+#
+# Mirrors src/shmem/CMakeLists.txt: a single SHARED-style cc_library named
+# mori_shmem. Sources are globbed so new pure-CXX files added upstream get
+# picked up automatically; the one explicit exclusion is the device-code
+# wrapper (CMake excludes it from MORI_SHMEM_SOURCES too — it gets JITed
+# elsewhere or built into a separate target).
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "mori_shmem",
+    srcs = glob(
+        ["*.cpp"],
+        exclude = [
+            # Contains __device__ symbols. Keep in sync with MORI_SHMEM_SOURCES
+            # in src/shmem/CMakeLists.txt — that list excludes this file too.
+            "shmem_device_api_wrapper.cpp",
+        ],
+    ),
+    copts = [
+        # @local_config_rocm's rocm_headers_includes target propagates
+        # -D__HIP_DISABLE_CPP_FUNCTIONS__=1 to every consumer, which suppresses
+        # the templated hipMalloc(T**, size_t) wrapper. MORI's host code relies
+        # on that wrapper for implicit T** -> void** conversion (e.g.
+        # init.cpp's hipMalloc(&gpuStates->rdmaEndpoints, ...)). Re-enable the
+        # C++ overloads just for this target.
+        "-U__HIP_DISABLE_CPP_FUNCTIONS__",
+    ],
+    alwayslink = True,
+    deps = [
+        # mori_shmem's .cpp files call application::* symbols (BootstrapNetwork,
+        # SymmMemManager, Context, ...). Without this lib dep, downstream link
+        # would fail with undefined references. The mori_application_headers
+        # dep below stays so include-only references (templates, inline funcs)
+        # also resolve at parse time.
+        "@roc_mori//src/application:mori_application",
+        "@roc_mori//:mori_shmem_headers",
+        "@roc_mori//:mori_application_headers",
+        "@local_config_rocm//rocm:hip",  # libamdhip64.so (hip::host)
+        "@local_config_rocm//rocm:rocm_headers",
+        "@roc_mori//:ibverbs",
+        "@spdlog//:spdlog",
+    ],
+)

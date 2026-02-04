@@ -1,5 +1,6 @@
 """ROCm-platform specific StreamExecutor support code."""
 
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "rocm_library",
@@ -27,6 +28,18 @@ package(
 package_group(
     name = "friends",
     packages = stream_executor_friends(),
+)
+
+# Allows to explicitely disable MORI collectives using invocation flag.
+bool_flag(
+    name = "mori_enabled",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "mori_supported",
+    constraint_values = ["@platforms//os:linux"],
+    flag_values = {":mori_enabled": "True"},
 )
 
 cc_library(
@@ -134,6 +147,10 @@ cc_library(
         ":rocm_stream",
         ":rocm_timer",
         ":rocm_version_parser",
+        "//xla:util",
+        "//xla/backends/gpu/collectives:gpu_collectives",
+        "//xla/core/collectives",
+        "//xla/core/collectives:collectives_registry",
         ":rocm_xgmi_topology",
         "//xla/stream_executor:activate_context",
         "//xla/stream_executor:blas",

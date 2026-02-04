@@ -144,6 +144,9 @@ nvshmem_redist_init_repository(
     nvshmem_redistributions = NVSHMEM_REDISTRIBUTIONS,
 )
 
+# load("//third_party/roc_mori:local_mori_configure.bzl", "local_mori_configure")
+# local_mori_configure(name = "roc_mori")
+
 # This is used for building nightly PJRT wheels.
 load("//build_tools/pjrt_wheels:nightly.bzl", "nightly_timestamp_repo")
 
