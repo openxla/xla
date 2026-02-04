@@ -1031,6 +1031,8 @@ CommonPjRtLoadedExecutable::ExecuteSharded(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options,
     std::optional<tsl::Future<void>>& returned_future, bool fill_future) const {
+  RunId run_id = options.launch_id != 0 ? RunId(options.launch_id)
+                                        : RunId::CreateUniqueId();
   tsl::profiler::TraceMe traceme("CommonPjRtLoadedExecutable::ExecuteSharded");
   for (int i = 0; i < addressable_devices_.size(); ++i) {
     if (addressable_devices_[i] == device) {
@@ -1038,7 +1040,7 @@ CommonPjRtLoadedExecutable::ExecuteSharded(
           options.send_callbacks, options.recv_callbacks, /*num_devices=*/1));
       TF_ASSIGN_OR_RETURN(auto result,
                           ExecuteHelperOnSingleDevice(
-                              argument_handles, RunId(options.launch_id),
+                              argument_handles, run_id,
                               addressable_device_logical_ids_[i].replica,
                               addressable_device_logical_ids_[i].partition,
                               options, fill_future));
@@ -1072,11 +1074,13 @@ CommonPjRtLoadedExecutable::ExecutePortable(
       options.send_callbacks, options.recv_callbacks, /*num_devices=*/1));
   VLOG(1) << "ExecutePortable executes single-core portable executable "
           << name();
+  RunId run_id = options.launch_id != 0 ? RunId(options.launch_id)
+                                        : RunId::CreateUniqueId();
   TF_ASSIGN_OR_RETURN(auto result,
-                      ExecuteHelperOnSingleDevice(
-                          argument_handles, RunId(options.launch_id),
-                          /*replica=*/0,
-                          /*partition=*/0, options, fill_future, device));
+                      ExecuteHelperOnSingleDevice(argument_handles, run_id,
+                                                  /*replica=*/0,
+                                                  /*partition=*/0, options,
+                                                  fill_future, device));
   returned_future = std::move(result.future);
   return std::move(result.buffers);
 }
@@ -1088,15 +1092,19 @@ CommonPjRtLoadedExecutable::Execute(
     std::optional<std::vector<tsl::Future<void>>>& returned_futures) const {
   tsl::profiler::TraceMe traceme("CommonPjRtLoadedExecutable::Execute");
   VLOG(1) << "CommonPjRtLoadedExecutable::Execute";
-  if (!client()->allows_recursion() && ThisThreadIsInsideHostCallback()) {
+  if (!client()->allows_execute_recursion() &&
+      ThisThreadIsInsideHostCallback()) {
     // Because TPU is single threaded, and the host callback currently blocking
     // the TPU, we should not initiate any outstanding computations because that
     // risks deadlocking the TPU.
     return InvalidArgument("Execute() called from inside host callback.");
   }
 
+  RunId run_id = options.launch_id != 0 ? RunId(options.launch_id)
+                                        : RunId::CreateUniqueId();
   tsl::profiler::TraceMeProducer producer("CommonPjRtLoadedExecutable::Execute",
-                                          tsl::profiler::ContextType::kPjRt);
+                                          tsl::profiler::ContextType::kPjRt,
+                                          run_id.ToInt());
 
   const int num_addressable_devices = addressable_devices_.size();
 
@@ -1117,7 +1125,6 @@ CommonPjRtLoadedExecutable::Execute(
       options.send_callbacks, options.recv_callbacks,
       addressable_devices_.size()));
 
-  xla::RunId run_id(options.launch_id);
   std::vector<absl::StatusOr<Result>> results(num_addressable_devices);
   if (num_addressable_devices == 1) {
     // Fast-path if there is only one device — run the computation on the

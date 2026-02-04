@@ -380,6 +380,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   }
 
   bool allows_recursion() const override { return false; }
+  bool allows_execute_recursion() const override { return true; }
 
   absl::StatusOr<int64_t> GetOnDeviceBytesCount(
       PjRtMemorySpace* memory_space, const xla::Shape& shape) const override;
@@ -635,12 +636,7 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
       int partition, PjRtDevice* device) const override;
 
   void LaunchOnDevice(PjRtDevice* device,
-                      absl::AnyInvocable<void()> execute_fn) const override {
-    const LocalDeviceState& device_state =
-        *tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
-             ->local_device_state();
-    device_state.execute_thread()->Schedule(std::move(execute_fn));
-  }
+                      absl::AnyInvocable<void()> execute_fn) const;
 
   const DeviceAssignment& device_assignment() const override {
     return *device_assignment_;
@@ -720,8 +716,6 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
   // Initializes information about which arguments to which executables must be
   // donated due to aliases that were specified by the computation.
   absl::Status SetUpDonation(bool tuple_inputs);
-
-  absl::Status VerifyCompatibleDevices() const;
 
   // Create shared pointers so we can free them after the execution: with
   // asynchronous execution, the process being executed can outlive the

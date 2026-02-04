@@ -1975,6 +1975,7 @@ PjRtStreamExecutorLoadedExecutable::StartRawExecutable(
                            ->local_device_state()
                            ->local_device_id()
                            .value();
+  TF_RETURN_IF_ERROR(executable_->VerifyRunDeviceCompatible(device_ordinal));
   VLOG(1) << "Replica " << replica << ", partition " << partition
           << " mapped to device ordinal for execution: " << device_ordinal;
   return std::make_unique<PjRtStreamExecutorRawLoadedExecutable>(
@@ -1983,19 +1984,18 @@ PjRtStreamExecutorLoadedExecutable::StartRawExecutable(
       on_device_executable_parameter_shapes_);
 }
 
-absl::Status PjRtStreamExecutorLoadedExecutable::VerifyCompatibleDevices()
-    const {
-  const int num_addressable_devices = addressable_devices_.size();
-  for (int i = 0; i < num_addressable_devices; ++i) {
-    PjRtDevice* device = addressable_devices_[i];
-    const int device_ordinal =
-        tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
-            ->local_device_state()
-            ->local_device_id()
-            .value();
-    TF_RETURN_IF_ERROR(executable_->VerifyRunDeviceCompatible(device_ordinal));
-  }
-  return absl::OkStatus();
+void PjRtStreamExecutorLoadedExecutable::LaunchOnDevice(
+    PjRtDevice* device, absl::AnyInvocable<void()> execute_fn) const {
+  std::unique_ptr<ProfilingContext> pc = CreateProfilingContext();
+  const LocalDeviceState& device_state =
+      *tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
+           ->local_device_state();
+  device_state.execute_thread()->Schedule(
+      [execute_fn = std::move(execute_fn), pc = std::move(pc)]() mutable {
+        std::unique_ptr<WithProfilingContext> wpc =
+            CreateWithProfilingContext(pc.get());
+        execute_fn();
+      });
 }
 
 absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
@@ -2020,126 +2020,8 @@ PjRtStreamExecutorLoadedExecutable::Execute(
     DumpHloUnoptimizedSnapshotIfEnabled(
         hlo_snapshot, input_hlo_snapshot_bits_->debug_options);
   }
-
-  RunId run_id = RunId::CreateUniqueId();
-  tsl::profiler::TraceMeProducer activity(
-      "PjRtStreamExecutorLoadedExecutable::Execute",
-      tsl::profiler::ContextType::kPjRt, run_id.ToInt());
-
-  const int num_addressable_devices = addressable_devices_.size();
-
-  if (argument_handles.size() != num_addressable_devices) {
-    return InvalidArgument(
-        "Attempted to execute with %d argument lists when local device "
-        "count is %d (total replica count: %d, partition count: %d)",
-        argument_handles.size(), num_addressable_devices, num_replicas(),
-        num_partitions());
-  }
-
-  TF_RETURN_IF_ERROR(VerifyCompatibleDevices());
-  VLOG(1) << "Executing computation " << name()
-          << "; num_replicas=" << num_replicas()
-          << " num_partitions=" << num_partitions()
-          << " num_addressable_devices=" << num_addressable_devices;
-  std::vector<absl::StatusOr<Result>> results(num_addressable_devices);
-  if (num_addressable_devices == 1 && !ThisThreadIsInsideHostCallback()) {
-    // Fast-path if there is only one device — run the computation on the
-    // current thread.
-    const int replica = addressable_device_logical_ids_[0].replica;
-    const int partition = addressable_device_logical_ids_[0].partition;
-    results[0] = ExecuteHelperOnSingleDevice(argument_handles[0], run_id,
-                                             replica, partition, options,
-                                             returned_futures.has_value());
-  } else {
-    std::unique_ptr<ProfilingContext> pc = CreateProfilingContext();
-    absl::Mutex mu;
-    int running = num_addressable_devices;
-    int failed = 0;
-    absl::Status first_failure_status;
-
-    for (int i = 0; i < num_addressable_devices; ++i) {
-      const int replica = addressable_device_logical_ids_[i].replica;
-      const int partition = addressable_device_logical_ids_[i].partition;
-      PjRtDevice* device = addressable_devices_[i];
-      const LocalDeviceState& device_state =
-          *tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
-               ->local_device_state();
-      device_state.execute_thread()->Schedule([&, replica, partition, i] {
-        std::unique_ptr<WithProfilingContext> wpc =
-            CreateWithProfilingContext(pc.get());
-        results[i] = ExecuteHelperOnSingleDevice(argument_handles[i], run_id,
-                                                 replica, partition, options,
-                                                 returned_futures.has_value());
-
-        absl::MutexLock lock(mu);
-        --running;
-        if (!results[i].ok()) {
-          if (failed == 0) {
-            first_failure_status = results[i].status();
-          }
-          ++failed;
-        }
-      });
-    }
-
-    auto done_running_or_failed = [&]() {
-      mu.AssertHeld();
-      return running == 0 || failed > 0;
-    };
-    absl::MutexLock lock(mu);
-    mu.Await(absl::Condition(&done_running_or_failed));
-    if (failed > 0) {
-      auto done_running = [&]() {
-        mu.AssertHeld();
-        return running == 0;
-      };
-      // If execution does not terminate within a reasonable amount of time,
-      // we may be stuck at a cross-replica barrier on-device. Terminate the
-      // process since that's the only way we can escape this situation at the
-      // moment (b/130629719).
-      if (!mu.AwaitWithTimeout(absl::Condition(&done_running),
-                               absl::Seconds(10))) {
-        LOG(FATAL)
-            << "Replicated computation launch failed, but not all replicas "
-               "terminated. Aborting process to work around deadlock. "
-               "Failure message (there may have been multiple failures, see "
-               "the error log for all failures): \n\n"
-            << first_failure_status.message();
-      }
-    }
-  }
-  VLOG(1) << "Replicated execution complete.";
-
-  std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> wrapped_results(
-      num_addressable_devices);
-  if (returned_futures.has_value()) {
-    returned_futures->reserve(num_addressable_devices);
-  }
-  for (int i = 0; i < num_addressable_devices; ++i) {
-    const int replica = addressable_device_logical_ids_[i].replica;
-    const int partition = addressable_device_logical_ids_[i].partition;
-    auto& statusor = results[i];
-    if (!statusor.ok()) {
-      if (returned_futures.has_value()) {
-        returned_futures->clear();
-      }
-      if (num_addressable_devices == 1) {
-        return statusor.status();
-      } else {
-        return AppendStatus(
-            statusor.status(),
-            absl::StrFormat("while running replica %d and partition %d of a "
-                            "replicated computation (other "
-                            "replicas may have failed as well).",
-                            replica, partition));
-      }
-    }
-    wrapped_results[i] = std::move(statusor->buffers);
-    if (returned_futures.has_value()) {
-      returned_futures->push_back(*std::move(statusor->future));
-    }
-  }
-  return wrapped_results;
+  return CommonPjRtLoadedExecutable::Execute(argument_handles, options,
+                                             returned_futures);
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
@@ -2150,25 +2032,8 @@ PjRtStreamExecutorLoadedExecutable::ExecuteSharded(
   if (device_assignment_ == nullptr) {
     return InvalidArgument("ExecuteShard expects a non-null device_assignment");
   }
-  for (int i = 0; i < addressable_devices_.size(); ++i) {
-    if (addressable_devices_[i] == device) {
-      VLOG(1) << "ExecuteShard executes computation " << name()
-              << " on assigned replica/partition on device "
-              << device->DebugString();
-      TF_ASSIGN_OR_RETURN(auto result,
-                          ExecuteHelperOnSingleDevice(
-                              argument_handles, RunId::CreateUniqueId(),
-                              addressable_device_logical_ids_[i].replica,
-                              addressable_device_logical_ids_[i].partition,
-                              options, fill_future));
-      returned_future = std::move(result.future);
-      return std::move(result.buffers);
-    }
-  }
-  return InvalidArgument(
-      "ExecuteShard attempted to execute on device id %d which is not "
-      "addressable by this client",
-      device->id());
+  return CommonPjRtLoadedExecutable::ExecuteSharded(
+      argument_handles, device, options, returned_future, fill_future);
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
@@ -2179,24 +2044,8 @@ PjRtStreamExecutorLoadedExecutable::ExecutePortable(
   if (device_assignment_ != nullptr) {
     return InvalidArgument("ExecutePortable gets a non-portable executable");
   }
-  if (num_replicas() != 1 || num_partitions() != 1) {
-    return InvalidArgument(
-        "ExecutePortable expects a single-core executable but gets "
-        "one with %d replica %d partition",
-        num_replicas(), num_partitions());
-  }
-  if (device == nullptr) {
-    return InvalidArgument("ExecutePortable expects a device to be specified");
-  }
-  VLOG(1) << "ExecutePortable executes single-core portable executable "
-          << name();
-  TF_ASSIGN_OR_RETURN(auto result,
-                      ExecuteHelperOnSingleDevice(
-                          argument_handles, RunId::CreateUniqueId(),
-                          /*replica=*/0,
-                          /*partition=*/0, options, fill_future, device));
-  returned_future = std::move(result.future);
-  return std::move(result.buffers);
+  return CommonPjRtLoadedExecutable::ExecutePortable(
+      argument_handles, device, options, returned_future, fill_future);
 }
 
 absl::StatusOr<std::vector<std::shared_ptr<HloModule>>>
@@ -2808,7 +2657,6 @@ PjRtStreamExecutorClient::LoadInternal(
       std::move(addressable_device_logical_ids), std::move(addressable_devices),
       this, std::move(parameter_shapes), std::move(result_shape),
       std::move(output_memory_space_kind_ids));
-
   TF_RETURN_IF_ERROR(
       executable->SetUpDonation(compile_options.parameter_is_tupled_arguments));
   if (xla_dump_hlo_unoptimized_snapshots &&
