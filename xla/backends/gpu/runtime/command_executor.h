@@ -136,7 +136,7 @@ class CommandExecutor {
                             RecordId record_id = RecordId(0)) const;
 
   // Returns buffers referenced by commands in this sequence.
-  const absl::flat_hash_set<BufferUse>& buffers() const;
+  const absl::flat_hash_set<BufferUse>& buffer_uses() const;
 
   // Returns buffer allocations indices referenced by commands in this sequence.
   absl::Span<const BufferAllocation::Index> allocs_indices() const;
