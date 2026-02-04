@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/permutation_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -112,8 +113,9 @@ int ComputeMaxUnrollFactor(int64_t num_elements, int64_t max_unroll) {
 }  // namespace
 
 int64_t MaxUnrollFactor(const HloFusionAnalysis* analysis) {
+  constexpr int kDefaultUnrollFactor = 4;
   if (analysis == nullptr) {
-    return 4;
+    return kDefaultUnrollFactor;
   }
 
   // On Blackwell we would like to increase the maximum unroll factor to 8, as
@@ -140,30 +142,52 @@ int64_t MaxUnrollFactor(const HloFusionAnalysis* analysis) {
   // don't face register pressure. This part of the heuristic may need
   // improvements.
   constexpr int kMaxNumOutputsForFullUnrolling = 1;
-  // On PTX level, we can vectorize with v4.b32, but not with v8.b32. So
-  // higher unroll factor does not make sense with 32 bit or more.
-  constexpr int kMaxBitsToVectorizeWithVectorSize4 = 32;
+  // On PTX level, we can efficiently vectorize up to 256 bits (e.g. v8.b32).
+  // So we allow aggressive (>4x) unrolling for types smaller than 64 bits
+  // to reach this width.
+  constexpr int kMaxBitsForAggressiveUnrolling = 64;
   DebugOptions debug_options = analysis->fusion_root(0)
                                    .instruction()
                                    .GetModule()
                                    ->config()
                                    .debug_options();
   if (analysis->device_info().cuda_compute_capability().IsBlackwell() &&
-      analysis->emitter_fusion_kind() ==
-          HloFusionAnalysis::EmitterFusionKind::kLoop &&
+      (analysis->emitter_fusion_kind() ==
+           HloFusionAnalysis::EmitterFusionKind::kLoop ||
+       analysis->emitter_fusion_kind() ==
+           HloFusionAnalysis::EmitterFusionKind::kTranspose) &&
       analysis->input_output_info().smallest_output_dtype_bits <
-          kMaxBitsToVectorizeWithVectorSize4 &&
+          kMaxBitsForAggressiveUnrolling &&
       analysis->fusion_root_count() <= kMaxNumOutputsForFullUnrolling &&
-      debug_options.xla_gpu_experimental_allow_unroll_factor_eight() &&
-      !HloAnyOf(
-          analysis->fusion(),
-          [](HloInstructionAdaptor node) {
-            return node.opcode() == HloOpcode::kReduce;
-          }) &&
-      !ContainsTransposeWithSmallMostMinorDim(analysis->fusion(), 8)) {
-    return 8;
+      !HloAnyOf(analysis->fusion(), [](HloInstructionAdaptor node) {
+        return node.opcode() == HloOpcode::kReduce;
+      })) {
+    int64_t max_dtype_bits = 0;
+    for (const HloInstruction* param : analysis->fusion().GetParameters()) {
+      max_dtype_bits = std::max(
+          max_dtype_bits, static_cast<int64_t>(primitive_util::StorageBitWidth(
+                              param->shape().element_type())));
+    }
+    for (const HloInstructionAdaptor& root : analysis->fusion_roots()) {
+      max_dtype_bits = std::max(
+          max_dtype_bits, static_cast<int64_t>(primitive_util::StorageBitWidth(
+                              root.instruction().shape().element_type())));
+    }
+
+    int64_t unroll_factor =
+        debug_options.xla_gpu_experimental_max_unroll_factor() * 8 /
+        std::max(int64_t{8}, max_dtype_bits);
+    unroll_factor =
+        1LL << (absl::bit_width(static_cast<uint64_t>(unroll_factor)) - 1);
+    while (unroll_factor > kDefaultUnrollFactor) {
+      if (!ContainsTransposeWithSmallMostMinorDim(analysis->fusion(),
+                                                  unroll_factor)) {
+        return unroll_factor;
+      }
+      unroll_factor /= 2;
+    }
   }
-  return 4;
+  return kDefaultUnrollFactor;
 }
 
 bool IsPhysicallyTransposing(const HloInstruction& instr) {
