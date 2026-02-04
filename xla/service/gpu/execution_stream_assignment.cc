@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/collective_opt_utils.h"
 #include "xla/side_effect_util.h"
 
 namespace xla::gpu {
@@ -128,9 +129,17 @@ std::optional<ExecutionScopeKind> IsExecutionScopeStart(
 
   // Async-collective operations not yet migrated to async wrappers.
   if (HloPredicateIsOp<HloOpcode::kAllGatherStart, HloOpcode::kAllReduceStart,
-                       HloOpcode::kCollectivePermuteStart, HloOpcode::kRecv,
-                       HloOpcode::kSend>(hlo)) {
+                       HloOpcode::kCollectivePermuteStart>(hlo)) {
     return ExecutionScopeKind::kCollective;
+  }
+
+  // Send/Recv operations are the only ones that can be partially pipelined and
+  // require a special handling. If this send/recv is not a canonical start,
+  // it must be an execution scope use operation.
+  if (HloPredicateIsOp<HloOpcode::kRecv, HloOpcode::kSend>(hlo)) {
+    return hlo == FindCanonicalSendRecvStartOp(hlo)
+               ? std::make_optional(ExecutionScopeKind::kCollective)
+               : std::nullopt;
   }
 
   // A special case of asynchronous compute operation.
@@ -149,6 +158,15 @@ std::optional<ExecutionScopeKind> IsExecutionScopeUse(
     return IsWrappedCollective(update) ? ExecutionScopeKind::kCollective
                                        : ExecutionScopeKind::kCompute;
   }
+
+  // A special case for partially pipelined send/recv operations. If this is
+  // a non-canonical send/recv inside a loop, we treat it as scope use.
+  if (HloPredicateIsOp<HloOpcode::kRecv, HloOpcode::kSend>(hlo)) {
+    return hlo != FindCanonicalSendRecvStartOp(hlo)
+               ? std::make_optional(ExecutionScopeKind::kCollective)
+               : std::nullopt;
+  }
+
   return std::nullopt;
 }
 
@@ -164,8 +182,14 @@ std::optional<ExecutionScopeKind> IsExecutionScopeEnd(
 
   // Async-collective operations not yet migrated to async wrappers.
   if (HloPredicateIsOp<HloOpcode::kAllGatherDone, HloOpcode::kAllReduceDone,
-                       HloOpcode::kCollectivePermuteDone, HloOpcode::kRecvDone,
-                       HloOpcode::kSendDone>(hlo)) {
+                       HloOpcode::kCollectivePermuteDone>(hlo)) {
+    return ExecutionScopeKind::kCollective;
+  }
+
+  // We always treat send/recv done operations as execution scope end. Strictly
+  // speaking pipelined send/recv can be an execution scope use, but today we
+  // don't care about that as it doesn't impact stream assignment.
+  if (HloPredicateIsOp<HloOpcode::kRecvDone, HloOpcode::kSendDone>(hlo)) {
     return ExecutionScopeKind::kCollective;
   }
 
@@ -185,10 +209,16 @@ const HloInstruction* FindExecutionScopeStart(const HloInstruction* hlo) {
     return async->async_chain_start();
   }
 
-  DCHECK(
-      (HloPredicateIsOp<HloOpcode::kAllGatherDone, HloOpcode::kAllReduceDone,
-                        HloOpcode::kCollectivePermuteDone, HloOpcode::kRecvDone,
-                        HloOpcode::kSendDone, HloOpcode::kCopyDone>(hlo)))
+  // A special-case for partially pipelined send/recv operations.
+  if (HloPredicateIsOp<HloOpcode::kRecv, HloOpcode::kSend, HloOpcode::kRecvDone,
+                       HloOpcode::kSendDone>(hlo)) {
+    return FindCanonicalSendRecvStartOp(hlo);
+  }
+
+  DCHECK((
+      HloPredicateIsOp<HloOpcode::kAllGatherDone, HloOpcode::kAllReduceDone,
+                       HloOpcode::kCollectivePermuteDone, HloOpcode::kCopyDone>(
+          hlo)))
       << "Unsupported async operation: " << hlo->name();
 
   return hlo->operand(0);
