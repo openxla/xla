@@ -173,6 +173,17 @@ void HloInstruction::Users::RemoveUser(HloInstruction* user) {
 }
 
 void HloInstruction::Users::SortInstructionUsers(
+    absl::FunctionRef<bool(const HloInstruction*, const HloInstruction*)>
+        compare) {
+  absl::c_sort(users_, compare);
+  if (user_map_ != nullptr) {
+    user_map_->clear();
+    RebuildMap();
+  }
+  DCHECK(CheckInvariants());
+}
+
+void HloInstruction::Users::SortInstructionUsers(
     const MappedPtrContainerSorter<HloInstruction>::MapPtrFn& map_fn,
     const Users& sorted_instruction_users) {
   using Sorter = MappedPtrContainerSorter<HloInstruction>;
