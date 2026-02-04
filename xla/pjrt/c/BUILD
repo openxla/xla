@@ -264,6 +264,15 @@ cc_library(
 )
 
 cc_library(
+    name = "pjrt_c_api_shardings_extension_hdrs",
+    hdrs = ["pjrt_c_api_shardings_extension.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pjrt_c_api_hdrs",
+    ],
+)
+
+cc_library(
     name = "pjrt_c_api_wrapper_impl",
     srcs = ["pjrt_c_api_wrapper_impl.cc"],
     hdrs = ["pjrt_c_api_wrapper_impl.h"],
@@ -273,6 +282,7 @@ cc_library(
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_layouts_extension_hdrs",
         ":pjrt_c_api_memory_descriptions_extension_hdrs",
+        ":pjrt_c_api_shardings_extension_hdrs",
         "//xla:future",
         "//xla:literal",
         "//xla:shape_util",
@@ -378,6 +388,7 @@ cc_library(
         ":pjrt_c_api_memory_descriptions_extension_hdrs",
         ":pjrt_c_api_phase_compile_extension_hdrs",
         ":pjrt_c_api_phase_compile_internal",
+        ":pjrt_c_api_shardings_extension_hdrs",
         ":pjrt_c_api_wrapper_impl",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",
@@ -450,6 +461,7 @@ cc_library(
         ":pjrt_c_api_layouts_extension_hdrs",
         ":pjrt_c_api_memory_descriptions_extension_hdrs",
         ":pjrt_c_api_profiler_extension_hdrs",
+        ":pjrt_c_api_shardings_extension_hdrs",
         ":pjrt_c_api_stream_extension_hdrs",
         ":pjrt_c_api_triton_extension_hdrs",
         ":pjrt_c_api_triton_internal",
