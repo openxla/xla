@@ -132,6 +132,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/collective_opt_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/custom_kernel_emitter.h"
@@ -265,115 +266,6 @@ std::optional<const HloInstruction*> GetCollectiveHeroForDynamicSliceFusion(
   return HloBfsFindIf(
       {instruction->fused_instructions_computation()->root_instruction()},
       [](const HloInstruction* instr) { return IsCollective(instr); });
-}
-
-// Find the canonical send/recv start op for one of send, recv,
-// send-done, or recv-done. For trivial cases send/recv and
-// send-done/recv-done come in pairs and the canonical start op is
-// the send/recv op of the pair. If send/recv is partially
-// pipelined, we will use the send/recv leading into the while loop
-// as the canonical start op, which will serve as a key for the
-// async events.
-//
-// Example:
-// ```
-// send_ctx = send(src, ...)  <-- canonical start op
-// send_ctx_final = while(send_ctx) {
-//   send_ctx_in = parameter(0)
-//   send-done(send_ctx_in)
-//   ...
-//   ROOT send_ctx_out = send(next_src, ...)
-// }
-// send-done(send_ctx_final)
-// ```
-static const HloInstruction* FindCanonicalSendRecvStartOp(
-    const HloInstruction* inst) {
-  CHECK(inst->opcode() == HloOpcode::kSend ||
-        inst->opcode() == HloOpcode::kRecv ||
-        inst->opcode() == HloOpcode::kSendDone ||
-        inst->opcode() == HloOpcode::kRecvDone);
-  // If the instruction is wrapped in an async computation, return
-  // the instruction itself.
-  if (inst->parent()->IsAsyncComputation()) {
-    return inst;
-  }
-
-  // Find container while loop and index for the send/recv case or
-  // return canonical start op directly.
-  const HloInstruction* while_op = nullptr;
-  int64_t i = -1;
-  if (inst->opcode() == HloOpcode::kSend ||
-      inst->opcode() == HloOpcode::kRecv) {
-    CHECK_EQ(inst->users().size(), 1);
-    const HloInstruction* unique_user = inst->users().front();
-
-    // Return send/recv inst directly if this is a simple send/recv
-    // pair.
-    if (unique_user->opcode() == HloOpcode::kSendDone ||
-        unique_user->opcode() == HloOpcode::kRecvDone) {
-      return inst;
-    }
-
-    // Find while loop and index, otherwise.
-    CHECK(unique_user->opcode() == HloOpcode::kTuple ||
-          unique_user->opcode() == HloOpcode::kWhile);
-    if (unique_user->IsRoot()) {
-      // send/recv op in the loop body.
-      auto maybe_while_op =
-          unique_user->parent()->GetUniqueCaller(HloOpcode::kWhile);
-      CHECK(maybe_while_op);
-      while_op = *maybe_while_op;
-      i = unique_user->operand_index(inst);
-    } else {
-      // send/recv leading into the loop.
-      CHECK_EQ(unique_user->users().size(), 1);
-      CHECK(unique_user->users().front()->opcode() == HloOpcode::kWhile);
-      while_op = unique_user->users().front();
-      i = unique_user->operand_index(inst);
-    }
-  }
-
-  // Find container while loop and index for the send-done/recv-done
-  // case or return canonical start op directly.
-  if (inst->opcode() == HloOpcode::kSendDone ||
-      inst->opcode() == HloOpcode::kRecvDone) {
-    const HloInstruction* operand = inst->operand(0);
-
-    // Return send/recv inst directly if this is a simple send/recv
-    // pair.
-    if (operand->opcode() == HloOpcode::kSend ||
-        operand->opcode() == HloOpcode::kRecv) {
-      return operand;
-    }
-
-    // Find while loop and index, otherwise.
-    CHECK(operand->opcode() == HloOpcode::kGetTupleElement);
-    const auto* gte = Cast<HloGetTupleElementInstruction>(operand);
-    const HloInstruction* iter_tuple = operand->operand(0);
-    if (iter_tuple->opcode() == HloOpcode::kParameter) {
-      // send-done/recv-done in the loop body.
-      CHECK(Cast<HloParameterInstruction>(iter_tuple)->parameter_number() == 0);
-      auto maybe_while =
-          iter_tuple->parent()->GetUniqueCaller(HloOpcode::kWhile);
-      CHECK(maybe_while);
-      while_op = *maybe_while;
-      i = gte->tuple_index();
-    } else {
-      // send-done/recv-done proceeding the loop.
-      CHECK(iter_tuple->opcode() == HloOpcode::kWhile);
-      while_op = iter_tuple;
-      i = gte->tuple_index();
-    }
-  }
-
-  // Extract canonical start op from while loop's init.
-  CHECK(while_op != nullptr);
-  CHECK(0 <= i && i < while_op->shape().tuple_shapes().size());
-  const HloInstruction* init = while_op->operand(0);
-  const HloInstruction* canonical_start_op = init->operand(i);
-  CHECK(canonical_start_op->opcode() == HloOpcode::kSend ||
-        canonical_start_op->opcode() == HloOpcode::kRecv);
-  return canonical_start_op;
 }
 
 }  // namespace
