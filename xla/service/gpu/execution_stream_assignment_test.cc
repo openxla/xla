@@ -94,7 +94,7 @@ TEST_F(ExecutionStreamAssignmentTest, AsyncFusion) {
 
   ExecutionStreamAssignment assignment(
       module.get(),
-      ExecutionStreamAssignmentOptions{/*number_of_execution_streams=*/2});
+      ExecutionStreamAssignment::Options{/*number_of_execution_streams=*/2});
 
   // The outermost computation should run on `ExecutionStreamId(0)`. The two
   // asynchronous branches should be launched on `ExecutionStreamId(1)` and
@@ -107,22 +107,22 @@ TEST_F(ExecutionStreamAssignmentTest, AsyncFusion) {
     EXPECT_THAT(assignment.GetAsyncExecutionStreamIds(Cast<HloAsyncInstruction>(
                     FindInstruction(module.get(), instruction))),
                 absl_testing::IsOkAndHolds(AsyncExecutionStreamIds{
-                    /*source_stream_id=*/ExecutionStreamId(0),
-                    /*destination_stream_id=*/ExecutionStreamId(1)}));
+                    /*parent_stream_id=*/ExecutionStreamId(0),
+                    /*async_stream_id=*/ExecutionStreamId(1)}));
   }
   for (absl::string_view instruction : {"start2", "update2", "done2"}) {
     EXPECT_THAT(assignment.GetAsyncExecutionStreamIds(Cast<HloAsyncInstruction>(
                     FindInstruction(module.get(), instruction))),
                 absl_testing::IsOkAndHolds(AsyncExecutionStreamIds{
-                    /*source_stream_id=*/ExecutionStreamId(0),
-                    /*destination_stream_id=*/ExecutionStreamId(2)}));
+                    /*parent_stream_id=*/ExecutionStreamId(0),
+                    /*async_stream_id=*/ExecutionStreamId(2)}));
   }
   for (absl::string_view instruction : {"start3", "update3", "done3"}) {
     EXPECT_THAT(assignment.GetAsyncExecutionStreamIds(Cast<HloAsyncInstruction>(
                     FindInstruction(module.get(), instruction))),
                 absl_testing::IsOkAndHolds(AsyncExecutionStreamIds{
-                    /*source_stream_id=*/ExecutionStreamId(0),
-                    /*destination_stream_id=*/ExecutionStreamId(1)}));
+                    /*parent_stream_id=*/ExecutionStreamId(0),
+                    /*async_stream_id=*/ExecutionStreamId(1)}));
   }
 
   // Leaf computations should run on the respective asynchronous
@@ -158,9 +158,9 @@ TEST_F(ExecutionStreamAssignmentTest, CopyStartStreamIdTest) {
     EXPECT_THAT(
         assignment.GetAsyncExecutionStreamIds(Cast<HloCopyStartInstruction>(
             FindInstruction(module.get(), instruction))),
-        absl_testing::IsOkAndHolds(AsyncExecutionStreamIds{
-            /*source_stream_id=*/ExecutionStreamId(0),
-            /*destination_stream_id=*/ExecutionStreamId(1)}));
+        absl_testing::IsOkAndHolds(
+            AsyncExecutionStreamIds{/*parent_stream_id=*/ExecutionStreamId(0),
+                                    /*async_stream_id=*/ExecutionStreamId(1)}));
   }
 }
 
@@ -268,7 +268,7 @@ TEST_F(ExecutionStreamAssignmentTest, ExplicitStreams) {
 
   ExecutionStreamAssignment assignment(
       module.get(),
-      ExecutionStreamAssignmentOptions{/*number_of_execution_streams=*/4});
+      ExecutionStreamAssignment::Options{/*number_of_execution_streams=*/4});
   // The outermost computation should run on `ExecutionStreamId(0)`.
   ExpectExecutionStreamForSyncInstructions(
       assignment, FindComputation(module.get(), "entry"), ExecutionStreamId(0));
@@ -331,15 +331,15 @@ TEST_F(ExecutionStreamAssignmentTest, AsyncCollectiveTest) {
   EXPECT_THAT(
       assignment.GetAsyncExecutionStreamIds(Cast<HloAllReduceInstruction>(
           FindInstruction(module.get(), "ar-start"))),
-      absl_testing::IsOkAndHolds(AsyncExecutionStreamIds{
-          /*source_stream_id=*/ExecutionStreamId(0),
-          /*destination_stream_id=*/ExecutionStreamId(5)}));
+      absl_testing::IsOkAndHolds(
+          AsyncExecutionStreamIds{/*parent_stream_id=*/ExecutionStreamId(0),
+                                  /*async_stream_id=*/ExecutionStreamId(5)}));
   EXPECT_THAT(
       assignment.GetAsyncExecutionStreamIds(Cast<HloAsyncStartInstruction>(
           FindInstruction(module.get(), "rs-start"))),
-      absl_testing::IsOkAndHolds(AsyncExecutionStreamIds{
-          /*source_stream_id=*/ExecutionStreamId(0),
-          /*destination_stream_id=*/ExecutionStreamId(6)}));
+      absl_testing::IsOkAndHolds(
+          AsyncExecutionStreamIds{/*parent_stream_id=*/ExecutionStreamId(0),
+                                  /*async_stream_id=*/ExecutionStreamId(6)}));
 
   // Redo stream assignment, with number_of_collective_execution_streams = 1
   // this time, expect rs-start to be scheduled on stream 5.
@@ -352,15 +352,15 @@ TEST_F(ExecutionStreamAssignmentTest, AsyncCollectiveTest) {
   EXPECT_THAT(
       assignment.GetAsyncExecutionStreamIds(Cast<HloAllReduceInstruction>(
           FindInstruction(module.get(), "ar-start"))),
-      absl_testing::IsOkAndHolds(AsyncExecutionStreamIds{
-          /*source_stream_id=*/ExecutionStreamId(0),
-          /*destination_stream_id=*/ExecutionStreamId(5)}));
+      absl_testing::IsOkAndHolds(
+          AsyncExecutionStreamIds{/*parent_stream_id=*/ExecutionStreamId(0),
+                                  /*async_stream_id=*/ExecutionStreamId(5)}));
   EXPECT_THAT(
       assignment.GetAsyncExecutionStreamIds(Cast<HloAsyncStartInstruction>(
           FindInstruction(module.get(), "rs-start"))),
-      absl_testing::IsOkAndHolds(AsyncExecutionStreamIds{
-          /*source_stream_id=*/ExecutionStreamId(0),
-          /*destination_stream_id=*/ExecutionStreamId(5)}));
+      absl_testing::IsOkAndHolds(
+          AsyncExecutionStreamIds{/*parent_stream_id=*/ExecutionStreamId(0),
+                                  /*async_stream_id=*/ExecutionStreamId(5)}));
 }
 }  // namespace
 }  // namespace xla::gpu
