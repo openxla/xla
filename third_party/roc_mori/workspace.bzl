@@ -38,8 +38,7 @@ def xla_repo():
         # Adding a new sub-library (e.g. src/application) is a single extra
         # entry here plus a sibling BUILD.<name> file in this directory.
         link_files = {
-            "//third_party/roc_mori:src_shmem.BUILD": "src/shmem/BUILD.bazel",
             "//third_party/roc_mori:src_application.BUILD": "src/application/BUILD.bazel",
-            "//third_party/roc_mori:src_collective.BUILD": "src/collective/BUILD.bazel",
+            "//third_party/roc_mori:src_cco.BUILD": "src/cco/BUILD.bazel",
         },
     )

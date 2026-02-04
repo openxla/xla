@@ -1130,8 +1130,7 @@ def _impl(ctx):
 
     # ROCm HIPcc feature from hipcc_config()
     _hipcc_config = hipcc_config()
-    # Construct full paths - config_rocm_hipcc is in external workspace
-    _workspace_prefix = "external/config_rocm_hipcc/rocm"
+    _workspace_prefix = Label("@config_rocm_hipcc//rocm:build_defs.bzl").workspace_root + "/rocm"
     _rocm_path = _workspace_prefix + "/" + _hipcc_config.rocm_root
 
     rocm_hipcc_feature = feature(
