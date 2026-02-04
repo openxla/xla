@@ -1029,7 +1029,14 @@ TEST(ThunkProtoDeserializationTest, CustomKernelThunkRoundTrip) {
             thread_dims { coordinates { x: 1, y: 1, z: 1 } }
             shared_memory_bytes: 42
           }
-          args { buffer_allocation_index: 0 }
+          args {
+            slice { buffer_allocation_index: 0 }
+            shape {
+              element_type: F32
+              dimensions: 22
+              is_dynamic_dimension: false
+            }
+          }
           written: true
         }
       )pb");
@@ -1064,7 +1071,14 @@ TEST(ThunkProtoDeserializationTest, CustomKernelThunkSymbolResolvingWorks) {
             thread_dims { coordinates { x: 1, y: 1, z: 1 } }
             shared_memory_bytes: 42
           }
-          args { buffer_allocation_index: 0 }
+          args {
+            slice { buffer_allocation_index: 0 }
+            shape {
+              element_type: F32
+              dimensions: 22
+              is_dynamic_dimension: false
+            }
+          }
           written: true
         }
       )pb");

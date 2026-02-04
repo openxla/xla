@@ -40,6 +40,8 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/service/shaped_slice.h"
+#include "xla/shape.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
@@ -131,6 +133,7 @@ void LaunchCommandBufferThunk(stream_executor::StreamExecutor* executor,
 
   constexpr int64_t kLength = 4;
   constexpr int64_t kLengthInBytes = sizeof(int32_t) * kLength;
+  Shape shape = ShapeUtil::MakeShape(S32, {kLength});
 
   stream_executor::DeviceAddress<int32_t> a =
       executor->AllocateArray<int32_t>(kLength, 0);
@@ -151,7 +154,8 @@ void LaunchCommandBufferThunk(stream_executor::StreamExecutor* executor,
   BufferAllocation::Slice slice_b(&alloc_b, 0, kLengthInBytes);
   BufferAllocation::Slice slice_c(&alloc_c, 0, kLengthInBytes);
 
-  auto args = {slice_a, slice_b, slice_c};  // c = a + b
+  std::vector<ShapedSlice> args{
+      {slice_a, shape}, {slice_b, shape}, {slice_c, shape}};  // c = a + b
   auto args_access = {BufferUse::MemoryAccess::kRead,
                       BufferUse::MemoryAccess::kRead,
                       BufferUse::MemoryAccess::kWrite};

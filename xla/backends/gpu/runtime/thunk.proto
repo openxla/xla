@@ -348,7 +348,7 @@ message CustomCallThunkProto {
 }
 
 message CustomKernelThunkProto {
-  repeated xla.buffer_assignment.BufferAllocationSliceProto args = 1;
+  repeated ShapedSliceProto args = 1;
   repeated bool written = 2;
   CustomKernelProto custom_kernel = 3;
 }

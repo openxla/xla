@@ -166,8 +166,7 @@ class ComputationIdCmd : public Command {
 
 class LaunchCmd : public Command {
  public:
-  LaunchCmd(std::string kernel_name,
-            absl::Span<const BufferAllocation::Slice> args,
+  LaunchCmd(std::string kernel_name, absl::Span<const ShapedSlice> args,
             absl::Span<const BufferUse::MemoryAccess> args_access,
             LaunchDimensions dims, int64_t shmem_bytes,
             std::optional<stream_executor::gpu::TmaMetadata> tma_metadata =
@@ -184,7 +183,7 @@ class LaunchCmd : public Command {
 
  private:
   std::string kernel_name_;
-  std::vector<BufferAllocation::Slice> args_;
+  std::vector<ShapedSlice> args_;
   std::vector<BufferUse::MemoryAccess> args_access_;
   LaunchDimensions dims_;
   int64_t shmem_bytes_;
@@ -203,7 +202,7 @@ class LaunchCmd : public Command {
 
 class CustomKernelLaunchCmd : public Command {
  public:
-  CustomKernelLaunchCmd(absl::Span<const BufferAllocation::Slice> args,
+  CustomKernelLaunchCmd(absl::Span<const ShapedSlice> args,
                         absl::Span<const BufferUse::MemoryAccess> args_access,
                         CustomKernel custom_kernel);
 
@@ -217,7 +216,7 @@ class CustomKernelLaunchCmd : public Command {
   BufferUseVector buffers() const override;
 
  private:
-  std::vector<BufferAllocation::Slice> args_;
+  std::vector<ShapedSlice> args_;
   std::vector<BufferUse::MemoryAccess> args_access_;
   CustomKernel custom_kernel_;
 

@@ -68,8 +68,7 @@ KernelThunk::KernelThunk(Thunk::ThunkInfo thunk_info, std::string kernel_name,
                          stream_executor::gpu::TmaMetadata tma_metadata,
                          std::vector<int64_t> zeroed_output_buffer_indices)
     : Thunk(Kind::kKernel, std::move(thunk_info)),
-      args_(kernel_arguments.GetArgumentBufferSlices()),
-      args_shape_(kernel_arguments.GetArgumentBufferShapes()),
+      args_(kernel_arguments.GetArgumentShapedSlices()),
       written_(kernel_arguments.GetArgumentOutputFlags()),
       zeroed_output_buffer_indices_(std::move(zeroed_output_buffer_indices)),
       kernel_name_(std::move(kernel_name)),
@@ -91,8 +90,8 @@ absl::StatusOr<ThunkProto> KernelThunk::ToProto() const {
 
   auto* kernel_proto = proto.mutable_kernel_thunk();
   for (int i = 0; i < args_.size(); i++) {
-    TF_ASSIGN_OR_RETURN(*kernel_proto->add_args(), args_[i].ToProto());
-    *kernel_proto->add_args_shape() = args_shape_[i].ToProto();
+    TF_ASSIGN_OR_RETURN(*kernel_proto->add_args(), args_[i].slice.ToProto());
+    *kernel_proto->add_args_shape() = args_[i].shape.ToProto();
     kernel_proto->add_written(written_[i]);
   }
   kernel_proto->set_kernel_name(kernel_name_);
@@ -202,7 +201,7 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   for (int64_t index : zeroed_output_buffer_indices_) {
     se::DeviceAddressBase address =
-        params.buffer_allocations->GetDeviceAddress(args_[index]);
+        params.buffer_allocations->GetDeviceAddress(args_[index].slice);
     TF_RETURN_IF_ERROR(stream->MemZero(&address, address.size()));
   }
 
@@ -233,10 +232,11 @@ absl::Status KernelThunk::ExecuteOnStream(const ExecuteParams& params) {
     XLA_VLOG_DEVICE(3, device_ordinal) << "Launching " << kernel->name();
     for (const auto& [idx, arg] : llvm::enumerate(args_)) {
       se::DeviceAddressBase buf =
-          params.buffer_allocations->GetDeviceAddress(arg);
+          params.buffer_allocations->GetDeviceAddress(arg.slice);
       XLA_VLOG_DEVICE(3, device_ordinal)
-          << "Arg: alloc #" << arg.index() << ", offset: " << arg.offset()
-          << ": " << buf.opaque() << " (" << buf.size() << "B)";
+          << "Arg: alloc #" << arg.slice.index()
+          << ", offset: " << arg.slice.offset() << ": " << buf.opaque() << " ("
+          << buf.size() << "B)";
 
       if (auto it = tma_metadata_.arg_index_to_tma_info.find(idx);
           it != tma_metadata_.arg_index_to_tma_info.end()) {
@@ -271,9 +271,9 @@ Thunk::BufferUses KernelThunk::buffer_uses() const {
     // We assume that any buffer is either an input or an output of the
     // kernel, and inout buffers are represented as 2 separate arguments.
     if (written_[i]) {
-      buffers.push_back(BufferUse::Write(args_[i], args_shape_[i]));
+      buffers.push_back(BufferUse::Write(args_[i].slice, args_[i].shape));
     } else {
-      buffers.push_back(BufferUse::Read(args_[i], args_shape_[i]));
+      buffers.push_back(BufferUse::Read(args_[i].slice, args_[i].shape));
     }
   }
   return buffers;

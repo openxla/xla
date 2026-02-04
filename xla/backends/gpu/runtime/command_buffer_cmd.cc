@@ -410,7 +410,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> ComputationIdCmd::Record(
 //===----------------------------------------------------------------------===//
 
 LaunchCmd::LaunchCmd(
-    std::string kernel_name, absl::Span<const BufferAllocation::Slice> args,
+    std::string kernel_name, absl::Span<const ShapedSlice> args,
     absl::Span<const BufferUse::MemoryAccess> args_access,
     LaunchDimensions dims, int64_t shmem_bytes,
     std::optional<stream_executor::gpu::TmaMetadata> tma_metadata)
@@ -469,7 +469,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> LaunchCmd::Record(
   stream_executor::gpu::TmaMetadata tma_metadata =
       tma_metadata_.value_or(se::gpu::TmaMetadata{});
   for (int idx = 0; idx < args_.size(); ++idx) {
-    const BufferAllocation::Slice& arg = args_[idx];
+    const BufferAllocation::Slice& arg = args_[idx].slice;
     se::DeviceAddressBase buf =
         execute_params.buffer_allocations->GetDeviceAddress(arg);
     VLOG(5) << "  Arg: " << arg << ": " << buf.opaque();
@@ -508,7 +508,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> LaunchCmd::Record(
 Command::BufferUseVector LaunchCmd::buffers() const {
   BufferUseVector buffers;
   for (int32_t i = 0; i < args_.size(); ++i) {
-    buffers.emplace_back(args_[i], args_access_[i]);
+    buffers.emplace_back(args_[i].slice, args_access_[i], args_[i].shape);
   }
   return buffers;
 }
@@ -518,7 +518,7 @@ Command::BufferUseVector LaunchCmd::buffers() const {
 //===----------------------------------------------------------------------===//
 
 CustomKernelLaunchCmd::CustomKernelLaunchCmd(
-    absl::Span<const BufferAllocation::Slice> args,
+    absl::Span<const ShapedSlice> args,
     absl::Span<const BufferUse::MemoryAccess> args_access,
     CustomKernel custom_kernel)
     : Command(CommandType::kCustomKernelLaunchCmd),
@@ -562,9 +562,9 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomKernelLaunchCmd::Record(
   }
 
   absl::InlinedVector<se::DeviceAddressBase, 4> buffers;
-  for (const BufferAllocation::Slice& arg : args_) {
+  for (const ShapedSlice& arg : args_) {
     se::DeviceAddressBase buf =
-        execute_params.buffer_allocations->GetDeviceAddress(arg);
+        execute_params.buffer_allocations->GetDeviceAddress(arg.slice);
     VLOG(5) << "  Arg: " << arg << ": " << buf.opaque();
     buffers.push_back(buf);
   }
@@ -589,7 +589,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomKernelLaunchCmd::Record(
 Command::BufferUseVector CustomKernelLaunchCmd::buffers() const {
   BufferUseVector buffers;
   for (int32_t i = 0; i < args_.size(); ++i) {
-    buffers.emplace_back(args_[i], args_access_[i]);
+    buffers.emplace_back(args_[i].slice, args_access_[i], args_[i].shape);
   }
   return buffers;
 }
@@ -1392,7 +1392,7 @@ Command::BufferUseVector CustomCallCmd::buffers() const {
   for (auto& slices : {operands_, results_}) {
     for (const std::optional<ShapedSlice>& slice : slices) {
       if (slice.has_value()) {
-        buffer_usage.push_back(BufferUse::Write(slice->slice));
+        buffer_usage.push_back(BufferUse::Write(slice->slice, slice->shape));
       }
     }
   }
@@ -2420,10 +2420,10 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
 Command::BufferUseVector DynamicSliceFusionCmd::buffers() const {
   Command::BufferUseVector buffers;
   auto embed_buffers = embedded_commands_.buffers();
-  for (const auto& buffer_usage : embed_buffers) {
+  for (const BufferUse& buffer_usage : embed_buffers) {
     buffers.emplace_back(
         *embeded_to_origin_slice_map_.at(buffer_usage.slice().index()),
-        buffer_usage.access());
+        buffer_usage.access(), buffer_usage.shape());
   }
   return buffers;
 }
