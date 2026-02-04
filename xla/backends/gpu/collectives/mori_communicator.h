@@ -63,6 +63,11 @@ class MoriCommunicator : public GpuCommunicator {
   absl::StatusOr<size_t> NumRanks() const final;
   absl::StatusOr<size_t> CurrentRank() final;
 
+  absl::StatusOr<std::unique_ptr<SymmetricMemory>> CreateSymmetricMemory(
+      se::DeviceAddressBase addr) final {
+    return absl::UnimplementedError("Not implemented");
+  }
+
   absl::Status Barrier(const Executor& executor) final;
 
   Future<> GroupExecute(absl::AnyInvocable<absl::Status() &&> group) final;
@@ -186,6 +191,10 @@ class MoriCommunicator : public GpuCommunicator {
                    std::shared_ptr<CancellationToken> cancel)
       : collectives_(coll), cancel_(std::move(cancel)) {}
 
+  // Maximum number of participants supported by the pre-allocated all-gather
+  // completion flag buffer.
+  static constexpr int kMaxRanks = 64;
+
   enum class P2PType : int32_t { Send, Recv };
 
   absl::Status P2P(P2PType p2p_type, PrimitiveType type,
@@ -195,6 +204,10 @@ class MoriCommunicator : public GpuCommunicator {
 
   static absl::StatusOr<se::Stream*> ToStream(const Executor& executor);
 
+  // Number of per-group block counters reserved for the push reduce-scatter
+  // (the kernel indexes groupCounters[g] for g in [0, S), with S <= 8).
+  static constexpr size_t kReduceScatterGroupCounters = 8;
+
   MoriCollectives* collectives_;  // Parent MoriCollectives instance
 
   // This communicator's participant set (NOT the global MORI clique). `rank_`
@@ -202,6 +215,16 @@ class MoriCommunicator : public GpuCommunicator {
   // `rank_to_pe_dev_` a device array mapping collective rank -> global MORI PE.
   int rank_ = 0;
   int num_ranks_ = 0;
+  int* rank_to_pe_dev_ = nullptr;
+  // Symmetric-heap completion flags for AllGather (kMaxRanks uint64 slots) and
+  // a per-communicator monotonically increasing generation counter.
+  void* allgather_flags_ = nullptr;
+  uint64_t allgather_gen_ = 0;
+
+  se::DeviceAddressBase staging_buffer_;
+  // Local-only per-group block counters for the push reduce-scatter, carved
+  // from the tail of the staging allocation and zeroed once at creation.
+  void* rs_group_counters_ = nullptr;
   // Should all pending collectives cancel?
   std::shared_ptr<CancellationToken> cancel_;
   bool aborted_ = false;  // Has Abort() been called?
