@@ -71,6 +71,9 @@ class SymbolicMap {
                          int64_t num_symbols,
                          llvm::SmallVector<SymbolicExpr> exprs);
 
+  explicit operator bool() const { return ctx_ != nullptr; }
+  bool operator!() const { return ctx_ == nullptr; }
+
   mlir::MLIRContext* GetContext() const { return ctx_; }
   int64_t GetNumDims() const { return num_dimensions_; }
   int64_t GetNumSymbols() const { return num_symbols_; }

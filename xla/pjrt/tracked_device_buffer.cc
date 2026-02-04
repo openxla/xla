@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/future.h"
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
@@ -144,11 +145,39 @@ class ForeignRawSEDeviceMemory : public RawSEDeviceMemory {
   absl::AnyInvocable<void() &&> on_delete_callback_;
 };
 
+class SlicedRawSEDeviceMemory : public RawSEDeviceMemory {
+ public:
+  SlicedRawSEDeviceMemory(se::DeviceAddressBase value,
+                          tsl::AsyncValueRef<RawSEDeviceMemory> base)
+      : RawSEDeviceMemory(value), base_(base) {}
+
+  void UnsafeReleaseMemory() override {
+    LOG(FATAL) << "SlicedRawSEDeviceMemory cannot be donated.";
+  }
+
+ private:
+  tsl::AsyncValueRef<RawSEDeviceMemory> base_;
+};
+
 tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::CreateForeign(
     se::DeviceAddressBase value,
     absl::AnyInvocable<void() &&> on_delete_callback) {
   return tsl::MakeAvailableAsyncValueRef<ForeignRawSEDeviceMemory>(
       value, std::move(on_delete_callback));
+}
+
+tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::CreateSlice(
+    tsl::AsyncValueRef<RawSEDeviceMemory> base, size_t offset, size_t size) {
+  size_t src_size = base->mem().size();
+  if (offset <= src_size && size <= src_size - offset) {
+    return tsl::MakeAvailableAsyncValueRef<SlicedRawSEDeviceMemory>(
+        se::DeviceAddressBase(
+            reinterpret_cast<char*>(base->mem().opaque()) + offset, size),
+        base);
+  }
+  return tsl::MakeErrorAsyncValueRef(absl::InvalidArgumentError(
+      absl::StrFormat("Error when slicing: [%d,%d) in array of size %d", offset,
+                      offset + size, src_size)));
 }
 
 TrackedDeviceBuffer::TrackedDeviceBuffer(
@@ -175,7 +204,11 @@ void TrackedDeviceBuffer::AddUsageEvent(BufferSequencingEventRef event,
 
   // If the event is 0, it means that the event is not recorded yet and the task
   // related to this event is deferred, so just add it.
-  if (!event->IsDefined()) {
+  auto state = event->event().GetAsyncValue()->state();
+  if (state == tsl::AsyncValue::State::kConcrete) {
+  } else if (state == tsl::AsyncValue::State::kError) {
+    return;
+  } else {
     usage_events_.push_back({event, reference_held});
     return;
   }
@@ -281,6 +314,19 @@ TrackedDeviceBuffer::GetAsyncValueDefinitionEvents() {
   avs.reserve(definition_events_.size());
   for (const auto& ev : definition_events_) {
     avs.push_back(ev.CopyRCRef());
+  }
+  return avs;
+}
+
+std::vector<tsl::RCReference<tsl::AsyncValue>>
+TrackedDeviceBuffer::GetAsyncValueDefinitionAndUsageEvents() {
+  std::vector<tsl::RCReference<tsl::AsyncValue>> avs;
+  avs.reserve(definition_events_.size());
+  for (const auto& ev : definition_events_) {
+    avs.push_back(ev.CopyRCRef());
+  }
+  for (const auto& ev : usage_events_) {
+    avs.push_back(ev.event.CopyRCRef());
   }
   return avs;
 }

@@ -1128,7 +1128,6 @@ xla_test(
     data = [
         ":data/add.hlo",
     ],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":xla_compile_lib",
         "//xla:util",
@@ -1167,7 +1166,6 @@ xla_test(
         "//xla/backends/gpu/target_config:all_gpu_specs",
         "//xla/service/gpu:gpu_compiler_test_autotune_db.textproto",
     ],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":xla_compile_lib",
         "//xla:util",
@@ -1230,7 +1228,6 @@ xla_cc_test(
 xla_test(
     name = "hlo_decomposer_test",
     srcs = ["hlo_decomposer_test.cc"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":hlo_decomposer_lib",
         "//xla/hlo/ir:hlo",

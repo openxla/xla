@@ -285,8 +285,9 @@ void RemoveEvents(XLine* line,
 }
 
 void RemoveEmptyPlanes(XSpace* space) {
-  RemoveIf(space->mutable_planes(),
-           [&](const XPlane* plane) { return plane->lines().empty(); });
+  RemoveIf(space->mutable_planes(), [&](const XPlane* plane) {
+    return plane->lines().empty() && plane->stats().empty();
+  });
 }
 
 void RemoveEmptyLines(XPlane* plane) {

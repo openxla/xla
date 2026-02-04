@@ -2470,6 +2470,7 @@ absl::Status SpmdPartitioningVisitor::HandleCall(HloInstruction* hlo) {
         MakePartitionedShape(hlo->shape(), hlo->sharding()), call_args,
         hlo->to_apply()));
     call->set_raw_backend_config_string(hlo->raw_backend_config_string());
+    call->set_frontend_attributes(hlo->frontend_attributes());
     return call;
   });
   return absl::OkStatus();
@@ -2504,6 +2505,7 @@ absl::Status SpmdPartitioningVisitor::DefaultAction(HloInstruction* hlo) {
   }
   auto clone =
       b_.AddInstruction(hlo->CloneWithNewOperands(hlo->shape(), new_operands));
+  clone->set_frontend_attributes(hlo->frontend_attributes());
   clone->set_sharding(base_sharding.NormalizeTupleSharding(clone->shape()));
   SetPartitionedHlo(hlo,
                     PartitionedHlo(clone, hlo->shape(), MakePartitioningState())

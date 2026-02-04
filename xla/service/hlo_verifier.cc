@@ -804,14 +804,7 @@ absl::Status CheckDuplicatedSourceOrTarget(
   // Note: for collective-permute, only COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID
   // and kCrossPartition modes are valid.
   const HloModuleConfig& config = collective_permute->GetModule()->config();
-  const int64_t limit =
-      group_mode ==
-              CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA
-          ? config.replica_count()
-          : config.num_partitions();
-  absl::flat_hash_map<int64_t, std::vector<int64_t>> seen_source_to_targets;
-  absl::flat_hash_map<int64_t, std::vector<int64_t>> seen_target_to_sources;
-  int allowed_seen_count = 1;
+  int64_t allowed_seen_count = 1;
   if (collective_permute->inplace()) {
     if (collective_permute->operand(0)->shape().IsArray()) {
       allowed_seen_count =
@@ -825,17 +818,34 @@ absl::Status CheckDuplicatedSourceOrTarget(
     }
   }
 
+  int64_t limit =
+      group_mode ==
+              CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA
+          ? config.replica_count()
+          : config.num_partitions();
+  if (limit == 1) {
+    // The limit is set in the module config, however if it is
+    // missing (i.e. set to 1) then calculate it manually.
+    for (const auto& p : collective_permute->source_target_pairs()) {
+      limit = std::max(limit, p.first + 1);
+      limit = std::max(limit, p.second + 1);
+    }
+  }
+  std::vector<int64_t> seen_source_counts(limit, 0);
+  std::vector<int64_t> seen_target_counts(limit, 0);
+
   for (const auto& p : collective_permute->source_target_pairs()) {
     TF_RET_CHECK(p.first >= 0)
         << "Source " << p.first
         << " in the instruction's source-target pair must be >= 0 : "
         << collective_permute->ToString();
-    TF_RET_CHECK(limit == 1 || p.first < limit)
+
+    TF_RET_CHECK(p.first < limit)
         << "Source " << p.first
         << " in the instruction's source-target pair must be < " << limit
         << " : " << collective_permute->ToString();
-    if (seen_source_to_targets.contains(p.first) &&
-        seen_source_to_targets[p.first].size() == allowed_seen_count) {
+
+    if (seen_source_counts[p.first] == allowed_seen_count) {
       if (allowed_seen_count == 1) {
         return Internal(
             "Source %d appears more than once in instruction's source-target "
@@ -848,18 +858,18 @@ absl::Status CheckDuplicatedSourceOrTarget(
           "pairs: %s",
           p.first, allowed_seen_count, collective_permute->ToString());
     }
-    seen_source_to_targets[p.first].push_back(p.second);
+    ++seen_source_counts[p.first];
 
     TF_RET_CHECK(p.second >= 0)
         << "Target " << p.second
         << " in the instruction's source-target pair must be >= 0 : "
         << collective_permute->ToString();
-    TF_RET_CHECK(limit == 1 || p.second < limit)
+    TF_RET_CHECK(p.second < limit)
         << "Target " << p.second
         << " in the instruction's source-target pair must be < " << limit
         << " : " << collective_permute->ToString();
-    if (seen_target_to_sources.contains(p.second) &&
-        seen_target_to_sources[p.second].size() == allowed_seen_count) {
+
+    if (seen_target_counts[p.second] == allowed_seen_count) {
       if (allowed_seen_count == 1) {
         return Internal(
             "Target %d appears more than once in instruction's source-target "
@@ -872,7 +882,7 @@ absl::Status CheckDuplicatedSourceOrTarget(
           "pairs: %s",
           p.second, allowed_seen_count, collective_permute->ToString());
     }
-    seen_target_to_sources[p.second].push_back(p.first);
+    ++seen_target_counts[p.second];
   }
   return absl::OkStatus();
 }

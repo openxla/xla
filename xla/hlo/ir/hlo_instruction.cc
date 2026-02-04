@@ -3038,6 +3038,44 @@ HloInstruction::InstructionVector HloInstruction::unique_operands() const {
   return unique;
 }
 
+std::optional<int64_t> HloInstruction::MapUnaryOutputDimToOperandDim(
+    int64_t output_dim_idx) const {
+  if (operand_count() != 1) {
+    return std::nullopt;
+  }
+  if (IsElementwise()) {
+    return output_dim_idx;
+  }
+  switch (opcode()) {
+    case HloOpcode::kBroadcast: {
+      // dimensions() maps operand dim -> output dim.
+      const auto& bcast_dims = dimensions();
+      auto it = absl::c_find(bcast_dims, output_dim_idx);
+      if (it == bcast_dims.end()) {
+        return std::nullopt;
+      }
+      return std::distance(bcast_dims.begin(), it);
+    }
+    case HloOpcode::kReshape:
+    case HloOpcode::kBitcast: {
+      if (!ShapeUtil::InsertedOrDeleted1SizedDimensions(operand(0)->shape(),
+                                                        shape())) {
+        return std::nullopt;
+      }
+      auto unmodified_dims = ShapeUtil::DimensionsUnmodifiedByReshape(
+          operand(0)->shape(), shape());
+      for (const auto& [input_dim, output_dim] : unmodified_dims) {
+        if (output_dim == output_dim_idx) {
+          return input_dim;
+        }
+      }
+      return std::nullopt;
+    }
+    default:
+      return std::nullopt;
+  }
+}
+
 absl::Status HloInstruction::AddControlDependencyTo(
     HloInstruction* instruction) {
   TF_RET_CHECK(instruction->parent() == parent());
@@ -4085,10 +4123,25 @@ void HloInstruction::PrintWithCanonicalNameMap(
       (metadata_ != nullptr &&
        (!metadata_->op_type().empty() || !metadata_->op_name().empty() ||
         !metadata_->source_file().empty() ||
-        !metadata_->scheduling_name().empty()))) {
+        !metadata_->scheduling_name().empty() ||
+        metadata_->stack_frame_id() != 0))) {
     printer->Append(", metadata={");
-    printer->Append(xla::OpMetadataToString(
-        *metadata_, options.print_metadata_only_op_name()));
+    if (options.print_inline_stack_frames() &&
+        metadata_->stack_frame_id() != 0 && GetModule() != nullptr) {
+      OpMetadata metadata = *metadata_;
+      metadata.set_stack_frame_id(0);
+      auto frame = GetModule()->get_stack_frame(metadata_->stack_frame_id());
+      if (!frame.empty()) {
+        metadata.set_source_file(frame.file_name);
+        metadata.set_source_line(frame.line);
+        metadata.set_source_column(frame.column);
+      }
+      printer->Append(xla::OpMetadataToString(
+          metadata, options.print_metadata_only_op_name()));
+    } else {
+      printer->Append(xla::OpMetadataToString(
+          *metadata_, options.print_metadata_only_op_name()));
+    }
     printer->Append("}");
   }
   if (options.print_backend_config() && !backend_config_.empty()) {

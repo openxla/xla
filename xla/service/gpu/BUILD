@@ -112,6 +112,7 @@ cc_library(
     deps = [
         ":backend_configs_cc",
         ":ir_emission_utils",
+        "//xla:status_macros",
         "//xla:xla_proto_cc",
         "//xla/hlo/analysis:hlo_alias_analysis",
         "//xla/hlo/analysis:hlo_ordering",
@@ -121,6 +122,8 @@ cc_library(
         "//xla/service:hlo_value",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log:die_if_null",
         "@com_google_absl//absl/status",
     ],
 )
@@ -134,7 +137,10 @@ xla_cc_test(
         "//xla/hlo/analysis:hlo_alias_analysis",
         "//xla/hlo/analysis:hlo_ordering",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:buffer_assignment",
         "//xla/service:hlo_module_config",
+        "//xla/service:hlo_value",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/strings",
@@ -196,7 +202,6 @@ xla_test(
     tags = [
         # TODO(intel-tf): Remove it when macro substitutions for SYCL are available in xla/stream_executor/sycl/*.
         "no-oneapi",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         "//xla:array",
@@ -1793,6 +1798,7 @@ cc_library(
         "//xla/service/gpu/transforms:algorithm_checker",
         "//xla/service/gpu/transforms:async_wrapper",
         "//xla/service/gpu/transforms:composite_rewriter",
+        "//xla/service/gpu/transforms:conv_kind_assignment",
         "//xla/service/gpu/transforms:conv_rewriter",
         "//xla/service/gpu/transforms:convert_triton_gemm_config",
         "//xla/service/gpu/transforms:cudnn_custom_call_converter",
@@ -1813,7 +1819,6 @@ cc_library(
         "//xla/service/gpu/transforms:gemm_fusion",
         "//xla/service/gpu/transforms:gemm_fusion_swap_operands",
         "//xla/service/gpu/transforms:gemm_rewriter",
-        "//xla/service/gpu/transforms:gemm_workspace_rewriter",
         "//xla/service/gpu/transforms:gemv_rewriter",
         "//xla/service/gpu/transforms:hoist_fused_bitcasts",
         "//xla/service/gpu/transforms:layout_assignment",
@@ -1934,15 +1939,9 @@ cc_library(
 xla_test(
     name = "gpu_compiler_test",
     srcs = ["gpu_compiler_test.cc"],
-    backend_tags = {
-        # TODO(b/445172709): Re-enable once nvbug 5552596 is fixed.
-        "b200": ["broken"],
-    },
     backends = ["gpu"],
     data = ["gpu_compiler_test_autotune_db.textproto"],
     shard_count = 2,
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
     deps = [
         ":alias_info",
         ":backend_configs_cc",
@@ -1966,24 +1965,29 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:compiled_module",
         "//xla/service:compiler",
+        "//xla/service:computation_placer_hdr",
         "//xla/service:executable",
+        "//xla/service:gpu_topology",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_runner_interface",
         "//xla/service:pattern_matcher",
         "//xla/service:xla_debug_info_manager",
         "//xla/service/gpu/autotuning:autotuner_util",
+        "//xla/service/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/service/llvm_ir:llvm_command_line_options",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:platform",
-        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor/cuda:cuda_compute_capability",
-        "//xla/tests:hlo_test_base",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/lib/gtl:value_or_die",
@@ -2013,6 +2017,50 @@ xla_test(
     ],
 )
 
+xla_test(
+    name = "gpu_compiler_legacy_hlo_runner_test",
+    srcs = ["gpu_compiler_legacy_hlo_runner_test.cc"],
+    backend_tags = {
+        # TODO(b/445172709): Re-enable once nvbug 5552596 is fixed.
+        "b200": ["broken"],
+    },
+    backends = ["gpu"],
+    deps = [
+        ":gpu_compiler",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:compiled_module",
+        "//xla/service:compiler",
+        "//xla/service:executable",
+        "//xla/service:gpu_topology",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_runner",
+        "//xla/service:hlo_runner_interface",
+        "//xla/service:platform_util",
+        "//xla/service/gpu/tests:hlo_pjrt_gpu_test_base",
+        "//xla/service/llvm_ir:llvm_command_line_options",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/tests:literal_test_util",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:path",
+    ],
+)
+
 cc_library(
     name = "legacy_gpu_aot_compilation_result",
     srcs = ["legacy_gpu_aot_compilation_result.cc"],
@@ -2033,7 +2081,6 @@ cc_library(
         "//xla/service:executable",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:platform",
-        "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -2055,7 +2102,6 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:kernel_symbol_registry",
         "//xla/stream_executor:platform",
-        "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "//xla/util/split_proto:split_gpu_executable_writer",
@@ -2112,7 +2158,6 @@ xla_test(
     name = "gpu_offloading_test",
     srcs = ["gpu_offloading_test.cc"],
     backends = ["gpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":backend_configs_cc",
         "//xla:autotune_results_proto_cc",
@@ -3176,6 +3221,33 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "conv_utils",
+    srcs = ["conv_utils.cc"],
+    hdrs = ["conv_utils.h"],
+    deps = [
+        ":backend_configs_cc",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+    ],
+)
+
+xla_cc_test(
+    name = "conv_utils_test",
+    srcs = ["conv_utils_test.cc"],
+    deps = [
+        ":conv_utils",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:shape_inference",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/log:check",
         "@com_google_googletest//:gtest",
     ],
 )

@@ -22,8 +22,6 @@ cc_library(
         "//xla:shape_util",
         "//xla/service:buffer_assignment",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/types:span",
     ],
 )

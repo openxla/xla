@@ -701,9 +701,8 @@ TEST_F(HloShardingTest, Hash) {
 using ShardingWithMetadataParamType =
     std::tuple<std::vector<OpMetadata>, std::string>;
 
-TEST_P(HloShardingRepresentationTest, ToStringReplicatedTest) {
-  bool use_named_sharding = GetParam();
-  HloSharding sharding = HloSharding::Replicate({}, use_named_sharding);
+TEST_F(HloShardingTest, ToStringReplicatedTest) {
+  HloSharding sharding = HloSharding::Replicate({});
   EXPECT_EQ(sharding.ToString(), "{replicated}");
 }
 
@@ -727,9 +726,8 @@ INSTANTIATE_TEST_SUITE_P(
             ListMetadata(),
             "{replicated metadata={{op_name=\"b\"}, {op_name=\"c\"}}}")));
 
-TEST_P(HloShardingRepresentationTest, ToStringAssignDeviceTest) {
-  bool use_named_sharding = GetParam();
-  HloSharding sharding = HloSharding::AssignDevice(7, {}, use_named_sharding);
+TEST_F(HloShardingTest, ToStringAssignDeviceTest) {
+  HloSharding sharding = HloSharding::AssignDevice(7);
   EXPECT_EQ(sharding.ToString(), "{maximal device=7}");
 }
 
@@ -817,12 +815,12 @@ TEST_F(HloShardingTest, ToStringTupleWithMetadataTest) {
 TEST_F(HloShardingTest, ToStringWithNamedShardingTest) {
   Mesh mesh({2, 4}, {"a", "b"});
   HloSharding sharding(test_utils::FromAxisNames(mesh, {{"a"}, {"b"}}));
-  EXPECT_EQ(sharding.ToString(), "{@mesh<a=2,b=4>, [{a}, {b}]}");
+  EXPECT_EQ(sharding.ToString(), "{mesh[a=2,b=4], [{a}, {b}]}");
 
   HloSharding sharding_with_metadata(test_utils::FromAxisNames(
       mesh, {{"a"}, {"b"}}, {}, {}, {}, ListMetadata()));
   EXPECT_EQ(sharding_with_metadata.ToString(/*include_metadata=*/true),
-            "{@mesh<a=2,b=4>, [{a}, {b}], metadata={{op_name=\"b\"}, "
+            "{mesh[a=2,b=4], [{a}, {b}], metadata={{op_name=\"b\"}, "
             "{op_name=\"c\"}}}");
 
   HloSharding tuple_sharding(HloSharding::Tuple(
@@ -831,8 +829,8 @@ TEST_F(HloShardingTest, ToStringWithNamedShardingTest) {
                                  ShapeUtil::MakeShape(S32, {9, 11})}),
       {sharding, sharding, sharding_with_metadata}));
   EXPECT_EQ(tuple_sharding.ToString(/*include_metadata=*/true),
-            "{{@mesh<a=2,b=4>, [{a}, {b}]}, {@mesh<a=2,b=4>, [{a}, {b}]}, "
-            "{@mesh<a=2,b=4>, [{a}, {b}], metadata={{op_name=\"b\"}, "
+            "{{mesh[a=2,b=4], [{a}, {b}]}, {mesh[a=2,b=4], [{a}, {b}]}, "
+            "{mesh[a=2,b=4], [{a}, {b}], metadata={{op_name=\"b\"}, "
             "{op_name=\"c\"}}}}");
 }
 

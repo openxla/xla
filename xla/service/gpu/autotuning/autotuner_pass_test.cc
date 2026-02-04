@@ -169,7 +169,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedAndCached) {
   std::string cache_dir = ::testing::TempDir();
   module->mutable_config()
       .mutable_debug_options()
-      .set_xla_gpu_experimental_autotuner_cache_dir(cache_dir);
+      .set_xla_gpu_per_fusion_autotune_cache_dir(cache_dir);
 
   tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "autotuning",
                                       /*num_threads=*/4);

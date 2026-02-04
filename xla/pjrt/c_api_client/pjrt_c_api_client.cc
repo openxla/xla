@@ -53,12 +53,14 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_callback_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_ffi_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_layouts_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_memory_descriptions_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_phase_compile_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_profiler_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_shardings_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_stream_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_tpu_topology_extension.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_phase_compiler.h"
@@ -308,6 +310,59 @@ PJRT_Extension_Base* PjRtCApiClient::FindExtensionImpl(
     return nullptr;
   }
   return it->second;
+}
+
+absl::Status PjRtCApiClient::RegisterCallbackImpl(
+    PJRT_Callback_Type callback_type, std::function<void(void*)> callback) {
+  if (callback == nullptr) {
+    return absl::OkStatus();
+  }
+  const PJRT_Callback_Extension* callbacks_ext =
+      FindExtension<PJRT_Callback_Extension>(
+          PJRT_Extension_Type::PJRT_Extension_Type_Callback);
+  if (callbacks_ext == nullptr) {
+    return absl::UnimplementedError(
+        "Callback extension is not implemented in this PJRT plugin.");
+  }
+  CHECK_NE(callbacks_ext, nullptr)
+      << "PjRt C API Callback extension is not found.";
+
+  auto callback_fn =
+      std::make_unique<std::function<void(void*)>>(std::move(callback));
+
+  PJRT_Callback_RegisterCallback_Args args;
+  args.struct_size = PJRT_Callback_RegisterCallback_Args_STRUCT_SIZE;
+  args.client = pjrt_c_client();
+  args.type = callback_type;
+  args.user_arg = callback_fn.get();
+  args.callback = +[](void* args, void* user_arg) {
+    using CallbackFn = std::function<void(void*)>;
+    CallbackFn* user_callback = static_cast<CallbackFn*>(user_arg);
+    (*user_callback)(args);
+  };
+
+  RETURN_STATUS_IF_PJRT_ERROR(callbacks_ext->register_callback(&args), c_api_);
+  registered_callbacks_.push_back(std::move(callback_fn));
+  return absl::OkStatus();
+}
+
+absl::Status PjRtCApiClient::InvokeCallbacks(PJRT_Callback_Type callback_type,
+                                             void* callback_args) {
+  const PJRT_Callback_Extension* callbacks_ext =
+      FindExtension<PJRT_Callback_Extension>(
+          PJRT_Extension_Type::PJRT_Extension_Type_Callback);
+  if (callbacks_ext == nullptr) {
+    return absl::UnimplementedError(
+        "Callback extension is not implemented in this PJRT plugin.");
+  }
+
+  PJRT_Callback_InvokeCallback_Args args;
+  args.struct_size = PJRT_Callback_InvokeCallback_Args_STRUCT_SIZE;
+  args.client = pjrt_c_client();
+  args.type = callback_type;
+  args.args = callback_args;
+  RETURN_STATUS_IF_PJRT_ERROR(callbacks_ext->invoke_callback(&args), c_api_);
+  return absl::OkStatus();
 }
 
 int PjRtCApiClient::device_count() const { return devices_.size(); }
@@ -1968,6 +2023,49 @@ static absl::StatusOr<Shape> GetOutputShapeHelper(
   return ShapeUtil::MakeTupleShape(shapes);
 }
 
+std::optional<std::vector<OpSharding>>
+PjRtCApiExecutable::GetParameterShardings() const {
+  const PJRT_Api* api = pjrt_c_api();
+  PJRT_Shardings_Extension* extension =
+      pjrt::FindExtension<PJRT_Shardings_Extension>(
+          api, PJRT_Extension_Type::PJRT_Extension_Type_Shardings);
+  if (extension == nullptr ||
+      extension->PJRT_Shardings_PJRT_Executable_OutputShardings == nullptr) {
+    return std::nullopt;
+  }
+  PJRT_Shardings_PJRT_Executable_ParameterShardings_Args args;
+  args.struct_size =
+      PJRT_Shardings_PJRT_Executable_ParameterShardings_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.executable = c_executable();
+  std::unique_ptr<PJRT_Error, pjrt::PJRT_ErrorDeleter> error(
+      extension->PJRT_Shardings_PJRT_Executable_ParameterShardings(&args),
+      pjrt::MakeErrorDeleter(api));
+  if (error != nullptr) {
+    LOG(ERROR) << "PJRT_Shardings_PJRT_Executable_ParameterShardings failed: "
+               << pjrt::PjrtErrorToStatus(error.get(), api);
+    return std::nullopt;
+  }
+
+  if (args.shardings == nullptr) {
+    return std::nullopt;
+  }
+
+  std::optional<std::vector<OpSharding>> shardings;
+  shardings.emplace();
+  shardings->reserve(args.num_parameters);
+  for (size_t i = 0; i < args.num_parameters; ++i) {
+    OpSharding sharding;
+    if (!sharding.ParseFromString(
+            std::string(args.shardings[i], args.sharding_sizes[i]))) {
+      LOG(ERROR) << "Failed to parse OpSharding proto";
+      return std::nullopt;
+    }
+    shardings->push_back(std::move(sharding));
+  }
+  return shardings;
+}
+
 absl::StatusOr<std::vector<Shape>> PjRtCApiExecutable::GetOutputShapes() const {
   TF_ASSIGN_OR_RETURN(std::vector<std::vector<PrimitiveType>> element_types,
                       GetOutputElementTypes());
@@ -2040,6 +2138,49 @@ PjRtCApiExecutable::GetOutputDimensions() const {
     out.push_back(std::move(dimensions));
   }
   return std::vector<std::vector<DimensionVector>>{std::move(out)};
+}
+
+std::optional<std::vector<OpSharding>> PjRtCApiExecutable::GetOutputShardings()
+    const {
+  const PJRT_Api* api = pjrt_c_api();
+  PJRT_Shardings_Extension* extension =
+      pjrt::FindExtension<PJRT_Shardings_Extension>(
+          api, PJRT_Extension_Type::PJRT_Extension_Type_Shardings);
+  if (extension == nullptr ||
+      extension->PJRT_Shardings_PJRT_Executable_OutputShardings == nullptr) {
+    return std::nullopt;
+  }
+  PJRT_Shardings_PJRT_Executable_OutputShardings_Args args;
+  args.struct_size =
+      PJRT_Shardings_PJRT_Executable_OutputShardings_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.executable = c_executable();
+  std::unique_ptr<PJRT_Error, pjrt::PJRT_ErrorDeleter> error(
+      extension->PJRT_Shardings_PJRT_Executable_OutputShardings(&args),
+      pjrt::MakeErrorDeleter(api));
+  if (error != nullptr) {
+    LOG(ERROR) << "PJRT_Shardings_PJRT_Executable_OutputShardings failed: "
+               << pjrt::PjrtErrorToStatus(error.get(), api);
+    return std::nullopt;
+  }
+
+  if (args.shardings == nullptr) {
+    return std::nullopt;
+  }
+
+  std::optional<std::vector<OpSharding>> shardings;
+  shardings.emplace();
+  shardings->reserve(args.num_outputs);
+  for (size_t i = 0; i < args.num_outputs; ++i) {
+    OpSharding sharding;
+    if (!sharding.ParseFromString(
+            std::string(args.shardings[i], args.sharding_sizes[i]))) {
+      LOG(ERROR) << "Failed to parse OpSharding proto";
+      return std::nullopt;
+    }
+    shardings->push_back(std::move(sharding));
+  }
+  return shardings;
 }
 
 absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
@@ -3324,6 +3465,10 @@ void PjRtCApiBuffer::MakePromiseTrackEvent() {
 }
 
 Future<> PjRtCApiBuffer::GetReadyFuture() {
+  if (IsDeleted()) {
+    return Future<>(InvalidArgument(
+        "GetReadyFuture() called on deleted or donated buffer"));
+  }
   absl::MutexLock l(mu_);
   if (readiness_promise_ == nullptr) {
     auto [promise, future] = MakePromise<>();

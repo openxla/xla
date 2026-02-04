@@ -105,10 +105,10 @@ Mesh::Mesh(TileAssignment device_assignment,
 std::string Mesh::ToString() const {
   if (IsMaximal()) {
     return absl::StrCat(
-        "@maximal_mesh<device_id=", device_assignment_.array()(0), ">");
+        "maximal_mesh[device_id=", device_assignment_.array()(0), "]");
   }
 
-  std::string mesh_str = "@mesh";
+  std::string mesh_str = "mesh";
   // Add the mesh axes names and sizes.
   std::vector<std::string> formatted_axes_names;
   formatted_axes_names.reserve(axes_names_.size());
@@ -120,11 +120,12 @@ std::string Mesh::ToString() const {
   // Add the device assignment if it is not an iota case.
   std::optional<IotaTileAssignment> iota = device_assignment_.iota();
   std::string device_assignment_str = "";
-  if (!(iota.has_value() && iota->reshape_dims().size() == 1)) {
+  bool simple_iota = iota.has_value() && iota->reshape_dims().size() == 1;
+  if (!simple_iota && device_assignment_.num_elements() != 0) {
     device_assignment_str =
         absl::StrCat(", device_ids=(", device_assignment_.ArrayToString(), ")");
   }
-  absl::StrAppend(&mesh_str, "<", absl::StrJoin(formatted_axes_names, ","), ">",
+  absl::StrAppend(&mesh_str, "[", absl::StrJoin(formatted_axes_names, ","), "]",
                   device_assignment_str);
   return mesh_str;
 }
@@ -243,12 +244,12 @@ AxisRefProto AxisRef::ToProto() const {
 }
 
 AxisRef AxisRef::FromProto(const AxisRefProto& proto) {
-  AxisRef axis_ref(proto.mesh_axis_index());
   if (proto.has_sub_axis_info()) {
-    axis_ref.sub_axis_info_ = {proto.sub_axis_info().pre_size(),
-                               proto.sub_axis_info().size()};
+    return AxisRef(proto.mesh_axis_index(),
+                   SubAxis{proto.sub_axis_info().pre_size(),
+                           proto.sub_axis_info().size()});
   }
-  return axis_ref;
+  return AxisRef(proto.mesh_axis_index());
 }
 
 AxisRef::AxisRef(int64_t mesh_axis_index) : mesh_axis_index_(mesh_axis_index) {}

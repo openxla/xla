@@ -482,6 +482,7 @@ TEST(CommandBufferThunkTest, LaunchCmd) {
 
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {length});
 
   // Prepare arguments: a=42, b=0
   se::DeviceAddress<int32_t> a =
@@ -499,7 +500,8 @@ TEST(CommandBufferThunkTest, LaunchCmd) {
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
-  auto args = {slice_a, slice_a, slice_b};  // b = a + a
+  std::vector<ShapedSlice> args = {
+      {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};  // b = a + a
   auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
                       MemoryAccess::kWrite};
 
@@ -586,6 +588,7 @@ TEST(CommandBufferThunkTest, CustomAddKernelLaunchCmd) {
 
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {length});
 
   // Prepare arguments: a=42, b=0
   se::DeviceAddress<int32_t> a =
@@ -603,7 +606,8 @@ TEST(CommandBufferThunkTest, CustomAddKernelLaunchCmd) {
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
-  auto args = {slice_a, slice_a, slice_b};  // b = a + a
+  std::vector<ShapedSlice> args{
+      {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};  // b = a + a
   auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
                       MemoryAccess::kWrite};
 
@@ -1095,9 +1099,13 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
 
   // CublasLt formula: D = alpha*(A*B) + beta*(C),
 
+  Shape a_shape = ShapeUtil::MakeShape(F32, {2, 4});
   int64_t a_length = sizeof(float) * 2 * 4;
+  Shape b_shape = ShapeUtil::MakeShape(F32, {4, 3});
   int64_t b_length = sizeof(float) * 4 * 3;
+  Shape c_shape = ShapeUtil::MakeShape(F32, {2, 3});
   int64_t c_length = sizeof(float) * 2 * 3;
+  Shape d_shape = ShapeUtil::MakeShape(F32, {2, 3});
   int64_t d_length = sizeof(float) * 2 * 3;
 
   // Prepare buffer allocations for recording command buffer.
@@ -1107,11 +1115,13 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
   BufferAllocation alloc_d(/*index=*/3, d_length, /*color=*/0);
   BufferAllocation alloc_workspace(/*index=*/4, 1024 * 1024, /*color=*/0);
 
-  BufferAllocation::Slice slice_a(&alloc_a, 0, a_length);
-  BufferAllocation::Slice slice_b(&alloc_b, 0, b_length);
-  BufferAllocation::Slice slice_c(&alloc_c, 0, c_length);
-  BufferAllocation::Slice slice_d(&alloc_d, 0, d_length);
-  BufferAllocation::Slice slice_workspace(&alloc_workspace, 0, 1024 * 1024);
+  ShapedSlice slice_a{BufferAllocation::Slice{&alloc_a, 0, a_length}, a_shape};
+  ShapedSlice slice_b{BufferAllocation::Slice(&alloc_b, 0, b_length), b_shape};
+  ShapedSlice slice_c{BufferAllocation::Slice(&alloc_c, 0, c_length), c_shape};
+  ShapedSlice slice_d{BufferAllocation::Slice(&alloc_d, 0, d_length), d_shape};
+  ShapedSlice slice_workspace{
+      BufferAllocation::Slice(&alloc_workspace, 0, 1024 * 1024),
+      ShapeUtil::MakeShape(U8, {1024, 1024})};
 
   auto config = GemmConfig::For(
       /*lhs_shape*/ ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}),
@@ -1136,10 +1146,8 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
       Thunk::ThunkInfo(), /*canonical_hlo=*/"", config.value(),
       se::gpu::BlasLt::Epilogue::kDefault, /*algorithm_idx=*/0,
       /*autotune_workspace_size=*/0, slice_a, slice_b, slice_c, slice_d,
-      BufferAllocation::Slice(), BufferAllocation::Slice(),
-      BufferAllocation::Slice(), BufferAllocation::Slice(),
-      BufferAllocation::Slice(), BufferAllocation::Slice(),
-      BufferAllocation::Slice(), slice_workspace));
+      std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+      std::nullopt, std::nullopt, slice_workspace));
   TF_ASSERT_OK_AND_ASSIGN(
       CommandBufferCmdExecutor executor,
       CommandBufferCmdExecutor::Create(std::move(commands), serialize));
@@ -1241,6 +1249,7 @@ TEST(CommandBufferThunkTest, MultipleLaunchCmd) {
 
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {length});
 
   // Prepare arguments: a=42, b=0
   se::DeviceAddress<int32_t> a =
@@ -1268,8 +1277,10 @@ TEST(CommandBufferThunkTest, MultipleLaunchCmd) {
   BufferAllocation::Slice slice_c(&alloc_c, 0, byte_length);
   BufferAllocation::Slice slice_d(&alloc_d, 0, byte_length);
 
-  auto args = {slice_a, slice_a, slice_b};    // b = a + a
-  auto args_1 = {slice_c, slice_c, slice_d};  // d = c + c
+  std::vector<ShapedSlice> args{
+      {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};  // b = a + a
+  std::vector<ShapedSlice> args_1{
+      {slice_c, shape}, {slice_c, shape}, {slice_d, shape}};  // d = c + c
   auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
                       MemoryAccess::kWrite};
 
@@ -1368,6 +1379,7 @@ TEST(CommandBufferThunkTest, CaseCmd) {
 
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {length});
 
   // Prepare arguments: index=0, a=42, b=0
   se::DeviceAddress<int32_t> index =
@@ -1399,14 +1411,16 @@ TEST(CommandBufferThunkTest, CaseCmd) {
                       MemoryAccess::kWrite};
 
   {  // Case 0: b = a + a
-    auto args = {slice_a, slice_a, slice_b};
+    std::vector<ShapedSlice> args{
+        {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};
     branches_sequence[0].Emplace<LaunchCmd>("AddI32", args, args_access,
                                             LaunchDimensions(1, 4),
                                             /*shmem_bytes=*/0);
   }
 
   {  // Case 1: b = b + b
-    auto args = {slice_b, slice_b, slice_b};
+    std::vector<ShapedSlice> args{
+        {slice_b, shape}, {slice_b, shape}, {slice_b, shape}};
     branches_sequence[1].Emplace<LaunchCmd>("AddI32", args, args_access,
                                             LaunchDimensions(1, 4),
                                             /*shmem_bytes=*/0);
@@ -1473,6 +1487,7 @@ TEST(CommandBufferThunkTest, WhileCmd) {
 
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {length});
 
   // Prepare arguments: loop_cnt=0, num_iters=10, a=1, b=0
   se::DeviceAddress<bool> pred = stream_executor->AllocateArray<bool>(1, 0);
@@ -1503,11 +1518,13 @@ TEST(CommandBufferThunkTest, WhileCmd) {
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
-  auto cond_args = {slice_loop_cnt, slice_pred, slice_num_iters};
+  std::vector<ShapedSlice> cond_args{
+      {slice_loop_cnt, shape}, {slice_pred, shape}, {slice_num_iters, shape}};
   auto cond_args_access = {MemoryAccess::kWrite, MemoryAccess::kWrite,
                            MemoryAccess::kRead};
 
-  auto body_args = {slice_a, slice_b, slice_b};  // b = a + b
+  std::vector<ShapedSlice> body_args{
+      {slice_a, shape}, {slice_b, shape}, {slice_b, shape}};  // b = a + b
   auto body_args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
                            MemoryAccess::kWrite};
 

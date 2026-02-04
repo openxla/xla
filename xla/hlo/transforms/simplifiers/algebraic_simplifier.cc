@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/numeric/bits.h"
 #include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -50,6 +51,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -4019,6 +4021,18 @@ absl::Status AlgebraicSimplifierVisitor::HandleDot(HloInstruction* dot) {
     return RewriteAsMultiplyDotWithZeroLhsContractingDim(dot, lhs, rhs, dnums);
   }
 
+  if (dot->user_count() == 1 &&
+      dot->users().front()->IsCustomCall("Sharding")) {
+    const HloInstruction* user = dot->users().front();
+    if (user->has_frontend_attributes()) {
+      std::optional<std::string> sharding_attr =
+          user->get_frontend_attribute(HloSharding::kShardingFrontendAttrName);
+      if (sharding_attr && absl::StrContains(*sharding_attr, "unreduced")) {
+        return absl::OkStatus();
+      }
+    }
+  }
+
   // Reorder nested dots with associativity using flops as a heuristic
   if (options_.use_associative_reordering()) {
     TF_ASSIGN_OR_RETURN(RewriteResult result,
@@ -6478,7 +6492,10 @@ absl::Status AlgebraicSimplifierVisitor::HandleReshape(
     return absl::OkStatus();
   }
 
-  if (!options_.is_layout_sensitive()) {
+  if (!options_.is_layout_sensitive() &&
+      // TODO: b/480285332 - Remove the flag once we can enable on all
+      // accelerators.
+      options_.enable_hoist_transpose_of_reshape()) {
     ASSIGN_OR_RETURN(bool hoisted, TryHoistTransposeOfReshape(reshape));
     if (hoisted) {
       return absl::OkStatus();
@@ -7528,25 +7545,19 @@ absl::Status AlgebraicSimplifierVisitor::HandleDynamicSlice(
   if (Match(operand, m::Reshape(&reshape, m::Op(&reshape_operand))) &&
       reshape->ReshapeMerelyInsertsOrDeletes1SizedDimensions().has_value() &&
       !options_.is_layout_sensitive()) {
-    int64_t slice_dim = 0;
+    auto unmodified_dims = ShapeUtil::DimensionsUnmodifiedByReshape(
+        reshape_operand->shape(), reshape->shape());
     HloInstruction* zero = MakeScalarLike(dynamic_slice->mutable_operand(1), 0);
-    std::vector<HloInstruction*> starts;
-    starts.reserve(reshape_operand->shape().dimensions().size());
-    std::vector<int64_t> slice_sizes;
-    slice_sizes.reserve(reshape_operand->shape().dimensions().size());
-    for (int64_t dim = 0; dim < reshape_operand->shape().dimensions().size();
-         ++dim) {
-      if (reshape_operand->shape().dimensions(dim) == 1) {
-        starts.push_back(zero);
-        slice_sizes.push_back(1);
+    std::vector<HloInstruction*> starts(
+        reshape_operand->shape().dimensions().size(), zero);
+    std::vector<int64_t> slice_sizes(
+        reshape_operand->shape().dimensions().size(), 1);
+    for (const auto& [input_dim, output_dim] : unmodified_dims) {
+      if (reshape_operand->shape().dimensions(input_dim) == 1) {
         continue;
       }
-      while (dynamic_slice->operand(0)->shape().dimensions(slice_dim) == 1) {
-        ++slice_dim;
-      }
-      starts.push_back(dynamic_slice->mutable_operand(1 + slice_dim));
-      slice_sizes.push_back(dynamic_slice->slice_sizes(slice_dim));
-      ++slice_dim;
+      starts[input_dim] = dynamic_slice->mutable_operand(1 + output_dim);
+      slice_sizes[input_dim] = dynamic_slice->slice_sizes(output_dim);
     }
     HloInstruction* new_dynamic_slice =
         dynamic_slice->AddInstruction(HloInstruction::CreateDynamicSlice(

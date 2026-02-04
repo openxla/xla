@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,32 +12,34 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#ifndef XLA_SERVICE_GPU_TRANSFORMS_GEMM_WORKSPACE_REWRITER_H_
-#define XLA_SERVICE_GPU_TRANSFORMS_GEMM_WORKSPACE_REWRITER_H_
+
+#ifndef XLA_SERVICE_GPU_TRANSFORMS_CONV_KIND_ASSIGNMENT_H_
+#define XLA_SERVICE_GPU_TRANSFORMS_CONV_KIND_ASSIGNMENT_H_
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/dnn.h"
 
 namespace xla {
 namespace gpu {
 
-// This pass updates the workspace size for cuBLAS/cuBLASLt GEMM operations
-// after autotuning has selected a specific algorithm. The GemmRewriter pass
-// conservatively allocates workspace before autotuning. After autotuning,
-// we know the exact algorithm selected and can query its actual workspace
-// requirement, potentially reducing memory usage.
-class GemmWorkspaceRewriter : public HloModulePass {
- public:
-  explicit GemmWorkspaceRewriter(const se::GpuComputeCapability& gpu_version,
-                                 stream_executor::StreamExecutor* stream_exec)
-      : gpu_version_(gpu_version), stream_exec_(stream_exec) {}
+// Assign the conv kind for each conv and transform the conv accordingly if
+// needed.
 
-  absl::string_view name() const override { return "gemm-workspace-rewriter"; }
+class ConvKindAssignment : public HloModulePass {
+ public:
+  explicit ConvKindAssignment(
+      const se::GpuComputeCapability& compute_capability,
+      se::dnn::VersionInfo dnn_version = se::dnn::VersionInfo{})
+      : compute_capability_(compute_capability), dnn_version_(dnn_version) {};
+
+  absl::string_view name() const override { return "conv-kind-assignment"; }
 
  protected:
   absl::StatusOr<bool> RunImpl(
@@ -45,11 +47,11 @@ class GemmWorkspaceRewriter : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
  private:
-  se::GpuComputeCapability gpu_version_;
-  stream_executor::StreamExecutor* stream_exec_;
+  const se::GpuComputeCapability compute_capability_;
+  const se::dnn::VersionInfo dnn_version_;
 };
 
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_TRANSFORMS_GEMM_WORKSPACE_REWRITER_H_
+#endif  // XLA_SERVICE_GPU_TRANSFORMS_CONV_KIND_ASSIGNMENT_H_
