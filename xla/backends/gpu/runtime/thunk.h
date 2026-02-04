@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/runtime/buffer_use.h"
+#include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -120,6 +121,9 @@ class Thunk {
  public:
   using ExecutionStreamIdMap =
       absl::flat_hash_map<ExecutionStreamId, se::Stream*>;
+
+  using BufferUses = absl::InlinedVector<BufferUse, 4>;
+  using ResourceUses = absl::InlinedVector<ResourceUse, 4>;
 
   // When default execution stream id is used, operations launched by a thunk
   // must be synchronized with a stream passed in ExecuteOptions.
@@ -414,8 +418,6 @@ class Thunk {
   //
   // Precondition: Initialize(initialize_params) has been called.
   virtual absl::Status ExecuteOnStream(const ExecuteParams& params) = 0;
-
-  using BufferUses = absl::InlinedVector<BufferUse, 4>;
 
   // Returns all device buffers used by the thunk.
   //
