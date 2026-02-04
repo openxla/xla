@@ -48,8 +48,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-namespace {
-
 AutotuneConfig GetAutotuneConfig(const DebugOptions& debug_options,
                                  bool is_deviceless,
                                  bool optimize_scratch_bytes,
@@ -105,7 +103,6 @@ ProfileOptions GetProfileOptions(const DebugOptions& debug_options,
   return profile_options;
 }
 
-}  // namespace
 
 absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
     std::vector<std::unique_ptr<CodegenBackend>> backends,
