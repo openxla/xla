@@ -13326,7 +13326,9 @@ TEST_F(AlgebraicSimplifierTest, HoistTransposeOfReshape) {
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
-  AlgebraicSimplifier simplifier(default_options_);
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_hoist_transpose_of_reshape(true);
+  AlgebraicSimplifier simplifier(options);
   EXPECT_TRUE(simplifier.Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::Transpose(m::Reshape(m::Parameter(0)))));
@@ -13347,7 +13349,9 @@ TEST_F(AlgebraicSimplifierTest, HoistTransposeOfReshapeNonContiguous) {
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
-  AlgebraicSimplifier simplifier(default_options_);
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_hoist_transpose_of_reshape(true);
+  AlgebraicSimplifier simplifier(options);
   EXPECT_FALSE(simplifier.Run(m.get()).value());
 }
 
@@ -13362,7 +13366,9 @@ TEST_F(AlgebraicSimplifierTest, HoistTransposeOfReshapeSplitDimension) {
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
-  AlgebraicSimplifier simplifier(default_options_);
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_hoist_transpose_of_reshape(true);
+  AlgebraicSimplifier simplifier(options);
   EXPECT_FALSE(simplifier.Run(m.get()).value());
 }
 
@@ -13377,7 +13383,9 @@ TEST_F(AlgebraicSimplifierTest, HoistTransposeOfReshapeInsertOne) {
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
-  AlgebraicSimplifier simplifier(default_options_);
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_hoist_transpose_of_reshape(true);
+  AlgebraicSimplifier simplifier(options);
   EXPECT_FALSE(simplifier.Run(m.get()).value());
 }
 
@@ -13392,7 +13400,10 @@ TEST_F(AlgebraicSimplifierTest, HoistTransposeOfReshapeLeftoverDims) {
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
-  AlgebraicSimplifier simplifier(default_options_);
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_hoist_transpose_of_reshape(true);
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_TRUE(simplifier.Run(m.get()).value());
 }
 
 TEST_F(AlgebraicSimplifierTest,
@@ -13407,7 +13418,9 @@ TEST_F(AlgebraicSimplifierTest,
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
-  AlgebraicSimplifier simplifier(default_options_);
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_hoist_transpose_of_reshape(true);
+  AlgebraicSimplifier simplifier(options);
   EXPECT_FALSE(simplifier.Run(m.get()).value());
 }
 
@@ -13422,7 +13435,9 @@ TEST_F(AlgebraicSimplifierTest, HoistTransposeOfReshapeReorderChunks) {
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
-  AlgebraicSimplifier simplifier(default_options_);
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_hoist_transpose_of_reshape(true);
+  AlgebraicSimplifier simplifier(options);
   EXPECT_TRUE(simplifier.Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::Transpose(m::Reshape(m::Parameter(0)))));
@@ -13432,6 +13447,23 @@ TEST_F(AlgebraicSimplifierTest, HoistTransposeOfReshapeReorderChunks) {
   EXPECT_THAT(reshape->shape().dimensions(), ElementsAre(200, 1200));
   // Transpose should flip them to [1200, 200]
   EXPECT_THAT(transpose->dimensions(), ElementsAre(1, 0));
+}
+
+TEST_F(AlgebraicSimplifierTest, HoistTransposeOfReshapeDisabled) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule m
+    ENTRY test {
+      p = f32[10, 20, 1200] parameter(0)
+      r1 = f32[10, 20, 30, 40] reshape(p)
+      t1 = f32[10, 30, 40, 20] transpose(r1), dimensions={0, 2, 3, 1}
+      ROOT r2 = f32[10, 1200, 20] reshape(t1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_hoist_transpose_of_reshape(false);
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_FALSE(simplifier.Run(m.get()).value());
 }
 
 TEST_F(AlgebraicSimplifierTest, HoistTransposeOfReshapeLayoutSensitive) {
@@ -13447,6 +13479,7 @@ TEST_F(AlgebraicSimplifierTest, HoistTransposeOfReshapeLayoutSensitive) {
   ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
   AlgebraicSimplifierOptions options = default_options_;
   options.set_is_layout_sensitive(true);
+  options.set_enable_hoist_transpose_of_reshape(true);
   AlgebraicSimplifier simplifier(options);
   EXPECT_FALSE(simplifier.Run(m.get()).value());
 }

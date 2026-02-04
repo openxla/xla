@@ -6492,7 +6492,10 @@ absl::Status AlgebraicSimplifierVisitor::HandleReshape(
     return absl::OkStatus();
   }
 
-  if (!options_.is_layout_sensitive()) {
+  if (!options_.is_layout_sensitive() &&
+      // TODO: b/480285332 - Remove the flag once we can enable on all
+      // accelerators.
+      options_.enable_hoist_transpose_of_reshape()) {
     ASSIGN_OR_RETURN(bool hoisted, TryHoistTransposeOfReshape(reshape));
     if (hoisted) {
       return absl::OkStatus();

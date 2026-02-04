@@ -1488,6 +1488,7 @@ AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
       // GPU pipeline handles transposes better than slice+concatenate, so keep
       // the transpose.
       opts.set_rewrite_reshape_transpose_as_slice_concatenate(false);
+      opts.set_enable_hoist_transpose_of_reshape(true);
       if (is_rocm) {
         opts.set_enable_conv_operand_swap(false);
       }

@@ -371,6 +371,14 @@ class AlgebraicSimplifierOptions {
     enable_conditional_simplification_ = value;
   }
 
+  bool enable_hoist_transpose_of_reshape() const {
+    return enable_hoist_transpose_of_reshape_;
+  }
+
+  void set_enable_hoist_transpose_of_reshape(bool value) {
+    enable_hoist_transpose_of_reshape_ = value;
+  }
+
  private:
   // Metadata struct can be used to store any metadata information encapsulated
   // with the AlgebraicSimplifierOptions that can be later used in an
@@ -419,6 +427,7 @@ class AlgebraicSimplifierOptions {
   bool run_to_fixed_point_{true};
   bool rewrite_no_op_bitcast_convert_to_bitcast_{false};
   bool enable_conditional_simplification_{false};
+  bool enable_hoist_transpose_of_reshape_{false};
   Metadata metadata_;
 };
 
