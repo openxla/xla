@@ -38,6 +38,7 @@ config_setting(
     flag_values = {
         ":rocm_path_type": "hermetic",
     },
+    visibility = ["//visibility:public"],
 )
 
 config_setting(
@@ -130,6 +131,7 @@ cc_library(
     linkopts = select({
         ":build_hermetic": [
             "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
         ],
         ":link_only": [
         ],
@@ -139,7 +141,9 @@ cc_library(
         ],
         "//conditions:default": [
             "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
+            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib/rocm_sysdeps/lib",
             "-Wl,-rpath,/opt/rocm/lib",
+            "-Wl,-rpath,/opt/rocm/lib/rocm_sysdeps/lib",
         ],
     }),
     visibility = ["//visibility:public"],
@@ -528,6 +532,32 @@ filegroup(
 cc_library(
     name = "system_libs",
     data = [":system_libs_data"],
+)
+
+# System libraries bundled by the hermetic (therock) ROCm distribution under
+# rocm_dist/lib/rocm_sysdeps/lib. Exposed as real link targets (not just runtime
+# data) so consumers like MORI's libhsakmt.a can resolve drm/numa symbols
+# hermetically instead of relying on host /usr/lib. Only valid in hermetic
+# builds; reference them behind select(":build_hermetic").
+rocm_lib_import(
+    name = "drm",
+    data = [":system_libs_data"],
+    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm.so",
+    deps = [],
+)
+
+rocm_lib_import(
+    name = "drm_amdgpu",
+    data = [":system_libs_data"],
+    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libdrm_amdgpu.so",
+    deps = [],
+)
+
+rocm_lib_import(
+    name = "numa",
+    data = [":system_libs_data"],
+    interface_library = "%{rocm_root}/lib/rocm_sysdeps/lib/libnuma.so",
+    deps = [],
 )
 
 filegroup(
