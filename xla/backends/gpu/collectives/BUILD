@@ -1,4 +1,5 @@
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured",
+     "rocm_library")
 load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured")
@@ -6,7 +7,6 @@ load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_nccl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
-
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility([":friends"]),
@@ -49,6 +49,8 @@ cc_library(
         ":loopback_collectives",
     ] + if_cuda_or_rocm_is_configured([
         ":nccl_or_rccl_collectives",
+    ]) + if_rocm_is_configured([
+        ":mori_collectives",
     ]) + if_cuda_is_configured([
         ":nvshmem_collectives_if_supported",
     ]) + if_sycl_is_configured([
@@ -315,16 +317,14 @@ xla_cc_test(
     name = "gpu_collectives_test",
     srcs = ["gpu_collectives_test.cc"],
     tags = [
-        "cuda-only",
         "gpu",
-        "requires-gpu-nvidia:2",
     ],
     deps = [
         ":allocator_memory_registration",
         ":cancellation_token",
         ":gpu_clique",
         ":gpu_clique_key",
-        ":gpu_collectives",
+        ":gpu_collectives_plugin",
         ":gpu_communicator",
         ":nccl_or_rccl_collectives",  # buildcleaner: keep
         "//xla:future",
@@ -345,8 +345,6 @@ xla_cc_test(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor/cuda:cuda_compute_capability",
-        "//xla/stream_executor/cuda:cuda_platform",
         "//xla/tsl/concurrency:executor",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:status_macros",
@@ -359,7 +357,12 @@ xla_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",  # buildcleaner: keep
-    ],
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor:cuda_platform",
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor:rocm_platform",
+    ]),
 )
 
 cc_library(
@@ -958,6 +961,92 @@ cc_library(
         "@local_config_rocm//rocm:rccl",  # buildcleaner: keep
         "@local_config_rocm//rocm:rocm_headers",
     ],
+)
+
+
+rocm_library(
+    name = "mori_kernels",
+    hdrs = ["mori_kernels.h"],
+    srcs = [
+        "mori_kernels.cu.cc",
+    ],
+    copts = ["-U__HIP_DISABLE_CPP_FUNCTIONS__"],   # <-- only if needed
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        "//xla/service:collective_opt_utils",
+        "@com_google_absl//absl/status",
+        "@roc_mori//src/shmem:mori_shmem",
+        "@roc_mori//src/application:mori_application",
+        # These are used for local_mori_configure.bzl
+        #"@roc_mori//:mori_headers",
+        #"@roc_mori//:mori_libs",
+    ],
+    # additional_linker_inputs = ["@roc_mori//:libmori_shmem_dev"],
+    # linkopts = [
+    #     "-Wl,--whole-archive",
+    #     "$(location @roc_mori//:libmori_shmem_dev)",
+    #     "-Wl,--no-whole-archive",
+    # ],
+    linkstatic = True,
+    #alwayslink = True,
+)
+
+cc_library(
+    name = "mori_collectives",
+    hdrs = if_rocm_is_configured([
+            "mori_collectives.h",
+            "mori_communicator.h",
+            ]),
+    srcs = if_rocm_is_configured([
+            "mori_collectives.cc",
+            "mori_communicator.cc",
+            ]),
+    tags = [
+        "gpu",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":gpu_clique_key",
+        ":gpu_collectives",
+        ":gpu_communicator",
+        "//xla:future",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/core/collectives",
+        "//xla/core/collectives:clique_id",
+        "//xla/core/collectives:clique_key",
+        "//xla/core/collectives:collectives_registry",
+        "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
+        "//xla/core/collectives:reduction_kind",
+        "//xla/core/collectives:symmetric_memory",
+        "//xla/service:collective_ops_utils",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:stream",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_macros",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:numbers",
+    ] + if_rocm_is_configured([
+        ":mori_kernels",
+    ]),
+    alwayslink = True,
 )
 
 cc_library(

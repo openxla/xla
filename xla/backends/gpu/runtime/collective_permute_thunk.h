@@ -86,7 +86,7 @@ class CollectivePermuteThunk : public CollectiveThunk {
   // Symmetric and private memory modes still require rendezvous.
   bool RequiresRendezvous() const override { return !use_peer_memory(); }
 
-  bool CanUseSymmetricBuffer() const override { return buffers().size() == 1; }
+  bool CanUseSymmetricBuffer() const override { return true; }
 
   absl::Status PrepareCollective(const PrepareParams& params,
                                  const GpuCliqueKey& clique_key) override;

@@ -169,6 +169,10 @@ class NcclCommunicator : public GpuCommunicator {
   // or aborted.
   absl::Status PollUntilDone() const;
 
+  absl::Status Barrier(const Executor& executor) final {
+    return absl::OkStatus();
+  }
+
  private:
   NcclCommunicator(se::StreamExecutor* stream_executor, ncclComm_t comm,
                    std::unique_ptr<tsl::Executor> executor,

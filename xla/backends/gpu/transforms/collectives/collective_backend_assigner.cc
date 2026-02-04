@@ -35,6 +35,14 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
+bool IsCollectiveOp(const HloInstruction* instr) {
+  return HloPredicateIsOp<HloOpcode::kAllReduce, HloOpcode::kAllReduceStart,
+                          HloOpcode::kCollectivePermute,
+                          HloOpcode::kCollectivePermuteStart,
+                          HloOpcode::kAllGather, HloOpcode::kAllGatherStart>(
+      instr);
+}
+
 bool IsCollectivePermuteOp(const HloInstruction* instr) {
   return HloPredicateIsOp<HloOpcode::kCollectivePermute,
                           HloOpcode::kCollectivePermuteStart>(instr);
