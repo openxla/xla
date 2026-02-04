@@ -237,10 +237,16 @@ mkl_repository = repository_rule(
 )
 
 def convert_cl_to_cpp(name, src, cl_list, **kwargs):
-    """Convert OpenCL kernel files to embedded C++ sources.
-    Generates C++ files from OpenCL .cl kernel sources, embedding them as
-    string literals for runtime compilation. Each .cl file becomes a _kernel.cpp
-    file, plus a kernel list file derived from the src template.
+    """Shorthand to generate embedded C++ sources from OpenCL kernels.
+
+    Args:
+      name: name of the genrule target.
+      src: template input file used to generate the kernel list.
+      cl_list: list of .cl kernel source files to embed.
+      **kwargs: additional arguments forwarded to native.genrule.
+
+    Returns:
+      None. This macro emits a genrule that produces C++ sources.
     """
     cpp_list = [cl.replace(".cl", "_kernel.cpp") for cl in cl_list]
     kernel_list = src.replace(".in", "")
@@ -258,10 +264,16 @@ def convert_cl_to_cpp(name, src, cl_list, **kwargs):
     )
 
 def convert_header_to_cpp(name, src, header_list, **kwargs):
-    """Convert header files to embedded C++ sources.
-    Generates C++ files from .h header sources, embedding them as string
-    literals for runtime GPU kernel compilation. Each .h file becomes a
-    _header.cpp file.
+    """Shorthand to generate embedded C++ sources from header files.
+
+    Args:
+      name: name of the genrule target.
+      src: template input file used to generate the header list.
+      header_list: list of .h header source files to embed.
+      **kwargs: additional arguments forwarded to native.genrule.
+
+    Returns:
+      None. This macro emits a genrule that produces C++ sources.
     """
     cpp_list = []
     h_list = []
