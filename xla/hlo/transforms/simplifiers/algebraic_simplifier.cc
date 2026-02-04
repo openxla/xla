@@ -5283,14 +5283,6 @@ std::optional<std::vector<Chunk>> FindContiguousChunks(
   auto factors =
       CommonFactors(reshape_shape.dimensions(), transpose_shape.dimensions());
 
-  if (factors.empty() ||
-      factors.back() !=
-          std::make_pair(
-              static_cast<int64_t>(reshape_shape.dimensions().size()),
-              static_cast<int64_t>(transpose_shape.dimensions().size()))) {
-    return std::nullopt;
-  }
-
   std::vector<Chunk> chunks;
   chunks.reserve(factors.size() - 1);
 
