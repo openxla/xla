@@ -327,8 +327,8 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyFromPjRtClient(
   // information.
   GlobalTopologyProto global_topology_proto;
   for (int process_index = 0; process_index < num_processes; ++process_index) {
-    LocalTopologyProto& node = *global_topology_proto.add_nodes();
-    node.set_node_id(process_index);
+    LocalTopologyProto& node = *global_topology_proto.add_processes();
+    node.set_process_id(process_index);
 
     const std::vector<DeviceId>& process_device_ids =
         process_index_to_ifrt_device_ids[process_index];
@@ -395,7 +395,7 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyFromPjRtClient(
 LocalTopologyProto MakeLocalTopologyFromPjRtClient(
     xla::PjRtClient* pjrt_client, const PjRtClient::CreateOptions& options) {
   LocalTopologyProto local_topology_proto;
-  local_topology_proto.set_node_id(options.process_id);
+  local_topology_proto.set_process_id(options.process_id);
   std::string boot_id_str;
   auto boot_id_str_or_status = GetBootIdString();
   if (!boot_id_str_or_status.ok()) {
@@ -439,20 +439,22 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyWithLocalTopology(
   absl::flat_hash_map<DeviceId, xla::PjRtGlobalDeviceId>
       ifrt_device_id_to_pjrt_global_device_id;
   for (int process_index = 0;
-       process_index < global_topology_proto.nodes_size(); ++process_index) {
-    const LocalTopologyProto& node = global_topology_proto.nodes(process_index);
-    if (node.node_id() == options.process_id) {
+       process_index < global_topology_proto.processes_size();
+       ++process_index) {
+    const LocalTopologyProto& process =
+        global_topology_proto.processes(process_index);
+    if (process.process_id() == options.process_id) {
       if (my_process_index.has_value()) {
         if (*my_process_index != process_index) {
           return InvalidArgument(
-              "GlobalTopologyProto contains multiple nodes with the same "
+              "GlobalTopologyProto contains multiple processes with the same "
               "process ID");
         }
       } else {
         my_process_index = process_index;
       }
     }
-    for (const DeviceProto& device_proto : node.devices()) {
+    for (const DeviceProto& device_proto : process.devices()) {
       // Use the same PjRt global device ID as IFRT device ID when topology
       // exchange is used.
       ifrt_device_id_to_pjrt_global_device_id.insert(
@@ -482,10 +484,10 @@ MakePjRtDevicesFromGlobalTopology(PjRtClient* client,
   int next_partition_index = 0;
   absl::flat_hash_map<std::string, int> boot_id_to_partition_index;
   for (int process_index = 0;
-       process_index < global_topology.global_topology_proto.nodes_size();
+       process_index < global_topology.global_topology_proto.processes_size();
        ++process_index) {
     const LocalTopologyProto& node =
-        global_topology.global_topology_proto.nodes(process_index);
+        global_topology.global_topology_proto.processes(process_index);
     int64_t partition_index = -1;
     if (!node.boot_id().empty()) {
       // Every new boot_id seen is treated as a new host/partition.
