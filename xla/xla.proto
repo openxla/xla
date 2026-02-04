@@ -658,12 +658,6 @@ message DebugOptions {
   // If true, autotune all fusions with block level emitter.
   optional bool xla_gpu_experimental_all_fusions_with_triton = 444;
 
-  // If true, allows unroll factor 8 on Blackwell architectures. This is also
-  // guarded with a heuristic, but the heuristic is not perfect, so enabling
-  // this flag can cause both performance improvements and performance
-  // regressions.
-  optional bool xla_gpu_experimental_allow_unroll_factor_eight = 430;
-
   // Enables an Ahead-of-Time (AOT) compilation flow where the compiled binary
   // includes the generated Thunks. In contrast, the legacy flow only compiles
   // up to the HLO optimization stage, before Thunk generation.
@@ -1040,6 +1034,12 @@ message DebugOptions {
   // the results of regular emitters.
   optional bool xla_gpu_verify_triton_fusion_numerics = 291;
 
+  // Controls max unroll factor on Blackwell architectures. This is also
+  // guarded with a heuristic, but the heuristic is not perfect, so changing
+  // this flag can cause both performance improvements and performance
+  // regressions.
+  optional int32 xla_gpu_experimental_max_unroll_factor = 456;
+
   // go/keep-sorted end
 
   //--------------------------------------------------------------------------//
@@ -1406,7 +1406,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 456
+  // Next id: 457
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1509,6 +1509,7 @@ message DebugOptions {
   reserved "xla_gpu_experimental_enable_command_buffer_on_thunks";
   reserved "xla_gpu_experimental_enable_triton_tma";
   reserved "xla_gpu_strict_conv_algorithm_picker";
+  reserved "xla_gpu_experimental_allow_unroll_factor_eight";
 
   reserved 5, 63, 80, 93, 94, 98, 117, 130, 133, 134, 139, 141, 143, 152, 156,
       158, 160, 161, 162, 167, 168, 169, 171, 172, 173, 176, 177, 178, 179, 180,
@@ -1516,7 +1517,7 @@ message DebugOptions {
       206, 207, 211, 214, 218, 220, 221, 226, 229, 230, 233, 234, 238, 242, 249,
       263, 264, 266, 270, 271, 275, 276, 278, 279, 281, 282, 286, 298, 299, 302,
       303, 309, 313, 314, 319, 320, 325, 326, 332, 346, 352, 354, 355, 358, 361,
-      367, 369, 371, 385, 394, 398, 402, 423, 446;
+      367, 369, 371, 385, 394, 398, 402, 423, 430, 446;
 }
 
 // Contains flags which affects the GPU compilation result.
