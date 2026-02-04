@@ -1798,6 +1798,7 @@ cc_library(
         "//xla/service/gpu/transforms:algorithm_checker",
         "//xla/service/gpu/transforms:async_wrapper",
         "//xla/service/gpu/transforms:composite_rewriter",
+        "//xla/service/gpu/transforms:conv_kind_assignment",
         "//xla/service/gpu/transforms:conv_rewriter",
         "//xla/service/gpu/transforms:convert_triton_gemm_config",
         "//xla/service/gpu/transforms:cudnn_custom_call_converter",
@@ -3220,6 +3221,33 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "conv_utils",
+    srcs = ["conv_utils.cc"],
+    hdrs = ["conv_utils.h"],
+    deps = [
+        ":backend_configs_cc",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+    ],
+)
+
+xla_cc_test(
+    name = "conv_utils_test",
+    srcs = ["conv_utils_test.cc"],
+    deps = [
+        ":conv_utils",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:shape_inference",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/log:check",
         "@com_google_googletest//:gtest",
     ],
 )
