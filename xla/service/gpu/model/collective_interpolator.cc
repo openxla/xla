@@ -102,9 +102,10 @@ struct InterpolationSpecification {
 // only `iota_replica_group_list`.
 absl::StatusOr<int> GetNumParticipatingDevices(
     const CollectiveDeviceListBase& device_list) {
-  if (device_list.version() != CollectiveDeviceListVersion::kIota) {
+  if (device_list.version() != CollectiveDeviceListVersion::kIota &&
+      device_list.version() != CollectiveDeviceListVersion::kListOfLists) {
     return absl::FailedPreconditionError(
-        "Only iota device assignment is supported.");
+        "Only iota or list of lists device assignment is supported.");
   }
   return device_list.num_devices_per_group();
 }
@@ -182,9 +183,9 @@ std::unique_ptr<HloModule> AllReduceModule(
       HloInstruction::CreateBinary(s, HloOpcode::kAdd, a, b));
 
   CollectiveDeviceList collective_device_list(
-      IotaReplicaGroupList::FromProto(profile.instruction()
-                                          .collective_device_list()
-                                          .iota_replica_group_list()));
+      IotaReplicaGroupList::FromProto(
+          profile.instruction().iota_collective_device_list())
+          .flattened_replica_groups());
 
   HloComputation* subcomp =
       module->AddEmbeddedComputation(wrapped_computation.Build());
@@ -223,9 +224,9 @@ std::unique_ptr<HloModule> ReduceScatterModule(
       HloInstruction::CreateBinary(s, HloOpcode::kAdd, a, b));
 
   CollectiveDeviceList collective_device_list(
-      IotaReplicaGroupList::FromProto(profile.instruction()
-                                          .collective_device_list()
-                                          .iota_replica_group_list()));
+      IotaReplicaGroupList::FromProto(
+          profile.instruction().iota_collective_device_list())
+          .flattened_replica_groups());
 
   HloComputation* subcomp =
       module->AddEmbeddedComputation(wrapped_computation.Build());
@@ -269,9 +270,9 @@ std::unique_ptr<HloModule> AllGatherModule(
   HloComputation::Builder entry_builder("entry");
 
   CollectiveDeviceList collective_device_list(
-      IotaReplicaGroupList::FromProto(profile.instruction()
-                                          .collective_device_list()
-                                          .iota_replica_group_list()));
+      IotaReplicaGroupList::FromProto(
+          profile.instruction().iota_collective_device_list())
+          .flattened_replica_groups());
 
   if (shape->dimensions().size() != 1) {
     VLOG(1) << "Unsupported number of dimensions: " << profile.DebugString();
@@ -311,9 +312,9 @@ std::unique_ptr<HloModule> AllToAllModule(
 
   HloComputation::Builder entry_builder("entry");
   CollectiveDeviceList collective_device_list(
-      IotaReplicaGroupList::FromProto(profile.instruction()
-                                          .collective_device_list()
-                                          .iota_replica_group_list()));
+      IotaReplicaGroupList::FromProto(
+          profile.instruction().iota_collective_device_list())
+          .flattened_replica_groups());
 
   HloInstruction* p0 = entry_builder.AddInstruction(
       HloInstruction::CreateParameter(0, *shape, "p0"));
@@ -367,7 +368,8 @@ std::optional<std::unique_ptr<CollectiveDeviceListBase>> CanonicalDeviceList(
 
   IotaReplicaGroupList iota((*num_groups_and_devices)->first,
                             (*num_groups_and_devices)->second);
-  return std::make_unique<CollectiveDeviceList>(iota);
+  return std::make_unique<CollectiveDeviceList>(
+      iota.flattened_replica_groups());
 }
 
 HloOpcode AsyncToSyncOpcode(const HloCollectiveInstruction& instr) {

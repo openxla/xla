@@ -5201,7 +5201,7 @@ HloInstruction* CreateAllGatherListsOfLists(
                                       /*use_global_device_ids=*/true));
 }
 
-std::optional<CollectiveDeviceList> TryExpandingPartitionGroupList(
+std::optional<IotaReplicaGroupList> TryExpandingPartitionGroupList(
     const CollectiveDeviceListBase& device_list, int64_t num_replicas,
     int64_t num_partitions) {
   std::optional<IotaReplicaGroupList> iota_list =
@@ -5226,7 +5226,7 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
               SpmdBuilder* b, HloInstruction* operand,
               HloComputation* reduction,
               const CollectiveDeviceListBase& device_list, int64_t channel_id) {
-            if (std::optional<CollectiveDeviceList> expanded =
+            if (std::optional<IotaReplicaGroupList> expanded =
                     TryExpandingPartitionGroupList(device_list, num_replicas,
                                                    num_partitions)) {
               HloComputation* reduction_clone =
@@ -5271,7 +5271,7 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
               SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
               const CollectiveDeviceListBase& device_list, int64_t channel_id,
               std::optional<int64_t> split_dimension) {
-            if (std::optional<CollectiveDeviceList> expanded =
+            if (std::optional<IotaReplicaGroupList> expanded =
                     TryExpandingPartitionGroupList(device_list, num_replicas,
                                                    num_partitions)) {
               std::vector<Shape> shapes(operands.size(), operands[0]->shape());
@@ -5291,7 +5291,7 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
               SpmdBuilder* b, HloInstruction* operand, const Shape& ag_shape,
               const CollectiveDeviceListBase& device_list, int64_t channel_id,
               int64_t all_gather_dimension) {
-            if (std::optional<CollectiveDeviceList> expanded =
+            if (std::optional<IotaReplicaGroupList> expanded =
                     TryExpandingPartitionGroupList(device_list, num_replicas,
                                                    num_partitions)) {
               return b->AddInstruction(HloInstruction::CreateAllGather(
