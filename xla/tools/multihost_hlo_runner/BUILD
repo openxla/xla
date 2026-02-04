@@ -71,7 +71,7 @@ cc_library(
         "@tsl//tsl/platform:statusor",
     ] + if_cuda_or_rocm([
         "//xla/service:gpu_plugin",
-        "//xla/backends/profiler/gpu:device_tracer",
+        #"//xla/backends/profiler/gpu:device_tracer",
     ]) + if_cuda([
         "//xla/stream_executor:cuda_platform",
         "//xla/backends/profiler/gpu:cupti_tracer",
@@ -94,6 +94,7 @@ xla_cc_binary(
     deps = [
         ":hlo_runner_main_lib",
     ],
+    linkstatic = True,
 )
 
 xla_cc_binary(
@@ -174,8 +175,8 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
-        "//xla/backends/profiler:profiler_backends",  # To register the Host Tracers for GPU Plugin.
-        "//xla/backends/profiler/plugin:plugin_tracer",  # To register the GPU Tracers with the GPU Plugin.
+        # "//xla/backends/profiler:profiler_backends",  # To register the Host Tracers for GPU Plugin.
+        # "//xla/backends/profiler/plugin:plugin_tracer",  # To register the GPU Tracers with the GPU Plugin.
         "//xla/client:executable_build_options",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",

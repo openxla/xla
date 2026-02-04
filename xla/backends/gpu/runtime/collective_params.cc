@@ -61,7 +61,7 @@ static absl::StatusOr<GlobalDeviceId> GetGlobalDeviceId(
   return it->second;
 }
 
-static GpuCollectives* ResolveCollectives(
+GpuCollectives* ResolveCollectives(
     const GpuExecutableRunOptions* gpu_options, absl::string_view platform_name,
     const std::optional<std::string>& implementation_name) {
   if (gpu_options && gpu_options->collectives()) {

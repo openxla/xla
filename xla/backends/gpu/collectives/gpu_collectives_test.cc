@@ -24,6 +24,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -35,13 +36,16 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/collectives.h"
+#include "xla/core/collectives/collectives_registry.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/core/collectives/registered_memory.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
+#include "xla/primitive_util.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/platform_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -88,10 +92,17 @@ static std::vector<std::unique_ptr<GpuCommunicator>> DowncastComms(
 static absl::StatusOr<std::vector<std::unique_ptr<GpuCommunicator>>>
 CreateCommunicators(absl::Span<se::StreamExecutor* const> executors,
                     std::vector<GlobalDeviceId> device_ids,
-                    bool blocking = true, size_t num_ids = 1) {
+                    bool blocking = true, size_t num_ids = 1,
+                    absl::string_view collectives_backend = "") {
   CHECK_EQ(executors.size(), device_ids.size());
 
-  GpuCollectives* collectives = GpuCollectives::Default("GPU");
+  TF_ASSIGN_OR_RETURN(auto *raw_coll, collectives_backend.empty() ? 
+        CollectivesRegistry::Default("GPU") : 
+        CollectivesRegistry::Get("GPU", collectives_backend));
+  auto* collectives = tsl::down_cast<GpuCollectives*>(raw_coll);
+  if (collectives == nullptr) {
+    return absl::InternalError("Failed to get GPU collectives");
+  }
 
   std::vector<GpuCollectives::Device> devices;
   devices.reserve(executors.size());
@@ -671,6 +682,137 @@ TEST(GpuCollectivesTest, PutAndWaitSignal) {
   EXPECT_THAT(h_recv0, testing::ElementsAre(5.0f, 6.0f, 7.0f, 8.0f));
   EXPECT_THAT(h_recv1, testing::ElementsAre(1.0f, 2.0f, 3.0f, 4.0f));
 }
+
+// Test that GPU communicators can be safely aborted and after they are aborted
+// they stay in valid state and reject all API calls.
+class GpuCollectivesSpeedTest : public ::testing::Test {
+public:
+using BenchmarkFunc = absl::AnyInvocable<Future<>(se::DeviceMemoryBase send_buf, 
+  se::DeviceMemoryBase recv_buf, size_t num_elems, 
+  GpuCommunicator *gpu_comm, const Communicator::Executor& executor)>;
+
+  GpuCollectivesSpeedTest() {  }
+  
+  static absl::StatusOr<std::vector<se::StreamExecutor*>> SetupExecutors(size_t n) {
+    TF_ASSIGN_OR_RETURN(std::string platform_name,
+      PlatformUtil::CanonicalPlatformName("gpu"));
+    TF_ASSIGN_OR_RETURN(se::Platform * platform,
+      se::PlatformManager::PlatformWithName(platform_name));
+    if (platform->VisibleDeviceCount() < n) {
+      return absl::InternalError(
+          absl::StrFormat("Test requires at least %d GPUs", n));
+    }
+    return CreateExecutors(platform, n);
+  }
+
+#define USE_COMM_ALLOC 1
+
+absl::Status BenchmarkCollectivesOp(PrimitiveType dtype, 
+        GpuCollectives *gpu_coll, 
+        GpuCommunicator *gpu_comm, se::StreamExecutor *stream_exec,
+     size_t num_peers, size_t min_elems, size_t max_elems, BenchmarkFunc&& F) {
+
+  TF_ASSIGN_OR_RETURN(auto stream, stream_exec->CreateStream());
+  size_t dbytes = primitive_util::BitWidth(dtype) / 8,
+         max_bytes = max_elems * dbytes;
+
+  se::DeviceMemoryBase send_buf, recv_buf;
+  void *send_ptr = nullptr;
+
+  absl::Cleanup cleanup = [&](){
+#if USE_COMM_ALLOC
+    gpu_coll->Deallocate(send_ptr).IgnoreError();
+#else
+    stream_exec->Deallocate(&send_buf);
+#endif
+  };
+
+#if USE_COMM_ALLOC
+  TF_ASSIGN_OR_RETURN(send_ptr, gpu_coll->Allocate(max_bytes*2));
+  send_buf = se::DeviceMemoryBase{send_ptr, max_bytes*2 };
+#else
+  send_buf = stream_exec->AllocateArray< uint8_t >(max_bytes*2, 0);
+  EXPECT_TRUE(!send_buf.is_null());
+#endif
+  recv_buf = send_buf.GetByteSlice(max_bytes, max_bytes);
+
+  uint32_t n_warmups = 2, n_runs = 10;
+  auto executor = GpuCollectives::On(*stream);
+
+  EXPECT_TRUE(stream_exec->SynchronizeAllActivity());
+  for (auto num_elems = min_elems; num_elems <= max_elems; 
+            num_elems = num_elems*3/2) {
+
+    std::unique_ptr<se::EventBasedTimer> timer;
+    Future<> future; 
+    for (uint32_t i = 0; i < n_warmups + n_runs; i++) {
+      if (i == n_warmups) {
+        TF_ASSIGN_OR_RETURN(timer, stream->CreateEventBasedTimer(false));
+      }
+      future = F(send_buf, recv_buf, num_elems, gpu_comm, executor);
+    }
+    EXPECT_TRUE(stream_exec->SynchronizeAllActivity());
+    TF_RETURN_IF_ERROR(future.Await()); // do we need this ??
+  
+    TF_ASSIGN_OR_RETURN(auto elapsed, timer->GetElapsedDuration());
+    auto msec = absl::ToDoubleMilliseconds(elapsed) / n_runs;
+    // total bytes transferred / seconds elapsed
+    double alg_bw = num_elems*dbytes / (msec * 1e6);
+    double bus_bw = 2.0*alg_bw*(num_peers - 1)/num_peers;
+
+    VLOG(0) << "num_bytes: " << (num_elems*dbytes) 
+        << " time: " << msec << "ms, alg_bw: " << alg_bw << " Gbps "
+        << " bus_bw: " << bus_bw << " Gbps";
+
+    EXPECT_TRUE(stream_exec->SynchronizeAllActivity());
+  } // for num_elems
+ 
+  return absl::OkStatus();
+}
+}; // class GpuCollectivesSpeedTest
+
+TEST_F(GpuCollectivesSpeedTest, TestAllGather) {
+
+  absl::string_view collectives_backend = "rccl";
+  size_t num_peers = 4;
+  ASSERT_OK_AND_ASSIGN(auto executors, SetupExecutors(num_peers));
+  ASSERT_OK_AND_ASSIGN(auto comms, 
+          CreateCommunicators(executors, {kD0, kD1, kD2, kD3}, true, 1, collectives_backend));
+  VLOG(0) << "comms size: " << comms.size();
+
+  // NOTE this is dup!!
+  ASSERT_OK_AND_ASSIGN(auto *raw_coll, 
+    CollectivesRegistry::Get("GPU", collectives_backend));
+  auto *gpu_coll = tsl::down_cast<GpuCollectives*>(raw_coll);
+
+  size_t min_elems = 1024, max_elems = 32*1024*1024;
+  using Type = float;
+  auto dtype = primitive_util::NativeToPrimitiveType< Type >();
+  
+  auto bench_func = [&](auto send_buf, auto recv_buf, size_t num_elems, 
+                        auto *gpu_comm, const auto& executor) -> Future<> {
+      auto future = gpu_comm->AllReduce(send_buf, recv_buf, dtype, num_elems, 
+            ReductionKind::SUM, executor);
+      TF_RETURN_IF_ERROR(gpu_comm->Barrier(executor));
+      //TF_RETURN_IF_ERROR(comm->Quiet(executor));
+      return future;
+  };
+  tsl::thread::ThreadPool pool(tsl::Env::Default(), "BenchmarkCollectivesOp",
+                                 executors.size());
+    for (size_t i = 0; i < executors.size(); ++i) {
+      pool.Schedule([&, i]() {
+        auto executor_context = executors[i]->Activate();
+        auto result = BenchmarkCollectivesOp(dtype, gpu_coll, comms[i].get(), executors[i], 
+            num_peers, min_elems, max_elems, bench_func);
+        if (!result.ok()) {
+            LOG(ERROR) << "BenchmarkCollectivesOp failed: " << result.message();
+            return;
+        }
+        LOG(INFO) << "BenchmarkCollectivesOp succeeded";
+      });
+    }
+}
+
 
 }  // namespace
 }  // namespace xla::gpu
