@@ -18,12 +18,10 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -94,7 +92,6 @@ limitations under the License.
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/instruction_fusion.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -106,8 +103,7 @@ limitations under the License.
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
-namespace xla {
-namespace gpu {
+namespace xla::xtile {
 
 namespace arith = ::mlir::arith;
 namespace stablehlo = ::mlir::stablehlo;
@@ -119,17 +115,6 @@ using ::mlir::MLIRContext;
 using ::mlir::Type;
 using ::mlir::Value;
 using ::mlir::ValueRange;
-
-using ::xla::xtile::Cast;
-using ::xla::xtile::CreateConst;
-using ::xla::xtile::EmitConstant;
-using ::xla::xtile::EmitElementwise;
-using ::xla::xtile::EmitScope;
-using ::xla::xtile::GetPaddedTileSizes;
-using ::xla::xtile::PrimitiveTypeToMlirType;
-using ::xla::xtile::StorageType;
-using ::xla::xtile::TensorValue;
-using ::xla::xtile::TileInfo;
 
 namespace {
 
@@ -1520,5 +1505,4 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
   return xtile_module;
 }
 
-}  // namespace gpu
-}  // namespace xla
+}  // namespace xla::xtile
