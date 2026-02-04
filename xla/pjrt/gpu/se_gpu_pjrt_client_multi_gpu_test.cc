@@ -1285,7 +1285,8 @@ absl::StatusOr<MultiProcessGpuClientSetup> SetUpMultiProcessGpuClient(
   options.allowed_devices = {rank_id};
 
   LOG(INFO) << log_prefix << ": creating PjRtClient";
-  ABSL_ASSIGN_OR_RETURN(prepared_test.client, GetStreamExecutorGpuClient(options));
+  ABSL_ASSIGN_OR_RETURN(prepared_test.client,
+                        GetStreamExecutorGpuClient(options));
   LOG(INFO) << log_prefix << ": PjRtClient created";
 
   return prepared_test;
@@ -1339,9 +1340,10 @@ absl::Status SuccessfulCrossHostSendReceiveTestBody(bool is_sender,
       transfer_keys.push_back(CrossHostTransferKey(i));
     };
 
-    ABSL_ASSIGN_OR_RETURN(std::vector<Future<>> send_futures,
-                     client->CrossHostSendBuffers(raw_buffers, dst_device_ids,
-                                                  std::move(transfer_keys)));
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<Future<>> send_futures,
+        client->CrossHostSendBuffers(raw_buffers, dst_device_ids,
+                                     std::move(transfer_keys)));
 
     EXPECT_EQ(send_futures.size(), num_arrays);
     for (int i = 0; i < num_arrays; ++i) {
@@ -1361,10 +1363,11 @@ absl::Status SuccessfulCrossHostSendReceiveTestBody(bool is_sender,
     }
 
     LOG(INFO) << log_prefix << ": calling CrossHostReceiveBuffers";
-    ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<PjRtBuffer>> receive_buffers,
-                     client->CrossHostReceiveBuffers(
-                         client->addressable_devices()[0], shapes,
-                         src_device_ids, std::move(transfer_keys)));
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<std::unique_ptr<PjRtBuffer>> receive_buffers,
+        client->CrossHostReceiveBuffers(client->addressable_devices()[0],
+                                        shapes, src_device_ids,
+                                        std::move(transfer_keys)));
     LOG(INFO) << log_prefix
               << ": CrossHostReceiveBuffers returned, waiting for ready";
 
@@ -1382,7 +1385,7 @@ absl::Status SuccessfulCrossHostSendReceiveTestBody(bool is_sender,
       LOG(INFO) << log_prefix << ": receive " << i << " completed";
 
       ABSL_ASSIGN_OR_RETURN(std::shared_ptr<xla::Literal> recv_literal,
-                       receive_buffers[i]->ToLiteral().Await());
+                            receive_buffers[i]->ToLiteral().Await());
 
       EXPECT_TRUE(LiteralTestUtil::Equal(expected_literal, *recv_literal));
       LOG(INFO) << log_prefix << ": verification of receive " << i
@@ -1536,8 +1539,9 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
     transferred_data.push_back(std::move(curr_data));
   }
   Shape shape = ShapeUtil::MakeShape(S32, {256});
-  ABSL_ASSIGN_OR_RETURN(PjRtMemorySpace * default_memory_space,
-                   client->addressable_devices()[0]->default_memory_space());
+  ABSL_ASSIGN_OR_RETURN(
+      PjRtMemorySpace * default_memory_space,
+      client->addressable_devices()[0]->default_memory_space());
 
   // Initial values that will be populated in receive buffers (all zeros).
   std::vector<int32_t> initial_zero_values(256, 0);
@@ -1593,7 +1597,7 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
             ->AcquireScopedRawBuffer(
                 [&](PjRtRawBufferRef buf_raw_buffer,
                     PjRtDeviceEventRefVector buf_definition_events) mutable
-                    -> absl::StatusOr<PjRtDeviceEventRef> {
+                -> absl::StatusOr<PjRtDeviceEventRef> {
                   raw_buffer = std::move(buf_raw_buffer);
                   ConsumeEvents(
                       std::move(buf_definition_events),
@@ -1639,7 +1643,7 @@ absl::Status SuccessfulCrossHostTransferTestBody(int rank_id,
   // uncorrupted.
   for (int i = 0; i < num_transfers; ++i) {
     ABSL_ASSIGN_OR_RETURN(std::shared_ptr<xla::Literal> buffer_literal,
-                     owned_buffers[i]->ToLiteral().Await());
+                          owned_buffers[i]->ToLiteral().Await());
     auto expected_literal = LiteralUtil::CreateR1<int32_t>(transferred_data[i]);
     EXPECT_TRUE(LiteralTestUtil::Equal(expected_literal, *buffer_literal));
     LOG(INFO) << log_prefix << ": finished verification of transfer " << i;
@@ -1863,19 +1867,20 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
   options.kv_store = GetDistributedKeyValueStore(distributed_client,
                                                  /*key_prefix=*/"gpu:");
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtClient> client,
-                   GetStreamExecutorGpuClient(options));
+                        GetStreamExecutorGpuClient(options));
   TF_RET_CHECK(client->platform_name() == xla::CudaName() ||
                client->platform_name() == xla::RocmName() ||
                client->platform_name() == xla::OneapiName());
   if (client->platform_name() == xla::CudaName()) {
 #if GOOGLE_CUDA
-    ABSL_ASSIGN_OR_RETURN(se::CudaComputeCapability cc,
-                     se::CudaComputeCapability::FromString(
-                         std::get<std::string>(client->addressable_devices()
-                                                   .front()
-                                                   ->description()
-                                                   .Attributes()
-                                                   .at("compute_capability"))));
+    ABSL_ASSIGN_OR_RETURN(
+        se::CudaComputeCapability cc,
+        se::CudaComputeCapability::FromString(
+            std::get<std::string>(client->addressable_devices()
+                                      .front()
+                                      ->description()
+                                      .Attributes()
+                                      .at("compute_capability"))));
     if (!cc.IsAtLeastAmpere()) {
       return absl::FailedPreconditionError("Ampere+ GPU required");
     }
@@ -1910,15 +1915,16 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
     }
   )";
 
-  ABSL_ASSIGN_OR_RETURN(auto hlo_module, ParseAndReturnUnverifiedModule(kHlo, {}));
+  ABSL_ASSIGN_OR_RETURN(auto hlo_module,
+                        ParseAndReturnUnverifiedModule(kHlo, {}));
   xla::XlaComputation computation(hlo_module->ToProto());
 
   std::unique_ptr<PjRtLoadedExecutable> executable;
   ABSL_ASSIGN_OR_RETURN(executable,
-                   client->CompileAndLoad(computation, compile_options));
+                        client->CompileAndLoad(computation, compile_options));
 
   ABSL_ASSIGN_OR_RETURN(auto hlo_modules,
-                   executable->GetExecutable()->GetHloModules());
+                        executable->GetExecutable()->GetHloModules());
   const std::string optimized_hlo = hlo_modules.front()->ToString();
   TF_RET_CHECK(absl::StrContains(optimized_hlo, "triton_gemm") ||
                absl::StrContains(optimized_hlo, "__triton_nested_gemm_fusion"))
@@ -1932,6 +1938,147 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::ValuesIn(std::vector<ShardedAutotuningTestInfo>{
         {2, 0}, {2, 1}, {2, 2}}),
     ShardedAutotuningTestInfo::Name);
+
+// Spawns two OS processes with one GPU each, forces a specific GPU collectives
+// backend (mori/rccl/nccl), and verifies that multi-process init succeeds and
+// that a cross-process all-reduce produces the correct reduced result.
+constexpr int kMultiProcessNumNodes = 2;
+
+class MultiProcessAllReduceTest : public ::testing::TestWithParam<std::string> {
+};
+
+TEST_P(MultiProcessAllReduceTest, AllReduce) {
+  const std::string impl = GetParam();
+  tsl::SubProcess child[kMultiProcessNumNodes];
+  for (int node_id = 0; node_id < kMultiProcessNumNodes; ++node_id) {
+    std::vector<std::string> argv;
+    argv.push_back(test_binary_name);
+    argv.push_back("multi_process_all_reduce_test");
+    argv.push_back("--test_to_run=MultiProcessAllReduceHelper");
+    argv.push_back(absl::StrFormat("--node_id=%d", node_id));
+    argv.push_back(
+        absl::StrFormat("--xla_gpu_collectives_implementation=%s", impl));
+    child[node_id].SetProgram(test_binary_name, argv);
+    child[node_id].SetChannelAction(tsl::CHAN_STDOUT, tsl::ACTION_PIPE);
+    child[node_id].SetChannelAction(tsl::CHAN_STDERR, tsl::ACTION_PIPE);
+    ASSERT_TRUE(child[node_id].Start()) << "node " << node_id;
+  }
+  for (int node_id = 0; node_id < kMultiProcessNumNodes; ++node_id) {
+    std::string stdout_str;
+    std::string stderr_str;
+    int child_status =
+        child[node_id].Communicate(nullptr, &stdout_str, &stderr_str);
+    if (WIFEXITED(child_status) &&
+        WEXITSTATUS(child_status) ==
+            static_cast<int>(absl::StatusCode::kFailedPrecondition)) {
+      GTEST_SKIP() << "Requires >= " << kMultiProcessNumNodes << " GPUs.";
+    }
+    EXPECT_EQ(child_status, 0) << "node " << node_id << "\nstdout:\n"
+                               << stdout_str << "\nstderr:\n"
+                               << stderr_str;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(Backends, MultiProcessAllReduceTest,
+                         ::testing::ValuesIn(std::vector<std::string> {
+#if TENSORFLOW_USE_ROCM
+                           "rccl", "mori",
+#else
+        "nccl",
+#endif
+                         }),
+                         [](const ::testing::TestParamInfo<std::string>& info) {
+                           return info.param;
+                         });
+
+absl::Status MultiProcessAllReduceTestBody(int node_id) {
+  std::string log_prefix = absl::StrFormat("mp_node_%d", node_id);
+
+  // MORI requires a symmetric heap; provide a default size if the operator
+  // hasn't set one for this environment. Harmless for rccl/nccl (ignored).
+  tsl::setenv("MORI_SHMEM_HEAP_SIZE", "1073741824", /*overwrite=*/false);
+
+  // Rank 0 hosts the coordination service so both processes can find each
+  // other; the shared key-value store also carries the collectives bootstrap
+  // id.
+  std::unique_ptr<xla::DistributedRuntimeService> service;
+  if (node_id == 0) {
+    ABSL_ASSIGN_OR_RETURN(
+        service,
+        xla::GetDistributedRuntimeService(
+            "127.0.0.1:12349", xla::CoordinationServiceImpl::Options{
+                                   /*num_nodes=*/kMultiProcessNumNodes}));
+  }
+
+  xla::DistributedRuntimeClient::Options distributed_options;
+  distributed_options.node_id = node_id;
+  distributed_options.init_timeout = absl::Seconds(120);
+  auto distributed_client =
+      GetDistributedRuntimeClient("127.0.0.1:12349", distributed_options);
+  CHECK_OK(distributed_client->Connect());
+
+  GpuClientOptions options = GetTestGpuClientOptions(kMultiProcessNumNodes);
+  options.node_id = node_id;
+  options.num_nodes = kMultiProcessNumNodes;
+  options.allowed_devices = {node_id};
+  options.kv_store =
+      GetDistributedKeyValueStore(distributed_client, /*key_prefix=*/"mp:");
+
+  // Building the client sets up the selected collectives backend. For MORI this
+  // eagerly initializes the symmetric heap; rccl/nccl initialize lazily at the
+  // first collective.
+  LOG(INFO) << log_prefix << ": creating PjRtClient";
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtClient> client,
+                        GetStreamExecutorGpuClient(options));
+
+  if (client->device_count() < kMultiProcessNumNodes) {
+    return absl::FailedPreconditionError(
+        "MultiProcessAllReduce requires >= 2 GPUs");
+  }
+  TF_RET_CHECK(client->addressable_device_count() == 1);
+  LOG(INFO) << log_prefix << ": PjRtClient created";
+
+  // The summed result is kMultiProcessNumNodes * [0, 1, 2, 3].
+  constexpr char kAllReduceHlo[] = R"(
+    HloModule allreduce
+    add {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT s = f32[] add(a, b)
+    }
+    ENTRY main {
+      c = f32[4] iota(), iota_dimension=0
+      ROOT ar = f32[4] all-reduce(c), replica_groups={{0,1}}, to_apply=add
+    }
+  )";
+  ABSL_ASSIGN_OR_RETURN(auto hlo_module,
+                        ParseAndReturnUnverifiedModule(kAllReduceHlo, {}));
+  xla::XlaComputation computation(hlo_module->ToProto());
+
+  CompileOptions compile_options;
+  compile_options.executable_build_options.set_num_replicas(
+      kMultiProcessNumNodes);
+  compile_options.executable_build_options.set_num_partitions(1);
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtLoadedExecutable> executable,
+                        client->CompileAndLoad(computation, compile_options));
+
+  LOG(INFO) << log_prefix << ": executing all-reduce";
+  ABSL_ASSIGN_OR_RETURN(auto results,
+                        executable->Execute({{}}, ExecuteOptions()));
+  TF_RET_CHECK(results.size() == 1);
+  TF_RET_CHECK(results[0].size() == 1);
+  ABSL_RETURN_IF_ERROR(results[0][0]->GetReadyFuture().Await());
+
+  ABSL_ASSIGN_OR_RETURN(std::shared_ptr<xla::Literal> result_literal,
+                        results[0][0]->ToLiteral().Await());
+  const float n = static_cast<float>(kMultiProcessNumNodes);
+  auto expected_literal =
+      LiteralUtil::CreateR1<float>({0.0f, n, 2.0f * n, 3.0f * n});
+  TF_RET_CHECK(LiteralTestUtil::Equal(expected_literal, *result_literal));
+  LOG(INFO) << log_prefix << ": all-reduce result verified";
+
+  return absl::OkStatus();
+}
 
 }  // namespace
 }  // namespace xla

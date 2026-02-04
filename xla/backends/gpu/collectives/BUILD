@@ -1,4 +1,5 @@
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured",
+     "rocm_library")
 load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured")
@@ -1266,6 +1267,38 @@ cc_library(
     ],
 )
 
+
+rocm_library(
+    name = "mori_kernels",
+    hdrs = ["mori_kernels.h"],
+    srcs = [
+        "mori_kernels.cu.cc",
+    ],
+    copts = ["-U__HIP_DISABLE_CPP_FUNCTIONS__"],   # <-- only if needed
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        "//xla/service:collective_opt_utils",
+        "@com_google_absl//absl/status",
+        "@roc_mori//src/shmem:mori_shmem",
+        "@roc_mori//src/application:mori_application",
+        # These are used for local_mori_configure.bzl
+        #"@roc_mori//:mori_headers",
+        #"@roc_mori//:mori_libs",
+    ],
+    # additional_linker_inputs = ["@roc_mori//:libmori_shmem_dev"],
+    # linkopts = [
+    #     "-Wl,--whole-archive",
+    #     "$(location @roc_mori//:libmori_shmem_dev)",
+    #     "-Wl,--no-whole-archive",
+    # ],
+    linkstatic = True,
+    #alwayslink = True,
+)
+
 cc_library(
     name = "mori_collectives",
     srcs = [
@@ -1275,7 +1308,6 @@ cc_library(
     hdrs = [
         "mori_collectives.h",
         "mori_communicator.h",
-        "mori_stub.h",
     ],
     tags = [
         "gpu",
@@ -1306,6 +1338,7 @@ cc_library(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/rocm:rocm_status",
         "//xla/tsl/platform:env",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
@@ -1328,7 +1361,10 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:numbers",
-    ],
+    ] + if_rocm_is_configured([
+        ":mori_kernels",
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
     alwayslink = True,
 )
 
