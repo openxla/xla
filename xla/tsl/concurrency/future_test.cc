@@ -20,12 +20,14 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/types/span.h"
 #include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
@@ -39,6 +41,11 @@ using ::absl_testing::IsOk;
 using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
 using ::testing::Not;
+
+// Check that we correctly detect move-only types.
+static_assert(internal::IsMoveOnly<std::unique_ptr<int32_t>>::value);
+static_assert(
+    internal::IsMoveOnly<std::vector<std::unique_ptr<int32_t>>>::value);
 
 // Inline executor that counts the number of tasks executed.
 struct CountingExecutor : public Executor {
@@ -979,6 +986,55 @@ TEST(FutureTest, JoinErrors) {
   promise1.Set(absl::InternalError("error #1"));
   EXPECT_TRUE(join_two.IsReady());
   EXPECT_EQ(join_two.Await(), absl::InternalError("error #0"));
+}
+
+TEST(FutureTest, JoinCopyableFutures) {
+  auto [promise0, future0] = MakePromise<int32_t>();
+  auto [promise1, future1] = MakePromise<int32_t>();
+
+  std::vector<Future<int32_t>> futures0 = {future0};
+  std::vector<Future<int32_t>> futures1 = {future0, future1};
+
+  Future<std::vector<int32_t>> join_one = JoinFutures<int32_t>(futures0);
+  EXPECT_FALSE(join_one.IsReady());
+
+  Future<std::vector<int32_t>> join_two = JoinFutures<int32_t>(futures1);
+  EXPECT_FALSE(join_two.IsReady());
+
+  promise0.Set(1);
+  EXPECT_TRUE(join_one.IsReady());
+  EXPECT_FALSE(join_two.IsReady());
+
+  promise1.Set(2);
+  EXPECT_TRUE(join_two.IsReady());
+
+  ASSERT_OK_AND_ASSIGN(std::vector<int32_t> v0, join_one.Await());
+  ASSERT_OK_AND_ASSIGN(std::vector<int32_t> v1, join_two.Await());
+
+  EXPECT_EQ(v0, std::vector<int32_t>({1}));
+  EXPECT_EQ(v1, std::vector<int32_t>({1, 2}));
+}
+
+TEST(FutureTest, JoinMoveOnlyFuture) {
+  auto [promise0, future0] = MakePromise<std::unique_ptr<int32_t>>();
+  auto [promise1, future1] = MakePromise<std::unique_ptr<int32_t>>();
+
+  std::vector<Future<std::unique_ptr<int32_t>>> futures;
+  futures.push_back(std::move(future0));
+  futures.push_back(std::move(future1));
+
+  Future<std::vector<std::unique_ptr<int32_t>>> join_two =
+      JoinFutures<std::unique_ptr<int32_t>>(absl::MakeSpan(futures));
+  EXPECT_FALSE(join_two.IsReady());
+
+  promise0.Set(std::make_unique<int32_t>(1));
+  promise1.Set(std::make_unique<int32_t>(2));
+  EXPECT_TRUE(join_two.IsReady());
+
+  ASSERT_OK_AND_ASSIGN(auto vec, std::move(join_two).Await());
+  ASSERT_EQ(vec.size(), 2);
+  EXPECT_EQ(*vec[0], 1);
+  EXPECT_EQ(*vec[1], 2);
 }
 
 TEST(FutureTest, WithProfiling) {

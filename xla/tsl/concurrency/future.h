@@ -17,18 +17,22 @@ limitations under the License.
 #define XLA_TSL_CONCURRENCY_FUTURE_H_
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "absl/base/attributes.h"
 #include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/functional/bind_front.h"
 #include "absl/meta/type_traits.h"
 #include "absl/status/status.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
@@ -69,6 +73,20 @@ class Promise;
 // Returns a `Future` that will be successful if all `futures` complete
 // successfully, or return a first encountered error.
 Future<> JoinFutures(absl::Span<const Future<>> futures);
+
+// Returns a `Future` that will be successful if all `futures` complete
+// successfully, or return a first encountered error. Copies values from
+// completed futures into the result vector.
+template <typename T, std::enable_if_t<!std::is_void_v<T>>* = nullptr>
+Future<std::vector<T>> JoinFutures(absl::Span<const Future<T>> futures);
+
+// Returns a `Future` that will be successful if all `futures` complete
+// successfully, or return a first encountered error. Moves values from
+// completed futures into the result vector and leaves `futures` in move-from
+// state (for copyable `T` it still incurs a copy overhead, see `OnReady`
+// documentation for details).
+template <typename T, std::enable_if_t<!std::is_void_v<T>>* = nullptr>
+Future<std::vector<T>> JoinFutures(absl::Span<Future<T>> futures);
 
 // Helpers for using Futures.
 class FutureHelpers {
@@ -150,11 +168,31 @@ struct FutureType<absl::StatusOr<T>> { using type = T; };
 template <typename T>
 using future_type_t = typename FutureType<T>::type;  // NOLINT
 
+// Detect if type `T` is move only.
+template <typename T>
+struct IsMoveOnly {
+  static constexpr bool value =
+      std::is_move_constructible_v<T> && !std::is_copy_constructible_v<T>;
+};
+
+// STL containers do not correctly report `std::is_copy_constructible_v` for
+// move-only value type.
+template <typename T>
+struct IsMoveOnly<std::vector<T>> {
+  static constexpr bool value = IsMoveOnly<T>::value;
+};
+
+// Unwrap `absl::StatusOr` container.
+template <typename T>
+struct IsMoveOnly<absl::StatusOr<T>> {
+  static constexpr bool value = IsMoveOnly<T>::value;
+};
+
 // A base class for a stateful future Future<T> and a stateless future Future<>.
 // If `is_move_only` is true, Future derived from this class acts as a move-only
 // type and the value can be passed to the caller only using move assignment
 // (applied to Await and OnReady APIs).
-template <typename T, bool is_move_only = !std::is_copy_constructible_v<T>>
+template <typename T, bool is_move_only = IsMoveOnly<T>::value>
 class FutureBase : public FutureMoveControl<is_move_only> {
   static_assert(internal::is_status_v<T> || internal::is_status_or_v<T>,
                 "Future value type must be absl::Status or absl::StatusOr");
@@ -1287,6 +1325,96 @@ auto Future<void>::SetPromise(Promise<R> promise, F&& f) {
       promise.Set(f());
     }
   };
+}
+
+//===----------------------------------------------------------------------===//
+// JoinFutures implementation.
+//===----------------------------------------------------------------------===//
+
+namespace internal {
+
+// A state for tracking ongoing `JoinFutures<T>` operation.
+template <typename T>
+class JoinState {
+ public:
+  JoinState(int32_t size, Promise<std::vector<T>> promise)
+      : pending_count_(size), promise_(std::move(promise)) {
+    values_.reserve(size);
+  }
+
+  void Update(absl::StatusOr<T> value) {
+    if (auto& status = value.status(); ABSL_PREDICT_FALSE(!status.ok())) {
+      absl::MutexLock lock(mu_);
+      if (VLOG_IS_ON(2)) {
+        if (!status_.ok() && status.code() != status_.code()) {
+          VLOG(2) << "Ignoring status " << status << " because first error was "
+                  << status_;
+        }
+      }
+      status_.Update(status);
+    } else {
+      absl::MutexLock lock(mu_);
+      values_.push_back(*std::move(value));
+    }
+
+    int32_t pending_count =
+        pending_count_.fetch_sub(1, std::memory_order_acq_rel);
+    CHECK_GE(pending_count, 1) << "Pending count can't drop below 0";
+
+    if (pending_count == 1) {
+      absl::MutexLock lock(mu_);
+      promise_.Set(std::move(values_));
+    }
+  }
+
+ private:
+  std::atomic<int32_t> pending_count_;
+  Promise<std::vector<T>> promise_;
+  std::vector<T> values_;
+
+  absl::Mutex mu_;
+  absl::Status status_ ABSL_GUARDED_BY(&mu_);
+};
+
+}  // namespace internal
+
+template <typename T, std::enable_if_t<!std::is_void_v<T>>*>
+Future<std::vector<T>> JoinFutures(absl::Span<const Future<T>> futures) {
+  VLOG(2) << "tsl::JoinFutures: " << futures.size() << " futures";
+
+  if (futures.empty()) {
+    return Future<std::vector<T>>({});
+  }
+
+  auto [promise, future] = MakePromise<std::vector<T>>();
+  auto state = std::make_shared<internal::JoinState<T>>(futures.size(),
+                                                        std::move(promise));
+
+  for (const Future<T>& future : futures) {
+    future.OnReady(absl::bind_front(&internal::JoinState<T>::Update, state));
+  }
+
+  return std::move(future);
+}
+
+template <typename T, std::enable_if_t<!std::is_void_v<T>>*>
+Future<std::vector<T>> JoinFutures(absl::Span<Future<T>> futures) {
+  VLOG(2) << "tsl::JoinFutures: " << futures.size() << " futures";
+
+  if (futures.empty()) {
+    return Future<std::vector<T>>({});
+  }
+
+  auto [promise, future] = MakePromise<std::vector<T>>();
+  auto state = std::make_shared<internal::JoinState<T>>(futures.size(),
+                                                        std::move(promise));
+
+  for (Future<T>& future : futures) {
+    std::move(future).OnReady(
+        absl::bind_front(&internal::JoinState<T>::Update, state));
+  }
+
+  return std::move(future);
 }
 
 }  // namespace tsl
