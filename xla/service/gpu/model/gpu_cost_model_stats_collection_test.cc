@@ -15,14 +15,13 @@ limitations under the License.
 
 #include "xla/service/gpu/model/gpu_cost_model_stats_collection.h"
 
-#include <stdint.h>
-
 #include <memory>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "mlir/IR/MLIRContext.h"
+#include <stdint.h>
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -43,7 +42,7 @@ using ::testing::Truly;
 class GpuCostModelStatsCollectionTest : public HloHardwareIndependentTestBase {
  public:
   GpuCostModelStatsCollection cost_model_stats_{
-      TestGpuDeviceInfo::RTXH100SXMDeviceInfo(),
+      TestGpuDeviceInfo::H100SXMDeviceInfo(),
       GpuHloCostAnalysis::Options{.count_multiple_input_accesses = true},
       &mlir_context_};
 
