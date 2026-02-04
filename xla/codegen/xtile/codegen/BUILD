@@ -91,6 +91,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/tools:hlo_decomposer_lib",
+        "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",

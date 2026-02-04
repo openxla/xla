@@ -97,6 +97,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tools/hlo_decomposer.h"
+#include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -1497,9 +1498,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     // be shared between backends.
     mlir::PassManager pm(&mlir_context);
     pm.addPass(xtile::createVerifyLegalXTileOpsPass());
-    if (mlir::failed(pm.run(*xtile_module))) {
-      return Internal("Failed to verify XTile module.");
-    }
+    tsl::StatusScopedDiagnosticHandler diagnostic_handler(&mlir_context);
+    TF_RETURN_IF_ERROR(diagnostic_handler.consumeStatus(pm.run(*xtile_module)));
   }
 
   return xtile_module;
