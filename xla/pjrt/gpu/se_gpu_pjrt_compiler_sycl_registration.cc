@@ -23,7 +23,7 @@ limitations under the License.
 namespace xla {
 
 STREAM_EXECUTOR_REGISTER_MODULE_INITIALIZER(pjrt_register_se_gpu_compiler, {
-  PjRtRegisterCompiler(OneapiName(), std::make_unique<StreamExecutorGpuCompiler>(
+  PjRtRegisterDefaultCompiler(OneapiName(), std::make_unique<StreamExecutorGpuCompiler>(
                                        stream_executor::sycl::kSyclPlatformId));
 });
 
