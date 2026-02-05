@@ -1975,7 +1975,9 @@ PjRtStreamExecutorLoadedExecutable::StartRawExecutable(
                            ->local_device_state()
                            ->local_device_id()
                            .value();
-  TF_RETURN_IF_ERROR(executable_->VerifyRunDeviceCompatible(device_ordinal));
+  if (!addressable_devices_.empty()) {
+    TF_RETURN_IF_ERROR(executable_->VerifyRunDeviceCompatible(device_ordinal));
+  }
   VLOG(1) << "Replica " << replica << ", partition " << partition
           << " mapped to device ordinal for execution: " << device_ordinal;
   return std::make_unique<PjRtStreamExecutorRawLoadedExecutable>(
