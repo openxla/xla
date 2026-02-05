@@ -422,7 +422,7 @@ cc_library(
     srcs = ["codegen_test_base.cc"],
     hdrs = ["codegen_test_base.h"],
     deps = [
-        ":hlo_test_base_with_mlir_context",
+        ":hlo_test_base",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",
         "//xla/service:executable",
@@ -4007,16 +4007,5 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_for_library",
-    ],
-)
-
-cc_library(
-    name = "hlo_test_base_with_mlir_context",
-    testonly = True,
-    hdrs = ["hlo_test_base_with_mlir_context.h"],
-    deps = [
-        ":hlo_test_base",
-        "//xla/hlo/analysis:symbolic_expr",
-        "@llvm-project//mlir:IR",
     ],
 )

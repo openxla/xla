@@ -493,6 +493,7 @@ xla_test(
         ":support",
         ":test_utils",
         ":xtile_compiler",
+        ":xtile_test_base",
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
         "//xla:literal",
@@ -568,7 +569,6 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:hlo_test_base",
-        "//xla/tests:hlo_test_base_with_mlir_context",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
@@ -583,6 +583,37 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:ir_headers",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
+    name = "xtile_test_base",
+    testonly = True,
+    srcs = ["xtile_test_base.cc"],
+    hdrs = ["xtile_test_base.h"],
+    deps = [
+        ":xtile_compiler",
+        "//xla:status_macros",
+        "//xla:util",
+        "//xla/codegen/tiling:symbolic_tile_analysis",
+        "//xla/codegen/tiling:tiling_specification",
+        "//xla/codegen/xtile/codegen:fusion_emitter",
+        "//xla/hlo/analysis:symbolic_expr",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/service:instruction_fusion",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu/model:block_level_parameters",
+        "//xla/service/gpu/model:triton_emitter_constraints",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
     ],
 )
@@ -655,19 +686,13 @@ xla_test(
 xla_cc_test(
     name = "fusion_emitter_shared_dialect_test",
     srcs = ["fusion_emitter_shared_dialect_test.cc"],
-    # TODO(b/353912594): this test does not need to run on GPU, but it is broken on CPU in OSS.
-    # Force it to run on GPU temporarily in order to get important OSS coverage.
-    tags = [
-        "gpu",
-        "no_mac",
-        "pjrt_migration_candidate",
-    ],
+    tags = ["no_mac"],
     deps = [
-        ":test_utils",
+        ":xtile_test_base",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service/gpu/model:block_level_parameters",
-        "//xla/tests:hlo_test_base_with_mlir_context",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
