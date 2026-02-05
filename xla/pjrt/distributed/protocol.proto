@@ -53,7 +53,7 @@ message DeviceProto {
 
   // The following fields are present in the GlobalTopologyProto message
   // returned by EnumerateDevices() but not in the LocalTopologyProto messages
-  // passed to EnumerateDevices(). In other words, the coordinator node
+  // passed to EnumerateDevices(). In other words, the coordinator process
   // determines the global device IDs during EnumerateDevices().
   int32 global_device_id = 4;  // Globally unique ID number.
 
@@ -101,7 +101,9 @@ message DeviceProto {
 }
 
 message LocalTopologyProto {
-  int32 node_id = 1;
+  // Unique id of the communicating process in the [0, num_processes) range.
+  int32 process_id = 1;
+
   // Unique per OS kernel restart to uniquely identify a host.
   // See /proc/sys/kernel/random/boot_id.
   string boot_id = 2;
@@ -112,5 +114,5 @@ message LocalTopologyProto {
 }
 
 message GlobalTopologyProto {
-  repeated LocalTopologyProto nodes = 1;
+  repeated LocalTopologyProto processes = 1;
 }
