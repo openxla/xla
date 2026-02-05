@@ -794,6 +794,7 @@ cc_library(
         "@riegeli//riegeli/bytes:string_reader",
         "@riegeli//riegeli/bytes:string_writer",
         "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:context",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/profiler/lib:connected_traceme",

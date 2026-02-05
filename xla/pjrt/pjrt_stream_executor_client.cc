@@ -167,6 +167,7 @@ limitations under the License.
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
+#include "tsl/platform/context.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/mem.h"
 #include "tsl/profiler/lib/connected_traceme.h"
@@ -814,7 +815,7 @@ PjRtStreamExecutorClient::CreateLinkedEventPromise(
   TF_ASSIGN_OR_RETURN(LocalDeviceState * local_device,
                       device->GetLocalDeviceState());
   auto result = tsl::MakeRef<PjRtStreamExecutorDeviceEventPromise>(
-      memory_space, local_device, async_work_runner());
+      this, local_device, async_work_runner());
   const auto& event = result->event();
   return std::pair<tsl::RCReference<PjRtDeviceEventPromise>,
                    tsl::RCReference<PjRtDeviceEvent>>(
@@ -1699,230 +1700,269 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
   RecvDeviceMemoryFunction recv_device_memory =
       ConvertRecvCallbacksToRecvFunction(replica_, options);
 
-  ExecutableRunOptions run_options;
-  run_options.set_stream(device_state->compute_stream());
-  run_options.set_device_ordinal(device_state->local_device_id().value());
-  run_options.set_local_device_count(client_->client()->device_count());
+  auto launch_on_device =
+      [device_state, gpu_run_options = client_->gpu_run_options(options),
+       launch_id = options.launch_id, run_id = run_id_,
+       context = options.context, client = client_, device = device_,
+       device_assignment = device_assignment_,
+       send_device_memory = std::move(send_device_memory),
+       recv_device_memory = std::move(recv_device_memory),
+       inputs = std::vector<tsl::RCReference<CommonPjRtRawBuffer>>(
+           inputs.begin(), inputs.end()),
+       results = std::vector<tsl::RCReference<CommonPjRtRawBuffer>>(
+           results.begin(), results.end()),
+       device_ordinal, executable = executable_,
+       execution_profile = options.execution_profile, is_predetermined_error,
+       parameter_is_tupled_arguments = parameter_is_tupled_arguments_,
+       on_device_executable_parameter_shapes =
+           on_device_executable_parameter_shapes_,
+       replica = replica_, partition = partition_,
+       extra_deps =
+           std::move(*tensorflow::down_cast<PjRtStreamExecutorDeviceEventSet*>(
+                         &extra_deps))
+               .event_refs(),
+       control_deps =
+           std::move(*tensorflow::down_cast<PjRtStreamExecutorDeviceEventSet*>(
+                         &control_deps))
+               .event_refs()]() mutable -> tsl::RCReference<PjRtDeviceEvent> {
+    ExecutableRunOptions run_options;
+    run_options.set_stream(device_state->compute_stream());
+    run_options.set_device_ordinal(device_state->local_device_id().value());
+    run_options.set_local_device_count(client->client()->device_count());
 
-  run_options.set_physical_device_ordinal(
-      device_state->local_hardware_id().value());
-  run_options.set_host_to_device_stream(device_state->host_to_device_stream());
-  run_options.set_device_to_host_stream(device_state->GetDeviceToHostStream());
-  run_options.set_allocator(client_->allocator());
-  run_options.set_intra_op_thread_pool(
-      client_->client()->backend().eigen_intra_op_thread_pool_device());
-  run_options.set_device_assignment(device_assignment_.get());
-  if (options.launch_id != 0) {
-    run_options.set_run_id(RunId(options.launch_id));
-  } else {
-    run_options.set_run_id(run_id_);
-  }
-  run_options.set_rng_seed(device_state->GetNewPrngSeed());
-  run_options.set_gpu_executable_run_options(client_->gpu_run_options(options));
-  run_options.set_launch_id(options.launch_id);
-  run_options.set_send_device_memory_function(&send_device_memory);
-  run_options.set_recv_device_memory_function(&recv_device_memory);
-  run_options.set_execution_profile(options.execution_profile);
-  if (run_options.launch_id() != 0) {
-    VLOG(3) << "launch id for " << executable_->executable()->name() << ": "
-            << run_options.launch_id();
-  }
-  if (options.context != nullptr) {
-    run_options.set_ffi_execution_context(&options.context->ffi_context());
-  }
-  // The choice of where we wait is arbitrary; the reason for the wait is
-  // pacing to avoid problems such as memory fragmentation and running ahead
-  // too far, not for correctness. Placing it before the executable launch
-  // allows the inputs for the next executable to be fetched even if the
-  // launch is delayed.
-  std::shared_ptr<Semaphore::ScopedReservation> compute_reservation;
-  {
-    tsl::profiler::TraceMe traceme("ComputeSemaphoreAcquire");
-    compute_reservation = std::make_shared<Semaphore::ScopedReservation>(
-        device_state->compute_semaphore().ScopedAcquire(1));
-  }
+    run_options.set_physical_device_ordinal(
+        device_state->local_hardware_id().value());
+    run_options.set_host_to_device_stream(
+        device_state->host_to_device_stream());
+    run_options.set_device_to_host_stream(
+        device_state->GetDeviceToHostStream());
+    run_options.set_allocator(client->allocator());
+    run_options.set_intra_op_thread_pool(
+        client->client()->backend().eigen_intra_op_thread_pool_device());
+    run_options.set_device_assignment(device_assignment.get());
+    run_options.set_run_id(run_id);
+    run_options.set_rng_seed(device_state->GetNewPrngSeed());
+    run_options.set_gpu_executable_run_options(std::move(gpu_run_options));
+    run_options.set_launch_id(launch_id);
+    run_options.set_send_device_memory_function(&send_device_memory);
+    run_options.set_recv_device_memory_function(&recv_device_memory);
+    run_options.set_execution_profile(execution_profile);
+    if (run_options.launch_id() != 0) {
+      VLOG(3) << "launch id for " << executable->executable()->name() << ": "
+              << run_options.launch_id();
+    }
+    if (context != nullptr) {
+      run_options.set_ffi_execution_context(&context->ffi_context());
+    }
+    // The choice of where we wait is arbitrary; the reason for the wait is
+    // pacing to avoid problems such as memory fragmentation and running ahead
+    // too far, not for correctness. Placing it before the executable launch
+    // allows the inputs for the next executable to be fetched even if the
+    // launch is delayed.
+    std::shared_ptr<Semaphore::ScopedReservation> compute_reservation;
+    {
+      tsl::profiler::TraceMe traceme("ComputeSemaphoreAcquire");
+      compute_reservation = std::make_shared<Semaphore::ScopedReservation>(
+          device_state->compute_semaphore().ScopedAcquire(1));
+    }
 
-  absl::Status predetermined_error;
-  for (BufferSequencingEvent* event :
-       tensorflow::down_cast<PjRtStreamExecutorDeviceEventSet*>(&extra_deps)
-           ->events()) {
-    if (event->IsPredeterminedError()) {
+    absl::Status predetermined_error;
+    for (BufferSequencingEventRef& event : extra_deps) {
+      if (event->IsPredeterminedError()) {
+        if (predetermined_error.ok()) {
+          predetermined_error = event->GetDefinedStatus();
+        }
+      }
+      event->WaitForEventOnStream(device_state->compute_stream());
+    }
+
+    for (BufferSequencingEventRef& event : control_deps) {
+      event->WaitForEventOnStream(device_state->compute_stream());
+    }
+
+    if (is_predetermined_error) {
       if (predetermined_error.ok()) {
-        predetermined_error = event->GetDefinedStatus();
+        predetermined_error =
+            absl::InternalError("Unknown predetermined error");
       }
     }
-    event->WaitForEventOnStream(device_state->compute_stream());
-  }
 
-  for (BufferSequencingEvent* event :
-       tensorflow::down_cast<PjRtStreamExecutorDeviceEventSet*>(&control_deps)
-           ->events()) {
-    event->WaitForEventOnStream(device_state->compute_stream());
-  }
+    std::shared_ptr<uint64_t> start_time_ns;
+    std::optional<uint64_t> key = xla::GetDeviceTimeMeasurementKey();
+    // Record the start time of the execution by placing a callback on the
+    // stream directly before the execution. If this callback is added, another
+    // callback will be added directly after the execution to record the elapsed
+    // device time.
+    if (key.has_value()) {
+      start_time_ns = std::make_shared<uint64_t>();
+      auto status = device_state->ThenExecuteCallback(
+          device_state->compute_stream(), [start_time_ns]() {
+            *start_time_ns = tsl::Env::Default()->NowNanos();
+          });
+      if (!status.ok()) {
+        StallStreamOnError(device_state, device_state->compute_stream());
+        LOG(ERROR) << "Problem registering Execute start time: " << status;
+        *start_time_ns = tsl::Env::Default()->NowNanos();
+      }
+    }
 
-  if (is_predetermined_error) {
+    VLOG(1) << "Start calling RunAsync for "
+            << executable->executable()->module().name()
+            << ", device=" << device->DebugString()
+            << ", run_id=" << run_options.run_id().ToInt();
+
+    if (VLOG_IS_ON(2)) {
+      absl::string_view executable_name = executable->executable()->name();
+      absl::Status host_callback_status = run_options.stream()->DoHostCallback(
+          [executable_name, launch_id(run_options.run_id().ToInt()), device]() {
+            VLOG(2) << "Start device execution for " << executable_name
+                    << ", launch_id: " << launch_id
+                    << ", device: " << device->DebugString();
+          });
+      if (!host_callback_status.ok()) {
+        LOG(WARNING)
+            << "Failed to do host callback for start device execution for "
+            << executable_name << ", status = " << host_callback_status;
+      }
+    }
+
+    absl::StatusOr<PjRtStreamExecutorExecutionOutput> result_buffer_or_status;
     if (predetermined_error.ok()) {
-      predetermined_error = absl::InternalError("Unknown predetermined error");
+      result_buffer_or_status =
+          client->RunAsync(*executable, device, inputs, results, run_options,
+                           parameter_is_tupled_arguments,
+                           *on_device_executable_parameter_shapes);
+    } else {
+      result_buffer_or_status = predetermined_error;
     }
-  }
 
-  std::shared_ptr<uint64_t> start_time_ns;
-  std::optional<uint64_t> key = xla::GetDeviceTimeMeasurementKey();
-  // Record the start time of the execution by placing a callback on the stream
-  // directly before the execution. If this callback is added, another callback
-  // will be added directly after the execution to record the elapsed device
-  // time.
-  if (key.has_value()) {
-    start_time_ns = std::make_shared<uint64_t>();
-    auto status = device_state->ThenExecuteCallback(
-        device_state->compute_stream(), [start_time_ns]() {
-          *start_time_ns = tsl::Env::Default()->NowNanos();
-        });
-    if (!status.ok()) {
-      StallStreamOnError(device_state, device_state->compute_stream());
-      LOG(ERROR) << "Problem registering Execute start time: " << status;
-      *start_time_ns = tsl::Env::Default()->NowNanos();
+    if (VLOG_IS_ON(2)) {
+      absl::string_view executable_name = executable->executable()->name();
+      absl::Status host_callback_status = run_options.stream()->DoHostCallback(
+          [executable_name, launch_id(run_options.run_id().ToInt()), device]() {
+            VLOG(2) << "Finish device execution for " << executable_name
+                    << ", launch_id: " << launch_id
+                    << ", device: " << device->DebugString();
+          });
+      if (!host_callback_status.ok()) {
+        LOG(WARNING)
+            << "Failed to do host callback for start device execution for "
+            << executable_name << ", status = " << host_callback_status;
+      }
     }
-  }
 
-  VLOG(1) << "Start calling RunAsync for "
-          << executable_->executable()->module().name()
-          << ", device=" << device_->DebugString()
-          << ", run_id=" << run_options.run_id().ToInt();
+    VLOG(1) << "Finish calling RunAsync for "
+            << executable->executable()->module().name()
+            << ", device=" << device->DebugString()
+            << ", run_id=" << run_options.run_id().ToInt()
+            << ", replica=" << replica << ", partition=" << partition
+            << ", completed, ok=" << result_buffer_or_status.ok();
 
-  if (VLOG_IS_ON(2)) {
-    absl::string_view executable_name = executable_->executable()->name();
-    absl::Status host_callback_status = run_options.stream()->DoHostCallback(
-        [executable_name, launch_id(run_options.run_id().ToInt()),
-         device = device_]() {
-          VLOG(2) << "Start device execution for " << executable_name
-                  << ", launch_id: " << launch_id
-                  << ", device: " << device->DebugString();
-        });
-    if (!host_callback_status.ok()) {
-      LOG(WARNING)
-          << "Failed to do host callback for start device execution for "
-          << executable_name << ", status = " << host_callback_status;
+    // Add a callback on the stream to record the elapsed device time of the
+    // executable execution.
+    //
+    // Do not place other callbacks between the callback recording the start
+    // time and this callback because their execution time will incorrectly
+    // count toward device execution time.
+    //
+    // This callback is only added if there is a valid key to guarantee that
+    // either both or none of the device time measurement callbacks are added to
+    // the stream, and to avoid needing a mutex.
+    if (key.has_value()) {
+      auto status = device_state->ThenExecuteCallback(
+          device_state->compute_stream(),
+          [key, start_time_ns,
+           device_type = GetDeviceType(client->platform_id())]() {
+            auto elapsed =
+                absl::FromUnixNanos(tsl::Env::Default()->NowNanos()) -
+                absl::FromUnixNanos(*start_time_ns);
+            xla::RecordDeviceTimeMeasurement(*key, elapsed, device_type);
+          });
+      if (!status.ok()) {
+        LOG(ERROR) << "Error logging device time.";
+        StallStreamOnError(device_state, device_state->compute_stream());
+        auto device_type = GetDeviceType(client->platform_id());
+        auto elapsed = absl::FromUnixNanos(tsl::Env::Default()->NowNanos()) -
+                       absl::FromUnixNanos(*start_time_ns);
+        xla::RecordDeviceTimeMeasurement(*key, elapsed, device_type);
+      }
     }
-  }
 
-  absl::StatusOr<PjRtStreamExecutorExecutionOutput> result_buffer_or_status;
-  if (predetermined_error.ok()) {
-    result_buffer_or_status =
-        client_->RunAsync(*executable_, device_, inputs, results, run_options,
-                          parameter_is_tupled_arguments_,
-                          *on_device_executable_parameter_shapes_);
+    auto definition_event = [&]() -> tsl::RCReference<PjRtDeviceEvent> {
+      LocalDeviceState* device_state = &(client->device_state(device_ordinal));
+      se::Stream* stream = device_state->compute_stream();
+
+      if (!result_buffer_or_status.ok()) {
+        StallStreamOnError(device_state, stream);
+        return client->CreateErrorDeviceEvent(result_buffer_or_status.status());
+      }
+
+      auto definition_event_or =
+          device_state->GetEventForComputeStreamSyncPoint(
+              device_state->GetNextComputeStreamSyncPoint(),
+              client->async_work_runner());
+      if (!definition_event_or.ok()) {
+        StallStreamOnError(device_state, stream);
+        return client->CreateErrorDeviceEvent(definition_event_or.status());
+      }
+      return tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(
+          std::move(*definition_event_or), "PjRtStreamExecutorLoadedExecutable",
+          "Execute");
+    }();
+    if (device_state->allocation_model() == LocalDeviceState::kSynchronous &&
+        result_buffer_or_status.ok()) {
+      // If we used a transient tuple for the arguments we donated its root
+      // table buffer. In that case, and/or if we donated any input buffers that
+      // were not aliased, the donated buffers are going to be passed back to us
+      // via the execution output. We need to ensure they aren't freed until
+      // after execution completes. (Currently XLA does not support aliasing
+      // tuple tables, so if any donated parameter is a tuple there will be
+      // donated but unaliased buffers.)
+      std::vector<tsl::AsyncValueRef<RawSEDeviceMemory>> buffers_to_release;
+      buffers_to_release.reserve(results.size() + inputs.size());
+      for (auto& node : results) {
+        buffers_to_release.push_back(
+            tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(node.get())
+                ->device_buffer());
+      }
+      for (auto& node : inputs) {
+        buffers_to_release.push_back(
+            tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(node.get())
+                ->device_buffer());
+      }
+      definition_event->AndThen(
+          [donated_memory = std::move(result_buffer_or_status->to_be_released),
+           se_donated_memory =
+               std::move(result_buffer_or_status->se_to_be_released),
+           exe = executable, reservation = compute_reservation,
+           assignment = device_assignment,
+           buffers_to_release{std::move(buffers_to_release)}]() mutable {});
+    } else {
+      // Any donated memory returned by the ExecutionOutput can be immediately
+      // freed.
+      definition_event->AndThen([exe = executable,
+                                 reservation = compute_reservation,
+                                 assignment = device_assignment]() {});
+    }
+    return definition_event;
+  };
+  tsl::RCReference<PjRtDeviceEvent> definition_event;
+  if (device_state->async_dispatch_thread()) {
+    std::unique_ptr<ProfilingContext> pc = CreateProfilingContext();
+    auto definition_event_promise =
+        tsl::MakeRef<PjRtStreamExecutorDeviceEventPromise>(
+            client_, device_state, client_->async_work_runner());
+    definition_event = tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(
+        definition_event_promise->event());
+    device_state->async_dispatch_thread()->Schedule(tsl::WithCurrentContext(
+        [launch_on_device = std::move(launch_on_device),
+         promise = std::move(definition_event_promise)]() mutable {
+          promise->Set(launch_on_device());
+        }));
   } else {
-    result_buffer_or_status = predetermined_error;
+    definition_event = launch_on_device();
   }
 
-  if (VLOG_IS_ON(2)) {
-    absl::string_view executable_name = executable_->executable()->name();
-    absl::Status host_callback_status = run_options.stream()->DoHostCallback(
-        [executable_name, launch_id(run_options.run_id().ToInt()),
-         device = device_]() {
-          VLOG(2) << "Finish device execution for " << executable_name
-                  << ", launch_id: " << launch_id
-                  << ", device: " << device->DebugString();
-        });
-    if (!host_callback_status.ok()) {
-      LOG(WARNING)
-          << "Failed to do host callback for start device execution for "
-          << executable_name << ", status = " << host_callback_status;
-    }
-  }
-
-  VLOG(1) << "Finish calling RunAsync for "
-          << executable_->executable()->module().name()
-          << ", device=" << device_->DebugString()
-          << ", run_id=" << run_options.run_id().ToInt()
-          << ", replica=" << replica_ << ", partition=" << partition_
-          << ", completed, ok=" << result_buffer_or_status.ok();
-
-  // Add a callback on the stream to record the elapsed device time of the
-  // executable execution.
-  //
-  // Do not place other callbacks between the callback recording the start time
-  // and this callback because their execution time will incorrectly count
-  // toward device execution time.
-  //
-  // This callback is only added if there is a valid key to guarantee that
-  // either both or none of the device time measurement callbacks are added to
-  // the stream, and to avoid needing a mutex.
-  if (key.has_value()) {
-    auto status = device_state->ThenExecuteCallback(
-        device_state->compute_stream(),
-        [key, start_time_ns,
-         device_type = GetDeviceType(client_->platform_id())]() {
-          auto elapsed = absl::FromUnixNanos(tsl::Env::Default()->NowNanos()) -
-                         absl::FromUnixNanos(*start_time_ns);
-          xla::RecordDeviceTimeMeasurement(*key, elapsed, device_type);
-        });
-    if (!status.ok()) {
-      LOG(ERROR) << "Error logging device time.";
-      StallStreamOnError(device_state, device_state->compute_stream());
-      auto device_type = GetDeviceType(client_->platform_id());
-      auto elapsed = absl::FromUnixNanos(tsl::Env::Default()->NowNanos()) -
-                     absl::FromUnixNanos(*start_time_ns);
-      xla::RecordDeviceTimeMeasurement(*key, elapsed, device_type);
-    }
-  }
-
-  auto definition_event = [&]() -> tsl::RCReference<PjRtDeviceEvent> {
-    LocalDeviceState* device_state = &(client_->device_state(device_ordinal));
-    se::Stream* stream = device_state->compute_stream();
-
-    if (!result_buffer_or_status.ok()) {
-      StallStreamOnError(device_state, stream);
-      return client_->CreateErrorDeviceEvent(result_buffer_or_status.status());
-    }
-
-    auto definition_event_or = device_state->GetEventForComputeStreamSyncPoint(
-        device_state->GetNextComputeStreamSyncPoint(),
-        client_->async_work_runner());
-    if (!definition_event_or.ok()) {
-      StallStreamOnError(device_state, stream);
-      return client_->CreateErrorDeviceEvent(definition_event_or.status());
-    }
-    return tsl::MakeRef<PjRtStreamExecutorDeviceEvent>(
-        std::move(*definition_event_or), "PjRtStreamExecutorLoadedExecutable",
-        "Execute");
-  }();
-  if (device_state->allocation_model() == LocalDeviceState::kSynchronous &&
-      result_buffer_or_status.ok()) {
-    // If we used a transient tuple for the arguments we donated its root table
-    // buffer. In that case, and/or if we donated any input buffers that were
-    // not aliased, the donated buffers are going to be passed back to us via
-    // the execution output. We need to ensure they aren't freed until after
-    // execution completes. (Currently XLA does not support aliasing tuple
-    // tables, so if any donated parameter is a tuple there will be donated but
-    // unaliased buffers.)
-    std::vector<tsl::AsyncValueRef<RawSEDeviceMemory>> buffers_to_release;
-    buffers_to_release.reserve(results.size() + inputs.size());
-    for (auto& node : results) {
-      buffers_to_release.push_back(
-          tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(node.get())
-              ->device_buffer());
-    }
-    for (auto& node : inputs) {
-      buffers_to_release.push_back(
-          tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(node.get())
-              ->device_buffer());
-    }
-    definition_event->AndThen(
-        [donated_memory = std::move(result_buffer_or_status->to_be_released),
-         se_donated_memory =
-             std::move(result_buffer_or_status->se_to_be_released),
-         exe = executable_, reservation = compute_reservation,
-         assignment = device_assignment_,
-         buffers_to_release{std::move(buffers_to_release)}]() mutable {});
-  } else {
-    // Any donated memory returned by the ExecutionOutput can be immediately
-    // freed.
-    definition_event->AndThen([exe = executable_,
-                               reservation = compute_reservation,
-                               assignment = device_assignment_]() {});
-  }
   std::optional<Future<>> maybe_future;
   if (fill_future) {
     auto [promise, future] = MakePromise<>();
