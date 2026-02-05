@@ -570,17 +570,15 @@ PartitionedHlo PartitionedHlo::ReshardNoCache(
     return PartitionedHlo(partitioned, base_shape_, state_);
   }
 
-  if (state_.module->config().debug_options().xla_enable_enzyme_comms_opt()) {
-    if (hlo_->opcode() == HloOpcode::kBroadcast &&
-        hlo_->operand(0)->shape().dimensions().empty()) {
-      const Shape sharded_broadcast_shape =
-          MakePartitionedShape(base_shape_, target);
-      HloInstruction* new_broadcast =
-          state_.b->AddInstruction(HloInstruction::CreateBroadcast(
-              sharded_broadcast_shape, hlo_->mutable_operand(0), {}));
-      new_broadcast->set_sharding(target);
-      return PartitionedHlo(new_broadcast, base_shape_, state_);
-    }
+  if (hlo_->opcode() == HloOpcode::kBroadcast &&
+      hlo_->operand(0)->shape().dimensions().empty()) {
+    const Shape sharded_broadcast_shape =
+        MakePartitionedShape(base_shape_, target);
+    HloInstruction* new_broadcast =
+        state_.b->AddInstruction(HloInstruction::CreateBroadcast(
+            sharded_broadcast_shape, hlo_->mutable_operand(0), {}));
+    new_broadcast->set_sharding(target);
+    return PartitionedHlo(new_broadcast, base_shape_, state_);
   }
 
   if (CanReshardWithCollectivePermute(sharding(), target)) {

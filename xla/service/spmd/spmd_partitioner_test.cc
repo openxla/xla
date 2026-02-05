@@ -12055,7 +12055,7 @@ ENTRY entry {
                                          ->root_instruction()
                                          ->false_computation()
                                          ->root_instruction();
-    auto operand = AllOf(op::Shape("s32[1,4,2,2]"), op::DynamicSlice());
+    auto operand = AllOf(op::Shape("s32[1,4,2,2]"), op::Broadcast());
     auto indices = AllOf(op::Shape("s32[2,1,4]"), op::Subtract());
     auto update = AllOf(op::Shape("s32[1,4,2,2]"), op::DynamicSlice());
     auto scatter =
@@ -13072,7 +13072,7 @@ ENTRY main.22 {
   const auto root = module->entry_computation()->root_instruction();
   auto operand = AllOf(op::Shape("f32[16,2]"), op::Broadcast());
   auto indices = AllOf(op::Shape("s32[8,2]"), op::Subtract());
-  auto update = AllOf(op::Shape("f32[8]"), op::AllGather());
+  auto update = AllOf(op::Shape("f32[8]"), op::Broadcast(op::Constant()));
   EXPECT_THAT(root, AllOf(op::Shape("f32[16,2]"),
                           op::Scatter(operand, indices, update)));
 }
@@ -15061,9 +15061,7 @@ TEST_P(SpmdPartitioningTest, AddBroadcastWithEnzymeOpt) {
 )hlo";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          PartitionComputation(hlo_string, /*num_devices=*/4,
-                                               SpmdPartitionerOptions(),
-                                               /*enable_enzyme_opt=*/true));
+                          PartitionComputation(hlo_string, /*num_devices=*/4));
 
   const auto root = module->entry_computation()->root_instruction();
   auto sharded_input = AllOf(op::Parameter(1), op::Shape("f32[]"));
