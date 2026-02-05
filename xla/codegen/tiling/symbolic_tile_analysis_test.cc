@@ -226,7 +226,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               Tiling({{fusion_root, FlatTiling({1, 10})}}),
                               default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
@@ -284,7 +284,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               Tiling({{fusion_root, FlatTiling({1, 10})}}),
                               default_schedule_builder_));
 
@@ -316,7 +316,7 @@ ENTRY entry_computation {
       module->entry_computation()->root_instruction()->fused_expression_root();
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               Tiling({{fusion_root, FlatTiling({1, 8})}}),
                               default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
@@ -377,7 +377,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis.ComputeTiledHloInstructions(
+                          analysis.ComputeTiledComputation(
                               Tiling({{fusion_root, FlatTiling({1, 97})}}),
                               default_schedule_builder_));
 
@@ -478,7 +478,7 @@ ENTRY entry_computation {
 
   TF_ASSERT_OK_AND_ASSIGN(
       TiledHloComputation tiled_hlo_computation,
-      analysis->ComputeTiledHloInstructions(
+      analysis->ComputeTiledComputation(
           Tiling({{add_root, FlatTiling({2, 4})}}), default_schedule_builder_,
           /*constraints_are_known_satisfied=*/false,
           /*compute_all_tile_offset_indexing_maps=*/false));
@@ -525,7 +525,7 @@ ENTRY entry_computation {
                                              ->fused_expression_root()
                                              ->operand(0);
 
-  auto maybe_tiled_hlo_computation = analysis->ComputeTiledHloInstructions(
+  auto maybe_tiled_hlo_computation = analysis->ComputeTiledComputation(
       Tiling({{broadcast_root, FlatTiling({1, 4})}}), default_schedule_builder_,
       /*constraints_are_known_satisfied=*/false,
       /*compute_all_tile_offset_indexing_maps=*/false);
@@ -562,7 +562,7 @@ ENTRY entry_computation {
                                            ->operand(0);
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               Tiling({{reshape_root, FlatTiling({1, 4})}}),
                               default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
@@ -612,7 +612,7 @@ ENTRY entry_computation {
                                            ->fused_expression_root()
                                            ->operand(0);
 
-  auto maybe_tiled_hlo_computation = analysis->ComputeTiledHloInstructions(
+  auto maybe_tiled_hlo_computation = analysis->ComputeTiledComputation(
       Tiling({{reshape_root, FlatTiling({1, 16})}}), default_schedule_builder_,
       /*constraints_are_known_satisfied=*/false,
       /*compute_all_tile_offset_indexing_maps=*/false);
@@ -649,7 +649,7 @@ ENTRY entry_computation {
                                            ->fused_expression_root()
                                            ->operand(0);
 
-  auto maybe_tiled_hlo_computation = analysis->ComputeTiledHloInstructions(
+  auto maybe_tiled_hlo_computation = analysis->ComputeTiledComputation(
       Tiling({{reshape_root, FlatTiling({1, 16})}}), default_schedule_builder_,
       /*constraints_are_known_satisfied=*/false,
       /*compute_all_tile_offset_indexing_maps=*/false);
@@ -687,7 +687,7 @@ ENTRY entry_computation {
 
   TF_ASSERT_OK_AND_ASSIGN(
       TiledHloComputation tiled_hlo_computation,
-      analysis->ComputeTiledHloInstructions(
+      analysis->ComputeTiledComputation(
           Tiling({{reshape_root, FlatTiling({4})}}), default_schedule_builder_,
           /*constraints_are_known_satisfied=*/false,
           /*compute_all_tile_offset_indexing_maps=*/false));
@@ -727,7 +727,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               Tiling({{fusion_root, FlatTiling({2, 4, 2})}}),
                               default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
@@ -773,7 +773,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               Tiling({{fusion_root, FlatTiling({2, 2})}}),
                               default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
@@ -831,7 +831,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
   Tiling tiling(Tiling::TileMapping{{dot_hlo, {8, 2, 2}}});
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               tiling, default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
@@ -894,7 +894,7 @@ ENTRY main {
   Tiling tiling(Tiling::TileMapping{
       {dot_hlo, {kContractingTileSize, kLhsTileSize, kRhsTileSize}}});
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               tiling, default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
@@ -1001,7 +1001,7 @@ ENTRY main {
   const HloInstruction* fusion_root =
       module->entry_computation()->root_instruction()->fused_expression_root();
 
-  auto result = analysis->ComputeTiledHloInstructions(
+  auto result = analysis->ComputeTiledComputation(
       Tiling({{fusion_root, FlatTiling({2})}}), default_schedule_builder_,
       /*constraints_are_known_satisfied=*/false,
       /*compute_all_tile_offset_indexing_maps=*/true);
@@ -1083,12 +1083,12 @@ ENTRY main {
 
   // Passing tile parameters that do not satisfy the constraints should result
   // in an error...
-  EXPECT_THAT(analysis->ComputeTiledHloInstructions(impossible_tile_parameters,
-                                                    default_schedule_builder_),
+  EXPECT_THAT(analysis->ComputeTiledComputation(impossible_tile_parameters,
+                                                default_schedule_builder_),
               absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 
   // ... unless we pinky-promise (lie) that they satisfy the constraints ;)
-  TF_EXPECT_OK(analysis->ComputeTiledHloInstructions(
+  TF_EXPECT_OK(analysis->ComputeTiledComputation(
       impossible_tile_parameters, default_schedule_builder_,
       /*constraints_are_known_satisfied=*/true));
 }
@@ -1412,7 +1412,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               Tiling({{fusion_root, FlatTiling({1, 1})}}),
                               default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
@@ -1429,7 +1429,7 @@ ENTRY main {
   )"));
 }
 
-TEST_F(SymbolicTileAnalysisTest, CanComputeTiledHloInstructionsWithRTVars) {
+TEST_F(SymbolicTileAnalysisTest, CanComputeTiledComputationWithRTVars) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(R"(
 HloModule m
@@ -1466,7 +1466,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               Tiling({{fusion_root, FlatTiling({1, 1})}}),
                               default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
@@ -1530,7 +1530,7 @@ ENTRY entry_computation {
 
   TF_ASSERT_OK_AND_ASSIGN(
       TiledHloComputation tiled_hlo_computation,
-      analysis->ComputeTiledHloInstructions(
+      analysis->ComputeTiledComputation(
           Tiling({{fusion_root, FlatTiling({1})}}), default_schedule_builder_,
           /*constraints_are_known_satisfied=*/false,
           /*compute_all_tile_offset_indexing_maps=*/true));
@@ -1628,7 +1628,7 @@ ENTRY e {
       module->entry_computation()->root_instruction()->fused_expression_root();
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               Tiling({{fusion_root, FlatTiling({2, 4, 8})}}),
                               default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
@@ -1702,7 +1702,7 @@ ENTRY e {
   ASSERT_TRUE(analysis.has_value());
   Tiling tiling = Tiling(Tiling::TileMapping({{root, {1, 1, 1, 1, 32}}}));
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               tiling, default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
@@ -1763,7 +1763,7 @@ ENTRY e {
   Tiling tiling(
       Tiling::TileMapping{{ds_hlo, {2, 4}}, {ds_hlo->operand(0), {8}}});
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               tiling, default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
@@ -1888,7 +1888,7 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       TiledHloComputation tiled_hlo_computation,
-      analysis->ComputeTiledHloInstructions(
+      analysis->ComputeTiledComputation(
           Tiling({{fusion_root, FlatTiling({4})}}), default_schedule_builder_,
           /*constraints_are_known_satisfied=*/false,
           /*compute_all_tile_offset_indexing_maps=*/false));
@@ -1935,7 +1935,7 @@ ENTRY main {
   // M is tiled to 128, K: 8, N: 32.
   Tiling dot_tiling = Tiling(Tiling::TileMapping({{dot_hlo, {8, 128, 32}}}));
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               /*tiling=*/dot_tiling, default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
@@ -2010,7 +2010,7 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       TiledHloComputation tiled_hlo_computation,
-      analysis->ComputeTiledHloInstructions(
+      analysis->ComputeTiledComputation(
           Tiling({{fusion_root, FlatTiling({2})}}), default_schedule_builder_,
           /*constraints_are_known_satisfied=*/false,
           /*compute_all_tile_offset_indexing_maps=*/true));
@@ -2128,7 +2128,7 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       TiledHloComputation tiled_hlo_computation,
-      analysis->ComputeTiledHloInstructions(
+      analysis->ComputeTiledComputation(
           Tiling({{fusion_root, FlatTiling({32})}}), default_schedule_builder_,
           /*constraints_are_known_satisfied=*/false,
           /*compute_all_tile_offset_indexing_maps=*/true));
@@ -2212,7 +2212,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
 
   // 128 % 33 != 0 thus the tiling should be rejected for concatenate operands.
-  auto tiled_hlo_computation_or = analysis->ComputeTiledHloInstructions(
+  auto tiled_hlo_computation_or = analysis->ComputeTiledComputation(
       Tiling({{fusion_root, FlatTiling({33})}}), default_schedule_builder_,
       /*constraints_are_known_satisfied=*/true,
       /*compute_all_tile_offset_indexing_maps=*/false);
@@ -2267,7 +2267,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               Tiling({{fusion_root, FlatTiling({16, 32})}}),
                               default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
@@ -2315,7 +2315,7 @@ ENTRY main {
   // Ensure that providing tile sizes that do not divide the resulting offsets
   // results in the tiling being rejected, even if we pretend that `33`
   // satisfies the constraints.
-  auto tiled_hlo_computation_or = analysis->ComputeTiledHloInstructions(
+  auto tiled_hlo_computation_or = analysis->ComputeTiledComputation(
       Tiling({{fusion_root, FlatTiling({16, 33})}}), default_schedule_builder_,
       /*constraints_are_known_satisfied=*/true,
       /*compute_all_tile_offset_indexing_maps=*/false);
@@ -2347,7 +2347,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
   Tiling tiling(Tiling::TileMapping{{pad_hlo, {2, 128}}});
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               tiling, default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
@@ -2412,7 +2412,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
   Tiling tiling(Tiling::TileMapping{{dot_hlo, {32, 16, 16}}});
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               tiling, default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
@@ -2483,7 +2483,7 @@ ENTRY main {
       module->entry_computation()->root_instruction()->fused_expression_root();
   Tiling tiling(Tiling::TileMapping{{dot_hlo, {32, 1, 16, 16}}});
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               tiling, default_schedule_builder_,
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
@@ -2620,7 +2620,7 @@ ENTRY main {
   Tiling tiling(
       Tiling::TileMapping{{dot_hlo, {tile_k, tile_batch, tile_m, tile_n}}});
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          analysis->ComputeTiledHloInstructions(
+                          analysis->ComputeTiledComputation(
                               tiling, TransposedDotTiledHloSchedule::Create,
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));

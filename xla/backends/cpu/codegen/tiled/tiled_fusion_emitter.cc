@@ -129,9 +129,8 @@ absl::StatusOr<Tiling> GetTiling(
                                                       fusion.operands().end());
   for (const auto& tiling : valid_tilings) {
     auto tile_sizes = tiling.tile_sizes().at(root_hlo);
-    ASSIGN_OR_RETURN(
-        TiledHloComputation tiled_hlo_computation,
-        symbolic_tile_analysis.ComputeTiledHloInstructions(tiling));
+    ASSIGN_OR_RETURN(TiledHloComputation tiled_hlo_computation,
+                     symbolic_tile_analysis.ComputeTiledComputation(tiling));
     auto cost = TotalCacheLineHits(tiled_hlo_computation, operands);
 
     if (cost < best_cost) {
