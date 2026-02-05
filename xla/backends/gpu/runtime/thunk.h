@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
+#include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_multimem_registry.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -292,8 +293,11 @@ class Thunk {
     // Parameters for executing collective operations.
     CollectiveParams* collective_params = nullptr;
 
-    // Collective cliques acquired based on resource requests.
+    // Collective cliques acquired based on clique requests.
     CollectiveCliques* collective_cliques = nullptr;
+
+    // Collective memory acquired based on memory requests.
+    CollectiveMemory* collective_memory = nullptr;
 
     // Multimem registry for preparing collective communicators.
     CollectiveMultimemRegistry* multicast_memory_registry = nullptr;
@@ -321,6 +325,7 @@ class Thunk {
         se::Stream* command_buffer_trace_stream,
         CollectiveParams* collective_params,
         CollectiveCliques* collective_cliques,
+        CollectiveMemory* collective_memory,
         ExecutionStreamIdMap additional_compute_streams = {});
 
     // Constructs execute parameters from an existing parameters but with
@@ -343,6 +348,9 @@ class Thunk {
 
     // Collective cliques acquired based on resource requests.
     CollectiveCliques* collective_cliques;
+
+    // Collective memory acquired based on memory requests.
+    CollectiveMemory* collective_memory;
 
     // Streams for moving data between host and device.
     se::Stream* device_to_host_stream;
@@ -369,6 +377,7 @@ class Thunk {
                   se::Stream* stream, se::Stream* command_buffer_trace_stream,
                   CollectiveParams* collective_params,
                   CollectiveCliques* collective_cliques,
+                  CollectiveMemory* collective_memory,
                   se::Stream* device_to_host_stream,
                   se::Stream* host_to_device_stream,
                   SendDeviceMemoryFunction* send_device_memory_function,

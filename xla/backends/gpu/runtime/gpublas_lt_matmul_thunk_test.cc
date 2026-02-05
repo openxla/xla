@@ -214,7 +214,7 @@ void GpuBlasLtMatmulThunkTest::CreateExecuteThunksFromHLO(
 
   auto thread_func = [&](se::Stream* stream) -> absl::Status {
     auto thunk_params = Thunk::ExecuteParams::Create(
-        run_options, *allocs, stream, stream, nullptr, nullptr);
+        run_options, *allocs, stream, stream, nullptr, nullptr, nullptr);
 
     Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
     for (auto& thunk : gemm_thunks) {

@@ -181,9 +181,11 @@ TEST(CollectiveOpsFfiKernelsTest, CollectiveKernelLaunch) {
   size_t offset = 0;
 
   ASSERT_OK(kernel0.Launch(thread_dims, block_dims, stream0.get(),
-                           dev_comm0.get(), symm0.get(), offset, num_elements));
+                           dev_comm0.get(), symm0.get(), symm0.get(), offset,
+                           offset, num_elements));
   ASSERT_OK(kernel1.Launch(thread_dims, block_dims, stream1.get(),
-                           dev_comm1.get(), symm1.get(), offset, num_elements));
+                           dev_comm1.get(), symm1.get(), symm1.get(), offset,
+                           offset, num_elements));
 
   // Copy data back to host and check it was all-reduced
   std::vector<int32_t> data0(num_elements, 0);

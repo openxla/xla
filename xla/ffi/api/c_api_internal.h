@@ -134,6 +134,12 @@ typedef XLA_FFI_Error* XLA_FFI_INTERNAL_CollectiveMultimemProvider_Get(
 typedef XLA_FFI_Error* XLA_FFI_INTERNAL_CollectiveCliques_Get(
     XLA_FFI_ExecutionContext* ctx, void** collective_clique);
 
+// Returns a pointer to `xla::gpu::CollectiveMemory` which allows FFI handlers
+// to get access to requested and acquired collective memory. Available only for
+// FFI handlers executing at execute stage.
+typedef XLA_FFI_Error* XLA_FFI_INTERNAL_CollectiveMemory_Get(
+    XLA_FFI_ExecutionContext* ctx, void** collective_memory);
+
 // Returns a pointer to `const xla::gpu::GpuTargetConfig` which allows FFI
 // handlers to access the GPU target config at run time.
 typedef XLA_FFI_Error* XLA_FFI_INTERNAL_GpuComputeCapability_Get(
@@ -172,6 +178,7 @@ struct XLA_FFI_InternalApi {
   _XLA_FFI_INTERNAL_API_STRUCT_FIELD(
       XLA_FFI_INTERNAL_CollectiveMultimemProvider_Get);
   _XLA_FFI_INTERNAL_API_STRUCT_FIELD(XLA_FFI_INTERNAL_CollectiveCliques_Get);
+  _XLA_FFI_INTERNAL_API_STRUCT_FIELD(XLA_FFI_INTERNAL_CollectiveMemory_Get);
   _XLA_FFI_INTERNAL_API_STRUCT_FIELD(XLA_FFI_INTERNAL_GpuComputeCapability_Get);
 };
 

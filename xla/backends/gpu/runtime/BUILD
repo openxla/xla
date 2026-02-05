@@ -1012,6 +1012,7 @@ cc_library(
     deps = [
         ":collective_clique_requests",
         ":collective_cliques",
+        ":collective_memory",
         ":collective_params",
         ":custom_call_target",
         ":thunk",
@@ -2150,6 +2151,35 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "collective_memory",
+    srcs = ["collective_memory.cc"],
+    hdrs = ["collective_memory.h"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    deps = [
+        ":collective_cliques",
+        ":collective_memory_requests",
+        ":collective_params",
+        "//xla:util",
+        "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/backends/gpu/collectives:gpu_communicator",
+        "//xla/core/collectives:rank_id",
+        "//xla/core/collectives:symmetric_memory",
+        "//xla/service:buffer_assignment",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor:device_address",
+        "//xla/tsl/platform:status_macros",
+        "//xla/tsl/util:safe_reinterpret_cast",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/time",
+        "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+cc_library(
     name = "collective_multimem",
     srcs = ["collective_multimem.cc"],
     hdrs = ["collective_multimem.h"],
@@ -2769,6 +2799,7 @@ cc_library(
     deps = [
         ":collective_clique_requests",
         ":collective_cliques",
+        ":collective_memory",
         ":collective_memory_requests",
         ":collective_multimem_registry",
         ":collective_params",

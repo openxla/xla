@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
+#include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_multimem.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -41,7 +42,10 @@ limitations under the License.
 #include "xla/service/gpu/tests/collective_ops_e2e_test_base.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/gpu/gpu_kernel_registry.h"
+#include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tests/collective_ops_ffi_kernels.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -71,7 +75,6 @@ static ReplicaGroup AllDevices() {
 // This is a prepare handler that tells XLA:GPU runtime what collective cliques
 // should be acquired before the execution starts. All collective operations
 // must let XLA:GPU runtime know what cliques they need ahead of time.
-template <bool device_comm>
 static absl::Status PrepareAllReduce(
     const CollectiveParams* collective_params,
     CollectiveCliqueRequests* clique_requests) {
@@ -84,16 +87,10 @@ static absl::Status PrepareAllReduce(
           *collective_params, {AllDevices()},
           CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID, false));
 
-  // Maybe ask for a device communicator.
-  CollectiveCliqueRequests::CliqueRequirements requirements;
-  if (device_comm) {
-    requirements.dev_comm = GpuDeviceCommunicator::Requirements{8};
-  }
-
-  // Ask XLA:GPU runtime to acquire a clique for this key. Later we will be able
-  // to get access to it from the execute handler.
-  TF_RETURN_IF_ERROR(clique_requests->RequestClique(
-      clique_key, /*device_groups=*/{{}}, requirements));
+  // Ask XLA:GPU runtime to acquire a clique for this key. Later we will be
+  // able to get access to it from the execute handler.
+  TF_RETURN_IF_ERROR(
+      clique_requests->RequestClique(clique_key, /*device_groups=*/{{}}));
 
   return absl::OkStatus();
 }
@@ -124,6 +121,7 @@ static absl::Status PrepareDeviceAllReduce(
   TF_RETURN_IF_ERROR(clique_requests->RequestClique(
       clique_key, /*device_groups=*/{{}}, requirements));
 
+  // Request src and dst buffers to be symmetric on the given clique.
   TF_RETURN_IF_ERROR(memory_requests->RequestSymmetricAddress(
       clique_key, src.device_memory()));
   TF_RETURN_IF_ERROR(memory_requests->RequestSymmetricAddress(
@@ -158,8 +156,53 @@ static absl::Status AllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
   return future.Await();
 }
 
-XLA_FFI_DEFINE_HANDLER(kPrepareAllReduce,
-                       PrepareAllReduce</*device_comm=*/false>,
+// FFI handler that launches device kernel that does all-reduce using NCCL
+// device-side APIs.
+static absl::Status DeviceAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
+                                    ffi::Result<ffi::BufferR0<U32>> dst,
+                                    const CollectiveParams* collective_params,
+                                    const CollectiveCliques* collective_cliques,
+                                    const CollectiveMemory* collective_memory) {
+  TF_RET_CHECK(collective_params && collective_cliques && collective_memory);
+
+  TF_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetGpuCliqueKey(
+          *collective_params, {AllDevices()},
+          CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID, false));
+
+  // Find collective memory for src and dst buffers.
+  auto [sym_src, src_offset] =
+      collective_memory->FindSymmetricMemory(clique_key, src.device_memory());
+  auto [sym_dst, dst_offset] =
+      collective_memory->FindSymmetricMemory(clique_key, dst->device_memory());
+  TF_RET_CHECK(sym_src && sym_dst);
+
+  // Get requested device communicator for a given clique.
+  auto rank = clique_key.rank(collective_params->global_device_id);
+  TF_ASSIGN_OR_RETURN(
+      GpuDeviceCommunicator * dev_comm,
+      collective_cliques->GetDeviceComm(
+          clique_key, *rank, GpuDeviceCommunicator::Requirements{8}));
+
+  // Load custom kernel that does device-initiated collectives.
+  TF_ASSIGN_OR_RETURN(
+      auto kernel,
+      se::gpu::GpuKernelRegistry::GetGlobalRegistry()
+          .LoadKernel<CollectiveInPlaceAllReduce>(collective_params->executor));
+
+  se::BlockDim block_dims(1);
+  se::ThreadDim thread_dims(8);
+
+  TF_RETURN_IF_ERROR(kernel.Launch(thread_dims, block_dims, stream, dev_comm,
+                                   sym_src, sym_dst, src_offset, dst_offset,
+                                   src.element_count()));
+
+  // Wait for kernel to finish before destructor will unload it.
+  return stream->BlockHostUntilDone();
+}
+
+XLA_FFI_DEFINE_HANDLER(kPrepareAllReduce, PrepareAllReduce,
                        ffi::Ffi::BindPrepare()
                            .Ctx<ffi::CollectiveParams>()
                            .Ctx<ffi::CollectiveCliqueRequests>());
@@ -180,15 +223,14 @@ XLA_FFI_DEFINE_HANDLER(kPrepareDeviceAllReduce, PrepareDeviceAllReduce,
                            .Ctx<ffi::CollectiveCliqueRequests>()
                            .Ctx<ffi::CollectiveMemoryRequests>());
 
-// TODO(ezhulenev): It's not yet a real device-initiated all reduce as support
-// for symmetric memory requests is not yet implemented.
-XLA_FFI_DEFINE_HANDLER(kDeviceAllReduce, AllReduce,
+XLA_FFI_DEFINE_HANDLER(kDeviceAllReduce, DeviceAllReduce,
                        ffi::Ffi::Bind()
                            .Ctx<ffi::Stream>()
                            .Arg<ffi::BufferR0<U32>>()  // src
                            .Ret<ffi::BufferR0<U32>>()  // dst
                            .Ctx<ffi::CollectiveParams>()
-                           .Ctx<ffi::CollectiveCliques>());
+                           .Ctx<ffi::CollectiveCliques>()
+                           .Ctx<ffi::CollectiveMemory>());
 
 // Register handler bundle for the custom all-reduce operation.
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$all_reduce", "gpu",
