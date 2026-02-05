@@ -2777,6 +2777,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_use_raft_select_k(),
       "If true, use the raft::matrix::select_k implementation of TopK."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_ragged_all_to_all_use_barrier",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_ragged_all_to_all_use_barrier),
+      debug_options->xla_gpu_experimental_ragged_all_to_all_use_barrier(),
+      "If true, use the MultiGpuBarrierKernel in one-shot RaggedAllToAll "
+      "thunk."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_scaled_dot_with_triton",
       bool_setter_for(
           &DebugOptions::set_xla_gpu_experimental_scaled_dot_with_triton),
