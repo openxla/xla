@@ -79,6 +79,7 @@ static __global__ void NcclDevAllReduce(void* dev_comm, ncclWindow_t src_win,
 // responsibility to make sure that data is ready on all ranks.
 static __global__ void MulticastAllReduce(uint32_t* src_mmem, uint32_t* dst,
                                           size_t src_offset, size_t count) {
+#if __CUDA_ARCH__ >= 900
   int64_t offset = blockIdx.x * blockDim.x + threadIdx.x;
   int64_t stride = blockDim.x * gridDim.x;
 
@@ -90,6 +91,7 @@ static __global__ void MulticastAllReduce(uint32_t* src_mmem, uint32_t* dst,
                  : "memory");
     dst[i] = data;
   }
+#endif  // __CUDA_ARCH__ >= 900
 }
 
 static se::KernelLoaderSpec SymmetricAllReduceKernelSpec(int32_t arity) {

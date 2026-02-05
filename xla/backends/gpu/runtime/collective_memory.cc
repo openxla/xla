@@ -97,8 +97,8 @@ std::pair<void*, size_t> CollectiveMemory::FindMultimemAddress(
     return std::make_pair(nullptr, 0);
   }
 
-  auto ptr = it->second.mapped_ptrs_.find(rank);
-  if (ptr == it->second.mapped_ptrs_.end()) {
+  auto ptr = it->second.mapped_ptrs.find(rank);
+  if (ptr == it->second.mapped_ptrs.end()) {
     return std::make_pair(nullptr, 0);
   }
 
@@ -248,7 +248,7 @@ absl::StatusOr<MulticastMemoryMap> AcquireMulticastMemory(
     // up memory mapping on all ranks, and don't support multi-process mode.
     if (!r.key.is_local()) {
       return Unimplemented(
-          "[%d] Multimem is not supported in multi-process mode in clique %v",
+          "[%d] Multicast is not supported in multi-process mode in clique %v",
           device_ordinal, r.key);
     }
 
@@ -285,7 +285,7 @@ absl::StatusOr<MulticastMemoryMap> AcquireMulticastMemory(
 
       MulticastMemoryMap clique_mcast_memories;
       for (BufferAllocation::Index i : r.allocations) {
-        // Allocate a multicast object for all participating devics.
+        // Allocate a multicast object for all participating devices.
         size_t multicast_size = params[0]->buffers.GetDeviceAddress(i).size();
         ASSIGN_OR_RETURN(
             std::unique_ptr<se::gpu::MulticastMemory> multicast_memory,
@@ -349,7 +349,7 @@ absl::StatusOr<MulticastMemoryMap> AcquireMulticastMemory(
 absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
     const CollectiveParams& params, const CollectiveCliques& cliques,
     const CollectiveMemoryRequests& requests) {
-  // We rely on determenistic order of memory requests, to guarantee that all
+  // We rely on deterministic order of memory requests, to guarantee that all
   // ranks create collective memory in identical order, otherwise we can get
   // a deadlock.
   std::vector<CollectiveMemoryRequests::SymmetricAllocations> sym_allocs =
@@ -363,29 +363,29 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
                             /*mcast_memories=*/{});
   }
 
-  VLOG(2) << absl::StreamFormat(
-      "[%d] Acquire collective memory for global device id %v: run_id=%v "
+  XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
+      " Acquire collective memory for global device id %v: run_id=%v "
       "symmetric=%d multicast=%d",
-      params.executor->device_ordinal(), params.global_device_id, params.run_id,
-      sym_allocs.size(), mcast_allocs.size());
+      params.global_device_id, params.run_id, sym_allocs.size(),
+      mcast_allocs.size());
   absl::Time start = absl::Now();
 
   for (size_t i = 0; i < sym_allocs.size(); ++i) {
     const CollectiveMemoryRequests::SymmetricAllocations& r = sym_allocs[i];
-    VLOG(2) << absl::StreamFormat(
-        "[%d]    symmetric memory #%d (global device %v): id=%d; clique=%v; "
+    XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
+        "    symmetric memory #%d (global device %v): id=%d; clique=%v; "
         "allocations=[%s]",
-        params.executor->device_ordinal(), i, params.global_device_id, r.id,
-        r.key, absl::StrJoin(r.allocations, ", "));
+        i, params.global_device_id, r.id, r.key,
+        absl::StrJoin(r.allocations, ", "));
   }
 
   for (size_t i = 0; i < mcast_allocs.size(); ++i) {
     const CollectiveMemoryRequests::MulticastAllocations& r = mcast_allocs[i];
-    VLOG(2) << absl::StreamFormat(
-        "[%d]    multicast memory #%d (global device %v): id=%d; clique=%v; "
+    XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
+        "    multicast memory #%d (global device %v): id=%d; clique=%v; "
         "allocations=[%s]",
-        params.executor->device_ordinal(), i, params.global_device_id, r.id,
-        r.key, absl::StrJoin(r.allocations, ", "));
+        i, params.global_device_id, r.id, r.key,
+        absl::StrJoin(r.allocations, ", "));
   }
 
   tsl::profiler::TraceMe trace([&] {
@@ -402,10 +402,9 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
                    AcquireMulticastMemory(params, cliques, requests.buffers(),
                                           mcast_allocs));
 
-  VLOG(2) << absl::StreamFormat(
-      "[%d] Acquired collective memory in %s for global device id %v; "
+  XLA_VLOG_DEVICE(2, params.executor->device_ordinal()) << absl::StreamFormat(
+      "Acquired collective memory in %s for global device id %v; "
       "run_id=%v symmetric=%d multicast=%d",
-      params.executor->device_ordinal(),
       absl::FormatDuration(absl::Now() - start), params.global_device_id,
       params.run_id, sym_allocs.size(), mcast_allocs.size());
 

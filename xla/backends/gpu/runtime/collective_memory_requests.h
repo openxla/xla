@@ -58,11 +58,11 @@ class CollectiveMemoryRequests {
  public:
   explicit CollectiveMemoryRequests(const BufferAllocations& buffers);
 
-  // For both kinds of collective memory we use a synthethic id that is
+  // For both kinds of collective memory we use a synthetic id that is
   // generated automatically when collective allocations is requested, and
-  // guarantees determenisitc iteration order across all ranks. See
+  // guarantees deterministic iteration order across all ranks. See
   // `collective_clique_requests` for more details on how exactly this id
-  // is generated and why it provides a determenistic iteration order.
+  // is generated and why it provides a deterministic iteration order.
 
   // A set of buffer allocations that must have a corresponding symmetric memory
   // on the given clique. Allocations must be allocated from a compatible
@@ -88,7 +88,7 @@ class CollectiveMemoryRequests {
                                           BufferAllocation::Index allocation);
 
   // Adds a request to make the given address range symmetric on the given
-  // clique. If address does not correcpond to any of the buffer allocations in
+  // clique. If address does not correspond to any of the buffer allocations in
   // the `buffers_`, it will return an error.
   absl::Status RequestSymmetricAddress(const GpuCliqueKey& clique_key,
                                        const se::DeviceAddressBase& addr);
@@ -99,7 +99,7 @@ class CollectiveMemoryRequests {
                                           BufferAllocation::Index allocation);
 
   // Adds a request to map the given allocation to multicast object on the given
-  // clique. If address does not correcpond to any of the buffer allocations in
+  // clique. If address does not correspond to any of the buffer allocations in
   // the `buffers_`, it will return an error.
   absl::Status RequestMulticastAddress(const GpuCliqueKey& clique_key,
                                        const se::DeviceAddressBase& addr);

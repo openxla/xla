@@ -48,7 +48,7 @@ class CollectiveMemory {
   // virtual memory pointer.
   struct MappedMulticastMemory {
     std::shared_ptr<se::gpu::MulticastMemory> multicast_memory;
-    absl::btree_map<RankId, void*> mapped_ptrs_;
+    absl::btree_map<RankId, void*> mapped_ptrs;
   };
 
   CollectiveMemory(

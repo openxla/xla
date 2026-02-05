@@ -2797,6 +2797,7 @@ cc_library(
     hdrs = ["collective_ops_ffi_kernels.h"],
     deps = [
         "//xla:types",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -2817,7 +2818,7 @@ cuda_library(
         "//xla/tsl/cuda:nccl",
         "@com_google_absl//absl/base",
     ],
-    alwayslink = True,  # static kernel registation
+    alwayslink = True,  # static kernel registration
 )
 
 xla_cc_test(
