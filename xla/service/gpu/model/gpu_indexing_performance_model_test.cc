@@ -603,9 +603,12 @@ ENTRY main {
   // gets support of concatenate, this test should fail with an error from
   // `EstimateRunTimeForTiledHloComputation` that propagation of the number of
   // blocks is not supported (b/351342921).
-  EXPECT_THAT(result,
-              absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition,
-                                     HasSubstr("SymbolicTileAnalysis failed")));
+  EXPECT_THAT(
+      result,
+      absl_testing::StatusIs(
+          absl::StatusCode::kFailedPrecondition,
+          HasSubstr(
+              "Concatenate is not supported by the indexing cost model")));
 }
 
 TEST_F(GpuIndexingPerformanceModelTest,
