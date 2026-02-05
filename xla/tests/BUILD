@@ -2892,7 +2892,6 @@ xla_test(
         "//xla/backends/gpu/runtime:collective_execution",
         "//xla/backends/gpu/runtime:collective_memory",
         "//xla/backends/gpu/runtime:collective_memory_requests",
-        "//xla/backends/gpu/runtime:collective_multimem",
         "//xla/backends/gpu/runtime:collective_params",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:reduction_kind",

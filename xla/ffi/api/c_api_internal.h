@@ -111,22 +111,10 @@ typedef XLA_FFI_Error* XLA_FFI_INTERNAL_CollectiveCliqueRequests_Get(
     XLA_FFI_ExecutionContext* ctx, void** collective_clique_requests);
 
 // Returns a pointer to `xla::gpu::CollectiveMemoryRequests` which allows
-// FFI handlers to request collective (symmettric) memory at run time. Available
+// FFI handlers to request collective (symmetric) memory at run time. Available
 // only for FFI handlers executing at prepare stage.
 typedef XLA_FFI_Error* XLA_FFI_INTERNAL_CollectiveMemoryRequests_Get(
     XLA_FFI_ExecutionContext* ctx, void** collective_memory_requests);
-
-// Returns a pointer to `xla::gpu::CollectiveMultimemRequests` which allows FFI
-// handlers to request multimem at run time. Available only for FFI handlers
-// executing at prepare stage.
-typedef XLA_FFI_Error* XLA_FFI_INTERNAL_CollectiveMultimemRequests_Get(
-    XLA_FFI_ExecutionContext* ctx, void** collective_multimem_requests);
-
-// Returns a pointer to `xla::gpu::CollectiveMultimemProvider` which allows FFI
-// to get multimem at run time. Available only for FFI handlers executing at
-// initialize stage.
-typedef XLA_FFI_Error* XLA_FFI_INTERNAL_CollectiveMultimemProvider_Get(
-    XLA_FFI_ExecutionContext* ctx, void** collective_multimem_provider);
 
 // Returns a pointer to `xla::gpu::CollectiveClique` which allows FFI handlers
 // to get access to requested and acquired GPU cliques. Available only for FFI
@@ -173,10 +161,6 @@ struct XLA_FFI_InternalApi {
       XLA_FFI_INTERNAL_CollectiveCliqueRequests_Get);
   _XLA_FFI_INTERNAL_API_STRUCT_FIELD(
       XLA_FFI_INTERNAL_CollectiveMemoryRequests_Get);
-  _XLA_FFI_INTERNAL_API_STRUCT_FIELD(
-      XLA_FFI_INTERNAL_CollectiveMultimemRequests_Get);
-  _XLA_FFI_INTERNAL_API_STRUCT_FIELD(
-      XLA_FFI_INTERNAL_CollectiveMultimemProvider_Get);
   _XLA_FFI_INTERNAL_API_STRUCT_FIELD(XLA_FFI_INTERNAL_CollectiveCliques_Get);
   _XLA_FFI_INTERNAL_API_STRUCT_FIELD(XLA_FFI_INTERNAL_CollectiveMemory_Get);
   _XLA_FFI_INTERNAL_API_STRUCT_FIELD(XLA_FFI_INTERNAL_GpuComputeCapability_Get);

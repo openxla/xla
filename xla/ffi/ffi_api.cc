@@ -104,8 +104,6 @@ static XLA_FFI_ExecutionContext CreateExecutionContext(
           options.collective_params,
           options.collective_clique_requests,
           options.collective_memory_requests,
-          options.collective_multimem_requests,
-          options.collective_multimem_provider,
           options.collective_cliques,
           options.collective_memory,
           options.gpu_compute_capability};
