@@ -66,6 +66,7 @@ cc_library(
         ":rocm_collector",
         ":rocm_tracer",
         ":rocm_tracer_utils",
+        "//xla:debug_options_flags",
         "//xla/stream_executor/rocm:roctracer_wrapper",
         "//xla/tsl/platform:env_time",
         "//xla/tsl/profiler/backends/cpu:annotation_stack",
