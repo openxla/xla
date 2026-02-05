@@ -489,10 +489,12 @@ absl::Status ExecuteThunksImpl(
     RETURN_IF_ERROR(thunk_sequence.Prepare(prepare_params));
   }
 
-  XLA_VLOG_DEVICE(3, run_options->device_ordinal())
-      << "Prepared GPU executable for execution:"
-      << " #collective_cliques=" << collective_clique_requests.size()
-      << " #collective_memories=" << collective_memory_requests.size();
+  XLA_VLOG_DEVICE(3, run_options->device_ordinal()) << absl::StreamFormat(
+      "Prepared GPU executable for execution: #collective=[cliques=%d, "
+      "symmetric=%d, multimem=%d]",
+      collective_clique_requests.size(),
+      collective_memory_requests.symmetric_size(),
+      collective_memory_requests.multicast_size());
 
   std::vector<std::unique_ptr<CliqueKey>>* clique_keys =
       run_options->run_options().clique_keys();

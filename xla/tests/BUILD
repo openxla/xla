@@ -2797,6 +2797,7 @@ cc_library(
     hdrs = ["collective_ops_ffi_kernels.h"],
     deps = [
         "//xla:types",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -2810,13 +2811,14 @@ cuda_library(
     ],
     deps = [
         ":collective_ops_ffi_kernels",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/tsl/cuda:nccl",
         "@com_google_absl//absl/base",
     ],
-    alwayslink = True,  # static kernel registation
+    alwayslink = True,  # static kernel registration
 )
 
 xla_cc_test(
@@ -2898,6 +2900,7 @@ xla_test(
         "//xla/ffi:ffi_api",
         "//xla/ffi/api:c_api",
         "//xla/service:collective_ops_utils",
+        "//xla/service:rendezvous",
         "//xla/service/gpu/tests:collective_ops_e2e_test_base",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:launch_dim",
@@ -2910,6 +2913,7 @@ xla_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
     ] + if_cuda_is_configured([
         ":collective_ops_ffi_kernels_cuda",
