@@ -1311,29 +1311,6 @@ class ReadySetLt {
     return std::nullopt;
   }
 
-  inline std::optional<bool> DelayAsyncStartCandidateCondition(
-      DefaultSchedulerCore::ScheduleCandidate& a,
-      DefaultSchedulerCore::ScheduleCandidate& b, const HloGraphNode* a_node,
-      const HloGraphNode* b_node, const char** reason) const {
-    bool a_has_async_resource =
-        a_node->DoesReleaseAnyResource() && !IsResourceConstrained(a, a_node);
-    bool b_has_async_resource =
-        b_node->DoesReleaseAnyResource() && !IsResourceConstrained(b, b_node);
-
-    CMP_EXPLICIT(!a_has_async_resource, !b_has_async_resource,
-                 "kDelayAsyncStartForCompute");
-    if (a_has_async_resource && b_has_async_resource) {
-      // If 2 nodes are both async nodes, we prioritize the one
-      // with more depth to free up more computes to overlap
-      // with the one with less depth which can be launched
-      // early
-      CMP_EXPLICIT(a_node->GetDepth() > b_node->GetDepth(),
-                   b_node->GetDepth() > a_node->GetDepth(),
-                   "kDelayAsyncStartForDepth");
-    }
-    return std::nullopt;
-  }
-
   // The comparison here implements the priority for the nodes in the ready
   // set. The function compares a and b in a series of prioritized
   // comparisons. As soon as it finds one that is not equal, it stops.  If
@@ -1360,6 +1337,12 @@ class ReadySetLt {
     // will run as usual, we take advantage of this fact when initializing
     // the heuristic algorithm.
     CMP_PROPERTY(GetPreference(), "kPreference");
+
+    // Update the resource_constrained of the candidate before any
+    // target specific rule is applied so rules can access the
+    // update-to-date value.
+    UpdateCandidateResourceConstrained(a, an);
+    UpdateCandidateResourceConstrained(b, bn);
 
     const SchedulerConfig& config = sched_state_.config;
     if (config.force_delay_over_memory_pressure) {
@@ -1441,16 +1424,6 @@ class ReadySetLt {
       // loop, the async-start will be pushed to the beginning of the loop.
       CMP_EXPLICIT(AsyncDepth0CandidateCondition(a, an),
                    AsyncDepth0CandidateCondition(b, bn), "kStartAtZeroDepth");
-    }
-
-    if (sched_state_.config.aggressive_scheduling_policies &&
-        sched_state_.config.prioritize_compute_over_async_start) {
-      // If an instruction releasing a resource is not resource constrained,
-      // delay it as much as possible.
-      if (auto value =
-              DelayAsyncStartCandidateCondition(a, b, an, bn, reason)) {
-        return *value;
-      }
     }
 
     auto a_readytime = an->GetReadyTime();
@@ -1587,14 +1560,13 @@ class ReadySetLt {
   static bool IsNop(const HloGraphNode& gn) {
     return IsNopInstruction(gn.GetOpcode(), gn.GetInstr());
   }
-  bool IsResourceConstrained(DefaultSchedulerCore::ScheduleCandidate& cand,
-                             const HloGraphNode* cand_node) const {
-    if (cand.has_resource_constrained) {
-      return cand.resource_constrained;
-    }
+
+  void UpdateCandidateResourceConstrained(
+      DefaultSchedulerCore::ScheduleCandidate& cand,
+      const HloGraphNode* cand_node) const {
     if (cand_node->GetResources().empty()) {
       cand.set_resource_constrained(false);
-      return cand.resource_constrained;
+      return;
     }
     cand.set_resource_constrained(false);
     for (const auto& [resource_type, usage_type] : cand_node->GetResources()) {
@@ -1605,10 +1577,14 @@ class ReadySetLt {
           max_it->second == 0 &&
           res_it != sched_state_.resource_users_in_queue.end() &&
           res_it->second > 0);
-      if (cand.resource_constrained) {
-        return cand.resource_constrained;
-      }
     }
+  }
+  bool IsResourceConstrained(DefaultSchedulerCore::ScheduleCandidate& cand,
+                             const HloGraphNode* cand_node) const {
+    if (cand.has_resource_constrained) {
+      return cand.resource_constrained;
+    }
+    UpdateCandidateResourceConstrained(cand, cand_node);
     return cand.resource_constrained;
   }
   HloGraphNode::TimeCost PastDueCyclesForNonextendableResource(
