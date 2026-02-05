@@ -341,14 +341,14 @@ TEST_P(RemapPlanTest, InvalidShardIndex) {
     RemapPlan plan;
     plan.input_specs.push_back(ArraySpec{
         /*dtype=*/DType(DType::kS32),
-        /*shape=*/Shape({2, 3}),
+        /*shape=*/Shape(shape),
         /*sharding=*/
         ConcreteEvenSharding::Create(GetDevices(devices), MemoryKind(),
                                      /*shape=*/Shape(shape),
                                      /*shard_shape=*/Shape(shard_shape))});
     plan.output_specs.push_back(ArraySpec{
         /*dtype=*/DType(DType::kS32),
-        /*shape=*/Shape({2, 3}),
+        /*shape=*/Shape(shape),
         /*sharding=*/
         ConcreteEvenSharding::Create(GetDevices(devices), MemoryKind(),
                                      /*shape=*/Shape(shape),
