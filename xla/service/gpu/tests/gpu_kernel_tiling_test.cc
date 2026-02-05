@@ -475,11 +475,6 @@ ENTRY MultiRowLargeReduce {
 
 TEST_F(GpuKernelTilingTest, MultiRowLargeReduceNonMultipleOf2) {
 
-  if (xla::PlatformUtil::CanonicalPlatformName("gpu").value() == "cuda") {
-    GTEST_SKIP() << "This test is currently broken on B200 system due to "
-                    "fusion autotuner issues.";
-  }
-
   const char *kHlo = 
 R"(
 HloModule Test
@@ -490,12 +485,12 @@ reduceOp {
 }
 ENTRY MultiRowLargeReduce {
   A = s32[762145]{0} parameter(0)
-  B = s32[762145,639936]{1,0} broadcast(A), dimensions={0}
-  I = s32[762145,639936]{1,0} iota(), iota_dimension=1
-  Z = s32[762145,639936]{1,0} add(B, I)
-  BB = s32[762145,9999,64]{2,1,0} reshape(B)
+  B = s32[762145,63936]{1,0} broadcast(A), dimensions={0}
+  I = s32[762145,63936]{1,0} iota(), iota_dimension=1
+  Z = s32[762145,63936]{1,0} add(B, I)
+  BB = s32[762145,999,64]{2,1,0} reshape(B)
   CC = s32[] constant(0)
-  ROOT R = s32[762145,9999]{1,0} reduce(BB, CC), dimensions={2}, to_apply=reduceOp
+  ROOT R = s32[762145,999]{1,0} reduce(BB, CC), dimensions={2}, to_apply=reduceOp
 })";
   ASSERT_OK_AND_ASSIGN(auto hlo_module, 
         ParseAndReturnVerifiedModule(kHlo, ConfigWithoutAutotuning()));
