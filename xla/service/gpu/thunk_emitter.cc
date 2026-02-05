@@ -2244,7 +2244,6 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCopyDoneThunk(
   CHECK(copy_start_instr->opcode() == HloOpcode::kCopyStart);
 
   return GetThunkSequence(std::make_unique<CopyDoneThunk>(
-      Thunk::kCopyDone,
       Thunk::ThunkInfo::WithProfileAnnotation(
           copy_start_instr, ir_emitter_context_->GetNextThunkId()),
       /*copy_events=*/copy_events_,

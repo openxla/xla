@@ -474,6 +474,11 @@ message CollectiveGroupThunkProto {
   optional uint64 async_events_unique_id = 4;
 }
 
+message CopyDoneThunkProto {
+  optional uint64 async_events_unique_id = 1;
+  int64 copy_start_instr_id = 2;
+}
+
 message ThunkProto {
   ThunkInfoProto thunk_info = 1;
 
@@ -524,6 +529,7 @@ message ThunkProto {
     CollectiveBroadcastStartThunkProto collective_broadcast_start_thunk = 46;
     CollectiveGroupThunkProto collective_group_thunk = 47;
     DynamicMemcpyThunkProto dynamic_memcpy_thunk = 48;
+    CopyDoneThunkProto copy_done_thunk = 49;
   }
 }
 

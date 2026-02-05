@@ -52,7 +52,8 @@ class HostToDeviceCopyThunk : public CopyThunk {
 
   static absl::StatusOr<std::unique_ptr<HostToDeviceCopyThunk>> FromProto(
       ThunkInfo thunk_info, const HostToDeviceCopyThunkProto& thunk_proto,
-      absl::Span<const BufferAllocation> buffer_allocations);
+      absl::Span<const BufferAllocation> buffer_allocations,
+      CopyThunk::AsyncEventsMap& async_events_map);
 
   std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const override;
 

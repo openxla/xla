@@ -87,13 +87,19 @@ absl::StatusOr<ThunkProto> DeviceToHostCopyThunk::ToProto() const {
   TF_ASSIGN_OR_RETURN(*copy_thunk_proto->mutable_destination_buffer(),
                       destination().ToProto());
   copy_thunk_proto->set_mem_size(size_bytes());
+
+  if (auto id = GetAsyncEventsUniqueId()) {
+    d2h_copy_thunk_proto->set_async_events_unique_id(id->value());
+  }
+  d2h_copy_thunk_proto->set_instr_id(instr_id_);
   return proto;
 }
 
 absl::StatusOr<std::unique_ptr<DeviceToHostCopyThunk>>
 DeviceToHostCopyThunk::FromProto(
     ThunkInfo thunk_info, const DeviceToHostCopyThunkProto& thunk_proto,
-    absl::Span<const BufferAllocation> buffer_allocations) {
+    absl::Span<const BufferAllocation> buffer_allocations,
+    CopyThunk::AsyncEventsMap& async_events_map) {
   TF_ASSIGN_OR_RETURN(
       ShapedSlice src_slice,
       ShapedSlice::FromProto(thunk_proto.copy_thunk().source_buffer(),
@@ -102,11 +108,19 @@ DeviceToHostCopyThunk::FromProto(
       ShapedSlice dst_slice,
       ShapedSlice::FromProto(thunk_proto.copy_thunk().destination_buffer(),
                              buffer_allocations));
+
+  std::shared_ptr<CopyThunk::AsyncEvents> async_events;
+  if (thunk_proto.has_async_events_unique_id()) {
+    auto [async_event_it, _] = async_events_map.try_emplace(
+        AsyncEventsUniqueId(thunk_proto.async_events_unique_id()),
+        std::make_shared<CopyThunk::AsyncEvents>());
+    async_events = async_event_it->second;
+  }
+
   return std::make_unique<DeviceToHostCopyThunk>(
       std::move(thunk_info), src_slice, dst_slice,
-      thunk_proto.copy_thunk().mem_size(),
-      /*events=*/nullptr,
-      /*instr_id=*/-1);
+      thunk_proto.copy_thunk().mem_size(), std::move(async_events),
+      thunk_proto.instr_id());
 }
 
 std::optional<AsyncEventsUniqueId>

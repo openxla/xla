@@ -799,6 +799,7 @@ cc_library(
     deps = [
         ":copy_thunk",
         ":thunk",
+        ":thunk_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:event",
         "//xla/stream_executor:stream",
@@ -807,6 +808,21 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+    ],
+)
+
+xla_cc_test(
+    name = "copy_done_thunk_test",
+    srcs = ["copy_done_thunk_test.cc"],
+    deps = [
+        ":copy_done_thunk",
+        ":copy_thunk",
+        ":thunk",
+        ":thunk_proto_cc",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/util/proto:parse_text_proto",
+        "@com_google_absl//absl/base",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -882,6 +898,7 @@ xla_cc_test(
     name = "device_to_host_copy_thunk_test",
     srcs = ["device_to_host_copy_thunk_test.cc"],
     deps = [
+        ":copy_thunk",
         ":device_to_host_copy_thunk",
         ":thunk",
         ":thunk_proto_cc",
@@ -898,6 +915,7 @@ xla_cc_test(
     name = "host_to_device_copy_thunk_test",
     srcs = ["host_to_device_copy_thunk_test.cc"],
     deps = [
+        ":copy_thunk",
         ":host_to_device_copy_thunk",
         ":thunk",
         ":thunk_proto_cc",
@@ -3440,6 +3458,7 @@ cc_library(
         ":conditional_thunk",
         ":convolution_reorder_thunk",
         ":convolution_thunk",
+        ":copy_done_thunk",
         ":copy_thunk",
         ":cub_sort_thunk",
         ":cudnn_thunk",
@@ -3492,6 +3511,7 @@ xla_cc_test(
     srcs = ["thunk_proto_deserialization_test.cc"],
     deps = [
         ":conditional_thunk",
+        ":copy_done_thunk",
         ":copy_thunk",
         ":custom_kernel_thunk",
         ":device_to_device_copy_thunk",
