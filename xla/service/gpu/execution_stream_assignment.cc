@@ -306,7 +306,7 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(const HloModule* module,
               << "' does't have stream assignment for the start operation '"
               << start->name() << "'";
 
-          AsyncExecutionStreamIds& assn = async_instructions_.at(start);
+          AsyncExecutionStreamIds assn = async_instructions_.at(start);
           VLOG(3) << absl::StreamFormat(
               "Use %v execution scope: instr=%s parent=%v async=%v", *kind,
               hlo->name(), assn.parent_stream_id, assn.async_stream_id);
@@ -325,7 +325,7 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(const HloModule* module,
               << "' does't have stream assignment for the start operation '"
               << start->name() << "'";
 
-          AsyncExecutionStreamIds& assn = async_instructions_.at(start);
+          AsyncExecutionStreamIds assn = async_instructions_.at(start);
           VLOG(3) << absl::StreamFormat(
               "End %v execution scope: instr=%s parent=%v async=%v", *kind,
               hlo->name(), assn.parent_stream_id, assn.async_stream_id);
