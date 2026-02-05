@@ -8,6 +8,7 @@ load(
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load(
     "//xla/tsl/platform:build_config.bzl",
@@ -17,6 +18,7 @@ load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
+load("//xla/util:build_defs.bzl", "embed_files")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -663,18 +665,43 @@ cc_library(
     ],
 )
 
+filegroup(
+    name = "all_default_configs",
+    data = glob(["default_configs/*.txtpb"]),
+)
+
+exports_files(glob([
+    "default_configs/*.txtpb",
+]))
+
+embed_files(
+    name = "embed_default_configs",
+    srcs = glob(["default_configs/*.txtpb"]),
+    compatible_with = get_compatible_with_portable() + if_google(["//buildenv/target:libtpu"]),
+    cpp_namespace = "xla::gpu::configs",
+)
+
 cc_library(
     name = "triton_configs",
     srcs = ["triton_configs.cc"],
     hdrs = ["triton_configs.h"],
     deps = [
+        ":embed_default_configs",
         "//xla:autotuning_proto_cc",
         "//xla/service/gpu:matmul_utils",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_protobuf//:protobuf",
+    ],
+)
+
+xla_cc_test(
+    name = "triton_configs_test",
+    srcs = ["triton_configs_test.cc"],
+    deps = [
+        ":triton_configs",
+        "@com_google_googletest//:gtest_main",
     ],
 )
