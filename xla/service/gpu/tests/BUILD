@@ -73,11 +73,22 @@ cc_library(
 )
 
 cc_library(
+    name = "hlo_gpu_test_base_interface",
+    hdrs = ["hlo_gpu_test_base_interface.h"],
+    deps = [
+        "//xla/backends/gpu/target_config",
+        "//xla/service:compiler",
+        "//xla/stream_executor:device_description",
+    ],
+)
+
+cc_library(
     name = "hlo_pjrt_gpu_test_base",
     testonly = True,
     srcs = ["hlo_pjrt_gpu_test_base.cc"],
     hdrs = ["hlo_pjrt_gpu_test_base.h"],
     deps = [
+        ":hlo_gpu_test_base_interface",
         "//xla/backends/gpu/target_config",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
@@ -97,6 +108,25 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_protobuf//:protobuf",
+    ],
+)
+
+cc_library(
+    name = "hlo_legacy_gpu_test_base",
+    testonly = True,
+    hdrs = ["hlo_legacy_gpu_test_base.h"],
+    deps = [
+        ":hlo_gpu_test_base_interface",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/target_config",
+        "//xla/service:backend",
+        "//xla/service:compiler",
+        "//xla/service:interpreter_plugin",  # reference backend
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:platform",
+        "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/base:core_headers",
     ],
 )
 

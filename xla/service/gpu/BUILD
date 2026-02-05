@@ -2023,6 +2023,7 @@ xla_test(
         "b200": ["broken"],
     },
     backends = ["gpu"],
+    use_legacy_runtime = True,
     deps = [
         ":gpu_compiler",
         "//xla:literal",
@@ -2039,7 +2040,7 @@ xla_test(
         "//xla/service:hlo_runner",
         "//xla/service:hlo_runner_interface",
         "//xla/service:platform_util",
-        "//xla/service/gpu/tests:hlo_pjrt_gpu_test_base",
+        "//xla/service/gpu/tests:hlo_legacy_gpu_test_base",
         "//xla/service/llvm_ir:llvm_command_line_options",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",

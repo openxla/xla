@@ -21,25 +21,28 @@ limitations under the License.
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/service/compiler.h"
+#include "xla/service/gpu/tests/hlo_gpu_test_base_interface.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tests/hlo_runner_agnostic_test_base.h"
 
 namespace xla::gpu {
 
-class HloPjRtGpuTestBase : public HloRunnerAgnosticTestBase {
+class HloPjRtGpuTestBase : public HloRunnerAgnosticTestBase,
+                           public HloGpuTestBaseInterface {
  protected:
   explicit HloPjRtGpuTestBase(HloPjRtTestBaseOptions options = {});
 
-  const GpuTargetConfig& gpu_target_config() const {
+  const GpuTargetConfig& gpu_target_config() const override {
     return gpu_target_config_;
   }
 
-  const stream_executor::DeviceDescription& device_description() const {
+  const stream_executor::DeviceDescription& device_description()
+      const override {
     return gpu_target_config_.device_description;
   }
 
-  Compiler* compiler() const { return compiler_.get(); }
+  Compiler* compiler() const override { return compiler_.get(); }
 
  private:
   HloPjRtGpuTestBase(PjRtClient* client, HloPjRtTestBaseOptions options);
