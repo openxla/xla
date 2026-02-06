@@ -129,7 +129,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/profiling/device_time_measurement.h"
-#include "xla/pjrt/profiling/profiling_context.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/se_raw_buffer.h"
@@ -1948,7 +1947,6 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
   };
   tsl::RCReference<PjRtDeviceEvent> definition_event;
   if (device_state->async_dispatch_thread()) {
-    std::unique_ptr<ProfilingContext> pc = CreateProfilingContext();
     auto definition_event_promise =
         tsl::MakeRef<PjRtStreamExecutorDeviceEventPromise>(
             client_, device_state, client_->async_work_runner());
@@ -2028,16 +2026,11 @@ PjRtStreamExecutorLoadedExecutable::StartRawExecutable(
 
 void PjRtStreamExecutorLoadedExecutable::LaunchOnDevice(
     PjRtDevice* device, absl::AnyInvocable<void()> execute_fn) const {
-  std::unique_ptr<ProfilingContext> pc = CreateProfilingContext();
   const LocalDeviceState& device_state =
       *tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
            ->local_device_state();
   device_state.execute_thread()->Schedule(
-      [execute_fn = std::move(execute_fn), pc = std::move(pc)]() mutable {
-        std::unique_ptr<WithProfilingContext> wpc =
-            CreateWithProfilingContext(pc.get());
-        execute_fn();
-      });
+      tsl::WithCurrentContext(std::move(execute_fn)));
 }
 
 absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>

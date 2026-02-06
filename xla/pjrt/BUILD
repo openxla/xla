@@ -746,7 +746,6 @@ cc_library(
         "//xla/pjrt/distributed:protocol_proto_cc",
         "//xla/pjrt/dump",
         "//xla/pjrt/profiling:device_time_measurement",
-        "//xla/pjrt/profiling:profiling_context",
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/service:buffer_assignment",
         "//xla/service:compiler",
