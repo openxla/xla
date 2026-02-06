@@ -438,7 +438,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   // --xla_ignore_channel_id should be kept false by default while channel ids
   // are load-bearing.
   opts.set_xla_ignore_channel_id(false);
-  opts.set_xla_gpu_dot_merger_threshold_mb(32);
+  opts.set_xla_gpu_dot_merger_threshold_mb(64);
   opts.set_xla_enable_fast_math(false);
   opts.set_xla_gpu_experimental_parallel_collective_overlap_limit(1);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
