@@ -798,6 +798,7 @@ xla_test(
         "manual",
         "notap",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":hlo_op_profile_proto_cc",
         ":hlo_op_profiler_lib",

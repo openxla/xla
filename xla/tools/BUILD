@@ -941,6 +941,7 @@ xla_test(
         "manual",
         "notap",
     ],
+    use_legacy_runtime = True,
     deps = [
         ":matmul_perf_table_gen",
         ":matmul_perf_table_gen_main_lib",
