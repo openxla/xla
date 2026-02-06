@@ -48,16 +48,6 @@ class GpuKernelTilingTest : public GpuCodegenTest {
     config.set_debug_options(debug_options);
     return config;
   }
-
-  HloModuleConfig ConfigWithoutAutotuning() {
-    // We disable autotuning for tests that are meant to test the native 
-    // emitter, not the triton emitter.
-    HloModuleConfig config;
-    auto debug_options = HloTestBase::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_autotune_level(0);
-    config.set_debug_options(debug_options);
-    return config;
-  }
 };
 
 TEST_F(GpuKernelTilingTest, UnnestedTransposeWithProperDimensionsTiled) {
@@ -421,7 +411,7 @@ ENTRY RowLargeReduce {
   ROOT R = s32[262144,512]{1,0} reduce(BB, CC), dimensions={2}, to_apply=reduceOp
 })";
   ASSERT_OK_AND_ASSIGN(auto hlo_module, 
-        ParseAndReturnVerifiedModule(kHlo, ConfigWithoutAutotuning()));
+        ParseAndReturnVerifiedModule(kHlo);
   EXPECT_TRUE(Run(std::move(hlo_module), /*run_hlo_passes*/true));
 }
 
@@ -445,7 +435,7 @@ ENTRY RowLargeReduce {
   ROOT O = s16[762145,999] convert(R)
 })";
   ASSERT_OK_AND_ASSIGN(auto hlo_module, 
-        ParseAndReturnVerifiedModule(kHlo, ConfigWithoutAutotuning()));
+        ParseAndReturnVerifiedModule(kHlo);
   EXPECT_TRUE(Run(std::move(hlo_module), /*run_hlo_passes*/true));
 }
 
@@ -469,7 +459,7 @@ ENTRY MultiRowLargeReduce {
   ROOT O = s16[262144,4096]{1,0} convert(R)
 })";
   ASSERT_OK_AND_ASSIGN(auto hlo_module, 
-        ParseAndReturnVerifiedModule(kHlo, ConfigWithoutAutotuning()));
+        ParseAndReturnVerifiedModule(kHlo);
   EXPECT_TRUE(Run(std::move(hlo_module), /*run_hlo_passes*/true));
 }
 
@@ -493,7 +483,7 @@ ENTRY MultiRowLargeReduce {
   ROOT R = s32[762145,999]{1,0} reduce(BB, CC), dimensions={2}, to_apply=reduceOp
 })";
   ASSERT_OK_AND_ASSIGN(auto hlo_module, 
-        ParseAndReturnVerifiedModule(kHlo, ConfigWithoutAutotuning()));
+        ParseAndReturnVerifiedModule(kHlo);
   EXPECT_OK(CompileToExecutable(std::move(hlo_module)));
 }
 
@@ -506,7 +496,7 @@ ENTRY LargeLoop {
   ROOT B = bf16[80,7,8192,8192]{3,2,1,0} broadcast(C), dimensions={}
 })";
   ASSERT_OK_AND_ASSIGN(auto hlo_module, 
-      ParseAndReturnVerifiedModule(kHlo, ConfigWithoutAutotuning()));
+      ParseAndReturnVerifiedModule(kHlo);
   EXPECT_OK(CompileToExecutable(std::move(hlo_module)));
 }
 
