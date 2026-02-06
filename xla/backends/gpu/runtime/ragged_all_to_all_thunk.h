@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -72,6 +73,7 @@ struct RaggedAllToAllRendezvousValue {
 struct RaggedAllToAllStreamState {
   int device_ordinal;
   RankId rank;
+  GpuCliqueKey clique_key;
 
   // Host memory allocations for ragged metadata.
   absl::InlinedVector<std::unique_ptr<se::MemoryAllocation>, 8>
@@ -97,8 +99,15 @@ struct RaggedAllToAllStreamState {
   // This value is incremented locally by the kernel after every barrier.
   se::DeviceAddressHandle barrier_signal_value;
 
-  RaggedAllToAllStreamState(int device_ordinal, RankId rank)
-      : device_ordinal(device_ordinal), rank(rank) {}
+  // Contains the output buffer pointers and barrier signal buffers for all
+  // peers.
+  std::shared_ptr<std::vector<RaggedAllToAllRendezvousValue>> participants;
+
+  RaggedAllToAllStreamState(int device_ordinal, RankId rank,
+                            GpuCliqueKey clique_key)
+      : device_ordinal(device_ordinal),
+        rank(rank),
+        clique_key(std::move(clique_key)) {}
 };
 
 // Thunk that performs a NCCL-based Ragged-All-to-All among CUDA GPU-based
@@ -175,6 +184,9 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
   absl::flat_hash_map<se::StreamExecutor*,
                       std::unique_ptr<RaggedAllToAllStreamState>>
       per_stream_states_ ABSL_GUARDED_BY(mutex_);
+
+  absl::StatusOr<RaggedAllToAllStreamState*> InitializeOnce(
+      const InitializeParams& params);
 };
 
 // Executes a generic Ragged All-to-All collective operation using the provided
@@ -225,7 +237,8 @@ absl::Status RunOneShotRaggedAllToAll(
     const se::DeviceAddressBase& barrier_signal_buffer,
     const se::DeviceAddressBase& barrier_signal_value,
     int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
-    absl::Span<DeviceBufferPair const> buffers);
+    absl::Span<DeviceBufferPair const> buffers,
+    const std::vector<RaggedAllToAllRendezvousValue>& participants);
 
 }  // namespace gpu
 }  // namespace xla
