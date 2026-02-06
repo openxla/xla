@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/service/compiler.h"
@@ -126,7 +127,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> FissionBackend::RunHloPasses(
   priority_fusion_options.count_multiple_input_accesses = true;
   // TODO: b/407494653 - Get rid of PriorityFusion.
   PriorityFusion priority_fusion(
-      /*thread_pool=*/nullptr, target_config().device_description,
+      /*thread_pool=*/nullptr, target_config().device_description, alias_info_,
       priority_fusion_options, mlir_context_);
   TF_RETURN_IF_ERROR(priority_fusion.Run(module.get()).status());
   return module;
@@ -134,12 +135,15 @@ absl::StatusOr<std::unique_ptr<HloModule>> FissionBackend::RunHloPasses(
 
 absl::Status FissionBackend::ApplyConfig(HloInstruction& instr,
                                          const BackendConfig& config) {
+  HloModule* module = instr.GetModule();
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
                       GetFissionedAndRewrittenModule(instr));
   TF_ASSIGN_OR_RETURN(HloInstruction * supported_instr,
                       FindFirstSupportedInstruction(hlo_module.get()));
   TF_RETURN_IF_ERROR(codegen_backend_->ApplyConfig(*supported_instr, config));
-  return InlineFissionedComputation(&instr, hlo_module->entry_computation());
+  TF_RETURN_IF_ERROR(
+      InlineFissionedComputation(&instr, hlo_module->entry_computation()));
+  return module->RemoveUnusedComputations();
 }
 
 bool FissionBackend::IsSupported(const HloInstruction& instr) {

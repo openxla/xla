@@ -70,6 +70,8 @@ typedef enum {
   PJRT_Extension_Type_Callback,
   PJRT_Extension_Type_HostAllocator,  // Experimental.
   PJRT_Extension_Type_TpuTopology,
+  PJRT_Extension_Type_TpuExecutable,
+  PJRT_Extension_Type_Megascale,
 } PJRT_Extension_Type;
 
 // PJRT_Extension_Base contains a type and a pointer to next
@@ -104,7 +106,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 89
+#define PJRT_API_MINOR 90
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -1069,6 +1071,9 @@ struct PJRT_Client_CreateErrorBuffer_Args {
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Client_CreateErrorBuffer_Args, buffer);
 
+// Creates a buffer in the given memory space that carries an error future
+// without allocating memory. If this buffer is passed to an Execute call, the
+// execution will fail with the given error code and message.
 typedef PJRT_Error* PJRT_Client_CreateErrorBuffer(
     PJRT_Client_CreateErrorBuffer_Args* args);
 
@@ -1995,9 +2000,11 @@ struct PJRT_Executable_GetCompiledMemoryStats_Args {
 
   // Device memory stats, from xla::CompiledMemoryStats.
   int64_t peak_memory_in_bytes;  // out
+  // Total Device default memory (e.g., HBM for GPU/TPU) usage.
+  int64_t total_size_in_bytes;  // out
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Executable_GetCompiledMemoryStats_Args,
-                          peak_memory_in_bytes);
+                          total_size_in_bytes);
 
 // Return memory stats that allow callers to estimate memory usage when running
 // this executable. The memory stats could contain usage info from different

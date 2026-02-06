@@ -33,10 +33,12 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "google/protobuf/descriptor.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
+#include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_device_dimensions.h"
 #include "xla/pjrt/pjrt_layout.h"
@@ -133,6 +135,9 @@ struct CompileOptions {
   absl::Status ApplyOptionFromString(
       const tsl::protobuf::FieldDescriptor* field, const std::string& value);
 
+  // Compiler variant to indicate which compiler is invoked.
+  std::optional<std::string> compiler_variant = std::nullopt;
+
   static absl::StatusOr<EnvironmentOptionOverrides> LoadEnvOptionOverrides(
       const google::protobuf::Map<std::string, xla::OptionOverrideProto>&
           env_option_overrides);
@@ -144,6 +149,9 @@ struct CompileOptions {
   static absl::StatusOr<CompileOptions> FromProto(
       const CompileOptionsProto& proto);
 };
+
+// Returns true if the compilation is an early exit compilation.
+bool IsEarlyExitCompilation(const xla::CompileOptions& compile_options);
 
 struct LoadOptions {
   // Origin of the subslice of the target topology to run computation on.
@@ -309,6 +317,7 @@ struct CompiledMemoryStats {
   // How much argument is reused for output.
   int64_t alias_size_in_bytes = 0;
   int64_t temp_size_in_bytes = 0;
+  int64_t total_size_in_bytes = 0;
 
   // Host memory usage stats.
   int64_t host_generated_code_size_in_bytes = 0;
@@ -399,6 +408,11 @@ class PjRtExecutable {
   // Serialize this executable into a string and return the value.
   virtual absl::StatusOr<std::string> SerializeExecutable() const {
     return absl::UnimplementedError("SerializeExecutable is not implemented.");
+  }
+
+  virtual absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>>
+  GetAbiVersion() const {
+    return absl::UnimplementedError("GetAbiVersion is not implemented.");
   }
 
   // Return a fingerprint of this executable.

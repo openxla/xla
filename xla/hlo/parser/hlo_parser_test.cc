@@ -1135,6 +1135,29 @@ ENTRY %fusion.v3 () -> f32[3,2,1,1] {
 
 )"
 },
+// AsyncStartWithAliasing
+{
+"AsyncStartWithAliasing",
+R"(HloModule module, entry_computation_layout={(f32[8,4,1]{0,1,2:T(4,128)})->f32[8,4,1]{0,1,2:T(4,128)}}
+
+%async_computation (param_0.2: (f32[8,4,1], (f32[8,4,1], u32[], u32[]))) -> f32[8,4,1] {
+  %param_0.2 = (f32[8,4,1]{1,2,0:T(1,128)}, (f32[8,4,1]{1,2,0:T(1,128)}, u32[]{:S(2)}, u32[]{:S(2)})) parameter(0)
+  %get-tuple-element = f32[8,4,1]{1,2,0:T(1,128)} get-tuple-element((f32[8,4,1]{1,2,0:T(1,128)}, (f32[8,4,1]{1,2,0:T(1,128)}, u32[]{:S(2)}, u32[]{:S(2)})) %param_0.2), index=0
+  ROOT %all-to-all0.0 = f32[8,4,1]{1,2,0:T(1,128)} all-to-all(f32[8,4,1]{1,2,0:T(1,128)} %get-tuple-element), channel_id=1, replica_groups={{0,1,2,3,4,5,6,7}}, dimensions={0}
+}
+
+ENTRY %Comp_spmd (param: f32[8,4,1]) -> f32[8,4,1] {
+  %param = f32[8,4,1]{0,1,2:T(4,128)} parameter(0)
+  %copy = f32[8,4,1]{1,2,0:T(1,128)} copy(f32[8,4,1]{0,1,2:T(4,128)} %param)
+  %custom-call = (f32[8,4,1]{1,2,0:T(1,128)}, u32[]{:S(2)}, u32[]{:S(2)}) custom-call(), custom_call_target="BarrierStart"
+  %tuple = (f32[8,4,1]{1,2,0:T(1,128)}, (f32[8,4,1]{1,2,0:T(1,128)}, u32[]{:S(2)}, u32[]{:S(2)})) tuple(f32[8,4,1]{1,2,0:T(1,128)} %copy, (f32[8,4,1]{1,2,0:T(1,128)}, u32[]{:S(2)}, u32[]{:S(2)}) %custom-call)
+  %all-to-all-start.1 = (((f32[8,4,1]{1,2,0:T(1,128)}, (f32[8,4,1]{1,2,0:T(1,128)}, u32[]{:S(2)}, u32[]{:S(2)}))), f32[8,4,1]{1,2,0:T(1,128)}, u32[]{:S(2)}, u32[]{:S(2)}) async-start((f32[8,4,1]{1,2,0:T(1,128)}, (f32[8,4,1]{1,2,0:T(1,128)}, u32[]{:S(2)}, u32[]{:S(2)})) %tuple), output_to_operand_aliasing={{0,0,1,0}: (0, {1,0}), {1}: (0, {1,0}), {0,0,1,1}: (0, {1,1}), {2}: (0, {1,1}), {0,0,1,2}: (0, {1,2}), {3}: (0, {1,2})}, calls=%async_computation
+  %all-to-all-done = f32[8,4,1]{1,2,0:T(1,128)} async-done((((f32[8,4,1]{1,2,0:T(1,128)}, (f32[8,4,1]{1,2,0:T(1,128)}, u32[]{:S(2)}, u32[]{:S(2)}))), f32[8,4,1]{1,2,0:T(1,128)}, u32[]{:S(2)}, u32[]{:S(2)}) %all-to-all-start.1)
+  ROOT %copy.1 = f32[8,4,1]{0,1,2:T(4,128)} copy(f32[8,4,1]{1,2,0:T(1,128)} %all-to-all-done)
+}
+
+)"
+},
 // FusionWithAliasing
 {
 "FusionWithAliasing",
@@ -2667,6 +2690,27 @@ R"(HloModule BitcastConvert, entry_computation_layout={(f32[100]{0})->u32[100]{0
 ENTRY BitcastConvertUsage {
   p = f32[100]{0} parameter(0)
   ROOT out = u32[100]{0} bitcast-convert(p)
+}
+
+)"
+},
+
+// Scan
+{
+"Scan",
+R"(HloModule scan_module, entry_computation_layout={(f32[4]{0})->(f32[4]{0}, f32[])}
+
+add_F32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  add = f32[] add(lhs, rhs)
+  ROOT t = (f32[], f32[]) tuple(add, add)
+}
+
+ENTRY Scan {
+  input = f32[4]{0} parameter(0)
+  init = f32[] constant(0)
+  ROOT scan = (f32[4]{0}, f32[]) scan(input, init), dimensions={0}, is_reverse=true, is_associative=true, to_apply=add_F32
 }
 
 )"
@@ -4410,6 +4454,18 @@ TEST(HloParserSingleOpTest, ConvolutionTrivialFeatureGroupCount) {
   auto* convolution =
       Cast<HloConvolutionInstruction>(computation->root_instruction());
   EXPECT_EQ(convolution->feature_group_count(), 1);
+}
+
+TEST(HloParserSingleOpTest, ConvolutionWithKind) {
+  const std::string text =
+      R"(%convolution = f32[1,2,1]{2,0,1} convolution(f32[1,2,1]{2,0,1} %copy, f32[1,1,1]{2,1,0} %filter), window={size=1}, dim_labels=b0f_0io->b0f, conv_kind=fprop)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(text));
+  const HloComputation* computation = module->entry_computation();
+  ASSERT_NE(computation, nullptr);
+  auto* convolution =
+      Cast<HloConvolutionInstruction>(computation->root_instruction());
+  EXPECT_EQ(convolution->conv_kind(),
+            HloConvolutionInstruction::ConvKind::FPROP);
 }
 
 TEST(HloParserSingleOpTest, MultipleOpsProducesError) {

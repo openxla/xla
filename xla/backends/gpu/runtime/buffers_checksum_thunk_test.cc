@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/buffer_debug_log_entry_metadata_store.h"
 #include "xla/backends/gpu/runtime/buffer_debug_log_structs.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_multimem_registry.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -100,7 +101,8 @@ class BuffersDebugChecksumThunkTest : public ::testing::Test {
     TF_ASSERT_OK_AND_ASSIGN(executor_, platform_->ExecutorForDevice(0));
     TF_ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream(std::nullopt));
     allocator_ =
-        std::make_unique<se::StreamExecutorMemoryAllocator>(stream_->parent());
+        std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
+            stream_->parent());
 
     if (!executor_->GetDeviceDescription()
              .cuda_compute_capability()
@@ -115,7 +117,7 @@ class BuffersDebugChecksumThunkTest : public ::testing::Test {
   se::Platform* platform_;
   se::StreamExecutor* executor_;
   std::unique_ptr<se::Stream> stream_;
-  std::unique_ptr<se::StreamExecutorMemoryAllocator> allocator_;
+  std::unique_ptr<stream_executor::StreamExecutorAddressAllocator> allocator_;
 };
 
 TEST_F(BuffersDebugChecksumThunkTest, CalculatesChecksums) {
@@ -164,16 +166,18 @@ TEST_F(BuffersDebugChecksumThunkTest, CalculatesChecksums) {
       CollectiveParams::Create(run_options, /*async_streams=*/{},
                                LocalDeviceId(executor_->device_ordinal())));
   CollectiveCliqueRequests clique_requests;
+  CollectiveMemoryRequests memory_requests(allocations);
   CollectiveMultimemRegistry multimem_registry(
       executor_, collective_params.global_device_id);
   Thunk::PrepareParams prepare_params{&collective_params, &clique_requests,
-                                      &multimem_registry, executor_,
-                                      &allocations};
+                                      &memory_requests,   &multimem_registry,
+                                      executor_,          &allocations};
 
   Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
       ServiceExecutableRunOptions(), allocations, stream_.get(),
       /*command_buffer_trace_stream=*/stream_.get(),
-      /*collective_params=*/nullptr, /*collective_cliques=*/nullptr);
+      /*collective_params=*/nullptr, /*collective_cliques=*/nullptr,
+      /*collective_memory=*/nullptr);
   auto metadata_store = std::make_shared<BufferDebugLogEntryMetadataStore>();
 
   BuffersDebugChecksumThunk thunk(
@@ -229,7 +233,7 @@ TEST_F(BuffersDebugChecksumThunkTest,
   struct TestDevice {
     se::StreamExecutor* executor;
     std::unique_ptr<se::Stream> stream;
-    std::unique_ptr<se::StreamExecutorMemoryAllocator> allocator;
+    std::unique_ptr<stream_executor::StreamExecutorAddressAllocator> allocator;
     BufferAllocations allocations;
   };
   auto setup_device = [this](int device_ordinal) -> absl::StatusOr<TestDevice> {
@@ -238,7 +242,8 @@ TEST_F(BuffersDebugChecksumThunkTest,
     TF_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
                         executor->CreateStream());
     auto allocator =
-        std::make_unique<se::StreamExecutorMemoryAllocator>(executor);
+        std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
+            executor);
     BufferAllocations allocations(
         {executor->AllocateArray<uint8_t>(kLogSizeBytes + kInputSizeBytes)},
         executor->device_ordinal(), allocator.get());
@@ -268,7 +273,7 @@ TEST_F(BuffersDebugChecksumThunkTest,
       ServiceExecutableRunOptions(), device0.allocations, device0.stream.get(),
       /*command_buffer_trace_stream=*/device0.stream.get(),
       /*collective_params=*/nullptr,
-      /*collective_cliques=*/nullptr)));
+      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr)));
   TF_ASSERT_OK(device0.stream->BlockHostUntilDone());
 
   TF_ASSERT_OK(
@@ -277,7 +282,7 @@ TEST_F(BuffersDebugChecksumThunkTest,
       ServiceExecutableRunOptions(), device1.allocations, device1.stream.get(),
       /*command_buffer_trace_stream=*/device1.stream.get(),
       /*collective_params=*/nullptr,
-      /*collective_cliques=*/nullptr)));
+      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr)));
   TF_ASSERT_OK(device1.stream->BlockHostUntilDone());
 }
 

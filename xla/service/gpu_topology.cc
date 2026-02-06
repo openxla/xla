@@ -38,7 +38,7 @@ absl::StatusOr<gpu::GpuModel> GetGpuModel(absl::string_view platform_type) {
   if (platform_type == "nvidia_h100") {
     return gpu::GpuModel::H100_SXM;
   }
-  if (platform_type == "umbriel_b200") {
+  if (platform_type == "umbriel_b200" || platform_type == "oberon_b200") {
     return gpu::GpuModel::B200;
   }
   return absl::InvalidArgumentError(
@@ -86,6 +86,12 @@ absl::StatusOr<GpuTopology> GetGpuTopologyForPlatform(
                    gpu::GpuTargetConfig::FromProto(gpu_target_config_proto));
   return GpuTopology(platform_version, num_partitions, num_hosts_per_partition,
                      num_devices_per_host, std::move(gpu_target_config));
+}
+
+GpuTopology GetSingleDeviceGpuTopology(
+    absl::string_view platform_version,
+    const gpu::GpuTargetConfig& gpu_target_config) {
+  return GpuTopology(platform_version, 1, 1, 1, gpu_target_config);
 }
 
 }  // namespace xla

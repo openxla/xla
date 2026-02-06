@@ -25,12 +25,15 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "xla/hlo/builder/xla_computation.h"
+#include "xla/layout.h"
+#include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_device_dimensions.h"
@@ -38,11 +41,10 @@ limitations under the License.
 #include "xla/pjrt/proto/pjrt_partial_program.pb.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/fingerprint.h"
 
 namespace xla {
-
-using PjRtPlatformId = uint64_t;
 
 inline const char* CpuName() {
   static constexpr char kCpuName[] = "cpu";
@@ -86,9 +88,36 @@ inline PjRtPlatformId TpuId() {
 }
 
 class PjRtCompiler;
+// A compiler variant is a string used to distinguish between different
+// compiler implementations registered for the same platform, such as a remote
+// compiler service vs in-process compilation.
+
 // Thread-safe. Returns a pointer to the registered compiler for the given
-// platform.
-absl::StatusOr<PjRtCompiler*> GetPjRtCompiler(absl::string_view platform_name);
+// platform and a default compiler variant.
+absl::StatusOr<PjRtCompiler*> GetDefaultPjRtCompiler(
+    absl::string_view platform_name);
+
+// Thread-safe. Returns a pointer to the registered compiler for the given
+// platform and compiler variant.
+absl::StatusOr<PjRtCompiler*> GetPjRtCompiler(
+    absl::string_view platform_name, absl::string_view compiler_variant);
+
+// A factory that creates a PjRtCompiler. Creation is deferred to avoid
+// violations during program initialization (e.g., RPC or file access during
+// global init).
+using PjRtCompilerFactory =
+    std::function<absl::StatusOr<std::unique_ptr<PjRtCompiler>>()>;
+
+// Registers a compiler factory for a specific platform and variant.
+void PjRtRegisterCompilerFactory(absl::string_view platform_name,
+                                 absl::string_view variant_name,
+                                 PjRtCompilerFactory factory);
+
+// Explicitly initializes a compiler with a given variant.
+// If the compiler is already initialized, this is a no-op.
+absl::Status PjRtInitializeCompilerVariant(absl::string_view platform_name,
+                                           absl::string_view variant_name);
+
 class PjRtClient;
 
 // Abstract interface to represent device topology that is used by the compiler.
@@ -322,13 +351,30 @@ class PjRtCompiler {
     return absl::UnimplementedError(
         "DeserializePjRtTopologyDescription is not implemented.");
   }
+
+  // Returns the target runtime ABI version that the compiled executables will
+  // be compatible with.
+  virtual absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>>
+  GetTargetRuntimeAbiVersion() {
+    return absl::UnimplementedError(
+        "GetTargetRuntimeAbiVersion is not implemented.");
+  }
 };
 
-// Registers a compiler to compile programs for 'platform_name'.
-// Takes ownership of 'compiler'.
+// Registers a compiler to compile programs for 'platform_name' with
+// a default compiler variant. Takes ownership of 'compiler'.
 //
-// REQUIRES: No compiler has been registered for the platform yet.
+// REQUIRES: No default compiler has been registered for the platform.
+void PjRtRegisterDefaultCompiler(absl::string_view platform_name,
+                                 std::unique_ptr<PjRtCompiler> compiler);
+
+// Registers a compiler to compile programs for 'platform_name' with
+// 'compiler_variant'. Takes ownership of 'compiler'.
+//
+// REQUIRES: No compiler has been registered for the platform and compiler
+// variant yet.
 void PjRtRegisterCompiler(absl::string_view platform_name,
+                          absl::string_view compiler_variant,
                           std::unique_ptr<PjRtCompiler> compiler);
 
 // Compiles a 'computation' and generates a 'PjRtExecutable' using the compiler

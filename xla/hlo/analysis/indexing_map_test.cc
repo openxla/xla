@@ -33,6 +33,8 @@ limitations under the License.
 #include "xla/hlo/analysis/indexing_map_serialization.h"
 #include "xla/hlo/analysis/indexing_test_utils.h"
 #include "xla/hlo/analysis/interval.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
+#include "xla/hlo/analysis/symbolic_map_converter.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 
@@ -45,6 +47,7 @@ using ::testing::ElementsAre;
 
 class IndexingMapTest : public HloHardwareIndependentTestBase {
  public:
+  IndexingMapTest() { RegisterSymbolicExprStorage(&mlir_context_); }
   IndexingMap Parse(absl::string_view indexing_map_str) {
     auto indexing_map = ParseIndexingMap(indexing_map_str, &mlir_context_);
     EXPECT_TRUE(indexing_map.has_value());
@@ -94,7 +97,7 @@ TEST_F(IndexingMapTest, VerifyDimensions) {
   EXPECT_FALSE(indexing_map.Verify(ss));
   EXPECT_EQ(ss.str(),
             "number of dim vars (2) must match the number of dimensions in the "
-            "affine map (1)");
+            "symbolic map (1)");
 }
 
 TEST_F(IndexingMapTest, VerifySymbols) {
@@ -106,7 +109,7 @@ TEST_F(IndexingMapTest, VerifySymbols) {
   EXPECT_FALSE(indexing_map.Verify(ss));
   EXPECT_EQ(ss.str(),
             "number of range (1) + runtime (0) variables must match the number "
-            "of symbols in the affine map (0)");
+            "of symbols in the symbolic map (0)");
 }
 
 TEST_F(IndexingMapTest, RTVar) {
@@ -1396,8 +1399,10 @@ TEST_F(IndexingMapTest, RangeEvaluatorTest) {
   EXPECT_TRUE(range_evaluator.IsAlwaysPositiveOrZero(d3));
   EXPECT_TRUE(range_evaluator.IsAlwaysNegativeOrZero(d3));
 
+  // TODO: b/446858351 - Remove conversion once fully migrated to SymbolicMap.
   // d0 * 2 + d1 between [-10, 17].
-  EXPECT_EQ(range_evaluator.ComputeExpressionRange(d0 * 2 + d1),
+  EXPECT_EQ(range_evaluator.ComputeExpressionRange(
+                AffineExprToSymbolicExpr(d0 * 2 + d1, /*num_dims=*/4)),
             (Interval{-10, 17}));
 }
 

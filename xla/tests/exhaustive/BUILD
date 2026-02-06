@@ -144,7 +144,6 @@ exhaustive_xla_test(
         "optonly",
         # This is a big test that we skip for capacity reasons in OSS testing.
         "no_oss",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":exhaustive_op_test_utils",
@@ -187,7 +186,6 @@ xla_test(
         "optonly",
         # This is a big test that we skip for capacity reasons in OSS testing.
         "no_oss",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":exhaustive_op_test_utils",
@@ -253,7 +251,6 @@ exhaustive_xla_test(
         "optonly",
         # This is a big test that we skip for capacity reasons in OSS testing.
         "no_oss",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":exhaustive_binary_test_textual_hdrs",

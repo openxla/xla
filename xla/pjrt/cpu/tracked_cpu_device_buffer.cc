@@ -250,6 +250,16 @@ TrackedCpuDeviceBuffer::GetAsyncValueDefinitionEvents() {
   return result;
 }
 
+std::vector<tsl::RCReference<tsl::AsyncValue>>
+TrackedCpuDeviceBuffer::GetAsyncValueDefinitionAndUsageEvents() {
+  std::vector<tsl::RCReference<tsl::AsyncValue>> result;
+  result.push_back(definition_event_.CopyRCRef());
+  for (auto& event : usage_events_) {
+    result.push_back(event.CopyRCRef());
+  }
+  return result;
+}
+
 void TrackedCpuDeviceBuffer::AddUsageEvent(
     tsl::RCReference<PjRtDeviceEvent> event) {
   if (event) {
@@ -326,6 +336,24 @@ absl::Status TrackedCpuDeviceBuffer::BlockForOperationsToComplete(
         absl::StrFormat("Error Execute: %s", error->message()));
   }
   return absl::OkStatus();
+}
+
+bool TrackedCpuDeviceBuffer::AddDefinitionEventsToSet(
+    PjRtDeviceEventSet& events) {
+  if (!definition_event_.IsAvailable() || definition_event_.IsError()) {
+    tensorflow::down_cast<CpuTrackedDeviceEventSet*>(&events)->AddEvent(
+        definition_event_.CopyRCRef());
+  }
+  return false;
+}
+
+void TrackedCpuDeviceBuffer::AddUsageEventsToSet(PjRtDeviceEventSet& events) {
+  for (const auto& ev : usage_events_) {
+    if (!ev.IsAvailable()) {
+      tensorflow::down_cast<CpuTrackedDeviceEventSet*>(&events)->AddEvent(
+          ev.CopyRCRef());
+    }
+  }
 }
 
 }  // namespace xla

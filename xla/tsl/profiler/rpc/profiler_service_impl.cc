@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/profiler/rpc/client/save_profile.h"
 #include "xla/tsl/profiler/utils/math_utils.h"
-#include "xla/tsl/profiler/utils/profiler_options_util.h"
 #include "xla/tsl/profiler/utils/time_utils.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "tsl/profiler/lib/profiler_session.h"
@@ -53,19 +52,14 @@ using tensorflow::MonitorRequest;
 using tensorflow::MonitorResponse;
 using tensorflow::ProfileRequest;
 using tensorflow::ProfileResponse;
+using tensorflow::StopContinuousProfilingRequest;
+using tensorflow::StopContinuousProfilingResponse;
 using tensorflow::TerminateRequest;
 using tensorflow::TerminateResponse;
 
 std::string GetHostname(const ProfileRequest& request) {
-  std::optional<std::variant<std::string, bool, int64_t>> hostname_override =
-      GetConfigValue(request.opts(), "override_hostname");
-  if (!hostname_override.has_value()) {
-    return request.host_name();
-  }
-  const std::string* hostname_str =
-      std::get_if<std::string>(&*hostname_override);
-  if (hostname_str != nullptr && !hostname_str->empty()) {
-    return *hostname_str;
+  if (!request.opts().override_hostname().empty()) {
+    return request.opts().override_hostname();
   }
   return request.host_name();
 }
@@ -147,7 +141,7 @@ class ProfilerServiceImpl : public tensorflow::grpc::ProfilerService::Service {
   ::grpc::Status StartContinuousProfiling(
       ::grpc::ServerContext* ctx, const ProfileRequest* req,
       ContinuousProfilingResponse* response) override {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     if (continuous_profiling_session_.has_value()) {
       return ::grpc::Status(::grpc::StatusCode::ALREADY_EXISTS,
                             "A profiling session is already running.");
@@ -167,10 +161,28 @@ class ProfilerServiceImpl : public tensorflow::grpc::ProfilerService::Service {
     return ::grpc::Status::OK;
   }
 
+  ::grpc::Status StopContinuousProfiling(
+      ::grpc::ServerContext* ctx, const StopContinuousProfilingRequest* req,
+      StopContinuousProfilingResponse* response) override {
+    std::optional<ContinuousSession> session_to_destroy;
+    {
+      absl::MutexLock lock(mutex_);
+      if (!continuous_profiling_session_.has_value()) {
+        return ::grpc::Status(::grpc::StatusCode::NOT_FOUND,
+                              "No continuous profiling session found.");
+      }
+      // Move session to a local variable so that it is destroyed after mutex
+      // is released, avoiding potentially expensive destruction of
+      // ProfilerSession under lock.
+      session_to_destroy.swap(continuous_profiling_session_);
+    }
+    return ::grpc::Status::OK;
+  }
+
   ::grpc::Status GetSnapshot(::grpc::ServerContext* ctx,
                              const GetSnapshotRequest* req,
                              ProfileResponse* response) override {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     if (!continuous_profiling_session_.has_value()) {
       return ::grpc::Status(::grpc::StatusCode::NOT_FOUND,
                             "No continuous profiling session found.");

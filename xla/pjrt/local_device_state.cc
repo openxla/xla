@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/client/local_client.h"
+#include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/buffer_sequencing_event.h"
 #include "xla/pjrt/worker_thread.h"
 #include "xla/stream_executor/device_address.h"
@@ -47,13 +48,11 @@ limitations under the License.
 
 namespace xla {
 
-LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
-                                   LocalClient* client,
-                                   AllocationModel allocation_model,
-                                   int max_inflight_computations,
-                                   bool allow_event_reuse,
-                                   bool use_callback_stream, int device_ordinal,
-                                   std::optional<StreamOptions> stream_options)
+LocalDeviceState::LocalDeviceState(
+    se::StreamExecutor* executor, LocalClient* client,
+    AllocationModel allocation_model, int max_inflight_computations,
+    bool allow_event_reuse, bool use_callback_stream, int device_ordinal,
+    std::optional<StreamOptions> stream_options, bool schedule_async)
     : allocation_model_(allocation_model),
       event_pool_(allow_event_reuse),
       compute_semaphore_(
@@ -125,12 +124,18 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
     external_ready_event_streams_.emplace_back(
         create_stream(absl::StrFormat("External ready event #%d", i)));
   }
-  execute_thread_ =
-      std::make_unique<WorkerThread>(tsl::Env::Default(), "py_xla_execute");
-  callback_thread_ =
-      std::make_unique<WorkerThread>(tsl::Env::Default(), "py_xla_callback");
-  cleanup_thread_ =
-      std::make_unique<WorkerThread>(tsl::Env::Default(), "py_xla_cleanup");
+  tsl::ThreadOptions thread_options;
+  thread_options.numa_node = executor->numa_node();
+  execute_thread_ = std::make_unique<WorkerThread>(
+      tsl::Env::Default(), thread_options, "py_xla_execute");
+  if (schedule_async) {
+    async_dispatch_thread_ = std::make_unique<WorkerThread>(
+        tsl::Env::Default(), thread_options, "py_xla_dispatch");
+  }
+  callback_thread_ = std::make_unique<WorkerThread>(
+      tsl::Env::Default(), thread_options, "py_xla_callback");
+  cleanup_thread_ = std::make_unique<WorkerThread>(
+      tsl::Env::Default(), thread_options, "py_xla_cleanup");
 }
 
 LocalDeviceState::~LocalDeviceState() {
@@ -309,10 +314,12 @@ int LocalDeviceState::GetNewPrngSeed() {
 }
 
 absl::Status LocalDeviceState::AllocateAndRecordEvent(
-    BufferSequencingEventRef event, se::Stream* stream) {
+    AsyncWorkRunner* async_work_runner, BufferSequencingEventRef event,
+    se::Stream* stream) {
   auto status = [&]() {
-    TF_ASSIGN_OR_RETURN(EventPool::Handle device_event,
-                        event_pool().AllocateEvent(stream->parent()));
+    TF_ASSIGN_OR_RETURN(
+        EventPool::Handle device_event,
+        event_pool().AllocateEvent(async_work_runner, stream->parent()));
     event_pool().ThenRecordEvent(stream, device_event);
     event->SetSequencingEvent(std::move(device_event), stream);
     return ThenExecuteCallback(stream, [event]() { event.SetStateConcrete(); });
@@ -325,7 +332,7 @@ absl::Status LocalDeviceState::AllocateAndRecordEvent(
 
 absl::StatusOr<BufferSequencingEventRef>
 LocalDeviceState::GetEventForComputeStreamSyncPoint(
-    size_t sync_point, tsl::thread::ThreadPool* thread_pool,
+    size_t sync_point, AsyncWorkRunner* async_work_runner,
     bool nullptr_if_past) {
   mu_.lock();
   size_t cur_sync_point = next_compute_stream_sync_point_.load();
@@ -343,8 +350,9 @@ LocalDeviceState::GetEventForComputeStreamSyncPoint(
     return event;
   }
   next_compute_stream_sync_point_.store(cur_sync_point + 1);
-  auto event = BufferSequencingEvent::Create(thread_pool);
-  auto status = AllocateAndRecordEvent(event, compute_stream());
+  auto event = BufferSequencingEvent::Create(async_work_runner);
+  auto status =
+      AllocateAndRecordEvent(async_work_runner, event, compute_stream());
   if (!status.ok()) {
     mu_.unlock();
     return status;

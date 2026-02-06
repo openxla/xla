@@ -22,15 +22,18 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "llvm/IR/Module.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/autotune_results.pb.h"
+#include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/service/compiled_module.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
@@ -137,7 +140,19 @@ class GpuCompiler : public LLVMCompiler {
 
   absl::StatusOr<std::unique_ptr<Executable>> LoadExecutableFromAotResult(
       const CompiledModule& aot_result,
-      const se::StreamExecutor& stream_exec) override;
+      const se::DeviceDescription& device_description) override;
+
+  static std::unique_ptr<HloPassPipeline> GetCublasRewriterPipeline(
+      const stream_executor::DeviceDescription& device_description,
+      bool enable_cublaslt = false);
+
+  static std::unique_ptr<HloPassPipeline> GetCustomKernelRewriterPipeline(
+      const stream_executor::DeviceDescription& device_description);
+
+  // Returns the LLVM command line options that we use for compilation.
+  // THey need to be set globally whenever we call into LLVM.
+  virtual std::vector<std::string> GetLLVMCommandLineOptions(
+      const DebugOptions& debug_options) const = 0;
 
  protected:
   struct BackendCompileResult {
@@ -156,35 +171,26 @@ class GpuCompiler : public LLVMCompiler {
       const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
       const GpuAliasInfo* alias_info, tsl::thread::ThreadPool* thread_pool);
 
-  // CollectivesScheduleLinearizer enforces a total ordering between collectives
-  // to work around divergence in executables introduced due to auto tuning,
-  // specifically the use of extra scratch space for convolutions. This
-  // function decided whether to apply this pass. If convolutions are present in
-  // the code and we are using "online" autotuning (i.e., not AOT) we need to
-  // use the pass, else we do not need to enable the pass.
-  virtual bool RequiresCollectiveScheduleLinearizer(
-      const HloModule* module, se::StreamExecutor* stream_exec) {
-    return false;
-  }
-
-  // Add autotuning passes for convolution and gemm (except triton).
+  // Add autotuning passes for convolution and gemm.
   // target_config must outlive the pipeline.
-  virtual absl::Status AddConvAndGemmAutotuningPasses(
-      HloPassPipeline* pipeline, const se::GpuComputeCapability& gpu_version,
-      const CompileOptions& options, HloModule* hlo_module,
-      AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool,
-      se::StreamExecutor* stream_exec, const GpuTargetConfig* target_config) {
-    return absl::OkStatus();
-  }
-
-  // Add autotuning passes for GEMM fusions.
-  virtual absl::Status AddGemmFusionAutotuningPasses(
+  virtual absl::Status AddConvAndGemmAutotuningPass(
       HloPassPipeline* pipeline, HloModule* hlo_module,
-      AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool,
+      const se::GpuComputeCapability& gpu_version,
+      const CompileOptions& options, AutotuneConfig& autotune_config,
+      tsl::thread::ThreadPool* thread_pool, se::StreamExecutor* stream_exec,
+      const Compiler::GpuTargetConfig* target_config,
       const MultiProcessKeyValueStore& key_value_store,
-      const se::SemanticVersion& toolkit_version,
-      stream_executor::StreamExecutor* stream_executor) {
-    return absl::OkStatus();
+      const se::SemanticVersion& toolkit_version, const AliasInfo* alias_info,
+      const DebugOptions& debug_options, mlir::MLIRContext* mlir_context,
+      HloCostAnalysis::ShapeSizeFunction shape_size_fn);
+
+  virtual absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
+  GetCodegenBackends(se::StreamExecutor* stream_exec,
+                     const Compiler::GpuTargetConfig* target_config,
+                     const AliasInfo* alias_info,
+                     const DebugOptions& debug_options,
+                     mlir::MLIRContext* mlir_context) {
+    return std::vector<std::unique_ptr<CodegenBackend>>();
   }
 
   // target_config must outlive the pipeline.
@@ -193,7 +199,8 @@ class GpuCompiler : public LLVMCompiler {
       const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
       stream_executor::StreamExecutor* stream_executor,
       const GpuTargetConfig* target_config,
-      HloCostAnalysis::ShapeSizeFunction shape_size_fn) {
+      HloCostAnalysis::ShapeSizeFunction shape_size_fn,
+      const MultiProcessKeyValueStore& key_value_store) {
     return absl::OkStatus();
   }
 
@@ -273,18 +280,22 @@ class GpuCompiler : public LLVMCompiler {
     return Unimplemented("LinkModules is not implemented.");
   }
 
-  // New AOT compilation as part of the AOT split project.
+  // Runs HLO passes on the given module. If the module has a schedule, it is
+  // assumed that the module is already optimized and no passes are run.
+  absl::StatusOr<std::unique_ptr<HloModule>> RunHloPassesIfNeeded(
+      std::unique_ptr<HloModule> hlo_module,
+      se::StreamExecutor* absl_nullable executor,
+      const CompileOptions& compile_options);
+
+  // New AOT compilation which compiles up the the Thunk generation stage.
   absl::StatusOr<std::vector<std::unique_ptr<CompiledModule>>>
   NewCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
-                        const AotCompilationOptions& options);
+                        se::StreamExecutor* executor,
+                        const CompileOptions& compile_options);
   // Legacy AOT compilation.
   absl::StatusOr<std::vector<std::unique_ptr<CompiledModule>>>
   LegacyCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
                            const AotCompilationOptions& options);
-
-  absl::StatusOr<std::vector<std::unique_ptr<CompiledModule>>>
-  EarlyExitCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
-                              const AotCompilationOptions& options);
 
   se::Platform::Id platform_id_;
 
@@ -299,11 +310,6 @@ class GpuCompiler : public LLVMCompiler {
 
   GpuCompiler(const GpuCompiler&) = delete;
   GpuCompiler& operator=(const GpuCompiler&) = delete;
-
-  // Returns the LLVM command line options that we use for compilation.
-  // THey need to be set globally whenever we call into LLVM.
-  virtual std::vector<std::string> GetLLVMCommandLineOptions(
-      const DebugOptions& debug_options) const = 0;
 
   // A MLIR context that can be used by pre-codegen passes. For codegen, we will
   // need to have a context with more dialects registered.

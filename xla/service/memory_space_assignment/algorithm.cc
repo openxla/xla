@@ -221,13 +221,18 @@ std::vector<HloUse> FindCrossProgramPrefetchUses(
             [&](const std::pair<HloOperandIndex, ShapeIndex>& in_place_pair) {
               if (in_place_pair.first.operand_number == use.operand_number &&
                   in_place_pair.first.operand_index == use.operand_index) {
-                return use.instruction != root_instruction &&
-                       absl::c_all_of(
-                           alias_analysis.dataflow_analysis()
-                               .GetUniqueValueAt(use.instruction,
-                                                 in_place_pair.second)
-                               .GetUses(),
-                           use_does_not_live_out);
+                if (use.instruction == root_instruction) {
+                  return false;
+                }
+                for (const HloUse& nested_use :
+                     alias_analysis.dataflow_analysis()
+                         .GetUniqueValueAt(use.instruction,
+                                           in_place_pair.second)
+                         .GetUses()) {
+                  if (nested_use != use && !use_does_not_live_out(nested_use)) {
+                    return false;
+                  }
+                }
               }
               return true;
             });
@@ -736,7 +741,8 @@ std::string MsaAlgorithm::RequiredMemoryAssignment::ToString() const {
 
   return absl::StrCat(
       "RequiredMemoryAssignment(memory_space=", memory_space_str,
-      ", time=", time, ", offset=", offset_str, ")");
+      ", time=", time, ", offset=", offset_str,
+      ", message=", required_assignment_source, ")");
 }
 
 std::vector<const MsaBufferInterval*> MsaAlgorithm::GetSortedColocatedIntervals(
@@ -1078,9 +1084,13 @@ absl::Status MsaAlgorithm::OptimizeMemoryBoundLoop(int loop_start_idx,
                       repeated_inst->parent() &&
                   value_position.instruction->opcode() ==
                       HloOpcode::kParameter) {
+                // TODO(subhankarshah): Validate if adding to pending required
+                // assignemnts is intentional/correct, since we clear after
+                // every successful allocation.
                 AddRequiredAssignment(value_position.instruction,
                                       value_position.index,
-                                      MemorySpace::kDefault);
+                                      MemorySpace::kDefault,
+                                      "Loop optimized parameter in while loop");
                 break;
               }
             }
@@ -3271,6 +3281,7 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
                 [this](const auto& site) {
                   VLOG(3) << "Inefficient site: " << site.ToString();
                   AddRequiredAssignment(site, MemorySpace::kDefault,
+                                        "Inefficient site",
                                         /*offset=*/nullptr,
                                         /*add_to_pending=*/false);
                 },
@@ -3665,11 +3676,12 @@ void MsaAlgorithm::AddRequiredAssignmentsForColocatedIntervals(
         VLOG(3) << "Adding required assignment for condition output: "
                 << value->ToShortString();
         AddRequiredAssignment(position.instruction, position.index,
-                              MemorySpace::kDefault);
+                              MemorySpace::kDefault, "Conditional phi output");
         for (const HloComputation* called_computation :
              position.instruction->called_computations()) {
           AddRequiredAssignment(called_computation->root_instruction(),
-                                position.index, MemorySpace::kDefault);
+                                position.index, MemorySpace::kDefault,
+                                "Conditional computation output");
         }
       }
     }
@@ -3803,7 +3815,8 @@ void MsaAlgorithm::AssignDefaultMemIfNotAllowedInAlternateMem(
     } else {
       AddRequiredAssignment(allocation_value.value(),
                             allocation_value.defining_instruction(),
-                            MemorySpace::kDefault, definition_time);
+                            MemorySpace::kDefault, definition_time,
+                            "Position not allowed in alternate memory.");
     }
   }
 }
@@ -4267,7 +4280,7 @@ AllocationRequest MsaAlgorithm::CreateAllocationRequest(
     } else {
       AddRequiredAssignment(allocation_value_to_update.value(),
                             hlo_use.instruction, MemorySpace::kDefault,
-                            use_time);
+                            use_time, "Use not allowed in alternate memory.");
     }
   } else if (previous_use != nullptr) {
     // We allow buffers in alternate memory that are passed into
@@ -4440,9 +4453,14 @@ void MsaAlgorithm::UpdateAllocationRequirementForUseAliases(
           << (aliased_allocation ? aliased_allocation->ToString()
                                  : "couldn't find the aliased allocation");
 
+  if (!aliased_allocation) {
+    return;
+  }
+
   for (const HloPosition& aliased_position : use.aliases) {
     AddAliasedRequiredAssignment(aliased_position.instruction,
-                                 aliased_position.index, aliased_allocation);
+                                 aliased_position.index, aliased_allocation,
+                                 "Aliased use");
   }
 }
 
@@ -5273,54 +5291,57 @@ MsaAlgorithm::AliasedRequiredAssignmentForUse(
 
 void MsaAlgorithm::AddAliasedRequiredAssignment(
     const HloInstruction* instruction, ShapeIndex index,
-    const Allocation* aliased_allocation) {
+    const Allocation* aliased_allocation,
+    std::string required_assignment_source) {
   AliasedOffset* offset = nullptr;
   if (aliased_allocation->memory_space() == MemorySpace::kAlternate) {
     offset = GetAliasedOffset(*aliased_allocation);
   }
   AddRequiredAssignment(instruction, index, aliased_allocation->memory_space(),
-                        offset);
+                        required_assignment_source, offset);
 }
 
 void MsaAlgorithm::AddRequiredAssignment(const HloValue* value,
                                          const HloInstruction* instruction,
                                          MemorySpace memory_space, int64_t time,
+                                         std::string required_assignment_source,
                                          AliasedOffset* offset,
                                          bool add_to_pending) {
+  RequiredMemoryAssignment required_assignment{memory_space, time, offset,
+                                               required_assignment_source};
   CHECK(memory_space != MemorySpace::kDefault ||
         !IsPositionColoredInAlternateMemoryAtTime(value->defining_position(),
                                                   time))
-      << "Conflicting " << (add_to_pending ? "pending " : "")
-      << "required assignment for : " << value->defining_position().ToString()
-      << " at " << time << " in default memory space.";
+      << "Conflicting required assignment for : "
+      << value->defining_position().ToString()
+      << " required assignment: " << required_assignment.ToString();
 
   CHECK(
       memory_space != MemorySpace::kAlternate ||
       !IsPositionColoredInDefaultMemoryAtTime(value->defining_position(), time))
-      << "Conflicting " << (add_to_pending ? "pending " : "")
-      << "required assignment for : " << value->defining_position().ToString()
-      << " at " << time << " in alternate memory space.";
+      << "Conflicting required assignment for : "
+      << value->defining_position().ToString()
+      << " required assignment: " << required_assignment.ToString();
 
   // Check for existing required assignment at this time and make sure it is the
   // same as this if there is one.
   auto existing_required_assignment = RequiredMemoryAssignmentAt(value, time);
   if (existing_required_assignment) {
     CHECK(memory_space == existing_required_assignment->memory_space)
-        << "Failed to add conflicting " << (add_to_pending ? "pending " : "")
-        << "required assignment for: " << value->defining_position().ToString()
-        << " at " << time << " in "
-        << (memory_space == MemorySpace::kDefault ? "def" : "alt")
-        << " memory space.";
+        << "Failed to add conflicting required assignment for: "
+        << value->defining_position().ToString()
+        << " existing required assignment: "
+        << existing_required_assignment->ToString()
+        << " new required assignment: " << required_assignment.ToString();
     CHECK((!offset && !existing_required_assignment->offset) ||
           offset == existing_required_assignment->offset);
     VLOG(3) << "Not adding required assignment because there is one already: "
-            << value->ToShortString() << " at " << time << " at "
-            << (memory_space == MemorySpace::kDefault ? "def" : "alt");
+            << value->ToShortString()
+            << " required assignment: " << required_assignment.ToString();
   } else {
-    VLOG(3) << "Adding required assignment: " << value->ToShortString()
-            << " at " << time << " at "
-            << (memory_space == MemorySpace::kDefault ? "def" : "alt");
-    RequiredMemoryAssignment required_assignment{memory_space, time, offset};
+    VLOG(3) << "Adding required assignment for value : "
+            << value->ToShortString()
+            << " required assignment: " << required_assignment.ToString();
     required_assignments_[value].push_back(required_assignment);
     if (add_to_pending) {
       pending_required_assignments_.push_back({value, required_assignment});
@@ -5331,6 +5352,7 @@ void MsaAlgorithm::AddRequiredAssignment(const HloValue* value,
 void MsaAlgorithm::AddRequiredAssignment(const HloInstruction* instruction,
                                          ShapeIndex index,
                                          MemorySpace memory_space,
+                                         std::string required_assignment_source,
                                          AliasedOffset* offset,
                                          bool add_to_pending) {
   const HloValue* value =
@@ -5338,26 +5360,28 @@ void MsaAlgorithm::AddRequiredAssignment(const HloInstruction* instruction,
   int64_t instruction_time =
       hlo_live_range_.instruction_schedule().at(instruction);
   AddRequiredAssignment(value, instruction, memory_space, instruction_time,
-                        offset, add_to_pending);
+                        required_assignment_source, offset, add_to_pending);
 }
 
 void MsaAlgorithm::AddRequiredAssignment(const HloPosition& position,
                                          MemorySpace memory_space,
+                                         std::string required_assignment_source,
                                          AliasedOffset* offset,
                                          bool add_to_pending) {
   AddRequiredAssignment(position.instruction, position.index, memory_space,
-                        offset, add_to_pending);
+                        required_assignment_source, offset, add_to_pending);
 }
 
 void MsaAlgorithm::AddRequiredAssignment(const HloUse& use,
                                          MemorySpace memory_space,
+                                         std::string required_assignment_source,
                                          AliasedOffset* offset,
                                          bool add_to_pending) {
   const HloValue* value = &alias_analysis_.dataflow_analysis().GetUniqueValueAt(
       use.instruction->operand(use.operand_number), use.operand_index);
   int64_t instruction_time = GetCorrectedUseTime(use);
   AddRequiredAssignment(value, use.instruction, memory_space, instruction_time,
-                        offset, add_to_pending);
+                        required_assignment_source, offset, add_to_pending);
 }
 
 void MsaAlgorithm::AddInputAndOutputRequiredAssignments() {
@@ -5388,6 +5412,7 @@ void MsaAlgorithm::AddInputAndOutputRequiredAssignments() {
                                                                 : "alt");
               AddRequiredAssignment(value, parameter_instruction, memory_space,
                                     parameter_instruction_time,
+                                    "Program input.",
                                     /*offset=*/nullptr,
                                     /*add_to_pending=*/false);
             }
@@ -5412,7 +5437,7 @@ void MsaAlgorithm::AddInputAndOutputRequiredAssignments() {
                     << " time = " << root_instruction_time << " space = "
                     << (memory_space == MemorySpace::kDefault ? "def" : "alt");
             AddRequiredAssignment(value, root_instruction, memory_space,
-                                  root_instruction_time,
+                                  root_instruction_time, "Program output.",
                                   /*offset=*/nullptr, /*add_to_pending=*/false);
           }
         }
@@ -5436,11 +5461,11 @@ void MsaAlgorithm::AddInputAndOutputRequiredAssignments() {
                           << value->ToShortString()
                           << " time = " << constant_instruction_time
                           << " space = def";
-                  AddRequiredAssignment(value, instruction,
-                                        MemorySpace::kDefault,
-                                        constant_instruction_time,
-                                        /*offset=*/nullptr,
-                                        /*add_to_pending=*/false);
+                  AddRequiredAssignment(
+                      value, instruction, MemorySpace::kDefault,
+                      constant_instruction_time, "Constant instruction.",
+                      /*offset=*/nullptr,
+                      /*add_to_pending=*/false);
                 }
               }
             });
@@ -7010,10 +7035,14 @@ AllocationResult MsaAlgorithm::Evict(const AllocationRequest& request,
 
   if (force_evict) {
     VLOG(3) << "Forcing evicting.";
+    int64_t inclusive_eviction_start_time = prev_allocation->end_time() + 1;
     AddAsyncCopyOrOtherMemOp(
         *prev_allocation, MemorySpace::kDefault,
-        /*chunk=*/std::nullopt, prev_allocation->end_time() - 1,
-        request.end_time, prev_allocation->end_time() + 1,
+        /*chunk=*/std::nullopt,
+        /*exclusive_start_time=*/
+        InclusiveToExclusiveStartTime(inclusive_eviction_start_time),
+        request.end_time,
+        /*copy_done_schedule_before_time=*/prev_allocation->end_time() + 1,
         request.allocation_value->mutable_allocation_sequence(),
         /*aliased_offset=*/nullptr, 0);
     return AllocationResult::kSuccess;
@@ -7317,7 +7346,7 @@ AllocationResult MsaAlgorithm::PrefetchWithResourceConstraints(
   //                                   Start   Done
 
   VLOG(5) << "Considering prefetch of "
-          << request.allocation_value->defining_instruction()->ToString()
+          << request.allocation_value->ToShortString()
           << (request.preferred_offset
                   ? absl::StrCat(", with a preferred offset of ",
                                  request.preferred_offset->offset, ".")

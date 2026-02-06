@@ -27,9 +27,9 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/service/shaped_slice.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
@@ -120,7 +121,8 @@ TEST(KernelThunkTest, CreateAndGettersAndToString) {
   EXPECT_EQ(thunk.kind(), Kind::kKernel);
   EXPECT_EQ(thunk.kernel_name(), "kernel123");
   EXPECT_EQ(thunk.arguments(),
-            std::vector<BufferAllocation::Slice>({slice0, slice1}));
+            std::vector<ShapedSlice>(
+                {{slice0, arg0.shape()}, {slice1, arg1.shape()}}));
   EXPECT_EQ(thunk.written(), std::vector<bool>({false, true}));
   EXPECT_EQ(thunk.launch_dimensions().block_counts(), se::BlockDim(32, 31, 30));
   EXPECT_EQ(thunk.launch_dimensions().thread_counts_per_block(),
@@ -279,7 +281,8 @@ TEST(KernelThunkTest, ToAndFromProto) {
   EXPECT_THAT(reconstructed_thunk->written(),
               ::testing::ElementsAre(false, true));
   EXPECT_THAT(reconstructed_thunk->arguments(),
-              ::testing::ElementsAre(slice0, slice1));
+              ::testing::ElementsAre(ShapedSlice{slice0, arg0.shape()},
+                                     ShapedSlice{slice1, arg1.shape()}));
   EXPECT_THAT(reconstructed_thunk->tma_metadata(), tma_metadata);
 }
 
@@ -466,9 +469,9 @@ TEST_P(KernelThunkTmaPTXTest, TmaPTX) {
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
 
-  auto execute_params =
-      Thunk::ExecuteParams::Create(run_options, buffer_allocations,
-                                   stream.get(), nullptr, nullptr, nullptr, {});
+  auto execute_params = Thunk::ExecuteParams::Create(
+      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
+      nullptr, {});
 
   const bool use_command_buffer = GetParam();
 

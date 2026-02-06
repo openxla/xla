@@ -57,19 +57,18 @@ RecvThunk::RecvThunk(ThunkInfo thunk_info, const HloRecvInstruction* instr,
     : RecvThunk(std::move(thunk_info),
                 GetP2PConfigForSendRecv(instr, instr->shape().tuple_shapes(0),
                                         replica_count, partition_count),
-                std::make_shared<CollectiveThunk::AsyncEvents>(),
-                GetStreamKindForP2P(instr), buffer, instr->name()) {}
+                std::make_shared<CollectiveThunk::AsyncEvents>(), buffer,
+                instr->name()) {}
 
 RecvThunk::RecvThunk(ThunkInfo thunk_info, const P2PConfig& config,
                      std::shared_ptr<AsyncEvents> async_events,
-                     AsyncStreamKind stream_kind, const Buffer& buffer,
-                     absl::string_view instr_name)
-    : CollectiveThunk(Thunk::kRecv, thunk_info, async_events, stream_kind),
+                     const Buffer& buffer, absl::string_view instr_name)
+    : CollectiveThunk(Thunk::kRecv, thunk_info, async_events, true),
       config_(config),
       buffer_(buffer),
       execution_counters_(config_.validation_kind ==
                                   P2PConfig::ValidationKind::kConditional
-                              ? new ExecutionCounters()
+                              ? std::make_shared<ExecutionCounters>()
                               : nullptr),
       hlo_name_(instr_name) {}
 
@@ -80,6 +79,23 @@ absl::Status RecvThunk::Initialize(const InitializeParams& params) {
         params.executor, params.collective_params->run_id));
   }
   return absl::OkStatus();
+}
+
+absl::StatusOr<bool> RecvThunk::ConditionalShouldRun(
+    const ExecuteParams& params, int64_t current_id, int64_t source_id) const {
+  se::StreamExecutor* executor = params.stream->parent();
+  TF_ASSIGN_OR_RETURN(int64_t* counter,
+                      execution_counters_->GetCounter(
+                          executor, params.collective_params->run_id));
+  auto it = config_.source_target_to_bounds.find(
+      std::make_pair(source_id, current_id));
+  TF_RET_CHECK(it != config_.source_target_to_bounds.end())
+      << "Missing bounds for conditional Recv";
+  bool should_run =
+      !(*counter < it->second.first || *counter > it->second.second);
+  VLOG(3) << "RunCollective counter " << *counter << " " << should_run;
+  ++(*counter);
+  return should_run;
 }
 
 absl::StatusOr<std::unique_ptr<RecvThunk>> RecvThunk::FromProto(
@@ -110,8 +126,7 @@ absl::StatusOr<std::unique_ptr<RecvThunk>> RecvThunk::FromProto(
 
   return std::make_unique<RecvThunk>(
       std::move(thunk_info), P2PConfig{config, std::move(id_to_source_target)},
-      async_events, thunk_proto.async_stream_kind(), buffer,
-      thunk_proto.instruction_name());
+      async_events, buffer, thunk_proto.instruction_name());
 }
 
 absl::StatusOr<ThunkProto> RecvThunk::ToProto() const {
@@ -143,20 +158,55 @@ absl::StatusOr<ThunkProto> RecvThunk::ToProto() const {
   thunk_proto->mutable_source_target_pairs()->Assign(
       source_target_pairs.begin(), source_target_pairs.end());
 
-  thunk_proto->set_async_stream_kind(GetAsyncStreamKind());
   thunk_proto->set_instruction_name(hlo_name_);
   return proto;
+}
+
+absl::Status RunRecv(DeviceBufferPair& buffer, se::Stream& stream,
+                     Communicator& comm, int64_t current_id,
+                     std::optional<int64_t> source_id,
+                     absl::string_view device_string) {
+  // Determine the target IDs for this instance. The target ID is the ID
+  // to which this instance will copy its data.
+  int device_ordinal = stream.parent()->device_ordinal();
+  se::DeviceAddressBase dest_addr = buffer.destination_buffer;
+
+  VLOG(3) << absl::StreamFormat("[%d] %s : id = %d, source_id = %d",
+                                device_ordinal, device_string, current_id,
+                                source_id.value_or(-1));
+
+  // Receive data from the source peer to the destination buffer.
+  if (source_id) {
+    VLOG(3) << "[" << device_ordinal << "] source_id: " << *source_id
+            << ", call comm.Recv()";
+    TF_RETURN_IF_ERROR(MaybeRegisterBuffers(stream.parent(), {buffer}, &comm));
+    auto future =
+        comm.Recv(dest_addr, buffer.element_type, buffer.element_count,
+                  RankId(*source_id), GpuCollectives::On(stream));
+    TF_RETURN_IF_ERROR(future.Await());
+  } else {
+    // If there is no source peer, i.e. no sender to this instance, zero out
+    // the destination buffer.
+    VLOG(3) << absl::StreamFormat("[%d] %s : Recv: Issuing MemZero",
+                                  device_ordinal, device_string);
+    TF_RETURN_IF_ERROR(stream.MemZero(&dest_addr, dest_addr.size()));
+  }
+
+  return absl::OkStatus();
 }
 
 absl::StatusOr<bool> RecvThunk::RunCollective(const ExecuteParams& params,
                                               const GpuCliqueKey& clique_key,
                                               se::Stream& stream,
                                               Communicator& comm) {
-  TF_ASSIGN_OR_RETURN(
-      std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(params, {buffer_},
-                             config_.config.operand_element_type));
-  TF_RET_CHECK(device_buffers.size() == 1) << "Expected one buffer pair.";
+  DeviceBufferPair device_buffer_pair{
+      config_.config.operand_element_type[0],
+      buffer_.element_count,
+      params.buffer_allocations->GetDeviceAddress(buffer_.source_buffer.slice),
+      params.buffer_allocations->GetDeviceAddress(
+          buffer_.destination_buffer.slice),
+      buffer_.source_memory_space,
+      buffer_.destination_memory_space};
 
   GlobalDeviceId global_device_id = params.collective_params->global_device_id;
 
@@ -172,64 +222,42 @@ absl::StatusOr<bool> RecvThunk::RunCollective(const ExecuteParams& params,
 
   const P2PConfig::SourceTargetMapEntry source_target =
       P2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
-  DeviceBufferPair& buffer = device_buffers[0];
 
   // Determine the source IDs for this instance. The source ID is the ID for
   // the peer that will copy its data to this instance. If there is no
   // source, just memzero() the destination buffer.
   int device_ordinal = stream.parent()->device_ordinal();
-  VLOG(3) << "[" << device_ordinal
-          << "] Performing Recv, current_id: " << current_id << ", group mode: "
-          << CollectiveOpGroupModeToString(config_.config.group_mode) << " ("
-          << hlo_name_ << ")";
 
   const std::optional<int64_t> source_id = source_target.source;
-  se::DeviceAddressBase dest_addr = buffer.destination_buffer;
-
-  VLOG(3) << absl::StreamFormat("[%d] %s : id = %d, source_id = %d",
-                                device_ordinal, device_string, current_id,
-                                source_id.value_or(-1));
-
-  // Receive data from the source peer to the destination buffer.
-  if (source_id) {
-    bool should_run =
-        config_.validation_kind == P2PConfig::ValidationKind::kInvalid ? false
-                                                                       : true;
-    if (config_.validation_kind == P2PConfig::ValidationKind::kConditional) {
-      se::StreamExecutor* executor = params.stream->parent();
-      TF_ASSIGN_OR_RETURN(int64_t* counter,
-                          execution_counters_->GetCounter(
-                              executor, params.collective_params->run_id));
-      auto it = config_.source_target_to_bounds.find(
-          std::make_pair(*source_target.source, current_id));
-      if (it == config_.source_target_to_bounds.end()) {
-        return absl::InternalError("Missing bounds for conditional Recv");
+  bool should_run = false;
+  switch (config_.validation_kind) {
+    case P2PConfig::ValidationKind::kValid:
+      should_run = true;
+      break;
+    case P2PConfig::ValidationKind::kInvalid:
+      should_run = false;
+      break;
+    case P2PConfig::ValidationKind::kConditional:
+      if (source_id) {
+        TF_ASSIGN_OR_RETURN(
+            should_run, ConditionalShouldRun(params, current_id, *source_id));
       }
-      if (*counter < it->second.first || *counter > it->second.second) {
-        should_run = false;
-      }
-      VLOG(3) << "[" << device_ordinal << "] RunCollective counter " << *counter
-              << " " << should_run;
-      ++(*counter);
-    }
-    if (should_run) {
-      TF_RETURN_IF_ERROR(
-          MaybeRegisterBuffers(stream.parent(), {buffer}, &comm));
-      auto future =
-          comm.Recv(dest_addr, buffer.element_type, buffer.element_count,
-                    RankId(*source_id), GpuCollectives::On(stream));
-      TF_RETURN_IF_ERROR(future.Await());
-    } else {
-      VLOG(3) << "[" << device_ordinal << "] Skipping Recv";
-    }
-
-  } else {
-    // If there is no source peer, i.e. no sender to this instance, zero out
-    // the destination buffer.
-    VLOG(3) << absl::StreamFormat("[%d] %s : Recv: Issuing MemZero",
-                                  device_ordinal, device_string);
-    TF_RETURN_IF_ERROR(stream.MemZero(&dest_addr, dest_addr.size()));
+      break;
   }
+
+  if (!should_run) {
+    VLOG(3) << "[" << device_ordinal << "] Skipping Recv";
+    return false;
+  }
+
+  VLOG(3) << "[" << device_ordinal
+          << "] Performing Recv, current_id: " << current_id << ", group mode: "
+          << CollectiveOpGroupModeToString(config_.config.group_mode)
+          << ", should_run: " << should_run << ", hlo_name=(" << hlo_name_
+          << ")";
+
+  TF_RETURN_IF_ERROR(RunRecv(device_buffer_pair, stream, comm, current_id,
+                             source_id, device_string));
   return false;
 }
 

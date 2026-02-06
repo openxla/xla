@@ -34,6 +34,8 @@ namespace {
 
 using tensorflow::ProfileRequest;
 using tensorflow::ProfileResponse;
+using tensorflow::StopContinuousProfilingRequest;
+using tensorflow::StopContinuousProfilingResponse;
 using ::tsl::profiler::test::DurationApproxLess;
 using ::tsl::profiler::test::DurationNear;
 using ::tsl::profiler::test::StartServer;
@@ -158,9 +160,7 @@ TEST(ProfileGrpcTest, ProfileWithOverrideHostname) {
   std::unique_ptr<ProfilerServer> server =
       StartServer(duration, &service_addr, &request);
 
-  (*request.mutable_opts()
-        ->mutable_advanced_configuration())["override_hostname"]
-      .set_string_value("testhost");
+  request.mutable_opts()->set_override_hostname("testhost");
 
   tensorflow::ProfileResponse response;
   absl::Status status = ProfileGrpc(service_addr, request, &response);
@@ -238,6 +238,48 @@ TEST(ContinuousProfiler, ContinuousProfilingTwice) {
   // Calling ContinuousProfilingGrpc again should fail.
   status = ContinuousProfilingGrpc(service_addr, request, &response);
   EXPECT_TRUE(absl::IsAlreadyExists(status));
+}
+
+TEST(ContinuousProfiler, StopContinuousProfiling) {
+  std::string service_addr;
+  auto server =
+      StartServer(/*duration=*/absl::Milliseconds(100), &service_addr);
+
+  // Start continuous profiling.
+  ProfileRequest request;
+  request.set_session_id("continuous_profiling_session");
+  *request.mutable_opts() = ProfilerSession::DefaultOptions();
+  tensorflow::ContinuousProfilingResponse response;
+  ASSERT_TRUE(ContinuousProfilingGrpc(service_addr, request, &response).ok());
+
+  // Stop continuous profiling.
+  tensorflow::StopContinuousProfilingRequest stop_request;
+  tensorflow::StopContinuousProfilingResponse stop_response;
+  ASSERT_TRUE(
+      StopContinuousProfilingGrpc(service_addr, stop_request, &stop_response)
+          .ok());
+
+  // Subsequent GetSnapshot should fail with NOT_FOUND.
+  tensorflow::GetSnapshotRequest snapshot_request;
+  tensorflow::ProfileResponse snapshot_response;
+  absl::Status status =
+      GetSnapshotGrpc(service_addr, snapshot_request, &snapshot_response);
+  EXPECT_TRUE(absl::IsNotFound(status));
+  EXPECT_EQ(status.message(), "No continuous profiling session found.");
+}
+
+TEST(ContinuousProfiler, StopContinuousProfilingWithoutStart) {
+  std::string service_addr;
+  auto server =
+      StartServer(/*duration=*/absl::Milliseconds(100), &service_addr);
+
+  // Stop continuous profiling.
+  tensorflow::StopContinuousProfilingRequest stop_request;
+  tensorflow::StopContinuousProfilingResponse stop_response;
+  absl::Status status =
+      StopContinuousProfilingGrpc(service_addr, stop_request, &stop_response);
+  EXPECT_TRUE(absl::IsNotFound(status));
+  EXPECT_EQ(status.message(), "No continuous profiling session found.");
 }
 
 }  // namespace

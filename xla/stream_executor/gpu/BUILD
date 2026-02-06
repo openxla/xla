@@ -128,9 +128,7 @@ xla_cc_test(
 cc_library(
     name = "gpu_command_buffer",
     srcs = ["gpu_command_buffer.cc"],
-    hdrs = [
-        "gpu_command_buffer.h",
-    ],
+    hdrs = ["gpu_command_buffer.h"],
     deps = [
         "//xla:debug_options_flags",
         "//xla/service:dump",
@@ -156,8 +154,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:path",
     ],
 )
 
@@ -253,6 +249,7 @@ cc_library(
     name = "gpu_asm_opts",
     hdrs = ["gpu_asm_opts.h"],
     visibility = internal_visibility([
+        "//third_party/py/jax/jaxlib/cuda:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
         "//tensorflow/core/kernels:__subpackages__",
@@ -445,7 +442,7 @@ cc_library(
 tf_proto_library(
     name = "gpu_blas_lt_proto",
     srcs = ["gpu_blas_lt.proto"],
-    protodeps = [
+    deps = [
         "//xla:xla_data_proto",
         "//xla/stream_executor:blas_proto",
     ],
@@ -786,7 +783,9 @@ cc_library(
 
 exports_files([
     "buffer_comparator_kernel_lib.cu.h",
+    "collective_signal.cu.h",
     "all_reduce_kernel_lib.cu.h",
+    "multi_gpu_barrier_kernel.cu.h",
     "ragged_all_to_all_kernel_lib.cu.h",
     "repeat_buffer_kernel.cu.h",
     "redzone_allocator_kernel_lib.cu.h",
@@ -812,6 +811,15 @@ cc_library(
 )
 
 cc_library(
+    name = "multi_gpu_barrier_kernel",
+    hdrs = ["multi_gpu_barrier_kernel.h"],
+    deps = [
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:kernel",
+    ],
+)
+
+cc_library(
     name = "all_reduce_kernel",
     hdrs = ["all_reduce_kernel.h"],
     deps = [
@@ -824,6 +832,10 @@ cc_library(
 cc_library(
     name = "collective_kernel_metadata",
     hdrs = ["collective_kernel_metadata.h"],
+    visibility = internal_visibility([
+        "//third_party/py/jax:__subpackages__",
+        ":friends",
+    ]),
 )
 
 cc_library(
@@ -921,6 +933,7 @@ xla_test(
         "//xla/backends/gpu/runtime:buffer_debug_log_proto_cc",
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
         "//xla/backends/gpu/runtime:thunk_id",
+        "//xla/service:platform_util",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
@@ -930,6 +943,7 @@ xla_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
 )

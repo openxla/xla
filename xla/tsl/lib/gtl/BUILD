@@ -34,7 +34,10 @@ package(
         "//tensorflow/core/profiler/convert:__pkg__",
         # xprof /convert and /utils uses map_util and top_n
         "//third_party/xprof/convert:__pkg__",
+        "//third_party/xprof/convert/megascale_perfetto:__pkg__",
         "//third_party/xprof/utils:__pkg__",
+        # Pathways uses int_type.
+        "//third_party/pathways/ifrt/sidecar:__pkg__",
     ]),
     licenses = ["notice"],
 )

@@ -69,8 +69,9 @@ class AutotunerPassTest : public HloHardwareIndependentTestBase {
  protected:
   AutotunerPassTest()
       : stream_executor_(GpuExecutor()),
-        allocator_(std::make_unique<se::StreamExecutorMemoryAllocator>(
-            stream_executor_)) {}
+        allocator_(
+            std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
+                stream_executor_)) {}
 
   se::StreamExecutor* stream_executor_;
   std::unique_ptr<se::DeviceAddressAllocator> allocator_;
@@ -168,7 +169,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedAndCached) {
   std::string cache_dir = ::testing::TempDir();
   module->mutable_config()
       .mutable_debug_options()
-      .set_xla_gpu_experimental_autotuner_cache_dir(cache_dir);
+      .set_xla_gpu_per_fusion_autotune_cache_dir(cache_dir);
 
   tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "autotuning",
                                       /*num_threads=*/4);
@@ -210,7 +211,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedAndCached) {
 
   module_2->mutable_config()
       .mutable_debug_options()
-      .set_xla_gpu_experimental_autotuner_cache_dir(cache_dir);
+      .set_xla_gpu_per_fusion_autotune_cache_dir(cache_dir);
   module_2->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_require_complete_aot_autotune_results(true);
@@ -251,7 +252,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedWithCacheOnly) {
   std::string cache_dir = ::testing::TempDir();
   module->mutable_config()
       .mutable_debug_options()
-      .set_xla_gpu_experimental_autotuner_cache_dir(cache_dir);
+      .set_xla_gpu_per_fusion_autotune_cache_dir(cache_dir);
 
   tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "autotuning",
                                       /*num_threads=*/4);
@@ -280,7 +281,7 @@ TEST_F(AutotunerPassTest, CublasGemmIsAutotunedWithCacheOnly) {
 
   module_2->mutable_config()
       .mutable_debug_options()
-      .set_xla_gpu_experimental_autotuner_cache_dir(cache_dir);
+      .set_xla_gpu_per_fusion_autotune_cache_dir(cache_dir);
 
   {
     std::vector<std::unique_ptr<CodegenBackend>> backends2;
@@ -315,7 +316,7 @@ TEST_F(AutotunerPassTest, DevicelessUsesDefaultConfigIfNoCache) {
   std::string cache_dir = ::testing::TempDir();
   module->mutable_config()
       .mutable_debug_options()
-      .set_xla_gpu_experimental_autotuner_cache_dir(cache_dir);
+      .set_xla_gpu_per_fusion_autotune_cache_dir(cache_dir);
 
   tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "autotuning",
                                       /*num_threads=*/4);

@@ -444,6 +444,18 @@ class MemorySpaceAssignmentTestBase : public HloPjRtTestBase {
     }
   }
 
+  // Checks for every instruction in instruction_names the output memory space
+  // matches the given memory space.
+  void CheckMemorySpaceForInstructionNames(
+      HloModule* module, std::vector<std::string>& instruction_names,
+      int64_t memory_space) {
+    for (const std::string& name : instruction_names) {
+      HloInstruction* instruction = FindInstruction(module, name);
+      EXPECT_NE(instruction, nullptr);
+      EXPECT_EQ(instruction->shape().layout().memory_space(), memory_space);
+    }
+  }
+
   struct OutstandingAsyncCopies {
     int64_t max_copies;
     int64_t max_prefetches;

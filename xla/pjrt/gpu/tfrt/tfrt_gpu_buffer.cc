@@ -350,7 +350,8 @@ Future<> TfrtGpuBuffer::ToLiteralHelper(
                    usage_event = std::move(usage_event),
                    promise = std::move(promise), client = client_,
                    on_device_shape = on_device_shape_, unpack_subbyte_types,
-                   literal, generator = std::move(generator)]() mutable {
+                   literal, generator = std::move(generator),
+                   thread_pool = client_->blocking_thread_pool()]() mutable {
     tsl::profiler::TraceMe traceme("ToLiteral::D2H_copy");
     if (device_buffer->definition_event().IsError()) {
       usage_event.SetStateConcrete();
@@ -409,8 +410,12 @@ Future<> TfrtGpuBuffer::ToLiteralHelper(
       HostMemoryAllocator::OwnedPtr staging_buffer;
       void* buffer_ptr;
       if (on_device_shape.IsArray()) {
-        staging_buffer = client->host_memory_allocator()->Allocate(byte_size);
-        buffer_ptr = staging_buffer.get();
+        buffer_ptr = literal->untyped_data();
+        if (should_unpack || transpose != nullptr ||
+            client->ShouldStageHostToDeviceTransfers(buffer_ptr, byte_size)) {
+          staging_buffer = client->host_memory_allocator()->Allocate(byte_size);
+          buffer_ptr = staging_buffer.get();
+        }
       } else {
         CHECK_EQ(byte_size, 0);
         buffer_ptr = nullptr;
@@ -488,26 +493,31 @@ Future<> TfrtGpuBuffer::ToLiteralHelper(
           tsl::port::AlignedFree(buffer);
         }
       }
-      if (on_device_shape.IsArray() && !should_unpack && transpose == nullptr) {
+      if (on_device_shape.IsArray() && staging_buffer != nullptr &&
+          !should_unpack && transpose == nullptr) {
         std::memcpy(literal->untyped_data(), buffer, literal->size_bytes());
       }
       return absl::OkStatus();
     };
+    auto copy_to_literal_and_set_event =
+        [copy_to_literal = std::move(copy_to_literal),
+         usage_event = std::move(usage_event), promise = std::move(promise)](
+            const absl::StatusOr<MutableLiteralBase*>& value) mutable {
+          absl::Status status = copy_to_literal(value);
+          usage_event.SetStateConcrete();
+          promise.Set(status);
+        };
 
     if (literal != nullptr) {
-      absl::Status status = copy_to_literal(literal);
-      usage_event.SetStateConcrete();
-      promise.Set(status);
+      copy_to_literal_and_set_event(literal);
     } else {
       Future<MutableLiteralBase*> generated = std::move(generator)();
-      generated.OnReady(
-          [copy_to_literal = std::move(copy_to_literal),
-           usage_event = std::move(usage_event), promise = std::move(promise)](
-              const absl::StatusOr<MutableLiteralBase*>& value) mutable {
-            absl::Status status = copy_to_literal(value);
-            usage_event.SetStateConcrete();
-            promise.Set(status);
-          });
+      if (generated.IsKnownReady()) {
+        copy_to_literal_and_set_event(generated.Await());
+      } else {
+        generated.OnReady(client->blocking_thread_pool()->AsExecutor(),
+                          std::move(copy_to_literal_and_set_event));
+      }
     }
   };
   client_->blocking_thread_pool()->ScheduleWhenReady(
@@ -579,8 +589,8 @@ Future<> TfrtGpuBuffer::CopyRawToHostFuture(Future<void*> dst_future,
     }
 
     HostMemoryAllocator::OwnedPtr staging_buffer;
-    const bool use_staging = client->should_stage_host_to_device_transfers() &&
-                             !client->IsDmaMapped(dst, transfer_size);
+    const bool use_staging =
+        client->ShouldStageHostToDeviceTransfers(dst, transfer_size);
 
     if (use_staging) {
       staging_buffer = client->host_memory_allocator()->Allocate(transfer_size);

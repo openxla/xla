@@ -34,9 +34,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
-#include "xla/backends/gpu/codegen/triton/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
+#include "xla/codegen/xtile/codegen/fusion_emitter.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
@@ -283,13 +283,17 @@ class TritonSupportTest : public TritonSupportTestBase {
                            llvm_ctx_, mlir_context_);
     };
 
-    if (IsTritonSupportedInstruction(ti.Instruction(), cc)) {
+    auto is_supported = IsTritonSupportedInstruction(ti.Instruction(), cc);
+    if (is_supported) {
       EXPECT_THAT(run_triton_codegen(), absl_testing::IsOk())
           << ti.Module()->ToString();
       return;
     }
     if (failure_mode == ExpectedFailMode::kFail) {
-      EXPECT_THAT(run_triton_codegen(), Not(absl_testing::IsOk()));
+      EXPECT_THAT(run_triton_codegen(), Not(absl_testing::IsOk()))
+          << "The instruction should not be supported, but it is.\nThe "
+             "decision to not support it was:\n\t"
+          << is_supported.Explain();
       return;
     }
     EXPECT_DEATH(
@@ -2606,8 +2610,8 @@ TEST_P(BitcastConvertTest, BitcastConvert) {
   std::string hlo_text;
   std::vector<int64_t> output_tile_sizes = {1, 32};
 
-  const int bit_width_in = primitive_util::BitWidth(data_type_in);
-  const int bit_width_out = primitive_util::BitWidth(data_type_out);
+  const int bit_width_in = primitive_util::StorageBitWidth(data_type_in);
+  const int bit_width_out = primitive_util::StorageBitWidth(data_type_out);
   const std::string data_type_in_str =
       primitive_util::LowercasePrimitiveTypeName(data_type_in);
   const std::string data_type_out_str =
@@ -2657,8 +2661,8 @@ TEST_P(BitcastConvertTest, BitcastConvertDisguisedAsBitcast) {
         << "BitcastConvert does not support complex <-> real conversion.";
   }
 
-  const int bit_width_in = primitive_util::BitWidth(data_type_in);
-  const int bit_width_out = primitive_util::BitWidth(data_type_out);
+  const int bit_width_in = primitive_util::StorageBitWidth(data_type_in);
+  const int bit_width_out = primitive_util::StorageBitWidth(data_type_out);
   std::vector<int64_t> output_tile_sizes = {1, 32};
   std::string hlo_text;
   const std::string data_type_in_str =
@@ -3563,6 +3567,7 @@ constexpr std::array kUnsupportedOps = {
     HloOpcode::kRaggedDot,
     HloOpcode::kReduceWindow,
     HloOpcode::kScaledDot,
+    HloOpcode::kScan,
     HloOpcode::kScatter,
     HloOpcode::kSelectAndScatter,
     HloOpcode::kSetDimensionSize,

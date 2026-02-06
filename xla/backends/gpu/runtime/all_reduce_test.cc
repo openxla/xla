@@ -131,7 +131,8 @@ class AllReduceKernelTest : public ::testing::Test,
           /*data_buffer_size=*/aligned_input_size +
           /*signal_buffer_size=*/aligned_signal_size;
       allocated_buffers.emplace_back(executor->AllocateArray<T>(
-          total_size, static_cast<int64_t>(se::MemoryType::kP2P)));
+          total_size,
+          static_cast<int64_t>(stream_executor::MemorySpace::kP2P)));
       local_input_buffers.emplace_back(
           allocated_buffers[i].GetByteSlice(0, aligned_input_size));
       TF_RET_CHECK(!local_input_buffers[i].is_null());
@@ -425,9 +426,9 @@ TEST_F(AllReduceHloTest, NullDeviceAssnWithHloRunner) {
   EXPECT_THAT(
       runner.Execute(std::move(module), {std::move(input)}),
       absl_testing::StatusIs(
-          absl::StatusCode::kInvalidArgument,
-          HasSubstr("Device assignment is null, but must be specified when "
-                    "running a collective thunk.")));
+          absl::StatusCode::kInternal,
+          HasSubstr(
+              "Collective parameters and device assignment are required")));
 }
 
 }  // namespace

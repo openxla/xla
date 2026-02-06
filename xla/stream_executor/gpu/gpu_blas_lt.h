@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/shape.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
@@ -83,6 +84,8 @@ struct MatrixLayout {  // plain MatrixLayout which is extended with create
   static absl::StatusOr<MatrixLayout> FromProto(
       const xla::GemmConfigProto::MatrixLayout& proto);
   xla::GemmConfigProto::MatrixLayout ToProto() const;
+
+  xla::Shape ToShape() const;
 };
 
 // compact version of the matrix layout to be used to pass matrices
@@ -251,7 +254,7 @@ struct BlasLt {
     // optimizations (like preloading matmul kernels) once the algorithm is set.
     virtual absl::Status SetAlgorithm(const MatmulAlgorithm& algorithm) = 0;
 
-    virtual ~MatmulPlan() {}
+    virtual ~MatmulPlan() = default;
   };  // class MatmulPlan
 
   using MatmulPlanPtr = std::unique_ptr<MatmulPlan>;
@@ -275,7 +278,7 @@ struct BlasLt {
   void ClearMatmulPlanCache();
   size_t GetMatmulPlanCacheSize() const;
 
-  virtual ~BlasLt() {}
+  virtual ~BlasLt() = default;
 
  protected:
   mutable absl::Mutex plan_cache_mu_;

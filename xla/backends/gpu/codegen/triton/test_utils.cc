@@ -36,8 +36,11 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
-#include "xla/backends/gpu/codegen/triton/fusion_emitter.h"
+#include "google/protobuf/descriptor.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
+#include "xla/codegen/tiling/symbolic_tile_analysis.h"
+#include "xla/codegen/tiling/tiling_specification.h"
+#include "xla/codegen/xtile/codegen/fusion_emitter.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -55,16 +58,16 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/model/triton_emitter_constraints.h"
+#include "xla/service/instruction_fusion.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/tests/hlo_test_base_with_mlir_context.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla::gpu {
 
@@ -131,70 +134,6 @@ absl::Status CreateTritonIrAndFileCheck(
   std::string out;
   llvm::raw_string_ostream os(out);
   triton_module->print(os);
-  TF_ASSIGN_OR_RETURN(bool succeeded, RunFileCheck(out, filecheck_pattern));
-  if (!succeeded) {
-    return absl::InternalError("FileCheck failed.");
-  }
-  return absl::OkStatus();
-}
-
-absl::StatusOr<
-    std::pair<mlir::OwningOpRef<mlir::ModuleOp>, std::unique_ptr<HloModule>>>
-CreateXTileIrAndFileCheck(HloTestBaseWithMLIRContext* test,
-                          absl::string_view hlo_text,
-                          absl::string_view triton_fusion_name,
-                          absl::string_view filecheck_pattern) {
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                      test->ParseAndReturnVerifiedModule(hlo_text));
-  auto* comp = hlo_module->GetComputationWithName(triton_fusion_name);
-  TF_RET_CHECK(comp != nullptr) << absl::StrCat(
-      "Computation '", triton_fusion_name, "' is not found in the module");
-  auto fusion_backend_config = comp->FusionInstruction()
-                                   ->backend_config<GpuBackendConfig>()
-                                   ->fusion_backend_config();
-  BlockLevelParameters block_level_parameters =
-      BlockLevelParameters::FromBlockLevelFusionConfig(
-          fusion_backend_config.block_level_fusion_config());
-  TF_ASSIGN_OR_RETURN(
-      mlir::OwningOpRef<mlir::ModuleOp> xtile_dialect_module,
-      CreateXTileIrAndFileCheck(test, *comp, block_level_parameters,
-                                filecheck_pattern));
-  return std::make_pair(std::move(xtile_dialect_module), std::move(hlo_module));
-}
-
-absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateXTileIrAndFileCheck(
-    HloTestBaseWithMLIRContext* test, const HloComputation& computation,
-    const BlockLevelParameters& block_level_parameters,
-    absl::string_view filecheck_pattern) {
-  auto* fusion = Cast<HloFusionInstruction>(computation.FusionInstruction());
-  LoadMlirDialectsForTriton(*test->mlir_context());
-  TF_ASSIGN_OR_RETURN(
-      mlir::OwningOpRef<mlir::ModuleOp> xtile_dialect_module,
-      EmitXTileModule("xtile_dialect_fn",
-                      TritonEmitterConstraints::GetBuilder(
-                          TestGpuDeviceInfo::RTXA6000DeviceInfo()),
-                      fusion, block_level_parameters, *test->mlir_context()));
-
-  std::string out;
-  llvm::raw_string_ostream os(out);
-  xtile_dialect_module->print(os);
-  TF_ASSIGN_OR_RETURN(bool succeeded, RunFileCheck(out, filecheck_pattern));
-  if (!succeeded) {
-    return absl::InternalError("FileCheck failed.");
-  }
-  return xtile_dialect_module;
-}
-
-absl::Status LowerXTileIrToTritonAndFileCheck(
-    HloTestBaseWithMLIRContext* test, mlir::ModuleOp xtile_dialect_module,
-    absl::string_view filecheck_pattern, const HloFusionInstruction& fusion) {
-  TF_RETURN_IF_ERROR(ir_emitter_triton_internal::LowerXTileToTriton(
-      xtile_dialect_module, *test->mlir_context(), fusion,
-      TestGpuDeviceInfo::RTXH100SXMDeviceInfo()));
-
-  std::string out;
-  llvm::raw_string_ostream os(out);
-  xtile_dialect_module->print(os);
   TF_ASSIGN_OR_RETURN(bool succeeded, RunFileCheck(out, filecheck_pattern));
   if (!succeeded) {
     return absl::InternalError("FileCheck failed.");

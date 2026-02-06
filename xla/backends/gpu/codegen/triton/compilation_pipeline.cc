@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
 
+#include <cassert>
+
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
@@ -23,20 +25,22 @@ limitations under the License.
 #include "xla/codegen/emitters/transforms/passes.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 
 namespace xla::gpu {
 
 void CreateTritonXlaPipeline(
     mlir::OpPassManager* pm,
     const stream_executor::GpuComputeCapability& gpu_cc, bool rewrite_int4,
-    bool allow_tma, int num_stages) {
+    bool allow_tma, int num_stages, bool warp_specialization_allowed) {
   pm->addPass(mlir::triton::xla::CreateTritonXLASqueezeDimsPass());
   pm->addPass(mlir::triton::xla::CreateTritonXLAFoldTransposePass());
   pm->addPass(mlir::triton::xla::CreateTritonXLALowerBlockBarrierPass());
   pm->addPass(mlir::triton::xla::CreateTritonXLALowerAtomicsPass());
   pm->addPass(mlir::triton::xla::CreateTritonXLALowerGetTidPass());
   pm->addPass(mlir::triton::xla::CreateTritonXLALowerXTilePass());
-  pm->addPass(mlir::triton::xla::CreateStableHLOLowerToTritonPass());
+  pm->addPass(mlir::triton::xla::CreateStableHLOLowerToTritonPass(
+      warp_specialization_allowed));
 
   pm->addPass(emitters::CreateSafeIntegerArithmeticPass());
   pm->addPass(mlir::triton::xla::CreateUnsupportedElementwiseToTritonPass());

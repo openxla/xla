@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/pjrt_client_test.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -23,8 +24,11 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/blocking_counter.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/hlo/builder/xla_builder.h"
@@ -408,6 +412,42 @@ TEST(PjRtClientTest, CopyToDevice) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto result, buffer->CopyToMemorySpace(
                                            *device_1->default_memory_space()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteral().Await());
+
+  std::vector<int32_t> expected(4, 0);
+  EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
+                                     *literal));
+}
+
+TEST(PjRtClientTest, CopyToDeviceWithDest) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());
+  ASSERT_GT(client->addressable_devices().size(), 1);
+
+  std::vector<int32_t> data(4, 0);
+  Shape shape = ShapeUtil::MakeShape(S32, {4});
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto scratchpad0,
+      client->CreateUninitializedBuffer(shape, client->memory_spaces()[0]));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          scratchpad0.get(), /*device_layout=*/nullptr));
+
+  auto* device_1 = client->addressable_devices()[1];
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto scratchpad1,
+      client->CreateUninitializedBuffer(buffer->on_device_shape(),
+                                        *device_1->default_memory_space()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto result,
+                          buffer->CopyToMemorySpace(scratchpad1.get()));
 
   TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteral().Await());
 

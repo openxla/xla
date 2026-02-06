@@ -104,7 +104,6 @@ using ::testing::DoAll;
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::HasSubstr;
-using ::testing::Invoke;
 using ::testing::MatchesRegex;
 using ::testing::Not;
 using ::testing::NotNull;
@@ -335,7 +334,7 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
   // be the target of the other Array-specific methods. Returns the array
   // handle.
   absl::StatusOr<uint64_t> MakeTestArray(ArrayRef mock_array) {
-    EXPECT_CALL(*mock_client_, MakeArrayFromHostBuffer(_, _, _, _, _, _, _))
+    EXPECT_CALL(*mock_client_, MakeArrayFromHostBuffer(_, _, _, _, _, _, _, _))
         .WillOnce(Return(std::move(mock_array)));
 
     auto ifrt_request = NewIfrtRequest(NewOpId());
@@ -386,7 +385,8 @@ class IfrtBackendHandlerTest : public IfrtBackendTest {
     }
 
     EXPECT_CALL(mock_compiler_, CompileAndLoad(_, _))
-        .WillOnce(Return(ByMove(std::move(loaded_executable))));
+        .WillOnce(Return(tsl::Future<xla::ifrt::LoadedExecutableRef>(
+            std::move(loaded_executable))));
 
     TF_ASSIGN_OR_RETURN(std::shared_ptr<IfrtResponse> response,
                         CallBackend(std::move(request)));
@@ -610,7 +610,7 @@ TEST_P(IfrtBackendHandlerTest, MakeArrayFromHostBufferSuccess) {
 
   EXPECT_CALL(*mock_client_,
               MakeArrayFromHostBuffer(_, DType(DType::kF64), expected_shape,
-                                      expected_byte_strides, _, _, _))
+                                      expected_byte_strides, _, _, _, _))
       .WillOnce(Return(std::move(mock_array)));
 
   TF_ASSERT_OK_AND_ASSIGN(auto response, CallBackend(std::move(ifrt_request)));
@@ -654,7 +654,7 @@ TEST_P(IfrtBackendHandlerTest, MakeStringArrayFromHostBufferSuccess) {
 
   EXPECT_CALL(*mock_client_,
               MakeArrayFromHostBuffer(_, expected_dtype, expected_shape,
-                                      expected_byte_strides, _, _, _))
+                                      expected_byte_strides, _, _, _, _))
       .WillOnce(Return(std::move(mock_array)));
 
   TF_ASSERT_OK_AND_ASSIGN(auto response, CallBackend(std::move(ifrt_request)));
@@ -801,7 +801,7 @@ TEST_P(IfrtBackendHandlerTest, CopyToHostSuccessWithStringArray) {
 
   EXPECT_CALL(*mock_client_,
               MakeArrayFromHostBuffer(_, expected_dtype, expected_shape,
-                                      expected_byte_strides, _, _, _))
+                                      expected_byte_strides, _, _, _, _))
       .WillOnce(Return(std::move(mock_array)));
 
   TF_ASSERT_OK_AND_ASSIGN(auto response, CallBackend(std::move(ifrt_request)));
@@ -903,6 +903,8 @@ TEST_P(IfrtBackendHandlerTest, CopyArrays) {
   for (const auto& device : devices->devices()) {
     copy_arrays_request->add_device_ids(device->Id().value());
   }
+  // OSS requires explicit string conversion
+  // NOLINTNEXTLINE(*-redundant-string-conversions)
   copy_arrays_request->set_memory_kind(std::string(*memory_kind.memory_kind()));
   copy_arrays_request->set_copy_semantics(
       proto::ARRAY_COPY_SEMANTICS_ALWAYS_COPY);
@@ -1188,8 +1190,6 @@ TEST_P(IfrtBackendHandlerTest, CompileSuccess) {
   EXPECT_CALL(*executable, addressable_devices())
       .WillOnce(Return(absl::MakeSpan(addressable_devices)));
   EXPECT_CALL(*executable, Fingerprint()).WillOnce(Return("fingerprint"));
-  EXPECT_CALL(*executable, GetReadyFuture())
-      .WillOnce(Return(tsl::Future<>(absl::OkStatus())));
 
   TF_ASSERT_OK_AND_ASSIGN(CompileResponse response,
                           CompileTestLoadedExecutable(std::move(executable)));
@@ -1200,7 +1200,6 @@ TEST_P(IfrtBackendHandlerTest, CompileSuccess) {
                 device_ids: [ 0, 1, 2, 3 ]
                 fingerprint_value: "fingerprint"
               )pb")));
-  TF_EXPECT_OK(CheckFuture(response.ready_future_handle()));
 }
 
 TEST_P(IfrtBackendHandlerTest, CompileFailure) {
@@ -1675,7 +1674,7 @@ TEST_P(IfrtBackendHandlerTest, LoadedHostCallbackExecute) {
               ASSERT_EQ(loaded_host_callbacks.size(), 1);
               loaded_host_callback = loaded_host_callbacks.front();
             },
-            Return(ByMove(std::move(e)))));
+            Return(tsl::Future<xla::ifrt::LoadedExecutableRef>(std::move(e)))));
 
     TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<IfrtResponse> response,
                             CallBackend(std::move(request)));
@@ -1860,8 +1859,6 @@ TEST_P(IfrtBackendHandlerTest, LoadedExecutableMetadataWithMpmd) {
         .WillByDefault(Return(absl::Span<xla::ifrt::Device* const>({})));
     ON_CALL(*executable, Fingerprint())
         .WillByDefault(Return("mpmd_fingerprint"));
-    ON_CALL(*executable, GetReadyFuture())
-        .WillByDefault(Return(tsl::Future<>(absl::OkStatus())));
 
     ON_CALL(*executable, GetParameterShardings())
         .WillByDefault(Return(std::nullopt));
@@ -1925,8 +1922,6 @@ TEST_P(IfrtBackendHandlerTest, LoadedExecutableMpmdCostAnalysis) {
         .WillByDefault(Return(absl::Span<xla::ifrt::Device* const>()));
     ON_CALL(*executable, Fingerprint())
         .WillByDefault(Return("mpmd_fingerprint"));
-    ON_CALL(*executable, GetReadyFuture())
-        .WillByDefault(Return(tsl::Future<>(absl::OkStatus())));
 
     absl::flat_hash_map<std::string, xla::ifrt::AttributeMap> cost_analysis;
     xla::ifrt::AttributeMap mesh1_attrs(xla::ifrt::AttributeMap::Map{
@@ -1975,8 +1970,6 @@ TEST_P(IfrtBackendHandlerTest, CompileSuccessWithMpmdAddressableDevices) {
   ON_CALL(*executable, addressable_devices())
       .WillByDefault(Return(absl::Span<xla::ifrt::Device* const>()));
   ON_CALL(*executable, Fingerprint()).WillByDefault(Return("mpmd_fingerprint"));
-  ON_CALL(*executable, GetReadyFuture())
-      .WillByDefault(Return(tsl::Future<>(absl::OkStatus())));
 
   std::vector<xla::ifrt::Device*> mesh1_devices = {mock_devices_[0].get()};
   std::vector<xla::ifrt::Device*> mesh2_devices = {mock_devices_[1].get()};

@@ -834,8 +834,8 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
 
   pipeline.AddPass<ConvCanonicalization>(target_machine_features);
 
-  // Run fp16 dots/convs in fp32 and then downcast the result to fp16.
-  // Justification:
+  // If we aren't going to call a library, run fp16 dots/convs in fp32 and then
+  // downcast the result to fp16. Justification:
   //
   //   - This is significantly faster on our CPUs today than true fp16.
   //   - It's numerically more accurate.  (Granted, this is not always
@@ -843,8 +843,27 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   //   - It matches more closely the GPU's behavior on fp16 dot/conv, where
   //     accumulation happens in f32.
   if (!module->config().debug_options().xla_cpu_strict_dot_conv_math()) {
-    pipeline.AddPass<ChangeOpDataType>(
-        F16, F32, HloPredicateIsOp<HloOpcode::kDot, HloOpcode::kConvolution>);
+    auto dot_conv_f16_to_f32_filter = [&](const HloInstruction* instr) {
+      if (instr->opcode() != HloOpcode::kDot &&
+          instr->opcode() != HloOpcode::kConvolution) {
+        return false;
+      }
+
+#ifdef XLA_ONEDNN
+      const DebugOptions& debug_options = module->config().debug_options();
+      if ((debug_options.xla_cpu_use_onednn() ||
+           debug_options.xla_cpu_experimental_onednn_custom_call()) &&
+          cpu::OneDnnContractionRewriter::ShouldRewriteInstr(instr, true)) {
+        return false;
+      }
+#endif  // XLA_ONEDNN
+
+      if (call_library_for_instruction(*instr)) {
+        return false;
+      }
+      return true;
+    };
+    pipeline.AddPass<ChangeOpDataType>(F16, F32, dot_conv_f16_to_f32_filter);
   }
 
   pipeline.AddPass(CreateSimplificationPipeline(
@@ -991,9 +1010,11 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     TF_RETURN_IF_ERROR(lib_pipeline.Run(module).status());
   }
 
+  AliasInfo alias_info;
   bool use_multi_output_fusion =
       options::UseMultiOutputFusion(module->config());
   pipeline.AddPass<CpuInstructionFusion>(
+      &alias_info,
       /*may_duplicate=*/!use_multi_output_fusion);
 
   if (is_fusion_emitters) {
@@ -1004,7 +1025,6 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
                                     use_tiled_emitter);
   }
 
-  AliasInfo alias_info;
   if (use_multi_output_fusion) {
     pipeline.AddPass<CpuMultiOutputFusion>(&alias_info);
     pipeline.AddPass<TupleSimplifier>();
@@ -1040,7 +1060,6 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     options.set_minmax_propagate_nan(
         !module->config().debug_options().xla_cpu_enable_fast_min_max());
     options.set_executing_on_cpu(true);
-    // oneDNN support is currently enabled only when thunk runtime is turned off
     options.set_enable_onednn_support(use_onednn_custom_call);
     options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
     pipeline.AddPass<AlgebraicSimplifier>(options);
@@ -1602,6 +1621,7 @@ class AotLlvmMultipleModuleCompiler : public LlvmMultipleModuleCompiler {
         CopyLlvmModuleToLocalContext(*llvm_context_, *tsm.getModuleUnlocked()));
 
     // Match data layouts to avoid warning messages.
+    cloned_module->setTargetTriple(llvm_module_->getTargetTriple());
     cloned_module->setDataLayout(llvm_module_->getDataLayout());
     linker_->linkInModule(std::move(cloned_module));
     return absl::OkStatus();
@@ -1649,6 +1669,7 @@ CpuCompiler::CompileCpuExecutable(
   TF_ASSIGN_OR_RETURN(std::unique_ptr<llvm::TargetMachine> target_machine,
                       ir_compiler->build_target_machine());
 
+  llvm_module->setTargetTriple(target_machine->getTargetTriple());
   llvm_module->setDataLayout(target_machine->createDataLayout());
 
   if (pic_level != llvm::PICLevel::NotPIC) {
@@ -2301,16 +2322,14 @@ CpuCompiler::LoadAotCompilationResult(
 absl::StatusOr<HloSchedule> CpuCompiler::CreateHloSchedule(
     const HloModule& hlo_module) const {
   AliasInfo alias_info;
-  // Select a memory scheduler optimized for concurrency vs minimal memory.
-  auto scheduler = hlo_module.config()
-                           .debug_options()
-                           .xla_cpu_enable_concurrency_optimized_scheduler()
-                       ? std::unique_ptr<ModuleSchedulerAlgorithm>(
-                             std::make_unique<BFScheduler>(
-                                 &alias_info, BufferSizeBytesFunction()))
-                       : std::make_unique<DFSMemoryScheduler>(
-                             &alias_info, BufferSizeBytesFunction());
-
+  auto scheduler =
+      hlo_module.config().debug_options().xla_cpu_scheduler_type() ==
+              DebugOptions::CPU_SCHEDULER_TYPE_MEMORY_OPTIMIZED
+          ? std::make_unique<DFSMemoryScheduler>(&alias_info,
+                                                 BufferSizeBytesFunction())
+          : std::unique_ptr<ModuleSchedulerAlgorithm>(
+                std::make_unique<BFScheduler>(&alias_info,
+                                              BufferSizeBytesFunction()));
   // Select an order for emitting the HLO instructions for each
   // computation. Using this sequence enables tighter buffer liveness analysis
   // and reduced memory usage (as compared to using `DependencyHloOrdering`).

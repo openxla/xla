@@ -220,6 +220,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:load_library",
+        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:thread_annotations",
     ],
@@ -372,6 +373,8 @@ cc_library(
         "//xla/tsl/platform/profile_utils:profile_utils_cpu_utils",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/time",
         "@snappy",
         "@tsl//tsl/platform",
     ] + select({
