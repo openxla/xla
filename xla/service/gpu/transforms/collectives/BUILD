@@ -395,13 +395,8 @@ xla_cc_test(
     srcs = ["all_gather_major_dimension_rewriter_test.cc"],
     deps = [
         ":all_gather_major_dimension_rewriter",
-        "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
-        "//xla/service:hlo_module_config",
         "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 
