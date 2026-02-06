@@ -393,8 +393,7 @@ ENTRY %primitive_computation_svd.38 (constant_5: f32[841,3], fusion.3: pred[3]) 
 }
 
 TEST_F(GpuKernelTilingTest, LargeRowReduction) {
-  const char *kHlo = 
-R"(
+  const char *kHlo = R"(
 HloModule Test
 reduceOp {
   X = s32[] parameter(1)
@@ -410,14 +409,12 @@ ENTRY RowLargeReduce {
   CC = s32[] constant(0)
   ROOT R = s32[262144,512]{1,0} reduce(BB, CC), dimensions={2}, to_apply=reduceOp
 })";
-  ASSERT_OK_AND_ASSIGN(auto hlo_module, 
-        ParseAndReturnVerifiedModule(kHlo);
+  ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseAndReturnVerifiedModule(kHlo));
   EXPECT_TRUE(Run(std::move(hlo_module), /*run_hlo_passes*/true));
 }
 
 TEST_F(GpuKernelTilingTest, LargeRowReductionNonMultipleOf2) {
-  const char *kHlo = 
-R"(
+  const char *kHlo = R"(
 HloModule Test
 reduceOp {
   X = s32[] parameter(1)
@@ -434,14 +431,12 @@ ENTRY RowLargeReduce {
   R = s32[762145,999]{1,0} reduce(BB, CC), dimensions={2}, to_apply=reduceOp
   ROOT O = s16[762145,999] convert(R)
 })";
-  ASSERT_OK_AND_ASSIGN(auto hlo_module, 
-        ParseAndReturnVerifiedModule(kHlo);
+  ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseAndReturnVerifiedModule(kHlo));
   EXPECT_TRUE(Run(std::move(hlo_module), /*run_hlo_passes*/true));
 }
 
 TEST_F(GpuKernelTilingTest, MultiRowLargeReduce) {
-  const char *kHlo = 
-R"(
+  const char *kHlo = R"(
 HloModule Test
 reduceOp {
   X = s32[] parameter(1)
@@ -458,15 +453,12 @@ ENTRY MultiRowLargeReduce {
   R = s32[262144,4096]{1,0} reduce(BB, CC), dimensions={2}, to_apply=reduceOp
   ROOT O = s16[262144,4096]{1,0} convert(R)
 })";
-  ASSERT_OK_AND_ASSIGN(auto hlo_module, 
-        ParseAndReturnVerifiedModule(kHlo);
+  ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseAndReturnVerifiedModule(kHlo));
   EXPECT_TRUE(Run(std::move(hlo_module), /*run_hlo_passes*/true));
 }
 
 TEST_F(GpuKernelTilingTest, MultiRowLargeReduceNonMultipleOf2) {
-
-  const char *kHlo = 
-R"(
+  const char *kHlo = R"(
 HloModule Test
 reduceOp {
   X = s32[] parameter(1)
@@ -482,21 +474,18 @@ ENTRY MultiRowLargeReduce {
   CC = s32[] constant(0)
   ROOT R = s32[762145,999]{1,0} reduce(BB, CC), dimensions={2}, to_apply=reduceOp
 })";
-  ASSERT_OK_AND_ASSIGN(auto hlo_module, 
-        ParseAndReturnVerifiedModule(kHlo);
+  ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseAndReturnVerifiedModule(kHlo));
   EXPECT_OK(CompileToExecutable(std::move(hlo_module)));
 }
 
 TEST_F(GpuKernelTilingTest, LargeLoopFusion) {
-  const char *kHlo = 
-R"(
+  const char *kHlo = R"(
 HloModule Test
 ENTRY LargeLoop {
   C = bf16[] constant(0)
   ROOT B = bf16[80,7,8192,8192]{3,2,1,0} broadcast(C), dimensions={}
 })";
-  ASSERT_OK_AND_ASSIGN(auto hlo_module, 
-      ParseAndReturnVerifiedModule(kHlo);
+  ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseAndReturnVerifiedModule(kHlo));
   EXPECT_OK(CompileToExecutable(std::move(hlo_module)));
 }
 
