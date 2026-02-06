@@ -216,22 +216,9 @@ class PjRtCpuClient final : public CommonPjRtClient {
 
   bool IsOnCpu(PjRtMemorySpace* memory_space) override { return true; }
 
-  // Returns a pair of async events:
-  // - async event that signals the completion of the last collective launch
-  // - count down event that must be signalled when each rank completes
-  //   a collective launch
-  using CollectiveLaunchEvent =
-      std::pair<tsl::AsyncValueRef<CpuEvent>,
-                tsl::CountDownAsyncValueRef<CpuEvent>>;
-
-  CollectiveLaunchEvent GetLastCollectiveLaunchEvent(
-      size_t num_addressable_devices) {
-    tsl::CountDownAsyncValueRef<CpuEvent> count_down(num_addressable_devices);
-    absl::MutexLock lock(mu_);
-    auto last_launch = std::move(last_collective_launch_event_);
-    last_collective_launch_event_ = count_down.AsRef();
-    return std::make_pair(std::move(last_launch), std::move(count_down));
-  }
+  tsl::AsyncValueRef<CpuEvent> GetCollectiveLaunchEvent(
+      RunId run_id, size_t num_addressable_devices,
+      tsl::AsyncValueRef<CpuEvent> execute_event);
 
   absl::StatusOr<const xla::PjRtTopologyDescription*> GetTopologyDescription()
       const override {
@@ -350,6 +337,12 @@ class PjRtCpuClient final : public CommonPjRtClient {
   // TODO(zhangqiaorjc): Explore alternatives that allow multiple concurrent
   // collectives.
   mutable absl::Mutex mu_;
+  struct CollectiveLaunchEventState {
+    tsl::AsyncValueRef<CpuEvent> previous_event;
+    tsl::CountDownAsyncValueRef<CpuEvent> countdown_event;
+    size_t num_left_in_barrier;
+  };
+  absl::flat_hash_map<RunId, CollectiveLaunchEventState> launch_events_;
   tsl::AsyncValueRef<CpuEvent> last_collective_launch_event_
       ABSL_GUARDED_BY(mu_);
 
@@ -409,9 +402,9 @@ class CpuPjRtRawLoadedExecutable {
  private:
   friend class PjRtCpuLoadedExecutable;
 
-  PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event_;
   const PjRtCpuExecutable* executable_;
   std::shared_ptr<DeviceAssignment> device_assignment_;
+  size_t num_addressable_devices_;
   PjRtCpuDevice* device_;
   PjRtCpuClient* client_;
   RunId run_id_;
@@ -581,14 +574,12 @@ class PjRtCpuLoadedExecutable final : public PjRtLoadedExecutable {
   absl::StatusOr<std::unique_ptr<CpuPjRtRawLoadedExecutable>>
   StartRawExecutable(
       const ExecuteOptions& options,
-      PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event,
       const RunId& run_id, int replica, int partition,
       PjRtDevice* device) const;
 
   absl::StatusOr<Result> ExecuteHelper(
       absl::Span<PjRtBuffer* const> argument_handles, int replica,
       int partition, const RunId& run_id, const ExecuteOptions& options,
-      PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event,
       bool fill_future, PjRtCpuDevice* device = nullptr) const;
 
   PjRtCpuClient* client_;

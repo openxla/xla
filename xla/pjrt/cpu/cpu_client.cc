@@ -1436,7 +1436,6 @@ absl::Status PjRtCpuLoadedExecutable::CheckBufferCompatibilities(
 absl::StatusOr<std::unique_ptr<CpuPjRtRawLoadedExecutable>>
 PjRtCpuLoadedExecutable::StartRawExecutable(
     const ExecuteOptions& options,
-    PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event,
     const RunId& run_id, int replica, int partition, PjRtDevice* device) const {
   std::shared_ptr<DeviceAssignment> device_assignment;
   if (device == nullptr) {
@@ -1457,10 +1456,9 @@ PjRtCpuLoadedExecutable::StartRawExecutable(
   }
   CHECK_EQ(device->process_index(), client_->process_index());
   auto result = std::make_unique<CpuPjRtRawLoadedExecutable>(run_id);
-  result->last_collective_launch_event_ =
-      std::move(last_collective_launch_event);
   result->executable_ = executable_.get();
   result->client_ = client_;
+  result->num_addressable_devices_ = addressable_devices_.size();
   result->device_assignment_ = device_assignment;
   result->device_ = tsl::down_cast<PjRtCpuDevice*>(device);
   return result;
@@ -1470,7 +1468,6 @@ absl::StatusOr<PjRtLoadedExecutable::Result>
 PjRtCpuLoadedExecutable::ExecuteHelper(
     absl::Span<PjRtBuffer* const> argument_handles, int replica, int partition,
     const RunId& run_id, const ExecuteOptions& options,
-    PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event,
     bool fill_future, PjRtCpuDevice* device) const {
   tsl::profiler::TraceMe traceme([&]() {
     return tsl::profiler::TraceMeEncode(
@@ -1484,8 +1481,7 @@ PjRtCpuLoadedExecutable::ExecuteHelper(
 
   TF_ASSIGN_OR_RETURN(
       auto executable,
-      StartRawExecutable(options, std::move(last_collective_launch_event),
-                         run_id, replica, partition, device));
+      StartRawExecutable(options, run_id, replica, partition, device));
   device = tsl::down_cast<PjRtCpuDevice*>(executable->device());
 
   bool is_error = false;
@@ -1539,6 +1535,34 @@ PjRtCpuLoadedExecutable::ExecuteHelper(
                              /*is_predetermined_error=*/false);
 
   return Result({std::move(result.future), std::move(res)});
+}
+
+tsl::AsyncValueRef<CpuEvent> PjRtCpuClient::GetCollectiveLaunchEvent(
+    RunId run_id, size_t num_addressable_devices,
+    tsl::AsyncValueRef<CpuEvent> execute_event) {
+  mu_.lock();
+  auto it = launch_events_.find(run_id);
+  if (it == launch_events_.end()) {
+    tsl::CountDownAsyncValueRef<CpuEvent> count_down(num_addressable_devices);
+    it = launch_events_
+             .emplace(run_id,
+                      CollectiveLaunchEventState{
+                          std::move(last_collective_launch_event_), count_down,
+                          num_addressable_devices})
+             .first;
+    last_collective_launch_event_ = count_down.AsRef();
+  }
+  auto result = it->second.previous_event;
+  auto countdown = it->second.countdown_event;
+  --it->second.num_left_in_barrier;
+  if (it->second.num_left_in_barrier == 0) {
+    launch_events_.erase(it);
+  }
+  mu_.unlock();
+  execute_event.AndThen([count_down = std::move(countdown)]() mutable {
+    count_down.CountDown();
+  });
+  return result;
 }
 
 absl::Status CpuPjRtRawLoadedExecutable::Execute(
@@ -1649,12 +1673,15 @@ absl::Status CpuPjRtRawLoadedExecutable::Execute(
   }
 
   // Schedule only one collective at a time.
-  bool is_a_collective_launch =
-      static_cast<bool>(last_collective_launch_event_.first);
   // Add additional dependency conditioned on whether this is a collective
   // launch or not.
+  bool is_a_collective_launch = num_addressable_devices_ > 1;
   if (is_a_collective_launch) {
-    input_deps.AddEvent(std::move(last_collective_launch_event_.first));
+    // We only created enough threads for one collective to complete.
+    // The next collective launch will not be scheduled onto threadpool until
+    // this one completes.
+    input_deps.AddEvent(client_->GetCollectiveLaunchEvent(
+        run_id_, num_addressable_devices_, execute_event));
   } else {
     // This is a non-parallel computation. Add the last enqueue event as a
     // dependency with any error cleared.
@@ -1774,16 +1801,7 @@ absl::Status CpuPjRtRawLoadedExecutable::Execute(
 
   } else {
     // Asynchronously call generated function.
-
-    // We only created enough threads for one collective to complete.
-    // The next collective launch will not be scheduled onto threadpool until
-    // this one completes.
-    if (is_a_collective_launch) {
-      execute_event.AndThen(
-          [count_down = last_collective_launch_event_.second]() mutable {
-            count_down.CountDown();
-          });
-    } else {
+    if (!is_a_collective_launch) {
       // This is a non-parallel computation. Set the execute event as the new
       // last enqueue event.
       auto* stream_event_map = device_->stream_event_map();
@@ -1964,9 +1982,9 @@ PjRtCpuLoadedExecutable::Execute(
           hlo_snapshot,
           executable_->cpu_executable_->module().config().debug_options());
     }
-    auto statusor = ExecuteHelper(
-        argument_handles[0], replica, partition, run_id, options,
-        /*last_collective_launch_event=*/{}, returned_futures.has_value());
+    auto statusor =
+        ExecuteHelper(argument_handles[0], replica, partition, run_id, options,
+                      returned_futures.has_value());
 
     if (!statusor.ok()) {
       return std::move(statusor).status();
@@ -1984,9 +2002,6 @@ PjRtCpuLoadedExecutable::Execute(
     // are run at the same time. We conservatively run only one collective at a
     // time, because we may not have enough threads to run arbitrary number of
     // collectives concurrently.
-    PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event =
-        client()->GetLastCollectiveLaunchEvent(num_addressable_devices);
-
     absl::Mutex mu;
     int running = num_addressable_devices;
     int failed = 0;
@@ -1997,9 +2012,9 @@ PjRtCpuLoadedExecutable::Execute(
       const int partition = addressable_device_logical_ids_[i].partition;
 
       client()->async_work_runner()->Schedule([&, replica, partition, i] {
-        auto statusor = ExecuteHelper(
-            argument_handles[i], replica, partition, run_id, options,
-            last_collective_launch_event, returned_futures.has_value());
+        auto statusor =
+            ExecuteHelper(argument_handles[i], replica, partition, run_id,
+                          options, returned_futures.has_value());
         if (statusor.ok()) {
           wrapped_results[i] = std::move(statusor->buffers);
           if (returned_futures.has_value()) {
@@ -2057,10 +2072,10 @@ PjRtCpuLoadedExecutable::ExecuteSharded(
               << device->DebugString();
       TF_ASSIGN_OR_RETURN(
           auto result,
-          ExecuteHelper(
-              argument_handles, addressable_device_logical_ids_[i].replica,
-              addressable_device_logical_ids_[i].partition, run_id, options,
-              /*last_collective_launch_event=*/{}, fill_future));
+          ExecuteHelper(argument_handles,
+                        addressable_device_logical_ids_[i].replica,
+                        addressable_device_logical_ids_[i].partition, run_id,
+                        options, fill_future));
       returned_future = std::move(result.future);
       return std::move(result.buffers);
     }
@@ -2093,12 +2108,10 @@ PjRtCpuLoadedExecutable::ExecutePortable(
   VLOG(1) << "ExecutePortable executes single-core portable executable "
           << name();
   TF_ASSIGN_OR_RETURN(
-      auto result,
-      ExecuteHelper(argument_handles,
-                    /*replica=*/0,
-                    /*partition=*/0, run_id, options,
-                    /*last_collective_launch_event=*/{}, fill_future,
-                    tsl::down_cast<PjRtCpuDevice*>(device)));
+      auto result, ExecuteHelper(argument_handles,
+                                 /*replica=*/0,
+                                 /*partition=*/0, run_id, options, fill_future,
+                                 tsl::down_cast<PjRtCpuDevice*>(device)));
   returned_future = std::move(result.future);
   return std::move(result.buffers);
 }
