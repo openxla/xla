@@ -209,9 +209,6 @@ class CustomCallThunk : public Thunk {
       const CollectiveParams* absl_nullable collective_params,
       CollectiveCliqueRequests* absl_nullable collective_clique_requests,
       CollectiveMemoryRequests* absl_nullable collective_memory_requests,
-      CollectiveMultimemRequests* absl_nullable collective_multimem_requests,
-      const CollectiveMultimemProvider* absl_nullable
-          collective_multimem_provider,
       const CollectiveCliques* absl_nullable collective_cliques,
       const CollectiveMemory* absl_nullable collective_memory,
       const ffi::ExecutionContext* absl_nullable execution_context);
@@ -223,9 +220,6 @@ class CustomCallThunk : public Thunk {
       const CollectiveParams* absl_nullable collective_params,
       CollectiveCliqueRequests* absl_nullable collective_clique_requests,
       CollectiveMemoryRequests* absl_nullable collective_memory_requests,
-      CollectiveMultimemRequests* absl_nullable collective_multimem_requests,
-      const CollectiveMultimemProvider* absl_nullable
-          collective_multimem_provider,
       const CollectiveCliques* absl_nullable collective_cliques,
       const CollectiveMemory* absl_nullable collective_memory);
 
@@ -236,9 +230,6 @@ class CustomCallThunk : public Thunk {
       const CollectiveParams* absl_nullable collective_params,
       CollectiveCliqueRequests* absl_nullable collective_clique_requests,
       CollectiveMemoryRequests* absl_nullable collective_memory_requests,
-      CollectiveMultimemRequests* absl_nullable collective_multimem_requests,
-      const CollectiveMultimemProvider* absl_nullable
-          collective_multimem_provider,
       const CollectiveCliques* absl_nullable collective_cliques,
       const CollectiveMemory* absl_nullable collective_memory);
 

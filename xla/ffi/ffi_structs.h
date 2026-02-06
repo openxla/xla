@@ -44,8 +44,6 @@ class DeviceAddressAllocator;
 namespace xla::gpu {
 struct CollectiveParams;
 class CollectiveCliqueRequests;
-class CollectiveMultimemRequests;
-class CollectiveMultimemProvider;
 class CollectiveMemoryRequests;
 class CollectiveCliques;
 class CollectiveMemory;
@@ -74,10 +72,6 @@ struct XLA_FFI_ExecutionContext {
     const xla::gpu::CollectiveParams* collective_params = nullptr;
     xla::gpu::CollectiveCliqueRequests* collective_clique_requests = nullptr;
     xla::gpu::CollectiveMemoryRequests* collective_memory_requests = nullptr;
-    xla::gpu::CollectiveMultimemRequests* collective_multimem_requests =
-        nullptr;
-    const xla::gpu::CollectiveMultimemProvider* collective_multimem_provider =
-        nullptr;
     const xla::gpu::CollectiveCliques* collective_cliques = nullptr;
     const xla::gpu::CollectiveMemory* collective_memory = nullptr;
     const stream_executor::GpuComputeCapability* gpu_compute_capability =
