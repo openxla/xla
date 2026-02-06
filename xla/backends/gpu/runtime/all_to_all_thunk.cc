@@ -227,7 +227,7 @@ absl::StatusOr<bool> AllToAllStartThunk::RunCollective(
     se::Stream& stream, Communicator& comm) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(params, buffers_,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
                              config_.config.operand_element_type));
 
   if (is_local() && p2p_memcpy_enabled_) {

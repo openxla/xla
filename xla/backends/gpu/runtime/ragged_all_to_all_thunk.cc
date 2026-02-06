@@ -544,7 +544,7 @@ absl::StatusOr<bool> RaggedAllToAllStartThunk::RunCollective(
     const ExecuteParams& params, const GpuCliqueKey& clique_key,
     se::Stream& stream, Communicator& comm) {
   ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
-                   ConvertToDeviceBuffers(params, buffers_,
+                   ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
                                           config_.config.operand_element_type));
 
   ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
