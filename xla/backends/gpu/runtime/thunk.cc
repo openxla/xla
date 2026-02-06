@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
@@ -501,7 +502,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
   }
 }
 
-/*static*/
 absl::StatusOr<se::Stream*> Thunk::GetStreamForExecution(
     ExecutionStreamId stream_id, const ExecuteParams& params) {
   if (stream_id == kDefaultExecutionStreamId) {
@@ -509,7 +509,12 @@ absl::StatusOr<se::Stream*> Thunk::GetStreamForExecution(
   }
   auto iter = params.additional_compute_streams.find(stream_id);
   if (iter == params.additional_compute_streams.end()) {
-    return absl::InvalidArgumentError("Invalid execution stream id.");
+    return InvalidArgument(
+        "Invalid execution stream id: %v; available streams: [%s]", stream_id,
+        absl::StrJoin(params.additional_compute_streams, ",",
+                      [](std::string* out, auto pair) {
+                        absl::StrAppendFormat(out, "%v", pair.first);
+                      }));
   }
   return iter->second;
 }
