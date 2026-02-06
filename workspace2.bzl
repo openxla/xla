@@ -244,9 +244,12 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "com_googlesource_code_re2",
-        sha256 = "ef516fb84824a597c4d5d0d6d330daedb18363b5a99eda87d027e6bdd9cba299",
-        strip_prefix = "re2-03da4fc0857c285e3a26782f6bc8931c4c950df4",
-        urls = tf_mirror_urls("https://github.com/google/re2/archive/03da4fc0857c285e3a26782f6bc8931c4c950df4.tar.gz"),
+        sha256 = "8635bc46ac8d73974b4198229805287c8d620245f2081af155d7d96d4988a3a5",
+        strip_prefix = "re2-927f5d53caf8111721e734cf24724686bb745f55",
+        urls = tf_mirror_urls("https://github.com/google/re2/archive/927f5d53caf8111721e734cf24724686bb745f55.tar.gz"),
+        repo_mapping = {
+            "@abseil-cpp": "@com_google_absl",
+        },
     )
 
     tf_http_archive(
