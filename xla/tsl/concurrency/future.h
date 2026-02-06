@@ -1363,7 +1363,11 @@ class JoinState {
 
     if (pending_count == 1) {
       absl::MutexLock lock(mu_);
-      promise_.Set(std::move(values_));
+      if (ABSL_PREDICT_TRUE(status_.ok())) {
+        promise_.Set(std::move(values_));
+      } else {
+        promise_.Set(std::move(status_));
+      }
     }
   }
 

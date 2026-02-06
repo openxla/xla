@@ -1015,6 +1015,21 @@ TEST(FutureTest, JoinCopyableFutures) {
   EXPECT_EQ(v1, std::vector<int32_t>({1, 2}));
 }
 
+TEST(FutureTest, JoinCopyableFuturesError) {
+  auto [promise0, future0] = MakePromise<int32_t>();
+  auto [promise1, future1] = MakePromise<int32_t>();
+
+  std::vector<Future<int32_t>> futures = {future0, future1};
+  Future<std::vector<int32_t>> join_two = JoinFutures<int32_t>(futures);
+  EXPECT_FALSE(join_two.IsReady());
+
+  promise0.Set(absl::InternalError("error0"));
+  promise1.Set(absl::InternalError("error1"));
+
+  EXPECT_TRUE(join_two.IsReady());
+  EXPECT_EQ(join_two.Await().status(), absl::InternalError("error0"));
+}
+
 TEST(FutureTest, JoinMoveOnlyFuture) {
   auto [promise0, future0] = MakePromise<std::unique_ptr<int32_t>>();
   auto [promise1, future1] = MakePromise<std::unique_ptr<int32_t>>();
@@ -1035,6 +1050,25 @@ TEST(FutureTest, JoinMoveOnlyFuture) {
   ASSERT_EQ(vec.size(), 2);
   EXPECT_EQ(*vec[0], 1);
   EXPECT_EQ(*vec[1], 2);
+}
+
+TEST(FutureTest, JoinMoveOnlyFuturesError) {
+  auto [promise0, future0] = MakePromise<std::unique_ptr<int32_t>>();
+  auto [promise1, future1] = MakePromise<std::unique_ptr<int32_t>>();
+
+  std::vector<Future<std::unique_ptr<int32_t>>> futures;
+  futures.push_back(std::move(future0));
+  futures.push_back(std::move(future1));
+
+  Future<std::vector<std::unique_ptr<int32_t>>> join_two =
+      JoinFutures<std::unique_ptr<int32_t>>(absl::MakeSpan(futures));
+  EXPECT_FALSE(join_two.IsReady());
+
+  promise0.Set(absl::InternalError("error0"));
+  promise1.Set(absl::InternalError("error1"));
+
+  EXPECT_TRUE(join_two.IsReady());
+  EXPECT_EQ(join_two.Await().status(), absl::InternalError("error0"));
 }
 
 TEST(FutureTest, WithProfiling) {
