@@ -87,7 +87,8 @@ absl::StatusOr<CollectiveParams> CollectiveParams::Create(
                           local_device_id, global_device_id,
                           run_options.run_options().device_assignment(),
                           device_id_map, clique_id_callback, incarnations,
-                          collective_max_nchannels, p2p_max_nchannels);
+                          collective_max_nchannels, p2p_max_nchannels,
+                          run_options.run_options().local_device_count());
 }
 
 CollectiveParams::CollectiveParams(
@@ -97,7 +98,7 @@ CollectiveParams::CollectiveParams(
     const GlobalDeviceIdMap* global_device_id_map,
     const CliqueIdCallback* clique_id_callback,
     const absl::flat_hash_map<GlobalDeviceId, IncarnationId>* incarnations,
-    int64_t collective_max_nchannels, int64_t p2p_max_nchannels)
+    int64_t collective_max_nchannels, int64_t p2p_max_nchannels, int local_device_count)
     : collectives(collectives),
       executor(executor),
       run_id(run_id),
@@ -109,6 +110,7 @@ CollectiveParams::CollectiveParams(
       clique_id_callback(clique_id_callback),
       incarnations(incarnations),
       collective_max_nchannels(collective_max_nchannels),
-      p2p_max_nchannels(p2p_max_nchannels) {}
+      p2p_max_nchannels(p2p_max_nchannels),
+      local_device_count(local_device_count) {}
 
 }  // namespace xla::gpu
