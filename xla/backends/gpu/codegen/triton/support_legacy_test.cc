@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -99,6 +100,12 @@ class DotTest : public SupportTestBase,
                         PrimitiveType output_type) {
     if (lhs_type == BF16 && !SupportsBF16(GetComputeCapability())) {
       GTEST_SKIP();
+    }
+    if (HloTestBase::GetTestPlatform()->id() == se::rocm::kROCmPlatformId &&
+        (primitive_util::IsF8Type(lhs_type) ||
+         primitive_util::IsF8Type(rhs_type) ||
+         primitive_util::IsF8Type(output_type))) {
+      GTEST_SKIP() << "F8 types are not supported on ROCm";
     }
     const HloOpcode opcode = HloOpcode::kDot;
     const std::string lhs =

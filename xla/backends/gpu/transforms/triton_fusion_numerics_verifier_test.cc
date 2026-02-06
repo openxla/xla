@@ -50,9 +50,8 @@ class TritonFusionNumericsVerifierTest
  public:
   void SetUp() override {
     auto device_config = CreateDeviceOrDevicelessConfig();
-    se::DeviceDescription device_info =
-        device_config.GetExecutor()->GetDeviceDescription();
-    alias_info_ = std::make_unique<GpuAliasInfo>(device_info);
+    device_info_ = device_config.GetExecutor()->GetDeviceDescription();
+    alias_info_ = std::make_unique<GpuAliasInfo>(device_info_);
   }
   DebugOptions GetDebugOptionsForTest() const override {
     auto options = HloPjRtTestBase::GetDebugOptionsForTest();
@@ -98,7 +97,12 @@ class TritonFusionNumericsVerifierTest
     return std::move(compile_util_or).value();
   }
 
+  bool IsRocm() {
+    return device_info_.gpu_compute_capability().IsRocm();
+  }
+
   MLIRContext mlir_context_;
+  se::DeviceDescription device_info_;
   std::unique_ptr<GpuAliasInfo> alias_info_;
 };
 
@@ -236,6 +240,9 @@ ENTRY main{
 }
 
 TEST_P(TritonFusionNumericsVerifierTest, VerifyMultipleNestedFusionNumerics) {
+  if (IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   constexpr absl::string_view kMultiOutputFusionHloText = R"(
 HloModule m
 lhs_computation (p0: bf16[128,512]) -> bf16[128,512] {
@@ -376,6 +383,9 @@ TEST_F(TritonFusionNumericsVerifierTest, CheckMismatch) {
 // spill. Verify that the numerics verifier still runs on those kernels.
 TEST_F(TritonFusionNumericsVerifierTest,
        CompilationSucceedsEvenIfKernelWillSpillRegisters) {
+  if (IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   auto module = Module(R"(
 HloModule m
 

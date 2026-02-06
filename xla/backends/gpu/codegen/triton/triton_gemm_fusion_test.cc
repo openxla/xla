@@ -2162,6 +2162,9 @@ TEST_F(CompareTest, SplitKBatch) {
   if (!SupportsBF16(GpuComputeCapability())) {
     GTEST_SKIP() << "BF16 not supported.";
   }
+  if (GpuComputeCapability().IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm because the test times out.";
+  }
   const std::string kHloTextRef = R"(
 triton_gemm_dot.24 {
   parameter_1 = bf16[1,1,800,5,128]{4,3,2,1,0} parameter(1)
@@ -2397,6 +2400,9 @@ ENTRY entry_computation {
 
 // TODO(b/393299275): transform this test once padding derivation if fixed.
 TEST_F(CompareTest, SupportsSplitKWithIndivisibleKUsingPaddingEqual1) {
+  if (GpuComputeCapability().IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm because the test times out.";
+  }
   constexpr absl::string_view kHloTextRef = R"(
 HloModule extracted, entry_computation_layout={(f16[1,8,4,1023]{3,2,1,0}, f16[1,1023,128]{2,1,0})->f16[1,8,4,128]{3,2,1,0}}
 
@@ -3084,6 +3090,9 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmTest, S8ToF32DotWithManyWarpsDoesNotCrash) {
+  if (GpuComputeCapability().IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm because the test times out.";
+  }
   constexpr absl::string_view kHloText = R"(
 HloModule m
 

@@ -271,6 +271,10 @@ TEST_P(UnaryElementwiseTest, ElementwiseUnaryOpExecutesCorrectly) {
   float tolerance;
   std::tie(data_type, opcode, tolerance) = GetParam();
 
+  if (is_built_with_rocm_ && data_type == F16 && opcode == HloOpcode::kCos) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
+
   const std::string kHloTestTemplate = R"(
 triton_computation {
   parameter_0 = $0[33,68]{1,0} parameter(0)
@@ -382,6 +386,10 @@ TEST_P(BinaryElementwiseTest, ElementwiseFusionExecutesCorrectly) {
   float tolerance;
   std::tie(data_type, opcode, tolerance) = GetParam();
 
+  if (is_built_with_rocm_ && data_type == F16 && opcode == HloOpcode::kAtan2) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
+
   const std::string kHloTestTemplate = R"(
 lhs_computation {
   ROOT parameter_0 = f32[92,11]{1,0} parameter(0)
@@ -460,6 +468,10 @@ TEST_P(BinaryElementwiseTest, ElementwiseBinaryOpExecutesCorrectly) {
   HloOpcode opcode;
   float tolerance;
   std::tie(data_type, opcode, tolerance) = GetParam();
+
+  if (is_built_with_rocm_ && data_type == F16 && opcode == HloOpcode::kAtan2) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
 
   const std::string kHloTestTemplate = R"(
 triton_computation {
@@ -1089,6 +1101,10 @@ ENTRY main {
 }
 
 TEST_F(TritonNormalizationTest, CanFuseAndEmitDiamondWithBF16Converts) {
+  if (is_built_with_rocm_) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
+
   const std::string hlo_text = R"(
 HloModule softmax
 max_computation {

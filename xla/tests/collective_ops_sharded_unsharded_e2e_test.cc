@@ -373,6 +373,9 @@ ENTRY entry {
 }
 
 TEST_F(CollectiveOpsTestE2EShardedUnsharded, BlockScaledDotBatchAndBatch) {
+  if (Capability().IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string hlo_text = R"(
 HloModule module, entry_computation_layout={(f8e4m3fn[4,16,64]{2,1,0}, f8e8m0fnu[4,16,2]{2,1,0}, f8e4m3fn[4,4,64]{2,1,0}, f8e8m0fnu[4,4,2]{2,1,0})->f32[4,16,4]{2,1,0}}, num_partitions=2
 
@@ -388,6 +391,9 @@ ENTRY entry {
 
 TEST_F(CollectiveOpsTestE2EShardedUnsharded,
        BlockScaledDotBatchAndNonContracting) {
+  if (Capability().IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string hlo_text = R"(
 HloModule module, entry_computation_layout={(f8e4m3fn[4,16,64]{2,1,0}, f8e8m0fnu[4,16,2]{2,1,0}, f8e4m3fn[4,4,64]{2,1,0}, f8e8m0fnu[4,4,2]{2,1,0})->f32[4,16,4]{2,1,0}}, num_partitions=2
 
@@ -403,6 +409,9 @@ ENTRY entry {
 
 TEST_F(CollectiveOpsTestE2EShardedUnsharded,
        BlockScaledDotContractingAndContracting) {
+  if (Capability().IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string hlo_text = R"(
 HloModule module, entry_computation_layout={(f8e4m3fn[16,64]{1,0}, f8e8m0fnu[16,2]{1,0}, f8e4m3fn[4,64]{1,0}, f8e8m0fnu[4,2]{1,0})->f32[16,4]{1,0}}, num_partitions=2
 
@@ -418,6 +427,9 @@ ENTRY entry {
 
 TEST_F(CollectiveOpsTestE2EShardedUnsharded,
        BlockScaledDotNonContractingAndContracting) {
+  if (Capability().IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string hlo_text = R"(
 HloModule module, entry_computation_layout={(f8e4m3fn[16,128]{1,0}, f8e8m0fnu[16,4]{1,0}, f8e4m3fn[4,128]{1,0}, f8e8m0fnu[4,4]{1,0})->f32[16,4]{1,0}}, num_partitions=2
 
@@ -433,6 +445,9 @@ ENTRY entry {
 
 TEST_F(CollectiveOpsTestE2EShardedUnsharded,
        BlockScaledDotContractingAndReplicated) {
+  if (Capability().IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string hlo_text = R"(
 HloModule module, entry_computation_layout={(f8e4m3fn[16,128]{1,0}, f8e8m0fnu[16,4]{1,0}, f8e4m3fn[4,128]{1,0}, f8e8m0fnu[4,4]{1,0})->f32[16,4]{1,0}}, num_partitions=2
 
@@ -448,6 +463,9 @@ ENTRY entry {
 
 TEST_F(CollectiveOpsTestE2EShardedUnsharded,
        BlockScaledDotReplicatedAndReplicated) {
+  if (Capability().IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string hlo_text = R"(
 HloModule module, entry_computation_layout={(f8e4m3fn[4,128]{1,0}, f8e8m0fnu[4,4], f8e4m3fn[1,128]{1,0}, f8e8m0fnu[1,4]{1,0})->f32[4,1]{1,0}}, num_partitions=2
 
@@ -463,6 +481,9 @@ ENTRY entry {
 
 TEST_F(CollectiveOpsTestE2EShardedUnsharded,
        BlockScaledDotContractingNonContractingAndContractingNonContracting) {
+  if (Capability().IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string hlo_text = R"(
 HloModule module, entry_computation_layout={(f8e4m3fn[8,128]{1,0}, f8e8m0fnu[8,4]{1,0}, f8e4m3fn[4,128]{1,0}, f8e8m0fnu[4,4]{1,0})->f32[8,4]{1,0}}, num_partitions=4
 

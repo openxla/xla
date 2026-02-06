@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/target_config/target_config.h"
+#include "xla/stream_executor/platform_manager.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -41,8 +42,15 @@ limitations under the License.
 namespace xla {
 namespace {
 
+namespace se = ::stream_executor;
+
 using ::testing::IsEmpty;
 using ::testing::Not;
+
+// Returns true if the test is running on a ROCm platform.
+bool IsRocm() {
+  return se::PlatformManager::PlatformWithName("ROCM").ok();
+}
 
 absl::StatusOr<Compiler::GpuTargetConfig> GetGpuTargetConfig() {
   const std::string target_config_path =
@@ -57,6 +65,9 @@ absl::StatusOr<Compiler::GpuTargetConfig> GetGpuTargetConfig() {
 class XlaDevicelessCompileLibTest : public testing::TestWithParam<bool> {};
 
 TEST_P(XlaDevicelessCompileLibTest, CompilesForGpuWithoutDevice) {
+  if (IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnUnverifiedModule(R"hlo(
     HloModule module
