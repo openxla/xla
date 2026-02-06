@@ -417,6 +417,27 @@ cc_library(
 )
 
 cc_library(
+    name = "codegen_utils",
+    testonly = True,
+    srcs = ["codegen_utils.cc"],
+    hdrs = ["codegen_utils.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/service:compiler",
+        "//xla/service:executable",
+        "//xla/service:llvm_compiler",
+        "//xla/service/llvm_ir:llvm_util",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:ir_headers",
+    ],
+)
+
+cc_library(
     name = "codegen_test_base",
     testonly = True,
     srcs = ["codegen_test_base.cc"],

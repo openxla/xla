@@ -83,6 +83,36 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_pjrt_codegen_test",
+    testonly = True,
+    srcs = ["gpu_pjrt_codegen_test.cc"],
+    hdrs = ["gpu_pjrt_codegen_test.h"],
+    deps = [
+        ":hlo_pjrt_gpu_test_base",
+        "//xla:shape_util",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:compiler",
+        "//xla/service:executable",
+        "//xla/service:gpu_plugin",
+        "//xla/service:gpu_topology",
+        "//xla/service:hlo_module_config",
+        "//xla/service:llvm_compiler",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/tests:codegen_utils",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_for_library",
+        "@tsl//tsl/platform:casts",
+    ],
+)
+
+cc_library(
     name = "hlo_pjrt_gpu_test_base",
     testonly = True,
     srcs = ["hlo_pjrt_gpu_test_base.cc"],
@@ -648,11 +678,10 @@ xla_test(
     name = "gpu_atomic_test",
     srcs = ["gpu_atomic_test.cc"],
     backends = ["gpu"],
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
     deps = [
-        ":gpu_codegen_test",
+        ":gpu_pjrt_codegen_test",
         "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_googletest//:gtest_main",
     ],
 )
