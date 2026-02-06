@@ -128,6 +128,16 @@ class ConvertTritonGemmConfigVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
 
+    absl::StatusOr<BlockLevelParameters> block_level_parameters =
+        FindBlockLevelParameters(dot, config, mlir_context_,
+                                 device_description_);
+    if (!block_level_parameters.ok()) {
+      VLOG(2) << "Skipping Triton nested GEMM conversion for "
+              << fusion->name() << ": "
+              << block_level_parameters.status();
+      return absl::OkStatus();
+    }
+
     // Annotate the dot with the contraction tile size.
     ASSIGN_OR_RETURN(auto tile_sizes, dot->backend_config<Tile>());
     tile_sizes.add_sizes(config.block_k);
@@ -140,13 +150,8 @@ class ConvertTritonGemmConfigVisitor : public DfsHloRewriteVisitor {
         *gpu_config.mutable_fusion_backend_config();
     backend_config.clear_triton_gemm_config();
     backend_config.set_kind(kTritonNestedGemmFusionKind);
-
-    ASSIGN_OR_RETURN(BlockLevelParameters block_level_parameters,
-                     FindBlockLevelParameters(dot, config, mlir_context_,
-                                              device_description_));
-
     *backend_config.mutable_block_level_fusion_config() =
-        block_level_parameters.ToBlockLevelFusionConfig();
+        block_level_parameters->ToBlockLevelFusionConfig();
     RETURN_IF_ERROR(fusion->set_backend_config(gpu_config));
 
     MarkAsChanged();
