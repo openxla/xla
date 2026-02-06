@@ -94,7 +94,7 @@ __device__ __forceinline__ RestrictedPtr<T> GetPeerPtr(
 }
 
 template <typename T>
-__device__ __forceinline__ RestrictedPtr<T> GetMultimemPtr(
+__device__ __forceinline__ RestrictedPtr<T> GetMultimemSrc(
     void* ptr, int64_t argument_index, int num_ranks,
     const CollectiveKernelMetadata& metadata) {
   uint64_t argument_offset = num_ranks * argument_index;
@@ -102,7 +102,19 @@ __device__ __forceinline__ RestrictedPtr<T> GetMultimemPtr(
       (uint64_t)metadata.param_to_peers[argument_offset + metadata.rank];
   uint64_t offset = (uint64_t)ptr - current_base;
 
-  return (RestrictedPtr<T>)((uint64_t)metadata.multicast_buffer_ptr + offset);
+  return (RestrictedPtr<T>)((uint64_t)metadata.src_multimem + offset);
+}
+
+template <typename T>
+__device__ __forceinline__ RestrictedPtr<T> GetMultimemDst(
+    void* ptr, int64_t argument_index, int num_ranks,
+    const CollectiveKernelMetadata& metadata) {
+  uint64_t argument_offset = num_ranks * argument_index;
+  uint64_t current_base =
+      (uint64_t)metadata.param_to_peers[argument_offset + metadata.rank];
+  uint64_t offset = (uint64_t)ptr - current_base;
+
+  return (RestrictedPtr<T>)((uint64_t)metadata.dst_multimem + offset);
 }
 
 template <typename T, xla::ReductionKind ReductionKindT, PlatformType PlatformT>
@@ -180,20 +192,19 @@ __device__ __forceinline__ void MultimemAllReduceKernelImpl(
       kNumElementsPerThread * (blockIdx.x * blockDim.x + threadIdx.x);
   int64_t stride = kNumElementsPerThread * blockDim.x * gridDim.x;
 
-  // Copy data from local input buffer to remote input buffer.
-  for (int i = offset; i < args.num_elements; i += stride) {
-    VecStore(args.symmetric_input_ptrs + i, VecLoad(args.input_buffer + i));
-  }
-
   SyncRemoteBlocks<PlatformT, kMaxNumAllReduceInputPtrs>(
       signal_flags_buffers, args.rank, args.num_ranks, args.signal_value);
   __syncthreads();
 
-  RestrictedPtr<T> multimem_ptr = GetMultimemPtr<T>(
+  RestrictedPtr<T> src_multimem = GetMultimemSrc<T>(
       args.symmetric_input_ptrs, 0, args.num_ranks, *args.metadata);
+  RestrictedPtr<T> dst_multimem = GetMultimemDst<T>(
+      args.symmetric_input_ptrs, 0, args.num_ranks, *args.metadata);
+
   if (args.metadata->rank == 0) {
     for (int i = offset; i < args.num_elements; i += stride) {
-      T* multimem_element_ptr = multimem_ptr + i;
+      T* src_multimem_element_ptr = src_multimem + i;
+      T* dst_multimem_element_ptr = dst_multimem + i;
 
       // Reduce
       Vec<T> vec;
@@ -202,13 +213,13 @@ __device__ __forceinline__ void MultimemAllReduceKernelImpl(
           "[%4];"
           : "=f"(vec.data[0]), "=f"(vec.data[1]), "=f"(vec.data[2]),
             "=f"(vec.data[3])
-          : "l"(multimem_element_ptr)
+          : "l"(src_multimem_element_ptr)
           : "memory");
 
       // Broadcast
       asm volatile(
           "multimem.st.relaxed.sys.global.v4.f32 [%0], {%1,%2,%3,%4};" ::"l"(
-              multimem_element_ptr),
+              dst_multimem_element_ptr),
           "f"(vec.data[0]), "f"(vec.data[1]), "f"(vec.data[2]), "f"(vec.data[3])
           : "memory");
     }
@@ -219,10 +230,6 @@ __device__ __forceinline__ void MultimemAllReduceKernelImpl(
   SyncRemoteBlocks<PlatformT, kMaxNumAllReduceInputPtrs>(
       signal_flags_buffers, args.rank, args.num_ranks, args.signal_value + 1);
   __syncthreads();
-
-  for (int i = offset; i < args.num_elements; i += stride) {
-    VecStore(args.output_buffer + i, VecLoad(args.symmetric_input_ptrs + i));
-  }
 }
 #endif  // __CUDA_ARCH__ >= 900
 

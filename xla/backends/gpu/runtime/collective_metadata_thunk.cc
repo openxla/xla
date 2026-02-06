@@ -120,8 +120,10 @@ CollectiveMetadataThunk::CreateCollectiveMetadata(
     std::shared_ptr<CollectiveMultimem> multimem) {
   CollectiveKernelMetadata metadata;
   metadata.rank = rank.value();
-  metadata.multicast_buffer_ptr =
-      multimem ? multimem->mapped_ptr(rank) : nullptr;
+  // We assume that we have at most one multimem buffer, so it becomes both
+  // a source multimem and destination multimem buffer.
+  metadata.src_multimem = multimem ? multimem->mapped_ptr(rank) : nullptr;
+  metadata.dst_multimem = multimem ? multimem->mapped_ptr(rank) : nullptr;
   return metadata;
 }
 

@@ -24,7 +24,6 @@ limitations under the License.*/
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
-#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -56,6 +55,7 @@ limitations under the License.*/
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -207,16 +207,29 @@ absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
         AllocateMemory(params.executor, kSignalBufferSize * kNumBuffers,
                        "Signal buffers"));
 
-    se::DeviceAddressBase local_buffers_ptr = local_buffers_handle.address();
     per_stream_memory_.emplace(
         params.executor,
         std::make_unique<StreamMemory>(StreamMemory{
             std::move(local_buffers_handle), std::move(signal_buffers_handle),
             strategy, kLocalBufferSize, kSignalBufferSize}));
-    if (is_multimem_enabled_ && strategy == AllReduceStrategy::kMultimem) {
-      params.multimem_registry->Request(
-          {clique_key, /*map_to=*/local_buffers_ptr});
-    }
+  }
+
+  // If we decided to run kernel using multimem strategy we request multimem
+  // addresses for input and output buffers (both of them must be allocated from
+  // the collective allocator at run time).
+  auto& stream_memory = per_stream_memory_.at(params.executor);
+  if (stream_memory->strategy == AllReduceStrategy::kMultimem) {
+    XLA_VLOG_DEVICE(3, params.executor->device_ordinal())
+        << "Request multicast address for source and destination buffers";
+
+    TF_RETURN_IF_ERROR(
+        params.collective_memory_requests->RequestMulticastAddress(
+            clique_key, params.buffer_allocations->GetDeviceAddress(
+                            buffers_[0].source_buffer.slice)));
+    TF_RETURN_IF_ERROR(
+        params.collective_memory_requests->RequestMulticastAddress(
+            clique_key, params.buffer_allocations->GetDeviceAddress(
+                            buffers_[0].destination_buffer.slice)));
   }
 
   return absl::OkStatus();
@@ -300,15 +313,6 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
   }
 
   if (state != nullptr) {
-    if (memory_state->strategy == AllReduceStrategy::kMultimem) {
-      TF_ASSIGN_OR_RETURN(
-          state->collective_multimem,
-          params.multicast_memory_registry->Get(
-              {clique_key, memory_state->local_buffers_handle.memory()}));
-      state->multicast_device_ptr =
-          state->collective_multimem->mapped_ptr(*rank);
-    }
-
     std::vector<se::DeviceAddressBase> parameters{
         memory_state->local_buffers_handle.memory(),
         memory_state->signal_buffers_handle.memory()};
@@ -324,10 +328,32 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
         param_to_peers_ptrs,
         CollectiveMetadataThunk::CollectParamToPeers(
             clique_key, state->rank, params.stream, std::move(parameters)));
-    TF_ASSIGN_OR_RETURN(CollectiveKernelMetadata metadata,
-                        CollectiveMetadataThunk::CreateCollectiveMetadata(
-                            clique_key, state->rank, params.stream,
-                            state->collective_multimem));
+
+    CollectiveKernelMetadata metadata;
+    metadata.rank = state->rank.value();
+
+    // Resolve multimem addresses that we requested earlier.
+    if (memory_state->strategy == AllReduceStrategy::kMultimem) {
+      auto src_addr = params.buffer_allocations->GetDeviceAddress(
+          buffers_[0].source_buffer.slice);
+      auto dst_addr = params.buffer_allocations->GetDeviceAddress(
+          buffers_[0].destination_buffer.slice);
+
+      auto [src_mmem, src_mmem_offset] =
+          params.collective_memory->FindMultimemAddress(clique_key, state->rank,
+                                                        src_addr);
+      auto [dst_mmem, dst_mmem_offset] =
+          params.collective_memory->FindMultimemAddress(clique_key, state->rank,
+                                                        dst_addr);
+
+      TF_RET_CHECK(src_mmem && dst_mmem)
+          << "Multimem addresses for source and destination buffers not found";
+      metadata.src_multimem =
+          tsl::safe_reinterpret_cast<char*>(src_mmem) + src_mmem_offset;
+      metadata.dst_multimem =
+          tsl::safe_reinterpret_cast<char*>(dst_mmem) + dst_mmem_offset;
+    }
+
     TF_RETURN_IF_ERROR(CollectiveMetadataThunk::CopyCollectiveMetadataToDevice(
         params.stream, metadata, param_to_peers_ptrs, state->metadata));
     return absl::OkStatus();
