@@ -15,6 +15,15 @@ limitations under the License.
 
 #include "xla/tsl/lib/monitoring/sampler.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <initializer_list>
+#include <limits>
+#include <memory>
+#include <utility>
+#include <vector>
+
 // clang-format off
 // Required for IS_MOBILE_PLATFORM
 #include "absl/log/check.h"
@@ -48,8 +57,8 @@ class ExplicitBuckets : public Buckets {
     // -DBL_MAX, because it uses these limits as upper-bounds, so
     // bucket_count[0] is always the number of elements in
     // [-DBL_MAX, bucket_limits[0]).
-    if (bucket_limits_.back() != DBL_MAX) {
-      bucket_limits_.push_back(DBL_MAX);
+    if (bucket_limits_.back() != std::numeric_limits<double>::max()) {
+      bucket_limits_.push_back(std::numeric_limits<double>::max());
     }
   }
 
@@ -117,6 +126,25 @@ std::unique_ptr<Buckets> Buckets::Exponential(double scale,
                                               int bucket_count) {
   return std::unique_ptr<Buckets>(
       new ExponentialBuckets(scale, growth_factor, bucket_count));
+}
+
+// static
+std::unique_ptr<Buckets> Buckets::Exponential(double scale,
+                                              double growth_factor,
+                                              const UpperBound& upper_bound) {
+  CHECK_GT(scale, 0.0);
+  CHECK_GE(growth_factor, 1.01);
+  CHECK_GT(upper_bound.max_value, 0.0);
+  CHECK_GT(upper_bound.max_bucket_boundaries, 0);
+
+  // Choose width to cover range that includes |max_value|.
+  const double num_finite_buckets = std::max(
+      1.0,  // Avoid negative size when scale_factor > max_value.
+      std::min(1 + ceil((log(upper_bound.max_value) - log(scale)) /
+                        log(growth_factor)),
+               static_cast<double>(upper_bound.max_bucket_boundaries)));
+
+  return Exponential(scale, growth_factor, lround(num_finite_buckets));
 }
 
 }  // namespace monitoring

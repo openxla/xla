@@ -114,10 +114,13 @@ class Sampler {
 
 #else  // IS_MOBILE_PLATFORM
 
-#include <float.h>
-
+#include <array>
+#include <cstdint>
+#include <initializer_list>
+#include <limits>
 #include <map>
 #include <memory>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -173,6 +176,16 @@ class SamplerCell {
 // mobile_sampler.h.
 class Buckets {
  public:
+  struct UpperBound {
+    // Sets an upper limit for the generated bucket boundary values (excluding
+    // the implicit DBL_MAX bound on the last bucket). The final boundary value
+    // may be less than this limit; it simply won't exceed the limit.
+    double max_value = std::numeric_limits<uint32_t>::max();
+    // Imposes an additional restriction on the number of bucket boundary values
+    // (excluding the implicit -DBL_MAX and +DBL_MAX bounds). Rarely relevant.
+    int max_bucket_boundaries = 255;
+  };
+
   virtual ~Buckets() = default;
 
   // Sets up buckets of the form:
@@ -183,6 +196,15 @@ class Buckets {
   static std::unique_ptr<Buckets> Exponential(double scale,
                                               double growth_factor,
                                               int bucket_count);
+
+  static std::unique_ptr<Buckets> Exponential(double scale,
+                                              double growth_factor,
+                                              const UpperBound& upper_bound);
+
+  static std::unique_ptr<Buckets> Exponential(double scale,
+                                              double growth_factor) {
+    return Exponential(scale, growth_factor, {});
+  }
 
   // Sets up buckets of the form:
   // [-DBL_MAX, ..., bucket_limits[i], bucket_limits[i + 1], ..., DBL_MAX].
