@@ -1508,13 +1508,10 @@ PjRtCpuLoadedExecutable::ExecuteHelper(
           executable_->cpu_executable_->module().input_output_alias_config(),
           device, executable_->output_memory_space_kind_ids_));
 
-  PjRtRawLoadedExecutable::RawExecuteResult result;
-  absl::Status inline_result_status;
-
-  TF_RETURN_IF_ERROR(std::move(*executable)
-                         .Execute(options, result, inline_result_status,
-                                  input_buffers, output_leaf_buffers,
-                                  input_deps, fill_future));
+  PjRtRawLoadedExecutable::RawExecuteResult result =
+      std::move(*executable)
+          .Execute(options, input_buffers, output_leaf_buffers, input_deps,
+                   fill_future);
 
   for (CommonPjRtBuffer::ScopedHold& b : device_buffers) {
     if (b.type() == CommonPjRtBuffer::ScopedHold::kUsage) {
@@ -1525,7 +1522,9 @@ PjRtCpuLoadedExecutable::ExecuteHelper(
     }
   }
 
-  TF_RETURN_IF_ERROR(inline_result_status);
+  if (result.primary_execute_event->async_value()->IsError()) {
+    TF_RETURN_IF_ERROR(result.primary_execute_event->async_value()->GetError());
+  }
 
   auto res =
       client_->CreateOutputs(executable_->cpu_executable_->result_shape(),
@@ -1565,15 +1564,14 @@ tsl::AsyncValueRef<CpuEvent> PjRtCpuClient::GetCollectiveLaunchEvent(
   return result;
 }
 
-absl::Status CpuPjRtRawLoadedExecutable::Execute(
+PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     const ExecuteOptions& options,
-    PjRtRawLoadedExecutable::RawExecuteResult& result,
-    absl::Status& inline_result_status,
     absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>&
         input_buffers,
     absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>&
         output_leaf_buffers,
     PjRtDeviceEventSet& generic_input_deps, bool fill_future) && {
+  PjRtRawLoadedExecutable::RawExecuteResult result;
   // `returned_future_can_be_set_event` indicates when `returned_future` can be
   // set using `execute_event`. This is necessary to delay setting the
   // `returned_future` until all (async) execution activities are complete even
@@ -1628,12 +1626,11 @@ absl::Status CpuPjRtRawLoadedExecutable::Execute(
   BufferAlloc buffer_alloc;
   BufferAllocAndCopy buffer_alloc_and_copy;
 
-  TF_ASSIGN_OR_RETURN(
-      std::vector<tsl::AsyncValueRef<CpuDeviceMemory>> buffer_table,
-      CreateBufferTable(cpu_executable->buffer_assignment(),
-                        cpu_executable->constants(), input_buffers,
-                        buffer_alloc, buffer_alloc_and_copy, tuple_index_table,
-                        output_leaf_buffers, executable_->output_indices_));
+  absl::StatusOr<std::vector<tsl::AsyncValueRef<CpuDeviceMemory>>>
+      buffer_table = CreateBufferTable(
+          cpu_executable->buffer_assignment(), cpu_executable->constants(),
+          input_buffers, buffer_alloc, buffer_alloc_and_copy, tuple_index_table,
+          output_leaf_buffers, executable_->output_indices_);
 
   // The choice of where we wait is arbitrary; the reason for the wait is
   // pacing to avoid problems such as memory fragmentation and running ahead
@@ -1722,8 +1719,10 @@ absl::Status CpuPjRtRawLoadedExecutable::Execute(
     tsl::port::ScopedFlushDenormal flush;
     tsl::port::ScopedSetRound round(FE_TONEAREST);
 
+    TF_RETURN_IF_ERROR(buffer_table.status());
+
     // Immediately allocate memory and prepare for computation.
-    for (const auto& buffer : buffer_table) {
+    for (const auto& buffer : *buffer_table) {
       CHECK(buffer.IsAvailable());
       if (buffer.IsError()) {
         return buffer.GetError();
@@ -1735,8 +1734,8 @@ absl::Status CpuPjRtRawLoadedExecutable::Execute(
     }
     // Call interpreted thunk sequence implementing XLA executable.
     absl::InlinedVector<MaybeOwningDeviceAddress, 8> buffer_device_mem;
-    buffer_device_mem.reserve(buffer_table.size());
-    for (const auto& buffer : buffer_table) {
+    buffer_device_mem.reserve(buffer_table->size());
+    for (const auto& buffer : *buffer_table) {
       buffer_device_mem.emplace_back(
           se::DeviceAddressBase(buffer->untyped_data(), buffer->size_bytes()));
     }
@@ -1791,14 +1790,18 @@ absl::Status CpuPjRtRawLoadedExecutable::Execute(
     buffer_alloc.Allocate(*client->allocator());
     buffer_alloc_and_copy.AllocateAndCopy(*client->allocator());
 
-    TF_ASSIGN_OR_RETURN(auto thunks_execute_event, execute_thunks());
+    auto thunks_execute_event = execute_thunks();
 
-    if (thunks_execute_event.IsError()) {
-      inline_result_status = thunks_execute_event.GetError();
-    } else {
-      returned_future_can_be_set_event.SetStateConcrete();
+    if (!thunks_execute_event.ok()) {
+      std::move(ready_on_exit)
+          .Release()
+          .SetError(thunks_execute_event.status());
+    } else if (thunks_execute_event->IsError()) {
+      std::move(ready_on_exit)
+          .Release()
+          .SetError(thunks_execute_event->GetError());
     }
-
+    returned_future_can_be_set_event.SetStateConcrete();
   } else {
     // Asynchronously call generated function.
     if (!is_a_collective_launch) {
@@ -1868,7 +1871,7 @@ absl::Status CpuPjRtRawLoadedExecutable::Execute(
         });
   }
 
-  if (fill_future && inline_result_status.ok()) {
+  if (fill_future) {
     auto [promise, future] = MakePromise<>();
     returned_future_can_be_set_event.AndThen(
         [execute_event = std::move(execute_event),
@@ -1884,8 +1887,7 @@ absl::Status CpuPjRtRawLoadedExecutable::Execute(
         });
     result.future = std::move(future);
   }
-
-  return absl::OkStatus();
+  return result;
 }
 
 static void MaybeDumpHloSnapshot(

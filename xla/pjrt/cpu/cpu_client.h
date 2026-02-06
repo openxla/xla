@@ -389,10 +389,8 @@ class CpuPjRtRawLoadedExecutable {
   explicit CpuPjRtRawLoadedExecutable(RunId run_id) : run_id_(run_id) {}
   PjRtDevice* device() { return device_; }
 
-  absl::Status Execute(
+  PjRtRawLoadedExecutable::RawExecuteResult Execute(
       const ExecuteOptions& options,
-      PjRtRawLoadedExecutable::RawExecuteResult& result,
-      absl::Status& inline_result_status,
       absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>&
           input_buffers,
       absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>&
