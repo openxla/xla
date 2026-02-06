@@ -30,10 +30,10 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace tsl {
 
@@ -1001,11 +1001,12 @@ TEST(FutureTest, JoinCopyableFutures) {
   Future<std::vector<int32_t>> join_two = JoinFutures<int32_t>(futures1);
   EXPECT_FALSE(join_two.IsReady());
 
-  promise0.Set(1);
-  EXPECT_TRUE(join_one.IsReady());
-  EXPECT_FALSE(join_two.IsReady());
-
+  // Set futures in reverse order to check that joined vector accumulates
+  // results in the same order as futures.
   promise1.Set(2);
+  promise0.Set(1);
+
+  EXPECT_TRUE(join_one.IsReady());
   EXPECT_TRUE(join_two.IsReady());
 
   ASSERT_OK_AND_ASSIGN(std::vector<int32_t> v0, join_one.Await());
@@ -1069,6 +1070,111 @@ TEST(FutureTest, JoinMoveOnlyFuturesError) {
 
   EXPECT_TRUE(join_two.IsReady());
   EXPECT_EQ(join_two.Await().status(), absl::InternalError("error0"));
+}
+
+TEST(FutureTest, JoinStatically) {
+  {
+    Future<> joined = JoinFutures();
+    EXPECT_TRUE(joined.IsReady());
+  }
+
+  {
+    auto [promise, future] = MakePromise<int32_t>();
+    Future<std::tuple<int32_t>> joined = JoinFutures(future);
+
+    promise.Set(1);
+    EXPECT_EQ(*joined.Await(), std::make_tuple(1));
+  }
+
+  {
+    auto [promise0, future0] = MakePromise<>();
+    auto [promise1, future1] = MakePromise<>();
+
+    Future<> joined = JoinFutures(future0, future1);
+    promise0.Set();
+    promise1.Set();
+    EXPECT_EQ(joined.Await(), absl::OkStatus());
+  }
+
+  {
+    auto [promise0, future0] = MakePromise<>();
+    auto [promise1, future1] = MakePromise<int32_t>();
+
+    Future<std::tuple<int32_t>> joined = JoinFutures(future0, future1);
+    promise0.Set();
+    promise1.Set(1);
+    EXPECT_EQ(*joined.Await(), std::make_tuple(1));
+  }
+
+  {
+    auto [promise0, future0] = MakePromise<int32_t>();
+    auto [promise1, future1] = MakePromise<int32_t>();
+
+    Future<std::tuple<int32_t, int32_t>> joined = JoinFutures(future0, future1);
+    promise0.Set(1);
+    promise1.Set(2);
+    EXPECT_EQ(*joined.Await(), std::make_tuple(1, 2));
+  }
+
+  {
+    auto [promise0, future0] = MakePromise<int32_t>();
+    auto [promise1, future1] = MakePromise<std::unique_ptr<int32_t>>();
+
+    Future<std::tuple<int32_t, std::unique_ptr<int32_t>>> joined =
+        JoinFutures(future0, std::move(future1));
+    promise0.Set(1);
+    promise1.Set(std::make_unique<int32_t>(2));
+    EXPECT_EQ(std::get<0>(*joined.Await()), 1);
+    EXPECT_EQ(*std::get<1>(*joined.Await()), 2);
+  }
+}
+
+TEST(FutureTest, JoinStaticallyError) {
+  auto [promise0, future0] = MakePromise<int32_t>();
+  auto [promise1, future1] = MakePromise<int32_t>();
+
+  Future<std::tuple<int32_t, int32_t>> joined = JoinFutures(future0, future1);
+  promise0.Set(absl::InternalError("error0"));
+  promise1.Set(absl::InternalError("error1"));
+  EXPECT_EQ(joined.Await().status(), absl::InternalError("error0"));
+}
+
+TEST(FutureTest, JoinStaticallyToCustomType) {
+  struct TwoInts {
+    TwoInts(int32_t a, int32_t b) : a(a), b(b) {}
+    int32_t a;
+    int32_t b;
+  };
+
+  auto [promise0, future0] = MakePromise<int32_t>();
+  auto [promise1, future1] = MakePromise<int32_t>();
+
+  Future<TwoInts> joined = JoinFutures<TwoInts>(future0, future1);
+
+  promise0.Set(1);
+  promise1.Set(2);
+
+  EXPECT_EQ(joined.Await()->a, 1);
+  EXPECT_EQ(joined.Await()->b, 2);
+}
+
+TEST(FutureTest, JoinStaticallyMoveOnlyToCustomType) {
+  struct TwoInts {
+    TwoInts(int32_t a, std::unique_ptr<int32_t> b) : a(a), b(std::move(b)) {}
+    int32_t a;
+    std::unique_ptr<int32_t> b;
+  };
+
+  auto [promise0, future0] = MakePromise<int32_t>();
+  auto [promise1, future1] = MakePromise<std::unique_ptr<int32_t>>();
+
+  Future<TwoInts> joined = JoinFutures<TwoInts>(future0, std::move(future1));
+
+  promise0.Set(1);
+  promise1.Set(std::make_unique<int32_t>(2));
+
+  EXPECT_EQ(joined.Await()->a, 1);
+  EXPECT_EQ(*joined.Await()->b, 2);
 }
 
 TEST(FutureTest, WithProfiling) {
