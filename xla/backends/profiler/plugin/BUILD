@@ -24,7 +24,7 @@ cc_library(
     srcs = ["plugin_tracer.cc"],
     hdrs = ["plugin_tracer.h"],
     copts = tf_profiler_copts(),
-    visibility = ["//xla:internal"],
+    visibility = ["//xla:friends"],
     deps = [
         ":profiler_c_api_hdrs",
         "//xla/tsl/platform:logging",
