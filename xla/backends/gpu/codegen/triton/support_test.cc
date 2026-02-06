@@ -2610,8 +2610,8 @@ TEST_P(BitcastConvertTest, BitcastConvert) {
   std::string hlo_text;
   std::vector<int64_t> output_tile_sizes = {1, 32};
 
-  const int bit_width_in = primitive_util::BitWidth(data_type_in);
-  const int bit_width_out = primitive_util::BitWidth(data_type_out);
+  const int bit_width_in = primitive_util::StorageBitWidth(data_type_in);
+  const int bit_width_out = primitive_util::StorageBitWidth(data_type_out);
   const std::string data_type_in_str =
       primitive_util::LowercasePrimitiveTypeName(data_type_in);
   const std::string data_type_out_str =
@@ -2661,8 +2661,8 @@ TEST_P(BitcastConvertTest, BitcastConvertDisguisedAsBitcast) {
         << "BitcastConvert does not support complex <-> real conversion.";
   }
 
-  const int bit_width_in = primitive_util::BitWidth(data_type_in);
-  const int bit_width_out = primitive_util::BitWidth(data_type_out);
+  const int bit_width_in = primitive_util::StorageBitWidth(data_type_in);
+  const int bit_width_out = primitive_util::StorageBitWidth(data_type_out);
   std::vector<int64_t> output_tile_sizes = {1, 32};
   std::string hlo_text;
   const std::string data_type_in_str =
