@@ -18,11 +18,14 @@ limitations under the License.
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <tuple>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/base/attributes.h"
@@ -70,6 +73,14 @@ class Future;
 template <class T = void>
 class Promise;
 
+namespace internal {
+// Type predicate to check that type is a future.
+template <typename T>
+struct IsFuture : std::false_type {};
+template <typename T>
+struct IsFuture<Future<T>> : std::true_type {};
+}  // namespace internal
+
 // Returns a `Future` that will be successful if all `futures` complete
 // successfully, or return a first encountered error.
 Future<> JoinFutures(absl::Span<const Future<>> futures);
@@ -87,6 +98,36 @@ Future<std::vector<T>> JoinFutures(absl::Span<const Future<T>> futures);
 // documentation for details).
 template <typename T, std::enable_if_t<!std::is_void_v<T>>* = nullptr>
 Future<std::vector<T>> JoinFutures(absl::Span<Future<T>> futures);
+
+// Returns a `Future` that will be successful if all `futures` complete
+// successfully, or return a first encountered error. Return type is
+// automatically derived from the passed futures.
+//
+// Example:
+//
+//   Future<std::string> f0 = ...;
+//   Future<std::string> f1 = ...;
+//   Future<std::tuple<std::string, int32_t> joined = JoinFutures(f0, f1);
+//
+//
+// Example with custom joined type:
+//
+//   struct TwoInts {
+//     int32_t a;
+//     int32_t b;
+//   };
+//
+//   Future<int32_t> f0 = ...;
+//   Future<int32_t> f1 = ...;
+//   Future<TwoInts> joined = JoinFutures<TwoInts>(f0, f1);
+//
+// If custom result type for `JoinFutures` is not defined (is void by default),
+// then the result type will be inferred as `std::tuple`. Otherwise the result
+// value of type `R` will be constructed from expanded tuple values.
+template <typename R = void, typename... Futures,
+          std::enable_if_t<std::conjunction_v<
+              internal::IsFuture<std::decay_t<Futures>>...>>* = nullptr>
+auto JoinFutures(Futures&&... futures);
 
 // Helpers for using Futures.
 class FutureHelpers {
@@ -1333,17 +1374,21 @@ auto Future<void>::SetPromise(Promise<R> promise, F&& f) {
 
 namespace internal {
 
-// A state for tracking ongoing `JoinFutures<T>` operation.
-template <typename T>
-class JoinState {
+// A base class for state machines for all `JoinFutures` implementations.
+template <typename Derived, typename T = void, typename State = std::monostate>
+class JoinFutures {
  public:
-  JoinState(int32_t size, Promise<std::vector<T>> promise)
-      : pending_count_(size), promise_(std::move(promise)) {
-    values_.reserve(size);
-  }
+  JoinFutures(int32_t size, Promise<T> promise)
+      : pending_count_(size), promise_(std::move(promise)) {}
 
-  void Update(absl::StatusOr<T> value) {
-    if (auto& status = value.status(); ABSL_PREDICT_FALSE(!status.ok())) {
+ protected:
+  // Updates internal status that tracks futures completed with errors and drops
+  // the pending counter. Calls `update_state` callback with a state that
+  // keeps intermediate result of completed futures. Calls `complete` callback
+  // with a promise that must be completed, the state and the status.
+  template <typename UpdateState>
+  void Update(absl::Status status, UpdateState&& update_state) {
+    if (ABSL_PREDICT_FALSE(!status.ok())) {
       absl::MutexLock lock(mu_);
       if (VLOG_IS_ON(2)) {
         if (!status_.ok() && status.code() != status_.code()) {
@@ -1352,32 +1397,64 @@ class JoinState {
         }
       }
       status_.Update(status);
-    } else {
-      absl::MutexLock lock(mu_);
-      values_.push_back(*std::move(value));
     }
 
+    // Call the `update_state` callback to give the caller a chance to put
+    // completed future value into the `state_` object.
+    if constexpr (!std::is_same_v<State, std::monostate>) {
+      if (ABSL_PREDICT_TRUE(status.ok())) {
+        absl::MutexLock lock(mu_);
+        update_state(&state_);
+      }
+    }
+
+    // Drop the pending futures counter and maybe complete the promise via the
+    // user-provided callback.
     int32_t pending_count =
         pending_count_.fetch_sub(1, std::memory_order_acq_rel);
     CHECK_GE(pending_count, 1) << "Pending count can't drop below 0";
 
     if (pending_count == 1) {
       absl::MutexLock lock(mu_);
-      if (ABSL_PREDICT_TRUE(status_.ok())) {
-        promise_.Set(std::move(values_));
-      } else {
-        promise_.Set(std::move(status_));
-      }
+      static_cast<Derived&>(*this).Complete(
+          std::move(promise_), std::move(status_), std::move(state_));
     }
-  }
+  };
 
  private:
   std::atomic<int32_t> pending_count_;
-  Promise<std::vector<T>> promise_;
-  std::vector<T> values_;
+  Promise<T> promise_;
 
   absl::Mutex mu_;
   absl::Status status_ ABSL_GUARDED_BY(&mu_);
+  State state_ ABSL_GUARDED_BY(&mu_);
+};
+
+// A state for tracking `JoinFutures` for stateful `Future<T>`.
+template <typename T>
+class JoinStateful
+    : public JoinFutures<JoinStateful<T>, std::vector<T>, std::vector<T>> {
+ public:
+  using JoinFutures<JoinStateful<T>, std::vector<T>,
+                    std::vector<T>>::JoinFutures;
+
+  void OnReady(size_t index, absl::StatusOr<T> value) {
+    this->Update(value.status(), [&](std::vector<T>* state) {
+      if (state->size() < (1 + index)) {
+        state->resize(1 + index);
+      }
+      state->at(index) = *std::move(value);
+    });
+  }
+
+  void Complete(Promise<std::vector<T>> promise, absl::Status status,
+                std::vector<T> state) {
+    if (ABSL_PREDICT_TRUE(status.ok())) {
+      promise.Set(std::move(state));
+    } else {
+      promise.Set(std::move(status));
+    }
+  }
 };
 
 }  // namespace internal
@@ -1391,11 +1468,13 @@ Future<std::vector<T>> JoinFutures(absl::Span<const Future<T>> futures) {
   }
 
   auto [promise, future] = MakePromise<std::vector<T>>();
-  auto state = std::make_shared<internal::JoinState<T>>(futures.size(),
-                                                        std::move(promise));
+  auto join = std::make_shared<internal::JoinStateful<T>>(futures.size(),
+                                                          std::move(promise));
 
-  for (const Future<T>& future : futures) {
-    future.OnReady(absl::bind_front(&internal::JoinState<T>::Update, state));
+  for (size_t index = 0; index < futures.size(); ++index) {
+    futures[index].OnReady([index, join](absl::StatusOr<T> value) {
+      join->OnReady(index, std::move(value));
+    });
   }
 
   return std::move(future);
@@ -1410,15 +1489,142 @@ Future<std::vector<T>> JoinFutures(absl::Span<Future<T>> futures) {
   }
 
   auto [promise, future] = MakePromise<std::vector<T>>();
-  auto state = std::make_shared<internal::JoinState<T>>(futures.size(),
-                                                        std::move(promise));
+  auto join = std::make_shared<internal::JoinStateful<T>>(futures.size(),
+                                                          std::move(promise));
 
-  for (Future<T>& future : futures) {
-    std::move(future).OnReady(
-        absl::bind_front(&internal::JoinState<T>::Update, state));
+  for (size_t index = 0; index < futures.size(); ++index) {
+    std::move(futures[index]).OnReady([index, join](absl::StatusOr<T> value) {
+      join->OnReady(index, std::move(value));
+    });
   }
 
   return std::move(future);
+}
+
+//===----------------------------------------------------------------------===//
+// JoinFutures implementation for statically known arguments.
+//===----------------------------------------------------------------------===//
+
+namespace internal {
+// A little bit of template meta-programming to figure out the types for
+// storing intermediate state during join and the type returned to the caller.
+template <typename F>
+struct JoinedType;
+
+template <>
+struct JoinedType<Future<void>> {
+  using state = std::tuple<std::monostate>;
+  using result = std::tuple<>;
+};
+
+template <typename T>
+struct JoinedType<Future<T>> {
+  using state = std::tuple<T>;
+  using result = std::tuple<T>;
+};
+
+template <typename... Futures>
+using JoinedTupleState = decltype(std::tuple_cat(
+    std::declval<typename JoinedType<Futures>::state>()...));
+
+template <typename... Futures>
+using JoinedTupleResult = decltype(std::tuple_cat(
+    std::declval<typename JoinedType<Futures>::result>()...));
+
+template <typename T>
+auto FilterJoinedTupleMonostate(T&& val) {
+  if constexpr (std::is_same_v<std::monostate, std::decay_t<T>>) {
+    return std::tuple<>();
+  } else {
+    return std::make_tuple(std::forward<T>(val));
+  }
+}
+
+template <typename... Ts>
+auto FilterJoinedTuple(std::tuple<Ts...> tuple) {
+  return std::apply(
+      [](auto&&... args) {
+        return std::tuple_cat(
+            FilterJoinedTupleMonostate(std::forward<decltype(args)>(args))...);
+      },
+      std::move(tuple));
+}
+
+template <typename R, typename Tuple, typename = void>
+struct JoinFromTupleConstructible : std::false_type {};
+
+template <typename R, typename... Args>
+struct JoinFromTupleConstructible<R, std::tuple<Args...>>
+    : std::is_constructible<R, Args...> {};
+
+// A state for tracking `JoinFutures` for statically known futures types.
+template <typename Result, typename State>
+class JoinStatic
+    : public JoinFutures<JoinStatic<Result, State>, Result, State> {
+ public:
+  using JoinFutures<JoinStatic<Result, State>, Result, State>::JoinFutures;
+
+  template <std::size_t... Is, typename... Futures>
+  static void OnReady(std::shared_ptr<JoinStatic> self,
+                      std::index_sequence<Is...>, Futures... futures) {
+    (std::forward<Futures>(futures).OnReady([self](auto value) {
+      self->OnReady(std::integral_constant<size_t, Is>{}, std::move(value));
+    }),
+     ...);
+  }
+
+  template <size_t index>
+  void OnReady(std::integral_constant<size_t, index>, absl::Status status) {
+    this->Update(status, [&](State* state) {});
+  }
+
+  template <size_t index, typename T>
+  void OnReady(std::integral_constant<size_t, index>, absl::StatusOr<T> value) {
+    this->Update(value.status(), [&](State* state) {
+      std::get<index>(*state) = *std::move(value);
+    });
+  }
+
+  void Complete(Promise<Result> promise, absl::Status status, State state) {
+    if (ABSL_PREDICT_TRUE(status.ok())) {
+      promise.Set(
+          std::make_from_tuple<Result>(FilterJoinedTuple(std::move(state))));
+    } else {
+      promise.Set(std::move(status));
+    }
+  }
+};
+
+}  // namespace internal
+
+template <typename R, typename... Futures,
+          std::enable_if_t<std::conjunction_v<
+              internal::IsFuture<std::decay_t<Futures>>...>>*>
+auto JoinFutures(Futures&&... futures) {
+  using State = internal::JoinedTupleState<std::decay_t<Futures>...>;
+  using Result = internal::JoinedTupleResult<std::decay_t<Futures>...>;
+
+  if constexpr (std::is_same_v<Result, std::tuple<>> && std::is_void_v<R>) {
+    // All futures have type `Future<>` and return type is `void`, use a more
+    // efficient `JoinFutures`.
+    return JoinFutures({futures...});
+
+  } else {
+    using PromiseResult = std::conditional_t<std::is_void_v<R>, Result, R>;
+    static_assert(
+        internal::JoinFromTupleConstructible<PromiseResult, Result>::value,
+        "PromiseResult must be constructible from he Result tuple");
+
+    // Create a join state machine for the accumulated futures.
+    auto [promise, future] = MakePromise<PromiseResult>();
+    auto join = std::make_shared<internal::JoinStatic<PromiseResult, State>>(
+        sizeof...(futures), std::move(promise));
+
+    using Is = std::make_index_sequence<sizeof...(Futures)>;
+    join->OnReady(std::move(join), Is{}, std::forward<Futures>(futures)...);
+
+    return std::move(future);
+  }
 }
 
 }  // namespace tsl
