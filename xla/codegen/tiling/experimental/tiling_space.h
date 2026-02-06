@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_TILING_SPACE_H_
-#define XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_TILING_SPACE_H_
+#ifndef XLA_CODEGEN_TILING_EXPERIMENTAL_TILING_SPACE_H_
+#define XLA_CODEGEN_TILING_EXPERIMENTAL_TILING_SPACE_H_
 
 #include <cstdint>
 #include <deque>
@@ -26,10 +26,10 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/tiling/constraint_expression.h"
+#include "xla/codegen/tiling/experimental/symbolic_tile.h"
 #include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/utils/hlo_traversal.h"
-#include "xla/service/gpu/model/experimental/symbolic_tile.h"
 #include "xla/shape.h"
 
 namespace xla::gpu::experimental {
@@ -175,4 +175,4 @@ const Shape& GetFirstShape(const HloInstruction* instr, int64_t index = 0);
 
 }  // namespace xla::gpu::experimental
 
-#endif  // XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_TILING_SPACE_H_
+#endif  // XLA_CODEGEN_TILING_EXPERIMENTAL_TILING_SPACE_H_

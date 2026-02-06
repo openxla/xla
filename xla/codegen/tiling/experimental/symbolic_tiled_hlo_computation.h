@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILED_HLO_COMPUTATION_H_
-#define XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILED_HLO_COMPUTATION_H_
+#ifndef XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILED_HLO_COMPUTATION_H_
+#define XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILED_HLO_COMPUTATION_H_
 
 #include <memory>
 #include <string>
@@ -24,9 +24,9 @@ limitations under the License.
 
 #include "llvm/ADT/ArrayRef.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/codegen/tiling/experimental/symbolic_tiled_hlo.h"
+#include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/hlo/utils/hlo_traversal.h"
-#include "xla/service/gpu/model/experimental/symbolic_tiled_hlo.h"
-#include "xla/service/gpu/model/experimental/tiling_space.h"
 #include "xla/service/instruction_fusion.h"
 
 namespace xla::gpu::experimental {
@@ -77,4 +77,4 @@ class SymbolicTiledComputation {
 
 }  // namespace xla::gpu::experimental
 
-#endif  // XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILED_HLO_COMPUTATION_H_
+#endif  // XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILED_HLO_COMPUTATION_H_

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/model/experimental/symbolic_tiled_hlo_computation.h"
+#include "xla/codegen/tiling/experimental/symbolic_tiled_hlo_computation.h"
 
 #include <memory>
 #include <utility>
@@ -24,12 +24,12 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/codegen/tiling/experimental/test_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/utils/hlo_traversal.h"
-#include "xla/service/gpu/model/experimental/test_utils.h"
 #include "xla/util.h"
 
 namespace xla::gpu::experimental {

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILE_H_
-#define XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILE_H_
+#ifndef XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILE_H_
+#define XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILE_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -150,4 +150,4 @@ DimTile GetDefaultDimTile(int64_t id, int64_t dim_size, mlir::MLIRContext* ctx);
 
 }  // namespace xla::gpu::experimental
 
-#endif  // XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILE_H_
+#endif  // XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILE_H_

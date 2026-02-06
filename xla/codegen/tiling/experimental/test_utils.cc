@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/model/experimental/test_utils.h"
+#include "xla/codegen/tiling/experimental/test_utils.h"
 
 #include <cstdint>
 #include <utility>
@@ -24,7 +24,7 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/service/gpu/model/experimental/symbolic_tile.h"
+#include "xla/codegen/tiling/experimental/symbolic_tile.h"
 
 namespace xla::gpu::experimental {
 

@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILE_PROPAGATION_H_
-#define XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILE_PROPAGATION_H_
+#ifndef XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILE_PROPAGATION_H_
+#define XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILE_PROPAGATION_H_
 
 #include <cstdint>
 #include <optional>
 #include <string>
 
 #include "llvm/ADT/SmallVector.h"
+#include "xla/codegen/tiling/experimental/symbolic_tile.h"
+#include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/gpu/model/experimental/symbolic_tile.h"
-#include "xla/service/gpu/model/experimental/tiling_space.h"
 
 namespace xla::gpu::experimental {
 
@@ -41,4 +41,4 @@ std::optional<SymbolicTiles> PropagateTileToOutput(
 
 }  // namespace xla::gpu::experimental
 
-#endif  // XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILE_PROPAGATION_H_
+#endif  // XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILE_PROPAGATION_H_

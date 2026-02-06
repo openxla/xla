@@ -13,17 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_TEST_UTILS_H_
-#define XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_TEST_UTILS_H_
+#ifndef XLA_CODEGEN_TILING_EXPERIMENTAL_TEST_UTILS_H_
+#define XLA_CODEGEN_TILING_EXPERIMENTAL_TEST_UTILS_H_
 
 #include <cstdint>
 
 #include <gmock/gmock.h>
 #include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/codegen/tiling/experimental/symbolic_tile.h"
+#include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/hlo/analysis/indexing_test_utils.h"
-#include "xla/service/gpu/model/experimental/symbolic_tile.h"
-#include "xla/service/gpu/model/experimental/tiling_space.h"
 
 namespace xla::gpu::experimental {
 
@@ -38,4 +38,4 @@ SymbolicTile GetTestSymbolicTile(const TilingSpace& tiling_space,
 
 }  // namespace xla::gpu::experimental
 
-#endif  // XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_TEST_UTILS_H_
+#endif  // XLA_CODEGEN_TILING_EXPERIMENTAL_TEST_UTILS_H_

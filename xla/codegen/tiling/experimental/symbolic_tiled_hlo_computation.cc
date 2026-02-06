@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/model/experimental/symbolic_tiled_hlo_computation.h"
+#include "xla/codegen/tiling/experimental/symbolic_tiled_hlo_computation.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -42,14 +42,14 @@ limitations under the License.
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/codegen/tiling/experimental/symbolic_tile.h"
+#include "xla/codegen/tiling/experimental/symbolic_tile_propagation.h"
+#include "xla/codegen/tiling/experimental/symbolic_tiled_hlo.h"
+#include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/model/experimental/symbolic_tile.h"
-#include "xla/service/gpu/model/experimental/symbolic_tile_propagation.h"
-#include "xla/service/gpu/model/experimental/symbolic_tiled_hlo.h"
-#include "xla/service/gpu/model/experimental/tiling_space.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/service/name_uniquer.h"
 #include "xla/util.h"

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILED_HLO_H_
-#define XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILED_HLO_H_
+#ifndef XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILED_HLO_H_
+#define XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILED_HLO_H_
 
 #include <cstdint>
 #include <string>
@@ -22,8 +22,8 @@ limitations under the License.
 
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/SmallVector.h"
+#include "xla/codegen/tiling/experimental/symbolic_tile.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/gpu/model/experimental/symbolic_tile.h"
 
 namespace xla::gpu::experimental {
 
@@ -101,4 +101,4 @@ H AbslHashValue(H h, const SymbolicTiledHloInstruction& tiled_hlo_instruction) {
 
 }  // namespace xla::gpu::experimental
 
-#endif  // XLA_SERVICE_GPU_MODEL_EXPERIMENTAL_SYMBOLIC_TILED_HLO_H_
+#endif  // XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILED_HLO_H_

@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/model/experimental/symbolic_tiled_hlo.h"
+#include "xla/codegen/tiling/experimental/symbolic_tiled_hlo.h"
 
 #include <sstream>
 #include <string>
 
 #include "absl/strings/string_view.h"
-#include "xla/service/gpu/model/experimental/symbolic_tile.h"
+#include "xla/codegen/tiling/experimental/symbolic_tile.h"
 
 namespace xla::gpu::experimental {
 

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/model/experimental/tiling_space.h"
+#include "xla/codegen/tiling/experimental/tiling_space.h"
 
 #include <memory>
 #include <utility>
