@@ -384,18 +384,24 @@ class PjRtCpuClient final : public CommonPjRtClient {
 class PjRtCpuLoadedExecutable;
 class PjRtCpuExecutable;
 
-class CpuPjRtRawLoadedExecutable {
+class CpuPjRtRawLoadedExecutable : public PjRtRawLoadedExecutable {
  public:
   explicit CpuPjRtRawLoadedExecutable(RunId run_id) : run_id_(run_id) {}
-  PjRtDevice* device() { return device_; }
+  PjRtDevice* device() override { return device_; }
+
+  absl::Status Load(const ExecuteOptions& options,
+                    size_t host_callback_idx) override {
+    return absl::OkStatus();
+  }
 
   PjRtRawLoadedExecutable::RawExecuteResult Execute(
       const ExecuteOptions& options,
-      absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>&
-          input_buffers,
-      absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>&
+      absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
+      absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>>
           output_leaf_buffers,
-      PjRtDeviceEventSet& input_deps, bool fill_future) &&;
+      PjRtDeviceEventSet& extra_deps, PjRtDeviceEventSet& control_deps,
+      bool is_predetermined_error, bool fill_future) &&
+      override;
 
  private:
   friend class PjRtCpuLoadedExecutable;

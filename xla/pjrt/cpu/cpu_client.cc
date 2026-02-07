@@ -1487,10 +1487,11 @@ PjRtCpuLoadedExecutable::ExecuteHelper(
   bool is_error = false;
   absl::InlinedVector<CommonPjRtBuffer::ScopedHold, 4> device_buffers;
   absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4> input_buffers;
-  CpuTrackedDeviceEventSet input_deps(argument_handles.size());
+  CpuTrackedDeviceEventSet extra_deps(argument_handles.size());
+  CpuTrackedDeviceEventSet control_deps(argument_handles.size());
   TF_RETURN_IF_ERROR(client()->PrepareArguments(
       options, argument_handles, executable_->parameters_that_must_be_donated_,
-      input_deps, input_deps, input_buffers, device_buffers,
+      extra_deps, control_deps, input_buffers, device_buffers,
       executable->device(), replica, partition,
       executable_->parameter_device_shapes_, is_error,
       /*allow_fallback_for_donation=*/true));
@@ -1510,8 +1511,8 @@ PjRtCpuLoadedExecutable::ExecuteHelper(
 
   PjRtRawLoadedExecutable::RawExecuteResult result =
       std::move(*executable)
-          .Execute(options, input_buffers, output_leaf_buffers, input_deps,
-                   fill_future);
+          .Execute(options, input_buffers, output_leaf_buffers, extra_deps,
+                   control_deps, is_error, fill_future);
 
   for (CommonPjRtBuffer::ScopedHold& b : device_buffers) {
     if (b.type() == CommonPjRtBuffer::ScopedHold::kUsage) {
@@ -1566,11 +1567,10 @@ tsl::AsyncValueRef<CpuEvent> PjRtCpuClient::GetCollectiveLaunchEvent(
 
 PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     const ExecuteOptions& options,
-    absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>&
-        input_buffers,
-    absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>&
-        output_leaf_buffers,
-    PjRtDeviceEventSet& generic_input_deps, bool fill_future) && {
+    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
+    absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> output_leaf_buffers,
+    PjRtDeviceEventSet& extra_deps, PjRtDeviceEventSet& control_deps,
+    bool is_predetermined_error, bool fill_future) && {
   PjRtRawLoadedExecutable::RawExecuteResult result;
   // `returned_future_can_be_set_event` indicates when `returned_future` can be
   // set using `execute_event`. This is necessary to delay setting the
@@ -1583,7 +1583,13 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
       tsl::MakeConstructedAsyncValueRef<CpuEvent>();
 
   auto& input_deps =
-      *tensorflow::down_cast<CpuTrackedDeviceEventSet*>(&generic_input_deps);
+      *tensorflow::down_cast<CpuTrackedDeviceEventSet*>(&control_deps);
+  size_t num_control_deps = input_deps.events().size();
+  for (auto& event :
+       std::move(*tensorflow::down_cast<CpuTrackedDeviceEventSet*>(&extra_deps))
+           .Consume()) {
+    input_deps.AddEvent(std::move(event));
+  }
   auto execute_event = tsl::MakeConstructedAsyncValueRef<CpuEvent>();
   MarkEventReadyOnExit ready_on_exit(execute_event);
   result.primary_execute_event =
@@ -1831,7 +1837,7 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
          compute_reservation = std::move(compute_reservation),
          tuple_index_table = std::move(tuple_index_table),
          scoped_async_execution = std::move(scoped_async_execution),
-         input_deps_avs = std::move(input_deps).Consume(),
+         input_deps_avs = std::move(input_deps).Consume(), num_control_deps,
          allocator = client->allocator(),
          returned_future_can_be_set_event =
              returned_future_can_be_set_event.CopyRef()]() mutable {
@@ -1842,13 +1848,17 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
           buffer_alloc.Allocate(*allocator);
           buffer_alloc_and_copy.AllocateAndCopy(*allocator);
 
+          size_t i = 0;
           for (const auto& av : input_deps_avs) {
-            if (auto* error = av->GetErrorIfPresent()) {
-              scoped_async_execution.SetError(Internal(
-                  "Error dispatching computation: %s", error->message()));
-              returned_future_can_be_set_event.SetStateConcrete();
-              return;
+            if (i >= num_control_deps) {
+              if (auto* error = av->GetErrorIfPresent()) {
+                scoped_async_execution.SetError(Internal(
+                    "Error dispatching computation: %s", error->message()));
+                returned_future_can_be_set_event.SetStateConcrete();
+                return;
+              }
             }
+            ++i;
           }
           auto status = [&]() -> absl::Status {
             TF_ASSIGN_OR_RETURN(auto thunks_execute_event, execute_thunks());
