@@ -192,6 +192,12 @@ xla_test(
     size = "large",
     srcs = ["se_gpu_pjrt_client_test.cc"],
     backend_tags = {
+        "h100": [
+            "full",
+            "multi_gpu",
+            "noasan",
+            "nomsan",
+        ],
         "gpu": [
             "multi_gpu",
             "noasan",
