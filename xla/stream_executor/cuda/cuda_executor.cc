@@ -2148,7 +2148,11 @@ absl::StatusOr<void*> CudaExecutor::CudaMulticastMemory::MapMemory(
 
   absl::MutexLock subscription_lock(mapped_devices_mu_);
   mapped_devices_.emplace(cuda_executor->device_, multicast_device_ptr);
-  return reinterpret_cast<void*>(multicast_device_ptr);
+  void* multicast_address = reinterpret_cast<void*>(multicast_device_ptr);
+  XLA_VLOG_DEVICE(3, cuda_executor->device_ordinal())
+      << "Mapped address: " << location.opaque()
+      << " to multimem address: " << multicast_address;
+  return multicast_address;
 }
 
 }  // namespace gpu
