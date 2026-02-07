@@ -187,12 +187,6 @@ absl::StatusOr<absl::flat_hash_map<std::string, HandlerRegistration>>
 StaticRegisteredHandlers(absl::string_view platform);
 
 //===----------------------------------------------------------------------===//
-// XLA FFI Api Implementation
-//===----------------------------------------------------------------------===//
-
-const XLA_FFI_Api* GetXlaFfiApi();
-
-//===----------------------------------------------------------------------===//
 // Helper functions
 //===----------------------------------------------------------------------===//
 
