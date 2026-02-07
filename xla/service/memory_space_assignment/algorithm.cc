@@ -2967,6 +2967,7 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
   // allocating the scoped memory allocations.
   FreeAlternateMemoryForScopedMemoryAllocations(max_scoped_memory_size);
   AllocateReservedScopedAllocations();
+  TF_RETURN_IF_ERROR(ProcessColoredBuffers());
 
   std::vector<MsaBufferInterval> sorted_buffer_intervals =
       GetSortedBufferIntervals();
@@ -3121,7 +3122,6 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
   VLOG(1) << "Assigning buffers to alternate memory. Max heap size = "
           << options_.max_size_in_bytes;
 
-  TF_RETURN_IF_ERROR(ProcessColoredBuffers());
   // Process colored buffers before input and output required assignments are
   // added to avoid adding conflicting required assignments.
   AddInputAndOutputRequiredAssignments();
