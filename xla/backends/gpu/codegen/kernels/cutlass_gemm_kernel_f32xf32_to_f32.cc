@@ -15,7 +15,7 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "xla/service/gpu/kernels/cutlass_gemm.h"
+#include "xla/backends/gpu/codegen/kernels/cutlass_gemm.h"
 
 namespace xla::gpu::kernel::gemm_universal {
 

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/kernels/ptx_custom_kernel.h"
+#include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
 
 #include <cstddef>
 #include <memory>
@@ -22,7 +22,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/service/gpu/kernels/custom_kernel.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/kernel_spec.h"

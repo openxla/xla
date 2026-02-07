@@ -18,7 +18,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
-#include "xla/service/gpu/kernels/cutlass_gemm_custom_kernel.h"
+#include "xla/backends/gpu/codegen/kernels/cutlass_gemm_custom_kernel.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/kernel.h"

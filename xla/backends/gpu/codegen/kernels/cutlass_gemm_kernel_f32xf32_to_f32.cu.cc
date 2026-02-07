@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include "cutlass/gemm/device/gemm_universal.h"
-#include "xla/service/gpu/kernels/cutlass_gemm_adaptor.cu.h"
+#include "xla/backends/gpu/codegen/kernels/cutlass_gemm_adaptor.cu.h"
 
 namespace xla::gpu::kernel::gemm_universal {
 

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/kernels/custom_kernel_fusion_pattern.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel_fusion_pattern.h"
 
 #include <cstdint>
 #include <memory>

@@ -22,8 +22,8 @@ limitations under the License.
 #include "cutlass/gemm/threadblock/threadblock_swizzle.h"
 #include "cutlass/gemm_coord.h"
 #include "cutlass/layout/matrix.h"
-#include "xla/service/gpu/kernels/cutlass_gemm.h"
-#include "xla/service/gpu/kernels/cutlass_gemm_adaptor.cu.h"
+#include "xla/backends/gpu/codegen/kernels/cutlass_gemm.h"
+#include "xla/backends/gpu/codegen/kernels/cutlass_gemm_adaptor.cu.h"
 
 namespace xla::gpu::kernel::gemm_universal {
 

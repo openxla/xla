@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/kernels/cutlass_gemm_custom_kernel.h"
+#include "xla/backends/gpu/codegen/kernels/cutlass_gemm_custom_kernel.h"
 
 #include <cstdint>
 #include <cstring>

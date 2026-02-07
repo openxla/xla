@@ -13,13 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_KERNELS_CUTLASS_GEMM_FUSION_H_
-#define XLA_SERVICE_GPU_KERNELS_CUTLASS_GEMM_FUSION_H_
+#ifndef XLA_BACKENDS_GPU_CODEGEN_KERNELS_CUTLASS_GEMM_FUSION_H_
+#define XLA_BACKENDS_GPU_CODEGEN_KERNELS_CUTLASS_GEMM_FUSION_H_
 
 #include <optional>
 
+#include "xla/backends/gpu/codegen/kernels/custom_kernel_fusion_pattern.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/gpu/kernels/custom_kernel_fusion_pattern.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla::gpu {
@@ -49,4 +49,4 @@ class CutlassGemmWithUpcastPattern : public CustomKernelFusionPattern {
 
 }  // namespace xla::gpu
 
-#endif  // XLA_SERVICE_GPU_KERNELS_CUTLASS_GEMM_FUSION_H_
+#endif  // XLA_BACKENDS_GPU_CODEGEN_KERNELS_CUTLASS_GEMM_FUSION_H_

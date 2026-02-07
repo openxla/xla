@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_KERNELS_CUTLASS_GEMM_H_
-#define XLA_SERVICE_GPU_KERNELS_CUTLASS_GEMM_H_
+#ifndef XLA_BACKENDS_GPU_CODEGEN_KERNELS_CUTLASS_GEMM_H_
+#define XLA_BACKENDS_GPU_CODEGEN_KERNELS_CUTLASS_GEMM_H_
 
 //===-------------------------------------------------------------------------//
 //                 ! ! ! ! !      WARNING      ! ! ! ! !                      //
@@ -262,4 +262,4 @@ class DeviceKernel<DlOpenedKernel> {
 
 }  // namespace xla::gpu::kernel::gemm_universal
 
-#endif  // XLA_SERVICE_GPU_KERNELS_CUTLASS_GEMM_H_
+#endif  // XLA_BACKENDS_GPU_CODEGEN_KERNELS_CUTLASS_GEMM_H_

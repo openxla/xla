@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/kernels/custom_kernel.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 
 #include <optional>
 
@@ -22,7 +22,7 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/service/gpu/kernels/custom_kernel.pb.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.pb.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"

@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_KERNELS_PTX_CUSTOM_KERNEL_H_
-#define XLA_SERVICE_GPU_KERNELS_PTX_CUSTOM_KERNEL_H_
+#ifndef XLA_BACKENDS_GPU_CODEGEN_KERNELS_PTX_CUSTOM_KERNEL_H_
+#define XLA_BACKENDS_GPU_CODEGEN_KERNELS_PTX_CUSTOM_KERNEL_H_
 
 #include <cstddef>
 #include <string>
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/service/gpu/kernels/custom_kernel.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 
 namespace xla::gpu::kernel {
@@ -44,4 +44,4 @@ absl::StatusOr<CustomKernel> GetOwnedPtxCustomKernel(
     size_t shared_memory_bytes = 0);
 
 }  // namespace xla::gpu::kernel
-#endif  // XLA_SERVICE_GPU_KERNELS_PTX_CUSTOM_KERNEL_H_
+#endif  // XLA_BACKENDS_GPU_CODEGEN_KERNELS_PTX_CUSTOM_KERNEL_H_

@@ -17,13 +17,13 @@ limitations under the License.
 #include "cutlass/arch/mma.h"
 #include "cutlass/gemm/device/gemm_universal.h"
 #include "cutlass/gemm/kernel/default_gemm_universal.h"
-#include "xla/service/gpu/kernels/cutlass_gemm_adaptor.cu.h"
+#include "xla/backends/gpu/codegen/kernels/cutlass_gemm_adaptor.cu.h"
 
 namespace xla::gpu::kernel::gemm_universal {
 
 namespace {
 
-using ElementA = float;
+using ElementA = cutlass::bfloat16_t;
 using ElementB = cutlass::bfloat16_t;
 using ElementOutput = float;
 using ElementAccumulator = float;
@@ -43,9 +43,9 @@ using GemmOperation = cutlass::gemm::device::GemmUniversal<
     1,  // B alignment
     cutlass::arch::OpMultiplyAdd>;
 
-XLA_GPU_DEFINE_CUTLASS_GEMM_TRAITS(F32xBf16ToF32<Arch::kDefault>,
+XLA_GPU_DEFINE_CUTLASS_GEMM_TRAITS(Bf16xBf16ToF32<Arch::kDefault>,
                                    GemmOperation);
-template class Adaptor<F32xBf16ToF32<Arch::kDefault>>;
-template class DeviceKernel<F32xBf16ToF32<Arch::kDefault>>;
+template class Adaptor<Bf16xBf16ToF32<Arch::kDefault>>;
+template class DeviceKernel<Bf16xBf16ToF32<Arch::kDefault>>;
 
 }  // namespace xla::gpu::kernel::gemm_universal

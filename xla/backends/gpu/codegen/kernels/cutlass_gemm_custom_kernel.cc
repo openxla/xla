@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/kernels/cutlass_gemm_custom_kernel.h"
+#include "xla/backends/gpu/codegen/kernels/cutlass_gemm_custom_kernel.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -29,8 +29,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "xla/service/gpu/kernels/custom_kernel.h"
-#include "xla/service/gpu/kernels/cutlass_gemm.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
+#include "xla/backends/gpu/codegen/kernels/cutlass_gemm.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_spec.h"

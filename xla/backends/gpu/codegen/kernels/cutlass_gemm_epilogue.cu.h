@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_KERNELS_CUTLASS_GEMM_EPILOGUE_CU_H_
-#define XLA_SERVICE_GPU_KERNELS_CUTLASS_GEMM_EPILOGUE_CU_H_
+#ifndef XLA_BACKENDS_GPU_CODEGEN_KERNELS_CUTLASS_GEMM_EPILOGUE_CU_H_
+#define XLA_BACKENDS_GPU_CODEGEN_KERNELS_CUTLASS_GEMM_EPILOGUE_CU_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -306,4 +306,4 @@ struct CollectiveBuilder<
 
 }  // namespace cutlass::epilogue::collective
 
-#endif  // XLA_SERVICE_GPU_KERNELS_CUTLASS_GEMM_EPILOGUE_CU_H_
+#endif  // XLA_BACKENDS_GPU_CODEGEN_KERNELS_CUTLASS_GEMM_EPILOGUE_CU_H_

@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_KERNELS_CUSTOM_KERNEL_FUSION_H_
-#define XLA_SERVICE_GPU_KERNELS_CUSTOM_KERNEL_FUSION_H_
+#ifndef XLA_BACKENDS_GPU_CODEGEN_KERNELS_CUSTOM_KERNEL_FUSION_H_
+#define XLA_BACKENDS_GPU_CODEGEN_KERNELS_CUSTOM_KERNEL_FUSION_H_
 
 #include <memory>
 #include <string>
@@ -27,8 +27,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/hlo/ir/hlo_computation.h"
-#include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/logging.h"
 
@@ -154,4 +154,4 @@ class CustomKernelFusionRegistry {
         return status.ok();                                                \
       }()
 
-#endif  // XLA_SERVICE_GPU_KERNELS_CUSTOM_KERNEL_FUSION_H_
+#endif  // XLA_BACKENDS_GPU_CODEGEN_KERNELS_CUSTOM_KERNEL_FUSION_H_
