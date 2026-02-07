@@ -64,6 +64,16 @@ struct DeviceOrdinal {};      // binds `int32_t` with device ordinal
 struct CalledComputation {};  // binds `HloComputation*`
 
 //===----------------------------------------------------------------------===//
+// XLA FFI Api
+//===----------------------------------------------------------------------===//
+
+// This is a declaration of the API that returns an XLA:FFI instance for a
+// process. This API is implemented in `xla/ffi/ffi_api.cc` and implementation
+// must be linked into the target process exactly once, or it is possible to
+// have multiple global static registries of FFI handlers and types.
+const XLA_FFI_Api* GetXlaFfiApi();
+
+//===----------------------------------------------------------------------===//
 // Arguments
 //===----------------------------------------------------------------------===//
 
@@ -393,7 +403,7 @@ struct internal::Decode<internal::RemainingRetsTag> {
 // Attributes decoding
 //===----------------------------------------------------------------------===//
 
-#define XLA_FFI_REGISTER_ARRRAY_ATTR_DECODING(T, TYPE)                   \
+#define XLA_FFI_REGISTER_ARRAY_ATTR_DECODING(T, TYPE)                    \
   template <>                                                            \
   struct AttrDecoding<absl::Span<const T>> {                             \
     using Type = absl::Span<const T>;                                    \
@@ -415,14 +425,14 @@ struct internal::Decode<internal::RemainingRetsTag> {
     }                                                                    \
   }
 
-XLA_FFI_REGISTER_ARRRAY_ATTR_DECODING(int8_t, XLA_FFI_DataType_S8);
-XLA_FFI_REGISTER_ARRRAY_ATTR_DECODING(int16_t, XLA_FFI_DataType_S16);
-XLA_FFI_REGISTER_ARRRAY_ATTR_DECODING(int32_t, XLA_FFI_DataType_S32);
-XLA_FFI_REGISTER_ARRRAY_ATTR_DECODING(int64_t, XLA_FFI_DataType_S64);
-XLA_FFI_REGISTER_ARRRAY_ATTR_DECODING(float, XLA_FFI_DataType_F32);
-XLA_FFI_REGISTER_ARRRAY_ATTR_DECODING(double, XLA_FFI_DataType_F64);
+XLA_FFI_REGISTER_ARRAY_ATTR_DECODING(int8_t, XLA_FFI_DataType_S8);
+XLA_FFI_REGISTER_ARRAY_ATTR_DECODING(int16_t, XLA_FFI_DataType_S16);
+XLA_FFI_REGISTER_ARRAY_ATTR_DECODING(int32_t, XLA_FFI_DataType_S32);
+XLA_FFI_REGISTER_ARRAY_ATTR_DECODING(int64_t, XLA_FFI_DataType_S64);
+XLA_FFI_REGISTER_ARRAY_ATTR_DECODING(float, XLA_FFI_DataType_F32);
+XLA_FFI_REGISTER_ARRAY_ATTR_DECODING(double, XLA_FFI_DataType_F64);
 
-#undef XLA_FFI_REGISTER_ARRRAY_ATTR_DECODING
+#undef XLA_FFI_REGISTER_ARRAY_ATTR_DECODING
 
 template <>
 struct AttrDecoding<absl::string_view> {

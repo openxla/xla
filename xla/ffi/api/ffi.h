@@ -51,6 +51,20 @@ limitations under the License.
 
 namespace xla::ffi {
 
+//===----------------------------------------------------------------------===//
+// XLA FFI Api
+//===----------------------------------------------------------------------===//
+
+// This is a declaration of the API that returns an XLA:FFI instance for a
+// process. This API is implemented in `xla/ffi/ffi_api.cc` and implementation
+// must be linked into the target process exactly once, or it is possible to
+// have multiple global static registries of FFI handlers and types.
+const XLA_FFI_Api* GetXlaFfiApi();
+
+//===----------------------------------------------------------------------===//
+// Type aliases for XLA_FFI C structs.
+//===----------------------------------------------------------------------===//
+
 // All user data types that are passed via the execution context or state must
 // be registered with the XLA FFI ahead of time to get unique type id.
 using TypeId = XLA_FFI_TypeId;      // NOLINT

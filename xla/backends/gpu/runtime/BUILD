@@ -376,9 +376,7 @@ cc_library(
 xla_test(
     name = "dynamic_slice_thunk_test",
     srcs = ["dynamic_slice_thunk_test.cc"],
-    backends = [
-        "gpu",
-    ],
+    backends = ["gpu"],
     deps = [
         ":collective_memory_requests",
         ":collective_multimem_registry",
@@ -394,7 +392,6 @@ xla_test(
         "//xla/backends/gpu:ffi",
         "//xla/ffi",
         "//xla/ffi:attribute_map",
-        "//xla/ffi:ffi_api",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
@@ -1005,7 +1002,6 @@ xla_cc_test(
         ":thunk",
         ":thunk_proto_cc",
         "//xla/ffi",
-        "//xla/ffi:ffi_api",
         "//xla/service:buffer_assignment",
         "//xla/service:platform_util",
         "//xla/stream_executor:platform",
@@ -1090,7 +1086,6 @@ xla_test(
         "//xla/ffi",
         "//xla/ffi:attribute_map",
         "//xla/ffi:execution_state",
-        "//xla/ffi:ffi_api",
         "//xla/ffi:type_registry",
         "//xla/hlo/ir:hlo",
         "//xla/runtime:device_id",
@@ -4029,7 +4024,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu:ffi",
         "//xla/ffi",
-        "//xla/ffi:ffi_api",
+        "//xla/ffi:ffi_api",  # build_cleaner: keep
         "//xla/service:collective_ops_utils",
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
