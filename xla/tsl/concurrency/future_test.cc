@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace tsl {
 
@@ -1175,6 +1174,68 @@ TEST(FutureTest, JoinStaticallyMoveOnlyToCustomType) {
 
   EXPECT_EQ(joined.Await()->a, 1);
   EXPECT_EQ(*joined.Await()->b, 2);
+}
+
+TEST(FutureTest, FlattenCopyable) {
+  thread::ThreadPool thread_pool(Env::Default(), "test", 4);
+
+  auto [promise, future] = MakePromise<int32_t>();
+
+  Future<Future<int32_t>> mapped = future.Map([&](int32_t value) {
+    return MakeFutureOn(*thread_pool.AsExecutor(),
+                        [value] { return value + 1; });
+  });
+
+  Future<int32_t> flatten = mapped.Flatten();
+  EXPECT_FALSE(mapped.IsReady());
+  EXPECT_FALSE(flatten.IsReady());
+
+  promise.Set(42);
+  EXPECT_TRUE(mapped.IsReady());
+
+  ASSERT_OK_AND_ASSIGN(int32_t result, flatten.Await());
+  EXPECT_EQ(result, 43);
+}
+
+TEST(FutureTest, FlattenCopyableRvalue) {
+  thread::ThreadPool thread_pool(Env::Default(), "test", 4);
+
+  auto [promise, future] = MakePromise<int32_t>();
+
+  Future<Future<int32_t>> mapped = future.Map([&](int32_t value) {
+    return MakeFutureOn(*thread_pool.AsExecutor(),
+                        [value] { return value + 1; });
+  });
+
+  Future<int32_t> flatten = std::move(mapped).Flatten();
+  EXPECT_FALSE(flatten.IsReady());
+
+  promise.Set(42);
+
+  ASSERT_OK_AND_ASSIGN(int32_t result, flatten.Await());
+  EXPECT_EQ(result, 43);
+}
+
+TEST(FutureTest, FlattenMoveOnly) {
+  thread::ThreadPool thread_pool(Env::Default(), "test", 4);
+
+  auto [promise, future] = MakePromise<int32_t>();
+
+  Future<Future<std::unique_ptr<int32_t>>> mapped =
+      future.Map([&](int32_t value) {
+        return MakeFutureOn(*thread_pool.AsExecutor(), [value] {
+          return std::make_unique<int32_t>(value + 1);
+        });
+      });
+
+  Future<std::unique_ptr<int32_t>> flatten = std::move(mapped).Flatten();
+  EXPECT_FALSE(flatten.IsReady());
+
+  promise.Set(42);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<int32_t> result,
+                       std::move(flatten).Await());
+  EXPECT_EQ(*result, 43);
 }
 
 TEST(FutureTest, WithProfiling) {

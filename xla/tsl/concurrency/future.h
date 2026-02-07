@@ -742,6 +742,16 @@ class Future : public internal::FutureBase<absl::StatusOr<T>> {
         executor, std::forward<F>(f));
   }
 
+  // Flattens a `Future<Future<T>>` to `Future<T>`
+  template <typename U = T, std::enable_if_t<internal::IsFuture<U>::value &&
+                                             !is_move_only>* = nullptr>
+  Future<internal::future_type_t<typename U::value_type>> Flatten() const&;
+
+  // Flattens a `Future<Future<T>>` to `Future<T>`
+  template <typename U = T,
+            std::enable_if_t<internal::IsFuture<U>::value>* = nullptr>
+  Future<internal::future_type_t<typename U::value_type>> Flatten() &&;
+
  private:
   friend class FutureHelpers;
   friend class ::tsl::Promise<T>;
@@ -1256,6 +1266,68 @@ template <typename R, int&... ExplicitParameterBarrier, typename F, typename U,
       });
     }
   });
+
+  return std::move(future);
+}
+
+template <typename T>
+template <typename U, std::enable_if_t<internal::IsFuture<U>::value &&
+                                       !Future<T>::is_move_only>*>
+[[nodiscard]] Future<internal::future_type_t<typename U::value_type>>
+Future<T>::Flatten() const& {
+  using R = internal::future_type_t<typename U::value_type>;
+  auto [promise, future] = MakePromise<R>();
+
+  // For const& API call we always get nested futures and values by reference.
+  using NestedFuture = const absl::StatusOr<Future<R>>&;
+  using Value = const absl::StatusOr<R>&;
+
+  OnReady([promise = std::move(promise)](NestedFuture nested_future) mutable {
+    // Immediately forward error to flatten future.
+    if (ABSL_PREDICT_FALSE(!nested_future.ok())) {
+      promise.Set(nested_future.status());
+      return;
+    }
+
+    // Forward nested value when it becomes ready to the promise.
+    nested_future->OnReady([promise = std::move(promise)](Value value) mutable {
+      promise.Set(value);
+    });
+  });
+
+  return std::move(future);
+}
+
+template <typename T>
+template <typename U, std::enable_if_t<internal::IsFuture<U>::value>*>
+[[nodiscard]] Future<internal::future_type_t<typename U::value_type>>
+Future<T>::Flatten() && {
+  using R = internal::future_type_t<typename U::value_type>;
+  auto [promise, future] = MakePromise<R>();
+
+  // For move-only futures the nested future and the value moved into the
+  // OnReady callback. For copyable futures they are passed by reference,
+  // because we don't know how many futures point to the same payload.
+  using NestedFuture =
+      std::conditional_t<is_move_only, absl::StatusOr<Future<R>>,
+                         const absl::StatusOr<Future<R>>&>;
+  using Value = std::conditional_t<is_move_only, absl::StatusOr<R>,
+                                   const absl::StatusOr<R>&>;
+
+  std::move(*this).OnReady(
+      [promise = std::move(promise)](NestedFuture nested_future) mutable {
+        // Immediately forward error to flatten future.
+        if (ABSL_PREDICT_FALSE(!nested_future.ok())) {
+          promise.Set(nested_future.status());
+          return;
+        }
+
+        // Forward nested value when it becomes ready to the promise.
+        std::move(*nested_future)
+            .OnReady([promise = std::move(promise)](Value value) mutable {
+              promise.Set(std::move(value));
+            });
+      });
 
   return std::move(future);
 }
