@@ -337,6 +337,8 @@ xla_test(
         "//xla:error_spec",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/transforms:hoist_fused_bitcasts",
+        "//xla/backends/gpu/transforms:nest_gemm_fusion",
         "//xla/hlo/analysis:symbolic_expr",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
@@ -349,8 +351,6 @@ xla_test(
         "//xla/service/gpu:target_constants",
         "//xla/service/gpu/model:block_level_parameters",
         "//xla/service/gpu/tests:gpu_codegen_test",
-        "//xla/service/gpu/transforms:hoist_fused_bitcasts",
-        "//xla/service/gpu/transforms:nest_gemm_fusion",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
