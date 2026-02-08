@@ -12,7 +12,7 @@ diff --ruN a/stablehlo/BUILD.bazel b/stablehlo/BUILD.bazel
 diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.cpp b/stablehlo/stablehlo/dialect/ChloOps.cpp
 --- stablehlo/stablehlo/dialect/ChloOps.cpp
 +++ stablehlo/stablehlo/dialect/ChloOps.cpp
-@@ -781,6 +781,220 @@
+@@ -781,6 +781,218 @@
    return success();
  }
  
@@ -101,10 +101,8 @@ diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.cpp b/stablehlo/stablehlo/diale
 +}
 +
 +LogicalResult ScanOp::verify() {
-+  if (getInits().size() != getCarries().size()) {
-+    return emitOpError() << "requires the number of inits ("
-+                         << getInits().size() << ") and carries ("
-+                         << getCarries().size() << ") to be equal";
++  if (getInputs().empty() && getOutputs().empty()) {
++    return emitOpError() << "at least one of inputs or outputs must be present";
 +  }
 +
 +  // Check that the scan dimension is in bounds for all operands. Also check
@@ -244,7 +242,7 @@ diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.td b/stablehlo/stablehlo/dialec
  include "mlir/IR/OpBase.td"
  include "mlir/Interfaces/ControlFlowInterfaces.td"
  include "mlir/Interfaces/InferTypeOpInterface.td"
-@@ -934,4 +935,53 @@
+@@ -934,4 +935,56 @@
    }];
  }
  
@@ -290,6 +288,9 @@ diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.td b/stablehlo/stablehlo/dialec
 +      for (size_t i = 0; i < region.getNumArguments(); ++i) {
 +        setNameFn(region.getArgument(i), i < getInputs().size() ? "input" : "carry");
 +      }
++    }
++    static bool isCompatibleReturnTypes(TypeRange l, TypeRange r) {
++      return succeeded(mlir::verifyCompatibleShapes(l, r));
 +    }
 +  }];
 +
