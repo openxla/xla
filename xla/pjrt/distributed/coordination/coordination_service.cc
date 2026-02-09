@@ -156,7 +156,7 @@ bool CoordinationService::TaskState::SetError(const absl::Status& status) {
 }
 
 absl::Status CoordinationService::TaskState::RecordHeartbeat(
-    IncarnationId task_incarnation) {
+    IncarnationId task_incarnation, bool recoverable) {
   if (!status_.ok()) {
     return status_;
   }
@@ -167,7 +167,7 @@ absl::Status CoordinationService::TaskState::RecordHeartbeat(
     return absl::OkStatus();
   }
   // Task incarnation mismatch!
-  if (IsRecoverable()) {
+  if (recoverable) {
     return absl::OkStatus();  // Ignore, but don't record new heartbeat.
   }
   return MakeCoordinationError(absl::AbortedError(absl::StrCat(
@@ -204,6 +204,13 @@ bool CoordinationService::TaskState::IsDisconnectedBeyondGracePeriod() {
 CoordinationService::CoordinationService(tsl::Env* env, const Config& config)
     : env_(*env), config_(config) {
   LOG(INFO) << "Initializing CoordinationService";
+  if (config.recoverable) {
+    LOG(WARNING)
+        << "Using experimental recoverable task feature. The default shutdown "
+           "barrier will only block non-recoverable tasks. If a synchronized "
+           "shutdown is desired, the user / library should invoke "
+           "`WaitAtBarrier` explicitly at the end of the program.";
+  }
   for (int i = 0; i < config.num_tasks; ++i) {
     const std::string task_name = GetTaskName(config.job_name, i);
     cluster_state_.emplace(task_name, std::make_unique<TaskState>(task_name));
@@ -541,7 +548,7 @@ void CoordinationService::ConnectTask(const CoordinatedTask& task,
 
   task_state->SetTaskIncarnation(incarnation);
   task_state->Connect();
-  if (task_state->IsRecoverable()) {
+  if (config_.recoverable) {
     LeaveOngoingBarriers(task, "recoverable task silently connected again");
     if (kLeaveBarriersOnRecoverableAgentRestart) {
       unsynced_recoverable_jobs_.insert(task_name);
@@ -578,13 +585,11 @@ void CoordinationService::RegisterTaskAsync(const CoordinatedTask& task,
 
   const std::unique_ptr<TaskState>& task_cluster_state =
       cluster_state_[task_name];
-  task_cluster_state->SetRecoverable(task.recoverable());
   const auto task_state = task_cluster_state->GetState();
   const auto task_status = task_cluster_state->GetStatus();
 
   if (task_state == CoordinatedTaskState::TASKSTATE_DISCONNECTED ||
-      ((config_.allow_new_incarnation_to_reconnect ||
-        task_cluster_state->IsRecoverable()) &&
+      ((config_.allow_new_incarnation_to_reconnect || config_.recoverable) &&
        (absl::IsUnavailable(task_status) &&
         task_status.GetPayload(CoordinationErrorPayloadKey())))) {
     // The task is allowed to register itself if:
@@ -606,8 +611,7 @@ void CoordinationService::RegisterTaskAsync(const CoordinatedTask& task,
       // barrier has passed, we want to mark the task unsynced when it connects
       // again. When the task passes a barrier with other tasks, it will be
       // removed from the unsynced set.
-      if (task_cluster_state->IsRecoverable() &&
-          kLeaveBarriersOnRecoverableAgentRestart) {
+      if (config_.recoverable && kLeaveBarriersOnRecoverableAgentRestart) {
         if (barriers_.contains(kClusterRegisterBarrierId) &&
             barriers_[kClusterRegisterBarrierId].passed) {
           // We want to mark the task unsynced when it connects again. When the
@@ -635,7 +639,7 @@ void CoordinationService::RegisterTaskAsync(const CoordinatedTask& task,
     // This may happen if the service processes the initial RegisterTask(),
     // but the agent did not receive the response so the agent retries again.
     if (task_cluster_state->GetTaskIncarnation() == incarnation ||
-        task_cluster_state->IsRecoverable()) {
+        config_.recoverable) {
       // This should be a no-op, but we update the last heartbeat timestamp
       // to give a longer grace period for the agent to start sending
       // heartbeats.
@@ -672,7 +676,7 @@ void CoordinationService::ShutdownTaskAsync(const CoordinatedTask& task,
                                             tsl::StatusCallback done) {
   VLOG(3) << "Task " << GetTaskName(task) << " invoked ShutdownTaskAsync()";
   if (config_.shutdown_barrier_timeout > absl::ZeroDuration() &&
-      !task.recoverable()) {
+      !config_.recoverable) {
     // Impose shutdown barrier so that all (non-recoverable) tasks can
     // disconnect together.
     // Notes:
@@ -873,7 +877,7 @@ absl::Status CoordinationService::RecordHeartbeat(const CoordinatedTask& task,
   }
   VLOG(10) << "Record heartbeat from task: " << task_name
            << "at incarnation: " << incarnation << "at " << absl::Now();
-  s = task_state->RecordHeartbeat(incarnation);
+  s = task_state->RecordHeartbeat(incarnation, config_.recoverable);
 
   // Set and propagate any heartbeat errors.
   if (!s.ok()) {
@@ -882,16 +886,6 @@ absl::Status CoordinationService::RecordHeartbeat(const CoordinatedTask& task,
   }
 
   return s;
-}
-
-bool CoordinationService::AllTasksAreRecoverable(
-    const std::vector<CoordinatedTask>& tasks) {
-  for (const auto& task : tasks) {
-    if (!cluster_state_[GetTaskName(task)]->IsRecoverable()) {
-      return false;
-    }
-  }
-  return true;
 }
 
 void CoordinationService::PropagateError(
@@ -912,7 +906,7 @@ void CoordinationService::PropagateError(
   VLOG(3) << "PropagateError(): " << error;
   assert(!error.ok());
   assert(!source_tasks.empty());
-  if (AllTasksAreRecoverable(source_tasks)) {
+  if (config_.recoverable) {
     VLOG(3) << "All tasks are recoverable, skip propagating error.";
     return;
   }
@@ -1097,9 +1091,8 @@ absl::Status CoordinationService::InitializeBarrier(
     const std::string task_name = GetTaskName(pending_task.first);
     const std::unique_ptr<TaskState>& task_cluster_state =
         cluster_state_[task_name];
-    if (!task_cluster_state->IsRecoverable() &&
-        task_cluster_state->GetState() ==
-            CoordinatedTaskState::TASKSTATE_ERROR) {
+    if (!config_.recoverable && task_cluster_state->GetState() ==
+                                    CoordinatedTaskState::TASKSTATE_ERROR) {
       absl::Status error = MakeBarrierError(
           absl::InternalError(absl::StrCat(
               "Task (", task_name,
@@ -1234,7 +1227,7 @@ void CoordinationService::BarrierAsyncLocked(
   if (  // Barrier has been passed before.
       barrier->passed &&
       // Task has likely just restarted.
-      task.recoverable() && counter == 0 &&
+      config_.recoverable && counter == 0 &&
       // Not a special once-only barrier.
       barrier_id != kClusterRegisterBarrierId &&
       barrier_id != shutdown_barrier_id_) {
@@ -1262,7 +1255,7 @@ void CoordinationService::BarrierAsyncLocked(
   if (!should_initialize_new_instance && counter != barrier->counter &&
       // Recoverable tasks are allowed to use different counters and rejoin the
       // barrier.
-      !(task.recoverable() && counter == 0)) {
+      !(config_.recoverable && counter == 0)) {
     // Counter mismatch! This is likely due to a restart.
     FailBarrierWithCounterMismatch(barrier, counter);
     return;
@@ -1622,7 +1615,7 @@ void CoordinationService::LeaveOngoingBarriers(const CoordinatedTask& task,
   const std::string task_name = GetTaskName(task);
   const std::unique_ptr<TaskState>& task_state = cluster_state_[task_name];
   // Unregister recoverable task from ongoing barriers.
-  if (task_state->IsRecoverable()) {
+  if (config_.recoverable) {
     for (const auto& barrier_id : task_state->GetOngoingBarriers()) {
       BarrierState* barrier = &barriers_[barrier_id];
       // Unregister task from barrier.
@@ -1695,7 +1688,7 @@ void CoordinationService::ReachBarrier(BarrierState* barrier,
 
 void CoordinationService::DisconnectAllNonRecoverableTasks() {
   for (const auto& [task_name, state] : cluster_state_) {
-    if (state->IsRecoverable()) {
+    if (config_.recoverable) {
       // Recoverable tasks will disconnect independently without the
       // barrier.
       continue;
@@ -1711,7 +1704,7 @@ std::vector<CoordinatedTask> CoordinationService::GetTasksForShutdownBarrier() {
   absl::MutexLock l(state_mu_);
   if (shutdown_barrier_tasks_.empty()) {
     for (const auto& [task_name, task_state] : cluster_state_) {
-      if (!task_state->IsRecoverable()) {
+      if (!config_.recoverable) {
         shutdown_barrier_tasks_.push_back(GetTaskFromName(task_name));
       }
     }

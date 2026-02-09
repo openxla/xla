@@ -96,6 +96,11 @@ class CoordinationService {
     // silently. This is useful when we know that a task can immediately resume
     // work upon re-connecting to the service.
     bool allow_new_incarnation_to_reconnect = false;
+
+    // If true, a job can continue running even if some tasks have failed, and
+    // tasks are allowed to rejoin. If false, tasks share fate. As soon as one
+    // task fails, all tasks are permanently failed.
+    bool recoverable = false;
   };
 
   using StatusOrValueCallback =
@@ -351,10 +356,6 @@ class CoordinationService {
                       const std::vector<absl::string_view>& source_task_names,
                       bool is_reported_by_task = false)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
-  // Checks if all tasks are from recoverable jobs.
-  bool AllTasksAreRecoverable(
-      const std::vector<tensorflow::CoordinatedTask>& tasks)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   void SetTaskError(absl::string_view task_name, const absl::Status& error)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Used for cluster-wide errors (e.g. register or shutdown barrier fails).
@@ -527,8 +528,6 @@ class CoordinationService {
 
     tensorflow::CoordinatedTaskState GetState() const { return state_; }
     absl::Status GetStatus() const { return status_; }
-    bool IsRecoverable() const { return recoverable_; }
-    void SetRecoverable(bool recoverable) { recoverable_ = recoverable; }
     IncarnationId GetTaskIncarnation() const { return task_incarnation_; }
     void SetTaskIncarnation(IncarnationId task_incarnation) {
       task_incarnation_ = task_incarnation;
@@ -541,7 +540,8 @@ class CoordinationService {
     }
     void SetConnected(IncarnationId task_incarnation);
     void Disconnect(uint64_t grace_period_duration_us);
-    absl::Status RecordHeartbeat(IncarnationId task_incarnation);
+    absl::Status RecordHeartbeat(IncarnationId task_incarnation,
+                                 bool recoverable);
     int64_t TimeSinceLastHeartbeatMs();
     // Sets the error and returns true if the task state is not ERROR.
     // Otherwise, don't overwrite the error and return false.
@@ -579,8 +579,6 @@ class CoordinationService {
     // For now, we assume there won't be many simultaneous barriers so we simply
     // use a set.
     absl::flat_hash_set<std::string> ongoing_barriers_for_task_;
-    // TODO(b/342448688): Re-use config's recoverable jobs instead.
-    bool recoverable_ = false;
   };
 
   // AlivenessState tracks the state of pending GetAliveTasks calls.
