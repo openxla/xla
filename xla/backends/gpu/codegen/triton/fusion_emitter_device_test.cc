@@ -114,6 +114,22 @@ class TritonEmitterTest : public GpuCodegenTest, public XTileTestBase {
     return XTileTestBase::CreateXTileIrAndFileCheck(
         std::move(module), triton_fusion_name, filecheck_pattern);
   }
+  absl::Status CreateTritonIrFromHloTextAndFileCheck(
+      absl::string_view hlo_text, absl::string_view triton_fusion_name,
+      absl::string_view filecheck_pattern) {
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+                        ParseAndReturnVerifiedModule(hlo_text));
+    return CreateTritonIrAndFileCheck(module.get(), triton_fusion_name,
+                                      filecheck_pattern);
+  }
+  absl::Status CreateTritonIrFromHloTextAndFileCheckForDot(
+      absl::string_view hlo_text, absl::string_view triton_fusion_name,
+      absl::string_view filecheck_pattern) {
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+                        ParseAndReturnVerifiedModule(hlo_text));
+    return CreateTritonIrAndFileCheckForDot(module.get(), triton_fusion_name,
+                                            filecheck_pattern);
+  }
 };
 
 class TmaParameterizedTritonEmitterTest
@@ -249,7 +265,8 @@ ENTRY %main {
         "num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_convert", R"(
+  TF_EXPECT_OK(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_convert", R"(
 CHECK: %[[CST:.*]] = arith.constant dense<0>
 CHECK: arith.cmpi ne, %{{.*}}, %[[CST]]
 )"));
@@ -277,7 +294,7 @@ ENTRY main {
         "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_add", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_add", R"(
 CHECK: arith.ori {{.*}} : i1
 )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
@@ -331,7 +348,7 @@ ENTRY main {
         "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_div", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_div", R"(
 CHECK-NOT: arith.constant
 CHECK: arith.divsi {{.*}} : i32
 )"));
@@ -358,7 +375,7 @@ ENTRY main {
         "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_div", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_div", R"(
 CHECK-COUNT-1: arith.constant
 CHECK: arith.divsi {{.*}} : i32
 )"));
@@ -384,7 +401,7 @@ ENTRY main {
         "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_div", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_div", R"(
 CHECK-COUNT-2: arith.constant
 CHECK: arith.divsi {{.*}} : i32
 )"));
@@ -412,7 +429,7 @@ ENTRY main {
         "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_div", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_div", R"(
 CHECK: arith.divsi {{.*}} : i32
 )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
@@ -437,7 +454,7 @@ ENTRY main {
         "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_not", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_not", R"(
 CHECK: arith.constant dense<-1>
 CHECK: arith.xori
 )"));
@@ -1063,7 +1080,7 @@ ENTRY entry_computation {
 
 })";
   auto status =
-      CreateTritonIrAndFileCheck(this, kHloText, "fused_computation", "");
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_computation", "");
   EXPECT_THAT(
       status,
       absl_testing::StatusIs(
@@ -1580,8 +1597,8 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(kHloText));
 
-  TF_ASSERT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          "triton_softmax_computation", R"(
+  TF_ASSERT_OK(CreateTritonIrFromHloTextAndFileCheck(
+      kHloText, "triton_softmax_computation", R"(
 // CHECK:         #xla.indexing_map<"(pid_0) -> (pid_0 floordiv 32), domain: pid_0 in [0, 2047]">
 // CHECK:         #xla.indexing_map<"(pid_0) -> (pid_0 mod 32), domain: pid_0 in [0, 2047]">
 // CHECK-LABEL:   xtile.entry_func @triton_fn(
@@ -2767,7 +2784,7 @@ ENTRY main {
           "num_stages":"1"}}}
 })";
   TF_EXPECT_OK(
-      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:      %[[CASTED_OUT:.*]] = arith.extui
 CHECK-SAME:   tensor<4xi1> to tensor<4xi8>
 CHECK:      xtile.insert %[[CASTED_OUT]]
@@ -2808,7 +2825,7 @@ ENTRY main {
           "num_stages":"1"}}}
 })";
   TF_EXPECT_OK(
-      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:      %[[I8_PARAM:.*]] = xtile.extract {{.*}} -> tensor<4xi8>
 CHECK:      arith.cmpi ne, %[[I8_PARAM]], {{.*}} : tensor<4xi8>
 )"));
@@ -3051,7 +3068,7 @@ ENTRY entry_computation {
           "num_stages":"1"}}}
 })";
   TF_EXPECT_OK(
-      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:     xtile.extract
 )"));
 
@@ -3089,7 +3106,7 @@ ENTRY entry_computation {
           "num_stages":"1"}}}
 })";
   TF_EXPECT_OK(
-      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:     xtile.extract {{.*}} -> tensor<f32>
 CHECK:     tt.extern_elementwise {{.*}} (f32) -> f32
 CHECK:     arith.negf {{.*}} f32
@@ -3696,7 +3713,7 @@ ENTRY entry {
 })";
 
   // Check that the IR attribute is set correctly.
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, hlo_text, "fdot", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(hlo_text, "fdot", R"(
   // CHECK:       scf.for
   // CHECK:       scf.yield
   // CHECK-NEXT:  tt.warp_specialize
@@ -4006,7 +4023,7 @@ ENTRY main {
 })";
 
   TF_EXPECT_OK(
-      CreateTritonIrAndFileCheck(this, kHloText, "concatenate_fusion", R"(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "concatenate_fusion", R"(
     // Check that we generate three branches. This is a bit of an implementation
     // detail, so it doesn't seem worth enforcing a lot here.
     CHECK-COUNT-2: scf.if
@@ -4802,8 +4819,8 @@ ENTRY main {
   int64_t num_m_tiles = (m / tile_m);
   int64_t num_n_tiles = (n / tile_n);
 
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(
-      this, hlo_text, "fusion",
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(
+      hlo_text, "fusion",
       absl::Substitute(
           R"(
 CHECK-DAG: (pid_0) -> ((pid_0 mod $0) * $1)
@@ -4877,8 +4894,8 @@ ENTRY main {
   int64_t num_m_tiles = (m / tile_m);
   int64_t num_n_tiles = (n / tile_n);
 
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(
-      this, hlo_text, "fusion",
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(
+      hlo_text, "fusion",
       absl::Substitute(
           R"(
 CHECK-DAG: (pid_0) -> ((pid_0 mod $0) * $1)
@@ -4953,8 +4970,8 @@ ENTRY main {
   int64_t num_m_tiles = (m / tile_m);
   int64_t num_n_tiles = (n / tile_n);
 
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(
-      this, hlo_text, "fusion",
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(
+      hlo_text, "fusion",
       absl::Substitute(
           R"(
 CHECK-DAG: (pid_0) -> ((pid_0 mod $0) * $1)
