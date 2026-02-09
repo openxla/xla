@@ -441,6 +441,79 @@ diff --ruN a/stablehlo/stablehlo/dialect/TypeInference.cpp b/stablehlo/stablehlo
  }
  
  LogicalResult verifyConvolutionAttributes(
+@@ -2413,24 +2418,60 @@
+   }
+ 
+   // Infer the output dimensions of the operation.
+-  SmallVector<int64_t> dimensions;
+   auto lhsRankedType = cast<RankedTensorType>(lhsType);
+   auto rhsRankedType = cast<RankedTensorType>(rhsType);
+   auto lhsShape = lhsRankedType.getShape();
+   auto rhsShape = rhsRankedType.getShape();
+-  for (const int64_t lhsBatchingDim : lhsBatchingDimensions)
+-    dimensions.push_back(lhsShape[lhsBatchingDim]);
+-  for (int64_t i = 0; i < lhsRankedType.getRank(); i++)
++
++  SmallVector<int64_t> lhsBounds =
++      to_vector(encodingToBounds(lhsRankedType.getEncoding()));
++  SmallVector<int64_t> rhsBounds =
++      to_vector(encodingToBounds(rhsRankedType.getEncoding()));
++
++  SmallVector<int64_t> inferredDimensions;
++  SmallVector<int64_t> inferredBounds;
++
++  for (size_t i = 0; i < lhsBatchingDimensions.size(); ++i) {
++    auto lhsDim = lhsBatchingDimensions[i];
++    auto rhsDim = rhsBatchingDimensions[i];
++    int64_t lhsBound =
++        lhsBounds.empty() ? ShapedType::kDynamic : lhsBounds[lhsDim];
++    int64_t rhsBound =
++        rhsBounds.empty() ? ShapedType::kDynamic : rhsBounds[rhsDim];
++    auto inferredDimAndBoundOrErr = inferMostSpecificDimAndBound(
++        location, i, lhsShape[lhsDim], rhsShape[rhsDim], lhsBound, rhsBound);
++    if (failed(inferredDimAndBoundOrErr)) {
++      return failure();
++    }
++    inferredDimensions.push_back(inferredDimAndBoundOrErr->first);
++    inferredBounds.push_back(inferredDimAndBoundOrErr->second);
++  }
++
++  for (int64_t i = 0; i < lhsRankedType.getRank(); i++) {
+     if (!llvm::is_contained(lhsBatchingDimensions, i) &&
+-        !llvm::is_contained(lhsContractingDimensions, i))
+-      dimensions.push_back(lhsShape[i]);
+-  for (int64_t i = 0; i < rhsRankedType.getRank(); i++)
++        !llvm::is_contained(lhsContractingDimensions, i)) {
++      inferredDimensions.push_back(lhsShape[i]);
++      inferredBounds.push_back(lhsBounds.empty() ? ShapedType::kDynamic
++                                                 : lhsBounds[i]);
++    }
++  }
++
++  for (int64_t i = 0; i < rhsRankedType.getRank(); i++) {
+     if (!llvm::is_contained(rhsBatchingDimensions, i) &&
+-        !llvm::is_contained(rhsContractingDimensions, i))
+-      dimensions.push_back(rhsShape[i]);
+-
+-  // dot_general_c12
+-  inferredReturnShapes.emplace_back(dimensions);
++        !llvm::is_contained(rhsContractingDimensions, i)) {
++      inferredDimensions.push_back(rhsShape[i]);
++      inferredBounds.push_back(rhsBounds.empty() ? ShapedType::kDynamic
++                                                 : rhsBounds[i]);
++    }
++  }
++
++  Attribute outputEncoding = lhsRankedType.getEncoding()
++                                 ? lhsRankedType.getEncoding()
++                                 : rhsRankedType.getEncoding();
++
++  Attribute boundsAttr = boundsToEncoding(outputEncoding, inferredBounds);
++  inferredReturnShapes.emplace_back(inferredDimensions, /*elementType=*/nullptr,
++                                    boundsAttr);
+   return success();
+ }
+ 
 diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.cpp b/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.cpp
 --- stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.cpp
 +++ stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.cpp
@@ -649,8 +722,8 @@ diff --ruN a/stablehlo/stablehlo/tests/TestUtils.cpp b/stablehlo/stablehlo/tests
 +    SmallVector<ShapedTypeComponents> inferredComponents;
 +    if (failed(definingOpInt.inferReturnTypeComponents(
 +            op->getContext(), op->getLoc(), definingOp->getOperands(),
-+            op->getAttrDictionary(), op->getPropertiesStorage(),
-+            op->getRegions(), inferredComponents)))
++            definingOp->getAttrDictionary(), definingOp->getPropertiesStorage(),
++            definingOp->getRegions(), inferredComponents)))
 +      return rewriter.notifyMatchFailure(op,
 +                                         "failed to infer return shaped types");
 +
@@ -704,7 +777,7 @@ diff --ruN a/stablehlo/stablehlo/tests/infer_stablehlo.mlir b/stablehlo/stablehl
    return %0 : tensor<?x?xf32, #stablehlo.bounds<64, 64>>
  }
  
-@@ -1833,6 +1834,17 @@
+@@ -1833,6 +1834,26 @@
    } : (tensor<?x?x?xf32>, tensor<?x?x?xf32>) -> tensor<?x?x?xf32>
    %1 = "hlo_test_infer.reify_return_type_shapes"(%result): (tensor<?x?x?xf32>) -> tensor<3xindex>
    func.return %1: tensor<3xindex>
@@ -715,10 +788,19 @@ diff --ruN a/stablehlo/stablehlo/tests/infer_stablehlo.mlir b/stablehlo/stablehl
 +// CHECK-LABEL: func @dot_general_bounds
 +func.func @dot_general_bounds(%arg0: tensor<?x12xf32, #stablehlo.bounds<64, ?>>, %arg1: tensor<12x?xf32, #stablehlo.bounds<?, 64>>) -> tensor<?x?xf32, #stablehlo.bounds<64, 64>> {
 +  %0 = stablehlo.dot_general %arg0, %arg1, contracting_dims = [1] x [0], precision = [HIGHEST, HIGHEST] : (tensor<?x12xf32, #stablehlo.bounds<64, ?>>, tensor<12x?xf32, #stablehlo.bounds<?, 64>>) -> tensor<?x?xf32, #stablehlo.bounds<64, 64>>
-+  // TODO: This should preserve the bounds as well
-+  // CHECK: types0 = tensor<?x12x12x?xindex>
++  // CHECK: types0 = tensor<?x?xindex, #stablehlo.bounds<64, 64>>
 +  %1 = "hlo_test_infer.get_return_type_components"(%0): (tensor<?x?xf32, #stablehlo.bounds<64, 64>>) -> tensor<2xindex>
 +  return %0 : tensor<?x?xf32, #stablehlo.bounds<64, 64>>
++}
++
++// -----
++
++// CHECK-LABEL: func @dot_general_bounds_another
++func.func @dot_general_bounds_another(%arg0: tensor<10x?x12xf32, #stablehlo.bounds<?, 64, ?>>, %arg1: tensor<10x12x?xf32, #stablehlo.bounds<?, ?, 64>>) -> tensor<3xindex> {
++  %0 = stablehlo.dot_general %arg0, %arg1, batching_dims = [0] x [0], contracting_dims = [2] x [1] : (tensor<10x?x12xf32, #stablehlo.bounds<?, 64, ?>>, tensor<10x12x?xf32, #stablehlo.bounds<?, ?, 64>>) -> tensor<10x?x?xf32, #stablehlo.bounds<?, 64, 64>>
++  // CHECK: types0 = tensor<10x?x?xindex, #stablehlo.bounds<?, 64, 64>>
++  %1 = "hlo_test_infer.get_return_type_components"(%0): (tensor<10x?x?xf32, #stablehlo.bounds<?, 64, 64>>) -> tensor<3xindex>
++  func.return %1 : tensor<3xindex>
  }
  
  // -----
