@@ -313,7 +313,7 @@ bool IsReduceLikeOpSupportedByYnn(const HloInstruction* hlo) {
     // The ReduceWindow operation is implemented by expanding the input tensor
     // with window dimensions. We need to make sure that the resulting tensor
     // rank does not exceed YNNPACK limit.
-    if (reduce_window->shape().dimensions_size() + new_axis_count >
+    if (reduce_window->shape().dimensions().size() + new_axis_count >
         YNN_MAX_TENSOR_RANK) {
       return false;
     }
