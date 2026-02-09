@@ -17,7 +17,6 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_AUTOTUNER_GPU_CODEGEN_BACKEND_H_
 
 #include <memory>
-#include <string>
 #include <utility>
 
 #include "absl/status/statusor.h"
@@ -43,17 +42,17 @@ class GpuCodegenBackend : public CodegenBackend {
  public:
   // target_config, debug_options and compiler should outlive the backend.
   // TODO(b/447096292): Remove stream_executor from GpuCodegenBackend.
-  GpuCodegenBackend(absl::string_view name, const DebugOptions* debug_options,
-                    Compiler* compiler,
+  GpuCodegenBackend(autotuner::Backend backend,
+                    const DebugOptions* debug_options, Compiler* compiler,
                     const Compiler::GpuTargetConfig* target_config,
                     stream_executor::StreamExecutor* stream_executor = nullptr)
-      : name_(name),
+      : backend_(backend),
         stream_executor_(stream_executor),
         target_config_(*target_config),
         debug_options_(*debug_options),
         compiler_(compiler) {}
 
-  absl::string_view name() const override { return name_; }
+  absl::string_view name() const override { return Backend_Name(backend_); }
 
   autotuner::Backend backend() const override { return backend_; }
 
@@ -129,7 +128,6 @@ class GpuCodegenBackend : public CodegenBackend {
 
   friend class FissionBackend;
 
-  std::string name_;
   autotuner::Backend backend_;
   stream_executor::StreamExecutor* stream_executor_;
   const Compiler::GpuTargetConfig& target_config_;

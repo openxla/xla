@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
 #include "xla/hlo/analysis/alias_info.h"
@@ -41,7 +42,8 @@ class TritonBackend : public GpuCodegenBackend {
                          const Compiler::GpuTargetConfig* target_config,
                          const AliasInfo* alias_info,
                          mlir::MLIRContext* mlir_context)
-      : GpuCodegenBackend("Triton", debug_options, compiler, target_config),
+      : GpuCodegenBackend(autotuner::Backend::TRITON, debug_options, compiler,
+                          target_config),
         alias_info_(alias_info),
         mlir_context_(mlir_context) {}
 

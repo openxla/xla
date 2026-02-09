@@ -91,35 +91,35 @@ class LegacyCacheTest : public ::testing::Test {
 
   Config CreateDummyTritonConfig() {
     Config config;
-    config.codegen_backend_name = "Triton";
+    config.codegen_backend_name = "TRITON";
     config.backend_config.PackFrom(AutotuneResult::TritonGemmKey());
     return config;
   }
 
   Config CreateDummyCublasConfig() {
     Config config;
-    config.codegen_backend_name = "Cublas";
+    config.codegen_backend_name = "CUBLAS";
     config.backend_config.PackFrom(AutotuneResult::GemmKey());
     return config;
   }
 
   Config CreateDummyCublasFissionConfig() {
     Config config;
-    config.codegen_backend_name = "Cublas_fission";
+    config.codegen_backend_name = "CUBLAS_FISSION";
     config.backend_config.PackFrom(AutotuneResult::GemmKey());
     return config;
   }
 
   Config CreateDummyCudnnConfig() {
     Config config;
-    config.codegen_backend_name = "Cudnn";
+    config.codegen_backend_name = "CUDNN";
     config.backend_config.PackFrom(stream_executor::dnn::AlgorithmProto());
     return config;
   }
 
   Config CreateDummyCustomKernelFissionConfig() {
     Config config;
-    config.codegen_backend_name = "CustomKernel_fission";
+    config.codegen_backend_name = "CUSTOM_KERNEL_FISSION";
     config.backend_config.PackFrom(AutotuneResult::CustomKernelFusionKey());
     return config;
   }
@@ -127,7 +127,7 @@ class LegacyCacheTest : public ::testing::Test {
   Config CreateDummyBackendConfig() {
     using DummyOtherConfig = AutotuneResult::CustomKernelFusionKey;
     Config config;
-    config.codegen_backend_name = "OtherBackend";
+    config.codegen_backend_name = "NATIVE_EMITTER";
     config.backend_config.PackFrom(DummyOtherConfig());
     return config;
   }

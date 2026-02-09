@@ -105,22 +105,22 @@ std::optional<LegacyCache::Config> LegacyCache::GetConfig(
     const AutotuneResult& result, bool is_fusion_instruction) {
   Config config;
   if (result.has_triton()) {
-    config.codegen_backend_name = "Triton";
+    config.codegen_backend_name = "TRITON";
     config.backend_config.PackFrom(result.triton());
   } else if (result.has_gemm()) {
-    config.codegen_backend_name = "Cublas";
+    config.codegen_backend_name = "CUBLAS";
     if (is_fusion_instruction) {
-      config.codegen_backend_name = "Cublas_fission";
+      config.codegen_backend_name = "CUBLAS_FISSION";
     }
     config.backend_config.PackFrom(result.gemm());
   } else if (result.has_algorithm()) {
-    config.codegen_backend_name = "Cudnn";
+    config.codegen_backend_name = "CUDNN";
     config.backend_config.PackFrom(result.algorithm());
   } else if (result.has_other()) {
     config.codegen_backend_name = result.other().name();
     config.backend_config = result.other().config();
   } else if (result.has_custom_kernel_fusion()) {
-    config.codegen_backend_name = "CustomKernel_fission";
+    config.codegen_backend_name = "CUSTOM_KERNEL_FISSION";
     config.backend_config.PackFrom(result.custom_kernel_fusion());
   } else {
     return std::nullopt;
@@ -131,14 +131,14 @@ std::optional<LegacyCache::Config> LegacyCache::GetConfig(
 std::optional<AutotuneResult> LegacyCache::GetAutotuneResult(
     const LegacyCache::Config& config) {
   AutotuneResult result;
-  if (config.codegen_backend_name == "Triton") {
+  if (config.codegen_backend_name == "TRITON") {
     config.backend_config.UnpackTo(result.mutable_triton());
-  } else if (config.codegen_backend_name == "Cublas" ||
-             config.codegen_backend_name == "Cublas_fission") {
+  } else if (config.codegen_backend_name == "CUBLAS" ||
+             config.codegen_backend_name == "CUBLAS_FISSION") {
     config.backend_config.UnpackTo(result.mutable_gemm());
-  } else if (config.codegen_backend_name == "Cudnn") {
+  } else if (config.codegen_backend_name == "CUDNN") {
     config.backend_config.UnpackTo(result.mutable_algorithm());
-  } else if (config.codegen_backend_name == "CustomKernel_fission") {
+  } else if (config.codegen_backend_name == "CUSTOM_KERNEL_FISSION") {
     config.backend_config.UnpackTo(result.mutable_custom_kernel_fusion());
   } else {
     result.mutable_other()->set_name(config.codegen_backend_name);

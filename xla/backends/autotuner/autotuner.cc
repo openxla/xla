@@ -387,7 +387,7 @@ absl::StatusOr<Autotuner::Config> Autotuner::TuneBestConfig(
                        executable_candidates.end(),
                        [](const ExecutableCandidate& candidate) {
                          return candidate.config.codegen_backend->name() ==
-                                "Cublas_fission";
+                                "CUBLAS_FISSION";
                        }),
         executable_candidates.end());
   }
