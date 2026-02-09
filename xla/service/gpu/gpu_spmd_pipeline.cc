@@ -142,7 +142,6 @@ void AddSPMDPasses(
       /*single_call_site=*/false,
       /*update_domain=*/false,
       /*composites_to_preserve=*/absl::flat_hash_set<std::string>{},
-      /*uniquify_channel_ids=*/false,
       /*override_policy=*/
       [](const xla::CallGraph& call_graph,
          const xla::HloInstruction* instruction) {
