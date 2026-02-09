@@ -317,7 +317,7 @@ absl::Status runShardingPropagation(HloModule* hloModule,
                                     mlir::sdy::PropagationOptions options,
                                     bool dedupFunctionsFully,
                                     absl::string_view passName) {
-  LOG(INFO) << "Using Shardy for XLA SPMD propagation.";
+  VLOG(1) << "Using Shardy for XLA SPMD propagation.";
 
   const DebugOptions& debugOptions = hloModule->config().debug_options();
   bool isShardyVerbose =
