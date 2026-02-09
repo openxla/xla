@@ -34,8 +34,7 @@ const bool kUnused =
        gpu_config.collective_memory_size = 0;
        GpuClientOptions options;
        options.allocator_config = std::move(gpu_config);
-       options.use_tfrt_gpu_client =
-           std::getenv("XLA_TEST_USE_STREAM_EXECUTOR_GPU_CLIENT") == nullptr;
+       options.use_tfrt_gpu_client = true;
        return GetXlaPjrtGpuClient(options);
      }),
      true);
