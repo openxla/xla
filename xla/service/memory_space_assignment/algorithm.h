@@ -69,6 +69,11 @@ struct UseInterval {
   int64_t last_use_time;
 };
 
+struct TimeInterval {
+  int64_t inclusive_start_time;
+  int64_t inclusive_end_time;
+};
+
 // A struct representing an asynchronous copy with its logical start and end
 // time (time that copy done is scheduled), the resource this copy would use,
 // its destination memory space, and a unique ID.
@@ -1108,11 +1113,12 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // this allocation sequence.
   void AddToPendingChunks(const MsaBufferInterval& buffer_interval,
                           const Chunk& chunk);
+
   // If we need to remove the allocations for this allocation sequence, this
   // removes pending chunks and asynchronous copies in the respective pending
   // buffers from the interval trees. If an allocation request returns
   // kFailRequiresUncommit, this method must be called.
-  void UncommitPendingChunks(absl::Span<AllocationValue> allocation_values);
+  void UncommitPendingWork(absl::Span<AllocationValue> allocation_values);
 
   // Finalizes the allocations where they can no longer be uncommitted.
   void FinalizeAllocations(absl::Span<AllocationValue> allocation_values);
@@ -1381,7 +1387,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
 
   // Maps defining HloPositions to the list of times it is required to be in
   // default memory, to meet buffer coloring requirements.
-  absl::flat_hash_map<HloPosition, std::vector<int64_t>>
+  absl::flat_hash_map<HloPosition, std::vector<TimeInterval>>
       default_memory_coloring_requirements_;
 
   // Set of HloUses that are in the default memory.
@@ -1390,6 +1396,11 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // Vector to preserve insertion order for deterministic window prefetching
   // results.
   std::vector<HloUse> uses_in_default_memory_;
+
+  // We have released the chunks corresponding to the allocations in the list.
+  // When we uncommit the current pending state following a
+  // kFailRequiresUncommit, we need to re-reserve those chunks.
+  std::vector<ReservedAllocation*> pending_deallocated_reserved_allocations_;
 };
 
 }  // namespace memory_space_assignment
