@@ -22,6 +22,7 @@ cc_library(
     hdrs = ["gpu_codegen_backend.h"],
     deps = [
         "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",

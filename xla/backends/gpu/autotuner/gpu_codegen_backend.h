@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -53,6 +54,8 @@ class GpuCodegenBackend : public CodegenBackend {
         compiler_(compiler) {}
 
   absl::string_view name() const override { return name_; }
+
+  autotuner::Backend backend() const override { return backend_; }
 
   const Compiler::GpuTargetConfig& target_config() const {
     return target_config_;
@@ -127,6 +130,7 @@ class GpuCodegenBackend : public CodegenBackend {
   friend class FissionBackend;
 
   std::string name_;
+  autotuner::Backend backend_;
   stream_executor::StreamExecutor* stream_executor_;
   const Compiler::GpuTargetConfig& target_config_;
   const DebugOptions& debug_options_;
