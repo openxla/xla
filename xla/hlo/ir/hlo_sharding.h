@@ -347,10 +347,11 @@ class HloSharding {
   // Returns whether the sharding represents a tiled sharding where the mapping
   // between devices and tiles is represented through 'tile_assignment()'.
   bool IsTiled() const {
-    return !IsTileMaximal() && !IsManual() && !IsUnknown();
+    return !IsTileMaximal() && !IsManual() && !IsUnreduced() && !IsUnknown();
   }
   bool IsTiledLeaf() const {
-    return !IsTileMaximalLeaf() && !IsManualLeaf() && !IsUnknownLeaf();
+    return !IsTileMaximalLeaf() && !IsManualLeaf() && !IsUnreducedLeaf() &&
+           !IsUnknownLeaf();
   }
 
   // Returns if the sharding has partial replication and partial sharding. If
