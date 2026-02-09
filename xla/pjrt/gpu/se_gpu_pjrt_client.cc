@@ -182,7 +182,7 @@ GetTargetConfigForDevices(absl::Span<PjRtDevice* const> devices) {
   }
   for (const PjRtDevice* device : devices) {
     LocalDeviceState* local_device_state =
-        tensorflow::down_cast<const PjRtStreamExecutorDevice*>(device)
+        absl::down_cast<const PjRtStreamExecutorDevice*>(device)
             ->local_device_state();
     if (local_device_state != nullptr) {
       return xla::gpu::GpuTargetConfig(local_device_state->executor())
@@ -237,12 +237,12 @@ StreamExecutorGpuClient::StreamExecutorGpuClient(
     const int id = device->id();
     auto memory_space =
         std::make_unique<StreamExecutorGpuHbmMemorySpace>(id, device);
-    tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)->AttachMemorySpace(
+    absl::down_cast<PjRtStreamExecutorDevice*>(device)->AttachMemorySpace(
         memory_space.get(), /*is_default=*/true);
     owned_memory_spaces_.push_back(std::move(memory_space));
     auto pinned =
         std::make_unique<PinnedHostMemorySpace>(basePinnedId + id, device);
-    tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)->AttachMemorySpace(
+    absl::down_cast<PjRtStreamExecutorDevice*>(device)->AttachMemorySpace(
         pinned.get());
     owned_memory_spaces_.push_back(std::move(pinned));
   }
@@ -367,7 +367,7 @@ namespace {
 // Get the local device state for a given PjRtDevice.
 absl::StatusOr<LocalDeviceState*> GetLocalDeviceState(PjRtDevice* device) {
   PjRtStreamExecutorDevice* pjrt_se_device =
-      tensorflow::down_cast<PjRtStreamExecutorDevice*>(device);
+      absl::down_cast<PjRtStreamExecutorDevice*>(device);
   return pjrt_se_device->GetLocalDeviceState();
 }
 
@@ -523,7 +523,7 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
 
   return AcquiredCliqueAndCommunicator{
       std::move(clique),
-      tsl::down_cast<gpu::GpuCommunicator*>(*maybe_communicator)};
+      absl::down_cast<gpu::GpuCommunicator*>(*maybe_communicator)};
 }
 
 // Create a `PreparedSend` object bundling together state needed to perform a
@@ -560,18 +560,17 @@ absl::StatusOr<PreparedSend> PrepareSend(
   std::vector<tsl::RCReference<tsl::AsyncValue>> definition_events;
 
   TF_RETURN_IF_ERROR(
-      tensorflow::down_cast<CommonPjRtBufferImpl*>(buffer)
-          ->AcquireScopedRawBuffer(
-              [&](tsl::RCReference<CommonPjRtRawBuffer> buf_raw_buffer,
-                  std::vector<tsl::RCReference<tsl::AsyncValue>>
-                      buf_definition_events) mutable
-                  -> absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> {
-                raw_buffer = std::move(buf_raw_buffer);
-                usage_event->AndThen([raw_buffer]() {});
-                definition_events = std::move(buf_definition_events);
-                return usage_event;
-              },
-              "PrepareSend"));
+      absl::down_cast<CommonPjRtBufferImpl*>(buffer)->AcquireScopedRawBuffer(
+          [&](tsl::RCReference<CommonPjRtRawBuffer> buf_raw_buffer,
+              std::vector<tsl::RCReference<tsl::AsyncValue>>
+                  buf_definition_events) mutable
+              -> absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> {
+            raw_buffer = std::move(buf_raw_buffer);
+            usage_event->AndThen([raw_buffer]() {});
+            definition_events = std::move(buf_definition_events);
+            return usage_event;
+          },
+          "PrepareSend"));
 
   // Return the result.
   return PreparedSend(client, std::move(clique_key), std::move(raw_buffer),
@@ -813,7 +812,7 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
         }
       }
       // Launch the send.
-      auto mem = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
+      auto mem = absl::down_cast<PjRtStreamExecutorRawBuffer*>(
                      prepared_send.raw_buffer_.get())
                      ->device_buffer();
       TF_RETURN_IF_ERROR(gpu_communicator->LaunchSend(
@@ -915,7 +914,7 @@ StreamExecutorGpuClient::PrepareReceiveBuffer(PjRtDevice* device, Shape shape) {
                                         /*retry_on_oom=*/true,
                                         /*allocate_after=*/{}));
   TF_ASSIGN_OR_RETURN(LocalDeviceState * local_device,
-                      tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
+                      absl::down_cast<PjRtStreamExecutorDevice*>(device)
                           ->GetLocalDeviceState());
 
   se::Stream* stream = local_device->GetDeviceToDeviceStream();
@@ -1023,7 +1022,7 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
       WaitForAllocation(stream, *prepared_receive.raw_buffer_);
 
       // Launch the receive.
-      auto mem = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
+      auto mem = absl::down_cast<PjRtStreamExecutorRawBuffer*>(
                      prepared_receive.raw_buffer_.get())
                      ->device_buffer();
       TF_RETURN_IF_ERROR(gpu_communicator->LaunchRecv(
@@ -1106,7 +1105,7 @@ void StreamExecutorGpuClient::ScheduleRemoteSend(
     on_done(collectives.status(), /*sends_were_enqueued=*/false);
   }
   gpu::GpuCollectives* gpu_collectives =
-      tsl::down_cast<gpu::GpuCollectives*>(*collectives);
+      absl::down_cast<gpu::GpuCollectives*>(*collectives);
   if (gpu_collectives == nullptr) {
     auto error = absl::InternalError("Failed to get GPU collectives");
     on_done(error, /*sends_were_enqueued=*/false);
@@ -1147,11 +1146,11 @@ void StreamExecutorGpuClient::ScheduleRemoteSend(
                   }
                 }
                 auto* local_device =
-                    tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
+                    absl::down_cast<PjRtStreamExecutorRawBuffer*>(
                         raw_buffer.get())
                         ->local_device();
                 auto* stream = local_device->GetDeviceToDeviceStream();
-                auto mem = tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(
+                auto mem = absl::down_cast<PjRtStreamExecutorRawBuffer*>(
                                raw_buffer.get())
                                ->device_buffer();
                 CliqueId clique_id(serialized_descriptor);
@@ -1206,7 +1205,7 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
   TF_ASSIGN_OR_RETURN(Collectives * collectives,
                       CollectivesRegistry::Default("gpu"));
   gpu::GpuCollectives* gpu_collectives =
-      tsl::down_cast<gpu::GpuCollectives*>(collectives);
+      absl::down_cast<gpu::GpuCollectives*>(collectives);
   if (gpu_collectives == nullptr) {
     return absl::InternalError("Failed to get GPU collectives");
   }
@@ -1227,9 +1226,8 @@ StreamExecutorGpuClient::MakeCrossHostReceiveBuffers(
       // Create a CliqueId.
       TF_ASSIGN_OR_RETURN(CliqueId clique_id,
                           gpu_collectives->CreateUniqueCliqueId());
-      auto mem =
-          tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(raw_buffer.get())
-              ->device_buffer();
+      auto mem = absl::down_cast<PjRtStreamExecutorRawBuffer*>(raw_buffer.get())
+                     ->device_buffer();
 
       // Notify the caller with the CliqueId. They will send the id to the
       // sender.
@@ -1302,7 +1300,7 @@ StreamExecutorGpuClient::CompileAndLoad(mlir::ModuleOp module,
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
   for (const PjRtDevice* device : addressable_devices()) {
     LocalDeviceState* local_device_state =
-        tensorflow::down_cast<const PjRtStreamExecutorDevice*>(device)
+        absl::down_cast<const PjRtStreamExecutorDevice*>(device)
             ->local_device_state();
     int64_t free_memory, total_memory;
     if (local_device_state != nullptr) {
@@ -1329,7 +1327,7 @@ StreamExecutorGpuClient::CompileAndLoad(const XlaComputation& computation,
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
   for (const PjRtDevice* device : addressable_devices()) {
     LocalDeviceState* local_device_state =
-        tensorflow::down_cast<const PjRtStreamExecutorDevice*>(device)
+        absl::down_cast<const PjRtStreamExecutorDevice*>(device)
             ->local_device_state();
     int64_t free_memory, total_memory;
     if (local_device_state != nullptr) {
@@ -1700,7 +1698,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   TF_ASSIGN_OR_RETURN(xla::Collectives * collectives,
                       xla::CollectivesRegistry::Default("gpu"));
   xla::gpu::GpuCollectives* gpu_collectives =
-      tsl::down_cast<xla::gpu::GpuCollectives*>(collectives);
+      absl::down_cast<gpu::GpuCollectives*>(collectives);
 
   if (gpu_collectives == nullptr) {
     return absl::InternalError("Failed to get GPU collectives");
@@ -1748,7 +1746,7 @@ absl::StatusOr<tsl::AllocatorStats> StreamExecutorGpuDevice::GetAllocatorStats()
   }
 
   auto* allocator_adapter = dynamic_cast<se::MultiDeviceAdapter*>(
-      tensorflow::down_cast<PjRtStreamExecutorClient*>(client())->allocator());
+      absl::down_cast<PjRtStreamExecutorClient*>(client())->allocator());
   if (!allocator_adapter) {
     return Unimplemented(
         "GetAllocatorStats() is only implemented with MultiDeviceAdapter "
@@ -1927,8 +1925,7 @@ StreamExecutorGpuClient::RunAsync(
 
   TF_ASSIGN_OR_RETURN(auto options_and_stream,
                       exec.RunHelper(argument_shapes, run_options_inp));
-  auto* gpu_exec =
-      tensorflow::down_cast<xla::gpu::GpuExecutable*>(exec.executable());
+  auto* gpu_exec = absl::down_cast<gpu::GpuExecutable*>(exec.executable());
   const ServiceExecutableRunOptions* run_options = &options_and_stream.first;
   se::DeviceAddressAllocator* const memory_allocator = run_options->allocator();
 
@@ -1998,7 +1995,7 @@ StreamExecutorGpuClient::RunAsync(
         } else {
           param_no = allocation.parameter_number();
         }
-        buffer = tensorflow::down_cast<const xla::PjRtStreamExecutorRawBuffer*>(
+        buffer = absl::down_cast<const PjRtStreamExecutorRawBuffer*>(
                      flat_arguments[param_no].get())
                      ->device_buffer()
                      ->mem();
@@ -2050,11 +2047,10 @@ StreamExecutorGpuClient::RunAsync(
         << "Looking at: allocation " << output_info.allocation_index
         << " @ index: " << index.ToString();
 
-    auto buf =
-        tensorflow::down_cast<PjRtStreamExecutorRawBuffer*>(results[i].get())
-            ->device_buffer();
+    auto buf = absl::down_cast<PjRtStreamExecutorRawBuffer*>(results[i].get())
+                   ->device_buffer();
     if (output_info.alias_config) {
-      auto input = tensorflow::down_cast<xla::PjRtStreamExecutorRawBuffer*>(
+      auto input = absl::down_cast<PjRtStreamExecutorRawBuffer*>(
                        flat_arguments[parameter_is_tupled_arguments
                                           ? allocation->param_shape_index()[0]
                                           : allocation->parameter_number()]
@@ -2113,7 +2109,7 @@ StreamExecutorGpuClient::RunAsync(
 
     RawSEDeviceMemory::ConstructDelayed(
         buf, result_buffer,
-        tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
+        absl::down_cast<PjRtStreamExecutorDevice*>(device)
             ->local_device_state(),
         memory_allocator);
     return absl::OkStatus();
