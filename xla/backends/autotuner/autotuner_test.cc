@@ -218,6 +218,17 @@ class AutotunerTest : public HloHardwareIndependentTestBase {
   AutotuneConfig config_;
 };
 
+std::unique_ptr<Executable> RegisterSpillingExecutable(int spilled = 8) {
+  gpu::GpuExecutable::Params params;
+  params.executable = std::make_unique<gpu::SequentialThunk>(
+      gpu::Thunk::ThunkInfo{}, gpu::ThunkSequence{});
+  KernelStats kernel_stats;
+  kernel_stats.store_bytes_spilled = spilled;
+  kernel_stats.load_bytes_spilled = spilled;
+  params.module_stats = {{"test_config_2", kernel_stats}};
+  return gpu::GpuExecutable::Create(std::move(params)).value();
+}
+
 TEST_F(AutotunerTest, NoCodegenBackend) {
   auto device_description = CreateDummyDeviceDescription();
   auto autotuner = Autotuner::Create({}, nullptr, config_,
@@ -332,12 +343,18 @@ TEST_F(AutotunerTest, AutotuneAppliesBestConfigUsingThreadPool) {
   configs.push_back(GetTestConfig("test_config_1"));
   configs.push_back(GetTestConfig("test_config_2"));
 
+  std::unique_ptr<Executable> executable1 = RegisterSpillingExecutable(0);
+  Executable* exec1 = executable1.get();
+  std::unique_ptr<Executable> executable2 = RegisterSpillingExecutable(0);
+  Executable* exec2 = executable2.get();
+
   auto backend = std::make_unique<MockCodegenBackend>();
   EXPECT_CALL(*backend, GetSupportedConfigs)
       .WillOnce(Return(std::move(configs)));
-  EXPECT_CALL(*backend, Compile(_, _))
-      .WillOnce(Return(std::unique_ptr<Executable>()))
-      .WillOnce(Return(std::unique_ptr<Executable>()));
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_1")))
+      .WillOnce(Return(std::move(executable1)));
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_2")))
+      .WillOnce(Return(std::move(executable2)));
   EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_2")))
       .Times(1)
       .WillRepeatedly(Return(absl::OkStatus()));
@@ -346,8 +363,9 @@ TEST_F(AutotunerTest, AutotuneAppliesBestConfigUsingThreadPool) {
   auto device_description = CreateDummyDeviceDescription();
   EXPECT_CALL(*profiler, CreateInputBuffers(_))
       .WillOnce(Return(std::make_unique<InputBuffers>()));
-  EXPECT_CALL(*profiler, Profile(_, _))
-      .WillOnce(Return(ProfileResult({absl::Seconds(2)})))
+  EXPECT_CALL(*profiler, Profile(testing::Pointer(exec1), _))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2)})));
+  EXPECT_CALL(*profiler, Profile(testing::Pointer(exec2), _))
       .WillOnce(Return(ProfileResult({absl::Seconds(1)})));
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
@@ -708,9 +726,6 @@ TEST_F(AutotunerTest, ExcludeCublasConfig) {
   auto backend = std::make_unique<MockCodegenBackend>();
   EXPECT_CALL(*backend, GetSupportedConfigs(_))
       .WillOnce(Return(std::move(configs)));
-  EXPECT_CALL(*backend, Compile(_, _))
-      .WillOnce(Return(std::unique_ptr<Executable>()))
-      .WillOnce(Return(std::unique_ptr<Executable>()));
   EXPECT_CALL(*backend, name()).WillRepeatedly(Return("CUBLAS_FISSION"));
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend));
@@ -751,17 +766,6 @@ TEST_F(AutotunerTest, SelectFirstConfig) {
   auto module = ParseAndReturnVerifiedModule(kHlo).value();
   auto dummy_instr = module->entry_computation()->root_instruction();
   EXPECT_THAT(autotuner->Autotune(dummy_instr), absl_testing::IsOk());
-}
-
-std::unique_ptr<Executable> RegisterSpillingExecutable() {
-  gpu::GpuExecutable::Params params;
-  params.executable = std::make_unique<gpu::SequentialThunk>(
-      gpu::Thunk::ThunkInfo{}, gpu::ThunkSequence{});
-  KernelStats kernel_stats;
-  kernel_stats.store_bytes_spilled = 8;
-  kernel_stats.load_bytes_spilled = 8;
-  params.module_stats = {{"test_config_2", kernel_stats}};
-  return gpu::GpuExecutable::Create(std::move(params)).value();
 }
 
 TEST_F(AutotunerTest, ConfigsWithRegisterSpillingAreAllowed) {
