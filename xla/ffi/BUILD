@@ -164,6 +164,31 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "invoke",
+    srcs = ["invoke.cc"],
+    hdrs = ["invoke.h"],
+    copts = ["-fexceptions"],
+    features = ["-use_header_modules"],
+    deps = [
+        ":api",
+        ":call_frame",
+        ":execution_context",
+        ":execution_state",
+        ":ffi_interop",
+        ":ffi_structs",
+        "//xla:executable_run_options",
+        "//xla:util",
+        "//xla/ffi/api:c_api",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
 # IMPORTANT: This is an internal (to XLA) implementation of XLA:FFI API and it
 # contains multiple global static registries (FFI handler registry and Type
 # Registry). This library must be linked exactly once into the target process,
@@ -182,9 +207,10 @@ cc_library(
         ":execution_context",
         ":execution_state",
         ":ffi_internal_api",
+        ":ffi_interop",
         ":ffi_structs",
+        ":invoke",
         ":type_registry",
-        "//xla:executable_run_options",
         "//xla:util",
         "//xla/ffi/api:c_api",
         "//xla/ffi/api:c_api_internal",
@@ -194,7 +220,6 @@ cc_library(
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:device_description",
         "//xla/tsl/concurrency:async_value",
-        "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -228,6 +253,19 @@ cc_library(
         "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+    ],
+)
+
+cc_library(
+    name = "ffi_interop",
+    srcs = ["ffi_interop.cc"],
+    hdrs = ["ffi_interop.h"],
+    deps = [
+        ":ffi_structs",
+        "//xla/ffi/api:c_api",
+        "//xla/tsl/concurrency:async_value",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
     ],
 )
@@ -303,7 +341,9 @@ xla_cc_test(
         ":execution_context",
         ":execution_state",
         ":ffi",
-        ":ffi_api",
+        ":ffi_api",  # buildcleaner: keep
+        ":ffi_interop",
+        ":invoke",
         ":type_registry",
         "//xla:executable_run_options",
         "//xla:xla_data_proto_cc",

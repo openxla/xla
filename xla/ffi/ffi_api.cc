@@ -17,9 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
-#include <exception>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -36,22 +34,21 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
-#include "xla/executable_run_options.h"
 #include "xla/ffi/api/api.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/c_api_internal.h"  // IWYU pragma: keep
-#include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/execution_state.h"
 #include "xla/ffi/ffi_internal_api.h"
+#include "xla/ffi/ffi_interop.h"
 #include "xla/ffi/ffi_structs.h"
+#include "xla/ffi/invoke.h"
 #include "xla/ffi/type_registry.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
-#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
@@ -90,244 +87,6 @@ static bool IsSupportedApiVersion(const XLA_FFI_Api_Version& api_version) {
 bool IsCommandBufferCompatible(const XLA_FFI_Metadata& metadata) {
   return metadata.traits & XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE;
 }
-
-static XLA_FFI_ExecutionContext CreateExecutionContext(
-    const CallOptions& options) {
-  using BackendContext = XLA_FFI_ExecutionContext::BackendContext;
-
-  // Converts CallOptions to corresponding backend context.
-  struct BackendVisitor {
-    BackendContext operator()(const std::monostate&) const {
-      return std::monostate{};
-    }
-
-    BackendContext operator()(const CallOptions::CpuOptions& options) const {
-      return XLA_FFI_ExecutionContext::CpuContext{options.intra_op_thread_pool};
-    }
-
-    BackendContext operator()(const CallOptions::GpuOptions& options) const {
-      return XLA_FFI_ExecutionContext::GpuContext{
-          options.stream,
-          options.allocator,
-          options.collective_params,
-          options.collective_clique_requests,
-          options.collective_memory_requests,
-          options.collective_cliques,
-          options.collective_memory,
-          options.gpu_compute_capability};
-    }
-  };
-
-  return XLA_FFI_ExecutionContext{
-      options.run_id,
-      options.device_ordinal,
-      std::visit(BackendVisitor{}, options.backend_options),
-      options.called_computation,
-      internal::ScopedExecutionContext::GetCallExecutionContext(options),
-      options.execution_state,
-  };
-}
-
-//===----------------------------------------------------------------------===//
-// Calling XLA FFI handlers
-//===----------------------------------------------------------------------===//
-
-absl::Status TakeStatus(XLA_FFI_Error* error) {
-  if (ABSL_PREDICT_TRUE(error == nullptr)) {
-    return absl::OkStatus();
-  }
-  absl::Status status = std::move(error->status);
-  delete error;
-  return status;
-}
-
-tsl::AsyncValueRef<tsl::Chain> TakeFuture(XLA_FFI_Future* future) {
-  // Non-reference-counted async value ref for synchronous FFI handlers.
-  static tsl::AsyncValueOwningRef<tsl::Chain>* chain = [] {
-    auto* storage = new tsl::internal::AsyncValueStorage<tsl::Chain>();
-    return new tsl::AsyncValueOwningRef<tsl::Chain>(
-        tsl::MakeAvailableAsyncValueRef<tsl::Chain>(*storage));
-  }();
-
-  if (ABSL_PREDICT_TRUE(future == nullptr)) {
-    return chain->AsRef();
-  }
-
-  // If the future is already completed, immediately return the underlying
-  // async value and delete the XLA_FFI_Future.
-  if (ABSL_PREDICT_TRUE(future->async_value.IsAvailable())) {
-    tsl::AsyncValueRef<tsl::Chain> async_value = std::move(future->async_value);
-    delete future;
-    return async_value;
-  }
-
-  // If the future is not completed, return a copy of the underlying async
-  // value and keep XLA_FFI_Future alive until it is completed.
-  tsl::AsyncValueRef<tsl::Chain> async_value = future->async_value;
-  async_value.AndThen([future] { delete future; });
-  return async_value;
-}
-
-template <typename Handler>
-static absl::StatusOr<XLA_FFI_Future*> Call(Handler& handler,
-                                            CallFrame& call_frame,
-                                            const CallOptions& options,
-                                            ExecutionStage stage) {
-  XLA_FFI_ExecutionContext ctx = CreateExecutionContext(options);
-  XLA_FFI_CallFrame ffi_call_frame = call_frame.Build(
-      GetXlaFfiApi(), &ctx, static_cast<XLA_FFI_ExecutionStage>(stage));
-
-  XLA_FFI_Error* error = nullptr;
-
-  // FFI handlers might be defined in external libraries and use exceptions, so
-  // take extra care to catch them and convert to a status.
-  try {
-    if constexpr (std::is_same_v<Handler, Ffi>) {
-      error = handler.Call(&ffi_call_frame);
-    } else if constexpr (std::is_same_v<Handler, XLA_FFI_Handler*>) {
-      error = (*handler)(&ffi_call_frame);
-    } else {
-      static_assert(sizeof(Handler) == 0, "Unsupported handler type");
-    }
-  } catch (std::exception& e) {
-    return Unknown("XLA FFI call failed: %s", e.what());
-  }
-
-  // If FFI handler returned synchronous error, it must not launch any
-  // asynchronous work that can also return an error.
-  if (error != nullptr) {
-    DCHECK_EQ(ffi_call_frame.future, nullptr)
-        << "Error must not be used together with a future";
-    return TakeStatus(error);
-  }
-
-  return ffi_call_frame.future;
-}
-
-static absl::Status BlockUntilReady(XLA_FFI_Future* future) {
-  if (ABSL_PREDICT_TRUE(future == nullptr)) {
-    return absl::OkStatus();
-  }
-
-  tsl::AsyncValueRef<tsl::Chain> av = TakeFuture(future);
-  tsl::BlockUntilReady(av);
-  return ABSL_PREDICT_FALSE(av.IsError()) ? av.GetError() : absl::OkStatus();
-}
-
-absl::Status Call(Ffi& handler, CallFrame& call_frame,
-                  const CallOptions& options, ExecutionStage stage) {
-  TF_ASSIGN_OR_RETURN(XLA_FFI_Future * future,
-                      Call<Ffi>(handler, call_frame, options, stage));
-  return BlockUntilReady(future);
-}
-
-absl::Status Call(XLA_FFI_Handler* handler, CallFrame& call_frame,
-                  const CallOptions& options, XLA_FFI_ExecutionStage stage) {
-  TF_ASSIGN_OR_RETURN(
-      XLA_FFI_Future * future,
-      Call<XLA_FFI_Handler*>(handler, call_frame, options,
-                             static_cast<ExecutionStage>(stage)));
-  return BlockUntilReady(future);
-}
-
-tsl::AsyncValueRef<tsl::Chain> CallAsync(Ffi& handler, CallFrame& call_frame,
-                                         const CallOptions& options,
-                                         ExecutionStage stage) {
-  TF_ASSIGN_OR_RETURN(XLA_FFI_Future * future,
-                      Call<Ffi>(handler, call_frame, options, stage));
-  return TakeFuture(future);
-}
-
-tsl::AsyncValueRef<tsl::Chain> CallAsync(XLA_FFI_Handler* handler,
-                                         CallFrame& call_frame,
-                                         const CallOptions& options,
-                                         XLA_FFI_ExecutionStage stage) {
-  TF_ASSIGN_OR_RETURN(
-      XLA_FFI_Future * future,
-      Call<XLA_FFI_Handler*>(handler, call_frame, options,
-                             static_cast<ExecutionStage>(stage)));
-  return TakeFuture(future);
-}
-
-static XLA_FFI_Metadata PrepareMetadata() {
-  return XLA_FFI_Metadata{XLA_FFI_Metadata_STRUCT_SIZE,
-                          XLA_FFI_Api_Version{XLA_FFI_Api_Version_STRUCT_SIZE}};
-}
-
-static XLA_FFI_Metadata_Extension PrepareMetadataExtension(
-    XLA_FFI_Metadata* metadata) {
-  return XLA_FFI_Metadata_Extension{
-      XLA_FFI_Extension_Base{XLA_FFI_Metadata_Extension_STRUCT_SIZE,
-                             XLA_FFI_Extension_Metadata},
-      metadata};
-}
-
-static XLA_FFI_CallFrame PrepareMetadataCallFrame(
-    XLA_FFI_Metadata_Extension* extension) {
-  return XLA_FFI_CallFrame{
-      XLA_FFI_CallFrame_STRUCT_SIZE,
-      &extension->extension_base,
-      /*api=*/GetXlaFfiApi(),
-      /*context=*/nullptr,
-      /*stage=*/XLA_FFI_ExecutionStage_EXECUTE,
-      /*args=*/XLA_FFI_Args{XLA_FFI_Args_STRUCT_SIZE},
-      /*rets=*/XLA_FFI_Rets{XLA_FFI_Rets_STRUCT_SIZE},
-      /*attrs=*/XLA_FFI_Attrs{XLA_FFI_Attrs_STRUCT_SIZE},
-  };
-}
-
-absl::StatusOr<XLA_FFI_Metadata> GetMetadata(Ffi& handler) {
-  XLA_FFI_Metadata metadata = PrepareMetadata();
-  XLA_FFI_Metadata_Extension extension = PrepareMetadataExtension(&metadata);
-  XLA_FFI_CallFrame call_frame = PrepareMetadataCallFrame(&extension);
-  XLA_FFI_Error* error = nullptr;
-  try {
-    error = handler.Call(&call_frame);
-  } catch (std::exception& e) {
-    return Unknown("Fetching XLA FFI metadata failed: %s", e.what());
-  }
-  if (error != nullptr) {
-    return TakeStatus(error);
-  }
-  return metadata;
-}
-
-absl::StatusOr<XLA_FFI_Metadata> GetMetadata(XLA_FFI_Handler* handler) {
-  XLA_FFI_Metadata metadata = PrepareMetadata();
-  XLA_FFI_Metadata_Extension extension = PrepareMetadataExtension(&metadata);
-  XLA_FFI_CallFrame call_frame = PrepareMetadataCallFrame(&extension);
-  XLA_FFI_Error* error = nullptr;
-  try {
-    error = (*handler)(&call_frame);
-  } catch (std::exception& e) {
-    return Unknown("Fetching XLA FFI metadata failed: %s", e.what());
-  }
-  if (error != nullptr) {
-    return TakeStatus(error);
-  }
-  return metadata;
-}
-
-namespace internal {
-static thread_local const ExecutionContext* scoped_execution_context = nullptr;
-
-ScopedExecutionContext::ScopedExecutionContext(const ExecutionContext* context)
-    : recover_(scoped_execution_context) {
-  scoped_execution_context = context;
-}
-
-ScopedExecutionContext::~ScopedExecutionContext() {
-  scoped_execution_context = recover_;
-}
-
-const ExecutionContext* ScopedExecutionContext::GetCallExecutionContext(
-    const CallOptions& options) {
-  if (scoped_execution_context != nullptr) {
-    return scoped_execution_context;
-  }
-  return options.execution_context;
-}
-}  // namespace internal
 
 //===----------------------------------------------------------------------===//
 // XLA FFI registry
@@ -384,10 +143,8 @@ static absl::Status RegisterHandler(absl::string_view name,
     return InvalidArgument(
         "XLA FFI handler registration for %s on platform %s (canonical %s) "
         "failed because the handler's API version (%d.%d) is incompatible "
-        "with "
-        "the framework's API version (%d.%d). Minimum supported API version "
-        "is "
-        "(%d.%d).",
+        "with the framework's API version (%d.%d). Minimum supported API "
+        "version is (%d.%d).",
         name, platform, canonical_platform, metadata.api_version.major_version,
         metadata.api_version.minor_version, kMaxSupportedApiVersion.first,
         kMaxSupportedApiVersion.second, kMinSupportedApiVersion.first,

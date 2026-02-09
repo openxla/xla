@@ -212,6 +212,7 @@ xla_test(
         "//xla/ffi",
         "//xla/ffi:execution_context",
         "//xla/ffi:ffi_api",
+        "//xla/ffi:invoke",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder/lib:constants",
         "//xla/hlo/ir:hlo",

@@ -73,6 +73,7 @@ limitations under the License.
 #include "xla/executable_run_options.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/ffi_api.h"
+#include "xla/ffi/invoke.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -1368,16 +1369,16 @@ CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
       se::TraceCommandBufferFactory::Create(
           execute_params.stream->parent(),
           execute_params.command_buffer_trace_stream, [&](se::Stream* stream) {
-            ffi::CallOptions options = {
+            ffi::InvokeContext context = {
                 run_id,
                 execute_params.buffer_allocations->device_ordinal(),
-                ffi::CallOptions::GpuOptions{
+                ffi::InvokeContext::GpuContext{
                     stream,
                     execute_params.buffer_allocations->memory_allocator()},
                 /*called_computation=*/nullptr,  // TODO(b/342285364)
                 execute_params.ffi_execution_context,
                 execution_state_.get()};
-            return ffi::Call(handler_, *call_frame, options);
+            return ffi::Invoke(handler_, *call_frame, context);
           }));
 
   return Handle(
