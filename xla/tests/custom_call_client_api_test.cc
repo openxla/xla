@@ -85,7 +85,7 @@ static absl::Status ExecutionContext(ffi::Result<ffi::AnyBuffer>,
 
 XLA_FFI_DEFINE_HANDLER(kExecutionContextExecute,
                        ExecutionContext<ffi::ExecutionStage::kExecute>,
-                       ffi::Ffi::Bind<ffi::ExecutionStage::kExecute>()
+                       ffi::Ffi::BindExecute()
                            .Ret<ffi::AnyBuffer>()
                            .Ctx<ffi::UserData<SomeExtraContext>>());
 

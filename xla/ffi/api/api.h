@@ -293,6 +293,9 @@ class Ffi {
   // Creates an empty binding for the initialize stage.
   static Binding<ExecutionStage::kInitialize> BindInitialize();
 
+  // Creates an empty binding for the execute stage.
+  static Binding<ExecutionStage::kExecute> BindExecute();
+
   // Automatic FFI binding that does binding specification inference from the
   // `fn` type signature and binds `fn` to it. This enables a more concise FFI
   // handler registration with fully automatic type inference at the cost of
@@ -766,6 +769,10 @@ inline Binding<ExecutionStage::kPrepare> Ffi::BindPrepare() {
 
 inline Binding<ExecutionStage::kInitialize> Ffi::BindInitialize() {
   return Bind<ExecutionStage::kInitialize>();
+}
+
+inline Binding<ExecutionStage::kExecute> Ffi::BindExecute() {
+  return Bind<ExecutionStage::kExecute>();
 }
 
 //===----------------------------------------------------------------------===//
