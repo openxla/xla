@@ -804,10 +804,10 @@ message DebugOptions {
 
   optional bool xla_gpu_fused_attention_use_cudnn_rng = 235;
 
-  // Does not work anymore.
-  // TODO(446874531): Delete this and add a generalized override mechanism.
-  optional string xla_gpu_gemm_autotuner_override_file = 434
-      [deprecated = true];
+  // A textproto file to override triton configs considered by autotuner. See
+  // also `xla_gpu_override_gemm_autotuner` to override with a single config.
+  // Use xla_gpu_cublas_fallback to allow/disallow fallback to cuBLAS.
+  optional string xla_gpu_gemm_autotuner_override_file = 434;
 
   // Threshold to rewrite matmul to cuBLAS or Triton (minimum combined number of
   // elements of both matrices in non-batch dimensions to be considered for a
@@ -893,9 +893,10 @@ message DebugOptions {
   // xla_gpu_threshold_for_windowed_einsum_mib will be ignored.
   optional int64 xla_gpu_operand_bytes_threshold_for_windowed_einsum = 339;
 
-  // Does not work anymore.
-  // TODO(446874531): Delete this and add a generalized override mechanism.
-  optional string xla_gpu_override_gemm_autotuner = 295 [deprecated = true];
+  // If set, override triton configs considered by autotuner. Use a textproto
+  // format matching AutotuneResult::TritonGemmKey. Use xla_gpu_cublas_fallback
+  // to allow/disallow fallback to cuBLAS.
+  optional string xla_gpu_override_gemm_autotuner = 295;
 
   optional string xla_gpu_per_fusion_autotune_cache_dir = 310;
 

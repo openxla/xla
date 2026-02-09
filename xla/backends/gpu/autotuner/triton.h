@@ -64,6 +64,8 @@ class TritonBackend : public GpuCodegenBackend {
   GetSupportedConfigsForDot(const HloInstruction* instr);
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
   GetSupportedConfigsForScaledDot(const HloInstruction* instr);
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
+  GetOverriddenConfigs(const HloInstruction* instr);
 
   absl::StatusOr<std::unique_ptr<HloModule>> RunHloPasses(
       std::unique_ptr<HloModule> hlo_module,

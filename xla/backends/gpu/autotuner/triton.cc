@@ -18,12 +18,15 @@ limitations under the License.
 #include <algorithm>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
+#include "google/protobuf/text_format.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
@@ -49,6 +52,7 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -89,6 +93,13 @@ TritonBackend::GetSupportedConfigs(const HloInstruction& instr) {
   if (!IsSupported(instr)) {
     return std::vector<std::unique_ptr<BackendConfig>>();
   }
+  TF_ASSIGN_OR_RETURN(
+      std::vector<std::unique_ptr<BackendConfig>> overridden_configs,
+      GetOverriddenConfigs(&instr));
+  if (!overridden_configs.empty()) {
+    return overridden_configs;
+  }
+
   const HloInstruction* dot_instr = hlo_query::GetFirstInstructionWithOpcode(
       *instr.fused_instructions_computation(), HloOpcode::kDot);
   if (dot_instr != nullptr) {
@@ -160,6 +171,39 @@ TritonBackend::GetSupportedConfigsForScaledDot(const HloInstruction* instr) {
         configs.push_back(std::move(any));
       }
     }
+  }
+  return configs;
+}
+
+absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
+TritonBackend::GetOverriddenConfigs(const HloInstruction* instr) {
+  std::vector<std::unique_ptr<BackendConfig>> configs;
+  const std::string& override_file =
+      debug_options().xla_gpu_gemm_autotuner_override_file();
+  if (!override_file.empty()) {
+    std::string file_content;
+    TF_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(), override_file,
+                                             &file_content));
+    TritonGemmConfigsProto gemm_configs;
+    if (!tsl::protobuf::TextFormat::ParseFromString(file_content,
+                                                    &gemm_configs)) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Could not parse override file: ", override_file));
+    }
+    configs.reserve(gemm_configs.config_size());
+    for (const auto& gemm_config : gemm_configs.config()) {
+      auto any = std::make_unique<google::protobuf::Any>();
+      any->PackFrom(gemm_config);
+      configs.push_back(std::move(any));
+    }
+  }
+  if (!debug_options().xla_gpu_override_gemm_autotuner().empty()) {
+    AutotuneResult::TritonGemmKey gemm_config;
+    CHECK(tsl::protobuf::TextFormat::ParseFromString(
+        debug_options().xla_gpu_override_gemm_autotuner(), &gemm_config));
+    auto any = std::make_unique<google::protobuf::Any>();
+    any->PackFrom(gemm_config);
+    configs.push_back(std::move(any));
   }
   return configs;
 }
