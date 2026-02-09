@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -217,6 +218,17 @@ SymbolicMap SymbolicMap::Replace(SymbolicExpr expr,
     return *this;
   }
   return SymbolicMap(ctx_, num_dimensions_, num_symbols_, std::move(new_exprs));
+}
+
+SymbolicMap SymbolicMap::Replace(
+    const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& map,
+    int64_t numResultDims, int64_t numResultSyms) const {
+  llvm::SmallVector<SymbolicExpr> new_exprs;
+  new_exprs.reserve(exprs_.size());
+  for (const auto& expr : exprs_) {
+    new_exprs.push_back(expr.Replace(map));
+  }
+  return SymbolicMap(ctx_, numResultDims, numResultSyms, std::move(new_exprs));
 }
 
 bool SymbolicMap::operator==(const SymbolicMap& other) const {

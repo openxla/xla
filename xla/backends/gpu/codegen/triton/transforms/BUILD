@@ -64,6 +64,7 @@ cc_library(
         "//xla/codegen/xtile/codegen:dot_algorithms",
         "//xla/codegen/xtile/codegen:emitter_helpers",
         "//xla/codegen/xtile/ir:xtile",
+        "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/translate/mhlo_to_hlo:attribute_exporter",
         "//xla/service:algorithm_util",
         "//xla/service/gpu:target_util",

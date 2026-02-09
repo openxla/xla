@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -43,6 +44,64 @@ namespace {
 
 bool IsIdentifierCharacter(char c) {
   return absl::ascii_isalnum(c) || c == '_';
+}
+
+void PrintImpl(SymbolicExpr expr, llvm::raw_ostream& os,
+               std::optional<int64_t> num_dims,
+               absl::Span<const std::string> var_names) {
+  switch (expr.GetType()) {
+    case SymbolicExprType::kConstant:
+      os << expr.GetValue();
+      return;
+    case SymbolicExprType::kVariable: {
+      int64_t var_id = expr.GetValue();
+      if (!var_names.empty()) {
+        if (var_id >= 0 && var_id < var_names.size()) {
+          os << var_names[var_id];
+        } else {
+          os << "v" << var_id;
+        }
+        return;
+      }
+      if (!num_dims.has_value()) {
+        os << "v" << var_id;
+        return;
+      }
+      // If num_dims is provided, then the first num_dims variables are
+      // dimensions, and the rest are symbols.
+      if (var_id < *num_dims) {
+        os << "d" << var_id;
+      } else {
+        os << "s" << (var_id - *num_dims);
+      }
+      return;
+    }
+    case SymbolicExprType::kAdd:
+    case SymbolicExprType::kMul:
+    case SymbolicExprType::kFloorDiv:
+    case SymbolicExprType::kCeilDiv:
+    case SymbolicExprType::kMod: {
+      auto bin_op_str = GetBinaryOpString(expr.GetType());
+      os << "(";
+      PrintImpl(expr.GetLHS(), os, num_dims, var_names);
+      os << " " << bin_op_str << " ";
+      PrintImpl(expr.GetRHS(), os, num_dims, var_names);
+      os << ")";
+      return;
+    }
+    case SymbolicExprType::kMax:
+    case SymbolicExprType::kMin: {
+      auto bin_op_str = GetBinaryOpString(expr.GetType());
+      os << bin_op_str << "(";
+      PrintImpl(expr.GetLHS(), os, num_dims, var_names);
+      os << ", ";
+      PrintImpl(expr.GetRHS(), os, num_dims, var_names);
+      os << ")";
+      return;
+    }
+    default:
+      LOG(FATAL) << "unknown type on symbolic expressions";
+  }
 }
 
 // Helper class to manage the state of the SymbolicExpr parser.
@@ -475,52 +534,14 @@ std::string GetBinaryOpString(SymbolicExprType type) {
   }
 }
 
-void Print(SymbolicExpr expr, llvm::raw_ostream& os, int64_t num_dims) {
-  switch (expr.GetType()) {
-    case SymbolicExprType::kConstant:
-      os << expr.GetValue();
-      return;
-    case SymbolicExprType::kVariable: {
-      int64_t var_id = expr.GetValue();
-      if (num_dims == -1) {
-        os << "v" << var_id;
-        return;
-      }
-      // If num_dims is provided, then the first num_dims variables are
-      // dimensions, and the rest are symbols.
-      if (var_id < num_dims) {
-        os << "d" << var_id;
-      } else {
-        os << "s" << (var_id - num_dims);
-      }
-      return;
-    }
-    case SymbolicExprType::kAdd:
-    case SymbolicExprType::kMul:
-    case SymbolicExprType::kFloorDiv:
-    case SymbolicExprType::kCeilDiv:
-    case SymbolicExprType::kMod: {
-      auto bin_op_str = GetBinaryOpString(expr.GetType());
-      os << "(";
-      Print(expr.GetLHS(), os, num_dims);
-      os << " " << bin_op_str << " ";
-      Print(expr.GetRHS(), os, num_dims);
-      os << ")";
-      return;
-    }
-    case SymbolicExprType::kMax:
-    case SymbolicExprType::kMin: {
-      auto bin_op_str = GetBinaryOpString(expr.GetType());
-      os << bin_op_str << "(";
-      Print(expr.GetLHS(), os, num_dims);
-      os << ", ";
-      Print(expr.GetRHS(), os, num_dims);
-      os << ")";
-      return;
-    }
-    default:
-      LOG(FATAL) << "unknown type on symbolic expressions";
-  }
+void Print(SymbolicExpr expr, llvm::raw_ostream& os,
+           std::optional<int64_t> num_dims) {
+  PrintImpl(expr, os, num_dims, {});
+}
+
+void Print(SymbolicExpr expr, llvm::raw_ostream& os,
+           absl::Span<const std::string> var_names) {
+  PrintImpl(expr, os, std::nullopt, var_names);
 }
 
 void Print(const SymbolicMap& map, llvm::raw_ostream& os) {
