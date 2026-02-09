@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
@@ -63,6 +64,13 @@ absl::Status Mesh::ValidateMesh() {
     if (!seen_axis_names.insert(axis_name).second) {
       return absl::InvalidArgumentError(absl::StrCat(
           "Mesh has duplicate axis names. Duplicate axis name: ", axis_name));
+    }
+    int64_t value;
+    if (absl::SimpleAtoi(axis_name, &value)) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Mesh axis name cannot be an integer to avoid confusion "
+                       "with axis indices: ",
+                       axis_name));
     }
   }
 

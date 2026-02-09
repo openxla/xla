@@ -209,6 +209,11 @@ TEST(MeshAndAxisTest, ValidatesMesh) {
   EXPECT_DEATH(
       { Mesh mesh_with_empty_dims(TileAssignment({}), {}); },
       "Mesh must have at least one axis");
+
+  EXPECT_DEATH(
+      { Mesh mesh_with_integer_axis_name({1, 2}, {"x", "1"}); },
+      "Mesh axis name cannot be an integer to avoid confusion with axis "
+      "indices: 1");
 }
 
 TEST(MeshAndAxisTest, FromProtoValidation) {
