@@ -536,6 +536,8 @@ class HloParserImpl : public HloParser {
       std::unique_ptr<CollectiveDeviceListBase>* device_list);
   bool ParseFrontendAttributes(FrontendAttributes* frontend_attributes);
   bool ParseStatisticsViz(StatisticsViz* statistics_viz);
+  bool ParseIotaTileAssignmentArray(std::vector<int64_t>& iota_reshape_dims,
+                                    std::vector<int>& iota_transpose_perm);
   bool ParseTileAssignment(std::vector<int64_t>& tile_assignment_dimensions,
                            std::vector<int64_t>& iota_reshape_dims,
                            std::vector<int>& iota_transpose_perm,
@@ -3974,6 +3976,62 @@ bool HloParserImpl::ParseStatisticsViz(StatisticsViz* statistics_viz) {
   return ParseToken(TokKind::kRbrace, "expects '}' at the end of statistics");
 }
 
+bool HloParserImpl::ParseIotaTileAssignmentArray(
+    std::vector<int64_t>& iota_reshape_dims,
+    std::vector<int>& iota_transpose_perm) {
+  if (!ParseToken(TokKind::kLsquare,
+                  "expected '[' to start sharding iota_reshape_dims")) {
+    return false;
+  }
+  do {
+    int64_t dim;
+    if (!ParseInt64(&dim)) {
+      return false;
+    }
+    iota_reshape_dims.push_back(dim);
+  } while (EatIfPresent(TokKind::kComma));
+  if (iota_reshape_dims.empty()) {
+    return TokenError("expected non-empty iota_reshape_dims");
+  }
+  if (!ParseToken(TokKind::kRsquare,
+                  "expected ']' to end sharding iota_reshape_dims")) {
+    return false;
+  }
+  if (iota_reshape_dims.size() == 1) {
+    iota_transpose_perm.push_back(0);
+  } else {
+    if (lexer_.GetKind() != TokKind::kIdent || lexer_.GetStrVal() != "T") {
+      return TokenError(
+          "expected 'T(' to start sharding devices iota_transpose_perm");
+    }
+    lexer_.Lex();
+    if (!ParseToken(
+            TokKind::kLparen,
+            "expected 'T(' to start sharding devices iota_transpose_perm")) {
+      return false;
+    }
+    do {
+      int64_t dim;
+      if (!ParseInt64(&dim)) {
+        return false;
+      }
+      if (dim >= iota_reshape_dims.size()) {
+        return TokenError(
+            absl::StrFormat("Out of range iota minor_to_major value %lld, "
+                            "expecting value in range [0, %d)",
+                            dim, iota_reshape_dims.size()));
+      }
+      iota_transpose_perm.push_back(dim);
+    } while (EatIfPresent(TokKind::kComma));
+    if (!ParseToken(
+            TokKind::kRparen,
+            "expected ')' to end sharding devices iota_transpose_perm")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // devices argument is optional: if not present, the tile assignment is assumed
 // to be an iota tile assignment.
 bool HloParserImpl::ParseTileAssignment(
@@ -3999,54 +4057,8 @@ bool HloParserImpl::ParseTileAssignment(
   }
   if (lexer_.GetKind() == TokKind::kLeq) {
     lexer_.Lex();
-    if (!ParseToken(TokKind::kLsquare,
-                    "expected '[' to start sharding iota_reshape_dims")) {
+    if (!ParseIotaTileAssignmentArray(iota_reshape_dims, iota_transpose_perm)) {
       return false;
-    }
-    do {
-      int64_t dim;
-      if (!ParseInt64(&dim)) {
-        return false;
-      }
-      iota_reshape_dims.push_back(dim);
-    } while (EatIfPresent(TokKind::kComma));
-    if (iota_reshape_dims.empty()) {
-      return TokenError("expected non-empty iota_reshape_dims");
-    }
-    if (!ParseToken(TokKind::kRsquare,
-                    "expected ']' to end sharding iota_reshape_dims")) {
-      return false;
-    }
-    if (iota_reshape_dims.size() == 1) {
-      iota_transpose_perm.push_back(0);
-    } else {
-      if (lexer_.GetKind() != TokKind::kIdent || lexer_.GetStrVal() != "T") {
-        return TokenError(
-            "expected 'T(' to start sharding devices "
-            "iota_transpose_perm");
-      }
-      lexer_.Lex();
-      if (!ParseToken(TokKind::kLparen,
-                      "expected 'T(' to start sharding devices "
-                      "iota_transpose_perm")) {
-        return false;
-      }
-      do {
-        int64_t dim;
-        if (!ParseInt64(&dim)) {
-          return false;
-        }
-        if (dim >= iota_reshape_dims.size()) {
-          return TokenError(absl::StrFormat(
-              "Out of range iota minor_to_major value %lld.", dim));
-        }
-        iota_transpose_perm.push_back(dim);
-      } while (EatIfPresent(TokKind::kComma));
-      if (!ParseToken(TokKind::kRparen,
-                      "expected ')' to end sharding devices "
-                      "iota_transpose_perm")) {
-        return false;
-      }
     }
   } else {
     if (!devices) {
