@@ -5857,8 +5857,7 @@ absl::Status SpmdPartitioner::PreprocessHlos(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   for (HloComputation* computation : module->computations(execution_threads)) {
     for (HloInstruction* hlo : computation->MakeInstructionPostOrder()) {
-      if (hlo->sharding().IsTileMaximal() || hlo->sharding().IsManual()) {
-        // No need to optimize for tile-maximal or manual sharding.
+      if (!hlo->sharding().IsTiled()) {
         continue;
       }
 
