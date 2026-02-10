@@ -54,7 +54,6 @@ jobs:
     container: 
         image: ${{ matrix.job_info.container }}
         volumes:
-          - /data/list:/data/list
           - /data/ci-cert.crt:/data/ci-cert.crt
           - /data/ci-cert.key:/data/ci-cert.key
     defaults:
@@ -75,9 +74,6 @@ jobs:
         working-directory: ${{ matrix.job_info.repo }}
         timeout-minutes: 60
         run: |
-          # Dynamically update build.py to read /data/list
-          sed -i "s|rocm_excluded_targets = (|rocm_excluded_targets = tuple(['-' + x.strip() for x in open('/data/list') if x.strip()]) + (|g" $GITHUB_WORKSPACE/openxla/xla/build_tools/ci/build.py
-
           # Run Single GPU Tests
           $GITHUB_WORKSPACE/openxla/xla/build_tools/ci/build.py --build="XLA Linux x86 AMD Instinct GPU Single_github_actions"
 
