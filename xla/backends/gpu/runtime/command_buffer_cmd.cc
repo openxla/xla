@@ -72,7 +72,7 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/call_frame.h"
-#include "xla/ffi/ffi_api.h"
+#include "xla/ffi/ffi.h"
 #include "xla/ffi/invoke.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/literal.h"
@@ -1378,7 +1378,8 @@ CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
                 /*called_computation=*/nullptr,  // TODO(b/342285364)
                 execute_params.ffi_execution_context,
                 execution_state_.get()};
-            return ffi::Invoke(handler_, *call_frame, context);
+            return ffi::Invoke(ffi::GetXlaFfiApi(), handler_, *call_frame,
+                               context);
           }));
 
   return Handle(

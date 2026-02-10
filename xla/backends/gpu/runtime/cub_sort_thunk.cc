@@ -35,7 +35,8 @@ limitations under the License.
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/call_frame.h"
-#include "xla/ffi/ffi_api.h"
+#include "xla/ffi/ffi.h"
+#include "xla/ffi/ffi_registry.h"
 #include "xla/ffi/invoke.h"
 #include "xla/primitive_util.h"
 #include "xla/runtime/buffer_use.h"
@@ -133,8 +134,8 @@ absl::Status CubSortKeysImpl::Run(se::DeviceAddressBase input_keys,
 
   ffi::InvokeContext context{};
   context.backend_context = ffi::InvokeContext::GpuContext{stream, nullptr};
-  return ffi::Invoke(sort_keys_fn_.bundle.execute, call_frame, context,
-                     XLA_FFI_ExecutionStage_EXECUTE);
+  return ffi::Invoke(ffi::GetXlaFfiApi(), sort_keys_fn_.bundle.execute,
+                     call_frame, context, XLA_FFI_ExecutionStage_EXECUTE);
 }
 
 absl::Status CubSortKeysImpl::Run(const Thunk::ExecuteParams& params,
@@ -158,9 +159,9 @@ absl::StatusOr<int64_t> CubSortKeysImpl::GetScratchSize(int64_t num_items,
   builder.AddAttributes(attrs.Build());
   ffi::CallFrame call_frame = builder.Build();
 
-  TF_RETURN_IF_ERROR(ffi::Invoke(sort_keys_fn_.bundle.initialize, call_frame,
-                                 ffi::InvokeContext{},
-                                 XLA_FFI_ExecutionStage_INITIALIZE));
+  TF_RETURN_IF_ERROR(ffi::Invoke(
+      ffi::GetXlaFfiApi(), sort_keys_fn_.bundle.initialize, call_frame,
+      ffi::InvokeContext{}, XLA_FFI_ExecutionStage_INITIALIZE));
   return temp_bytes;
 }
 
@@ -223,8 +224,8 @@ absl::Status CubSortPairsImpl::Run(se::DeviceAddressBase input_keys,
 
   ffi::InvokeContext context{};
   context.backend_context = ffi::InvokeContext::GpuContext{stream, nullptr};
-  return ffi::Invoke(sort_pairs_fn_.bundle.execute, call_frame, context,
-                     XLA_FFI_ExecutionStage_EXECUTE);
+  return ffi::Invoke(ffi::GetXlaFfiApi(), sort_pairs_fn_.bundle.execute,
+                     call_frame, context, XLA_FFI_ExecutionStage_EXECUTE);
 }
 
 absl::Status CubSortPairsImpl::Run(const Thunk::ExecuteParams& params,
@@ -251,9 +252,9 @@ absl::StatusOr<int64_t> CubSortPairsImpl::GetScratchSize(int64_t num_items,
   builder.AddAttributes(attrs.Build());
   ffi::CallFrame call_frame = builder.Build();
 
-  TF_RETURN_IF_ERROR(ffi::Invoke(sort_pairs_fn_.bundle.initialize, call_frame,
-                                 ffi::InvokeContext{},
-                                 XLA_FFI_ExecutionStage_INITIALIZE));
+  TF_RETURN_IF_ERROR(ffi::Invoke(
+      ffi::GetXlaFfiApi(), sort_pairs_fn_.bundle.initialize, call_frame,
+      ffi::InvokeContext{}, XLA_FFI_ExecutionStage_INITIALIZE));
   return temp_bytes;
 }
 

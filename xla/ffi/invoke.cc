@@ -81,13 +81,14 @@ static XLA_FFI_ExecutionContext CreateExecutionContext(
 }
 
 template <typename Handler>
-static absl::StatusOr<XLA_FFI_Future*> Invoke(Handler& handler,
+static absl::StatusOr<XLA_FFI_Future*> Invoke(const XLA_FFI_Api* api,
+                                              Handler& handler,
                                               CallFrame& call_frame,
                                               const InvokeContext& context,
                                               ExecutionStage stage) {
   XLA_FFI_ExecutionContext ctx = CreateExecutionContext(context);
-  XLA_FFI_CallFrame ffi_call_frame = call_frame.Build(
-      XLA_FFI_GetApi(), &ctx, static_cast<XLA_FFI_ExecutionStage>(stage));
+  XLA_FFI_CallFrame ffi_call_frame =
+      call_frame.Build(api, &ctx, static_cast<XLA_FFI_ExecutionStage>(stage));
 
   XLA_FFI_Error* error = nullptr;
 
@@ -126,38 +127,40 @@ static absl::Status BlockUntilReady(XLA_FFI_Future* future) {
   return ABSL_PREDICT_FALSE(av.IsError()) ? av.GetError() : absl::OkStatus();
 }
 
-absl::Status Invoke(Ffi& handler, CallFrame& call_frame,
+absl::Status Invoke(const XLA_FFI_Api* api, Ffi& handler, CallFrame& call_frame,
                     const InvokeContext& context, ExecutionStage stage) {
   TF_ASSIGN_OR_RETURN(XLA_FFI_Future * future,
-                      Invoke<Ffi>(handler, call_frame, context, stage));
+                      Invoke<Ffi>(api, handler, call_frame, context, stage));
   return BlockUntilReady(future);
 }
 
-absl::Status Invoke(XLA_FFI_Handler* handler, CallFrame& call_frame,
-                    const InvokeContext& context,
+absl::Status Invoke(const XLA_FFI_Api* api, XLA_FFI_Handler* handler,
+                    CallFrame& call_frame, const InvokeContext& context,
                     XLA_FFI_ExecutionStage stage) {
   TF_ASSIGN_OR_RETURN(
       XLA_FFI_Future * future,
-      Invoke<XLA_FFI_Handler*>(handler, call_frame, context,
+      Invoke<XLA_FFI_Handler*>(api, handler, call_frame, context,
                                static_cast<ExecutionStage>(stage)));
   return BlockUntilReady(future);
 }
 
-tsl::AsyncValueRef<tsl::Chain> InvokeAsync(Ffi& handler, CallFrame& call_frame,
+tsl::AsyncValueRef<tsl::Chain> InvokeAsync(const XLA_FFI_Api* api, Ffi& handler,
+                                           CallFrame& call_frame,
                                            const InvokeContext& context,
                                            ExecutionStage stage) {
   TF_ASSIGN_OR_RETURN(XLA_FFI_Future * future,
-                      Invoke<Ffi>(handler, call_frame, context, stage));
+                      Invoke<Ffi>(api, handler, call_frame, context, stage));
   return TakeFuture(future);
 }
 
-tsl::AsyncValueRef<tsl::Chain> InvokeAsync(XLA_FFI_Handler* handler,
+tsl::AsyncValueRef<tsl::Chain> InvokeAsync(const XLA_FFI_Api* api,
+                                           XLA_FFI_Handler* handler,
                                            CallFrame& call_frame,
                                            const InvokeContext& context,
                                            XLA_FFI_ExecutionStage stage) {
   TF_ASSIGN_OR_RETURN(
       XLA_FFI_Future * future,
-      Invoke<XLA_FFI_Handler*>(handler, call_frame, context,
+      Invoke<XLA_FFI_Handler*>(api, handler, call_frame, context,
                                static_cast<ExecutionStage>(stage)));
   return TakeFuture(future);
 }
@@ -176,11 +179,11 @@ static XLA_FFI_Metadata_Extension PrepareMetadataExtension(
 }
 
 static XLA_FFI_CallFrame PrepareMetadataCallFrame(
-    XLA_FFI_Metadata_Extension* extension) {
+    const XLA_FFI_Api* api, XLA_FFI_Metadata_Extension* extension) {
   return XLA_FFI_CallFrame{
       XLA_FFI_CallFrame_STRUCT_SIZE,
       &extension->extension_base,
-      /*api=*/XLA_FFI_GetApi(),
+      /*api=*/api,
       /*context=*/nullptr,
       /*stage=*/XLA_FFI_ExecutionStage_EXECUTE,
       /*args=*/XLA_FFI_Args{XLA_FFI_Args_STRUCT_SIZE},
@@ -189,10 +192,11 @@ static XLA_FFI_CallFrame PrepareMetadataCallFrame(
   };
 }
 
-absl::StatusOr<XLA_FFI_Metadata> GetMetadata(Ffi& handler) {
+absl::StatusOr<XLA_FFI_Metadata> GetMetadata(const XLA_FFI_Api* api,
+                                             Ffi& handler) {
   XLA_FFI_Metadata metadata = PrepareMetadata();
   XLA_FFI_Metadata_Extension extension = PrepareMetadataExtension(&metadata);
-  XLA_FFI_CallFrame call_frame = PrepareMetadataCallFrame(&extension);
+  XLA_FFI_CallFrame call_frame = PrepareMetadataCallFrame(api, &extension);
   XLA_FFI_Error* error = nullptr;
   try {
     error = handler.Call(&call_frame);
@@ -205,10 +209,11 @@ absl::StatusOr<XLA_FFI_Metadata> GetMetadata(Ffi& handler) {
   return metadata;
 }
 
-absl::StatusOr<XLA_FFI_Metadata> GetMetadata(XLA_FFI_Handler* handler) {
+absl::StatusOr<XLA_FFI_Metadata> GetMetadata(const XLA_FFI_Api* api,
+                                             XLA_FFI_Handler* handler) {
   XLA_FFI_Metadata metadata = PrepareMetadata();
   XLA_FFI_Metadata_Extension extension = PrepareMetadataExtension(&metadata);
-  XLA_FFI_CallFrame call_frame = PrepareMetadataCallFrame(&extension);
+  XLA_FFI_CallFrame call_frame = PrepareMetadataCallFrame(api, &extension);
   XLA_FFI_Error* error = nullptr;
   try {
     error = (*handler)(&call_frame);

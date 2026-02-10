@@ -19,6 +19,7 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
+#include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -26,7 +27,9 @@ limitations under the License.
 #include "xla/ffi/api/c_api_internal.h"  // IWYU pragma: keep
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/execution_state.h"
+#include "xla/ffi/ffi_registry.h"
 #include "xla/ffi/ffi_structs.h"
+#include "xla/ffi/type_registry.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/concurrency/async_value.h"
@@ -96,7 +99,7 @@ static XLA_FFI_Error* XLA_FFI_INTERNAL_IntraOpThreadPool_Get(
 
   // For GPU backend we don't have intra-op thread pool, but we didn't promise
   // to return one, so instead of an error we return a nullptr thread pool.
-  if (auto* gpu = std::get_if<XLA_FFI_ExecutionContext::GpuContext>(
+  if (auto* _ = std::get_if<XLA_FFI_ExecutionContext::GpuContext>(
           &ctx->backend_context)) {
     return nullptr;
   }

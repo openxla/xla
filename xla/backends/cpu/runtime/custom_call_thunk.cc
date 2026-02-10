@@ -33,7 +33,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
-#include "unsupported/Eigen/CXX11/Tensor"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -44,7 +43,8 @@ limitations under the License.
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_state.h"
-#include "xla/ffi/ffi_api.h"
+#include "xla/ffi/ffi.h"
+#include "xla/ffi/ffi_registry.h"
 #include "xla/ffi/invoke.h"
 #include "xla/primitive_util.h"
 #include "xla/runtime/buffer_use.h"
@@ -103,7 +103,7 @@ static absl::Status InstantiateHandlerState(
 
     ffi::InvokeContext invoke_context;
     invoke_context.execution_state = execution_state;
-    TF_RETURN_IF_ERROR(Invoke(handler.bundle.instantiate,
+    TF_RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), handler.bundle.instantiate,
                               instantiate_call_frame, invoke_context,
                               XLA_FFI_ExecutionStage_INSTANTIATE));
   }
@@ -347,7 +347,8 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
       execution_state_.get()};
 
   ffi::HandlerRegistration& handler = std::get<1>(target_);
-  return ffi::InvokeAsync(handler.bundle.execute, *call_frame, invoke_context);
+  return ffi::InvokeAsync(ffi::GetXlaFfiApi(), handler.bundle.execute,
+                          *call_frame, invoke_context);
 }
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallUntypedAPI(
