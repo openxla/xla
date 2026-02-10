@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_VIRTUAL_ADDRESS_ALLOCATOR_H_
-#define XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_VIRTUAL_ADDRESS_ALLOCATOR_H_
+#ifndef XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_VMM_ALLOCATOR_H_
+#define XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_VMM_ALLOCATOR_H_
 
 #include <cstdint>
 #include <deque>
@@ -52,7 +52,7 @@ namespace stream_executor {
 //
 // IMPORTANT: This allocator only supports single-device instantiation and is
 // NOT thread-safe. All operations must be performed from a single thread.
-class DeviceVirtualAddressAllocator : public DeviceAddressAllocator {
+class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
  public:
   // Information needed per device for the allocator.
   struct DeviceInfo {
@@ -70,8 +70,8 @@ class DeviceVirtualAddressAllocator : public DeviceAddressAllocator {
   //           allocator. This should typically be the main compute stream from
   //           ServiceExecutableRunOptions.
   //   pa_budget: The physical address budget for the allocator.
-  DeviceVirtualAddressAllocator(StreamExecutor* executor, Stream* stream,
-                                uint64_t pa_budget);
+  DeviceAddressVmmAllocator(StreamExecutor* executor, Stream* stream,
+                            uint64_t pa_budget);
 
   // Create an allocator for a single device using DeviceInfo.
   //
@@ -83,10 +83,10 @@ class DeviceVirtualAddressAllocator : public DeviceAddressAllocator {
   //            The stream must outlive the allocator and should typically be
   //            the main compute stream from ServiceExecutableRunOptions.
   //            CHECKs if devices.size() != 1.
-  DeviceVirtualAddressAllocator(const Platform* platform,
-                                absl::Span<const DeviceInfo> devices);
+  DeviceAddressVmmAllocator(const Platform* platform,
+                            absl::Span<const DeviceInfo> devices);
 
-  ~DeviceVirtualAddressAllocator() override;
+  ~DeviceAddressVmmAllocator() override;
 
   absl::StatusOr<ScopedDeviceAddress<uint8_t>> Allocate(
       int device_ordinal, uint64_t size, bool retry_on_failure,
@@ -171,4 +171,4 @@ class DeviceVirtualAddressAllocator : public DeviceAddressAllocator {
 
 }  // namespace stream_executor
 
-#endif  // XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_VIRTUAL_ADDRESS_ALLOCATOR_H_
+#endif  // XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_VMM_ALLOCATOR_H_

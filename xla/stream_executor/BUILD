@@ -311,9 +311,9 @@ cc_library(
 )
 
 cc_library(
-    name = "stream_executor_virtual_address_allocator",
-    srcs = ["stream_executor_virtual_address_allocator.cc"],
-    hdrs = ["stream_executor_virtual_address_allocator.h"],
+    name = "stream_executor_vmm_allocator",
+    srcs = ["stream_executor_vmm_allocator.cc"],
+    hdrs = ["stream_executor_vmm_allocator.h"],
     deps = [
         ":device_address",
         ":device_address_allocator",
@@ -335,8 +335,8 @@ cc_library(
 )
 
 xla_cc_test(
-    name = "stream_executor_virtual_address_allocator_test",
-    srcs = ["stream_executor_virtual_address_allocator_test.cc"],
+    name = "stream_executor_vmm_allocator_test",
+    srcs = ["stream_executor_vmm_allocator_test.cc"],
     tags = ["cuda-only"],
     deps = [
         ":device_address",
@@ -344,7 +344,7 @@ xla_cc_test(
         ":platform_manager",
         ":stream",
         ":stream_executor_h",
-        ":stream_executor_virtual_address_allocator",
+        ":stream_executor_vmm_allocator",
         "//xla/stream_executor/cuda:cuda_platform",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",

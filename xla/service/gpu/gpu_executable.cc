@@ -110,7 +110,7 @@ limitations under the License.
 #include "xla/stream_executor/scoped_module_handle.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/stream_executor_virtual_address_allocator.h"
+#include "xla/stream_executor/stream_executor_vmm_allocator.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
@@ -1211,7 +1211,7 @@ absl::Status GpuExecutable::ExecuteThunks(
       module_config()
           .debug_options()
           .xla_gpu_enable_command_buffer_va_remapping() &&
-      dynamic_cast<se::DeviceVirtualAddressAllocator*>(memory_allocator) !=
+      dynamic_cast<se::DeviceAddressVmmAllocator*>(memory_allocator) !=
           nullptr;
 
   VLOG(3) << "ExecuteThunks: command_buffer_allocation_indexes_.size()="

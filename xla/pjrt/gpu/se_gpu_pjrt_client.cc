@@ -108,7 +108,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/stream_executor_virtual_address_allocator.h"
+#include "xla/stream_executor/stream_executor_vmm_allocator.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -1485,7 +1485,7 @@ GetStreamExecutorGpuDeviceAllocator(
 
     case GpuAllocatorConfig::Kind::kVmm: {
       LOG(INFO) << "Using VMM (Virtual Memory Management) allocator.";
-      std::vector<se::DeviceVirtualAddressAllocator::DeviceInfo> devices;
+      std::vector<se::DeviceAddressVmmAllocator::DeviceInfo> devices;
       for (const auto& ordinal_and_device : addressable_devices) {
         se::StreamExecutor* executor = ordinal_and_device.second->executor();
         int64_t free_memory;
@@ -1507,8 +1507,8 @@ GetStreamExecutorGpuDeviceAllocator(
                            ordinal_and_device.second->compute_stream(),
                            pa_budget});
       }
-      return std::make_unique<se::DeviceVirtualAddressAllocator>(platform,
-                                                                 devices);
+      return std::make_unique<se::DeviceAddressVmmAllocator>(platform,
+                                                             devices);
     }
   }
 

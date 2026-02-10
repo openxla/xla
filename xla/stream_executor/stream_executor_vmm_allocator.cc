@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/stream_executor/stream_executor_virtual_address_allocator.h"
+#include "xla/stream_executor/stream_executor_vmm_allocator.h"
 
 #include <cstdint>
 #include <utility>
@@ -35,22 +35,23 @@ limitations under the License.
 
 namespace stream_executor {
 
-DeviceVirtualAddressAllocator::DeviceVirtualAddressAllocator(
-    StreamExecutor* executor, Stream* stream, uint64_t pa_budget)
+DeviceAddressVmmAllocator::DeviceAddressVmmAllocator(StreamExecutor* executor,
+                                                     Stream* stream,
+                                                     uint64_t pa_budget)
     : DeviceAddressAllocator(executor->GetPlatform()),
       allocation_granularity_(executor->GetAllocationGranularity()) {
   stream_executors_ = {executor};
   streams_[executor->device_ordinal()] = stream;
   allocator_pa_budget_[executor->device_ordinal()] = pa_budget;
-  VLOG(3) << "DeviceVirtualAddressAllocator created for device "
+  VLOG(3) << "DeviceAddressVmmAllocator created for device "
           << executor->device_ordinal() << " with pa_budget " << pa_budget;
 }
 
-DeviceVirtualAddressAllocator::DeviceVirtualAddressAllocator(
+DeviceAddressVmmAllocator::DeviceAddressVmmAllocator(
     const Platform* platform, absl::Span<const DeviceInfo> devices)
     : DeviceAddressAllocator(platform) {
   CHECK_EQ(devices.size(), 1)
-      << "DeviceVirtualAddressAllocator only supports single-device "
+      << "DeviceAddressVmmAllocator only supports single-device "
          "instantiation. Got "
       << devices.size() << " devices.";
   stream_executors_.reserve(devices.size());
@@ -62,13 +63,13 @@ DeviceVirtualAddressAllocator::DeviceVirtualAddressAllocator(
     if (allocation_granularity_ == 0) {
       allocation_granularity_ = device.executor->GetAllocationGranularity();
     }
-    VLOG(3) << "DeviceVirtualAddressAllocator created for device "
+    VLOG(3) << "DeviceAddressVmmAllocator created for device "
             << device.executor->device_ordinal() << " with pa_budget "
             << device.pa_budget;
   }
 }
 
-DeviceVirtualAddressAllocator::~DeviceVirtualAddressAllocator() {
+DeviceAddressVmmAllocator::~DeviceAddressVmmAllocator() {
   // Process all remaining pending deallocations synchronously.
   for (auto& pending : pending_deallocations_) {
     // Wait for the event to complete.
@@ -84,7 +85,7 @@ DeviceVirtualAddressAllocator::~DeviceVirtualAddressAllocator() {
   pending_deallocations_.clear();
 }
 
-void DeviceVirtualAddressAllocator::ProcessCompletedPendingDeallocations() {
+void DeviceAddressVmmAllocator::ProcessCompletedPendingDeallocations() {
   // Process pending deallocations whose events have completed.
   while (!pending_deallocations_.empty()) {
     auto& front = pending_deallocations_.front();
@@ -108,7 +109,7 @@ void DeviceVirtualAddressAllocator::ProcessCompletedPendingDeallocations() {
   }
 }
 
-void DeviceVirtualAddressAllocator::WaitPendingDeallocationsToComplete(
+void DeviceAddressVmmAllocator::WaitPendingDeallocationsToComplete(
     uint64_t size) {
   if (pending_deallocations_.empty()) {
     return;
@@ -165,8 +166,8 @@ void DeviceVirtualAddressAllocator::WaitPendingDeallocationsToComplete(
   }
 }
 
-void DeviceVirtualAddressAllocator::DoDeallocate(int device_ordinal,
-                                                 DeviceAddressBase mem) {
+void DeviceAddressVmmAllocator::DoDeallocate(int device_ordinal,
+                                             DeviceAddressBase mem) {
   auto executor_or = GetStreamExecutor(device_ordinal);
   if (!executor_or.ok()) {
     LOG(WARNING) << "Failed to get executor for deallocation: "
@@ -184,10 +185,8 @@ void DeviceVirtualAddressAllocator::DoDeallocate(int device_ordinal,
       RoundUpToGranularity(mem.size());
 }
 
-absl::StatusOr<DeviceAddressBase>
-DeviceVirtualAddressAllocator::AllocateWithBudget(int device_ordinal,
-                                                  StreamExecutor* executor,
-                                                  uint64_t size) {
+absl::StatusOr<DeviceAddressBase> DeviceAddressVmmAllocator::AllocateWithBudget(
+    int device_ordinal, StreamExecutor* executor, uint64_t size) {
   if (size == 0) {
     return DeviceAddressBase(nullptr, 0);
   }
@@ -205,9 +204,9 @@ DeviceVirtualAddressAllocator::AllocateWithBudget(int device_ordinal,
 }
 
 absl::StatusOr<ScopedDeviceAddress<uint8_t>>
-DeviceVirtualAddressAllocator::Allocate(int device_ordinal, uint64_t size,
-                                        bool retry_on_failure,
-                                        int64_t memory_space) {
+DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
+                                    bool retry_on_failure,
+                                    int64_t memory_space) {
   // Handle zero-size allocation.
   if (size == 0) {
     return ScopedDeviceAddress<uint8_t>(DeviceAddressBase(), device_ordinal,
@@ -227,8 +226,8 @@ DeviceVirtualAddressAllocator::Allocate(int device_ordinal, uint64_t size,
     return ScopedDeviceAddress<uint8_t>(*reused, device_ordinal, this);
   }
 
-  // Use AllocateWithBudget which handles the full flow: reserve virtual address,
-  // allocate physical memory, map, and set access permissions.
+  // Use AllocateWithBudget which handles the full flow: reserve virtual
+  // address, allocate physical memory, map, and set access permissions.
   absl::StatusOr<DeviceAddressBase> result =
       AllocateWithBudget(device_ordinal, executor, size);
 
@@ -258,8 +257,8 @@ DeviceVirtualAddressAllocator::Allocate(int device_ordinal, uint64_t size,
   return ScopedDeviceAddress<uint8_t>(*result, device_ordinal, this);
 }
 
-absl::Status DeviceVirtualAddressAllocator::Deallocate(int device_ordinal,
-                                                       DeviceAddressBase mem) {
+absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
+                                                   DeviceAddressBase mem) {
   if (mem.is_null()) {
     return absl::OkStatus();
   }
@@ -290,8 +289,8 @@ absl::Status DeviceVirtualAddressAllocator::Deallocate(int device_ordinal,
   return absl::OkStatus();
 }
 
-absl::StatusOr<StreamExecutor*>
-DeviceVirtualAddressAllocator::GetStreamExecutor(int device_ordinal) const {
+absl::StatusOr<StreamExecutor*> DeviceAddressVmmAllocator::GetStreamExecutor(
+    int device_ordinal) const {
   if (device_ordinal < 0) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "device ordinal value (%d) must be non-negative", device_ordinal));
@@ -306,21 +305,20 @@ DeviceVirtualAddressAllocator::GetStreamExecutor(int device_ordinal) const {
                       platform()->Name(), device_ordinal));
 }
 
-absl::StatusOr<Stream*> DeviceVirtualAddressAllocator::GetStream(
+absl::StatusOr<Stream*> DeviceAddressVmmAllocator::GetStream(
     int device_ordinal) {
   auto it = streams_.find(device_ordinal);
   if (it == streams_.end()) {
     return absl::NotFoundError(
         absl::StrFormat("No stream registered for device ordinal %d. "
-                        "DeviceVirtualAddressAllocator requires streams to be "
+                        "DeviceAddressVmmAllocator requires streams to be "
                         "provided at construction time.",
                         device_ordinal));
   }
   return it->second;
 }
 
-uint64_t DeviceVirtualAddressAllocator::RoundUpToGranularity(
-    uint64_t size) const {
+uint64_t DeviceAddressVmmAllocator::RoundUpToGranularity(uint64_t size) const {
   if (allocation_granularity_ == 0) {
     return size;
   }
@@ -329,8 +327,9 @@ uint64_t DeviceVirtualAddressAllocator::RoundUpToGranularity(
 }
 
 std::optional<DeviceAddressBase>
-DeviceVirtualAddressAllocator::TryReusePendingDeallocation(
-    int device_ordinal, uint64_t size, uint64_t rounded_size) {
+DeviceAddressVmmAllocator::TryReusePendingDeallocation(int device_ordinal,
+                                                       uint64_t size,
+                                                       uint64_t rounded_size) {
   // Search for a pending deallocation with matching rounded size on the same
   // device whose event has already completed.
   for (auto it = pending_deallocations_.begin();

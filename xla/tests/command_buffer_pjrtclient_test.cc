@@ -15,7 +15,7 @@ limitations under the License.
 
 // End-to-end test for the Virtual Memory Management (VMM) allocator.
 // This test verifies that HLO computations can be compiled and executed
-// correctly when using the DeviceVirtualAddressAllocator.
+// correctly when using the DeviceAddressVmmAllocator.
 
 #include <cstdint>
 #include <memory>
