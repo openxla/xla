@@ -1,3 +1,4 @@
+load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/megascale:package_groups.bzl", "megascale_package_groups")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -34,5 +35,21 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
         "@tsl//tsl/platform:casts",
+    ],
+)
+
+xla_cc_test(
+    name = "megascale_c_api_client_test",
+    srcs = ["megascale_c_api_client_test.cc"],
+    tags = ["no_oss"],
+    deps = [
+        ":megascale_c_api_client",
+        "//xla/megascale:addresses_proto_cc",
+        "//xla/megascale:dcn_topology_proto_cc",
+        "//xla/pjrt/plugin/xla_tpu:tpu_static_registration",
+        "//xla/pjrt/plugin/xla_tpu:xla_tpu_pjrt_client",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
+        "@com_google_googletest//:gtest",
     ],
 )
