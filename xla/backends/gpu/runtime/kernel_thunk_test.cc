@@ -27,6 +27,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
@@ -469,9 +469,9 @@ TEST_P(KernelThunkTmaPTXTest, TmaPTX) {
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
 
-  auto execute_params =
-      Thunk::ExecuteParams::Create(run_options, buffer_allocations,
-                                   stream.get(), nullptr, nullptr, nullptr, {});
+  auto execute_params = Thunk::ExecuteParams::Create(
+      run_options, buffer_allocations, stream.get(), nullptr, nullptr, nullptr,
+      nullptr, {});
 
   const bool use_command_buffer = GetParam();
 

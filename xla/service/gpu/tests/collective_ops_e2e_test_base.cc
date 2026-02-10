@@ -81,8 +81,7 @@ void CollectiveOpsE2ETestBase::SetupHloRunner(size_t memory_size,
   options.allocator_config.kind = xla::GpuAllocatorConfig::Kind::kBFC;
   options.allocator_config.gpu_system_memory_size = memory_size;
   options.allocator_config.collective_memory_size = collectives_memory_size;
-  options.use_tfrt_gpu_client =
-      std::getenv("XLA_TEST_USE_STREAM_EXECUTOR_GPU_CLIENT") == nullptr;
+  options.use_tfrt_gpu_client = true;
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> pjrt_client,
                        xla::GetXlaPjrtGpuClient(options));
 

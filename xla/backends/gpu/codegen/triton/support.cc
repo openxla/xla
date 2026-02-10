@@ -733,8 +733,19 @@ CodegenDecision IsTritonSupportedInstructionImpl(
         return CodegenDecision::Forbid(
             "only bitcasts with the same number of elements are supported");
       }
-      return CodegenDecision(instr.shape().element_type() != S4,
-                             "S4 is not supported.");
+      // With Triton we use i1 type for PRED, while on HLO level we assume that
+      // PRED takes 8 bits.
+      {
+        PrimitiveType operand_type = instr.operand(0)->shape().element_type();
+        PrimitiveType result_type = instr.shape().element_type();
+        if (result_type != operand_type &&
+            (result_type == PRED || operand_type == PRED)) {
+          return CodegenDecision::Forbid(
+              "bitcasts with different element types are not supported if PRED "
+              "is involved");
+        }
+        return CodegenDecision(result_type != S4, "S4 is not supported.");
+      }
     case HloOpcode::kBroadcast:
     case HloOpcode::kReshape:
     case HloOpcode::kSlice:

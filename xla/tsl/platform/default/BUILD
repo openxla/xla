@@ -220,6 +220,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:load_library",
+        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:thread_annotations",
     ],

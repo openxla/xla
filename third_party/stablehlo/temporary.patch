@@ -12,7 +12,7 @@ diff --ruN a/stablehlo/BUILD.bazel b/stablehlo/BUILD.bazel
 diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.cpp b/stablehlo/stablehlo/dialect/ChloOps.cpp
 --- stablehlo/stablehlo/dialect/ChloOps.cpp
 +++ stablehlo/stablehlo/dialect/ChloOps.cpp
-@@ -781,6 +781,220 @@
+@@ -781,6 +781,218 @@
    return success();
  }
  
@@ -101,10 +101,8 @@ diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.cpp b/stablehlo/stablehlo/diale
 +}
 +
 +LogicalResult ScanOp::verify() {
-+  if (getInits().size() != getCarries().size()) {
-+    return emitOpError() << "requires the number of inits ("
-+                         << getInits().size() << ") and carries ("
-+                         << getCarries().size() << ") to be equal";
++  if (getInputs().empty() && getOutputs().empty()) {
++    return emitOpError() << "at least one of inputs or outputs must be present";
 +  }
 +
 +  // Check that the scan dimension is in bounds for all operands. Also check
@@ -244,7 +242,7 @@ diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.td b/stablehlo/stablehlo/dialec
  include "mlir/IR/OpBase.td"
  include "mlir/Interfaces/ControlFlowInterfaces.td"
  include "mlir/Interfaces/InferTypeOpInterface.td"
-@@ -934,4 +935,53 @@
+@@ -934,4 +935,56 @@
    }];
  }
  
@@ -291,6 +289,9 @@ diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.td b/stablehlo/stablehlo/dialec
 +        setNameFn(region.getArgument(i), i < getInputs().size() ? "input" : "carry");
 +      }
 +    }
++    static bool isCompatibleReturnTypes(TypeRange l, TypeRange r) {
++      return succeeded(mlir::verifyCompatibleShapes(l, r));
++    }
 +  }];
 +
 +  let hasCustomAssemblyFormat = 1;
@@ -298,6 +299,148 @@ diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.td b/stablehlo/stablehlo/dialec
 +}
 +
  #endif  // STABLEHLO_DIALECT_CHLO_OPS
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.cpp b/stablehlo/stablehlo/dialect/StablehloOps.cpp
+--- stablehlo/stablehlo/dialect/StablehloOps.cpp
++++ stablehlo/stablehlo/dialect/StablehloOps.cpp
+@@ -47,6 +47,7 @@
+ #include "llvm/ADT/TypeSwitch.h"
+ #include "llvm/ADT/iterator_range.h"
+ #include "llvm/Support/Casting.h"
++#include "llvm/Support/Debug.h"
+ #include "llvm/Support/FormatVariadic.h"
+ #include "llvm/Support/LogicalResult.h"
+ #include "llvm/Support/MathExtras.h"
+@@ -91,6 +92,8 @@
+ #include "stablehlo/dialect/StablehloOps.h.inc"
+ #include "stablehlo/dialect/TypeInference.h"
+ 
++#define DEBUG_TYPE "stablehlo"
++
+ // Include order matters
+ #define GET_TYPEDEF_CLASSES
+ #include "stablehlo/dialect/StablehloTypeDefs.cpp.inc"
+@@ -729,6 +732,16 @@
+                           getPrecisionConfig(), getResult());
+ }
+ 
++LogicalResult DotOp::inferReturnTypeComponents(
++    MLIRContext*, std::optional<Location> location, ValueShapeRange operands,
++    DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
++    SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
++  DotOp::Adaptor adaptor(operands, attributes, properties, regions);
++  auto lhsType = mlir::cast<RankedTensorType>(adaptor.getLhs().getType());
++  auto rhsType = mlir::cast<RankedTensorType>(adaptor.getRhs().getType());
++  return hlo::inferDotOp(location, lhsType, rhsType, {}, inferredReturnShapes);
++}
++
+ // PrecisionConfig - std::optional attribute, print the array as raw enums
+ //
+ // {precision_config = [#stablehlo<precision DEFAULT>,
+@@ -856,6 +869,35 @@
+       getDotDimensionNumbersAttr().getRhsContractingDimensions(),
+       getPrecisionConfig(), isDefaultPrecisionConfig, hasAlgorithmSpecified,
+       getResult());
++}
++
++LogicalResult DotGeneralOp::inferReturnTypeComponents(
++    MLIRContext*, std::optional<Location> location, ValueShapeRange operands,
++    DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
++    SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
++  DotGeneralOp::Adaptor adaptor(operands, attributes, properties, regions);
++  LLVM_DEBUG(llvm::dbgs() << "DotGeneralOp::inferReturnTypeComponents\n");
++  LLVM_DEBUG(llvm::dbgs() << "attributes: " << attributes << "\n");
++  LLVM_DEBUG(llvm::dbgs() << "properties: " << properties << "\n");
++
++  ArrayRef<int64_t> lhsBatchingDimensions;
++  ArrayRef<int64_t> rhsBatchingDimensions;
++  ArrayRef<int64_t> lhsContractingDimensions;
++  ArrayRef<int64_t> rhsContractingDimensions;
++  if (adaptor.getDotDimensionNumbersAttr()) {
++    lhsBatchingDimensions =
++        adaptor.getDotDimensionNumbersAttr().getLhsBatchingDimensions();
++    rhsBatchingDimensions =
++        adaptor.getDotDimensionNumbersAttr().getRhsBatchingDimensions();
++    lhsContractingDimensions =
++        adaptor.getDotDimensionNumbersAttr().getLhsContractingDimensions();
++    rhsContractingDimensions =
++        adaptor.getDotDimensionNumbersAttr().getRhsContractingDimensions();
++  }
++  return hlo::inferDotGeneralOp(
++      location, adaptor.getLhs().getType(), adaptor.getRhs().getType(),
++      lhsBatchingDimensions, rhsBatchingDimensions, lhsContractingDimensions,
++      rhsContractingDimensions, {}, inferredReturnShapes);
+ }
+ 
+ LogicalResult DotGeneralOp::reifyReturnTypeShapes(
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.td b/stablehlo/stablehlo/dialect/StablehloOps.td
+--- stablehlo/stablehlo/dialect/StablehloOps.td
++++ stablehlo/stablehlo/dialect/StablehloOps.td
+@@ -56,9 +56,9 @@
+ include "stablehlo/dialect/StablehloAttrs.td"
+ include "stablehlo/dialect/StablehloTypes.td"
+ 
+-class StableHLO_ShapedInterfaceOp<string mnemonic, list<Trait> traits> :
++class StableHLO_ShapedInterfaceOp<string mnemonic, list<Trait> traits, list<string> extraMethodOverrides = []> :
+     StableHLO_Op<mnemonic, traits # [DeclareOpInterfaceMethods<InferShapedTypeOpInterface,
+-    ["reifyReturnTypeShapes"]>]> {}
++    ["reifyReturnTypeShapes"] # extraMethodOverrides>]> {}
+ 
+ class StableHLO_ResourceBase<string resourceKind> :
+     Resource<!strconcat("::mlir::stablehlo::side_effects::", resourceKind)> {}
+@@ -2557,7 +2557,7 @@
+   }];
+ }
+ 
+-def StableHLO_DotOp: StableHLO_Op<"dot", [Pure]> {
++def StableHLO_DotOp: StableHLO_Op<"dot", [Pure, DeclareOpInterfaceMethods<InferShapedTypeOpInterface, ["inferReturnTypeComponents"]>]> {
+   let summary = "Dot operation";
+   let description = [{
+     This operation is on its way out of StableHLO, so it is not included in
+@@ -2587,7 +2587,8 @@
+ }
+ 
+ def StableHLO_DotGeneralOp: StableHLO_ShapedInterfaceOp<"dot_general",
+-    [ConditionallySpeculatable, NoMemoryEffect]> {
++    [ConditionallySpeculatable, NoMemoryEffect,
++     DeclareOpInterfaceMethods<InferShapedTypeOpInterface, ["inferReturnTypeComponents"]>]> {
+   let summary = "DotGeneral operation";
+   let description = [{
+     Computes dot products between slices of `lhs` and slices of `rhs` and
+diff --ruN a/stablehlo/stablehlo/dialect/TypeInference.cpp b/stablehlo/stablehlo/dialect/TypeInference.cpp
+--- stablehlo/stablehlo/dialect/TypeInference.cpp
++++ stablehlo/stablehlo/dialect/TypeInference.cpp
+@@ -48,6 +48,7 @@
+ #include "llvm/ADT/StringRef.h"
+ #include "llvm/ADT/Twine.h"
+ #include "llvm/ADT/iterator_range.h"
++#include "llvm/Support/Debug.h"
+ #include "llvm/Support/MathExtras.h"
+ #include "llvm/Support/Regex.h"
+ #include "llvm/Support/raw_ostream.h"
+@@ -74,6 +75,8 @@
+ #include "stablehlo/dialect/AssemblyFormat.h"
+ #include "stablehlo/dialect/Base.h"
+ 
++#define DEBUG_TYPE "stablehlo-type-inference"
++
+ namespace mlir {
+ namespace hlo {
+ namespace {
+@@ -1246,9 +1249,11 @@
+   if (!arrayAttr) return success();
+   return arrayAttr.size() <= 2
+              ? success()
+-             : emitOptionalError(loc,
+-                                 "expects precision config to be empty or have "
+-                                 "<= 2 elements.");
++             : emitOptionalError(
++                   loc,
++                   "expects precision config to be empty or have "
++                   "<= 2 elements, got " +
++                       std::to_string(arrayAttr.getValue().size()));
+ }
+ 
+ LogicalResult verifyConvolutionAttributes(
 diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.cpp b/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.cpp
 --- stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.cpp
 +++ stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilder.cpp
@@ -466,6 +609,119 @@ diff --ruN a/stablehlo/stablehlo/integrations/cpp/builder/StablehloBuilderTest.c
    }
  
    OwningOpRef<ModuleOp> module = mb->build();
+diff --ruN a/stablehlo/stablehlo/tests/TestUtils.cpp b/stablehlo/stablehlo/tests/TestUtils.cpp
+--- stablehlo/stablehlo/tests/TestUtils.cpp
++++ stablehlo/stablehlo/tests/TestUtils.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include "stablehlo/tests/TestUtils.h"
+ 
++#include <cstdint>
+ #include <utility>
+ 
+ #include "llvm/ADT/STLExtras.h"
+@@ -25,6 +26,7 @@
+ #include "mlir/Dialect/Shape/IR/Shape.h"
+ #include "mlir/IR/Attributes.h"
+ #include "mlir/IR/BuiltinAttributes.h"
++#include "mlir/IR/BuiltinTypes.h"
+ #include "mlir/IR/MLIRContext.h"
+ #include "mlir/IR/Operation.h"
+ #include "mlir/IR/OperationSupport.h"
+@@ -114,6 +116,54 @@
+   }
+ };
+ 
++struct InferReturnShapedTypesPattern : public RewritePattern {
++  explicit InferReturnShapedTypesPattern(MLIRContext* context)
++      : RewritePattern("hlo_test_infer.get_return_type_components", 1,
++                       context) {}
++  LogicalResult matchAndRewrite(Operation* op,
++                                PatternRewriter& rewriter) const override {
++    if (op->getNumOperands() != 1) return failure();
++    auto* definingOp = op->getOperand(0).getDefiningOp();
++    auto definingOpInt =
++        llvm::dyn_cast_or_null<InferShapedTypeOpInterface>(definingOp);
++    if (!definingOpInt)
++      return rewriter.notifyMatchFailure(
++          op, "doesn't implement InferShapedTypeOpInterface");
++
++    SmallVector<ShapedTypeComponents> inferredComponents;
++    if (failed(definingOpInt.inferReturnTypeComponents(
++            op->getContext(), op->getLoc(), definingOp->getOperands(),
++            op->getAttrDictionary(), op->getPropertiesStorage(),
++            op->getRegions(), inferredComponents)))
++      return rewriter.notifyMatchFailure(op,
++                                         "failed to infer return shaped types");
++
++    // Replace the op with another pass-through op with attributes added.
++    OperationState state(op->getLoc(), "hlo_test_infer.return_type_components",
++                         op->getOperands(), op->getResultTypes(),
++                         op->getAttrs());
++    auto* newOp = rewriter.create(state);
++    for (const auto& it : llvm::enumerate(inferredComponents))
++      newOp->setAttr((StringRef("types") + Twine(it.index())).str(),
++                     componentToAttribute(it.value(), rewriter));
++    rewriter.replaceOp(op, {newOp->getResults()});
++    return success();
++  }
++  Attribute componentToAttribute(const ShapedTypeComponents& component,
++                                 PatternRewriter& rewriter) const {
++    SmallVector<NamedAttribute, 2> attrs;
++    // Dummy tensor of index type with the same rank as the shaped type.
++    // use tensor so we get `?` in the printing for dynamic dims
++    ArrayRef<int64_t> shape = component.getDims();
++    Type elementType = component.getElementType();
++    Attribute encoding = component.getAttribute();
++    if (!elementType) {
++      elementType = rewriter.getIndexType();
++    }
++    return TypeAttr::get(RankedTensorType::get(shape, elementType, encoding));
++  }
++};
++
+ LogicalResult checkSpeculatability(PatternRewriter& rewriter, Operation* op,
+                                    mlir::Speculation::Speculatability spec) {
+   if (op->getNumOperands() != 1) return failure();
+@@ -190,6 +240,7 @@
+     RewritePatternSet patterns(context);
+     patterns.add<InferReturnTypesPattern>(context);
+     patterns.add<ReifyReturnTypeShapesPattern>(context);
++    patterns.add<InferReturnShapedTypesPattern>(context);
+     patterns_ = std::move(patterns);
+     return success();
+   }
+diff --ruN a/stablehlo/stablehlo/tests/infer_stablehlo.mlir b/stablehlo/stablehlo/tests/infer_stablehlo.mlir
+--- stablehlo/stablehlo/tests/infer_stablehlo.mlir
++++ stablehlo/stablehlo/tests/infer_stablehlo.mlir
+@@ -1807,7 +1807,8 @@
+ // CHECK-LABEL: func @dot_bounds
+ func.func @dot_bounds(%arg0: tensor<?x12xf32, #stablehlo.bounds<64, ?>>, %arg1: tensor<12x?xf32, #stablehlo.bounds<?, 64>>) -> tensor<?x?xf32, #stablehlo.bounds<64, 64>> {
+   %0 = stablehlo.dot %arg0, %arg1, precision = [HIGHEST, HIGHEST] : (tensor<?x12xf32, #stablehlo.bounds<64, ?>>, tensor<12x?xf32, #stablehlo.bounds<?, 64>>) -> tensor<?x?xf32, #stablehlo.bounds<64, 64>>
+-  // CHECK: return {{.*}} : tensor<?x?xf32, #stablehlo.bounds<64, 64>>
++  // CHECK: types0 = tensor<?x?xindex, #stablehlo.bounds<64, 64>>
++  %1 = "hlo_test_infer.get_return_type_components"(%0): (tensor<?x?xf32, #stablehlo.bounds<64, 64>>) -> tensor<2xindex>
+   return %0 : tensor<?x?xf32, #stablehlo.bounds<64, 64>>
+ }
+ 
+@@ -1833,6 +1834,17 @@
+   } : (tensor<?x?x?xf32>, tensor<?x?x?xf32>) -> tensor<?x?x?xf32>
+   %1 = "hlo_test_infer.reify_return_type_shapes"(%result): (tensor<?x?x?xf32>) -> tensor<3xindex>
+   func.return %1: tensor<3xindex>
++}
++
++// -----
++
++// CHECK-LABEL: func @dot_general_bounds
++func.func @dot_general_bounds(%arg0: tensor<?x12xf32, #stablehlo.bounds<64, ?>>, %arg1: tensor<12x?xf32, #stablehlo.bounds<?, 64>>) -> tensor<?x?xf32, #stablehlo.bounds<64, 64>> {
++  %0 = stablehlo.dot_general %arg0, %arg1, contracting_dims = [1] x [0], precision = [HIGHEST, HIGHEST] : (tensor<?x12xf32, #stablehlo.bounds<64, ?>>, tensor<12x?xf32, #stablehlo.bounds<?, 64>>) -> tensor<?x?xf32, #stablehlo.bounds<64, 64>>
++  // TODO: This should preserve the bounds as well
++  // CHECK: types0 = tensor<?x12x12x?xindex>
++  %1 = "hlo_test_infer.get_return_type_components"(%0): (tensor<?x?xf32, #stablehlo.bounds<64, 64>>) -> tensor<2xindex>
++  return %0 : tensor<?x?xf32, #stablehlo.bounds<64, 64>>
+ }
+ 
+ // -----
 diff --ruN a/stablehlo/stablehlo/tests/ops_chlo.mlir b/stablehlo/stablehlo/tests/ops_chlo.mlir
 --- stablehlo/stablehlo/tests/ops_chlo.mlir
 +++ stablehlo/stablehlo/tests/ops_chlo.mlir

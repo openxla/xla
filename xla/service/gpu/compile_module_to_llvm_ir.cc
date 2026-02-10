@@ -127,7 +127,7 @@ CompileModuleResults InitializeResults(const HloModule* hlo_module) {
   results.execution_stream_assignment =
       std::make_unique<ExecutionStreamAssignment>(
           hlo_module,
-          ExecutionStreamAssignmentOptions{
+          ExecutionStreamAssignment::Options{
               kNumComputeStreams,
               /*number_of_collective_execution_streams=*/
               hlo_module->config()

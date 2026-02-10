@@ -694,7 +694,10 @@ ENTRY main {
   const HloInstruction* root =
       triton_enabled_module->entry_computation()->root_instruction();
   const HloInstruction* custom_op = root->operand(0)->operand(0);
-  EXPECT_TRUE(custom_op->IsCustomCall("__cublas$gemm"));
+  bool is_cublas_gemm = GetDebugOptionsForTest().xla_gpu_enable_cublaslt()
+                            ? custom_op->IsCustomCall("__cublas$lt$matmul")
+                            : custom_op->IsCustomCall("__cublas$gemm");
+  EXPECT_TRUE(is_cublas_gemm) << custom_op->ToString();
   // Make sure that the module has the same number of computations with/without
   // enabling triton gemm
   EXPECT_EQ(triton_enabled_module->computation_count(),
@@ -815,7 +818,7 @@ ENTRY main {
       R"(CHECK: custom-call($0{{[^)]*}}, $1{{[^)]*}}){{.*}}custom_call_target="__cublas$$lt$$matmul$$f8")",
       lhs_name, rhs_name);
   const std::string cublas_convert_to_f16 =
-      R"(CHECK: custom-call(f16{{[^)]*}}, f16{{[^)]*}}){{.*}}custom_call_target="__cublas$gemm")";
+      R"(CHECK: custom-call(f16{{.*}}, f16{{.*}}){{.*}}custom_call_target="{{__cublas\$gemm|__cublas\$lt\$matmul}}")";
   const std::string fallback_convert_to_f16 =
       R"(CHECK: dot(f16{{[^)]*}}, f16{{[^)]*}}))";
 

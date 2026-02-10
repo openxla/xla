@@ -122,7 +122,7 @@ bool IsCollectiveCommand(CommandType type);
 // done with a state manager.
 class Command {
  public:
-  using BufferUseVector = absl::InlinedVector<BufferUse, 4>;
+  using BufferUses = Thunk::BufferUses;
   using ResourceUseVector = absl::InlinedVector<ResourceUse, 1>;
 
  public:
@@ -146,7 +146,7 @@ class Command {
     // rely on this information to skip unnecessary updates.
     std::optional<std::vector<BufferAllocation::Index>> updated_allocs;
 
-    // A flag indicating whether we record comands at command buffer thunk
+    // A flag indicating whether we record commands at command buffer thunk
     // initialization time.
     bool is_initialization = false;
 
@@ -213,7 +213,7 @@ class Command {
 
   // Returns true if command supports loop unroll, the while loop can be
   // unrolled only if it has pre-known trip count and also all commands from the
-  // body commands are unrollable..
+  // body commands are unrollable.
   virtual bool support_loop_unroll() { return true; }
 
   // This is only true for DynamicSliceCopyFusionCmd when offset is dependents
@@ -224,7 +224,7 @@ class Command {
 
   // Returns all buffers used by the cmd. These will be used to track cmd
   // updates, thus they need to be consistent across calls to the function.
-  virtual BufferUseVector buffers() const { return {}; }
+  virtual BufferUses buffer_uses() const { return {}; }
 
   std::shared_ptr<Resource> token() const { return token_; }
 

@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/tsl/util/safe_reinterpret_cast.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 
@@ -88,14 +89,14 @@ bool IsAtLeastCuda12900(const se::StreamExecutor* stream_executor) {
 
 // Give a short alias to synchronization mode.
 static constexpr auto serialize =
-    CommandBufferCmdExecutor::SynchronizationMode::kSerialize;
+    CommandExecutor::SynchronizationMode::kSerialize;
 
 // A command buffer cmd for testing automatic barriers insertion by the command
 // buffer cmd commands. We never execute this command, we need it only to pass
 // buffer usage vector to the command buffer cmd commands.
 struct TestOnlyCommandBufferCmd : public Command {
-  explicit TestOnlyCommandBufferCmd(Command::BufferUseVector buffer_usage)
-      : Command(CommandType::kEmptyCmd, {}), buffer_usage(buffer_usage) {}
+  explicit TestOnlyCommandBufferCmd(Command::BufferUses buffers)
+      : Command(CommandType::kEmptyCmd, {}), buffers(buffers) {}
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction,
@@ -103,9 +104,9 @@ struct TestOnlyCommandBufferCmd : public Command {
     return nullptr;
   }
 
-  BufferUseVector buffers() const override { return buffer_usage; }
+  BufferUses buffer_uses() const override { return buffers; }
 
-  BufferUseVector buffer_usage;
+  BufferUses buffers;
 };
 
 class FakeCmd : public Command {
@@ -118,7 +119,7 @@ class FakeCmd : public Command {
     return nullptr;
   }
 
-  BufferUseVector buffers() const override { return BufferUseVector{}; }
+  BufferUses buffer_uses() const override { return BufferUses{}; }
 };
 
 TEST(CommandBufferCmdStateManageTest, GetOrCreateState) {
@@ -174,11 +175,11 @@ TEST(CommandBufferCmdTest, SerializeExecution) {
   auto use1 = BufferUse::Read(slice1, shape);
 
   CommandSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUseVector{use1});
+  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
   TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor executor,
-      CommandBufferCmdExecutor::Create(std::move(commands), serialize));
+      CommandExecutor executor,
+      CommandExecutor::Create(std::move(commands), serialize));
 
   // TODO(ezhulenev): Check that executor correctly infer dependencies.
 }
@@ -195,11 +196,11 @@ TEST(CommandBufferCmdTest, NoReadBarrier) {
   auto use1 = BufferUse::Read(slice1, shape);
 
   CommandSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUseVector{use1});
+  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
   TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor executor,
-      CommandBufferCmdExecutor::Create(std::move(commands), serialize));
+      CommandExecutor executor,
+      CommandExecutor::Create(std::move(commands), serialize));
 
   // TODO(ezhulenev): Check that executor correctly infer dependencies.
 }
@@ -216,11 +217,11 @@ TEST(CommandBufferCmdTest, NoWriteBarrier) {
   auto use1 = BufferUse::Write(slice1, shape);
 
   CommandSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUseVector{use1});
+  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
   TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor executor,
-      CommandBufferCmdExecutor::Create(std::move(commands), serialize));
+      CommandExecutor executor,
+      CommandExecutor::Create(std::move(commands), serialize));
 
   // TODO(ezhulenev): Check that executor correctly infer dependencies.
 }
@@ -239,12 +240,12 @@ TEST(CommandBufferCmdTest, WriteConflictBarrier) {
   auto use2 = BufferUse::Write(slice1, shape);
 
   CommandSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUseVector{use1});
-  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUseVector{use2});
+  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use1});
+  commands.Emplace<TestOnlyCommandBufferCmd>(Command::BufferUses{use2});
   TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor executor,
-      CommandBufferCmdExecutor::Create(std::move(commands), serialize));
+      CommandExecutor executor,
+      CommandExecutor::Create(std::move(commands), serialize));
 
   // TODO(ezhulenev): Check that executor correctly infer dependencies.
 }
@@ -278,18 +279,18 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
   commands.Emplace<MemcpyDeviceToDeviceCmd>(
       ShapedSlice{slice_b, shape}, ShapedSlice{slice_a, shape}, byte_length);
   TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor executor,
-      CommandBufferCmdExecutor::Create(std::move(commands), serialize));
+      CommandExecutor executor,
+      CommandExecutor::Create(std::move(commands), serialize));
 
   ServiceExecutableRunOptions run_options;
   se::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
+
   CommandStateManager state;
-
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
-
   Command::RecordParams record_params = {state};
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -344,8 +345,8 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
                               LaunchDimensions(1, 4),
                               /*shmem_bytes=*/0);
   TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor executor,
-      CommandBufferCmdExecutor::Create(std::move(commands), serialize));
+      CommandExecutor executor,
+      CommandExecutor::Create(std::move(commands), serialize));
 
   // Initialize command commands and load device kernels.
   TF_ASSERT_OK_AND_ASSIGN(
@@ -360,8 +361,9 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   se::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -419,8 +421,8 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
   commands.back()->set_priority(se::StreamPriority::Highest);
 
   TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor executor,
-      CommandBufferCmdExecutor::Create(std::move(commands), serialize));
+      CommandExecutor executor,
+      CommandExecutor::Create(std::move(commands), serialize));
 
   // Initialize command commands and load device kernels.
   TF_ASSERT_OK_AND_ASSIGN(
@@ -435,8 +437,9 @@ TEST(CommandBufferCmdTest, LaunchCmdWithPriority) {
   se::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -488,18 +491,18 @@ TEST(CommandBufferCmdTest, DynamicSliceCopyFusionCmd) {
       ShapedSlice{slice_a, shape}, ShapedSlice{slice_b, shape}, 16,
       DynamicMemcpyThunk::Offsets{false, {16}, {16}});
   TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor executor,
-      CommandBufferCmdExecutor::Create(std::move(commands), serialize));
+      CommandExecutor executor,
+      CommandExecutor::Create(std::move(commands), serialize));
 
   ServiceExecutableRunOptions run_options;
   se::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
+
   CommandStateManager state;
-
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
-
   Command::RecordParams record_params = {state};
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -527,7 +530,7 @@ TEST(TracedCommandBuffer, GetOrUpdateCommandBuffer) {
     BufferAllocation alloc1(/*index=*/1, /*size=*/1024, /*color=*/0);
 
     Shape shape = ShapeUtil::MakeShape(U8, {1024});
-    Command::BufferUseVector buffers = {
+    Command::BufferUses buffers = {
         BufferUse::Read(BufferAllocation::Slice(&alloc0, 0, 1024), shape),
         BufferUse::Write(BufferAllocation::Slice(&alloc1, 0, 1024), shape)};
 
@@ -643,9 +646,8 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   // Executor A: a = 1 (memset)
   CommandSequence seq_a;
   seq_a.Emplace<Memset32Cmd>(slice_a, /*bit_pattern=*/1);
-  TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor exec_a,
-      CommandBufferCmdExecutor::Create(std::move(seq_a), serialize));
+  TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_a,
+                          CommandExecutor::Create(std::move(seq_a), serialize));
 
   // Executor B: b = a + a (launch kernel AddI32)
   CommandSequence seq_b;
@@ -658,17 +660,15 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
     seq_b.Emplace<LaunchCmd>("AddI32", absl::MakeConstSpan(args), args_access,
                              LaunchDimensions(1, 4), /*shmem_bytes=*/0);
   }
-  TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor exec_b,
-      CommandBufferCmdExecutor::Create(std::move(seq_b), serialize));
+  TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_b,
+                          CommandExecutor::Create(std::move(seq_b), serialize));
 
   // Executor C: c = b (memcpy)
   CommandSequence seq_c;
   seq_c.Emplace<MemcpyDeviceToDeviceCmd>(
       ShapedSlice{slice_c, shape}, ShapedSlice{slice_b, shape}, byte_length);
-  TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor exec_c,
-      CommandBufferCmdExecutor::Create(std::move(seq_c), serialize));
+  TF_ASSERT_OK_AND_ASSIGN(CommandExecutor exec_c,
+                          CommandExecutor::Create(std::move(seq_c), serialize));
 
   // Initialize executors (B needs kernel fatbin).
   TF_ASSERT_OK_AND_ASSIGN(
@@ -686,8 +686,9 @@ TEST(CommandBufferCmdTest, RecordExecutorsWithDependencies) {
   se::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b, c}, 0, &allocator);
 
-  Thunk::ExecuteParams exec_params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams exec_params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -761,8 +762,8 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   inner_seq.Emplace<MemcpyDeviceToDeviceCmd>(
       ShapedSlice{slice_c, shape}, ShapedSlice{slice_a, shape}, byte_length);
   TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor inner_executor,
-      CommandBufferCmdExecutor::Create(std::move(inner_seq), serialize));
+      CommandExecutor inner_executor,
+      CommandExecutor::Create(std::move(inner_seq), serialize));
 
   // Middle child wraps inner.
   CommandSequence middle_seq;
@@ -771,8 +772,8 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   middle_seq.Emplace<Memset32Cmd>(slice_b, /*bit_pattern=*/3);
   middle_seq.Emplace<Memset32Cmd>(slice_b, /*bit_pattern=*/5);
   TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor middle_executor,
-      CommandBufferCmdExecutor::Create(std::move(middle_seq), serialize));
+      CommandExecutor middle_executor,
+      CommandExecutor::Create(std::move(middle_seq), serialize));
 
   // Outer child wraps middle.
   CommandSequence outer_seq;
@@ -781,8 +782,8 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   outer_seq.Emplace<MemzeroCmd>(ShapedSlice{slice_b, shape});
   outer_seq.Emplace<EmptyCmd>();
   TF_ASSERT_OK_AND_ASSIGN(
-      CommandBufferCmdExecutor outer_executor,
-      CommandBufferCmdExecutor::Create(std::move(outer_seq), serialize));
+      CommandExecutor outer_executor,
+      CommandExecutor::Create(std::move(outer_seq), serialize));
 
   // Prepare state and params; ChildCmd requires initialization to create a
   // nested buffer.
@@ -794,8 +795,9 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
 
   // allocations already created above
   ServiceExecutableRunOptions run_options;
-  Thunk::ExecuteParams exec_params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams exec_params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -833,8 +835,9 @@ TEST(CommandBufferCmdTest, NestedChildCmdCreateAndUpdate) {
   TF_ASSERT_OK(stream->MemZero(&c2, byte_length));
 
   BufferAllocations allocations2({a2, b, c2}, 0, &allocator);
-  Thunk::ExecuteParams exec_params2 = Thunk::ExecuteParams::Create(
-      run_options, allocations2, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams exec_params2 =
+      Thunk::ExecuteParams::Create(run_options, allocations2, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   // Indicate which allocations changed to ensure update is not skipped.
   std::vector<BufferAllocation::Index> updated_allocs = {0, 2};
@@ -873,7 +876,7 @@ static void BM_GetOrTraceCommandBuffer(benchmark::State& state) {
   BufferAllocation alloc1(/*index=*/1, /*size=*/1024, /*color=*/0);
 
   Shape shape = ShapeUtil::MakeShape(U8, {1024});
-  Command::BufferUseVector buffers = {
+  Command::BufferUses buffers = {
       BufferUse::Read(BufferAllocation::Slice(&alloc0, 0, 1024), shape),
       BufferUse::Write(BufferAllocation::Slice(&alloc1, 0, 1024), shape)};
 

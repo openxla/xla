@@ -61,6 +61,9 @@ class CopyThunk : public Thunk {
         ABSL_GUARDED_BY(mutex_);
   };
 
+  using AsyncEventsMap =
+      absl::flat_hash_map<AsyncEventsUniqueId, std::shared_ptr<AsyncEvents>>;
+
   CopyThunk(ThunkInfo thunk_info, const ShapedSlice& source_buffer,
             const ShapedSlice& destination_buffer, int64_t mem_size);
 

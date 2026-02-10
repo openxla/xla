@@ -63,6 +63,7 @@ class CommonPjRtClient : public PjRtClient {
   // Some clients do not support recursion eg: calling to_literal in host
   // callbacks. Those clients should return false here.
   virtual bool allows_recursion() const { return true; }
+  virtual bool allows_execute_recursion() const { return allows_recursion(); }
 
   // Backend specific handlers for when an oom is detected during execute.
   virtual void CallOomHandlers() const {}

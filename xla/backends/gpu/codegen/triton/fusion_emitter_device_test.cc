@@ -36,12 +36,15 @@ limitations under the License.
 #include "Eigen/Core"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/TargetParser/Triple.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/PassManager.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
+#include "xla/backends/gpu/codegen/triton/xtile_test_base.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -87,7 +90,7 @@ const HloFusionInstruction& GetFusionInstruction(
 
 constexpr ErrorSpec kExactMatch{/*aabs=*/0, /*arel=*/0};
 
-class TritonEmitterTest : public GpuCodegenTest {
+class TritonEmitterTest : public GpuCodegenTest, public XTileTestBase {
  public:
   const stream_executor::GpuComputeCapability& GpuComputeCapability() {
     return backend()
@@ -100,6 +103,32 @@ class TritonEmitterTest : public GpuCodegenTest {
         .default_stream_executor()
         ->GetDeviceDescription()
         .cuda_compute_capability();
+  }
+  absl::StatusOr<
+      std::pair<mlir::OwningOpRef<mlir::ModuleOp>, std::unique_ptr<HloModule>>>
+  CreateXTileIrAndFileCheck(absl::string_view hlo_text,
+                            absl::string_view triton_fusion_name,
+                            absl::string_view filecheck_pattern) {
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+                        ParseAndReturnVerifiedModule(hlo_text));
+    return XTileTestBase::CreateXTileIrAndFileCheck(
+        std::move(module), triton_fusion_name, filecheck_pattern);
+  }
+  absl::Status CreateTritonIrFromHloTextAndFileCheck(
+      absl::string_view hlo_text, absl::string_view triton_fusion_name,
+      absl::string_view filecheck_pattern) {
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+                        ParseAndReturnVerifiedModule(hlo_text));
+    return CreateTritonIrAndFileCheck(module.get(), triton_fusion_name,
+                                      filecheck_pattern);
+  }
+  absl::Status CreateTritonIrFromHloTextAndFileCheckForDot(
+      absl::string_view hlo_text, absl::string_view triton_fusion_name,
+      absl::string_view filecheck_pattern) {
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+                        ParseAndReturnVerifiedModule(hlo_text));
+    return CreateTritonIrAndFileCheckForDot(module.get(), triton_fusion_name,
+                                            filecheck_pattern);
   }
 };
 
@@ -236,7 +265,8 @@ ENTRY %main {
         "num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_convert", R"(
+  TF_EXPECT_OK(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_convert", R"(
 CHECK: %[[CST:.*]] = arith.constant dense<0>
 CHECK: arith.cmpi ne, %{{.*}}, %[[CST]]
 )"));
@@ -264,7 +294,7 @@ ENTRY main {
         "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_add", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_add", R"(
 CHECK: arith.ori {{.*}} : i1
 )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
@@ -318,7 +348,7 @@ ENTRY main {
         "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_div", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_div", R"(
 CHECK-NOT: arith.constant
 CHECK: arith.divsi {{.*}} : i32
 )"));
@@ -345,7 +375,7 @@ ENTRY main {
         "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_div", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_div", R"(
 CHECK-COUNT-1: arith.constant
 CHECK: arith.divsi {{.*}} : i32
 )"));
@@ -371,7 +401,7 @@ ENTRY main {
         "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_div", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_div", R"(
 CHECK-COUNT-2: arith.constant
 CHECK: arith.divsi {{.*}} : i32
 )"));
@@ -399,7 +429,7 @@ ENTRY main {
         "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_div", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_div", R"(
 CHECK: arith.divsi {{.*}} : i32
 )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
@@ -424,7 +454,7 @@ ENTRY main {
         "num_ctas":1,"num_stages":1,"is_tma_allowed":false}}}
 }
 )";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText, "fused_not", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_not", R"(
 CHECK: arith.constant dense<-1>
 CHECK: arith.xori
 )"));
@@ -463,12 +493,12 @@ ENTRY entry_computation {
 })";
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "fused_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "fused_computation", R"(
 CHECK: %[[REDUCE:.*]] = stablehlo.reduce(%{{.*}} init: %{{.*}}) applies stablehlo.maximum across dimensions = [1] : (tensor<4x4xf32>, tensor<f32>) -> tensor<4xf32>
 )"));
 
   TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:  "tt.reduce"(%[[LOAD:.*]]) <{axis = 1 : i32}>
 )",
       GetFusionInstruction(*xtile_module_and_hlo_module.second,
@@ -509,7 +539,7 @@ ENTRY entry_computation {
 )";
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "fused_reduce", R"(
+      CreateXTileIrAndFileCheck(kHloText, "fused_reduce", R"(
 CHECK: stablehlo.reduce
 CHECK: reducer(%[[ARG0:.*]]: tensor<f32>, %[[ARG1:.*]]: tensor<f32>)
 CHECK:   %[[ADD:.*]] = stablehlo.add %[[ARG0]], %[[ARG1]] : tensor<f32>
@@ -518,7 +548,7 @@ CHECK:   stablehlo.return %[[MIN]] : tensor<f32>
 )"));
 
   TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK: "tt.reduce"
 CHECK: ^bb0(%[[ARG0:.*]]: f32, %[[ARG1:.*]]: f32)
 CHECK: %[[ADD:.*]] = arith.addf %[[ARG0]], %[[ARG1]]
@@ -564,7 +594,7 @@ ENTRY entry_computation {
 })";
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "fused_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "fused_computation", R"(
 CHECK-COUNT-1:  xtile.extract
 CHECK:  %[[ABS:.*]] = math.absf
 CHECK: %[[REDUCE:.*]] = stablehlo.reduce(%[[ABS]] init: %{{.*}}) applies stablehlo.maximum across dimensions = [1] : (tensor<64x512xf32>, tensor<f32>) -> tensor<64xf32>
@@ -573,7 +603,7 @@ CHECK:  xtile.insert %[[ABS]] {{.*}} : tensor<64x512xf32>
 )"));
 
   TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK-COUNT-1:  xtile.extract
 CHECK:  %[[ABS:.*]] = math.absf
 CHECK: %[[REDUCE:.*]] = "tt.reduce"(%[[ABS:.*]]) <{axis = 1 : i32}>
@@ -618,7 +648,7 @@ ENTRY entry_computation {
 })";
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "fused_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "fused_computation", R"(
 CHECK-COUNT-1:  xtile.extract
 CHECK:  %[[ABS:.*]] = math.absf
 CHECK:  %[[REDUCE:.*]] = stablehlo.reduce(%[[ABS]] init: %{{.*}}) applies stablehlo.maximum across dimensions = [0]
@@ -626,7 +656,7 @@ CHECK:  xtile.insert %[[ABS]]
 )"));
 
   TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK-COUNT-1:  xtile.extract
 CHECK:  %[[ABS:.*]] = math.absf
 CHECK:  %[[REDUCE:.*]] = "tt.reduce"(%[[ABS:.*]]) <{axis = 0 : i32}>
@@ -998,14 +1028,14 @@ ENTRY entry_computation {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "fused_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "fused_computation", R"(
 CHECK-COUNT-1:  xtile.extract
 CHECK: stablehlo.reduce
 CHECK-COUNT-2:  xtile.insert
 )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK-COUNT-1:  xtile.extract
 CHECK: tt.reduce
 CHECK-COUNT-2:  xtile.insert
@@ -1050,7 +1080,7 @@ ENTRY entry_computation {
 
 })";
   auto status =
-      CreateTritonIrAndFileCheck(this, kHloText, "fused_computation", "");
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_computation", "");
   EXPECT_THAT(
       status,
       absl_testing::StatusIs(
@@ -1089,7 +1119,7 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_reduction_computation",
+      CreateXTileIrAndFileCheck(kHloText, "triton_reduction_computation",
                                 R"(
 
         CHECK:  xtile.mask
@@ -1097,7 +1127,7 @@ ENTRY main {
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:  xtile.mask
 CHECK:  "tt.reduce"(%[[SELECT:.*]]) <{axis = 2 : i32}>
   )",
@@ -1138,7 +1168,7 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_reduction_computation",
+      CreateXTileIrAndFileCheck(kHloText, "triton_reduction_computation",
                                 R"(
 ; Make sure input reduction tile is padded with a neutral value.
 CHECK:  %[[LOAD:.*]] = xtile.extract
@@ -1147,7 +1177,7 @@ CHECK:  %[[REDUCE:.*]] = stablehlo.reduce(%[[MASKED]] init: %{{.*}}) applies sta
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 ; Make sure input reduction tile is padded with a neutral value.
 CHECK:  %[[LOAD:.*]] = xtile.extract
 CHECK:  %[[MASKED:.*]] = xtile.mask %[[LOAD]]
@@ -1194,9 +1224,9 @@ ENTRY main {
         "num_warps":"1",
         "num_ctas":"1",
         "num_stages":"1"}}}})";
-  TF_ASSERT_OK_AND_ASSIGN(auto xtile_module_and_hlo_module,
-                          CreateXTileIrAndFileCheck(
-                              this, kHloText, "triton_softmax_computation", R"(
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto xtile_module_and_hlo_module,
+      CreateXTileIrAndFileCheck(kHloText, "triton_softmax_computation", R"(
 CHECK:        xtile.entry_func @xtile_dialect_fn(%[[P0:.*]]: {{.*}}, %[[P1:.*]]: {{.*}}, %[[PID:.*]]: index)
 CHECK-DAG:        %[[EXTRACT_IDX_0:.*]] = xla.apply_indexing #indexing_map(%[[PID]])
 CHECK-NEXT:       xtile.extract %[[P0]]
@@ -1210,7 +1240,7 @@ CHECK:        }
 )"));
 
   TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:        xtile.entry_func @xtile_dialect_fn(%[[P0:.*]]: {{.*}}, %[[P1:.*]]: {{.*}}, %[[PID:.*]]: index)
 CHECK-DAG:        %[[C_0:.*]] = arith.constant 0 : index
 CHECK-NEXT:       xtile.extract %[[P0]]
@@ -1266,9 +1296,9 @@ ENTRY main {
         "num_ctas":"1",
         "num_stages":"1"}}}})";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto xtile_module_and_hlo_module,
-                          CreateXTileIrAndFileCheck(
-                              this, kHloText, "triton_softmax_computation", R"(
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto xtile_module_and_hlo_module,
+      CreateXTileIrAndFileCheck(kHloText, "triton_softmax_computation", R"(
 CHECK:         xtile.entry_func @xtile_dialect_fn(
 CHECK-SAME:                      %[[P0:[A-Za-z0-9_]*]]: memref<125x127xf32>
 CHECK-SAME:                      %[[P1:[A-Za-z0-9_]*]]: memref<127xf32>
@@ -1285,7 +1315,7 @@ CHECK-SAME:       [%[[TID]], %{{.*}}] [1, 128] [1, 1] : tensor<1x128xf32>
 )"));
 
   TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:         xtile.entry_func @xtile_dialect_fn(
 CHECK-SAME:                      %[[P0:[A-Za-z0-9_]*]]: memref<125x127xf32>
 CHECK-SAME:                      %[[P1:[A-Za-z0-9_]*]]: memref<127xf32>
@@ -1347,9 +1377,9 @@ ENTRY main {
           "num_stages":"1"}}}
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto xtile_module_and_hlo_module,
-                          CreateXTileIrAndFileCheck(
-                              this, kHloText, "triton_softmax_computation", R"(
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto xtile_module_and_hlo_module,
+      CreateXTileIrAndFileCheck(kHloText, "triton_softmax_computation", R"(
 CHECK:        #[[MAP:.*]] = #xla.indexing_map<"(pid_0) -> (pid_0 floordiv 125), domain: pid_0 in [0, 1249]">
 CHECK:        #[[MAP1:.*]] = #xla.indexing_map<"(pid_0) -> (pid_0 mod 125), domain: pid_0 in [0, 1249]">
 CHECK:        #[[C_0_MAP:.*]] = #xla.indexing_map<"(pid_0) -> (0), domain: pid_0 in [0, 1249]">
@@ -1368,7 +1398,7 @@ CHECK:            xtile.insert {{.*}} into %[[P3]]{{.*}}
 )"));
 
   TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:        #[[MAP:.*]] = #xla.indexing_map<"(pid_0) -> (pid_0 floordiv 125), domain: pid_0 in [0, 1249]">
 CHECK:        #[[MAP1:.*]] = #xla.indexing_map<"(pid_0) -> (pid_0 mod 125), domain: pid_0 in [0, 1249]">
 CHECK:        xtile.entry_func @xtile_dialect_fn(%[[P0:.*]]: {{.*}}, %[[P1:.*]]: {{.*}}, %[[P2:.*]]: {{.*}}, %[[P3:.*]]: {{.*}}, %[[TID:.*]]: index)
@@ -1567,8 +1597,8 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(kHloText));
 
-  TF_ASSERT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          "triton_softmax_computation", R"(
+  TF_ASSERT_OK(CreateTritonIrFromHloTextAndFileCheck(
+      kHloText, "triton_softmax_computation", R"(
 // CHECK:         #xla.indexing_map<"(pid_0) -> (pid_0 floordiv 32), domain: pid_0 in [0, 2047]">
 // CHECK:         #xla.indexing_map<"(pid_0) -> (pid_0 mod 32), domain: pid_0 in [0, 2047]">
 // CHECK-LABEL:   xtile.entry_func @triton_fn(
@@ -1773,7 +1803,7 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_reduction_computation",
+      CreateXTileIrAndFileCheck(kHloText, "triton_reduction_computation",
                                 R"(
 CHECK:        xtile.entry_func @xtile_dialect_fn(%[[P0:[A-Za-z0-9_]*]]: memref<125x127xf32>
 CHECK-SAME:                               %[[P1:[A-Za-z0-9_]*]]: memref<125xf32>
@@ -1786,7 +1816,7 @@ CHECK:            xtile.insert {{.*}} : tensor<1xf32>
 )"));
 
   TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:        xtile.entry_func @xtile_dialect_fn(%[[P0:[A-Za-z0-9_]*]]: memref<125x127xf32>
 CHECK-SAME:                               %[[P1:[A-Za-z0-9_]*]]: memref<125xf32>
 CHECK-SAME:                               %[[P2:[A-Za-z0-9_]*]]: memref<125xf32>
@@ -2083,12 +2113,12 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, hlo_text, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(hlo_text, "triton_computation", R"(
 CHECK: stablehlo.reshape
 )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK: tt.reshape
 )",
       GetFusionInstruction(*xtile_module_and_hlo_module.second,
@@ -2120,7 +2150,7 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 // #xla.indexing_map<"(pid_0) -> (pid_0 * 32), domain: pid_0 in [0, 1]
 
 // CHECK: xtile.entry_func @{{.*}}(
@@ -2145,7 +2175,7 @@ ENTRY main {
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 // #xla.indexing_map<"(pid_0) -> (pid_0 * 32), domain: pid_0 in [0, 1]
 
 // CHECK: xtile.entry_func @{{.*}}(%[[IN:.*]]: memref<17xf32>
@@ -2196,7 +2226,7 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 // CHECK: xtile.extract {{.*}} -> tensor<32x16xf32>
 // CHECK: stablehlo.iota dim = 0 : tensor<32xi32>
 // CHECK: stablehlo.broadcast_in_dim
@@ -2209,7 +2239,7 @@ ENTRY main {
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 // CHECK: xtile.extract {{.*}} -> tensor<32x16xf32>
 // CHECK: tt.make_range {end = 32 : i32, start = 0 : i32} : tensor<32xi32>
 // CHECK: tt.expand_dims
@@ -2249,12 +2279,12 @@ ENTRY main {
 })";
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK: stablehlo.reshape
 )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK: tt.reshape
 )",
       GetFusionInstruction(*xtile_module_and_hlo_module.second,
@@ -2435,7 +2465,7 @@ ENTRY entry_computation {
 })";
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:     xtile.extract
 CHECK-NOT: stablehlo.transpose
 CHECK:     stablehlo.reshape
@@ -2444,7 +2474,7 @@ CHECK:     xtile.insert
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:     xtile.extract
 CHECK-NOT: tt.trans
 CHECK:     tt.reshape
@@ -2479,7 +2509,7 @@ ENTRY entry_computation {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:      xtile.entry_func @xtile_dialect_fn(
 CHECK-SAME: memref<48x16xi32, #xtile.layout<[0, 1]>>
 CHECK-SAME: memref<16x16x3xi32>,
@@ -2491,7 +2521,7 @@ CHECK:      xtile.insert
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:     xtile.extract
 CHECK:     tt.trans
 CHECK:     tt.reshape
@@ -2526,7 +2556,7 @@ ENTRY entry_computation {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:     xtile.extract
 CHECK-NOT: stablehlo.transpose
 CHECK:     stablehlo.reshape
@@ -2535,7 +2565,7 @@ CHECK:     xtile.insert
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:     xtile.extract
 CHECK-NOT: tt.trans
 CHECK:     tt.reshape
@@ -2571,7 +2601,7 @@ ENTRY entry_computation {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:     xtile.extract
 CHECK:     stablehlo.transpose
 CHECK:     stablehlo.reshape
@@ -2580,7 +2610,7 @@ CHECK:     xtile.insert
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:     xtile.extract
 CHECK:     tt.trans
 CHECK:     tt.reshape
@@ -2615,7 +2645,7 @@ ENTRY entry_computation {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:     xtile.extract
 CHECK:     stablehlo.transpose
 CHECK-NOT: stablehlo.reshape
@@ -2624,7 +2654,7 @@ CHECK:     xtile.insert
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:     xtile.extract
 CHECK:     tt.trans
 CHECK-NOT: tt.reshape
@@ -2673,7 +2703,7 @@ ENTRY main {
 })";
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:     xtile.extract
 CHECK:     stablehlo.reduce
 CHECK:     stablehlo.broadcast_in_dim
@@ -2681,7 +2711,7 @@ CHECK:     xtile.insert
 )"));
 
   TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:     xtile.extract
 CHECK:     tt.reduce
 CHECK:     tt.broadcast
@@ -2715,13 +2745,13 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:       %[[EXTRACTED_VALUE:.*]] = xtile.extract
 CHECK:       stablehlo.broadcast_in_dim %[[EXTRACTED_VALUE]], dims = []
           )"));
 
   TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:       tt.splat {{.*}} f32 -> tensor<8x4xf32>
 )",
       GetFusionInstruction(*xtile_module_and_hlo_module.second,
@@ -2754,7 +2784,7 @@ ENTRY main {
           "num_stages":"1"}}}
 })";
   TF_EXPECT_OK(
-      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:      %[[CASTED_OUT:.*]] = arith.extui
 CHECK-SAME:   tensor<4xi1> to tensor<4xi8>
 CHECK:      xtile.insert %[[CASTED_OUT]]
@@ -2795,7 +2825,7 @@ ENTRY main {
           "num_stages":"1"}}}
 })";
   TF_EXPECT_OK(
-      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:      %[[I8_PARAM:.*]] = xtile.extract {{.*}} -> tensor<4xi8>
 CHECK:      arith.cmpi ne, %[[I8_PARAM]], {{.*}} : tensor<4xi8>
 )"));
@@ -2827,13 +2857,13 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:      %[[TILE:.*]] = xtile.extract {{.*}} -> tensor<8x4x1xf32>
 CHECK:      stablehlo.transpose %[[TILE]], dims = [2, 0, 1] : (tensor<8x4x1xf32>) -> tensor<1x8x4xf32>
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:      %[[TILE:.*]] = xtile.extract {{.*}} -> tensor<8x4x1xf32>
 CHECK:      tt.trans %[[TILE]] {order = array<i32: 2, 0, 1>} : tensor<8x4x1xf32> -> tensor<1x8x4xf32>
   )",
@@ -2872,7 +2902,7 @@ ENTRY entry_computation {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "fused_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "fused_computation", R"(
 CHECK:         %[[TILE:.*]] = xtile.extract {{.*}} -> tensor<15x7x3xf32> to tensor<8x4x1xf32>
 CHECK-NOT:     xtile.extract
 CHECK:         %[[ABS:.*]] = math.absf %[[TILE]]
@@ -2881,7 +2911,7 @@ CHECK-COUNT-2: xtile.insert
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:         %[[TILE:.*]] = xtile.extract {{.*}} -> tensor<15x7x3xf32> to tensor<8x4x1xf32>
 CHECK-NOT:     xtile.extract
 CHECK:         %[[ABS:.*]] = math.absf %[[TILE]]
@@ -2941,13 +2971,13 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:      %[[RANGE:.*]] = stablehlo.iota dim = 0 : tensor<64xi32>
 CHECK:      arith.muli{{.*}} %[[RANGE]]
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:      %[[RANGE:.*]] = tt.make_range {{.*}} : tensor<64xi32>
 CHECK:      arith.muli{{.*}} %[[RANGE]]
   )",
@@ -2984,7 +3014,7 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:      %[[RANGE:.*]] = stablehlo.iota dim = 0 : tensor<64xi32>
 CHECK:      %[[MUL:.*]] = arith.muli %[[RANGE]], {{.*}} : tensor<64xi32>
 CHECK:      arith.addi{{.*}} %[[MUL]]
@@ -2994,7 +3024,7 @@ CHECK:      stablehlo.broadcast_in_dim {{.*}}, dims = [2] : {{.*}}
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:      %[[RANGE:.*]] = tt.make_range {{.*}} : tensor<64xi32>
 CHECK:      arith.addi{{.*}} %[[RANGE]]
             // Omit the data type below, since it depends on a test parameter
@@ -3038,7 +3068,7 @@ ENTRY entry_computation {
           "num_stages":"1"}}}
 })";
   TF_EXPECT_OK(
-      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:     xtile.extract
 )"));
 
@@ -3076,7 +3106,7 @@ ENTRY entry_computation {
           "num_stages":"1"}}}
 })";
   TF_EXPECT_OK(
-      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:     xtile.extract {{.*}} -> tensor<f32>
 CHECK:     tt.extern_elementwise {{.*}} (f32) -> f32
 CHECK:     arith.negf {{.*}} f32
@@ -3129,7 +3159,7 @@ ENTRY entry_computation {
 })";
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:     xtile.extract {{.*}} -> tensor<f32>
 CHECK:     stablehlo.broadcast_in_dim
 CHECK:     stablehlo.add
@@ -3138,7 +3168,7 @@ CHECK:     xtile.insert {{.*}} : tensor<f32>
 )"));
 
   TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:     xtile.extract {{.*}} -> tensor<f32>
 CHECK:     tt.splat
 CHECK:     arith.addf
@@ -3177,13 +3207,13 @@ ENTRY entry_computation {
 })";
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:     stablehlo.reshape {{.*}} : (tensor<1x1x1x1xf32>) -> tensor<f32>
 CHECK:     xtile.insert {{.*}} : tensor<f32>
 )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:     tt.reshape
 CHECK:     tt.reduce{{.*}}axis = 0
 CHECK-NOT: tt.reshape
@@ -3230,7 +3260,7 @@ ENTRY entry_computation {
 })";
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
 CHECK:     xtile.extract
 CHECK:     stablehlo.reshape
 CHECK:     stablehlo.reduce
@@ -3239,7 +3269,7 @@ CHECK:     xtile.insert
 )"));
 
   TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:     xtile.extract
 CHECK:     tt.reshape
 CHECK:     tt.reduce
@@ -3507,14 +3537,14 @@ ENTRY entry {
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(auto xtile_module_and_hlo_module,
-                          CreateXTileIrAndFileCheck(this, kHloText, "fdot",
+                          CreateXTileIrAndFileCheck(kHloText, "fdot",
                                                     R"(
 CHECK:  stablehlo.dot_general
 CHECK:  arith.addf
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK: tt.dot {{.*}} -> tensor<16x16xf32>
   )",
       GetFusionInstruction(*xtile_module_and_hlo_module.second, "fdot")));
@@ -3580,7 +3610,7 @@ ENTRY entry {
   std::string hlo_text = absl::Substitute(kHloTextTemplate, is_tma_allowed);
 
   TF_ASSERT_OK_AND_ASSIGN(auto xtile_module_and_hlo_module,
-                          CreateXTileIrAndFileCheck(this, hlo_text, "fdot",
+                          CreateXTileIrAndFileCheck(hlo_text, "fdot",
                                                     R"(
 CHECK:      xtile.entry_func @xtile_dialect_fn(%[[ARG0:[A-Za-z0-9_]*]]: memref<32x123xf32>
 CHECK-SAME:                             %[[ARG1:[A-Za-z0-9_]*]]: memref<123x512xf32>
@@ -3602,7 +3632,7 @@ CHECK-COUNT-1: xtile.insert
           )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
 CHECK:      xtile.entry_func @xtile_dialect_fn(%[[ARG0:[A-Za-z0-9_]*]]: memref<32x123xf32>
 CHECK-SAME:                             %[[ARG1:[A-Za-z0-9_]*]]: memref<123x512xf32>
 CHECK-SAME:                             %[[ARG2:[A-Za-z0-9_]*]]: memref<32x512xf32>
@@ -3683,7 +3713,7 @@ ENTRY entry {
 })";
 
   // Check that the IR attribute is set correctly.
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, hlo_text, "fdot", R"(
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(hlo_text, "fdot", R"(
   // CHECK:       scf.for
   // CHECK:       scf.yield
   // CHECK-NEXT:  tt.warp_specialize
@@ -3743,7 +3773,7 @@ ENTRY entry {
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(auto xtile_module_and_hlo_module,
-                          CreateXTileIrAndFileCheck(this, kHloText, "fdot", R"(
+                          CreateXTileIrAndFileCheck(kHloText, "fdot", R"(
   // Ensure that masking is applied only conditionally to both operands.
   CHECK:      %[[MASKED_OPERAND0:.*]] = scf.if
   CHECK:        %[[SELECT0:.*]] = arith.select
@@ -3756,7 +3786,7 @@ ENTRY entry {
   )"));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(), R"(
+      xtile_module_and_hlo_module.first.get(), R"(
   // Ensure that masking is applied only conditionally to both operands.
   CHECK:      %[[MASKED_OPERAND0:.*]] = scf.if
   CHECK:        %[[SELECT0:.*]] = arith.select
@@ -3993,7 +4023,7 @@ ENTRY main {
 })";
 
   TF_EXPECT_OK(
-      CreateTritonIrAndFileCheck(this, kHloText, "concatenate_fusion", R"(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "concatenate_fusion", R"(
     // Check that we generate three branches. This is a bit of an implementation
     // detail, so it doesn't seem worth enforcing a lot here.
     CHECK-COUNT-2: scf.if
@@ -4308,7 +4338,7 @@ TEST_P(BasicDotAlgorithmEmitterTest, BasicAlgorithmIsEmittedCorrectly) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
       CreateXTileIrAndFileCheck(
-          this, kHloText, "dot",
+          kHloText, "dot",
           absl::Substitute(
               R"(
   CHECK:  stablehlo.dot_general{{.*}} : (tensor<16x32x$0>, tensor<32x64x$0>) -> tensor<16x64x$1>
@@ -4318,7 +4348,7 @@ TEST_P(BasicDotAlgorithmEmitterTest, BasicAlgorithmIsEmittedCorrectly) {
               primitive_util::LowercasePrimitiveTypeName(out_ty))));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(),
+      xtile_module_and_hlo_module.first.get(),
       absl::Substitute(R"(
   CHECK:  tt.dot{{.*}} : tensor<16x32x$0> * tensor<32x64x$0> -> tensor<16x64x$1>
   )",
@@ -4390,7 +4420,7 @@ TEST_P(MultiDotAlgorithmEmitterTest, MultiDotAlgorithmIsEmittedCorrectly) {
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(this, kHloText, "dot",
+      CreateXTileIrAndFileCheck(kHloText, "dot",
                                 absl::Substitute(
                                     R"(
   CHECK:  stablehlo.dot_general{{.*}} num_primitive_operations = $0, {{.*}}
@@ -4398,7 +4428,7 @@ TEST_P(MultiDotAlgorithmEmitterTest, MultiDotAlgorithmIsEmittedCorrectly) {
                                     stablehlo_dot_count_for_algorithm)));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(),
+      xtile_module_and_hlo_module.first.get(),
       absl::Substitute(R"(
   CHECK-COUNT-$2:  tt.dot{{.*}}$3{{.*}} : tensor<16x32x$0> * tensor<32x64x$0> -> tensor<16x64x$1>
   )",
@@ -4445,7 +4475,7 @@ TEST_P(TF32DotAlgorithmEmitterTest, TF32AlgorithmsUseTF32InputPrecision) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
       CreateXTileIrAndFileCheck(
-          this, kHloText, "dot",
+          kHloText, "dot",
           absl::Substitute(
               R"(
   CHECK:  stablehlo.dot_general{{.*}}, contracting_dims = [1] x [0], {{.*}} algorithm = <lhs_precision_type = tf32, rhs_precision_type = tf32, accumulation_type = f32, lhs_component_count = 1, rhs_component_count = 1, num_primitive_operations = $2, allow_imprecise_accumulation = false> : (tensor<16x32x$0>, tensor<32x64x$0>) -> tensor<16x64x$1>
@@ -4455,7 +4485,7 @@ TEST_P(TF32DotAlgorithmEmitterTest, TF32AlgorithmsUseTF32InputPrecision) {
               num_primitive_operations_string)));
 
   TF_ASSERT_OK(LowerXTileIrToTritonAndFileCheck(
-      this, xtile_module_and_hlo_module.first.get(),
+      xtile_module_and_hlo_module.first.get(),
       absl::Substitute(R"(
   CHECK:  tt.dot{{.*}} inputPrecision = $2 : tensor<16x32x$0> * tensor<32x64x$0> -> tensor<16x64x$1>
   )",
@@ -4789,8 +4819,8 @@ ENTRY main {
   int64_t num_m_tiles = (m / tile_m);
   int64_t num_n_tiles = (n / tile_n);
 
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(
-      this, hlo_text, "fusion",
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(
+      hlo_text, "fusion",
       absl::Substitute(
           R"(
 CHECK-DAG: (pid_0) -> ((pid_0 mod $0) * $1)
@@ -4864,8 +4894,8 @@ ENTRY main {
   int64_t num_m_tiles = (m / tile_m);
   int64_t num_n_tiles = (n / tile_n);
 
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(
-      this, hlo_text, "fusion",
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(
+      hlo_text, "fusion",
       absl::Substitute(
           R"(
 CHECK-DAG: (pid_0) -> ((pid_0 mod $0) * $1)
@@ -4940,8 +4970,8 @@ ENTRY main {
   int64_t num_m_tiles = (m / tile_m);
   int64_t num_n_tiles = (n / tile_n);
 
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(
-      this, hlo_text, "fusion",
+  TF_EXPECT_OK(CreateTritonIrFromHloTextAndFileCheck(
+      hlo_text, "fusion",
       absl::Substitute(
           R"(
 CHECK-DAG: (pid_0) -> ((pid_0 mod $0) * $1)

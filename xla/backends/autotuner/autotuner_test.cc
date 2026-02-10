@@ -94,6 +94,7 @@ AutotuneConfig GetTestAutotuneConfig() {
 class MockCodegenBackend : public CodegenBackend {
  public:
   MOCK_METHOD(absl::string_view, name, (), (const, override));
+  MOCK_METHOD(autotuner::Backend, backend, (), (const, override));
   MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>,
               GetSupportedConfigs, (const HloInstruction& instr), (override));
   MOCK_METHOD(absl::StatusOr<std::unique_ptr<BackendConfig>>, GetDefaultConfig,
@@ -710,7 +711,7 @@ TEST_F(AutotunerTest, ExcludeCublasConfig) {
   EXPECT_CALL(*backend, Compile(_, _))
       .WillOnce(Return(std::unique_ptr<Executable>()))
       .WillOnce(Return(std::unique_ptr<Executable>()));
-  EXPECT_CALL(*backend, name()).WillRepeatedly(Return("Cublas_fission"));
+  EXPECT_CALL(*backend, name()).WillRepeatedly(Return("CUBLAS_FISSION"));
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend));
 

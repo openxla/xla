@@ -680,8 +680,6 @@ class PjRtCApiExecutable : public PjRtExecutable {
     return pjrt::GetCompiledMemoryStats(c_api_, executable_.get());
   }
 
-  std::optional<std::vector<OpSharding>> GetParameterShardings() const override;
-
   absl::StatusOr<std::vector<Shape>> GetOutputShapes() const override;
 
   absl::StatusOr<std::vector<std::vector<PrimitiveType>>>
@@ -689,8 +687,6 @@ class PjRtCApiExecutable : public PjRtExecutable {
 
   absl::StatusOr<std::vector<std::vector<DimensionVector>>>
   GetOutputDimensions() const override;
-
-  std::optional<std::vector<OpSharding>> GetOutputShardings() const override;
 
   absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
   GetOutputLayouts() const override;
@@ -761,11 +757,6 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
     return executable_->GetCompiledMemoryStats();
   }
 
-  std::optional<std::vector<OpSharding>> GetParameterShardings()
-      const override {
-    return executable_->GetParameterShardings();
-  }
-
   absl::StatusOr<std::vector<Shape>> GetOutputShapes() const override {
     return executable_->GetOutputShapes();
   }
@@ -778,10 +769,6 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
   absl::StatusOr<std::vector<std::vector<DimensionVector>>>
   GetOutputDimensions() const override {
     return executable_->GetOutputDimensions();
-  }
-
-  std::optional<std::vector<OpSharding>> GetOutputShardings() const override {
-    return executable_->GetOutputShardings();
   }
 
   absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>

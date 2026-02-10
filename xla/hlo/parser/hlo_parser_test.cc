@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
@@ -2710,7 +2711,7 @@ add_F32 {
 ENTRY Scan {
   input = f32[4]{0} parameter(0)
   init = f32[] constant(0)
-  ROOT scan = (f32[4]{0}, f32[]) scan(input, init), dimensions={0}, is_reverse=true, is_associative=true, to_apply=add_F32
+  ROOT scan = (f32[4]{0}, f32[]) scan(input, init), dimensions={0}, num_carries=1, is_reverse=true, is_associative=true, to_apply=add_F32
 }
 
 )"

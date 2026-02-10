@@ -101,6 +101,15 @@ class AlgorithmTest : public GpuCodegenTest {
     return device_desc().gpu_compute_capability();
   }
 
+  absl::Status CreateTritonIrFromHloTextAndFileCheckForDot(
+      absl::string_view hlo_text, absl::string_view triton_fusion_name,
+      absl::string_view filecheck_pattern) {
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+                        ParseAndReturnVerifiedModule(hlo_text));
+    return CreateTritonIrAndFileCheckForDot(module.get(), triton_fusion_name,
+                                            filecheck_pattern);
+  }
+
  protected:
   const stream_executor::DeviceDescription& device_desc() {
     return backend().default_stream_executor()->GetDeviceDescription();
@@ -516,7 +525,7 @@ TEST_F(Triton6xBF16GemmTest, Emit6xBF16GemmWhenBothInputsAreF32) {
     }
   )";
   TF_ASSERT_OK(
-      CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_dot", R"(
+      CreateTritonIrFromHloTextAndFileCheckForDot(kHloText, "triton_dot", R"(
 CHECK:          %[[INFINITY:.*]] = arith.constant dense<0x7F800000> : tensor<32x32xf32>
 CHECK:          %[[C0:.*]] = arith.constant dense<0.000000e+00> : tensor<32x32xf32>
 CHECK:          %[[LHS_HI_BF16:.*]] = arith.truncf %[[LHS_INPUT:.*]] : tensor<32x32xf32> to tensor<32x32xbf16>
@@ -585,7 +594,7 @@ TEST_F(Triton6xBF16GemmTest, Triton6xBF16GemmWorksForLongContractingDimension) {
     }
   )";
   TF_ASSERT_OK(
-      CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_dot", R"(
+      CreateTritonIrFromHloTextAndFileCheckForDot(kHloText, "triton_dot", R"(
 CHECK-COUNT-6:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} : tensor<64x32xbf16> * tensor<32x32xbf16> -> tensor<64x32xf32>
     )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{/*aabs=*/1e-5,
@@ -662,7 +671,7 @@ TEST_F(Triton3xBF16GemmTest, Emit3xBF16GemmWhenBothInputsAreF32) {
     }
   )";
   TF_ASSERT_OK(
-      CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_dot", R"(
+      CreateTritonIrFromHloTextAndFileCheckForDot(kHloText, "triton_dot", R"(
 CHECK:          %[[INFINITY:.*]] = arith.constant dense<0x7F800000> : tensor<32x32xf32>
 CHECK:          %[[C0:.*]] = arith.constant dense<0.000000e+00> : tensor<32x32xf32>
 CHECK:          %[[LHS_HI_BF16:.*]] = arith.truncf %[[LHS_INPUT:.*]] : tensor<32x32xf32> to tensor<32x32xbf16>
@@ -725,7 +734,7 @@ TEST_F(Triton3xBF16GemmTest, Triton3xBF16GemmWorksForLongContractingDimension) {
     }
   )";
   TF_ASSERT_OK(
-      CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_dot", R"(
+      CreateTritonIrFromHloTextAndFileCheckForDot(kHloText, "triton_dot", R"(
 CHECK-COUNT-3:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} : tensor<64x32xbf16> * tensor<32x32xbf16> -> tensor<64x32xf32>
     )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{/*aabs=*/1e-4,

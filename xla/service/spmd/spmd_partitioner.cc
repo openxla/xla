@@ -570,17 +570,15 @@ PartitionedHlo PartitionedHlo::ReshardNoCache(
     return PartitionedHlo(partitioned, base_shape_, state_);
   }
 
-  if (state_.module->config().debug_options().xla_enable_enzyme_comms_opt()) {
-    if (hlo_->opcode() == HloOpcode::kBroadcast &&
-        hlo_->operand(0)->shape().dimensions().empty()) {
-      const Shape sharded_broadcast_shape =
-          MakePartitionedShape(base_shape_, target);
-      HloInstruction* new_broadcast =
-          state_.b->AddInstruction(HloInstruction::CreateBroadcast(
-              sharded_broadcast_shape, hlo_->mutable_operand(0), {}));
-      new_broadcast->set_sharding(target);
-      return PartitionedHlo(new_broadcast, base_shape_, state_);
-    }
+  if (hlo_->opcode() == HloOpcode::kBroadcast &&
+      hlo_->operand(0)->shape().dimensions().empty()) {
+    const Shape sharded_broadcast_shape =
+        MakePartitionedShape(base_shape_, target);
+    HloInstruction* new_broadcast =
+        state_.b->AddInstruction(HloInstruction::CreateBroadcast(
+            sharded_broadcast_shape, hlo_->mutable_operand(0), {}));
+    new_broadcast->set_sharding(target);
+    return PartitionedHlo(new_broadcast, base_shape_, state_);
   }
 
   if (CanReshardWithCollectivePermute(sharding(), target)) {
@@ -5201,7 +5199,7 @@ HloInstruction* CreateAllGatherListsOfLists(
                                       /*use_global_device_ids=*/true));
 }
 
-std::optional<CollectiveDeviceList> TryExpandingPartitionGroupList(
+std::optional<IotaReplicaGroupList> TryExpandingPartitionGroupList(
     const CollectiveDeviceListBase& device_list, int64_t num_replicas,
     int64_t num_partitions) {
   std::optional<IotaReplicaGroupList> iota_list =
@@ -5226,7 +5224,7 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
               SpmdBuilder* b, HloInstruction* operand,
               HloComputation* reduction,
               const CollectiveDeviceListBase& device_list, int64_t channel_id) {
-            if (std::optional<CollectiveDeviceList> expanded =
+            if (std::optional<IotaReplicaGroupList> expanded =
                     TryExpandingPartitionGroupList(device_list, num_replicas,
                                                    num_partitions)) {
               HloComputation* reduction_clone =
@@ -5271,7 +5269,7 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
               SpmdBuilder* b, absl::Span<HloInstruction* const> operands,
               const CollectiveDeviceListBase& device_list, int64_t channel_id,
               std::optional<int64_t> split_dimension) {
-            if (std::optional<CollectiveDeviceList> expanded =
+            if (std::optional<IotaReplicaGroupList> expanded =
                     TryExpandingPartitionGroupList(device_list, num_replicas,
                                                    num_partitions)) {
               std::vector<Shape> shapes(operands.size(), operands[0]->shape());
@@ -5291,7 +5289,7 @@ SPMDCollectiveOpsCreator GetDefaultCollectiveOpsCreator(int64_t num_partitions,
               SpmdBuilder* b, HloInstruction* operand, const Shape& ag_shape,
               const CollectiveDeviceListBase& device_list, int64_t channel_id,
               int64_t all_gather_dimension) {
-            if (std::optional<CollectiveDeviceList> expanded =
+            if (std::optional<IotaReplicaGroupList> expanded =
                     TryExpandingPartitionGroupList(device_list, num_replicas,
                                                    num_partitions)) {
               return b->AddInstruction(HloInstruction::CreateAllGather(
@@ -5549,26 +5547,6 @@ int64_t SpmdPartitioner::CommunicationCostInBytes(HloInstruction* hlo) {
   module->set_spmd_output_sharding(entry_root->sharding());
 }
 
-namespace {
-
-// Returns true if the old and the new entry layout shapes differ.
-// NOTE: that we explicitly ignore the layout, since it is either defined
-// beforehand or during layout assignment.
-bool ShapeChangesBetween(const ComputationLayout& old_entry_layout,
-                         const ProgramShape& new_program_shape) {
-  for (int64_t i = 0; i < new_program_shape.parameters_size(); ++i) {
-    if (!Shape::Equal().IgnoreLayout()(old_entry_layout.parameter_shape(i),
-                                       new_program_shape.parameters(i))) {
-      return true;
-    }
-  }
-
-  return !Shape::Equal().IgnoreLayout()(old_entry_layout.result_shape(),
-                                        new_program_shape.result());
-}
-
-}  // namespace
-
 absl::StatusOr<bool> SpmdPartitioner::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -5664,62 +5642,66 @@ absl::StatusOr<bool> SpmdPartitioner::RunImpl(
 
   // For the entry computation, make sure that the root instruction and the
   // parameters preserve their signatures if there are any partitioning changes.
-  auto new_program_shape = module->entry_computation()->ComputeProgramShape();
-  const ComputationLayout& old_entry_layout =
-      module->entry_computation_layout();
-  if (ShapeChangesBetween(old_entry_layout, new_program_shape)) {
-    if (!options_.allow_module_signature_change) {
-      if (!Shape::Equal()(program_shape.result(), new_program_shape.result())) {
-        return absl::InvalidArgumentError(
-            "Result shape changed for the entry computation from: " +
-            program_shape.result().ToString() +
-            " to: " + new_program_shape.result().ToString());
+  ProgramShape new_program_shape =
+      module->entry_computation()->ComputeProgramShape();
+  if (program_shape.parameters_size() != new_program_shape.parameters_size()) {
+    return absl::InvalidArgumentError(
+        "Parameter count changed for the entry computation from: " +
+        std::to_string(program_shape.parameters_size()) +
+        " to: " + std::to_string(new_program_shape.parameters_size()));
+  }
+
+  if (options_.allow_module_signature_change) {
+    const ComputationLayout& old_entry_layout =
+        module->entry_computation_layout();
+    // For the cases where we update the shape, also fix up some bad tiling in
+    // entry computation layout.
+    auto update_shape = [this](Shape* subshape, const xla::ShapeIndex&) {
+      if (subshape->IsArray() && subshape->has_layout()) {
+        UpdateLayout(subshape);
       }
-      if (program_shape.parameters_size() !=
-          new_program_shape.parameters_size()) {
-        return absl::InvalidArgumentError(
-            "Parameter count changed for the entry computation from: " +
-            std::to_string(program_shape.parameters_size()) +
-            " to: " + std::to_string(new_program_shape.parameters_size()));
-      }
-      for (int64_t i = 0; i < program_shape.parameters_size(); ++i) {
-        if (!Shape::Equal()(program_shape.parameters(i),
-                            new_program_shape.parameters(i))) {
-          return absl::InvalidArgumentError(
-              "Parameter shape changed for the entry computation parameter " +
-              std::to_string(i) +
-              " from: " + program_shape.parameters(i).ToString() +
-              " to: " + new_program_shape.parameters(i).ToString());
-        }
-      }
-    } else {
-      // For the cases where we update the shape, also fix up some bad tiling in
-      // entry computation layout.
-      auto update_shape = [this](Shape* subshape,
-                                 const xla::ShapeIndex& index) {
-        if (subshape->IsArray() && subshape->has_layout()) {
-          UpdateLayout(subshape);
-        }
-      };
-      // Shapes can change but the layout should still remain the same.
-      // If the shapes do not change, we shouldn't change the layout if pre-set.
-      for (int64_t i = 0; i < new_program_shape.parameters_size(); ++i) {
-        TF_RETURN_IF_ERROR(LayoutUtil::CopyLayoutBetweenShapes(
-            old_entry_layout.parameter_shape(i),
-            new_program_shape.mutable_parameters(i)));
+    };
+    // Shapes can change but the layout should still remain the same.
+    // If the shapes do not change, we shouldn't change the layout if pre-set.
+    for (int64_t i = 0; i < new_program_shape.parameters_size(); ++i) {
+      TF_RETURN_IF_ERROR(LayoutUtil::CopyLayoutBetweenShapes(
+          old_entry_layout.parameter_shape(i),
+          new_program_shape.mutable_parameters(i)));
+      if (!Shape::Equal().IgnoreLayout()(old_entry_layout.parameter_shape(i),
+                                         new_program_shape.parameters(i))) {
         ShapeUtil::ForEachMutableSubshape(
             new_program_shape.mutable_parameters(i), update_shape);
       }
+    }
 
-      TF_RETURN_IF_ERROR(LayoutUtil::CopyLayoutBetweenShapes(
-          old_entry_layout.result_shape(), new_program_shape.mutable_result()));
+    TF_RETURN_IF_ERROR(LayoutUtil::CopyLayoutBetweenShapes(
+        old_entry_layout.result_shape(), new_program_shape.mutable_result()));
+    if (!Shape::Equal().IgnoreLayout()(old_entry_layout.result_shape(),
+                                       new_program_shape.result())) {
       ShapeUtil::ForEachMutableSubshape(new_program_shape.mutable_result(),
                                         update_shape);
+    }
 
-      HloModuleConfig config = module->config();
-      *config.mutable_entry_computation_layout() =
-          ComputationLayout(new_program_shape, /*ignore_layouts=*/false);
-      module->set_config(config);
+    HloModuleConfig config = module->config();
+    *config.mutable_entry_computation_layout() =
+        ComputationLayout(new_program_shape, /*ignore_layouts=*/false);
+    module->set_config(config);
+  } else {
+    if (!Shape::Equal()(program_shape.result(), new_program_shape.result())) {
+      return absl::InvalidArgumentError(
+          "Result shape changed for the entry computation from: " +
+          program_shape.result().ToString() +
+          " to: " + new_program_shape.result().ToString());
+    }
+    for (int64_t i = 0; i < program_shape.parameters_size(); ++i) {
+      if (!Shape::Equal()(program_shape.parameters(i),
+                          new_program_shape.parameters(i))) {
+        return absl::InvalidArgumentError(
+            "Parameter shape changed for the entry computation parameter " +
+            std::to_string(i) +
+            " from: " + program_shape.parameters(i).ToString() +
+            " to: " + new_program_shape.parameters(i).ToString());
+      }
     }
   }
 

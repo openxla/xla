@@ -442,8 +442,6 @@ class CoordinationService {
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Post-barrier hook to connect all tasks.
   void ConnectAllTasks() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
-  // Post-barrier hook to aggregate device info.
-  void AggregateClusterDevices() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Post-shutdown barrier hook to disconnect tasks that acked and propagate
   // errors to those that have not.
   void CompleteShutdownAfterBarrier(const absl::Status& result,

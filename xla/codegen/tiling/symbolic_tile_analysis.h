@@ -140,7 +140,7 @@ class SymbolicTileAnalysis {
 
   // Returns a graph of HLO instructions tiled with the given tiling parameters.
   // The provided tiling parameters must satisfy the analysis's constraints.
-  // By default, `ComputeTiledHloInstructions` performs a check that the
+  // By default, `ComputeTiledComputation` performs a check that the
   // constraints are satisfied by the chosen tiling parameters. Setting
   // `constraints_are_known_satisfied` to true bypasses this check.
   //
@@ -152,7 +152,7 @@ class SymbolicTileAnalysis {
   //   `tile_offset_indexing_map`s are necessary to deduplicate operations.
   // In either case, the iteration pattern for the `TiledHloInstruction`s will
   // be dictated by the schedule derived from the provided schedule builder.
-  absl::StatusOr<TiledHloComputation> ComputeTiledHloInstructions(
+  absl::StatusOr<TiledHloComputation> ComputeTiledComputation(
       const Tiling& tiling,
       const TiledHloScheduleBuilder& schedule_builder =
           CreateMajorToMinorTiledHloSchedule,

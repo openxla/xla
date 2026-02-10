@@ -16529,6 +16529,44 @@ ENTRY %NegateChain (p0: f32[2,3], p1: f32[2,3]) -> f32[2,3] {
             kDefaultMemorySpace);
 }
 
+TEST_F(MemorySpaceAssignmentTest,
+       ReserveColoredBuffersBeforeCrossProgramPrefetchBug) {
+  // Reserving alternate memory space for colored buffers first prevents any
+  // successful cross program prefetches.
+  absl::string_view hlo_string = R"hlo(
+  HloModule cross_program_prefetch, is_scheduled=true
+
+  ENTRY cross_program_prefetch {
+    p0 = (f32[8,8]{1,0}, f32[8,2]{1,0}) parameter(0)
+    get-tuple-element.0 = f32[8,8]{1,0} get-tuple-element(p0), index=0
+    add.0 = f32[8,8]{1,0} add(get-tuple-element.0, get-tuple-element.0)
+    get-tuple-element.1 = f32[8,2]{1,0} get-tuple-element(p0), index=1
+    dot.0 = f32[8,2]{1,0} dot(add.0, get-tuple-element.1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    negate.1 = f32[8,2]{1,0} negate(dot.0)
+    negate.2 = f32[8,2]{1,0} negate(negate.1)
+    ROOT dot.1 = f32[2,2]{1,0} dot(negate.2, get-tuple-element.1), lhs_contracting_dims={0}, rhs_contracting_dims={0}
+  }
+  )hlo";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  Options options = DefaultMemorySpaceOptions();
+  options.enable_cross_program_prefetch = true;
+  options.max_size_in_bytes = 256;
+
+  HloInstruction* dot0 = FindInstruction(module.get(), "dot.0");
+  HloUse dot0_use_add0 = {dot0, 0, {}};
+  options.buffer_colorings = {{dot0_use_add0, kAlternateMemorySpace}};
+
+  AssignMemorySpace(module.get(), std::move(options));
+  CheckOperandOpcodeAndMemorySpaceForInstructionNames(
+      module.get(), {"dot.0"},
+      /*operand_index=*/0, /*operand_opcode=*/HloOpcode::kAdd,
+      /*operand_memory_space=*/kAlternateMemorySpace);
+  auto cross_program_prefetches = module->CrossProgramPrefetches();
+  ASSERT_EQ(cross_program_prefetches.size(), 0);
+}
+
 TEST_F(MemorySpaceAssignmentTest, PrefetchWithoutBandwidthLimitingAsyncStart) {
   // The negate chain is long enough for asynchronous copy to be inserted
   // between p1 and add. The prefetch will happen because the bandwidth
