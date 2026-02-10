@@ -189,6 +189,14 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
       const InitializeParams& params);
 };
 
+// Executes the rendezvous to exchange buffer addresses and barrier signal
+// buffers.
+absl::StatusOr<std::shared_ptr<std::vector<RaggedAllToAllRendezvousValue>>>
+RendezvousResources(int device_ordinal, RankId rank,
+                    const GpuCliqueKey& clique_key,
+                    const se::DeviceAddressBase& output_buffer,
+                    const se::DeviceAddressBase& barrier_signal_buffer);
+
 // Executes a generic Ragged All-to-All collective operation using the provided
 // communicator (e.g., NCCL).
 //

@@ -226,40 +226,6 @@ absl::Status RendezvousAfterKernelFinish(
   return absl::OkStatus();
 }
 
-// Executes the rendezvous to exchange buffer addresses and barrier signal
-// buffers.
-absl::StatusOr<std::shared_ptr<std::vector<RaggedAllToAllRendezvousValue>>>
-RendezvousResources(int device_ordinal, RankId rank,
-                    const GpuCliqueKey& clique_key,
-                    const se::DeviceAddressBase& output_buffer,
-                    const se::DeviceAddressBase& barrier_signal_buffer) {
-  int64_t num_ranks = clique_key.num_local_participants();
-
-  RaggedAllToAllRendezvousValue rendezvous_value;
-  rendezvous_value.rank = rank;
-  rendezvous_value.output_buffer = output_buffer;
-  rendezvous_value.barrier_signal_buffer = barrier_signal_buffer;
-
-  auto rendezvous_fn =
-      [](absl::Span<const RaggedAllToAllRendezvousValue* const> values) {
-        std::vector<RaggedAllToAllRendezvousValue> values_copy;
-        for (const auto& value : values) {
-          values_copy.push_back(*value);
-        }
-        // Sort to make sure that values are in the same order as the devices
-        // are ordered in the communicator.
-        absl::c_sort(values_copy);
-        return values_copy;
-      };
-
-  auto rendezvous_name = absl::StrFormat(
-      "[%d] [rank=%v] One-shot ragged-all-to-all rendezvous, clique: %v",
-      device_ordinal, rank, clique_key);
-
-  return Rendezvous<std::vector<RaggedAllToAllRendezvousValue>>(
-      rendezvous_name, clique_key, rendezvous_value, num_ranks, rendezvous_fn);
-}
-
 // Helper to launch the MultiGpuBarrierKernel.
 //
 // This implements a decentralized peer-to-peer barrier synchronization:
@@ -621,6 +587,40 @@ absl::StatusOr<bool> RaggedAllToAllStartThunk::RunCollective(
                         state->output_offsets_device_buffer.address(),
                         config_.config.use_symmetric_buffer));
   return true;
+}
+
+// Executes the rendezvous to exchange buffer addresses and barrier signal
+// buffers.
+absl::StatusOr<std::shared_ptr<std::vector<RaggedAllToAllRendezvousValue>>>
+RendezvousResources(int device_ordinal, RankId rank,
+                    const GpuCliqueKey& clique_key,
+                    const se::DeviceAddressBase& output_buffer,
+                    const se::DeviceAddressBase& barrier_signal_buffer) {
+  int64_t num_ranks = clique_key.num_local_participants();
+
+  RaggedAllToAllRendezvousValue rendezvous_value;
+  rendezvous_value.rank = rank;
+  rendezvous_value.output_buffer = output_buffer;
+  rendezvous_value.barrier_signal_buffer = barrier_signal_buffer;
+
+  auto rendezvous_fn =
+      [](absl::Span<const RaggedAllToAllRendezvousValue* const> values) {
+        std::vector<RaggedAllToAllRendezvousValue> values_copy;
+        for (const auto& value : values) {
+          values_copy.push_back(*value);
+        }
+        // Sort to make sure that values are in the same order as the devices
+        // are ordered in the communicator.
+        absl::c_sort(values_copy);
+        return values_copy;
+      };
+
+  auto rendezvous_name = absl::StrFormat(
+      "[%d] [rank=%v] One-shot ragged-all-to-all rendezvous, clique: %v",
+      device_ordinal, rank, clique_key);
+
+  return Rendezvous<std::vector<RaggedAllToAllRendezvousValue>>(
+      rendezvous_name, clique_key, rendezvous_value, num_ranks, rendezvous_fn);
 }
 
 absl::Status RunRaggedAllToAll(
