@@ -726,9 +726,22 @@ xla_cc_test(
     srcs = ["symbolic_map_test.cc"],
     deps = [
         ":symbolic_map",
-        "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+xla_cc_test(
+    name = "symbolic_map_serialization_test",
+    srcs = ["symbolic_map_serialization_test.cc"],
+    deps = [
+        ":indexing_test_utils",
+        ":symbolic_map",
+        "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/log:scoped_mock_log",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
