@@ -39,7 +39,7 @@ limitations under the License.
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/execution_state.h"
 #include "xla/ffi/ffi.h"
-#include "xla/ffi/ffi_api.h"
+#include "xla/ffi/invoke.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/object_pool.h"
@@ -203,7 +203,7 @@ class CustomCallThunk : public Thunk {
   absl::StatusOr<ObjectPool<xla::ffi::CallFrame>::BorrowedObject>
   BuildCallFrame(const BufferAllocations* absl_nullable buffer_allocations);
 
-  xla::ffi::CallOptions BuildCallOptions(
+  xla::ffi::InvokeContext BuildInvokeContext(
       RunId run_id, se::Stream* absl_nullable stream,
       const BufferAllocations* absl_nullable buffer_allocations,
       const CollectiveParams* absl_nullable collective_params,

@@ -678,6 +678,7 @@ cc_library(
         "//xla/ffi:call_frame",
         "//xla/ffi:execution_state",
         "//xla/ffi:ffi_api",
+        "//xla/ffi:invoke",
         "//xla/ffi/api:c_api",
         "//xla/runtime:buffer_use",
         "//xla/runtime:object_pool",
