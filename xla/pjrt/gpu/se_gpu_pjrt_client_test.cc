@@ -2285,7 +2285,9 @@ TEST(StreamExecutorGpuClientTest, ProfileExecution) {
   ExecutionProfile profile;
   ExecuteOptions opts;
   opts.execution_profile = &profile;
-  TF_ASSERT_OK(executable->Execute(/*argument_handles=*/{{}}, opts));
+  TF_ASSERT_OK_AND_ASSIGN(auto results,
+                          executable->Execute(/*argument_handles=*/{{}}, opts));
+  TF_ASSERT_OK(results[0][0]->GetReadyFuture().Await());
   EXPECT_GT(profile.compute_time_ns(), 0);
 }
 

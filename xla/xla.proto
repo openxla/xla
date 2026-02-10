@@ -804,10 +804,10 @@ message DebugOptions {
 
   optional bool xla_gpu_fused_attention_use_cudnn_rng = 235;
 
-  // Does not work anymore.
-  // TODO(446874531): Delete this and add a generalized override mechanism.
-  optional string xla_gpu_gemm_autotuner_override_file = 434
-      [deprecated = true];
+  // A textproto file to override triton configs considered by autotuner. See
+  // also `xla_gpu_override_gemm_autotuner` to override with a single config.
+  // Use xla_gpu_cublas_fallback to allow/disallow fallback to cuBLAS.
+  optional string xla_gpu_gemm_autotuner_override_file = 434;
 
   // Threshold to rewrite matmul to cuBLAS or Triton (minimum combined number of
   // elements of both matrices in non-batch dimensions to be considered for a
@@ -893,9 +893,10 @@ message DebugOptions {
   // xla_gpu_threshold_for_windowed_einsum_mib will be ignored.
   optional int64 xla_gpu_operand_bytes_threshold_for_windowed_einsum = 339;
 
-  // Does not work anymore.
-  // TODO(446874531): Delete this and add a generalized override mechanism.
-  optional string xla_gpu_override_gemm_autotuner = 295 [deprecated = true];
+  // If set, override triton configs considered by autotuner. Use a textproto
+  // format matching AutotuneResult::TritonGemmKey. Use xla_gpu_cublas_fallback
+  // to allow/disallow fallback to cuBLAS.
+  optional string xla_gpu_override_gemm_autotuner = 295;
 
   optional string xla_gpu_per_fusion_autotune_cache_dir = 310;
 
@@ -930,6 +931,10 @@ message DebugOptions {
   // e.g., command buffer updates to ensure correctness when running in
   // multi-thread mode.
   optional bool xla_gpu_require_exclusive_lock = 347;
+
+  // Maximum number of trace events for ROCm GPU profiling. Limits memory
+  // usage during profiling on AMD GPUs.
+  optional int64 xla_gpu_rocm_max_trace_events = 449;
 
   optional ShapeChecks xla_gpu_shape_checks = 170;
 
@@ -1371,10 +1376,13 @@ message DebugOptions {
   // If true, use third-party library raft::matrix::select_k to implement TopK.
   optional bool xla_gpu_experimental_use_raft_select_k = 413;
 
+  // If true, use MultiGpuBarrierKernel in one-shot RaggedAllToAll thunk.
+  optional bool xla_gpu_experimental_ragged_all_to_all_use_barrier = 450;
+
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 449
+  // Next id: 451
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

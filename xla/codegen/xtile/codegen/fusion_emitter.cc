@@ -1371,7 +1371,7 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
   }
   TF_RET_CHECK(root_index < symbolic_tile_analysis.GetRoots().size());
   TF_ASSIGN_OR_RETURN(TiledHloComputation tiled_hlo_computation,
-                      symbolic_tile_analysis.ComputeTiledHloInstructions(
+                      symbolic_tile_analysis.ComputeTiledComputation(
                           tiling, schedule_builder,
                           /*constraints_are_known_satisfied=*/false,
                           /*compute_all_tile_offset_indexing_maps=*/true));

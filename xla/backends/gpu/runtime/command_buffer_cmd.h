@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command.h"
@@ -52,7 +53,6 @@ limitations under the License.
 #include "xla/runtime/object_pool.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/shaped_slice.h"
@@ -81,7 +81,7 @@ namespace xla::gpu {
 class TracedCommandBuffer : public CommandState {
  public:
   explicit TracedCommandBuffer(const Command* trace_cmd,
-                               Command::BufferUseVector buffers,
+                               Command::BufferUses buffers,
                                int64_t capacity = 16);
 
   // Returns cached command buffer traced using the same buffer addresses or
@@ -135,7 +135,7 @@ class EmptyCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override { return {}; }
+  BufferUses buffer_uses() const override { return {}; }
 };
 
 //===----------------------------------------------------------------------===//
@@ -153,7 +153,7 @@ class ComputationIdCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   BufferAllocation::Slice dest_;
@@ -179,7 +179,7 @@ class LaunchCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   std::string kernel_name_;
@@ -213,7 +213,7 @@ class CustomKernelLaunchCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   std::vector<ShapedSlice> args_;
@@ -240,7 +240,7 @@ class MemcpyDeviceToDeviceCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   ShapedSlice dst_;
@@ -261,7 +261,7 @@ class MemzeroCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   ShapedSlice dst_;
@@ -280,7 +280,7 @@ class Memset32Cmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   BufferAllocation::Slice dst_;
@@ -308,7 +308,7 @@ class ChildCmd : public Command {
 
   bool support_loop_unroll() override { return false; }
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   CommandBufferCmdExecutor child_commands_;
@@ -335,7 +335,7 @@ class CaseCmd : public Command {
 
   bool support_loop_unroll() override { return false; }
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   ShapedSlice index_;
@@ -371,7 +371,7 @@ class WhileCmd : public Command {
   // unsupported for now.
   bool support_loop_unroll() override { return false; }
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   BufferAllocation::Slice pred_;
@@ -402,7 +402,7 @@ class GemmCmd : public TracedCommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
   bool IsNestedCommandBuffer() const final { return true; }
 
@@ -429,7 +429,7 @@ class CublasLtCmd : public TracedCommandBufferCmd, public CublasLtMatmulThunk {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
   bool IsNestedCommandBuffer() const final { return true; }
 };
@@ -450,7 +450,7 @@ class CuDnnCmd : public TracedCommandBufferCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
   bool IsNestedCommandBuffer() const final { return true; }
 
@@ -502,7 +502,7 @@ class CustomCallCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
   bool IsNestedCommandBuffer() const final { return true; }
 
  private:
@@ -594,7 +594,7 @@ class CollectiveDoneCmd : public AsyncDoneCommand {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override { return {}; }
+  BufferUses buffer_uses() const override { return {}; }
 
   std::shared_ptr<CollectiveThunk::AsyncEvents> async_events() const {
     return async_events_;
@@ -619,7 +619,7 @@ class AllReduceCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   ReductionKind reduction_kind_;
@@ -641,7 +641,7 @@ class ReduceScatterCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   ReductionKind reduction_kind_;
@@ -663,7 +663,7 @@ class AllToAllCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   bool has_split_dimension_;
@@ -685,7 +685,7 @@ class AllGatherCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   std::vector<CollectiveThunk::Buffer> buffers_;
@@ -707,7 +707,7 @@ class CollectiveBroadcastCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   std::vector<CollectiveThunk::Buffer> buffers_;
@@ -729,7 +729,7 @@ class CollectivePermuteCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   P2PConfig p2p_config_;
@@ -751,7 +751,7 @@ class RecvCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   P2PConfig p2p_config_;
@@ -773,7 +773,7 @@ class SendCmd : public CollectiveCmd {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   P2PConfig p2p_config_;
@@ -808,7 +808,7 @@ class DynamicSliceFusionCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
   bool force_update() override { return true; }
 
@@ -870,7 +870,7 @@ class DynamicSliceCopyFusionCmd : public Command {
 
   bool support_loop_unroll() override { return true; }
 
-  BufferUseVector buffers() const override;
+  BufferUses buffer_uses() const override;
 
  private:
   const ShapedSlice source_buffer_;

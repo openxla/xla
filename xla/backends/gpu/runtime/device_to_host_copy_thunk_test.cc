@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/service/buffer_assignment.h"
@@ -85,6 +86,7 @@ TEST(DeviceToHostCopyThunkTest, ToProto) {
                     }
                     mem_size: 256
                   }
+                  instr_id: -1
                 }
               )pb"));
 }
@@ -133,11 +135,12 @@ TEST(DeviceToHostCopyThunkTest, FromProto) {
   std::vector<BufferAllocation> buffer_allocations = {
       BufferAllocation(/*index=*/0, /*size=*/1024, /*color=*/0),
       BufferAllocation(/*index=*/1, /*size=*/1024, /*color=*/0)};
+  CopyThunk::AsyncEventsMap async_events_map;
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DeviceToHostCopyThunk> thunk,
-      DeviceToHostCopyThunk::FromProto(
-          thunk_info, proto.device_to_host_copy_thunk(), buffer_allocations));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DeviceToHostCopyThunk> thunk,
+                          DeviceToHostCopyThunk::FromProto(
+                              thunk_info, proto.device_to_host_copy_thunk(),
+                              buffer_allocations, async_events_map));
   Shape shape = ShapeUtil::MakeShape(S32, {64});
 
   EXPECT_EQ(*thunk.get(),

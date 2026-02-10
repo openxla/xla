@@ -109,7 +109,7 @@ class CoordinationServiceAgent {
   static absl::StatusOr<std::unique_ptr<CoordinationServiceAgent>> Create(
       tsl::Env* env, absl::string_view job_name, int task_id,
       const Config& config, std::unique_ptr<CoordinationClient> leader_client,
-      tsl::StatusCallback error_fn, bool recoverable = false);
+      tsl::StatusCallback error_fn);
 
   virtual ~CoordinationServiceAgent() {
     absl::Status s = Shutdown();

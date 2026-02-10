@@ -164,6 +164,12 @@ cc_library(
     ],
 )
 
+# IMPORTANT: This is an internal (to XLA) implementation of XLA:FFI API and it
+# contains multiple global static registries (FFI handler registry and Type
+# Registry). This library must be linked exactly once into the target process,
+# or it is possible to have multiple registries, which will lead to crashes and
+# undefined behavior as XLA:FFI will be calling destructors for unrelated types,
+# or fail to find an FFI handler.
 cc_library(
     name = "ffi_api",
     srcs = ["ffi_api.cc"],

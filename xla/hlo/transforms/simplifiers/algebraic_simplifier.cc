@@ -1646,7 +1646,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleBitcastConvert(
       if (!ShapeUtil::LastDimIsMinorMost(shape)) {
         return false;
       }
-      const int type_bit_width = primitive_util::BitWidth(shape.element_type());
+      const int type_bit_width =
+          primitive_util::StorageBitWidth(shape.element_type());
       if (!shape.has_layout() || shape.layout().element_size_in_bits() == 0) {
         return type_bit_width % 8 == 0;
       }
@@ -5282,14 +5283,6 @@ std::optional<std::vector<Chunk>> FindContiguousChunks(
 
   auto factors =
       CommonFactors(reshape_shape.dimensions(), transpose_shape.dimensions());
-
-  if (factors.empty() ||
-      factors.back() !=
-          std::make_pair(
-              static_cast<int64_t>(reshape_shape.dimensions().size()),
-              static_cast<int64_t>(transpose_shape.dimensions().size()))) {
-    return std::nullopt;
-  }
 
   std::vector<Chunk> chunks;
   chunks.reserve(factors.size() - 1);

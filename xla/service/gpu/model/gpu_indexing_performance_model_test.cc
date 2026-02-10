@@ -859,7 +859,7 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
                           std::get<SymbolicTileAnalysis>(analysis_or_error)
-                              .ComputeTiledHloInstructions(Tiling(
+                              .ComputeTiledComputation(Tiling(
                                   {{fusion_root, FlatTiling({9, 9, 9})}})));
 
   LaunchDimensions launch_dimensions = GpuPerformanceModelWithIndexingAnalysis::
@@ -907,10 +907,10 @@ ENTRY main {
           /*emitter_specific_constraints_builder=*/nullptr);
   ASSERT_TRUE(std::holds_alternative<SymbolicTileAnalysis>(analysis_or_error));
 
-  TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          std::get<SymbolicTileAnalysis>(analysis_or_error)
-                              .ComputeTiledHloInstructions(
-                                  Tiling({{fusion_root, FlatTiling({1})}})));
+  TF_ASSERT_OK_AND_ASSIGN(
+      TiledHloComputation tiled_hlo_computation,
+      std::get<SymbolicTileAnalysis>(analysis_or_error)
+          .ComputeTiledComputation(Tiling({{fusion_root, FlatTiling({1})}})));
 
   LaunchDimensions launch_dimensions = GpuPerformanceModelWithIndexingAnalysis::
       GetLaunchDimensionsForTiledFusion(tiled_hlo_computation, device_info_);

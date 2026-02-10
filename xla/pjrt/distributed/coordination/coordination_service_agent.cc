@@ -75,7 +75,7 @@ constexpr char kHeartbeatThread[] = "CoordinationServiceHeartbeatLoop";
 CoordinationServiceAgent::Create(
     tsl::Env* env, absl::string_view job_name, int task_id,
     const Config& config, std::unique_ptr<CoordinationClient> leader_client,
-    tsl::StatusCallback error_fn, bool recoverable) {
+    tsl::StatusCallback error_fn) {
   // Validate arguments.
   if (config.service_leader.empty()) {
     return MakeCoordinationError(InvalidArgument(
@@ -85,13 +85,6 @@ CoordinationServiceAgent::Create(
     return MakeCoordinationError(InvalidArgument(
         "CoordinationServiceAgent must have a valid leader client."));
   }
-  if (recoverable) {
-    LOG(WARNING)
-        << "Using experimental recoverable task feature. The default shutdown "
-           "barrier will only block non-recoverable tasks. If a synchronized "
-           "shutdown is desired, the user / library should invoke "
-           "`WaitAtBarrier` explicitly at the end of the program.";
-  }
 
   // Record coordination service agent metric.
   enabled_usage_metric->GetCell()->Set(true);
@@ -99,7 +92,6 @@ CoordinationServiceAgent::Create(
   CoordinatedTask task;
   task.set_job_name(std::string(job_name));
   task.set_task_id(task_id);
-  task.set_recoverable(recoverable);
 
   // The CoordinationServiceAgent constructor is private, so we can't call
   // std::make_unique.

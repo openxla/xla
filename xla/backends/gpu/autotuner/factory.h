@@ -37,13 +37,6 @@ struct GetCodegenBackends {
       mlir::MLIRContext* mlir_context)>;
 };
 
-struct GetFissionBackends {
-  using Type = std::function<std::vector<std::unique_ptr<CodegenBackend>>(
-      stream_executor::StreamExecutor*, const DebugOptions*, Compiler*,
-      const Compiler::GpuTargetConfig*, const AliasInfo* alias_info,
-      mlir::MLIRContext* mlir_context)>;
-};
-
 }  // namespace gpu
 }  // namespace xla
 

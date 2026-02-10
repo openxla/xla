@@ -112,8 +112,7 @@ DistributedRuntimeCoordinationServiceClient::
   leader_client.reset(NewGrpcCoordinationClient(channel));
   auto agent = CoordinationServiceAgent::Create(
       options.env, "jax_worker", options.node_id, config,
-      std::move(leader_client), options.missed_heartbeat_callback,
-      options.recoverable);
+      std::move(leader_client), options.missed_heartbeat_callback);
   if (!agent.ok()) {
     LOG(ERROR) << "Coordination agent failed to initialize: " << agent.status();
   } else {

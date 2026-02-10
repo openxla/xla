@@ -182,7 +182,7 @@ void LaunchCommandBufferThunk(stream_executor::StreamExecutor* executor,
   BufferAllocations allocations({a, b, c}, 0, &allocator);
 
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream, stream, nullptr, nullptr);
+      run_options, allocations, stream, stream, nullptr, nullptr, nullptr);
 
   // This is where we're getting the 'AddI32' kernel from.
   TF_ASSERT_OK_AND_ASSIGN(std::vector<uint8_t> fatbin,
