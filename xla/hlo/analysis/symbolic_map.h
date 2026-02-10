@@ -185,10 +185,6 @@ SymbolicMap CompressDims(const SymbolicMap& map,
 SymbolicMap CompressSymbols(const SymbolicMap& map,
                             const llvm::SmallBitVector& unused_symbols);
 
-// Parses a SymbolicMap from its string representation.
-SymbolicMap ParseSymbolicMap(absl::string_view serialized_symbolic_map,
-                             mlir::MLIRContext* mlir_context);
-
 template <typename H>
 H AbslHashValue(H h, const llvm::SmallVector<SymbolicExpr>& vec) {
   return H::combine(std::move(h), absl::MakeSpan(vec));

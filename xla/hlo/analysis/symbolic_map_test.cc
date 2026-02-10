@@ -23,6 +23,7 @@ limitations under the License.
 #include "llvm/ADT/SmallBitVector.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
+#include "xla/hlo/analysis/symbolic_map_serialization.h"
 
 namespace xla {
 namespace gpu {
