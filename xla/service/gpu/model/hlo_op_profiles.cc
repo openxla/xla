@@ -51,6 +51,9 @@ HloOpProfiles::GetProfileName(const se::DeviceDescription &device_info) {
     std::string profile_name = absl::StrCat("sm_", ptr->major, ptr->minor);
     // For sm_100, append device name to distinguish B200 vs GB200.
     if (profile_name == "sm_100") {
+      CHECK(device_info.name() != se::DeviceDescription::kUndefinedString)
+          << "Device name must be set for sm_100 devices to distinguish "
+             "B200 vs GB200. Use B200SXMDeviceInfo() in tests.";
       std::vector<std::string> full_name =
           absl::StrSplit(device_info.name(), ' ');
       return absl::StrCat(profile_name, "_", full_name.back());
