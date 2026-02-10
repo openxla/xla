@@ -4021,7 +4021,6 @@ xla_cc_test(
 xla_cc_test(
     name = "layout_assignment_test",
     srcs = ["layout_assignment_test.cc"],
-    tags = ["pjrt_migration_candidate"],
     deps = [
         ":computation_layout",
         ":hlo_verifier",
@@ -4036,11 +4035,12 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/hlo/testlib:test",
         "//xla/hlo/testlib:test_helpers",
         "//xla/hlo/transforms/simplifiers:algebraic_simplifier",
-        "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:errors",
