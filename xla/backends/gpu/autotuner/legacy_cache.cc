@@ -55,12 +55,9 @@ std::optional<LegacyCache::Config> LegacyCache::Lookup(
 absl::Status LegacyCache::Insert(const HloInstruction* instr,
                                  const Config& best_config) {
   AutotuneCacheKey key = GetAutotuneCacheKey(*instr);
-  std::optional<AutotuneResult> opt_result = GetAutotuneResult(best_config);
-  if (!opt_result.has_value()) {
-    return absl::OkStatus();
-  }
+  AutotuneResult autotune_result = GetAutotuneResult(best_config);
   absl::StatusOr<AutotunerUtil::ResultAndInserted> result_and_inserted =
-      AutotunerUtil::AddResultToCaches(key, opt_result.value(), cache_dir_,
+      AutotunerUtil::AddResultToCaches(key, autotune_result, cache_dir_,
                                        cache_mode_);
   if (!result_and_inserted.ok()) {
     LOG(ERROR) << "Failed to insert autotune cache: "
@@ -108,9 +105,9 @@ std::optional<LegacyCache::Config> LegacyCache::GetConfig(
     config.codegen_backend_name = "TRITON";
     config.backend_config.PackFrom(result.triton());
   } else if (result.has_gemm()) {
-    config.codegen_backend_name = "CUBLAS";
+    config.codegen_backend_name = "CUBLASLT";
     if (is_fusion_instruction) {
-      config.codegen_backend_name = "CUBLAS_FISSION";
+      config.codegen_backend_name = "CUBLASLT_FISSION";
     }
     config.backend_config.PackFrom(result.gemm());
   } else if (result.has_algorithm()) {
@@ -128,13 +125,13 @@ std::optional<LegacyCache::Config> LegacyCache::GetConfig(
   return config;
 }
 
-std::optional<AutotuneResult> LegacyCache::GetAutotuneResult(
+AutotuneResult LegacyCache::GetAutotuneResult(
     const LegacyCache::Config& config) {
   AutotuneResult result;
   if (config.codegen_backend_name == "TRITON") {
     config.backend_config.UnpackTo(result.mutable_triton());
-  } else if (config.codegen_backend_name == "CUBLAS" ||
-             config.codegen_backend_name == "CUBLAS_FISSION") {
+  } else if (config.codegen_backend_name == "CUBLASLT" ||
+             config.codegen_backend_name == "CUBLASLT_FISSION") {
     config.backend_config.UnpackTo(result.mutable_gemm());
   } else if (config.codegen_backend_name == "CUDNN") {
     config.backend_config.UnpackTo(result.mutable_algorithm());

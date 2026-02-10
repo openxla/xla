@@ -96,16 +96,16 @@ class LegacyCacheTest : public ::testing::Test {
     return config;
   }
 
-  Config CreateDummyCublasConfig() {
+  Config CreateDummyCublasLtConfig() {
     Config config;
-    config.codegen_backend_name = "CUBLAS";
+    config.codegen_backend_name = "CUBLASLT";
     config.backend_config.PackFrom(AutotuneResult::GemmKey());
     return config;
   }
 
-  Config CreateDummyCublasFissionConfig() {
+  Config CreateDummyCublasLtFissionConfig() {
     Config config;
-    config.codegen_backend_name = "CUBLAS_FISSION";
+    config.codegen_backend_name = "CUBLASLT_FISSION";
     config.backend_config.PackFrom(AutotuneResult::GemmKey());
     return config;
   }
@@ -177,7 +177,7 @@ TEST_F(LegacyCacheTest, InsertAndLookupTriton) {
 TEST_F(LegacyCacheTest, InsertAndLookupCublas) {
   auto cache = LegacyCache(test_dir_, mode_, device_desc_);
   auto instr = CreateDummyInstr("hlo2");
-  Config config = CreateDummyCublasConfig();
+  Config config = CreateDummyCublasLtConfig();
 
   TF_ASSERT_OK(cache.Insert(instr.get(), config));
   EXPECT_THAT(cache.Lookup(instr.get()), Optional(ConfigEq(config)));
@@ -202,7 +202,7 @@ ENTRY main {
 )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(kHLO));
   auto instr = module->entry_computation()->root_instruction();
-  Config config = CreateDummyCublasFissionConfig();
+  Config config = CreateDummyCublasLtFissionConfig();
 
   TF_ASSERT_OK(cache.Insert(instr, config));
   EXPECT_THAT(cache.Lookup(instr), Optional(ConfigEq(config)));
@@ -279,7 +279,7 @@ TEST_F(LegacyCacheTest, OnlyInsertOncePerHlo) {
   TF_ASSERT_OK(cache.Insert(instr.get(), config));
   EXPECT_THAT(cache.Lookup(instr.get()), Optional(ConfigEq(config)));
 
-  Config another_config = CreateDummyCublasConfig();
+  Config another_config = CreateDummyCublasLtConfig();
   TF_ASSERT_OK(cache.Insert(instr.get(), another_config));
   EXPECT_THAT(cache.Lookup(instr.get()), Optional(ConfigEq(config)));
 }
@@ -300,7 +300,7 @@ TEST_F(LegacyCacheTest, SerializeAndDeserialize) {
 
   // Overwrite config for both instructions.
   cache.ClearCache();
-  Config another_config = CreateDummyCublasConfig();
+  Config another_config = CreateDummyCublasLtConfig();
   TF_ASSERT_OK(cache.Insert(instr_1.get(), another_config));
   TF_ASSERT_OK(cache.Insert(instr_2.get(), another_config));
 
