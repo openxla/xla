@@ -22,7 +22,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
-#include "xla/hlo/analysis/symbolic_map.h"
+#include "xla/hlo/analysis/symbolic_map_serialization.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/shape_util.h"
