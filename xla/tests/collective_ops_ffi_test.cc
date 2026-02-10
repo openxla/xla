@@ -358,9 +358,9 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$multimem_all_reduce",
                          });
 
 TEST_F(CollectiveOpsTestFFI, AllReduce) {
-  if (hlo_runner_->device_count() < kNumReplicas) {
+  if (device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
-                 << hlo_runner_->device_count() << " available)";
+                 << device_count() << " available)";
   }
 
   constexpr absl::string_view hlo_string = R"(
@@ -394,9 +394,9 @@ TEST_F(CollectiveOpsTestFFI, AllReduce) {
 }
 
 TEST_F(CollectiveOpsTestFFI, DeviceAllReduce) {
-  if (hlo_runner_->device_count() < kNumReplicas) {
+  if (device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
-                 << hlo_runner_->device_count() << " available)";
+                 << device_count() << " available)";
   }
 
   GpuCollectives* collectives = GpuCollectives::Default("CUDA");
@@ -436,9 +436,9 @@ TEST_F(CollectiveOpsTestFFI, DeviceAllReduce) {
 }
 
 TEST_F(CollectiveOpsTestFFI, MulticastAllReduce) {
-  if (hlo_runner_->device_count() < kNumReplicas) {
+  if (device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
-                 << hlo_runner_->device_count() << " available)";
+                 << device_count() << " available)";
   }
 
   if (!IsHopperAndHigher()) {

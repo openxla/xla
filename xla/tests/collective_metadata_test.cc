@@ -59,9 +59,9 @@ TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadata) {
   })";
 
   constexpr int kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto unoptimized_module,
@@ -121,9 +121,9 @@ TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadataForPartitions) {
   })";
 
   constexpr int kNumPartitions = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumPartitions)
+  ASSERT_GE(device_count(), kNumPartitions)
       << "Test requires at least " << kNumPartitions << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto unoptimized_module,
@@ -163,9 +163,9 @@ TEST_F(CollectiveMetadataTest, BuildMultimemOnlyOncePerModuleExecution) {
   })";
 
   constexpr int kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
@@ -217,9 +217,9 @@ TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadataWithReplicaGroup) {
   })";
 
   constexpr int kNumReplicas = 4;
-  if (hlo_runner_->device_count() < kNumReplicas) {
+  if (device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
-                 << hlo_runner_->device_count() << " available)";
+                 << device_count() << " available)";
   }
 
   TF_ASSERT_OK_AND_ASSIGN(

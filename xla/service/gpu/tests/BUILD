@@ -1176,6 +1176,7 @@ cc_library(
     srcs = ["collective_ops_e2e_test_base.cc"],
     hdrs = ["collective_ops_e2e_test_base.h"],
     deps = [
+        ":hlo_pjrt_gpu_test_base",
         "//xla:literal",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/target_config",
