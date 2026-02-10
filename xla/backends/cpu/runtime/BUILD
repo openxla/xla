@@ -674,10 +674,12 @@ cc_library(
         ":thunk",
         "//xla:shape_util",
         "//xla:util",
+        "//xla/ffi",
         "//xla/ffi:attribute_map",
         "//xla/ffi:call_frame",
         "//xla/ffi:execution_state",
-        "//xla/ffi:ffi_api",
+        "//xla/ffi:ffi_api",  # buildcleaner: keep
+        "//xla/ffi:ffi_registry",
         "//xla/ffi:invoke",
         "//xla/ffi/api:c_api",
         "//xla/runtime:buffer_use",

@@ -48,7 +48,7 @@ limitations under the License.
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_state.h"
 #include "xla/ffi/ffi.h"
-#include "xla/ffi/ffi_api.h"
+#include "xla/ffi/ffi_registry.h"
 #include "xla/ffi/invoke.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/primitive_util.h"
@@ -64,10 +64,10 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/platform.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -271,7 +271,8 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
 
       InvokeContext call_options = BuildInstantiateInvokeContext(
           execution_state.get(), &gpu_compute_capability);
-      RETURN_IF_ERROR(Invoke(bundle.instantiate, call_frame, call_options,
+      RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), bundle.instantiate,
+                             call_frame, call_options,
                              XLA_FFI_ExecutionStage_INSTANTIATE));
     }
   }
@@ -314,7 +315,8 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
 
     InvokeContext context = BuildInstantiateInvokeContext(
         execution_state.get(), &gpu_compute_capability);
-    TF_RETURN_IF_ERROR(Invoke(*bundle.instantiate, call_frame, context,
+    TF_RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), *bundle.instantiate,
+                              call_frame, context,
                               xla::ffi::ExecutionStage::kInstantiate));
   }
 
@@ -496,7 +498,7 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
       run_id, stream, buffer_allocations, collective_params,
       collective_clique_requests, collective_memory_requests,
       collective_cliques, collective_memory, execution_context);
-  return Invoke(handler, *call_frame, context, stage);
+  return Invoke(ffi::GetXlaFfiApi(), handler, *call_frame, context, stage);
 }
 
 absl::Status CustomCallThunk::ExecuteFfiHandler(
@@ -518,7 +520,7 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
       run_id, stream, buffer_allocations, collective_params,
       collective_clique_requests, collective_memory_requests,
       collective_cliques, collective_memory, execution_context);
-  return Invoke(handler, *call_frame, context, stage);
+  return Invoke(ffi::GetXlaFfiApi(), handler, *call_frame, context, stage);
 }
 
 absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {

@@ -22,9 +22,12 @@ limitations under the License.
 #include <type_traits>
 
 #include "absl/base/no_destructor.h"
+#include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "xla/tsl/lib/gtl/int_type.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/safe_reinterpret_cast.h"
@@ -49,7 +52,7 @@ namespace xla::ffi {
 //    of time and explicitly get a unique type id for them.
 //
 // 2. Internal type id. When FFI handler defined in the same binary we rely
-//    on a global static registry to automatically assign type ids.
+//    on the automatic type registration in the global static registry.
 //
 // TypeInfo defines a set of functions that allow XLA runtime to manipulate
 // external types. For user data, that is forwarded to FFI handlers, they all
@@ -73,6 +76,12 @@ class TypeRegistry {
     Deleter deleter = nullptr;
     Serializer serializer = nullptr;
     Deserializer deserializer = nullptr;
+  };
+
+  // A type registration record.
+  struct TypeRegistration {
+    TypeId type_id;
+    TypeInfo type_info;
   };
 
   // To declare a type `T` as serializable and deserializable, define a
@@ -135,6 +144,23 @@ class TypeRegistry {
  private:
   static TypeId GetNextTypeId();
 };
+
+namespace internal {
+
+// `TypeRegistry` is implemented on top of the `TypeRegistrationMap` that
+// holds registrations for all types in the process. It is critical that
+// FFI handlers and XLA runtime share the same instance of this map.
+struct TypeRegistrationMap {
+  absl::Mutex mu;
+  absl::flat_hash_map<std::string, TypeRegistry::TypeRegistration> map
+      ABSL_GUARDED_BY(mu);
+};
+
+}  // namespace internal
+
+//===---------------------------------------------------------------------===///
+// TypeRegistry templates implementation.
+//===---------------------------------------------------------------------===///
 
 template <typename T>
 absl::string_view TypeRegistry::GetTypeName() {
