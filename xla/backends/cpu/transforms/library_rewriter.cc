@@ -254,9 +254,9 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
   // release of oneDNN library with both fusion direction support.
 #if XLA_ONEDNN_USE_GRAPH_API
   if (lib->fusion_kind() == kOneDnnFusionKind) {
-     direction = FusionDirection::kDown;
+    direction = FusionDirection::kDown;
   }
-#endif // XLA_ONEDNN_USE_GRAPH_API
+#endif  // XLA_ONEDNN_USE_GRAPH_API
 
   AddFusionCandidates(fusion, fusion, direction, frontier);
 
@@ -293,7 +293,7 @@ absl::Status LibraryRewriter::FuseNeighbors(HloFusionInstruction* fusion,
       VLOG(4) << "  Only one dot op is allowed in oneDNN fusion";
       break;
     }
-#endif // XLA_ONEDNN_USE_GRAPH_API
+#endif  // XLA_ONEDNN_USE_GRAPH_API
 
     if (lib->ReachedMaxFusionSize(fused_op_count)) {
       VLOG(4) << "  Reached max fusion size: " << fused_op_count;
