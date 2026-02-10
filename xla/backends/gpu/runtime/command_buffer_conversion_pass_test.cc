@@ -33,9 +33,9 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
-#include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/cudnn_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
+#include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/replica_id_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -211,7 +211,8 @@ std::unique_ptr<CuDnnThunk> CreateCuDnnThunk(const BufferAllocation& alloc0) {
   BufferAllocation::Slice slice0(&alloc0, 0, 1024);
   return std::make_unique<CuDnnThunk>(
       /*fingerprint=*/"fingeprint", Thunk::ThunkInfo(),
-      /*args=*/std::vector<BufferAllocation::Slice>{slice0},
+      /*args=*/
+      std::vector<ShapedSlice>{{slice0, ShapeUtil::MakeShape(F32, {256})}},
       /*output_args=*/std::vector<bool>{true});
 }
 

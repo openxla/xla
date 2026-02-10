@@ -204,6 +204,30 @@ TEST(PjRtCApiClientTest, ConcurrentGetReadyFuture) {
   }
 }
 
+TEST(PjRtCApiClientTest, GetReadyFutureDeletedBuffer) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+
+  std::vector<int32_t> data{1};
+  Shape shape = ShapeUtil::MakeShape(S32, {});
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          client->memory_spaces()[0], /*device_layout=*/nullptr));
+
+  buffer->Delete();
+  EXPECT_TRUE(buffer->IsDeleted());
+
+  auto future = buffer->GetReadyFuture();
+  EXPECT_THAT(future.Await(), StatusIs(absl::StatusCode::kInvalidArgument,
+                                       HasSubstr("deleted or donated")));
+}
+
 TEST(PjRtCApiClientTest, IsDynamicDimension) {
   SetUpCpuPjRtApi();
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,

@@ -87,11 +87,7 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> CompileInternal(
   TF_ASSIGN_OR_RETURN(auto cpu_client,
                       CreatePjRtCpuClientFromTopology(topology));
 
-  TF_ASSIGN_OR_RETURN(auto loaded_executable,
-                      cpu_client->CompileAndLoad(computation, options));
-
-  return std::make_unique<xla::PjRtExecutableForwarder>(
-      std::move(loaded_executable));
+  return cpu_client->Compile(computation, options);
 }
 
 }  // namespace
@@ -113,5 +109,5 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> CpuPjRtCompiler::Compile(
 STREAM_EXECUTOR_REGISTER_MODULE_INITIALIZER(pjrt_register_cpu_compiler, {
   std::unique_ptr<xla::PjRtCompiler> compiler =
       std::make_unique<xla::cpu::CpuPjRtCompiler>();
-  PjRtRegisterCompiler(xla::CpuName(), std::move(compiler));
+  PjRtRegisterDefaultCompiler(xla::CpuName(), std::move(compiler));
 });

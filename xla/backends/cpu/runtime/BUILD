@@ -23,7 +23,8 @@ filegroup(
     srcs = [
         "convolution_lib_f16_2d.cc",
         "convolution_lib_f16_3d.cc",
-        "convolution_lib_f32.cc",
+        "convolution_lib_f32_2d.cc",
+        "convolution_lib_f32_3d.cc",
         "dot_lib_c128.cc",
         "dot_lib_c64.cc",
         "dot_lib_f16.cc",
@@ -161,6 +162,7 @@ tf_proto_library(
         "//xla/backends/cpu:ynn_fusion_options_proto",
         "//xla/service:buffer_assignment_proto",
         "//xla/service:hlo_proto",
+        "//xla/service:shaped_slice_proto",
     ],
 )
 
@@ -399,7 +401,8 @@ cc_library(
     srcs = [
         "convolution_lib_f16_2d.cc",
         "convolution_lib_f16_3d.cc",
-        "convolution_lib_f32.cc",
+        "convolution_lib_f32_2d.cc",
+        "convolution_lib_f32_3d.cc",
     ],
     hdrs = ["convolution_lib.h"],
     copts = runtime_copts(),
@@ -950,6 +953,7 @@ cc_library(
         "//xla/runtime:buffer_use",
         "//xla/runtime:work_group",
         "//xla/service:buffer_assignment",
+        "//xla/service:shaped_slice",
         "//xla/stream_executor:device_address",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:errors",
@@ -1260,6 +1264,7 @@ cc_library(
         "//xla/runtime:work_group",
         "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
+        "//xla/service:shaped_slice",
         "//xla/stream_executor:device_address",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
@@ -1352,6 +1357,7 @@ xla_cc_test(
         "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
         "//xla/service:hlo_proto_cc",
+        "//xla/service:shaped_slice",
         "//xla/stream_executor:launch_dim",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",

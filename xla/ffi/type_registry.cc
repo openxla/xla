@@ -58,13 +58,14 @@ TypeRegistry::TypeId TypeRegistry::GetNextTypeId() {
 
 absl::StatusOr<TypeRegistry::TypeId> TypeRegistry::AssignExternalTypeId(
     absl::string_view name, TypeInfo type_info) {
-  VLOG(3) << absl::StrFormat("Assign external type id: name=%s", name);
-
   absl::MutexLock lock(type_registry_mutex);
   auto& registry = StaticTypeRegistryMap();
 
-  // Try to emplace with unknow type id and fill it with real type id only if we
-  // successfully acquired an entry for a given name.
+  VLOG(3) << absl::StreamFormat("Assign external type id: name=%s registry=%p",
+                                name, &registry);
+
+  // Try to emplace with unknown type id and fill it with real type id only if
+  // we successfully acquired an entry for a given name.
   auto emplaced =
       registry.emplace(name, TypeRegistration{kUnknownTypeId, type_info});
   if (!emplaced.second) {
@@ -84,19 +85,21 @@ absl::StatusOr<TypeRegistry::TypeId> TypeRegistry::AssignExternalTypeId(
     type_id = GetNextTypeId();
   }
 
-  VLOG(3) << absl::StrFormat("Assigned external type id: name=%s type_id=%d",
-                             name, type_id.value());
+  VLOG(3) << absl::StreamFormat(
+      "Assigned external type id: name=%s type_id=%v registry=%p", name,
+      type_id, &registry);
   return emplaced.first->second.type_id = type_id;
 }
 
 absl::Status TypeRegistry::RegisterExternalTypeId(absl::string_view name,
                                                   TypeId type_id,
                                                   TypeInfo type_info) {
-  VLOG(3) << absl::StrFormat("Register external type id: name=%s type_id=%d",
-                             name, type_id.value());
-
   absl::MutexLock lock(type_registry_mutex);
   auto& registry = StaticTypeRegistryMap();
+
+  VLOG(3) << absl::StreamFormat(
+      "Register external type id: name=%s type_id=%v registry=%p", name,
+      type_id, &registry);
 
   auto emplaced = registry.emplace(name, TypeRegistration{type_id, type_info});
   if (!emplaced.second && emplaced.first->second.type_id != type_id) {

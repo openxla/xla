@@ -53,6 +53,8 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "google/protobuf/text_format.h"
+#include "riegeli/bytes/string_reader.h"
+#include "riegeli/bytes/string_writer.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/debug_options_flags.h"
 #include "xla/ffi/ffi.h"
@@ -108,10 +110,13 @@ limitations under the License.
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/types.h"
 #include "xla/util.h"
+#include "xla/util/split_proto/split_executable_and_options_writer.h"
+#include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/mem.h"
+#include "tsl/platform/numa.h"
 #include "tsl/platform/platform.h"
 
 namespace xla {
@@ -221,6 +226,21 @@ TEST(StreamExecutorGpuClientTest, MemorySpacesUniqueIds) {
       EXPECT_TRUE(inserted) << "Duplicate ids for memory spaces '" << it->second
                             << "' and '" << debug_string << "'";
     }
+  }
+}
+
+TEST(StreamExecutorGpuClientTest, NumaNode) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+  ASSERT_GE(client->devices().size(), 1);
+
+  for (auto* device : client->devices()) {
+    const auto it = device->Attributes().find("numa_node");
+    ASSERT_NE(it, device->Attributes().end());
+
+    const int64_t* value = std::get_if<int64_t>(&it->second);
+    ASSERT_NE(value, nullptr);
+    EXPECT_NE(*value, tsl::port::kNUMANoAffinity);
   }
 }
 
@@ -455,9 +475,13 @@ TEST(StreamExecutorGpuClientTest, SendErrorNoDeadLock) {
   opts.recv_callbacks = recv_callbacks;
 
   // Check that send error safely rejected and we do not dead lock.
-  auto result = executable->Execute(/*argument_handles=*/{{}}, opts);
-  EXPECT_TRUE(absl::StrContains(result.status().message(),
-                                "Uh-oh, can send chunk to host"));
+  TF_ASSERT_OK_AND_ASSIGN(auto result,
+                          executable->Execute(/*argument_handles=*/{{}}, opts));
+  ASSERT_EQ(result.size(), 1);
+  ASSERT_EQ(result[0].size(), 1);
+  auto status = result[0][0]->GetReadyFuture().Await();
+  EXPECT_TRUE(
+      absl::StrContains(status.message(), "Uh-oh, can send chunk to host"));
 }
 
 TEST(StreamExecutorGpuClientTest, RecvErrorNoDeadLock) {
@@ -491,8 +515,12 @@ TEST(StreamExecutorGpuClientTest, RecvErrorNoDeadLock) {
   opts.recv_callbacks = recv_callbacks;
 
   // Check that invalid chunk safely rejected and we do not dead lock.
-  auto result = executable->Execute(/*argument_handles=*/{{}}, opts);
-  EXPECT_TRUE(absl::StrContains(result.status().message(),
+  TF_ASSERT_OK_AND_ASSIGN(auto result,
+                          executable->Execute(/*argument_handles=*/{{}}, opts));
+  ASSERT_EQ(result.size(), 1);
+  ASSERT_EQ(result[0].size(), 1);
+  auto status = result[0][0]->GetReadyFuture().Await();
+  EXPECT_TRUE(absl::StrContains(status.message(),
                                 "Adding chunk of size 40 would overflow buffer "
                                 "of size 8 (0 already transferred)"));
 }
@@ -1149,6 +1177,61 @@ TEST(StreamExecutorGpuClientTest, AsyncCopyToDevice) {
   ASSERT_TRUE(ShapeUtil::Compatible(src_literal.shape(), literal->shape()));
   ASSERT_EQ(src_literal.data<float>(),
             literal->Relayout(src_literal.shape().layout()).data<float>());
+}
+
+TEST(StreamExecutorGpuClientTest, CopyErrorBufferToDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+
+  auto* src_device = client->addressable_devices()[0];
+  auto* dst_device = client->addressable_devices()[1];
+
+  TF_ASSERT_OK_AND_ASSIGN(auto* src_memory_space,
+                          src_device->default_memory_space());
+  TF_ASSERT_OK_AND_ASSIGN(auto* dst_memory_space,
+                          dst_device->default_memory_space());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto send_buffer,
+      client->CreateErrorBuffer(Internal("some error"),
+                                ShapeUtil::MakeShape(U32, {3, 2}),
+                                src_memory_space));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto recv_buffer,
+                          send_buffer->CopyToMemorySpace(dst_memory_space));
+
+  EXPECT_THAT(
+      recv_buffer->ToLiteral().Await(),
+      absl_testing::StatusIs(tsl::error::INTERNAL, HasSubstr("some error")));
+}
+
+TEST(StreamExecutorGpuClientTest, CopyDelayedErrorBufferToDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+
+  auto* src_device = client->addressable_devices()[0];
+  auto* dst_device = client->addressable_devices()[1];
+
+  TF_ASSERT_OK_AND_ASSIGN(auto* src_memory_space,
+                          src_device->default_memory_space());
+  TF_ASSERT_OK_AND_ASSIGN(auto* dst_memory_space,
+                          dst_device->default_memory_space());
+
+  xla::Shape shape = ShapeUtil::MakeShape(U32, {3, 2});
+
+  TF_ASSERT_OK_AND_ASSIGN(auto alias_pair,
+                          client->CreateAliasBuffer(shape, src_memory_space));
+  auto& send_buffer = alias_pair.first;
+  auto& fulfill_cb = alias_pair.second;
+
+  TF_ASSERT_OK_AND_ASSIGN(auto recv_buffer,
+                          send_buffer->CopyToMemorySpace(dst_memory_space));
+
+  absl::SleepFor(absl::Seconds(3));
+
+  absl::Status error = fulfill_cb(absl::InternalError("delayed error"));
+
+  EXPECT_THAT(recv_buffer->ToLiteral().Await(), error);
 }
 
 TEST(StreamExecutorGpuClientTest, CreateMixOfErrorBuffers) {
@@ -2202,7 +2285,9 @@ TEST(StreamExecutorGpuClientTest, ProfileExecution) {
   ExecutionProfile profile;
   ExecuteOptions opts;
   opts.execution_profile = &profile;
-  TF_ASSERT_OK(executable->Execute(/*argument_handles=*/{{}}, opts));
+  TF_ASSERT_OK_AND_ASSIGN(auto results,
+                          executable->Execute(/*argument_handles=*/{{}}, opts));
+  TF_ASSERT_OK(results[0][0]->GetReadyFuture().Await());
   EXPECT_GT(profile.compute_time_ns(), 0);
 }
 
@@ -2294,12 +2379,15 @@ ENTRY %Add.6 (a.1: f32[], b.2: f32[]) -> (f32[], f32[]) {
                           gpu_exe->SerializeExecutable());
 
   ExecutableAndOptionsProto proto;
-  proto.ParseFromString(serialized);
+  ASSERT_OK(ReadSplitProto(
+      std::make_unique<riegeli::StringReader<>>(serialized), proto));
   EXPECT_EQ(proto.pjrt_client_name(), "PjRtStreamExecutorClient");
   proto.set_pjrt_client_name("SomeGpuClient");
-  serialized = proto.SerializeAsString();
+  std::string modified_serialized;
+  ASSERT_OK(WriteSplitExecutableAndOptions(
+      proto, std::make_unique<riegeli::StringWriter<>>(&modified_serialized)));
 
-  EXPECT_THAT(client->DeserializeExecutable(serialized, std::nullopt),
+  EXPECT_THAT(client->DeserializeExecutable(modified_serialized, std::nullopt),
               absl_testing::StatusIs(
                   absl::StatusCode::kInternal,
                   HasSubstr("PjRt client type expected by the serialized "
@@ -3379,7 +3467,7 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
   if (node_id < num_nodes_using_cache) {
     debug_options.set_xla_gpu_experimental_autotune_cache_mode(
         DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
-    debug_options.set_xla_gpu_experimental_autotuner_cache_dir(cache_dir);
+    debug_options.set_xla_gpu_per_fusion_autotune_cache_dir(cache_dir);
   }
 
   const char* kHlo = R"(

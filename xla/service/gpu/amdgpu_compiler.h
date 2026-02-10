@@ -57,12 +57,10 @@ class AMDGPUCompiler : public GpuCompiler {
       const GpuAliasInfo* alias_info,
       tsl::thread::ThreadPool* thread_pool) override;
 
-  bool RequiresCollectiveScheduleLinearizer(
-      const HloModule* module, se::StreamExecutor* stream_exec) override;
-
   absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
   GetCodegenBackends(se::StreamExecutor* stream_exec,
                      const Compiler::GpuTargetConfig* target_config,
+                     const AliasInfo* alias_info,
                      const DebugOptions& debug_options,
                      mlir::MLIRContext* mlir_context) override;
 
@@ -77,7 +75,8 @@ class AMDGPUCompiler : public GpuCompiler {
       const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
       stream_executor::StreamExecutor* stream_executor,
       const Compiler::GpuTargetConfig* target_config,
-      HloCostAnalysis::ShapeSizeFunction shape_size_fn) override;
+      HloCostAnalysis::ShapeSizeFunction shape_size_fn,
+      const MultiProcessKeyValueStore& key_value_store) override;
 
  private:
   AMDGPUCompiler(const AMDGPUCompiler&) = delete;

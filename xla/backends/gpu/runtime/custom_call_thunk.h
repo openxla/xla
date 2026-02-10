@@ -30,7 +30,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
-#include "xla/backends/gpu/runtime/shaped_slice.h"
+#include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/c_api.h"
@@ -46,7 +46,9 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/shaped_slice.h"
 #include "xla/stream_executor/device_address_allocator.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream.h"
 
 namespace xla {
@@ -104,6 +106,7 @@ class CustomCallThunk : public Thunk {
       std::vector<NullableShapedSlice> results,
       xla::ffi::AttributesMap attributes,
       const HloComputation* called_computation, absl::string_view platform_name,
+      const se::GpuComputeCapability& gpu_compute_capability,
       std::unique_ptr<xla::ffi::ExecutionState> execution_state = nullptr);
 
   // Creates a serializable custom call thunk from the given XLA FFI handler
@@ -115,6 +118,7 @@ class CustomCallThunk : public Thunk {
       std::vector<NullableShapedSlice> results,
       xla::ffi::AttributesMap attributes,
       const HloComputation* called_computation,
+      const se::GpuComputeCapability& gpu_compute_capability,
       std::unique_ptr<xla::ffi::ExecutionState> execution_state = nullptr);
 
   // Creates a custom call thunk from a bundle of handlers created with
@@ -125,7 +129,8 @@ class CustomCallThunk : public Thunk {
       std::vector<NullableShapedSlice> operands,
       std::vector<NullableShapedSlice> results,
       xla::ffi::AttributesMap attributes,
-      const HloComputation* called_computation);
+      const HloComputation* called_computation,
+      const se::GpuComputeCapability& gpu_compute_capability);
 
   absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
@@ -174,7 +179,8 @@ class CustomCallThunk : public Thunk {
       ThunkInfo thunk_info, const CustomCallThunkProto& proto,
       absl::Span<const BufferAllocation> buffer_allocations,
       const HloModule* absl_nullable hlo_module,
-      absl::string_view platform_name);
+      absl::string_view platform_name,
+      const se::GpuComputeCapability& gpu_compute_capability);
 
  private:
   CustomCallThunk(ThunkInfo thunk_info, std::string target_name,
@@ -202,7 +208,9 @@ class CustomCallThunk : public Thunk {
       const BufferAllocations* absl_nullable buffer_allocations,
       const CollectiveParams* absl_nullable collective_params,
       CollectiveCliqueRequests* absl_nullable collective_clique_requests,
+      CollectiveMemoryRequests* absl_nullable collective_memory_requests,
       const CollectiveCliques* absl_nullable collective_cliques,
+      const CollectiveMemory* absl_nullable collective_memory,
       const ffi::ExecutionContext* absl_nullable execution_context);
 
   absl::Status ExecuteFfiHandler(
@@ -211,7 +219,9 @@ class CustomCallThunk : public Thunk {
       const BufferAllocations* buffer_allocations,
       const CollectiveParams* absl_nullable collective_params,
       CollectiveCliqueRequests* absl_nullable collective_clique_requests,
-      const CollectiveCliques* absl_nullable collective_cliques);
+      CollectiveMemoryRequests* absl_nullable collective_memory_requests,
+      const CollectiveCliques* absl_nullable collective_cliques,
+      const CollectiveMemory* absl_nullable collective_memory);
 
   absl::Status ExecuteFfiHandler(
       RunId run_id, xla::ffi::Ffi& handler, xla::ffi::ExecutionStage stage,
@@ -219,7 +229,9 @@ class CustomCallThunk : public Thunk {
       const BufferAllocations* buffer_allocations,
       const CollectiveParams* absl_nullable collective_params,
       CollectiveCliqueRequests* absl_nullable collective_clique_requests,
-      const CollectiveCliques* absl_nullable collective_cliques);
+      CollectiveMemoryRequests* absl_nullable collective_memory_requests,
+      const CollectiveCliques* absl_nullable collective_cliques,
+      const CollectiveMemory* absl_nullable collective_memory);
 
   // API version of the custom call. If not set, it means the custom call thunk
   // was initialized from a non-registered function pointer and can't be

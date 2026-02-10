@@ -19,6 +19,7 @@ cc_library(
     name = "codegen_backend",
     hdrs = ["codegen_backend.h"],
     deps = [
+        ":backends_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
         "@com_google_absl//absl/status",
@@ -38,11 +39,13 @@ cc_library(
         ":profiler",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:dump",
         "//xla/service:executable",
         "//xla/service:shaped_buffer",
+        "//xla/service/gpu/autotuning:autotuner_status_key",
         "//xla/stream_executor:kernel_stats",
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/platform:env",
@@ -195,4 +198,9 @@ xla_cc_test(
         "@com_google_protobuf//:any_cc_proto",
         "@tsl//tsl/platform:path",
     ],
+)
+
+tf_proto_library(
+    name = "backends_proto",
+    srcs = ["backends.proto"],
 )

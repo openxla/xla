@@ -114,7 +114,6 @@ xla_test(
     name = "xla_ops_test",
     srcs = ["xla_ops_test.cc"],
     backends = ["cpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":xla",
         "//xla/hlo/analysis:indexing_analysis",

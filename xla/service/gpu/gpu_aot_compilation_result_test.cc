@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "riegeli/bytes/string_reader.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.h"
-#include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -71,6 +71,8 @@ using ::testing::AnyOf;
 using ::testing::Return;
 using ::testing::ReturnRef;
 using ::tsl::proto_testing::EqualsProto;
+
+PLATFORM_DEFINE_ID(kDummyPlatformId, dummy_platform);
 
 DeviceDescription GetDeviceDescription() {
   DeviceDescription device_description;
@@ -162,8 +164,7 @@ class GpuAotCompilationResultTest : public ::testing::Test {
   MockStreamExecutor executor_;
   MockPlatform platform_;
   const std::string platform_name_ = "gpu";
-  stream_executor::Platform::Id platform_id_ =
-      reinterpret_cast<stream_executor::Platform::Id>(123);
+  stream_executor::Platform::Id platform_id_ = kDummyPlatformId;
 };
 
 TEST_F(GpuAotCompilationResultTest, CreateAndSerialize) {
@@ -194,7 +195,8 @@ TEST_F(GpuAotCompilationResultTest, LoadExecutable) {
   EnsureCudaSymbolIsRegistered();
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
-                          std::move(*result).LoadExecutable(&executor_));
+                          std::move(*result).LoadExecutable(
+                              platform_.id(), GetDeviceDescription()));
 
   auto* gpu_executable = dynamic_cast<GpuExecutable*>(executable.get());
   ASSERT_NE(gpu_executable, nullptr) << "Executable is not a GpuExecutable.";

@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_callback_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_ffi_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_layouts_extension.h"
@@ -308,6 +309,59 @@ PJRT_Extension_Base* PjRtCApiClient::FindExtensionImpl(
     return nullptr;
   }
   return it->second;
+}
+
+absl::Status PjRtCApiClient::RegisterCallbackImpl(
+    PJRT_Callback_Type callback_type, std::function<void(void*)> callback) {
+  if (callback == nullptr) {
+    return absl::OkStatus();
+  }
+  const PJRT_Callback_Extension* callbacks_ext =
+      FindExtension<PJRT_Callback_Extension>(
+          PJRT_Extension_Type::PJRT_Extension_Type_Callback);
+  if (callbacks_ext == nullptr) {
+    return absl::UnimplementedError(
+        "Callback extension is not implemented in this PJRT plugin.");
+  }
+  CHECK_NE(callbacks_ext, nullptr)
+      << "PjRt C API Callback extension is not found.";
+
+  auto callback_fn =
+      std::make_unique<std::function<void(void*)>>(std::move(callback));
+
+  PJRT_Callback_RegisterCallback_Args args;
+  args.struct_size = PJRT_Callback_RegisterCallback_Args_STRUCT_SIZE;
+  args.client = pjrt_c_client();
+  args.type = callback_type;
+  args.user_arg = callback_fn.get();
+  args.callback = +[](void* args, void* user_arg) {
+    using CallbackFn = std::function<void(void*)>;
+    CallbackFn* user_callback = static_cast<CallbackFn*>(user_arg);
+    (*user_callback)(args);
+  };
+
+  RETURN_STATUS_IF_PJRT_ERROR(callbacks_ext->register_callback(&args), c_api_);
+  registered_callbacks_.push_back(std::move(callback_fn));
+  return absl::OkStatus();
+}
+
+absl::Status PjRtCApiClient::InvokeCallbacks(PJRT_Callback_Type callback_type,
+                                             void* callback_args) {
+  const PJRT_Callback_Extension* callbacks_ext =
+      FindExtension<PJRT_Callback_Extension>(
+          PJRT_Extension_Type::PJRT_Extension_Type_Callback);
+  if (callbacks_ext == nullptr) {
+    return absl::UnimplementedError(
+        "Callback extension is not implemented in this PJRT plugin.");
+  }
+
+  PJRT_Callback_InvokeCallback_Args args;
+  args.struct_size = PJRT_Callback_InvokeCallback_Args_STRUCT_SIZE;
+  args.client = pjrt_c_client();
+  args.type = callback_type;
+  args.args = callback_args;
+  RETURN_STATUS_IF_PJRT_ERROR(callbacks_ext->invoke_callback(&args), c_api_);
+  return absl::OkStatus();
 }
 
 int PjRtCApiClient::device_count() const { return devices_.size(); }
@@ -3051,6 +3105,7 @@ Future<> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
   args.struct_size = PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.src = buffer_.get();
+  args.event = nullptr;
 
   const xla::Shape& shape = literal->shape();
 
@@ -3062,6 +3117,15 @@ Future<> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
 
   args.dst_size = ShapeUtil::ByteSizeOfElements(shape);
   args.dst = literal->untyped_data();
+  std::unique_ptr<char[]> placeholder_dst;
+  if (args.dst == nullptr && args.dst_size == 0) {
+    // `PJRT_Buffer_ToHostBuffer` returns early for `nullptr` dst, which skips
+    // buffer error propagation. Therefore, we set `args.dst` to a non-null
+    // placeholder to force `PJRT_Buffer_ToHostBuffer` to proceed to copy and
+    // propagate errors.
+    placeholder_dst = std::make_unique<char[]>(0);
+    args.dst = placeholder_dst.get();
+  }
   absl::StatusOr<pjrt::BufferMemoryLayoutData> c_layout_data;
   if (literal->shape().has_layout()) {
     c_layout_data =
@@ -3083,7 +3147,7 @@ Future<> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
   if (error != nullptr) {
     return Future<>(::pjrt::PjrtErrorToStatus(error.get(), api));
   }
-
+  CHECK(args.event != nullptr);
   return pjrt::ConvertCEventToCppFuture(args.event, api);
 }
 
@@ -3314,6 +3378,10 @@ void PjRtCApiBuffer::MakePromiseTrackEvent() {
 }
 
 Future<> PjRtCApiBuffer::GetReadyFuture() {
+  if (IsDeleted()) {
+    return Future<>(InvalidArgument(
+        "GetReadyFuture() called on deleted or donated buffer"));
+  }
   absl::MutexLock l(mu_);
   if (readiness_promise_ == nullptr) {
     auto [promise, future] = MakePromise<>();

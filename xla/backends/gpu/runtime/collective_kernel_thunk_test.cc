@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_multimem_registry.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -283,9 +284,11 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
   CollectiveMultimemRegistry multimem_registry(
       executor, collective_params.global_device_id);
   CollectiveCliqueRequests clique_requests;
+  CollectiveMemoryRequests memory_requests(buffer_allocations);
   Thunk::PrepareParams prepare_params{&collective_params, &clique_requests,
-                                      &multimem_registry, executor,
-                                      &buffer_allocations};
+                                      &memory_requests,   &multimem_registry,
+                                      executor,           &buffer_allocations};
+
   TF_RETURN_IF_ERROR(metadata.thunk->Prepare(prepare_params));
 
   TF_RETURN_IF_ERROR(multimem_registry.Build());
@@ -318,7 +321,7 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
   auto execute_params = Thunk::ExecuteParams::Create(
       run_options, buffer_allocations, stream.get(),
       /*command_buffer_trace_stream=*/nullptr, &collective_params,
-      /*collective_cliques=*/nullptr);
+      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr);
   TF_RETURN_IF_ERROR(metadata.thunk->ExecuteOnStream(execute_params));
   return output_buffer;
 }

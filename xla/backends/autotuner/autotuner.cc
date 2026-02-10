@@ -19,7 +19,6 @@ limitations under the License.
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -49,6 +48,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
+#include "xla/service/gpu/autotuning/autotuner_status_key.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/tools/hlo_decomposer.h"
@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/proto/proto_utils.h"
+#include "xla/util.h"
 #include "tsl/platform/blocking_counter.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
@@ -191,15 +192,31 @@ absl::Status Autotuner::Autotune(HloModule* module,
   }
 
   // 2. Shard and get instructions to autotune for current shard.
+  // Sort the instructions by fingerprint to ensure deterministic sharding.
+  std::vector<tsl::Fprint128> sorted_fingerprints;
+  for (const auto& [fingerprint, _] : all_instructions_by_fingerprint) {
+    sorted_fingerprints.push_back(fingerprint);
+  }
+  std::sort(sorted_fingerprints.begin(), sorted_fingerprints.end(),
+            [](const tsl::Fprint128& a, const tsl::Fprint128& b) {
+              if (a.high64 != b.high64) {
+                return a.high64 < b.high64;
+              }
+              return a.low64 < b.low64;
+            });
+
   const size_t bucket_size =
-      std::ceil(static_cast<double>(all_instructions_by_fingerprint.size()) /
+      std::ceil(static_cast<double>(sorted_fingerprints.size()) /
                 static_cast<double>(total_shards));
   const size_t start = bucket_size * my_shard_index;
-  const size_t end =
-      std::min(start + bucket_size, all_instructions_by_fingerprint.size());
-  InstructionsByFingerprint instructions_by_fingerprint(
-      std::next(all_instructions_by_fingerprint.begin(), start),
-      std::next(all_instructions_by_fingerprint.begin(), end));
+  const size_t end = std::min(start + bucket_size, sorted_fingerprints.size());
+
+  InstructionsByFingerprint instructions_by_fingerprint;
+  for (size_t i = start; i < end; ++i) {
+    const tsl::Fprint128& fingerprint = sorted_fingerprints[i];
+    instructions_by_fingerprint[fingerprint] =
+        all_instructions_by_fingerprint.at(fingerprint);
+  }
 
   // 3. Autotune instructions for this shard. Use cached configs if available,
   // otherwise autotune and cache the best config.
@@ -254,7 +271,9 @@ absl::Status Autotuner::Autotune(HloModule* module,
 
   // 6. Apply the results to all candidate instructions, must be already in
   // cache_ due to step 3 and 5 above.
-  for (auto& [_, instructions] : all_instructions_by_fingerprint) {
+  for (tsl::Fprint128 fingerprint : sorted_fingerprints) {
+    std::vector<HloInstruction*>& instructions =
+        all_instructions_by_fingerprint[fingerprint];
     CHECK(!instructions.empty());
     std::optional<Config> cached_config = LookUp(instructions[0]);
     CHECK(cached_config.has_value())
@@ -293,8 +312,11 @@ absl::StatusOr<Autotuner::Config> Autotuner::GetConfig(HloInstruction* instr) {
   }
 
   if (autotune_config_.expect_all_instructions_in_cache) {
-    return absl::NotFoundError("No cached config found for HLO instr: " +
-                               instr->ToString());
+    absl::Status s = absl::NotFoundError(
+        "No cached config found for HLO instr: " + instr->ToString());
+    tsl::errors::InsertPayloads(
+        s, {{std::string(gpu::kAutotuneCacheRequiredErrorPayloadKey), ""}});
+    return s;
   }
 
   if (autotune_config_.use_default_config) {
@@ -365,7 +387,7 @@ absl::StatusOr<Autotuner::Config> Autotuner::TuneBestConfig(
                        executable_candidates.end(),
                        [](const ExecutableCandidate& candidate) {
                          return candidate.config.codegen_backend->name() ==
-                                "Cublas_fission";
+                                "CUBLAS_FISSION";
                        }),
         executable_candidates.end());
   }
@@ -485,6 +507,8 @@ std::vector<absl::StatusOr<std::unique_ptr<Executable>>> Autotuner::CompileAll(
         configs.push_back(std::move(selected_config));
         return success_result;
       }
+      VLOG(4) << "Skipping config: " << configs[i].ToString()
+              << " with status: " << executable.status();
     }
     return executables;
   }
@@ -564,7 +588,6 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
 
 absl::StatusOr<Autotuner::ConfigResult> Autotuner::PickBestConfig(
     std::vector<ConfigResult>& results) {
-
   absl::Duration min_duration = absl::InfiniteDuration();
   ConfigResult* best_result = nullptr;
   for (ConfigResult& result : results) {
@@ -686,10 +709,11 @@ absl::Status Autotuner::DumpLogsToFile() {
   std::string textproto;
   tsl::protobuf::TextFormat::PrintToString(logs_, &textproto);
 
-  TF_RETURN_IF_ERROR(tsl::WriteStringToFile(
+  TF_RETURN_IF_ERROR(tsl::AppendStringToFile(
       tsl::Env::Default(), autotune_config_.dump_logs_to, textproto));
-  VLOG(1) << "Autotune logs serialized to file: "
+  VLOG(1) << "Autotune logs appended to file: "
           << autotune_config_.dump_logs_to;
+  logs_.Clear();
   return absl::OkStatus();
 }
 

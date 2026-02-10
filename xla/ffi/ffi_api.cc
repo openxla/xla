@@ -60,6 +60,14 @@ limitations under the License.
 
 namespace xla::ffi {
 
+// Forward declare XLA:FFI API access defined below. This API is available
+// publicly via the `xla/ffi/ffi.h` or `xla/ffi/api/ffi.h` header. In this
+// translation unit we implement it, and it is critical that this translation
+// unit linked exactly one time into the main binary. It must not be linked
+// into FFI handler implementations as it will lead to duplicate static
+// registries in multiple object files.
+const XLA_FFI_Api* GetXlaFfiApi();
+
 // The minimum XLA:FFI API version that XLA runtime supports.
 static constexpr std::pair<int32_t, int32_t> kMinSupportedApiVersion = {
     /*major=*/0,
@@ -99,8 +107,14 @@ static XLA_FFI_ExecutionContext CreateExecutionContext(
 
     BackendContext operator()(const CallOptions::GpuOptions& options) const {
       return XLA_FFI_ExecutionContext::GpuContext{
-          options.stream, options.allocator, options.collective_params,
-          options.collective_clique_requests, options.collective_cliques};
+          options.stream,
+          options.allocator,
+          options.collective_params,
+          options.collective_clique_requests,
+          options.collective_memory_requests,
+          options.collective_cliques,
+          options.collective_memory,
+          options.gpu_compute_capability};
     }
   };
 

@@ -164,6 +164,12 @@ cc_library(
     ],
 )
 
+# IMPORTANT: This is an internal (to XLA) implementation of XLA:FFI API and it
+# contains multiple global static registries (FFI handler registry and Type
+# Registry). This library must be linked exactly once into the target process,
+# or it is possible to have multiple registries, which will lead to crashes and
+# undefined behavior as XLA:FFI will be calling destructors for unrelated types,
+# or fail to find an FFI handler.
 cc_library(
     name = "ffi_api",
     srcs = ["ffi_api.cc"],
@@ -186,6 +192,7 @@ cc_library(
         "//xla/service:platform_util",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:device_description",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
@@ -216,6 +223,7 @@ cc_library(
         "//xla/ffi/api:c_api",
         "//xla/ffi/api:c_api_internal",
         "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/base:core_headers",
@@ -233,6 +241,7 @@ cc_library(
         ":execution_state",
         "//xla:executable_run_options",
         "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description",
         "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/status",
     ],

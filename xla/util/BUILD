@@ -1,3 +1,4 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load(
     "//xla/tsl:tsl.bzl",
     "internal_visibility",
@@ -44,5 +45,15 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+bzl_library(
+    name = "build_defs_bzl",
+    srcs = ["build_defs.bzl"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla/tsl:package_groups_bzl",
+        "//xla/tsl/platform:rules_cc_bzl",
     ],
 )

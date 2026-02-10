@@ -28,7 +28,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/gpu/runtime/command.h"
-#include "xla/backends/gpu/runtime/command_buffer_cmd.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/service/buffer_assignment.h"
@@ -149,7 +149,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   absl::MutexLock lock(cmd_buffer->mutex);
 
   // Initialize commands.
-  TF_RETURN_IF_ERROR(commands_.Initialize(params, cmd_buffer->state));
+  TF_RETURN_IF_ERROR(commands_.Initialize(params));
 
   // Always initialize thunks if they are present so we are ready to fall back
   // on them if we detect profiling activity.
@@ -169,7 +169,8 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   Thunk::ExecuteParams execute_params(
       params.buffer_allocations, params.stream,
       params.command_buffer_trace_stream, params.collective_params,
-      params.collective_cliques, /*device_to_host_stream=*/nullptr,
+      params.collective_cliques, params.collective_memory,
+      /*device_to_host_stream=*/nullptr,
       /*host_to_device_stream=*/nullptr,
       /*send_device_memory_function=*/nullptr,
       /*recv_device_memory_function=*/nullptr, params.ffi_execution_context,

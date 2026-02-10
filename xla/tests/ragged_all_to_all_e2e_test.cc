@@ -37,9 +37,8 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/tests/collective_ops_e2e_test_base.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/hlo_runner.h"
-#include "xla/tests/collective_ops_e2e_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -57,6 +56,7 @@ enum class RaggedAllToAllImplType {
   kNccl,
   kDecomposer,
   kOneShot,
+  kOneShotWithMultiGpuBarrier,
 };
 
 class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
@@ -225,6 +225,10 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
         impl_type_ == RaggedAllToAllImplType::kDecomposer);
     opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(
         impl_type_ == RaggedAllToAllImplType::kOneShot);
+    if (impl_type_ == RaggedAllToAllImplType::kOneShotWithMultiGpuBarrier) {
+      opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
+      opts.set_xla_gpu_experimental_ragged_all_to_all_use_barrier(true);
+    }
     return opts;
   }
 
@@ -889,6 +893,8 @@ std::string RaggedAllToAllImplTypeName(
       return "decomposer";
     case RaggedAllToAllImplType::kOneShot:
       return "one_shot";
+    case RaggedAllToAllImplType::kOneShotWithMultiGpuBarrier:
+      return "one_shot_with_multi_gpu_barrier";
     default:
       LOG(FATAL) << "Unknown ragged all-to-all implementation type.";
   }
@@ -896,10 +902,12 @@ std::string RaggedAllToAllImplTypeName(
 
 INSTANTIATE_TEST_SUITE_P(
     RaggedAllToAllTest, RaggedAllToAllTest,
-    ::testing::Combine(::testing::Bool(),
-                       ::testing::Values(RaggedAllToAllImplType::kNccl,
-                                         RaggedAllToAllImplType::kDecomposer,
-                                         RaggedAllToAllImplType::kOneShot)),
+    ::testing::Combine(
+        ::testing::Bool(),
+        ::testing::Values(RaggedAllToAllImplType::kNccl,
+                          RaggedAllToAllImplType::kDecomposer,
+                          RaggedAllToAllImplType::kOneShot,
+                          RaggedAllToAllImplType::kOneShotWithMultiGpuBarrier)),
     [](const ::testing::TestParamInfo<std::tuple<bool, RaggedAllToAllImplType>>&
            info) {
       return absl::StrCat(std::get<0>(info.param) ? "async" : "sync", "_",

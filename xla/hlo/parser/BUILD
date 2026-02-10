@@ -81,6 +81,7 @@ xla_cc_test(
         "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:hlo_module_config",
+        "//xla/service:hlo_proto_cc",
         "//xla/service:pattern_matcher",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:errors",

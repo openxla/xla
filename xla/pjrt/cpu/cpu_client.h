@@ -88,6 +88,8 @@ absl::string_view PlatformVersion();
 
 }  // namespace cpu
 
+class PjRtCpuExecutable;
+
 class PjRtCpuClient final : public CommonPjRtClient {
  public:
   ~PjRtCpuClient() override;
@@ -133,10 +135,29 @@ class PjRtCpuClient final : public CommonPjRtClient {
   absl::StatusOr<std::unique_ptr<HloCostAnalysis>> GetHloCostAnalysis()
       const override;
 
+  // TODO(parkers): These should be moved to be fully client independent in
+  // cpu_pjrt_compiler.cc.
+  absl::StatusOr<std::pair<std::unique_ptr<PjRtCpuExecutable>,
+                           std::shared_ptr<DeviceAssignment>>>
+  CompileAndAssignDevices(const XlaComputation& computation,
+                          CompileOptions options);
+  absl::StatusOr<std::pair<std::unique_ptr<PjRtCpuExecutable>,
+                           std::shared_ptr<DeviceAssignment>>>
+  CompileAndAssignDevices(mlir::ModuleOp module, CompileOptions options);
+
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
+      const XlaComputation& computation, CompileOptions options) override;
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
+      mlir::ModuleOp module, CompileOptions options) override;
+
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
       const XlaComputation& computation, CompileOptions options) override;
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
       mlir::ModuleOp module, CompileOptions options) override;
+
+  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Load(
+      std::unique_ptr<PjRtExecutable> executable,
+      const LoadOptions& load_options) override;
 
   // TODO(b/403584258): PJRT wants to have just one simple Compile API. When the
   // CPU runtime stops supporting the legacy runtime we will unify our compile
@@ -195,22 +216,9 @@ class PjRtCpuClient final : public CommonPjRtClient {
 
   bool IsOnCpu(PjRtMemorySpace* memory_space) override { return true; }
 
-  // Returns a pair of async events:
-  // - async event that signals the completion of the last collective launch
-  // - count down event that must be signalled when each rank completes
-  //   a collective launch
-  using CollectiveLaunchEvent =
-      std::pair<tsl::AsyncValueRef<CpuEvent>,
-                tsl::CountDownAsyncValueRef<CpuEvent>>;
-
-  CollectiveLaunchEvent GetLastCollectiveLaunchEvent(
-      size_t num_addressable_devices) {
-    tsl::CountDownAsyncValueRef<CpuEvent> count_down(num_addressable_devices);
-    absl::MutexLock lock(mu_);
-    auto last_launch = std::move(last_collective_launch_event_);
-    last_collective_launch_event_ = count_down.AsRef();
-    return std::make_pair(std::move(last_launch), std::move(count_down));
-  }
+  tsl::AsyncValueRef<CpuEvent> GetCollectiveLaunchEvent(
+      RunId run_id, uint64_t executable_id, size_t num_addressable_devices,
+      tsl::AsyncValueRef<CpuEvent> execute_event);
 
   absl::StatusOr<const xla::PjRtTopologyDescription*> GetTopologyDescription()
       const override {
@@ -225,6 +233,11 @@ class PjRtCpuClient final : public CommonPjRtClient {
   absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>> AllocateRawBuffer(
       PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
       bool retry_on_oom, tsl::AsyncValueRef<bool> allocate_after) override;
+
+  absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
+  AllocateRawBufferForExecute(PjRtMemorySpace* memory_space,
+                              size_t on_device_bytes_count,
+                              bool retry_on_oom) override;
 
   absl::StatusOr<std::pair<tsl::RCReference<PjRtDeviceEventPromise>,
                            tsl::RCReference<PjRtDeviceEvent>>>
@@ -264,7 +277,7 @@ class PjRtCpuClient final : public CommonPjRtClient {
       const Layout* device_layout) const override;
 
  private:
-  friend class PjRtCpuExecutable;
+  friend class PjRtCpuLoadedExecutable;
   friend class CpuPjRtRawLoadedExecutable;
   friend absl::StatusOr<std::unique_ptr<PjRtClient>> GetPjRtCpuClient(
       CpuClientOptions options);
@@ -278,12 +291,18 @@ class PjRtCpuClient final : public CommonPjRtClient {
       int max_transpose_threads,
       std::unique_ptr<CpuTopologyDescription> topology);
 
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileInternal(
+  absl::StatusOr<std::pair<std::unique_ptr<PjRtCpuExecutable>,
+                           std::shared_ptr<DeviceAssignment>>>
+  CompileInternal(
       const XlaComputation& computation,
       const std::vector<const Shape*>& argument_layout_pointers,
       LayoutCanonicalizationCallback layout_canonicalization_callback,
       CompileOptions options,
       const AotCompilationOptions* absl_nullable aot_options = nullptr);
+
+  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadInternal(
+      std::shared_ptr<PjRtCpuExecutable> cpu_executable,
+      std::shared_ptr<DeviceAssignment> device_assignment);
 
   CpuDeviceMemory::Allocator* allocator() const { return allocator_.get(); }
 
@@ -318,6 +337,13 @@ class PjRtCpuClient final : public CommonPjRtClient {
   // TODO(zhangqiaorjc): Explore alternatives that allow multiple concurrent
   // collectives.
   mutable absl::Mutex mu_;
+  struct CollectiveLaunchEventState {
+    tsl::AsyncValueRef<CpuEvent> previous_event;
+    tsl::CountDownAsyncValueRef<CpuEvent> countdown_event;
+    size_t num_left_in_barrier;
+  };
+  absl::flat_hash_map<std::pair<RunId, uint64_t>, CollectiveLaunchEventState>
+      launch_events_;
   tsl::AsyncValueRef<CpuEvent> last_collective_launch_event_
       ABSL_GUARDED_BY(mu_);
 
@@ -356,48 +382,49 @@ class PjRtCpuClient final : public CommonPjRtClient {
   int max_transpose_threads_;
 };
 
+class PjRtCpuLoadedExecutable;
 class PjRtCpuExecutable;
 
-class CpuPjRtRawLoadedExecutable {
+class CpuPjRtRawLoadedExecutable : public PjRtRawLoadedExecutable {
  public:
   explicit CpuPjRtRawLoadedExecutable(RunId run_id) : run_id_(run_id) {}
-  PjRtDevice* device() { return device_; }
+  PjRtDevice* device() override { return device_; }
 
-  absl::Status Execute(
+  absl::Status Load(const ExecuteOptions& options,
+                    size_t host_callback_idx) override {
+    return absl::OkStatus();
+  }
+
+  PjRtRawLoadedExecutable::RawExecuteResult Execute(
       const ExecuteOptions& options,
-      PjRtRawLoadedExecutable::RawExecuteResult& result,
-      absl::Status& inline_result_status,
-      absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>&
-          input_buffers,
-      absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>&
+      absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
+      absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>>
           output_leaf_buffers,
-      PjRtDeviceEventSet& input_deps, bool fill_future) &&;
+      PjRtDeviceEventSet& extra_deps, PjRtDeviceEventSet& control_deps,
+      bool is_predetermined_error, bool fill_future) &&
+      override;
 
  private:
-  friend class PjRtCpuExecutable;
+  friend class PjRtCpuLoadedExecutable;
 
-  PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event_;
   const PjRtCpuExecutable* executable_;
   std::shared_ptr<DeviceAssignment> device_assignment_;
+  size_t num_addressable_devices_;
   PjRtCpuDevice* device_;
+  PjRtCpuClient* client_;
   RunId run_id_;
 };
 
-class PjRtCpuExecutable final : public PjRtLoadedExecutable {
+class PjRtCpuExecutable final : public PjRtExecutable {
  public:
   PjRtCpuExecutable(
       int num_replicas, int num_partitions,
-      std::shared_ptr<DeviceAssignment> device_assignment,
       bool parameter_is_tupled_arguments, CompileOptions compile_options,
       std::unique_ptr<Executable> cpu_executable,
       absl::InlinedVector<BufferAllocation::Index, 4> result_buffer_indices,
-      std::vector<LogicalDeviceIds> addressable_device_logical_ids,
-      std::vector<PjRtDevice*> addressable_devices, PjRtCpuClient* client,
       std::unique_ptr<HloModule> unoptimized_hlo_module);
 
   ~PjRtCpuExecutable() override = default;
-
-  PjRtCpuClient* client() const override { return client_; }
 
   absl::string_view name() const override {
     return cpu_executable_->shared_module()->name();
@@ -409,19 +436,6 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
 
   int64_t SizeOfGeneratedCodeInBytes() const override {
     return cpu_executable_->SizeOfGeneratedCodeInBytes();
-  }
-
-  const DeviceAssignment& device_assignment() const override {
-    return *device_assignment_;
-  }
-
-  absl::Span<const LogicalDeviceIds> addressable_device_logical_ids()
-      const override {
-    return addressable_device_logical_ids_;
-  }
-
-  absl::Span<PjRtDevice* const> addressable_devices() const override {
-    return addressable_devices_;
   }
 
   absl::StatusOr<std::vector<std::shared_ptr<HloModule>>> GetHloModules()
@@ -436,28 +450,6 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
   }
 
   absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override;
-
-  using PjRtLoadedExecutable::Execute;
-  absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
-      absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
-      const ExecuteOptions& options,
-      std::optional<std::vector<Future<>>>& returned_futures) const override;
-
-  using PjRtLoadedExecutable::ExecuteSharded;
-  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteSharded(
-      absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
-      const ExecuteOptions& options, std::optional<Future<>>& returned_future,
-      bool fill_future) const override;
-
-  using PjRtLoadedExecutable::ExecutePortable;
-  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecutePortable(
-      absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
-      const ExecuteOptions& options, std::optional<Future<>>& returned_future,
-      bool fill_future) const override;
-
-  void Delete() override;
-
-  bool IsDeleted() const override;
 
   absl::StatusOr<std::string> SerializeExecutable() const override;
 
@@ -475,36 +467,17 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
     return compile_options_;
   }
 
+  const CompileOptions& compile_options() const { return compile_options_; }
+
  private:
   friend class PjRtCpuClient;
   friend class CpuPjRtRawLoadedExecutable;
+  friend class PjRtCpuLoadedExecutable;
 
   absl::Status SetUpDonation(bool tuple_inputs);
 
-  // Checks that the input buffers passed in by the user have the correct size
-  // on device for the compiled program.
-  absl::Status CheckBufferCompatibilities(
-      absl::Span<const CommonPjRtBuffer::ScopedHold> input_buffers,
-      absl::Span<PjRtBuffer* const> argument_handles) const;
-
-  absl::StatusOr<std::unique_ptr<CpuPjRtRawLoadedExecutable>>
-  StartRawExecutable(
-      const ExecuteOptions& options,
-      PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event,
-      const RunId& run_id, int replica, int partition,
-      PjRtDevice* device) const;
-
-  absl::StatusOr<Result> ExecuteHelper(
-      absl::Span<PjRtBuffer* const> argument_handles, int replica,
-      int partition, const RunId& run_id, const ExecuteOptions& options,
-      PjRtCpuClient::CollectiveLaunchEvent last_collective_launch_event,
-      bool fill_future, PjRtCpuDevice* device = nullptr) const;
-
-  PjRtCpuClient* client_;
-
   int num_replicas_;
   int num_partitions_;
-  std::shared_ptr<DeviceAssignment> device_assignment_;
   bool parameter_is_tupled_arguments_;
   CompileOptions compile_options_;
 
@@ -528,6 +501,97 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
   // be donated when executing the computation.
   std::vector<int> parameters_that_must_be_donated_;
 
+  // Cached list of memory spaces per output.
+  std::vector<int> output_memory_space_kind_ids_;
+
+  // Cached result of comparing HloCostAnalysis FLOP estimate for execute
+  // critical path.
+  bool cheap_computation_;
+
+  std::string fingerprint_;
+
+  std::unique_ptr<HloModule> unoptimized_hlo_module_;
+};
+
+class PjRtCpuLoadedExecutable final : public PjRtLoadedExecutable {
+ public:
+  PjRtCpuLoadedExecutable(
+      std::shared_ptr<PjRtCpuExecutable> executable,
+      std::shared_ptr<DeviceAssignment> device_assignment,
+      std::vector<LogicalDeviceIds> addressable_device_logical_ids,
+      std::vector<PjRtDevice*> addressable_devices, PjRtCpuClient* client);
+
+  ~PjRtCpuLoadedExecutable() override = default;
+
+  PjRtCpuExecutable* GetExecutable() const override {
+    return executable_.get();
+  }
+
+  PjRtCpuClient* client() const override { return client_; }
+
+  const DeviceAssignment& device_assignment() const override {
+    return *device_assignment_;
+  }
+
+  absl::Span<const LogicalDeviceIds> addressable_device_logical_ids()
+      const override {
+    return addressable_device_logical_ids_;
+  }
+
+  absl::Span<PjRtDevice* const> addressable_devices() const override {
+    return addressable_devices_;
+  }
+
+  using PjRtLoadedExecutable::Execute;
+  absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
+      absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
+      const ExecuteOptions& options,
+      std::optional<std::vector<Future<>>>& returned_futures) const override;
+
+  using PjRtLoadedExecutable::ExecuteSharded;
+  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecuteSharded(
+      absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
+      const ExecuteOptions& options, std::optional<Future<>>& returned_future,
+      bool fill_future) const override;
+
+  using PjRtLoadedExecutable::ExecutePortable;
+  absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> ExecutePortable(
+      absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
+      const ExecuteOptions& options, std::optional<Future<>>& returned_future,
+      bool fill_future) const override;
+
+  void Delete() override;
+
+  bool IsDeleted() const override;
+
+ private:
+  friend class PjRtCpuClient;
+  friend class CpuPjRtRawLoadedExecutable;
+
+  absl::Status SetUpDonation(bool tuple_inputs);
+
+  // Checks that the input buffers passed in by the user have the correct size
+  // on device for the compiled program.
+  absl::Status CheckBufferCompatibilities(
+      absl::Span<const CommonPjRtBuffer::ScopedHold> input_buffers,
+      absl::Span<PjRtBuffer* const> argument_handles) const;
+
+  absl::StatusOr<std::unique_ptr<CpuPjRtRawLoadedExecutable>>
+  StartRawExecutable(
+      const ExecuteOptions& options,
+      const RunId& run_id, int replica, int partition,
+      PjRtDevice* device) const;
+
+  absl::StatusOr<Result> ExecuteHelper(
+      absl::Span<PjRtBuffer* const> argument_handles, int replica,
+      int partition, const RunId& run_id, const ExecuteOptions& options,
+      bool fill_future, PjRtCpuDevice* device = nullptr) const;
+
+  PjRtCpuClient* client_;
+  std::shared_ptr<PjRtCpuExecutable> executable_;
+
+  std::shared_ptr<DeviceAssignment> device_assignment_;
+
   // The replica and partition indices of device_assignment_ to be run by this
   // client. On single-host platforms without partitioning, this is all
   // replicas (i.e. addressable_device_logical_ids_[i] = (i, 0)), but this may
@@ -540,17 +604,6 @@ class PjRtCpuExecutable final : public PjRtLoadedExecutable {
   // addressable_device_logical_ids_[i] is assigned. shared_ptrs instead of
   // unique_ptrs to play well with the Python bindings (see xla.cc).
   std::vector<PjRtDevice*> addressable_devices_;
-
-  // Cached list of memory spaces per output.
-  std::vector<int> output_memory_space_kind_ids_;
-
-  // Cached result of comparing HloCostAnalysis FLOP estimate for execute
-  // critical path.
-  bool cheap_computation_;
-
-  std::string fingerprint_;
-
-  std::unique_ptr<HloModule> unoptimized_hlo_module_;
 };
 
 absl::StatusOr<std::unique_ptr<PjRtClient>> ABSL_DEPRECATED(

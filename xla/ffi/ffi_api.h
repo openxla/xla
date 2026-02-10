@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/execution_state.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/tsl/concurrency/chain.h"
 
 // This is an implementation of XLA FFI API defined in `api/c_api.h` header. It
@@ -60,7 +61,9 @@ class DeviceAddressAllocator;
 namespace xla::gpu {
 struct CollectiveParams;
 class CollectiveCliqueRequests;
+class CollectiveMemoryRequests;
 class CollectiveCliques;
+class CollectiveMemory;
 }  // namespace xla::gpu
 
 namespace xla::ffi {
@@ -82,7 +85,11 @@ struct CallOptions {
     se::DeviceAddressAllocator* allocator = nullptr;
     const xla::gpu::CollectiveParams* collective_params = nullptr;
     xla::gpu::CollectiveCliqueRequests* collective_clique_requests = nullptr;
+    xla::gpu::CollectiveMemoryRequests* collective_memory_requests = nullptr;
     const xla::gpu::CollectiveCliques* collective_cliques = nullptr;
+    const xla::gpu::CollectiveMemory* collective_memory = nullptr;
+    const stream_executor::GpuComputeCapability* gpu_compute_capability =
+        nullptr;
   };
 
   using BackendOptions = std::variant<std::monostate, CpuOptions, GpuOptions>;
@@ -178,12 +185,6 @@ absl::StatusOr<HandlerRegistration> FindHandler(absl::string_view name,
 // Returns all registered calls in the static registry for a given platform.
 absl::StatusOr<absl::flat_hash_map<std::string, HandlerRegistration>>
 StaticRegisteredHandlers(absl::string_view platform);
-
-//===----------------------------------------------------------------------===//
-// XLA FFI Api Implementation
-//===----------------------------------------------------------------------===//
-
-const XLA_FFI_Api* GetXlaFfiApi();
 
 //===----------------------------------------------------------------------===//
 // Helper functions
