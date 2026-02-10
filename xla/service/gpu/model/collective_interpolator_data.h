@@ -22,7 +22,7 @@ limitations under the License.
 //
 // BEGIN_DEFAULT_PERF_TABLE
 constexpr char kDefaultCollectivePTable[] = R"pb(
-    entries {
+  entries {
     key: "sm_100_B200"
     value {
       entries {
