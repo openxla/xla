@@ -155,8 +155,14 @@ class IndexingMap {
   // Returns an undefined indexing map.
   static IndexingMap GetUndefined() { return IndexingMap(); }
 
+  // TODO: b/446858351 - Remove AffineMap-based factory functions once all the
+  // users are migrated to SymbolicMap.
   static IndexingMap FromTensorSizes(
       mlir::AffineMap affine_map, absl::Span<const int64_t> dim_upper_bounds,
+      absl::Span<const int64_t> symbol_upper_bounds);
+
+  static IndexingMap FromTensorSizes(
+      SymbolicMap symbolic_map, absl::Span<const int64_t> dim_upper_bounds,
       absl::Span<const int64_t> symbol_upper_bounds);
 
   // Returns true if the indexing map is valid.
@@ -323,10 +329,6 @@ class IndexingMap {
   IndexingMap(SymbolicMap symbolic_map, std::vector<Variable> dimensions,
               std::vector<Variable> range_vars, std::vector<Variable> rt_vars,
               const llvm::MapVector<SymbolicExpr, Interval>& constraints);
-
-  static IndexingMap FromTensorSizes(
-      SymbolicMap symbolic_map, absl::Span<const int64_t> dim_upper_bounds,
-      absl::Span<const int64_t> symbol_upper_bounds);
 
   // Merges "mod" constraints for the same SymbolicExpr.
   // Returns true if simplification was performed.
