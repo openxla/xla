@@ -191,8 +191,7 @@ TEST(NamedShardingTest, ToString) {
   NamedSharding maximal_sharding(maximal_mesh);
   EXPECT_EQ(maximal_sharding.ToString(), "{maximal_mesh[device_id=5]}");
 
-  NamedSharding sharding_fully_unreduced =
-      test_utils::FromAxisNames(mesh, {}, {}, {"a", "b", "c", "d"});
+  NamedSharding sharding_fully_unreduced = NamedSharding::Unreduced(mesh);
   EXPECT_EQ(sharding_fully_unreduced.ToString(),
             "{mesh[a=2,b=4,c=3,d=8], unreduced}");
   NamedSharding sharding_unreduced =
@@ -200,8 +199,7 @@ TEST(NamedShardingTest, ToString) {
   EXPECT_EQ(sharding_unreduced.ToString(),
             "{mesh[a=2,b=4,c=3,d=8], [], unreduced={d:(4)2}}");
 
-  NamedSharding sharding_fully_manual =
-      test_utils::FromAxisNames(mesh, {}, {}, {}, {"a", "b", "c", "d"});
+  NamedSharding sharding_fully_manual = NamedSharding::Manual(mesh);
   EXPECT_EQ(sharding_fully_manual.ToString(),
             "{mesh[a=2,b=4,c=3,d=8], manual}");
   NamedSharding sharding_manual =
