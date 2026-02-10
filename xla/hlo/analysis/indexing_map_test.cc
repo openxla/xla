@@ -35,7 +35,7 @@ limitations under the License.
 #include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
-#include "xla/hlo/analysis/symbolic_map_serialization.h"
+#include "xla/hlo/analysis/symbolic_map_converter.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 
@@ -1407,6 +1407,7 @@ TEST_F(IndexingMapTest, RangeEvaluatorTest) {
   EXPECT_TRUE(range_evaluator.IsAlwaysPositiveOrZero(d3));
   EXPECT_TRUE(range_evaluator.IsAlwaysNegativeOrZero(d3));
 
+  // TODO: b/446858351 - Remove conversion once fully migrated to SymbolicMap.
   // d0 * 2 + d1 between [-10, 17].
   EXPECT_EQ(range_evaluator.ComputeExpressionRange(d0 * 2 + d1),
             (Interval{-10, 17}));
