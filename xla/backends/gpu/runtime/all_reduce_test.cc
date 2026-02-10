@@ -167,7 +167,7 @@ class AllReduceKernelTest : public ::testing::Test,
     for (int i = 0; i < num_ranks; ++i) {
       CollectiveKernelMetadata metadata;
       metadata.rank = i;
-
+      std::vector<void*> param_to_multimem_addresses;
       if (params_.all_reduce_strategy == AllReduceStrategy::kMultimem) {
         se::gpu::GpuExecutor* gpu_executor =
             dynamic_cast<se::gpu::GpuExecutor*>(executors[i]);
@@ -175,21 +175,34 @@ class AllReduceKernelTest : public ::testing::Test,
         TF_ASSIGN_OR_RETURN(
             void* mapped_memory,
             multicast_memory->MapMemory(allocated_buffers[i], gpu_executor));
-        metadata.multicast_buffer_ptr = mapped_memory;
-      } else {
-        metadata.multicast_buffer_ptr = nullptr;
+        param_to_multimem_addresses =
+            std::vector<void*>(kNumPeerParameters, mapped_memory);
       }
 
+      const size_t param_to_multimem_addresses_byte_size =
+          sizeof(void*) * param_to_multimem_addresses.size();
       // First map from parameter to peer ptrs and then metadata.
       metadata_buffers.emplace_back(executors[i]->AllocateArray<uint64_t>(
-          sizeof(CollectiveKernelMetadata) + param_to_peers_size));
+          sizeof(CollectiveKernelMetadata) + param_to_peers_size +
+          param_to_multimem_addresses_byte_size));
 
       se::DeviceAddressBase param_to_peers_ptrs_buffer =
           metadata_buffers[i].GetByteSlice(sizeof(CollectiveKernelMetadata),
                                            param_to_peers_size);
       metadata.param_to_peers =
           reinterpret_cast<void**>(param_to_peers_ptrs_buffer.opaque());
-
+      if (params_.all_reduce_strategy == AllReduceStrategy::kMultimem) {
+        se::DeviceAddressBase param_to_multimem_addresses_buffer =
+            metadata_buffers[i].GetByteSlice(
+                sizeof(CollectiveKernelMetadata) + param_to_peers_size,
+                param_to_multimem_addresses_byte_size);
+        metadata.param_to_multimem_addresses = reinterpret_cast<void**>(
+            param_to_multimem_addresses_buffer.opaque());
+        TF_RETURN_IF_ERROR(
+            streams[i]->Memcpy(&param_to_multimem_addresses_buffer,
+                               param_to_multimem_addresses.data(),
+                               param_to_multimem_addresses_byte_size));
+      }
       TF_RETURN_IF_ERROR(streams[i]->Memcpy(&metadata_buffers[i], &metadata,
                                             sizeof(CollectiveKernelMetadata)));
       TF_RETURN_IF_ERROR(streams[i]->Memcpy(&param_to_peers_ptrs_buffer,

@@ -72,7 +72,7 @@ CreateMetadataConstructionFutures() {
   size_t metadata_size =
       sizeof(CollectiveKernelMetadata::rank) +
       sizeof(CollectiveKernelMetadata::param_to_peers) +
-      sizeof(CollectiveKernelMetadata::multicast_buffer_ptr) +
+      sizeof(CollectiveKernelMetadata::param_to_multimem_addresses) +
       kNumParameters * kNumDevices * sizeof(void*);
   se::StreamExecutor* executors[kNumDevices] = {GetGpuExecutor(0),
                                                 GetGpuExecutor(1)};

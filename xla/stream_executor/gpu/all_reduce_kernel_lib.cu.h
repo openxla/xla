@@ -102,7 +102,9 @@ __device__ __forceinline__ RestrictedPtr<T> GetMultimemPtr(
       (uint64_t)metadata.param_to_peers[argument_offset + metadata.rank];
   uint64_t offset = (uint64_t)ptr - current_base;
 
-  return (RestrictedPtr<T>)((uint64_t)metadata.multicast_buffer_ptr + offset);
+  return (RestrictedPtr<T>)((uint64_t)metadata
+                                .param_to_multimem_addresses[argument_index] +
+                            offset);
 }
 
 template <typename T, xla::ReductionKind ReductionKindT, PlatformType PlatformT>

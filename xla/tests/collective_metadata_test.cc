@@ -91,11 +91,6 @@ TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadata) {
   EXPECT_NE(second_result_data[1], 0)
       << "Second result pointer to peers is NULL.";
 
-  EXPECT_NE(first_result_data[2], 0)
-      << "First result pointer to multimem metadata is not set.";
-  EXPECT_NE(second_result_data[2], 0)
-      << "Second result pointer to multimem metadata is not set.";
-
   for (int i = 3; i < kNumElements; ++i) {
     EXPECT_NE(first_result_data[i], 0)
         << "First result param_to_peers is NULL.";
