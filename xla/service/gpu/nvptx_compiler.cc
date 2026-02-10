@@ -368,25 +368,23 @@ NVPTXCompiler::GetCodegenBackends(
       backends.push_back(std::make_unique<CublasLtBackend>(
           stream_exec, &debug_options, this, target_config));
     }
-    if (debug_options.xla_gpu_cublas_fallback()) {
-      if (is_backend_enabled(DebugOptions::AUTOTUNE_BACKEND_CUBLAS)) {
-        backends.push_back(std::make_unique<FissionBackend>(
-            &debug_options, this, target_config,
-            std::make_unique<CublasBackend>(stream_exec, &debug_options, this,
-                                            target_config, true),
-            GetCublasRewriterPipeline(target_config->device_description),
-            alias_info, mlir_context));
-      }
-      if (debug_options.xla_gpu_enable_cublaslt() &&
-          is_backend_enabled(DebugOptions::AUTOTUNE_BACKEND_CUBLASLT)) {
-        backends.push_back(std::make_unique<FissionBackend>(
-            &debug_options, this, target_config,
-            std::make_unique<CublasLtBackend>(stream_exec, &debug_options, this,
-                                              target_config),
-            GetCublasRewriterPipeline(target_config->device_description,
-                                      /*enable_cublaslt=*/true),
-            alias_info, mlir_context));
-      }
+    if (is_backend_enabled(DebugOptions::AUTOTUNE_BACKEND_CUBLAS)) {
+      backends.push_back(std::make_unique<FissionBackend>(
+          &debug_options, this, target_config,
+          std::make_unique<CublasBackend>(stream_exec, &debug_options, this,
+                                          target_config, true),
+          GetCublasRewriterPipeline(target_config->device_description),
+          alias_info, mlir_context));
+    }
+    if (debug_options.xla_gpu_enable_cublaslt() &&
+        is_backend_enabled(DebugOptions::AUTOTUNE_BACKEND_CUBLASLT)) {
+      backends.push_back(std::make_unique<FissionBackend>(
+          &debug_options, this, target_config,
+          std::make_unique<CublasLtBackend>(stream_exec, &debug_options, this,
+                                            target_config),
+          GetCublasRewriterPipeline(target_config->device_description,
+                                    /*enable_cublaslt=*/true),
+          alias_info, mlir_context));
     }
     backends.push_back(std::make_unique<FissionBackend>(
         &debug_options, this, target_config,

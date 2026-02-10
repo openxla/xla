@@ -717,7 +717,11 @@ TEST_F(AutotunerTest, DumpLogsToFile) {
   EXPECT_THAT(actual_logs, tsl::proto_testing::EqualsProto(expected_logs));
 }
 
-TEST_F(AutotunerTest, ExcludeCublasConfig) {
+class AutotunerTestWithBackendName
+    : public AutotunerTest,
+      public ::testing::WithParamInterface<std::string> {};
+
+TEST_P(AutotunerTestWithBackendName, ExcludeCublasConfig) {
   config_.exclude_cublas_config = true;
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.push_back(GetTestConfig("test_config_1"));
@@ -726,7 +730,7 @@ TEST_F(AutotunerTest, ExcludeCublasConfig) {
   auto backend = std::make_unique<MockCodegenBackend>();
   EXPECT_CALL(*backend, GetSupportedConfigs(_))
       .WillOnce(Return(std::move(configs)));
-  EXPECT_CALL(*backend, name()).WillRepeatedly(Return("CUBLAS_FISSION"));
+  EXPECT_CALL(*backend, name()).WillRepeatedly(Return(GetParam()));
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend));
 
@@ -739,6 +743,11 @@ TEST_F(AutotunerTest, ExcludeCublasConfig) {
   EXPECT_THAT(autotuner->Autotune(dummy_instr),
               StatusIs(absl::StatusCode::kInternal));
 }
+
+INSTANTIATE_TEST_SUITE_P(ExcludeCublasConfigInstance,
+                         AutotunerTestWithBackendName,
+                         ::testing::Values("CUBLAS_FISSION",
+                                           "CUBLASLT_FISSION"));
 
 TEST_F(AutotunerTest, SelectFirstConfig) {
   config_.select_first_config = true;

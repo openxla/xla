@@ -503,7 +503,8 @@ absl::StatusOr<std::vector<Autotuner::Config>> Autotuner::GetSupportedConfigs(
 std::optional<std::unique_ptr<Executable>> Autotuner::Compile(
     HloInstruction* instr, const Config& config) {
   if (autotune_config_.exclude_cublas_config &&
-      config.codegen_backend->name() == "CUBLAS_FISSION") {
+      (config.codegen_backend->name() == "CUBLAS_FISSION" ||
+       config.codegen_backend->name() == "CUBLASLT_FISSION")) {
     return std::nullopt;
   }
   absl::StatusOr<std::unique_ptr<Executable>> executable =
