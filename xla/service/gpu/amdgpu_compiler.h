@@ -70,14 +70,6 @@ class AMDGPUCompiler : public GpuCompiler {
       const HloModule* debug_module, const CompileOptions& options,
       std::optional<int> shard_number) override;
 
-  absl::Status AddFusionAutotuningPass(
-      HloPassPipeline* pipeline, HloModule* hlo_module,
-      const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
-      stream_executor::StreamExecutor* stream_executor,
-      const Compiler::GpuTargetConfig* target_config,
-      HloCostAnalysis::ShapeSizeFunction shape_size_fn,
-      const MultiProcessKeyValueStore& key_value_store) override;
-
  private:
   AMDGPUCompiler(const AMDGPUCompiler&) = delete;
   AMDGPUCompiler& operator=(const AMDGPUCompiler&) = delete;

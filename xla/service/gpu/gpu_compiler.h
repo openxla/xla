@@ -194,15 +194,13 @@ class GpuCompiler : public LLVMCompiler {
   }
 
   // target_config must outlive the pipeline.
-  virtual absl::Status AddFusionAutotuningPass(
+  absl::Status AddFusionAutotuningPass(
       HloPassPipeline* pipeline, HloModule* hlo_module,
       const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
       stream_executor::StreamExecutor* stream_executor,
       const GpuTargetConfig* target_config,
       HloCostAnalysis::ShapeSizeFunction shape_size_fn,
-      const MultiProcessKeyValueStore& key_value_store) {
-    return absl::OkStatus();
-  }
+      const MultiProcessKeyValueStore& key_value_store);
 
   // Runs cuDNN fusion and custom call compiler passes.
   virtual absl::Status RunCudnnCompilerPasses(HloModule* module,
