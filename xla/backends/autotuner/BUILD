@@ -146,6 +146,7 @@ cc_library(
     hdrs = ["autotuner_cache_interface.h"],
     deps = [
         ":autotuner_cache_proto_cc",
+        ":backends_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

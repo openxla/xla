@@ -466,7 +466,7 @@ TEST_F(AutotunerTest, AutotuneButOneBackendFails) {
 TEST_F(AutotunerTest, CacheHit) {
   auto cache_manager = std::make_unique<MockAutotunerCache>();
   AutotunerCacheInterface::Config config;
-  config.codegen_backend_name = "mock_backend";
+  config.codegen_backend = autotuner::Backend::UNSPECIFIED_BACKEND;
   TestConfig test_config;
   GetTestConfig("test_config_2")->UnpackTo(&test_config);
   config.backend_config.PackFrom(test_config);
@@ -1003,7 +1003,7 @@ class MockKeyValueStore : public KeyValueStoreInterface {
 
 AutotunerCacheInterface::Config GetCacheConfig(absl::string_view name) {
   AutotunerCacheInterface::Config config;
-  config.codegen_backend_name = "mock_backend";
+  config.codegen_backend = autotuner::Backend::UNSPECIFIED_BACKEND;
   config.backend_config = *GetTestConfig(std::string(name));
   return config;
 };

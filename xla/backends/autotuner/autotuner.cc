@@ -456,7 +456,7 @@ std::optional<Autotuner::Config> Autotuner::LookUp(
     if (cached_config.has_value()) {
       VLOG(1) << "Found cached config for HLO: " << instr->ToString();
       for (auto& codegen_backend : codegen_backends_) {
-        if (codegen_backend->name() == cached_config->codegen_backend_name) {
+        if (codegen_backend->backend() == cached_config->codegen_backend) {
           auto backend_config = std::make_unique<google::protobuf::Any>(
               cached_config->backend_config);
           return Config{codegen_backend.get(), std::move(backend_config)};
@@ -464,7 +464,7 @@ std::optional<Autotuner::Config> Autotuner::LookUp(
       }
       LOG(WARNING) << "Cached config for HLO: " << instr->ToString()
                    << " has unsupported backend "
-                   << cached_config->codegen_backend_name;
+                   << cached_config->codegen_backend;
     }
   }
   return std::nullopt;
@@ -473,7 +473,7 @@ std::optional<Autotuner::Config> Autotuner::LookUp(
 void Autotuner::Insert(const HloInstruction* instr, Autotuner::Config& config) {
   if (cache_) {
     AutotunerCacheInterface::Config cached_config;
-    cached_config.codegen_backend_name = config.codegen_backend->name();
+    cached_config.codegen_backend = config.codegen_backend->backend();
     cached_config.backend_config = *config.backend_config;
     CHECK_OK(cache_->Insert(instr, cached_config));
   }
