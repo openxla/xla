@@ -1,0 +1,30 @@
+# proto-file: https://github.com/google-ml-infra/actions/blob/main/benchmarking/proto/benchmark_registry.proto
+# proto-message: BenchmarkSuite
+
+benchmarks {
+  name: "gemma3_1b_flax_call"
+  description: "Gemma3 1b in Flax running on GPU L4"
+  owner: "XLA Team"
+  update_frequency_policy: QUARTERLY
+  workload {
+    action: "./user_repo/xla/tools/benchmarks/executor"
+    action_inputs { key: "hlo_path" value: "https://storage.googleapis.com/xla-benchmarking-temp/gemma3_1b_flax_call.hlo" }
+  }
+
+  environment_configs {
+    id: "GPU_L4"
+    runner_label: "linux-x86-g2-16-l4-1gpu"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.8-cudnn9.8:latest"
+    workflow_type: [PRESUBMIT, POSTSUBMIT, SCHEDULED]
+    workload_action_inputs { key: "runtime_flags" value: "--num_repeats=5" }
+    workload_action_inputs { key: "hardware_category" value: "GPU_L4" }
+  }
+
+  metrics {
+    name: "bap/test"
+    unit: "ms"
+    stats {
+      stat: MEDIAN
+    }
+  }
+}

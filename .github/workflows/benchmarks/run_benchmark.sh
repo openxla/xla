@@ -220,6 +220,12 @@ else
     ERROR_MSG_CONTENT=""
 fi
 
+if [[ "${SKIP_RESULT_GENERATION:-false}" == "true" ]]; then
+  echo "INFO: SKIP_RESULT_GENERATION is set to true."
+  echo "Stats binary run complete. Skipping legacy results.json creation."
+  exit $RUNNER_EXIT_CODE
+fi
+
 # Use jq to build the final JSON, incorporating the parsed metrics
 jq -n \
   --arg bn "$BENCHMARK_NAME" \
