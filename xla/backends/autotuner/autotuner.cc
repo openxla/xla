@@ -349,10 +349,11 @@ tsl::Future<Autotuner::Config> Autotuner::GetConfig(HloInstruction* instr) {
   }
 
   VLOG(1) << "Autotuning the HLO instruction to find best config.";
-  return TuneBestConfig(instr).Map([&, instr](Autotuner::Config best_config) {
-    Insert(instr, best_config);
-    return best_config;
-  });
+  return TuneBestConfig(instr).Map(
+      [&, instr](Autotuner::Config best_config) -> absl::StatusOr<Config> {
+        RETURN_IF_ERROR(Insert(instr, best_config));
+        return best_config;
+      });
 }
 
 absl::Status Autotuner::IsValidExecutable(
@@ -470,13 +471,15 @@ std::optional<Autotuner::Config> Autotuner::LookUp(
   return std::nullopt;
 }
 
-void Autotuner::Insert(const HloInstruction* instr, Autotuner::Config& config) {
+absl::Status Autotuner::Insert(const HloInstruction* instr,
+                               Autotuner::Config& config) {
   if (cache_) {
     AutotunerCacheInterface::Config cached_config;
     cached_config.codegen_backend = config.codegen_backend->backend();
     cached_config.backend_config = *config.backend_config;
-    CHECK_OK(cache_->Insert(instr, cached_config));
+    return cache_->Insert(instr, cached_config);
   }
+  return absl::OkStatus();
 }
 
 absl::StatusOr<std::vector<Autotuner::Config>> Autotuner::GetSupportedConfigs(
@@ -557,7 +560,7 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
 
   absl::MutexLock lock(profiler_m_);
 
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       std::unique_ptr<InputBuffers> input_buffers,
       profiler_->CreateInputBuffers(candidates[0].executable.get()));
 

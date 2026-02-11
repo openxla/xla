@@ -195,7 +195,7 @@ class Autotuner {
   // Translates from Autotuner::Config to AutotunerCacheInterface::Config and
   // the other way around.
   std::optional<Autotuner::Config> LookUp(const HloInstruction* instr);
-  void Insert(const HloInstruction* instr, Autotuner::Config& config);
+  absl::Status Insert(const HloInstruction* instr, Autotuner::Config& config);
 
   absl::StatusOr<std::vector<Config>> GetSupportedConfigs(
       HloInstruction* instr);
