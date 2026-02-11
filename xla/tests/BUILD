@@ -2937,6 +2937,7 @@ xla_test(
         "//xla/backends/gpu/runtime:collective_memory_requests",
         "//xla/backends/gpu/runtime:collective_params",
         "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
         "//xla/core/collectives:reduction_kind",
         "//xla/ffi",
         "//xla/ffi:ffi_api",

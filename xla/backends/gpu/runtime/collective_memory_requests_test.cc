@@ -84,4 +84,30 @@ TEST(CollectiveMemoryRequestsTest, OrderedMulticastRequests) {
   EXPECT_EQ(ordered_requests[2].key, k1);
 }
 
+TEST(CollectiveMemoryRequestsTest, OrderedPeerRequests) {
+  GpuCliqueKey k0({kD2, kD3}, 2);
+  GpuCliqueKey k1({kD0, kD1}, 2);
+  GpuCliqueKey k2({kD0, kD1, kD2, kD3}, 4);
+
+  std::array<char, 10> data;
+  se::DeviceAddressBase buffer(data.data(), 10);
+  se::DeviceAddressBase slice = buffer.GetByteSlice(2, 2);
+
+  BufferAllocations buffers({buffer}, /*device_ordinal=*/0, nullptr);
+  CollectiveMemoryRequests requests(buffers);
+
+  TF_ASSERT_OK(requests.RequestPeerAllocation(k0, 0));
+  TF_ASSERT_OK(requests.RequestPeerAllocation(k0, 1));
+  TF_ASSERT_OK(requests.RequestPeerAllocation(k1, 0));
+  TF_ASSERT_OK(requests.RequestPeerAddress(k2, slice));
+
+  // Check that we create symmetric memories according to the GPU clique key
+  // ordering.
+  auto ordered_requests = requests.OrderedPeerAllocations();
+  ASSERT_EQ(ordered_requests.size(), 3);
+  EXPECT_EQ(ordered_requests[0].key, k2);
+  EXPECT_EQ(ordered_requests[1].key, k0);
+  EXPECT_EQ(ordered_requests[2].key, k1);
+}
+
 }  // namespace xla::gpu
