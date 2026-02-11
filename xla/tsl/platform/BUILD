@@ -350,6 +350,7 @@ tsl_cc_test(
     size = "small",
     srcs = ["subprocess_test.cc"],
     data = [
+        "//xla/tsl/platform/testdata:test_crash",
         "//xla/tsl/platform/testdata:test_echo",
         "//xla/tsl/platform/testdata:test_echo_argv_1",
         "//xla/tsl/platform/testdata:test_noop",
@@ -360,6 +361,7 @@ tsl_cc_test(
         ":subprocess",
         ":test",
         "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:strcat",

@@ -27,6 +27,7 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 
 // Android versions older than 28 do not have posix_spawn().
@@ -83,7 +84,12 @@ extern char** environ;
 namespace tsl {
 
 SubProcess::SubProcess(int nfds)
-    : running_(false), pid_(-1), exec_path_(nullptr), exec_argv_(nullptr) {
+    : running_(false),
+      pid_(-1),
+      exit_cb_(nullptr),
+      exit_cb_tid_(-1),
+      exec_path_(nullptr),
+      exec_argv_(nullptr) {
   // The input 'nfds' parameter is currently ignored and the internal constant
   // 'kNFds' is used to support the 3 channels (stdin, stdout, stderr).
   for (int i = 0; i < kNFds; i++) {
@@ -95,6 +101,15 @@ SubProcess::SubProcess(int nfds)
 
 SubProcess::~SubProcess() {
   absl::MutexLock procLock(&proc_mu_);
+  if (exit_cb_tid_ != -1) {
+    if (exit_cb_tid_ == Env::Default()->GetCurrentThreadId()) {
+      LOG(FATAL) << "Deleting SubProcess " << pid_
+                 << " from within its own exit callback routine.";
+    } else {
+      LOG(FATAL) << "Deleting SubProcess " << pid_
+                 << " while exit callback is running in another thread.";
+    }
+  }
   absl::MutexLock dataLock(&data_mu_);
   pid_ = -1;
   running_ = false;
@@ -173,6 +188,15 @@ void SubProcess::SetChannelAction(Channel chan, ChannelAction action) {
   } else {
     action_[chan] = action;
   }
+}
+
+void SubProcess::SetExitCallback(std::function<void(SubProcess*)> cb) {
+  absl::MutexLock procLock(&proc_mu_);
+  if (running_) {
+    LOG(FATAL) << "SetExitCallback called after the process was started.";
+    return;
+  }
+  exit_cb_ = cb;
 }
 
 #if USE_POSIX_SPAWN
@@ -500,11 +524,24 @@ bool SubProcess::WaitInternal(int* status) {
   }
 
   proc_mu_.Lock();
+  // Invariant: exit_cb_tid_ == -1 if and only if there are no callback or
+  // the exit callback has completed.
+  std::function<void(SubProcess*)> cb;
   if ((running_ == running) && (pid_ == pid)) {
     running_ = false;
     pid_ = -1;
+    cb = exit_cb_;
+    if (cb != nullptr) {
+      exit_cb_tid_ = Env::Default()->GetCurrentThreadId();
+    }
   }
   proc_mu_.Unlock();
+  if (cb != nullptr) {
+    cb(this);
+    proc_mu_.Lock();
+    exit_cb_tid_ = -1;
+    proc_mu_.Unlock();
+  }
   return ret;
 }
 

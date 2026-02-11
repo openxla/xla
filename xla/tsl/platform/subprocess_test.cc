@@ -20,6 +20,7 @@ limitations under the License.
 #include <algorithm>
 #include <string>
 
+#include "absl/synchronization/notification.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/test.h"
 #include "tsl/platform/path.h"
@@ -57,6 +58,12 @@ std::string NoopProgram() {
 std::string StdErrProgram() {
   std::string path = io::JoinPath(testing::XlaSrcRoot(), "tsl", "platform",
                                   "testdata", "test_stderr");
+  return tsl::io::AppendDotExeIfWindows(path);
+}
+
+std::string CrashProgram() {
+  std::string path = io::JoinPath(testing::XlaSrcRoot(), "tsl", "platform",
+                                  "testdata", "test_crash");
   return tsl::io::AppendDotExeIfWindows(path);
 }
 
@@ -227,6 +234,43 @@ TEST_F(SubProcessTest, KillProc) {
   EXPECT_TRUE(proc.Wait());
 
   EXPECT_FALSE(proc.Kill(SIGKILL));
+}
+
+TEST_F(SubProcessTest, ExitCallbackNormal) {
+  tsl::SubProcess proc;
+  proc.SetProgram(NoopProgram(), {NoopProgram()});
+  absl::Notification notification;
+  proc.SetExitCallback([&](SubProcess* p) { notification.Notify(); });
+
+  EXPECT_TRUE(proc.Start());
+  EXPECT_TRUE(proc.Wait());
+  EXPECT_TRUE(notification.HasBeenNotified());
+}
+
+TEST_F(SubProcessTest, ExitCallbackChildKilled) {
+  tsl::SubProcess proc;
+  proc.SetProgram(EchoProgram(), {EchoProgram()});
+  proc.SetChannelAction(CHAN_STDIN, ACTION_PIPE);
+  absl::Notification notification;
+
+  proc.SetExitCallback([&](SubProcess* p) { notification.Notify(); });
+
+  EXPECT_TRUE(proc.Start());
+  EXPECT_TRUE(proc.Kill(SIGKILL));
+  EXPECT_TRUE(proc.Wait());
+  EXPECT_TRUE(notification.HasBeenNotified());
+}
+
+TEST_F(SubProcessTest, ExitCallbackChildCrash) {
+  tsl::SubProcess proc;
+  proc.SetProgram(CrashProgram(), {CrashProgram()});
+  proc.SetChannelAction(CHAN_STDIN, ACTION_PIPE);
+  absl::Notification notification;
+  proc.SetExitCallback([&](SubProcess* p) { notification.Notify(); });
+
+  EXPECT_TRUE(proc.Start());
+  EXPECT_TRUE(proc.Wait());
+  EXPECT_TRUE(notification.HasBeenNotified());
 }
 
 }  // namespace

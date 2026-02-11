@@ -19,9 +19,11 @@ limitations under the License.
 #include <errno.h>
 #include <unistd.h>
 
+#include <functional>
 #include <string>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/types.h"
@@ -60,6 +62,11 @@ class SubProcess {
   //          name - $PATH is not searched.
   //    argv: The argument list.
   virtual void SetProgram(const string& file, const std::vector<string>& argv);
+
+  // SetExitCallback()
+  //    Set a callback to be run when the process exits.
+  //    It is illegal to delete the SubProcess within its exit callback.
+  virtual void SetExitCallback(std::function<void(SubProcess*)> cb);
 
   // Start()
   //    Run the command that was previously set up with SetProgram().
@@ -116,6 +123,8 @@ class SubProcess {
   mutable absl::Mutex proc_mu_;
   bool running_ TF_GUARDED_BY(proc_mu_);
   pid_t pid_ TF_GUARDED_BY(proc_mu_);
+  std::function<void(SubProcess*)> exit_cb_ ABSL_GUARDED_BY(proc_mu_);
+  int64_t exit_cb_tid_ ABSL_GUARDED_BY(proc_mu_);
 
   mutable absl::Mutex data_mu_ TF_ACQUIRED_AFTER(proc_mu_);
   char* exec_path_ TF_GUARDED_BY(data_mu_);

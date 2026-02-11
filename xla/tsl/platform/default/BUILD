@@ -453,9 +453,11 @@ cc_library(
     ],
     textual_hdrs = ["subprocess.h"],
     deps = [
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:types",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:thread_annotations",
