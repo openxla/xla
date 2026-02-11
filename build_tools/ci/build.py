@@ -746,7 +746,7 @@ Build(
 Build(
     type_=BuildType.JAX_LINUX_X86_CPU_GITHUB_ACTIONS,
     repo="google/jax",
-    configs=("rbe_linux_x86_64",),
+    configs=("rbe_linux_x86_64", "bzlmod"),
     target_patterns=(
         "//tests:cpu_tests",
         "//tests:backend_independent_tests",
@@ -759,9 +759,9 @@ Build(
         JAX_NUM_GENERATED_CASES=25,
         JAX_SKIP_SLOW_TESTS=1,
     ),
-    override_repository=dict(
-        xla=f"{_GITHUB_WORKSPACE}/openxla/xla",
-    ),
+    override_repository={
+        "xla~": f"{_GITHUB_WORKSPACE}/openxla/xla",
+    },
     options=_DEFAULT_BAZEL_OPTIONS,
     repo_env={"HERMETIC_PYTHON_VERSION": "3.12"},
 )
