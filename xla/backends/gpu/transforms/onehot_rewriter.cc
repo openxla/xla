@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -52,10 +53,13 @@ HloInstruction* TraceOneHotPattern(HloInstruction* inst,
 
   for (int64_t depth = 0; depth < kMaxTraceDepth; ++depth) {
     if (check_iota_dim.has_value() && current->opcode() == HloOpcode::kIota) {
-      return (Cast<HloIotaInstruction>(current)->iota_dimension() ==
-              *current_dim)
-                 ? current
-                 : nullptr;
+      if (Cast<HloIotaInstruction>(current)->iota_dimension() == *current_dim) {
+        return current;
+      }
+      VLOG(4) << "TraceOneHotPattern: Iota dimension mismatch on "
+              << current->name() << ". Expected " << *current_dim << ", got "
+              << Cast<HloIotaInstruction>(current)->iota_dimension();
+      return nullptr;
     }
 
     HloInstruction* next = nullptr;
@@ -66,6 +70,9 @@ HloInstruction* TraceOneHotPattern(HloInstruction* inst,
       if (check_iota_dim.has_value()) {
         auto next_dim = current->MapUnaryOutputDimToOperandDim(*current_dim);
         if (!next_dim.has_value()) {
+          VLOG(4) << "TraceOneHotPattern: MapUnaryOutputDimToOperandDim failed "
+                     "for "
+                  << current->name() << " dim " << *current_dim;
           return nullptr;
         }
         current_dim = next_dim;
@@ -76,6 +83,7 @@ HloInstruction* TraceOneHotPattern(HloInstruction* inst,
 
     return check_iota_dim.has_value() ? nullptr : current;
   }
+  VLOG(4) << "TraceOneHotPattern: Max trace depth reached.";
   return nullptr;
 }
 
@@ -103,6 +111,8 @@ std::optional<OneHotMatch> TryMatchOneHotDot(HloInstruction* instr) {
   if (dnums.lhs_batch_dimensions_size() > 0 ||
       dnums.rhs_batch_dimensions_size() > 0 ||
       dnums.lhs_contracting_dimensions_size() != 1) {
+    VLOG(3) << "Dot instruction " << dot->name()
+            << " failed dimension check for OneHot match.";
     return std::nullopt;
   }
 
@@ -127,6 +137,8 @@ std::optional<OneHotMatch> TryMatchOneHotDot(HloInstruction* instr) {
 
     if (!compare ||
         compare->comparison_direction() != ComparisonDirection::kEq) {
+      VLOG(3) << "Operand " << i << " of " << dot->name()
+              << " is not a valid comparison for OneHot.";
       continue;
     }
 
@@ -139,9 +151,13 @@ std::optional<OneHotMatch> TryMatchOneHotDot(HloInstruction* instr) {
 
     HloInstruction* found_indices = nullptr;
     if (lhs_iota && !rhs_iota) {
-      found_indices = TraceOneHotPattern(cmp_rhs, std::nullopt);
+      found_indices =
+          TraceOneHotPattern(cmp_rhs, /*check_iota_dim=*/std::nullopt);
     } else if (rhs_iota && !lhs_iota) {
       found_indices = TraceOneHotPattern(cmp_lhs, std::nullopt);
+    } else {
+      VLOG(3) << "Tracing failed for operand " << i << " of " << dot->name();
+      continue;
     }
 
     if (found_indices) {
@@ -151,8 +167,10 @@ std::optional<OneHotMatch> TryMatchOneHotDot(HloInstruction* instr) {
       if (found_indices->shape().dimensions().size() +
               weights->shape().dimensions().size() - 1 !=
           dot->shape().dimensions().size()) {
+        VLOG(3) << "Shape mismatch for OneHot match on " << dot->name();
         continue;
       }
+      VLOG(2) << "Matched OneHot pattern on " << dot->name();
       return OneHotMatch{found_indices, weights, i == 0};
     }
   }
@@ -180,6 +198,7 @@ std::optional<OneHotMatch> TryMatchOneHotDot(HloInstruction* instr) {
 absl::Status RewriteOneHotDotToGather(HloComputation* computation,
                                       HloDotInstruction* dot,
                                       const OneHotMatch& match) {
+  VLOG(2) << "Rewriting OneHot Dot " << dot->name() << " to Gather.";
   HloInstruction* indices = match.indices;
   HloInstruction* weights = match.weights;
   const Shape& dot_shape = dot->shape();
