@@ -1436,8 +1436,8 @@ TEST(StreamExecutorGpuClientTest, MockNcclClientTest) {
   EXPECT_EQ(client->device_count(), devices_per_host * num_nodes);
   for (int i = 0; i < client->device_count(); i++) {
     auto device = client->devices()[i];
-    auto partition_index =
-        std::get<int64_t>(device->Attributes().at("partition_index"));
+    auto partition_index = std::get<int64_t>(
+        device->description().Attributes().at("partition_index"));
     auto host_index = device->process_index();
     EXPECT_EQ(partition_index, host_index);
   }
@@ -3444,7 +3444,7 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
   TF_ASSIGN_OR_RETURN(
       se::CudaComputeCapability cc,
       se::CudaComputeCapability::FromString(std::get<std::string>(
-          client->addressable_devices().front()->Attributes().at(
+          client->addressable_devices().front()->description().Attributes().at(
               "compute_capability"))));
   if (!cc.IsAtLeastAmpere()) {
     return absl::FailedPreconditionError("Ampere+ GPU required");

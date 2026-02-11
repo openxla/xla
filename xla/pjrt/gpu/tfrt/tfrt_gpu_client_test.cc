@@ -1668,8 +1668,8 @@ TEST(TfrtGpuClientWithOptionsTest, DeviceAttributes) {
         client->addressable_devices()[device_index]);
 
     // Attribute `compute_capability`.
-    auto compute_capability =
-        std::get<std::string>(device->Attributes().at("compute_capability"));
+    auto compute_capability = std::get<std::string>(
+        device->description().Attributes().at("compute_capability"));
 
     // Gets the expected compute capability.
     const se::Platform* platform = device->executor()->GetPlatform();
@@ -1687,17 +1687,18 @@ TEST(TfrtGpuClientWithOptionsTest, DeviceAttributes) {
                 ElementsAre(0, 0, device->local_device_id().value()));
 
     // Attribute `device_vendor`.
-    auto device_vendor =
-        std::get<std::string>(device->Attributes().at("device_vendor"));
+    auto device_vendor = std::get<std::string>(
+        device->description().Attributes().at("device_vendor"));
     EXPECT_EQ(device_vendor, desc->device_vendor());
 
     // Attribute `partition_index`.
-    auto partition_index =
-        std::get<int64_t>(device->Attributes().at("partition_index"));
+    auto partition_index = std::get<int64_t>(
+        device->description().Attributes().at("partition_index"));
     EXPECT_EQ(partition_index, 0);
 
     // Attribute `core_count`.
-    auto core_count = std::get<int64_t>(device->Attributes().at("core_count"));
+    auto core_count =
+        std::get<int64_t>(device->description().Attributes().at("core_count"));
     EXPECT_EQ(core_count, desc->core_count());
   }
 }
