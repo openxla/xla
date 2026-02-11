@@ -732,6 +732,10 @@ SymbolicExpr SymbolicExpr::operator+(SymbolicExpr other) const {
   return BasicAddSimplify(*this, other);
 }
 
+SymbolicExpr operator+(int64_t lhs, SymbolicExpr rhs) {
+  return CreateSymbolicConstant(lhs, rhs.GetContext()) + rhs;
+}
+
 SymbolicExpr SymbolicExpr::operator-() const {
   return (*this * CreateSymbolicConstant(-1, GetContext())).Canonicalize();
 }
@@ -747,6 +751,10 @@ SymbolicExpr SymbolicExpr::operator*(SymbolicExpr other) const {
   // TODO(b/433693782): We should use our own canonicalization here instead of
   // relying on a similar one to AffineMap so tests do not fail.
   return BasicMulSimplify(*this, other);
+}
+
+SymbolicExpr operator*(int64_t lhs, SymbolicExpr rhs) {
+  return CreateSymbolicConstant(lhs, rhs.GetContext()) * rhs;
 }
 
 SymbolicExpr SymbolicExpr::operator%(int64_t v) const {

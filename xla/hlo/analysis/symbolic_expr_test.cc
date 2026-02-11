@@ -221,9 +221,9 @@ TEST_F(SymbolicExprTest, BasicSimplificationsAtCreationTime) {
   auto c3 = CreateSymbolicConstant(3, &ctx);
 
   // x + 0 = x
-  EXPECT_EQ(v0 + c0, v0);
-  EXPECT_EQ(c0 + v0, v0);
-  EXPECT_EQ(c2 + c1, c3);
+  EXPECT_EQ(v0 + 0, v0);
+  EXPECT_EQ(0 + v0, v0);
+  EXPECT_EQ(2 + c1, c3);
 
   // TODO(b/459357586): This will be canonicalized to (v0 + 2) in the future.
   EXPECT_NE(v0 + c2, c2 + v0);
@@ -243,7 +243,7 @@ TEST_F(SymbolicExprTest, BasicSimplificationsAtCreationTime) {
 
   // No associativity if constant is on LHS of outer mul.
   // TODO(b/459357586): This will be canonicalized to (v0 * 6) in the future.
-  SymbolicExpr mul_2_v0 = CreateSymbolicConstant(2, &ctx) * v0;
+  SymbolicExpr mul_2_v0 = 2 * v0;
   SymbolicExpr mul_2_v0_3 = mul_2_v0 * 3;
   EXPECT_EQ(mul_2_v0_3.ToString(), "((2 * v0) * 3)");
 }

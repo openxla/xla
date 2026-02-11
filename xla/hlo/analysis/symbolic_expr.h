@@ -146,6 +146,9 @@ class SymbolicExpr {
   const ImplType* impl_ = nullptr;
 };
 
+SymbolicExpr operator+(int64_t lhs, SymbolicExpr rhs);
+SymbolicExpr operator*(int64_t lhs, SymbolicExpr rhs);
+
 inline ::llvm::hash_code hash_value(SymbolicExpr expr) {
   return ::llvm::hash_value(expr.GetImpl());
 }
