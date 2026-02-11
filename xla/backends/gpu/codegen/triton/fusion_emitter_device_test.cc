@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -61,11 +62,12 @@ limitations under the License.
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/target_constants.h"
-#include "xla/service/gpu/tests/gpu_codegen_test.h"
+#include "xla/service/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
+#include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
@@ -90,19 +92,15 @@ const HloFusionInstruction& GetFusionInstruction(
 
 constexpr ErrorSpec kExactMatch{/*aabs=*/0, /*arel=*/0};
 
-class TritonEmitterTest : public GpuCodegenTest, public XTileTestBase {
+class TritonEmitterTest
+    : public HloPjRtInterpreterReferenceMixin<GpuPjRtCodegenTest>,
+      public XTileTestBase {
  public:
   const stream_executor::GpuComputeCapability& GpuComputeCapability() {
-    return backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .gpu_compute_capability();
+    return device_description().gpu_compute_capability();
   }
   stream_executor::CudaComputeCapability GetCudaComputeCapability() {
-    return backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .cuda_compute_capability();
+    return device_description().cuda_compute_capability();
   }
   absl::StatusOr<
       std::pair<mlir::OwningOpRef<mlir::ModuleOp>, std::unique_ptr<HloModule>>>
@@ -1193,9 +1191,12 @@ CHECK:  })
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
+class TritonDevicelessTest : public HloHardwareIndependentTestBase,
+                             public XTileTestBase {};
+
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
-TEST_F(TritonEmitterTest, TestGenericEmitterWithSoftMaxSingleParameter) {
+TEST_F(TritonDevicelessTest, TestGenericEmitterWithSoftMaxSingleParameter) {
   constexpr absl::string_view kHloText = R"(
 HloModule t
 add {
@@ -1224,9 +1225,12 @@ ENTRY main {
         "num_warps":"1",
         "num_ctas":"1",
         "num_stages":"1"}}}})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(kHloText, "triton_softmax_computation", R"(
+      CreateXTileIrAndFileCheck(std::move(module), "triton_softmax_computation",
+                                R"(
 CHECK:        xtile.entry_func @xtile_dialect_fn(%[[P0:.*]]: {{.*}}, %[[P1:.*]]: {{.*}}, %[[PID:.*]]: index)
 CHECK-DAG:        %[[EXTRACT_IDX_0:.*]] = xla.apply_indexing #indexing_map(%[[PID]])
 CHECK-NEXT:       xtile.extract %[[P0]]
@@ -1262,7 +1266,7 @@ CHECK:        }
 
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
-TEST_F(TritonEmitterTest, TestGenericEmitterWithMultipleParameters) {
+TEST_F(TritonDevicelessTest, TestGenericEmitterWithMultipleParameters) {
   constexpr absl::string_view kHloText = R"(
 HloModule t
 
@@ -1296,9 +1300,12 @@ ENTRY main {
         "num_ctas":"1",
         "num_stages":"1"}}}})";
 
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(kHloText, "triton_softmax_computation", R"(
+      CreateXTileIrAndFileCheck(std::move(module), "triton_softmax_computation",
+                                R"(
 CHECK:         xtile.entry_func @xtile_dialect_fn(
 CHECK-SAME:                      %[[P0:[A-Za-z0-9_]*]]: memref<125x127xf32>
 CHECK-SAME:                      %[[P1:[A-Za-z0-9_]*]]: memref<127xf32>
@@ -1657,7 +1664,8 @@ ENTRY main {
 
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
-TEST_F(TritonEmitterTest, EmitterFailsIfComputeCapabilityIsBelowAmpere) {
+TEST_F(HloHardwareIndependentTestBase,
+       EmitterFailsIfComputeCapabilityIsBelowAmpere) {
   constexpr absl::string_view kHloText = R"(
 triton_computation {
   p0 = f32[10,10] parameter(0)
@@ -1704,7 +1712,7 @@ ENTRY entry {
 
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
-TEST_F(TritonEmitterTest,
+TEST_F(HloHardwareIndependentTestBase,
        EmitterFailsIfFusionBackendConfigDoesNotSatisfyConstraints) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
                           ParseAndReturnVerifiedModule(R"(
@@ -1768,7 +1776,7 @@ ENTRY entry_computation {
 
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should b
 // moved to deviceless test file.
-TEST_F(TritonEmitterTest, TestGenericEmitterReductionFusion) {
+TEST_F(TritonDevicelessTest, TestGenericEmitterReductionFusion) {
   constexpr absl::string_view kHloText = R"(
 HloModule t
 add {
@@ -1801,10 +1809,11 @@ ENTRY main {
           "num_stages":"1"}}}
 })";
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(kHloText, "triton_reduction_computation",
-                                R"(
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  TF_ASSERT_OK_AND_ASSIGN(auto xtile_module_and_hlo_module,
+                          CreateXTileIrAndFileCheck(
+                              std::move(module), "triton_reduction_computation",
+                              R"(
 CHECK:        xtile.entry_func @xtile_dialect_fn(%[[P0:[A-Za-z0-9_]*]]: memref<125x127xf32>
 CHECK-SAME:                               %[[P1:[A-Za-z0-9_]*]]: memref<125xf32>
 CHECK-SAME:                               %[[P2:[A-Za-z0-9_]*]]: memref<125xf32>
@@ -1832,7 +1841,7 @@ CHECK:            xtile.insert {{.*}} : tensor<1xf32>
 }
 
 TEST_F(TritonEmitterTest,
-       TestGenericEmitterWithReductonAndMultidimensionalTile) {
+       TestGenericEmitterWithReductionAndMultidimensionalTile) {
   constexpr absl::string_view kHloText = R"(
 HloModule t
 max {
@@ -2724,7 +2733,8 @@ CHECK:     xtile.insert
 }
 
 // TODO(b/353484968): move this test to a deviceless file.
-TEST_F(TritonEmitterTest, GenericEmitterLowersBroadcastFrom0dOperandCorrectly) {
+TEST_F(TritonDevicelessTest,
+       GenericEmitterLowersBroadcastFrom0dOperandCorrectly) {
   constexpr absl::string_view kHloText = R"(
 triton_computation {
   param_0 = f32[] parameter(0)
@@ -2743,9 +2753,10 @@ ENTRY main {
           "num_stages":"1"}}}
 })";
 
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(
       auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(kHloText, "triton_computation", R"(
+      CreateXTileIrAndFileCheck(std::move(module), "triton_computation", R"(
 CHECK:       %[[EXTRACTED_VALUE:.*]] = xtile.extract
 CHECK:       stablehlo.broadcast_in_dim %[[EXTRACTED_VALUE]], dims = []
           )"));
@@ -5178,11 +5189,7 @@ ENTRY e {
 
   auto hlo_text = params.PrepareHloText(kHloTextTemplate);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
-
-  TF_ASSERT_OK_AND_ASSIGN(auto optimized_module,
-                          GetOptimizedModule(std::move(module)));
+  TF_ASSERT_OK_AND_ASSIGN(auto optimized_module, GetOptimizedModule(hlo_text));
   EXPECT_TRUE(*RunFileCheck(optimized_module->ToString(), R"(
     CHECK: fusion
     CHECK: ROOT {{.*}} scaled-dot
@@ -5248,10 +5255,8 @@ ENTRY e {
 }
 )hlo";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(kHloTextTemplate));
   TF_ASSERT_OK_AND_ASSIGN(auto optimized_module,
-                          GetOptimizedModule(std::move(module)));
+                          GetOptimizedModule(kHloTextTemplate));
   constexpr absl::string_view kExpectedOptimizedHLO = R"(
     CHECK: fusion
     CHECK: ROOT {{.*}} scaled-dot
@@ -5304,10 +5309,8 @@ ENTRY e {
 }
 )hlo";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(kHloTextTemplate));
   TF_ASSERT_OK_AND_ASSIGN(auto optimized_module,
-                          GetOptimizedModule(std::move(module)));
+                          GetOptimizedModule(kHloTextTemplate));
   constexpr absl::string_view kExpectedOptimizedHLO = R"(
     CHECK: fusion
     CHECK: ROOT {{.*}} scaled-dot
@@ -5363,10 +5366,8 @@ ENTRY e {
 }
   )hlo";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(kHloTextTemplate));
   TF_ASSERT_OK_AND_ASSIGN(auto optimized_module,
-                          GetOptimizedModule(std::move(module)));
+                          GetOptimizedModule(kHloTextTemplate));
   constexpr absl::string_view kExpectedOptimizedHLO = R"(
     CHECK: ROOT %{{.*}} = f8e8m0fnu[3,128,4]{2,1,0} broadcast(%{{.*}}), dimensions={0,1}
     CHECK: ROOT %{{.*}} = f8e8m0fnu[3,128,4]{2,1,0} broadcast(%{{.*}}), dimensions={0,1}
@@ -5417,10 +5418,8 @@ TEST_F(TritonScaledDotTest, Fp4Succeeds) {
           rhs_contracting_dims={1}
     }
   )hlo";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                       ParseAndReturnVerifiedModule(kHloTextTemplate));
   ASSERT_OK_AND_ASSIGN(auto optimized_module,
-                       GetOptimizedModule(std::move(module)));
+                       GetOptimizedModule(kHloTextTemplate));
   HloComputation* scaled_dot_computation = GetFirstComputationWithInstruction(
       *optimized_module, HloOpcode::kScaledDot);
   constexpr absl::string_view kExpectedTritonIr = R"(
