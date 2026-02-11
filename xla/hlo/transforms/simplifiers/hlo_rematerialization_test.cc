@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -1909,6 +1910,80 @@ ENTRY %entry (param.0: f32[], param.1: f32[]) -> f32[1024] {
 }
 
 TEST_F(RecomputeAndCompressHloRematerializationTest,
+       PeakPriorityRematIgnoresDeadInstructionsInPlaceBefore) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+  HloModule fusion, is_scheduled=true
+
+ENTRY %entry (param.0: f32[], param.1: f32[]) -> f32[1024] {
+  %constant_source_8 = f32[] constant(8)
+  %param_0 = f32[1024]{0} parameter(0)
+  %param_1 = f32[1024]{0} parameter(1)
+  %constant.anon = f32[] constant(1)
+  %constant_0 = f32[16384]{0} broadcast(%constant.anon), dimensions={}
+  %constant_1 = f32[16384]{0} broadcast(%constant.anon), dimensions={}
+  %op_1 = f32[16384]{0} tanh(%constant_0)
+  %op_2 = f32[16384]{0} tanh(%op_1)
+  %op_3 = f32[16384]{0} add(%op_1, %op_2)
+  %op_5 = f32[16384]{0} add(%op_3, %op_3)
+  %op_6 = f32[16384]{0} add(%op_3, %op_5)
+  %f4651 = f32[16384]{0} add(%constant_0, %constant_1)
+  %f4653 = f32[16384]{0} add(%constant_0, %constant_1)
+  %tan_res = f32[1024]{0} slice(%op_6), slice={[0:1024]}
+  %add_tan_res = f32[1024]{0} add(%tan_res, %tan_res)
+  %add_tan_res_2 = f32[1024]{0} add(%add_tan_res, %add_tan_res)
+  %add_tan_res_3 = f32[1024]{0} add(%add_tan_res_2, %add_tan_res)
+  %add_tan_res_4 = f32[1024]{0} add(%add_tan_res_3, %add_tan_res)
+  %add_tan_res_5 = f32[1024]{0} add(%add_tan_res_4, %add_tan_res)
+  %add_tan_res_6 = f32[1024]{0} add(%add_tan_res_5, %add_tan_res)
+  %add_tan_res_7 = f32[1024]{0} add(%add_tan_res_6, %add_tan_res)
+  %res_param_add.remat = f32[1024]{0} add(%param_0, %param_1)
+  %res_1 = f32[1024]{0} add(%res_param_add.remat, %add_tan_res_7)
+  %constant_source_8_user.remat = f32[1024]{0} broadcast(%constant_source_8), dimensions={}
+  %res_3 = f32[1024]{0} add(%constant_source_8_user.remat, %res_1)
+  %constant_source_8_user_2.remat = f32[1024]{0} broadcast(%constant_source_8), dimensions={}
+  %res_3_2 = f32[1024]{0} add(%constant_source_8_user_2.remat, %res_3)
+  %constant_x = f32[1024]{0} broadcast(%constant_source_8), dimensions={}
+  %constant_x_and_res_param_add = f32[1024]{0} add(%constant_x, %res_param_add.remat)
+  %res_4 = f32[1024]{0} add(%res_3_2, %constant_x_and_res_param_add)
+  %tan_f4651 = f32[1024]{0} slice(%f4651), slice={[0:1024]}
+  %res_5 = f32[1024]{0} add(%tan_f4651, %res_4)
+  %tan_f4653 = f32[1024]{0} slice(%f4653), slice={[0:1024]}
+  %res_6 = f32[1024]{0} add(%tan_f4653, %res_5)
+  ROOT %res = f32[1024]{0} add(%res_3, %res_6)
+}
+)"));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed, RunHloRematerialization(
+                        /*memory_limit_bytes=*/25 * 1024, module.get(),
+                        /*min_remat_size=*/0,
+                        HloRematerialization::RematAlgorithm::kPeakPriority));
+
+  EXPECT_TRUE(changed);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  absl::Span<HloInstruction* const> instructions_in_order =
+      module->schedule().sequence(module->entry_computation()).instructions();
+  EXPECT_THAT(
+      instructions_in_order,
+      AllOf(Contains(Property(&HloInstruction::name, StrEq("f4653.remat"))),
+            Contains(Property(&HloInstruction::name, StrEq("f4651.remat"))),
+            Contains(Property(&HloInstruction::name, StrEq("tan_f4653")))));
+  // Check that f4653.remat is placed immediately before tan_f4653 instead of
+  // being placed in the old position of f.4651, which was killed by remat.
+  EXPECT_THAT(instructions_in_order,
+              ::testing::Truly([](absl::Span<HloInstruction* const> insts) {
+                for (size_t i = 0; i + 1 < insts.size(); ++i) {
+                  if (insts[i]->name() == "f4653.remat") {
+                    return insts[i + 1]->name() == "tan_f4653";
+                  }
+                }
+                return false;
+              }))
+      << "f4653.remat is not immediately followed by tan_f4653";
+}
+
+TEST_F(RecomputeAndCompressHloRematerializationTest,
        PeakFirstRematerializesAtSamePeak) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(R"(
@@ -1988,6 +2063,5 @@ ENTRY %entry (param.0: f32[], param.1: f32[]) -> f32[1024] {
                   Contains(Property(&HloInstruction::name,
                                     StrEq("constant_source_8_user_2.remat")))));
 }
-
 }  // namespace
 }  // namespace xla
