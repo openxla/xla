@@ -41,7 +41,6 @@ cc_library(
         "//xla/tsl/platform:errors",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -189,12 +188,6 @@ cc_library(
     ],
 )
 
-# IMPORTANT: This is an internal (to XLA) implementation of XLA:FFI API and it
-# contains multiple global static registries (FFI handler registry and Type
-# Registry). This library must be linked exactly once into the target process,
-# or it is possible to have multiple registries, which will lead to crashes and
-# undefined behavior as XLA:FFI will be calling destructors for unrelated types,
-# or fail to find an FFI handler.
 cc_library(
     name = "ffi_api",
     srcs = ["ffi_api.cc"],
@@ -202,24 +195,22 @@ cc_library(
     copts = ["-fexceptions"],
     features = ["-use_header_modules"],
     deps = [
-        ":api",
         ":execution_context",
         ":execution_state",
         ":ffi_internal_api",
         ":ffi_interop",
+        ":ffi_registry",
         ":ffi_structs",
         ":invoke",
         ":type_registry",
         "//xla:util",
         "//xla/ffi/api:c_api",
         "//xla/ffi/api:c_api_internal",
-        "//xla/service:platform_util",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:stream",
         "//xla/tsl/concurrency:async_value",
-        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/numeric:bits",
@@ -240,7 +231,9 @@ cc_library(
     deps = [
         ":execution_context",
         ":execution_state",
+        ":ffi_registry",
         ":ffi_structs",
+        ":type_registry",
         "//xla:util",
         "//xla/ffi/api:c_api",
         "//xla/ffi/api:c_api_internal",
@@ -249,6 +242,7 @@ cc_library(
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
     ],
@@ -264,6 +258,30 @@ cc_library(
         "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
+    ],
+)
+
+cc_library(
+    name = "ffi_registry",
+    srcs = ["ffi_registry.cc"],
+    hdrs = ["ffi_registry.h"],
+    deps = [
+        ":api",
+        ":invoke",
+        "//xla:util",
+        "//xla/ffi/api:c_api",
+        "//xla/service:platform_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -340,6 +358,7 @@ xla_cc_test(
         ":ffi",
         ":ffi_api",  # buildcleaner: keep
         ":ffi_interop",
+        ":ffi_registry",
         ":invoke",
         ":type_registry",
         "//xla:executable_run_options",
