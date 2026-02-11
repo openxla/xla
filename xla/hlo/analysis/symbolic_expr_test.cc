@@ -69,6 +69,18 @@ TEST_F(SymbolicExprTest, CreateAndPrint) {
                   "((((v0 + 42) * max(min(v1, 2), 0)) floordiv 2) ceildiv 2)"));
 }
 
+TEST_F(SymbolicExprTest, PrintWithVariableNames) {
+  SymbolicExpr expr = v0 + v1;
+  EXPECT_THAT(expr.ToString({"foo", "bar"}),
+              MatchIndexingString("(foo + bar)"));
+}
+
+TEST_F(SymbolicExprTest, PrintWithDimAndSymbolNames) {
+  SymbolicExpr expr = v0 + v1;
+  EXPECT_THAT(expr.ToString({"foo"}, {"bar"}),
+              MatchIndexingString("(foo + bar)"));
+}
+
 TEST_F(SymbolicExprTest, ConstantFolding) {
   // Expressions are simplified at creation if possible.
   EXPECT_EQ(c2 + c3, c5);
@@ -351,6 +363,27 @@ TEST_F(SymbolicExprTest, Walk) {
 
   EXPECT_THAT(visited_exprs, ::testing::ElementsAre("v0", "42", "(v0 + 42)",
                                                     "v1", "((v0 + 42) * v1)"));
+}
+
+TEST_F(SymbolicExprTest, IsMultipleOf) {
+  EXPECT_TRUE(CreateSymbolicConstant(10, &ctx).IsMultipleOf(5));
+  EXPECT_FALSE(CreateSymbolicConstant(11, &ctx).IsMultipleOf(5));
+  EXPECT_TRUE((v0 * 5).IsMultipleOf(5));
+  EXPECT_TRUE((5 * v0).IsMultipleOf(5));
+  EXPECT_TRUE((v0 * 2 * 3).IsMultipleOf(6));
+  EXPECT_FALSE((v0 * 2 + 1).IsMultipleOf(2));
+  EXPECT_TRUE(((v0 * 2) + (v1 * 4)).IsMultipleOf(2));
+  EXPECT_FALSE(v0.IsMultipleOf(2));
+  EXPECT_TRUE((v0 % 10).IsMultipleOf(1));
+  EXPECT_TRUE(((v0 * 6).min(v1 * 4)).IsMultipleOf(2));
+  EXPECT_FALSE(((v0 * 6).min(v1 * 4)).IsMultipleOf(3));
+  EXPECT_TRUE(((v0 * 6).max(v1 * 4)).IsMultipleOf(2));
+  EXPECT_FALSE(((v0 * 6).max(v1 * 4)).IsMultipleOf(3));
+  EXPECT_TRUE(((v0 * 10).floorDiv(5)).IsMultipleOf(2));
+  EXPECT_FALSE(((v0 * 10).floorDiv(2)).IsMultipleOf(2));
+  EXPECT_FALSE(((v0 * 10).floorDiv(v1)).IsMultipleOf(2));
+  EXPECT_TRUE(((v0 * 10).ceilDiv(5)).IsMultipleOf(2));
+  EXPECT_FALSE(((v0 * 10).ceilDiv(2)).IsMultipleOf(2));
 }
 
 TEST_F(SymbolicExprTest, Hashing) {

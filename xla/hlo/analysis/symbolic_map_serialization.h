@@ -21,6 +21,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
@@ -35,8 +36,12 @@ namespace xla {
 std::string GetBinaryOpString(SymbolicExprType type);
 
 // Prints symbolic expression to stream. If num_dims is provided, then the first
-// num_dims variables are dimensions, and the rest are symbols.
-void Print(SymbolicExpr expr, llvm::raw_ostream& os, int64_t num_dims = -1);
+// num_dims variables are dimensions, and the rest are symbols. If var_names is
+// provided, then variable names are taken from it.
+void Print(SymbolicExpr expr, llvm::raw_ostream& os,
+           std::optional<int64_t> num_dims = std::nullopt);
+void Print(SymbolicExpr expr, llvm::raw_ostream& os,
+           absl::Span<const std::string> var_names);
 
 // Prints symbolic map to stream.
 void Print(const SymbolicMap& map, llvm::raw_ostream& os);

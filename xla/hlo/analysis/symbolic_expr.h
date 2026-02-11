@@ -70,8 +70,12 @@ class SymbolicExpr {
   SymbolicExpr GetRHS() const;
   int64_t GetValue() const;
   // If num_dims is provided, then the first num_dims variables are dimensions,
-  // and the rest are symbols.
-  std::string ToString(int64_t num_dims = -1) const;
+  // and the rest are symbols. If variable names are provided, then they are
+  // used instead of numbers.
+  std::string ToString(std::optional<int64_t> num_dims = std::nullopt) const;
+  std::string ToString(absl::Span<const std::string> var_names) const;
+  std::string ToString(absl::Span<const std::string> dim_names,
+                       absl::Span<const std::string> sym_names) const;
   int64_t Evaluate(absl::Span<const int64_t> variable_values) const;
   SymbolicExpr ReplaceVariables(
       absl::Span<const SymbolicExpr> substitutions) const;
@@ -107,6 +111,9 @@ class SymbolicExpr {
   // Traverses the expression tree and calls the callback for each
   // subexpression in postorder.
   void Walk(const std::function<void(SymbolicExpr)>& callback) const;
+
+  // Return true if the expression is a multiple of `factor`.
+  bool IsMultipleOf(int64_t factor) const;
 
   SymbolicExpr operator+(int64_t v) const;
   SymbolicExpr operator+(SymbolicExpr other) const;
