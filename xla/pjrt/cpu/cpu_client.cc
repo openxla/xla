@@ -1054,6 +1054,11 @@ PjRtCpuClient::CreateLinkedEventPromise(PjRtMemorySpace* memory_space,
                         std::move(definition_event));
 }
 
+std::unique_ptr<PjRtDeviceEventSet> PjRtCpuClient::CreateDeviceEventSet(
+    size_t preallocated_size) const {
+  return std::make_unique<CpuTrackedDeviceEventSet>(preallocated_size);
+}
+
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::DefineBuffer(
     const Shape& on_device_shape, PjRtMemorySpace* memory_space,
     tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
@@ -1243,12 +1248,18 @@ PjRtCpuLoadedExecutable::PjRtCpuLoadedExecutable(
     std::shared_ptr<DeviceAssignment> device_assignment,
     std::vector<LogicalDeviceIds> addressable_device_logical_ids,
     std::vector<PjRtDevice*> addressable_devices, PjRtCpuClient* client)
-    : client_(client),
+    : CommonPjRtLoadedExecutable(executable->parameter_device_shapes_,
+                                 executable->cpu_executable_->result_shape(),
+                                 executable->output_memory_space_kind_ids_,
+                                 addressable_devices,
+                                 addressable_device_logical_ids),
+      client_(client),
       executable_(std::move(executable)),
-      device_assignment_(std::move(device_assignment)),
-      addressable_device_logical_ids_(
-          std::move(addressable_device_logical_ids)),
-      addressable_devices_(std::move(addressable_devices)) {}
+      device_assignment_(std::move(device_assignment)) {
+  input_buffer_sizes_in_bytes_ = executable_->input_buffer_sizes_in_bytes_;
+  parameters_that_must_be_donated_ =
+      executable_->parameters_that_must_be_donated_;
+}
 
 void PjRtCpuLoadedExecutable::Delete() {}
 
@@ -1433,10 +1444,11 @@ absl::Status PjRtCpuLoadedExecutable::CheckBufferCompatibilities(
   return absl::OkStatus();
 }
 
-absl::StatusOr<std::unique_ptr<CpuPjRtRawLoadedExecutable>>
-PjRtCpuLoadedExecutable::StartRawExecutable(
-    const ExecuteOptions& options,
-    const RunId& run_id, int replica, int partition, PjRtDevice* device) const {
+absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>>
+PjRtCpuLoadedExecutable::StartRawExecutable(const ExecuteOptions& options,
+                                            RunId run_id, int replica,
+                                            int partition,
+                                            PjRtDevice* device) const {
   std::shared_ptr<DeviceAssignment> device_assignment;
   if (device == nullptr) {
     CHECK(device_assignment_ != nullptr);
@@ -1462,79 +1474,6 @@ PjRtCpuLoadedExecutable::StartRawExecutable(
   result->device_assignment_ = device_assignment;
   result->device_ = tsl::down_cast<PjRtCpuDevice*>(device);
   return result;
-}
-
-absl::StatusOr<PjRtLoadedExecutable::Result>
-PjRtCpuLoadedExecutable::ExecuteHelper(
-    absl::Span<PjRtBuffer* const> argument_handles, int replica, int partition,
-    const RunId& run_id, const ExecuteOptions& options,
-    bool fill_future, PjRtCpuDevice* device) const {
-  tsl::profiler::TraceMe traceme([&]() {
-    return tsl::profiler::TraceMeEncode(
-        "PjRtCpuLoadedExecutable::ExecuteHelper",
-        {
-            {"run_id", run_id.ToInt()},
-            {"replica", replica},
-            {"partition", partition},
-        });
-  });
-
-  TF_ASSIGN_OR_RETURN(
-      auto executable,
-      StartRawExecutable(options, run_id, replica, partition, device));
-  device = tsl::down_cast<PjRtCpuDevice*>(executable->device());
-
-  bool is_error = false;
-  absl::InlinedVector<CommonPjRtBuffer::ScopedHold, 4> device_buffers;
-  absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4> input_buffers;
-  CpuTrackedDeviceEventSet extra_deps(argument_handles.size());
-  CpuTrackedDeviceEventSet control_deps(argument_handles.size());
-  TF_RETURN_IF_ERROR(client()->PrepareArguments(
-      options, argument_handles, executable_->parameters_that_must_be_donated_,
-      extra_deps, control_deps, input_buffers, device_buffers,
-      executable->device(), replica, partition,
-      executable_->parameter_device_shapes_, is_error,
-      /*allow_fallback_for_donation=*/true));
-
-  CHECK(!is_error) << "CpuClient does not support is_error.";
-  TF_RETURN_IF_ERROR(
-      CheckBufferCompatibilities(device_buffers, argument_handles));
-
-  auto cpu_executable =
-      tsl::down_pointer_cast<cpu::CpuExecutable>(executable_->cpu_executable_);
-  TF_ASSIGN_OR_RETURN(
-      auto output_leaf_buffers,
-      client_->AllocateOutputBuffersWithInputReuse(
-          executable_->cpu_executable_->result_shape(), device_buffers,
-          executable_->cpu_executable_->module().input_output_alias_config(),
-          device, executable_->output_memory_space_kind_ids_));
-
-  PjRtRawLoadedExecutable::RawExecuteResult result =
-      std::move(*executable)
-          .Execute(options, input_buffers, output_leaf_buffers, extra_deps,
-                   control_deps, is_error, fill_future);
-
-  for (CommonPjRtBuffer::ScopedHold& b : device_buffers) {
-    if (b.type() == CommonPjRtBuffer::ScopedHold::kUsage) {
-      b.ConvertUsageHold(result.primary_execute_event);
-    } else {
-      CHECK(b.type() == CommonPjRtBuffer::ScopedHold::kDonation);
-      b.ConfirmDonation();
-    }
-  }
-
-  if (result.primary_execute_event->async_value()->IsError()) {
-    TF_RETURN_IF_ERROR(result.primary_execute_event->async_value()->GetError());
-  }
-
-  auto res =
-      client_->CreateOutputs(executable_->cpu_executable_->result_shape(),
-                             std::move(result.primary_execute_event), device,
-                             executable_->output_memory_space_kind_ids_,
-                             std::move(output_leaf_buffers),
-                             /*is_predetermined_error=*/false);
-
-  return Result({std::move(result.future), std::move(res)});
 }
 
 tsl::AsyncValueRef<CpuEvent> PjRtCpuClient::GetCollectiveLaunchEvent(
@@ -1801,10 +1740,12 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     auto thunks_execute_event = execute_thunks();
 
     if (!thunks_execute_event.ok()) {
+      result.inline_status = thunks_execute_event.status();
       std::move(ready_on_exit)
           .Release()
           .SetError(thunks_execute_event.status());
     } else if (thunks_execute_event->IsError()) {
+      result.inline_status = thunks_execute_event->GetError();
       std::move(ready_on_exit)
           .Release()
           .SetError(thunks_execute_event->GetError());
@@ -1996,9 +1937,9 @@ PjRtCpuLoadedExecutable::Execute(
           hlo_snapshot,
           executable_->cpu_executable_->module().config().debug_options());
     }
-    auto statusor =
-        ExecuteHelper(argument_handles[0], replica, partition, run_id, options,
-                      returned_futures.has_value());
+    auto statusor = ExecuteHelperOnSingleDevice(argument_handles[0], run_id,
+                                                replica, partition, options,
+                                                returned_futures.has_value());
 
     if (!statusor.ok()) {
       return std::move(statusor).status();
@@ -2026,9 +1967,9 @@ PjRtCpuLoadedExecutable::Execute(
       const int partition = addressable_device_logical_ids_[i].partition;
 
       client()->async_work_runner()->Schedule([&, replica, partition, i] {
-        auto statusor =
-            ExecuteHelper(argument_handles[i], replica, partition, run_id,
-                          options, returned_futures.has_value());
+        auto statusor = ExecuteHelperOnSingleDevice(
+            argument_handles[i], run_id, replica, partition, options,
+            returned_futures.has_value());
         if (statusor.ok()) {
           wrapped_results[i] = std::move(statusor->buffers);
           if (returned_futures.has_value()) {
@@ -2084,12 +2025,12 @@ PjRtCpuLoadedExecutable::ExecuteSharded(
       VLOG(1) << "ExecuteShard executes computation " << name()
               << " on assigned replica/partition on device "
               << device->DebugString();
-      TF_ASSIGN_OR_RETURN(
-          auto result,
-          ExecuteHelper(argument_handles,
-                        addressable_device_logical_ids_[i].replica,
-                        addressable_device_logical_ids_[i].partition, run_id,
-                        options, fill_future));
+      TF_ASSIGN_OR_RETURN(auto result,
+                          ExecuteHelperOnSingleDevice(
+                              argument_handles, run_id,
+                              addressable_device_logical_ids_[i].replica,
+                              addressable_device_logical_ids_[i].partition,
+                              options, fill_future));
       returned_future = std::move(result.future);
       return std::move(result.buffers);
     }
@@ -2121,11 +2062,11 @@ PjRtCpuLoadedExecutable::ExecutePortable(
   }
   VLOG(1) << "ExecutePortable executes single-core portable executable "
           << name();
-  TF_ASSIGN_OR_RETURN(
-      auto result, ExecuteHelper(argument_handles,
-                                 /*replica=*/0,
-                                 /*partition=*/0, run_id, options, fill_future,
-                                 tsl::down_cast<PjRtCpuDevice*>(device)));
+  TF_ASSIGN_OR_RETURN(auto result, ExecuteHelperOnSingleDevice(
+                                       argument_handles, run_id,
+                                       /*replica=*/0,
+                                       /*partition=*/0, options, fill_future,
+                                       tsl::down_cast<PjRtCpuDevice*>(device)));
   returned_future = std::move(result.future);
   return std::move(result.buffers);
 }
