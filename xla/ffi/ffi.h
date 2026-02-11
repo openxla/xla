@@ -35,6 +35,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/attributes.h"
+#include "absl/base/no_destructor.h"
 #include "absl/base/nullability.h"
 #include "absl/base/optimization.h"
 #include "absl/log/check.h"
@@ -53,6 +54,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
+#include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -231,6 +233,35 @@ ABSL_ATTRIBUTE_ALWAYS_INLINE std::optional<Buffer<dtype, rank>> DecodeBuffer(
   }
 
   return Buffer<dtype, rank>(buf);
+}
+
+}  // namespace internal
+
+//===----------------------------------------------------------------------===//
+// TypeId registration
+//===----------------------------------------------------------------------===//
+
+namespace internal {
+
+template <typename T>
+TypeRegistry::TypeId GetTypeId(const XLA_FFI_Api* api) {
+  // We don't use the default `TypeRegistry::GetTypeId` because it might lead
+  // to type registrations in duplicate static type registration maps and it
+  // can lead to run time errors when FFI handlers and FFI API implementation
+  // are in different object files that linked dynamically. Instead we rely
+  // on XLA:FFI API itself to give us the type registration map that is used
+  // by XLA runtime. See `TypeRegistry` documentation for more details.
+  //
+  // WARNING: Because of static storage duration we will initialize type id the
+  // first time `GetTypeId` is called with whatever `api` is passed as the
+  // argument. It means that in practice we do not support calling FFI handler
+  // via multiple api instances, but this is ok, because we expect exactly one
+  // XLA FFI API implementation in the process (or PjRt plugin).
+  static absl::NoDestructor<absl::StatusOr<TypeRegistry::TypeId>> type_id(
+      TypeRegistry::GetOrAssignTypeId<T>(
+          *tsl::safe_reinterpret_cast<internal::TypeRegistrationMap*>(
+              api->internal_api->XLA_FFI_Internal_TypeRegistrationMap_Get())));
+  return **type_id;
 }
 
 }  // namespace internal
@@ -630,13 +661,13 @@ struct CtxDecoding<UserData<T>> {
           "Execution context must be not null to fetch UserData parameter");
     }
 
-    auto user_data = execution_context->Lookup<T>();
+    auto user_data = execution_context->Lookup(internal::GetTypeId<T>(api));
     if (!user_data.ok()) {
       return diagnostic.Emit("Failed to get user data from execution context: ")
              << user_data.status().message();
     }
 
-    return *std::move(user_data);
+    return tsl::safe_reinterpret_cast<Type>(*user_data);
   }
 };
 
@@ -663,13 +694,14 @@ struct CtxDecoding<State<T>> {
           "Execution state must be not null to fetch State parameter");
     }
 
-    auto state = execution_state->Get<T>();
+    absl::StatusOr<void*> state =
+        execution_state->Get(internal::GetTypeId<T>(api));
     if (!state.ok()) {
       return diagnostic.Emit("Failed to get state from execution context: ")
              << state.status().message();
     }
 
-    return *std::move(state);
+    return tsl::safe_reinterpret_cast<Type>(*state);
   }
 };
 
@@ -692,8 +724,8 @@ struct ResultEncoding<stage, absl::Status> {
 template <typename T>
 struct ResultEncoding<ExecutionStage::kInstantiate,
                       absl::StatusOr<std::unique_ptr<T>>> {
-  static XLA_FFI_TypeId state_type_id() {
-    return XLA_FFI_TypeId{TypeRegistry::GetTypeId<T>().value()};
+  static XLA_FFI_TypeId state_type_id(const XLA_FFI_Api* api) {
+    return XLA_FFI_TypeId{internal::GetTypeId<T>(api).value()};
   }
 
   static XLA_FFI_Error* Encode(const XLA_FFI_Api* api,
@@ -702,7 +734,8 @@ struct ResultEncoding<ExecutionStage::kInstantiate,
     if (ABSL_PREDICT_TRUE(state.ok())) {
       auto* execution_state = reinterpret_cast<ExecutionState*>(
           api->internal_api->XLA_FFI_INTERNAL_ExecutionState_Get(ctx));
-      absl::Status status = execution_state->Set<T>(*std::move(state));
+      absl::Status status =
+          execution_state->Set(internal::GetTypeId<T>(api), state->release());
       if (ABSL_PREDICT_TRUE(status.ok())) {
         return nullptr;
       }

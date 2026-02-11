@@ -19,7 +19,6 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
-#include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -58,6 +57,14 @@ static XLA_FFI_Future* XLA_FFI_INTERNAL_Future_Forward(void* async_value) {
 
   return new XLA_FFI_Future{
       tsl::AsyncValueRef<tsl::Chain>(tsl::TakeRef(tsl_async_value))};
+}
+
+static void* XLA_FFI_Internal_HandlerRegistrationMap_Get() {
+  return &internal::StaticHandlerRegistrationMap();
+}
+
+static void* XLA_FFI_Internal_TypeRegistrationMap_Get() {
+  return &internal::StaticTypeRegistrationMap();
 }
 
 static int32_t XLA_FFI_INTERNAL_DeviceOrdinal_Get(
@@ -217,6 +224,8 @@ const XLA_FFI_InternalApi* GetInternalApi() {
       // Generic XLA APIs available on all XLA backends.
       XLA_FFI_INTERNAL_Error_Forward,
       XLA_FFI_INTERNAL_Future_Forward,
+      XLA_FFI_Internal_HandlerRegistrationMap_Get,
+      XLA_FFI_Internal_TypeRegistrationMap_Get,
       XLA_FFI_INTERNAL_DeviceOrdinal_Get,
       XLA_FFI_INTERNAL_RunId_Get,
       XLA_FFI_INTERNAL_CalledComputation_Get,

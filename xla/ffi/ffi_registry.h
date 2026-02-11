@@ -72,6 +72,9 @@ struct HandlerRegistrationMap {
   absl::flat_hash_map<Key, HandlerRegistration> map ABSL_GUARDED_BY(mu);
 };
 
+// Returns a reference to a static instance of a handler registration map.
+HandlerRegistrationMap& StaticHandlerRegistrationMap();
+
 }  // namespace internal
 
 //===----------------------------------------------------------------------===//

@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_FFI_API_FFI_H_
 #define XLA_FFI_API_FFI_H_
 
-#include <string_view>
 #ifdef XLA_FFI_FFI_H_
 #error Two different XLA FFI implementations cannot be included together. \
        See README.md for more details.
@@ -38,6 +37,7 @@ limitations under the License.
 #include <optional>
 #include <ostream>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -1213,7 +1213,7 @@ struct ResultEncoding<ExecutionStage::kInstantiate,
   static_assert(std::is_same_v<decltype(T::id), TypeId>,
                 "State type must have a static `TypeId id` field");
 
-  static XLA_FFI_TypeId state_type_id() { return T::id; }
+  static XLA_FFI_TypeId state_type_id(const XLA_FFI_Api*) { return T::id; }
 
   XLA_FFI_ATTRIBUTE_ALWAYS_INLINE
   static XLA_FFI_Error* Encode(const XLA_FFI_Api* api,
