@@ -6907,6 +6907,9 @@ AllocationResult MsaAlgorithm::Evict(const AllocationRequest& request,
   // start time to ensure that the value is created before we start copying
   // back to default memory.
   int64_t eviction_exclusive_start_time = prev_allocation->start_time();
+  // TODO(b/483747673): `prev_allocation->end_time()` is conservative for
+  // eviction done schedule before time. We can set it to
+  // `prev_allocation->end_time() + 1`.
   int64_t eviction_end_time = prev_allocation->end_time();
   CHECK(eviction_exclusive_start_time <= eviction_end_time);
 
