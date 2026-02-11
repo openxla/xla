@@ -45,6 +45,11 @@ void Print(const SymbolicMap& map, llvm::raw_ostream& os);
 SymbolicMap ParseSymbolicMap(absl::string_view serialized_symbolic_map,
                              mlir::MLIRContext* mlir_context);
 
+// Parses a symbolic map from `map_str`. Advances `map_str` past the
+// parsed map. Returns the parsed map or null if parsing failed.
+SymbolicMap ParseSymbolicMapAndAdvance(absl::string_view* map_str,
+                                       mlir::MLIRContext* mlir_context);
+
 // Parse a symbolic expression from `expr_str`. `num_dims` specifies the
 // number of dimension variables. It is used to determine a variable index from
 // a symbol id. For example, if `num_dims` is 2, 's0' parses to variable index

@@ -301,6 +301,19 @@ class SymbolicMapParserImpl {
       : remaining_str_(str), context_(context) {}
 
   SymbolicMap Parse() {
+    SymbolicMap map = ParsePartial();
+    if (!map) {
+      return map;
+    }
+    SkipWhitespace();
+    if (!remaining_str_.empty()) {
+      return ReportError(
+          "Unexpected characters at the end of SymbolicMap string");
+    }
+    return map;
+  }
+
+  SymbolicMap ParsePartial() {
     std::optional<int64_t> num_dims_opt =
         ParseArgList("(", ")", /*is_dim=*/true);
     if (!num_dims_opt.has_value()) {
@@ -329,15 +342,10 @@ class SymbolicMapParserImpl {
       return ReportError(
           "Failed to parse expression list in SymbolicMap string");
     }
-
-    SkipWhitespace();
-    if (!remaining_str_.empty()) {
-      return ReportError(
-          "Unexpected characters at the end of SymbolicMap string");
-    }
-
     return SymbolicMap::Get(context_, num_dims_, num_symbols_, exprs.value());
   }
+
+  absl::string_view GetRemainingStr() const { return remaining_str_; }
 
  private:
   // Logs the error message and returns an empty SymbolicMap similarly to the
@@ -539,6 +547,16 @@ SymbolicMap ParseSymbolicMap(absl::string_view serialized_symbolic_map,
   return SymbolicMapParserImpl(serialized_symbolic_map, mlir_context).Parse();
 }
 
+SymbolicMap ParseSymbolicMapAndAdvance(absl::string_view* map_str,
+                                       mlir::MLIRContext* mlir_context) {
+  SymbolicMapParserImpl parser(*map_str, mlir_context);
+  SymbolicMap map = parser.ParsePartial();
+  if (map) {
+    *map_str = parser.GetRemainingStr();
+  }
+  return map;
+}
+
 SymbolicExpr ParseSymbolicExpr(absl::string_view expr_str,
                                mlir::MLIRContext* mlir_context,
                                std::optional<int64_t> num_dims) {
@@ -550,7 +568,9 @@ SymbolicExpr ParseSymbolicExprAndAdvance(absl::string_view* expr_str,
                                          std::optional<int64_t> num_dims) {
   SymbolicExprParserImpl parser(*expr_str, mlir_context, num_dims);
   SymbolicExpr expr = parser.ParsePartial();
-  *expr_str = parser.GetRemainingStr();
+  if (expr) {
+    *expr_str = parser.GetRemainingStr();
+  }
   return expr;
 }
 
@@ -559,7 +579,9 @@ SymbolicExpr ParseSymbolicExprAndAdvance(
     const llvm::DenseMap<llvm::StringRef, SymbolicExpr>& variable_map) {
   SymbolicExprParserImpl parser(*expr_str, mlir_context, &variable_map);
   SymbolicExpr expr = parser.ParsePartial();
-  *expr_str = parser.GetRemainingStr();
+  if (expr) {
+    *expr_str = parser.GetRemainingStr();
+  }
   return expr;
 }
 

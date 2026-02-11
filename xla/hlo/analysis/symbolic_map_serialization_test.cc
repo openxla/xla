@@ -21,6 +21,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/base/log_severity.h"
 #include "absl/log/scoped_mock_log.h"
+#include "absl/strings/ascii.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -96,6 +97,19 @@ TEST_F(SymbolicMapSerializationTest, ParseSymbolicExprAndPrint_Invalid) {
   EXPECT_CALL(log, Log(absl::LogSeverity::kError, testing::_,
                        "Failed to parse expression at: \"foo(3, 4)\""));
   EXPECT_EQ(ParseSymbolicExpr("foo(3, 4)", &ctx), SymbolicExpr());
+}
+
+TEST_F(SymbolicMapSerializationTest, ParseSymbolicExprAndAdvance_Invalid) {
+  absl::ScopedMockLog log(absl::MockLogDefault::kDisallowUnexpected);
+  log.StartCapturingLogs();
+
+  // Invalid: Incomplete expression
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, _,
+                       "Unexpected end of expression at: \"\""));
+  absl::string_view expr_str = "1 + ";
+  EXPECT_EQ(ParseSymbolicExprAndAdvance(&expr_str, &ctx), SymbolicExpr());
+  // The expression string is not consumed because parsing failed.
+  EXPECT_EQ(expr_str, "1 + ");
 }
 
 TEST_F(SymbolicMapSerializationTest, ParseSymbolicExprWithVariableMap) {
@@ -198,6 +212,39 @@ TEST_F(SymbolicMapSerializationTest, ParseSymbolicMap_Invalid) {
                        HasSubstr("Failed to parse expression list")));
   EXPECT_EQ(ParseSymbolicMap("(d0) -> d0", &ctx), SymbolicMap());
   ::testing::Mock::VerifyAndClearExpectations(&log);
+}
+
+TEST_F(SymbolicMapSerializationTest, ParseSymbolicMapAndAdvance_ConsumesAll) {
+  absl::string_view map_str = "(d0) -> (d0)";
+  SymbolicMap map = ParseSymbolicMapAndAdvance(&map_str, &ctx);
+  EXPECT_EQ(map.ToString(), "(d0)[] -> (d0)");
+  EXPECT_EQ(map_str, "");
+}
+
+TEST_F(SymbolicMapSerializationTest, ParseSymbolicMapAndAdvance_WithSuffix) {
+  absl::string_view map_str = "(d0) -> (d0) domain: d0 in [0, 1]";
+  SymbolicMap map = ParseSymbolicMapAndAdvance(&map_str, &ctx);
+  EXPECT_EQ(map.ToString(), "(d0)[] -> (d0)");
+  EXPECT_EQ(absl::StripLeadingAsciiWhitespace(map_str), "domain: d0 in [0, 1]");
+}
+
+TEST_F(SymbolicMapSerializationTest, ParseSymbolicMapAndAdvance_Invalid) {
+  absl::ScopedMockLog log(absl::MockLogDefault::kDisallowUnexpected);
+  log.StartCapturingLogs();
+
+  // Invalid: Empty string
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, _,
+                       HasSubstr("Failed to parse dimension list")));
+  absl::string_view map_str = "";
+  EXPECT_EQ(ParseSymbolicMapAndAdvance(&map_str, &ctx), SymbolicMap());
+
+  // Invalid: Malformed map string
+  EXPECT_CALL(log, Log(absl::LogSeverity::kError, _,
+                       HasSubstr("Failed to parse expression list")));
+  map_str = "(d0) -> d0";
+  EXPECT_EQ(ParseSymbolicMapAndAdvance(&map_str, &ctx), SymbolicMap());
+  // The map string is not consumed because parsing failed.
+  EXPECT_EQ(map_str, "(d0) -> d0");
 }
 
 }  // namespace
