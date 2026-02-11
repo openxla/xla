@@ -250,6 +250,11 @@ class SymbolicTileAnalysis {
       EmitterSpecificConstraintsBuilder emitter_specific_constraints_builder,
       std::vector<SymbolicTiledHloInstruction*> root_runtime_variables);
 
+  // Takes a tiled instruction and returns a list of symbolically tiled
+  // instructions - a subgraph of HLO instructions within the fusion that are
+  // needed to compute `instruction`. The instructions are ordered in
+  // def-before-use order. It is guaranteed that the returned list will contain
+  // initial `instruction` as is at the end of the list.
   static std::variant<std::vector<std::unique_ptr<SymbolicTiledHloInstruction>>,
                       FusionDecision>
   AnalyzeFromInstruction(
