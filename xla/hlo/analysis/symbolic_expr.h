@@ -108,6 +108,9 @@ class SymbolicExpr {
   // subexpression in postorder.
   void Walk(const std::function<void(SymbolicExpr)>& callback) const;
 
+  // Return true if the expression is a multiple of `factor`.
+  bool IsMultipleOf(int64_t factor) const;
+
   SymbolicExpr operator+(int64_t v) const;
   SymbolicExpr operator+(SymbolicExpr other) const;
   SymbolicExpr operator-() const;
