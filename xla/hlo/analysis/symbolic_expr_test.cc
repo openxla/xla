@@ -132,6 +132,16 @@ TEST_F(SymbolicExprTest, ReplaceVariables) {
   EXPECT_EQ(result.ToString(), "(v0 + (v2 * 10))");
 }
 
+TEST_F(SymbolicExprTest, ReplaceDims) {
+  SymbolicExpr d0 = CreateSymbolicVariable(0, &ctx);
+  SymbolicExpr s0 = CreateSymbolicVariable(1, &ctx);
+  SymbolicExpr s1 = CreateSymbolicVariable(2, &ctx);
+  SymbolicExpr c7 = CreateSymbolicConstant(7, &ctx);
+  SymbolicExpr expr_to_sub = (d0 + s0 * 2) * s1;
+  SymbolicExpr result = expr_to_sub.ReplaceDims({c7});
+  EXPECT_EQ(result.ToString(), "((7 + (v1 * 2)) * v2)");
+}
+
 TEST_F(SymbolicExprTest, ReplaceSymbols) {
   SymbolicExpr d0 = CreateSymbolicVariable(0, &ctx);
   SymbolicExpr s0 = CreateSymbolicVariable(1, &ctx);
