@@ -89,6 +89,12 @@ class SubProcess {
   //    because the process doesn't exist.
   virtual bool Kill(int signal);
 
+  // CheckRunning()
+  //    Check to see if the process is still running.
+  //    @return false, if the process has exited;
+  //            true, if the process is still running.
+  virtual bool CheckRunning();
+
   // Wait()
   //    Block until the process exits.
   //    Return true normally, or false if the process wasn't running.
@@ -126,6 +132,7 @@ class SubProcess {
   std::function<void(SubProcess*)> exit_cb_ ABSL_GUARDED_BY(proc_mu_);
   int64_t exit_cb_tid_ ABSL_GUARDED_BY(proc_mu_);
 
+  mutable absl::Mutex wait_mu_;
   mutable absl::Mutex data_mu_ TF_ACQUIRED_AFTER(proc_mu_);
   char* exec_path_ TF_GUARDED_BY(data_mu_);
   char** exec_argv_ TF_GUARDED_BY(data_mu_);

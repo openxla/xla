@@ -24,9 +24,11 @@ limitations under the License.
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include <functional>
 #include <memory>
 #include <vector>
 
+#include "absl/synchronization/mutex.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 
@@ -508,6 +510,7 @@ bool SubProcess::WaitInternal(int* status) {
 
   bool ret = false;
   if (running && (pid > 1)) {
+    absl::MutexLock lock(&wait_mu_);
     pid_t cpid;
     int cstat;
     bool done = false;
@@ -543,6 +546,63 @@ bool SubProcess::WaitInternal(int* status) {
     proc_mu_.Unlock();
   }
   return ret;
+}
+
+bool SubProcess::CheckRunning() {
+  pid_t pid;
+  {
+    absl::MutexLock lock(&proc_mu_);
+    if (!running_) {
+      return false;
+    }
+    pid = pid_;
+  }
+
+  int status = 0;
+  pid_t result;
+  if (!wait_mu_.TryLock()) {
+    return true;
+  }
+  do {
+    result = waitpid(pid, &status, WNOHANG);
+  } while (result < 0 && retry(errno));
+  wait_mu_.Unlock();
+
+  if (result == 0) {
+    return true;  // Still running.
+  }
+
+  std::function<void(SubProcess*)> cb_to_run;
+  bool exited = false;
+
+  {
+    absl::MutexLock lock(&proc_mu_);
+    // If result == pid, and exited/signaled, and we are still the one who
+    // thinks it's running with that pid, then we are the ones reaping it.
+    if (running_ && pid_ == pid &&
+        ((result == pid && (WIFEXITED(status) || WIFSIGNALED(status))) ||
+         (result < 0 && errno == ECHILD))) {
+      running_ = false;
+      pid_ = -1;
+      cb_to_run = exit_cb_;
+      if (cb_to_run != nullptr) {
+        exit_cb_tid_ = Env::Default()->GetCurrentThreadId();
+      }
+      exited = true;
+    } else if (result == 0) {
+      // If result was 0, but by the time we got proc_mu_, running_ became
+      // false, we should return false.
+      exited = !running_;
+    }
+  }
+
+  if (cb_to_run) {
+    cb_to_run(this);
+    absl::MutexLock lock(&proc_mu_);
+    exit_cb_tid_ = -1;
+  }
+
+  return !exited;
 }
 
 bool SubProcess::Kill(int signal) {

@@ -358,10 +358,12 @@ tsl_cc_test(
     ],
     tags = ["no_oss"],  # TODO(b/327036247): revisit after this moves to XLA
     deps = [
+        ":env",
         ":subprocess",
         ":test",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:strcat",
