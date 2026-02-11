@@ -109,7 +109,7 @@ absl::Status Autotune(HloModule& module) {
   xla::RegisterSymbolicExprStorage(&mlir_context);
   std::vector<std::unique_ptr<CodegenBackend>> backends =
       get_codegen_backends(stream_executor, &debug_options, compiler.get(),
-                           &target_config, alias_info.get(), &mlir_context);
+                           &target_config, alias_info.get(), &mlir_context, {});
 
   std::unique_ptr<se::DeviceAddressAllocator> allocator =
       std::make_unique<stream_executor::StreamExecutorAddressAllocator>(

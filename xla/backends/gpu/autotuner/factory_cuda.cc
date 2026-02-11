@@ -16,10 +16,14 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_BACKENDS_GPU_AUTOTUNER_CUDA_FACTORY_H_
 #define TENSORFLOW_COMPILER_XLA_BACKENDS_GPU_AUTOTUNER_CUDA_FACTORY_H_
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
+#include "absl/types/span.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/autotuner/cublas.h"
 #include "xla/backends/gpu/autotuner/cublaslt.h"
@@ -81,7 +85,8 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForCuda(
     stream_executor::StreamExecutor* stream_executor,
     const DebugOptions* debug_options, Compiler* compiler,
     const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
-    MLIRContext* mlir_context) {
+    MLIRContext* mlir_context,
+    absl::Span<const autotuner::Backend> backend_allowlist) {
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::make_unique<TritonBackend>(
       debug_options, compiler, target_config, alias_info, mlir_context));
@@ -111,6 +116,18 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForCuda(
                                             compiler, target_config),
       GetCustomKernelRewriterPipeline(target_config->device_description),
       alias_info, mlir_context));
+  if (!backend_allowlist.empty()) {
+    backends.erase(
+        std::remove_if(backends.begin(), backends.end(),
+                       [&](const std::unique_ptr<CodegenBackend>& backend) {
+                         return !absl::c_any_of(
+                             backend_allowlist,
+                             [&](autotuner::Backend backend_id) {
+                               return backend->backend() == backend_id;
+                             });
+                       }),
+        backends.end());
+  }
   return backends;
 }
 

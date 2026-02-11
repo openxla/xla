@@ -637,6 +637,7 @@ cc_library(
         ":fission_backend",
         ":triton",
         "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
         "//xla/backends/gpu/transforms:custom_kernel_fusion_rewriter",
         "//xla/backends/gpu/transforms:dot_algorithm_rewriter",
@@ -649,6 +650,8 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/platform:platform_object_registry",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/types:span",
     ],
     alwayslink = True,
 )
@@ -808,12 +811,15 @@ cc_library(
         ":rocblas",
         ":triton",
         "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
         "//xla/hlo/analysis:alias_info",
         "//xla/service:compiler",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/platform:platform_object_registry",
         "//xla/stream_executor/rocm:rocm_platform_id",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
     ],
     alwayslink = True,
@@ -823,10 +829,12 @@ cc_library(
     name = "factory",
     hdrs = ["factory.h"],
     deps = [
+        "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
         "//xla/hlo/analysis:alias_info",
         "//xla/service:compiler",
         "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
     ],
 )
@@ -1129,4 +1137,37 @@ xla_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
     ],
+)
+
+xla_test(
+    name = "factory_test",
+    srcs = ["factory_test.cc"],
+    backends = ["gpu"],
+    local_defines = (
+        if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
+            "TENSORFLOW_USE_ROCM=1",
+        ])
+    ),
+    deps = [
+        ":factory",
+        "//xla/backends/autotuner:backends_proto_cc",
+        "//xla/backends/autotuner:codegen_backend",
+        "//xla/hlo/analysis:alias_info",
+        "//xla/hlo/analysis:symbolic_map",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:compiler",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/platform:platform_object_registry",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:IR",
+    ] + if_cuda_is_configured([
+        ":factory_cuda",
+    ]) + if_rocm_is_configured([
+        ":factory_rocm",
+    ]),
 )
