@@ -20,8 +20,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/gpu/collective_kernel_metadata.h"
 #include "xla/stream_executor/stream.h"
 
 namespace xla::gpu {
@@ -37,6 +40,21 @@ absl::Status LaunchMultiGpuBarrier(
     stream_executor::Stream* stream, int64_t num_devices, RankId rank,
     const std::vector<stream_executor::DeviceAddressBase>& barrier_addresses,
     stream_executor::DeviceAddressBase local_barrier_signal_value);
+
+// Collect the pointers to the parameters at the peer devices.
+// The size of the returned vector is num_parameters * num_devices.
+absl::StatusOr<std::vector<void*>> CollectParamToPeers(
+    const GpuCliqueKey& clique_key, RankId rank,
+    stream_executor::Stream* stream,
+    std::vector<stream_executor::DeviceAddressBase> parameters);
+
+// Copy the collective metadata, the param to peers pointers and multimem
+// addresses to the destination device memory.
+absl::Status CopyCollectiveMetadataToDevice(
+    stream_executor::Stream* stream, CollectiveKernelMetadata metadata,
+    const std::vector<void*>& param_to_peers_ptrs,
+    const std::vector<void*>& multimem_addresses,
+    stream_executor::DeviceAddressBase destination);
 
 }  // namespace xla::gpu
 

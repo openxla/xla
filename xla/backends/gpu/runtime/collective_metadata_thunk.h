@@ -63,28 +63,11 @@ class CollectiveMetadataThunk : public Thunk {
 
   static CollectiveConfig GetCollectiveConfig(const HloInstruction& hlo);
 
-  // Calculate the device memory base for the given parameter index.
-  // The size of the returned memory is num_devices pointers.
-  static absl::StatusOr<se::DeviceAddressBase> GetParameterDeviceMemoryBase(
-      se::DeviceAddressBase metadata, int64_t num_parameters,
-      int64_t num_devices, int64_t parameter_index);
-
   // Collect the pointers to the parameters at the peer devices.
   // The size of the returned vector is num_parameters * num_devices.
   static absl::StatusOr<std::vector<void*>> CollectParamToPeers(
       const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
       std::vector<se::DeviceAddressBase> parameters);
-
-  // Legacy version, remove after Mosaic uses the new version.
-  static absl::StatusOr<CollectiveKernelMetadata> CreateCollectiveMetadata(
-      const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
-      std::shared_ptr<CollectiveMultimem> multimem);
-
-  // Constructs and places the collective metadata on the device.
-  // All participants should call this method to construct their local
-  // metadata.
-  static absl::StatusOr<CollectiveKernelMetadata> CreateCollectiveMetadata(
-      const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream);
 
   // Copy the collective metadata, the param to peers pointers and multimem
   // addresses to the destination device memory.
@@ -92,14 +75,6 @@ class CollectiveMetadataThunk : public Thunk {
       se::Stream* stream, CollectiveKernelMetadata metadata,
       const std::vector<void*>& param_to_peers_ptrs,
       const std::vector<void*>& multimem_addresses,
-      se::DeviceAddressBase destination);
-
-  // Copy the collective metadata and the param to peers pointers to the
-  // destination device memory.
-  // Legacy version, remove after Mosaic uses the new version.
-  static absl::Status CopyCollectiveMetadataToDevice(
-      se::Stream* stream, CollectiveKernelMetadata metadata,
-      const std::vector<void*>& param_to_peers_ptrs,
       se::DeviceAddressBase destination);
 
  private:

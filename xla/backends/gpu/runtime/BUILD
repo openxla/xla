@@ -1628,6 +1628,7 @@ cc_library(
     deps = [
         ":all_reduce",
         ":collective_cliques",
+        ":collective_kernel_api",
         ":collective_metadata_thunk",
         ":collective_multimem",
         ":collective_params",
@@ -2033,6 +2034,7 @@ xla_test(
     backends = ["gpu"],
     tags = ["cuda-only"],
     deps = [
+        ":collective_kernel_api",
         ":collective_metadata_thunk",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/collectives:gpu_clique_key",
@@ -2702,15 +2704,21 @@ cc_library(
     hdrs = ["collective_kernel_api.h"],
     deps = [
         "//xla:status_macros",
+        "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/backends/gpu/collectives:gpu_clique_rendezvous",
         "//xla/core/collectives:rank_id",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/gpu:collective_kernel_metadata",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:multi_gpu_barrier_kernel",
+        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -2719,6 +2727,7 @@ cc_library(
     srcs = ["collective_metadata_thunk.cc"],
     hdrs = ["collective_metadata_thunk.h"],
     deps = [
+        ":collective_kernel_api",
         ":collective_multimem",
         ":collective_multimem_registry",
         ":collective_thunk",

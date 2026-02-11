@@ -33,6 +33,7 @@ limitations under the License.*/
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
+#include "xla/backends/gpu/runtime/collective_kernel_api.h"
 #include "xla/backends/gpu/runtime/collective_metadata_thunk.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -316,20 +317,25 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
 
     const size_t param_to_peers_ptrs_size_bytes =
         parameters.size() * clique_key.num_devices() * sizeof(uint64_t);
+    std::vector<void*> multimem_addresses(kNumParameters, nullptr);
+    const size_t multimem_addresses_size_bytes =
+        multimem_addresses.size() * sizeof(void*);
     state->metadata = params.executor->Allocate(
-        sizeof(CollectiveKernelMetadata) + param_to_peers_ptrs_size_bytes, 0);
+        sizeof(CollectiveKernelMetadata) + param_to_peers_ptrs_size_bytes +
+            multimem_addresses_size_bytes,
+        0);
 
     std::vector<void*> param_to_peers_ptrs;
     TF_ASSIGN_OR_RETURN(
         param_to_peers_ptrs,
-        CollectiveMetadataThunk::CollectParamToPeers(
-            clique_key, state->rank, params.stream, std::move(parameters)));
-    TF_ASSIGN_OR_RETURN(CollectiveKernelMetadata metadata,
-                        CollectiveMetadataThunk::CreateCollectiveMetadata(
-                            clique_key, state->rank, params.stream,
-                            state->collective_multimem));
-    TF_RETURN_IF_ERROR(CollectiveMetadataThunk::CopyCollectiveMetadataToDevice(
-        params.stream, metadata, param_to_peers_ptrs, state->metadata));
+        CollectParamToPeers(clique_key, state->rank, params.stream,
+                            std::move(parameters)));
+    CollectiveKernelMetadata metadata;
+    metadata.rank = state->rank.value();
+
+    TF_RETURN_IF_ERROR(CopyCollectiveMetadataToDevice(
+        params.stream, metadata, param_to_peers_ptrs, multimem_addresses,
+        state->metadata));
     return absl::OkStatus();
   }
 
@@ -402,12 +408,12 @@ absl::Status CollectiveKernelThunk::ExecuteOnStream(
 
   if (state->kernel != nullptr) {
     TF_ASSIGN_OR_RETURN(se::DeviceAddressBase remote_buffers,
-                        CollectiveMetadataThunk::GetParameterDeviceMemoryBase(
+                        GetParameterDeviceMemoryBase(
                             state->metadata, /*num_parameters=*/kNumParameters,
                             /*num_devices=*/num_devices,
                             /*parameter_index=*/0));
     TF_ASSIGN_OR_RETURN(se::DeviceAddressBase signal_buffers,
-                        CollectiveMetadataThunk::GetParameterDeviceMemoryBase(
+                        GetParameterDeviceMemoryBase(
                             state->metadata, /*num_parameters=*/kNumParameters,
                             /*num_devices=*/num_devices,
                             /*parameter_index=*/1));
@@ -440,4 +446,22 @@ absl::Status CollectiveKernelThunk::ExecuteOnStream(
       /*metadata=*/state->metadata);
 }
 
+/* static */ absl::StatusOr<se::DeviceAddressBase>
+CollectiveKernelThunk::GetParameterDeviceMemoryBase(
+    const se::DeviceAddressBase metadata, const int64_t num_parameters,
+    const int64_t num_devices, const int64_t parameter_index) {
+  TF_RET_CHECK(parameter_index >= 0 && parameter_index < num_parameters)
+      << "Parameter index " << parameter_index << " is out of bounds [0, "
+      << num_parameters << ")";
+  // The pointer table is a flattened array laid out in parameter major order.
+  // P0R0 P0R1 ... P0Rn P1R0
+  // P1R1 ... P1Rn ... PnRn
+  // Where Pn is the parameter index and Rn is the rank.
+  se::DeviceAddressBase ptr_table_base = metadata.GetByteSlice(
+      sizeof(CollectiveKernelMetadata),
+      /*size_bytes=*/num_parameters * num_devices * sizeof(void*));
+  return ptr_table_base.GetByteSlice(
+      (parameter_index * num_devices) * sizeof(void*),
+      /*size_bytes=*/num_devices * sizeof(void*));
+}
 }  // namespace xla::gpu
