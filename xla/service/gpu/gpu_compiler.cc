@@ -2657,7 +2657,7 @@ GpuCompiler::CompileToBackendResult(
   // Host executable has to be compiled the GPU compilation is done to
   // avoid a deadlock on the LLVM command line options lock. We can then load
   // it.
-  compile_module_results.executable->ForAllThunksMutable([&](Thunk* thunk) {
+  compile_module_results.executable->Walk([&](Thunk* thunk) {
     if (thunk->kind() == Thunk::Kind::kHostExecuteStart) {
       auto* host_execute_start_thunk =
           tsl::down_cast<HostExecuteStartThunk*>(thunk);

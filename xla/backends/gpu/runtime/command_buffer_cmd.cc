@@ -107,6 +107,7 @@ limitations under the License.
 #include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
@@ -783,6 +784,11 @@ absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
       });
 }
 
+absl::Status ChildCmd::WalkNested(
+    absl::FunctionRef<absl::Status(Command*)> callback) {
+  return child_commands_.Walk(callback);
+}
+
 //===----------------------------------------------------------------------===//
 // CaseCmd
 //===----------------------------------------------------------------------===//
@@ -854,6 +860,14 @@ Command::BufferUses CaseCmd::buffer_uses() const {
     buffers.insert(branch.buffer_uses().begin(), branch.buffer_uses().end());
   }
   return {buffers.begin(), buffers.end()};
+}
+
+absl::Status CaseCmd::WalkNested(
+    absl::FunctionRef<absl::Status(Command*)> callback) {
+  for (auto& branch : branches_) {
+    RETURN_IF_ERROR(branch.Walk(callback));
+  }
+  return absl::OkStatus();
 }
 
 //===----------------------------------------------------------------------===//
@@ -1004,6 +1018,12 @@ Command::BufferUses WhileCmd::buffer_uses() const {
   buffers.insert(body_commands_.buffer_uses().begin(),
                  body_commands_.buffer_uses().end());
   return {buffers.begin(), buffers.end()};
+}
+
+absl::Status WhileCmd::WalkNested(
+    absl::FunctionRef<absl::Status(Command*)> callback) {
+  RETURN_IF_ERROR(cond_commands_.Walk(callback));
+  return body_commands_.Walk(callback);
 }
 
 //===----------------------------------------------------------------------===//
@@ -2160,7 +2180,7 @@ DynamicSliceFusionCmd::DynamicSliceFusionCmd(
   }
 
   for (auto [argument_idx, slice] : llvm::enumerate(slices_)) {
-    embeded_to_origin_slice_map_[argument_idx] = slice.embedded_thunk_argument;
+    embedded_to_origin_slice_map_[argument_idx] = slice.embedded_thunk_argument;
   }
 
   // Find how many offsets we might have to transfer from device to host and
@@ -2435,10 +2455,15 @@ Command::BufferUses DynamicSliceFusionCmd::buffer_uses() const {
   auto embed_buffers = embedded_commands_.buffer_uses();
   for (const BufferUse& buffer_usage : embed_buffers) {
     buffers.emplace_back(
-        *embeded_to_origin_slice_map_.at(buffer_usage.slice().index()),
+        *embedded_to_origin_slice_map_.at(buffer_usage.slice().index()),
         buffer_usage.access(), buffer_usage.shape());
   }
   return buffers;
+}
+
+absl::Status DynamicSliceFusionCmd::WalkNested(
+    absl::FunctionRef<absl::Status(Command*)> callback) {
+  return embedded_commands_.Walk(callback);
 }
 
 //===----------------------------------------------------------------------===//
