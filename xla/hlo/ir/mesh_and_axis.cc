@@ -44,7 +44,7 @@ limitations under the License.
 
 namespace xla {
 
-absl::Status Mesh::ValidateMesh() {
+absl::Status Mesh::Validate() {
   // TODO(varcho): An empty mesh is valid in Shardy. If support for such meshes
   // is required, update this validation.
   if (device_assignment_.num_dimensions() == 0 || axes_names_.empty()) {
@@ -107,7 +107,7 @@ Mesh::Mesh(TileAssignment device_assignment,
            absl::Span<const absl::string_view> axes_names)
     : device_assignment_(std::move(device_assignment)),
       axes_names_(axes_names.begin(), axes_names.end()) {
-  CHECK_OK(ValidateMesh());
+  CHECK_OK(Validate());
 }
 
 std::string Mesh::ToString() const {
