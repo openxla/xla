@@ -630,7 +630,7 @@ std::unique_ptr<CollectiveDeviceListBase> GetPartitionGroupsForReplication(
 // Generates partition groups (groups of devices that will communicate via a
 // collective) across provided target dims with provided group sizes in vector
 // of vector format (legacy format).
-CollectiveDeviceList GetPartitionGroupsAcrossTargetDims(
+CollectiveDeviceList GetListOfListsPartitionGroupsAcrossTargetDims(
     const HloSharding& sharding, std::vector<int64_t> target_dims,
     std::vector<int64_t> group_sizes);
 
@@ -652,6 +652,12 @@ std::optional<MeshAxesReplicaGroupList>
 GetMeshAxesPartitionGroupsAcrossTargetDims(const HloSharding& sharding,
                                            std::vector<int64_t> target_dims,
                                            std::vector<int64_t> group_sizes);
+
+// Generates partition groups (groups of devices that will communicate via a
+// collective) across provided target dims with provided group sizes.
+std::unique_ptr<CollectiveDeviceListBase> GetPartitionGroupsAcrossTargetDims(
+    const HloSharding& sharding, std::vector<int64_t> target_dims,
+    std::vector<int64_t> group_sizes);
 
 // Expands partition group list across all replicas. Expects that provided
 // partition_group_list utilizes all the partitions.
