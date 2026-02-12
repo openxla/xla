@@ -137,6 +137,12 @@ class SymbolicMap {
 
   SymbolicMap Replace(SymbolicExpr expr, SymbolicExpr replacement) const;
 
+  /// Replaces multiple sub-expressions at once by applying
+  /// `SymbolicExpr::Replace(map)` to each expression. Returns a new SymbolicMap
+  /// with the new results and with the specified number of dims and symbols.
+  SymbolicMap Replace(const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& map,
+                      int64_t numResultDims, int64_t numResultSyms) const;
+
   bool operator==(const SymbolicMap& other) const;
   bool operator!=(const SymbolicMap& other) const { return !(*this == other); }
 
