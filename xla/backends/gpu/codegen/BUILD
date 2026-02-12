@@ -203,6 +203,11 @@ xla_test(
         {},
     ),
     backend_tags = {
+        "h100": [
+            "full",
+            "multi_gpu",
+            "no_oss",
+        ],
         "gpu": [
             "multi_gpu",
             "no_oss",

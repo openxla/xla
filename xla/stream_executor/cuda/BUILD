@@ -1414,6 +1414,10 @@ xla_test(
     name = "cuda_executor_multigpu_test",
     srcs = ["cuda_executor_multigpu_test.cc"],
     backend_tags = {
+        "h100": [
+            "full",
+            "multi_gpu",
+        ],
         "gpu": [
             "multi_gpu",
         ],
