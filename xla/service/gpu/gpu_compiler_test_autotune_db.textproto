@@ -23,7 +23,6 @@ results {
       nanos: 1
     }
   }
-  version: 23
 }
 results {
   device: "CUDA: 9.0, Cores: 132, GPU clock: 1.98 GHz, Memory bandwidth: 3352 GB/s, L2 cache: 50 MB, DNN version: 9.10.0"
@@ -37,7 +36,6 @@ results {
       }
     }
   }
-  version: 23
 }
 results {
   device: "CUDA: 9.0, Cores: 132, GPU clock: 1.98 GHz, Memory bandwidth: 3352 GB/s, L2 cache: 50 MB, DNN version: 9.10.0"
@@ -50,7 +48,6 @@ results {
       }
     }
   }
-  version: 23
 }
 results {
   device: "CUDA: 9.0, Cores: 132, GPU clock: 1.98 GHz, Memory bandwidth: 3352 GB/s, L2 cache: 50 MB, DNN version: 9.10.0"
@@ -63,5 +60,4 @@ results {
       }
     }
   }
-  version: 23
 }
