@@ -917,6 +917,7 @@ cc_library(
         "//xla/codegen/tiling:tiled_hlo_instruction",
         "//xla/codegen/xtile/codegen:emitter_helpers",
         "//xla/codegen/xtile/ir:xtile",
+        "//xla/core/collectives:reduction_kind",
         "//xla/hlo/ir:hlo",
         "//xla/service:collective_ops_utils",
         "//xla/service/gpu:backend_configs_cc",
