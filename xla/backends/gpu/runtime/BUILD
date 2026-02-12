@@ -4196,7 +4196,6 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_description",
-        "//xla/stream_executor:device_memory",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
@@ -4233,6 +4232,7 @@ xla_test(
     deps = [
         ":buffer_debug_log_entry_metadata_store",
         ":buffer_debug_log_structs",
+        ":buffer_debug_log_structs_test_matchers",
         ":buffers_float_check_thunk",
         ":collective_clique_requests",
         ":collective_memory_requests",
@@ -4387,6 +4387,13 @@ xla_cc_test(
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],
+)
+
+cc_library(
+    name = "buffer_debug_log_structs_test_matchers",
+    testonly = 1,
+    hdrs = ["buffer_debug_log_structs_test_matchers.h"],
+    deps = ["@com_google_googletest//:gtest_for_library"],
 )
 
 xla_cc_test(
