@@ -69,6 +69,18 @@ TEST_F(SymbolicExprTest, CreateAndPrint) {
                   "((((v0 + 42) * max(min(v1, 2), 0)) floordiv 2) ceildiv 2)"));
 }
 
+TEST_F(SymbolicExprTest, PrintWithVariableNames) {
+  SymbolicExpr expr = v0 + v1;
+  EXPECT_THAT(expr.ToString({"foo", "bar"}),
+              MatchIndexingString("(foo + bar)"));
+}
+
+TEST_F(SymbolicExprTest, PrintWithDimAndSymbolNames) {
+  SymbolicExpr expr = v0 + v1;
+  EXPECT_THAT(expr.ToString({"foo"}, {"bar"}),
+              MatchIndexingString("(foo + bar)"));
+}
+
 TEST_F(SymbolicExprTest, ConstantFolding) {
   // Expressions are simplified at creation if possible.
   EXPECT_EQ(c2 + c3, c5);
