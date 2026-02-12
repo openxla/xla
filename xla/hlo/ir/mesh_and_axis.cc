@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
@@ -43,7 +44,7 @@ limitations under the License.
 
 namespace xla {
 
-absl::Status Mesh::ValidateMesh() {
+absl::Status Mesh::Validate() {
   // TODO(varcho): An empty mesh is valid in Shardy. If support for such meshes
   // is required, update this validation.
   if (device_assignment_.num_dimensions() == 0 || axes_names_.empty()) {
@@ -63,6 +64,13 @@ absl::Status Mesh::ValidateMesh() {
     if (!seen_axis_names.insert(axis_name).second) {
       return absl::InvalidArgumentError(absl::StrCat(
           "Mesh has duplicate axis names. Duplicate axis name: ", axis_name));
+    }
+    int64_t value;
+    if (absl::SimpleAtoi(axis_name, &value)) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Mesh axis name cannot be an integer to avoid confusion "
+                       "with axis indices: ",
+                       axis_name));
     }
   }
 
@@ -99,16 +107,16 @@ Mesh::Mesh(TileAssignment device_assignment,
            absl::Span<const absl::string_view> axes_names)
     : device_assignment_(std::move(device_assignment)),
       axes_names_(axes_names.begin(), axes_names.end()) {
-  CHECK_OK(ValidateMesh());
+  CHECK_OK(Validate());
 }
 
 std::string Mesh::ToString() const {
   if (IsMaximal()) {
     return absl::StrCat(
-        "@maximal_mesh<device_id=", device_assignment_.array()(0), ">");
+        "maximal_mesh[device_id=", device_assignment_.array()(0), "]");
   }
 
-  std::string mesh_str = "@mesh";
+  std::string mesh_str = "mesh";
   // Add the mesh axes names and sizes.
   std::vector<std::string> formatted_axes_names;
   formatted_axes_names.reserve(axes_names_.size());
@@ -120,11 +128,12 @@ std::string Mesh::ToString() const {
   // Add the device assignment if it is not an iota case.
   std::optional<IotaTileAssignment> iota = device_assignment_.iota();
   std::string device_assignment_str = "";
-  if (!(iota.has_value() && iota->reshape_dims().size() == 1)) {
+  bool simple_iota = iota.has_value() && iota->reshape_dims().size() == 1;
+  if (!simple_iota && device_assignment_.num_elements() != 0) {
     device_assignment_str =
         absl::StrCat(", device_ids=(", device_assignment_.ArrayToString(), ")");
   }
-  absl::StrAppend(&mesh_str, "<", absl::StrJoin(formatted_axes_names, ","), ">",
+  absl::StrAppend(&mesh_str, "[", absl::StrJoin(formatted_axes_names, ","), "]",
                   device_assignment_str);
   return mesh_str;
 }

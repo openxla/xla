@@ -61,7 +61,7 @@ class LegacyCache : public AutotunerCacheInterface {
   // AutotuneResult.
   std::optional<Config> GetConfig(const AutotuneResult& result,
                                   bool is_fusion_instruction);
-  std::optional<AutotuneResult> GetAutotuneResult(const Config& config);
+  AutotuneResult GetAutotuneResult(const Config& config);
 
   const std::string cache_dir_;
   const DebugOptions::AutotuneCacheMode cache_mode_;

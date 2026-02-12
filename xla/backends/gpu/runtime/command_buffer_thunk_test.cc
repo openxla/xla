@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/platform_util.h"
@@ -193,8 +193,9 @@ TEST(CommandBufferThunkTest, MemcpyCmd) {
   ServiceExecutableRunOptions run_options;
   BufferAllocations allocations({a, b}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   // Execute command buffer thunk and verify that it copied the memory.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
@@ -252,8 +253,9 @@ TEST(CommandBufferThunkTest, MemzeroCmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   // Execute command buffer thunk and verify that it zeroes the memory.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
@@ -298,8 +300,9 @@ TEST(CommandBufferThunkTest, Memset32Cmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   // Execute command buffer thunk and verify that it set the memory.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
@@ -354,8 +357,9 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersDisabledDuringProfiling) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   TF_ASSERT_OK_AND_ASSIGN(auto profiler_lock,
                           tsl::profiler::ProfilerLock::Acquire());
@@ -412,8 +416,9 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersEnabledDuringProfiling) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   TF_ASSERT_OK_AND_ASSIGN(auto profiler_lock,
                           tsl::profiler::ProfilerLock::Acquire());
@@ -461,8 +466,9 @@ TEST(CommandBufferThunkTest, Memset32CmdOnDifferentStreams) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   // Execute command buffer thunk and verify that it set the memory.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
@@ -482,6 +488,7 @@ TEST(CommandBufferThunkTest, LaunchCmd) {
 
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {length});
 
   // Prepare arguments: a=42, b=0
   se::DeviceAddress<int32_t> a =
@@ -499,7 +506,8 @@ TEST(CommandBufferThunkTest, LaunchCmd) {
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
-  auto args = {slice_a, slice_a, slice_b};  // b = a + a
+  std::vector<ShapedSlice> args = {
+      {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};  // b = a + a
   auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
                       MemoryAccess::kWrite};
 
@@ -519,8 +527,9 @@ TEST(CommandBufferThunkTest, LaunchCmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   TF_ASSERT_OK_AND_ASSIGN(OwningExecutableSource source, ExecutableSource());
   TF_ASSERT_OK(thunk.Initialize({stream_executor,
@@ -586,6 +595,7 @@ TEST(CommandBufferThunkTest, CustomAddKernelLaunchCmd) {
 
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {length});
 
   // Prepare arguments: a=42, b=0
   se::DeviceAddress<int32_t> a =
@@ -603,7 +613,8 @@ TEST(CommandBufferThunkTest, CustomAddKernelLaunchCmd) {
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
-  auto args = {slice_a, slice_a, slice_b};  // b = a + a
+  std::vector<ShapedSlice> args{
+      {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};  // b = a + a
   auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
                       MemoryAccess::kWrite};
 
@@ -623,8 +634,9 @@ TEST(CommandBufferThunkTest, CustomAddKernelLaunchCmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   TF_ASSERT_OK_AND_ASSIGN(OwningExecutableSource source, ExecutableSource());
   TF_ASSERT_OK(thunk.Initialize({stream_executor,
@@ -744,8 +756,9 @@ TEST(CommandBufferThunkTest, GemmCmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({lhs, rhs, out, workspace}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
   TF_ASSERT_OK(thunk.Initialize(
@@ -872,8 +885,9 @@ TEST(CommandBufferThunkTest, ChildGemmCmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({lhs, rhs, out, workspace}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
   TF_ASSERT_OK(thunk.Initialize(
@@ -1033,8 +1047,9 @@ TEST(CommandBufferThunkTest, DISABLED_DynamicSliceFusionCmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({lhs, rhs, out, workspace}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
   TF_ASSERT_OK(thunk.Initialize(
@@ -1181,8 +1196,9 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
     se::StreamExecutorMemoryAllocator allocator(stream_executor);
     BufferAllocations allocations({a, b, c, d, workspace}, 0, &allocator);
 
-    Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-        run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+    Thunk::ExecuteParams params =
+        Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                     stream.get(), nullptr, nullptr, nullptr);
 
     Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
     TF_ASSERT_OK(thunk.Initialize(
@@ -1245,6 +1261,7 @@ TEST(CommandBufferThunkTest, MultipleLaunchCmd) {
 
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {length});
 
   // Prepare arguments: a=42, b=0
   se::DeviceAddress<int32_t> a =
@@ -1272,8 +1289,10 @@ TEST(CommandBufferThunkTest, MultipleLaunchCmd) {
   BufferAllocation::Slice slice_c(&alloc_c, 0, byte_length);
   BufferAllocation::Slice slice_d(&alloc_d, 0, byte_length);
 
-  auto args = {slice_a, slice_a, slice_b};    // b = a + a
-  auto args_1 = {slice_c, slice_c, slice_d};  // d = c + c
+  std::vector<ShapedSlice> args{
+      {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};  // b = a + a
+  std::vector<ShapedSlice> args_1{
+      {slice_c, shape}, {slice_c, shape}, {slice_d, shape}};  // d = c + c
   auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
                       MemoryAccess::kWrite};
 
@@ -1296,8 +1315,9 @@ TEST(CommandBufferThunkTest, MultipleLaunchCmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b, c, d}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   TF_ASSERT_OK_AND_ASSIGN(OwningExecutableSource source, ExecutableSource());
   TF_ASSERT_OK(thunk.Initialize({stream_executor,
@@ -1372,6 +1392,7 @@ TEST(CommandBufferThunkTest, CaseCmd) {
 
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {length});
 
   // Prepare arguments: index=0, a=42, b=0
   se::DeviceAddress<int32_t> index =
@@ -1403,14 +1424,16 @@ TEST(CommandBufferThunkTest, CaseCmd) {
                       MemoryAccess::kWrite};
 
   {  // Case 0: b = a + a
-    auto args = {slice_a, slice_a, slice_b};
+    std::vector<ShapedSlice> args{
+        {slice_a, shape}, {slice_a, shape}, {slice_b, shape}};
     branches_sequence[0].Emplace<LaunchCmd>("AddI32", args, args_access,
                                             LaunchDimensions(1, 4),
                                             /*shmem_bytes=*/0);
   }
 
   {  // Case 1: b = b + b
-    auto args = {slice_b, slice_b, slice_b};
+    std::vector<ShapedSlice> args{
+        {slice_b, shape}, {slice_b, shape}, {slice_b, shape}};
     branches_sequence[1].Emplace<LaunchCmd>("AddI32", args, args_access,
                                             LaunchDimensions(1, 4),
                                             /*shmem_bytes=*/0);
@@ -1438,8 +1461,9 @@ TEST(CommandBufferThunkTest, CaseCmd) {
   se::StreamExecutorMemoryAllocator allocator(stream_executor);
   BufferAllocations allocations({index, a, b}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   TF_ASSERT_OK_AND_ASSIGN(OwningExecutableSource source, ExecutableSource());
   TF_ASSERT_OK(thunk.Initialize({stream_executor,
@@ -1477,6 +1501,7 @@ TEST(CommandBufferThunkTest, WhileCmd) {
 
   int64_t length = 4;
   int64_t byte_length = sizeof(int32_t) * length;
+  Shape shape = ShapeUtil::MakeShape(S32, {length});
 
   // Prepare arguments: loop_cnt=0, num_iters=10, a=1, b=0
   se::DeviceAddress<bool> pred = stream_executor->AllocateArray<bool>(1, 0);
@@ -1507,11 +1532,13 @@ TEST(CommandBufferThunkTest, WhileCmd) {
   BufferAllocation::Slice slice_a(&alloc_a, 0, byte_length);
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
-  auto cond_args = {slice_loop_cnt, slice_pred, slice_num_iters};
+  std::vector<ShapedSlice> cond_args{
+      {slice_loop_cnt, shape}, {slice_pred, shape}, {slice_num_iters, shape}};
   auto cond_args_access = {MemoryAccess::kWrite, MemoryAccess::kWrite,
                            MemoryAccess::kRead};
 
-  auto body_args = {slice_a, slice_b, slice_b};  // b = a + b
+  std::vector<ShapedSlice> body_args{
+      {slice_a, shape}, {slice_b, shape}, {slice_b, shape}};  // b = a + b
   auto body_args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
                            MemoryAccess::kWrite};
 
@@ -1549,8 +1576,9 @@ TEST(CommandBufferThunkTest, WhileCmd) {
   BufferAllocations allocations({pred, loop_cnt, num_iters, a, b}, 0,
                                 &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), nullptr, nullptr, nullptr);
 
   TF_ASSERT_OK_AND_ASSIGN(OwningExecutableSource source, ExecutableSource());
   TF_ASSERT_OK(thunk.Initialize({stream_executor,

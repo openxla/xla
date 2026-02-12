@@ -37,6 +37,8 @@ limitations under the License.
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
+#include "xla/backends/gpu/transforms/gemm_fusion.h"
+#include "xla/backends/gpu/transforms/gemm_rewriter.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -59,8 +61,6 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/transforms/gemm_fusion.h"
-#include "xla/service/gpu/transforms/gemm_rewriter.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -175,7 +175,9 @@ class StatelessAutotunerTest : public HloTestBase {
  public:
   StatelessAutotunerTest()
       : HloTestBase(/*verifier_layout_sensitive=*/true,
-                    /*allow_mixed_precision_in_hlo_verifier=*/false) {}
+                    /*allow_mixed_precision_in_hlo_verifier=*/false) {
+    RegisterSymbolicExprStorage(&mlir_context_);
+  }
 
   se::SemanticVersion GetToolkitVersion() const {
     return backend()

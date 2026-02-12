@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/autotuner/autotuner_cache.pb.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 
 namespace xla {
@@ -35,7 +36,7 @@ class AutotunerCacheInterface {
  public:
   // Serializable config. Will be changed to a proto in the future.
   struct Config {
-    std::string codegen_backend_name;
+    autotuner::Backend codegen_backend;
     google::protobuf::Any backend_config;
   };
 

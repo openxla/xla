@@ -78,10 +78,12 @@ KeyValueEntry CreateKv(const std::string& key, const std::string& value) {
   return kv;
 }
 
-CoordinationService::Config GetCoordinationServiceConfig(int num_tasks) {
+CoordinationService::Config GetCoordinationServiceConfig(int num_tasks,
+                                                         bool recoverable) {
   CoordinationService::Config config;
   config.job_name = "worker";
   config.num_tasks = num_tasks;
+  config.recoverable = recoverable;
   return config;
 }
 
@@ -147,14 +149,13 @@ class CoordinationBarrierTest : public ::testing::Test {
       CoordinatedTask task;
       task.set_job_name("worker");
       task.set_task_id(i);
-      task.set_recoverable(recoverable);
 
       auto client = std::make_unique<TestCoordinationClient>();
       tasks_.push_back(task);
       clients_.push_back(std::move(client));
     }
     CoordinationService::Config config =
-        GetCoordinationServiceConfig(num_tasks);
+        GetCoordinationServiceConfig(num_tasks, recoverable);
 
     coord_service_ =
         std::make_unique<CoordinationService>(tsl::Env::Default(), config);
@@ -218,13 +219,9 @@ class CoordinateTwoTasksTest : public ::testing::Test {
       bool enable_register_barrier = false,
       bool set_worker_job_recoverable = false,
       bool allow_new_incarnation_to_reconnect = false) {
-    CoordinationService::Config config =
-        GetCoordinationServiceConfig(/*num_tasks=*/2);
+    CoordinationService::Config config = GetCoordinationServiceConfig(
+        /*num_tasks=*/2, /*recoverable=*/set_worker_job_recoverable);
     config.heartbeat_timeout = kHeartbeatTimeout;
-    if (set_worker_job_recoverable) {
-      task_0_.set_recoverable(true);
-      task_1_.set_recoverable(true);
-    }
     if (enable_shutdown_barrier) {
       config.shutdown_barrier_timeout = kShutdownBarrierTimeout;
     }
@@ -286,7 +283,7 @@ TEST_F(CoordinateTwoTasksTest, TestStandaloneService) {
 // the same incarnation.
 TEST(CoordinationServiceTest, RegisterTask_AlreadyConnected_Succeeds) {
   const CoordinationService::Config config =
-      GetCoordinationServiceConfig(/*num_tasks=*/1);
+      GetCoordinationServiceConfig(/*num_tasks=*/1, /*recoverable=*/false);
   CoordinatedTask task_0;
   task_0.set_job_name("worker");
   task_0.set_task_id(0);
@@ -305,7 +302,7 @@ TEST(CoordinationServiceTest, RegisterTask_AlreadyConnected_Succeeds) {
 TEST(CoordinationServiceTest,
      RegisterTask_AlreadyConnectedDifferentIncarnation_Fails) {
   const CoordinationService::Config config =
-      GetCoordinationServiceConfig(/*num_tasks=*/1);
+      GetCoordinationServiceConfig(/*num_tasks=*/1, /*recoverable=*/false);
   CoordinatedTask task_0;
   task_0.set_job_name("worker");
   task_0.set_task_id(0);
@@ -325,7 +322,7 @@ TEST(CoordinationServiceTest,
 
 TEST(CoordinationServiceTest, RegisterTask_AlreadyInError_Fails) {
   CoordinationService::Config config =
-      GetCoordinationServiceConfig(/*num_tasks=*/1);
+      GetCoordinationServiceConfig(/*num_tasks=*/1, /*recoverable=*/false);
   CoordinatedTask task_0;
   task_0.set_job_name("worker");
   task_0.set_task_id(0);
@@ -771,7 +768,7 @@ TEST_F(CoordinateTwoTasksTest, TestSetGetValues) {
 
 TEST(CoordinationServiceTest, TryGetKeyValue) {
   const CoordinationService::Config config =
-      GetCoordinationServiceConfig(/*num_tasks=*/1);
+      GetCoordinationServiceConfig(/*num_tasks=*/1, /*recoverable=*/false);
   std::unique_ptr<CoordinationService> coord_service =
       std::make_unique<CoordinationService>(tsl::Env::Default(), config);
 
@@ -793,7 +790,7 @@ TEST(CoordinationServiceTest, TryGetKeyValue) {
 
 TEST(CoordinationServiceTest, IncrementKeyValue) {
   const CoordinationService::Config config =
-      GetCoordinationServiceConfig(/*num_tasks=*/1);
+      GetCoordinationServiceConfig(/*num_tasks=*/1, /*recoverable=*/false);
   std::unique_ptr<CoordinationService> coord_service =
       std::make_unique<CoordinationService>(tsl::Env::Default(), config);
   ASSERT_OK(coord_service->InsertKeyValue("test_key", "1"));

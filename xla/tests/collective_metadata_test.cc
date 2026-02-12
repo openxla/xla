@@ -54,14 +54,14 @@ TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadata) {
 
     const_0 = f32[1] constant({10})
 
-    result_tuple = (f32[4], f32[4]{0:S(1)}, f32[1], u64[9]) custom-call(param_0, copy_1, const_0), custom_call_target="CollectiveMetadata", output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {})}
-    ROOT get_tuple_element = u64[9] get-tuple-element(result_tuple), index=3
+    result_tuple = (f32[4], f32[4]{0:S(1)}, f32[1], u64[12]) custom-call(param_0, copy_1, const_0), custom_call_target="CollectiveMetadata", output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {})}
+    ROOT get_tuple_element = u64[12] get-tuple-element(result_tuple), index=3
   })";
 
   constexpr int kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto unoptimized_module,
@@ -79,7 +79,7 @@ TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadata) {
 
   absl::Span<const uint64_t> first_result_data = result[0].data<uint64_t>();
   absl::Span<const uint64_t> second_result_data = result[1].data<uint64_t>();
-  constexpr int kNumElements = 9;
+  constexpr int kNumElements = 12;
   ASSERT_EQ(first_result_data.size(), kNumElements);
   ASSERT_EQ(second_result_data.size(), kNumElements);
 
@@ -91,18 +91,21 @@ TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadata) {
   EXPECT_NE(second_result_data[1], 0)
       << "Second result pointer to peers is NULL.";
 
-  EXPECT_NE(first_result_data[2], 0)
-      << "First result pointer to multimem metadata is not set.";
-  EXPECT_NE(second_result_data[2], 0)
-      << "Second result pointer to multimem metadata is not set.";
-
-  for (int i = 3; i < kNumElements; ++i) {
+  constexpr int kParamToPeersEnd = 9;
+  for (int i = 3; i < kParamToPeersEnd; ++i) {
     EXPECT_NE(first_result_data[i], 0)
         << "First result param_to_peers is NULL.";
     EXPECT_EQ(second_result_data[i], first_result_data[i])
         << "Param_to_peers mismatch at index " << i
         << " in the first result: " << first_result_data[i]
         << " and in the second result: " << second_result_data[i];
+  }
+
+  for (int i = kParamToPeersEnd; i < kNumElements; ++i) {
+    EXPECT_EQ(first_result_data[i], 0)
+        << "First result multimem metadata is not NULL.";
+    EXPECT_EQ(second_result_data[i], 0)
+        << "Second result multimem metadata is not NULL.";
   }
 }
 
@@ -116,14 +119,14 @@ TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadataForPartitions) {
 
     const_0 = f32[1] constant({10})
 
-    result_tuple = (f32[4], f32[4]{0}, f32[1], u64[9]) custom-call(param_0, param_1, const_0), custom_call_target="CollectiveMetadata", output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {})}
-    ROOT get_tuple_element = u64[9] get-tuple-element(result_tuple), index=3
+    result_tuple = (f32[4], f32[4]{0}, f32[1], u64[12]) custom-call(param_0, param_1, const_0), custom_call_target="CollectiveMetadata", output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {})}
+    ROOT get_tuple_element = u64[12] get-tuple-element(result_tuple), index=3
   })";
 
   constexpr int kNumPartitions = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumPartitions)
+  ASSERT_GE(device_count(), kNumPartitions)
       << "Test requires at least " << kNumPartitions << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto unoptimized_module,
@@ -142,65 +145,9 @@ TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadataForPartitions) {
 
   absl::Span<const uint64_t> first_result_data = result[0].data<uint64_t>();
   absl::Span<const uint64_t> second_result_data = result[1].data<uint64_t>();
-  constexpr int kNumElements = 9;
+  constexpr int kNumElements = 12;
   ASSERT_EQ(first_result_data.size(), kNumElements);
   ASSERT_EQ(second_result_data.size(), kNumElements);
-}
-
-TEST_F(CollectiveMetadataTest, BuildMultimemOnlyOncePerModuleExecution) {
-  const absl::string_view kModuleStr = R"(
-  HloModule test, replica_count=2
-
-  ENTRY test_computation {
-    param_0 = f32[1] parameter(0)
-    copy_1 = f32[1]{0:S(1)} copy(param_0)
-
-    first_result_tuple = (f32[1]{0:S(1)}, u64[5]) custom-call(copy_1), custom_call_target="CollectiveMetadata", output_to_operand_aliasing={{0}: (0, {})}
-    first_result = u64[5] get-tuple-element(first_result_tuple), index=1
-    second_result_tuple = (f32[1]{0:S(1)}, u64[5]) custom-call(copy_1), custom_call_target="CollectiveMetadata", output_to_operand_aliasing={{0}: (0, {})}
-    second_result = u64[5] get-tuple-element(second_result_tuple), index=1
-    ROOT result_tuple = (u64[5], u64[5]) tuple(first_result, second_result)
-  })";
-
-  constexpr int kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
-      << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
-
-  Literal input_0 = LiteralUtil::CreateR1<float>({1.0f});
-  TF_ASSERT_OK_AND_ASSIGN(
-      ExecutionResult execution_result,
-      ExecuteReplicated(std::move(module),
-                        /*arguments=*/std::vector<Literal*>{&input_0},
-                        /*run_hlo_passes=*/false));
-
-  std::vector<Literal>& literals = execution_result.results;
-  ASSERT_EQ(literals.size(), kNumReplicas);
-
-  std::vector<Literal> first_result = literals[0].DecomposeTuple();
-  std::vector<Literal> second_result = literals[1].DecomposeTuple();
-
-  absl::Span<const uint64_t> first_device_first_result =
-      first_result[0].data<uint64_t>();
-  absl::Span<const uint64_t> first_device_second_result =
-      first_result[1].data<uint64_t>();
-  absl::Span<const uint64_t> second_device_first_result =
-      second_result[0].data<uint64_t>();
-  absl::Span<const uint64_t> second_device_second_result =
-      second_result[1].data<uint64_t>();
-  constexpr int kNumElements = 5;
-  ASSERT_EQ(first_device_first_result.size(), kNumElements);
-  ASSERT_EQ(first_device_second_result.size(), kNumElements);
-  ASSERT_EQ(second_device_first_result.size(), kNumElements);
-  ASSERT_EQ(second_device_second_result.size(), kNumElements);
-
-  EXPECT_EQ(first_device_first_result[2], first_device_second_result[2])
-      << "Multimem metadata should be the same for both results.";
-  EXPECT_EQ(second_device_first_result[2], second_device_second_result[2])
-      << "Multimem metadata should be the same for both results.";
 }
 
 TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadataWithReplicaGroup) {
@@ -212,14 +159,14 @@ TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadataWithReplicaGroup) {
     param_1 = f32[4] parameter(1)
     copy_1 = f32[4]{0:S(1)} copy(param_1)
 
-    result_tuple = (f32[4], f32[4]{0:S(1)}, u64[7]) custom-call(param_0, copy_1), custom_call_target="CollectiveMetadata", output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {})}, backend_config="{\"collective_metadata_backend_config\":{\"collective_devices\": { \"replica_groups\": [{\"replica_ids\": [0,1]}, {\"replica_ids\": [2,3]}]}}}"
-    ROOT get_tuple_element = u64[7] get-tuple-element(result_tuple), index=2
+    result_tuple = (f32[4], f32[4]{0:S(1)}, u64[9]) custom-call(param_0, copy_1), custom_call_target="CollectiveMetadata", output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {})}, backend_config="{\"collective_metadata_backend_config\":{\"collective_devices\": { \"replica_groups\": [{\"replica_ids\": [0,1]}, {\"replica_ids\": [2,3]}]}}}"
+    ROOT get_tuple_element = u64[9] get-tuple-element(result_tuple), index=2
   })";
 
   constexpr int kNumReplicas = 4;
-  if (hlo_runner_->device_count() < kNumReplicas) {
+  if (device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
-                 << hlo_runner_->device_count() << " available)";
+                 << device_count() << " available)";
   }
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -245,7 +192,7 @@ TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadataWithReplicaGroup) {
       result[3].data<uint64_t>();
 
   // Check the rank in the first position.
-  constexpr int kNumElements = 7;
+  constexpr int kNumElements = 9;
   ASSERT_EQ(replica_0_result_0_data.size(), kNumElements);
   ASSERT_EQ(replica_0_result_1_data.size(), kNumElements);
   ASSERT_EQ(replica_1_result_0_data.size(), kNumElements);
@@ -268,12 +215,21 @@ TEST_F(CollectiveMetadataTest, ConstructCollectiveMetadataWithReplicaGroup) {
   EXPECT_NE(replica_1_result_0_data[2], 0);
   EXPECT_NE(replica_1_result_1_data[2], 0);
 
+  constexpr int kParamToPeersEnd = 7;
   // Check param_to_peers structure.
-  for (int i = 3; i < kNumElements; ++i) {
+  for (int i = 3; i < kParamToPeersEnd; ++i) {
     EXPECT_NE(replica_0_result_0_data[i], 0);
     EXPECT_EQ(replica_0_result_1_data[i], replica_0_result_0_data[i]);
     EXPECT_NE(replica_1_result_0_data[i], 0);
     EXPECT_EQ(replica_1_result_1_data[i], replica_1_result_0_data[i]);
+  }
+
+  // Check that multimem metadata is zeroed.
+  for (int i = kParamToPeersEnd; i < kNumElements; ++i) {
+    EXPECT_EQ(replica_0_result_0_data[i], 0);
+    EXPECT_EQ(replica_0_result_1_data[i], 0);
+    EXPECT_EQ(replica_1_result_0_data[i], 0);
+    EXPECT_EQ(replica_1_result_1_data[i], 0);
   }
 }
 

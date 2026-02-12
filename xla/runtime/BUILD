@@ -22,8 +22,6 @@ cc_library(
         "//xla:shape_util",
         "//xla/service:buffer_assignment",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -160,6 +158,17 @@ cc_library(
     hdrs = ["device_id.h"],
     deps = [
         "//xla/tsl/distributed_runtime/coordination:coordination_service",
+        "//xla/tsl/lib/gtl:int_type",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "chip_id",
+    hdrs = ["chip_id.h"],
+    deps = [
         "//xla/tsl/lib/gtl:int_type",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",

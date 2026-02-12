@@ -347,10 +347,11 @@ class HloSharding {
   // Returns whether the sharding represents a tiled sharding where the mapping
   // between devices and tiles is represented through 'tile_assignment()'.
   bool IsTiled() const {
-    return !IsTileMaximal() && !IsManual() && !IsUnknown();
+    return !IsTileMaximal() && !IsManual() && !IsUnreduced() && !IsUnknown();
   }
   bool IsTiledLeaf() const {
-    return !IsTileMaximalLeaf() && !IsManualLeaf() && !IsUnknownLeaf();
+    return !IsTileMaximalLeaf() && !IsManualLeaf() && !IsUnreducedLeaf() &&
+           !IsUnknownLeaf();
   }
 
   // Returns if the sharding has partial replication and partial sharding. If
@@ -507,6 +508,15 @@ class HloSharding {
   // Gets the tile assignment tensor.
   // REQUIRES: !IsReplicated() && !IsTuple()
   const TileAssignment& tile_assignment() const { return tile_assignment_; }
+
+  // Returns the flattened list of devices used in the tile assignment.
+  // REQUIRES: !IsReplicated() && !IsTuple()
+  absl::Span<const int64_t> flattened_device_list() const {
+    const auto& array = UseNamedShardingLeaf()
+                            ? named_sharding_->device_assignment().array()
+                            : tile_assignment_.array();
+    return absl::MakeConstSpan(array.begin(), array.num_elements());
+  }
 
   const NamedSharding& named_sharding() const {
     CHECK(UseNamedShardingLeaf());

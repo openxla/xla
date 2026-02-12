@@ -39,6 +39,8 @@ limitations under the License.
 
 namespace xla::gpu {
 
+// TODO(b/481948581) Move static methods to collective kernel utils file.
+// And remove this thunk with the custom call.
 class CollectiveMetadataThunk : public Thunk {
  public:
   struct Buffer {
@@ -61,43 +63,18 @@ class CollectiveMetadataThunk : public Thunk {
 
   static CollectiveConfig GetCollectiveConfig(const HloInstruction& hlo);
 
-  // Calculate the device memory base for the given parameter index.
-  // The size of the returned memory is num_devices pointers.
-  static absl::StatusOr<se::DeviceAddressBase> GetParameterDeviceMemoryBase(
-      se::DeviceAddressBase metadata, int64_t num_parameters,
-      int64_t num_devices, int64_t parameter_index);
-
   // Collect the pointers to the parameters at the peer devices.
   // The size of the returned vector is num_parameters * num_devices.
   static absl::StatusOr<std::vector<void*>> CollectParamToPeers(
       const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
-      const std::vector<se::DeviceAddressBase>& parameters);
+      std::vector<se::DeviceAddressBase> parameters);
 
-  // Constructs and places the collective metadata on the device.
-  // All participants should call this method to construct their local
-  // metadata.
-  static absl::StatusOr<CollectiveKernelMetadata> CreateCollectiveMetadata(
-      const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
-      std::shared_ptr<CollectiveMultimem> multimem);
-
-  // Copy the collective metadata and the param to peers pointers to the
-  // destination device memory.
+  // Copy the collective metadata, the param to peers pointers and multimem
+  // addresses to the destination device memory.
   static absl::Status CopyCollectiveMetadataToDevice(
       se::Stream* stream, CollectiveKernelMetadata metadata,
       const std::vector<void*>& param_to_peers_ptrs,
-      se::DeviceAddressBase destination);
-
-  // Constructs and places the collective metadata on the device.
-  // All participants should call this method to construct their local
-  // metadata.
-  // Method needed for backward compatibility with the Mosaic custom call
-  // implementation.
-  // TODO(patrios): Remove this method once Mosaic is updated to use the
-  // new collective metadata construction flow.
-  static absl::Status ConstructCollectiveMetadata(
-      const GpuCliqueKey& clique_key, RankId rank, se::Stream* stream,
-      const std::vector<se::DeviceAddressBase>& parameters,
-      std::shared_ptr<CollectiveMultimem> multimem,
+      const std::vector<void*>& multimem_addresses,
       se::DeviceAddressBase destination);
 
  private:

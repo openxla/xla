@@ -539,6 +539,12 @@ Shape TileShape(const HloSharding& sharding, const Shape& shape);
 // REQUIRES: !sharding.IsTuple()
 Shape TileLeafShape(const HloSharding& sharding, const Shape& shape);
 
+// Replicate the parameter/output sharding if the sharding does not evenly
+// partition the parameter/output.
+void ReplicateBoundaryShardingsIfIndivisible(
+    HloModule* module, absl::Span<const bool> process_output,
+    absl::Span<const bool> process_parameters);
+
 // Canonicalizes entry_computation_layout by calling
 // module->layout_canonicalization_callback(), which gives canonicalized
 // argument and result layouts based on current module. Currently used by PJRT

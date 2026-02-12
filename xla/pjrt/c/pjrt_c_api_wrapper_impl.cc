@@ -1923,7 +1923,6 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
   if (args->options->call_location) {
     options.call_location = std::string(args->options->call_location);
   }
-  options.strict_shape_checking = true;
   options.context = args->options->context
                         ? args->options->context->execute_context.get()
                         : nullptr;

@@ -116,7 +116,8 @@ class LocalDeviceState {
                    AllocationModel allocation_model,
                    int max_inflight_computations, bool allow_event_reuse,
                    bool use_callback_stream, int device_ordinal = -1,
-                   std::optional<StreamOptions> stream_options = std::nullopt);
+                   std::optional<StreamOptions> stream_options = std::nullopt,
+                   bool schedule_async = false);
   virtual ~LocalDeviceState();
 
   se::StreamExecutor* executor() const { return executor_; }
@@ -176,6 +177,10 @@ class LocalDeviceState {
       se::DeviceAddressBase src_buffer, se::DeviceAddressBase dst_buffer);
 
   WorkerThread* execute_thread() const { return execute_thread_.get(); }
+
+  WorkerThread* async_dispatch_thread() const {
+    return async_dispatch_thread_.get();
+  }
 
   WorkerThread* cleanup_thread() const { return cleanup_thread_.get(); }
 
@@ -279,6 +284,10 @@ class LocalDeviceState {
 
   // A worker thread, used for replicated computation launches.
   std::unique_ptr<WorkerThread> execute_thread_;
+
+  // A worker thread, used for launching executables async
+  // Only if schedule_async=true is passed in the constructor.
+  std::unique_ptr<WorkerThread> async_dispatch_thread_;
 
   // A worker thread, used for callbacks. It is necessary that this be a
   // different thread to the execute thread because we acquire the compute

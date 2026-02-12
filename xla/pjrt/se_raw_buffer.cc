@@ -85,9 +85,9 @@ Future<> PjRtStreamExecutorDeviceEvent::GetReadyFuture() {
 }
 
 PjRtStreamExecutorDeviceEventPromise::PjRtStreamExecutorDeviceEventPromise(
-    PjRtMemorySpace* memory_space, LocalDeviceState* local_device,
+    PjRtStreamExecutorClient* client, LocalDeviceState* local_device,
     AsyncWorkRunner* async_work_runner)
-    : memory_space_(memory_space),
+    : client_(client),
       local_device_(local_device),
       av_(tsl::MakeIndirectAsyncValue()),
       event_(tsl::MakeConstructedAsyncValueRef<BufferSequencingEvent>(
@@ -114,12 +114,10 @@ void PjRtStreamExecutorDeviceEventPromise::SetFromSEEvent(
 }
 
 void PjRtStreamExecutorDeviceEventPromise::SetReady() {
-  auto* client =
-      tensorflow::down_cast<PjRtStreamExecutorClient*>(memory_space_->client());
-  auto result = BufferSequencingEvent::Create(client->async_work_runner());
+  auto result = BufferSequencingEvent::Create(client_->async_work_runner());
   auto stream = local_device_->BorrowStreamFromPool();
   auto status =
-      client->AllocateAndRecordEvent(result, local_device_, stream.get());
+      client_->AllocateAndRecordEvent(result, local_device_, stream.get());
   local_device_->ReturnStreamToPool(std::move(stream));
   if (!status.ok()) {
     SetError(status);
@@ -276,7 +274,7 @@ PjRtStreamExecutorRawBuffer::RemoveDynamicShapeMetadataIfPresent(
   size_t size = transfer_manager->GetByteSizeRequirement(logical_shape);
   return tsl::MakeRef<PjRtStreamExecutorRawBuffer>(
       client_, memory_space_, local_device_,
-      RawSEDeviceMemory::CreateSlice(device_buffer_, 0, size));
+      RawSEDeviceMemory::CreateSlice(device_buffer_, 0, size), size);
 }
 
 void PjRtStreamExecutorRawBuffer::CopyToLiteralAsync(

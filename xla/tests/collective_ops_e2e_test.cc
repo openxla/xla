@@ -96,10 +96,9 @@ class CollectiveOpsTestE2E : public CollectiveOpsE2ETestBase {
     }
     const int64_t kNumReplicas = 1;
     const int64_t kNumPartitions = 4;
-    if (hlo_runner_->device_count() < kNumReplicas * kNumPartitions) {
+    if (device_count() < kNumReplicas * kNumPartitions) {
       GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
-                   << " devices (" << hlo_runner_->device_count()
-                   << " available)";
+                   << " devices (" << device_count() << " available)";
     }
 
     HloModuleConfig config = GetModuleConfigForTest(
@@ -108,12 +107,12 @@ class CollectiveOpsTestE2E : public CollectiveOpsE2ETestBase {
     TF_ASSERT_OK_AND_ASSIGN(auto module,
                             ParseAndReturnVerifiedModule(hlo_text, config));
 
-    TF_ASSERT_OK_AND_ASSIGN(auto executable, hlo_runner_->CreateExecutable(
-                                                 std::move(module),
-                                                 /*run_hlo_passes=*/true));
+    TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                            CreateExecutable(std::move(module),
+                                             /*run_hlo_passes=*/true));
     TF_ASSERT_OK_AND_ASSIGN(
         const HloModule* const hlo_module,
-        hlo_runner_->HloModuleFromWrapped(executable.get()));
+        test_runner().HloModuleFromWrapped(executable.get()));
     std::vector<HloInstruction*> gemm_ops =
         FindInstructions(hlo_module, HloOpcode::kCustomCall);
     for (HloInstruction* gemm_op : gemm_ops) {
@@ -193,9 +192,9 @@ TEST_P(AsyncCollectiveOps, AsyncAllReduce) {
     )";
 
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   const bool enable_async_all_reduce = GetParam();
 
@@ -236,9 +235,9 @@ TEST_P(AsyncCollectiveOps, AsyncAllGather) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   const bool enable_async_all_gather = GetParam();
 
@@ -282,9 +281,9 @@ TEST_P(AsyncCollectiveOps, AsyncAllGatherMixedTypes) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   const bool enable_async_all_gather = GetParam();
 
@@ -327,9 +326,9 @@ TEST_P(AsyncCollectiveOps, AsyncCollectiveBroadcast) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   const bool enable_async_collective_broadcast = GetParam();
   TF_ASSERT_OK_AND_ASSIGN(
@@ -365,9 +364,9 @@ TEST_P(AsyncCollectiveOps, AsyncCollectivePermute) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   const bool enable_async_collective_permute = GetParam();
   TF_ASSERT_OK_AND_ASSIGN(
@@ -448,9 +447,9 @@ TEST_P(AsyncCollectiveOps, CollectivePermuteCombiner) {
   )";
   const int64_t kNumReplicas = 4;
   const bool enable_async_collective_permute = GetParam();
-  if (hlo_runner_->device_count() < kNumReplicas) {
+  if (device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
-                 << hlo_runner_->device_count() << " available)";
+                 << device_count() << " available)";
   }
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -514,9 +513,9 @@ TEST_P(AsyncCollectiveOps, AsyncReduceScatter) {
   )";
 
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   const bool enable_async_reduce_scatter = GetParam();
   TF_ASSERT_OK_AND_ASSIGN(
@@ -553,9 +552,9 @@ TEST_P(AsyncCollectiveOps, AsyncAllToAllWithSplitDim) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   const bool enable_async_all_to_all = GetParam();
   TF_ASSERT_OK_AND_ASSIGN(
@@ -637,9 +636,9 @@ TEST_P(AsyncCollectiveOps, AsyncAllToAllWithoutSplitDim) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   const bool enable_async_all_to_all = GetParam();
   TF_ASSERT_OK_AND_ASSIGN(
@@ -713,9 +712,9 @@ TEST_P(AsyncCollectiveOps, AsyncAllToAllNumberOfElementsLargerThanInt32Max) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   const bool enable_async_all_to_all = GetParam();
   TF_ASSERT_OK_AND_ASSIGN(
@@ -767,9 +766,9 @@ ENTRY entry {
 )";
 
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
@@ -818,9 +817,9 @@ TEST_P(AsyncMemcpyCollectiveOps, AsyncAllToAllMultipleReplicaGroups) {
   }
   )";
   const int64_t kNumReplicas = 4;
-  if (hlo_runner_->device_count() < kNumReplicas) {
+  if (device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
-                 << hlo_runner_->device_count() << " available)";
+                 << device_count() << " available)";
   }
 
   HloModuleConfig config =
@@ -851,9 +850,9 @@ TEST_P(AsyncMemcpyCollectiveOps, AsyncAllToAllDegenerateWithSplitDim) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
@@ -882,9 +881,9 @@ TEST_P(AsyncMemcpyCollectiveOps, AsyncAllToAllDegenerateWithoutSplitDim) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
@@ -915,10 +914,9 @@ TEST_P(MemcpyCollectiveOps, AllToAll8Gpus) {
   )";
   const int64_t kNumReplicas = 8;
   const int64_t kNumPartitions = 1;
-  if (hlo_runner_->device_count() < kNumReplicas * kNumPartitions) {
+  if (device_count() < kNumReplicas * kNumPartitions) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
-                 << " devices (" << hlo_runner_->device_count()
-                 << " available)";
+                 << " devices (" << device_count() << " available)";
   }
 
   HloModuleConfig config =
@@ -973,9 +971,9 @@ TEST_P(AsyncCollectiveOps, MatmulReplicated) {
    }
   )";
   const int64_t kNumReplicas = 4;
-  if (hlo_runner_->device_count() < kNumReplicas) {
+  if (device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
-                 << hlo_runner_->device_count() << " available)";
+                 << device_count() << " available)";
   }
 
   bool enable_cublaslt = GetParam();
@@ -999,8 +997,8 @@ TEST_P(AsyncCollectiveOps, MatmulReplicated) {
 
   ASSERT_OK_AND_ASSIGN(auto ref_module,
                        ParseAndReturnVerifiedModule(kModuleSingleStr, config));
-  ASSERT_OK_AND_ASSIGN(auto ref_exec, hlo_runner_->CreateExecutable(
-                                          std::move(ref_module), true));
+  ASSERT_OK_AND_ASSIGN(auto ref_exec,
+                       CreateExecutable(std::move(ref_module), true));
 
   ErrorSpec error_spec{5e-3, 5e-3};
   fake_ptrs.push_back(nullptr);
@@ -1008,7 +1006,7 @@ TEST_P(AsyncCollectiveOps, MatmulReplicated) {
     auto replica_id =
         LiteralUtil::CreateFullWithDescendingLayout<uint32_t>({}, i);
     fake_ptrs.back() = &replica_id;
-    ASSERT_OK_AND_ASSIGN(auto res, hlo_runner_->ExecuteWithExecutable(
+    ASSERT_OK_AND_ASSIGN(auto res, test_runner().ExecuteWithExecutable(
                                        ref_exec.get(), fake_ptrs));
     EXPECT_TRUE(LiteralTestUtil::Near(res, results[i], error_spec));
   }
@@ -1097,9 +1095,9 @@ TEST_F(CollectiveOpsTestE2E, WhileLoopReduceScatterCodeMotion) {
   )";
 
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
@@ -1150,9 +1148,9 @@ TEST_F(CollectiveOpsTestE2E, NoAllToAllDecomposition) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
@@ -1194,9 +1192,9 @@ TEST_F(CollectiveOpsTestE2E, NoAsyncCollectives) {
   }
   )";
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
@@ -1207,11 +1205,11 @@ TEST_F(CollectiveOpsTestE2E, NoAsyncCollectives) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kModuleStr, config));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto executable, hlo_runner_->CreateExecutable(std::move(module),
-                                                     /*run_hlo_passes=*/true));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(std::move(module),
+                                           /*run_hlo_passes=*/true));
   TF_ASSERT_OK_AND_ASSIGN(const HloModule* const executable_module,
-                          hlo_runner_->HloModuleFromWrapped(executable.get()));
+                          test_runner().HloModuleFromWrapped(executable.get()));
 
   // Verify that the all-to-all is a sync collective.
   const HloInstruction* all_to_all =
@@ -1251,8 +1249,8 @@ TEST_F(CollectiveOpsTestE2E, HostMemoryOffloadingWithDonation) {
       /*param_index=*/{},
       /*kind=*/HloInputOutputAliasConfig::AliasKind::kMustAlias));
 
-  auto executable_or = hlo_runner_->CreateExecutable(std::move(module),
-                                                     /*run_hlo_passes=*/false);
+  auto executable_or = CreateExecutable(std::move(module),
+                                        /*run_hlo_passes=*/false);
 
   EXPECT_FALSE(executable_or.ok())
       << "Expected buffer assignment error but compilation succeeded";
@@ -1276,10 +1274,9 @@ class CollectiveOpsTestE2EWindowedNonWindowed : public CollectiveOpsTestE2E {
       bool enable_a2a_rewrite = false) {
     const int64_t kNumReplicas = 1;
     const int64_t kNumPartitions = 4;
-    if (hlo_runner_->device_count() < kNumReplicas * kNumPartitions) {
+    if (device_count() < kNumReplicas * kNumPartitions) {
       GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
-                   << " devices (" << hlo_runner_->device_count()
-                   << " available)";
+                   << " devices (" << device_count() << " available)";
     }
 
     HloModuleConfig config = GetModuleConfigForTest(
@@ -1295,12 +1292,12 @@ class CollectiveOpsTestE2EWindowedNonWindowed : public CollectiveOpsTestE2E {
     // Run with reference config.
     TF_ASSERT_OK_AND_ASSIGN(auto ref_module,
                             ParseAndReturnVerifiedModule(hlo_text, config));
-    ASSERT_OK_AND_ASSIGN(auto ref_executable, hlo_runner_->CreateExecutable(
-                                                  std::move(ref_module),
-                                                  /*run_hlo_passes=*/true));
+    ASSERT_OK_AND_ASSIGN(auto ref_executable,
+                         CreateExecutable(std::move(ref_module),
+                                          /*run_hlo_passes=*/true));
     ASSERT_OK_AND_ASSIGN(
         const HloModule* ref_optimized_module,
-        hlo_runner_->HloModuleFromWrapped(ref_executable.get()));
+        test_runner().HloModuleFromWrapped(ref_executable.get()));
 
     auto fake_ref_arguments =
         xla::MakeFakeArguments(ref_optimized_module).value();
@@ -1675,9 +1672,9 @@ class CollectiveOpsTestE2EPipelinedNonPipelined : public CollectiveOpsTestE2E {
   void CollectiveOpsComparePipelinedNonPipelined(absl::string_view hlo_string) {
     const int64_t kNumReplicas = 1;
     const int64_t kNumPartitions = 2;
-    ASSERT_GE(hlo_runner_->device_count(), kNumReplicas * kNumPartitions)
+    ASSERT_GE(device_count(), kNumReplicas * kNumPartitions)
         << "Test requires at least " << kNumReplicas * kNumPartitions
-        << " devices (" << hlo_runner_->device_count() << " available)";
+        << " devices (" << device_count() << " available)";
 
     HloModuleConfig config =
         GetModuleConfigForTest(kNumReplicas, kNumPartitions);
@@ -1909,9 +1906,9 @@ ENTRY entry {
 
   const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas * kNumPartitions)
+  ASSERT_GE(device_count(), kNumReplicas * kNumPartitions)
       << "Test requires at least " << kNumReplicas * kNumPartitions
-      << " devices (" << hlo_runner_->device_count() << " available)";
+      << " devices (" << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleReplicatedStr,
@@ -1948,9 +1945,9 @@ ENTRY entry {
 
   const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas * kNumPartitions)
+  ASSERT_GE(device_count(), kNumReplicas * kNumPartitions)
       << "Test requires at least " << kNumReplicas * kNumPartitions
-      << " devices (" << hlo_runner_->device_count() << " available)";
+      << " devices (" << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleReplicatedStr,
@@ -2001,10 +1998,9 @@ ENTRY entry {
 
   const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 4;
-  if (hlo_runner_->device_count() < kNumReplicas * kNumPartitions) {
+  if (device_count() < kNumReplicas * kNumPartitions) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
-                 << " devices (" << hlo_runner_->device_count()
-                 << " available)";
+                 << " devices (" << device_count() << " available)";
   }
 
   HloModuleConfig config = GetModuleConfigForTest(
@@ -2012,11 +2008,11 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleReplicatedStr, config));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto executable, hlo_runner_->CreateExecutable(std::move(module),
-                                                     /*run_hlo_passes=*/true));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(std::move(module),
+                                           /*run_hlo_passes=*/true));
   TF_ASSERT_OK_AND_ASSIGN(const HloModule* const hlo_module,
-                          hlo_runner_->HloModuleFromWrapped(executable.get()));
+                          test_runner().HloModuleFromWrapped(executable.get()));
   HloInstruction* all_gather =
       FindInstruction(hlo_module, HloOpcode::kAllGatherStart);
 
@@ -2038,16 +2034,14 @@ ENTRY entry {
 
   const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 4;
-  if (hlo_runner_->device_count() < kNumReplicas * kNumPartitions) {
+  if (device_count() < kNumReplicas * kNumPartitions) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
-                 << " devices (" << hlo_runner_->device_count()
-                 << " available)";
+                 << " devices (" << device_count() << " available)";
   }
 
-  if (hlo_runner_->device_count() < kNumReplicas * kNumPartitions) {
+  if (device_count() < kNumReplicas * kNumPartitions) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
-                 << " devices (" << hlo_runner_->device_count()
-                 << " available)";
+                 << " devices (" << device_count() << " available)";
   }
 
   HloModuleConfig config = GetModuleConfigForTest(
@@ -2057,12 +2051,12 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleReplicatedStr, config));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto executable, hlo_runner_->CreateExecutable(std::move(module),
-                                                     /*run_hlo_passes=*/true));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(std::move(module),
+                                           /*run_hlo_passes=*/true));
 
   TF_ASSERT_OK_AND_ASSIGN(const HloModule* const hlo_module,
-                          hlo_runner_->HloModuleFromWrapped(executable.get()));
+                          test_runner().HloModuleFromWrapped(executable.get()));
   EXPECT_NE(hlo_module, nullptr);
 }
 
@@ -2132,10 +2126,9 @@ ENTRY main.49 {
 
   const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 4;
-  if (hlo_runner_->device_count() < kNumReplicas * kNumPartitions) {
+  if (device_count() < kNumReplicas * kNumPartitions) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
-                 << " devices (" << hlo_runner_->device_count()
-                 << " available)";
+                 << " devices (" << device_count() << " available)";
   }
 
   HloModuleConfig config = GetModuleConfigForTest(kNumReplicas, kNumPartitions);
@@ -2145,11 +2138,11 @@ ENTRY main.49 {
                        ParseAndReturnVerifiedModule(hlo_string, config));
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<OpaqueExecutable> executable,
-                       hlo_runner_->CreateExecutable(std::move(module),
-                                                     /*run_hlo_passes=*/true));
+                       CreateExecutable(std::move(module),
+                                        /*run_hlo_passes=*/true));
 
   ASSERT_OK_AND_ASSIGN(const HloModule* optimized_module,
-                       hlo_runner_->HloModuleFromWrapped(executable.get()));
+                       test_runner().HloModuleFromWrapped(executable.get()));
 
   ASSERT_OK_AND_ASSIGN(auto fake_arguments,
                        xla::MakeFakeArguments(optimized_module));
@@ -2212,10 +2205,9 @@ ENTRY main {
 
   const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 4;
-  if (hlo_runner_->device_count() < kNumReplicas * kNumPartitions) {
+  if (device_count() < kNumReplicas * kNumPartitions) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
-                 << " devices (" << hlo_runner_->device_count()
-                 << " available)";
+                 << " devices (" << device_count() << " available)";
   }
 
   HloModuleConfig config = GetModuleConfigForTest(kNumReplicas, kNumPartitions);
@@ -2279,10 +2271,9 @@ ENTRY main {
 
   const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 4;
-  if (hlo_runner_->device_count() < kNumReplicas * kNumPartitions) {
+  if (device_count() < kNumReplicas * kNumPartitions) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
-                 << " devices (" << hlo_runner_->device_count()
-                 << " available)";
+                 << " devices (" << device_count() << " available)";
   }
 
   HloModuleConfig config = GetModuleConfigForTest(kNumReplicas, kNumPartitions);
@@ -2293,11 +2284,11 @@ ENTRY main {
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string, config));
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto executable, hlo_runner_->CreateExecutable(std::move(module),
-                                                     /*run_hlo_passes=*/false));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(std::move(module),
+                                           /*run_hlo_passes=*/false));
   TF_ASSERT_OK_AND_ASSIGN(const HloModule* const executable_module,
-                          hlo_runner_->HloModuleFromWrapped(executable.get()));
+                          test_runner().HloModuleFromWrapped(executable.get()));
   HloInstruction* ag_start =
       FindInstructions(executable_module, HloOpcode::kAllGatherStart)[0];
   // Both ag and its producer should have collective memory space 1
@@ -2327,10 +2318,9 @@ ROOT tuple = (bf16[1024,1024]{1,0}, bf16[]) tuple(all-reduce-done, all-reduce-do
 
   const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 4;
-  if (hlo_runner_->device_count() < kNumReplicas * kNumPartitions) {
+  if (device_count() < kNumReplicas * kNumPartitions) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
-                 << " devices (" << hlo_runner_->device_count()
-                 << " available)";
+                 << " devices (" << device_count() << " available)";
   }
 
   HloModuleConfig config = GetModuleConfigForTest(kNumReplicas, kNumPartitions);
@@ -2341,11 +2331,11 @@ ROOT tuple = (bf16[1024,1024]{1,0}, bf16[]) tuple(all-reduce-done, all-reduce-do
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_string, config));
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto executable, hlo_runner_->CreateExecutable(std::move(module),
-                                                     /*run_hlo_passes=*/false));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(std::move(module),
+                                           /*run_hlo_passes=*/false));
   TF_ASSERT_OK_AND_ASSIGN(const HloModule* const executable_module,
-                          hlo_runner_->HloModuleFromWrapped(executable.get()));
+                          test_runner().HloModuleFromWrapped(executable.get()));
   std::vector<HloInstruction*> all_ar =
       FindInstructions(executable_module, HloOpcode::kAllReduceStart);
   // Both allreduces should have their operands copied to collective memory
@@ -2466,9 +2456,9 @@ TEST_P(AllReduceTest, AsyncAllReduce_F32_2GPUs) {
   )";
 
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
@@ -2542,9 +2532,9 @@ TEST_P(AllReduceTest, AsyncAllReduceInsideWhile_F32_2GPUs) {
       kNumIterations, kNumElements, kReplicaGroups);
 
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
@@ -2594,9 +2584,9 @@ TEST_P(AllReduceTest, AsyncAllReduce_BF16_2GPUs) {
   )";
 
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
@@ -2699,9 +2689,9 @@ TEST_P(AllReduceTest, AsyncAllReduce_F8E4M3FN_TrainingStep_2GPUs) {
   })";
 
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   Array<Eigen::half> activations1({32, 64}), activations2({32, 64});
   activations1.FillRandom(Eigen::half(0.1f), 0.5f, /*seed=*/0);
@@ -2791,9 +2781,9 @@ TEST_P(AllReduceTest, AsyncAllReduce_F8E4M3FN_FailsOnPreHopper) {
   })";
 
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kF8ModuleStr, kNumReplicas));
@@ -2832,9 +2822,9 @@ TEST_P(AllReduceTest, AsyncAllReduce_PRED_2GPUs) {
   )";
 
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
@@ -2884,9 +2874,9 @@ TEST_P(AllReduceTest, AsyncAllReduce_8GPUs_AllReplicasOneGroup) {
   )";
 
   const int64_t kNumReplicas = 8;
-  if (hlo_runner_->device_count() < kNumReplicas) {
+  if (device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
-                 << hlo_runner_->device_count() << " available)";
+                 << device_count() << " available)";
   }
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -2951,9 +2941,9 @@ TEST_P(AllReduceTest, AsyncAllReduce_8GPUs_2ReplicasPerGroup) {
       kNumIterations, kNumElements);
 
   const int64_t kNumReplicas = 8;
-  if (hlo_runner_->device_count() < kNumReplicas) {
+  if (device_count() < kNumReplicas) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
-                 << hlo_runner_->device_count() << " available)";
+                 << device_count() << " available)";
   }
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -2977,9 +2967,9 @@ TEST_P(AllReduceTest, AsyncAllReduce_8GPUs_2ReplicasPerGroup) {
 
 TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim0OutputIsCorrect) {
   constexpr int kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(auto unoptimized_module,
                           ParseAndReturnVerifiedModule(R"(
@@ -3014,9 +3004,9 @@ TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim0OutputIsCorrect) {
 
 TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim1OutputIsCorrect) {
   constexpr int kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
-      << hlo_runner_->device_count() << " available)";
+      << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(auto unoptimized_module,
                           ParseAndReturnVerifiedModule(R"(
@@ -3095,9 +3085,9 @@ TEST_F(CollectiveOpsTestE2E, MultipleModuleDifferentDeviceGroupsShouldRun) {
 
   const int64_t kNumReplicas_1 = 2;
   const int64_t kNumReplicas_2 = 4;
-  if (hlo_runner_->device_count() < kNumReplicas_2) {
+  if (device_count() < kNumReplicas_2) {
     GTEST_SKIP() << "Test requires at least " << kNumReplicas_2 << " devices ("
-                 << hlo_runner_->device_count() << " available)";
+                 << device_count() << " available)";
   }
 
   HloModuleConfig config_1 =

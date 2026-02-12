@@ -127,6 +127,11 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
     return description_;
   }
 
+  void SetAttributes(
+      absl::flat_hash_map<std::string, PjRtDeviceAttribute> attrs) {
+    attributes_ = std::move(attrs);
+  }
+
   // Return `platform_id` from client.
   PjRtPlatformId platform_id() const;
 
@@ -143,6 +148,11 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
 
   PjRtLocalHardwareId local_hardware_id() const override {
     return local_hardware_id_;
+  }
+
+  const absl::flat_hash_map<std::string, PjRtDeviceAttribute>& Attributes()
+      const override {
+    return attributes_;
   }
 
   // If this is a device local to this host, returns a LocalDeviceState object
@@ -186,6 +196,7 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
   const PjRtLocalHardwareId local_hardware_id_;
   const std::unique_ptr<LocalDeviceState> local_device_state_;
   PjRtStreamExecutorDeviceDescription description_;
+  absl::flat_hash_map<std::string, PjRtDeviceAttribute> attributes_;
   PjRtClient* client_ = nullptr;
   absl::InlinedVector<PjRtMemorySpace*, 1> memory_spaces_;
   absl::flat_hash_map<int, PjRtMemorySpace*> memory_spaces_by_id_;
@@ -380,6 +391,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   }
 
   bool allows_recursion() const override { return false; }
+  bool allows_execute_recursion() const override { return true; }
 
   absl::StatusOr<int64_t> GetOnDeviceBytesCount(
       PjRtMemorySpace* memory_space, const xla::Shape& shape) const override;
@@ -635,12 +647,7 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
       int partition, PjRtDevice* device) const override;
 
   void LaunchOnDevice(PjRtDevice* device,
-                      absl::AnyInvocable<void()> execute_fn) const override {
-    const LocalDeviceState& device_state =
-        *tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
-             ->local_device_state();
-    device_state.execute_thread()->Schedule(std::move(execute_fn));
-  }
+                      absl::AnyInvocable<void()> execute_fn) const;
 
   const DeviceAssignment& device_assignment() const override {
     return *device_assignment_;
@@ -720,8 +727,6 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
   // Initializes information about which arguments to which executables must be
   // donated due to aliases that were specified by the computation.
   absl::Status SetUpDonation(bool tuple_inputs);
-
-  absl::Status VerifyCompatibleDevices() const;
 
   // Create shared pointers so we can free them after the execution: with
   // asynchronous execution, the process being executed can outlive the

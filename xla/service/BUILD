@@ -713,6 +713,7 @@ xla_cc_test(
         "//xla/hlo/testlib:test",
         "//xla/hlo/testlib:test_helpers",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:status_matchers",
@@ -870,7 +871,6 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         "//xla:error_spec",
         "//xla:literal",
@@ -1688,6 +1688,7 @@ cc_library(
     visibility = internal_visibility([
         "//xla/internal:hwi_internal",
         "//xla/backends/gpu/runtime:__subpackages__",
+        "//xla/service/gpu/tests:__pkg__",
         "//third_party/pathways/configuration:__subpackages__",
     ]),
     deps = [
@@ -2385,14 +2386,15 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":scatter_determinism_expander",
         "//xla:literal",
+        "//xla:shape_util",
         "//xla/hlo/testlib:test",
         "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -2430,9 +2432,6 @@ xla_test(
     srcs = ["triangular_solve_expander_test.cc"],
     backends = ["cpu"],
     shard_count = 12,
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         ":triangular_solve_expander",
         "//xla:array2d",
@@ -2456,7 +2455,6 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":batchnorm_expander",
         "//xla:error_spec",
@@ -2475,7 +2473,6 @@ xla_test(
 xla_test(
     name = "algebraic_simplifier_overflow_test",
     srcs = ["algebraic_simplifier_overflow_test.cc"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         "//xla:error_spec",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
@@ -2894,7 +2891,6 @@ xla_test(
     name = "scan_loop_accumulator_input_unification_test",
     srcs = ["scan_loop_accumulator_input_unification_test.cc"],
     backends = ["interpreter"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":copy_insertion",
         ":scan_loop_accumulator_input_unification",
@@ -2955,7 +2951,6 @@ xla_test(
     name = "while_loop_unroller_test",
     srcs = ["while_loop_unroller_test.cc"],
     backends = ["interpreter"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":scheduling_annotations_util",
         ":while_loop_unroller",
@@ -4026,7 +4021,6 @@ xla_cc_test(
 xla_cc_test(
     name = "layout_assignment_test",
     srcs = ["layout_assignment_test.cc"],
-    tags = ["pjrt_migration_candidate"],
     deps = [
         ":computation_layout",
         ":hlo_verifier",
@@ -4041,11 +4035,12 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/hlo/testlib:test",
         "//xla/hlo/testlib:test_helpers",
         "//xla/hlo/transforms/simplifiers:algebraic_simplifier",
-        "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:errors",
@@ -4086,7 +4081,6 @@ xla_test(
     name = "hlo_cse_test",
     srcs = ["hlo_cse_test.cc"],
     backends = ["interpreter"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":hlo_cse",
         ":pattern_matcher",
@@ -4328,7 +4322,6 @@ xla_test(
     ],
     tags = [
         "no_windows",  # TODO(b/152037541)
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":elemental_ir_emitter",
@@ -5207,7 +5200,6 @@ xla_test(
     name = "map_inliner_test",
     srcs = ["map_inliner_test.cc"],
     backends = ["interpreter"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":map_inliner",
         "//xla:literal",
@@ -5490,7 +5482,6 @@ xla_test(
     name = "topk_rewriter_test",
     srcs = ["topk_rewriter_test.cc"],
     backends = ["interpreter"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         ":pattern_matcher",
         ":topk_rewriter",

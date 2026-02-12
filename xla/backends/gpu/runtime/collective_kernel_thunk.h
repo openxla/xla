@@ -162,6 +162,12 @@ class CollectiveKernelThunk : public Thunk {
   // Returns the input size in bytes for the collective.
   int64_t GetInputSizeBytes() const;
 
+  // Calculate the device memory base for the given parameter index.
+  // The size of the returned memory is num_devices pointers.
+  static absl::StatusOr<se::DeviceAddressBase> GetParameterDeviceMemoryBase(
+      se::DeviceAddressBase metadata, int64_t num_parameters,
+      int64_t num_devices, int64_t parameter_index);
+
   // Whether the one-shot kernel is enabled.
   const bool collective_kernel_enabled_;
   // Whether the collective is run on an async stream.

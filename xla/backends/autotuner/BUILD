@@ -19,6 +19,7 @@ cc_library(
     name = "codegen_backend",
     hdrs = ["codegen_backend.h"],
     deps = [
+        ":backends_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
         "@com_google_absl//absl/status",
@@ -47,11 +48,14 @@ cc_library(
         "//xla/service/gpu/autotuning:autotuner_status_key",
         "//xla/stream_executor:kernel_stats",
         "//xla/tools:hlo_decomposer_lib",
+        "//xla/tsl/concurrency:future",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:proto_utils",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -60,7 +64,9 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
         "@com_google_protobuf//:any_cc_proto",
         "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:blocking_counter",
@@ -140,6 +146,7 @@ cc_library(
     hdrs = ["autotuner_cache_interface.h"],
     deps = [
         ":autotuner_cache_proto_cc",
+        ":backends_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -197,4 +204,9 @@ xla_cc_test(
         "@com_google_protobuf//:any_cc_proto",
         "@tsl//tsl/platform:path",
     ],
+)
+
+tf_proto_library(
+    name = "backends_proto",
+    srcs = ["backends.proto"],
 )

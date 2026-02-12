@@ -43,6 +43,7 @@ std::unique_ptr<xla::CoordinationService> EnableCoordinationService(
   config.shutdown_barrier_timeout = options.shutdown_timeout;
   config.job_name = job_name;
   config.num_tasks = options.num_nodes;
+  config.recoverable = options.recoverable;
   auto service =
       std::make_unique<xla::CoordinationService>(options.env, config);
   return service;

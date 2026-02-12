@@ -416,12 +416,8 @@ def xla_test(
         # Ensure that the tags are consistent with the runtime used.
         if "pjrt_migration_candidate" in this_backend_tags and not use_legacy_runtime:
             fail("xla_tests that do not use the legacy runtime configuration should not be tagged `pjrt_migration_candidate`.")
-
-        # TODO: b/382779188 - Remove this tag once we have fully moved to tagging candidates instead.
-        if "test_migrated_to_hlo_runner_pjrt" in this_backend_tags and use_legacy_runtime:
-            fail("xla_tests that use the legacy runtime configuration should not be tagged `test_migrated_to_hlo_runner_pjrt`.")
-        if "test_migrated_to_hlo_runner_pjrt" in this_backend_tags and "pjrt_migration_candidate" in this_backend_tags:
-            fail("xla_tests should not be tagged both `test_migrated_to_hlo_runner_pjrt` and `pjrt_migration_candidate`. These states are mutually exclusive.")
+        if "test_migrated_to_hlo_runner_pjrt" in this_backend_tags:
+            fail("The `test_migrated_to_hlo_runner_pjrt` tag is deprecated and should no longer be used.")
 
         modifiers = backend.split("_")
         device = modifiers.pop(0)
@@ -447,35 +443,6 @@ def xla_test(
         if ((backend in NVIDIA_GPU_BACKENDS and is_cuda_configured()) or
             (backend in AMD_GPU_DEFAULT_BACKENDS and is_rocm_configured())):
             test_names.append(test_name)
-
-        # For coverage purposes, we want all GPU tests to also run with the PjRt
-        # StreamExecutor GPU client, unless they are incompatible or blocking
-        # the PjRt test migration. Only until the TFRT GPU client is fully
-        # supported.
-        if device_type_for_env == "gpu" and "incompatible_with_pjrt_se_gpu_client" not in this_backend_tags and not use_legacy_runtime:
-            variant_test_name = test_name + "_notfrt"
-            xla_cc_test(
-                name = variant_test_name,
-                srcs = srcs,
-                tags = this_backend_tags,
-                copts = copts + this_backend_copts,
-                args = args + this_backend_args,
-                deps = deps + backend_deps,
-                data = data + this_backend_data,
-                env = env | {
-                    "XLA_TEST_DEVICE": device,
-                    "XLA_TEST_DEVICE_TYPE": device_type_for_env,
-                    "XLA_TEST_MODIFIERS": ",".join(modifiers),
-                    "XLA_TEST_USE_STREAM_EXECUTOR_GPU_CLIENT": "",
-                },
-                linkstatic = linkstatic,
-                fail_if_no_test_linked = fail_if_no_test_linked,
-                fail_if_no_test_selected = fail_if_no_test_selected,
-                **this_backend_kwargs
-            )
-            if ((backend in NVIDIA_GPU_BACKENDS and is_cuda_configured()) or
-                (backend in AMD_GPU_DEFAULT_BACKENDS and is_rocm_configured())):
-                test_names.append(variant_test_name)
 
     # Notably, a test_suite with `tests = []` is not empty:
     # https://bazel.build/reference/be/general#test_suite_args and the default

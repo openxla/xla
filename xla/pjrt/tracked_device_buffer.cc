@@ -204,7 +204,11 @@ void TrackedDeviceBuffer::AddUsageEvent(BufferSequencingEventRef event,
 
   // If the event is 0, it means that the event is not recorded yet and the task
   // related to this event is deferred, so just add it.
-  if (!event->IsDefined()) {
+  auto state = event->event().GetAsyncValue()->state();
+  if (state == tsl::AsyncValue::State::kConcrete) {
+  } else if (state == tsl::AsyncValue::State::kError) {
+    return;
+  } else {
     usage_events_.push_back({event, reference_held});
     return;
   }
@@ -350,7 +354,7 @@ void TrackedDeviceBuffer::AddUsageEvent(
 bool TrackedDeviceBuffer::AddDefinitionEventsToSet(PjRtDeviceEventSet& events) {
   for (const auto& e : definition_events_) {
     tensorflow::down_cast<PjRtStreamExecutorDeviceEventSet*>(&events)->AddEvent(
-        &*e);
+        e);
   }
   return false;
 }
@@ -358,7 +362,7 @@ bool TrackedDeviceBuffer::AddDefinitionEventsToSet(PjRtDeviceEventSet& events) {
 void TrackedDeviceBuffer::AddUsageEventsToSet(PjRtDeviceEventSet& events) {
   for (const auto& e : usage_events_) {
     tensorflow::down_cast<PjRtStreamExecutorDeviceEventSet*>(&events)->AddEvent(
-        &*e.event);
+        e.event);
   }
 }
 

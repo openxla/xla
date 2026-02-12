@@ -307,8 +307,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
 
   TF_ASSIGN_OR_RETURN(
       auto triton_module,
-      EmitXTileModule(fn_name, fusion, symbolic_tile_analysis, tiling,
-                      mlir_context, absl::MakeSpan(opaque_args_types)));
+      xtile::EmitXTileModule(fn_name, fusion, symbolic_tile_analysis, tiling,
+                             mlir_context, absl::MakeSpan(opaque_args_types)));
 
   const auto debug_options = fusion->GetModule()->config().debug_options();
 

@@ -1436,8 +1436,8 @@ TEST(StreamExecutorGpuClientTest, MockNcclClientTest) {
   EXPECT_EQ(client->device_count(), devices_per_host * num_nodes);
   for (int i = 0; i < client->device_count(); i++) {
     auto device = client->devices()[i];
-    auto partition_index =
-        std::get<int64_t>(device->Attributes().at("partition_index"));
+    auto partition_index = std::get<int64_t>(
+        device->description().Attributes().at("partition_index"));
     auto host_index = device->process_index();
     EXPECT_EQ(partition_index, host_index);
   }
@@ -2285,7 +2285,9 @@ TEST(StreamExecutorGpuClientTest, ProfileExecution) {
   ExecutionProfile profile;
   ExecuteOptions opts;
   opts.execution_profile = &profile;
-  TF_ASSERT_OK(executable->Execute(/*argument_handles=*/{{}}, opts));
+  TF_ASSERT_OK_AND_ASSIGN(auto results,
+                          executable->Execute(/*argument_handles=*/{{}}, opts));
+  TF_ASSERT_OK(results[0][0]->GetReadyFuture().Await());
   EXPECT_GT(profile.compute_time_ns(), 0);
 }
 
@@ -3442,7 +3444,7 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
   TF_ASSIGN_OR_RETURN(
       se::CudaComputeCapability cc,
       se::CudaComputeCapability::FromString(std::get<std::string>(
-          client->addressable_devices().front()->Attributes().at(
+          client->addressable_devices().front()->description().Attributes().at(
               "compute_capability"))));
   if (!cc.IsAtLeastAmpere()) {
     return absl::FailedPreconditionError("Ampere+ GPU required");
@@ -3465,7 +3467,7 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
   if (node_id < num_nodes_using_cache) {
     debug_options.set_xla_gpu_experimental_autotune_cache_mode(
         DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
-    debug_options.set_xla_gpu_experimental_autotuner_cache_dir(cache_dir);
+    debug_options.set_xla_gpu_per_fusion_autotune_cache_dir(cache_dir);
   }
 
   const char* kHlo = R"(

@@ -185,6 +185,20 @@ class NamedSharding {
                          /*manual_axes=*/{}, metadata);
   }
 
+  static NamedSharding Unreduced(Mesh mesh,
+                                 absl::Span<const OpMetadata> metadata = {}) {
+    return NamedSharding(mesh, /*dim_shardings=*/{},
+                         /*replicated_axes=*/{}, GetAllMeshAxes(mesh),
+                         /*manual_axes=*/{}, metadata);
+  }
+
+  static NamedSharding Manual(Mesh mesh,
+                              absl::Span<const OpMetadata> metadata = {}) {
+    return NamedSharding(mesh, /*dim_shardings=*/{},
+                         /*replicated_axes=*/{},
+                         /*unreduced_axes=*/{}, GetAllMeshAxes(mesh), metadata);
+  }
+
  private:
   friend class HloSharding;
 
@@ -209,6 +223,15 @@ class NamedSharding {
     }
     return std::vector<DimensionSharding>(dim_shardings.begin(),
                                           dim_shardings.end());
+  }
+
+  static std::vector<AxisRef> GetAllMeshAxes(const Mesh& mesh) {
+    std::vector<AxisRef> all_axes;
+    all_axes.reserve(mesh.num_axes());
+    for (int64_t i = 0; i < mesh.num_axes(); ++i) {
+      all_axes.push_back(AxisRef(i));
+    }
+    return all_axes;
   }
 
   const TileAssignment& device_assignment() const {

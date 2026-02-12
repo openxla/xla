@@ -144,6 +144,9 @@ CublasLtBackend::GetDefaultConfig(const HloInstruction& instr) {
 
   AutotuneResult::GemmKey gemm_key;
   gemm_key.set_algorithm(0);
+  // We don't know the workspace size in advance, so we pick a reasonably large
+  // value that is likely to be sufficient.
+  gemm_key.set_autotune_workspace_size(4194304);  // 4MiB
   auto any = std::make_unique<google::protobuf::Any>();
   any->PackFrom(gemm_key);
   return any;

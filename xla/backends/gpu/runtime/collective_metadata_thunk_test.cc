@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/collective_kernel_api.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/gpu/gpu_constants.h"
@@ -72,7 +73,7 @@ CreateMetadataConstructionFutures() {
   size_t metadata_size =
       sizeof(CollectiveKernelMetadata::rank) +
       sizeof(CollectiveKernelMetadata::param_to_peers) +
-      sizeof(CollectiveKernelMetadata::multicast_buffer_ptr) +
+      sizeof(CollectiveKernelMetadata::param_to_multimem_addresses) +
       kNumParameters * kNumDevices * sizeof(void*);
   se::StreamExecutor* executors[kNumDevices] = {GetGpuExecutor(0),
                                                 GetGpuExecutor(1)};
@@ -105,18 +106,16 @@ CreateMetadataConstructionFutures() {
 
           TF_ASSIGN_OR_RETURN(
               std::vector<void*> param_to_peers,
-              CollectiveMetadataThunk::CollectParamToPeers(
-                  clique_key, rank, streams[device_number].get(), parameters));
-          TF_ASSIGN_OR_RETURN(
-              CollectiveKernelMetadata metadata,
-              CollectiveMetadataThunk::CreateCollectiveMetadata(
-                  clique_key, rank, streams[device_number].get(),
-                  /*multimem=*/nullptr));
+              CollectParamToPeers(clique_key, rank,
+                                  streams[device_number].get(), parameters));
 
-          TF_RETURN_IF_ERROR(
-              CollectiveMetadataThunk::CopyCollectiveMetadataToDevice(
-                  streams[device_number].get(), metadata, param_to_peers,
-                  destinations[device_number]));
+          CollectiveKernelMetadata metadata;
+          metadata.rank = rank.value();
+
+          TF_RETURN_IF_ERROR(xla::gpu::CopyCollectiveMetadataToDevice(
+              streams[device_number].get(), metadata, param_to_peers,
+              std::vector<void*>(kNumParameters, nullptr),
+              destinations[device_number]));
           RankAndParamToPeers result;
           result.rank = metadata.rank;
           result.param_to_peers = std::move(param_to_peers);

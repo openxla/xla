@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_FFI_EXECUTION_STATE_H_
 
 #include <memory>
+#include <utility>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
