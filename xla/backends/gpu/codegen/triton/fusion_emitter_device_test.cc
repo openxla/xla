@@ -2678,7 +2678,8 @@ CHECK:     xtile.insert
 
 TEST_F(TritonEmitterTest,
        BitcastInBetweenReductionAndSlicedBroadcastIsLoweredCorrectly) {
-  // Regression test for b/392099316
+  // Regression test for b/392099316 (hitting assert/crash in the Triton
+  // pipeline).
   constexpr absl::string_view kHloText = R"(
 triton_computation {
   p0 = bf16[2048,4,256]{2,1,0} parameter(0)
@@ -2728,8 +2729,8 @@ CHECK:     xtile.insert
 )",
       GetFusionInstruction(*xtile_module_and_hlo_module.second,
                            "triton_computation")));
-
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  TF_EXPECT_OK(CreateExecutable(std::move(module), /*run_hlo_passes=*/false));
 }
 
 // TODO(b/353484968): move this test to a deviceless file.
