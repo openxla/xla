@@ -89,6 +89,8 @@ cc_library(
         "//xla/hlo/translate/hlo_to_mhlo:hlo_function_importer",
         "//xla/mlir_hlo",
         "//xla/service:hlo_module_config",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",

@@ -91,6 +91,8 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape.h"
@@ -1041,8 +1043,21 @@ absl::StatusOr<TensorValue> EmitPad(
   Type i32_type = b.getI32Type();
   Value mask;
   for (auto [dim_index, sizes] : llvm::enumerate(
-           llvm::zip(pad_input_shape, padded_tile_sizes, tile_offsets))) {
-    auto [pad_input_dim_size, pad_output_dim_size, tile_offset] = sizes;
+           llvm::zip(pad_input_shape, padded_tile_sizes, tile_offsets,
+                     tiled_pad.hlo()->padding_config().dimensions()))) {
+    auto [pad_input_dim_size, pad_output_dim_size, tile_offset, dim_config] =
+        sizes;
+    if (dim_config.edge_padding_low() != 0) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Low padding is not supported but got edge_padding_low: ",
+          dim_config.edge_padding_low()));
+    }
+    if (dim_config.interior_padding() != 0) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Interior padding is not supported but got interior_padding: ",
+          dim_config.interior_padding()));
+    }
+
     if (pad_input_dim_size == pad_output_dim_size) {
       continue;
     }
@@ -1292,6 +1307,14 @@ absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
     // Skip generating nested fusions, they are emitted by their consumer.
     if (hlo->parent()->IsFusionComputation() &&
         hlo->opcode() == HloOpcode::kFusion) {
+      if (hlo->backend_config<xla::gpu::GpuBackendConfig>()
+              .value()
+              .fusion_backend_config()
+              .kind() != xla::gpu::kTritonNestedGemmFusionKind) {
+        return absl::InvalidArgumentError(
+            absl::StrCat("Nested fusions must have kind: ",
+                         xla::gpu::kTritonNestedGemmFusionKind));
+      }
       VLOG(1) << "Skipping nested fusion: " << hlo->ToString();
       continue;
     }
