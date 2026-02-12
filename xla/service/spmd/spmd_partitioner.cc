@@ -49,6 +49,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/mesh_and_axis.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
@@ -5776,11 +5778,48 @@ absl::Status SpmdPartitioner::ConvertUnreducedSharding(
         }
         return HloSharding::PartialTile(tile_assignment, sharding.metadata());
       };
+      auto convert_unreduced_named_sharding =
+          [](const HloSharding& sharding) -> std::optional<HloSharding> {
+        if (!sharding.UseNamedShardingLeaf()) {
+          return std::nullopt;
+        }
+        const NamedSharding& named_sharding = sharding.named_sharding();
+        if (named_sharding.unreduced_axes().empty()) {
+          return std::nullopt;
+        }
+        std::vector<AxisRef> new_replicated_axes(
+            named_sharding.replicated_axes().begin(),
+            named_sharding.replicated_axes().end());
+        new_replicated_axes.insert(new_replicated_axes.end(),
+                                   named_sharding.unreduced_axes().begin(),
+                                   named_sharding.unreduced_axes().end());
+        absl::c_sort(new_replicated_axes, [](const AxisRef& a,
+                                             const AxisRef& b) {
+          if (a.mesh_axis_index() != b.mesh_axis_index()) {
+            return a.mesh_axis_index() < b.mesh_axis_index();
+          }
+          int64_t a_pre =
+              a.sub_axis_info().has_value() ? a.sub_axis_info()->pre_size : 1;
+          int64_t b_pre =
+              b.sub_axis_info().has_value() ? b.sub_axis_info()->pre_size : 1;
+          return a_pre < b_pre;
+        });
+        return HloSharding(NamedSharding(
+            named_sharding.mesh(), named_sharding.dim_shardings(),
+            new_replicated_axes, /*unreduced_axes=*/{},
+            named_sharding.manual_axes(), named_sharding.metadata()));
+      };
+
       if (sharding.IsTuple()) {
         std::vector<HloSharding> subshardings = sharding.tuple_elements();
         bool should_convert = false;
         for (HloSharding& subsharding : subshardings) {
-          if (subsharding.IsUnreduced()) {
+          if (std::optional<HloSharding> new_sharding =
+                  convert_unreduced_named_sharding(subsharding)) {
+            hlo->add_frontend_attribute(sdy::kHasUnreducedAxes, "true");
+            subsharding = *new_sharding;
+            should_convert = true;
+          } else if (subsharding.IsUnreduced()) {
             subsharding = convert_unreduced_sharding(hlo, subsharding);
             should_convert = true;
           } else if (subsharding.IsUnreducedSubgroup()) {
@@ -5794,7 +5833,11 @@ absl::Status SpmdPartitioner::ConvertUnreducedSharding(
           hlo->set_sharding(HloSharding::Tuple(hlo->shape(), subshardings));
         }
       } else {
-        if (sharding.IsUnreduced()) {
+        if (std::optional<HloSharding> new_sharding =
+                convert_unreduced_named_sharding(sharding)) {
+          hlo->add_frontend_attribute(sdy::kHasUnreducedAxes, "true");
+          hlo->set_sharding(*new_sharding);
+        } else if (sharding.IsUnreduced()) {
           hlo->set_sharding(convert_unreduced_sharding(hlo, sharding));
         } else if (sharding.IsUnreducedSubgroup()) {
           TF_ASSIGN_OR_RETURN(

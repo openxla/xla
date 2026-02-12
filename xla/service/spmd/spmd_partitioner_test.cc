@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -50,6 +51,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/service/spmd/sharding_format_picker.h"
+#include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/spmd_prepare.h"
 #include "xla/shape.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -82,6 +84,12 @@ class SpmdPartitioningTest
     : public HloHardwareIndependentTestBase,
       public ::testing::WithParamInterface<ShardingFormatPicker::ShardingType> {
  public:
+  class TestSpmdPartitioner : public SpmdPartitioner {
+   public:
+    using SpmdPartitioner::ConvertUnreducedSharding;
+    using SpmdPartitioner::SpmdPartitioner;
+  };
+
   absl::StatusOr<std::unique_ptr<HloModule>> PartitionComputation(
       absl::string_view hlo_module, int64_t num_devices,
       SpmdPartitionerOptions options = SpmdPartitionerOptions(),
@@ -16821,6 +16829,85 @@ ENTRY entry {
     EXPECT_TRUE(inst->has_sharding());
     EXPECT_EQ(inst->shape().dimensions()[0], 8);
   }
+}
+
+TEST_P(SpmdPartitioningTest, NamedShardingWithUnreducedAndDimAxes) {
+  const char* hlo_text = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[32,32] parameter(0), sharding={mesh[x=2,y=2,u=2] [{x},{y}], unreduced={u}}
+  ROOT root = f32[32,32] copy(p0), sharding={mesh[x=2,y=2,u=2] [{x},{y}], unreduced={u}}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+
+  HloInstruction* root = module->entry_computation()->root_instruction();
+
+  SpmdPartitioningTest::TestSpmdPartitioner partitioner(
+      /*num_partitions=*/2,
+      /*num_replicas=*/1, SpmdPartitionerOptions());
+  TF_ASSERT_OK(partitioner.ConvertUnreducedSharding(module.get(), {}));
+
+  const HloSharding& new_sharding = root->sharding();
+  EXPECT_TRUE(new_sharding.UseNamedShardingLeaf());
+  const auto& new_named_sharding = new_sharding.named_sharding();
+  EXPECT_TRUE(new_named_sharding.unreduced_axes().empty());
+  // Expected replicated axes: [u].
+  ASSERT_EQ(new_named_sharding.replicated_axes().size(), 1);
+  EXPECT_EQ(new_named_sharding.replicated_axes()[0].mesh_axis_index(), 2);
+  // Dimension shardings should remain untouched.
+  ASSERT_EQ(new_named_sharding.dim_shardings().size(), 2);
+  ASSERT_EQ(new_named_sharding.dim_shardings()[0].axes().size(), 1);
+  EXPECT_EQ(new_named_sharding.dim_shardings()[0].axes()[0].mesh_axis_index(),
+            0);  // x
+  ASSERT_EQ(new_named_sharding.dim_shardings()[1].axes().size(), 1);
+  EXPECT_EQ(new_named_sharding.dim_shardings()[1].axes()[0].mesh_axis_index(),
+            1);  // y
+  EXPECT_TRUE(
+      root->frontend_attributes().map().contains(sdy::kHasUnreducedAxes));
+}
+
+TEST_P(SpmdPartitioningTest, NamedShardingWithUnreducedAndReplicatedAxes) {
+  const char* hlo_text = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[32,32] parameter(0), sharding={mesh[x=2,u=2,y=1,z=1] [{y},{z}], replicated={x}, unreduced={u}}
+  ROOT root = f32[32,32] copy(p0), sharding={mesh[x=2,u=2,y=1,z=1] [{y},{z}], replicated={x}, unreduced={u}}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+
+  HloInstruction* root = module->entry_computation()->root_instruction();
+
+  SpmdPartitioningTest::TestSpmdPartitioner partitioner(
+      /*num_partitions=*/2,
+      /*num_replicas=*/1, SpmdPartitionerOptions());
+  TF_ASSERT_OK(partitioner.ConvertUnreducedSharding(module.get(), {}));
+
+  const HloSharding& new_sharding = root->sharding();
+  EXPECT_TRUE(new_sharding.UseNamedShardingLeaf());
+  const auto& new_named_sharding = new_sharding.named_sharding();
+  EXPECT_TRUE(new_named_sharding.unreduced_axes().empty());
+  // Expected replicated axes: [x, u] (sorted by mesh axis index or pre-size,
+  // here x=0, u=1).
+  ASSERT_EQ(new_named_sharding.replicated_axes().size(), 2);
+  // Check order/content.
+  // x (0) should come before u (1).
+  EXPECT_EQ(new_named_sharding.replicated_axes()[0].mesh_axis_index(), 0);
+  EXPECT_EQ(new_named_sharding.replicated_axes()[1].mesh_axis_index(), 1);
+  // Dimension shardings (y, z) should remain.
+  ASSERT_EQ(new_named_sharding.dim_shardings().size(), 2);
+  ASSERT_EQ(new_named_sharding.dim_shardings()[0].axes().size(), 1);
+  EXPECT_EQ(new_named_sharding.dim_shardings()[0].axes()[0].mesh_axis_index(),
+            2);  // y
+  ASSERT_EQ(new_named_sharding.dim_shardings()[1].axes().size(), 1);
+  EXPECT_EQ(new_named_sharding.dim_shardings()[1].axes()[0].mesh_axis_index(),
+            3);  // z
+
+  EXPECT_TRUE(
+      root->frontend_attributes().map().contains(sdy::kHasUnreducedAxes));
 }
 
 }  // namespace
