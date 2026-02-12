@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/ir/tile_assignment.h"
+#include "xla/service/spmd/spmd_partitioner_util_internal.h"
 
 namespace xla {
 namespace spmd {
