@@ -1068,7 +1068,7 @@ TEST_F(CustomCallHloTest, HloBufferRotated) {
 }
 
 // Adds 1 to 2 elements with the given offset in the input buffer.
-absl::Status UpadteBufferImpl(se::Stream* stream, ffi::AnyBuffer src,
+absl::Status UpdateBufferImpl(se::Stream* stream, ffi::AnyBuffer src,
                               ffi::Result<ffi::AnyBuffer> ret, int offset) {
   if (src.untyped_data() != ret->untyped_data()) {
     return absl::InternalError("Input and output buffers must be the same.");
@@ -1093,12 +1093,12 @@ absl::Status UpadteBufferImpl(se::Stream* stream, ffi::AnyBuffer src,
 // Adds 1 to the first 2 elements of the input buffer.
 static absl::Status UpdateBuffer1(se::Stream* stream, ffi::AnyBuffer src,
                                   ffi::Result<ffi::AnyBuffer> ret) {
-  return UpadteBufferImpl(stream, src, ret, /*offset=*/0);
+  return UpdateBufferImpl(stream, src, ret, /*offset=*/0);
 }
 // Adds 1 to the last 2 elements of the input buffer.
 static absl::Status UpdateBuffer2(se::Stream* stream, ffi::AnyBuffer src,
                                   ffi::Result<ffi::AnyBuffer> ret) {
-  return UpadteBufferImpl(stream, src, ret, /*offset=*/2);
+  return UpdateBufferImpl(stream, src, ret, /*offset=*/2);
 }
 
 XLA_FFI_DEFINE_HANDLER(kUpdateBuffer1, UpdateBuffer1,
@@ -1181,8 +1181,7 @@ TEST_F(CustomCallHloTest, CallConcurrentUpdateTwoBuffers) {
   EXPECT_THAT(results[0].data<int32_t>(), ::testing::Each(1));
 }
 
-// TODO(b/477658897): Enable this test once the runtime failure is fixed.
-TEST_F(CustomCallHloTest, DISABLED_CustomCallConcurrentUpdateTwoBuffers) {
+TEST_F(CustomCallHloTest, CustomCallConcurrentUpdateTwoBuffers) {
   xla::ffi::Ffi::RegisterStaticHandler(ffi::GetXlaFfiApi(),
                                        "xla.gpu.update_buffer1", PlatformName(),
                                        kUpdateBuffer1);

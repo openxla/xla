@@ -1345,34 +1345,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitAsyncCustomCallStart(
   TF_ASSIGN_OR_RETURN(ExecutionStreamId execution_stream_id,
                       stream_assignment.GetSyncExecutionStreamId(wrapped));
 
-  auto* custom_call = Cast<HloCustomCallInstruction>(wrapped);
-  if (IsLegacyCublasMatmul(*wrapped)) {
-    TF_ASSIGN_OR_RETURN(auto gemm_thunks, EmitGemmThunk(custom_call));
-    CHECK_EQ(gemm_thunks.size(), 1);
-    gemm_thunks.back()->set_execution_stream_id(execution_stream_id);
-    AppendThunkSequence(thunks, gemm_thunks);
-    return thunks;
+  TF_ASSIGN_OR_RETURN(auto custom_call_thunks, EmitCustomCallSwitch(wrapped));
+  for (int64_t i = 0; i < custom_call_thunks.size(); ++i) {
+    custom_call_thunks[i]->set_execution_stream_id(execution_stream_id);
   }
-  if (IsCublasLtMatmul(*wrapped)) {
-    TF_ASSIGN_OR_RETURN(auto cublas_lt_matmul_thunks,
-                        EmitCublasLtMatmulThunk(custom_call));
-    CHECK_EQ(cublas_lt_matmul_thunks.size(), 1);
-    cublas_lt_matmul_thunks.back()->set_execution_stream_id(
-        execution_stream_id);
-    AppendThunkSequence(thunks, cublas_lt_matmul_thunks);
-    return thunks;
-  }
-  if (IsCublasLtMatmulF8(*wrapped)) {
-    TF_ASSIGN_OR_RETURN(auto cublas_lt_matmul_thunks,
-                        EmitCublasLtMatmulThunkF8(custom_call));
-    CHECK_EQ(cublas_lt_matmul_thunks.size(), 1);
-    cublas_lt_matmul_thunks.back()->set_execution_stream_id(
-        execution_stream_id);
-    AppendThunkSequence(thunks, cublas_lt_matmul_thunks);
-    return thunks;
-  }
-  return Internal("Unsupported async custom call instruction: %s",
-                  HloOpcodeString(wrapped->opcode()));
+  AppendThunkSequence(thunks, custom_call_thunks);
+  return thunks;
 }
 
 absl::Status ThunkEmitter::AssertNonDeterminismIsOkay(
@@ -2549,6 +2527,67 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitAsyncStart(
   }
 }
 
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallSwitch(
+    const HloInstruction* hlo) {
+  auto* custom_call = Cast<HloCustomCallInstruction>(hlo);
+  if (IsLegacyCublasMatmul(*hlo)) {
+    return EmitGemmThunk(custom_call);
+  }
+  if (IsCublasLtMatmul(*hlo)) {
+    return EmitCublasLtMatmulThunk(custom_call);
+  }
+  if (IsCublasLtMatmulF8(*hlo)) {
+    return EmitCublasLtMatmulThunkF8(custom_call);
+  }
+  if (IsCudnnConvolutionReorder(*hlo)) {
+    return EmitConvolutionReorderThunk(custom_call);
+  }
+  if (IsCustomCallToDnnNorm(*hlo)) {
+    return EmitNormThunk(custom_call);
+  }
+  if (IsCustomCallTofMHA(*hlo) || IsCustomCallTofMHAF8(*hlo) ||
+      IsCustomCallToBlockScaledDot(*hlo)) {
+    return EmitCuDnnThunk(custom_call);
+  }
+  if (IsCustomCallToPtxKernel(*hlo)) {
+    return EmitPtxCustomCall(custom_call);
+  }
+  if (IsCustomCallToTopK(*hlo)) {
+    return EmitTopKCustomCall(custom_call);
+  }
+  if (IsCustomCallToDnnConvolution(*hlo)) {
+    return EmitConvolutionThunk(custom_call);
+  }
+  if (IsTriangularSolve(*hlo)) {
+    return EmitTriangularSolveCustomCall(hlo);
+  }
+  if (IsCubDeviceRadixSort(*hlo)) {
+    return EmitCubDeviceRadixSort(custom_call);
+  }
+  if (custom_call->custom_call_target() == "PadToStatic") {
+    return EmitPadToStatic(custom_call);
+  }
+  if (hlo->custom_call_target() == "SliceToDynamic") {
+    return EmitSliceToDynamic(custom_call);
+  }
+  if (hlo->custom_call_target() == "__gpu$xla.gpu.triton") {
+    // TODO(slebedev): Remove this after June 15th 2025.
+    return EmitTritonCustomCall(custom_call);
+  }
+  if (hlo->custom_call_target() == kNopCustomCallTarget) {
+    return ThunkSequence{};
+  }
+  if (hlo->custom_call_target() == kPinCustomCallTarget ||
+      hlo->custom_call_target() == kUnpinCustomCallTarget ||
+      hlo->custom_call_target() == kCreateBufferCustomCallTarget) {
+    return ThunkSequence{};
+  }
+  if (hlo->custom_call_target() == kCollectiveMetadataCustomCallTarget) {
+    return EmitCollectiveMetadata(hlo);
+  }
+  return EmitCustomCallThunk(custom_call);
+}
+
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     const HloInstruction* hlo, bool emit_group_thunks) {
   switch (hlo->opcode()) {
@@ -2593,65 +2632,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
       return EmitConditional(hlo);
     case HloOpcode::kConstant:
       return EmitConstant(Cast<HloConstantInstruction>(hlo));
-    case HloOpcode::kCustomCall: {
-      auto* custom_call = Cast<HloCustomCallInstruction>(hlo);
-      if (IsLegacyCublasMatmul(*hlo)) {
-        return EmitGemmThunk(custom_call);
-      }
-      if (IsCublasLtMatmul(*hlo)) {
-        return EmitCublasLtMatmulThunk(custom_call);
-      }
-      if (IsCublasLtMatmulF8(*hlo)) {
-        return EmitCublasLtMatmulThunkF8(custom_call);
-      }
-      if (IsCudnnConvolutionReorder(*hlo)) {
-        return EmitConvolutionReorderThunk(custom_call);
-      }
-      if (IsCustomCallToDnnNorm(*hlo)) {
-        return EmitNormThunk(custom_call);
-      }
-      if (IsCustomCallTofMHA(*hlo) || IsCustomCallTofMHAF8(*hlo) ||
-          IsCustomCallToBlockScaledDot(*hlo)) {
-        return EmitCuDnnThunk(custom_call);
-      }
-      if (IsCustomCallToPtxKernel(*hlo)) {
-        return EmitPtxCustomCall(custom_call);
-      }
-      if (IsCustomCallToTopK(*hlo)) {
-        return EmitTopKCustomCall(custom_call);
-      }
-      if (IsCustomCallToDnnConvolution(*hlo)) {
-        return EmitConvolutionThunk(custom_call);
-      }
-      if (IsTriangularSolve(*hlo)) {
-        return EmitTriangularSolveCustomCall(hlo);
-      }
-      if (IsCubDeviceRadixSort(*hlo)) {
-        return EmitCubDeviceRadixSort(custom_call);
-      }
-      if (custom_call->custom_call_target() == "PadToStatic") {
-        return EmitPadToStatic(custom_call);
-      }
-      if (hlo->custom_call_target() == "SliceToDynamic") {
-        return EmitSliceToDynamic(custom_call);
-      }
-      if (hlo->custom_call_target() == "__gpu$xla.gpu.triton") {
-        // TODO(slebedev): Remove this after June 15th 2025.
-        return EmitTritonCustomCall(custom_call);
-      }
-      if (hlo->custom_call_target() == kNopCustomCallTarget) {
-        return ThunkSequence{};
-      }
-      if (hlo->custom_call_target() == kPinCustomCallTarget ||
-          hlo->custom_call_target() == kUnpinCustomCallTarget ||
-          hlo->custom_call_target() == kCreateBufferCustomCallTarget) {
-        return ThunkSequence{};
-      }
-      if (hlo->custom_call_target() == kCollectiveMetadataCustomCallTarget) {
-        return EmitCollectiveMetadata(hlo);
-      }
-      return EmitCustomCallThunk(custom_call);
-    }
+    case HloOpcode::kCustomCall:
+      return EmitCustomCallSwitch(hlo);
     case HloOpcode::kFusion:
       return EmitFusion(Cast<HloFusionInstruction>(hlo));
     case HloOpcode::kCopy:
