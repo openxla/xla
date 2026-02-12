@@ -494,7 +494,7 @@ HloInstruction* PerGroupSliceFromReplicated(
 std::optional<HloInstruction*> PadFromPartialReplicateShape(
     HloInstruction* hlo, const Shape& base_shape,
     const HloSharding& src_sharding, const HloSharding& dst_sharding,
-    const std::vector<int64_t>& expand_tile_dims,
+    absl::Span<const int64_t> expand_tile_dims,
     const SPMDCollectiveOpsCreator& collective_ops_creator,
     int64_t* next_channel_id, HloInstruction* partition_id, SpmdBuilder* b);
 
@@ -517,7 +517,7 @@ std::optional<HloSharding> PartialReplicateReshardCompatibleSharding(
 std::optional<HloInstruction*> TileToPartialReplicateHaloExchange(
     HloInstruction* hlo, const Shape& base_shape,
     const HloSharding& src_sharding, const HloSharding& dst_sharding,
-    const std::vector<int64_t>& replicate_dims,
+    absl::Span<const int64_t> replicate_dims,
     const SPMDCollectiveOpsCreator& collective_ops_creator,
     int64_t* next_channel_id, HloInstruction* partition_id, SpmdBuilder* b);
 
@@ -602,8 +602,8 @@ std::unique_ptr<CollectiveDeviceListBase> GetPartitionGroupsForReplication(
 // Generates partition groups (groups of devices that will communicate via a
 // collective) across provided target dims with provided group sizes.
 std::unique_ptr<CollectiveDeviceListBase> GetPartitionGroupsAcrossTargetDims(
-    const HloSharding& sharding, std::vector<int64_t> target_dims,
-    std::vector<int64_t> group_sizes);
+    const HloSharding& sharding, absl::Span<const int64_t> target_dims,
+    absl::Span<const int64_t> group_sizes);
 
 // Expands partition group list across all replicas. Expects that provided
 // partition_group_list utilizes all the partitions.
