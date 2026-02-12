@@ -290,6 +290,8 @@ class PjRtTopologyDescription {
   virtual absl::StatusOr<std::string> Serialize() const = 0;
 
   // Returns vendor specific attributes about the topology.
+  // This map should only include static information available at cross-compile
+  // time.
   virtual const absl::flat_hash_map<std::string, PjRtDeviceAttribute>&
   Attributes() const = 0;
 

@@ -193,6 +193,9 @@ class PjRtDevice {
   // Returns vendor specific attributes about the device. For example the model
   // number of a GPU, or the mesh coordinates of a TPU device. The returned
   // reference will remain valid for the lifetime of the PjRtDevice.
+  // This map contains all vendor-specific attributes, including both static
+  // information from the description and dynamic runtime information (if
+  // applicable).
   virtual const absl::flat_hash_map<std::string, PjRtDeviceAttribute>&
   Attributes() const {
     return description().Attributes();

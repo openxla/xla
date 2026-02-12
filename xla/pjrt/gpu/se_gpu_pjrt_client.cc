@@ -122,6 +122,7 @@ limitations under the License.
 #include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/fingerprint.h"
+#include "tsl/platform/numa.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/nvtx_utils.h"
@@ -1732,8 +1733,13 @@ StreamExecutorGpuDevice::StreamExecutorGpuDevice(
       device_vendor_(std::move(device_vendor)) {
   StreamExecutorGpuTopologyDescription::SetupDeviceDescription(
       description(), device_vendor_, compute_capability, core_count,
-      static_cast<int64_t>(shared_memory_per_block_optin), partition_index,
-      numa_node);
+      static_cast<int64_t>(shared_memory_per_block_optin), partition_index);
+  absl::flat_hash_map<std::string, PjRtDeviceAttribute> attributes =
+      description().Attributes();
+  if (numa_node != tsl::port::kNUMANoAffinity) {
+    attributes["numa_node"] = static_cast<int64_t>(numa_node);
+  }
+  SetAttributes(std::move(attributes));
 }
 
 absl::string_view StreamExecutorGpuDevice::device_vendor() const {

@@ -537,6 +537,9 @@ MakePjRtDevicesFromGlobalTopology(PjRtClient* client,
           absl::StrAppend(&debug_string,
                           "[PjRtIFRTDeviceId=", ifrt_device_id.value(), "]");
         }
+        for (const auto& [name, value] : pjrt_device->Attributes()) {
+          attributes[name] = value;
+        }
       }
       auto ifrt_device = std::make_unique<PjRtDevice>(
           client, ifrt_device_id, platform_name, device_proto.device_kind(),
