@@ -24,11 +24,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -88,19 +89,6 @@ inline PjRtPlatformId TpuId() {
 }
 
 class PjRtCompiler;
-// A compiler variant is a string used to distinguish between different
-// compiler implementations registered for the same platform, such as a remote
-// compiler service vs in-process compilation.
-
-// Thread-safe. Returns a pointer to the registered compiler for the given
-// platform and a default compiler variant.
-absl::StatusOr<PjRtCompiler*> GetDefaultPjRtCompiler(
-    absl::string_view platform_name);
-
-// Thread-safe. Returns a pointer to the registered compiler for the given
-// platform and compiler variant.
-absl::StatusOr<PjRtCompiler*> GetPjRtCompiler(
-    absl::string_view platform_name, absl::string_view compiler_variant);
 
 // A factory that creates a PjRtCompiler. Creation is deferred to avoid
 // violations during program initialization (e.g., RPC or file access during
@@ -108,15 +96,89 @@ absl::StatusOr<PjRtCompiler*> GetPjRtCompiler(
 using PjRtCompilerFactory =
     std::function<absl::StatusOr<std::unique_ptr<PjRtCompiler>>()>;
 
+// PjRtCompilerRegistry manages the registration and lifecycle of PjRtCompilers.
+// It supports both direct registration of compiler instances and registration
+// of factories for deferred initialization.
+class PjRtCompilerRegistry {
+ public:
+  PjRtCompilerRegistry() = default;
+  ~PjRtCompilerRegistry() = default;
+
+  // Not copyable or movable.
+  PjRtCompilerRegistry(const PjRtCompilerRegistry&) = delete;
+  PjRtCompilerRegistry& operator=(const PjRtCompilerRegistry&) = delete;
+
+  // Returns the global singleton instance.
+  static PjRtCompilerRegistry& Global();
+
+  // Registers a compiler factory for a specific platform and variant.
+  absl::Status RegisterFactory(absl::string_view platform_name,
+                               absl::string_view variant_name,
+                               PjRtCompilerFactory factory);
+
+  // Registers a compiler instance for a specific platform and variant.
+  absl::Status RegisterCompiler(absl::string_view platform_name,
+                                absl::string_view variant_name,
+                                std::unique_ptr<PjRtCompiler> compiler);
+
+  // Returns the registered compiler for the given platform and variant.
+  // Initializes the compiler using the factory if necessary.
+  absl::StatusOr<PjRtCompiler*> GetCompiler(absl::string_view platform_name,
+                                            absl::string_view variant_name);
+
+  // Explicitly initializes a compiler with a given variant.
+  absl::Status InitializeVariant(absl::string_view platform_name,
+                                 absl::string_view variant_name);
+
+  // Initializes all registered compiler variants.
+  absl::Status InitializeAllVariants();
+
+ private:
+  absl::StatusOr<PjRtCompiler*> GetOrCreateCompiler(
+      absl::string_view platform_name, absl::string_view variant_name)
+      ABSL_LOCKS_EXCLUDED(compiler_mutex_, factory_mutex_);
+
+  absl::Mutex compiler_mutex_;
+
+  absl::Mutex factory_mutex_;
+
+  absl::flat_hash_map<std::pair<std::string, std::string>,
+                      std::unique_ptr<PjRtCompiler>>
+      compilers_ ABSL_GUARDED_BY(compiler_mutex_);
+
+  absl::flat_hash_map<std::pair<std::string, std::string>, PjRtCompilerFactory>
+      factories_ ABSL_GUARDED_BY(factory_mutex_);
+};
+
+// Thread-safe. Returns a pointer to the registered compiler for the given
+// platform and a default compiler variant.
+// Initializes the compiler using the factory if necessary.
+absl::StatusOr<PjRtCompiler*> GetDefaultPjRtCompiler(
+    absl::string_view platform_name);
+
+// Thread-safe. Returns a pointer to the registered compiler for the given
+// platform and compiler variant.
+// Initializes the compiler using the factory if necessary.
+absl::StatusOr<PjRtCompiler*> GetPjRtCompiler(
+    absl::string_view platform_name, absl::string_view compiler_variant);
+
 // Registers a compiler factory for a specific platform and variant.
 void PjRtRegisterCompilerFactory(absl::string_view platform_name,
                                  absl::string_view variant_name,
                                  PjRtCompilerFactory factory);
 
-// Explicitly initializes a compiler with a given variant.
+// A compiler variant is a string used to distinguish between different
+// compiler implementations registered for the same platform, such as a remote
+// compiler service vs in-process compilation.
+//
+// Explicitly initializes a compiler with a given variant. The corresponding
+// factory must have been registered.
 // If the compiler is already initialized, this is a no-op.
 absl::Status PjRtInitializeCompilerVariant(absl::string_view platform_name,
                                            absl::string_view variant_name);
+
+// Initializes all compiler variants.
+absl::Status PjRtInitializeCompilerVariants();
 
 class PjRtClient;
 
