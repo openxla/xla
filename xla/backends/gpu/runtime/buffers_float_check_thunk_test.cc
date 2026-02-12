@@ -46,7 +46,6 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
-#include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"
@@ -83,15 +82,15 @@ MATCHER_P2(IsEntryWithMetadata, store, metadata, "") {
 }
 
 MATCHER_P(NanCountIs, value, "nan_count") {
-  return ExplainMatchResult(value, arg.nan_count, result_listener);
+  return ExplainMatchResult(value, arg.result.nan_count, result_listener);
 }
 
 MATCHER_P(InfCountIs, value, "inf_count") {
-  return ExplainMatchResult(value, arg.inf_count, result_listener);
+  return ExplainMatchResult(value, arg.result.inf_count, result_listener);
 }
 
 MATCHER_P(ZeroCountIs, value, "zero_count") {
-  return ExplainMatchResult(value, arg.zero_count, result_listener);
+  return ExplainMatchResult(value, arg.result.zero_count, result_listener);
 }
 
 class BuffersDebugFloatCheckThunkTest : public ::testing::Test {

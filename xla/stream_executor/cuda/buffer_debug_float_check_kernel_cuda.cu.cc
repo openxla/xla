@@ -238,8 +238,8 @@ __global__ void ReduceFloatCheckResults(
 #if __CUDA_ARCH__ >= 600
     const uint32_t write_idx = log_write_idx.fetch_add(1);
     if (write_idx < log_header->capacity) {
-      log_entries[write_idx] = xla::gpu::BufferDebugFloatCheckEntry{
-          entry_id, total.nan_count, total.inf_count, total.zero_count};
+      log_entries[write_idx] =
+          xla::gpu::BufferDebugFloatCheckEntry{entry_id, total};
     }
 #else
     // Our toolchains generate a fetch_add PTX instructions with system scope,

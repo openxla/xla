@@ -253,33 +253,36 @@ absl::Status BufferDebugFloatCheck(
               << BufferDebugLogEntryProto::CheckType_Name(metadata->check_type);
       continue;
     }
-    if (nan_check_enabled && entry.nan_count > 0) {
+    if (nan_check_enabled && entry.result.nan_count > 0) {
       if (reported_nan_thunks.contains(metadata->profile_annotation)) {
-        VLOG(1) << "Skipping entry with non zero nan count " << entry.nan_count
-                << " for thunk " << entry.entry_id << " and execution "
+        VLOG(1) << "Skipping entry with non zero nan count "
+                << entry.result.nan_count << " for thunk " << entry.entry_id
+                << " and execution "
                 << "with metadata: " << metadata->profile_annotation;
         continue;
       }
       reported_nan_thunks.insert(metadata->profile_annotation);
-      LOG(ERROR) << "Found entry with non zero nan count " << entry.nan_count
-                 << " for thunk " << entry.entry_id << " and execution "
-                 << "with metadata: " << metadata->profile_annotation;
+      LOG(ERROR) << "Found entry with non zero nan count for thunk "
+                 << entry.entry_id << " and execution "
+                 << "with metadata: " << metadata->profile_annotation << ": "
+                 << entry;
       non_zero_nan_check_modules_count++;
       LogHloInstructionWithId(hlo_module, metadata->profile_annotation, "NaN");
     }
-    if (inf_check_enabled && entry.inf_count > 0) {
+    if (inf_check_enabled && entry.result.inf_count > 0) {
       if (reported_inf_thunks.contains(metadata->profile_annotation)) {
-        VLOG(1) << "Skipping entry with non zero inf count " << entry.inf_count
-                << " for thunk " << entry.entry_id << " with execution_id "
-                << metadata->execution_id
+        VLOG(1) << "Skipping entry with non zero inf count "
+                << entry.result.inf_count << " for thunk " << entry.entry_id
+                << " with execution_id " << metadata->execution_id
                 << " and profile annotation: " << metadata->profile_annotation;
         continue;
       }
       reported_inf_thunks.insert(metadata->profile_annotation);
-      LOG(ERROR) << "Found entry with non zero inf count " << entry.inf_count
-                 << " for thunk " << entry.entry_id << " with execution_id "
+      LOG(ERROR) << "Found entry with non zero inf count for thunk "
+                 << entry.entry_id << " with execution_id "
                  << metadata->execution_id
-                 << " and profile annotation: " << metadata->profile_annotation;
+                 << " and profile annotation: " << metadata->profile_annotation
+                 << ": " << entry;
       non_zero_inf_check_modules_count++;
       LogHloInstructionWithId(hlo_module, metadata->profile_annotation, "Inf");
     }

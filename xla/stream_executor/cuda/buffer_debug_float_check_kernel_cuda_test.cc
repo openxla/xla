@@ -40,7 +40,7 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/stream_executor_memory_allocator.h"
+#include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/stream_executor/typed_kernel_factory.h"  // IWYU pragma: keep, required for KernelType::FactoryType::Create
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -162,9 +162,9 @@ TEST_F(FloatCheckKernelTest, ChecksFloatsForF32) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto host_log, device_log.ReadFromDevice(*stream_));
   ASSERT_GE(host_log.size(), 1);
-  EXPECT_EQ(host_log[0].nan_count, 2);
-  EXPECT_EQ(host_log[0].inf_count, 3);
-  EXPECT_EQ(host_log[0].zero_count, 1);
+  EXPECT_EQ(host_log[0].result.nan_count, 2);
+  EXPECT_EQ(host_log[0].result.inf_count, 3);
+  EXPECT_EQ(host_log[0].result.zero_count, 1);
 }
 
 TEST_F(FloatCheckKernelTest, ChecksFloatsForBf16) {
@@ -187,9 +187,9 @@ TEST_F(FloatCheckKernelTest, ChecksFloatsForBf16) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto host_log, device_log.ReadFromDevice(*stream_));
   ASSERT_GE(host_log.size(), 1);
-  EXPECT_EQ(host_log[0].nan_count, 2);
-  EXPECT_EQ(host_log[0].inf_count, 3);
-  EXPECT_EQ(host_log[0].zero_count, 1);
+  EXPECT_EQ(host_log[0].result.nan_count, 2);
+  EXPECT_EQ(host_log[0].result.inf_count, 3);
+  EXPECT_EQ(host_log[0].result.zero_count, 1);
 }
 
 TEST_F(FloatCheckKernelTest, ChecksFloatsInParallel) {
@@ -236,12 +236,12 @@ TEST_F(FloatCheckKernelTest, ChecksFloatsInParallel) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto host_log, device_log.ReadFromDevice(*stream_));
   ASSERT_GE(host_log.size(), 2);
-  EXPECT_EQ(host_log[0].nan_count, kNumNaNs);
-  EXPECT_EQ(host_log[0].inf_count, kNumInfs);
-  EXPECT_EQ(host_log[0].zero_count, kNumZeros);
-  EXPECT_EQ(host_log[1].nan_count, kNumNaNs);
-  EXPECT_EQ(host_log[1].inf_count, kNumInfs);
-  EXPECT_EQ(host_log[1].zero_count, kNumZeros);
+  EXPECT_EQ(host_log[0].result.nan_count, kNumNaNs);
+  EXPECT_EQ(host_log[0].result.inf_count, kNumInfs);
+  EXPECT_EQ(host_log[0].result.zero_count, kNumZeros);
+  EXPECT_EQ(host_log[1].result.nan_count, kNumNaNs);
+  EXPECT_EQ(host_log[1].result.inf_count, kNumInfs);
+  EXPECT_EQ(host_log[1].result.zero_count, kNumZeros);
 }
 
 TEST_F(FloatCheckKernelTest, ReduceFloatCheckResults) {
@@ -285,9 +285,9 @@ TEST_F(FloatCheckKernelTest, ReduceFloatCheckResults) {
   TF_ASSERT_OK_AND_ASSIGN(auto host_log, device_log.ReadFromDevice(*stream_));
 
   ASSERT_GE(host_log.size(), 1);
-  EXPECT_EQ(host_log[0].nan_count, kNumNaNs);
-  EXPECT_EQ(host_log[0].inf_count, kNumInfs);
-  EXPECT_EQ(host_log[0].zero_count, kNumZeros);
+  EXPECT_EQ(host_log[0].result.nan_count, kNumNaNs);
+  EXPECT_EQ(host_log[0].result.inf_count, kNumInfs);
+  EXPECT_EQ(host_log[0].result.zero_count, kNumZeros);
 }
 
 }  // namespace
