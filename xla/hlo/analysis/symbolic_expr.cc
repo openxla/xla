@@ -559,11 +559,29 @@ bool SymbolicExpr::operator<(const SymbolicExpr& other) const {
   }
 }
 
-std::string SymbolicExpr::ToString(int64_t num_dims) const {
+std::string SymbolicExpr::ToString(std::optional<int64_t> num_dims) const {
   std::string s;
   llvm::raw_string_ostream os(s);
   xla::Print(*this, os, num_dims);
   return os.str();
+}
+
+std::string SymbolicExpr::ToString(
+    absl::Span<const std::string> var_names) const {
+  std::string s;
+  llvm::raw_string_ostream os(s);
+  xla::Print(*this, os, var_names);
+  return os.str();
+}
+
+std::string SymbolicExpr::ToString(
+    absl::Span<const std::string> dim_names,
+    absl::Span<const std::string> sym_names) const {
+  llvm::SmallVector<std::string> var_names;
+  var_names.reserve(dim_names.size() + sym_names.size());
+  var_names.append(dim_names.begin(), dim_names.end());
+  var_names.append(sym_names.begin(), sym_names.end());
+  return ToString(var_names);
 }
 
 int64_t SymbolicExpr::Evaluate(
