@@ -471,18 +471,6 @@ cc_embed_data(
     visibility = ["//visibility:private"],
 )
 
-cc_library(
-    name = "filewrapper_testdata_lib",
-    testonly = True,
-    srcs = ["filewrapper_testdata.cc"],
-    hdrs = ["filewrapper_testdata.h"],
-    visibility = ["//visibility:private"],
-    deps = [
-        ":file_toc",
-        ":filewrapper_testdata",
-    ],
-)
-
 tsl_cc_test(
     name = "filewrapper_embed_test",
     srcs = [
@@ -495,7 +483,7 @@ tsl_cc_test(
         ":filewrapper_testdata.txt",
     ],
     deps = [
-        ":filewrapper_testdata_lib",
+        ":filewrapper_testdata",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
