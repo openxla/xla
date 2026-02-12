@@ -839,4 +839,11 @@ std::string AutotuneConfig::ToString() const {
       allow_reg_spills ? "true" : "false");
 }
 
+AutotunerCacheInterface::CacheStats Autotuner::GetCacheStats() {
+  if (cache_) {
+    return cache_->GetCacheStats();
+  }
+  return AutotunerCacheInterface::CacheStats();
+}
+
 }  // namespace xla

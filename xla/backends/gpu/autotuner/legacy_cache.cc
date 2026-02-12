@@ -50,8 +50,10 @@ std::optional<LegacyCache::Config> LegacyCache::Lookup(
     return std::nullopt;
   }
   if (!result->has_value()) {
+    stats_.misses++;
     return std::nullopt;
   }
+  stats_.hits++;
   return GetConfig(result->value(), instr->opcode() == HloOpcode::kFusion);
 }
 

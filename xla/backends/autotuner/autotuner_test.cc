@@ -141,6 +141,7 @@ class MockAutotunerCache : public AutotunerCacheInterface {
               (override));
   MOCK_METHOD(absl::Status, Deserialize, (absl::string_view serialized_cache),
               (override));
+  MOCK_METHOD(CacheStats, GetCacheStats, (), (const, override));
 };
 
 using absl_testing::IsOk;

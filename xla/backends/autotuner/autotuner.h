@@ -123,6 +123,8 @@ class Autotuner {
                         const InstructionFilterFn& should_autotune,
                         MultiProcessKeyValueStore& sharding_kv_store);
 
+  AutotunerCacheInterface::CacheStats GetCacheStats();
+
  private:
   using InstructionsByFingerprint =
       absl::flat_hash_map<tsl::Fprint128, std::vector<HloInstruction*>,
