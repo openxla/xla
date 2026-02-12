@@ -618,23 +618,35 @@ CodegenDecision IsTritonSupportedFusion(
                    " is not supported: ", decision.Explain()));
 }
 
+// Returns whether a control-flow regions should be created at the tile level.
+bool TilingControlFlowIsEnabled(const HloInstruction& hlo) {
+  return hlo.GetModule()
+      ->config()
+      .debug_options()
+      .xla_gpu_unsupported_disable_nested_gemm_fusions();
+}
+
 CodegenDecision IsTritonSupportedConcatenate(const HloInstruction& hlo) {
   CHECK(hlo.opcode() == HloOpcode::kConcatenate);
+  if (hlo.shape().element_type() == S4) {
+    return CodegenDecision::Forbid("S4 is not supported.");
+  }
   if (!IsInTritonNestedGemmFusion(hlo)) {
     return CodegenDecision::Forbid(
         "Only concatenates in nested GEMM fusions are supported.");
   }
-  // TODO(b/393299275): remove this operand filter once migration is
-  // complete and priority fusion can produce nests.
-  if (absl::c_any_of(hlo.operands(), [](const HloInstruction* operand) {
-        return operand->opcode() != HloOpcode::kFusion;
-      })) {
-    return CodegenDecision::Forbid(
-        "Only support concatenates with nested GEMM fusions as a "
-        "parameter.");
+  if (!TilingControlFlowIsEnabled(hlo)) {
+    // TODO(b/393299275): remove this operand filter once migration is
+    // complete and priority fusion can produce nests.
+    if (absl::c_any_of(hlo.operands(), [](const HloInstruction* operand) {
+          return operand->opcode() != HloOpcode::kFusion;
+        })) {
+      return CodegenDecision::Forbid(
+          "Only support concatenates with nested GEMM fusions as a "
+          "parameter.");
+    }
   }
-  return CodegenDecision(hlo.shape().element_type() != S4,
-                         "S4 is not supported.");
+  return CodegenDecision::Allow();
 }
 
 CodegenDecision IsTritonSupportedInstructionImpl(
