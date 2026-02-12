@@ -93,6 +93,27 @@ struct OneHotMatch {
   bool lhs_is_one_hot;
 };
 
+bool ShouldRewrite(const HloDotInstruction* dot, const OneHotMatch& match) {
+  int64_t weights_contract_dim =
+      (match.lhs_is_one_hot)
+          ? dot->dot_dimension_numbers().rhs_contracting_dimensions(0)
+          : dot->dot_dimension_numbers().lhs_contracting_dimensions(0);
+  int64_t depth = match.weights->shape().dimensions(weights_contract_dim);
+
+  // No rewrite at low depth/high batch, where dot is likely more efficient.
+  // Please see go/onehot-microbenchmark to re-evaluate this threshold.
+  // Note that the current threshold is defensive (too strict on some hardware),
+  // to avoid a complex heuristic.
+  int64_t batch = ShapeUtil::ElementsIn(match.indices->shape());
+  if (depth < 256 && batch > 1024) {
+    VLOG(3) << "Skipping OneHot rewrite for " << dot->name()
+            << " due to low depth/high batch ratio. depth: " << depth
+            << ", batch: " << batch;
+    return false;
+  }
+  return true;
+}
+
 // Returns a match if the dot instruction is a One-Hot encoded matmul.
 // 1. Identifies a Dot instruction.
 // 2. Checks if one operand is a comparison (EQ) involving an Iota and some
@@ -171,7 +192,10 @@ std::optional<OneHotMatch> TryMatchOneHotDot(HloInstruction* instr) {
         continue;
       }
       VLOG(2) << "Matched OneHot pattern on " << dot->name();
-      return OneHotMatch{found_indices, weights, i == 0};
+      OneHotMatch match{found_indices, weights, i == 0};
+      if (ShouldRewrite(dot, match)) {
+        return match;
+      }
     }
   }
   return std::nullopt;

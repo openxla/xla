@@ -470,6 +470,33 @@ ENTRY Main {
   )");
 }
 
+TEST_F(OneHotGatherRewriterTest, HeuristicSkip) {
+  // depth=128 (< 256), indices elements=2048 (> 1024).
+  // This triggers the heuristic to skip rewrite.
+  absl::string_view hlo_string = R"(
+HloModule HeuristicSkip
+
+ENTRY Main {
+  %indices = s32[2048] parameter(0)
+  %weights = f32[128, 32] parameter(1)
+
+  %iota = s32[128] iota(), iota_dimension=0
+  %indices_b = s32[2048,128] broadcast(%indices), dimensions={0}
+  %iota_b = s32[2048,128] broadcast(%iota), dimensions={1}
+
+  %compare = pred[2048,128] compare(%indices_b, %iota_b), direction=EQ
+  %one_hot = f32[2048,128] convert(%compare)
+
+  ROOT %dot = f32[2048,32] dot(%one_hot, %weights), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  OneHotGatherRewriter rewriter;
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  EXPECT_FALSE(changed);
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
