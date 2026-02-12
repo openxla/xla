@@ -1674,7 +1674,8 @@ xla_test(
     name = "collective_kernel_thunk_test",
     srcs = ["collective_kernel_thunk_test.cc"],
     backend_tags = {
-        "gpu": [
+        "h100": [
+            "full",
             "multi_gpu",
         ],
     },

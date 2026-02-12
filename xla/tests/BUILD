@@ -2684,15 +2684,21 @@ xla_test(
     name = "collective_ops_test",
     srcs = ["collective_ops_test.cc"],
     args = ["--xla_force_host_platform_device_count=4"],
-    backend_tags = {
-        "gpu": [
-            "multi_gpu",
-            "no_oss",
-        ],
-        "cpu": [
-            "notsan",
-        ],
-    },
+    backend_tags =
+        {
+            "h100": [
+                "full",
+                "multi_gpu",
+                "no_oss",
+            ],
+            "gpu": [
+                "multi_gpu",
+                "no_oss",
+            ],
+            "cpu": [
+                "notsan",
+            ],
+        },
     backends = [
         "gpu",
         "cpu",
@@ -3925,6 +3931,7 @@ bzl_library(
         "//xla:xla_bzl",
         "//xla/stream_executor:build_defs_bzl",
         "//xla/tsl:package_groups_bzl",
+        "//xla/tsl:tsl_bzl",
         "//xla/tsl/platform:build_config_root_bzl",
         "//xla/tsl/platform/default:build_config_bzl",
         "//xla/tsl/platform/default:cuda_build_defs_bzl",
