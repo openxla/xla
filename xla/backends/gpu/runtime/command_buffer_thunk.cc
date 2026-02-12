@@ -379,20 +379,12 @@ void CommandBufferThunk::EvictCommandBuffers() {
   }
 }
 
-void CommandBufferThunk::ForAllThunks(
-    absl::FunctionRef<void(const Thunk*)> fn) const {
-  fn(this);
+absl::Status CommandBufferThunk::WalkNested(
+    absl::FunctionRef<absl::Status(Thunk*)> callback) {
   if (thunks_ != nullptr) {
-    thunks_->ForAllThunks(fn);
+    TF_RETURN_IF_ERROR(thunks_->Walk(callback));
   }
-}
-
-void CommandBufferThunk::ForAllThunksMutable(
-    absl::FunctionRef<void(Thunk*)> fn) {
-  fn(this);
-  if (thunks_ != nullptr) {
-    thunks_->ForAllThunksMutable(fn);
-  }
+  return absl::OkStatus();
 }
 
 std::string CommandBufferThunk::ToString(int indent) const {

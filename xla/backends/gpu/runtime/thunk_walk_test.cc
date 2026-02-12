@@ -39,11 +39,11 @@ namespace {
 using ::testing::IsSupersetOf;
 using ::testing::UnorderedElementsAre;
 
-// Invokes `ForAllThunks` on the `root` and returns a `vector` containing all
+// Invokes `Walk` on the `root` and returns a `vector` containing all
 // iterated `Thunks`.
-std::vector<const Thunk*> GetAllThunks(Thunk* root) {
+std::vector<const Thunk*> GetAllThunks(const Thunk* root) {
   std::vector<const Thunk*> thunks;
-  root->ForAllThunks([&](const Thunk* thunk) { thunks.push_back(thunk); });
+  root->Walk([&](const Thunk* thunk) { thunks.push_back(thunk); });
   return thunks;
 }
 
@@ -57,12 +57,12 @@ struct DummyThunk : public Thunk {
   absl::StatusOr<ThunkProto> ToProto() const override { return ThunkProto{}; }
 };
 
-TEST(ForAllThunksTest, SingleThunk) {
+TEST(ThunkWalkTest, SingleThunk) {
   DummyThunk thunk;
   EXPECT_THAT(GetAllThunks(&thunk), UnorderedElementsAre(&thunk));
 }
 
-TEST(ForAllThunksTest, DynamicSliceThunk) {
+TEST(ThunkWalkTest, DynamicSliceThunk) {
   auto thunk = std::make_unique<DummyThunk>();
   Thunk* thunk_ptr = thunk.get();
 
@@ -78,7 +78,7 @@ TEST(ForAllThunksTest, DynamicSliceThunk) {
               IsSupersetOf<const Thunk*>({thunk_ptr, &dynamic_slice_thunk}));
 }
 
-TEST(ForAllThunksTest, CommandBufferThunk) {
+TEST(ThunkWalkTest, CommandBufferThunk) {
   auto thunk = std::make_unique<DummyThunk>();
   Thunk* thunk_ptr = thunk.get();
 
@@ -97,7 +97,7 @@ TEST(ForAllThunksTest, CommandBufferThunk) {
                                    sequential_thunk_ptr));
 }
 
-TEST(ForAllThunksTest, ConditionalThunk) {
+TEST(ThunkWalkTest, ConditionalThunk) {
   auto thunk = std::make_unique<DummyThunk>();
   Thunk* thunk_ptr = thunk.get();
 
@@ -122,7 +122,7 @@ TEST(ForAllThunksTest, ConditionalThunk) {
                                    &conditional_thunk));
 }
 
-TEST(ForAllThunksTest, WhileThunk) {
+TEST(ThunkWalkTest, WhileThunk) {
   auto condition_thunk = std::make_unique<DummyThunk>();
   Thunk* condition_thunk_ptr = condition_thunk.get();
 

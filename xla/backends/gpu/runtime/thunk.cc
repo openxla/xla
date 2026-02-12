@@ -593,14 +593,6 @@ bool Thunk::IsCollective() const {
   }
 }
 
-void Thunk::ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const {
-  fn(this);
-}
-
-void Thunk::ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn) {
-  fn(this);
-}
-
 absl::StatusOr<ThunkProto> Thunk::ToProto() const {
   return absl::UnimplementedError(absl::StrFormat(
       "Proto serialization for thunk of type %s is not implemented",
@@ -617,7 +609,7 @@ ThunkMetadataProto Thunk::ToMetadataProto() const {
 ThunkMetadataListProto GetMetadataListProtoFromThunkGraph(
     const Thunk& root_thunk) {
   ThunkMetadataListProto metadata_list_proto;
-  root_thunk.ForAllThunks([&metadata_list_proto](const Thunk* thunk) {
+  root_thunk.Walk([&metadata_list_proto](const Thunk* thunk) {
     *metadata_list_proto.add_thunk_metadata() = thunk->ToMetadataProto();
   });
   return metadata_list_proto;
