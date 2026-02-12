@@ -1,5 +1,9 @@
 # PJRT C API changelog
 
+## 0.91
+
+* Added `PJRT_LoadedExecutable_AddressableDeviceLogicalIds`.
+
 ## 0.90
 
 * Added `total_size_in_bytes` field to `PJRT_Executable_GetCompiledMemoryStats_Args`.
