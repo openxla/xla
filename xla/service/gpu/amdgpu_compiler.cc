@@ -26,19 +26,13 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/IR/Module.h"
-#include "mlir/IR/MLIRContext.h"
 #include "xla/backends/autotuner/codegen_backend.h"
-#include "xla/backends/gpu/autotuner/hipblaslt.h"
-#include "xla/backends/gpu/autotuner/miopen.h"
-#include "xla/backends/gpu/autotuner/rocblas.h"
-#include "xla/backends/gpu/autotuner/triton.h"
 #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
 #include "xla/backends/gpu/transforms/conv_padding_legalization.h"
 #include "xla/backends/gpu/transforms/conv_rewriter.h"
 #include "xla/backends/gpu/transforms/cublas_pad_for_gemms.h"
 #include "xla/backends/gpu/transforms/cudnn_fused_conv_rewriter.h"
 #include "xla/backends/gpu/transforms/triangular_solve_rewriter.h"
-#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -217,58 +211,6 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
           .status());
 
   return absl::OkStatus();
-}
-
-absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
-AMDGPUCompiler::GetCodegenBackends(
-    se::StreamExecutor* stream_exec,
-    const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
-    const DebugOptions& debug_options, mlir::MLIRContext* mlir_context) {
-  std::vector<std::unique_ptr<CodegenBackend>> backends;
-
-  const auto& enabled_backends =
-      debug_options.xla_gpu_experimental_autotune_backends();
-
-  auto is_backend_enabled = [&](DebugOptions::AutotuneBackend backend) {
-    if (enabled_backends.empty()) {
-      return true;
-    }
-    for (const auto& enabled_backend : enabled_backends) {
-      if (enabled_backend == DebugOptions::AUTOTUNE_BACKEND_ALL) {
-        return true;
-      }
-      if (enabled_backend == backend) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  if (is_backend_enabled(DebugOptions::AUTOTUNE_BACKEND_TRITON)) {
-    backends.push_back(std::make_unique<TritonBackend>(
-        &debug_options, this, target_config, alias_info, mlir_context));
-  }
-
-  if (debug_options.xla_gpu_experimental_disable_binary_libraries()) {
-    return backends;
-  }
-
-  if (is_backend_enabled(DebugOptions::AUTOTUNE_BACKEND_MIOPEN)) {
-    backends.push_back(std::make_unique<MIOpenBackend>(
-        stream_exec, &debug_options, this, target_config));
-  }
-
-  if (is_backend_enabled(DebugOptions::AUTOTUNE_BACKEND_ROCBLAS)) {
-    backends.push_back(std::make_unique<RocblasBackend>(
-        stream_exec, &debug_options, this, target_config));
-  }
-
-  if (is_backend_enabled(DebugOptions::AUTOTUNE_BACKEND_HIPBLASLT)) {
-    backends.push_back(std::make_unique<HipblasLtBackend>(
-        stream_exec, &debug_options, this, target_config));
-  }
-
-  return backends;
 }
 
 AMDGPUCompiler::AMDGPUCompiler()

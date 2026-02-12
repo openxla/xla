@@ -87,14 +87,18 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForCuda(
     const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
     MLIRContext* mlir_context,
     absl::Span<const autotuner::Backend> backend_allowlist) {
+  // Selecting the "first' config in the autotuner is backend order dependent.
+  // To make all tests pass we need to keep the CuDnn backend first and the
+  // Triton backend second.
   std::vector<std::unique_ptr<CodegenBackend>> backends;
+  backends.push_back(std::make_unique<CudnnBackend>(
+      stream_executor, debug_options, compiler, target_config));
   backends.push_back(std::make_unique<TritonBackend>(
       debug_options, compiler, target_config, alias_info, mlir_context));
   backends.push_back(std::make_unique<CublasBackend>(
-      stream_executor, debug_options, compiler, target_config));
+      stream_executor, debug_options, compiler, target_config,
+      /*fp8_lt_fallback=*/true));
   backends.push_back(std::make_unique<CublasLtBackend>(
-      stream_executor, debug_options, compiler, target_config));
-  backends.push_back(std::make_unique<CudnnBackend>(
       stream_executor, debug_options, compiler, target_config));
   backends.push_back(std::make_unique<FissionBackend>(
       debug_options, compiler, target_config,

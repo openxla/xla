@@ -28,7 +28,6 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "llvm/IR/Module.h"
 #include "xla/autotune_results.pb.h"
-#include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_compiler.h"
@@ -63,13 +62,6 @@ class NVPTXCompiler : public GpuCompiler {
       const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
       const GpuAliasInfo* alias_info,
       tsl::thread::ThreadPool* thread_pool) override;
-
-  absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
-  GetCodegenBackends(se::StreamExecutor* stream_exec,
-                     const Compiler::GpuTargetConfig* target_config,
-                     const AliasInfo* alias_info,
-                     const DebugOptions& debug_options,
-                     mlir::MLIRContext* mlir_context) override;
 
   absl::Status RunCudnnCompilerPasses(HloModule* module,
                                       se::StreamExecutor* stream_exec,

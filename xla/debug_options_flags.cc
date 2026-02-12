@@ -45,6 +45,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/text_format.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/debug_options_parsers.h"
 #include "xla/parse_flags_from_env.h"
 #include "xla/service/collective_utils.h"
@@ -476,21 +477,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_early_exit_with_layouts(false);
   opts.set_xla_gpu_experimental_all_fusions_with_triton(false);
 
-  opts.add_xla_gpu_experimental_autotune_backends(
-      DebugOptions::AUTOTUNE_BACKEND_TRITON);
-  opts.add_xla_gpu_experimental_autotune_backends(
-      DebugOptions::AUTOTUNE_BACKEND_CUBLAS);
-  opts.add_xla_gpu_experimental_autotune_backends(
-      DebugOptions::AUTOTUNE_BACKEND_CUBLASLT);
-  opts.add_xla_gpu_experimental_autotune_backends(
-      DebugOptions::AUTOTUNE_BACKEND_CUDNN);
-  opts.add_xla_gpu_experimental_autotune_backends(
-      DebugOptions::AUTOTUNE_BACKEND_ROCBLAS);
-  opts.add_xla_gpu_experimental_autotune_backends(
-      DebugOptions::AUTOTUNE_BACKEND_HIPBLASLT);
-  opts.add_xla_gpu_experimental_autotune_backends(
-      DebugOptions::AUTOTUNE_BACKEND_MIOPEN);
-
   opts.set_xla_cpu_collective_call_warn_stuck_seconds(20);
   opts.set_xla_cpu_collective_call_terminate_timeout_seconds(40);
   opts.set_xla_cpu_collective_timeout_seconds(30 * 60);
@@ -739,7 +725,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       [](google::protobuf::RepeatedField<int> backends) -> std::string {
     struct Formatter {
       void operator()(std::string* out, int type) const {
-        absl::StrAppend(out, DebugOptions::AutotuneBackend_Name(type));
+        absl::StrAppend(out, autotuner::Backend_Name(type));
       }
     };
     return absl::StrJoin(backends, ", ", Formatter());
@@ -2422,10 +2408,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Experimental: Specify the directory to read/write autotuner cache to."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_autotune_backends",
-      SetterForRepeatedEnum<DebugOptions::AutotuneBackend>(
+      SetterForRepeatedEnum<autotuner::Backend>(
           "xla_gpu_experimental_autotune_backends",
-          /*enum_prefix=*/"AUTOTUNE_BACKEND_",
-          &DebugOptions::AutotuneBackend_Parse,
+          /*enum_prefix=*/"", &autotuner::Backend_Parse,
           debug_options->mutable_xla_gpu_experimental_autotune_backends()),
       autotune_backends_to_string(
           debug_options->xla_gpu_experimental_autotune_backends()),
@@ -2433,7 +2418,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Examples:\n"
       "  'cudnn,triton' (overwrites defaults)\n"
       "  '+cudnn,-cublas' (adds/removes from defaults)\n"
-      "Available: cudnn, triton, cublas, cublaslt."));
+      "Available: cudnn, triton, cublas, cublaslt etc, check "
+      "xla.autotuner.Backend for the full list."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_all_fusions_with_triton",
       bool_setter_for(

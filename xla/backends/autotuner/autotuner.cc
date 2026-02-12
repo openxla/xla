@@ -150,6 +150,9 @@ absl::StatusOr<std::unique_ptr<Autotuner>> Autotuner::Create(
   if (codegen_backends.empty()) {
     return absl::InvalidArgumentError("No codegen backends provided");
   }
+  for (const auto& backend : codegen_backends) {
+    VLOG(1) << "Registered backend: " << backend->name();
+  }
   return absl::WrapUnique(
       new Autotuner(std::move(codegen_backends), std::move(profiler),
                     std::move(autotune_config), std::move(cache), thread_pool));

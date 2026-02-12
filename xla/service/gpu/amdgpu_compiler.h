@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_AMDGPU_COMPILER_H_
 #define XLA_SERVICE_GPU_AMDGPU_COMPILER_H_
 
-#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -24,8 +23,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "llvm/IR/Module.h"
-#include "mlir/IR/MLIRContext.h"
-#include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/alias_info.h"
@@ -56,13 +53,6 @@ class AMDGPUCompiler : public GpuCompiler {
       const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
       const GpuAliasInfo* alias_info,
       tsl::thread::ThreadPool* thread_pool) override;
-
-  absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
-  GetCodegenBackends(se::StreamExecutor* stream_exec,
-                     const Compiler::GpuTargetConfig* target_config,
-                     const AliasInfo* alias_info,
-                     const DebugOptions& debug_options,
-                     mlir::MLIRContext* mlir_context) override;
 
   absl::StatusOr<BackendCompileResult> CompileTargetBinary(
       const HloModuleConfig& module_config, llvm::Module* llvm_module,

@@ -67,6 +67,7 @@ limitations under the License.
 #include "xla/backends/cpu/nanort/nanort_client.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
 #include "xla/backends/gpu/autotuner/block_level_emitter.h"
+#include "xla/backends/gpu/autotuner/factory.h"
 #include "xla/backends/gpu/autotuner/native_emitter.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
@@ -317,6 +318,7 @@ limitations under the License.
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform/platform_object_registry.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -3263,9 +3265,10 @@ absl::Status GpuCompiler::AddConvAndGemmAutotuningPass(
     const se::SemanticVersion& toolkit_version, const AliasInfo* alias_info,
     const DebugOptions& debug_options, mlir::MLIRContext* mlir_context,
     HloCostAnalysis::ShapeSizeFunction shape_size_fn) {
-  TF_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<CodegenBackend>> backends,
-                      GetCodegenBackends(stream_exec, target_config, alias_info,
-                                         debug_options, mlir_context));
+  TF_ASSIGN_OR_RETURN(
+      std::vector<std::unique_ptr<CodegenBackend>> backends,
+      GetAutotunerBackends(stream_exec, target_config, alias_info,
+                           debug_options, mlir_context));
 
   bool do_not_autotune_cublas_and_cudnn =
       debug_options.xla_gpu_experimental_disable_binary_libraries() ||
@@ -3306,6 +3309,61 @@ absl::Status GpuCompiler::AddConvAndGemmAutotuningPass(
   pipeline->AddPass(std::move(autotuner_pass));
 
   return absl::OkStatus();
+}
+
+absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
+GpuCompiler::GetAutotunerBackends(
+    se::StreamExecutor* stream_exec,
+    const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
+    const DebugOptions& debug_options, mlir::MLIRContext* mlir_context) {
+  std::vector<autotuner::Backend> autotune_backends;
+  if (!debug_options.xla_gpu_experimental_autotune_backends().empty()) {
+    for (const auto& backend :
+         debug_options.xla_gpu_experimental_autotune_backends()) {
+      autotune_backends.push_back(static_cast<autotuner::Backend>(backend));
+    }
+  } else {
+    for (int i = 0; i < autotuner::Backend_descriptor()->value_count(); ++i) {
+      const auto backend = static_cast<autotuner::Backend>(
+          autotuner::Backend_descriptor()->value(i)->number());
+      if (backend != autotuner::Backend::UNSPECIFIED_BACKEND) {
+        autotune_backends.push_back(backend);
+      }
+    }
+  }
+
+  std::vector<autotuner::Backend> disabled_autotune_backends;
+  if (debug_options.xla_gpu_experimental_disable_binary_libraries()) {
+    disabled_autotune_backends.push_back(autotuner::Backend::CUBLAS);
+    disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT);
+    disabled_autotune_backends.push_back(autotuner::Backend::CUDNN);
+  }
+
+  if (!debug_options.xla_gpu_enable_cublaslt()) {
+    disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT);
+    disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT_FISSION);
+  } else {
+    // Breaks xla/backends/gpu/transforms:gemm_rewriter_test_b200, it requires
+    // CUBLAS and CUBLASLT both to be available. TODO: fix tests and uncomment.
+    // disabled_autotune_backends.push_back(autotuner::Backend::CUBLAS);
+    disabled_autotune_backends.push_back(autotuner::Backend::CUBLAS_FISSION);
+  }
+
+  autotune_backends.erase(
+      std::remove_if(autotune_backends.begin(), autotune_backends.end(),
+                     [&](autotuner::Backend backend) {
+                       return absl::c_linear_search(disabled_autotune_backends,
+                                                    backend);
+                     }),
+      autotune_backends.end());
+
+  auto& registry = stream_executor::PlatformObjectRegistry::GetGlobalRegistry();
+  TF_ASSIGN_OR_RETURN(const GetCodegenBackends::Type& get_codegen_backends,
+                      registry.FindObject<GetCodegenBackends>(PlatformId()));
+  std::vector<std::unique_ptr<CodegenBackend>> backends =
+      get_codegen_backends(stream_exec, &debug_options, this, target_config,
+                           alias_info, mlir_context, autotune_backends);
+  return backends;
 }
 
 namespace {

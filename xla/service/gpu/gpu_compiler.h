@@ -184,14 +184,12 @@ class GpuCompiler : public LLVMCompiler {
       const DebugOptions& debug_options, mlir::MLIRContext* mlir_context,
       HloCostAnalysis::ShapeSizeFunction shape_size_fn);
 
-  virtual absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
-  GetCodegenBackends(se::StreamExecutor* stream_exec,
-                     const Compiler::GpuTargetConfig* target_config,
-                     const AliasInfo* alias_info,
-                     const DebugOptions& debug_options,
-                     mlir::MLIRContext* mlir_context) {
-    return std::vector<std::unique_ptr<CodegenBackend>>();
-  }
+  absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
+  GetAutotunerBackends(se::StreamExecutor* stream_exec,
+                       const Compiler::GpuTargetConfig* target_config,
+                       const AliasInfo* alias_info,
+                       const DebugOptions& debug_options,
+                       mlir::MLIRContext* mlir_context);
 
   // target_config must outlive the pipeline.
   absl::Status AddFusionAutotuningPass(

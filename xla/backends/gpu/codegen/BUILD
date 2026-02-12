@@ -96,6 +96,7 @@ xla_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/gpu/transforms:cudnn_fusion_compiler",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
