@@ -1393,19 +1393,15 @@ TEST_F(IndexingMapTest, RangeEvaluatorTest) {
 
   // d0 is always positive.
   EXPECT_TRUE(range_evaluator.IsAlwaysPositiveOrZero(d0));
-  EXPECT_FALSE(range_evaluator.IsAlwaysNegativeOrZero(d0));
 
   // d1 is always negative.
   EXPECT_FALSE(range_evaluator.IsAlwaysPositiveOrZero(d1));
-  EXPECT_TRUE(range_evaluator.IsAlwaysNegativeOrZero(d1));
 
   // d2 is sometimes positive and sometimes negative.
   EXPECT_FALSE(range_evaluator.IsAlwaysPositiveOrZero(d2));
-  EXPECT_FALSE(range_evaluator.IsAlwaysNegativeOrZero(d2));
 
   // d3 is always 0.
   EXPECT_TRUE(range_evaluator.IsAlwaysPositiveOrZero(d3));
-  EXPECT_TRUE(range_evaluator.IsAlwaysNegativeOrZero(d3));
 
   // d0 * 2 + d1 between [-10, 17].
   EXPECT_EQ(range_evaluator.ComputeExpressionRange(d0 * 2 + d1),
