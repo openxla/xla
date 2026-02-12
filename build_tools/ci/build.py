@@ -754,6 +754,8 @@ Build(
         "//tests/multiprocess:cpu_tests",
         "//jax/experimental/jax2tf/tests/multiprocess:cpu_tests",
         "//jaxlib/tools:check_cpu_wheel_sources_test",
+        "//jaxlib/tools:jaxlib_wheel_size_test",
+        "//:jax_wheel_size_test",
     ),
     test_env=dict(
         JAX_NUM_GENERATED_CASES=25,
@@ -777,6 +779,8 @@ Build(
         "//tests/multiprocess:cpu_tests",
         "//jax/experimental/jax2tf/tests/multiprocess:cpu_tests",
         "//jaxlib/tools:check_cpu_wheel_sources_test",
+        "//jaxlib/tools:jaxlib_wheel_size_test",
+        "//:jax_wheel_size_test",
     ),
     test_env=dict(
         JAX_NUM_GENERATED_CASES=25,
@@ -803,6 +807,10 @@ Build(
         "//tests/pallas:gpu_tests",
         "//tests/pallas:backend_independent_tests",
         "//jaxlib/tools:check_gpu_wheel_sources_test",
+        "//jaxlib/tools:jax_cuda_plugin_wheel_size_test",
+        "//jaxlib/tools:jax_cuda_pjrt_wheel_size_test",
+        "//jaxlib/tools:jaxlib_wheel_size_test",
+        "//:jax_wheel_size_test",
     ),
     build_tag_filters=("-multiaccelerator",),
     test_tag_filters=("-multiaccelerator",),
