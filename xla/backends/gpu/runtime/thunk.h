@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_THUNK_H_
 #define XLA_BACKENDS_GPU_RUNTIME_THUNK_H_
 
+#include <any>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -56,8 +57,8 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/gtl/int_type.h"
-#include "xla/util.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace gpu {
@@ -247,6 +248,24 @@ class Thunk {
   };
 
   //===--------------------------------------------------------------------===//
+  // ExecutionScopedState
+  //===--------------------------------------------------------------------===//
+
+  // Thunks themself instantiated once per XLA program (GpuExecutable), and the
+  // same Thunk is reused for all concurrent executions. Thunks state is shared
+  // between all concurrently executing XLA programs (and must be carefully
+  // synchronized). `ExecutionScopedState` is a container that allows thunks to
+  // put an arbitrary state that will have an execution scope, i.e. it will be
+  // automatically destroyed when GpuExecutable finishes execution. This allows
+  // thunks to pass arbitrary state between stages (from prepare to initialize
+  // and then to execute), without having to create a globally synchronized map
+  // and it also guarantees correct state life time, as leaving state in a map
+  // might lead to "leaks", as the map will be destroyed only when the
+  // executable is destroyed. It also thread-safe by construction as all thunks
+  // for a GPU program run sequentially from a single thread.
+  using ExecutionScopedState = absl::flat_hash_map<const Thunk*, std::any>;
+
+  //===--------------------------------------------------------------------===//
   // PrepareParams
   //===--------------------------------------------------------------------===//
 
@@ -266,6 +285,8 @@ class Thunk {
     se::StreamExecutor* absl_nonnull executor = nullptr;
     // Buffer allocations for the thunk.
     const BufferAllocations* absl_nonnull buffer_allocations = nullptr;
+    // Execution scoped state shared between prepare, initialize and execute.
+    ExecutionScopedState* execution_scoped_state = nullptr;
   };
 
   //===--------------------------------------------------------------------===//
@@ -309,6 +330,9 @@ class Thunk {
 
     // Total local device count.
     int local_device_count = 0;
+
+    // Execution scoped state shared between prepare, initialize and execute.
+    ExecutionScopedState* execution_scoped_state = nullptr;
   };
 
   //===--------------------------------------------------------------------===//
@@ -328,7 +352,8 @@ class Thunk {
         CollectiveParams* collective_params,
         CollectiveCliques* collective_cliques,
         CollectiveMemory* collective_memory,
-        ExecutionStreamIdMap additional_compute_streams = {});
+        ExecutionStreamIdMap additional_compute_streams = {},
+        ExecutionScopedState* execution_scoped_state = nullptr);
 
     // Constructs execute parameters from an existing parameters but with
     // different buffer allocations.
@@ -368,6 +393,9 @@ class Thunk {
     // Additional compute streams on which thunks launch operations.
     ExecutionStreamIdMap additional_compute_streams;
 
+    // Execution scoped state shared between prepare, initialize and execute.
+    ExecutionScopedState* execution_scoped_state = nullptr;
+
     bool mock_collectives = false;
 
     int64_t execution_id = 0;
@@ -386,6 +414,7 @@ class Thunk {
                   RecvDeviceMemoryFunction* recv_device_memory_function,
                   const ffi::ExecutionContext* ffi_execution_context,
                   ExecutionStreamIdMap additional_compute_streams = {},
+                  ExecutionScopedState* execution_scoped_state = nullptr,
                   bool mock_collectives = false, int64_t execution_id = 0);
   };
 

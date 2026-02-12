@@ -107,12 +107,12 @@ limitations under the License.
 #include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -1394,10 +1394,11 @@ CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
                 execute_params.buffer_allocations->device_ordinal(),
                 ffi::InvokeContext::GpuContext{
                     stream,
-                    execute_params.buffer_allocations->memory_allocator()},
+                    execute_params.buffer_allocations->memory_allocator(),
+                },
+                ffi::InvokeContext::StateContext{execution_state_.get()},
                 /*called_computation=*/nullptr,  // TODO(b/342285364)
-                execute_params.ffi_execution_context,
-                execution_state_.get()};
+                execute_params.ffi_execution_context};
             return ffi::Invoke(ffi::GetXlaFfiApi(), handler_, *call_frame,
                                context);
           }));

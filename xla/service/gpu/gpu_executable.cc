@@ -113,6 +113,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
@@ -120,7 +121,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -494,6 +494,9 @@ absl::Status ExecuteThunksImpl(
                                           profile->warmup_run_executed()));
   }
 
+  // A state container for this execution.
+  Thunk::ExecutionScopedState execution_scoped_state;
+
   // Parameters for executing collective operations.
   ASSIGN_OR_RETURN(CollectiveParams collective_params,
                    CollectiveParams::Create(
@@ -512,7 +515,8 @@ absl::Status ExecuteThunksImpl(
                                         &collective_memory_requests,
                                         &multimem_registry,
                                         executor,
-                                        &buffer_allocations};
+                                        &buffer_allocations,
+                                        &execution_scoped_state};
 
     tsl::profiler::TraceMe trace_prepare("Thunks::Prepare");
     RETURN_IF_ERROR(thunk_sequence.Prepare(prepare_params));
@@ -562,7 +566,8 @@ absl::Status ExecuteThunksImpl(
         &collective_memory,
         &multimem_registry,
         run_options->run_options().ffi_execution_context(),
-        run_options->local_device_count()};
+        run_options->local_device_count(),
+        &execution_scoped_state};
 
     tsl::profiler::TraceMe trace_initialize("Thunks::Initialize");
     RETURN_IF_ERROR(thunk_sequence.Initialize(initialize_params));
@@ -581,7 +586,8 @@ absl::Status ExecuteThunksImpl(
   Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
       *run_options, buffer_allocations, main_stream,
       command_buffer_trace_stream, &collective_params, &collective_cliques,
-      &collective_memory, std::move(additional_execution_streams));
+      &collective_memory, std::move(additional_execution_streams),
+      &execution_scoped_state);
 
   XLA_VLOG_DEVICE(1, run_options->device_ordinal())
       << "Start GpuExecutable::ExecuteOnStream module: " << module_name;
