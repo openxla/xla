@@ -278,8 +278,7 @@ static XLA_FFI_Error* XLA_FFI_Type_Register(XLA_FFI_Type_Register_Args* args) {
   // If type_id is unknown, we are registering a new type and XLA will assign
   // a unique type id to it.
   if (type_id == TypeRegistry::kUnknownTypeId) {
-    auto assigned_type_id =
-        TypeRegistry::AssignExternalTypeId(type_name, type_info);
+    auto assigned_type_id = TypeRegistry::AssignTypeId(type_name, type_info);
     if (!assigned_type_id.ok()) {
       return new XLA_FFI_Error{std::move(assigned_type_id).status()};
     }
@@ -290,7 +289,7 @@ static XLA_FFI_Error* XLA_FFI_Type_Register(XLA_FFI_Type_Register_Args* args) {
 
   // If type_id is set, we are relying on the caller-provided unique type id.
   auto registered_type_id =
-      TypeRegistry::RegisterExternalTypeId(type_name, type_id, type_info);
+      TypeRegistry::RegisterTypeId(type_name, type_id, type_info);
   if (!registered_type_id.ok()) {
     return new XLA_FFI_Error{std::move(registered_type_id)};
   }

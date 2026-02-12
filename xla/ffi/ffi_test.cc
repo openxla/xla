@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/execution_state.h"
-#include "xla/ffi/ffi_api.h"
 #include "xla/ffi/ffi_interop.h"
 #include "xla/ffi/ffi_registry.h"
 #include "xla/ffi/invoke.h"
@@ -1136,7 +1135,9 @@ TEST(FfiTest, Metadata) {
   EXPECT_EQ(metadata.api_version.major_version, XLA_FFI_API_MAJOR);
   EXPECT_EQ(metadata.api_version.minor_version, XLA_FFI_API_MINOR);
 
-  TypeRegistry::TypeId type_id = TypeRegistry::GetTypeId<StrState>();
+  TF_ASSERT_OK_AND_ASSIGN(TypeRegistry::TypeId type_id,
+                          TypeRegistry::GetOrAssignTypeId<StrState>(
+                              internal::StaticTypeRegistrationMap()));
   EXPECT_EQ(metadata.state_type_id.type_id, type_id);
 }
 

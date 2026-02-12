@@ -37,7 +37,7 @@ limitations under the License.
 
 namespace xla::ffi {
 
-static internal::HandlerRegistrationMap& StaticHandlerRegistrationMap() {
+internal::HandlerRegistrationMap& internal::StaticHandlerRegistrationMap() {
   static absl::NoDestructor<internal::HandlerRegistrationMap> registry;
   return *registry;
 }
@@ -122,7 +122,7 @@ absl::Status RegisterHandler(const XLA_FFI_Api* api, absl::string_view name,
     metadata.state_type_id = instantiate_metadata.state_type_id;
   }
 
-  auto& registry = StaticHandlerRegistrationMap();
+  auto& registry = internal::StaticHandlerRegistrationMap();
   absl::MutexLock lock(registry.mu);
 
   VLOG(3) << absl::StreamFormat(
@@ -162,7 +162,7 @@ absl::StatusOr<HandlerRegistration> FindHandler(absl::string_view name,
   TF_ASSIGN_OR_RETURN(std::string canonical_platform,
                       PlatformUtil::CanonicalPlatformName(platform));
 
-  auto& registry = StaticHandlerRegistrationMap();
+  auto& registry = internal::StaticHandlerRegistrationMap();
   absl::MutexLock lock(registry.mu);
 
   auto it = registry.map.find(registry.MakeKey(name, canonical_platform));
@@ -179,7 +179,7 @@ StaticRegisteredHandlers(absl::string_view platform) {
   TF_ASSIGN_OR_RETURN(std::string canonical_platform,
                       PlatformUtil::CanonicalPlatformName(platform));
 
-  auto& registry = StaticHandlerRegistrationMap();
+  auto& registry = internal::StaticHandlerRegistrationMap();
   absl::MutexLock lock(registry.mu);
 
   absl::flat_hash_map<std::string, HandlerRegistration> calls;
