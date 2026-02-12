@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/shape_inference.h"
 #include "xla/service/spmd/spmd_partitioner.h"
+#include "xla/service/spmd/spmd_partitioner_util_internal.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
