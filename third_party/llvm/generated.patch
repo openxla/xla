@@ -1,4 +1,94 @@
 Auto generated patch. Do not edit or delete it, even if empty.
+diff -ruN --strip-trailing-cr a/lld/ELF/SyntheticSections.h b/lld/ELF/SyntheticSections.h
+--- a/lld/ELF/SyntheticSections.h
++++ b/lld/ELF/SyntheticSections.h
+@@ -53,7 +53,7 @@
+   EhFrameSection(Ctx &);
+   void writeTo(uint8_t *buf) override;
+   void finalizeContents() override;
+-  bool isNeeded() const override { return !sections.empty(); }
++  bool isNeeded() const override { return isLive() && !sections.empty(); }
+   size_t getSize() const override { return size; }
+ 
+   static bool classof(const SectionBase *d) {
+diff -ruN --strip-trailing-cr a/lld/ELF/Writer.cpp b/lld/ELF/Writer.cpp
+--- a/lld/ELF/Writer.cpp
++++ b/lld/ELF/Writer.cpp
+@@ -2455,8 +2455,7 @@
+     ret.push_back(std::move(relRo));
+ 
+   // PT_GNU_EH_FRAME is a special section pointing on .eh_frame_hdr.
+-  if (part.ehFrame->isNeeded() && part.ehFrameHdr &&
+-      part.ehFrame->getParent() && part.ehFrameHdr->getParent())
++  if (part.ehFrameHdr && part.ehFrameHdr->isNeeded())
+     addHdr(PT_GNU_EH_FRAME, part.ehFrameHdr->getParent()->getPhdrFlags())
+         ->add(part.ehFrameHdr->getParent());
+ 
+diff -ruN --strip-trailing-cr a/lld/test/ELF/linkerscript/discard-eh-frame.s b/lld/test/ELF/linkerscript/discard-eh-frame.s
+--- a/lld/test/ELF/linkerscript/discard-eh-frame.s
++++ b/lld/test/ELF/linkerscript/discard-eh-frame.s
+@@ -0,0 +1,44 @@
++# REQUIRES: x86
++## Test discarding .eh_frame and/or .eh_frame_hdr.
++
++# RUN: rm -rf %t && split-file %s %t && cd %t
++# RUN: llvm-mc -filetype=obj -triple=x86_64 a.s -o a.o
++# RUN: ld.lld --eh-frame-hdr -T 1.lds a.o -o out1
++# RUN: llvm-readelf -Sl out1 | FileCheck %s
++# RUN: ld.lld --eh-frame-hdr -T 2.lds a.o -o out2
++# RUN: llvm-readelf -Sl out2 | FileCheck %s
++# RUN: ld.lld --eh-frame-hdr -T 3.lds a.o -o out3
++# RUN: llvm-readelf -Sl out3 | FileCheck %s --check-prefix=CHECK3
++
++# CHECK-NOT: .eh_frame
++# CHECK:     .text
++# CHECK-NOT: .eh_frame
++
++# CHECK:     Program Headers:
++# CHECK-NOT: PT_GNU_EH_FRAME
++
++# CHECK3-NOT: .eh_frame_hdr
++# CHECK3:     .eh_frame PROGBITS
++# CHECK3-NOT: .eh_frame_hdr
++# CHECK3:     Program Headers:
++# CHECK3-NOT: PT_GNU_EH_FRAME
++
++#--- a.s
++.global _start
++_start:
++ nop
++
++.section .dah,"ax",@progbits
++.cfi_startproc
++ nop
++.cfi_endproc
++
++#--- 1.lds
++## Regression test for https://github.com/llvm/llvm-project/pull/179089#issuecomment-3888507749
++SECTIONS { /DISCARD/ : { *(.eh_frame) } }
++
++#--- 2.lds
++SECTIONS { /DISCARD/ : { *(.eh_frame .eh_frame_hdr) } }
++
++#--- 3.lds
++SECTIONS { /DISCARD/ : { *(.eh_frame_hdr) } }
+diff -ruN --strip-trailing-cr a/lld/test/ELF/linkerscript/pt_gnu_eh_frame.s b/lld/test/ELF/linkerscript/pt_gnu_eh_frame.s
+--- a/lld/test/ELF/linkerscript/pt_gnu_eh_frame.s
++++ b/lld/test/ELF/linkerscript/pt_gnu_eh_frame.s
+@@ -1,13 +0,0 @@
+-# REQUIRES: x86
+-# RUN: llvm-mc -filetype=obj -triple=x86_64-unknown-linux %s -o %t
+-# RUN: echo "SECTIONS { /DISCARD/ : { *(.eh_frame*) *(.eh_frame_hdr*) } }" > %t.script
+-# RUN: ld.lld -o /dev/null --eh-frame-hdr --script %t.script %t
+-
+-.global _start
+-_start:
+- nop
+-
+-.section .dah,"ax",@progbits
+-.cfi_startproc
+- nop
+-.cfi_endproc
 diff -ruN --strip-trailing-cr a/lldb/source/Target/Process.cpp b/lldb/source/Target/Process.cpp
 --- a/lldb/source/Target/Process.cpp
 +++ b/lldb/source/Target/Process.cpp
@@ -14,7 +104,7 @@ diff -ruN --strip-trailing-cr a/lldb/source/Target/Process.cpp b/lldb/source/Tar
 diff -ruN --strip-trailing-cr a/llvm/lib/Transforms/Vectorize/SLPVectorizer.cpp b/llvm/lib/Transforms/Vectorize/SLPVectorizer.cpp
 --- a/llvm/lib/Transforms/Vectorize/SLPVectorizer.cpp
 +++ b/llvm/lib/Transforms/Vectorize/SLPVectorizer.cpp
-@@ -17042,6 +17042,8 @@
+@@ -17093,6 +17093,8 @@
        NodesCosts.erase(TE.get());
        GatheredLoadsToDelete.insert(TE.get());
      }
@@ -23,7 +113,7 @@ diff -ruN --strip-trailing-cr a/llvm/lib/Transforms/Vectorize/SLPVectorizer.cpp 
    }
  
    for (std::unique_ptr<TreeEntry> &TE : VectorizableTree) {
-@@ -17071,6 +17073,22 @@
+@@ -17122,6 +17124,22 @@
      DeletedNodes.clear();
      TransformedToGatherNodes.clear();
      NewCost = Cost;
