@@ -418,7 +418,8 @@ absl::Status ExecuteThunksImpl(
 
   // Maybe add a watch guard for this execution.
   absl::Duration watchdog_timeout = absl::InfiniteDuration();
-  if (debug_options) {
+  if (debug_options &&
+      !debug_options->xla_gpu_execution_terminate_timeout().empty()) {
     TF_RET_CHECK(absl::ParseDuration(
         debug_options->xla_gpu_execution_terminate_timeout(),
         &watchdog_timeout))
