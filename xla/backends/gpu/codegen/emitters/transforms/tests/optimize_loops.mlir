@@ -82,8 +82,8 @@ module {
 }
 
 // CHECK-LABEL: @unroll_by_factor
-// CHECK: %[[C8:.*]] = arith.constant 8 : index
-// CHECK: scf.for {{.*}} step %[[C8]]
+// CHECK: %[[C4:.*]] = arith.constant 4 : index
+// CHECK: scf.for {{.*}} step %[[C4]]
 
 // -----
 
@@ -105,3 +105,30 @@ module {
 // CHECK-LABEL: @do_not_unroll
 // CHECK: %[[C1:.*]] = arith.constant 1 : index
 // CHECK: scf.for {{.*}} step %[[C1]]
+
+// -----
+
+module {
+  func.func @unroll_with_pure_call(%arg0: tensor<234881024xbf16>, %arg1: tensor<234881024xbf16>, %arg2: tensor<234881024xbf16>) -> tensor<234881024xbf16> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %ret = scf.for %i = %c0 to %c16 step %c1 iter_args(%arg3 = %arg2) -> (tensor<234881024xbf16>) {
+      %0 = xla.pure_call @callee(%arg0, %arg1, %i) : (tensor<234881024xbf16>, tensor<234881024xbf16>, index) -> bf16
+      %inserted = tensor.insert %0 into %arg3[%i] : tensor<234881024xbf16>
+      scf.yield %inserted : tensor<234881024xbf16>
+    }
+    return %ret : tensor<234881024xbf16>
+  }
+  func.func private @callee(%arg0: tensor<234881024xbf16>, %arg1: tensor<234881024xbf16>, %arg2: index) -> bf16 {
+    %extracted = tensor.extract %arg0[%arg2] : tensor<234881024xbf16>
+    %neg = arith.negf %extracted : bf16
+    %exp = math.exp %neg : bf16
+    %log = math.log %exp : bf16
+    return %log : bf16
+  }
+}
+
+// CHECK-LABEL: @unroll_with_pure_call
+// CHECK: scf.for
+// CHECK-SAME: step %c4
