@@ -168,6 +168,26 @@ class NamedSharding {
   // size is same as input size.
   bool IsTileMaximal() const { return IsReplicated() || IsMaximal(); }
 
+  bool HasPartialReplication() const {
+    if (IsTileMaximal()) {
+      return false;
+    }
+    if (!replicated_axes().empty()) {
+      return true;
+    }
+    int64_t used_elements = 1;
+    for (const int64_t dim : dimensions()) {
+      used_elements *= dim;
+    }
+    for (const AxisRef& axis : unreduced_axes()) {
+      used_elements *= axis.size(mesh());
+    }
+    for (const AxisRef& axis : manual_axes()) {
+      used_elements *= axis.size(mesh());
+    }
+    return used_elements < num_devices();
+  }
+
   // Creates a sharding with empty mesh and no sharding axes depicting it is
   // replicated across all devices.
   static NamedSharding Replicate(absl::Span<const OpMetadata> metadata = {}) {
