@@ -83,6 +83,7 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::H100SXMDeviceInfo(
 stream_executor::DeviceDescription TestGpuDeviceInfo::B200SXMDeviceInfo(
     stream_executor::GpuComputeCapability cc) {
   stream_executor::DeviceDescription b;
+  b.set_name("NVIDIA B200");
   b.set_gpu_compute_capability(cc);
   b.set_threads_per_block_limit(1024);
   b.set_threads_per_warp(32);
