@@ -54,9 +54,8 @@ class OneHotGatherRewriterTest
       std::optional<std::vector<Literal>> custom_arguments = std::nullopt) {
     auto test_preprocessor = [&](HloModule* module) {
       OneHotGatherRewriter rewriter;
-      absl::StatusOr<bool> changed = rewriter.Run(module);
-      ASSERT_TRUE(changed.ok());
-      EXPECT_TRUE(changed.value());
+      ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module));
+      EXPECT_TRUE(changed);
       absl::StatusOr<bool> filecheck_result =
           RunFileCheck(module->ToString(), check_pattern);
       ASSERT_OK(filecheck_result.status());
@@ -312,7 +311,7 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   OneHotGatherRewriter rewriter;
-  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
   EXPECT_FALSE(changed);
 }
 
@@ -334,7 +333,7 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   OneHotGatherRewriter rewriter;
-  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
   EXPECT_FALSE(changed);
 }
 
@@ -382,7 +381,7 @@ TEST_F(OneHotGatherRewriterTest, DepthLimitExceeded) {
   module->AddEntryComputation(builder.Build());
 
   OneHotGatherRewriter rewriter;
-  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
   // Should NOT rewrite because depth > 20.
   EXPECT_FALSE(changed);
 }
@@ -406,7 +405,7 @@ ENTRY Main {
   // Contracting over a merged dimension: The rewriter should reject this.
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   OneHotGatherRewriter rewriter;
-  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
   EXPECT_FALSE(changed);
 }
 
@@ -430,7 +429,7 @@ ENTRY Main {
   OneHotGatherRewriter rewriter;
   // This should not change because the indices shape [2, 5] does not match
   // the dot rank structure implied by flattening.
-  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
   EXPECT_FALSE(changed);
 }
 
@@ -493,7 +492,256 @@ ENTRY Main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   OneHotGatherRewriter rewriter;
-  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(OneHotGatherRewriterTest, RankMismatch_ReshapeIndices) {
+  absl::string_view hlo_string = R"(
+HloModule RankMismatch
+ENTRY main {
+  %indices = s32[2,2] parameter(0)
+  %weights = f32[4,2] parameter(1)
+  %indices_r = s32[4] reshape(%indices)
+  %iota = s32[4,4] iota(), iota_dimension=1
+  %indices_b = s32[4,4] broadcast(%indices_r), dimensions={0}
+  %compare = pred[4,4] compare(%indices_b, %iota), direction=EQ
+  %one_hot = f32[4,4] convert(%compare)
+  ROOT %dot = f32[4,2] dot(%one_hot, %weights),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+
+  RunPassAndVerify(hlo_string, R"(
+    CHECK: %[[WEIGHTS:.*]] = f32[4,2]{{.*}}parameter(1)
+    CHECK: %[[RESHAPE:.*]] = s32[4,1]{{.*}}reshape
+    CHECK: %[[GATHER:.*]] = f32[4,2]{{.*}}gather(%[[WEIGHTS]], %[[RESHAPE]])
+    CHECK: ROOT %[[SELECT:.*]] = f32[4,2]{{.*}}select({{.*}}, %[[GATHER]], {{.*}})
+  )");
+}
+
+TEST_F(OneHotGatherRewriterTest, FloatIndices_NoRewrite) {
+  absl::string_view hlo_string = R"(
+HloModule FloatIndices
+
+ENTRY main {
+  %indices = f32[2] parameter(0)
+  %weights = f32[4, 2] parameter(1)
+
+  %iota = f32[4] iota(), iota_dimension=0
+  %indices_b = f32[2,4] broadcast(%indices), dimensions={0}
+  %iota_b = f32[2,4] broadcast(%iota), dimensions={1}
+
+  %compare = pred[2,4] compare(%indices_b, %iota_b), direction=EQ
+  %one_hot = f32[2,4] convert(%compare)
+
+  ROOT %dot = f32[2,2] dot(%one_hot, %weights), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  OneHotGatherRewriter rewriter;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(OneHotGatherRewriterTest, S64Indices_CorrectConstants) {
+  absl::string_view hlo_string = R"(
+HloModule S64Indices
+
+ENTRY main {
+  %indices = s64[2] parameter(0)
+  %weights = f32[4, 2] parameter(1)
+
+  %iota = s64[4] iota(), iota_dimension=0
+  %indices_b = s64[2,4] broadcast(%indices), dimensions={0}
+  %iota_b = s64[2,4] broadcast(%iota), dimensions={1}
+
+  %compare = pred[2,4] compare(%indices_b, %iota_b), direction=EQ
+  %one_hot = f32[2,4] convert(%compare)
+
+  ROOT %dot = f32[2,2] dot(%one_hot, %weights), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  OneHotGatherRewriter rewriter;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(OneHotGatherRewriterTest, Bug_TypeMismatch_S64Indices_Converted) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY main {
+  %indices_s64 = s64[2,2,2]{2,1,0} parameter(0)
+  %indices = s32[2,2,2]{2,1,0} convert(%indices_s64)
+  %weights = bf16[8,2,4] parameter(1)
+
+  %iota = s32[8] iota(), iota_dimension=0
+
+  %indices_broadcast = s32[2,2,2,8]{3,2,1,0} broadcast(%indices), dimensions={0,1,2}
+  %iota_broadcast = s32[2,2,2,8]{3,2,1,0} broadcast(%iota), dimensions={3}
+
+  %compare = pred[2,2,2,8] compare(%indices_broadcast, %iota_broadcast), direction=EQ
+  %one_hot = bf16[2,2,2,8] convert(%compare)
+
+  ROOT %dot = bf16[2,2,2,2,4] dot(%one_hot, %weights), lhs_contracting_dims={3}, rhs_contracting_dims={0}
+}
+)";
+  RunPassAndVerify(hlo_string, R"(
+    CHECK: gather
+  )");
+}
+
+TEST_F(OneHotGatherRewriterTest, TypeMismatch_F32Indices_Converted) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY main {
+  %indices_f32 = f32[2] parameter(0)
+  %indices = s32[2] convert(%indices_f32)
+  %weights = f32[4, 2] parameter(1)
+
+  %iota = s32[4] iota(), iota_dimension=0
+  %indices_b = s32[2,4] broadcast(%indices), dimensions={0}
+  %iota_b = s32[2,4] broadcast(%iota), dimensions={1}
+
+  %compare = pred[2,4] compare(%indices_b, %iota_b), direction=EQ
+  %one_hot = f32[2,4] convert(%compare)
+
+  ROOT %dot = f32[2,2] dot(%one_hot, %weights), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+
+  RunPassAndVerify(hlo_string, R"(
+    CHECK: gather
+  )");
+}
+
+TEST_F(OneHotGatherRewriterTest, ShapeMismatch_BroadcastBatchDims) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY main {
+  %indices = s32[2] parameter(0)
+  %weights = f32[2, 2] parameter(1)
+
+  %iota = s32[2] iota(), iota_dimension=0
+  %indices_b = s32[2,2] broadcast(%indices), dimensions={1}
+  %iota_b = s32[2,2] broadcast(%iota), dimensions={1}
+
+  %compare = pred[2,2] compare(%indices_b, %iota_b), direction=EQ
+  %one_hot = f32[2,2] convert(%compare)
+
+  ROOT %dot = f32[2,2] dot(%one_hot, %weights), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  OneHotGatherRewriter rewriter;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(OneHotGatherRewriterTest, BroadcastPermutation_ShapeMismatch) {
+  absl::string_view hlo_string = R"(
+HloModule PermutationBug
+
+ENTRY main {
+  %indices = s32[2, 3] parameter(0)
+  %weights = f32[4, 5] parameter(1)
+
+  %iota = s32[4] iota(), iota_dimension=0
+  %iota_b = s32[3, 4, 2] broadcast(%iota), dimensions={1}
+
+  // Permute [2, 3] to [3, 2] and add dim 1.
+  %indices_b = s32[3, 4, 2] broadcast(%indices), dimensions={2, 0}
+
+  %compare = pred[3, 4, 2] compare(%indices_b, %iota_b), direction=EQ
+  %one_hot = f32[3, 4, 2] convert(%compare)
+
+  ROOT %dot = f32[3, 2, 5] dot(%one_hot, %weights), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  OneHotGatherRewriter rewriter;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(OneHotGatherRewriterTest, TypeMismatch_MixedPrecision) {
+  absl::string_view hlo_string = R"(
+HloModule TypeMismatch
+
+ENTRY entry {
+  %indices = s32[2] parameter(0)
+  %weights = f16[10, 5] parameter(1)
+
+  %iota = s32[2, 10] iota(), iota_dimension=1
+  %indices_b = s32[2, 10] broadcast(%indices), dimensions={0}
+  %compare = pred[2, 10] compare(%iota, %indices_b), direction=EQ
+  %one_hot = f16[2, 10] convert(%compare)
+
+  // Dot accumulates F16 into F32. Output is F32.
+  // Rewrite creates Gather(Weights=F16) -> Output=F32.
+  // HLO Verifier fails: Gather output element type must match operand element type.
+  ROOT %dot = f32[2, 5] dot(%one_hot, %weights), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  OneHotGatherRewriter rewriter;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(OneHotGatherRewriterTest, ZeroDepth_NoRewrite) {
+  absl::string_view hlo_string = R"(
+HloModule ZeroDepth
+
+ENTRY main {
+  %indices = s32[2] parameter(0)
+  %weights = f32[0, 2] parameter(1)
+
+  %iota = s32[0] iota(), iota_dimension=0
+  %indices_b = s32[2,0] broadcast(%indices), dimensions={0}
+  %iota_b = s32[2,0] broadcast(%iota), dimensions={1}
+
+  %compare = pred[2,0] compare(%indices_b, %iota_b), direction=EQ
+  %one_hot = f32[2,0] convert(%compare)
+
+  // Dot contracts dim 0 (size 0). Result should be 0.
+  ROOT %dot = f32[2,2] dot(%one_hot, %weights), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  OneHotGatherRewriter rewriter;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(OneHotGatherRewriterTest, LargeDepth_NoRewrite) {
+  absl::string_view hlo_string = R"(
+HloModule LargeDepth
+
+ENTRY main {
+  %indices = s32[1] parameter(0)
+  // Depth 3,000,000,000 > INT32_MAX
+  %weights = f32[3000000000, 1] parameter(1)
+
+  %iota = s32[3000000000] iota(), iota_dimension=0
+  %indices_b = s32[1, 3000000000] broadcast(%indices), dimensions={0}
+  %iota_b = s32[1, 3000000000] broadcast(%iota), dimensions={1}
+
+  %compare = pred[1, 3000000000] compare(%indices_b, %iota_b), direction=EQ
+  %one_hot = f32[1, 3000000000] convert(%compare)
+
+  ROOT %dot = f32[1, 1] dot(%one_hot, %weights), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  OneHotGatherRewriter rewriter;
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(rewriter, module.get()));
   EXPECT_FALSE(changed);
 }
 
