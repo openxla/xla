@@ -184,6 +184,10 @@ TEST(MeshAndAxisTest, ValidatesAxisRef) {
       "sub-axis size must be");
 }
 
+TEST(MeshAndAxisTest, ValidatesMeshEmptyMesh) { Mesh(); }
+
+TEST(MeshAndAxisTest, ValidatesMeshMaximalMesh) { Mesh(5); }
+
 TEST(MeshAndAxisTest, ValidatesMesh) {
   EXPECT_DEATH(
       { Mesh mesh_dims_axes_mismatch({2, 3, 4}, {"x", "y"}); },
@@ -205,10 +209,6 @@ TEST(MeshAndAxisTest, ValidatesMesh) {
         Mesh mesh_with_duplicate_axis_names({1, 2, 3, 4}, {"x", "y", "z", "x"});
       },
       "Mesh has duplicate axis names. Duplicate axis name: x");
-
-  EXPECT_DEATH(
-      { Mesh mesh_with_empty_dims(TileAssignment({}), {}); },
-      "Mesh must have at least one axis");
 
   EXPECT_DEATH(
       { Mesh mesh_with_integer_axis_name({1, 2}, {"x", "1"}); },
