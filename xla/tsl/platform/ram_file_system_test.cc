@@ -73,5 +73,42 @@ TEST(RamFileSystemTest, CustomScheme) {
               StatusIs(absl::StatusCode::kNotFound));
 }
 
+TEST(RamFileSystemTest, ReadAfterWrite) {
+  RamFileSystem fs;
+
+  std::string data = "data";
+  std::string filename = "file.txt";
+
+  // Write.
+  {
+    std::unique_ptr<WritableFile> f;
+    TF_ASSERT_OK(fs.NewWritableFile(filename, &f));
+
+    TF_ASSERT_OK(f->Append(data));
+    TF_ASSERT_OK(f->Close());
+  }
+
+  // Now write again.
+  {
+    std::unique_ptr<WritableFile> f;
+    TF_ASSERT_OK(fs.NewWritableFile(filename, &f));
+
+    TF_ASSERT_OK(f->Append(data));
+    TF_ASSERT_OK(f->Close());
+  }
+
+  // Now read, and we should see only the second write.
+  {
+    std::unique_ptr<RandomAccessFile> f;
+    TF_ASSERT_OK(fs.NewRandomAccessFile(filename, &f));
+
+    absl::string_view contents;
+    std::vector<char> scratch(data.size());
+    TF_ASSERT_OK(f->Read(0, contents, absl::MakeSpan(scratch)));
+
+    EXPECT_EQ(contents, data);
+  }
+}
+
 }  // namespace
 }  // namespace tsl

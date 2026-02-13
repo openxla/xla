@@ -423,6 +423,8 @@ tsl_cc_test(
         ":env",
         "//xla/tsl/testing:temporary_directory",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",

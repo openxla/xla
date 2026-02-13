@@ -156,6 +156,8 @@ class RamFileSystem : public FileSystem {
           absl::StrCat(fname_, " is a directory."));
     }
 
+    // Per POSIX, files opened for writing should truncate.
+    fs_[fname]->clear();
     *result = std::unique_ptr<WritableFile>(
         new RamRandomAccessFile(fname, fs_[fname]));
     return absl::OkStatus();
