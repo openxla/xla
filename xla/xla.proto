@@ -637,6 +637,20 @@ message DebugOptions {
   // Timeout to issue a warning on stuck rendez-vous.
   optional int32 xla_gpu_executable_warn_stuck_timeout_seconds = 327;
 
+  // Timeout to terminate XLA:GPU execution if it doesn't complete successfully.
+  //
+  // If XLA:GPU executable doesn't complete it's execution within some
+  // reasonable time frame it probably means that it deadlocked in one of the
+  // GPU kernels or collective communication. It is nearly impossible to recover
+  // from such deadlock, and it is typically better to kill the current process
+  // and let the higher level job scheduling to retry the run.
+  //
+  // Parses a duration string consisting of a possibly signed sequence of
+  // decimal numbers, each with an optional fractional part and a unit
+  // suffix. The valid suffixes are "ns", "us" "ms", "s", "m", and "h".
+  // Simple examples include "300ms", "-1.5h", and "2h45m". Default is "inf".
+  optional string xla_gpu_execution_terminate_timeout = 451;
+
   optional bool xla_gpu_exhaustive_tiling_search = 219;
 
   // If true, autotune all fusions with block level emitter.
@@ -1378,7 +1392,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 451
+  // Next id: 452
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
