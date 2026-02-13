@@ -1886,32 +1886,13 @@ PjRtCpuLoadedExecutable::Execute(
     absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
     const ExecuteOptions& options,
     std::optional<std::vector<Future<>>>& returned_futures) const {
-  RunId run_id(options.launch_id);
-  tsl::profiler::TraceMe trace_me("PjRtCpuLoadedExecutable::Execute");
   if (device_assignment_ == nullptr) {
     return InvalidArgument("Execute expects a non-null device_assignment");
   }
-  const int num_addressable_devices = addressable_devices_.size();
-
-  if (argument_handles.size() != num_addressable_devices) {
-    return InvalidArgument(
-        "Attempted to execute with %d argument lists when local device "
-        "count is %d (total replica count: %d, partition count: %d)",
-        argument_handles.size(), num_addressable_devices, num_replicas(),
-        num_partitions());
-  }
-
-  VLOG(1) << "Executing computation " << name()
-          << "; num_replicas=" << num_replicas()
-          << " num_partitions=" << num_partitions()
-          << " num_addressable_devices=" << num_addressable_devices;
-
-  std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> wrapped_results(
-      num_addressable_devices);
-  if (returned_futures.has_value()) {
-    returned_futures->resize(num_addressable_devices);
-  }
-  if (num_addressable_devices == 1) {
+  if (addressable_devices_.size() == 1 && argument_handles.size() == 1) {
+    std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> wrapped_results(1);
+    RunId run_id = options.launch_id != 0 ? RunId(options.launch_id)
+                                          : RunId::CreateUniqueId();
     // Fast-path if there is only one device — run the computation on the
     // current thread.
     const int replica = addressable_device_logical_ids_[0].replica;
@@ -1947,67 +1928,16 @@ PjRtCpuLoadedExecutable::Execute(
 
     wrapped_results[0] = std::move(statusor->buffers);
     if (returned_futures.has_value()) {
-      (*returned_futures)[0] = std::move(*statusor->future);
+      returned_futures->push_back(std::move(*statusor->future));
     }
 
     MaybeDumpHloSnapshot(executable_->cpu_executable_->module(), run_id,
                          argument_handles[0], wrapped_results[0]);
+    return wrapped_results;
   } else {
-    // Gang schedule collectives to ensure that collectives with the same RunId
-    // are run at the same time. We conservatively run only one collective at a
-    // time, because we may not have enough threads to run arbitrary number of
-    // collectives concurrently.
-    absl::Mutex mu;
-    int running = num_addressable_devices;
-    int failed = 0;
-    absl::Status first_failure_status;
-
-    for (int i = 0; i < num_addressable_devices; ++i) {
-      const int replica = addressable_device_logical_ids_[i].replica;
-      const int partition = addressable_device_logical_ids_[i].partition;
-
-      client()->async_work_runner()->Schedule([&, replica, partition, i] {
-        auto statusor = ExecuteHelperOnSingleDevice(
-            argument_handles[i], run_id, replica, partition, options,
-            returned_futures.has_value());
-        if (statusor.ok()) {
-          wrapped_results[i] = std::move(statusor->buffers);
-          if (returned_futures.has_value()) {
-            (*returned_futures)[i] = std::move(*statusor->future);
-          }
-        }
-
-        absl::MutexLock lock(mu);
-        --running;
-        if (!statusor.ok()) {
-          if (failed == 0) {
-            first_failure_status = AppendStatus(
-                std::move(statusor).status(),
-                absl::StrFormat(
-                    "while running replica %d and partition %d of a "
-                    "replicated computation (other "
-                    "replicas may have failed as well).",
-                    replica, partition));
-          }
-          ++failed;
-        }
-      });
-    }
-
-    {
-      auto done_running = [&]() {
-        mu.AssertHeld();
-        return running == 0;
-      };
-      absl::MutexLock lock(mu);
-      mu.Await(absl::Condition(&done_running));
-    }
-
-    if (!first_failure_status.ok()) return first_failure_status;
+    return CommonPjRtLoadedExecutable::Execute(argument_handles, options,
+                                               returned_futures);
   }
-  VLOG(1) << "Replicated execution complete.";
-
-  return wrapped_results;
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
@@ -2015,30 +1945,11 @@ PjRtCpuLoadedExecutable::ExecuteSharded(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options, std::optional<Future<>>& returned_future,
     bool fill_future) const {
-  RunId run_id(options.launch_id);
-  tsl::profiler::TraceMe trace_me("PjRtCpuLoadedExecutable::ExecuteSharded");
   if (device_assignment_ == nullptr) {
     return InvalidArgument("ExecuteShard expects a non-null device_assignment");
   }
-  for (int i = 0; i < addressable_devices_.size(); ++i) {
-    if (addressable_devices_[i] == device) {
-      VLOG(1) << "ExecuteShard executes computation " << name()
-              << " on assigned replica/partition on device "
-              << device->DebugString();
-      TF_ASSIGN_OR_RETURN(auto result,
-                          ExecuteHelperOnSingleDevice(
-                              argument_handles, run_id,
-                              addressable_device_logical_ids_[i].replica,
-                              addressable_device_logical_ids_[i].partition,
-                              options, fill_future));
-      returned_future = std::move(result.future);
-      return std::move(result.buffers);
-    }
-  }
-  return InvalidArgument(
-      "ExecuteShard attempted to execute on device id %d which is not "
-      "addressable by this client",
-      device->id());
+  return CommonPjRtLoadedExecutable::ExecuteSharded(
+      argument_handles, device, options, returned_future, fill_future);
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
@@ -2046,28 +1957,10 @@ PjRtCpuLoadedExecutable::ExecutePortable(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options, std::optional<Future<>>& returned_future,
     bool fill_future) const {
-  RunId run_id(options.launch_id);
-  tsl::profiler::TraceMe trace_me("PjRtCpuLoadedExecutable::ExecutePortable");
   if (device_assignment_ != nullptr) {
     return InvalidArgument("ExecutePortable gets a non-portable executable");
   }
-  if (num_replicas() != 1 || num_partitions() != 1) {
-    return InvalidArgument(
-        "ExecutePortable expects a single-core executable but gets "
-        "one with %d replica %d partition",
-        num_replicas(), num_partitions());
-  }
-  if (device == nullptr) {
-    return InvalidArgument("ExecutePortable expects a device to be specified");
-  }
-  VLOG(1) << "ExecutePortable executes single-core portable executable "
-          << name();
-  TF_ASSIGN_OR_RETURN(auto result, ExecuteHelperOnSingleDevice(
-                                       argument_handles, run_id,
-                                       /*replica=*/0,
-                                       /*partition=*/0, options, fill_future,
-                                       tsl::down_cast<PjRtCpuDevice*>(device)));
-  returned_future = std::move(result.future);
-  return std::move(result.buffers);
+  return CommonPjRtLoadedExecutable::ExecutePortable(
+      argument_handles, device, options, returned_future, fill_future);
 }
 }  // namespace xla
