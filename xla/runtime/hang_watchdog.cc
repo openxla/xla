@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/runtime/hang_watchdog.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -62,16 +63,16 @@ static std::shared_ptr<HangWatchdog::Guard> CheckGuard(
     VLOG(3) << absl::StreamFormat(
         "%s didn't finish in %s, calling cancel callback.", locked->action,
         absl::FormatDuration(locked->duration));
-    locked->cancel();
+    std::move(locked->cancel)();
     return nullptr;
   }
 
   return locked;
 }
 
-HangWatchdog::HangWatchdog(tsl::Env* env, absl::string_view name)
-    : thread_pool_(env, absl::StrCat(name, "-hang-watchdog"),
-                   /*num_threads*/ 1) {}
+HangWatchdog::HangWatchdog(tsl::Env* env, absl::string_view name,
+                           size_t num_threads)
+    : thread_pool_(env, absl::StrCat(name, "-hang-watchdog"), num_threads) {}
 
 HangWatchdog::CancelCallback HangWatchdog::Abort(absl::string_view action,
                                                  absl::Duration duration) {
@@ -109,18 +110,19 @@ void HangWatchdog::ScheduleCheck(std::weak_ptr<Guard> guard,
   static constexpr absl::Duration kMaxSleepInterval = absl::Seconds(5);
 
   thread_pool_.Schedule([this, guard = std::move(guard), sleep_interval] {
-    // Check if the guard is already completed.
-    std::shared_ptr<Guard> locked = CheckGuard(guard);
-
-    // If the guard is completed we are done.
-    if (locked == nullptr) {
+    // If the guard is expired we are done. We schedule one task per-guard
+    // because it's easier than dealing with persistent tasks and a
+    // synchronization required to make it safe. Missing a submitted a guard
+    // is a guaranteed way to get a deadlock, we prefer to keep things simple!
+    if (guard.expired()) {
       return;
     }
 
-    // Before sleeping try to do something useful and check the other guards,
-    // while doing that also update the deadline to sleep just enough time to be
-    // able to check the next guard immediately.
-    absl::Time deadline = locked->deadline;
+    // If our guard is not expired process all pending guards and find the
+    // next deadline to sleep just enough time to be able to check the next
+    // guard. All tasks will be racing to check the guards, but this is ok,
+    // because of the scheduling jitter.
+    absl::Time deadline = absl::InfiniteFuture();
     {
       absl::MutexLock lock(mu_);
       auto completed = [&](std::weak_ptr<Guard> ptr) {
@@ -133,6 +135,14 @@ void HangWatchdog::ScheduleCheck(std::weak_ptr<Guard> guard,
       auto remove = std::remove_if(guards_.begin(), guards_.end(), completed);
       guards_.erase(remove, guards_.end());
     }
+
+    // We have no more guards to process, stop recursive scheduling loop.
+    if (deadline == absl::InfiniteFuture()) {
+      return;
+    }
+
+    // We do not hold `mu_` here, because `Schedule` can execute the task in
+    // the caller thread if the task queue is full, and it can lead to deadlock.
 
     // Sleep for the current interval (capped at remaining time to deadline)
     // and schedule the next check with a doubled interval.

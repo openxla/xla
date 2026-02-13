@@ -16,11 +16,13 @@ limitations under the License.
 #ifndef XLA_RUNTIME_HANG_WATCHDOG_H_
 #define XLA_RUNTIME_HANG_WATCHDOG_H_
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
@@ -40,15 +42,19 @@ namespace xla {
 // except aborting the process. In distributed environment XLA tracks alive
 // devices using `IncarnationId`, but this might not be enough to detect hangs
 // as all processes are alive, but not making any progress.
+//
+// IMPORTANT: Cancellation callbacks must be cheap, running expensive work
+// inside the callback can delay processing of other guards. Be careful with
+// setting AsyncValue/Future in the callback, as it will process all OnReady
+// callbacks in the caller thread.
 class HangWatchdog {
  public:
   // Forward declare.
   struct Guard;
 
-  // Cancel callback has to be copyable because we pass it to thread pool.
-  using CancelCallback = std::function<void()>;
+  using CancelCallback = absl::AnyInvocable<void() &&>;
 
-  HangWatchdog(tsl::Env* env, absl::string_view name);
+  HangWatchdog(tsl::Env* env, absl::string_view name, size_t num_threads = 1);
 
   // Returns a cancel callback that will abort the process.
   static CancelCallback Abort(absl::string_view action,
