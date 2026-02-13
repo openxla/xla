@@ -108,10 +108,7 @@ cc_library(
     name = "abstract_tracked_device_buffer",
     srcs = ["abstract_tracked_device_buffer.cc"],
     hdrs = ["abstract_tracked_device_buffer.h"],
-    visibility = [
-        "//third_party/py/torch_tpu/pjrt:__pkg__",
-        "//xla:internal",
-    ],
+    visibility = ["//xla:internal"],
     deps = [
         ":device_event",
         ":pjrt_client",
