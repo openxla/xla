@@ -26,6 +26,7 @@ load(
     "cc_library",
 )
 load(":cc_embed_data.bzl", "cc_embed_data")
+load(":memfile_embed_data.bzl", "memfile_embed_data")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -489,6 +490,70 @@ tsl_cc_test(
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:path",
+    ],
+)
+
+cc_library(
+    name = "memfile_builtin",
+    srcs = ["memfile_builtin.cc"],
+    hdrs = ["memfile_builtin.h"],
+    deps = [
+        ":file_toc",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:ram_file_system",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:path",
+    ],
+)
+
+tsl_cc_test(
+    name = "memfile_builtin_test",
+    srcs = ["memfile_builtin_test.cc"],
+    deps = [
+        ":file_toc",
+        ":memfile_builtin",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_for_library",
+    ],
+)
+
+cc_binary(
+    name = "memfile_stub_generator",
+    srcs = ["memfile_stub_generator.cc"],
+    deps = [
+        ":command_line_flags",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+memfile_embed_data(
+    name = "test_memfile",
+    testonly = True,
+    srcs = ["memfile_test.txt"],
+)
+
+tsl_cc_test(
+    name = "memfile_embed_data_test",
+    srcs = ["memfile_embed_data_test.cc"],
+    data = ["memfile_test.txt"],
+    deps = [
+        ":test_memfile",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:path",
     ],
 )
