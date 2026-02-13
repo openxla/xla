@@ -80,6 +80,7 @@ def prepare_nvidia_gpu_backend_data(backends, disabled_backends, backend_tags, b
         "a100": (8, 0),
         "h100": (9, 0),
         "b200": (10, 0),
+        "gb200": (10, 0),
     }
     for gpu_backend in NVIDIA_GPU_BACKENDS:
         all_tags = new_backend_tags[gpu_backend]
