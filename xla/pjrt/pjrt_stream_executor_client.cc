@@ -274,7 +274,8 @@ class CpuAllocator : public tsl::Allocator {
   std::string Name() override { return "cpu"; }
 
   void* AllocateRaw(size_t alignment, size_t num_bytes) override {
-    return tsl::port::AlignedMalloc(num_bytes, alignment);
+    return tsl::port::AlignedMalloc(num_bytes,
+                                    static_cast<std::align_val_t>(alignment));
   }
   void DeallocateRaw(void* ptr) override { return tsl::port::AlignedFree(ptr); }
 };
