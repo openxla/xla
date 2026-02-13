@@ -106,9 +106,6 @@ class ThunkEmitter {
   absl::StatusOr<ThunkSequence> EmitCollectiveGroupStartThunk(
       const HloInstruction* hlo);
 
-  absl::StatusOr<ThunkSequence> EmitCollectiveMetadata(
-      const HloInstruction* hlo);
-
   absl::StatusOr<ThunkSequence> EmitCollectivePermute(
       const HloCollectivePermuteInstruction* hlo);
 

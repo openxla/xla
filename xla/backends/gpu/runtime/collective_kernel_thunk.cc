@@ -34,7 +34,6 @@ limitations under the License.*/
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/backends/gpu/runtime/collective_kernel_api.h"
-#include "xla/backends/gpu/runtime/collective_metadata_thunk.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"

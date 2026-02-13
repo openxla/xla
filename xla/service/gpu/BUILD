@@ -490,7 +490,6 @@ cc_library(
         "//xla/backends/gpu/runtime:collective_broadcast_thunk",
         "//xla/backends/gpu/runtime:collective_group_thunk",
         "//xla/backends/gpu/runtime:collective_kernel_thunk",
-        "//xla/backends/gpu/runtime:collective_metadata_thunk",
         "//xla/backends/gpu/runtime:collective_multimem",
         "//xla/backends/gpu/runtime:collective_permute_thunk",
         "//xla/backends/gpu/runtime:collective_thunk",
