@@ -18,7 +18,6 @@ limitations under the License.
 
 // clang-format off
 // Required for IS_MOBILE_PLATFORM
-#include <type_traits>
 #include "absl/status/status.h"
 #include "tsl/platform/platform.h"
 // clang-format on
@@ -123,6 +122,7 @@ class Sampler {
 #include <memory>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
