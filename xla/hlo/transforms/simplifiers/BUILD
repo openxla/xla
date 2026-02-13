@@ -382,6 +382,7 @@ cc_library(
     hdrs = ["algebraic_simplifier.h"],
     copts = tsl_copts(),
     deps = [
+        ":conv_operand_swapper",
         "//xla:comparison_util",
         "//xla:literal",
         "//xla:literal_util",
@@ -455,6 +456,42 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "conv_operand_swapper",
+    srcs = ["conv_operand_swapper.cc"],
+    hdrs = ["conv_operand_swapper.h"],
+    copts = tsl_copts(),
+    deps = [
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service:hlo_creation_utils",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "conv_operand_swapper_test",
+    srcs = ["conv_operand_swapper_test.cc"],
+    deps = [
+        ":conv_operand_swapper",
+        "//xla:util",
+        "//xla:window_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )

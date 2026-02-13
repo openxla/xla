@@ -91,6 +91,10 @@ class AlgebraicSimplifierOptions {
     conv_is_lowerable_callback_ = std::move(conv_is_lowerable_callback);
   }
 
+  ConvIsLowerableCallback conv_is_lowerable_callback() const {
+    return conv_is_lowerable_callback_;
+  }
+
   // If is_layout_sensitive is true, then the simplifier preserves layout during
   // transformation. Otherwise, layout is ignored.
   void set_is_layout_sensitive(bool is_layout_sensitive) {
