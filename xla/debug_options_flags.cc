@@ -43,6 +43,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "absl/time/time.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/text_format.h"
 #include "xla/backends/autotuner/backends.pb.h"
@@ -104,7 +105,8 @@ absl::StatusOr<std::vector<RepeatedFlagModifier>> ParseRepeatedEnumModifiers(
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
+                                   T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -432,6 +434,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_executable_embed_debug_info(true);
   opts.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
   opts.set_xla_gpu_executable_terminate_timeout_seconds(30);
+  opts.set_xla_gpu_execution_terminate_timeout("inf");
 
   opts.set_xla_gpu_first_collective_call_warn_stuck_timeout_seconds(20);
   opts.set_xla_gpu_first_collective_call_terminate_timeout_seconds(40);
@@ -592,6 +595,19 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
   auto float_setter_for =
       [debug_options](void (DebugOptions::*member_setter)(float)) {
         return [debug_options, member_setter](float value) {
+          (debug_options->*member_setter)(value);
+          return true;
+        };
+      };
+
+  // Custom setter that checks that argument is a valid `absl::Duration`.
+  auto duration_setter_for =
+      [debug_options](
+          void (DebugOptions::*member_setter)(const std::string& value)) {
+        return [debug_options, member_setter](const std::string& value) {
+          if (absl::Duration duration; !absl::ParseDuration(value, &duration)) {
+            return false;
+          }
           (debug_options->*member_setter)(value);
           return true;
         };
@@ -2491,6 +2507,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_executable_terminate_timeout_seconds),
       debug_options->xla_gpu_executable_terminate_timeout_seconds(),
       "Set timeout for Rendezvous termination"));
+
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_execution_terminate_timeout",
+      duration_setter_for(
+          &DebugOptions::set_xla_gpu_execution_terminate_timeout),
+      debug_options->xla_gpu_execution_terminate_timeout(),
+      "Set timeout for XLA:GPU execution to prevent undetected deadlocks"));
 
   flag_list->push_back(tsl::Flag(
       "xla_gpu_first_collective_call_warn_stuck_timeout_seconds",
