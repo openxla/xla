@@ -418,9 +418,12 @@ absl::Status ExecuteThunksImpl(
 
   // Maybe add a watch guard for this execution.
   absl::Duration watchdog_timeout = absl::InfiniteDuration();
-  TF_RET_CHECK(absl::ParseDuration(
-      debug_options->xla_gpu_execution_terminate_timeout(), &watchdog_timeout))
-      << "Failed to parse XLA execution terminate timeout";
+  if (debug_options) {
+    TF_RET_CHECK(absl::ParseDuration(
+        debug_options->xla_gpu_execution_terminate_timeout(),
+        &watchdog_timeout))
+        << "Failed to parse XLA execution terminate timeout";
+  }
 
   std::shared_ptr<HangWatchdog::Guard> guard = nullptr;
   if (watchdog_timeout < absl::InfiniteDuration()) {
