@@ -763,7 +763,6 @@ def tsl_pybind_extension_opensource(
             "//conditions:default": [so_file],
         }) + pytype_srcs,
         deps = pytype_deps,
-        strict_deps = False,
         srcs_version = srcs_version,
         licenses = licenses,
         testonly = testonly,
