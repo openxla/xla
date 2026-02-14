@@ -2686,17 +2686,17 @@ std::optional<PadWithWrapPattern> FindPadWithWrapPattern(
       }
       inst = inst->operand(0);
     }
-    return std::make_pair(modifiers, inst);
+    return std::pair{modifiers, inst};
   };
 
   PadWithWrapPattern pad_pattern;
-  auto skip_result = skip_elementwise_ops(lhs);
-  pad_pattern.lhs_modifiers = std::move(skip_result.first);
-  lhs = skip_result.second;
+  auto [lhs_modifiers, lhs_inst] = skip_elementwise_ops(lhs);
+  pad_pattern.lhs_modifiers = std::move(lhs_modifiers);
+  lhs = lhs_inst;
 
-  skip_result = skip_elementwise_ops(rhs);
-  pad_pattern.rhs_modifiers = std::move(skip_result.first);
-  rhs = skip_result.second;
+  auto [rhs_modifiers, rhs_inst] = skip_elementwise_ops(rhs);
+  pad_pattern.rhs_modifiers = std::move(rhs_modifiers);
+  rhs = rhs_inst;
 
   const int64_t dim = concat->concatenate_dimension();
   if (lhs->opcode() != HloOpcode::kSlice ||

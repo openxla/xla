@@ -1977,7 +1977,7 @@ std::tuple<HloSharding, HloSharding, int64_t> CreateSplitShardingTuple(
       hlo_sharding_util::SplitShardingDimension(source, dim, new_dim_size);
   HloSharding split_target =
       hlo_sharding_util::SplitShardingDimension(target, dim, new_dim_size);
-  return std::make_tuple(std::move(split_source), std::move(split_target), dim);
+  return {std::move(split_source), std::move(split_target), dim};
 }
 
 // Matching the following patterns, where X and Y cannot be 1.
@@ -2802,16 +2802,16 @@ absl::StatusOr<std::pair<HloInstruction*, PartitionedHlo>> HandleSliceHelper(
   if (sharding.IsTileMaximal()) {
     // As the return type is a StatusOr<pair>, the pair type is not
     // autodeduced without the explicit pair
-    return std::make_pair(nullptr,
-                          PartitionedHlo(nullptr, shape, poperand.state()));
+    return std::pair<HloInstruction*, PartitionedHlo>(
+        nullptr, PartitionedHlo(nullptr, shape, poperand.state()));
   }
 
   auto reshard_operand =
       ReshardDataForSlicing(slice_strides, slice_starts, slice_limits,
                             poperand.Reshard(sharding), sharding, b);
   if (!reshard_operand.has_value()) {
-    return std::make_pair(nullptr,
-                          PartitionedHlo(nullptr, shape, poperand.state()));
+    return std::pair<HloInstruction*, PartitionedHlo>(
+        nullptr, PartitionedHlo(nullptr, shape, poperand.state()));
   }
   TF_RET_CHECK(!reshard_operand->dynamic_slice_index_on_output.has_value());
 
@@ -2820,9 +2820,9 @@ absl::StatusOr<std::pair<HloInstruction*, PartitionedHlo>> HandleSliceHelper(
   final_operand->set_sharding(sharding);
 
   CHECK_NE(reshard_operand->sharded_input, nullptr);
-  return std::make_pair(reshard_operand->sharded_input,
-                        PartitionedHlo(final_operand, shape, poperand.state())
-                            .Reshard(result_sharding));
+  return std::pair(reshard_operand->sharded_input,
+                   PartitionedHlo(final_operand, shape, poperand.state())
+                       .Reshard(result_sharding));
 }
 
 absl::StatusOr<HloInstruction*> HandleSliceHelper(
