@@ -302,6 +302,7 @@ cc_library(
     hdrs = ["pjrt_client.h"],
     visibility = internal_visibility(["//xla:friends"]),
     deps = [
+        ":host_memory_allocator",
         ":pjrt_abi_version",
         ":pjrt_common",
         ":pjrt_compiler",

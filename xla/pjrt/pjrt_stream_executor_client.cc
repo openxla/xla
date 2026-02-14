@@ -691,7 +691,7 @@ PjRtStreamExecutorClient::LinearizeHostBufferInto(
   if (must_use_staging_buffer ||
       ShouldStageHostToDeviceTransfers(data, packed_size)) {
     staging_buffer =
-        host_memory_allocator()->Allocate(transpose ? size : packed_size);
+        GetHostMemoryAllocator()->Allocate(transpose ? size : packed_size);
   }
 
   // Copy the buffer into a staging buffer before returning control to the

@@ -1034,8 +1034,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuClient::BufferFromHostBuffer(
   bool use_staging_buffer = must_use_staging_buffer ||
                             ShouldStageHostToDeviceTransfers(data, packed_size);
 
-  auto copy_to_staging_buffer = [allocator = host_memory_allocator(), byte_size,
-                                 type, packed_size,
+  auto copy_to_staging_buffer = [allocator = GetHostMemoryAllocator(),
+                                 byte_size, type, packed_size,
                                  transpose{std::move(transpose)},
                                  should_pack](const void* src_buf) mutable {
     tsl::profiler::TraceMe traceme("BufferFromHostBuffer::H2D_staging_copy");
