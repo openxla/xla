@@ -917,6 +917,23 @@ TEST_P(ShardingParamShardingTest, GetShardShape) {
                             "Shape 3 vs from ShardingParam 2")));
 }
 
+TEST_P(ShardingParamShardingTest, GetShardShapeWithUnreducedAxes) {
+  auto device_list = GetDevices({0, 1, 2, 3, 4, 5});
+  ShardingParam param{/*dim_shards=*/{2, 1},
+                      {/*permutation=*/{1, 0}, /*axis_sizes=*/{3, 2}},
+                      /*unreduced_axes=*/{1}};
+  TF_ASSERT_OK_AND_ASSIGN(
+      ShardingRef sharding,
+      ShardingParamSharding::Create(param, device_list, MemoryKind()));
+  EXPECT_THAT(sharding->GetShardShape(Shape({6, 6})),
+              absl_testing::IsOkAndHolds(Shape({3, 6})));
+  EXPECT_THAT(sharding->GetShardShape(Shape({6, 6, 6})),
+              absl_testing::StatusIs(
+                  tsl::error::INVALID_ARGUMENT,
+                  HasSubstr("Numbers of dimensions don't match. From "
+                            "Shape 3 vs from ShardingParam 2")));
+}
+
 TEST_P(ShardingParamShardingTest, HasSamePartitioning) {
   auto device_list0 = GetDevices({0, 1, 2, 3, 4, 5});
   ShardingParam param0{/*dim_shards=*/{2, 3},

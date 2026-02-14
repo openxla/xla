@@ -113,7 +113,11 @@ mlir::Attribute convertGeneric(mlir::Attribute ifrt_attr,
     return VifrtDevicesV1Attr::get(attr.getContext(), attr.getIds());
   }
   if (auto attr = llvm::dyn_cast<IfrtShardingParamAttr>(ifrt_attr)) {
-    return VifrtShardingParamV1Attr::get(attr.getContext(), attr.getSharding());
+    if (attr.getSharding().unreduced_axes().empty()) {
+      return VifrtShardingParamV1Attr::get(attr.getContext(),
+                                           attr.getSharding());
+    }
+    return VifrtShardingParamV2Attr::get(attr.getContext(), attr.getSharding());
   }
   if (auto attr = llvm::dyn_cast<IfrtUnspecifiedShardingAttr>(ifrt_attr)) {
     return VifrtUnspecifiedShardingV1Attr::get(attr.getContext());
