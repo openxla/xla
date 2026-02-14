@@ -31,6 +31,10 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "tsl/platform/strcat.h"
 
+#ifndef _WIN32
+#include <limits.h>
+#endif
+
 #ifdef PLATFORM_WINDOWS
 #define WIFEXITED(code) ((code) != 3)
 #define WEXITSTATUS(code) (code)
@@ -57,6 +61,12 @@ std::string EchoArgv1Program() {
 std::string NoopProgram() {
   std::string path = io::JoinPath(testing::XlaSrcRoot(), "tsl", "platform",
                                   "testdata", "test_noop");
+  return tsl::io::AppendDotExeIfWindows(path);
+}
+
+std::string PwdProgram() {
+  std::string path = io::JoinPath(testing::XlaSrcRoot(), "tsl", "platform",
+                                  "testdata", "test_pwd");
   return tsl::io::AppendDotExeIfWindows(path);
 }
 
@@ -384,6 +394,29 @@ TEST_F(SubProcessTest, ConcurrentCheckRunning) {
     thread.reset();  // Join threads
   }
   EXPECT_FALSE(proc.CheckRunning());
+}
+
+TEST_F(SubProcessTest, SetDirectory) {
+  tsl::SubProcess proc;
+  proc.SetProgram(PwdProgram(), {PwdProgram()});
+
+  std::string dir = io::JoinPath(::testing::TempDir(), "setdir_test");
+  TF_ASSERT_OK(Env::Default()->CreateDir(dir));
+
+  if (!proc.SetDirectory(dir)) {
+    GTEST_SKIP() << "SetDirectory not supported on this platform.";
+  }
+
+  proc.SetChannelAction(CHAN_STDOUT, ACTION_PIPE);
+  proc.SetChannelAction(CHAN_STDERR, ACTION_PIPE);
+  EXPECT_TRUE(proc.Start());
+
+  std::string out, err;
+  int status = proc.Communicate(nullptr, &out, &err);
+  EXPECT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(0, WEXITSTATUS(status));
+  EXPECT_EQ(dir, out);
+  EXPECT_EQ("", err);
 }
 
 }  // namespace

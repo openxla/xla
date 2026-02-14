@@ -23,6 +23,7 @@ limitations under the License.
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include <functional>
 #include <memory>
@@ -38,6 +39,15 @@ limitations under the License.
 #else  // defined(__ANDROID_API__) && __ANDROID_API__ < 28
 #define USE_POSIX_SPAWN 0
 #endif  // !defined(__ANDROID_API__) || __ANDROID_API__ >= 28
+
+#if USE_POSIX_SPAWN
+#if _POSIX_VERSION >= 202405L
+#define TSL_USE_POSIX_SPAWN_ADDCHDIR 1
+#elif defined(__GLIBC__) && \
+    (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 29))
+#define TSL_USE_POSIX_SPAWN_ADDCHDIR_NP 1
+#endif
+#endif
 
 // 1) FYI from m3b@ about fork():
 // A danger of calling fork() (as opposed to clone() or vfork()) is that if
@@ -192,6 +202,24 @@ void SubProcess::SetChannelAction(Channel chan, ChannelAction action) {
   }
 }
 
+bool SubProcess::SetDirectory(const string& dir) {
+  absl::MutexLock procLock(&proc_mu_);
+  absl::MutexLock dataLock(&data_mu_);
+  if (running_) {
+    LOG(FATAL) << "SetDirectory called after the process was started.";
+  }
+#if USE_POSIX_SPAWN && !defined(TSL_USE_POSIX_SPAWN_ADDCHDIR) && \
+    !defined(TSL_USE_POSIX_SPAWN_ADDCHDIR_NP)
+  if (!dir.empty()) {
+    LOG(ERROR)
+        << "SetDirectory is not supported with posix_spawn on this platform.";
+    return false;
+  }
+#endif
+  chdir_ = dir;
+  return true;
+}
+
 void SubProcess::SetExitCallback(std::function<void(SubProcess*)> cb) {
   absl::MutexLock procLock(&proc_mu_);
   if (running_) {
@@ -202,6 +230,19 @@ void SubProcess::SetExitCallback(std::function<void(SubProcess*)> cb) {
 }
 
 #if USE_POSIX_SPAWN
+
+namespace {
+int SpawnFileActionsAddChdir(posix_spawn_file_actions_t* file_actions,
+                             const char* path) {
+#if defined(TSL_USE_POSIX_SPAWN_ADDCHDIR)
+  return posix_spawn_file_actions_addchdir(file_actions, path);
+#elif defined(TSL_USE_POSIX_SPAWN_ADDCHDIR_NP)
+  return posix_spawn_file_actions_addchdir_np(file_actions, path);
+#else
+  return -1;
+#endif
+}
+}  //  namespace
 
 // Implementation based on posix_spawn().
 // We prefer to use posix_spawn() where possible to avoid calling
@@ -328,6 +369,17 @@ bool SubProcess::Start() {
   }
 
   // Start the child process and setup the file descriptors of both processes.
+  if (!chdir_.empty()) {
+    ret = SpawnFileActionsAddChdir(&file_actions, chdir_.c_str());
+    if (ret != 0) {
+      LOG(ERROR) << "Start cannot add chdir to POSIX file actions: "
+                 << strerror(ret);
+      posix_spawn_file_actions_destroy(&file_actions);
+      ClosePipes();
+      return false;
+    }
+  }
+
   ret = posix_spawnp(&pid_, exec_path_, &file_actions, nullptr, exec_argv_,
                      environ);
   if (ret != 0) {
@@ -485,6 +537,14 @@ bool SubProcess::Start() {
   if (devnull_fd >= 0) {
     if (close(devnull_fd) < 0) {
       LOG(ERROR) << "close() failed: " << strerror(errno);
+    }
+  }
+
+  // Change directory if requested.
+  if (!chdir_.empty()) {
+    if (chdir(chdir_.c_str()) != 0) {
+      LOG(ERROR) << "chdir() failed: " << strerror(errno);
+      _exit(1);
     }
   }
 
