@@ -609,7 +609,7 @@ PJRT_Error* PJRT_Client_LookupDevice(PJRT_Client_LookupDevice_Args* args) {
       PJRT_Client_LookupDevice_Args_STRUCT_SIZE, args->struct_size));
   PJRT_ASSIGN_OR_RETURN(
       xla::PjRtDevice * device,
-      args->client->client->LookupDevice(xla::PjRtGlobalDeviceId(args->id)));
+      args->client->client->LookupDevice(xla::GlobalDeviceId(args->id)));
   args->device = GetCDevice(args->client, device);
   return nullptr;
 }
@@ -621,7 +621,7 @@ PJRT_Error* PJRT_Client_LookupAddressableDevice(
       PJRT_Client_LookupAddressableDevice_Args_STRUCT_SIZE, args->struct_size));
   PJRT_ASSIGN_OR_RETURN(xla::PjRtDevice * addressable_device,
                         args->client->client->LookupAddressableDevice(
-                            xla::PjRtLocalDeviceId(args->local_hardware_id)));
+                            xla::LocalDeviceId(args->local_hardware_id)));
   args->addressable_device = GetCDevice(args->client, addressable_device);
   return nullptr;
 }
