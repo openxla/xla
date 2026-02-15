@@ -176,7 +176,7 @@ struct GlobalTopology {
   int my_process_index;
   // Mapping from IFRT device ID to PjRt global device ID. Made for the devices
   // that are accessible via `pjrt_client_->devices()`.
-  absl::flat_hash_map<DeviceId, xla::PjRtGlobalDeviceId>
+  absl::flat_hash_map<DeviceId, xla::GlobalDeviceId>
       ifrt_device_id_to_pjrt_global_device_id;
 };
 
@@ -190,7 +190,7 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyFromPjRtClient(
   int num_processes;
   // Mapping from IFRT device ID to PjRt global device ID. Made for the
   // devices that are accessible via `pjrt_client->devices()`.
-  absl::flat_hash_map<DeviceId, xla::PjRtGlobalDeviceId>
+  absl::flat_hash_map<DeviceId, xla::GlobalDeviceId>
       ifrt_device_id_to_pjrt_global_device_id;
   // Process index to IFRT device IDs. Made for all IFRT devices.
   std::vector<std::vector<DeviceId>> process_index_to_ifrt_device_ids;
@@ -275,7 +275,7 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyFromPjRtClient(
     });
 
     for (xla::PjRtDevice* pjrt_device : pjrt_devices) {
-      const xla::PjRtGlobalDeviceId pjrt_global_device_id =
+      const xla::GlobalDeviceId pjrt_global_device_id =
           pjrt_device->global_device_id();
       DeviceId ifrt_device_id;
       if (pjrt_device->IsAddressable()) {
@@ -312,7 +312,7 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyFromPjRtClient(
 
     process_index_to_ifrt_device_ids.resize(num_processes);
     for (xla::PjRtDevice* pjrt_device : pjrt_client->devices()) {
-      const xla::PjRtGlobalDeviceId pjrt_global_device_id =
+      const xla::GlobalDeviceId pjrt_global_device_id =
           pjrt_device->global_device_id();
       // Use PjRt device ID as IFRT device ID.
       const DeviceId ifrt_device_id = DeviceId(pjrt_global_device_id.value());
@@ -436,7 +436,7 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyWithLocalTopology(
       /*assign_global_device_ids=*/false));
 
   std::optional<int> my_process_index;
-  absl::flat_hash_map<DeviceId, xla::PjRtGlobalDeviceId>
+  absl::flat_hash_map<DeviceId, xla::GlobalDeviceId>
       ifrt_device_id_to_pjrt_global_device_id;
   for (int process_index = 0;
        process_index < global_topology_proto.processes_size();
@@ -459,7 +459,7 @@ absl::StatusOr<GlobalTopology> MakeGlobalTopologyWithLocalTopology(
       // exchange is used.
       ifrt_device_id_to_pjrt_global_device_id.insert(
           {DeviceId(device_proto.global_device_id()),
-           xla::PjRtGlobalDeviceId(device_proto.global_device_id())});
+           xla::GlobalDeviceId(device_proto.global_device_id())});
     }
   }
 
@@ -522,7 +522,7 @@ MakePjRtDevicesFromGlobalTopology(PjRtClient* client,
       std::string to_string(device_proto.to_string());
       std::string debug_string(device_proto.debug_string());
       if (node_is_me) {
-        xla::PjRtGlobalDeviceId pjrt_global_device_id =
+        xla::GlobalDeviceId pjrt_global_device_id =
             global_topology.ifrt_device_id_to_pjrt_global_device_id.at(
                 ifrt_device_id);
         TF_ASSIGN_OR_RETURN(pjrt_device,
@@ -967,7 +967,7 @@ absl::StatusOr<PjRtCompatibleMemory*> PjRtClient::LookupPjRtMemory(
   return it->second;
 }
 
-absl::StatusOr<xla::PjRtGlobalDeviceId> PjRtClient::GetPjRtGlobalDeviceId(
+absl::StatusOr<xla::GlobalDeviceId> PjRtClient::GetGlobalDeviceId(
     DeviceId device_id) const {
   auto it = ifrt_device_id_to_pjrt_global_device_id_.find(device_id);
   if (it == ifrt_device_id_to_pjrt_global_device_id_.end()) {
@@ -993,7 +993,7 @@ absl::StatusOr<Device*> PjRtClient::LookupAddressableDevice(
   DCHECK(this);
   TF_ASSIGN_OR_RETURN(xla::PjRtDevice * pjrt_device,
                       pjrt_client_->LookupAddressableDevice(
-                          xla::PjRtLocalDeviceId(local_hardware_id)));
+                          xla::LocalDeviceId(local_hardware_id)));
   return LookupPjRtDevice(pjrt_device);
 }
 
@@ -1411,11 +1411,10 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
       } else {
         // Create vector of (remote) dst devices; we send each array to
         // dst_devices->devices()[i].
-        TF_ASSIGN_OR_RETURN(
-            xla::PjRtGlobalDeviceId dst_global_device_id,
-            GetPjRtGlobalDeviceId(dst_devices->devices()[i]->Id()));
-        std::vector<PjRtGlobalDeviceId> dst_global_device_ids(
-            arrays.size(), dst_global_device_id);
+        TF_ASSIGN_OR_RETURN(xla::GlobalDeviceId dst_global_device_id,
+                            GetGlobalDeviceId(dst_devices->devices()[i]->Id()));
+        std::vector<GlobalDeviceId> dst_global_device_ids(arrays.size(),
+                                                          dst_global_device_id);
 
         // If the PJRT plugin implements the `CrossHostSendBuffers` API, use it.
         // Otherwise, call this class's `CrossHostSendBuffers` method to use the
@@ -1458,19 +1457,17 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
       }
 
       // Get the dst device we receive into.
-      TF_ASSIGN_OR_RETURN(
-          xla::PjRtGlobalDeviceId pjrt_global_device_id,
-          GetPjRtGlobalDeviceId(dst_devices->devices()[i]->Id()));
+      TF_ASSIGN_OR_RETURN(xla::GlobalDeviceId pjrt_global_device_id,
+                          GetGlobalDeviceId(dst_devices->devices()[i]->Id()));
       TF_ASSIGN_OR_RETURN(xla::PjRtDevice * pjrt_device,
                           pjrt_client_->LookupDevice(pjrt_global_device_id));
 
       // Create vector of src devices; we receive each array from
       // src_devices->devices()[i].
-      TF_ASSIGN_OR_RETURN(
-          xla::PjRtGlobalDeviceId src_global_device_id,
-          GetPjRtGlobalDeviceId(src_devices->devices()[i]->Id()));
-      std::vector<PjRtGlobalDeviceId> src_global_device_ids(
-          arrays.size(), src_global_device_id);
+      TF_ASSIGN_OR_RETURN(xla::GlobalDeviceId src_global_device_id,
+                          GetGlobalDeviceId(src_devices->devices()[i]->Id()));
+      std::vector<GlobalDeviceId> src_global_device_ids(arrays.size(),
+                                                        src_global_device_id);
 
       // If the PJRT plugin implements the `CrossHostReceiveBuffers` API, use
       // it. Otherwise, call this class's `CrossHostReceiveBuffers` method to
