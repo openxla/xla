@@ -26,6 +26,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/base/no_destructor.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -69,6 +70,7 @@ limitations under the License.
 #include "xla/map_util.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/runtime/device_id.h"
+#include "xla/runtime/hang_watchdog.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
@@ -108,6 +110,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
@@ -123,6 +126,12 @@ namespace xla {
 namespace gpu {
 
 namespace {
+
+HangWatchdog& StaticHangWatchDog() {
+  static absl::NoDestructor<HangWatchdog> watchdog(tsl::Env::Default(),
+                                                   "gpu-executable");
+  return *watchdog;
+}
 
 // Chooses the correct allocations to be used within the GpuExecutable code.
 std::vector<const BufferAllocation*> GatherAllocationPtrs(
@@ -405,6 +414,25 @@ absl::Status ExecuteThunksImpl(
   }
   if (use_highest_priority_for_async_stream) {
     stream_priority = stream_executor::StreamPriority::Highest;
+  }
+
+  // Maybe add a watch guard for this execution.
+  absl::Duration watchdog_timeout = absl::InfiniteDuration();
+  if (debug_options &&
+      !debug_options->xla_gpu_execution_terminate_timeout().empty()) {
+    TF_RET_CHECK(absl::ParseDuration(
+        debug_options->xla_gpu_execution_terminate_timeout(),
+        &watchdog_timeout))
+        << "Failed to parse XLA execution terminate timeout";
+  }
+
+  std::shared_ptr<HangWatchdog::Guard> guard = nullptr;
+  if (watchdog_timeout < absl::InfiniteDuration()) {
+    std::string watchdog_name = absl::StrFormat(
+        "[%d] XLA GPU execution `%s`", executor->device_ordinal(), module_name);
+    guard = StaticHangWatchDog().Watch(
+        watchdog_name, watchdog_timeout,
+        HangWatchdog::Abort(watchdog_name, watchdog_timeout));
   }
 
   // Borrow streams required for CollectiveThunk.
