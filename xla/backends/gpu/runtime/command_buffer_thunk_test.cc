@@ -189,7 +189,7 @@ TEST(CommandBufferThunkTest, MemcpyCmd) {
   // Construct a thunk with command sequence.
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   ServiceExecutableRunOptions run_options;
   BufferAllocations allocations({a, b}, 0, &allocator);
 
@@ -250,7 +250,7 @@ TEST(CommandBufferThunkTest, MemzeroCmd) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a}, 0, &allocator);
 
   Thunk::ExecuteParams params =
@@ -297,7 +297,7 @@ TEST(CommandBufferThunkTest, Memset32Cmd) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a}, 0, &allocator);
 
   Thunk::ExecuteParams params =
@@ -354,7 +354,7 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersDisabledDuringProfiling) {
                            kProfileCommandBuffersEnabled);
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a}, 0, &allocator);
 
   Thunk::ExecuteParams params =
@@ -413,7 +413,7 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersEnabledDuringProfiling) {
                            kProfileCommandBuffersEnabled);
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a}, 0, &allocator);
 
   Thunk::ExecuteParams params =
@@ -463,7 +463,7 @@ TEST(CommandBufferThunkTest, Memset32CmdOnDifferentStreams) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a}, 0, &allocator);
 
   Thunk::ExecuteParams params =
@@ -524,7 +524,7 @@ TEST(CommandBufferThunkTest, LaunchCmd) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
   Thunk::ExecuteParams params =
@@ -631,7 +631,7 @@ TEST(CommandBufferThunkTest, CustomAddKernelLaunchCmd) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b}, 0, &allocator);
 
   Thunk::ExecuteParams params =
@@ -753,7 +753,7 @@ TEST(CommandBufferThunkTest, GemmCmd) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({lhs, rhs, out, workspace}, 0, &allocator);
 
   Thunk::ExecuteParams params =
@@ -882,7 +882,7 @@ TEST(CommandBufferThunkTest, ChildGemmCmd) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({lhs, rhs, out, workspace}, 0, &allocator);
 
   Thunk::ExecuteParams params =
@@ -1044,7 +1044,7 @@ TEST(CommandBufferThunkTest, DISABLED_DynamicSliceFusionCmd) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({lhs, rhs, out, workspace}, 0, &allocator);
 
   Thunk::ExecuteParams params =
@@ -1193,7 +1193,7 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
     TF_ASSERT_OK(stream->MemZero(&workspace, 1024 * 1024));
 
     ServiceExecutableRunOptions run_options;
-    se::StreamExecutorMemoryAllocator allocator(stream_executor);
+    stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
     BufferAllocations allocations({a, b, c, d, workspace}, 0, &allocator);
 
     Thunk::ExecuteParams params =
@@ -1312,7 +1312,7 @@ TEST(CommandBufferThunkTest, MultipleLaunchCmd) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({a, b, c, d}, 0, &allocator);
 
   Thunk::ExecuteParams params =
@@ -1458,7 +1458,7 @@ TEST(CommandBufferThunkTest, CaseCmd) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({index, a, b}, 0, &allocator);
 
   Thunk::ExecuteParams params =
@@ -1572,7 +1572,7 @@ TEST(CommandBufferThunkTest, WhileCmd) {
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo());
 
   ServiceExecutableRunOptions run_options;
-  se::StreamExecutorMemoryAllocator allocator(stream_executor);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
   BufferAllocations allocations({pred, loop_cnt, num_iters, a, b}, 0,
                                 &allocator);
 
