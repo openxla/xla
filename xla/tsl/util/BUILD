@@ -411,6 +411,25 @@ tsl_cc_test(
     ],
 )
 
+cc_library(
+    name = "unique_any",
+    hdrs = ["unique_any.h"],
+    deps = [
+        "@com_google_absl//absl/log:check",
+    ],
+)
+
+tsl_cc_test(
+    name = "unique_any_test",
+    srcs = ["unique_any_test.cc"],
+    deps = [
+        ":unique_any",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
+    ],
+)
+
 cc_binary(
     name = "filewrapper",
     srcs = ["filewrapper.cc"],
