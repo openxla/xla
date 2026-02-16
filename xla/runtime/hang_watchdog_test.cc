@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/runtime/hang_watchdog.h"
 
 #include <cstddef>
-#include <memory>
 
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
@@ -28,7 +27,7 @@ namespace xla {
 namespace {
 
 TEST(HangWatchdogTest, Cancelled) {
-  HangWatchdog watchdog(tsl::Env::Default(), "test");
+  HangWatchdog watchdog(tsl::Env::Default(), "watchdog");
 
   absl::Notification notification;
 
@@ -40,7 +39,7 @@ TEST(HangWatchdogTest, Cancelled) {
 }
 
 TEST(HangWatchdogTest, Completed) {
-  HangWatchdog watchdog(tsl::Env::Default(), "test");
+  HangWatchdog watchdog(tsl::Env::Default(), "watchdog");
 
   absl::Notification notification;
 
@@ -55,7 +54,7 @@ TEST(HangWatchdogTest, Completed) {
 
 TEST(HangWatchdogTest, StressTest) {
   tsl::thread::ThreadPool pool(tsl::Env::Default(), "stress", 8);
-  HangWatchdog watchdog(tsl::Env::Default(), "test");
+  HangWatchdog watchdog(tsl::Env::Default(), "watchdog");
 
   for (size_t i = 0; i < 1000; ++i) {
     watchdog.Watch("test", absl::Milliseconds(1), [] {});
