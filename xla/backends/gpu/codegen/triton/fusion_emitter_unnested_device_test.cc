@@ -3295,6 +3295,10 @@ ENTRY entry_computation {
 // Reproducer from b/384110192.
 TEST_F(TritonEmitterTest,
        FusionWithOutputContainingMoreThanInt32MaxElementsExecutesCorrectly) {
+  if (GpuComputeCapability().IsRocm()) {
+    GTEST_SKIP() << "Requires more than 4GB GPU memory, exceeds ROCm RBE "
+                    "worker limits";
+  }
   // The point here is to check the output of the Triton fusion. The `slice` op
   // at the end is inserted to allow the comparison of output to run in a
   // reasonable amount of time, and has been proven to still correctly capture
@@ -3357,6 +3361,10 @@ TEST_F(TritonEmitterTest, ConvertF16ToF8E5M2Exhaustive) {
       cc && cc->IsAtLeastHopper()) {
     GTEST_SKIP() << "Skipping tests above Ampere, Triton's conversion isn't "
                     "always correct";
+  }
+  if (GpuComputeCapability().IsRocm()) {
+    GTEST_SKIP() << "Triton's F16 to F8E5M2 conversion doesn't preserve "
+                    "infinities on ROCm";
   }
 
   constexpr absl::string_view kHloTextTemplate = R"(
