@@ -583,6 +583,7 @@ def tsl_pybind_extension_opensource(
         deprecation = None,
         enable_stub_generation = False,  # @unused
         features = [],
+        local_defines = [],
         licenses = None,
         linkopts = [],
         pytype_deps = [],
@@ -650,6 +651,7 @@ def tsl_pybind_extension_opensource(
                 ],
             }),
             defines = defines,
+            local_defines = local_defines,
             features = features + ["-use_header_modules"],
             restricted_to = restricted_to,
             testonly = testonly,
@@ -726,6 +728,7 @@ def tsl_pybind_extension_opensource(
                 version_script_file,
             ],
             defines = defines,
+            local_defines = local_defines,
             features = features + ["-use_header_modules"],
             linkshared = 1,
             testonly = testonly,
