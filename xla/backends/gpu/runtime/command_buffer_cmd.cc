@@ -107,12 +107,12 @@ limitations under the License.
 #include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -1184,8 +1184,7 @@ Command::BufferUses CublasLtCmd::buffer_uses() const {
 // ConvolutionCmd
 //===----------------------------------------------------------------------===//
 
-ConvolutionCmd::ConvolutionCmd(
-    const ConvolutionThunk& thunk)
+ConvolutionCmd::ConvolutionCmd(const ConvolutionThunk& thunk)
     : TracedCommandBufferCmd(CommandType::kConvolutionCmd),
       operand_buffers_(thunk.operand_buffers_),
       result_buffers_(thunk.result_buffers_),
@@ -1202,14 +1201,14 @@ absl::StatusOr<const se::CommandBuffer::Command*> ConvolutionCmd::Record(
     const Thunk::ExecuteParams& execute_params,
     const RecordParams& record_params, RecordAction record_action,
     se::CommandBuffer* command_buffer) {
-  
   VLOG(5) << "ConvolutionCmd";
 
   return RecordTracedCommand(
       execute_params, record_params, std::move(record_action), command_buffer,
       [&](se::Stream* stream) {
-         return RunConvolutionOnStream(execute_params, operand_buffers_, 
-            result_buffers_, scratch_buffer_, config_, cache_, stream);
+        return RunConvolutionOnStream(execute_params, operand_buffers_,
+                                      result_buffers_, scratch_buffer_, config_,
+                                      cache_, stream);
       });
 }
 
@@ -1224,7 +1223,7 @@ Command::BufferUses ConvolutionCmd::buffer_uses() const {
     buffer_usage.push_back(BufferUse::Write(buffer.slice, buffer.shape));
   }
   buffer_usage.push_back(BufferUse::Scratch(
-        scratch_buffer_, ShapeUtil::MakeShape(U8, {scratch_buffer_.size()})));
+      scratch_buffer_, ShapeUtil::MakeShape(U8, {scratch_buffer_.size()})));
   return buffer_usage;
 }
 
