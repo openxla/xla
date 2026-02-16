@@ -46,11 +46,12 @@ TEST_F(GpuCodegenTest, OnNanShouldLogHloInstruction) {
   module->mutable_config().mutable_debug_options().set_xla_gpu_detect_nan(
       DebugOptions::DETECTION_MODE_WARNING);
   absl::ScopedMockLog log;
-  EXPECT_CALL(
-      log, Log(absl::LogSeverity::kError, _,
-               ::testing::HasSubstr("Found entry with non zero nan count ")));
+  EXPECT_CALL(log,
+              Log(absl::LogSeverity::kError, _,
+                  ::testing::AllOf(::testing::HasSubstr("found NaN"),
+                                   ::testing::HasSubstr("nan_count: 1024,"))));
   EXPECT_CALL(log, Log(absl::LogSeverity::kError, _,
-                       ::testing::HasSubstr("Found NaN in HLO instruction ")));
+                       ::testing::HasSubstr("In HLO instruction")));
   EXPECT_CALL(log,
               Log(absl::LogSeverity::kError, _,
                   ::testing::HasSubstr("HLO fusion instruction computation")));
@@ -75,11 +76,12 @@ TEST_F(GpuCodegenTest, OnInfShouldLogHloInstruction) {
   module->mutable_config().mutable_debug_options().set_xla_gpu_detect_inf(
       DebugOptions::DETECTION_MODE_WARNING);
   absl::ScopedMockLog log;
-  EXPECT_CALL(
-      log, Log(absl::LogSeverity::kError, _,
-               ::testing::HasSubstr("Found entry with non zero inf count ")));
+  EXPECT_CALL(log,
+              Log(absl::LogSeverity::kError, _,
+                  ::testing::AllOf(::testing::HasSubstr("found Inf"),
+                                   ::testing::HasSubstr("inf_count: 1024,"))));
   EXPECT_CALL(log, Log(absl::LogSeverity::kError, _,
-                       ::testing::HasSubstr("Found Inf in HLO instruction ")));
+                       ::testing::HasSubstr("In HLO instruction ")));
   EXPECT_CALL(log,
               Log(absl::LogSeverity::kError, _,
                   ::testing::HasSubstr("HLO fusion instruction computation")));
