@@ -40,6 +40,13 @@ struct HangWatchdog::Guard {
         deadline(absl::Now() + duration),
         cancel(std::move(cancel)) {}
 
+  ~Guard() {
+    absl::Duration elapsed = absl::Now() - (deadline - duration);
+    VLOG(5) << absl::StreamFormat(
+        "%s completed after %v (was added to watch for %v)", action, elapsed,
+        duration);
+  }
+
   std::string action;
   absl::Duration duration;
   absl::Time deadline;
@@ -60,8 +67,8 @@ static std::shared_ptr<HangWatchdog::Guard> CheckGuard(
   // Action timed out, cancel it via the user-defined callback.
   if (absl::Now() > locked->deadline) {
     VLOG(3) << absl::StreamFormat(
-        "%s didn't finish in %s, calling cancel callback.", locked->action,
-        absl::FormatDuration(locked->duration));
+        "%s didn't finish in %v, calling cancel callback.", locked->action,
+        locked->duration);
     locked->cancel();
     return nullptr;
   }
@@ -77,8 +84,8 @@ HangWatchdog::CancelCallback HangWatchdog::Abort(absl::string_view action,
                                                  absl::Duration duration) {
   return [action = std::string(action), duration] {
     LOG(FATAL) << absl::StreamFormat(
-        "%s didn't finish in %s. Abort the process to avoid infinite hangs.",
-        action, absl::FormatDuration(duration));
+        "%s didn't finish in %v. Abort the process to avoid infinite hangs.",
+        action, duration);
   };
 }
 
@@ -88,9 +95,10 @@ std::shared_ptr<HangWatchdog::Guard> HangWatchdog::Watch(
   // so that accumulated sleep/wake-up jitter doesn't extend the timeout.
   auto guard = std::make_shared<Guard>(action, duration, std::move(cancel));
 
-  VLOG(3) << absl::StreamFormat("Watch %s for %s (deadline %s)", action,
-                                absl::FormatDuration(duration),
-                                absl::FormatTime(guard->deadline));
+  VLOG(3) << absl::StreamFormat(
+      "Watch %s for %v (deadline %s)", action, duration,
+      absl::FormatTime("%Y-%m-%d %H:%M:%S", guard->deadline,
+                       absl::LocalTimeZone()));
 
   {  // Track newly created guard.
     absl::MutexLock lock(&mu_);
