@@ -310,6 +310,7 @@ def nvidia_gpu_build_with_compute_capability(
     multi_gpu: bool = False,
 ) -> Build:
   """Returns a build for a Nvidia GPU build with the given compute capability."""
+  repo_env = {"TF_CUDA_COMPUTE_CAPABILITIES": f"{compute_capability/10}"}
   if multi_gpu:
     options = {
         "//xla/tsl:ci_build": True,
@@ -327,6 +328,7 @@ def nvidia_gpu_build_with_compute_capability(
         nvidia_only_multi_gpu_filters
         + _tag_filters_only_for_compute_capability(compute_capability)
     )
+    repo_env["REMOTE_GPU_TESTING"] = 0
   else:
     options = {
         "run_under": "//build_tools/ci:parallel_gpu_execute",
@@ -347,7 +349,7 @@ def nvidia_gpu_build_with_compute_capability(
       test_tag_filters=test_tag_filters,
       build_tag_filters=build_tag_filters,
       options=options,
-      repo_env={"TF_CUDA_COMPUTE_CAPABILITIES": f"{compute_capability/10}"},
+      repo_env=repo_env,
       extra_setup_commands=(["nvidia-smi"],),
   )
 
