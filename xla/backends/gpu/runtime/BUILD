@@ -4173,6 +4173,7 @@ xla_test(
         ":thunk_id",
         "//xla:types",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
