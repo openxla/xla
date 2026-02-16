@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_THUNK_H_
 #define XLA_BACKENDS_GPU_RUNTIME_THUNK_H_
 
-#include <any>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -58,6 +57,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/gtl/int_type.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -263,7 +263,8 @@ class Thunk {
   // might lead to "leaks", as the map will be destroyed only when the
   // executable is destroyed. It also thread-safe by construction as all thunks
   // for a GPU program run sequentially from a single thread.
-  using ExecutionScopedState = absl::flat_hash_map<const Thunk*, std::any>;
+  using ExecutionScopedState =
+      absl::flat_hash_map<const Thunk*, tsl::UniqueAny>;
 
   //===--------------------------------------------------------------------===//
   // PrepareParams

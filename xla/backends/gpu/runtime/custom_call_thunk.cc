@@ -67,6 +67,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
 #include "tsl/platform/platform.h"
 
@@ -479,12 +480,10 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
   ffi::ExecutionState* initialize_state = nullptr;
 
   if (execution_scoped_state) {
-    std::any& state = (*execution_scoped_state)[this];
-    if (!state.has_value()) {
-      state = std::make_shared<PrepareAndInitState>();
-    }
+    auto [it, _] = execution_scoped_state->try_emplace(
+        this, std::in_place_type<PrepareAndInitState>);
     PrepareAndInitState& prepare_and_init =
-        *std::any_cast<std::shared_ptr<PrepareAndInitState>&>(state);
+        tsl::any_cast<PrepareAndInitState>(it->second);
     prepare_state = &prepare_and_init.prepare;
     initialize_state = &prepare_and_init.init;
   }
