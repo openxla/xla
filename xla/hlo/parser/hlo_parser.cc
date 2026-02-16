@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
+#include "xla/hlo/ir/stack_frames.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/hlo/parser/hlo_lexer.h"
 #include "xla/layout.h"
@@ -1336,7 +1337,7 @@ bool HloParserImpl::ParseStackFrameIndex(HloModule* module) {
       !ParseStackFramesList(&stack_frame_index)) {
     return false;
   }
-  module->set_stack_frame_index(std::move(stack_frame_index));
+  module->set_stack_frames(StackFrames(std::move(stack_frame_index)));
   return true;
 }
 

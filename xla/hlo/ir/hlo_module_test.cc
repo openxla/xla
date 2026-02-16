@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/ir/stack_frames.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/utils/hlo_query.h"
@@ -350,12 +351,12 @@ TEST(HloModuleTest, ClonePreservesStackFrameIndex) {
   auto* stack_frame = stack_frame_index.add_stack_frames();
   stack_frame->set_file_location_id(1);
   stack_frame->set_parent_frame_id(0);
-  m1.set_stack_frame_index(stack_frame_index);
+  m1.set_stack_frames(StackFrames(stack_frame_index));
 
   std::unique_ptr<HloModule> m2 = m1.Clone(kCloneSuffix);
 
-  EXPECT_TRUE(m2->stack_frame_index().has_value());
-  EXPECT_THAT(m2->stack_frame_index().value(),
+  EXPECT_FALSE(m2->stack_frames().empty());
+  EXPECT_THAT(m2->stack_frames().proto(),
               tsl::proto_testing::EqualsProto(stack_frame_index));
 }
 
