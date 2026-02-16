@@ -32,9 +32,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/service/hlo_runner_pjrt.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
+#include "xla/service/hlo_runner_pjrt.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -129,9 +129,9 @@ class CommandBufferTest
 
   // Same as above, but generates fake inputs and compares results to a
   // reference execution. Useful for tests originally using RunAndCompare.
-  void RunAndCompareThreeIterations(
-      std::unique_ptr<HloModule> module, bool run_hlo_passes,
-      const std::optional<ErrorSpec>& error) {
+  void RunAndCompareThreeIterations(std::unique_ptr<HloModule> module,
+                                    bool run_hlo_passes,
+                                    const std::optional<ErrorSpec>& error) {
     // Verify module then clone for reference.
     CHECK_OK(this->verifier().Run(module.get()).status());
     std::unique_ptr<HloModule> reference_module = module->Clone();
@@ -151,8 +151,8 @@ class CommandBufferTest
         reference_runner().Execute(std::move(reference_module),
                                    absl::MakeSpan(arg_ptrs), run_hlo_passes));
 
-    TF_ASSERT_OK_AND_ASSIGN(auto exec,
-                            CreateExecutable(std::move(module), run_hlo_passes));
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto exec, CreateExecutable(std::move(module), run_hlo_passes));
 
     auto* pjrt_runner = tsl::down_cast<HloRunnerPjRt*>(&test_runner());
     EXPECT_TRUE(pjrt_runner != nullptr);
@@ -161,24 +161,23 @@ class CommandBufferTest
     // pointers really get updated during the last "update run".
     std::array<std::vector<std::unique_ptr<PjRtBuffer>>, 2> argument_handles;
     for (auto& handle : argument_handles) {
-      TF_ASSERT_OK_AND_ASSIGN(
-          handle, pjrt_runner->TransferLiteralsToDevice(
-                      input_layouts, absl::MakeSpan(arg_ptrs)));
+      TF_ASSERT_OK_AND_ASSIGN(handle,
+                              pjrt_runner->TransferLiteralsToDevice(
+                                  input_layouts, absl::MakeSpan(arg_ptrs)));
     }
     for (int i = 0; i < 3; i++) {
-      TF_ASSERT_OK_AND_ASSIGN(
-          auto output_buffers,
-          pjrt_runner->ExecuteWithDeviceBuffers(
-              exec.get(), argument_handles[i < 2 ? 0 : 1]));
+      TF_ASSERT_OK_AND_ASSIGN(auto output_buffers,
+                              pjrt_runner->ExecuteWithDeviceBuffers(
+                                  exec.get(), argument_handles[i < 2 ? 0 : 1]));
 
-      TF_ASSERT_OK_AND_ASSIGN(
-          auto result,
-          pjrt_runner->TransferLiteralsFromDevice(output_buffers,
-                                                  untuple_results));
+      TF_ASSERT_OK_AND_ASSIGN(auto result,
+                              pjrt_runner->TransferLiteralsFromDevice(
+                                  output_buffers, untuple_results));
       if (!LiteralTestUtil::NearOrEqual(reference, result, error)) {
-        ::testing::AssertionFailure()
-            << "Mismatch on "
-            << (i == 0 ? "warm-up run" : i == 1 ? "create run" : "update run");
+        ::testing::AssertionFailure() << "Mismatch on "
+                                      << (i == 0   ? "warm-up run"
+                                          : i == 1 ? "create run"
+                                                   : "update run");
       }
     }  // for
   }
@@ -247,18 +246,16 @@ ENTRY Test {
   HloModuleConfig config;
   DebugOptions debug_options = GetDebugOptionsForTest();
   debug_options.clear_xla_gpu_enable_command_buffer();
-  debug_options.add_xla_gpu_enable_command_buffer(
-      DebugOptions::CONVOLUTION);
-  debug_options.add_xla_gpu_enable_command_buffer(
-      DebugOptions::FUSION);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CONVOLUTION);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   debug_options.set_xla_gpu_graph_min_graph_size(1);
   config.set_debug_options(debug_options);
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_text, config));
 
-  RunAndCompareThreeIterations(
-      std::move(module), /*run_hlo_passes=*/true, ErrorSpec{1e-3, 2e-3});
+  RunAndCompareThreeIterations(std::move(module), /*run_hlo_passes=*/true,
+                               ErrorSpec{1e-3, 2e-3});
 }
 
 // Empty memcpy state to test stateful custom calls.
@@ -771,8 +768,8 @@ TEST_P(CommandBufferTest, DynamicSliceCopyFusionCmd) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_text, config));
 
-  RunAndCompareThreeIterations(
-      std::move(module), /*run_hlo_passes=*/false, ErrorSpec{1e-3, 2e-3});
+  RunAndCompareThreeIterations(std::move(module), /*run_hlo_passes=*/false,
+                               ErrorSpec{1e-3, 2e-3});
 
   if (!IsAtLeastCuda12900(GpuExecutor())) {
     GTEST_SKIP() << "While loop unrolling is not supported for CUDA < 12.9";
@@ -794,8 +791,7 @@ TEST_P(CommandBufferTest, DynamicSliceCopyFusionCmd) {
                           ParseAndReturnVerifiedModule(hlo_text, config));
 
   RunAndCompareThreeIterations(std::move(unrolled_module),
-                               /*run_hlo_passes=*/false,
-                               ErrorSpec{1e-3, 2e-3});
+                               /*run_hlo_passes=*/false, ErrorSpec{1e-3, 2e-3});
 }
 
 TEST_P(CommandBufferUnrollTest, WhileLoop) {
