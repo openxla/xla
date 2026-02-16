@@ -159,7 +159,6 @@ std::unique_ptr<GemmThunk> CreateGemmThunk(const BufferAllocation& alloc1) {
 
 std::unique_ptr<ConvolutionThunk> CreateConvolutionThunk(
                 const BufferAllocation& alloc) {
-  se::StreamExecutor* executor = GpuExecutor();
   std::vector< ShapedSlice > operand_slices, result_slices;
   for (int i = 0, num = 3; i < num; i++) {
     operand_slices.emplace_back(
