@@ -1124,9 +1124,8 @@ TEST_F(TfrtGpuClientTest, LookupDevice) {
   ASSERT_GE(client_->devices().size(), 2);
   TfrtGpuDevice* device =
       absl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto* looked_up_device,
-      client_->LookupDevice(PjRtGlobalDeviceId(device->id())));
+  TF_ASSERT_OK_AND_ASSIGN(auto* looked_up_device,
+                          client_->LookupDevice(GlobalDeviceId(device->id())));
   EXPECT_EQ(looked_up_device, device);
 
   TF_ASSERT_OK_AND_ASSIGN(
