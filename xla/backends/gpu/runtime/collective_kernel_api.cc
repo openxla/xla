@@ -22,9 +22,11 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/no_destructor.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_clique_rendezvous.h"
 #include "xla/core/collectives/rank_id.h"
@@ -72,14 +74,30 @@ absl::Status LaunchMultiGpuBarrier(
   }
 
   stream_executor::StreamExecutor* executor = stream->parent();
-  TF_ASSIGN_OR_RETURN(
-      auto kernel, (stream_executor::gpu::GpuKernelRegistry::GetGlobalRegistry()
-                        .LoadKernel<MultiGpuBarrierKernel>(executor)));
+  // Load the multi-GPU barrier kernel only once per stream executor.
+  static absl::NoDestructor<absl::flat_hash_map<
+      se::StreamExecutor*, MultiGpuBarrierKernel::KernelType>>
+      kernel_per_executor;
+  static absl::NoDestructor<absl::Mutex> kernel_mutex;
+
+  MultiGpuBarrierKernel::KernelType* kernel;
+  {
+    absl::MutexLock lock(*kernel_mutex);
+    if (!kernel_per_executor->contains(executor)) {
+      TF_ASSIGN_OR_RETURN(
+          auto new_kernel,
+          (stream_executor::gpu::GpuKernelRegistry::GetGlobalRegistry()
+               .LoadKernel<MultiGpuBarrierKernel>(executor)));
+      kernel_per_executor->emplace(executor, std::move(new_kernel));
+    }
+
+    kernel = &kernel_per_executor->at(executor);
+  }
 
   stream_executor::DeviceAddress<uint32_t> typed_sync_counter(
       local_barrier_signal_value);
 
-  return kernel.Launch(
+  return kernel->Launch(
       stream_executor::ThreadDim(MultiGpuBarrierKernel::kMaxPeers, 1, 1),
       stream_executor::BlockDim(1, 1, 1), stream,
       static_cast<int64_t>(rank.value()), static_cast<int64_t>(num_devices),
