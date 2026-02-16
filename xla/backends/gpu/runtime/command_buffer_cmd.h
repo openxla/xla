@@ -135,8 +135,6 @@ class EmptyCmd : public Command {
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override { return {}; }
 };
 
 //===----------------------------------------------------------------------===//
@@ -303,14 +301,6 @@ class ChildCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  bool requires_initialization() override;
-
-  bool force_update() override;
-
-  bool support_loop_unroll() override { return false; }
-
-  BufferUses buffer_uses() const override;
-
   absl::Status WalkNested(
       absl::FunctionRef<absl::Status(Command*)> callback) override;
 
@@ -332,12 +322,6 @@ class CaseCmd : public Command {
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
-
-  bool requires_initialization() override;
-
-  bool force_update() override;
-
-  bool support_loop_unroll() override { return false; }
 
   BufferUses buffer_uses() const override;
 
@@ -369,14 +353,6 @@ class WhileCmd : public Command {
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
-
-  bool requires_initialization() override;
-
-  bool force_update() override;
-
-  // We have not tried unrolling the loop inside another loop, so marking it
-  // unsupported for now.
-  bool support_loop_unroll() override { return false; }
 
   BufferUses buffer_uses() const override;
 
@@ -566,7 +542,7 @@ class CollectiveCmd : public AsyncStartCommand {
 
   absl::Status Prepare(const Thunk::PrepareParams& params) final;
 
-  bool requires_initialization() override { return true; }
+  bool requires_initialization() const final { return true; }
 
   bool IsNestedCommandBuffer() const final { return true; }
 
@@ -603,8 +579,6 @@ class CollectiveDoneCmd : public AsyncDoneCommand {
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override { return {}; }
 
   std::shared_ptr<CollectiveThunk::AsyncEvents> async_events() const {
     return async_events_;
@@ -818,13 +792,9 @@ class DynamicSliceFusionCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUses buffer_uses() const override;
+  bool force_update() const final { return true; }
 
-  bool force_update() override { return true; }
-
-  bool requires_initialization() override;
-
-  bool support_loop_unroll() override { return true; }
+  bool requires_initialization() const final;
 
   bool IsNestedCommandBuffer() const final { return true; }
 
@@ -879,9 +849,7 @@ class DynamicSliceCopyFusionCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  bool force_update() override { return offsets_.depends_on_loop; }
-
-  bool support_loop_unroll() override { return true; }
+  bool force_update() const final { return offsets_.depends_on_loop; }
 
   BufferUses buffer_uses() const override;
 
