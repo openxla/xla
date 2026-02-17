@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -41,6 +42,7 @@ limitations under the License.
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
+#include "tsl/platform/numa.h"
 
 namespace xla {
 
@@ -52,16 +54,18 @@ namespace xla {
   std::vector<int64_t> v_coords(description.coords().begin(),
                                 description.coords().end());
 
-  description.SetAttributes(
-      {{"coords", xla::PjRtDeviceAttribute(v_coords)},
-       {"device_vendor", device_vendor},
-       // TODO - b/435521225: `slice_index` is deprecated. Use
-       // `partition_index`, which better aligns with NVIDIA's terminology.
-       {"slice_index", static_cast<int64_t>(partition_index)},
-       {"partition_index", static_cast<int64_t>(partition_index)},
-       {"compute_capability", xla::PjRtDeviceAttribute(compute_capability)},
-       {"shared_memory_per_block_optin", shared_memory_per_block_optin},
-       {"core_count", static_cast<int64_t>(core_count)}});
+  absl::flat_hash_map<std::string, PjRtDeviceAttribute> attributes = {
+      {"coords", xla::PjRtDeviceAttribute(v_coords)},
+      {"device_vendor", device_vendor},
+      // TODO - b/435521225: `slice_index` is deprecated. Use
+      // `partition_index`, which better aligns with NVIDIA's terminology.
+      {"slice_index", static_cast<int64_t>(partition_index)},
+      {"partition_index", static_cast<int64_t>(partition_index)},
+      {"compute_capability", xla::PjRtDeviceAttribute(compute_capability)},
+      {"shared_memory_per_block_optin", shared_memory_per_block_optin},
+      {"core_count", static_cast<int64_t>(core_count)},
+  };
+  description.SetAttributes(std::move(attributes));
   description.SetToString(absl::StrFormat(
       "StreamExecutorGpuDevice(device_kind=%s, id=%i, process_index=%i, "
       "partition_index=%i))",
@@ -135,7 +139,8 @@ StreamExecutorGpuTopologyDescription::CreateDeviceDescription(
     StreamExecutorGpuTopologyDescription::SetupDeviceDescription(
         *description, gpu_vendor, compute_capability,
         target_config_->gpu_device_info().core_count(),
-        target_config_->gpu_device_info().shared_memory_per_block_optin(), 0);
+        target_config_->gpu_device_info().shared_memory_per_block_optin(),
+        /*partition_index=*/0);
   }
   return description;
 }

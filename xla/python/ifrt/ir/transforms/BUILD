@@ -28,7 +28,6 @@ cc_library(
     srcs = [
         "ifrt_atom_programs_from_vhlo_pass.cc",
         "ifrt_atom_programs_to_vhlo_pass.cc",
-        "ifrt_compile_and_propagate_shardings_pass.cc",
         "ifrt_compile_atom_program_pass.cc",
         "ifrt_dump_atom_programs_pass.cc",
         "ifrt_duplicated_callee_elimination_pass.cc",
@@ -81,7 +80,6 @@ cc_library(
         "//xla/python/ifrt/ir:ifrt_ir_program",
         "//xla/python/ifrt/ir:ifrt_ir_program_proto_cc",
         "//xla/python/ifrt/ir:ifrt_ops_inc_gen",
-        "//xla/python/ifrt/ir:sharding_param",
         "//xla/python/ifrt/ir:version",
         "//xla/python/ifrt/ir:vifrt",
         "//xla/python/ifrt/support:sharding_conversions",
@@ -125,6 +123,7 @@ cc_library(
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:random",
     ],
 )
 
@@ -146,11 +145,13 @@ cc_library(
     hdrs = ["utils.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/mlir/utils:type_util",
         "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
         "//xla/python/ifrt/ir",
+        "//xla/python/ifrt/support:module_parsing",
         "//xla/python/pjrt_ifrt:pjrt_dtype",
         "//xla/python/pjrt_ifrt:xla_ifrt",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -159,6 +160,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:BytecodeWriter",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",

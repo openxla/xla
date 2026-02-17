@@ -535,9 +535,9 @@ ENTRY entry {
   EXPECT_TRUE(all_gather->device_list().version() ==
               CollectiveDeviceListVersion::kIota);
   EXPECT_EQ(all_gather->device_list(),
-            CollectiveDeviceList(IotaReplicaGroupList(
+            IotaReplicaGroupList(
                 /*num_replica_groups=*/1, /*num_devices_per_group=*/4,
-                /*reshape_dims=*/{4}, /*transpose_perm=*/{0})));
+                /*reshape_dims=*/{4}, /*transpose_perm=*/{0}));
 }
 
 TEST_P(SpmdPartitioningTest, TiledToSingleDevice) {
@@ -598,9 +598,9 @@ ENTRY entry {
   EXPECT_EQ(all_to_all->replica_groups()[0].replica_ids_size(), 8);
   if (GetParam() == ShardingFormatPicker::ShardingType::kBestEffortV2) {
     EXPECT_EQ(all_to_all->device_list(),
-              CollectiveDeviceList(IotaReplicaGroupList(
+              IotaReplicaGroupList(
                   /*num_replica_groups=*/1, /*num_devices_per_group=*/8,
-                  /*reshape_dims=*/{4, 2}, /*transpose_perm=*/{1, 0})));
+                  /*reshape_dims=*/{4, 2}, /*transpose_perm=*/{1, 0}));
   } else {
     std::vector<std::vector<int64_t>> expected_replica_groups = {
         {0, 2, 4, 6, 1, 3, 5, 7}};
@@ -2011,9 +2011,9 @@ ENTRY entry {
   EXPECT_EQ((*all_reduce_instruction)->device_list().version(),
             CollectiveDeviceListVersion::kIota);
   EXPECT_EQ((*all_reduce_instruction)->device_list(),
-            CollectiveDeviceList(IotaReplicaGroupList(
+            IotaReplicaGroupList(
                 /*num_replica_groups=*/1, /*num_devices_per_group=*/8,
-                /*reshape_dims=*/{8}, /*transpose_perm=*/{0})));
+                /*reshape_dims=*/{8}, /*transpose_perm=*/{0}));
 }
 
 TEST_P(SpmdPartitioningTest, ConvolutionLhsTiledRhsTiledWindowReversal) {
@@ -12055,7 +12055,7 @@ ENTRY entry {
                                          ->root_instruction()
                                          ->false_computation()
                                          ->root_instruction();
-    auto operand = AllOf(op::Shape("s32[1,4,2,2]"), op::DynamicSlice());
+    auto operand = AllOf(op::Shape("s32[1,4,2,2]"), op::Broadcast());
     auto indices = AllOf(op::Shape("s32[2,1,4]"), op::Subtract());
     auto update = AllOf(op::Shape("s32[1,4,2,2]"), op::DynamicSlice());
     auto scatter =
@@ -12154,11 +12154,9 @@ ENTRY %module {
     EXPECT_EQ(all_to_all->device_list().version(),
               CollectiveDeviceListVersion::kIota);
     EXPECT_EQ(all_to_all->device_list(),
-              CollectiveDeviceList(IotaReplicaGroupList(
+              IotaReplicaGroupList(
                   /*num_replica_groups=*/4, /*num_devices_per_group=*/2,
-                  /*reshape_dims=*/{2, 2, 2},
-                  /*transpose_perm=*/{0, 2, 1})));
-
+                  /*reshape_dims=*/{2, 2, 2}, /*transpose_perm=*/{0, 2, 1}));
   } else {
     std::vector<std::vector<int64_t>> expected_replica_groups = {
         {0, 2}, {1, 3}, {4, 6}, {5, 7}};
@@ -13074,7 +13072,7 @@ ENTRY main.22 {
   const auto root = module->entry_computation()->root_instruction();
   auto operand = AllOf(op::Shape("f32[16,2]"), op::Broadcast());
   auto indices = AllOf(op::Shape("s32[8,2]"), op::Subtract());
-  auto update = AllOf(op::Shape("f32[8]"), op::AllGather());
+  auto update = AllOf(op::Shape("f32[8]"), op::Broadcast(op::Constant()));
   EXPECT_THAT(root, AllOf(op::Shape("f32[16,2]"),
                           op::Scatter(operand, indices, update)));
 }
@@ -15047,6 +15045,28 @@ TEST_P(SpmdPartitioningTest, DusOfBroadcastWithEnzymeOpt) {
   auto sharded_dus_in = AllOf(op::Parameter(0), op::Shape("f32[20,40,50]"));
   EXPECT_THAT(root, AllOf(op::Select(op::Pad(_, _), sharded_dus_in,
                                      op::Broadcast(sharded_input)),
+                          op::Shape("f32[20,40,50]")));
+}
+
+TEST_P(SpmdPartitioningTest, AddBroadcastWithEnzymeOpt) {
+  absl::string_view hlo_string = R"hlo(
+  HloModule module
+
+  ENTRY entry {
+    %dus_in = f32[20,80,100] parameter(0), sharding={devices=[1,2,2]<=[2,2]T(1,0)}
+    %cst = f32[] parameter(1), sharding={replicated}
+    bcast = f32[20,80,100] broadcast(cst), dimensions={}, sharding={devices=[1,1,4]<=[2,2]T(1,0)}
+    ROOT %add = f32[20,80,100] add(%dus_in, %bcast), sharding={devices=[1,2,2]<=[2,2]T(1,0)}
+  }
+)hlo";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/4));
+
+  const auto root = module->entry_computation()->root_instruction();
+  auto sharded_input = AllOf(op::Parameter(1), op::Shape("f32[]"));
+  auto sharded_dus_in = AllOf(op::Parameter(0), op::Shape("f32[20,40,50]"));
+  EXPECT_THAT(root, AllOf(op::Add(sharded_dus_in, op::Broadcast(sharded_input)),
                           op::Shape("f32[20,40,50]")));
 }
 

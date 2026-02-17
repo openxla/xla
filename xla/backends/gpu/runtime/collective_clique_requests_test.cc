@@ -17,7 +17,10 @@ limitations under the License.
 
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/runtime/device_id.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/test.h"
@@ -35,10 +38,14 @@ TEST(CollectiveCliqueRequestsTest, OrderedRequests) {
   GpuCliqueKey k1({d0, d1}, 2);
   GpuCliqueKey k2({d0, d1, d2, d3}, 4);
 
+  std::vector<std::vector<GlobalDeviceId>> rg0 = {{d2, d3}};
+  std::vector<std::vector<GlobalDeviceId>> rg1 = {{d0, d1}};
+  std::vector<std::vector<GlobalDeviceId>> rg2 = {{d0, d1, d2, d3}};
+
   CollectiveCliqueRequests requests;
-  TF_ASSERT_OK(requests.RequestClique(k0));
-  TF_ASSERT_OK(requests.RequestClique(k1));
-  TF_ASSERT_OK(requests.RequestClique(k2));
+  TF_ASSERT_OK(requests.RequestClique(k0, rg0));
+  TF_ASSERT_OK(requests.RequestClique(k1, rg1));
+  TF_ASSERT_OK(requests.RequestClique(k2, rg2));
 
   // Check that we acquire larger cliques first, and then cliques with smaller
   // id first, as acquiring cliques according to natural clique key order might
@@ -48,6 +55,65 @@ TEST(CollectiveCliqueRequestsTest, OrderedRequests) {
   EXPECT_EQ(ordered_requests[0].key, k2);
   EXPECT_EQ(ordered_requests[1].key, k0);
   EXPECT_EQ(ordered_requests[2].key, k1);
+}
+
+TEST(CollectiveCliqueRequestsTest, RequestDevComms) {
+  GlobalDeviceId d0 = GlobalDeviceId(0);
+  GlobalDeviceId d1 = GlobalDeviceId(1);
+
+  GpuCliqueKey k0({d0, d1}, 2);
+
+  std::vector<std::vector<GlobalDeviceId>> rg0 = {{d0, d1}};
+
+  GpuDeviceCommunicator::Requirements dev_comm0{8};
+  GpuDeviceCommunicator::Requirements dev_comm1{16};
+
+  CollectiveCliqueRequests requests;
+  TF_ASSERT_OK(requests.RequestClique(k0, rg0, {dev_comm0}));
+  TF_ASSERT_OK(requests.RequestClique(k0, rg0, {dev_comm1}));
+
+  auto ordered_requests = requests.OrderedRequestedCliques();
+  ASSERT_EQ(ordered_requests.size(), 1);
+  EXPECT_EQ(ordered_requests[0].key, k0);
+  ASSERT_EQ(ordered_requests[0].dev_comms.size(), 2);
+  EXPECT_TRUE(ordered_requests[0].dev_comms.contains(dev_comm0));
+  EXPECT_TRUE(ordered_requests[0].dev_comms.contains(dev_comm1));
+}
+
+TEST(CollectiveCliqueRequestsTest, DeviceGroupsNormalized) {
+  GlobalDeviceId d0 = GlobalDeviceId(0);
+  GlobalDeviceId d1 = GlobalDeviceId(1);
+
+  GpuCliqueKey k0({d0, d1}, 2);
+
+  // Check that the order of devices in replica groups doesn't matter.
+  std::vector<std::vector<GlobalDeviceId>> dg0a = {{d0, d1}};
+  std::vector<std::vector<GlobalDeviceId>> dg0b = {{d1, d0}};
+
+  CollectiveCliqueRequests requests;
+  TF_ASSERT_OK(requests.RequestClique(k0, dg0a));
+  TF_ASSERT_OK(requests.RequestClique(k0, dg0b));
+}
+
+TEST(CollectiveCliqueRequestsTest, DeviceGroupsMismatch) {
+  GlobalDeviceId d0 = GlobalDeviceId(0);
+  GlobalDeviceId d1 = GlobalDeviceId(1);
+  GlobalDeviceId d2 = GlobalDeviceId(2);
+  GlobalDeviceId d3 = GlobalDeviceId(3);
+
+  GpuCliqueKey k0({d0, d1}, 2);
+
+  // Check that the order of devices in replica groups doesn't matter.
+  std::vector<std::vector<GlobalDeviceId>> dg0a = {{d0, d1}};
+  std::vector<std::vector<GlobalDeviceId>> dg0b = {{d1, d0}, {d2, d3}};
+
+  CollectiveCliqueRequests requests;
+  TF_ASSERT_OK(requests.RequestClique(k0, dg0a));
+
+  ASSERT_THAT(
+      requests.RequestClique(k0, dg0b),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             testing::HasSubstr("different device groups")));
 }
 
 }  // namespace xla::gpu

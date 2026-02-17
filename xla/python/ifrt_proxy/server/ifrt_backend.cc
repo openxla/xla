@@ -57,6 +57,7 @@
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/host_callback.h"
+#include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/mpmd_executable.h"
 #include "xla/python/ifrt/program.h"
@@ -107,8 +108,8 @@ absl::StatusOr<IfrtArrayRef> MakeStringArrayFromHostBuffer(
   const void* data = string_host_buffer.data();
 
   return client->MakeArrayFromHostBuffer(
-      data, dtype, std::move(shape), std::move(byte_strides),
-      std::move(sharding),
+      data, dtype, std::move(shape), byte_strides, std::move(sharding),
+      /*layout=*/nullptr,
       xla::ifrt::Client::HostBufferSemantics::kImmutableUntilTransferCompletes,
       /*on_done_with_host_buffer=*/
       [host_buffer = std::move(host_buffer),
@@ -873,6 +874,11 @@ IfrtBackend::HandleMakeArrayFromHostBufferRequest(
   TF_ASSIGN_OR_RETURN(
       auto sharding,
       Sharding::FromProto(client_.get(), make_array_request->sharding()));
+  LayoutRef layout;
+  if (make_array_request->has_layout()) {
+    TF_ASSIGN_OR_RETURN(layout,
+                        Layout::FromProto(make_array_request->layout()));
+  }
 
   const auto byte_strides = [&]() -> std::optional<std::vector<int64_t>> {
     if (!make_array_request->has_byte_strides()) {
@@ -904,7 +910,7 @@ IfrtBackend::HandleMakeArrayFromHostBufferRequest(
         array,
         client_->MakeArrayFromHostBuffer(
             mem_region.zeroth_element(), dtype, std::move(shape),
-            std::move(byte_strides), std::move(sharding),
+            std::move(byte_strides), std::move(sharding), std::move(layout),
             xla::ifrt::Client::HostBufferSemantics::
                 kImmutableUntilTransferCompletes,
             [hold = std::move(host_buffer)]() mutable { hold.reset(); }));
@@ -1429,9 +1435,11 @@ tsl::Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
                               client_.get(), xla_options->compile_options));
     }
 
-    TF_ASSIGN_OR_RETURN(auto executable,
-                        client_->GetDefaultCompiler()->CompileAndLoad(
-                            std::move(program), std::move(options)));
+    TF_ASSIGN_OR_RETURN(
+        auto executable,
+        client_->GetDefaultCompiler()
+            ->CompileAndLoad(std::move(program), std::move(options))
+            .Await());
 
     std::unique_ptr<IfrtResponse> ifrt_resp =
         NewIfrtResponse(request->request_metadata().op_id());
@@ -1495,12 +1503,14 @@ tsl::Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
     // future, we may introduce separate mechanisms to remove futures from
     // `futures_` without checking its status for situations where futures are
     // not used.
+    //
+    // TODO(junwhan): Clean this up once the client stops querying the ready
+    // future.
     {
       absl::MutexLock lock(futures_mutex_);
       compile_resp->set_ready_future_handle(
           handle_generator_.GenerateAtServer());
-      futures_.insert(
-          {compile_resp->ready_future_handle(), executable->GetReadyFuture()});
+      futures_.insert({compile_resp->ready_future_handle(), absl::OkStatus()});
     }
 
     {

@@ -15,9 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/nccl_communicator.h"
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/collectives/nccl_errors.h"
@@ -46,6 +47,7 @@ limitations under the License.
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
 #include "xla/primitive_util.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -55,6 +57,7 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 
 // Include NCCL after XLA headers.
@@ -84,16 +87,21 @@ static size_t ToNcclCount(PrimitiveType dtype, size_t count) {
   return primitive_util::IsComplexType(dtype) ? count * 2 : count;
 }
 
-static absl::StatusOr<ncclDataType_t> ToNcclDataType(PrimitiveType dtype,
-                                                     bool is_reduction_op) {
+static absl::StatusOr<ncclDataType_t> ToNcclDataType(
+    PrimitiveType dtype, bool is_reduction_op, se::CudaComputeCapability cc) {
   switch (dtype) {
     case S8:
-    case F8E5M2:
-    case F8E4M3FN:
     case F8E5M2FNUZ:
     case F8E4M3FNUZ:
     case F8E8M0FNU:
       return ncclInt8;
+    // For pre-Hopper FP8 reductions, let NCCL throw appropriate errors.
+    case F8E5M2:
+      return (cc.IsAtLeastHopper() || is_reduction_op) ? ncclFloat8e5m2
+                                                       : ncclInt8;
+    case F8E4M3FN:
+      return (cc.IsAtLeastHopper() || is_reduction_op) ? ncclFloat8e4m3
+                                                       : ncclInt8;
     case PRED:
     case U8:
       return ncclUint8;
@@ -178,7 +186,7 @@ class NcclCommunicator::NcclRegisteredBufferHandle
     if (!symmetric_handle_) {
 #if (NCCL_VERSION_CODE >= 21901)
       auto f = [this]() -> absl::Status {
-        if (comm_.canceling_.load()) {
+        if (comm_.cancel_->IsCancelled()) {
           return FailedPrecondition("[%d] NcclCommunicator aborted",
                                     device_ordinal_);
         }
@@ -199,7 +207,7 @@ class NcclCommunicator::NcclRegisteredBufferHandle
           device_ordinal_, handle_, comm_.comm_);
 #if (NCCL_VERSION_CODE >= 22700)
       auto f = [this]() -> absl::Status {
-        if (comm_.canceling_.load()) {
+        if (comm_.cancel_->IsCancelled()) {
           return FailedPrecondition("[%d] NcclCommunicator aborted",
                                     device_ordinal_);
         }
@@ -263,14 +271,14 @@ NcclCommunicator::CreateSymmetricMemory(se::DeviceAddressBase addr) {
 
 absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
     se::StreamExecutor* stream_executor,
-    absl::AnyInvocable<absl::StatusOr<ncclComm_t>()> make_comm, bool is_async,
-    std::atomic_bool* cancel, tsl::Env& env) {
+    absl::AnyInvocable<absl::StatusOr<ncclComm_t>()> make_comm,
+    std::shared_ptr<CancellationToken> cancel, bool is_async, tsl::Env& env) {
   auto f = [cancel, &make_comm]() -> absl::StatusOr<ncclComm_t> {
     TF_ASSIGN_OR_RETURN(ncclComm_t comm, make_comm());
     if (cancel) {
       TF_RETURN_IF_ERROR(::xla::gpu::PollUntilDone(comm, *cancel));
     } else {
-      std::atomic_bool never_cancelled;
+      CancellationToken never_cancelled;
       TF_RETURN_IF_ERROR(::xla::gpu::PollUntilDone(comm, never_cancelled));
     }
     return comm;
@@ -280,8 +288,8 @@ absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
     // If this NcclCommunicator is synchronous, construct ncclComm_t in the
     // calling thread.
     TF_ASSIGN_OR_RETURN(ncclComm_t comm, f());
-    return absl::WrapUnique(
-        new NcclCommunicator(stream_executor, comm, nullptr));
+    return absl::WrapUnique(new NcclCommunicator(stream_executor, comm, nullptr,
+                                                 std::move(cancel)));
   }
 
   // If this NcclCommunicator is asynchronous, then all operations on the
@@ -290,8 +298,8 @@ absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
   auto executor = std::make_unique<SingleThreadedExecutor>(env);
   TF_ASSIGN_OR_RETURN(ncclComm_t comm,
                       MakeFutureOn<ncclComm_t>(*executor, f).Await());
-  return absl::WrapUnique(
-      new NcclCommunicator(stream_executor, comm, std::move(executor)));
+  return absl::WrapUnique(new NcclCommunicator(
+      stream_executor, comm, std::move(executor), std::move(cancel)));
 }
 
 NcclCommunicator::~NcclCommunicator() {
@@ -318,9 +326,9 @@ NcclCommunicator::~NcclCommunicator() {
 }
 
 absl::Status NcclCommunicator::Abort() {
-  // By setting canceling_ to true, all pending collectives scheduled on
+  // By setting the cancellation token all pending collectives scheduled on
   // executor_ will cancel. This will allow the aborting lambda below to run.
-  canceling_.store(true);
+  cancel_->Cancel();
 
   return ExecuteAwait([this]() -> absl::Status {
     VLOG(1) << "Abort NCCL communicator: " << *this;
@@ -337,7 +345,7 @@ absl::Status NcclCommunicator::Abort() {
 absl::Status NcclCommunicator::HealthCheck() const {
   return ExecuteAwait([this]() -> absl::Status {
     VLOG(5) << "Get last async error for NCCL communicator: " << *this;
-    if (canceling_.load()) {
+    if (cancel_->IsCancelled()) {
       return FailedPrecondition("NcclCommunicator aborted");
     }
 
@@ -355,7 +363,7 @@ absl::Status NcclCommunicator::HealthCheck() const {
 absl::StatusOr<size_t> NcclCommunicator::NumRanks() const {
   return ExecuteAwait<size_t>([this]() -> absl::StatusOr<size_t> {
     VLOG(5) << "Get the number of ranks in NCCL communicator: " << *this;
-    if (canceling_.load()) {
+    if (cancel_->IsCancelled()) {
       return FailedPrecondition("NcclCommunicator aborted");
     }
 
@@ -409,11 +417,10 @@ NcclCommunicator::RegisterBuffer(stream_executor::DeviceAddressBase buffer,
     return ExecuteAwait<Handle>(
         [&buffer, device_ordinal, this]() -> absl::StatusOr<Handle> {
           VLOG(3) << absl::StreamFormat(
-              "[%d] Register buffer for NCCL communicator; buffer=%p; "
-              "size=%d; "
+              "[%d] Register buffer for NCCL communicator; buffer=%p; size=%d; "
               "comm=%p",
               device_ordinal, buffer.opaque(), buffer.size(), comm_);
-          if (canceling_.load()) {
+          if (cancel_->IsCancelled()) {
             return FailedPrecondition("NcclCommunicator aborted");
           }
           void* handle = nullptr;
@@ -579,7 +586,7 @@ absl::Status NcclCommunicator::LaunchAllReduce(
     se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
     PrimitiveType dtype, size_t count, ReductionKind reduction_kind,
     const Communicator::Executor& executor) {
-  if (canceling_.load()) {
+  if (cancel_->IsCancelled()) {
     return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
@@ -592,7 +599,11 @@ absl::Status NcclCommunicator::LaunchAllReduce(
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
       count, reduction_kind, comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, /*is_reduction_op=*/true,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclAllReduce(
       send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
@@ -607,7 +618,7 @@ absl::Status NcclCommunicator::LaunchAllReduce(
 absl::Status NcclCommunicator::LaunchBroadcast(
     se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
     PrimitiveType dtype, size_t count, RankId root, const Executor& executor) {
-  if (canceling_.load()) {
+  if (cancel_->IsCancelled()) {
     return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
@@ -620,7 +631,11 @@ absl::Status NcclCommunicator::LaunchBroadcast(
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
       count, root.value(), comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, false,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclBroadcast(
       send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
@@ -635,7 +650,7 @@ absl::Status NcclCommunicator::LaunchReduceScatter(
     se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
     PrimitiveType dtype, size_t count, ReductionKind reduction_kind,
     const Executor& executor) {
-  if (canceling_.load()) {
+  if (cancel_->IsCancelled()) {
     return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
@@ -648,7 +663,11 @@ absl::Status NcclCommunicator::LaunchReduceScatter(
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
       count, reduction_kind, comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, /*is_reduction_op=*/true,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclReduceScatter(
       send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
@@ -663,7 +682,7 @@ absl::Status NcclCommunicator::LaunchReduceScatter(
 absl::Status NcclCommunicator::LaunchAllGather(
     se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
     PrimitiveType dtype, size_t count, const Executor& executor) {
-  if (canceling_.load()) {
+  if (cancel_->IsCancelled()) {
     return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
@@ -675,7 +694,11 @@ absl::Status NcclCommunicator::LaunchAllGather(
       recv_buffer.opaque(), primitive_util::LowercasePrimitiveTypeName(dtype),
       count, comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, false,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclAllGather(
       send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
@@ -716,7 +739,7 @@ absl::Status NcclCommunicator::LaunchAllToAll(
     absl::InlinedVector<se::DeviceAddressBase, 4> send_buffers,
     absl::InlinedVector<se::DeviceAddressBase, 4> recv_buffers,
     PrimitiveType dtype, size_t count, const Executor& executor) {
-  if (canceling_.load()) {
+  if (cancel_->IsCancelled()) {
     return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
@@ -754,7 +777,11 @@ absl::Status NcclCommunicator::LaunchAllToAll(
         send_buffers.size(), num_ranks);
   }
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, false,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
 #if NCCL_VERSION_CODE >= 22800
   // If send and receive buffers are contiguous we can use all-to-all API from
@@ -788,7 +815,7 @@ absl::Status NcclCommunicator::LaunchCollectivePermute(
     se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
     PrimitiveType dtype, size_t count, std::optional<RankId> source_rank,
     absl::Span<const RankId> target_ranks, const Executor& executor) {
-  if (canceling_.load()) {
+  if (cancel_->IsCancelled()) {
     return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
@@ -799,7 +826,7 @@ absl::Status NcclCommunicator::LaunchCollectivePermute(
 
   VLOG(3) << absl::StreamFormat(
       "[%d] Launch NCCL CollectivePermute operation; send_buffer=%p; "
-      "recv_buffer=%p; dtype=%s; source_rank=%s; target_ranks=[%s]; "
+      "recv_buffer=%p; dtype=%s; source_rank=%s; target_[ranks=%s]; "
       "count=%d; "
       "comm=%p; stream=%p",
       stream->parent()->device_ordinal(), send_buffer.opaque(),
@@ -807,7 +834,11 @@ absl::Status NcclCommunicator::LaunchCollectivePermute(
       source_rank ? absl::StrCat(source_rank->value()) : "<empty>",
       absl::StrJoin(target_ranks, ", ", rank_formatter), count, comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, false,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   // Short-circuit if there is no source or target rank.
   if (!source_rank && target_ranks.empty()) {
@@ -837,7 +868,7 @@ absl::Status NcclCommunicator::LaunchSend(se::DeviceAddressBase send_buffer,
                                           PrimitiveType dtype, size_t count,
                                           RankId peer,
                                           const Executor& executor) {
-  if (canceling_.load()) {
+  if (cancel_->IsCancelled()) {
     return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
@@ -849,7 +880,11 @@ absl::Status NcclCommunicator::LaunchSend(se::DeviceAddressBase send_buffer,
       primitive_util::LowercasePrimitiveTypeName(dtype), count, peer.value(),
       comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, false,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(
       ncclSend(send_buffer.opaque(), ToNcclCount(dtype, count), nccl_dtype,
@@ -864,7 +899,7 @@ absl::Status NcclCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
                                           PrimitiveType dtype, size_t count,
                                           RankId peer,
                                           const Executor& executor) {
-  if (canceling_.load()) {
+  if (cancel_->IsCancelled()) {
     return FailedPrecondition("NcclCommunicator aborted");
   }
   se::Stream* stream = ToStream(executor);
@@ -876,7 +911,11 @@ absl::Status NcclCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
       primitive_util::LowercasePrimitiveTypeName(dtype), count, peer.value(),
       comm_, stream);
 
-  TF_ASSIGN_OR_RETURN(ncclDataType_t nccl_dtype, ToNcclDataType(dtype, false));
+  TF_ASSIGN_OR_RETURN(
+      ncclDataType_t nccl_dtype,
+      ToNcclDataType(
+          dtype, false,
+          stream->parent()->GetDeviceDescription().cuda_compute_capability()));
 
   TF_RETURN_IF_ERROR(XLA_NCCL_STATUS(
       ncclRecv(recv_buffer.opaque(), ToNcclCount(dtype, count), nccl_dtype,
@@ -894,10 +933,10 @@ std::string NcclCommunicator::ToString() const {
 }
 
 absl::Status NcclCommunicator::PollUntilDone() const {
-  if (canceling_.load()) {
+  if (cancel_->IsCancelled()) {
     return FailedPrecondition("NcclCommunicator aborted");
   }
-  return ::xla::gpu::PollUntilDone(comm_, canceling_);
+  return ::xla::gpu::PollUntilDone(comm_, *cancel_);
 }
 
 Future<> NcclCommunicator::Execute(

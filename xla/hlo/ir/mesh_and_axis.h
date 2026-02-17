@@ -102,7 +102,8 @@ class Mesh {
   static Mesh FromProto(const MeshProto& proto);
 
   const TileAssignment& device_assignment() const { return device_assignment_; }
-  std::vector<std::string> axis_names() const { return axes_names_; }
+  absl::Span<const std::string> axis_names() const { return axes_names_; }
+  int64_t num_axes() const { return axes_names_.size(); }
   absl::Span<const int64_t> axis_sizes() const {
     return device_assignment_.dimensions();
   }
@@ -110,8 +111,11 @@ class Mesh {
     return device_assignment_.dim(axis_index);
   }
 
+  // Returns true if the given axes span contains all mesh axes in order.
+  bool ContainsAllMeshAxesInOrder(absl::Span<const AxisRef> axes) const;
+
  private:
-  absl::Status ValidateMesh();
+  absl::Status Validate();
   // Dimensions of the `device_assignment_` array correspond to the axes of the
   // mesh.
   TileAssignment device_assignment_;
@@ -129,6 +133,11 @@ class AxisRef {
     int64_t pre_size;
     int64_t size;
     int64_t next_pre_size() const { return pre_size * size; }
+
+    template <typename H>
+    friend H AbslHashValue(H h, const SubAxis& s) {
+      return H::combine(std::move(h), s.pre_size, s.size);
+    }
   };
 
   // Index corresponding to axis in the mesh. It should be a valid index into
@@ -157,6 +166,11 @@ class AxisRef {
 
   bool operator!=(const xla::AxisRef& other) const { return !(*this == other); }
 
+  template <typename H>
+  friend H AbslHashValue(H h, const AxisRef& a) {
+    return H::combine(std::move(h), a.mesh_axis_index_, a.sub_axis_info_);
+  }
+
   std::string ToString(const Mesh* mesh = nullptr) const;
 
   AxisRefProto ToProto() const;
@@ -180,9 +194,6 @@ class AxisRef {
   std::optional<SubAxis> sub_axis_info() const { return sub_axis_info_; }
 
   int64_t size(const Mesh& mesh) const;
-
- private:
-  absl::Status ValidateAxisRef();
 };
 
 std::ostream& operator<<(std::ostream& out, const Mesh& mesh);
@@ -191,10 +202,12 @@ std::ostream& operator<<(std::ostream& out, const AxisRef& axis);
 
 bool AxesCanCoexistWithoutOverlap(absl::Span<const AxisRef> axes);
 
-// The span of axes is valid if (1) all axes are valid for the given mesh, and
-// (2) the axes can coexist without overlap.
+// The span of axes is valid if (1) all axes are valid for the given mesh,
+// (2) the axes can coexist without overlap, and (3) mergeable neighbors are
+// merged if `allow_mergeable_neighbors` is false.
 absl::Status ValidateSpanOfAxes(absl::Span<const AxisRef> axes,
-                                const Mesh& mesh);
+                                const Mesh& mesh,
+                                bool allow_mergeable_neighbors = false);
 
 }  // namespace xla
 

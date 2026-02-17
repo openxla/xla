@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,7 +26,6 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
-#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -35,6 +33,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/layout.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/dot_as_convolution_util.h"
@@ -84,9 +83,27 @@ HloInstruction* ReverseFormatShape(
     HloComputation* computation);
 
 // Determines if the first operand 'potential_subsharding' is a subsharding of
-// the second operand 'sharding'. Subsharding means that the tiles in
-// 'potential_subsharding' define tiles that have a subset or the same data that
-// the tiles in 'sharding' define.
+// the second operand 'sharding'.
+//
+// For Tiled Sharding:
+// Subsharding means that the tiles in 'potential_subsharding' define tiles that
+// have a subset or the same data that the tiles in 'sharding' define.
+//
+// For Named Sharding:
+// A sub-tiling ensures that each dimension sharding in `potential_subsharding`
+// is a subset of a dimension sharding in `sharding`.
+// This implies two conditions:
+// 1. Axis Alignment: For every tensor dimension, the sequence of axes in
+//    `sharding` must be a prefix of the sequence of axes in
+//    `potential_subsharding`.
+//    - Sub-axes are handled by checking if the `potential_subsharding` axis can
+//      be sliced to match the `sharding` axis.
+//    - Example: `sharding` on `["x":(1)2]` is a valid prefix for
+//      `potential_subsharding` on `["x"]` (full axis), as the full axis implies
+//      the sub-axis.
+// 2. Data Containment: The data partitions defined by `potential_subsharding`
+//    must align with `sharding` such that no sub-tile crosses the boundary of a
+//    parent tile.
 bool IsSubTilingOrEqualSharding(const Shape& shape,
                                 const HloSharding& potential_subsharding,
                                 const HloSharding& sharding);
@@ -256,6 +273,11 @@ HloSharding ReplicateAllDataDims(const HloSharding& sharding,
 // be 1.
 HloSharding RemoveShapeDimensions(const HloSharding& sharding,
                                   absl::Span<const int64_t> dims_to_remove);
+
+// Returns a sharding that adds `num_dims` sharding dimensions of size 1 (i.e
+// replicated) at `insertion_index`.
+HloSharding AddShapeDimensions(const HloSharding& sharding,
+                               int64_t insertion_index, int64_t num_dims);
 
 // Similar to TransposeSharding(), but allows removing/adding non-partitioned
 // dimensions. In src_to_tgt and tgt_to_src, -1 represents a non-existing
@@ -516,6 +538,12 @@ Shape TileShape(const HloSharding& sharding, const Shape& shape);
 // Returns the tiled shape.
 // REQUIRES: !sharding.IsTuple()
 Shape TileLeafShape(const HloSharding& sharding, const Shape& shape);
+
+// Replicate the parameter/output sharding if the sharding does not evenly
+// partition the parameter/output.
+void ReplicateBoundaryShardingsIfIndivisible(
+    HloModule* module, absl::Span<const bool> process_output,
+    absl::Span<const bool> process_parameters);
 
 // Canonicalizes entry_computation_layout by calling
 // module->layout_canonicalization_callback(), which gives canonicalized

@@ -413,7 +413,8 @@ Future<> TfrtGpuBuffer::ToLiteralHelper(
         buffer_ptr = literal->untyped_data();
         if (should_unpack || transpose != nullptr ||
             client->ShouldStageHostToDeviceTransfers(buffer_ptr, byte_size)) {
-          staging_buffer = client->host_memory_allocator()->Allocate(byte_size);
+          staging_buffer =
+              client->GetHostMemoryAllocator()->Allocate(byte_size);
           buffer_ptr = staging_buffer.get();
         }
       } else {
@@ -593,7 +594,8 @@ Future<> TfrtGpuBuffer::CopyRawToHostFuture(Future<void*> dst_future,
         client->ShouldStageHostToDeviceTransfers(dst, transfer_size);
 
     if (use_staging) {
-      staging_buffer = client->host_memory_allocator()->Allocate(transfer_size);
+      staging_buffer =
+          client->GetHostMemoryAllocator()->Allocate(transfer_size);
     }
 
     void* host_ptr = use_staging ? staging_buffer.get() : dst;

@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/future.h"
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
@@ -115,6 +116,18 @@ tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::Create(
       value, local_device, allocator);
 }
 
+/*static*/ void RawSEDeviceMemory::ConstructDelayed(
+    tsl::AsyncValueRef<RawSEDeviceMemory> buf, se::DeviceAddressBase value,
+    LocalDeviceState* local_device, se::DeviceAddressAllocator* allocator) {
+  tsl::Cast<AllocatedRawSEDeviceMemory>(buf).emplace(value, local_device,
+                                                     allocator);
+}
+
+/*static*/ tsl::AsyncValueRef<RawSEDeviceMemory>
+RawSEDeviceMemory::CreateDelayedMemory() {
+  return tsl::MakeUnconstructedAsyncValueRef<AllocatedRawSEDeviceMemory>();
+}
+
 class ForeignRawSEDeviceMemory : public RawSEDeviceMemory {
  public:
   ForeignRawSEDeviceMemory(se::DeviceAddressBase value,
@@ -132,11 +145,39 @@ class ForeignRawSEDeviceMemory : public RawSEDeviceMemory {
   absl::AnyInvocable<void() &&> on_delete_callback_;
 };
 
+class SlicedRawSEDeviceMemory : public RawSEDeviceMemory {
+ public:
+  SlicedRawSEDeviceMemory(se::DeviceAddressBase value,
+                          tsl::AsyncValueRef<RawSEDeviceMemory> base)
+      : RawSEDeviceMemory(value), base_(base) {}
+
+  void UnsafeReleaseMemory() override {
+    LOG(FATAL) << "SlicedRawSEDeviceMemory cannot be donated.";
+  }
+
+ private:
+  tsl::AsyncValueRef<RawSEDeviceMemory> base_;
+};
+
 tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::CreateForeign(
     se::DeviceAddressBase value,
     absl::AnyInvocable<void() &&> on_delete_callback) {
   return tsl::MakeAvailableAsyncValueRef<ForeignRawSEDeviceMemory>(
       value, std::move(on_delete_callback));
+}
+
+tsl::AsyncValueRef<RawSEDeviceMemory> RawSEDeviceMemory::CreateSlice(
+    tsl::AsyncValueRef<RawSEDeviceMemory> base, size_t offset, size_t size) {
+  size_t src_size = base->mem().size();
+  if (offset <= src_size && size <= src_size - offset) {
+    return tsl::MakeAvailableAsyncValueRef<SlicedRawSEDeviceMemory>(
+        se::DeviceAddressBase(
+            reinterpret_cast<char*>(base->mem().opaque()) + offset, size),
+        base);
+  }
+  return tsl::MakeErrorAsyncValueRef(absl::InvalidArgumentError(
+      absl::StrFormat("Error when slicing: [%d,%d) in array of size %d", offset,
+                      offset + size, src_size)));
 }
 
 TrackedDeviceBuffer::TrackedDeviceBuffer(
@@ -163,7 +204,11 @@ void TrackedDeviceBuffer::AddUsageEvent(BufferSequencingEventRef event,
 
   // If the event is 0, it means that the event is not recorded yet and the task
   // related to this event is deferred, so just add it.
-  if (!event->IsDefined()) {
+  auto state = event->event().GetAsyncValue()->state();
+  if (state == tsl::AsyncValue::State::kConcrete) {
+  } else if (state == tsl::AsyncValue::State::kError) {
+    return;
+  } else {
     usage_events_.push_back({event, reference_held});
     return;
   }
@@ -273,6 +318,19 @@ TrackedDeviceBuffer::GetAsyncValueDefinitionEvents() {
   return avs;
 }
 
+std::vector<tsl::RCReference<tsl::AsyncValue>>
+TrackedDeviceBuffer::GetAsyncValueDefinitionAndUsageEvents() {
+  std::vector<tsl::RCReference<tsl::AsyncValue>> avs;
+  avs.reserve(definition_events_.size());
+  for (const auto& ev : definition_events_) {
+    avs.push_back(ev.CopyRCRef());
+  }
+  for (const auto& ev : usage_events_) {
+    avs.push_back(ev.event.CopyRCRef());
+  }
+  return avs;
+}
+
 absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>>
 TrackedDeviceBuffer::GetDefinitionEvent(PjRtMemorySpace* memory_space) {
   if (definition_events_.size() != 1) {
@@ -293,17 +351,18 @@ void TrackedDeviceBuffer::AddUsageEvent(
   }
 }
 
-void GetDeviceBufferEvents(
-    const TrackedDeviceBuffer& buffer, bool get_usage_events,
-    absl::flat_hash_set<BufferSequencingEvent*>* events) {
-  if (get_usage_events) {
-    for (const auto& e : buffer.usage_events()) {
-      events->insert(&*e.event);
-    }
-  } else {
-    for (const auto& e : buffer.definition_events()) {
-      events->insert(&*e);
-    }
+bool TrackedDeviceBuffer::AddDefinitionEventsToSet(PjRtDeviceEventSet& events) {
+  for (const auto& e : definition_events_) {
+    tensorflow::down_cast<PjRtStreamExecutorDeviceEventSet*>(&events)->AddEvent(
+        e);
+  }
+  return false;
+}
+
+void TrackedDeviceBuffer::AddUsageEventsToSet(PjRtDeviceEventSet& events) {
+  for (const auto& e : usage_events_) {
+    tensorflow::down_cast<PjRtStreamExecutorDeviceEventSet*>(&events)->AddEvent(
+        e.event);
   }
 }
 

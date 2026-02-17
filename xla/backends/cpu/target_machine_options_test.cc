@@ -132,13 +132,18 @@ TEST(TargetMachineOptionsTest, SetFeatures) {
 TEST(TargetMachineOptionsTest, AVX512ImpliesNoScatterAndNoGather) {
   TargetMachineOptions options("test_triple", "test_cpu", "+avx512");
   EXPECT_EQ(options.GetTargetMachineFeatures(),
-            "+avx512,+prefer-no-scatter,+prefer-no-gather");
+            "+avx512,+prefer-no-gather,+prefer-no-scatter");
 }
 
 TEST(TargetMachineOptionsTest, GetTargetMachineFeaturesVector) {
   TargetMachineOptions options("test_triple", "test_cpu", "+avx2,-avx512");
   EXPECT_THAT(options.GetTargetMachineFeaturesVector(),
               testing::ElementsAre("+avx2", "-avx512"));
+}
+
+TEST(TargetMachineOptionsTest, TestTargeteMachineOptionsFeaturesAreSorted) {
+  TargetMachineOptions options("test_triple", "test_cpu", "-d,+c,-b,+a");
+  EXPECT_EQ(options.GetTargetMachineFeatures(), "+a,+c,-b,-d");
 }
 
 }  // namespace

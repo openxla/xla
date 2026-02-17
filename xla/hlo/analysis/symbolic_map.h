@@ -21,6 +21,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/log/check.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallBitVector.h"
@@ -70,6 +71,9 @@ class SymbolicMap {
                          int64_t num_symbols,
                          llvm::SmallVector<SymbolicExpr> exprs);
 
+  explicit operator bool() const { return ctx_ != nullptr; }
+  bool operator!() const { return ctx_ == nullptr; }
+
   mlir::MLIRContext* GetContext() const { return ctx_; }
   int64_t GetNumDims() const { return num_dimensions_; }
   int64_t GetNumSymbols() const { return num_symbols_; }
@@ -92,6 +96,12 @@ class SymbolicMap {
 
   // Returns true if all result expressions are constant.
   bool IsConstant() const;
+
+  // Returns true if any result expression depends on the given dimension.
+  bool IsFunctionOfDim(int64_t dim_id) const;
+
+  // Returns true if any result expression depends on the given symbol.
+  bool IsFunctionOfSymbol(int64_t symbol_id) const;
 
   // Returns a vector containing the values of all the results. CHECK-fails if
   // any result expression is not a constant.
@@ -126,6 +136,12 @@ class SymbolicMap {
   SymbolicMap GetSubMap(absl::Span<const size_t> result_indices) const;
 
   SymbolicMap Replace(SymbolicExpr expr, SymbolicExpr replacement) const;
+
+  /// Replaces multiple sub-expressions at once by applying
+  /// `SymbolicExpr::Replace(map)` to each expression. Returns a new SymbolicMap
+  /// with the new results and with the specified number of dims and symbols.
+  SymbolicMap Replace(const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& map,
+                      int64_t numResultDims, int64_t numResultSyms) const;
 
   bool operator==(const SymbolicMap& other) const;
   bool operator!=(const SymbolicMap& other) const { return !(*this == other); }
