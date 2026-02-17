@@ -13,7 +13,7 @@ cc_binary(
     srcs = glob([
         "utils/prepare-builtins/*.cpp",
         "utils/prepare-builtins/*.h",
-    ]),
+    ], allow_empty = True),
     copts = [
         "-fno-rtti -fno-exceptions",
     ],
@@ -32,13 +32,13 @@ bitcode_library(
     name = "ocml",
     srcs = glob([
         "ocml/src/*.cl",
-    ]),
+    ], allow_empty = True),
     hdrs = glob([
         "ocml/src/*.h",
         "ocml/inc/*.h",
         "irif/inc/*.h",
         "oclc/inc/*.h",
-    ]),
+    ], allow_empty = True),
     file_specific_flags = {
         "native_logF.cl": ["-fapprox-func"],
         "native_expF.cl": ["-fapprox-func"],
@@ -51,12 +51,12 @@ bitcode_library(
     srcs = glob([
         "ockl/src/*.cl",
         "ockl/src/*.ll",
-    ]),
+    ], allow_empty = True),
     hdrs = glob([
         "ockl/inc/*.h",
         "irif/inc/*.h",
         "oclc/inc/*.h",
-    ]),
+    ], allow_empty = True),
     file_specific_flags = {
         "gaaf.cl": ["-munsafe-fp-atomics"],
     },

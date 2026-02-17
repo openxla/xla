@@ -163,7 +163,7 @@ _TEXTUAL_HDRS_LIST = glob([
     "src/graph/backend/dnnl/kernels/*.hpp",
     "src/graph/utils/*.hpp",
     "src/graph/utils/pm/*.hpp",
-]) + [
+], allow_empty = True) + [
     ":dnnl_config_h",
     ":dnnl_version_h",
     ":dnnl_version_hash_h",
@@ -176,7 +176,7 @@ _TEXTUAL_HDRS_LIST = glob([
 # compiler doesn't clean up stack from temporary objects.)
 cc_library(
     name = "onednn_autogen",
-    srcs = glob(["src/cpu/x64/gemm/**/*_kern_autogen*.cpp"]),
+    srcs = glob(["src/cpu/x64/gemm/**/*_kern_autogen*.cpp"], allow_empty = True),
     copts = [
         "-O1",
         "-U_FORTIFY_SOURCE",
@@ -211,8 +211,7 @@ cc_library(
             "src/cpu/rv64/**",
             "src/cpu/x64/gemm/**/*_kern_autogen.cpp",
             "src/cpu/sycl/**",
-        ],
-    ),
+        ], allow_empty = True),
     copts = _COPTS_LIST,
     includes = _INCLUDES_LIST,
     # TODO(penpornk): Use lrt_if_needed from tensorflow.bzl instead.

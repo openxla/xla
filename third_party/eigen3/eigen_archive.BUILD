@@ -32,6 +32,7 @@ EIGEN_SOURCES = glob(
         "unsupported/Eigen/**/src/**/*.h",
         "unsupported/Eigen/**/src/**/*.inc",
     ],
+    allow_empty = True,
 )
 
 cc_library(

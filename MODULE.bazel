@@ -42,11 +42,16 @@ bazel_dep(name = "rules_ml_toolchain")
 # wget -O temp_module_archive.tar.gz <archive URL>
 # HASH=$(openssl dgst -sha256 -binary temp_module_archive.tar.gz | openssl base64 -A)
 # echo "sha256-${HASH}"
-archive_override(
+# archive_override(
+#     module_name = "rules_ml_toolchain",
+#     integrity = "sha256-KIfZtJ4Y7132+HQ4pNmXWUCNIaH0Y8YfS+arMdiS3Ig=",
+#     strip_prefix = "rules_ml_toolchain-de6fc6c38ea0368a198daa3f8c7cb829cc8db185",
+#     urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/de6fc6c38ea0368a198daa3f8c7cb829cc8db185.tar.gz"],
+# )
+
+local_path_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-KIfZtJ4Y7132+HQ4pNmXWUCNIaH0Y8YfS+arMdiS3Ig=",
-    strip_prefix = "rules_ml_toolchain-de6fc6c38ea0368a198daa3f8c7cb829cc8db185",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/de6fc6c38ea0368a198daa3f8c7cb829cc8db185.tar.gz"],
+    path = "../rules_ml_toolchain",
 )
 
 # TODO: Upstream the patch?
@@ -128,12 +133,12 @@ pip.whl_mods(
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 cc_library(
     name = "numpy_headers_2",
-    hdrs = glob(["site-packages/numpy/_core/include/**/*.h"]),
+    hdrs = glob(["site-packages/numpy/_core/include/**/*.h"], allow_empty = True),
     strip_include_prefix="site-packages/numpy/_core/include/",
 )
 cc_library(
     name = "numpy_headers_1",
-    hdrs = glob(["site-packages/numpy/core/include/**/*.h"]),
+    hdrs = glob(["site-packages/numpy/core/include/**/*.h"], allow_empty = True),
     strip_include_prefix="site-packages/numpy/core/include/",
 )
 cc_library(

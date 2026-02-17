@@ -10,7 +10,7 @@ cc_library(
     name = "spmd_expander",
     srcs = glob([
         "*spmd_expander.cc",
-    ]),
+    ], allow_empty = True),
     hdrs = glob([
         "*spmd_expander.h",
     ]),

@@ -1,0 +1,665 @@
+diff --git a/BUILD b/BUILD
+index 13ba15d..184e93a 100644
+--- a/BUILD
++++ b/BUILD
+@@ -59,7 +59,7 @@ _no_unused_variable = select({
+ 
+ td_library(
+     name = "td_files",
+-    srcs = glob(["include/triton/**/*.td"]),
++    srcs = glob(["include/triton/**/*.td"], allow_empty = True),
+     includes = ["include"],
+     deps = [
+         "@llvm-project//mlir:ArithOpsTdFiles",
+@@ -462,7 +462,7 @@ cc_library(
+         # There are so many interdependencies between Dialect and Analysis that we're just compiling
+         # everything in a single unit.
+         "lib/Analysis/*.cpp",
+-    ]) + [
++    ], allow_empty = True) + [
+         "include/triton/Conversion/TritonGPUToLLVM/TargetInfoBase.h",  # Avoid circular dependency.
+         "include/triton/Conversion/TritonGPUToLLVM/Utility.h",  # Avoid circular dependency.
+         "lib/Dialect/TritonGPU/Transforms/Utility.cpp",  # Avoid circular dependency.
+@@ -477,7 +477,7 @@ cc_library(
+         # There are so many interdependencies between Dialect and Analysis that we're just compiling
+         # everything in a single unit.
+         "include/triton/Analysis/*.h",
+-    ]) + [
++    ], allow_empty = True) + [
+         "include/triton/Dialect/TritonNvidiaGPU/Transforms/TMAUtilities.h",  # Avoid circular dependency.
+         "include/triton/Dialect/TritonGPU/Transforms/Utility.h",  # Avoid circular dependency.
+         # What is this lone header doing rooted under Conversion? Best to add it to Dialect, but
+@@ -555,8 +555,7 @@ cc_library(
+         exclude = [
+             # Included in TritonGPUTransforms to avoid circular dependency
+             "lib/Dialect/Triton/Transforms/LoopPeeling.cpp",
+-        ],
+-    ),
++        ], allow_empty = True),
+     hdrs = glob(
+         include = [
+             "include/triton/Dialect/Triton/Transforms/*.h",
+@@ -564,8 +563,7 @@ cc_library(
+         exclude = [
+             # Included in TritonGPUTransforms to avoid circular dependency
+             "include/triton/Dialect/Triton/Transforms/LoopPeeling.h",
+-        ],
+-    ),
++        ], allow_empty = True),
+     copts = _no_unused_variable,
+     deps = [
+         ":TritonDialects",
+@@ -598,13 +596,11 @@ cc_library(
+         exclude = [
+             "lib/Dialect/TritonGPU/Transforms/WarpSpecialization/PartitionBuilder.cpp",
+             "lib/Dialect/TritonGPU/Transforms/WarpSpecialization/Partition.cpp",
+-        ],
+-    ),
++        ], allow_empty = True),
+     hdrs = glob(
+         [
+             "include/triton/Dialect/TritonGPU/Transforms/WarpSpecialization/*.h",
+-        ],
+-    ),
++        ], allow_empty = True),
+     copts = _no_unused_variable,
+     deps = [
+         ":TritonDialects",
+@@ -646,8 +642,7 @@ cc_library(
+         ],
+         exclude = [
+             "lib/Dialect/TritonGPU/Transforms/Utility.cpp",
+-        ],
+-    ) + [
++        ], allow_empty = True) + [
+         # TritonTransforms target depends on TritonGPUTransforms. But some files
+         # in TritonGPUTransforms depend on the headers in TritonTransforms, so
+         # we need to include them here to avoid circular dependency.
+@@ -659,8 +654,7 @@ cc_library(
+         include = [
+             "include/triton/Dialect/TritonGPU/Transforms/*.h",
+         ],
+-        exclude = ["include/triton/Dialect/TritonGPU/Transforms/Utility.h"],
+-    ) + [
++        exclude = ["include/triton/Dialect/TritonGPU/Transforms/Utility.h"], allow_empty = True) + [
+         # TritonTransforms target depends on TritonGPUTransforms. But some files
+         # in TritonGPUTransforms depend on the headers in TritonTransforms, so
+         # we need to include them here to avoid circular dependency.
+@@ -712,11 +706,11 @@ cc_library(
+     srcs = glob([
+         "lib/Conversion/TritonGPUToLLVM/*.h",
+         "lib/Conversion/TritonGPUToLLVM/**/*.cpp",
+-    ]),
++    ], allow_empty = True),
+     hdrs = glob([
+         "include/triton/Tools/Sys/*.hpp",
+         "include/triton/Conversion/TritonGPUToLLVM/*.h",
+-    ]),
++    ], allow_empty = True),
+     copts = select({
+         "//conditions:default": [
+             "-Wno-unused-variable",
+@@ -754,14 +748,14 @@ cc_library(
+ # by building these sources together with `TritonNVIDIAGPUToLLVM`.
+ filegroup(
+     name = "instrument_to_llvm_srcs",
+-    srcs = glob(["lib/Conversion/TritonInstrumentToLLVM/**/*.cpp"]),
++    srcs = glob(["lib/Conversion/TritonInstrumentToLLVM/**/*.cpp"], allow_empty = True),
+     visibility = ["@triton//third_party/nvidia:__subpackages__"],
+ )
+ 
+ cc_library(
+     name = "TritonInstrumentTransforms",
+-    srcs = glob(["lib/Dialect/TritonInstrument/Transforms/*.cpp"]),
+-    hdrs = glob(["include/triton/Dialect/TritonInstrument/Transforms/*.h"]),
++    srcs = glob(["lib/Dialect/TritonInstrument/Transforms/*.cpp"], allow_empty = True),
++    hdrs = glob(["include/triton/Dialect/TritonInstrument/Transforms/*.h"], allow_empty = True),
+     copts = select({
+         ":compiler_is_msvc": [],
+         "//conditions:default": [
+@@ -787,8 +781,7 @@ cc_library(
+         exclude = [
+             "lib/Dialect/TritonNvidiaGPU/Transforms/TMAUtilities.cpp",
+             "lib/Dialect/TritonNvidiaGPU/Transforms/Utility.cpp",
+-        ],
+-    ),
++        ], allow_empty = True),
+     hdrs = glob(
+         [
+             "include/triton/Dialect/TritonNvidiaGPU/Transforms/*.h",
+@@ -797,8 +790,7 @@ cc_library(
+         exclude = [
+             "include/triton/Dialect/TritonNvidiaGPU/Transforms/TMAUtilities.h",
+             "include/triton/Dialect/TritonNvidiaGPU/Transforms/Utility.h",
+-        ],
+-    ),
++        ], allow_empty = True),
+     copts = select({
+         ":compiler_is_msvc": [],
+         "//conditions:default": [
+@@ -843,11 +835,10 @@ cc_library(
+     srcs = glob([
+         "lib/Conversion/TritonToTritonGPU/*.h",
+         "lib/Conversion/TritonToTritonGPU/*.cpp",
+-    ]),
++    ], allow_empty = True),
+     hdrs = glob(
+         ["include/triton/Conversion/TritonToTritonGPU/*.h"],
+-        exclude = ["include/triton/Conversion/TritonToTritonGPU/Passes.h"],
+-    ),
++        exclude = ["include/triton/Conversion/TritonToTritonGPU/Passes.h"], allow_empty = True),
+     copts = _no_unused_variable,
+     includes = ["include"],
+     deps = [
+@@ -876,8 +867,8 @@ cc_library(
+     srcs = glob([
+         "lib/Target/LLVMIR/*.cpp",
+         "lib/Target/LLVMIR/*.h",
+-    ]),
+-    hdrs = glob(["include/triton/Target/LLVMIR/*.h"]),
++    ], allow_empty = True),
++    hdrs = glob(["include/triton/Target/LLVMIR/*.h"], allow_empty = True),
+     copts = _no_unused_variable,
+     deps = [
+         ":GetEnv",
+@@ -916,8 +907,8 @@ cc_library(
+     name = "TritonPTX",
+     srcs = glob([
+         "lib/Target/PTX/*.cpp",
+-    ]),
+-    hdrs = glob(["include/triton/Target/PTX/*.h"]),
++    ], allow_empty = True),
++    hdrs = glob(["include/triton/Target/PTX/*.h"], allow_empty = True),
+     deps = ["@llvm-project//llvm:Support"],
+ )
+ 
+@@ -925,8 +916,8 @@ cc_library(
+     name = "TritonHSACO",
+     srcs = glob([
+         "lib/Target/HSACO/*.cpp",
+-    ]),
+-    hdrs = glob(["include/triton/Target/HSACO/*.h"]),
++    ], allow_empty = True),
++    hdrs = glob(["include/triton/Target/HSACO/*.h"], allow_empty = True),
+     deps = [
+         ":GetEnv",
+         ":TritonLLVMIR",
+@@ -955,8 +946,8 @@ cc_library(
+ 
+ cc_library(
+     name = "TritonTools",
+-    srcs = glob(["lib/Tools/*.cpp"]),
+-    hdrs = glob(["include/triton/Tools/*.h"]),
++    srcs = glob(["lib/Tools/*.cpp"], allow_empty = True),
++    hdrs = glob(["include/triton/Tools/*.h"], allow_empty = True),
+     copts = _no_unused_variable,
+     includes = ["include"],
+     deps = [
+@@ -969,8 +960,8 @@ cc_library(
+ 
+ cc_library(
+     name = "GluonTransforms",
+-    srcs = glob(["lib/Dialect/Gluon/Transforms/*.cpp"]),
+-    hdrs = glob(["include/triton/Dialect/Gluon/Transforms/*.h"]),
++    srcs = glob(["lib/Dialect/Gluon/Transforms/*.cpp"], allow_empty = True),
++    hdrs = glob(["include/triton/Dialect/Gluon/Transforms/*.h"], allow_empty = True),
+     copts = _no_unused_variable,
+     deps = [
+         ":TritonGPUTransforms",
+diff --git a/python/BUILD b/python/BUILD
+index c68f93d..b76ef0b 100644
+--- a/python/BUILD
++++ b/python/BUILD
+@@ -99,6 +99,5 @@ pybind_extension(
+ filegroup(
+     name = "files",
+     srcs = glob(
+-        include = ["triton/**/*.py"],
+-    ),
++        include = ["triton/**/*.py"], allow_empty = True),
+ )
+diff --git a/python/test/BUILD b/python/test/BUILD
+index efafd7e..a92757f 100644
+--- a/python/test/BUILD
++++ b/python/test/BUILD
+@@ -115,8 +115,7 @@ pytest_multi_tests(
+     target_compatible_with = _requires_config_cuda,
+     tests = glob(
+         include = ["**/test_*.py"],
+-        exclude = EXCLUDE_TESTS,
+-    ),
++        exclude = EXCLUDE_TESTS, allow_empty = True),
+     deps = [
+         "@llvm-project//llvm:FileCheck",
+         "//third_party/py/expecttest",
+@@ -141,8 +140,7 @@ pytest_multi_tests(
+     target_compatible_with = _requires_config_cuda,
+     tests = glob(
+         include = ["**/test_*.py"],
+-        exclude = EXCLUDE_TESTS,
+-    ),
++        exclude = EXCLUDE_TESTS, allow_empty = True),
+     deps = [
+         "@llvm-project//llvm:FileCheck",
+         "//third_party/py/expecttest",
+@@ -218,8 +216,7 @@ pytest_multi_tests(
+     target_compatible_with = _requires_config_cuda,
+     tests = glob(
+         include = ["**/test_*.py"],
+-        exclude = EXCLUDE_TESTS + B200_FULL_GPU_ONLY_TESTS,
+-    ),
++        exclude = EXCLUDE_TESTS + B200_FULL_GPU_ONLY_TESTS, allow_empty = True),
+     deps = [
+         "@llvm-project//llvm:FileCheck",
+         "//third_party/py/expecttest",
+@@ -242,8 +239,7 @@ pytest_multi_tests(
+     tags = _requires_gpu_sm100_full,
+     target_compatible_with = _requires_config_cuda,
+     tests = glob(
+-        include = B200_FULL_GPU_ONLY_TESTS,
+-    ),
++        include = B200_FULL_GPU_ONLY_TESTS, allow_empty = True),
+     deps = [
+         "//third_party/py/torch:pytorch",
+         "//third_party/py/triton",
+diff --git a/test/BUILD b/test/BUILD
+index b188467..a1f0088 100644
+--- a/test/BUILD
++++ b/test/BUILD
+@@ -55,8 +55,8 @@
+ 
+ cc_library(
+     name = "TritonTestAnalysis",
+-    srcs = glob(["lib/Analysis/*.cpp"]),
+-    hdrs = glob(["include/Analysis/*.h"]),
++    srcs = glob(["lib/Analysis/*.cpp"], allow_empty = True),
++    hdrs = glob(["include/Analysis/*.h"], allow_empty = True),
+     visibility = ["//visibility:public"],
+     deps = [
+         "@llvm-project//llvm:Support",
+@@ -73,7 +73,7 @@ cc_library(
+ 
+ cc_library(
+     name = "TritonTestDialect",
+-    srcs = glob(["lib/Dialect/*.cpp"]),
++    srcs = glob(["lib/Dialect/*.cpp"], allow_empty = True),
+     visibility = ["//visibility:public"],
+     deps = [
+         "@llvm-project//mlir:GPUDialect",
+diff --git a/third_party/amd/BUILD b/third_party/amd/BUILD
+index c91d047..a985acb 100644
+--- a/third_party/amd/BUILD
++++ b/third_party/amd/BUILD
+@@ -32,11 +32,10 @@ cc_library(
+         exclude = [
+             "lib/TritonAMDGPUTransforms/MfmaGroup.cpp",  # Avoid circular dependency.
+             "lib/TritonAMDGPUTransforms/WmmaGroup.cpp",  # Avoid circular dependency.
+-        ],
+-    ),
++        ], allow_empty = True),
+     hdrs = glob([
+         "include/TritonAMDGPUTransforms/**/*.h",
+-    ]),
++    ], allow_empty = True),
+     copts = _no_unused_variable + select({
+         "@triton//:compiler_is_msvc": [],
+         "//conditions:default": ["-Wno-implicit-fallthrough"],
+@@ -83,8 +82,7 @@ cc_library(
+     srcs = glob(
+         [
+             "lib/TritonAMDGPUToLLVM/TDMUtility.*",
+-        ],
+-    ) + [
++        ], allow_empty = True) + [
+         "include/TritonAMDGPUToLLVM/TargetUtils.h",
+         "lib/TritonAMDGPUToLLVM/TargetInfo.h",
+     ],
+@@ -115,11 +113,11 @@ cc_library(
+     srcs = glob([
+         "lib/Dialect/TritonAMDGPU/**/*.h",
+         "lib/Dialect/TritonAMDGPU/**/*.cpp",
+-    ]),
++    ], allow_empty = True),
+     hdrs = glob([
+         "include/Dialect/TritonAMDGPU/**/*.h",
+         "include/Utils/**/*.h",
+-    ]),
++    ], allow_empty = True),
+     copts = _no_unused_variable,
+     includes = [
+         "..",
+@@ -162,8 +160,7 @@ cc_library(
+             # TDMUtility is also used by both TritonAMDGPU and TritonAMDGPUToLLVM that would cause
+             # circular dependencies. Moved TDMUtility to its own target.
+             "lib/TritonAMDGPUToLLVM/TDMUtility.*",
+-        ],
+-    ) + [
++        ], allow_empty = True) + [
+         "include/TritonAMDGPUTransforms/MfmaGroup.h",  # Avoid circular dependency.
+         "include/TritonAMDGPUTransforms/WmmaGroup.h",  # Avoid circular dependency.
+         "lib/TritonAMDGPUTransforms/MfmaGroup.cpp",  # Avoid circular dependency.
+@@ -171,7 +168,7 @@ cc_library(
+     ],
+     hdrs = glob([
+         "include/TritonAMDGPUToLLVM/**/*.h",
+-    ]) + [
++    ], allow_empty = True) + [
+         "lib/TritonAMDGPUToLLVM/AsyncUtility.h",
+         "lib/TritonAMDGPUToLLVM/PatternTritonGPUOpToLLVM.h",
+         "lib/TritonAMDGPUToLLVM/TargetInfo.h",
+@@ -229,7 +226,7 @@ cc_library(
+ 
+ td_library(
+     name = "td_files",
+-    srcs = glob(["include/**/*.td"]),
++    srcs = glob(["include/**/*.td"], allow_empty = True),
+     includes = ["include"],
+     deps = ["@triton//:td_files"],
+ )
+@@ -317,8 +314,8 @@ gentbl_cc_library(
+ 
+ cc_library(
+     name = "Analysis",
+-    srcs = glob(["lib/Analysis/*.cpp"]),
+-    hdrs = glob(["include/Analysis/*.h"]),
++    srcs = glob(["lib/Analysis/*.cpp"], allow_empty = True),
++    hdrs = glob(["include/Analysis/*.h"], allow_empty = True),
+     copts = _no_unused_variable + select({
+         "@triton//:compiler_is_msvc": [],
+         "//conditions:default": ["-Wno-implicit-fallthrough"],
+@@ -344,7 +341,7 @@ cc_library(
+ 
+ cc_library(
+     name = "TestAMDAnalysis",
+-    srcs = glob(["test/lib/Analysis/*.cpp"]),
++    srcs = glob(["test/lib/Analysis/*.cpp"], allow_empty = True),
+     deps = [
+         ":Analysis",
+         ":TritonAMDGPUToLLVM",
+@@ -364,5 +361,5 @@ cc_library(
+     includes = [
+         "backend/include",
+     ],
+-    textual_hdrs = glob(["backend/include/**/*.h"]),
++    textual_hdrs = glob(["backend/include/**/*.h"], allow_empty = True),
+ )
+diff --git a/third_party/nvidia/BUILD b/third_party/nvidia/BUILD
+index 8e091e4..d89dd6d 100644
+--- a/third_party/nvidia/BUILD
++++ b/third_party/nvidia/BUILD
+@@ -22,7 +22,7 @@ package(
+ #     name = "cublas_headers",
+ #     hdrs = glob([
+ #         "include/*.h",
+-#     ]),
++#     ], allow_empty = True),
+ #     deps = ["@local_config_cuda//cuda:cuda_headers"],
+ # )
+ # 
+@@ -60,10 +60,10 @@ cc_library(
+     name = "NVGPUToLLVM",
+     srcs = glob([
+         "lib/NVGPUToLLVM/*.cpp",
+-    ]),
++    ], allow_empty = True),
+     hdrs = glob([
+         "include/NVGPUToLLVM/*.h",
+-    ]),
++    ], allow_empty = True),
+     copts = [
+         "-Wno-unused-variable",
+         "-Wno-return-type",
+@@ -96,12 +96,11 @@ cc_library(
+             "lib/TritonNVIDIAGPUToLLVM/*.h",
+             "lib/TritonNVIDIAGPUToLLVM/**/*.cpp",
+         ],
+-        exclude = ["lib/TritonNVIDIAGPUToLLVM/DecomposeUnsupportedConversions.cpp"],
+-    ) + ["@triton//:instrument_to_llvm_srcs"],
++        exclude = ["lib/TritonNVIDIAGPUToLLVM/DecomposeUnsupportedConversions.cpp"], allow_empty = True) + ["@triton//:instrument_to_llvm_srcs"],
+     hdrs = glob([
+         "include/TritonNVIDIAGPUToLLVM/*.h",
+         "include/triton/Conversion/TritonGPUToLLVM/*.h",
+-    ]) + [
++    ], allow_empty = True) + [
+         "lib/TritonNVIDIAGPUToLLVM/DotOpToLLVM/MMAHelpers.h",
+         "lib/TritonNVIDIAGPUToLLVM/TargetInfo.h",
+         "lib/TritonNVIDIAGPUToLLVM/Utility.h",
+@@ -176,7 +175,7 @@ td_library(
+     srcs = glob([
+         "include/Dialect/NVGPU/IR/*.td",
+         "include/Dialect/NVWS/IR/*.td",
+-    ]),
++    ], allow_empty = True),
+     includes = [
+         "include",
+     ],
+@@ -361,10 +360,10 @@ cc_library(
+     name = "NVGPUDialect",
+     srcs = glob([
+         "lib/Dialect/NVGPU/IR/*.cpp",
+-    ]),
++    ], allow_empty = True),
+     hdrs = glob([
+         "include/Dialect/NVGPU/IR/*.h",
+-    ]),
++    ], allow_empty = True),
+     copts = select({
+         "@triton//:compiler_is_msvc": [],
+         "//conditions:default": [
+@@ -429,10 +428,10 @@ cc_library(
+     name = "NVWSDialect",
+     srcs = glob([
+         "lib/Dialect/NVWS/IR/*.cpp",
+-    ]),
++    ], allow_empty = True),
+     hdrs = glob([
+         "include/Dialect/NVWS/IR/*.h",
+-    ]),
++    ], allow_empty = True),
+     copts = select({
+         "@triton//:compiler_is_msvc": [],
+         "//conditions:default": [
+@@ -463,11 +462,11 @@ cc_library(
+     name = "NVWSTransforms",
+     srcs = glob([
+         "lib/Dialect/NVWS/Transforms/*.cpp",
+-    ]),
++    ], allow_empty = True),
+     hdrs = glob([
+         "include/Dialect/NVWS/Transforms/*.h",
+         "lib/Dialect/NVWS/Transforms/*.h",
+-    ]),
++    ], allow_empty = True),
+     copts = select({
+         "@triton//:compiler_is_msvc": [],
+         "//conditions:default": [
+@@ -509,10 +508,10 @@ cc_library(
+     srcs = glob([
+         "hopper/lib/Transforms/**/*.cpp",
+         "hopper/lib/Transforms/**/*.h",
+-    ]),
++    ], allow_empty = True),
+     hdrs = glob([
+         "hopper/include/Transforms/*.h",
+-    ]),
++    ], allow_empty = True),
+     copts = select({
+         "@triton//:compiler_is_msvc": [],
+         "//conditions:default": [
+diff --git a/third_party/nvidia/backend/BUILD b/third_party/nvidia/backend/BUILD
+index cf67f47..defffeb 100644
+--- a/third_party/nvidia/backend/BUILD
++++ b/third_party/nvidia/backend/BUILD
+@@ -26,6 +26,5 @@ pybind_extension(
+ filegroup(
+     name = "files",
+     srcs = glob(
+-        include = ["**/*.py"],
+-    ),
++        include = ["**/*.py"], allow_empty = True),
+ )
+diff --git a/third_party/nvidia/language/cuda/BUILD b/third_party/nvidia/language/cuda/BUILD
+index b7d02f8..4ae1ff0 100644
+--- a/third_party/nvidia/language/cuda/BUILD
++++ b/third_party/nvidia/language/cuda/BUILD
+@@ -8,6 +8,5 @@ package(
+ filegroup(
+     name = "files",
+     srcs = glob(
+-        include = ["**/*.py"],
+-    ),
++        include = ["**/*.py"], allow_empty = True),
+ )
+diff --git a/third_party/proton/BUILD b/third_party/proton/BUILD
+index ff06499..5487bcd 100644
+--- a/third_party/proton/BUILD
++++ b/third_party/proton/BUILD
+@@ -21,7 +21,7 @@ _no_unused_variable = select({
+ 
+ td_library(
+     name = "td_files",
+-    srcs = glob(["Dialect/include/**/*.td"]),
++    srcs = glob(["Dialect/include/**/*.td"], allow_empty = True),
+     includes = [
+         "..",  # because 'include proton/Dialect/include/<proper path>'
+         "Dialect/include",
+@@ -166,10 +166,10 @@ cc_library(
+     name = "ProtonIR",
+     srcs = glob([
+         "Dialect/lib/Dialect/Proton/IR/*.cpp",
+-    ]),
++    ], allow_empty = True),
+     hdrs = glob([
+         "Dialect/include/Dialect/Proton/IR/*.h",
+-    ]),
++    ], allow_empty = True),
+     includes = [
+         "..",  # because '#include "proton/Dialect/include/<proper path>"'
+         "Dialect/include",
+@@ -191,10 +191,10 @@ cc_library(
+     name = "ProtonGPUIR",
+     srcs = glob([
+         "Dialect/lib/Dialect/ProtonGPU/IR/*.cpp",
+-    ]),
++    ], allow_empty = True),
+     hdrs = glob([
+         "Dialect/include/Dialect/ProtonGPU/IR/*.h",
+-    ]),
++    ], allow_empty = True),
+     copts = _no_unused_variable,
+     includes = [
+         "..",  # because '#include "proton/Dialect/include/<proper path>"'
+@@ -218,8 +218,8 @@ cc_library(
+ 
+ cc_library(
+     name = "ProtonAnalysis",
+-    srcs = glob(["Dialect/lib/Analysis/*.cpp"]),
+-    hdrs = glob(["Dialect/include/Analysis/*.h"]),
++    srcs = glob(["Dialect/lib/Analysis/*.cpp"], allow_empty = True),
++    hdrs = glob(["Dialect/include/Analysis/*.h"], allow_empty = True),
+     includes = ["Dialect/include"],
+     deps = [
+         ":ProtonIR",
+@@ -233,8 +233,8 @@ cc_library(
+ 
+ cc_library(
+     name = "ProtonToProtonGPU",
+-    srcs = glob(["Dialect/lib/ProtonToProtonGPU/*.cpp"]),
+-    hdrs = glob(["Dialect/include/Conversion/ProtonToProtonGPU/*.h"]),
++    srcs = glob(["Dialect/lib/ProtonToProtonGPU/*.cpp"], allow_empty = True),
++    hdrs = glob(["Dialect/include/Conversion/ProtonToProtonGPU/*.h"], allow_empty = True),
+     copts = _no_unused_variable,
+     deps = [
+         ":ProtonAnalysis",
+@@ -259,8 +259,8 @@ cc_library(
+ 
+ cc_library(
+     name = "ProtonGPUTransforms",
+-    srcs = glob(["Dialect/lib/Dialect/ProtonGPU/Transforms/*.cpp"]),
+-    hdrs = glob(["Dialect/include/Dialect/ProtonGPU/Transforms/*.h"]),
++    srcs = glob(["Dialect/lib/Dialect/ProtonGPU/Transforms/*.cpp"], allow_empty = True),
++    hdrs = glob(["Dialect/include/Dialect/ProtonGPU/Transforms/*.h"], allow_empty = True),
+     includes = ["Dialect/include"],
+     deps = [
+         ":ProtonGPUIR",
+@@ -280,11 +280,11 @@ cc_library(
+     srcs = glob([
+         "Dialect/lib/ProtonGPUToLLVM/*.cpp",
+         "Dialect/lib/ProtonGPUToLLVM/**/*.cpp",
+-    ]),
++    ], allow_empty = True),
+     hdrs = glob([
+         "Dialect/include/Conversion/ProtonGPUToLLVM/*.h",
+         "Dialect/include/Conversion/ProtonGPUToLLVM/**/*.h",
+-    ]),
++    ], allow_empty = True),
+     copts = _no_unused_variable,
+     deps = [
+         ":ProtonGPUIR",
+@@ -347,7 +347,7 @@ pybind_extension(
+         "csrc/**/*.h",
+         "common/**/*.cpp",
+         "common/**/*.h",
+-    ]),
++    ], allow_empty = True),
+     copts = [
+         "-Wno-reorder-ctor",
+         "-Wno-implicit-fallthrough",
+diff --git a/third_party/proton/proton/BUILD b/third_party/proton/proton/BUILD
+index b7d02f8..4ae1ff0 100644
+--- a/third_party/proton/proton/BUILD
++++ b/third_party/proton/proton/BUILD
+@@ -8,6 +8,5 @@ package(
+ filegroup(
+     name = "files",
+     srcs = glob(
+-        include = ["**/*.py"],
+-    ),
++        include = ["**/*.py"], allow_empty = True),
+ )
+diff --git a/third_party/proton/test/BUILD b/third_party/proton/test/BUILD
+index f1521d8..1997dd9 100644
+--- a/third_party/proton/test/BUILD
++++ b/third_party/proton/test/BUILD
+@@ -21,8 +21,7 @@ pytest_multi_tests(
+             "test_api.py",  # Needs to dlopen cupti, but we only have a static version of it.
+             "test_lib.py",  # Needs to dlopen cupti, but we only have a static version of it.
+             "test_instrumentation.py",  # Needs to dlopen cupti, but we only have a static version of it.
+-        ],
+-    ),
++        ], allow_empty = True),
+     deps = [
+         "//third_party/py/pandas",
+         "//third_party/py/torch:pytorch",
+diff --git a/unittest/BUILD b/unittest/BUILD
+index c8d41da..d797dcf 100644
+--- a/unittest/BUILD
++++ b/unittest/BUILD
+@@ -9,7 +9,7 @@ package(
+ 
+ cc_test(
+     name = "AnalysisTest",
+-    srcs = glob(["Analysis/*.cpp"]),
++    srcs = glob(["Analysis/*.cpp"], allow_empty = True),
+     deps = [
+         "@com_google_googletest//:gtest_main",
+         "@llvm-project//llvm:Support",
+@@ -29,8 +29,7 @@ cc_test(
+             "Dialect/TritonGPU/DialectTest.cpp",
+             "Dialect/TritonGPU/LinearLayoutConversionsTest.cpp",
+             "Dialect/TritonGPU/SwizzleTest.cpp",
+-        ],
+-    ),
++        ], allow_empty = True),
+     copts = select({
+         "@triton//:compiler_is_msvc": [],
+         "//conditions:default": [
+@@ -121,7 +120,7 @@ cc_test(
+ 
+ cc_test(
+     name = "ToolsTest",
+-    srcs = glob(["Tools/*.cpp"]),
++    srcs = glob(["Tools/*.cpp"], allow_empty = True),
+     copts = select({
+         "@triton//:compiler_is_msvc": [],
+         "//conditions:default": [
