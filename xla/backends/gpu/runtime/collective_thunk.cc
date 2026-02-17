@@ -60,10 +60,10 @@ limitations under the License.
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 namespace {
@@ -413,8 +413,11 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
             debug_options
                 .xla_gpu_first_collective_call_terminate_timeout_seconds()));
   };
-
-  RETURN_IF_ERROR(first_call_rendezvous("before", pre_call_rendezvous_flag_));
+  std::pair<RendezvousFlag*, RendezvousFlag*> rend_flags;
+  ASSIGN_OR_RETURN(
+      rend_flags,
+      params.collective_cliques->GetCliqueFirstRendezvousFlags(clique_key));
+  RETURN_IF_ERROR(first_call_rendezvous("before", *(rend_flags.first)));
 
   se::StreamExecutor* executor = params.stream->parent();
   int64_t async_stream_idx = Thunk::execution_stream_id().value();
@@ -437,7 +440,7 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
     RETURN_IF_ERROR(RunCollective(params, clique_key, *params.stream, *comm));
   }
 
-  RETURN_IF_ERROR(first_call_rendezvous("after", post_call_rendezvous_flag_));
+  RETURN_IF_ERROR(first_call_rendezvous("after", *(rend_flags.second)));
 
   return absl::OkStatus();
 }
