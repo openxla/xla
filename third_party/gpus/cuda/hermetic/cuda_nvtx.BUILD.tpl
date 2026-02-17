@@ -5,7 +5,7 @@ cc_library(
     %{comment}hdrs = glob([
         %{comment}"include/nvToolsExt*.h",
         %{comment}"include/nvtx3/**",
-    %{comment}]),
+    %{comment}], allow_empty = True),
     include_prefix = "third_party/gpus/cuda/include",
     includes = ["include"],
     strip_include_prefix = "include",
