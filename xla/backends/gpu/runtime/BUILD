@@ -3520,6 +3520,7 @@ cc_library(
     srcs = ["nvshmem_collective_thunk.cc"],
     hdrs = ["nvshmem_collective_thunk.h"],
     deps = [
+        ":collective_clique_requests",
         ":collective_execution",
         ":collective_thunk",
         ":thunk",
