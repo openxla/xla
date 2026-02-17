@@ -87,6 +87,8 @@ template <typename T>
 static constexpr PrimitiveType kPrimitiveTypeOf =
     PrimitiveType::PRIMITIVE_TYPE_INVALID;
 template <>
+constexpr PrimitiveType kPrimitiveTypeOf<double> = PrimitiveType::F64;
+template <>
 constexpr PrimitiveType kPrimitiveTypeOf<float> = PrimitiveType::F32;
 template <>
 constexpr PrimitiveType kPrimitiveTypeOf<Eigen::bfloat16> = PrimitiveType::BF16;
@@ -122,7 +124,7 @@ template <typename T>
 class BuffersDebugFloatCheckThunkTypedTest
     : public BuffersDebugFloatCheckThunkTest {};
 
-using FloatTypes = ::testing::Types<Eigen::bfloat16, float>;
+using FloatTypes = ::testing::Types<Eigen::bfloat16, float, double>;
 TYPED_TEST_SUITE(BuffersDebugFloatCheckThunkTypedTest, FloatTypes);
 
 TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest, CalculatesNanCounts) {
@@ -504,12 +506,15 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
       BufferDebugLog<BufferDebugFloatCheckEntry>::RequiredSizeForEntries(10);
   static constexpr size_t kTmpSizeElems = 1255;
   static constexpr size_t kTmpSizeBytes = kTmpSizeElems * sizeof(uint32_t);
+  // Rounding needed for correct alignment of doubles.
+  static constexpr size_t kInputOffsetBytes =
+      xla::RoundUpTo(kLogSize + kTmpSizeBytes, sizeof(TypeParam));
   static constexpr size_t kInputElems = 1572864;
   static constexpr size_t kPaddedInputElems = kInputElems * 2;
   static constexpr size_t kPaddedInputSizeInBytes =
       kPaddedInputElems * sizeof(TypeParam);
   static constexpr size_t kTotalDeviceMemoryBytes =
-      kLogSize + kTmpSizeBytes + kPaddedInputSizeInBytes * 2;
+      kInputOffsetBytes + kPaddedInputSizeInBytes * 2;
 
   // Repro test for a case where the particular combination of input size and
   // number of blocks makes "round up per-block input size to next 128b" makes
@@ -533,7 +538,7 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
                          /*color=*/0);
   BufferAllocation::Slice log_slice(&alloc, /*offset=*/0, kLogSize);
   BufferAllocation::Slice tmp_slice(&alloc, /*offset=*/kLogSize, kTmpSizeBytes);
-  BufferAllocation::Slice input(&alloc, /*offset=*/kLogSize + kTmpSizeBytes,
+  BufferAllocation::Slice input(&alloc, /*offset=*/kInputOffsetBytes,
                                 kPaddedInputElems * sizeof(TypeParam),
                                 kPrimitiveTypeOf<TypeParam>);
 

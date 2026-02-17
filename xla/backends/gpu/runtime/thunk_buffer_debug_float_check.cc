@@ -132,7 +132,8 @@ absl::StatusOr<std::unique_ptr<Thunk>> WrapWithFloatCheckThunk(
       continue;
     }
     if (slice.element_type() != PrimitiveType::F32 &&
-        slice.element_type() != PrimitiveType::BF16) {
+        slice.element_type() != PrimitiveType::BF16 &&
+        slice.element_type() != PrimitiveType::F64) {
       VLOG(1) << "Buffer " << buffer_idx << " in thunk "
               << thunk->thunk_info().thunk_id
               << " has unsupported element type "
