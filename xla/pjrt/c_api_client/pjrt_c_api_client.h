@@ -43,10 +43,12 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_abi_version_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_callback_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_tpu_topology_extension.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -365,6 +367,9 @@ class PjRtCApiClient : public PjRtClient {
   absl::string_view platform_name() const override { return platform_name_; };
 
   absl::string_view platform_version() const override;
+
+  absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>> RuntimeAbiVersion()
+      const override;
 
   std::optional<PjRtPluginAttributes> plugin_attributes() const override;
 
@@ -705,6 +710,9 @@ class PjRtCApiExecutable : public PjRtExecutable {
 
   absl::StatusOr<std::string> FingerprintExecutable() const override;
 
+  absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>> GetAbiVersion()
+      const override;
+
   // TODO(b/438000615): Move this to PjRtLoadedExecutable.
   absl::StatusOr<std::string> GetSerializedExecutableMetadata() const;
 
@@ -719,6 +727,8 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
  public:
   PjRtCApiLoadedExecutable(PjRtCApiClient* client,
                            PJRT_LoadedExecutable* executable);
+
+  PjRtExecutable* GetExecutable() const override { return executable_.get(); }
 
   PjRtClient* client() const override { return client_; }
   absl::string_view name() const override { return executable_->name(); }
@@ -904,6 +914,47 @@ class CApiCopyToDeviceStream : public CopyToDeviceStream {
  private:
   PJRT_CopyToDeviceStream* c_stream_;
   const PJRT_Api* c_api_;
+};
+
+class PjRtCApiRuntimeAbiVersion : public PjRtRuntimeAbiVersion {
+ public:
+  PjRtCApiRuntimeAbiVersion(PJRT_RuntimeAbiVersion* c_abi_version,
+                            const PJRT_Api* c_api,
+                            const PJRT_AbiVersion_Extension* extension);
+  ~PjRtCApiRuntimeAbiVersion() override;
+
+  absl::Status IsCompatibleWith(
+      const PjRtRuntimeAbiVersion& runtime_abi_version) const override;
+  absl::Status IsCompatibleWith(
+      const PjRtExecutableAbiVersion& executable_abi_version) const override;
+
+  absl::StatusOr<PjRtRuntimeAbiVersionProto> ToProto() const override;
+  PjRtPlatformId platform_id() const override;
+
+  PJRT_RuntimeAbiVersion* c_abi_version() const { return c_abi_version_; }
+
+ private:
+  PJRT_RuntimeAbiVersion* c_abi_version_;
+  const PJRT_Api* c_api_;
+  const PJRT_AbiVersion_Extension* extension_;
+};
+
+class PjRtCApiExecutableAbiVersion : public PjRtExecutableAbiVersion {
+ public:
+  PjRtCApiExecutableAbiVersion(PJRT_ExecutableAbiVersion* c_abi_version,
+                               const PJRT_Api* c_api,
+                               const PJRT_AbiVersion_Extension* extension);
+  ~PjRtCApiExecutableAbiVersion() override;
+
+  absl::StatusOr<PjRtExecutableAbiVersionProto> ToProto() const override;
+  PjRtPlatformId platform_id() const override;
+
+  PJRT_ExecutableAbiVersion* c_abi_version() const { return c_abi_version_; }
+
+ private:
+  PJRT_ExecutableAbiVersion* c_abi_version_;
+  const PJRT_Api* c_api_;
+  const PJRT_AbiVersion_Extension* extension_;
 };
 
 absl::StatusOr<std::unique_ptr<PjRtClient>> GetCApiClient(

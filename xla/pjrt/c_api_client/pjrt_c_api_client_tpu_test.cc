@@ -25,12 +25,17 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/parser/hlo_parser.h"
+#include "xla/pjrt/c/pjrt_c_api_abi_version_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_callback_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
+#include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_dimensions.h"
+#include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_tpu/xla_tpu_pjrt_client.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/tsl/platform/statusor.h"
@@ -265,6 +270,50 @@ TEST(PjRtCApiClientTpuTest, RegisterAndInvokeCallback) {
       PJRT_Callback_Type::PJRT_Callback_Type_Prefatal, &args));
   EXPECT_TRUE(callback_executed);
   EXPECT_EQ(callback_status, error_status);
+}
+
+TEST(PjRtCApiClientTpuTest, AbiVersion) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetXlaPjrtTpuClient());
+  PjRtCApiClient* c_api_client = absl::down_cast<PjRtCApiClient*>(client.get());
+  ASSERT_NE(c_api_client, nullptr);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtRuntimeAbiVersion> runtime_abi_version,
+      client->RuntimeAbiVersion());
+
+  TF_ASSERT_OK_AND_ASSIGN(auto runtime_proto, runtime_abi_version->ToProto());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtRuntimeAbiVersion> runtime_abi_version_from_proto,
+      pjrt::CApiRuntimeAbiVersionFromProto(runtime_proto,
+                                           c_api_client->pjrt_c_api()));
+
+  // Test executable ABI version.
+  ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseAndReturnUnverifiedModule(R"(
+HloModule Identity
+ENTRY Identity() -> f32[2, 2] {
+    ROOT %result = f32[2, 2] parameter(0)
+})",
+                                                                       {}));
+  XlaComputation xla_computation(hlo_module->ToProto());
+  ASSERT_OK_AND_ASSIGN(auto executable,
+                       client->CompileAndLoad(xla_computation, {}));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutableAbiVersion> executable_abi_version,
+      executable->GetExecutable()->GetAbiVersion());
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable_proto,
+                          executable_abi_version->ToProto());
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtExecutableAbiVersion>
+                              executable_abi_version_from_proto,
+                          pjrt::CApiExecutableAbiVersionFromProto(
+                              executable_proto, c_api_client->pjrt_c_api()));
+
+  EXPECT_OK(runtime_abi_version->IsCompatibleWith(
+      *executable_abi_version_from_proto));
 }
 
 }  // namespace

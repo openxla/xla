@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_abi_version_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_callback_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_ffi_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
@@ -70,6 +71,7 @@ limitations under the License.
 #include "xla/pjrt/extensions/host_allocator/host_allocator_extension.h"
 #include "xla/pjrt/extensions/host_allocator/host_allocator_interface_impl.h"
 #include "xla/pjrt/mlir_to_hlo.h"
+#include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_api.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -79,6 +81,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
+#include "xla/pjrt/proto/pjrt_abi_version.pb.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/pjrt/scoped_async_tracking_event.h"
 #include "xla/service/computation_placer.h"
@@ -392,6 +395,24 @@ int PjRtCApiClient::process_index() const {
 
 absl::string_view PjRtCApiClient::platform_version() const {
   return platform_version_;
+}
+
+absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>>
+PjRtCApiClient::RuntimeAbiVersion() const {
+  PJRT_AbiVersion_Extension* extension =
+      FindExtension<PJRT_AbiVersion_Extension>(
+          PJRT_Extension_Type::PJRT_Extension_Type_AbiVersion);
+  if (extension == nullptr) {
+    return absl::UnimplementedError(
+        "AbiVersion extension not implemented in this PJRT plugin.");
+  }
+  PJRT_Client_RuntimeAbiVersion_Args args;
+  args.struct_size = PJRT_Client_RuntimeAbiVersion_Args_STRUCT_SIZE;
+  args.client = c_client_.get();
+  RETURN_STATUS_IF_PJRT_ERROR(extension->client_runtime_abi_version(&args),
+                              c_api_);
+  return std::make_unique<PjRtCApiRuntimeAbiVersion>(args.abi_version, c_api_,
+                                                     extension);
 }
 
 std::optional<PjRtPluginAttributes> PjRtCApiClient::plugin_attributes() const {
@@ -2366,6 +2387,24 @@ absl::StatusOr<std::string> PjRtCApiExecutable::FingerprintExecutable() const {
                               c_api_);
   return std::string(args.executable_fingerprint,
                      args.executable_fingerprint_size);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>>
+PjRtCApiExecutable::GetAbiVersion() const {
+  PJRT_AbiVersion_Extension* extension =
+      pjrt::FindExtension<PJRT_AbiVersion_Extension>(
+          c_api_, PJRT_Extension_Type::PJRT_Extension_Type_AbiVersion);
+  if (extension == nullptr) {
+    return absl::UnimplementedError(
+        "AbiVersion extension not implemented in this PJRT plugin.");
+  }
+  PJRT_Executable_GetAbiVersion_Args args;
+  args.struct_size = PJRT_Executable_GetAbiVersion_Args_STRUCT_SIZE;
+  args.executable = c_executable();
+  RETURN_STATUS_IF_PJRT_ERROR(extension->executable_get_abi_version(&args),
+                              c_api_);
+  return std::make_unique<PjRtCApiExecutableAbiVersion>(args.abi_version,
+                                                        c_api_, extension);
 }
 
 absl::StatusOr<CompileOptions> PjRtCApiExecutable::GetCompileOptions() const {
@@ -4422,6 +4461,122 @@ absl::StatusOr<std::unique_ptr<PjRtPhaseCompiler>> GetCApiPhaseCompiler() {
         "instead.");
   }
   return GetCApiPhaseCompiler(device_types[0]);
+}
+
+PjRtCApiRuntimeAbiVersion::PjRtCApiRuntimeAbiVersion(
+    PJRT_RuntimeAbiVersion* c_abi_version, const PJRT_Api* c_api,
+    const PJRT_AbiVersion_Extension* extension)
+    : c_abi_version_(c_abi_version), c_api_(c_api), extension_(extension) {}
+
+PjRtCApiRuntimeAbiVersion::~PjRtCApiRuntimeAbiVersion() {
+  PJRT_RuntimeAbiVersion_Destroy_Args args;
+  args.struct_size = PJRT_RuntimeAbiVersion_Destroy_Args_STRUCT_SIZE;
+  args.abi_version = c_abi_version_;
+  pjrt::LogFatalIfPjrtError(extension_->runtime_abi_version_destroy(&args),
+                            c_api_);
+}
+
+absl::Status PjRtCApiRuntimeAbiVersion::IsCompatibleWith(
+    const PjRtRuntimeAbiVersion& runtime_abi_version) const {
+  PJRT_RuntimeAbiVersion_IsCompatibleWithRuntime_Args args;
+  args.struct_size =
+      PJRT_RuntimeAbiVersion_IsCompatibleWithRuntime_Args_STRUCT_SIZE;
+  args.abi_version = c_abi_version_;
+  args.other_abi_version =
+      tensorflow::down_cast<const PjRtCApiRuntimeAbiVersion&>(
+          runtime_abi_version)
+          .c_abi_version();
+  RETURN_STATUS_IF_PJRT_ERROR(
+      extension_->runtime_abi_version_is_compatible_with_runtime(&args),
+      c_api_);
+  return absl::OkStatus();
+}
+
+absl::Status PjRtCApiRuntimeAbiVersion::IsCompatibleWith(
+    const PjRtExecutableAbiVersion& executable_abi_version) const {
+  PJRT_RuntimeAbiVersion_IsCompatibleWithExecutable_Args args;
+  args.struct_size =
+      PJRT_RuntimeAbiVersion_IsCompatibleWithExecutable_Args_STRUCT_SIZE;
+  args.abi_version = c_abi_version_;
+  args.executable_abi_version =
+      tensorflow::down_cast<const PjRtCApiExecutableAbiVersion&>(
+          executable_abi_version)
+          .c_abi_version();
+  RETURN_STATUS_IF_PJRT_ERROR(
+      extension_->runtime_abi_version_is_compatible_with_executable(&args),
+      c_api_);
+  return absl::OkStatus();
+}
+
+absl::StatusOr<PjRtRuntimeAbiVersionProto> PjRtCApiRuntimeAbiVersion::ToProto()
+    const {
+  PJRT_RuntimeAbiVersion_ToProto_Args args;
+  args.struct_size = PJRT_RuntimeAbiVersion_ToProto_Args_STRUCT_SIZE;
+  args.abi_version = c_abi_version_;
+  RETURN_STATUS_IF_PJRT_ERROR(extension_->runtime_abi_version_to_proto(&args),
+                              c_api_);
+  absl::Cleanup cleanup = [&args] {
+    args.serialized_proto_deleter(args.serialized_proto_holder);
+  };
+  PjRtRuntimeAbiVersionProto proto;
+  if (!proto.ParseFromString(
+          std::string(args.serialized_proto, args.serialized_proto_size))) {
+    return absl::InternalError(
+        "PjRtCApiRuntimeAbiVersion::ToProto: Failed to parse "
+        "PjRtRuntimeAbiVersionProto");
+  }
+  return proto;
+}
+
+PjRtPlatformId PjRtCApiRuntimeAbiVersion::platform_id() const {
+  PJRT_RuntimeAbiVersion_PlatformId_Args args;
+  args.struct_size = PJRT_RuntimeAbiVersion_PlatformId_Args_STRUCT_SIZE;
+  args.abi_version = c_abi_version_;
+  pjrt::LogFatalIfPjrtError(extension_->runtime_abi_version_platform_id(&args),
+                            c_api_);
+  return args.platform_id;
+}
+
+PjRtCApiExecutableAbiVersion::PjRtCApiExecutableAbiVersion(
+    PJRT_ExecutableAbiVersion* c_abi_version, const PJRT_Api* c_api,
+    const PJRT_AbiVersion_Extension* extension)
+    : c_abi_version_(c_abi_version), c_api_(c_api), extension_(extension) {}
+
+PjRtCApiExecutableAbiVersion::~PjRtCApiExecutableAbiVersion() {
+  PJRT_ExecutableAbiVersion_Destroy_Args args;
+  args.struct_size = PJRT_ExecutableAbiVersion_Destroy_Args_STRUCT_SIZE;
+  args.abi_version = c_abi_version_;
+  pjrt::LogFatalIfPjrtError(extension_->executable_abi_version_destroy(&args),
+                            c_api_);
+}
+
+absl::StatusOr<PjRtExecutableAbiVersionProto>
+PjRtCApiExecutableAbiVersion::ToProto() const {
+  PJRT_ExecutableAbiVersion_ToProto_Args args;
+  args.struct_size = PJRT_ExecutableAbiVersion_ToProto_Args_STRUCT_SIZE;
+  args.abi_version = c_abi_version_;
+  RETURN_STATUS_IF_PJRT_ERROR(
+      extension_->executable_abi_version_to_proto(&args), c_api_);
+  absl::Cleanup cleanup = [&args] {
+    args.serialized_proto_deleter(args.serialized_proto_holder);
+  };
+  PjRtExecutableAbiVersionProto proto;
+  if (!proto.ParseFromString(
+          std::string(args.serialized_proto, args.serialized_proto_size))) {
+    return absl::InternalError(
+        "PjRtCApiExecutableAbiVersion::ToProto: Failed to parse "
+        "PjRtExecutableAbiVersionProto");
+  }
+  return proto;
+}
+
+PjRtPlatformId PjRtCApiExecutableAbiVersion::platform_id() const {
+  PJRT_ExecutableAbiVersion_PlatformId_Args args;
+  args.struct_size = PJRT_ExecutableAbiVersion_PlatformId_Args_STRUCT_SIZE;
+  args.abi_version = c_abi_version_;
+  pjrt::LogFatalIfPjrtError(
+      extension_->executable_abi_version_platform_id(&args), c_api_);
+  return args.platform_id;
 }
 
 }  // namespace xla
