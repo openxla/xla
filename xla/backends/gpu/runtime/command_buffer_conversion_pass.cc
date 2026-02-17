@@ -349,8 +349,14 @@ ConvertThunksToCommandBuffer(
           thunks_to_convert,
           ConvertToCommandsOptions{synchronization_mode, enable_loop_unroll}));
 
+  std::string profile_annotation = absl::StrCat(
+      "command_buffer",
+      !thunks_to_convert.empty()
+          ? absl::StrCat("_", thunks_to_convert.front()->thunk_info().thunk_id)
+          : "");
+
   Thunk::ThunkInfo thunk_info;
-  thunk_info.profile_annotation = "command_buffer";
+  thunk_info.profile_annotation = profile_annotation;
   if (tsl::profiler::ProfilerLock::HasActiveSession() &&
       !debug_options.xla_enable_command_buffers_during_profiling()) {
     thunk_info.profile_annotation += " (disabled for profiling)";

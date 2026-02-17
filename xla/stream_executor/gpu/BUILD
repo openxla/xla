@@ -785,6 +785,7 @@ exports_files([
     "buffer_comparator_kernel_lib.cu.h",
     "collective_signal.cu.h",
     "all_reduce_kernel_lib.cu.h",
+    "multi_gpu_barrier_kernel.cu.h",
     "ragged_all_to_all_kernel_lib.cu.h",
     "repeat_buffer_kernel.cu.h",
     "redzone_allocator_kernel_lib.cu.h",
@@ -810,6 +811,15 @@ cc_library(
 )
 
 cc_library(
+    name = "multi_gpu_barrier_kernel",
+    hdrs = ["multi_gpu_barrier_kernel.h"],
+    deps = [
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:kernel",
+    ],
+)
+
+cc_library(
     name = "all_reduce_kernel",
     hdrs = ["all_reduce_kernel.h"],
     deps = [
@@ -822,6 +832,10 @@ cc_library(
 cc_library(
     name = "collective_kernel_metadata",
     hdrs = ["collective_kernel_metadata.h"],
+    visibility = internal_visibility([
+        "//third_party/py/jax:__subpackages__",
+        ":friends",
+    ]),
 )
 
 cc_library(

@@ -668,7 +668,10 @@ filegroup(
 cc_library(
     name = "net",
     textual_hdrs = ["net.h"],
-    deps = tf_windows_aware_platform_deps("net"),
+    deps = tf_windows_aware_platform_deps("net") + [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/strings",
+    ],
 )
 
 cc_library(
@@ -1321,6 +1324,7 @@ tsl_cc_test(
     ],
     deps = [
         ":net",
+        ":platform",
         "@com_google_googletest//:gtest_main",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:test",

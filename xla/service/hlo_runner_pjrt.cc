@@ -140,6 +140,7 @@ absl::StatusOr<std::vector<Layout>> FlattenedParameterLayouts(
 
 absl::StatusOr<ExecuteOptions> GenerateExecuteOptions(const HloModule& module) {
   ExecuteOptions execute_options;
+  execute_options.strict_shape_checking = true;
   return execute_options;
 }
 

@@ -26,6 +26,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/base/no_destructor.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -47,6 +48,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
+#include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_multimem_registry.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -68,6 +70,7 @@ limitations under the License.
 #include "xla/map_util.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/runtime/device_id.h"
+#include "xla/runtime/hang_watchdog.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
@@ -81,6 +84,7 @@ limitations under the License.
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_value.h"
+#include "xla/service/logical_buffer.h"
 #include "xla/service/maybe_owning_device_address.h"
 #include "xla/service/rendezvous.h"
 #include "xla/service/riegeli_dump_writer.h"
@@ -106,6 +110,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
@@ -121,6 +126,12 @@ namespace xla {
 namespace gpu {
 
 namespace {
+
+HangWatchdog& StaticHangWatchDog() {
+  static absl::NoDestructor<HangWatchdog> watchdog(tsl::Env::Default(),
+                                                   "gpu-executable");
+  return *watchdog;
+}
 
 // Chooses the correct allocations to be used within the GpuExecutable code.
 std::vector<const BufferAllocation*> GatherAllocationPtrs(
@@ -184,7 +195,7 @@ using ::tsl::profiler::ScopedAnnotation;
 static absl::flat_hash_set<ExecutionStreamId> GetExecutionStreamIds(
     const SequentialThunk& thunks) {
   absl::flat_hash_set<ExecutionStreamId> stream_ids;
-  thunks.ForAllThunks([&](const Thunk* thunk) {
+  thunks.Walk([&](const Thunk* thunk) {
     if (thunk->execution_stream_id() > 0) {
       stream_ids.insert(thunk->execution_stream_id());
     }
@@ -209,8 +220,9 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
   if ((debug_options.xla_gpu_detect_nan() !=
        DebugOptions::DETECTION_MODE_NONE) ||
       (debug_options.xla_gpu_detect_inf() !=
-       DebugOptions::DETECTION_MODE_NONE)) {
-    LOG(ERROR) << "Adding ThunkBufferDebugPass for nan/inf checking";
+       DebugOptions::DETECTION_MODE_NONE) ||
+      debug_options.xla_gpu_log_minmax()) {
+    LOG(ERROR) << "Adding ThunkBufferDebugPass for nan/inf/minmax checking";
     pipeline.AddPass(std::make_unique<ThunkBufferDebugPass>(
         ThunkBufferDebugPass::Mode::kFloatChecker));
   }
@@ -405,6 +417,25 @@ absl::Status ExecuteThunksImpl(
     stream_priority = stream_executor::StreamPriority::Highest;
   }
 
+  // Maybe add a watch guard for this execution.
+  absl::Duration watchdog_timeout = absl::InfiniteDuration();
+  if (debug_options &&
+      !debug_options->xla_gpu_execution_terminate_timeout().empty()) {
+    TF_RET_CHECK(absl::ParseDuration(
+        debug_options->xla_gpu_execution_terminate_timeout(),
+        &watchdog_timeout))
+        << "Failed to parse XLA execution terminate timeout";
+  }
+
+  std::shared_ptr<HangWatchdog::Guard> guard = nullptr;
+  if (watchdog_timeout < absl::InfiniteDuration()) {
+    std::string watchdog_name = absl::StrFormat(
+        "[%d] XLA GPU execution `%s`", executor->device_ordinal(), module_name);
+    guard = StaticHangWatchDog().Watch(
+        watchdog_name, watchdog_timeout,
+        HangWatchdog::Abort(watchdog_name, watchdog_timeout));
+  }
+
   // Borrow streams required for CollectiveThunk.
   absl::InlinedVector<se::Stream*, kAsyncStreamTotal> async_comms_streams(
       kAsyncStreamTotal, nullptr);
@@ -487,10 +518,12 @@ absl::Status ExecuteThunksImpl(
     RETURN_IF_ERROR(thunk_sequence.Prepare(prepare_params));
   }
 
-  XLA_VLOG_DEVICE(3, run_options->device_ordinal())
-      << "Prepared GPU executable for execution:"
-      << " #collective_cliques=" << collective_clique_requests.size()
-      << " #collective_memories=" << collective_memory_requests.size();
+  XLA_VLOG_DEVICE(3, run_options->device_ordinal()) << absl::StreamFormat(
+      "Prepared GPU executable for execution: #collective=[cliques=%d, "
+      "symmetric=%d, multimem=%d]",
+      collective_clique_requests.size(),
+      collective_memory_requests.symmetric_size(),
+      collective_memory_requests.multicast_size());
 
   std::vector<std::unique_ptr<CliqueKey>>* clique_keys =
       run_options->run_options().clique_keys();
@@ -509,6 +542,12 @@ absl::Status ExecuteThunksImpl(
                                               collective_clique_requests));
   }
 
+  // Acquire collective memories requested by thunks.
+  ASSIGN_OR_RETURN(
+      CollectiveMemory collective_memory,
+      AcquireCollectiveMemory(collective_params, collective_cliques,
+                              collective_memory_requests));
+
   RETURN_IF_ERROR(multimem_registry.Build());
 
   {  // Initialize thunks using prepared resources before execution.
@@ -520,6 +559,7 @@ absl::Status ExecuteThunksImpl(
         command_buffer_trace_stream,
         &collective_params,
         &collective_cliques,
+        &collective_memory,
         &multimem_registry,
         run_options->run_options().ffi_execution_context(),
         run_options->local_device_count()};
@@ -541,7 +581,7 @@ absl::Status ExecuteThunksImpl(
   Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
       *run_options, buffer_allocations, main_stream,
       command_buffer_trace_stream, &collective_params, &collective_cliques,
-      std::move(additional_execution_streams));
+      &collective_memory, std::move(additional_execution_streams));
 
   XLA_VLOG_DEVICE(1, run_options->device_ordinal())
       << "Start GpuExecutable::ExecuteOnStream module: " << module_name;
@@ -790,7 +830,9 @@ absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
     const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
     const BufferAllocation& allocation,
     se::DeviceAddressAllocator* const memory_allocator, int device_ordinal,
-    int64_t arg_idx) {
+    int64_t arg_idx,
+    const absl::flat_hash_map<LogicalBuffer::Color, int64_t>&
+        allocate_granularity) {
   if (allocation.is_thread_local()) {
     return se::DeviceAddressBase{};
   } else if (allocation.is_entry_computation_parameter()) {
@@ -824,9 +866,14 @@ absl::StatusOr<se::DeviceAddressBase> GpuExecutable::BufferForAllocation(
   } else {
     // Allocate each allocation that might escape, or is the temp buffer.
     CHECK(allocation.maybe_live_out() || allocation.IsPreallocatedTempBuffer());
-    const int64_t buffer_size = allocation.size();
+    int64_t buffer_size = allocation.size();
     se::DeviceAddressBase buffer_address;
     if (buffer_size > 0) {
+      // Maybe round up buffer allocation size to the requested granulariy.
+      if (auto it = allocate_granularity.find(allocation.color());
+          it != allocate_granularity.end()) {
+        buffer_size = RoundUpTo(buffer_size, it->second);
+      }
       ASSIGN_OR_RETURN(
           se::ScopedDeviceAddress<uint8_t> buffer,
           memory_allocator->Allocate(device_ordinal, buffer_size,
@@ -859,13 +906,38 @@ static absl::Status CheckAlignment(const BufferAllocation& allocation,
   return absl::OkStatus();
 }
 
+// Resolve GpuCollectives instance that we should use for the run.
+static GpuCollectives* ResolveGpuCollectives(
+    const ServiceExecutableRunOptions* run_options) {
+  absl::string_view platform_name =
+      run_options->run_options().stream()->parent()->GetPlatform()->Name();
+  auto* gpu_options = run_options->run_options().gpu_executable_run_options();
+  return gpu_options && gpu_options->collectives()
+             ? gpu_options->collectives()
+             : GpuCollectives::Default(platform_name);
+}
+
 absl::StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
-    VariantArguments arguments,
+    const ServiceExecutableRunOptions* run_options, VariantArguments arguments,
     const GpuExecutable::BufferAllocToDeviceMemoryMap* globals,
     se::DeviceAddressAllocator* const memory_allocator, int device_ordinal) {
   tsl::profiler::TraceMe hlo_module_activity(
       [&] { return std::string("Build buffer allocations"); },
       tsl::profiler::TraceMeLevel::kInfo);
+
+  absl::flat_hash_map<LogicalBuffer::Color, int64_t> allocate_granularity;
+  if (auto* collectives = ResolveGpuCollectives(run_options)) {
+    // BFC allocator ignores memory alignment and always allocates 256 byte
+    // aligned buffers, however for collective memory underlying libraries
+    // require larger alignment. We conservatively round up all allocation
+    // sizes to the alignment requirement. Proper fix must be done in BFC
+    // allocator and all the other allocator adaptors that we have in XLA, but
+    // this is left as an exercise for curious reader. The raw memory allocator
+    // that backs the BFC allocator uses correct granularity and alignment.
+    static constexpr int64_t kCollectiveMemoryColor = 1;
+    allocate_granularity[kCollectiveMemoryColor] =
+        collectives->SymmetricMemoryAlignment();
+  }
 
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();
   const int64_t num_buffers = allocations.size();
@@ -873,9 +945,10 @@ absl::StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
   buffers.reserve(num_buffers);
   for (int64_t i = 0; i < num_buffers; ++i) {
     const BufferAllocation& allocation = *allocations[i];
-    ASSIGN_OR_RETURN(buffers.emplace_back(),
-                     BufferForAllocation(arguments, globals, allocation,
-                                         memory_allocator, device_ordinal, i));
+    ASSIGN_OR_RETURN(
+        buffers.emplace_back(),
+        BufferForAllocation(arguments, globals, allocation, memory_allocator,
+                            device_ordinal, i, allocate_granularity));
     RETURN_IF_ERROR(CheckAlignment(allocation, buffers.back(), i));
   }
   return {{buffers, device_ordinal, memory_allocator}};
@@ -940,7 +1013,7 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
                          executor->device_ordinal());
 
   ASSIGN_OR_RETURN(BufferAllocations buffer_allocations,
-                   GenerateBufferAllocations(arguments, globals,
+                   GenerateBufferAllocations(run_options, arguments, globals,
                                              memory_allocator, device_ordinal));
   VLOG(3) << buffer_allocations.ToString();
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();

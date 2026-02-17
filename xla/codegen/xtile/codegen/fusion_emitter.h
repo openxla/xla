@@ -29,7 +29,7 @@ limitations under the License.
 #include "xla/codegen/tiling/tiling_specification.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 
-namespace xla::gpu {
+namespace xla::xtile {
 
 // Emits an xtile module.
 // fn_name: The name of the function to emit.
@@ -46,6 +46,6 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     mlir::MLIRContext& mlir_context,
     absl::Span<mlir::Type> opaque_args_types = {});
 
-}  // namespace xla::gpu
+}  // namespace xla::xtile
 
 #endif  // XLA_CODEGEN_XTILE_CODEGEN_FUSION_EMITTER_H_

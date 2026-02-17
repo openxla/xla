@@ -122,6 +122,7 @@ limitations under the License.
 #include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/fingerprint.h"
+#include "tsl/platform/numa.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/nvtx_utils.h"
@@ -490,6 +491,7 @@ class PreparedReceive {
 absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
     StreamExecutorGpuClient* client, gpu::GpuCollectives* gpu_collectives,
     const gpu::GpuCliqueKey& clique_key,
+    absl::Span<const std::vector<GlobalDeviceId>> device_groups,
     gpu::AcquiredCliquesMap& acquired_cliques_map, RankId rank_id,
     se::Stream* stream) {
   // Get the clique ID callback.
@@ -505,7 +507,8 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
         acquired_cliques_map[clique_key],
         AcquireGpuClique(gpu_collectives,
                          /*device=*/stream->parent(), RunId(0), clique_key,
-                         clique_id_callback, rank_id, acquired_cliques_map,
+                         device_groups, clique_id_callback, rank_id,
+                         acquired_cliques_map,
                          /*max_nchannels=*/0));
   }
   std::shared_ptr<gpu::LockableGpuClique::Lock> clique =
@@ -533,18 +536,21 @@ absl::StatusOr<PreparedSend> PrepareSend(
     gpu::AcquiredCliquesMap& acquired_cliques_map,
     std::shared_ptr<Promise<>> promise,
     tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event) {
+  GlobalDeviceId src_device(buffer->device()->global_device_id().value());
+  GlobalDeviceId dst_device(dst_global_device_id.value());
+
   // Form the GPU clique key.
   // TODO(asrao, mwhittaker): Supply correct incarnations when creating the
   // clique key.
   gpu::GpuCliqueKey clique_key = gpu::GpuCliqueKey(
-      /*devices=*/{GlobalDeviceId(buffer->device()->global_device_id().value()),
-                   GlobalDeviceId(dst_global_device_id.value())},
+      /*devices=*/{src_device, dst_device},
       /*num_local_participants=*/1);
 
   // Get the clique and communicator for the send.
   TF_ASSIGN_OR_RETURN(
       AcquiredCliqueAndCommunicator clique_and_communicator,
       AcquireCliqueAndCommunicator(client, gpu_collectives, clique_key,
+                                   /*device_groups=*/{{src_device, dst_device}},
                                    acquired_cliques_map, RankId(0), stream));
 
   // Acquire a hold on this buffer. The hold is held as long as usage_event is
@@ -582,18 +588,21 @@ absl::StatusOr<PreparedReceive> PrepareReceive(
     PjRtGlobalDeviceId src_global_device_id, CrossHostTransferKey transfer_key,
     Shape shape, gpu::AcquiredCliquesMap& acquired_cliques_map,
     tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event) {
+  GlobalDeviceId src_device(src_global_device_id.value());
+  GlobalDeviceId dst_device(device->global_device_id().value());
+
   // Form the GPU clique key.
   // TODO(asrao, mwhittaker): Supply correct incarnations when creating the
   // clique key.
   gpu::GpuCliqueKey clique_key = gpu::GpuCliqueKey(
-      /*devices=*/{GlobalDeviceId(src_global_device_id.value()),
-                   GlobalDeviceId(device->global_device_id().value())},
+      /*devices=*/{src_device, dst_device},
       /*num_local_participants=*/1);
 
   // Get the clique and communicator for the receive.
   TF_ASSIGN_OR_RETURN(
       AcquiredCliqueAndCommunicator clique_and_communicator,
       AcquireCliqueAndCommunicator(client, gpu_collectives, clique_key,
+                                   /*device_groups=*/{{src_device, dst_device}},
                                    acquired_cliques_map, RankId(1), stream));
 
   // Allocate an uninitialized buffer. The buffer will be populated with data
@@ -1525,10 +1534,10 @@ GetStreamExecutorGpuDeviceAllocator(
 void NameDeviceAndLauncherThread(const LocalTopologyProto& node,
                                  const DeviceProto& device_proto,
                                  WorkerThread* launcher_thread) {
-  auto suffix = absl::StrFormat(":#global=%d,local=%d,process=%d,partition=%d#",
-                                device_proto.global_device_id(),
-                                device_proto.local_device_ordinal(),
-                                node.node_id(), device_proto.partition_index());
+  auto suffix = absl::StrFormat(
+      ":#global=%d,local=%d,process=%d,partition=%d#",
+      device_proto.global_device_id(), device_proto.local_device_ordinal(),
+      node.process_id(), device_proto.partition_index());
   // Name the device.
   tsl::profiler::NameDevice(device_proto.local_device_ordinal(),
                             absl::StrCat("Xla", suffix));
@@ -1546,7 +1555,7 @@ void NameDeviceAndLauncherThread(const LocalTopologyProto& node,
 absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     absl::string_view platform_name,
     std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,
-    int node_id, int num_nodes,
+    int process_id, int num_nodes,
     gpu::GpuExecutableRunOptions* gpu_executable_run_options,
     std::shared_ptr<KeyValueStoreInterface> kv_store, bool enable_mock_nccl,
     std::optional<absl::string_view> mock_gpu_topology,
@@ -1555,7 +1564,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     absl::Duration get_global_topology_timeout) {
   std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices;
   LocalTopologyProto local_topology;
-  local_topology.set_node_id(node_id);
+  local_topology.set_process_id(process_id);
   std::string boot_id_str;
   auto boot_id_str_or_status = GetBootIdString();
   if (!boot_id_str_or_status.ok()) {
@@ -1622,9 +1631,9 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     std::vector<LocalTopologyProto> local_topologies(num_nodes, local_topology);
     for (int i = 0; i < sizes.num_partitions; ++i) {
       for (int j = 0; j < sizes.num_hosts_per_partition; j++) {
-        int node_id = i * sizes.num_hosts_per_partition + j;
-        local_topologies[node_id].set_node_id(node_id);
-        local_topologies[node_id].set_boot_id(absl::StrCat(i));
+        int process_id = i * sizes.num_hosts_per_partition + j;
+        local_topologies[process_id].set_process_id(process_id);
+        local_topologies[process_id].set_boot_id(absl::StrCat(i));
       }
     }
     TF_ASSIGN_OR_RETURN(global_topology,
@@ -1632,7 +1641,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
                                             /*assign_global_device_ids=*/true));
   } else {
     TF_RETURN_IF_ERROR(ExchangeTopologies(
-        platform_name, node_id, num_nodes, get_local_topology_timeout,
+        platform_name, process_id, num_nodes, get_local_topology_timeout,
         get_global_topology_timeout, kv_store.get(), local_topology,
         &global_topology, /*assign_global_device_ids=*/true));
   }
@@ -1642,25 +1651,25 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   int curr_partition_index = -1;
   int curr_process_index = -1;
   int curr_process_index_in_partition = 0;
-  for (const LocalTopologyProto& node : global_topology.nodes()) {
+  for (const LocalTopologyProto& node : global_topology.processes()) {
     for (const DeviceProto& device_proto : node.devices()) {
-      // The devices in the global topology are ordered by node_id,
+      // The devices in the global topology are ordered by process_id,
       // partition_index. This is guaranteed by the `BuildGlobalTopology`
       // function and the `ExchangeTopologies` function.
       if (curr_partition_index != device_proto.partition_index()) {
         curr_partition_index = device_proto.partition_index();
-        curr_process_index = node.node_id();
+        curr_process_index = node.process_id();
         curr_process_index_in_partition = 0;
       }
-      if (curr_process_index != node.node_id()) {
-        curr_process_index = node.node_id();
+      if (curr_process_index != node.process_id()) {
+        curr_process_index = node.process_id();
         curr_process_index_in_partition++;
       }
 
       GlobalDeviceId global_device_id(device_proto.global_device_id());
-      device_to_process[global_device_id] = node.node_id();
+      device_to_process[global_device_id] = node.process_id();
       std::unique_ptr<LocalDeviceState> local_device;
-      if (node.node_id() == node_id) {
+      if (node.process_id() == process_id) {
         auto it = local_device_states.find(device_proto.local_device_ordinal());
         TF_RET_CHECK(it != local_device_states.end())
             << device_proto.local_device_ordinal();
@@ -1677,7 +1686,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
           device_proto.name(), device_proto.vendor(),
           device_proto.compute_capability(), device_proto.core_count(),
           device_proto.shared_memory_per_block_optin(),
-          device_proto.local_device_ordinal(), node.node_id(),
+          device_proto.local_device_ordinal(), node.process_id(),
           curr_process_index_in_partition, device_proto.partition_index(),
           device_proto.numa_node());
       devices.push_back(std::move(device));
@@ -1698,10 +1707,10 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     return absl::InternalError("Failed to get GPU collectives");
   }
 
-  size_t num_processes = global_topology.nodes().size();
+  size_t num_processes = global_topology.processes().size();
   TF_ASSIGN_OR_RETURN(
       auto clique_id_callback,
-      gpu_collectives->InitializeTopology({ProcessId(node_id), num_processes,
+      gpu_collectives->InitializeTopology({ProcessId(process_id), num_processes,
                                            local_device_states.size(), kv_store,
                                            device_to_process}));
   gpu_executable_run_options->set_clique_id_callback(
@@ -1724,8 +1733,13 @@ StreamExecutorGpuDevice::StreamExecutorGpuDevice(
       device_vendor_(std::move(device_vendor)) {
   StreamExecutorGpuTopologyDescription::SetupDeviceDescription(
       description(), device_vendor_, compute_capability, core_count,
-      static_cast<int64_t>(shared_memory_per_block_optin), partition_index,
-      numa_node);
+      static_cast<int64_t>(shared_memory_per_block_optin), partition_index);
+  absl::flat_hash_map<std::string, PjRtDeviceAttribute> attributes =
+      description().Attributes();
+  if (numa_node != tsl::port::kNUMANoAffinity) {
+    attributes["numa_node"] = static_cast<int64_t>(numa_node);
+  }
+  SetAttributes(std::move(attributes));
 }
 
 absl::string_view StreamExecutorGpuDevice::device_vendor() const {
@@ -1863,7 +1877,7 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
 
 std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
     std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,
-    int node_id) {
+    int process_id) {
   std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices;
   for (auto& ordinal_and_device : local_device_states) {
     const se::DeviceDescription& desc =
@@ -1873,7 +1887,7 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
         desc.name(), desc.device_vendor(),
         MakeComputeCapabilityAttributeString(desc), desc.core_count(),
         desc.shared_memory_per_block_optin(),
-        ordinal_and_device.second->local_device_id().value(), node_id,
+        ordinal_and_device.second->local_device_id().value(), process_id,
         desc.numa_node());
     devices.push_back(std::move(device));
   }

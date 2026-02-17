@@ -201,6 +201,10 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
       CompileOptions* options, ExecutableExtras* returned_extras,
       bool lookup_addressable_devices) override;
 
+  HostMemoryAllocator* GetHostMemoryAllocator() const override {
+    return host_memory_allocator_.get();
+  }
+
  private:
   absl::flat_hash_map<GlobalDeviceId, IncarnationId> GetLatestIncarnations(
       const ExecuteOptions& options);

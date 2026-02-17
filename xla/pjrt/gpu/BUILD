@@ -1,5 +1,6 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/pjrt/gpu:package_groups.bzl", "xla_gpu_internal_packages")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm")
@@ -50,7 +51,9 @@ cc_library(
     name = "se_gpu_pjrt_client",
     srcs = ["se_gpu_pjrt_client.cc"],
     hdrs = ["se_gpu_pjrt_client.h"],
-    defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm(["TENSORFLOW_USE_ROCM=1"]),
+    defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm(["TENSORFLOW_USE_ROCM=1"]) + if_sycl([
+        "TENSORFLOW_USE_SYCL=1",
+    ]),
     visibility = internal_visibility(["//xla/pjrt/gpu:legacy_gpu_client_users"]),
     deps = [
         ":gpu_helpers",
@@ -192,6 +195,12 @@ xla_test(
     size = "large",
     srcs = ["se_gpu_pjrt_client_test.cc"],
     backend_tags = {
+        "h100": [
+            "full",
+            "multi_gpu",
+            "noasan",
+            "nomsan",
+        ],
         "gpu": [
             "multi_gpu",
             "noasan",
@@ -261,6 +270,8 @@ xla_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:subprocess",
         "//xla/tsl/util:command_line_flags",
+        "//xla/util/split_proto:split_executable_and_options_writer",
+        "//xla/util/split_proto:split_proto_reader",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -277,6 +288,9 @@ xla_test(
         "@com_google_googletest//:gtest",
         "@com_google_protobuf//:protobuf",
         "@llvm-project//mlir:IR",
+        "@riegeli//riegeli/bytes:reader",
+        "@riegeli//riegeli/bytes:string_reader",
+        "@riegeli//riegeli/bytes:string_writer",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:platform_port",
@@ -443,6 +457,7 @@ cc_library(
         ":se_gpu_topology_description",
         "//xla:shape_util",
         "//xla:status_macros",
+        "//xla/client:executable_build_options",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo:mhlo_passes",
@@ -591,6 +606,7 @@ xla_test(
         "//xla:literal_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_computation",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/mlir_hlo",
         "//xla/pjrt:pjrt_client",

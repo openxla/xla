@@ -23,7 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/status/statusor.h"
+#include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/tile_assignment.h"
@@ -77,6 +77,13 @@ class NamedSharding {
     // or other slices with sub-axis, we cannot slice it to {a, c} + {b}.
     std::optional<DimensionSharding> Slice(const Mesh& mesh,
                                            int64_t slice_size);
+
+    // Returns true if this dimension sharding is a prefix of `other`.
+    //
+    // This means that the sequence of axes in this sharding matches the
+    // beginning of the sequence of axes in `other` sharding.
+    bool IsPrefixOf(const DimensionSharding& other, const Mesh& mesh,
+                    const Mesh& other_mesh) const;
 
    private:
     std::vector<AxisRef> axes_;
@@ -136,6 +143,51 @@ class NamedSharding {
     return mesh_.device_assignment().num_elements();
   }
 
+  bool IsReplicated() const {
+    return !IsMaximal() && AllDimShardingsEmpty(dim_shardings_) &&
+           unreduced_axes_.empty() && manual_axes_.empty();
+  }
+
+  bool IsMaximal() const { return mesh_.IsMaximal(); }
+
+  bool IsManual() const {
+    return !IsMaximal() && AllDimShardingsEmpty(dim_shardings_) &&
+           replicated_axes_.empty() && unreduced_axes_.empty() &&
+           mesh_.ContainsAllMeshAxesInOrder(manual_axes_);
+  }
+
+  bool IsUnreduced() const {
+    return !IsMaximal() && AllDimShardingsEmpty(dim_shardings_) &&
+           replicated_axes_.empty() && manual_axes_.empty() &&
+           mesh_.ContainsAllMeshAxesInOrder(unreduced_axes_);
+  }
+
+  // Returns true if the tile size is the same as the input size.
+  //
+  // This checks for both replicated and maximal sharding, as in both cases tile
+  // size is same as input size.
+  bool IsTileMaximal() const { return IsReplicated() || IsMaximal(); }
+
+  bool HasPartialReplication() const {
+    if (IsTileMaximal()) {
+      return false;
+    }
+    if (!replicated_axes().empty()) {
+      return true;
+    }
+    int64_t used_elements = 1;
+    for (const int64_t dim : dimensions()) {
+      used_elements *= dim;
+    }
+    for (const AxisRef& axis : unreduced_axes()) {
+      used_elements *= axis.size(mesh());
+    }
+    for (const AxisRef& axis : manual_axes()) {
+      used_elements *= axis.size(mesh());
+    }
+    return used_elements < num_devices();
+  }
+
   // Creates a sharding with empty mesh and no sharding axes depicting it is
   // replicated across all devices.
   static NamedSharding Replicate(absl::Span<const OpMetadata> metadata = {}) {
@@ -143,6 +195,28 @@ class NamedSharding {
                          /*replicated_axes=*/{},
                          /*unreduced_axes=*/{},
                          /*manual_axes=*/{}, metadata);
+  }
+
+  static NamedSharding MaximalSharding(
+      int64_t device_id, absl::Span<const OpMetadata> metadata = {}) {
+    return NamedSharding(Mesh(device_id), /*dim_shardings=*/{},
+                         /*replicated_axes=*/{},
+                         /*unreduced_axes=*/{},
+                         /*manual_axes=*/{}, metadata);
+  }
+
+  static NamedSharding Unreduced(Mesh mesh,
+                                 absl::Span<const OpMetadata> metadata = {}) {
+    return NamedSharding(mesh, /*dim_shardings=*/{},
+                         /*replicated_axes=*/{}, GetAllMeshAxes(mesh),
+                         /*manual_axes=*/{}, metadata);
+  }
+
+  static NamedSharding Manual(Mesh mesh,
+                              absl::Span<const OpMetadata> metadata = {}) {
+    return NamedSharding(mesh, /*dim_shardings=*/{},
+                         /*replicated_axes=*/{},
+                         /*unreduced_axes=*/{}, GetAllMeshAxes(mesh), metadata);
   }
 
  private:
@@ -155,42 +229,30 @@ class NamedSharding {
     }
   }
 
+  bool AllDimShardingsEmpty(
+      absl::Span<const DimensionSharding> dim_shardings) const {
+    return absl::c_all_of(dim_shardings, [](const DimensionSharding& s) {
+      return s.axes().empty();
+    });
+  }
+
   std::vector<DimensionSharding> CanonicalizedDimShardings(
       absl::Span<const DimensionSharding> dim_shardings) const {
-    bool all_dims_empty = absl::c_all_of(
-        dim_shardings,
-        [](const DimensionSharding& ds) { return ds.axes().empty(); });
-
-    if (all_dims_empty) {
+    if (AllDimShardingsEmpty(dim_shardings)) {
       return {};
     }
     return std::vector<DimensionSharding>(dim_shardings.begin(),
                                           dim_shardings.end());
   }
 
-  static NamedSharding MaximalSharding(
-      int64_t device_id, absl::Span<const OpMetadata> metadata = {}) {
-    return NamedSharding(Mesh(device_id), /*dim_shardings=*/{},
-                         /*replicated_axes=*/{},
-                         /*unreduced_axes=*/{},
-                         /*manual_axes=*/{}, metadata);
+  static std::vector<AxisRef> GetAllMeshAxes(const Mesh& mesh) {
+    std::vector<AxisRef> all_axes;
+    all_axes.reserve(mesh.num_axes());
+    for (int64_t i = 0; i < mesh.num_axes(); ++i) {
+      all_axes.push_back(AxisRef(i));
+    }
+    return all_axes;
   }
-
-  bool IsReplicated() const {
-    return !IsMaximal() &&
-           absl::c_all_of(
-               dim_shardings_,
-               [](const DimensionSharding& s) { return s.axes().empty(); }) &&
-           unreduced_axes_.empty();
-  }
-
-  bool IsMaximal() const { return mesh_.IsMaximal(); }
-
-  // Returns true if the tile size is the same as the input size.
-  //
-  // This checks for both replicated and maximal sharding, as in both cases tile
-  // size is same as input size.
-  bool IsTileMaximal() const { return IsReplicated() || IsMaximal(); }
 
   const TileAssignment& device_assignment() const {
     return mesh_.device_assignment();

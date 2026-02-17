@@ -168,7 +168,7 @@ class TfrtGpuClient final : public PjRtClient {
            size < (int64_t{1} << 30) && !IsDmaMapped(data, size);
   }
 
-  HostMemoryAllocator* host_memory_allocator() const {
+  HostMemoryAllocator* GetHostMemoryAllocator() const override {
     return host_memory_allocator_.get();
   }
 

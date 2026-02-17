@@ -243,9 +243,7 @@ class HloSharding {
   bool IsManualLeaf() const {
     DCHECK(!IsTuple());
     if (UseNamedShardingLeaf()) {
-      // ManualSharding is represented by separate ManualComputationOp in named
-      // sharding format.
-      return false;
+      return named_sharding_->IsManual();
     }
     return manual_;
   }
@@ -269,13 +267,16 @@ class HloSharding {
 
   bool IsUnreduced() const {
     if (!IsTuple()) {
-      return unreduced_;
+      return IsUnreducedLeaf();
     }
     return absl::c_all_of(tuple_elements_,
                           [](const HloSharding& s) { return s.IsUnreduced(); });
   }
   bool IsUnreducedLeaf() const {
     DCHECK(!IsTuple());
+    if (UseNamedShardingLeaf()) {
+      return named_sharding_->IsUnreduced();
+    }
     return unreduced_;
   }
 
@@ -346,10 +347,11 @@ class HloSharding {
   // Returns whether the sharding represents a tiled sharding where the mapping
   // between devices and tiles is represented through 'tile_assignment()'.
   bool IsTiled() const {
-    return !IsTileMaximal() && !IsManual() && !IsUnknown();
+    return !IsTileMaximal() && !IsManual() && !IsUnreduced() && !IsUnknown();
   }
   bool IsTiledLeaf() const {
-    return !IsTileMaximalLeaf() && !IsManualLeaf() && !IsUnknownLeaf();
+    return !IsTileMaximalLeaf() && !IsManualLeaf() && !IsUnreducedLeaf() &&
+           !IsUnknownLeaf();
   }
 
   // Returns if the sharding has partial replication and partial sharding. If
@@ -360,12 +362,26 @@ class HloSharding {
   // Returns whether there is any partial replication. This can be using
   // ReplicateOnLastTileDim or subgroups with REPLICATED.
   bool HasPartialReplication() const {
+    if (UseNamedShardingLeaf()) {
+      return named_sharding_->HasPartialReplication();
+    }
     return replicate_on_last_tile_dim_ ||
            absl::c_linear_search(subgroup_types_, OpSharding::REPLICATED);
   }
 
   // Returns true if the sharding defines an operation on the given device.
   bool UsesDevice(int64_t device) const;
+
+  // Returns the device assignment for the sharding.
+  //
+  // For NamedSharding we convert it to tile based HloShardingV2 and then return
+  // the device assignment.
+  TileAssignment device_assignment() const {
+    if (UseNamedShardingLeaf()) {
+      return V3ToV2Sharding(*named_sharding_).device_assignment();
+    }
+    return tile_assignment_;
+  }
 
   // Returns the tile that should be executed on the given device.
   // REQUIRES: !IsTuple()
@@ -495,6 +511,15 @@ class HloSharding {
   // Gets the tile assignment tensor.
   // REQUIRES: !IsReplicated() && !IsTuple()
   const TileAssignment& tile_assignment() const { return tile_assignment_; }
+
+  // Returns the flattened list of devices used in the tile assignment.
+  // REQUIRES: !IsReplicated() && !IsTuple()
+  absl::Span<const int64_t> flattened_device_list() const {
+    const auto& array = UseNamedShardingLeaf()
+                            ? named_sharding_->device_assignment().array()
+                            : tile_assignment_.array();
+    return absl::MakeConstSpan(array.begin(), array.num_elements());
+  }
 
   const NamedSharding& named_sharding() const {
     CHECK(UseNamedShardingLeaf());

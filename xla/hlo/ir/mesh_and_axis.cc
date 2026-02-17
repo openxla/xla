@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
@@ -43,14 +44,19 @@ limitations under the License.
 
 namespace xla {
 
-absl::Status Mesh::ValidateMesh() {
-  // TODO(varcho): An empty mesh is valid in Shardy. If support for such meshes
-  // is required, update this validation.
-  if (device_assignment_.dimensions().empty() || axes_names_.empty()) {
-    return absl::InvalidArgumentError("Mesh must have at least one axis.");
+absl::Status Mesh::Validate() {
+  if (device_assignment_.num_dimensions() == 0) {
+    // Empty mesh or maximal mesh.
+    if (device_assignment_.num_elements() <= 1) {
+      return absl::OkStatus();
+    }
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Non-maximal mesh must have exactly 1 device id. Number of "
+        "device ids: ",
+        device_assignment_.num_elements()));
   }
 
-  if (device_assignment_.dimensions().size() != axes_names_.size()) {
+  if (device_assignment_.num_dimensions() != axes_names_.size()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Number of axes names must match number of dimensions in the device "
         "assignment. Number of axes names: ",
@@ -63,6 +69,13 @@ absl::Status Mesh::ValidateMesh() {
     if (!seen_axis_names.insert(axis_name).second) {
       return absl::InvalidArgumentError(absl::StrCat(
           "Mesh has duplicate axis names. Duplicate axis name: ", axis_name));
+    }
+    int64_t value;
+    if (absl::SimpleAtoi(axis_name, &value)) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Mesh axis name cannot be an integer to avoid confusion "
+                       "with axis indices: ",
+                       axis_name));
     }
   }
 
@@ -99,16 +112,16 @@ Mesh::Mesh(TileAssignment device_assignment,
            absl::Span<const absl::string_view> axes_names)
     : device_assignment_(std::move(device_assignment)),
       axes_names_(axes_names.begin(), axes_names.end()) {
-  CHECK_OK(ValidateMesh());
+  CHECK_OK(Validate());
 }
 
 std::string Mesh::ToString() const {
   if (IsMaximal()) {
     return absl::StrCat(
-        "@maximal_mesh<device_id=", device_assignment_.array()(0), ">");
+        "maximal_mesh[device_id=", device_assignment_.array()(0), "]");
   }
 
-  std::string mesh_str = "@mesh";
+  std::string mesh_str = "mesh";
   // Add the mesh axes names and sizes.
   std::vector<std::string> formatted_axes_names;
   formatted_axes_names.reserve(axes_names_.size());
@@ -120,20 +133,20 @@ std::string Mesh::ToString() const {
   // Add the device assignment if it is not an iota case.
   std::optional<IotaTileAssignment> iota = device_assignment_.iota();
   std::string device_assignment_str = "";
-  if (!(iota.has_value() && iota->reshape_dims().size() == 1)) {
+  bool simple_iota = iota.has_value() && iota->reshape_dims().size() == 1;
+  if (!simple_iota && device_assignment_.num_elements() != 0) {
     device_assignment_str =
         absl::StrCat(", device_ids=(", device_assignment_.ArrayToString(), ")");
   }
-  absl::StrAppend(&mesh_str, "<", absl::StrJoin(formatted_axes_names, ","), ">",
+  absl::StrAppend(&mesh_str, "[", absl::StrJoin(formatted_axes_names, ","), "]",
                   device_assignment_str);
   return mesh_str;
 }
 
 MeshProto Mesh::ToProto() const {
   MeshProto proto;
-  int64_t num_axes = axes_names_.size();
 
-  if (num_axes == 0) {
+  if (num_axes() == 0) {
     if (device_assignment_.num_elements() == 0) {
       return MeshProto();
     }
@@ -144,7 +157,7 @@ MeshProto Mesh::ToProto() const {
   }
 
   std::vector<MeshProto::MeshAxis> axes;
-  axes.reserve(num_axes);
+  axes.reserve(num_axes());
 
   for (auto [name, size] :
        llvm::zip_equal(axes_names_, device_assignment_.dimensions())) {
@@ -206,11 +219,23 @@ Mesh Mesh::FromProto(const MeshProto& proto) {
   return Mesh(tile_assignment, mesh_axis_names_span);
 }
 
+bool Mesh::ContainsAllMeshAxesInOrder(absl::Span<const AxisRef> axes) const {
+  if (num_axes() != axes.size()) {
+    return false;
+  }
+  for (int i = 0; i < axes.size(); ++i) {
+    if (axes[i].sub_axis_info().has_value() || axes[i].mesh_axis_index() != i) {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::string AxisRef::ToString(const Mesh* mesh) const {
   // TODO(b/474013054): Remove these checks if they have significant overhead.
   CHECK_GE(mesh_axis_index_, 0);
   if (mesh) {
-    CHECK_LT(mesh_axis_index_, mesh->axis_names().size());
+    CHECK_LT(mesh_axis_index_, mesh->num_axes());
   }
   std::string axis_str = mesh ? mesh->axis_names()[mesh_axis_index_]
                               : std::to_string(mesh_axis_index_);
@@ -232,12 +257,12 @@ AxisRefProto AxisRef::ToProto() const {
 }
 
 AxisRef AxisRef::FromProto(const AxisRefProto& proto) {
-  AxisRef axis_ref(proto.mesh_axis_index());
   if (proto.has_sub_axis_info()) {
-    axis_ref.sub_axis_info_ = {proto.sub_axis_info().pre_size(),
-                               proto.sub_axis_info().size()};
+    return AxisRef(proto.mesh_axis_index(),
+                   SubAxis{proto.sub_axis_info().pre_size(),
+                           proto.sub_axis_info().size()});
   }
-  return axis_ref;
+  return AxisRef(proto.mesh_axis_index());
 }
 
 AxisRef::AxisRef(int64_t mesh_axis_index) : mesh_axis_index_(mesh_axis_index) {}
@@ -309,7 +334,7 @@ bool AxisRef::Merge(const AxisRef& other, const Mesh& mesh) {
 }
 
 absl::Status AxisRef::Validate(const Mesh& mesh) const {
-  if (mesh_axis_index_ >= mesh.axis_names().size()) {
+  if (mesh_axis_index_ >= mesh.num_axes()) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Axis index must be less than number of axes. Axis index: ",
         mesh_axis_index_, ", Number of axes: ", mesh.axis_names().size()));

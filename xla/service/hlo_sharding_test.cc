@@ -589,6 +589,21 @@ TEST_F(HloShardingTest, NestedTuple) {
                                            /*num_devices=*/5));
 }
 
+TEST_F(HloShardingTest, DeviceAssignmentTiledSharding) {
+  TileAssignment ta({2, 4}, {4, 2}, {1, 0});
+  HloSharding sharding = HloSharding::Tile(ta);
+
+  EXPECT_EQ(sharding.device_assignment(), ta);
+}
+TEST_F(HloShardingTest, DeviceAssignmentNamedSharding) {
+  TileAssignment ta({2, 4}, {4, 2}, {1, 0});
+  Mesh mesh(ta, {"a", "b"});
+  HloSharding hlo_sharding_from_named(
+      test_utils::FromAxisNames(mesh, {{"a"}, {"b"}}));
+
+  EXPECT_EQ(hlo_sharding_from_named.device_assignment(), ta);
+}
+
 TEST_F(HloShardingTest, NormalizeTrivialSubgroupToManual) {
   HloSharding sharding =
       HloSharding::Subgroup(Array<int64_t>({1, 2, 1}, {0, 1}),
@@ -686,9 +701,8 @@ TEST_F(HloShardingTest, Hash) {
 using ShardingWithMetadataParamType =
     std::tuple<std::vector<OpMetadata>, std::string>;
 
-TEST_P(HloShardingRepresentationTest, ToStringReplicatedTest) {
-  bool use_named_sharding = GetParam();
-  HloSharding sharding = HloSharding::Replicate({}, use_named_sharding);
+TEST_F(HloShardingTest, ToStringReplicatedTest) {
+  HloSharding sharding = HloSharding::Replicate({});
   EXPECT_EQ(sharding.ToString(), "{replicated}");
 }
 
@@ -712,9 +726,8 @@ INSTANTIATE_TEST_SUITE_P(
             ListMetadata(),
             "{replicated metadata={{op_name=\"b\"}, {op_name=\"c\"}}}")));
 
-TEST_P(HloShardingRepresentationTest, ToStringAssignDeviceTest) {
-  bool use_named_sharding = GetParam();
-  HloSharding sharding = HloSharding::AssignDevice(7, {}, use_named_sharding);
+TEST_F(HloShardingTest, ToStringAssignDeviceTest) {
+  HloSharding sharding = HloSharding::AssignDevice(7);
   EXPECT_EQ(sharding.ToString(), "{maximal device=7}");
 }
 
@@ -802,12 +815,12 @@ TEST_F(HloShardingTest, ToStringTupleWithMetadataTest) {
 TEST_F(HloShardingTest, ToStringWithNamedShardingTest) {
   Mesh mesh({2, 4}, {"a", "b"});
   HloSharding sharding(test_utils::FromAxisNames(mesh, {{"a"}, {"b"}}));
-  EXPECT_EQ(sharding.ToString(), "{@mesh<a=2,b=4>, [{a}, {b}]}");
+  EXPECT_EQ(sharding.ToString(), "{mesh[a=2,b=4], [{a}, {b}]}");
 
   HloSharding sharding_with_metadata(test_utils::FromAxisNames(
       mesh, {{"a"}, {"b"}}, {}, {}, {}, ListMetadata()));
   EXPECT_EQ(sharding_with_metadata.ToString(/*include_metadata=*/true),
-            "{@mesh<a=2,b=4>, [{a}, {b}], metadata={{op_name=\"b\"}, "
+            "{mesh[a=2,b=4], [{a}, {b}], metadata={{op_name=\"b\"}, "
             "{op_name=\"c\"}}}");
 
   HloSharding tuple_sharding(HloSharding::Tuple(
@@ -816,8 +829,8 @@ TEST_F(HloShardingTest, ToStringWithNamedShardingTest) {
                                  ShapeUtil::MakeShape(S32, {9, 11})}),
       {sharding, sharding, sharding_with_metadata}));
   EXPECT_EQ(tuple_sharding.ToString(/*include_metadata=*/true),
-            "{{@mesh<a=2,b=4>, [{a}, {b}]}, {@mesh<a=2,b=4>, [{a}, {b}]}, "
-            "{@mesh<a=2,b=4>, [{a}, {b}], metadata={{op_name=\"b\"}, "
+            "{{mesh[a=2,b=4], [{a}, {b}]}, {mesh[a=2,b=4], [{a}, {b}]}, "
+            "{mesh[a=2,b=4], [{a}, {b}], metadata={{op_name=\"b\"}, "
             "{op_name=\"c\"}}}}");
 }
 

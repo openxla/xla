@@ -66,6 +66,9 @@ limitations under the License.
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/cpu/nanort/nanort_client.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
+#include "xla/backends/gpu/autotuner/block_level_emitter.h"
+#include "xla/backends/gpu/autotuner/factory.h"
+#include "xla/backends/gpu/autotuner/native_emitter.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
 #include "xla/backends/gpu/runtime/runtime_intrinsics.h"
@@ -73,6 +76,73 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/target_config/target_config.h"
+#include "xla/backends/gpu/transforms/add_tracking_suffix_to_instruction_names.h"
+#include "xla/backends/gpu/transforms/algebraic_simplifier.h"
+#include "xla/backends/gpu/transforms/algorithm_checker.h"
+#include "xla/backends/gpu/transforms/async_wrapper.h"
+#include "xla/backends/gpu/transforms/collectives/all_gather_combiner.h"
+#include "xla/backends/gpu/transforms/collectives/all_gather_dynamic_slice_simplifier.h"
+#include "xla/backends/gpu/transforms/collectives/all_gather_optimizer.h"
+#include "xla/backends/gpu/transforms/collectives/all_reduce_blueconnect.h"
+#include "xla/backends/gpu/transforms/collectives/all_reduce_combiner.h"
+#include "xla/backends/gpu/transforms/collectives/all_reduce_decomposer.h"
+#include "xla/backends/gpu/transforms/collectives/all_reduce_splitter.h"
+#include "xla/backends/gpu/transforms/collectives/collective_backend_assigner.h"
+#include "xla/backends/gpu/transforms/collectives/collective_combiner_annotator.h"
+#include "xla/backends/gpu/transforms/collectives/collective_permute_cycle_decomposer.h"
+#include "xla/backends/gpu/transforms/collectives/collective_pipelining_analyzer.h"
+#include "xla/backends/gpu/transforms/collectives/convert_async_collectives_to_sync.h"
+#include "xla/backends/gpu/transforms/collectives/gpu_collective_combiner_utils.h"
+#include "xla/backends/gpu/transforms/collectives/reduce_scatter_combiner.h"
+#include "xla/backends/gpu/transforms/composite_rewriter.h"
+#include "xla/backends/gpu/transforms/conv_rewriter.h"
+#include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
+#include "xla/backends/gpu/transforms/cudnn_custom_call_converter.h"
+#include "xla/backends/gpu/transforms/custom_kernel_fusion_rewriter.h"
+#include "xla/backends/gpu/transforms/dot_algorithm_rewriter.h"
+#include "xla/backends/gpu/transforms/dot_dimension_sorter.h"
+#include "xla/backends/gpu/transforms/dot_normalizer.h"
+#include "xla/backends/gpu/transforms/dot_operand_converter.h"
+#include "xla/backends/gpu/transforms/dot_strength_reduction.h"
+#include "xla/backends/gpu/transforms/double_buffer_loop_unrolling.h"
+#include "xla/backends/gpu/transforms/dynamic_slice_fusion_rewriter.h"
+#include "xla/backends/gpu/transforms/estimate_cub_scratch_size.h"
+#include "xla/backends/gpu/transforms/explicit_collectives_group_async_wrapper.h"
+#include "xla/backends/gpu/transforms/explicit_stream_annotation_async_wrapper.h"
+#include "xla/backends/gpu/transforms/fusion_wrapper.h"
+#include "xla/backends/gpu/transforms/gemm_broadcast_folding_rewriter.h"
+#include "xla/backends/gpu/transforms/gemm_fusion.h"
+#include "xla/backends/gpu/transforms/gemm_fusion_swap_operands.h"
+#include "xla/backends/gpu/transforms/gemm_rewriter.h"
+#include "xla/backends/gpu/transforms/gemv_rewriter.h"
+#include "xla/backends/gpu/transforms/hoist_fused_bitcasts.h"
+#include "xla/backends/gpu/transforms/layout_assignment.h"
+#include "xla/backends/gpu/transforms/move_copy_to_users.h"
+#include "xla/backends/gpu/transforms/nest_gemm_fusion.h"
+#include "xla/backends/gpu/transforms/ragged_all_to_all_canonicalizer.h"
+#include "xla/backends/gpu/transforms/ragged_all_to_all_decomposer.h"
+#include "xla/backends/gpu/transforms/ragged_all_to_all_multi_host_decomposer.h"
+#include "xla/backends/gpu/transforms/reduce_scatter_creator.h"
+#include "xla/backends/gpu/transforms/reduction_degenerate_dim_remover.h"
+#include "xla/backends/gpu/transforms/reduction_dimension_grouper.h"
+#include "xla/backends/gpu/transforms/reduction_layout_normalizer.h"
+#include "xla/backends/gpu/transforms/reduction_splitter.h"
+#include "xla/backends/gpu/transforms/rename_fusions.h"
+#include "xla/backends/gpu/transforms/sanitize_constant_names.h"
+#include "xla/backends/gpu/transforms/scalar_constant_sinker.h"
+#include "xla/backends/gpu/transforms/scaled_dot_rewriter.h"
+#include "xla/backends/gpu/transforms/scatter_expander.h"
+#include "xla/backends/gpu/transforms/scatter_slice_simplifier.h"
+#include "xla/backends/gpu/transforms/softmax_rewriter_triton.h"
+#include "xla/backends/gpu/transforms/sort_rewriter.h"
+#include "xla/backends/gpu/transforms/splitk_rewriter.h"
+#include "xla/backends/gpu/transforms/stream_attribute_annotator.h"
+#include "xla/backends/gpu/transforms/stream_attribute_async_wrapper.h"
+#include "xla/backends/gpu/transforms/topk_specializer.h"
+#include "xla/backends/gpu/transforms/topk_splitter.h"
+#include "xla/backends/gpu/transforms/tree_reduction_rewriter.h"
+#include "xla/backends/gpu/transforms/triton_fusion_numerics_verifier.h"
+#include "xla/backends/gpu/transforms/windowed_einsum_handler.h"
 #include "xla/core/host_offloading/hlo_host_device_type_call_wrapper.h"
 #include "xla/core/host_offloading/host_compute_asyncifier.h"
 #include "xla/hlo/analysis/alias_info.h"
@@ -211,74 +281,6 @@ limitations under the License.
 #include "xla/service/gpu/reduction_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/thunk_emitter.h"
-#include "xla/service/gpu/transforms/add_tracking_suffix_to_instruction_names.h"
-#include "xla/service/gpu/transforms/algebraic_simplifier.h"
-#include "xla/service/gpu/transforms/algorithm_checker.h"
-#include "xla/service/gpu/transforms/async_wrapper.h"
-#include "xla/service/gpu/transforms/collectives/all_gather_combiner.h"
-#include "xla/service/gpu/transforms/collectives/all_gather_dynamic_slice_simplifier.h"
-#include "xla/service/gpu/transforms/collectives/all_gather_optimizer.h"
-#include "xla/service/gpu/transforms/collectives/all_reduce_blueconnect.h"
-#include "xla/service/gpu/transforms/collectives/all_reduce_combiner.h"
-#include "xla/service/gpu/transforms/collectives/all_reduce_decomposer.h"
-#include "xla/service/gpu/transforms/collectives/all_reduce_splitter.h"
-#include "xla/service/gpu/transforms/collectives/collective_backend_assigner.h"
-#include "xla/service/gpu/transforms/collectives/collective_combiner_annotator.h"
-#include "xla/service/gpu/transforms/collectives/collective_permute_cycle_decomposer.h"
-#include "xla/service/gpu/transforms/collectives/collective_pipelining_analyzer.h"
-#include "xla/service/gpu/transforms/collectives/convert_async_collectives_to_sync.h"
-#include "xla/service/gpu/transforms/collectives/gpu_collective_combiner_utils.h"
-#include "xla/service/gpu/transforms/collectives/reduce_scatter_combiner.h"
-#include "xla/service/gpu/transforms/composite_rewriter.h"
-#include "xla/service/gpu/transforms/conv_rewriter.h"
-#include "xla/service/gpu/transforms/convert_triton_gemm_config.h"
-#include "xla/service/gpu/transforms/cudnn_custom_call_converter.h"
-#include "xla/service/gpu/transforms/custom_kernel_fusion_rewriter.h"
-#include "xla/service/gpu/transforms/dot_algorithm_rewriter.h"
-#include "xla/service/gpu/transforms/dot_dimension_sorter.h"
-#include "xla/service/gpu/transforms/dot_normalizer.h"
-#include "xla/service/gpu/transforms/dot_operand_converter.h"
-#include "xla/service/gpu/transforms/dot_strength_reduction.h"
-#include "xla/service/gpu/transforms/double_buffer_loop_unrolling.h"
-#include "xla/service/gpu/transforms/dynamic_slice_fusion_rewriter.h"
-#include "xla/service/gpu/transforms/estimate_cub_scratch_size.h"
-#include "xla/service/gpu/transforms/explicit_collectives_group_async_wrapper.h"
-#include "xla/service/gpu/transforms/explicit_stream_annotation_async_wrapper.h"
-#include "xla/service/gpu/transforms/fusion_wrapper.h"
-#include "xla/service/gpu/transforms/gemm_broadcast_folding_rewriter.h"
-#include "xla/service/gpu/transforms/gemm_fusion.h"
-#include "xla/service/gpu/transforms/gemm_fusion_swap_operands.h"
-#include "xla/service/gpu/transforms/gemm_rewriter.h"
-#include "xla/service/gpu/transforms/gemm_workspace_rewriter.h"
-#include "xla/service/gpu/transforms/gemv_rewriter.h"
-#include "xla/service/gpu/transforms/hoist_fused_bitcasts.h"
-#include "xla/service/gpu/transforms/layout_assignment.h"
-#include "xla/service/gpu/transforms/move_copy_to_users.h"
-#include "xla/service/gpu/transforms/nest_gemm_fusion.h"
-#include "xla/service/gpu/transforms/ragged_all_to_all_canonicalizer.h"
-#include "xla/service/gpu/transforms/ragged_all_to_all_decomposer.h"
-#include "xla/service/gpu/transforms/ragged_all_to_all_multi_host_decomposer.h"
-#include "xla/service/gpu/transforms/reduce_scatter_creator.h"
-#include "xla/service/gpu/transforms/reduction_degenerate_dim_remover.h"
-#include "xla/service/gpu/transforms/reduction_dimension_grouper.h"
-#include "xla/service/gpu/transforms/reduction_layout_normalizer.h"
-#include "xla/service/gpu/transforms/reduction_splitter.h"
-#include "xla/service/gpu/transforms/rename_fusions.h"
-#include "xla/service/gpu/transforms/sanitize_constant_names.h"
-#include "xla/service/gpu/transforms/scalar_constant_sinker.h"
-#include "xla/service/gpu/transforms/scaled_dot_rewriter.h"
-#include "xla/service/gpu/transforms/scatter_expander.h"
-#include "xla/service/gpu/transforms/scatter_slice_simplifier.h"
-#include "xla/service/gpu/transforms/softmax_rewriter_triton.h"
-#include "xla/service/gpu/transforms/sort_rewriter.h"
-#include "xla/service/gpu/transforms/splitk_rewriter.h"
-#include "xla/service/gpu/transforms/stream_attribute_annotator.h"
-#include "xla/service/gpu/transforms/stream_attribute_async_wrapper.h"
-#include "xla/service/gpu/transforms/topk_specializer.h"
-#include "xla/service/gpu/transforms/topk_splitter.h"
-#include "xla/service/gpu/transforms/tree_reduction_rewriter.h"
-#include "xla/service/gpu/transforms/triton_fusion_numerics_verifier.h"
-#include "xla/service/gpu/transforms/windowed_einsum_handler.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_cse.h"
@@ -316,6 +318,7 @@ limitations under the License.
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform/platform_object_registry.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -509,7 +512,6 @@ void LogDebugOptions(HloModule* hlo_module) {
 }
 
 absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
-  const DebugOptions& debug_options = hlo_module->config().debug_options();
   HloPassPipeline pre_spmd_pipeline("pre-spmd-partitioner");
   // Run some IR cleanup passes before running the SPMD partitioning
   // passes.
@@ -520,8 +522,7 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
   pre_spmd_pipeline.AddPass<FlattenCallGraph>();
   pre_spmd_pipeline.AddPass<CallInliner>(
       /*single_call_site=*/false, /*update_domain=*/false,
-      /*composites_to_preserve=*/absl::flat_hash_set<std::string>(),
-      /*uniquify_channel_ids=*/debug_options.xla_ignore_channel_id());
+      /*composites_to_preserve=*/absl::flat_hash_set<std::string>());
   pre_spmd_pipeline.AddPass<ZeroSizedHloElimination>();
   pre_spmd_pipeline.AddPass<ConditionalCanonicalizer>();
 
@@ -720,8 +721,7 @@ absl::Status RunOptimizationPasses(
 
   pipeline.AddPass<CallInliner>(
       /*single_call_site=*/false, /*update_domain=*/false,
-      /*composites_to_preserve=*/absl::flat_hash_set<std::string>(),
-      /*uniquify_channel_ids=*/debug_options.xla_ignore_channel_id());
+      /*composites_to_preserve=*/absl::flat_hash_set<std::string>());
 
   pipeline.AddPass<StochasticConvertDecomposer>();
 
@@ -1411,14 +1411,12 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
   const DebugOptions& opts = hlo_module->config().debug_options();
   if (opts.xla_gpu_enable_dynamic_slice_fusion()) {
     HloPassPipeline pipeline("dynamic-slice");
-    ASSIGN_OR_RETURN(se::Platform * platform,
-                     se::PlatformManager::PlatformWithId(platform_id));
     pipeline.AddPass<GpuReduceScatterCombiner>(
         kDefaultReduceScatterCombineThreshold,
         opts.xla_gpu_reduce_scatter_combine_threshold_bytes(),
         kCombineThresholdCount,
         opts.xla_gpu_enable_reduce_scatter_combine_by_dim());
-    pipeline.AddPass<DynamicSliceFusionRewriter>(platform->Name());
+    pipeline.AddPass<DynamicSliceFusionRewriter>(platform_id);
     pipeline.AddPass<AsyncWrapper>([](const HloInstruction* instr) {
       if (!IsDynamicSliceFusion(instr)) {
         return false;
@@ -1476,7 +1474,6 @@ AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
   opts.set_supports_non_canonical_dots(false);
   opts.set_enable_unconditional_reduce_of_concat_replacement(false);
   opts.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
-  opts.set_enable_conditional_simplification(true);
 
   switch (mode) {
     case AlgebraicSimplifierMode::kPostFusionSimplification:
@@ -1491,6 +1488,7 @@ AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
       // GPU pipeline handles transposes better than slice+concatenate, so keep
       // the transpose.
       opts.set_rewrite_reshape_transpose_as_slice_concatenate(false);
+      opts.set_enable_hoist_transpose_of_reshape(true);
       if (is_rocm) {
         opts.set_enable_conv_operand_swap(false);
       }
@@ -1911,9 +1909,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
       stream_exec, &gpu_target_config, options.key_value_store,
       gpu_target_config.device_description.runtime_version(), alias_info,
       debug_options, &mlir_context_, ShapeSizeBytesFunction()));
-  // After autotuning, update GEMM workspace sizes to match the exact
-  // requirements of the selected algorithms, potentially reducing memory usage.
-  pipeline.AddPass<GemmWorkspaceRewriter>(gpu_version, stream_exec);
 
   // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
   pipeline.AddPass<GemmBroadcastFoldingRewriter>();
@@ -2663,7 +2658,7 @@ GpuCompiler::CompileToBackendResult(
   // Host executable has to be compiled the GPU compilation is done to
   // avoid a deadlock on the LLVM command line options lock. We can then load
   // it.
-  compile_module_results.executable->ForAllThunksMutable([&](Thunk* thunk) {
+  compile_module_results.executable->Walk([&](Thunk* thunk) {
     if (thunk->kind() == Thunk::Kind::kHostExecuteStart) {
       auto* host_execute_start_thunk =
           tsl::down_cast<HostExecuteStartThunk*>(thunk);
@@ -3169,7 +3164,8 @@ GpuCompiler::LoadAotCompilationResult(
 
 absl::StatusOr<std::unique_ptr<Executable>>
 GpuCompiler::LoadExecutableFromAotResult(
-    const CompiledModule& aot_result, const se::StreamExecutor& stream_exec) {
+    const CompiledModule& aot_result,
+    const se::DeviceDescription& device_description) {
   tsl::profiler::TraceMe traceme("LoadExecutableFromAotResult");
 
   const auto* gpu_aot_result =
@@ -3190,16 +3186,12 @@ GpuCompiler::LoadExecutableFromAotResult(
   std::vector<uint8_t> binary(proto.binary().begin(), proto.binary().end());
 
   // Build the executable, which should be a thunk sequence.
-  ASSIGN_OR_RETURN(se::Platform * platform,
-                   se::PlatformManager::PlatformWithId(PlatformId()));
-  std::string platform_name = platform->Name();
+  absl::string_view platform_name = PlatformId()->ToName();
 
-  const se::DeviceDescription& gpu_device_info =
-      stream_exec.GetDeviceDescription();
   llvm::LLVMContext llvm_context;
 
   // Recreate BufferAssignment from proto.
-  std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(gpu_device_info);
+  std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(device_description);
   ASSIGN_OR_RETURN(
       std::unique_ptr<BufferAssignment> buffer_assignment,
       BufferAssignment::FromProto(proto.buffer_assignment(), hlo_module.get(),
@@ -3207,7 +3199,7 @@ GpuCompiler::LoadExecutableFromAotResult(
 
   IrEmitterContext ir_emitter_context(
       hlo_module.get(), buffer_assignment.get(), &execution_stream_assignment,
-      platform_name, gpu_device_info, mlir_context(), &llvm_context,
+      platform_name, device_description, mlir_context(), &llvm_context,
       /*emit_kernels=*/false, llvm::Triple(target_triple()), data_layout());
 
   absl::string_view cache_file_path =
@@ -3240,7 +3232,7 @@ GpuCompiler::LoadExecutableFromAotResult(
 
   {
     tsl::profiler::TraceMe traceme("CreateGpuExecutable");
-    std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(gpu_device_info);
+    std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(device_description);
     return GpuExecutable::Create(GpuExecutable::Params{
         /*asm_text=*/proto.asm_text(),
         /*binary=*/binary,
@@ -3256,7 +3248,7 @@ GpuCompiler::LoadExecutableFromAotResult(
         /*buffer_assignment=*/std::move(buffer_assignment),
         /*alias_info=*/std::move(alias_info),
         /*debug_options=*/std::move(debug_options),
-        /*device_description=*/gpu_device_info,
+        /*device_description=*/device_description,
         /*debug_module=*/std::move(hlo_module),
         /*enable_debug_info_manager=*/true});
   }
@@ -3272,9 +3264,10 @@ absl::Status GpuCompiler::AddConvAndGemmAutotuningPass(
     const se::SemanticVersion& toolkit_version, const AliasInfo* alias_info,
     const DebugOptions& debug_options, mlir::MLIRContext* mlir_context,
     HloCostAnalysis::ShapeSizeFunction shape_size_fn) {
-  TF_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<CodegenBackend>> backends,
-                      GetCodegenBackends(stream_exec, target_config, alias_info,
-                                         debug_options, mlir_context));
+  TF_ASSIGN_OR_RETURN(
+      std::vector<std::unique_ptr<CodegenBackend>> backends,
+      GetAutotunerBackends(stream_exec, target_config, alias_info,
+                           debug_options, mlir_context));
 
   bool do_not_autotune_cublas_and_cudnn =
       debug_options.xla_gpu_experimental_disable_binary_libraries() ||
@@ -3314,6 +3307,139 @@ absl::Status GpuCompiler::AddConvAndGemmAutotuningPass(
                             /*optimize_scratch_bytes=*/true, key_value_store));
   pipeline->AddPass(std::move(autotuner_pass));
 
+  return absl::OkStatus();
+}
+
+absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
+GpuCompiler::GetAutotunerBackends(
+    se::StreamExecutor* stream_exec,
+    const Compiler::GpuTargetConfig* target_config, const AliasInfo* alias_info,
+    const DebugOptions& debug_options, mlir::MLIRContext* mlir_context) {
+  std::vector<autotuner::Backend> autotune_backends;
+  if (!debug_options.xla_gpu_experimental_autotune_backends().empty()) {
+    for (const auto& backend :
+         debug_options.xla_gpu_experimental_autotune_backends()) {
+      autotune_backends.push_back(static_cast<autotuner::Backend>(backend));
+    }
+  } else {
+    for (int i = 0; i < autotuner::Backend_descriptor()->value_count(); ++i) {
+      const auto backend = static_cast<autotuner::Backend>(
+          autotuner::Backend_descriptor()->value(i)->number());
+      if (backend != autotuner::Backend::UNSPECIFIED_BACKEND) {
+        autotune_backends.push_back(backend);
+      }
+    }
+  }
+
+  std::vector<autotuner::Backend> disabled_autotune_backends;
+  if (debug_options.xla_gpu_experimental_disable_binary_libraries()) {
+    disabled_autotune_backends.push_back(autotuner::Backend::CUBLAS);
+    disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT);
+    disabled_autotune_backends.push_back(autotuner::Backend::CUDNN);
+  }
+
+  if (!debug_options.xla_gpu_enable_cublaslt()) {
+    disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT);
+    disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT_FISSION);
+  } else {
+    // Breaks xla/backends/gpu/transforms:gemm_rewriter_test_b200, it requires
+    // CUBLAS and CUBLASLT both to be available. TODO: fix tests and uncomment.
+    // disabled_autotune_backends.push_back(autotuner::Backend::CUBLAS);
+    disabled_autotune_backends.push_back(autotuner::Backend::CUBLAS_FISSION);
+  }
+
+  autotune_backends.erase(
+      std::remove_if(autotune_backends.begin(), autotune_backends.end(),
+                     [&](autotuner::Backend backend) {
+                       return absl::c_linear_search(disabled_autotune_backends,
+                                                    backend);
+                     }),
+      autotune_backends.end());
+
+  auto& registry = stream_executor::PlatformObjectRegistry::GetGlobalRegistry();
+  TF_ASSIGN_OR_RETURN(const GetCodegenBackends::Type& get_codegen_backends,
+                      registry.FindObject<GetCodegenBackends>(PlatformId()));
+  std::vector<std::unique_ptr<CodegenBackend>> backends =
+      get_codegen_backends(stream_exec, &debug_options, this, target_config,
+                           alias_info, mlir_context, autotune_backends);
+  return backends;
+}
+
+namespace {
+
+bool ShouldAutotuneBetweenFusionEmittersAny(const HloInstruction& instruction) {
+  if (instruction.opcode() != HloOpcode::kFusion) {
+    return false;
+  }
+  auto fusion = Cast<const HloFusionInstruction>(&instruction);
+  // kCustom fusions have already been assigned to a backend and we don't want
+  // to override it.
+  if (fusion->fusion_kind() == HloInstruction::FusionKind::kCustom) {
+    return false;
+  }
+  // Scatter can't go through the block-level emitter and runs into comparator
+  // issues in the autotuner as different runs can produce different results.
+  if (absl::c_any_of(fusion->fused_instructions_computation()->instructions(),
+                     HloPredicateIsOp<HloOpcode::kScatter>)) {
+    return false;
+  }
+  return true;
+}
+
+// Returns true if the instruction is a fusion that would go through the native
+// emitter, but may benefit from going through the block-level emitter.
+// Currently, we only do this for reductions and transposes.
+bool ShouldAutotuneBetweenFusionEmitters(const HloInstruction& instruction) {
+  if (!ShouldAutotuneBetweenFusionEmittersAny(instruction)) {
+    return false;
+  }
+  auto fusion = Cast<const HloFusionInstruction>(&instruction);
+  return absl::c_any_of(
+      fusion->fused_instructions_computation()->instructions(),
+      HloPredicateIsOp<HloOpcode::kReduce, HloOpcode::kTranspose>);
+}
+
+}  // namespace
+
+absl::Status GpuCompiler::AddFusionAutotuningPass(
+    HloPassPipeline* pipeline, HloModule* hlo_module,
+    const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
+    stream_executor::StreamExecutor* stream_executor,
+    const Compiler::GpuTargetConfig* target_config,
+    HloCostAnalysis::ShapeSizeFunction shape_size_fn,
+    const MultiProcessKeyValueStore& key_value_store) {
+  if (stream_executor == nullptr) {
+    return absl::OkStatus();
+  }
+  const DebugOptions& debug_options = hlo_module->config().debug_options();
+  if (debug_options.xla_gpu_autotune_level() == 0 ||
+      debug_options.xla_gpu_exclude_nondeterministic_ops() ||
+      !debug_options.xla_gpu_experimental_enable_fusion_autotuner()) {
+    return absl::OkStatus();
+  }
+
+  std::vector<std::unique_ptr<CodegenBackend>> backends;
+  auto native_backend = std::make_unique<NativeEmitterBackend>(
+      &debug_options, this, target_config);
+  backends.push_back(std::move(native_backend));
+  auto ble_backend = std::make_unique<BlockLevelEmitterBackend>(
+      &debug_options, this, shape_size_fn, target_config,
+      /*use_default_config=*/true);
+  backends.push_back(std::move(ble_backend));
+
+  auto should_autotune =
+      debug_options.xla_gpu_experimental_all_fusions_with_triton()
+          ? ShouldAutotuneBetweenFusionEmittersAny
+          : ShouldAutotuneBetweenFusionEmitters;
+
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<AutotunerPass> autotuner_pass,
+      AutotunerPass::Create(std::move(backends), debug_options, stream_executor,
+                            thread_pool, should_autotune, target_config,
+                            options.device_allocator,
+                            /*optimize_scratch_bytes=*/false, key_value_store,
+                            /*allow_reg_spills=*/true));
+  pipeline->AddPass(std::move(autotuner_pass));
   return absl::OkStatus();
 }
 

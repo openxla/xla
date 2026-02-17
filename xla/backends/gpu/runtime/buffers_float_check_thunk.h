@@ -18,10 +18,8 @@ limitations under the License.
 
 #include <atomic>
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <string>
-#include <utility>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"

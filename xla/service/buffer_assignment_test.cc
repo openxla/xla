@@ -597,6 +597,12 @@ TEST_F(BufferAssignmentTest, BasicToFromProto) {
       std::unique_ptr<BufferAssignment> buffers_from_proto,
       ConvertToProtoAndBack(buffers_orig.get(), module.get()));
 
+  EXPECT_EQ(buffers_from_proto->GetStats().parameter_allocation_bytes, 804);
+  EXPECT_EQ(buffers_from_proto->GetStats().maybe_live_out_allocation_bytes,
+            400);
+  EXPECT_EQ(buffers_from_proto->GetStats().total_allocation_count, 4);
+  EXPECT_EQ(buffers_from_proto->GetStats().total_allocation_bytes, 1204);
+
   // Compare the two buffer assignments and ensure that they are identical.
   const HloDataflowAnalysis& dataflow_orig = buffers_orig->dataflow_analysis();
   const HloDataflowAnalysis& dataflow_proto =
@@ -4227,6 +4233,75 @@ TEST(ComputePeakMemoryTest, LargeResult) {
 TEST(ComputeTotalAllocationBytesTest, EmptyProto) {
   BufferAssignmentProto proto;
   EXPECT_EQ(ComputeTotalAllocationBytes(proto, /*memory_color=*/0), 0);
+}
+
+TEST_F(BufferAssignmentTest, TopologicalOrder) {
+  auto module = CreateNewVerifiedModule();
+  auto builder = HloComputation::Builder(TestName());
+  auto param0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, r0f32_, "param0"));
+
+  // small: f32[] (4 bytes)
+  auto small = builder.AddInstruction(
+      HloInstruction::CreateUnary(r0f32_, HloOpcode::kNegate, param0));
+
+  // large: f32[100] (400 bytes).
+  // large depends on small, enforcing topological order: small then large.
+  auto large = builder.AddInstruction(
+      HloInstruction::CreateBroadcast(f32vec100_, small, {}));
+
+  // Return a tuple containing both to ensure they are both live/output.
+  builder.AddInstruction(HloInstruction::CreateTuple({small, large}));
+  module->AddEntryComputation(builder.Build());
+
+  // Even though we use DependencyHloOrdering, we must set a valid schedule
+  // for the module to pass verification/setup.
+  HloSchedule schedule(module.get());
+  schedule.set_sequence(
+      module->entry_computation(),
+      {param0, small, large, module->entry_computation()->root_instruction()});
+  CHECK_OK(module->set_schedule(schedule));
+
+  // Run with kBiggestFirst
+  {
+    BufferAssigner::Options opts;
+    opts.buffer_order = BufferAssigner::BufferOrder::kBiggestFirst;
+    auto assignment =
+        BufferAssigner::Run(
+            module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
+            &BufferSizeBytes, &alias_info_,
+            [](LogicalBuffer::Color) { return 1; }, std::move(opts))
+            .value();
+
+    const BufferAllocation& alloc_small =
+        GetAssignedOutputAllocation(*assignment, small);
+    const BufferAllocation& alloc_large =
+        GetAssignedOutputAllocation(*assignment, large);
+
+    // Expect large assigned before small (lower index) because it's bigger.
+    EXPECT_LT(alloc_large.index(), alloc_small.index());
+  }
+
+  // Run with kTopological
+  {
+    BufferAssigner::Options opts;
+    opts.buffer_order = BufferAssigner::BufferOrder::kTopological;
+    auto assignment =
+        BufferAssigner::Run(
+            module.get(), std::make_unique<DependencyHloOrdering>(module.get()),
+            &BufferSizeBytes, &alias_info_,
+            [](LogicalBuffer::Color) { return 1; }, std::move(opts))
+            .value();
+
+    const BufferAllocation& alloc_small =
+        GetAssignedOutputAllocation(*assignment, small);
+    const BufferAllocation& alloc_large =
+        GetAssignedOutputAllocation(*assignment, large);
+
+    // Expect small assigned before large (lower index) because it comes first
+    // in topological order (dependency).
+    EXPECT_LT(alloc_small.index(), alloc_large.index());
+  }
 }
 
 TEST(ComputeTotalAllocationBytesTest, NonMatchingColorAllocations) {

@@ -18,6 +18,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -37,6 +38,7 @@ struct SymbolicMapTest : public ::testing::Test {
     d1 = CreateDimExpr(1, &ctx);
     s0 = CreateSymbolExpr(0, kSampleDims, &ctx);
     s1 = CreateSymbolExpr(1, kSampleDims, &ctx);
+    s2 = CreateSymbolExpr(2, kSampleDims, &ctx);
     c2 = CreateSymbolicConstant(2, &ctx);
     c10 = CreateSymbolicConstant(10, &ctx);
     sample_map =
@@ -48,6 +50,7 @@ struct SymbolicMapTest : public ::testing::Test {
   SymbolicExpr d1;
   SymbolicExpr s0;
   SymbolicExpr s1;
+  SymbolicExpr s2;
   SymbolicExpr c2;
   SymbolicExpr c10;
   SymbolicMap sample_map;
@@ -239,6 +242,18 @@ TEST_F(SymbolicMapTest, Replace) {
   SymbolicMap no_replacement_map =
       map.Replace(CreateSymbolicVariable(99, &ctx), c5);
   EXPECT_EQ(no_replacement_map, map);
+}
+
+TEST_F(SymbolicMapTest, ReplaceWithMap) {
+  SymbolicExpr expr = (d0 + 1) * (d1 + 2);
+  SymbolicMap map = SymbolicMap::Get(&ctx, 2, 0, {expr});
+
+  llvm::DenseMap<SymbolicExpr, SymbolicExpr> replacements;
+  replacements[d0 + 1] = c10;
+  replacements[d1] = d0;
+  SymbolicMap replaced1 = map.Replace(replacements, 1, 0);
+  EXPECT_THAT(replaced1.GetResults(), ElementsAre(c10 * (d0 + 2)));
+  EXPECT_EQ(replaced1.GetNumDims(), 1);
 }
 
 TEST_F(SymbolicMapTest, GetUnusedVariables) {
