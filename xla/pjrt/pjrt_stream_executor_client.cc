@@ -2619,6 +2619,11 @@ PjRtStreamExecutorClient::LoadInternal(
       addressable_device_logical_ids = extras.addressable_device_logical_ids;
   std::vector<PjRtDevice*>& addressable_devices = extras.addressable_devices;
 
+  if (IsEarlyExitCompilation(compile_options)) {
+    return InvalidArgument(
+        "Excutable from early exit with layouts cannot be loaded.");
+  }
+
   const auto& ex_options = compile_options.executable_build_options;
   const bool xla_dump_hlo_unoptimized_snapshots =
       ex_options.has_debug_options() &&
