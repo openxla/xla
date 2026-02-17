@@ -113,6 +113,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
@@ -120,7 +121,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -543,6 +543,10 @@ absl::Status ExecuteThunksImpl(
                      AcquireCollectiveCliques(collective_params,
                                               collective_clique_requests));
   }
+  ASSIGN_OR_RETURN(
+      bool skip_rendezvous_after_init,
+      AllFirstRendezvousCompleted(
+          collective_cliques, collective_clique_requests.RequestedCliques()));
 
   // Acquire collective memories requested by thunks.
   ASSIGN_OR_RETURN(
@@ -575,7 +579,7 @@ absl::Status ExecuteThunksImpl(
   // collective operations and clique initialization is famous for introducing
   // deadlocks if we try to execute it concurrently with other potentially
   // memory-allocating operations.
-  if (!collective_cliques.empty()) {
+  if (!skip_rendezvous_after_init) {
     RETURN_IF_ERROR(RendezvousAfterInitialization(*run_options, debug_options));
   }
 
