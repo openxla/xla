@@ -69,21 +69,24 @@ jobs:
       - name: Print GitHub Context
         run: |
           echo "GitHub SHA: ${{ github.sha }}"
-          echo "GitHub Ref: ${{ github.ref }}"
-          echo "GitHub Ref Name: ${{ github.ref_name }}"
-          echo "GitHub Head Ref: ${{ github.head_ref }})"
-          echo "GitHub Base Ref: ${{ github.base_ref }})"
+          echo "GitHub Ref: ${GITHUB_REF}"
+          echo "GitHub Ref Name: ${GITHUB_REF_NAME}"
+          echo "GitHub Head Ref: ${GITHUB_HEAD_REF})"
+          echo "GitHub Base Ref: ${GITHUB_BASE_REF})"
           echo "GitHub Repository: ${{ github.repository }}"
           echo "GitHub Run ID: ${{ github.run_id }}"
           echo "GitHub Run Number: ${{ github.run_number }}"
-          echo "GitHub Workflow: ${{ github.workflow }}"
-          echo "GitHub Actor: ${{ github.actor }}"
+          echo "GitHub Workflow: ${GITHUB_WORKFLOW}"
+          echo "GitHub Actor: ${GITHUB_ACTOR}"
           echo "GitHub Event Name: ${{ github.event_name }}"
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             echo "Pull Request Number: ${{ github.event.pull_request.number }}"
-            echo "Pull Request Head Ref: ${{ github.event.pull_request.head.ref }}"
-            echo "Pull Request Base Ref: ${{ github.event.pull_request.base.ref }}"
+            echo "Pull Request Head Ref: ${GITHUB_EVENT_PULL_REQUEST_HEAD_REF}"
+            echo "Pull Request Base Ref: ${GITHUB_EVENT_PULL_REQUEST_BASE_REF}"
           fi
+        env:
+          GITHUB_EVENT_PULL_REQUEST_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          GITHUB_EVENT_PULL_REQUEST_BASE_REF: ${{ github.event.pull_request.base.ref }}
 
       - name: Checkout OpenXLA
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
