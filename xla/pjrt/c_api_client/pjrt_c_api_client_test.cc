@@ -204,6 +204,30 @@ TEST(PjRtCApiClientTest, ConcurrentGetReadyFuture) {
   }
 }
 
+TEST(PjRtCApiClientTest, GetReadyFutureDeletedBuffer) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+
+  std::vector<int32_t> data{1};
+  Shape shape = ShapeUtil::MakeShape(S32, {});
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          client->memory_spaces()[0], /*device_layout=*/nullptr));
+
+  buffer->Delete();
+  EXPECT_TRUE(buffer->IsDeleted());
+
+  auto future = buffer->GetReadyFuture();
+  EXPECT_THAT(future.Await(), StatusIs(absl::StatusCode::kInvalidArgument,
+                                       HasSubstr("deleted or donated")));
+}
+
 TEST(PjRtCApiClientTest, IsDynamicDimension) {
   SetUpCpuPjRtApi();
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
@@ -623,6 +647,35 @@ TEST(PjRtCApiClientTest, GetOutputShapes) {
   EXPECT_EQ(output_shapes.size(), 1);
   Shape expected_shape = ShapeUtil::MakeShape(F32, {4});
   EXPECT_EQ(output_shapes[0], expected_shape);
+}
+
+TEST(PjRtCApiClientTest, GetParameterAndOutputShardings) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+  Shape shape = ShapeUtil::MakeShapeWithType<float>({4});
+  XlaBuilder builder("sum");
+  auto inp_0 = Parameter(&builder, 0, shape, "input0");
+  auto inp_1 = Parameter(&builder, 1, shape, "input1");
+  auto sum = Add(inp_0, inp_1);
+  auto computation = builder.Build(sum).value();
+
+  CompileOptions options;
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtLoadedExecutable> executable,
+                          client->CompileAndLoad(computation, options));
+
+  // CPU usually returns nullopt for shardings if not explicitly set.
+  auto parameter_shardings = executable->GetParameterShardings();
+  auto output_shardings = executable->GetOutputShardings();
+
+  // We expect them to be either nullopt or some default shardings.
+  // For CPU with default options, they are typically nullopt.
+  if (parameter_shardings.has_value()) {
+    EXPECT_EQ(parameter_shardings->size(), 2);
+  }
+  if (output_shardings.has_value()) {
+    EXPECT_EQ(output_shardings->size(), 1);
+  }
 }
 
 TEST(PjRtClientTest, BufferFromLiteralInt4) {

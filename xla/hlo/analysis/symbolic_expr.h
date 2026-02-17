@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 
 #include "absl/strings/string_view.h"
@@ -69,16 +70,21 @@ class SymbolicExpr {
   SymbolicExpr GetRHS() const;
   int64_t GetValue() const;
   // If num_dims is provided, then the first num_dims variables are dimensions,
-  // and the rest are symbols.
-  std::string ToString(int64_t num_dims = -1) const;
+  // and the rest are symbols. If variable names are provided, then they are
+  // used instead of numbers.
+  std::string ToString(std::optional<int64_t> num_dims = std::nullopt) const;
+  std::string ToString(absl::Span<const std::string> var_names) const;
+  std::string ToString(absl::Span<const std::string> dim_names,
+                       absl::Span<const std::string> sym_names) const;
   int64_t Evaluate(absl::Span<const int64_t> variable_values) const;
   SymbolicExpr ReplaceVariables(
       absl::Span<const SymbolicExpr> substitutions) const;
-  // TODO(karupayun): These methods are needed for IndexingMap, but dimensions
-  // and symbols are SymbolicMap specific. We should remove them once we have a
-  // better way to integrate SymbolicExpr with IndexingMap. It is assuming that
-  // dimensions are the first (0...num_dims-1) variables and symbols are the
-  // rest.
+  // TODO: b/459357586 - These methods are needed for IndexingMap, but
+  // dimensions and symbols are SymbolicMap specific. We should remove them once
+  // we have a better way to integrate SymbolicExpr with IndexingMap. It is
+  // assuming that dimensions are the first (0...num_dims-1) variables and
+  // symbols are the rest.
+  SymbolicExpr ReplaceDims(absl::Span<const SymbolicExpr> replacements) const;
   SymbolicExpr ReplaceSymbols(absl::Span<const SymbolicExpr> replacements,
                               int64_t num_dims) const;
   SymbolicExpr ReplaceDimsAndSymbols(
@@ -99,9 +105,15 @@ class SymbolicExpr {
 
   void GetUsedVariables(llvm::DenseSet<VariableID>& used_vars) const;
 
+  // Returns true if this expression depends on the given variable.
+  bool IsFunctionOfVariable(VariableID var_id) const;
+
   // Traverses the expression tree and calls the callback for each
   // subexpression in postorder.
   void Walk(const std::function<void(SymbolicExpr)>& callback) const;
+
+  // Return true if the expression is a multiple of `factor`.
+  bool IsMultipleOf(int64_t factor) const;
 
   SymbolicExpr operator+(int64_t v) const;
   SymbolicExpr operator+(SymbolicExpr other) const;
@@ -142,6 +154,9 @@ class SymbolicExpr {
   const ImplType* impl_ = nullptr;
 };
 
+SymbolicExpr operator+(int64_t lhs, SymbolicExpr rhs);
+SymbolicExpr operator*(int64_t lhs, SymbolicExpr rhs);
+
 inline ::llvm::hash_code hash_value(SymbolicExpr expr) {
   return ::llvm::hash_value(expr.GetImpl());
 }
@@ -156,9 +171,7 @@ H AbslHashValue(H h, const SymbolicExpr& expr) {
 // called before any SymbolicExprs are created.
 void RegisterSymbolicExprStorage(mlir::MLIRContext* mlir_context);
 
-// Free functions to create SymbolicExpr.
-SymbolicExpr ParseSymbolicExpr(absl::string_view expr_str,
-                               mlir::MLIRContext* mlir_context);
+// Helpers to create SymbolicExprs.
 SymbolicExpr CreateSymbolicConstant(int64_t value,
                                     mlir::MLIRContext* mlir_context);
 SymbolicExpr CreateSymbolicVariable(int64_t var_id,

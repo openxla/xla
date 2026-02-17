@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_FFI_API_FFI_H_
 #define XLA_FFI_API_FFI_H_
 
-#include <string_view>
 #ifdef XLA_FFI_FFI_H_
 #error Two different XLA FFI implementations cannot be included together. \
        See README.md for more details.
@@ -38,6 +37,7 @@ limitations under the License.
 #include <optional>
 #include <ostream>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -50,6 +50,20 @@ limitations under the License.
 // IWYU pragma: end_exports
 
 namespace xla::ffi {
+
+//===----------------------------------------------------------------------===//
+// XLA FFI Api
+//===----------------------------------------------------------------------===//
+
+// This is a declaration of the API that returns an XLA:FFI instance for a
+// process. This API is implemented in `xla/ffi/ffi_api.cc` and implementation
+// must be linked into the target process exactly once, or it is possible to
+// have multiple global static registries of FFI handlers and types.
+const XLA_FFI_Api* GetXlaFfiApi();
+
+//===----------------------------------------------------------------------===//
+// Type aliases for XLA_FFI C structs.
+//===----------------------------------------------------------------------===//
 
 // All user data types that are passed via the execution context or state must
 // be registered with the XLA FFI ahead of time to get unique type id.
@@ -1199,7 +1213,7 @@ struct ResultEncoding<ExecutionStage::kInstantiate,
   static_assert(std::is_same_v<decltype(T::id), TypeId>,
                 "State type must have a static `TypeId id` field");
 
-  static XLA_FFI_TypeId state_type_id() { return T::id; }
+  static XLA_FFI_TypeId state_type_id(const XLA_FFI_Api*) { return T::id; }
 
   XLA_FFI_ATTRIBUTE_ALWAYS_INLINE
   static XLA_FFI_Error* Encode(const XLA_FFI_Api* api,
@@ -1508,11 +1522,18 @@ constexpr XLA_FFI_TypeInfo MakeTypeInfo() {
   XLA_FFI_REGISTER_TYPE_(API, NAME, TYPE_ID, TYPE_INFO, __COUNTER__)
 #define XLA_FFI_REGISTER_TYPE_(API, NAME, TYPE_ID, TYPE_INFO, N) \
   XLA_FFI_REGISTER_TYPE__(API, NAME, TYPE_ID, TYPE_INFO, N)
-#define XLA_FFI_REGISTER_TYPE__(API, NAME, TYPE_ID, TYPE_INFO, N)              \
-  [[maybe_unused]] static const XLA_FFI_Error*                                 \
-      xla_ffi_type_##N##_registered_ = [] {                                    \
-        return ::xla::ffi::Ffi::RegisterTypeId(API, NAME, TYPE_ID, TYPE_INFO); \
-      }()
+#define XLA_FFI_REGISTER_TYPE__(API, NAME, TYPE_ID, TYPE_INFO, N)             \
+  [[maybe_unused]] static const bool xla_ffi_type_##N##_registered_ = [] {    \
+    if (XLA_FFI_Error* error =                                                \
+            ::xla::ffi::Ffi::RegisterTypeId(API, NAME, TYPE_ID, TYPE_INFO)) { \
+      std::cerr << "Failed to register XLA FFI type: "                        \
+                << ::xla::ffi::internal::GetErrorMessage(API, error)          \
+                << std::endl;                                                 \
+      ::xla::ffi::internal::DestroyError(API, error);                         \
+      std::abort();                                                           \
+    }                                                                         \
+    return true;                                                              \
+  }()
 
 //===----------------------------------------------------------------------===//
 // UserData

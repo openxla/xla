@@ -33,3 +33,25 @@ def ConvertElementwise0DTensorToScalarPass
     "mlir::tensor::TensorDialect",
   ];
 }
+
+def StablehloLowerToXtilePass
+    : Pass<"stablehlo-lower-to-xtile", "mlir::ModuleOp"> {
+  let summary = "Lowers stablehlo ops to Xtile.";
+  let description = [{
+    This pass lowers stablehlo ops to Xtile supported ops.
+  }];
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::stablehlo::StablehloDialect",
+  ];
+}
+
+def StablehloLowerToArithPass : Pass<"stablehlo-lower-to-arith"> {
+  let summary = "Lowers certain stablehlo ops to arith ops.";
+  let description = [{
+    This pass lowers stablehlo ops to arith ops.
+  }];
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+  ];
+}

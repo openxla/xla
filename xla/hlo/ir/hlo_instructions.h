@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/hash/hash.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
@@ -337,6 +338,12 @@ class HloAsyncStartInstruction : public HloAsyncInstruction,
   // Adds a new operand to the async-start instruction.
   HloInstruction* AddCallOperand(HloInstruction* new_operand);
 
+  // Clones the async-start instruction with new operands and a new computation.
+  std::unique_ptr<HloInstruction> CloneWithNewOperandsAndComputation(
+      const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+      HloComputation* new_computation,
+      HloCloneContext* context = nullptr) const;
+
   absl::string_view async_execution_thread() const override {
     return async_execution_thread_;
   };
@@ -360,6 +367,9 @@ class HloAsyncStartInstruction : public HloAsyncInstruction,
       const HloInstruction& other,
       absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
           eq_computations) const override;
+  std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(
+      const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+      HloComputation* new_computation, HloCloneContext* context) const;
   std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(
       const Shape& shape, absl::Span<HloInstruction* const> new_operands,
       HloCloneContext* context) const override;
@@ -1137,6 +1147,9 @@ class HloScanInstruction : public HloDimensionsInstruction {
 
   // Returns the dimension along which to scan.
   int64_t scan_dimension() const { return HloInstruction::dimensions(0); }
+
+  // Returns the size of the dimension along which to scan.
+  absl::StatusOr<int64_t> GetScanDimSize() const;
 
   // Returns whether the scan is in reverse order.
   bool is_reverse() const { return is_reverse_; }
@@ -1947,6 +1960,7 @@ class HloConvolutionInstruction : public HloInstruction {
       const Window& window,
       const ConvolutionDimensionNumbers& dimension_numbers,
       const PrecisionConfig& precision_config);
+  enum class ConvKind { UNSET, FPROP, WGRAD, DGRAD };
   const Window& window() const override { return window_; }
   void set_window(const Window& window) override { window_ = window; }
   const ConvolutionDimensionNumbers& convolution_dimension_numbers() const {
@@ -1967,6 +1981,9 @@ class HloConvolutionInstruction : public HloInstruction {
   void set_batch_group_count(int64_t num_batch_groups) {
     batch_group_count_ = num_batch_groups;
   }
+
+  ConvKind conv_kind() const { return conv_kind_; }
+  void set_conv_kind(ConvKind conv_kind) { conv_kind_ = conv_kind; }
 
   // Returns the information used to tell the implementation information about
   // what sort of precision is requested. The meaning of the field is backend
@@ -2008,6 +2025,8 @@ class HloConvolutionInstruction : public HloInstruction {
   // Information used to communicate to the implementation about the algorithm
   // used to produce results. See the documentation on precision_config().
   PrecisionConfig precision_config_;
+  // Conv type (fprop, dgrad, wgrad)
+  ConvKind conv_kind_ = ConvKind::UNSET;
 };
 
 class HloReduceWindowInstruction : public HloInstruction {
@@ -2960,8 +2979,6 @@ inline constexpr absl::string_view kPinCustomCallTarget = "Pin";
 inline constexpr absl::string_view kUnpinCustomCallTarget = "Unpin";
 inline constexpr absl::string_view kCreateBufferCustomCallTarget =
     "CreateBuffer";
-inline constexpr absl::string_view kCollectiveMetadataCustomCallTarget =
-    "CollectiveMetadata";
 
 }  // namespace xla
 

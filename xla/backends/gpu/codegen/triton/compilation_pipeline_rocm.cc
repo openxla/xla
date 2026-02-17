@@ -84,6 +84,8 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
       {rocm_cc.gfx_version()}));
   pm->addNestedPass<mlir::triton::FuncOp>(
       mlir::createTritonAMDGPUHoistLayoutConversions());
+  pm->addNestedPass<mlir::triton::FuncOp>(
+      mlir::createTritonAMDGPUSinkLayoutConversions());
 
   pm->addPass(mt::gpu::createTritonGPUFuseNestedLoops());
   pm->addPass(mlir::createCanonicalizerPass());
@@ -139,10 +141,8 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
 static void MakeLLIR(mlir::OpPassManager* pm,
                      const stream_executor::RocmComputeCapability& rocm_cc,
                      int num_stages) {
-  const int custom_lds_size = 0;
   pm->addPass(mlir::createTritonAMDGPUUpdateAsyncWaitCount());
-  pm->addPass(mlir::triton::AMD::createOptimizeLDSUsagePass(
-      rocm_cc.gfx_version(), custom_lds_size));
+  pm->addPass(mlir::triton::AMD::createConvertWarpPipelinePass());
   pm->addPass(mlir::createSCFToControlFlowPass());
   pm->addPass(mlir::createConvertIndexToLLVMPass());
   pm->addPass(mt::gpu::createAllocateSharedMemory());

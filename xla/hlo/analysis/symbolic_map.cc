@@ -23,14 +23,16 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_join.h"
+#include "absl/log/log.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
+#include "xla/hlo/analysis/symbolic_map_serialization.h"
 
 namespace xla {
 namespace {
@@ -73,23 +75,10 @@ SymbolicMap::SymbolicMap(mlir::MLIRContext* ctx, int64_t num_dimensions,
 }
 
 std::string SymbolicMap::ToString() const {
-  std::string out = "(";
-  for (int i = 0; i < GetNumDims(); ++i) {
-    absl::StrAppend(&out, (i > 0 ? ", " : ""), "d", i);
-  }
-  out += ")[";
-  for (int i = 0; i < GetNumSymbols(); ++i) {
-    absl::StrAppend(&out, (i > 0 ? ", " : ""), "s", i);
-  }
-  out += "] -> (";
-
-  absl::StrAppend(
-      &out,
-      absl::StrJoin(GetResults(), ", ", [&](std::string* s, const auto& expr) {
-        absl::StrAppend(s, expr.ToString(GetNumDims()));
-      }));
-  out += ")";
-  return out;
+  std::string s;
+  llvm::raw_string_ostream os(s);
+  xla::Print(*this, os);
+  return os.str();
 }
 
 bool SymbolicMap::IsIdentity() const {
@@ -112,6 +101,24 @@ bool SymbolicMap::IsConstant() const {
     }
   }
   return true;
+}
+
+bool SymbolicMap::IsFunctionOfDim(int64_t dim_id) const {
+  for (const auto& expr : exprs_) {
+    if (expr.IsFunctionOfVariable(dim_id)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool SymbolicMap::IsFunctionOfSymbol(int64_t symbol_id) const {
+  for (const auto& expr : exprs_) {
+    if (expr.IsFunctionOfVariable(num_dimensions_ + symbol_id)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 llvm::SmallVector<int64_t> SymbolicMap::GetConstantResults() const {
@@ -211,6 +218,17 @@ SymbolicMap SymbolicMap::Replace(SymbolicExpr expr,
     return *this;
   }
   return SymbolicMap(ctx_, num_dimensions_, num_symbols_, std::move(new_exprs));
+}
+
+SymbolicMap SymbolicMap::Replace(
+    const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& map,
+    int64_t numResultDims, int64_t numResultSyms) const {
+  llvm::SmallVector<SymbolicExpr> new_exprs;
+  new_exprs.reserve(exprs_.size());
+  for (const auto& expr : exprs_) {
+    new_exprs.push_back(expr.Replace(map));
+  }
+  return SymbolicMap(ctx_, numResultDims, numResultSyms, std::move(new_exprs));
 }
 
 bool SymbolicMap::operator==(const SymbolicMap& other) const {

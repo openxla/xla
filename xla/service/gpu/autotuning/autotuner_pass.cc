@@ -48,8 +48,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-namespace {
-
 AutotuneConfig GetAutotuneConfig(const DebugOptions& debug_options,
                                  bool is_deviceless,
                                  bool optimize_scratch_bytes,
@@ -77,7 +75,8 @@ AutotuneConfig GetAutotuneConfig(const DebugOptions& debug_options,
   autotune_config.expect_all_instructions_in_cache =
       debug_options.xla_gpu_require_complete_aot_autotune_results();
   autotune_config.dump_hlos =
-      debug_options.xla_gpu_dump_autotuned_gemm_fusions();
+      debug_options.xla_gpu_dump_autotuned_gemm_fusions() ||
+      debug_options.xla_gpu_dump_autotuned_instructions();
   if (!debug_options.xla_gpu_fail_ptx_compilation_on_register_spilling() &&
       allow_reg_spills) {
     autotune_config.allow_reg_spills = true;
@@ -104,7 +103,6 @@ ProfileOptions GetProfileOptions(const DebugOptions& debug_options,
   return profile_options;
 }
 
-}  // namespace
 
 absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
     std::vector<std::unique_ptr<CodegenBackend>> backends,
@@ -126,10 +124,13 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
         allocator);
   }
 
+  std::string cache_dir = debug_options.xla_gpu_per_fusion_autotune_cache_dir();
+  if (cache_dir.empty()) {
+    cache_dir = debug_options.xla_gpu_experimental_autotuner_cache_dir();
+  }
   std::unique_ptr<AutotunerCacheInterface> cache =
       std::make_unique<LegacyCache>(
-          debug_options.xla_gpu_experimental_autotuner_cache_dir(),
-          debug_options.xla_gpu_experimental_autotune_cache_mode(),
+          cache_dir, debug_options.xla_gpu_experimental_autotune_cache_mode(),
           target_config->device_description);
 
   TF_ASSIGN_OR_RETURN(
@@ -155,6 +156,8 @@ absl::StatusOr<bool> AutotunerPass::RunImpl(
   } else {
     TF_RETURN_IF_ERROR(autotuner_->Autotune(module, should_autotune_));
   }
+  VLOG(1) << "Autotuner cache stats: hits=" << autotuner_->GetCacheStats().hits
+          << ", misses=" << autotuner_->GetCacheStats().misses;
   return true;
 }
 

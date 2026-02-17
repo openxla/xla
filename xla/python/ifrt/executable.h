@@ -52,10 +52,11 @@ struct CompileOptions;
 struct DeserializeExecutableOptions;
 
 struct ExecutableVersion : llvm::RTTIExtends<ExecutableVersion, Serializable> {
-  // Returns true iff this version is compatible with `other`. The logic for
+  // Returns OK iff this version is compatible with `other`. The logic for
   // checking the version compatibility is an implementation detail of
   // `ExecutableVersion` subclasses.
-  virtual bool IsCompatibleWith(const ExecutableVersion& other) const = 0;
+  virtual absl::Status IsCompatibleWith(
+      const ExecutableVersion& other) const = 0;
 
   static char ID;  // NOLINT
 };
@@ -181,7 +182,7 @@ class LoadedExecutable
 
   // Returns the executable version that can be used for verifying the
   // compatibility with a runtime.
-  virtual absl::StatusOr<std::unique_ptr<ExecutableVersion>>
+  virtual absl::StatusOr<std::shared_ptr<const ExecutableVersion>>
   executable_version() const = 0;
 
   // Serializes this executable into a string. The compatibility of the
@@ -197,16 +198,6 @@ class LoadedExecutable
   // May be `nullptr` if the user context is unset or the runtime does not
   // support it.
   virtual UserContextRef user_context() const = 0;
-
-  // Returns a future that becomes ready when the executable is ready to be
-  // used for execution.
-  //
-  // This can be used by implementations that support async compilation, where
-  // `Compiler::Compile()` returns an executable ~immediately and does heavy
-  // compilation work in the background. Implementations must still ensure that
-  // all other methods can be used even without explicitly waiting for the ready
-  // future (e.g., via blocking).
-  virtual tsl::Future<> GetReadyFuture() const = 0;
 
   // The following APIs are taken from `xla::PjRtExecutable` for fast
   // prototyping.

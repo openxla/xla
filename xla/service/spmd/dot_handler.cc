@@ -128,9 +128,9 @@ PartitionedHloMX ReplicatePartiallySharded(
 std::pair<Shape, Shape> GetPerGroupBaseShape(
     const hlo_sharding_util::GroupedSharding& grouped_sharding,
     const PartitionedHloMX::ShapesMX& original_base_shapes) {
-  std::pair<Shape, Shape> pair(std::move(original_base_shapes));
-  return std::make_pair(GetPerGroupBaseShape(grouped_sharding, pair.first),
-                        GetPerGroupBaseShape(grouped_sharding, pair.second));
+  std::pair<Shape, Shape> shapes(original_base_shapes);
+  return {GetPerGroupBaseShape(grouped_sharding, shapes.first),
+          GetPerGroupBaseShape(grouped_sharding, shapes.second)};
 }
 
 // Functor class for creating sharded dots with operands of type PartitionedHlo.
@@ -291,28 +291,6 @@ DotDimensionIndexMapping ComputeDimensionIndexMapping(
   return DotDimensionIndexMapping{lhs_to_rhs_indices,    lhs_to_output_indices,
                                   rhs_to_lhs_indices,    rhs_to_output_indices,
                                   output_to_lhs_indices, output_to_rhs_indices};
-}
-
-CollectiveDeviceList GetPartitionGroupsForReplication(
-    const HloSharding& sharding, absl::Span<const int64_t> replication_dims) {
-  int64_t group_size = 1;
-  for (int64_t i : replication_dims) {
-    group_size *= ShardCountAtDim(sharding, i);
-  }
-  std::vector<std::vector<int64_t>> partition_groups(sharding.num_devices() /
-                                                     group_size);
-  sharding.tile_assignment().Each(
-      [&](absl::Span<const int64_t> indices, int64_t partition) {
-        int64_t group_id = 0;
-        for (int64_t i = 0; i < indices.size(); ++i) {
-          if (!absl::c_linear_search(replication_dims, i)) {
-            group_id *= ShardCountAtDim(sharding, i);
-            group_id += indices[i];
-          }
-        }
-        partition_groups[group_id].push_back(partition);
-      });
-  return CollectiveDeviceList(partition_groups);
 }
 
 // Returns true iff all of the following conditions are simultaneously true:
@@ -3391,10 +3369,10 @@ bool PrioritizeContractingDimensionsPartitioning(
   auto reduce_scatter_subgroups = GetPartitionGroupsForReplication(
       outer_output_tmp_sharding, output_slice_dims);
   const double all_gather_time_in_ms = visitor->GetCommunicationTimeInMilliSec(
-      all_gather_bytes, all_gather_subgroups);
+      all_gather_bytes, *all_gather_subgroups);
   const double reduce_scatter_time_in_ms =
       visitor->GetCommunicationTimeInMilliSec(reduce_scatter_bytes,
-                                              reduce_scatter_subgroups);
+                                              *reduce_scatter_subgroups);
 
   Shape other_original_shape = other_hlo->shape();
   *other_hlo->mutable_shape() =
@@ -3429,13 +3407,13 @@ bool PrioritizeContractingDimensionsPartitioning(
         lhs_matching_iterations ? *lhs_matching_iterations : INT64_MAX,
         rhs_matching_iterations ? *rhs_matching_iterations : INT64_MAX);
     return min_nc_iterations > new_num_partitions;
-  } else if ((computation_time_in_ms <= all_gather_time_in_ms) &&
-             (computation_time_in_ms <= reduce_scatter_time_in_ms)) {
+  }
+  if ((computation_time_in_ms <= all_gather_time_in_ms) &&
+      (computation_time_in_ms <= reduce_scatter_time_in_ms)) {
     return all_gather_bytes / new_num_partitions <
            reduce_scatter_bytes / num_iterations;
-  } else {
-    return all_gather_time_in_ms > reduce_scatter_time_in_ms;
   }
+  return all_gather_time_in_ms > reduce_scatter_time_in_ms;
 }
 
 // Return if it would be better to match the LHS operand or RHS operand
@@ -4795,9 +4773,9 @@ absl::Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
       padded_operand_shape.set_dimensions(
           i, padded_shape.dimensions(broadcast->dimensions(i)));
     }
-    auto* padded_operand =
-        PadToShape(base_motion_cluster.outside_to_inside[broadcast->operand(0)],
-                   padded_operand_shape, body);
+    auto* padded_operand = spmd::PadToShape(
+        base_motion_cluster.outside_to_inside[broadcast->operand(0)],
+        padded_operand_shape, body);
     auto* inside_broadcast =
         body->AddInstruction(broadcast->CloneWithNewOperands(
             ShapeUtil::ChangeElementType(padded_shape,
@@ -4821,10 +4799,10 @@ absl::Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
   auto add_constant = [&](const HloInstruction* constant) {
     auto* constant_clone = body->AddInstruction(constant->Clone());
     auto* inside_constant =
-        PadToShape(constant_clone,
-                   ShapeUtil::ChangeElementType(
-                       padded_shape, constant->shape().element_type()),
-                   body);
+        spmd::PadToShape(constant_clone,
+                         ShapeUtil::ChangeElementType(
+                             padded_shape, constant->shape().element_type()),
+                         body);
     for (MotionCluster& motion_cluster : motion_clusters) {
       motion_cluster.outside_to_inside[constant] = get_slice(
           inside_constant, motion_cluster.slice_offsets, motion_cluster.dus);

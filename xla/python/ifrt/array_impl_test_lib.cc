@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/ir/sharding_param.h"
+#include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
@@ -55,6 +56,7 @@ namespace xla {
 namespace ifrt {
 namespace {
 
+using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
 using ::testing::_;
 using ::testing::Each;
@@ -106,6 +108,39 @@ TEST(ArrayImplTest, MakeArrayFromHostBuffer) {
   EXPECT_EQ(array->dtype(), dtype);
   EXPECT_EQ(array->shape(), shape);
   EXPECT_EQ(array->shared_ptr_sharding().get(), sharding.get());
+  EXPECT_EQ(array->user_context()->Id(), UserContextId(100));
+}
+
+TEST(ArrayImplTest, MakeArrayFromHostBufferWithCustomLayout) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+
+  DType dtype(DType::kF32);
+  Shape shape({2, 3});
+  auto data = std::make_unique<std::vector<float>>(6);
+  absl::c_iota(*data, 0);
+  Device* device = client->addressable_devices().at(0);
+  ShardingRef sharding = SingleDeviceSharding::Create(device, MemoryKind());
+  TF_ASSERT_OK_AND_ASSIGN(CustomLayoutRef layout,
+                          client->GetDefaultLayout(dtype, shape, sharding));
+  UserContextScope user_context_scope(test_util::MakeUserContext(100));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto array, client->MakeArrayFromHostBuffer(
+                      data->data(), dtype, shape,
+                      /*byte_strides=*/std::nullopt, sharding, layout,
+                      Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+                      /*on_done_with_host_buffer=*/nullptr));
+
+  EXPECT_EQ(array->dtype(), dtype);
+  EXPECT_EQ(array->shape(), shape);
+  EXPECT_EQ(array->shared_ptr_sharding().get(), sharding.get());
+  // The created array currently only needs to have an equivalent layout to the
+  // requested layout.
+  // TODO(hyeontaek): Tighten this check to verify `array->layout().get() ==
+  // layout.get()` to make it consistent with array sharding handling.
+  EXPECT_THAT(EquivalentLayouts(dtype, shape, sharding, array->layout(), dtype,
+                                shape, sharding, layout),
+              IsOkAndHolds(true));
   EXPECT_EQ(array->user_context()->Id(), UserContextId(100));
 }
 

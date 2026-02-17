@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_callback_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_tpu_topology_extension.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
@@ -482,10 +483,28 @@ class PjRtCApiClient : public PjRtClient {
     return reinterpret_cast<ExtType*>(FindExtensionImpl(type));  // NOLINT
   }
 
+  template <typename CallbackArgs, int ArgsStructSize>
+  absl::Status RegisterCallback(
+      PJRT_Callback_Type callback_type,
+      std::function<void(CallbackArgs*)> user_callback) {
+    return RegisterCallbackImpl(
+        callback_type, [user_callback = std::move(user_callback)](void* args) {
+          CallbackArgs* callback_args = static_cast<CallbackArgs*>(args);
+          CHECK_OK(pjrt::ActualStructSizeIsGreaterOrEqual(
+              "CallbackArgs", ArgsStructSize, callback_args->struct_size));
+          user_callback(callback_args);
+        });
+  }
+
+  absl::Status InvokeCallbacks(PJRT_Callback_Type callback_type,
+                               void* callback_args);
+
  private:
   void InitDevicesAndMemorySpaces();
   void InitAttributes();
   PJRT_Extension_Base* FindExtensionImpl(PJRT_Extension_Type type) const;
+  absl::Status RegisterCallbackImpl(PJRT_Callback_Type callback_type,
+                                    std::function<void(void*)> callback);
 
   std::unique_ptr<PJRT_Error, ::pjrt::PJRT_ErrorDeleter> CreatePjRtError(
       const absl::Status& error) const;
@@ -520,6 +539,8 @@ class PjRtCApiClient : public PjRtClient {
   const std::string platform_name_;
   const PjRtPlatformId platform_id_;
   absl::flat_hash_map<std::string, xla::PjRtValueType> attributes_;
+  std::vector<std::unique_ptr<std::function<void(void*)>>>
+      registered_callbacks_;
 };
 
 class PjRtCApiBuffer : public PjRtBuffer {
@@ -659,6 +680,8 @@ class PjRtCApiExecutable : public PjRtExecutable {
     return pjrt::GetCompiledMemoryStats(c_api_, executable_.get());
   }
 
+  std::optional<std::vector<OpSharding>> GetParameterShardings() const override;
+
   absl::StatusOr<std::vector<Shape>> GetOutputShapes() const override;
 
   absl::StatusOr<std::vector<std::vector<PrimitiveType>>>
@@ -666,6 +689,8 @@ class PjRtCApiExecutable : public PjRtExecutable {
 
   absl::StatusOr<std::vector<std::vector<DimensionVector>>>
   GetOutputDimensions() const override;
+
+  std::optional<std::vector<OpSharding>> GetOutputShardings() const override;
 
   absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
   GetOutputLayouts() const override;
@@ -736,6 +761,11 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
     return executable_->GetCompiledMemoryStats();
   }
 
+  std::optional<std::vector<OpSharding>> GetParameterShardings()
+      const override {
+    return executable_->GetParameterShardings();
+  }
+
   absl::StatusOr<std::vector<Shape>> GetOutputShapes() const override {
     return executable_->GetOutputShapes();
   }
@@ -748,6 +778,10 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
   absl::StatusOr<std::vector<std::vector<DimensionVector>>>
   GetOutputDimensions() const override {
     return executable_->GetOutputDimensions();
+  }
+
+  std::optional<std::vector<OpSharding>> GetOutputShardings() const override {
+    return executable_->GetOutputShardings();
   }
 
   absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>

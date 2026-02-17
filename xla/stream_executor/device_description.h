@@ -29,7 +29,6 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
-#include "absl/types/span.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -585,6 +584,8 @@ class DeviceDescription {
 
   DeviceInterconnectInfo interconnect_info_;
 };
+
+std::string MakeComputeCapabilityAttributeString(const DeviceDescription& desc);
 
 // Returns whether the given thread_dim is acceptable given the limits described
 // in device_description. For detailed reasons for failing the predicate, enable

@@ -94,6 +94,7 @@ AutotuneConfig GetTestAutotuneConfig() {
 class MockCodegenBackend : public CodegenBackend {
  public:
   MOCK_METHOD(absl::string_view, name, (), (const, override));
+  MOCK_METHOD(autotuner::Backend, backend, (), (const, override));
   MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>,
               GetSupportedConfigs, (const HloInstruction& instr), (override));
   MOCK_METHOD(absl::StatusOr<std::unique_ptr<BackendConfig>>, GetDefaultConfig,
@@ -140,6 +141,7 @@ class MockAutotunerCache : public AutotunerCacheInterface {
               (override));
   MOCK_METHOD(absl::Status, Deserialize, (absl::string_view serialized_cache),
               (override));
+  MOCK_METHOD(CacheStats, GetCacheStats, (), (const, override));
 };
 
 using absl_testing::IsOk;
@@ -216,6 +218,17 @@ class AutotunerTest : public HloHardwareIndependentTestBase {
   AutotunerTest() { config_ = GetTestAutotuneConfig(); }
   AutotuneConfig config_;
 };
+
+std::unique_ptr<Executable> RegisterSpillingExecutable(int spilled = 8) {
+  gpu::GpuExecutable::Params params;
+  params.executable = std::make_unique<gpu::SequentialThunk>(
+      gpu::Thunk::ThunkInfo{}, gpu::ThunkSequence{});
+  KernelStats kernel_stats;
+  kernel_stats.store_bytes_spilled = spilled;
+  kernel_stats.load_bytes_spilled = spilled;
+  params.module_stats = {{"test_config_2", kernel_stats}};
+  return gpu::GpuExecutable::Create(std::move(params)).value();
+}
 
 TEST_F(AutotunerTest, NoCodegenBackend) {
   auto device_description = CreateDummyDeviceDescription();
@@ -331,12 +344,18 @@ TEST_F(AutotunerTest, AutotuneAppliesBestConfigUsingThreadPool) {
   configs.push_back(GetTestConfig("test_config_1"));
   configs.push_back(GetTestConfig("test_config_2"));
 
+  std::unique_ptr<Executable> executable1 = RegisterSpillingExecutable(0);
+  Executable* exec1 = executable1.get();
+  std::unique_ptr<Executable> executable2 = RegisterSpillingExecutable(0);
+  Executable* exec2 = executable2.get();
+
   auto backend = std::make_unique<MockCodegenBackend>();
   EXPECT_CALL(*backend, GetSupportedConfigs)
       .WillOnce(Return(std::move(configs)));
-  EXPECT_CALL(*backend, Compile(_, _))
-      .WillOnce(Return(std::unique_ptr<Executable>()))
-      .WillOnce(Return(std::unique_ptr<Executable>()));
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_1")))
+      .WillOnce(Return(std::move(executable1)));
+  EXPECT_CALL(*backend, Compile(_, ConfigMatcher("test_config_2")))
+      .WillOnce(Return(std::move(executable2)));
   EXPECT_CALL(*backend, ApplyConfig(_, ConfigMatcher("test_config_2")))
       .Times(1)
       .WillRepeatedly(Return(absl::OkStatus()));
@@ -345,8 +364,9 @@ TEST_F(AutotunerTest, AutotuneAppliesBestConfigUsingThreadPool) {
   auto device_description = CreateDummyDeviceDescription();
   EXPECT_CALL(*profiler, CreateInputBuffers(_))
       .WillOnce(Return(std::make_unique<InputBuffers>()));
-  EXPECT_CALL(*profiler, Profile(_, _))
-      .WillOnce(Return(ProfileResult({absl::Seconds(2)})))
+  EXPECT_CALL(*profiler, Profile(testing::Pointer(exec1), _))
+      .WillOnce(Return(ProfileResult({absl::Seconds(2)})));
+  EXPECT_CALL(*profiler, Profile(testing::Pointer(exec2), _))
       .WillOnce(Return(ProfileResult({absl::Seconds(1)})));
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
@@ -447,7 +467,7 @@ TEST_F(AutotunerTest, AutotuneButOneBackendFails) {
 TEST_F(AutotunerTest, CacheHit) {
   auto cache_manager = std::make_unique<MockAutotunerCache>();
   AutotunerCacheInterface::Config config;
-  config.codegen_backend_name = "mock_backend";
+  config.codegen_backend = autotuner::Backend::UNSPECIFIED_BACKEND;
   TestConfig test_config;
   GetTestConfig("test_config_2")->UnpackTo(&test_config);
   config.backend_config.PackFrom(test_config);
@@ -698,7 +718,11 @@ TEST_F(AutotunerTest, DumpLogsToFile) {
   EXPECT_THAT(actual_logs, tsl::proto_testing::EqualsProto(expected_logs));
 }
 
-TEST_F(AutotunerTest, ExcludeCublasConfig) {
+class AutotunerTestWithBackendName
+    : public AutotunerTest,
+      public ::testing::WithParamInterface<std::string> {};
+
+TEST_P(AutotunerTestWithBackendName, ExcludeCublasConfig) {
   config_.exclude_cublas_config = true;
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.push_back(GetTestConfig("test_config_1"));
@@ -707,10 +731,7 @@ TEST_F(AutotunerTest, ExcludeCublasConfig) {
   auto backend = std::make_unique<MockCodegenBackend>();
   EXPECT_CALL(*backend, GetSupportedConfigs(_))
       .WillOnce(Return(std::move(configs)));
-  EXPECT_CALL(*backend, Compile(_, _))
-      .WillOnce(Return(std::unique_ptr<Executable>()))
-      .WillOnce(Return(std::unique_ptr<Executable>()));
-  EXPECT_CALL(*backend, name()).WillRepeatedly(Return("Cublas_fission"));
+  EXPECT_CALL(*backend, name()).WillRepeatedly(Return(GetParam()));
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::move(backend));
 
@@ -723,6 +744,11 @@ TEST_F(AutotunerTest, ExcludeCublasConfig) {
   EXPECT_THAT(autotuner->Autotune(dummy_instr),
               StatusIs(absl::StatusCode::kInternal));
 }
+
+INSTANTIATE_TEST_SUITE_P(ExcludeCublasConfigInstance,
+                         AutotunerTestWithBackendName,
+                         ::testing::Values("CUBLAS_FISSION",
+                                           "CUBLASLT_FISSION"));
 
 TEST_F(AutotunerTest, SelectFirstConfig) {
   config_.select_first_config = true;
@@ -750,17 +776,6 @@ TEST_F(AutotunerTest, SelectFirstConfig) {
   auto module = ParseAndReturnVerifiedModule(kHlo).value();
   auto dummy_instr = module->entry_computation()->root_instruction();
   EXPECT_THAT(autotuner->Autotune(dummy_instr), absl_testing::IsOk());
-}
-
-std::unique_ptr<Executable> RegisterSpillingExecutable() {
-  gpu::GpuExecutable::Params params;
-  params.executable = std::make_unique<gpu::SequentialThunk>(
-      gpu::Thunk::ThunkInfo{}, gpu::ThunkSequence{});
-  KernelStats kernel_stats;
-  kernel_stats.store_bytes_spilled = 8;
-  kernel_stats.load_bytes_spilled = 8;
-  params.module_stats = {{"test_config_2", kernel_stats}};
-  return gpu::GpuExecutable::Create(std::move(params)).value();
 }
 
 TEST_F(AutotunerTest, ConfigsWithRegisterSpillingAreAllowed) {
@@ -989,7 +1004,7 @@ class MockKeyValueStore : public KeyValueStoreInterface {
 
 AutotunerCacheInterface::Config GetCacheConfig(absl::string_view name) {
   AutotunerCacheInterface::Config config;
-  config.codegen_backend_name = "mock_backend";
+  config.codegen_backend = autotuner::Backend::UNSPECIFIED_BACKEND;
   config.backend_config = *GetTestConfig(std::string(name));
   return config;
 };
@@ -1005,32 +1020,32 @@ TEST_F(AutotunerTest, ShardedAutotuning) {
   auto kv_store = std::make_shared<MockKeyValueStore>();
   auto cache = std::make_unique<MockAutotunerCache>();
 
-  // Shard 0 autotunes kCopy instructions, updates the cache and serializes the
-  // result to a string "kCopy_autotune_result".
-  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kCopy)))
+  // Shard 0 autotunes kAdd instructions, updates the cache and serializes the
+  // result to a string "kAdd_autotune_result".
+  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kAdd)))
       .WillOnce(Return(std::nullopt))                    // During autotuning.
       .WillOnce(Return(GetCacheConfig("best_config")));  // Config application.
-  EXPECT_CALL(*cache, Insert(InstrPtrMatcher(HloOpcode::kCopy), _))
+  EXPECT_CALL(*cache, Insert(InstrPtrMatcher(HloOpcode::kAdd), _))
       .WillOnce(Return(absl::OkStatus()));
-  EXPECT_CALL(*cache, Serialize(_)).WillOnce(Return("kCopy_autotune_result"));
+  EXPECT_CALL(*cache, Serialize(_)).WillOnce(Return("kAdd_autotune_result"));
   // Stores the serialized results to the KV store if it does not exist.
   EXPECT_CALL(*kv_store, TryGet(testing::HasSubstr("_0")))
       .WillOnce(Return(absl::NotFoundError("not found")));
-  EXPECT_CALL(*kv_store, Set(testing::HasSubstr("_0"), "kCopy_autotune_result"))
+  EXPECT_CALL(*kv_store, Set(testing::HasSubstr("_0"), "kAdd_autotune_result"))
       .WillOnce(Return(absl::OkStatus()));
 
   // Shard 0 reads the KV store entry for shard 1 and updates the current cache.
   EXPECT_CALL(*kv_store, Get(testing::HasSubstr("_1"), _))
-      .WillOnce(Return("kAdd_autotune_result"));
-  EXPECT_CALL(*cache, Deserialize("kAdd_autotune_result"))
+      .WillOnce(Return("kCopy_autotune_result"));
+  EXPECT_CALL(*cache, Deserialize("kCopy_autotune_result"))
       .WillOnce(Return(absl::OkStatus()));
-  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kAdd)))
+  EXPECT_CALL(*cache, Lookup(InstrPtrMatcher(HloOpcode::kCopy)))
       .WillOnce(Return(GetCacheConfig("best_config")));
 
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Autotuner> autotuner,
       SetupAutotunerWithExpectations(
-          /*instrs_to_autotune=*/{HloOpcode::kCopy},
+          /*instrs_to_autotune=*/{HloOpcode::kAdd},
           /*instrs_to_apply_config_and_count=*/
           {{HloOpcode::kCopy, 1}, {HloOpcode::kAdd, 2}}, std::move(cache)));
 

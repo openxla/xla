@@ -42,6 +42,7 @@
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/remap_plan.h"
 #include "xla/python/ifrt/shape.h"
@@ -72,7 +73,8 @@ class Client final : public llvm::RTTIExtends<Client, xla::ifrt::Client> {
   absl::StatusOr<xla::ifrt::ArrayRef> MakeArrayFromHostBuffer(
       const void* data, xla::ifrt::DType dtype, xla::ifrt::Shape shape,
       std::optional<absl::Span<const int64_t>> byte_strides,
-      xla::ifrt::ShardingRef sharding, HostBufferSemantics semantics,
+      xla::ifrt::ShardingRef sharding, xla::ifrt::LayoutRef layout,
+      HostBufferSemantics semantics,
       std::function<void()> on_done_with_host_buffer) override;
   absl::StatusOr<std::vector<xla::ifrt::ArrayRef>>
   MakeArraysFromHostBufferShards(
@@ -155,6 +157,9 @@ class Client final : public llvm::RTTIExtends<Client, xla::ifrt::Client> {
       xla::ifrt::DType dtype, absl::Span<const int64_t> dims,
       xla::ifrt::Device* device,
       xla::ifrt::MemoryKind memory_kind) const override;
+  absl::StatusOr<xla::ifrt::CustomLayoutRef> GetDefaultLayout(
+      xla::ifrt::DType dtype, const xla::ifrt::Shape& shape,
+      const xla::ifrt::ShardingRef& sharding) const override;
 
   absl::StatusOr<std::unique_ptr<xla::ifrt::DeviceAttributeSubscription>>
   SubscribeToAttributeChanges(
