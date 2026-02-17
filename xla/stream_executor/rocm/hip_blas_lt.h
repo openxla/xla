@@ -31,6 +31,11 @@ limitations under the License.
 
 #include "xla/stream_executor/rocm/hip_blas_utils.h"
 
+namespace hipblaslt_ext {
+  class GroupedGemm;
+  struct UserArguments;
+}
+
 namespace stream_executor {
 
 namespace rocm {
@@ -88,6 +93,7 @@ class BlasLt : public gpu::BlasLt {
   };
 
   struct MatmulPlan : public gpu::BlasLt::MatmulPlan {
+    // Constructor for regular matmul
     MatmulPlan(MatmulDesc&& op_desc, MatrixLayout&& a_desc,
                MatrixLayout&& b_desc, MatrixLayout&& c_desc,
                MatrixLayout&& d_desc, xla::complex128 alpha, double beta,
@@ -99,7 +105,14 @@ class BlasLt : public gpu::BlasLt {
           d_desc_(std::move(d_desc)),
           alpha_(alpha),
           beta_(beta),
-          must_swap_operands_(must_swap_operands) {}
+          must_swap_operands_(must_swap_operands),
+          grouped_gemm_(nullptr) {}
+
+    // Constructor for grouped matmul
+    MatmulPlan(gpu::GroupedGemmConfig&& cfg, bool must_swap_operands)
+        : cfg_(std::move(cfg)),
+          must_swap_operands_(must_swap_operands),
+          grouped_gemm_(nullptr) {}
 
     ~MatmulPlan() override = default;
 
@@ -113,8 +126,11 @@ class BlasLt : public gpu::BlasLt {
 
     absl::Status SetAlgorithm(const MatmulAlgorithm& algorithm) override {
       algorithm_ = algorithm;
+      algorithm_must_be_initialized_ = true;
       return absl::OkStatus();
     }
+
+    bool is_grouped() const { return grouped_gemm_ != nullptr; }
 
    protected:
     absl::Status DoMatmul(Stream* stream, const void* alpha, const void* beta,
@@ -122,25 +138,46 @@ class BlasLt : public gpu::BlasLt {
                           blas::ProfileResult* profile_result) const;
 
    private:
+    absl::Status ExecuteRegularMatmul(
+        Stream* stream, const gpu::BlasLt::MemoryArgs& args,
+        blas::ProfileResult* profile_result) const;
+    absl::Status ExecuteGroupedMatmul(
+        Stream* stream, const gpu::BlasLt::MemoryArgs& args,
+        blas::ProfileResult* profile_result) const;
+
     // TODO(cjfj): Add consistency checks for types, shapes, etc.?
-    MatmulDesc op_desc_;
-    MatrixLayout a_desc_;
-    MatrixLayout b_desc_;
-    MatrixLayout c_desc_;
-    MatrixLayout d_desc_;
-    xla::complex128 alpha_;
-    double beta_;
+    // Regular matmul members (optional for grouped matmul)
+    std::optional<MatmulDesc> op_desc_;
+    std::optional<MatrixLayout> a_desc_;
+    std::optional<MatrixLayout> b_desc_;
+    std::optional<MatrixLayout> c_desc_;
+    std::optional<MatrixLayout> d_desc_;
+    std::optional<xla::complex128> alpha_;
+    std::optional<double> beta_;
     bool must_swap_operands_;
     std::optional<MatmulAlgorithm> algorithm_;  // selected algorithm
+    friend class BlasLt;
+    using GroupedGemmPtr = std::unique_ptr<hipblaslt_ext::GroupedGemm>;
+    // Grouped matmul members
+    GroupedGemmPtr grouped_gemm_;
+    std::optional<gpu::GroupedGemmConfig> cfg_;
+    mutable bool algorithm_must_be_initialized_ = false;
+    mutable DeviceMemoryBase saved_address_workspace_{};
   };  // class MatmulPlan
 
-  explicit BlasLt(StreamExecutor* parent)
-      : parent_(parent), blas_lt_(nullptr, wrap::hipblasLtDestroy) {}
+  explicit BlasLt(StreamExecutor* parent) : parent_(parent), blas_lt_(nullptr, wrap::hipblasLtDestroy) {}
 
   absl::Status Init() override;
 
   absl::StatusOr<MatmulPlanPtr> GetMatmulPlan(const gpu::GemmConfig& cfg,
                                               Epilogue epilogue) const override;
+
+  absl::StatusOr<MatmulPlanPtr> GetGroupedMatmulPlan(
+      gpu::GroupedGemmConfig& config,
+      const std::vector<Epilogue>& epilogues) const override;
+
+  void ClearGroupedMatmulPlanCache();
+  size_t GetGroupedMatmulPlanCacheSize() const;
 
   ~BlasLt() override = default;
 

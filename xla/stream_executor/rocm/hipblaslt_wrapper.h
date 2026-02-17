@@ -29,6 +29,8 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "tsl/platform/dso_loader.h"
 
+#include "rocm/include/hipblaslt/hipblaslt-ext.hpp"
+
 namespace stream_executor {
 namespace wrap {
 
