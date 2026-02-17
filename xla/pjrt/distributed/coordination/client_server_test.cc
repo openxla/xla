@@ -64,13 +64,6 @@ constexpr absl::Duration kBarrierTimeout = absl::Milliseconds(200);
 constexpr absl::Duration kHeartbeatTimeout = absl::Seconds(3);
 constexpr char kBarrierId[] = "barrier_id";
 
-tensorflow::CoordinatedTask GetTask(int node_id) {
-  tensorflow::CoordinatedTask task;
-  task.set_task_id(node_id);
-  task.set_job_name("agent");
-  return task;
-}
-
 // Note: b/169705709: no protobuf matchers in OSS.
 MATCHER_P2(IsKvEntry, key, value, "") {
   return key == arg.key() && value == arg.value();
@@ -85,7 +78,6 @@ class ClientServerTest : public ::testing::Test {
       bool cluster_shutdown_with_barrier = true) {
     // Set config.
     CoordinationServiceAgent::Config config;
-    config.service_leader = "/job:agent/task:0";
     config.cluster_register_timeout = init_and_shutdown_timeout;
     config.heartbeat_timeout = kHeartbeatTimeout;
     if (cluster_shutdown_with_barrier) {
@@ -109,7 +101,6 @@ class ClientServerTest : public ::testing::Test {
       config.shutdown_barrier_timeout = init_and_shutdown_timeout;
     }
     config.cluster_register_with_barrier = cluster_register_with_barrier;
-    config.job_name = "agent";
     config.num_tasks = num_nodes;
     config.recoverable = recoverable;
     auto service =
@@ -133,7 +124,7 @@ class ClientServerTest : public ::testing::Test {
     CoordinationServiceAgent::Config config =
         GetConfig(init_and_shutdown_timeout, shutdown_on_destruction);
     auto coord_agent = CoordinationServiceAgent::Create(
-        tsl::Env::Default(), "agent", node_id, config, std::move(leader_client),
+        tsl::Env::Default(), node_id, config, std::move(leader_client),
         std::move(error_fn));
     if (!coord_agent.ok()) {
       LOG(ERROR) << "Coordination agent failed to initialize: "
@@ -928,8 +919,8 @@ TEST_F(ClientServerTest, WaitAtBarrierSubset_Succeeds) {
     TF_RETURN_IF_ERROR(client->Connect());
 
     if (node_id != 2) {
-      TF_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_1", kBarrierTimeout,
-                                               {GetTask(0), GetTask(1)}));
+      TF_RETURN_IF_ERROR(
+          client->WaitAtBarrier("barrier_1", kBarrierTimeout, {0, 1}));
     }
 
     TF_RETURN_IF_ERROR(client->Shutdown());
@@ -959,14 +950,12 @@ TEST_F(ClientServerTest, WaitAtBarrier_DifferentSubset_Fails) {
     auto client = GetClient(node_id);
     TF_ASSERT_OK(client->Connect());
     if (node_id == 0) {
-      status_0 =
-          client->WaitAtBarrier("barrier_1", kBarrierTimeout, {GetTask(0)});
+      status_0 = client->WaitAtBarrier("barrier_1", kBarrierTimeout, {0});
       n.Notify();
     } else {
       n.WaitForNotification();
       // Same barrier id, but specifies different tasks.
-      status_1 =
-          client->WaitAtBarrier("barrier_1", kBarrierTimeout, {GetTask(1)});
+      status_1 = client->WaitAtBarrier("barrier_1", kBarrierTimeout, {1});
     }
   };
 
@@ -1016,8 +1005,7 @@ TEST_F(ClientServerTest,
     if (node_id == 0) {
       n.WaitForNotification();
     }
-    auto status = client->WaitAtBarrier("barrier_1", kBarrierTimeout,
-                                        {GetTask(0), GetTask(1)});
+    auto status = client->WaitAtBarrier("barrier_1", kBarrierTimeout, {0, 1});
     // Node 1 will fail in the barrier because non-participating node 2 also
     // calls it.
     if (node_id == 1) {
@@ -1058,7 +1046,7 @@ TEST_F(ClientServerTest, GetAliveTasks_Succeed) {
     auto client = GetClient(node_id);
     TF_RETURN_IF_ERROR(client->Connect());
     absl::StatusOr<std::vector<CoordinationServiceAgent::AliveTask>>
-        alive_tasks = client->GetAliveTasks({GetTask(0), GetTask(1)});
+        alive_tasks = client->GetAliveTasks({0, 1});
     if (!alive_tasks.ok()) {
       return alive_tasks.status();
     }

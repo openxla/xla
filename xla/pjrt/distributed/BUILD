@@ -65,6 +65,7 @@ cc_library(
     deps = [
         ":key_value_store_interface",
         "//xla/pjrt/distributed/coordination:coordination_client",
+        "//xla/pjrt/distributed/coordination:coordination_service",
         "//xla/pjrt/distributed/coordination:coordination_service_agent",
         "//xla/pjrt/distributed/coordination:grpc_coordination_client",
         "//xla/runtime:device_id",
