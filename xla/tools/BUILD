@@ -817,7 +817,7 @@ cc_library(
         ":collective_perf_table_gen",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
-        "//xla/service/gpu/model:collective_interpolator_data",
+        "//xla/service/gpu/model:default_collective_perf_table",
         "//xla/service/gpu/model:hlo_op_profile_proto_cc",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
