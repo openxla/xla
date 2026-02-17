@@ -75,6 +75,7 @@ cc_library(
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/service:lockable",
+        "//xla/service:rendezvous",
         "//xla/tsl/platform:logging",
         "//xla/tsl/util:tied_ref",
         "@com_google_absl//absl/base:core_headers",

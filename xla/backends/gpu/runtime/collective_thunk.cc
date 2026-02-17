@@ -384,11 +384,16 @@ absl::Status CollectiveThunk::RunWithCommAndRendezvous(
                        clique_key, params.collective_params->global_device_id));
   DCHECK(comm) << "Failed to get communicator for collective operation";
 
+  std::pair<RendezvousFlag*, RendezvousFlag*> rend_flags;
+  ASSIGN_OR_RETURN(
+      rend_flags,
+      params.collective_cliques->GetCliqueFirstRendezvousFlags(clique_key));
+
   RETURN_IF_ERROR(FirstCallRendezvous(params, clique_key, "before",
-                                      pre_call_rendezvous_flag_));
+                                      *(rend_flags.first)));
   RETURN_IF_ERROR(fn(clique_key, *comm));
   RETURN_IF_ERROR(FirstCallRendezvous(params, clique_key, "after",
-                                      post_call_rendezvous_flag_));
+                                      *(rend_flags.second)));
   return absl::OkStatus();
 }
 
