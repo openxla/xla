@@ -42,16 +42,11 @@ bazel_dep(name = "rules_ml_toolchain")
 # wget -O temp_module_archive.tar.gz <archive URL>
 # HASH=$(openssl dgst -sha256 -binary temp_module_archive.tar.gz | openssl base64 -A)
 # echo "sha256-${HASH}"
-# archive_override(
-#     module_name = "rules_ml_toolchain",
-#     integrity = "sha256-KIfZtJ4Y7132+HQ4pNmXWUCNIaH0Y8YfS+arMdiS3Ig=",
-#     strip_prefix = "rules_ml_toolchain-de6fc6c38ea0368a198daa3f8c7cb829cc8db185",
-#     urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/de6fc6c38ea0368a198daa3f8c7cb829cc8db185.tar.gz"],
-# )
-
-local_path_override(
+archive_override(
     module_name = "rules_ml_toolchain",
-    path = "../rules_ml_toolchain",
+    integrity = "sha256-O/gSDQK6yQc0ZQSm4HB6NrSZl80Xm1/5iPAA4F7DjxM=",
+    strip_prefix = "rules_ml_toolchain-8bb0873adbbbc18fea96adfd9eeb136f8029160e",
+    urls = ["https://github.com/meteorcloudy/rules_ml_toolchain/archive/8bb0873adbbbc18fea96adfd9eeb136f8029160e.tar.gz"],
 )
 
 # TODO: Upstream the patch?
