@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/conv_fusion_rewriter.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <array>
 #include <initializer_list>
 #include <memory>
@@ -25,13 +22,14 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
-#include "tsl/platform/statusor.h"
 #include "xla/backends/gpu/transforms/conv_kind_assignment.h"
 #include "xla/comparison_util.h"
 #include "xla/error_spec.h"
@@ -61,6 +59,7 @@ limitations under the License.
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
