@@ -552,7 +552,7 @@ absl::Status IrEmitter::EmitXfeedTransfer(XfeedKind kind, const Shape& shape,
         "size range",
         length);
   }
-  int32_t length_32 = static_cast<int32_t>(length);
+  auto length_32 = static_cast<int32_t>(length);
 
   int32_t shape_length;
   TF_ASSIGN_OR_RETURN(

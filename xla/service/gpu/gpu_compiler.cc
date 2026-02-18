@@ -467,7 +467,7 @@ namespace {
 void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
                     bool debug_only = false) {
   opts.verify_no_collective_deadlocks = true;
-  std::unique_ptr<TargetVerifierMetadata> verifier_metadata =
+  auto verifier_metadata =
       std::make_unique<CpuGpuVerifierMetadata>(std::move(opts));
   if (debug_only) {
     pipeline->AddInvariantCheckerDebug<HloVerifier>(
@@ -1921,9 +1921,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   pipeline.AddPass<ScatterSimplifier>();
 
   // Verify the host memory space before the host offloader pass
-  std::unique_ptr<TargetVerifierMetadata> verifier_metadata =
-      std::make_unique<CpuGpuVerifierMetadata>(
-          HloVerifierOpts{}.VerifyNoHostMemorySpace());
+  auto verifier_metadata = std::make_unique<CpuGpuVerifierMetadata>(
+      HloVerifierOpts{}.VerifyNoHostMemorySpace());
   pipeline.AddPass<HloVerifier>(std::move(verifier_metadata));
 
   pipeline.AddPass<HostOffloader>(alias_info);

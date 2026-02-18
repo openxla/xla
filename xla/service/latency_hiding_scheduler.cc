@@ -1911,8 +1911,7 @@ bool DefaultSchedulerCore::DeleteOccupierFromResource(
           }) == false) {
     return false;
   }
-  std::vector<std::pair<HloEdge*, HloGraphNode::TimeCost>>::iterator it =
-      occupiers.begin();
+  auto it = occupiers.begin();
   int64_t num_occupiers = occupiers.size();
   HloGraphNode::TimeCost prev_time = current_time;
   HloGraphNode::TimeCost accumulated_saved_time = 0;
@@ -1957,8 +1956,7 @@ bool DefaultSchedulerCore::AddOccupierToResource(
     std::vector<std::pair<HloEdge*, HloGraphNode::TimeCost>>& occupiers) {
   CHECK(new_edge.OriginalLatency() > 0 && current_time >= 0);
   auto new_edge_remaining = new_edge.OriginalLatency();
-  std::vector<std::pair<HloEdge*, HloGraphNode::TimeCost>>::iterator it =
-      occupiers.begin();
+  auto it = occupiers.begin();
   int64_t num_occupiers = occupiers.size();
   HloGraphNode::TimeCost prev_time = current_time;
   HloGraphNode::TimeCost accumulated_delay = 0;
@@ -3178,11 +3176,10 @@ absl::StatusOr<bool> DefaultSchedulerCore::TryScheduleOneAnnotationGroup(
 absl::StatusOr<std::shared_ptr<SchedulerCore::SchedulingState>>
 DefaultSchedulerCore::MakeSchedulingState(const HloComputation* computation) {
   const HloSchedule& module_schedule = computation->parent()->schedule();
-  std::unique_ptr<MemoryPressureTracker> memory_pressure_tracker =
-      std::make_unique<MemoryPressureTracker>(
-          scheduling_context_->GetAliasAnalysis().get(),
-          module_pressure_state_->buffer_tracker(),
-          module_pressure_state_->pressure_state_cache());
+  auto memory_pressure_tracker = std::make_unique<MemoryPressureTracker>(
+      scheduling_context_->GetAliasAnalysis().get(),
+      module_pressure_state_->buffer_tracker(),
+      module_pressure_state_->pressure_state_cache());
   memory_pressure_tracker->Initialize(
       computation,
       module_pressure_state_->GetPressureStateForComputation(computation)
