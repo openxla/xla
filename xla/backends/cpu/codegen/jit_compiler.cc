@@ -237,7 +237,7 @@ void JitCompiler::TaskDispatcher::dispatch(
 
     if (task_holder->task) {
       // We run and explicitly destroy the task before decrementing the
-      // counterand notifying the condition variable, to ensure that the
+      // counter and notifying the condition variable to ensure that the
       // task is fully executed and cleaned up before task dispatcher shut
       // down.
       task_holder->task->run();
