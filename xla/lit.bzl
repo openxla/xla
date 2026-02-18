@@ -10,6 +10,12 @@ load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 visibility(DEFAULT_LOAD_VISIBILITY)
 
+def package_path(label_str):
+    lbl = Label(label_str)
+    if not lbl.workspace_name:
+        return lbl.package
+    return "../" + lbl.workspace_name + "/" + lbl.package
+
 def enforce_glob(files, **kwargs):
     """A utility to enforce that a list matches a glob expression.
 
