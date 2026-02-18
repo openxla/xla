@@ -44,9 +44,9 @@ bazel_dep(name = "rules_ml_toolchain")
 # echo "sha256-${HASH}"
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-V9drp/b50XxwQM2jM3cN+zWBUXe4MqquXGzn4p/VZ28=",
-    strip_prefix = "rules_ml_toolchain-8520a826ad8683b3f4ea06d6547a89f4a895f4f2",
-    urls = ["https://github.com/meteorcloudy/rules_ml_toolchain/archive/8520a826ad8683b3f4ea06d6547a89f4a895f4f2.tar.gz"],
+    integrity = "sha256-+08asgV1bUG9UZvMeT7ucW1edNj1NzCZvX57t0BvWx8=",
+    strip_prefix = "rules_ml_toolchain-6d19ed7e900ccf6fae6301a09c9139299ea41ef4",
+    urls = ["https://github.com/meteorcloudy/rules_ml_toolchain/archive/6d19ed7e900ccf6fae6301a09c9139299ea41ef4.tar.gz"],
 )
 
 # TODO: Upstream the patch?
@@ -206,7 +206,7 @@ nccl_redist = use_extension("@rules_ml_toolchain//extensions:nccl_redist.bzl", "
 use_repo(nccl_redist, "cuda_nccl")
 
 sycl_configure = use_extension("@rules_ml_toolchain//extensions:sycl_configure.bzl", "sycl_configure_ext")
-use_repo(sycl_configure, "local_config_sycl")
+use_repo(sycl_configure, "local_config_sycl", "oneapi", "level_zero", "zero_loader")
 
 cuda_redist_init_ext = use_extension("@rules_ml_toolchain//extensions:cuda_redist_init.bzl", "cuda_redist_init_ext")
 use_repo(
