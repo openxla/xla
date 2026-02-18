@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
+#include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/ffi/api/c_api.h"
@@ -889,6 +890,30 @@ class DynamicSliceCopyFusionCmd : public Command {
   const ShapedSlice destination_buffer_;
   uint64_t mem_size_;
   DynamicMemcpyThunk::Offsets offsets_;
+};
+
+//===----------------------------------------------------------------------===//
+// RaggedAllToAllCmd
+//===----------------------------------------------------------------------===//
+
+class RaggedAllToAllCmd : public CollectiveCmd {
+ public:
+  RaggedAllToAllCmd(RaggedAllToAllConfig ragged_all_to_all_config,
+                    absl::Span<const CollectiveThunk::Buffer> buffers,
+                    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events);
+
+  absl::Status Initialize(const Thunk::InitializeParams& params) override;
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override;
+
+  BufferUses buffer_uses() const override;
+
+ private:
+  RaggedAllToAllConfig ragged_all_to_all_config_;
+  std::vector<CollectiveThunk::Buffer> buffers_;
 };
 
 }  // namespace xla::gpu
