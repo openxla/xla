@@ -137,8 +137,14 @@ ResolveLegacyCustomCall(const CustomCallTargetRegistry& registry,
                         absl::string_view target_name,
                         absl::string_view platform_name,
                         CustomCallApiVersion api_version) {
-  void* call_target = CustomCallTargetRegistry::Global()->Lookup(
-      std::string(target_name), std::string(platform_name));
+  void* call_target =
+      registry.Lookup(std::string(target_name), std::string(platform_name));
+
+  if (call_target == nullptr) {
+    return NotFound(
+        "No registered implementation for custom call to %s for platform %s",
+        target_name, platform_name);
+  }
 
   // For information about this calling convention, see
   // xla/g3doc/custom_call.md.
