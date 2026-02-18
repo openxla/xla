@@ -1089,10 +1089,11 @@ TEST_F(AutotunerTest, DumpHlos) {
   EXPECT_THAT(
       files,
       UnorderedElementsAre(
-          MatchesRegex(".*\\.test_module\\.autotuner_0\\.copy\\.before\\.txt"),
-          MatchesRegex(".*\\.test_module\\.autotuner_0\\.copy\\.after\\.txt"),
-          MatchesRegex(".*\\.test_module\\.autotuner_1\\.add\\.after\\.txt"),
-          MatchesRegex(".*\\.test_module\\.autotuner_1\\.add\\.before\\.txt")));
+          MatchesRegex(".*\\.test_module\\.autotuner_0\\.add\\.before\\.txt"),
+          MatchesRegex(".*\\.test_module\\.autotuner_0\\.add\\.after\\.txt"),
+          MatchesRegex(".*\\.test_module\\.autotuner_1\\.copy\\.after\\.txt"),
+          MatchesRegex(
+              ".*\\.test_module\\.autotuner_1\\.copy\\.before\\.txt")));
 }
 
 TEST(AutotuneConfigTest, ToString) {
