@@ -17,6 +17,8 @@ permissions:
   contents: read
 on:
   workflow_dispatch:  # Allows manual triggering
+  schedule:
+    - cron: "0 0 * * *"  # Run at midnight every day
 
 jobs:
   Tests:
