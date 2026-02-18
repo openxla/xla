@@ -285,7 +285,7 @@ std::ostream& operator<<(std::ostream& out, const NamedSharding& sharding);
 // - For a single vector of axes, mergeable neighbors is not allowed.
 // - For the concat(all axes), we check (1) no overlap, and (2) all axes can
 //   co-exist.
-// - Replicated axes and unreduced axes are sorted by mesh axis index and
+// - Replicated, unreduced, and manual axes are sorted by mesh axis index,
 //   sub-axis pre-size.
 absl::Status VerifyNamedSharding(const NamedSharding& named_sharding);
 
