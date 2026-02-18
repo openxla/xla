@@ -1577,6 +1577,9 @@ class ReadySetLt {
           max_it->second == 0 &&
           res_it != sched_state_.resource_users_in_queue.end() &&
           res_it->second > 0);
+      if (cand.resource_constrained) {
+        return;
+      }
     }
   }
   bool IsResourceConstrained(DefaultSchedulerCore::ScheduleCandidate& cand,
