@@ -29,6 +29,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/linked_hash_set.h"
+
 // TODO(b/210891274): Use btree_map after build issue in Windows is resolved.
 #if defined(__GNUC__) || defined(__clang__)
 #include "absl/container/btree_map.h"
@@ -1362,8 +1364,9 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   absl::flat_hash_map<HloPosition, std::vector<int64_t>>
       default_memory_coloring_requirements_;
 
-  // Set of HloUses that are in the default memory.
-  absl::flat_hash_set<HloUse> uses_in_default_memory_;
+  // Set of HloUses that are in the default memory. Using linked_hash_set for
+  // deterministic window prefetching results.
+  absl::linked_hash_set<HloUse> uses_in_default_memory_;
 };
 
 }  // namespace memory_space_assignment

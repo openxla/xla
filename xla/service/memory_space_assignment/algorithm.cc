@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/container/linked_hash_map.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
@@ -7203,8 +7204,10 @@ absl::Status MsaAlgorithm::WindowPrefetch() {
   // cloned computation and use the cloned computation to determine the operand
   // span size.
 
-  // Map of the original instruction to a clone of the instruction.
-  absl::flat_hash_map<HloInstruction*, HloInstruction*> cloned_insts;
+  // Map of the original instruction to a clone of the instruction. Use a
+  // linked_hash_map to ensure deterministic traversal for memory space
+  // propagation and cleanup.
+  absl::linked_hash_map<HloInstruction*, HloInstruction*> cloned_insts;
   const std::vector<HloInstruction*>& instruction_sequence =
       hlo_live_range_.flattened_instruction_sequence().instructions();
   for (HloInstruction* instruction : instruction_sequence) {
