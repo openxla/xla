@@ -20,6 +20,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology.pb.h"
+#include "xla/runtime/device_id.h"
 #include "tsl/platform/protobuf.h"
 
 namespace xla {

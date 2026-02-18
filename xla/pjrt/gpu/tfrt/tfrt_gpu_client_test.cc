@@ -73,6 +73,7 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/raw_buffer.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/gpu_topology.pb.h"
 #include "xla/service/platform_util.h"
@@ -1124,9 +1125,8 @@ TEST_F(TfrtGpuClientTest, LookupDevice) {
   ASSERT_GE(client_->devices().size(), 2);
   TfrtGpuDevice* device =
       absl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto* looked_up_device,
-      client_->LookupDevice(PjRtGlobalDeviceId(device->id())));
+  TF_ASSERT_OK_AND_ASSIGN(auto* looked_up_device,
+                          client_->LookupDevice(GlobalDeviceId(device->id())));
   EXPECT_EQ(looked_up_device, device);
 
   TF_ASSERT_OK_AND_ASSIGN(
