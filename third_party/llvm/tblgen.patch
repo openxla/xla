@@ -1,0 +1,14 @@
+--- a/utils/bazel/llvm-project-overlay/mlir/tblgen.bzl
++++ b/utils/bazel/llvm-project-overlay/mlir/tblgen.bzl
+@@ -77,8 +77,9 @@
+             include = include.lstrip("/")
+         else:
+             include = paths.join(package, include)
+-        include = paths.join(workspace_root, include)
+-        resolved_includes.append(include)
++        resolved_includes.append(paths.join(workspace_root, include))
++        if workspace_root.startswith("external/"):
++            resolved_includes.append(paths.join("../" + workspace_root[9:], include))
+     return resolved_includes
+
+ def _td_library_impl(ctx):
