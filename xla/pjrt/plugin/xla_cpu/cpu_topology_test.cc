@@ -56,7 +56,7 @@ TEST(CpuTopology, ToProto) {
 }
 
 TEST(PackCpuDeviceId, PackAndUnpack) {
-  PjRtGlobalDeviceId device_id = PackCpuDeviceId(2, 3);
+  GlobalDeviceId device_id = PackCpuDeviceId(2, 3);
   EXPECT_EQ(UnpackCpuProcessIndex(device_id), 2);
   EXPECT_EQ(UnpackCpuLocalDeviceId(device_id), 3);
 }

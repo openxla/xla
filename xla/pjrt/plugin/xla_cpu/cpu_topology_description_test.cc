@@ -112,7 +112,7 @@ TEST(CpuTopologyDescriptionTest,
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_core,
       topology.ChipCoordAndCoreIndexForLogicalDeviceOfDefaultType(
-          xla::PjRtGlobalDeviceId(1)));
+          GlobalDeviceId(1)));
   auto [device_coords, core_id] = std::move(device_core);
   ASSERT_EQ(device_coords, (PjRtDeviceDimensions{0, 0, 1}));
   ASSERT_EQ(core_id, 0);

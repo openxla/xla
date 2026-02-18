@@ -56,7 +56,7 @@ absl::StatusOr<std::string> CpuTopologyDescription::Serialize() const {
 
 absl::StatusOr<std::pair<PjRtDeviceDimensions, int32_t>>
 CpuTopologyDescription::ChipCoordAndCoreIndexForLogicalDeviceOfDefaultType(
-    xla::PjRtGlobalDeviceId device_id) const {
+    GlobalDeviceId device_id) const {
   return std::make_pair(PjRtDeviceDimensions{0, 0, device_id.value()}, 0);
 }
 

@@ -97,7 +97,7 @@ class CpuTopologyDescription : public PjRtTopologyDescription {
 
   absl::StatusOr<std::pair<PjRtDeviceDimensions, int32_t>>
   ChipCoordAndCoreIndexForLogicalDeviceOfDefaultType(
-      xla::PjRtGlobalDeviceId device_id) const override;
+      GlobalDeviceId device_id) const override;
 
   // Returns vendor specific attributes about the topology.
   const absl::flat_hash_map<std::string, PjRtDeviceAttribute>& Attributes()
