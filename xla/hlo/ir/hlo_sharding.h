@@ -498,15 +498,25 @@ class HloSharding {
                            bool overwrite) const;
 
   bool operator==(const HloSharding& other) const {
-    return replicated_ == other.replicated_ && maximal_ == other.maximal_ &&
-           manual_ == other.manual_ && unknown_ == other.unknown_ &&
-           unreduced_ == other.unreduced_ &&
-           tile_assignment_ == other.tile_assignment_ &&
-           tuple_elements_ == other.tuple_elements_ &&
-           replicate_on_last_tile_dim_ == other.replicate_on_last_tile_dim_ &&
-           subgroup_types_ == other.subgroup_types_ &&
-           shard_group_ == other.shard_group_ &&
-           named_sharding_ == other.named_sharding_;
+    if (named_sharding_.has_value() == other.named_sharding_.has_value()) {
+      return replicated_ == other.replicated_ && maximal_ == other.maximal_ &&
+             manual_ == other.manual_ && unknown_ == other.unknown_ &&
+             unreduced_ == other.unreduced_ &&
+             tile_assignment_ == other.tile_assignment_ &&
+             tuple_elements_ == other.tuple_elements_ &&
+             replicate_on_last_tile_dim_ == other.replicate_on_last_tile_dim_ &&
+             subgroup_types_ == other.subgroup_types_ &&
+             shard_group_ == other.shard_group_ &&
+             named_sharding_ == other.named_sharding_;
+    }
+
+    // Compare two shardings regardless of their representation in order to
+    // support mixed sharding representations in HLO
+    // TODO (b/485319882): Compare NamedSharding's with different meshes
+    if (named_sharding_.has_value()) {
+      return V3ToV2Sharding(*named_sharding_) == other;
+    }
+    return *this == V3ToV2Sharding(*other.named_sharding_);
   }
   bool operator!=(const HloSharding& other) const { return !(*this == other); }
 

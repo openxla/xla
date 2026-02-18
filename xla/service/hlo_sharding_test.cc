@@ -79,7 +79,8 @@ TEST_P(HloShardingRepresentationTest, Replicate) {
 
   HloSharding other = HloSharding::Replicate({}, use_named_sharding);
   EXPECT_EQ(other, sharding);
-  EXPECT_NE(HloSharding::Replicate(),
+  // Shardings are compared regardless of representation.
+  EXPECT_EQ(HloSharding::Replicate(),
             HloSharding::Replicate({}, /*use_named_sharding=*/true));
 
   EXPECT_IS_OK(sharding.Validate(ShapeUtil::MakeShape(U32, {4}),
@@ -99,7 +100,8 @@ TEST_P(HloShardingRepresentationTest, DevicePlacement) {
 
   HloSharding other = HloSharding::Replicate({}, use_named_sharding);
   EXPECT_NE(other, sharding);
-  EXPECT_NE(HloSharding::AssignDevice(5),
+  // Shardings are compared regardless of representation.
+  EXPECT_EQ(HloSharding::AssignDevice(5),
             HloSharding::AssignDevice(5, {}, /*use_named_sharding=*/true));
 
   EXPECT_IS_OK(sharding.Validate(ShapeUtil::MakeShape(U32, {4}),
