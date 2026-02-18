@@ -205,7 +205,7 @@ jobs:
       - name: Upload results.json directly to GCS
         run: |
           GCS_BUCKET="gs://openxla-postsubmit-transient"
-          RESULTS_JSON_FILE_PATH="${{ env.RESOLVED_OUTPUT_DIR }}/results.json"
+          RESULTS_JSON_FILE_PATH="${RESOLVED_OUTPUT_DIR}/results.json"
 
           # Check if the results file exists
           if [ ! -f "$RESULTS_JSON_FILE_PATH" ]; then

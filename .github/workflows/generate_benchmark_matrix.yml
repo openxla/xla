@@ -99,10 +99,10 @@ jobs:
         id: run_generator
         run: |
           BINARY_PATH="./bazel-bin/xla/tools/benchmarks/utils/generate_benchmark_matrices_main"
-          REGISTRY_PATH="${{ inputs.registry_file }}"
+          REGISTRY_PATH="${INPUTS_REGISTRY_FILE}"
           # Convert workflow_type input to uppercase for the C++ binary, 
           # as the binary's GetWorkflowTypeFromStr expects uppercase or known aliases.
-          WORKFLOW_TYPE_ARG_UPPER=$(echo "${{ inputs.workflow_type }}" | tr '[:lower:]' '[:upper:]')
+          WORKFLOW_TYPE_ARG_UPPER=$(echo "${INPUTS_WORKFLOW_TYPE}" | tr '[:lower:]' '[:upper:]')
 
 
           if [ ! -f "$BINARY_PATH" ]; then 
@@ -113,7 +113,7 @@ jobs:
             exit 1
           fi
 
-          echo "Generating matrix for workflow type: $WORKFLOW_TYPE_ARG_UPPER (original input: ${{ inputs.workflow_type }}) using registry: $REGISTRY_PATH"
+          echo "Generating matrix for workflow type: $WORKFLOW_TYPE_ARG_UPPER (original input: ${INPUTS_WORKFLOW_TYPE}) using registry: $REGISTRY_PATH"
 
           # Execute and capture output
           JSON_ARRAY_STRING=$("$BINARY_PATH" --registry_file="$REGISTRY_PATH" --workflow_type="$WORKFLOW_TYPE_ARG_UPPER")
@@ -139,3 +139,6 @@ jobs:
           echo "matrix_json<<EOF_MATRIX_JSON" >> $GITHUB_OUTPUT
           echo "$JSON_ARRAY_STRING" >> $GITHUB_OUTPUT
           echo "EOF_MATRIX_JSON" >> $GITHUB_OUTPUT
+        env:
+          INPUTS_REGISTRY_FILE: ${{ inputs.registry_file }}
+          INPUTS_WORKFLOW_TYPE: ${{ inputs.workflow_type }}
