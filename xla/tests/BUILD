@@ -3009,10 +3009,7 @@ xla_test(
     name = "ragged_all_to_all_e2e_test",
     srcs = ["ragged_all_to_all_e2e_test.cc"],
     backend_tags = {
-        "gpu": [
-            "multi_gpu",
-            "no_oss",
-        ],
+        "gpu": ["multi_gpu"],
     },
     backends = [
         "gpu",
