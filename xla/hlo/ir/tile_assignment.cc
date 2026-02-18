@@ -695,43 +695,34 @@ void TileAssignment::MaybeMaterializeFullArray() const {
 std::vector<int64_t> ExtractCommonFactorSequence(
     absl::Span<const int64_t> array1, absl::Span<const int64_t> array2) {
   std::vector<int64_t> result;
-  result.reserve(std::max(array1.size(), array2.size()));
+  int64_t index1 = 0;
+  int64_t index2 = 0;
+  int64_t val1 = 1;
+  int64_t val2 = 1;
 
-  auto next_index_with_non_one_element = [](absl::Span<const int64_t> array,
-                                            int64_t index) -> int64_t {
-    while (index < array.size() && array[index] == 1) {
-      index++;
+  while (index1 < array1.size() || index2 < array2.size() || val1 > 1 ||
+         val2 > 1) {
+    while (val1 == 1 && index1 < array1.size()) {
+      val1 = array1[index1++];
     }
-    return index;
-  };
-
-  int64_t index1 = next_index_with_non_one_element(array1, 0);
-  int64_t index2 = next_index_with_non_one_element(array2, 0);
-  int64_t next_stride1 = 1;
-  int64_t next_stride2 = 1;
-  int64_t accumulated_factor = 1;
-
-  while (index1 < array1.size() || index2 < array2.size()) {
-    if (index1 < array1.size() && next_stride1 == accumulated_factor) {
-      next_stride1 *= array1[index1++];
-    }
-    if (index2 < array2.size() && next_stride2 == accumulated_factor) {
-      next_stride2 *= array2[index2++];
+    while (val2 == 1 && index2 < array2.size()) {
+      val2 = array2[index2++];
     }
 
-    const auto [small_factor, large_factor] = std::minmax(
-        {next_stride1 / accumulated_factor, next_stride2 / accumulated_factor});
-
-    if (large_factor % small_factor != 0 || small_factor == 1) {
+    if (val1 == 1 && val2 == 1) {
+      break;
+    }
+    if (val1 == 1 || val2 == 1) {
       return {};
     }
 
-    result.push_back(small_factor);
-    accumulated_factor *= small_factor;
-    CHECK_EQ(accumulated_factor, Product(result));
-
-    index1 = next_index_with_non_one_element(array1, index1);
-    index2 = next_index_with_non_one_element(array2, index2);
+    const int64_t common = std::min(val1, val2);
+    if (val1 % common != 0 || val2 % common != 0) {
+      return {};
+    }
+    result.push_back(common);
+    val1 /= common;
+    val2 /= common;
   }
 
   return result;
