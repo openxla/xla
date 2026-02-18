@@ -15,12 +15,15 @@ limitations under the License.
 
 #include "xla/hlo/ir/tile_assignment.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
@@ -687,6 +690,132 @@ void TileAssignment::MaybeMaterializeFullArray() const {
     shared_array_ = std::move(full);
     array_ = shared_array_.get();
   }
+}
+
+std::vector<int64_t> ExtractCommonFactorSequence(
+    absl::Span<const int64_t> array1, absl::Span<const int64_t> array2) {
+  std::vector<int64_t> result;
+  result.reserve(std::max(array1.size(), array2.size()));
+
+  auto next_index_with_non_one_element = [](absl::Span<const int64_t> array,
+                                            int64_t index) -> int64_t {
+    while (index < array.size() && array[index] == 1) {
+      index++;
+    }
+    return index;
+  };
+
+  int64_t index1 = next_index_with_non_one_element(array1, 0);
+  int64_t index2 = next_index_with_non_one_element(array2, 0);
+  int64_t next_stride1 = 1;
+  int64_t next_stride2 = 1;
+  int64_t accumulated_factor = 1;
+
+  while (index1 < array1.size() || index2 < array2.size()) {
+    if (index1 < array1.size() && next_stride1 == accumulated_factor) {
+      next_stride1 *= array1[index1++];
+    }
+    if (index2 < array2.size() && next_stride2 == accumulated_factor) {
+      next_stride2 *= array2[index2++];
+    }
+
+    const auto [small_factor, large_factor] = std::minmax(
+        {next_stride1 / accumulated_factor, next_stride2 / accumulated_factor});
+
+    if (large_factor % small_factor != 0 || small_factor == 1) {
+      return {};
+    }
+
+    result.push_back(small_factor);
+    accumulated_factor *= small_factor;
+    CHECK_EQ(accumulated_factor, Product(result));
+
+    index1 = next_index_with_non_one_element(array1, index1);
+    index2 = next_index_with_non_one_element(array2, index2);
+  }
+
+  return result;
+}
+
+std::optional<std::vector<SubDimInfo>> GetOrderedSubDimsFromIotaTileAssignment(
+    const IotaTileAssignment& iota) {
+  std::vector<int64_t> device_shape;
+  device_shape.reserve(iota.transpose_perm().size());
+  for (const int perm_index : iota.transpose_perm()) {
+    device_shape.emplace_back(iota.reshape_dims()[perm_index]);
+  }
+
+  const std::vector<int64_t> axis_sizes =
+      ExtractCommonFactorSequence(iota.dims(), device_shape);
+  if (axis_sizes.empty()) {
+    return std::nullopt;
+  }
+
+  std::vector<SubDimInfo> sub_dims;
+  sub_dims.reserve(axis_sizes.size());
+
+  int64_t tile_dim_index = iota.ndims() - 1;
+  int64_t trans_perm_index = iota.transpose_perm().size() - 1;
+  int64_t acc_tile_size = 1;
+  int64_t acc_device_size = 1;
+  int64_t sub_dim = 0;
+
+  for (auto it = axis_sizes.rbegin(); it != axis_sizes.rend(); ++it) {
+    int64_t axis_size = *it;
+    while (iota.dim(tile_dim_index) == 1) {
+      tile_dim_index--;
+    }
+    sub_dims.push_back(SubDimInfo{
+        /* .tile_dim_index = */ tile_dim_index,
+        /* .tile_sub_dim_index = */ sub_dim++,
+        /* .reshape_dim_index = */ iota.transpose_perm()[trans_perm_index],
+        /* .size = */ axis_size,
+    });
+    acc_tile_size *= axis_size;
+    acc_device_size *= axis_size;
+    if (iota.dim(tile_dim_index) == acc_tile_size) {
+      tile_dim_index--;
+      acc_tile_size = 1;
+      sub_dim = 0;
+    }
+    if (device_shape[trans_perm_index] == acc_device_size) {
+      acc_device_size = 1;
+      trans_perm_index--;
+    }
+  }
+
+  absl::c_sort(sub_dims, [](const SubDimInfo& a, const SubDimInfo& b) {
+    return std::forward_as_tuple(a.reshape_dim_index, a.tile_dim_index) <
+           std::forward_as_tuple(b.reshape_dim_index, b.tile_dim_index);
+  });
+  return sub_dims;
+}
+
+AnalyzeTileAssignmentResult AnalyzeTileAssignment(
+    const TileAssignment& tile_assignment) {
+  // If the input has iota tile assignment (the corresponding HloSharding is in
+  // V2 format), we use GetOrderedSubDimsFromIotaTileAssignment.
+  const std::optional<IotaTileAssignment>& iota = tile_assignment.iota();
+  CHECK(iota.has_value()) << "tile assignment: " << tile_assignment.ToString();
+  std::optional<std::vector<SubDimInfo>> sub_dims =
+      GetOrderedSubDimsFromIotaTileAssignment(*iota);
+
+  // TODO(zixuanjiang). We cannot handle the sharding that needs to specify the
+  // device list. For example, we cannot handle the V2 sharding
+  // {devices=[2,3]<=[2,3]T(1,0)}, which is equivalent to
+  // {devices=[2,3]0,3,1,4,2,5}.
+  CHECK(sub_dims.has_value())
+      << "tile assignment: " << tile_assignment.ToString();
+
+  std::vector<int64_t> mesh;
+  mesh.reserve(sub_dims->size());
+  for (const SubDimInfo& sub_dim_info : *sub_dims) {
+    mesh.push_back(sub_dim_info.size);
+  }
+  return AnalyzeTileAssignmentResult{
+      /* .sub_dims = */ std::move(*sub_dims),
+      /* .local_mesh = */ std::move(mesh),
+  };
 }
 
 }  // namespace xla
