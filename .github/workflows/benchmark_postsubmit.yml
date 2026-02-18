@@ -82,21 +82,24 @@ jobs:
       - name: Print GitHub Context
         run: |
           echo "GitHub SHA: ${{ github.sha }}"
-          echo "GitHub Ref: ${{ github.ref }}"
-          echo "GitHub Ref Name: ${{ github.ref_name }}"
-          echo "GitHub Head Ref: ${{ github.head_ref }})"
-          echo "GitHub Base Ref: ${{ github.base_ref }})"
+          echo "GitHub Ref: ${GITHUB_REF}"
+          echo "GitHub Ref Name: ${GITHUB_REF_NAME}"
+          echo "GitHub Head Ref: ${GITHUB_HEAD_REF})"
+          echo "GitHub Base Ref: ${GITHUB_BASE_REF})"
           echo "GitHub Repository: ${{ github.repository }}"
           echo "GitHub Run ID: ${{ github.run_id }}"
           echo "GitHub Run Number: ${{ github.run_number }}"
-          echo "GitHub Workflow: ${{ github.workflow }}"
-          echo "GitHub Actor: ${{ github.actor }}"
+          echo "GitHub Workflow: ${GITHUB_WORKFLOW}"
+          echo "GitHub Actor: ${GITHUB_ACTOR}"
           echo "GitHub Event Name: ${{ github.event_name }}"
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             echo "Pull Request Number: ${{ github.event.pull_request.number }}"
-            echo "Pull Request Head Ref: ${{ github.event.pull_request.head.ref }}"
-            echo "Pull Request Base Ref: ${{ github.event.pull_request.base.ref }}"
+            echo "Pull Request Head Ref: ${GITHUB_EVENT_PULL_REQUEST_HEAD_REF}"
+            echo "Pull Request Base Ref: ${GITHUB_EVENT_PULL_REQUEST_BASE_REF}"
           fi
+        env:
+          GITHUB_EVENT_PULL_REQUEST_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          GITHUB_EVENT_PULL_REQUEST_BASE_REF: ${{ github.event.pull_request.base.ref }}
       # Find the current PR number, if any, because github context doesn't have it for push events.
       - uses: jwalton/gh-find-current-pr@v1.3.3
         id: find_pr
@@ -104,10 +107,11 @@ jobs:
           # Can be "open", "closed", or "all".  Defaults to "open".
           state: all
       # This will echo "Your PR is 7", or be skipped if there is no current PR.
-      - run: echo "PR_NUMBER=${{ steps.find_pr.outputs.pr }}"
+      - run: echo "PR_NUMBER=${STEPS_FIND_PR_OUTPUTS_PR}"
         if: success() && steps.find_pr.outputs.number
         env:
           PR: ${{ steps.find_pr.outputs.pr }}
+          STEPS_FIND_PR_OUTPUTS_PR: ${{ steps.find_pr.outputs.pr }}
 
       - name: Checkout OpenXLA
         uses: actions/checkout@v6.0.1
@@ -163,7 +167,7 @@ jobs:
           FILENAME=$(basename "$OUTPUT_FILE")
           COMMIT_SHA="${{ github.sha }}"
           RUN_ID="${{ github.run_id }}"
-          PR_NUMBER="${{ steps.find_pr.outputs.pr }}"
+          PR_NUMBER="${STEPS_FIND_PR_OUTPUTS_PR}"
           PLATFORM="${{ matrix.job_info.platform }}"
           POOL="${{ matrix.job_info.pool }}"
           PR_SUFFIX=""
@@ -176,6 +180,8 @@ jobs:
           echo "Uploading $OUTPUT_FILE to $GCS_BUCKET/$GCS_OBJECT_NAME"
           ls -l "$OUTPUT_FILE" # Verify the file exists
           gsutil cp "$OUTPUT_FILE" "$GCS_BUCKET/$GCS_OBJECT_NAME"
+        env:
+          STEPS_FIND_PR_OUTPUTS_PR: ${{ steps.find_pr.outputs.pr }}
 
       - name: Download Gemma Hlo Files
         run: |
@@ -220,7 +226,7 @@ jobs:
           FILENAME="gemma3_1b_flax_call.hlo"
           COMMIT_SHA="${{ github.sha }}"
           RUN_ID="${{ github.run_id }}"
-          PR_NUMBER="${{ steps.find_pr.outputs.pr }}"
+          PR_NUMBER="${STEPS_FIND_PR_OUTPUTS_PR}"
           PLATFORM="${{ matrix.job_info.platform }}"
           POOL="${{ matrix.job_info.pool }}"
           PR_SUFFIX=""
@@ -233,6 +239,8 @@ jobs:
           echo "Uploading $OUTPUT_FILE to $GCS_BUCKET/$GCS_OBJECT_NAME"
           ls -l "$OUTPUT_FILE" # Verify the file exists
           gsutil cp "$OUTPUT_FILE" "$GCS_BUCKET/$GCS_OBJECT_NAME"
+        env:
+          STEPS_FIND_PR_OUTPUTS_PR: ${{ steps.find_pr.outputs.pr }}
 
       - name: Upload XSpace artifacts
         uses: actions/upload-artifact@v6.0.0
