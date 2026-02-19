@@ -561,98 +561,71 @@ bool SubProcess::Wait() {
   return WaitInternal(&status);
 }
 
-bool SubProcess::WaitInternal(int* status) {
-  // The waiter must release proc_mu_ while waiting in order for Kill() to work.
-  proc_mu_.Lock();
-  bool running = running_;
-  pid_t pid = pid_;
-  proc_mu_.Unlock();
-
-  bool ret = false;
-  if (running && (pid > 1)) {
-    absl::MutexLock lock(&wait_mu_);
-    pid_t cpid;
-    int cstat;
-    bool done = false;
-    while (!done) {
-      cpid = waitpid(pid, &cstat, 0);
-      if ((cpid < 0) && !retry(errno)) {
-        done = true;
-      } else if ((cpid == pid) && (WIFEXITED(cstat) || WIFSIGNALED(cstat))) {
-        *status = cstat;
-        ret = true;
-        done = true;
-      }
-    }
-  }
-
-  proc_mu_.Lock();
-  // Invariant: exit_cb_tid_ == -1 if and only if there are no callback or
-  // the exit callback has completed.
-  std::function<void(SubProcess*)> cb;
-  if ((running_ == running) && (pid_ == pid)) {
-    running_ = false;
-    pid_ = -1;
-    cb = exit_cb_;
-    if (cb != nullptr) {
-      exit_cb_tid_ = Env::Default()->GetCurrentThreadId();
-    }
-  }
-  proc_mu_.Unlock();
-  if (cb != nullptr) {
-    cb(this);
-    proc_mu_.Lock();
-    exit_cb_tid_ = -1;
-    proc_mu_.Unlock();
-  }
-  return ret;
-}
-
-bool SubProcess::CheckRunning() {
+SubProcess::WaitStatus SubProcess::WaitOrCheckRunningInternal(int flags,
+                                                              int* status) {
   pid_t pid;
   {
     absl::MutexLock lock(&proc_mu_);
     if (!running_) {
-      return false;
+      return WaitStatus::kNotRunning;
     }
     pid = pid_;
   }
 
-  int status = 0;
-  pid_t result;
-  if (!wait_mu_.TryLock()) {
-    return true;
+  if ((flags & WNOHANG) == 0) {
+    wait_mu_.Lock();
+  } else if (!wait_mu_.TryLock()) {
+    return WaitStatus::kStillRunning;
   }
-  do {
-    result = waitpid(pid, &status, WNOHANG);
-  } while (result < 0 && retry(errno));
+
+  // wait_mu_ is locked.
+
+  pid_t cpid;
+  int cstat;
+  bool done = false;    // Loop control.
+  bool exited = false;  // Did we reap the process?
+  while (!done) {
+    cpid = waitpid(pid, &cstat, flags);
+    if (cpid < 0 && retry(errno)) {
+      continue;
+    }
+    if (cpid == pid && (WIFEXITED(cstat) || WIFSIGNALED(cstat))) {
+      *status = cstat;
+      exited = true;
+      done = true;
+    } else if ((flags & WNOHANG) || (cpid < 0)) {
+      // Either non-blocking wait or blocking wait with non-retriable error.
+      done = true;
+      if (cpid < 0 && errno == ECHILD) {
+        // Reaped by someone else.
+        *status = 0;
+        exited = true;
+      }
+    }
+  }
+
   wait_mu_.Unlock();
 
-  if (result == 0) {
-    return true;  // Still running.
+  if (!exited) {
+    return WaitStatus::kStillRunning;  // Still running.
   }
 
+  // If we are here, process has exited.
   std::function<void(SubProcess*)> cb_to_run;
-  bool exited = false;
-
+  // Invariant: exit_cb_tid_ == -1 if and only if there are no callback or
+  // the exit callback has completed.
   {
     absl::MutexLock lock(&proc_mu_);
-    // If result == pid, and exited/signaled, and we are still the one who
-    // thinks it's running with that pid, then we are the ones reaping it.
-    if (running_ && pid_ == pid &&
-        ((result == pid && (WIFEXITED(status) || WIFSIGNALED(status))) ||
-         (result < 0 && errno == ECHILD))) {
+    if (running_ && pid_ == pid) {
       running_ = false;
       pid_ = -1;
       cb_to_run = exit_cb_;
       if (cb_to_run != nullptr) {
         exit_cb_tid_ = Env::Default()->GetCurrentThreadId();
       }
-      exited = true;
-    } else if (result == 0) {
-      // If result was 0, but by the time we got proc_mu_, running_ became
-      // false, we should return false.
-      exited = !running_;
+    } else {
+      // Reaped by someone else between wait_mu_.Unlock() and proc_mu_.Lock().
+      return WaitStatus::kNotRunning;
     }
   }
 
@@ -662,7 +635,17 @@ bool SubProcess::CheckRunning() {
     exit_cb_tid_ = -1;
   }
 
-  return !exited;
+  return WaitStatus::kExited;
+}
+
+bool SubProcess::WaitInternal(int* status) {
+  return WaitOrCheckRunningInternal(/*flags=*/0, status) == WaitStatus::kExited;
+}
+
+bool SubProcess::CheckRunning() {
+  int status;
+  return WaitOrCheckRunningInternal(WNOHANG, &status) ==
+         WaitStatus::kStillRunning;
 }
 
 bool SubProcess::Kill(int signal) {
