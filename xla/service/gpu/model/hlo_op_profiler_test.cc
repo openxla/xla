@@ -40,11 +40,12 @@ class HloOpProfilerTest : public HloTestBase {
         platform_id_ != se::rocm::kROCmPlatformId) {
       GTEST_SKIP() << "Not built with --config=cuda or --config=rocm";
     }
+    kMinClockCyclesDivideF64_ =
+        platform_id_ == se::cuda::kCudaPlatformId ? 280 : 100;
   }
 
   const int kMinClockCyclesAddF32_ = 0;
-  const int kMinClockCyclesDivideF64_ =
-      platform_id_ == se::cuda::kCudaPlatformId ? 280 : 100;
+  int kMinClockCyclesDivideF64_;
   const int kMinClockCyclesSqrtC128_ = 1000;
   se::Platform::Id platform_id_;
 };
