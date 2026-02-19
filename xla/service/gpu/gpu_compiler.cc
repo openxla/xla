@@ -1934,13 +1934,10 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // GemmFusionAutotuner runs hoist-fused-bitcasts and nest-gemm-fusion,
   // matching its behavior here.
   pipeline.AddPass<HoistFusedBitcasts>();
-  if (debug_options.xla_gpu_unsupported_disable_nested_gemm_fusions()) {
-    pipeline.AddPass<ConvertTritonGemmConfig>(
-        gpu_target_config.device_description, &mlir_context_);
-  } else {
-    pipeline.AddPass<NestGemmFusion>(gpu_target_config.device_description,
-                                     &mlir_context_);
-  }
+  pipeline.AddPass<ConvertTritonGemmConfig>(
+      gpu_target_config.device_description, &mlir_context_);
+  pipeline.AddPass<NestGemmFusion>(gpu_target_config.device_description,
+                                   &mlir_context_);
 
   // Clean up new_tuple described above.
   pipeline.AddPass<TupleSimplifier>();
