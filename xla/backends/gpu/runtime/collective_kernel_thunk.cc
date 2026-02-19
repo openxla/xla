@@ -74,7 +74,7 @@ using se::gpu::AllReduceStrategy;
 // - Signal buffers
 // - Remote buffers
 static constexpr int32_t kAllReduceArgsCount = 6;
-static constexpr int32_t kNumParameters = 3;
+static constexpr int32_t kNumParameters = 2;
 
 // Helper for allocating memory on the device.
 absl::StatusOr<se::DeviceAddressHandle> AllocateMemory(
@@ -115,6 +115,37 @@ struct PtrFormatter {
     absl::StrAppend(out, absl::StrFormat("%p", ptr));
   }
 };
+
+absl::Status CopyCollectiveMetadataToDevice(
+    se::Stream* stream, CollectiveKernelMetadata metadata,
+    const std::vector<void*>& param_to_peers_ptrs,
+    const std::vector<void*>& multimem_addresses,
+    se::DeviceAddressBase destination) {
+  const int64_t param_to_peers_ptrs_size =
+      param_to_peers_ptrs.size() * sizeof(void*);
+  se::DeviceAddressBase param_to_peers_ptrs_buffer = destination.GetByteSlice(
+      sizeof(CollectiveKernelMetadata), param_to_peers_ptrs_size);
+
+  const int64_t multimem_addresses_size =
+      multimem_addresses.size() * sizeof(void*);
+  se::DeviceAddressBase multimem_addresses_buffer = destination.GetByteSlice(
+      sizeof(CollectiveKernelMetadata) + param_to_peers_ptrs_size,
+      multimem_addresses_size);
+
+  metadata.param_to_peers =
+      reinterpret_cast<void**>(param_to_peers_ptrs_buffer.opaque());
+  metadata.param_to_multimem_addresses =
+      reinterpret_cast<void**>(multimem_addresses_buffer.opaque());
+  TF_RETURN_IF_ERROR(stream->Memcpy(&destination, &metadata,
+                                    sizeof(CollectiveKernelMetadata)));
+  TF_RETURN_IF_ERROR(stream->Memcpy(&param_to_peers_ptrs_buffer,
+                                    param_to_peers_ptrs.data(),
+                                    param_to_peers_ptrs_size));
+  TF_RETURN_IF_ERROR(stream->Memcpy(&multimem_addresses_buffer,
+                                    multimem_addresses.data(),
+                                    multimem_addresses_size));
+  return absl::OkStatus();
+}
 }  // namespace
 
 absl::StatusOr<bool> CollectiveKernelThunk::IsSupported(
