@@ -665,6 +665,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunkF8(
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmulThunk(
     const HloCustomCallInstruction* instr) {
+  ASSIGN_OR_RETURN(const auto gpu_config,
+                   instr->backend_config<xla::gpu::GpuBackendConfig>());
+  const xla::gpu::GemmBackendConfig& config = gpu_config.gemm_backend_config();
   bool has_aux_output = false;
 
   TF_RET_CHECK(instr->operand_count() == 3);
@@ -690,8 +693,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmulThunk(
       auto gemm_config,
       GroupedGemmConfig::For(static_cast<const HloInstruction*>(instr),
                              ir_emitter_context_->gpu_compute_capability()));
-  int64_t algorithm = 0;
-  int64_t autotune_workspace_size = 0;
+
+  // Use the first algorithm by default (i.e. fastest according to
+  // heuristics).
+  int64_t algorithm =
+      config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
+          ? config.selected_algorithm()
+          : 0;
 
   Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
@@ -700,9 +708,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmulThunk(
 
   auto thunk = std::make_unique<CublasLtMatmulThunk>(
       std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
-      se::gpu::BlasLt::Epilogue::kDefault, algorithm, autotune_workspace_size,
-      a, b, c, d, group_sizes, std::nullopt, std::nullopt, std::nullopt,
-      std::nullopt, std::nullopt, std::nullopt, std::nullopt, workspace_buffer);
+      se::gpu::BlasLt::Epilogue::kDefault, algorithm,
+      config.autotune_workspace_size(), a, b, c, d, group_sizes, std::nullopt,
+      std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+      std::nullopt, workspace_buffer);
   return GetThunkSequence(std::move(thunk));
 }
 

@@ -45,6 +45,8 @@ cc_library(
         "//xla/service:dump",
         "//xla/service:executable",
         "//xla/service:shaped_buffer",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu/autotuning:autotuner_status_key",
         "//xla/stream_executor:kernel_stats",
         "//xla/tools:hlo_decomposer_lib",
