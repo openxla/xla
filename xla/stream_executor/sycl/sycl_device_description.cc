@@ -15,7 +15,12 @@ limitations under the License.
 
 #include "xla/stream_executor/sycl/sycl_device_description.h"
 
+// clang-format off
+#include <level_zero/ze_api.h>
+// clang-format on
+
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -23,10 +28,10 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
-#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/read_numa_node.h"
 #include "xla/stream_executor/sycl/oneapi_compute_capability.h"
@@ -53,8 +58,7 @@ namespace {
 // platforms. Therefore, we use values from the official product specifications.
 // TODO(intel-tf): Implement a proper memory bandwidth estimation based on
 // level zero memory properties.
-inline int64_t EstimateMemoryBandwidth(
-    const OneAPIComputeCapability& oneapi_cc) {
+int64_t EstimateMemoryBandwidth(const OneAPIComputeCapability& oneapi_cc) {
   if (oneapi_cc.IsBMG()) {
     // https://www.intel.com/content/www/us/en/products/sku/241598/intel-arc-b580-graphics/specifications.html
     return 456'000'000'000;
@@ -70,7 +74,7 @@ inline int64_t EstimateMemoryBandwidth(
 }
 
 // TODO(intel-tf): Use direct Level Zero API when available.
-inline int DetermineFpusPerCore(const ze_device_properties_t& props) {
+int DetermineFpusPerCore(const ze_device_properties_t& props) {
   return props.numEUsPerSubslice * props.physicalEUSimdWidth;
 }
 
@@ -79,7 +83,7 @@ inline int DetermineFpusPerCore(const ze_device_properties_t& props) {
 // generate code for any of the available subgroup sizes. Here we pick the
 // largest one as the representative warp size, though kernel performance may
 // vary with different subgroup sizes.
-inline int64_t DetermineThreadsPerWarp(
+int64_t DetermineThreadsPerWarp(
     const ze_device_compute_properties_t& compute_props,
     const ze_device_properties_t& device_props) {
   uint32_t subgroup_size = 0;
@@ -94,33 +98,23 @@ inline int64_t DetermineThreadsPerWarp(
 
 // Parses version strings of the form "major.minor.patch+build#". For example,
 // "1.2.3+456" will be parsed as {1, 2, 3}. If parsing fails, returns {0, 0, 0}.
-inline SemanticVersion ParseOrDefaultDriverVersion(
-    absl::string_view version_str) {
+SemanticVersion ParseOrDefaultDriverVersion(absl::string_view version_str) {
+  if (version_str.empty()) {
+    return SemanticVersion{0, 0, 0};
+  }
   // Split by '+' to remove build# if present.
-  std::vector<std::string> version_str_parts = absl::StrSplit(version_str, '+');
-  if (version_str_parts.empty()) {
-    return SemanticVersion{0, 0, 0};
-  }
+  std::array<absl::string_view, 1> version_str_parts =
+      absl::StrSplit(version_str, '+');
 
-  std::vector<std::string> version_parts =
-      absl::StrSplit(version_str_parts[0], '.');
-  if (version_parts.size() < 3) {
-    return SemanticVersion{0, 0, 0};
+  absl::StatusOr<SemanticVersion> version =
+      SemanticVersion::ParseFromString(version_str_parts[0]);
+  if (version.ok()) {
+    return version.value();
   }
-
-  auto [major, minor, patch] =
-      std::tuple<unsigned, unsigned, unsigned>(0, 0, 0);
-  if (!absl::SimpleAtoi(version_parts[0], &major) ||
-      !absl::SimpleAtoi(version_parts[1], &minor) ||
-      !absl::SimpleAtoi(version_parts[2], &patch)) {
-    return SemanticVersion{0, 0, 0};
-  }
-
-  return SemanticVersion{major, minor, patch};
+  return SemanticVersion{0, 0, 0};
 }
 
-inline SemanticVersion GetOrDefaultLevelZeroDriverVersion(
-    ze_driver_handle_t driver) {
+SemanticVersion GetOrDefaultLevelZeroDriverVersion(ze_driver_handle_t driver) {
   using pfn_driver_version_t =
       ze_result_t (*)(ze_driver_handle_t, char*, size_t*);
   pfn_driver_version_t driver_version_func = nullptr;
@@ -129,6 +123,10 @@ inline SemanticVersion GetOrDefaultLevelZeroDriverVersion(
       reinterpret_cast<void**>(&driver_version_func));
   if (driver_version_func) {
     size_t driver_version_string_size = 0;
+    // Note: level zero api for driver version string uses array of char that is
+    // not null-terminated. The first call is to get the required buffer size
+    // for the driver version string, and the second call is to get the actual
+    // driver version string.
     driver_version_func(driver, nullptr, &driver_version_string_size);
     std::vector<char> driver_version_string(driver_version_string_size);
     driver_version_func(driver, driver_version_string.data(),
@@ -138,7 +136,7 @@ inline SemanticVersion GetOrDefaultLevelZeroDriverVersion(
   return SemanticVersion{0, 0, 0};
 }
 
-inline std::string GetPciBusId(ze_device_handle_t lz_device) {
+std::string GetPciBusId(ze_device_handle_t lz_device) {
   ze_pci_ext_properties_t pci_props{ZE_STRUCTURE_TYPE_PCI_EXT_PROPERTIES};
   if (zeDevicePciGetPropertiesExt(lz_device, &pci_props) == ZE_RESULT_SUCCESS) {
     return absl::StrFormat("%04x:%02x:%02x.%x", pci_props.address.domain,
@@ -148,7 +146,7 @@ inline std::string GetPciBusId(ze_device_handle_t lz_device) {
   return "";
 }
 
-inline SemanticVersion CompileTimeToolkitVersion() {
+SemanticVersion CompileTimeToolkitVersion() {
   return SemanticVersion{0, 0, 0};
 }
 
