@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/support.h"
 
 #include <string>
-#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -41,7 +40,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -620,23 +618,35 @@ CodegenDecision IsTritonSupportedFusion(
                    " is not supported: ", decision.Explain()));
 }
 
+// Returns whether a control-flow regions should be created at the tile level.
+bool TilingControlFlowIsEnabled(const HloInstruction& hlo) {
+  return hlo.GetModule()
+      ->config()
+      .debug_options()
+      .xla_gpu_unsupported_disable_nested_gemm_fusions();
+}
+
 CodegenDecision IsTritonSupportedConcatenate(const HloInstruction& hlo) {
   CHECK(hlo.opcode() == HloOpcode::kConcatenate);
+  if (hlo.shape().element_type() == S4) {
+    return CodegenDecision::Forbid("S4 is not supported.");
+  }
   if (!IsInTritonNestedGemmFusion(hlo)) {
     return CodegenDecision::Forbid(
         "Only concatenates in nested GEMM fusions are supported.");
   }
-  // TODO(b/393299275): remove this operand filter once migration is
-  // complete and priority fusion can produce nests.
-  if (absl::c_any_of(hlo.operands(), [](const HloInstruction* operand) {
-        return operand->opcode() != HloOpcode::kFusion;
-      })) {
-    return CodegenDecision::Forbid(
-        "Only support concatenates with nested GEMM fusions as a "
-        "parameter.");
+  if (!TilingControlFlowIsEnabled(hlo)) {
+    // TODO(b/393299275): remove this operand filter once migration is
+    // complete and priority fusion can produce nests.
+    if (absl::c_any_of(hlo.operands(), [](const HloInstruction* operand) {
+          return operand->opcode() != HloOpcode::kFusion;
+        })) {
+      return CodegenDecision::Forbid(
+          "Only support concatenates with nested GEMM fusions as a "
+          "parameter.");
+    }
   }
-  return CodegenDecision(hlo.shape().element_type() != S4,
-                         "S4 is not supported.");
+  return CodegenDecision::Allow();
 }
 
 CodegenDecision IsTritonSupportedInstructionImpl(
@@ -733,8 +743,19 @@ CodegenDecision IsTritonSupportedInstructionImpl(
         return CodegenDecision::Forbid(
             "only bitcasts with the same number of elements are supported");
       }
-      return CodegenDecision(instr.shape().element_type() != S4,
-                             "S4 is not supported.");
+      // With Triton we use i1 type for PRED, while on HLO level we assume that
+      // PRED takes 8 bits.
+      {
+        PrimitiveType operand_type = instr.operand(0)->shape().element_type();
+        PrimitiveType result_type = instr.shape().element_type();
+        if (result_type != operand_type &&
+            (result_type == PRED || operand_type == PRED)) {
+          return CodegenDecision::Forbid(
+              "bitcasts with different element types are not supported if PRED "
+              "is involved");
+        }
+        return CodegenDecision(result_type != S4, "S4 is not supported.");
+      }
     case HloOpcode::kBroadcast:
     case HloOpcode::kReshape:
     case HloOpcode::kSlice:

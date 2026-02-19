@@ -184,6 +184,10 @@ TEST(MeshAndAxisTest, ValidatesAxisRef) {
       "sub-axis size must be");
 }
 
+TEST(MeshAndAxisTest, ValidatesMeshEmptyMesh) { Mesh(); }
+
+TEST(MeshAndAxisTest, ValidatesMeshMaximalMesh) { Mesh(5); }
+
 TEST(MeshAndAxisTest, ValidatesMesh) {
   EXPECT_DEATH(
       { Mesh mesh_dims_axes_mismatch({2, 3, 4}, {"x", "y"}); },
@@ -207,8 +211,9 @@ TEST(MeshAndAxisTest, ValidatesMesh) {
       "Mesh has duplicate axis names. Duplicate axis name: x");
 
   EXPECT_DEATH(
-      { Mesh mesh_with_empty_dims(TileAssignment({}), {}); },
-      "Mesh must have at least one axis");
+      { Mesh mesh_with_integer_axis_name({1, 2}, {"x", "1"}); },
+      "Mesh axis name cannot be an integer to avoid confusion with axis "
+      "indices: 1");
 }
 
 TEST(MeshAndAxisTest, FromProtoValidation) {
@@ -248,24 +253,27 @@ TEST(MeshAndAxisTest, FromProtoValidation) {
 }
 
 TEST(MeshAndAxisTest, MeshToString) {
+  Mesh empty_mesh;
+  EXPECT_EQ(empty_mesh.ToString(), "mesh[]");
+
   Mesh mesh_uvw({10, 12, 15}, {"u", "v", "w"});
-  EXPECT_EQ(mesh_uvw.ToString(), "@mesh<u=10,v=12,w=15>");
+  EXPECT_EQ(mesh_uvw.ToString(), "mesh[u=10,v=12,w=15]");
 
   Mesh mesh_abcd(
       TileAssignment(/*dims=*/{2, 4, 4, 2}, /*reshape_dims=*/{1, 4, 1, 16},
                      /*transpose_perm=*/{2, 3, 0, 1}),
       {"a", "b", "c", "d"});
   EXPECT_EQ(mesh_abcd.ToString(),
-            "@mesh<a=2,b=4,c=4,d=2>, device_ids=([4,16]T(1,0))");
+            "mesh[a=2,b=4,c=4,d=2], device_ids=([4,16]T(1,0))");
 
   Array<int64_t> array({{8, 3, 7, 5, 4, 2, 6, 0, 1, 9}});
   array.Reshape({10});
   Mesh mesh_ooo(array, {"ooo"});
   EXPECT_EQ(mesh_ooo.ToString(),
-            "@mesh<ooo=10>, device_ids=(8,3,7,5,4,2,6,0,1,9)");
+            "mesh[ooo=10], device_ids=(8,3,7,5,4,2,6,0,1,9)");
 
   Mesh maximal_mesh(5);
-  EXPECT_EQ(maximal_mesh.ToString(), "@maximal_mesh<device_id=5>");
+  EXPECT_EQ(maximal_mesh.ToString(), "maximal_mesh[device_id=5]");
 }
 
 TEST(MeshAndAxisTest, AxisRefToString) {
@@ -301,6 +309,14 @@ TEST(MeshAndAxisTest, ValidateAxisForMesh) {
       { CHECK_OK(AxisRef(1, {1, 3 * 11}).Validate(mesh)); },
       "Sub-axis size must be strictly less than the full axis size.*"
       "Sub-axis size: 33, Axis size: 33");
+
+  AxisRefProto invalid_pre_size_proto;
+  invalid_pre_size_proto.set_mesh_axis_index(0);
+  invalid_pre_size_proto.mutable_sub_axis_info()->set_pre_size(0);
+  invalid_pre_size_proto.mutable_sub_axis_info()->set_size(2);
+  EXPECT_DEATH(
+      { CHECK_OK(AxisRef::FromProto(invalid_pre_size_proto).Validate(mesh)); },
+      "sub-axis pre-size must be >= 1");
 }
 
 TEST(MeshAndAxisTest, AxisRefCanCoexistWithoutOverlap) {

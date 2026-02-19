@@ -60,16 +60,15 @@ class CpuTopology {
 
 static const int kMaxCpuDevicesPerProcess = 1 << 11;
 
-inline PjRtGlobalDeviceId PackCpuDeviceId(int process_index, int device_id) {
-  return PjRtGlobalDeviceId(kMaxCpuDevicesPerProcess * process_index +
-                            device_id);
+inline GlobalDeviceId PackCpuDeviceId(int process_index, int device_id) {
+  return GlobalDeviceId(kMaxCpuDevicesPerProcess * process_index + device_id);
 }
 
-inline int UnpackCpuProcessIndex(PjRtGlobalDeviceId global_device_id) {
+inline int UnpackCpuProcessIndex(GlobalDeviceId global_device_id) {
   return global_device_id.value() / kMaxCpuDevicesPerProcess;
 }
 
-inline int UnpackCpuLocalDeviceId(PjRtGlobalDeviceId global_device_id) {
+inline int UnpackCpuLocalDeviceId(GlobalDeviceId global_device_id) {
   return global_device_id.value() % kMaxCpuDevicesPerProcess;
 }
 

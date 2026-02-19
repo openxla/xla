@@ -475,9 +475,13 @@ TEST(StreamExecutorGpuClientTest, SendErrorNoDeadLock) {
   opts.recv_callbacks = recv_callbacks;
 
   // Check that send error safely rejected and we do not dead lock.
-  auto result = executable->Execute(/*argument_handles=*/{{}}, opts);
-  EXPECT_TRUE(absl::StrContains(result.status().message(),
-                                "Uh-oh, can send chunk to host"));
+  TF_ASSERT_OK_AND_ASSIGN(auto result,
+                          executable->Execute(/*argument_handles=*/{{}}, opts));
+  ASSERT_EQ(result.size(), 1);
+  ASSERT_EQ(result[0].size(), 1);
+  auto status = result[0][0]->GetReadyFuture().Await();
+  EXPECT_TRUE(
+      absl::StrContains(status.message(), "Uh-oh, can send chunk to host"));
 }
 
 TEST(StreamExecutorGpuClientTest, RecvErrorNoDeadLock) {
@@ -511,8 +515,12 @@ TEST(StreamExecutorGpuClientTest, RecvErrorNoDeadLock) {
   opts.recv_callbacks = recv_callbacks;
 
   // Check that invalid chunk safely rejected and we do not dead lock.
-  auto result = executable->Execute(/*argument_handles=*/{{}}, opts);
-  EXPECT_TRUE(absl::StrContains(result.status().message(),
+  TF_ASSERT_OK_AND_ASSIGN(auto result,
+                          executable->Execute(/*argument_handles=*/{{}}, opts));
+  ASSERT_EQ(result.size(), 1);
+  ASSERT_EQ(result[0].size(), 1);
+  auto status = result[0][0]->GetReadyFuture().Await();
+  EXPECT_TRUE(absl::StrContains(status.message(),
                                 "Adding chunk of size 40 would overflow buffer "
                                 "of size 8 (0 already transferred)"));
 }
@@ -1171,6 +1179,61 @@ TEST(StreamExecutorGpuClientTest, AsyncCopyToDevice) {
             literal->Relayout(src_literal.shape().layout()).data<float>());
 }
 
+TEST(StreamExecutorGpuClientTest, CopyErrorBufferToDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+
+  auto* src_device = client->addressable_devices()[0];
+  auto* dst_device = client->addressable_devices()[1];
+
+  TF_ASSERT_OK_AND_ASSIGN(auto* src_memory_space,
+                          src_device->default_memory_space());
+  TF_ASSERT_OK_AND_ASSIGN(auto* dst_memory_space,
+                          dst_device->default_memory_space());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto send_buffer,
+      client->CreateErrorBuffer(Internal("some error"),
+                                ShapeUtil::MakeShape(U32, {3, 2}),
+                                src_memory_space));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto recv_buffer,
+                          send_buffer->CopyToMemorySpace(dst_memory_space));
+
+  EXPECT_THAT(
+      recv_buffer->ToLiteral().Await(),
+      absl_testing::StatusIs(tsl::error::INTERNAL, HasSubstr("some error")));
+}
+
+TEST(StreamExecutorGpuClientTest, CopyDelayedErrorBufferToDevice) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(DefaultOptions()));
+
+  auto* src_device = client->addressable_devices()[0];
+  auto* dst_device = client->addressable_devices()[1];
+
+  TF_ASSERT_OK_AND_ASSIGN(auto* src_memory_space,
+                          src_device->default_memory_space());
+  TF_ASSERT_OK_AND_ASSIGN(auto* dst_memory_space,
+                          dst_device->default_memory_space());
+
+  xla::Shape shape = ShapeUtil::MakeShape(U32, {3, 2});
+
+  TF_ASSERT_OK_AND_ASSIGN(auto alias_pair,
+                          client->CreateAliasBuffer(shape, src_memory_space));
+  auto& send_buffer = alias_pair.first;
+  auto& fulfill_cb = alias_pair.second;
+
+  TF_ASSERT_OK_AND_ASSIGN(auto recv_buffer,
+                          send_buffer->CopyToMemorySpace(dst_memory_space));
+
+  absl::SleepFor(absl::Seconds(3));
+
+  absl::Status error = fulfill_cb(absl::InternalError("delayed error"));
+
+  EXPECT_THAT(recv_buffer->ToLiteral().Await(), error);
+}
+
 TEST(StreamExecutorGpuClientTest, CreateMixOfErrorBuffers) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(DefaultOptions()));
@@ -1373,8 +1436,8 @@ TEST(StreamExecutorGpuClientTest, MockNcclClientTest) {
   EXPECT_EQ(client->device_count(), devices_per_host * num_nodes);
   for (int i = 0; i < client->device_count(); i++) {
     auto device = client->devices()[i];
-    auto partition_index =
-        std::get<int64_t>(device->Attributes().at("partition_index"));
+    auto partition_index = std::get<int64_t>(
+        device->description().Attributes().at("partition_index"));
     auto host_index = device->process_index();
     EXPECT_EQ(partition_index, host_index);
   }
@@ -2222,7 +2285,9 @@ TEST(StreamExecutorGpuClientTest, ProfileExecution) {
   ExecutionProfile profile;
   ExecuteOptions opts;
   opts.execution_profile = &profile;
-  TF_ASSERT_OK(executable->Execute(/*argument_handles=*/{{}}, opts));
+  TF_ASSERT_OK_AND_ASSIGN(auto results,
+                          executable->Execute(/*argument_handles=*/{{}}, opts));
+  TF_ASSERT_OK(results[0][0]->GetReadyFuture().Await());
   EXPECT_GT(profile.compute_time_ns(), 0);
 }
 
@@ -2954,9 +3019,9 @@ TEST(StreamExecutorGpuClientTest, FailedCrossHostSendArgsSizeMismatch) {
 
   // Try to send some data, giving an extra dst_global_device_id.
   EXPECT_THAT(
-      client->CrossHostSendBuffers(
-          {buffer.get()}, {PjRtGlobalDeviceId(1), PjRtGlobalDeviceId(2)},
-          {CrossHostTransferKey(0)}),
+      client->CrossHostSendBuffers({buffer.get()},
+                                   {GlobalDeviceId(1), GlobalDeviceId(2)},
+                                   {CrossHostTransferKey(0)}),
       absl_testing::StatusIs(
           absl::StatusCode::kInvalidArgument,
           ::testing::StrEq("CrossHostSendBuffers: buffers, "
@@ -2966,7 +3031,7 @@ TEST(StreamExecutorGpuClientTest, FailedCrossHostSendArgsSizeMismatch) {
   // Try to send some data, giving and extra transfer key.
   EXPECT_THAT(
       client->CrossHostSendBuffers(
-          {buffer.get()}, {PjRtGlobalDeviceId(1)},
+          {buffer.get()}, {GlobalDeviceId(1)},
           {CrossHostTransferKey(0), CrossHostTransferKey(1)}),
       absl_testing::StatusIs(
           absl::StatusCode::kInvalidArgument,
@@ -2997,7 +3062,7 @@ TEST(StreamExecutorGpuClientTest, FailedCrossHostTransferSrcAndDstAddressable) {
 
   // Try to transfer some data between two addressable devices.
   EXPECT_THAT(
-      client->CrossHostSendBuffers({buffer.get()}, {PjRtGlobalDeviceId(1)},
+      client->CrossHostSendBuffers({buffer.get()}, {GlobalDeviceId(1)},
                                    {CrossHostTransferKey(0)}),
       absl_testing::StatusIs(
           absl::StatusCode::kInvalidArgument,
@@ -3010,7 +3075,7 @@ TEST(StreamExecutorGpuClientTest, FailedCrossHostTransferSrcAndDstAddressable) {
       client->CrossHostReceiveBuffers(
           /*device=*/client->addressable_devices()[0],
           /*shapes=*/{shape},
-          /*src_global_device_ids=*/{PjRtGlobalDeviceId(1)},
+          /*src_global_device_ids=*/{GlobalDeviceId(1)},
           /*transfer_keys=*/{CrossHostTransferKey(0)}),
       absl_testing::StatusIs(
           absl::StatusCode::kInvalidArgument,
@@ -3051,7 +3116,7 @@ TEST(StreamExecutorGpuClientTest, FailedCrossHostReceiveArgsSizeMismatch) {
       mismatch_status_or_2 = client->CrossHostReceiveBuffers(
           /*device=*/client->addressable_devices()[0],
           /*shapes=*/shapes,
-          /*src_global_device_ids=*/{PjRtGlobalDeviceId(0)},
+          /*src_global_device_ids=*/{GlobalDeviceId(0)},
           /*transfer_keys=*/{CrossHostTransferKey(0), CrossHostTransferKey(1)});
   EXPECT_THAT(
       mismatch_status_or_2.status(),
@@ -3193,11 +3258,11 @@ absl::Status SuccessfulCrossHostTransferTestBody(bool is_sender,
     LOG(INFO) << log_prefix << ": issuing CrossHostSendBuffers";
 
     std::vector<PjRtBuffer*> raw_buffers;
-    std::vector<PjRtGlobalDeviceId> dst_device_ids;
+    std::vector<GlobalDeviceId> dst_device_ids;
     std::vector<CrossHostTransferKey> transfer_keys;
     for (int i = 0; i < buffers.size(); ++i) {
       raw_buffers.push_back(buffers[i].get());
-      dst_device_ids.push_back(PjRtGlobalDeviceId(1));
+      dst_device_ids.push_back(GlobalDeviceId(1));
       transfer_keys.push_back(CrossHostTransferKey(i));
     };
 
@@ -3215,11 +3280,11 @@ absl::Status SuccessfulCrossHostTransferTestBody(bool is_sender,
   } else {
     // Receiver logic.
     std::vector<Shape> shapes;
-    std::vector<PjRtGlobalDeviceId> src_device_ids;
+    std::vector<GlobalDeviceId> src_device_ids;
     std::vector<CrossHostTransferKey> transfer_keys;
     for (int i = 0; i < num_arrays; ++i) {
       shapes.push_back(ShapeUtil::MakeShape(S32, {256}));
-      src_device_ids.push_back(PjRtGlobalDeviceId(0));
+      src_device_ids.push_back(GlobalDeviceId(0));
       transfer_keys.push_back(CrossHostTransferKey(i));
     }
 
@@ -3379,7 +3444,7 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
   TF_ASSIGN_OR_RETURN(
       se::CudaComputeCapability cc,
       se::CudaComputeCapability::FromString(std::get<std::string>(
-          client->addressable_devices().front()->Attributes().at(
+          client->addressable_devices().front()->description().Attributes().at(
               "compute_capability"))));
   if (!cc.IsAtLeastAmpere()) {
     return absl::FailedPreconditionError("Ampere+ GPU required");
@@ -3402,7 +3467,7 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
   if (node_id < num_nodes_using_cache) {
     debug_options.set_xla_gpu_experimental_autotune_cache_mode(
         DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
-    debug_options.set_xla_gpu_experimental_autotuner_cache_dir(cache_dir);
+    debug_options.set_xla_gpu_per_fusion_autotune_cache_dir(cache_dir);
   }
 
   const char* kHlo = R"(

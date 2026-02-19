@@ -154,6 +154,13 @@ class GpuCompiler : public LLVMCompiler {
   virtual std::vector<std::string> GetLLVMCommandLineOptions(
       const DebugOptions& debug_options) const = 0;
 
+  absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
+  GetAutotunerBackends(se::StreamExecutor* stream_exec,
+                       const Compiler::GpuTargetConfig* target_config,
+                       const AliasInfo* alias_info,
+                       const DebugOptions& debug_options,
+                       mlir::MLIRContext* mlir_context);
+
  protected:
   struct BackendCompileResult {
     std::string asm_text;
@@ -184,25 +191,14 @@ class GpuCompiler : public LLVMCompiler {
       const DebugOptions& debug_options, mlir::MLIRContext* mlir_context,
       HloCostAnalysis::ShapeSizeFunction shape_size_fn);
 
-  virtual absl::StatusOr<std::vector<std::unique_ptr<CodegenBackend>>>
-  GetCodegenBackends(se::StreamExecutor* stream_exec,
-                     const Compiler::GpuTargetConfig* target_config,
-                     const AliasInfo* alias_info,
-                     const DebugOptions& debug_options,
-                     mlir::MLIRContext* mlir_context) {
-    return std::vector<std::unique_ptr<CodegenBackend>>();
-  }
-
   // target_config must outlive the pipeline.
-  virtual absl::Status AddFusionAutotuningPass(
+  absl::Status AddFusionAutotuningPass(
       HloPassPipeline* pipeline, HloModule* hlo_module,
       const CompileOptions& options, tsl::thread::ThreadPool* thread_pool,
       stream_executor::StreamExecutor* stream_executor,
       const GpuTargetConfig* target_config,
       HloCostAnalysis::ShapeSizeFunction shape_size_fn,
-      const MultiProcessKeyValueStore& key_value_store) {
-    return absl::OkStatus();
-  }
+      const MultiProcessKeyValueStore& key_value_store);
 
   // Runs cuDNN fusion and custom call compiler passes.
   virtual absl::Status RunCudnnCompilerPasses(HloModule* module,

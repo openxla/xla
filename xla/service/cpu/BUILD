@@ -383,7 +383,6 @@ cc_library(
         "//xla/service:hlo_profile_printer_data_cc",
         "//xla/service:hlo_proto_cc",
         "//xla/stream_executor:platform",
-        "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
@@ -435,9 +434,6 @@ xla_test(
     srcs = ["cpu_compiler_test.cc"],
     backends = [
         "cpu",
-    ],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         "//xla/hlo/testlib:verified_hlo_module",
@@ -860,7 +856,7 @@ cc_library(
         "//xla/codegen/emitters:computation_fingerprint",
         "//xla/codegen/emitters:kernel_api_builder",
         "//xla/codegen/emitters:kernel_arguments",
-        "//xla/hlo/analysis:symbolic_expr",
+        "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/runtime:resource_use",
         "//xla/runtime:work_group",

@@ -16,6 +16,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
@@ -27,12 +28,15 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
 #include "xla/primitive_util.h"
+#include "xla/runtime/device_id.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/event.h"
@@ -91,13 +95,27 @@ absl::StatusOr<xla::gpu::GpuCollectives*> GetNvshmemCollectivesFromRegistry() {
 }
 
 absl::Status NvshmemCollectiveThunk::Prepare(const PrepareParams& params) {
-  TF_RET_CHECK(params.collective_params != nullptr);
+  TF_RET_CHECK(params.collective_params &&
+               params.collective_params->device_assn);
+
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
       GetGpuCliqueKey(*params.collective_params, config().replica_groups,
-                      config().group_mode, GetAsyncStreamKind(),
-                      /*include_participant_groups=*/false));
-  return params.collective_clique_requests->RequestClique(clique_key);
+                      config().group_mode, /*is_p2p=*/false));
+
+  TF_ASSIGN_OR_RETURN(std::vector<std::vector<GlobalDeviceId>> device_groups,
+                      GetParticipatingDevicesGroups(
+                          *params.collective_params->device_assn,
+                          config().replica_groups, config().group_mode));
+
+  // Any NVSHMEM collective will need to require a barrier at the end of
+  // graph execution to make sure all reads and writes to symmetrics buffers
+  // are finished and ready for the next iteration of executable.
+  CollectiveCliqueRequests::CliqueRequirements clique_reqs;
+  clique_reqs.barrier_reqs = CollectiveCliqueRequests::BarrierRequirements{
+      /*module_execution_barrier=*/true};
+  return params.collective_clique_requests->RequestClique(
+      clique_key, std::move(device_groups), clique_reqs);
 }
 
 absl::Status NvshmemCollectiveThunk::Initialize(
@@ -105,10 +123,6 @@ absl::Status NvshmemCollectiveThunk::Initialize(
   if (async_events_) {
     TF_RETURN_IF_ERROR(async_events_->Initialize(params.executor));
   }
-  // Any nvshmem collective will need to require a barrier at the end of
-  // graph execution to make sure all reads and writes to symmetrics buffers
-  // are finished and ready for the next iteration of executable.
-  params.collective_params->need_barrier = true;
   return absl::OkStatus();
 }
 

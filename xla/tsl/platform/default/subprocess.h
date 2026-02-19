@@ -19,9 +19,11 @@ limitations under the License.
 #include <errno.h>
 #include <unistd.h>
 
+#include <functional>
 #include <string>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/types.h"
@@ -61,6 +63,17 @@ class SubProcess {
   //    argv: The argument list.
   virtual void SetProgram(const string& file, const std::vector<string>& argv);
 
+  // SetDirectory()
+  //    In the child process, chdir() to this directory before
+  //    exec-ing.
+  //    Returns false if this is not supported on the current platform.
+  ABSL_MUST_USE_RESULT virtual bool SetDirectory(const string& dir);
+
+  // SetExitCallback()
+  //    Set a callback to be run when the process exits.
+  //    It is illegal to delete the SubProcess within its exit callback.
+  virtual void SetExitCallback(std::function<void(SubProcess*)> cb);
+
   // Start()
   //    Run the command that was previously set up with SetProgram().
   //    The following are fatal programming errors:
@@ -81,6 +94,12 @@ class SubProcess {
   //    Return true normally, or false if we couldn't send the signal - likely
   //    because the process doesn't exist.
   virtual bool Kill(int signal);
+
+  // CheckRunning()
+  //    Check to see if the process is still running.
+  //    @return false, if the process has exited;
+  //            true, if the process is still running.
+  virtual bool CheckRunning();
 
   // Wait()
   //    Block until the process exits.
@@ -116,10 +135,14 @@ class SubProcess {
   mutable absl::Mutex proc_mu_;
   bool running_ TF_GUARDED_BY(proc_mu_);
   pid_t pid_ TF_GUARDED_BY(proc_mu_);
+  std::function<void(SubProcess*)> exit_cb_ ABSL_GUARDED_BY(proc_mu_);
+  int64_t exit_cb_tid_ ABSL_GUARDED_BY(proc_mu_);
 
+  mutable absl::Mutex wait_mu_;
   mutable absl::Mutex data_mu_ TF_ACQUIRED_AFTER(proc_mu_);
   char* exec_path_ TF_GUARDED_BY(data_mu_);
   char** exec_argv_ TF_GUARDED_BY(data_mu_);
+  std::string chdir_ ABSL_GUARDED_BY(data_mu_);
   ChannelAction action_[kNFds] TF_GUARDED_BY(data_mu_);
   int parent_pipe_[kNFds] TF_GUARDED_BY(data_mu_);
   int child_pipe_[kNFds] TF_GUARDED_BY(data_mu_);

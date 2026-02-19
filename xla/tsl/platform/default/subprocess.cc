@@ -23,10 +23,14 @@ limitations under the License.
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
+#include <functional>
 #include <memory>
 #include <vector>
 
+#include "absl/synchronization/mutex.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 
 // Android versions older than 28 do not have posix_spawn().
@@ -35,6 +39,15 @@ limitations under the License.
 #else  // defined(__ANDROID_API__) && __ANDROID_API__ < 28
 #define USE_POSIX_SPAWN 0
 #endif  // !defined(__ANDROID_API__) || __ANDROID_API__ >= 28
+
+#if USE_POSIX_SPAWN
+#if _POSIX_VERSION >= 202405L
+#define TSL_USE_POSIX_SPAWN_ADDCHDIR 1
+#elif defined(__GLIBC__) && \
+    (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 29))
+#define TSL_USE_POSIX_SPAWN_ADDCHDIR_NP 1
+#endif
+#endif
 
 // 1) FYI from m3b@ about fork():
 // A danger of calling fork() (as opposed to clone() or vfork()) is that if
@@ -83,7 +96,12 @@ extern char** environ;
 namespace tsl {
 
 SubProcess::SubProcess(int nfds)
-    : running_(false), pid_(-1), exec_path_(nullptr), exec_argv_(nullptr) {
+    : running_(false),
+      pid_(-1),
+      exit_cb_(nullptr),
+      exit_cb_tid_(-1),
+      exec_path_(nullptr),
+      exec_argv_(nullptr) {
   // The input 'nfds' parameter is currently ignored and the internal constant
   // 'kNFds' is used to support the 3 channels (stdin, stdout, stderr).
   for (int i = 0; i < kNFds; i++) {
@@ -95,6 +113,15 @@ SubProcess::SubProcess(int nfds)
 
 SubProcess::~SubProcess() {
   absl::MutexLock procLock(&proc_mu_);
+  if (exit_cb_tid_ != -1) {
+    if (exit_cb_tid_ == Env::Default()->GetCurrentThreadId()) {
+      LOG(FATAL) << "Deleting SubProcess " << pid_
+                 << " from within its own exit callback routine.";
+    } else {
+      LOG(FATAL) << "Deleting SubProcess " << pid_
+                 << " while exit callback is running in another thread.";
+    }
+  }
   absl::MutexLock dataLock(&data_mu_);
   pid_ = -1;
   running_ = false;
@@ -175,7 +202,47 @@ void SubProcess::SetChannelAction(Channel chan, ChannelAction action) {
   }
 }
 
+bool SubProcess::SetDirectory(const string& dir) {
+  absl::MutexLock procLock(&proc_mu_);
+  absl::MutexLock dataLock(&data_mu_);
+  if (running_) {
+    LOG(FATAL) << "SetDirectory called after the process was started.";
+  }
+#if USE_POSIX_SPAWN && !defined(TSL_USE_POSIX_SPAWN_ADDCHDIR) && \
+    !defined(TSL_USE_POSIX_SPAWN_ADDCHDIR_NP)
+  if (!dir.empty()) {
+    LOG(ERROR)
+        << "SetDirectory is not supported with posix_spawn on this platform.";
+    return false;
+  }
+#endif
+  chdir_ = dir;
+  return true;
+}
+
+void SubProcess::SetExitCallback(std::function<void(SubProcess*)> cb) {
+  absl::MutexLock procLock(&proc_mu_);
+  if (running_) {
+    LOG(FATAL) << "SetExitCallback called after the process was started.";
+    return;
+  }
+  exit_cb_ = cb;
+}
+
 #if USE_POSIX_SPAWN
+
+namespace {
+int SpawnFileActionsAddChdir(posix_spawn_file_actions_t* file_actions,
+                             const char* path) {
+#if defined(TSL_USE_POSIX_SPAWN_ADDCHDIR)
+  return posix_spawn_file_actions_addchdir(file_actions, path);
+#elif defined(TSL_USE_POSIX_SPAWN_ADDCHDIR_NP)
+  return posix_spawn_file_actions_addchdir_np(file_actions, path);
+#else
+  return -1;
+#endif
+}
+}  //  namespace
 
 // Implementation based on posix_spawn().
 // We prefer to use posix_spawn() where possible to avoid calling
@@ -302,6 +369,17 @@ bool SubProcess::Start() {
   }
 
   // Start the child process and setup the file descriptors of both processes.
+  if (!chdir_.empty()) {
+    ret = SpawnFileActionsAddChdir(&file_actions, chdir_.c_str());
+    if (ret != 0) {
+      LOG(ERROR) << "Start cannot add chdir to POSIX file actions: "
+                 << strerror(ret);
+      posix_spawn_file_actions_destroy(&file_actions);
+      ClosePipes();
+      return false;
+    }
+  }
+
   ret = posix_spawnp(&pid_, exec_path_, &file_actions, nullptr, exec_argv_,
                      environ);
   if (ret != 0) {
@@ -462,6 +540,14 @@ bool SubProcess::Start() {
     }
   }
 
+  // Change directory if requested.
+  if (!chdir_.empty()) {
+    if (chdir(chdir_.c_str()) != 0) {
+      LOG(ERROR) << "chdir() failed: " << strerror(errno);
+      _exit(1);
+    }
+  }
+
   // Execute the child program.
   // See comment (2) in the header about issues with the use of execvp().
   execvp(exec_path_, exec_argv_);
@@ -484,6 +570,7 @@ bool SubProcess::WaitInternal(int* status) {
 
   bool ret = false;
   if (running && (pid > 1)) {
+    absl::MutexLock lock(&wait_mu_);
     pid_t cpid;
     int cstat;
     bool done = false;
@@ -500,12 +587,82 @@ bool SubProcess::WaitInternal(int* status) {
   }
 
   proc_mu_.Lock();
+  // Invariant: exit_cb_tid_ == -1 if and only if there are no callback or
+  // the exit callback has completed.
+  std::function<void(SubProcess*)> cb;
   if ((running_ == running) && (pid_ == pid)) {
     running_ = false;
     pid_ = -1;
+    cb = exit_cb_;
+    if (cb != nullptr) {
+      exit_cb_tid_ = Env::Default()->GetCurrentThreadId();
+    }
   }
   proc_mu_.Unlock();
+  if (cb != nullptr) {
+    cb(this);
+    proc_mu_.Lock();
+    exit_cb_tid_ = -1;
+    proc_mu_.Unlock();
+  }
   return ret;
+}
+
+bool SubProcess::CheckRunning() {
+  pid_t pid;
+  {
+    absl::MutexLock lock(&proc_mu_);
+    if (!running_) {
+      return false;
+    }
+    pid = pid_;
+  }
+
+  int status = 0;
+  pid_t result;
+  if (!wait_mu_.TryLock()) {
+    return true;
+  }
+  do {
+    result = waitpid(pid, &status, WNOHANG);
+  } while (result < 0 && retry(errno));
+  wait_mu_.Unlock();
+
+  if (result == 0) {
+    return true;  // Still running.
+  }
+
+  std::function<void(SubProcess*)> cb_to_run;
+  bool exited = false;
+
+  {
+    absl::MutexLock lock(&proc_mu_);
+    // If result == pid, and exited/signaled, and we are still the one who
+    // thinks it's running with that pid, then we are the ones reaping it.
+    if (running_ && pid_ == pid &&
+        ((result == pid && (WIFEXITED(status) || WIFSIGNALED(status))) ||
+         (result < 0 && errno == ECHILD))) {
+      running_ = false;
+      pid_ = -1;
+      cb_to_run = exit_cb_;
+      if (cb_to_run != nullptr) {
+        exit_cb_tid_ = Env::Default()->GetCurrentThreadId();
+      }
+      exited = true;
+    } else if (result == 0) {
+      // If result was 0, but by the time we got proc_mu_, running_ became
+      // false, we should return false.
+      exited = !running_;
+    }
+  }
+
+  if (cb_to_run) {
+    cb_to_run(this);
+    absl::MutexLock lock(&proc_mu_);
+    exit_cb_tid_ = -1;
+  }
+
+  return !exited;
 }
 
 bool SubProcess::Kill(int signal) {

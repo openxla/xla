@@ -53,7 +53,8 @@ void setHloShardingAttr(
 // If `addMissingShardingToControlFlow` is true, the pass will add a replicated
 // hlo sharding to control flow ops (while, case, if) that have no sdy sharding.
 std::unique_ptr<mlir::Pass> createExportStablehloShardingsPass(
-    bool addMissingShardingToControlFlow = false);
+    bool addMissingShardingToControlFlow = false,
+    bool enableHloShardingV3 = false);
 
 // Register the xla-sdy-stablehlo-export-shardings pass.
 void registerStablehloExportShardingsPass();
