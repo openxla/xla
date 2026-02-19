@@ -177,6 +177,12 @@ class HloSharding {
   // Convert NamedSharding (HloShardingV3) to HloShardingV2.
   static HloSharding V3ToV2Sharding(const NamedSharding& named_sharding);
 
+  // Convert HloShardingV1/V2 to NamedSharding (HloShardingV3).
+  static NamedSharding ToNamedSharding(const HloSharding& sharding);
+
+  // Convert HloShardingV1/V2 to HloShardingV3.
+  static HloSharding ToV3Sharding(const HloSharding& sharding);
+
   OpSharding ToProto() const;
 
   // Prints the string representation of this sharding.Note that this string

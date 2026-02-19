@@ -369,7 +369,9 @@ std::optional<std::vector<SubDimInfo>> GetOrderedSubDimsFromIotaTileAssignment(
 
 // Analyze the input tile assignment to obtain the information on the mesh and
 // sub dimensions.
-AnalyzeTileAssignmentResult AnalyzeTileAssignment(
+//
+// Returns std::nullopt if the input is not a compatible IotaTileAssignment.
+std::optional<AnalyzeTileAssignmentResult> AnalyzeTileAssignment(
     const TileAssignment& tile_assignment);
 
 }  // namespace xla

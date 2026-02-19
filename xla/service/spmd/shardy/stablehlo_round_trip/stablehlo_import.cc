@@ -184,21 +184,21 @@ MeshAxesAndIds findMeshAxesAndIds(
     }
 
     CHECK(hloSharding.IsTiled());
-    const xla::AnalyzeTileAssignmentResult result =
+    std::optional<xla::AnalyzeTileAssignmentResult> result =
         xla::AnalyzeTileAssignment(hloSharding.tile_assignment());
 
     // TODO(zixuanjiang). We cannot handle the sharding that needs to specify
     // the device list. For example, we cannot handle the V2 sharding
     // {devices=[2,3]<=[2,3]T(1,0)}, which is equivalent to
     // {devices=[2,3]0,3,1,4,2,5}.
-    CHECK(!result.sub_dims.empty())
+    CHECK(result.has_value())
         << "tile assignment: " << hloSharding.tile_assignment().ToString();
 
     if (axes.empty()) {
-      axes.assign(result.local_mesh.begin(), result.local_mesh.end());
+      axes.assign(result->local_mesh.begin(), result->local_mesh.end());
     } else {
       std::vector<int64_t> commonFactors = xla::ExtractCommonFactorSequence(
-          absl::MakeConstSpan(result.local_mesh), absl::MakeConstSpan(axes));
+          absl::MakeConstSpan(result->local_mesh), absl::MakeConstSpan(axes));
       axes.assign(commonFactors.begin(), commonFactors.end());
     }
     CHECK(!axes.empty());
@@ -230,16 +230,15 @@ MeshAxesAndIds findMeshAxesAndIds(ModuleOp moduleOp) {
 }  // namespace
 
 SmallVector<int64_t> getAxisSizes(const TileAssignment& tileAssignment) {
-  const xla::AnalyzeTileAssignmentResult result =
+  std::optional<xla::AnalyzeTileAssignmentResult> result =
       xla::AnalyzeTileAssignment(tileAssignment);
   // TODO(zixuanjiang). We cannot handle the sharding that needs to specify the
   // device list. For example, we cannot handle the V2 sharding
   // {devices=[2,3]<=[2,3]T(1,0)}, which is equivalent to
   // {devices=[2,3]0,3,1,4,2,5}.
-  CHECK(!result.sub_dims.empty())
-      << "tile assignment: " << tileAssignment.ToString();
-  return SmallVector<int64_t>(result.local_mesh.begin(),
-                              result.local_mesh.end());
+  CHECK(result.has_value()) << "tile assignment: " << tileAssignment.ToString();
+  return SmallVector<int64_t>(result->local_mesh.begin(),
+                              result->local_mesh.end());
 }
 
 std::string convertToSdySharding(const xla::OpSharding& opSharding,
@@ -321,23 +320,23 @@ TensorShardingAttr convertToSdySharding(
   }
 
   CHECK(hloSharding.IsTiled());
-  const xla::AnalyzeTileAssignmentResult result =
+  std::optional<xla::AnalyzeTileAssignmentResult> result =
       xla::AnalyzeTileAssignment(hloSharding.tile_assignment());
 
   // TODO(zixuanjiang). We cannot handle the sharding that needs to specify the
   // device list. For example, we cannot handle the V2 sharding
   // {devices=[2,3]<=[2,3]T(1,0)}, which is equivalent to
   // {devices=[2,3]0,3,1,4,2,5}.
-  CHECK(!result.sub_dims.empty())
+  CHECK(result.has_value())
       << "tile assignment: " << hloSharding.tile_assignment().ToString();
 
   // 1. Create a mapping from local axis to global axis refs.
-  CHECK_EQ(Product(result.local_mesh), globalMesh.getTotalSize());
+  CHECK_EQ(Product(result->local_mesh), globalMesh.getTotalSize());
   SmallVector<SmallVector<AxisRefAttr>> localAxisIndexToGlobalAxes;
-  localAxisIndexToGlobalAxes.reserve(result.local_mesh.size());
+  localAxisIndexToGlobalAxes.reserve(result->local_mesh.size());
   ArrayRef<MeshAxisAttr> remainingGlobalAxes = globalMesh.getAxes();
   int64_t globalAxisPreSize = 1;
-  for (int64_t localAxisRemainingSize : result.local_mesh) {
+  for (int64_t localAxisRemainingSize : result->local_mesh) {
     SmallVector<AxisRefAttr>& globalAxes =
         localAxisIndexToGlobalAxes.emplace_back();
     // The local axis size can correspond to multiple global axes or sub-axes.
@@ -370,7 +369,7 @@ TensorShardingAttr convertToSdySharding(
 
   // 2. Create a mapping from dim and nested sub-dim to local axis index.
   SmallVector<SmallVector<int64_t>> dimToSubDimToLocalAxisIndex(rank);
-  for (auto [localAxisIndex, subDimInfo] : llvm::enumerate(result.sub_dims)) {
+  for (auto [localAxisIndex, subDimInfo] : llvm::enumerate(result->sub_dims)) {
     if (subDimInfo.tile_dim_index >= rank) {
       // This is the last tile dimension that is replicated.
       continue;

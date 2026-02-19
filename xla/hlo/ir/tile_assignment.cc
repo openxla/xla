@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
@@ -782,31 +783,28 @@ std::optional<std::vector<SubDimInfo>> GetOrderedSubDimsFromIotaTileAssignment(
   return sub_dims;
 }
 
-AnalyzeTileAssignmentResult AnalyzeTileAssignment(
+std::optional<AnalyzeTileAssignmentResult> AnalyzeTileAssignment(
     const TileAssignment& tile_assignment) {
   // If the input has iota tile assignment (the corresponding HloSharding is in
   // V2 format), we use GetOrderedSubDimsFromIotaTileAssignment.
-  const std::optional<IotaTileAssignment>& iota = tile_assignment.iota();
-  CHECK(iota.has_value()) << "tile assignment: " << tile_assignment.ToString();
-  std::optional<std::vector<SubDimInfo>> sub_dims =
-      GetOrderedSubDimsFromIotaTileAssignment(*iota);
+  if (tile_assignment.iota()) {
+    std::optional<std::vector<SubDimInfo>> sub_dims =
+        GetOrderedSubDimsFromIotaTileAssignment(*tile_assignment.iota());
+    CHECK(sub_dims.has_value())
+        << "tile assignment: " << tile_assignment.ToString();
 
-  // TODO(zixuanjiang). We cannot handle the sharding that needs to specify the
-  // device list. For example, we cannot handle the V2 sharding
-  // {devices=[2,3]<=[2,3]T(1,0)}, which is equivalent to
-  // {devices=[2,3]0,3,1,4,2,5}.
-  CHECK(sub_dims.has_value())
-      << "tile assignment: " << tile_assignment.ToString();
-
-  std::vector<int64_t> mesh;
-  mesh.reserve(sub_dims->size());
-  for (const SubDimInfo& sub_dim_info : *sub_dims) {
-    mesh.push_back(sub_dim_info.size);
+    std::vector<int64_t> mesh;
+    mesh.reserve(sub_dims->size());
+    for (const SubDimInfo& sub_dim_info : *sub_dims) {
+      mesh.push_back(sub_dim_info.size);
+    }
+    return AnalyzeTileAssignmentResult{
+        /* .sub_dims = */ std::move(*sub_dims),
+        /* .local_mesh = */ std::move(mesh),
+    };
   }
-  return AnalyzeTileAssignmentResult{
-      /* .sub_dims = */ std::move(*sub_dims),
-      /* .local_mesh = */ std::move(mesh),
-  };
+
+  return std::nullopt;
 }
 
 }  // namespace xla
