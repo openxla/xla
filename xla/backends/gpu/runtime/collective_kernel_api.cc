@@ -104,6 +104,13 @@ absl::Status LaunchMultiGpuBarrier(
       signal_buffers, typed_sync_counter);
 }
 
+size_t GetMultiGpuBarrierSignalBufferSize() {
+  return stream_executor::gpu::MultiGpuBarrierKernel::kMaxPeers *
+         sizeof(uint32_t);
+}
+
+size_t GetMultiGpuBarrierSignalValueSize() { return sizeof(uint32_t); }
+
 absl::StatusOr<std::vector<void*>> CollectParamToPeers(
     const GpuCliqueKey& clique_key, RankId rank,
     stream_executor::Stream* stream,

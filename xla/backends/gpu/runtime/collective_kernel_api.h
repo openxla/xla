@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_KERNEL_API_H_
 #define XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_KERNEL_API_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -40,6 +41,12 @@ absl::Status LaunchMultiGpuBarrier(
     stream_executor::Stream* stream, int64_t num_devices, RankId rank,
     const std::vector<stream_executor::DeviceAddressBase>& barrier_addresses,
     stream_executor::DeviceAddressBase local_barrier_signal_value);
+
+// Returns the size of the barrier signal buffer in bytes.
+size_t GetMultiGpuBarrierSignalBufferSize();
+
+// Returns the size of the barrier signal value in bytes.
+size_t GetMultiGpuBarrierSignalValueSize();
 
 // Collect the pointers to the parameters at the peer devices.
 // The size of the returned vector is num_parameters * num_devices.
