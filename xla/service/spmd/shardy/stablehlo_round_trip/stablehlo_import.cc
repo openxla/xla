@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_import.h"
 
 #include <cstdint>
-#include <functional>
 #include <iterator>
 #include <memory>
 #include <numeric>
@@ -576,8 +575,10 @@ std::unique_ptr<mlir::Pass> createImportShardingsPass(
 }
 
 void registerStablehloImportShardingsPass() {
-  mlir::registerPass(std::bind(createImportShardingsPass, ArrayRef<bool>(),
-                               ArrayRef<bool>(), false));
+  mlir::registerPass([]() {
+    return createImportShardingsPass(ArrayRef<bool>(), ArrayRef<bool>(),
+                                     /*inlineMesh=*/false);
+  });
 }
 
 void addStablehloImportPipeline(mlir::OpPassManager& pm,
@@ -597,8 +598,11 @@ void registerStablehloImportPipeline() {
       "xla-sdy-stablehlo-import-pipeline",
       "Run passes to import a StableHLO module with `mhlo.shardings` into the "
       "SDY (Shardy) dialect.",
-      std::bind(addStablehloImportPipeline, std::placeholders::_1,
-                ArrayRef<bool>(), ArrayRef<bool>(), true));
+      [](mlir::OpPassManager& pm) {
+        addStablehloImportPipeline(
+            pm, ArrayRef<bool>(), ArrayRef<bool>(),
+            /*enableStablehloCanonicalizeFromHloImport=*/true);
+      });
 }
 
 }  // namespace sdy

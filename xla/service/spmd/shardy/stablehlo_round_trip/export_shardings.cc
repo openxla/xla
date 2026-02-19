@@ -379,9 +379,11 @@ std::unique_ptr<Pass> createExportStablehloShardingsPass(
 }
 
 void registerStablehloExportShardingsPass() {
-  mlir::registerPass(std::bind(createExportStablehloShardingsPass,
-                               /*addMissingShardingToControlFlow=*/false,
-                               /*enableHloShardingV3=*/false));
+  mlir::registerPass([]() {
+    return createExportStablehloShardingsPass(
+        /*addMissingShardingToControlFlow=*/false,
+        /*enableHloShardingV3=*/false);
+  });
 }
 
 }  // namespace sdy

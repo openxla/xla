@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <cassert>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <optional>
 
@@ -372,8 +371,10 @@ std::unique_ptr<mlir::Pass> createSdyRoundTripImportShardyAttrsPass(
 }
 
 void registerSdyRoundTripImportShardyAttrsPass() {
-  mlir::registerPass(std::bind(createSdyRoundTripImportShardyAttrsPass,
-                               /*enableHloShardingV3=*/false));
+  mlir::registerPass([]() {
+    return createSdyRoundTripImportShardyAttrsPass(
+        /*enableHloShardingV3=*/false);
+  });
 }
 
 }  // namespace sdy

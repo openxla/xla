@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/service/spmd/shardy/sdy_round_trip/export_shardy_attrs.h"
 
 #include <cstdint>
-#include <functional>
 #include <memory>
 
 #include "llvm/ADT/SmallVector.h"
@@ -198,8 +197,10 @@ class SdyRoundTripExportShardyAttrsPass
 }  // namespace
 
 void registerSdyRoundTripExportShardyAttrsPass() {
-  mlir::registerPass(std::bind(createSdyRoundTripExportShardyAttrsPass,
-                               /*enableHloShardingV3=*/false));
+  mlir::registerPass([]() {
+    return createSdyRoundTripExportShardyAttrsPass(
+        /*enableHloShardingV3=*/false);
+  });
 }
 
 std::unique_ptr<Pass> createSdyRoundTripExportShardyAttrsPass(
