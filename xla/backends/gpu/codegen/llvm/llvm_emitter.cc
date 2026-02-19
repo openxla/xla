@@ -698,6 +698,14 @@ GpuExecutable::ConstantInfo AppendGlobalConstant(
   // zero initializers in LLVM IR and are later overwritten when the PTX/CUBIN
   // is loaded.
   bool should_emit_initializer = num_elements <= 1;
+  // SYCL platform: Always use zero initializer for SPIRV backend as the unused
+  // globals are eliminated by the LLVM SPIR-V backend. Furthermore, forcing
+  // SPIR-V backend to keep unused globals does not resolve it either because of
+  // unused global elimination by Intel Graphics Compiler in the level zero
+  // driver.
+  if (llvm::Triple(module->getTargetTriple()).isSPIROrSPIRV()) {
+    should_emit_initializer = false;
+  }
 
   llvm::IRBuilder<> b(module->getContext());
   // Ptxas has issues if the constant allocation is smaller than 64 bytes.
@@ -726,8 +734,9 @@ GpuExecutable::ConstantInfo AppendGlobalConstant(
                                                 content.span().size()));
   }();
 
-  // Explicitly set global addrspace for SPIR backend.
-  int addrspace = llvm::Triple(module->getTargetTriple()).isSPIR() ? 1 : 0;
+  // Explicitly set global addrspace for SPIR-V backend.
+  int addrspace =
+      llvm::Triple(module->getTargetTriple()).isSPIROrSPIRV() ? 1 : 0;
   // These globals will be looked up by name by GpuExecutable so we need to
   // give them an external linkage.  Not all of their uses are visible in
   // the LLVM IR so we can't give then a linkage that merely preserves their
