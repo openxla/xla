@@ -32,10 +32,6 @@ cc_library(
     name = "sycl_platform_id",
     srcs = ["sycl_platform_id.cc"],
     hdrs = ["sycl_platform_id.h"],
-    tags = [
-        "gpu",
-        "oneapi-only",
-    ],
     deps = ["//xla/stream_executor:platform"],
 )
 
