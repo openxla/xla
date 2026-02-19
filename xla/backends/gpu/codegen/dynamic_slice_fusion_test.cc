@@ -23,6 +23,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include "absl/algorithm/container.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/ascii.h"
 #include "xla/backends/gpu/ffi.h"
@@ -30,6 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
+#include "xla/backends/gpu/transforms/dynamic_slice_fusion_rewriter.h"
 #include "xla/error_spec.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
@@ -41,7 +43,6 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/transforms/dynamic_slice_fusion_rewriter.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
@@ -66,6 +67,13 @@ namespace {
 std::string GetPlatformName() {
   return absl::AsciiStrToUpper(
       PlatformUtil::CanonicalPlatformName("gpu").value());
+}
+
+stream_executor::Platform::Id GetPlatformId() {
+  auto platform_id =
+      PlatformUtil::GetPlatformIdFromCanonicalName(GetPlatformName());
+  CHECK_OK(platform_id);
+  return platform_id.value();
 }
 
 using ::testing::ElementsAre;
@@ -1064,7 +1072,7 @@ TEST_F(DynamicSliceFusionTest, CustomCallSimple) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto hlo_opt, xla::HloModule::CreateFromProto(
                                             computation.proto(), hlo_config));
-  DynamicSliceFusionRewriter pass(GetPlatformName());
+  DynamicSliceFusionRewriter pass(GetPlatformId());
   TF_ASSERT_OK_AND_ASSIGN(auto changed, this->RunHloPass(&pass, hlo_opt.get()));
   EXPECT_TRUE(changed);
 
@@ -1214,7 +1222,7 @@ TEST_F(DynamicSliceFusionTest, CustomCallWithTuple) {
   TF_ASSERT_OK_AND_ASSIGN(auto hlo_opt, xla::HloModule::CreateFromProto(
                                             computation.proto(), hlo_config));
 
-  DynamicSliceFusionRewriter pass(GetPlatformName());
+  DynamicSliceFusionRewriter pass(GetPlatformId());
   TF_ASSERT_OK_AND_ASSIGN(auto changed, this->RunHloPass(&pass, hlo_opt.get()));
   EXPECT_TRUE(changed);
 
@@ -1267,7 +1275,7 @@ TEST_F(DynamicSliceFusionTest, NilTuple) {
   TF_ASSERT_OK_AND_ASSIGN(auto hlo_opt, xla::HloModule::CreateFromProto(
                                             computation.proto(), hlo_config));
 
-  DynamicSliceFusionRewriter pass(GetPlatformName());
+  DynamicSliceFusionRewriter pass(GetPlatformId());
   TF_ASSERT_OK_AND_ASSIGN(auto changed, this->RunHloPass(&pass, hlo_opt.get()));
   EXPECT_TRUE(changed);
 
@@ -2584,7 +2592,7 @@ TEST_F(DynamicSliceFusionTest, DynamicCustomCallSimple) {
                                             computation.proto(), hlo_config));
   TF_ASSERT_OK_AND_ASSIGN(auto hlo_opt, xla::HloModule::CreateFromProto(
                                             computation.proto(), hlo_config));
-  DynamicSliceFusionRewriter pass(GetPlatformName());
+  DynamicSliceFusionRewriter pass(GetPlatformId());
   TF_ASSERT_OK_AND_ASSIGN(auto changed, this->RunHloPass(&pass, hlo_opt.get()));
   EXPECT_TRUE(changed);
 
@@ -2657,7 +2665,7 @@ TEST_F(DynamicSliceFusionTest, DynamicCustomCallWithTuple) {
   TF_ASSERT_OK_AND_ASSIGN(auto hlo_opt, xla::HloModule::CreateFromProto(
                                             computation.proto(), hlo_config));
 
-  DynamicSliceFusionRewriter pass(GetPlatformName());
+  DynamicSliceFusionRewriter pass(GetPlatformId());
   TF_ASSERT_OK_AND_ASSIGN(auto changed, this->RunHloPass(&pass, hlo_opt.get()));
   EXPECT_TRUE(changed);
   EXPECT_TRUE(*RunFileCheck(hlo_opt->ToString(), R"(
@@ -2834,7 +2842,7 @@ TEST_F(DynamicSliceFusionTest, CustomCallDUSTuple) {
   TF_ASSERT_OK_AND_ASSIGN(auto hlo_opt, xla::HloModule::CreateFromProto(
                                             computation.proto(), hlo_config));
 
-  DynamicSliceFusionRewriter pass(GetPlatformName());
+  DynamicSliceFusionRewriter pass(GetPlatformId());
   TF_ASSERT_OK_AND_ASSIGN(auto changed, this->RunHloPass(&pass, hlo_opt.get()));
   EXPECT_TRUE(changed);
 

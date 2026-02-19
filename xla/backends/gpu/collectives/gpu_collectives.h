@@ -50,9 +50,9 @@ class GpuCollectives : public Collectives {
   // Returns the default collectives implementation for the given platform.
   static GpuCollectives* Default(absl::string_view platform_name);
 
-  // A callback to get a unique clique id.
+  // A callback to get a unique clique ids.
   using CliqueIdCallback =  // NOLINT
-      std::function<absl::StatusOr<CliqueId>(const CliqueKey&)>;
+      std::function<absl::StatusOr<CliqueIds>(const CliqueKey&)>;
 
   // Topology describes how exactly the current process fits into the collection
   // of distributed processes, and based on this information the underlying
@@ -146,6 +146,9 @@ class GpuCollectives : public Collectives {
 
   // Returns true if GPU collectives support device-initiated communication.
   virtual bool SupportsDeviceComm() const { return false; }
+
+  // Returns minimum alignment requirement for symmetric memory.
+  virtual size_t SymmetricMemoryAlignment() const { return 1; }
 
   // Returns a slice of device memory `buff` containing `count` values of data
   // type `dtype` starting from `offset`.

@@ -16,11 +16,13 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_COLLECTIVES_GPU_CLIQUE_KEY_H_
 #define XLA_BACKENDS_GPU_COLLECTIVES_GPU_CLIQUE_KEY_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 #include "absl/hash/hash.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/core/collectives/clique_key.h"
 #include "xla/runtime/device_id.h"
@@ -44,15 +46,17 @@ CollectiveStreamId GetCollectiveStreamId(
     AsyncStreamKind stream_kind =
         AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE);
 
+// StrJoin for device groups that shortens long list of devices for readbility.
+std::string HumanReadableDeviceGroups(
+    absl::Span<const std::vector<GlobalDeviceId>> device_groups,
+    absl::string_view separator = ",", size_t first = 2, size_t last = 1);
+
 // Clique key for identifying a particular collectives clique on a GPU backend.
 class GpuCliqueKey : public CliqueKey {
  public:
-  explicit GpuCliqueKey(
-      std::vector<GlobalDeviceId> devices, int64_t num_local_participants,
-      bool is_p2p = false,
-      std::vector<std::vector<GlobalDeviceId>> participant_groups = {},
-      GlobalDeviceId root_device = GlobalDeviceId(-1),
-      std::vector<IncarnationId> incarnations = {});
+  explicit GpuCliqueKey(std::vector<GlobalDeviceId> devices,
+                        int64_t num_local_participants, bool is_p2p = false,
+                        std::vector<IncarnationId> incarnations = {});
 
   GpuCliqueKey(const GpuCliqueKey&) = default;
   GpuCliqueKey& operator=(const GpuCliqueKey&) = default;
@@ -62,11 +66,6 @@ class GpuCliqueKey : public CliqueKey {
 
   CollectiveStreamId stream_id() const;
 
-  std::vector<std::vector<GlobalDeviceId>> ParticipantGroups() const;
-
-  // Device generating the unique id for this key
-  GlobalDeviceId root_device() const;
-
   // Returns true if this clique is a subset of `other`: both cliques have the
   // same `stream_id` and all clique devices are part of `other` clique.
   bool IsSubsetOf(const CliqueKey& other) const final;
@@ -74,11 +73,12 @@ class GpuCliqueKey : public CliqueKey {
   // Returns true if this clique will be used with p2p communicators.
   bool is_p2p() const;
 
-  // For multi-root initialization, generate `nroots` copies (subkeys) of the
-  // key each with a different root device. Root devices are distributed evenly
-  // across the ranks. The subkeys are used to exchange the CliqueIds during
-  // clique initialization.
-  std::vector<GpuCliqueKey> GetSubKeys(int64_t nroots) const;
+  // Returns root devices that are responsible for bootstrapping the GPU clique
+  // during initialization. Root devices are distributed evenly across all ranks
+  // in the clique. XLA processes owning the root devices are responsible for
+  // generating clique id and exchanging it with other ranks that share the same
+  // root device (this is done via shared KV store).
+  std::vector<GlobalDeviceId> GetRootDevices(int64_t nroots) const;
 
   // The number of participant devices that are local to the current process (in
   // multi-host environments this likely to be all devices on the same host).
@@ -104,27 +104,8 @@ class GpuCliqueKey : public CliqueKey {
  private:
   void HashValue(absl::HashState state) const final;
 
-  // See comment on `num_local_participants()`.
   int64_t num_local_participants_;
   bool is_p2p_;
-
-  // The full list of groups across all devices which this clique is a part of.
-  //
-  // When GPU communicator splitting is enabled, this is used to distinguish
-  // which cliques can be reused from the cache or must be split in order to
-  // prevent a deadlock situation.
-  //
-  // For example, imagine we have a communicator with devices = [0,1] and
-  // groups = [0, 1] Later on, we may want to create communicators [0, 1] and
-  // [2, 3] by splitting [0, 1, 2, 3] If ranks 0 and 1 reuse the existing
-  // [0, 1] clique but ranks 2 and 3 initiate a split, there will be a deadlock
-  // since ranks 2, 3 and will be waiting forever for 0, 1 to join the split.
-  //
-  // Having the participating groups as part of the cache key will prevent such
-  // situations
-  std::vector<std::vector<GlobalDeviceId>> participant_groups_;
-
-  GlobalDeviceId root_device_;
 
   std::vector<IncarnationId> incarnations_;
 };

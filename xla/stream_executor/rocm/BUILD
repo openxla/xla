@@ -829,6 +829,7 @@ cc_library(
         ":hipfft_plugin",
         ":make_batch_pointers_kernel_rocm",
         ":miopen_plugin",
+        ":multi_gpu_barrier_kernel_rocm",
         ":ragged_all_to_all_kernel_rocm",
         ":redzone_allocator_kernel_rocm",
         ":repeat_buffer_kernel_rocm",
@@ -1261,7 +1262,29 @@ rocm_library(
         "rocm-only",
     ],
     deps = [
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+    alwayslink = 1,
+)
+
+rocm_library(
+    name = "multi_gpu_barrier_kernel_rocm",
+    srcs = [
+        "multi_gpu_barrier_kernel_rocm.cu.cc",
+        "//xla/stream_executor/gpu:multi_gpu_barrier_kernel.cu.h",
+    ],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":collective_signal_rocm",
+        ":rocm_platform_id",
         "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor/gpu:gpu_kernel_registry",
+        "//xla/stream_executor/gpu:multi_gpu_barrier_kernel",
+        "@com_google_absl//absl/base",
         "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = 1,

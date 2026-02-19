@@ -435,9 +435,6 @@ xla_test(
     backends = [
         "cpu",
     ],
-    tags = [
-        "test_migrated_to_hlo_runner_pjrt",
-    ],
     deps = [
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/tests:hlo_pjrt_test_base",
@@ -859,7 +856,7 @@ cc_library(
         "//xla/codegen/emitters:computation_fingerprint",
         "//xla/codegen/emitters:kernel_api_builder",
         "//xla/codegen/emitters:kernel_arguments",
-        "//xla/hlo/analysis:symbolic_expr",
+        "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/runtime:resource_use",
         "//xla/runtime:work_group",
@@ -869,6 +866,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "//xla/service:pattern_matcher",
+        "//xla/service:shaped_slice",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_address",
         "//xla/tsl/platform:env",
@@ -1046,6 +1044,7 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/utils:hlo_matchers",

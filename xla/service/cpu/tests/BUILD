@@ -78,6 +78,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
         "//xla/service:cpu_plugin",
         "//xla/service/cpu:cpu_instruction_fusion",
@@ -149,7 +150,6 @@ xla_test(
     name = "cpu_ffi_test",
     srcs = ["cpu_ffi_test.cc"],
     backends = ["cpu"],
-    tags = ["test_migrated_to_hlo_runner_pjrt"],
     deps = [
         "//xla:debug_options_flags",
         "//xla:shape_util",

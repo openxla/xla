@@ -86,8 +86,7 @@ ENTRY e {
   Compiler* compiler = backend().compiler();
   ASSERT_NE(compiler, nullptr);
 
-  std::unique_ptr<AotCompilationOptions> aot_options = std::make_unique<
-      CpuAotCompilationOptions>(
+  auto aot_options = std::make_unique<CpuAotCompilationOptions>(
       /*triple=*/kTargetTripleForHost, /*cpu_name=*/kTargetCpuForHost,
       /*features=*/"",
       /*entry_point_name=*/"entry",
@@ -110,9 +109,8 @@ ENTRY e {
         std::unique_ptr<CompiledModule> aot_result,
         compiler->LoadAotCompilationResult(serialized_aot_result));
 
-    TF_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<Executable> executable,
-        std::move(*aot_result).LoadExecutable(aot_options->executor()));
+    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                            std::move(*aot_result).LoadExecutable());
     std::unique_ptr<OpaqueExecutable> wrapped_executable =
         test_runner_as_hlo_runner().WrapExecutable(std::move(executable));
 

@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_device_dimensions.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_device_description.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology.h"
+#include "xla/runtime/device_id.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
@@ -56,7 +57,7 @@ absl::StatusOr<std::string> CpuTopologyDescription::Serialize() const {
 
 absl::StatusOr<std::pair<PjRtDeviceDimensions, int32_t>>
 CpuTopologyDescription::ChipCoordAndCoreIndexForLogicalDeviceOfDefaultType(
-    xla::PjRtGlobalDeviceId device_id) const {
+    GlobalDeviceId device_id) const {
   return std::make_pair(PjRtDeviceDimensions{0, 0, device_id.value()}, 0);
 }
 

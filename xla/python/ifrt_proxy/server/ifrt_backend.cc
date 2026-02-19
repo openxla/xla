@@ -108,8 +108,8 @@ absl::StatusOr<IfrtArrayRef> MakeStringArrayFromHostBuffer(
   const void* data = string_host_buffer.data();
 
   return client->MakeArrayFromHostBuffer(
-      data, dtype, std::move(shape), std::move(byte_strides),
-      std::move(sharding),
+      data, dtype, std::move(shape), byte_strides, std::move(sharding),
+      /*layout=*/nullptr,
       xla::ifrt::Client::HostBufferSemantics::kImmutableUntilTransferCompletes,
       /*on_done_with_host_buffer=*/
       [host_buffer = std::move(host_buffer),
@@ -1503,12 +1503,14 @@ tsl::Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
     // future, we may introduce separate mechanisms to remove futures from
     // `futures_` without checking its status for situations where futures are
     // not used.
+    //
+    // TODO(junwhan): Clean this up once the client stops querying the ready
+    // future.
     {
       absl::MutexLock lock(futures_mutex_);
       compile_resp->set_ready_future_handle(
           handle_generator_.GenerateAtServer());
-      futures_.insert(
-          {compile_resp->ready_future_handle(), executable->GetReadyFuture()});
+      futures_.insert({compile_resp->ready_future_handle(), absl::OkStatus()});
     }
 
     {

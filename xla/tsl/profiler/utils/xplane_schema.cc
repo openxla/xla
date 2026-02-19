@@ -222,6 +222,7 @@ const StatTypeMap& GetStatTypeMap() {
        {"queue_id", kQueueId},
        {"request_id", kRequestId},
        {"run_id", kRunId},
+       {"global_chip_id", kGlobalChipId},
        {"replica_id", kReplicaId},
        {"graph_type", kGraphType},
        {"step_num", kStepNum},
@@ -304,6 +305,10 @@ const StatTypeMap& GetStatTypeMap() {
        {"Time Scale Multiplier", kTimeScaleMultiplier},
        {"matrix_unit_utilization_percent", kMatrixUnitUtilizationPercent},
        {"hbm_utilization_percent", kHbmUtilizationPercent},
+       {"performance_counter_id", kPerformanceCounterId},
+       {"counter_value", kCounterValue},
+       {"performance_counter_description", kPerformanceCounterDescription},
+       {"performance_counter_sets", kPerformanceCounterSets},
        // XLA metadata map related.
        {"Hlo Proto", kHloProto},
        {"EdgeTPU Model information", kEdgeTpuModelInfo},
@@ -393,7 +398,12 @@ const StatTypeMap& GetStatTypeMap() {
        {"cuda_version", kMetadataCudaVersion},
        {"libtpu_version", kMetadataLibtpuVersion},
        {"cuda_runtime_version", kMetadataCudaRuntimeVersion},
-       {"cuda_driver_version", kMetadataCudaDriverVersion}});
+       {"cuda_driver_version", kMetadataCudaDriverVersion},
+       // Power-related stats
+       {"vdd_core_energy_nj", kVddCoreEnergy},
+       {"vdd_core_power_events", kVddCorePowerEvents},
+       {"hbm_energy_nj", kHbmEnergy},
+       {"hbm_power_events", kHbmPowerEvents}});
   DCHECK_EQ(stat_type_map->size(), kNumStatTypes);
   return *stat_type_map;
 }
@@ -477,6 +487,7 @@ const TaskEnvStatTypeMap& GetTaskEnvStatTypeMap() {
   static auto* const task_env_stat_type_map = new TaskEnvStatTypeMap({
       {"profile_start_time", kEnvProfileStartTime},
       {"profile_stop_time", kEnvProfileStopTime},
+      {"profile_options", kEnvProfileOptions},
   });
   DCHECK_EQ(task_env_stat_type_map->size(), kNumTaskEnvStatTypes);
   return *task_env_stat_type_map;

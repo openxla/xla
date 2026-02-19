@@ -43,12 +43,14 @@ namespace xla::gpu {
 GpuClique::GpuClique(
     GpuCliqueKey key, std::optional<CliqueIds> ids,
     absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators,
-    bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel)
+    bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel,
+    const GpuClique* parent)
     : Clique(std::move(communicators)),
       key_(key),
       ids_(ids),
       peer_access_enabled_(peer_access_enabled),
-      cancel_(std::move(cancel)) {}
+      cancel_(std::move(cancel)),
+      parent_(parent) {}
 
 std::optional<GpuDeviceCommunicator*> GpuClique::device_comm(
     RankId rank, const GpuDeviceCommunicator::Requirements& reqs) const {
@@ -75,9 +77,8 @@ absl::Status GpuClique::AddDeviceComm(
 
 std::string GpuClique::DebugString() const {
   std::string out = absl::StrFormat(
-      "key: %s; fingerprint(id): %d; size: %d; communicators: ",
-      key_.ToString(), ids_.has_value() ? ids_->fingerprint() : 0,
-      num_communicators());
+      "key: %v; fingerprint(id): %d; size: %d; communicators: ", key_,
+      ids_.has_value() ? ids_->fingerprint() : 0, num_communicators());
   int32_t cnt = 0;
   ForEachComm([&](RankId rank, Communicator* comm) {
     if (cnt++) {
@@ -102,12 +103,12 @@ absl::Status GpuClique::HealthCheck() const {
 }
 
 absl::Status GpuClique::Abort() {
-  VLOG(1) << "Aborting GpuClique " << key().ToString();
+  VLOG(1) << "Aborting GpuClique " << key();
   absl::Status result = absl::OkStatus();
   ForEachComm([this, &result](RankId rank, Communicator* comm) {
     if (absl::Status s = comm->Abort(); !s.ok()) {
       LOG(ERROR) << "Error aborting GPU communicator (rank " << rank
-                 << ") for clique " << key().ToString() << ": " << s;
+                 << ") for clique " << key() << ": " << s;
       result = std::move(s);
     }
   });
@@ -115,22 +116,23 @@ absl::Status GpuClique::Abort() {
 }
 
 void GpuClique::Cancel() {
-  VLOG(1) << "Cancel GpuClique " << key().ToString();
+  VLOG(1) << "Cancel GpuClique " << key();
   cancel_->Cancel();
 }
 
 bool GpuClique::IsCancelled() const { return cancel_->IsCancelled(); }
 
 std::string GpuClique::LockableName::ToString(const GpuClique& clique) {
-  return absl::StrFormat("lockable clique %s", clique.key().ToString());
+  return absl::StrFormat("lockable clique %v", clique.key());
 }
 
 LockableGpuClique::LockableGpuClique(
     GpuCliqueKey clique_key, std::optional<CliqueIds> clique_ids,
     absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators,
-    bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel)
+    bool peer_access_enabled, std::shared_ptr<CancellationToken> cancel,
+    const GpuClique* parent)
     : Lockable(std::move(clique_key), clique_ids, std::move(communicators),
-               peer_access_enabled, std::move(cancel)) {}
+               peer_access_enabled, std::move(cancel), parent) {}
 
 absl::Status LockableGpuClique::HealthCheck() const {
   return value().HealthCheck();
@@ -139,6 +141,10 @@ absl::Status LockableGpuClique::HealthCheck() const {
 absl::Status LockableGpuClique::Abort() { return mutable_value().Abort(); }
 
 void LockableGpuClique::Cancel() { mutable_value().Cancel(); }
+
+bool LockableGpuClique::HasParent(const GpuClique* parent) const {
+  return this->value().parent() == parent;
+}
 
 std::string LockableGpuClique::DebugString() const {
   return absl::StrFormat("LockableGpuClique: %s", value().DebugString());

@@ -274,7 +274,7 @@ absl::Status AddOpDescription(absl::Status status, OpT op,
 // Helper over GetGpuCliqueKey that builds clique key.
 absl::StatusOr<GpuCliqueKey> GetCollectiveGpuCliqueKey(
     const CollectiveParams& params, const CollectiveConfig& collective_config,
-    bool include_participant_groups = true);
+    bool is_p2p);
 
 struct DeviceBufferPair {
   PrimitiveType element_type;
@@ -284,11 +284,6 @@ struct DeviceBufferPair {
   int64_t source_memory_space;
   int64_t destination_memory_space;
 };
-
-absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
-    const Thunk::ExecuteParams& params,
-    const std::vector<CollectiveThunk::Buffer>& buffers,
-    const std::vector<PrimitiveType>& element_types);
 
 absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
     const BufferAllocations* buffer_allocations,

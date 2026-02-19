@@ -79,7 +79,8 @@ TEST_P(HloShardingRepresentationTest, Replicate) {
 
   HloSharding other = HloSharding::Replicate({}, use_named_sharding);
   EXPECT_EQ(other, sharding);
-  EXPECT_NE(HloSharding::Replicate(),
+  // Shardings are compared regardless of representation.
+  EXPECT_EQ(HloSharding::Replicate(),
             HloSharding::Replicate({}, /*use_named_sharding=*/true));
 
   EXPECT_IS_OK(sharding.Validate(ShapeUtil::MakeShape(U32, {4}),
@@ -99,7 +100,8 @@ TEST_P(HloShardingRepresentationTest, DevicePlacement) {
 
   HloSharding other = HloSharding::Replicate({}, use_named_sharding);
   EXPECT_NE(other, sharding);
-  EXPECT_NE(HloSharding::AssignDevice(5),
+  // Shardings are compared regardless of representation.
+  EXPECT_EQ(HloSharding::AssignDevice(5),
             HloSharding::AssignDevice(5, {}, /*use_named_sharding=*/true));
 
   EXPECT_IS_OK(sharding.Validate(ShapeUtil::MakeShape(U32, {4}),
@@ -165,7 +167,7 @@ TEST_F(HloShardingTest, NamedShardingTupleProtoRoundTrip) {
     tuple_shardings {
       named_sharding {
         mesh {
-          axes { name: "a" size: 2 }
+          axes { name: "a" size: 4 }
           axes { name: "b" size: 4 }
         }
         dim_shardings {
@@ -184,7 +186,7 @@ TEST_F(HloShardingTest, NamedShardingTupleProtoRoundTrip) {
     tuple_shardings {
       named_sharding {
         mesh {
-          axes { name: "a" size: 2 }
+          axes { name: "a" size: 4 }
           axes { name: "b" size: 4 }
         }
         dim_shardings {
@@ -589,6 +591,21 @@ TEST_F(HloShardingTest, NestedTuple) {
                                            /*num_devices=*/5));
 }
 
+TEST_F(HloShardingTest, DeviceAssignmentTiledSharding) {
+  TileAssignment ta({2, 4}, {4, 2}, {1, 0});
+  HloSharding sharding = HloSharding::Tile(ta);
+
+  EXPECT_EQ(sharding.device_assignment(), ta);
+}
+TEST_F(HloShardingTest, DeviceAssignmentNamedSharding) {
+  TileAssignment ta({2, 4}, {4, 2}, {1, 0});
+  Mesh mesh(ta, {"a", "b"});
+  HloSharding hlo_sharding_from_named(
+      test_utils::FromAxisNames(mesh, {{"a"}, {"b"}}));
+
+  EXPECT_EQ(hlo_sharding_from_named.device_assignment(), ta);
+}
+
 TEST_F(HloShardingTest, NormalizeTrivialSubgroupToManual) {
   HloSharding sharding =
       HloSharding::Subgroup(Array<int64_t>({1, 2, 1}, {0, 1}),
@@ -686,9 +703,8 @@ TEST_F(HloShardingTest, Hash) {
 using ShardingWithMetadataParamType =
     std::tuple<std::vector<OpMetadata>, std::string>;
 
-TEST_P(HloShardingRepresentationTest, ToStringReplicatedTest) {
-  bool use_named_sharding = GetParam();
-  HloSharding sharding = HloSharding::Replicate({}, use_named_sharding);
+TEST_F(HloShardingTest, ToStringReplicatedTest) {
+  HloSharding sharding = HloSharding::Replicate({});
   EXPECT_EQ(sharding.ToString(), "{replicated}");
 }
 
@@ -712,9 +728,8 @@ INSTANTIATE_TEST_SUITE_P(
             ListMetadata(),
             "{replicated metadata={{op_name=\"b\"}, {op_name=\"c\"}}}")));
 
-TEST_P(HloShardingRepresentationTest, ToStringAssignDeviceTest) {
-  bool use_named_sharding = GetParam();
-  HloSharding sharding = HloSharding::AssignDevice(7, {}, use_named_sharding);
+TEST_F(HloShardingTest, ToStringAssignDeviceTest) {
+  HloSharding sharding = HloSharding::AssignDevice(7);
   EXPECT_EQ(sharding.ToString(), "{maximal device=7}");
 }
 
@@ -802,12 +817,12 @@ TEST_F(HloShardingTest, ToStringTupleWithMetadataTest) {
 TEST_F(HloShardingTest, ToStringWithNamedShardingTest) {
   Mesh mesh({2, 4}, {"a", "b"});
   HloSharding sharding(test_utils::FromAxisNames(mesh, {{"a"}, {"b"}}));
-  EXPECT_EQ(sharding.ToString(), "{@mesh<a=2,b=4>, [{a}, {b}]}");
+  EXPECT_EQ(sharding.ToString(), "{mesh[a=2,b=4], [{a}, {b}]}");
 
   HloSharding sharding_with_metadata(test_utils::FromAxisNames(
       mesh, {{"a"}, {"b"}}, {}, {}, {}, ListMetadata()));
   EXPECT_EQ(sharding_with_metadata.ToString(/*include_metadata=*/true),
-            "{@mesh<a=2,b=4>, [{a}, {b}], metadata={{op_name=\"b\"}, "
+            "{mesh[a=2,b=4], [{a}, {b}], metadata={{op_name=\"b\"}, "
             "{op_name=\"c\"}}}");
 
   HloSharding tuple_sharding(HloSharding::Tuple(
@@ -816,8 +831,8 @@ TEST_F(HloShardingTest, ToStringWithNamedShardingTest) {
                                  ShapeUtil::MakeShape(S32, {9, 11})}),
       {sharding, sharding, sharding_with_metadata}));
   EXPECT_EQ(tuple_sharding.ToString(/*include_metadata=*/true),
-            "{{@mesh<a=2,b=4>, [{a}, {b}]}, {@mesh<a=2,b=4>, [{a}, {b}]}, "
-            "{@mesh<a=2,b=4>, [{a}, {b}], metadata={{op_name=\"b\"}, "
+            "{{mesh[a=2,b=4], [{a}, {b}]}, {mesh[a=2,b=4], [{a}, {b}]}, "
+            "{mesh[a=2,b=4], [{a}, {b}], metadata={{op_name=\"b\"}, "
             "{op_name=\"c\"}}}}");
 }
 
@@ -1145,6 +1160,181 @@ TEST_F(V3ToV2ShardingSplitAxesTest, AllSubgroupTypesWithSplitAxes) {
       HloSharding::Subgroup(
           TileAssignment({8, 2, 4}, {2, 4, 2, 4}, {2, 3, 0, 1}),
           {OpSharding::MANUAL, OpSharding::UNREDUCED, OpSharding::REPLICATED}));
+}
+
+TEST_F(HloShardingTest, ToNamedShardingTuple) {
+  HloSharding sharding = HloSharding::Tuple(
+      ShapeUtil::MakeTupleShape({ShapeUtil::MakeShape(F32, {3, 5}),
+                                 ShapeUtil::MakeShape(F32, {2, 3})}),
+      {HloSharding::Replicate(), HloSharding::IotaTile({2, 3})});
+
+  HloSharding named_sharding = HloSharding::ToV3Sharding(sharding);
+
+  ASSERT_TRUE(named_sharding.IsTuple());
+  ASSERT_EQ(named_sharding.tuple_elements().size(), 2);
+  EXPECT_TRUE(named_sharding.tuple_elements()[0].UseNamedShardingLeaf());
+  EXPECT_EQ(named_sharding.tuple_elements()[0].named_sharding(),
+            NamedSharding::Replicate());
+  EXPECT_TRUE(named_sharding.tuple_elements()[1].UseNamedShardingLeaf());
+  EXPECT_EQ(named_sharding.tuple_elements()[1].named_sharding().ToString(),
+            "{mesh[axis_0=2,axis_1=3], [{axis_0}, {axis_1}]}");
+}
+
+TEST_F(HloShardingTest, ToNamedShardingReplicated) {
+  HloSharding hlo_sharding = HloSharding::Replicate();
+  NamedSharding named_sharding = HloSharding::ToNamedSharding(hlo_sharding);
+
+  EXPECT_TRUE(named_sharding.IsReplicated());
+}
+
+TEST_F(HloShardingTest, ToNamedShardingMaximal) {
+  HloSharding hlo_sharding = HloSharding::AssignDevice(5);
+  NamedSharding named_sharding = HloSharding::ToNamedSharding(hlo_sharding);
+
+  EXPECT_TRUE(named_sharding.IsMaximal());
+  EXPECT_EQ(*named_sharding.mesh().device_assignment().array().begin(), 5);
+}
+
+TEST_F(HloShardingTest, ToNamedShardingTiled) {
+  HloSharding hlo_sharding = HloSharding::IotaTile({2, 3});
+  NamedSharding named_sharding = HloSharding::ToNamedSharding(hlo_sharding);
+
+  EXPECT_EQ(named_sharding.ToString(),
+            "{mesh[axis_0=2,axis_1=3], [{axis_0}, {axis_1}]}");
+}
+
+TEST_F(HloShardingTest, ToNamedShardingPartialTile) {
+  HloSharding hlo_sharding = HloSharding::PartialTile(TileAssignment({2, 3}));
+  NamedSharding named_sharding = HloSharding::ToNamedSharding(hlo_sharding);
+
+  EXPECT_EQ(named_sharding.ToString(),
+            "{mesh[axis_0=2,axis_1=3], [{axis_0}], replicated={axis_1}}");
+}
+
+TEST_F(HloShardingTest, ToNamedShardingIotaWithReshape) {
+  HloSharding hlo_sharding = HloSharding::IotaTile({2, 4}, {8}, {0});
+  NamedSharding named_sharding = HloSharding::ToNamedSharding(hlo_sharding);
+
+  EXPECT_EQ(named_sharding.ToString(),
+            "{mesh[axis_0=2,axis_1=4], [{axis_0}, {axis_1}]}");
+}
+
+TEST_F(HloShardingTest, ToNamedShardingIotaWithReshapeTransposeToSingleDim) {
+  HloSharding hlo_sharding = HloSharding::IotaTile({4}, {2, 2}, {1, 0});
+  NamedSharding named_sharding = HloSharding::ToNamedSharding(hlo_sharding);
+
+  EXPECT_EQ(named_sharding.ToString(),
+            "{mesh[axis_0=2,axis_1=2], [{axis_1, axis_0}]}");
+}
+
+TEST_F(HloShardingTest, ToNamedShardingIotaWithReshapeAndTranspose) {
+  HloSharding hlo_sharding = HloSharding::IotaTile({2, 2}, {2, 2}, {1, 0});
+  NamedSharding named_sharding = HloSharding::ToNamedSharding(hlo_sharding);
+
+  EXPECT_EQ(named_sharding.ToString(),
+            "{mesh[axis_0=2,axis_1=2], [{axis_1}, {axis_0}]}");
+}
+
+TEST_F(HloShardingTest, ToNamedShardingIotaWithReshapeTransposeToTwoDims) {
+  HloSharding hlo_sharding =
+      HloSharding::IotaTile({6, 35}, {7, 10, 3}, {2, 1, 0});
+  NamedSharding named_sharding = HloSharding::ToNamedSharding(hlo_sharding);
+
+  EXPECT_EQ(named_sharding.ToString(),
+            "{mesh[axis_0=7,axis_1=2,axis_2=5,axis_3=3], [{axis_3, axis_1}, "
+            "{axis_2, axis_0}]}");
+}
+
+TEST_F(HloShardingTest, ToNamedShardingSubgroups) {
+  HloSharding hlo_sharding = HloSharding::Subgroup(
+      TileAssignment({2, 2, 2}),
+      {OpSharding::MANUAL, OpSharding::UNREDUCED, OpSharding::REPLICATED});
+  NamedSharding named_sharding = HloSharding::ToNamedSharding(hlo_sharding);
+
+  EXPECT_EQ(named_sharding.ToString(),
+            "{mesh[axis_0=2,axis_1=2,axis_2=2], [], replicated={axis_2}, "
+            "unreduced={axis_1}, manual={axis_0}}");
+}
+
+class HloShardingV2ToV3ToV2RoundTripTest
+    : public HloShardingTest,
+      public ::testing::WithParamInterface<HloSharding> {
+ public:
+  HloSharding V3ToV2Deep(const HloSharding& s) {
+    if (s.IsTuple()) {
+      std::vector<HloSharding> elements;
+      for (const auto& e : s.tuple_elements()) {
+        elements.push_back(V3ToV2Deep(e));
+      }
+      return HloSharding::FlatTuple(elements);
+    }
+    return HloSharding::V3ToV2Sharding(s.named_sharding());
+  }
+};
+
+TEST_P(HloShardingV2ToV3ToV2RoundTripTest, RoundTrip) {
+  const HloSharding& hlo_sharding = GetParam();
+  HloSharding named_sharding = HloSharding::ToV3Sharding(hlo_sharding);
+  HloSharding hlo_sharding_restored = V3ToV2Deep(named_sharding);
+  EXPECT_EQ(hlo_sharding, hlo_sharding_restored);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    V2ToV3ToV2RoundTrip, HloShardingV2ToV3ToV2RoundTripTest,
+    ::testing::Values(
+        HloSharding::Replicate(), HloSharding::AssignDevice(3),
+        HloSharding::IotaTile({2, 4}), HloSharding::IotaTile({2, 4}, {8}, {0}),
+        HloSharding::Subgroup(TileAssignment({2, 2}),
+                              {OpSharding::MANUAL, OpSharding::REPLICATED}),
+        HloSharding::Tuple(
+            ShapeUtil::MakeTupleShape({ShapeUtil::MakeShape(F32, {3, 5}),
+                                       ShapeUtil::MakeShape(F32, {2, 4})}),
+            {HloSharding::Replicate(), HloSharding::IotaTile({2, 4})})));
+
+class HloShardingV3ToV2ToV3RoundTripTest
+    : public HloShardingTest,
+      public ::testing::WithParamInterface<NamedSharding> {};
+
+TEST_P(HloShardingV3ToV2ToV3RoundTripTest, RoundTrip) {
+  const NamedSharding& named_sharding = GetParam();
+
+  HloSharding hlo_sharding = HloSharding::V3ToV2Sharding(named_sharding);
+  NamedSharding named_sharding_restored =
+      HloSharding::ToNamedSharding(hlo_sharding);
+
+  EXPECT_EQ(named_sharding, named_sharding_restored);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    V3ToV2ToV3RoundTrip, HloShardingV3ToV2ToV3RoundTripTest,
+    ::testing::Values(
+        NamedSharding::Replicate(), NamedSharding::MaximalSharding(3),
+        test_utils::FromAxisNames(Mesh({2, 3}, {"axis_0", "axis_1"}),
+                                  {{"axis_0"}, {"axis_1"}}),
+        test_utils::FromAxisNames(Mesh({2, 2}, {"axis_0", "axis_1"}),
+                                  {{"axis_0"}, {"axis_1"}}),
+        test_utils::FromAxisNames(Mesh({4}, {"axis_0"}), {{"axis_0"}}),
+        test_utils::FromAxisNames(Mesh(Array<int64_t>({2, 2}, {0, 2, 1, 3}),
+                                       {"axis_0", "axis_1"}),
+                                  {{"axis_0"}, {"axis_1"}})));
+
+TEST_F(HloShardingTest, V3ToV2ToV3RoundTripSubAxes) {
+  Mesh mesh({4}, {"axis_0"});
+  NamedSharding named_sharding =
+      test_utils::FromAxisNames(mesh, {{"axis_0:(1)2"}});
+
+  HloSharding hlo_sharding = HloSharding::V3ToV2Sharding(named_sharding);
+  NamedSharding named_sharding_restored =
+      HloSharding::ToNamedSharding(hlo_sharding);
+
+  EXPECT_EQ(named_sharding_restored.dim_shardings().size(), 1);
+  EXPECT_EQ(named_sharding_restored.dim_sharding(0).getShardedSize(
+                named_sharding_restored.mesh()),
+            2);
+
+  HloSharding hlo_sharding_restored =
+      HloSharding::V3ToV2Sharding(named_sharding_restored);
+  EXPECT_EQ(hlo_sharding, hlo_sharding_restored);
 }
 
 }  // namespace

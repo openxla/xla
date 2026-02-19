@@ -39,8 +39,7 @@ namespace {
 
 absl::StatusOr<HloComputation*> BuildConditionComputation(
     HloScanInstruction* scan, const Shape& loop_state_shape) {
-  int64_t scan_dim = scan->scan_dimension();
-  int64_t scan_dim_size = scan->operand(0)->shape().dimensions(scan_dim);
+  TF_ASSIGN_OR_RETURN(int64_t scan_dim_size, scan->GetScanDimSize());
 
   HloComputation::Builder builder(absl::StrCat(scan->name(), "_condition"));
   auto* param = builder.AddInstruction(
@@ -142,8 +141,13 @@ absl::StatusOr<HloComputation*> BuildBodyComputation(
   int64_t num_carries = scan->num_carries();
   auto inputs = scan->inputs();
   int64_t num_inputs = inputs.size();
-  int64_t num_outputs = scan->shape().tuple_shapes().size() - num_carries;
-  int64_t scan_dim_size = inputs[0]->shape().dimensions(scan_dim);
+  int64_t num_outputs;
+  if (scan->shape().IsTuple()) {
+    num_outputs = scan->shape().tuple_shapes().size() - num_carries;
+  } else {
+    num_outputs = 1 - num_carries;
+  }
+  TF_ASSIGN_OR_RETURN(int64_t scan_dim_size, scan->GetScanDimSize());
   Shape scalar_shape = ShapeUtil::MakeShape(S64, {});
 
   HloComputation::Builder builder(absl::StrCat(scan->name(), "_body"));
@@ -185,8 +189,18 @@ absl::StatusOr<HloComputation*> BuildBodyComputation(
 
   // Extract results from call
   // tuple structure: (outputs..., new_accs...)
-  auto new_outputs = GetTupleElements(&builder, call, 0, num_outputs);
-  auto new_accs = GetTupleElements(&builder, call, num_outputs, num_carries);
+  std::vector<HloInstruction*> new_outputs;
+  std::vector<HloInstruction*> new_accs;
+  if (call->shape().IsTuple()) {
+    new_outputs = GetTupleElements(&builder, call, 0, num_outputs);
+    new_accs = GetTupleElements(&builder, call, num_outputs, num_carries);
+  } else {
+    if (num_outputs == 1) {
+      new_outputs.push_back(call);
+    } else if (num_carries == 1) {
+      new_accs.push_back(call);
+    }
+  }
 
   // Update output arrays
   auto updated_output_arrays = UpdateOutputArrays(
@@ -233,7 +247,12 @@ absl::StatusOr<HloInstruction*> ScanExpander::ExpandInstruction(
   auto inits = scan->inits();
   int64_t num_carries = scan->num_carries();
   int64_t num_inputs = inputs.size();
-  int64_t num_outputs = scan->shape().tuple_shapes().size() - num_carries;
+  int64_t num_outputs;
+  if (scan->shape().IsTuple()) {
+    num_outputs = scan->shape().tuple_shapes().size() - num_carries;
+  } else {
+    num_outputs = 1 - num_carries;
+  }
 
   Shape scalar_shape = ShapeUtil::MakeShape(S64, {});
 
@@ -248,8 +267,12 @@ absl::StatusOr<HloInstruction*> ScanExpander::ExpandInstruction(
   }
   // Outputs match scan output shapes (the first num_outputs elements)
   for (int64_t i = 0; i < num_outputs; ++i) {
-    loop_state_shapes.push_back(
-        ShapeUtil::GetTupleElementShape(scan->shape(), i));
+    if (scan->shape().IsTuple()) {
+      loop_state_shapes.push_back(
+          ShapeUtil::GetTupleElementShape(scan->shape(), i));
+    } else {
+      loop_state_shapes.push_back(scan->shape());
+    }
   }
   Shape loop_state_shape = ShapeUtil::MakeTupleShape(loop_state_shapes);
 
@@ -273,7 +296,12 @@ absl::StatusOr<HloInstruction*> ScanExpander::ExpandInstruction(
   // Initialize output arrays (zeros or garbage)
   // We can broadcast a constant 0 of the element type.
   for (int64_t i = 0; i < num_outputs; ++i) {
-    Shape output_shape = ShapeUtil::GetTupleElementShape(scan->shape(), i);
+    Shape output_shape;
+    if (scan->shape().IsTuple()) {
+      output_shape = ShapeUtil::GetTupleElementShape(scan->shape(), i);
+    } else {
+      output_shape = scan->shape();
+    }
     HloInstruction* zero =
         scan->parent()->AddInstruction(HloInstruction::CreateConstant(
             LiteralUtil::Zero(output_shape.element_type())));
@@ -309,8 +337,13 @@ absl::StatusOr<HloInstruction*> ScanExpander::ExpandInstruction(
         HloInstruction::CreateGetTupleElement(while_loop, 1 + i)));
   }
 
-  return scan->parent()->AddInstruction(
+  HloInstruction* result_tuple = scan->parent()->AddInstruction(
       HloInstruction::CreateTuple(final_results));
+  if (scan->shape().IsTuple()) {
+    return result_tuple;
+  }
+  return scan->parent()->AddInstruction(
+      HloInstruction::CreateGetTupleElement(result_tuple, 0));
 }
 
 }  // namespace xla

@@ -140,7 +140,7 @@ struct SpmdPartitionerOptions {
 // transformation.
 class SpmdBuilder : public HloComputation::Builder {
  public:
-  SpmdBuilder(const std::string& name, HloInstruction* hlo)
+  SpmdBuilder(absl::string_view name, HloInstruction* hlo)
       : HloComputation::Builder(name) {
     visiting_hlo_ = hlo;
   }

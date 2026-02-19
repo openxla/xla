@@ -102,6 +102,20 @@ absl::StatusOr<ynn_binary_operator> YnnBinaryOperator(const HloOpcode& opcode) {
   return result->second;
 }
 
+absl::StatusOr<ynn_reduce_operator> YnnReduceOperator(const HloOpcode& opcode) {
+  switch (opcode) {
+    case HloOpcode::kAdd:
+      return ynn_reduce_sum;
+    case HloOpcode::kMaximum:
+      return ynn_reduce_max;
+    case HloOpcode::kMinimum:
+      return ynn_reduce_min;
+    default:
+      return InvalidArgument("Unsupported YNNPACK reduce operator: %s",
+                             HloOpcodeString(opcode));
+  }
+}
+
 bool IsLayoutSupportedByYnn(const Shape& shape) {
   if (shape.dimensions().size() > YNN_MAX_TENSOR_RANK) {
     // TODO(b/460602165): We should eliminate this limitation.
@@ -203,12 +217,11 @@ absl::StatusOr<bool> IsDotSupportedByYnn(
   TF_ASSIGN_OR_RETURN(DotCanonicalDims dot_canonical_dims,
                       GetDotCanonicalDims(dot_dimensions, dot_shape));
 
-  if (dot_canonical_dims.m == 1 && dot_canonical_dims.n == 1 &&
-      dot_shape.batch_size > 1) {
-    // TODO(b/430079105): YNNPACK does not handle batch dimensions that are not
-    // matrix dimensions. We could handle this case by fully implementing dot
-    // (b/430079105), but we also could just insert dummy dimensions of size 1
-    // for the matrix dimensions, so the batch dimensions get handled correctly.
+  if (dot_canonical_dims.m == 1 || dot_canonical_dims.n == 1) {
+    // TODO(b/430079105): YNNPACK does not handle vectors in dots. We could
+    // insert dummy extent 1 dimensions to handle this case. We don't expect to
+    // see this because XLA handles these with its own codegen, but if dots get
+    // pulled into fusions, we need to reject them (b/469236467).
     return false;
   }
 
@@ -238,30 +251,77 @@ absl::StatusOr<bool> IsDotSupportedByYnn(const HloInstruction* hlo) {
                              hlo->shape());
 }
 
-bool IsReduceOpSupportedByYnn(const HloInstruction* hlo) {
-  CHECK_EQ(hlo->opcode(), HloOpcode::kReduce);
+bool IsReduceLikeOpSupportedByYnn(const HloInstruction* hlo) {
   if (!YnnType(hlo->shape().element_type()).ok()) {
     return false;
   }
-  const HloReduceInstruction* reduce = Cast<HloReduceInstruction>(hlo);
-  CHECK_NE(reduce, nullptr);
-  // TODO(ashaposhnikov): we can support this edge case,
-  // planning to come back to this later.
-  if (reduce->dimensions().empty()) {
+  if (!IsLayoutSupportedByYnn(hlo->shape()) ||
+      !IsLayoutSupportedByYnn(hlo->operand(0)->shape())) {
     return false;
   }
 
-  HloInstruction* init = reduce->init_values().front();
-  const PrimitiveType type = init->shape().element_type();
-  // TODO(ashaposhnikov): The list of supported types can be extended.
-  if (type != F32) {
-    return false;
-  }
-  if (type != hlo->shape().element_type()) {
+  auto check_type = [](const auto* reduce_like_op) {
+    HloInstruction* init = reduce_like_op->init_values().front();
+    const PrimitiveType type = init->shape().element_type();
+    // TODO(ashaposhnikov): The list of supported types can be extended.
+    return type == F32 && type == reduce_like_op->shape().element_type();
+  };
+
+  if (hlo->opcode() == HloOpcode::kReduce) {
+    const HloReduceInstruction* reduce = Cast<HloReduceInstruction>(hlo);
+    // TODO(ashaposhnikov): we can support this edge case,
+    // planning to come back to this later.
+    if (reduce->dimensions().empty()) {
+      return false;
+    }
+    if (!check_type(reduce)) {
+      return false;
+    }
+  } else if (hlo->opcode() == HloOpcode::kReduceWindow) {
+    const HloReduceWindowInstruction* reduce_window =
+        Cast<HloReduceWindowInstruction>(hlo);
+    if (!check_type(reduce_window)) {
+      return false;
+    }
+    const Window& window = reduce_window->window();
+    int new_axis_count = 0;
+    for (const WindowDimension& dim : window.dimensions()) {
+      if (dim.size() > 1) {
+        // TODO(ashaposhnikov): consider relaxing the constraints below.
+        if (dim.stride() != dim.size()) {
+          return false;
+        }
+        if (dim.base_dilation() != 1) {
+          return false;
+        }
+        if (dim.window_dilation() != 1) {
+          return false;
+        }
+        if (dim.window_reversal()) {
+          return false;
+        }
+        new_axis_count++;
+      }
+    }
+
+    // We do not currently handle the case where reduce->dimensions() is empty,
+    // see the check above.
+    if (new_axis_count == 0) {
+      return false;
+    }
+
+    // The ReduceWindow operation is implemented by expanding the input tensor
+    // with window dimensions. We need to make sure that the resulting tensor
+    // rank does not exceed YNNPACK limit.
+    if (reduce_window->shape().dimensions().size() + new_axis_count >
+        YNN_MAX_TENSOR_RANK) {
+      return false;
+    }
+  } else {
     return false;
   }
 
-  const HloComputation* to_apply = reduce->to_apply();
+  const HloComputation* to_apply = hlo->to_apply();
   CHECK_NE(to_apply, nullptr);
   return Match(to_apply->root_instruction(),
                match::AnyOf<HloInstruction>(match::Add(), match::Maximum(),
@@ -270,8 +330,8 @@ bool IsReduceOpSupportedByYnn(const HloInstruction* hlo) {
                                                match::Parameter(1)));
 }
 
-bool IsReduceOpOffloadedToYnn(const HloInstruction* hlo) {
-  if (!IsReduceOpSupportedByYnn(hlo)) {
+bool IsReduceLikeOpOffloadedToYnn(const HloInstruction* hlo) {
+  if (!IsReduceLikeOpSupportedByYnn(hlo)) {
     return false;
   }
   const HloInstruction* input = hlo->operand(0);
@@ -312,9 +372,10 @@ bool IsConvolutionOpSupportedByYnn(const HloInstruction* instr) {
   }
 
   // Stores tuple of allowed (input, output) dtypes.
+  // TODO(b/466474339): Enable other data types.
   static const absl::NoDestructor<absl::flat_hash_set<
       std::tuple<PrimitiveType, PrimitiveType, PrimitiveType>>>
-      kAllowedTypes({{F32, F32, F32}, {BF16, BF16, F32}, {S8, S8, S32}});
+      kAllowedTypes({{F32, F32, F32}, /* {BF16, BF16, F32}, */ {S8, S8, S32}});
 
   const Shape& lhs_shape = conv->operand(0)->shape();
   const Shape& rhs_shape = conv->operand(1)->shape();

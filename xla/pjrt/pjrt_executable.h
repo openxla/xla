@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
+#include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_device_dimensions.h"
 #include "xla/pjrt/pjrt_layout.h"
@@ -233,7 +234,7 @@ struct ExecuteOptions {
   const ExecuteContext* context = nullptr;
   // If true, check that the PjRtBuffer argument shapes match the compiled
   // shapes. Otherwise, any shape with the right size on device may be passed.
-  bool strict_shape_checking = true;
+  bool strict_shape_checking = false;
 
   // Set multi_slice_config when the computation spans multiple slices. The
   // config should match what was used during compilation to generate this
@@ -407,6 +408,11 @@ class PjRtExecutable {
   // Serialize this executable into a string and return the value.
   virtual absl::StatusOr<std::string> SerializeExecutable() const {
     return absl::UnimplementedError("SerializeExecutable is not implemented.");
+  }
+
+  virtual absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>>
+  GetAbiVersion() const {
+    return absl::UnimplementedError("GetAbiVersion is not implemented.");
   }
 
   // Return a fingerprint of this executable.

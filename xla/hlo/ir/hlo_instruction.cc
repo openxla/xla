@@ -173,6 +173,17 @@ void HloInstruction::Users::RemoveUser(HloInstruction* user) {
 }
 
 void HloInstruction::Users::SortInstructionUsers(
+    absl::FunctionRef<bool(const HloInstruction*, const HloInstruction*)>
+        compare) {
+  absl::c_sort(users_, compare);
+  if (user_map_ != nullptr) {
+    user_map_->clear();
+    RebuildMap();
+  }
+  DCHECK(CheckInvariants());
+}
+
+void HloInstruction::Users::SortInstructionUsers(
     const MappedPtrContainerSorter<HloInstruction>::MapPtrFn& map_fn,
     const Users& sorted_instruction_users) {
   using Sorter = MappedPtrContainerSorter<HloInstruction>;
@@ -630,20 +641,12 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
           << "Scan instruction should have 1 called computation but sees "
           << proto.called_computation_ids_size();
       int64_t num_carries = proto.num_carries();
-      if (num_carries == 0) {
-        TF_RET_CHECK(proto.operand_ids_size() % 2 == 0)
-            << "Scan instruction should have an even number of operands but "
-               "sees "
-            << proto.operand_ids_size();
-        num_carries = proto.operand_ids_size() / 2;
-      }
       TF_RET_CHECK(num_carries >= 0 && num_carries <= proto.operand_ids_size());
+      int64_t num_inputs = proto.operand_ids_size() - num_carries;
       const auto scan_operands = all_operands();
-      auto inputs = absl::MakeSpan(scan_operands)
-                        .subspan(0, scan_operands.size() - num_carries);
+      auto inputs = absl::MakeSpan(scan_operands).subspan(0, num_inputs);
       auto inits =
-          absl::MakeSpan(scan_operands)
-              .subspan(scan_operands.size() - num_carries, num_carries);
+          absl::MakeSpan(scan_operands).subspan(num_inputs, num_carries);
       instruction =
           CreateScan(shape, inputs, inits, computations(0), proto.dimensions(0),
                      proto.is_reverse(), proto.is_associative());
@@ -988,6 +991,25 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
           std::max<int64_t>(proto.feature_group_count(), 1),
           std::max<int64_t>(proto.batch_group_count(), 1), proto.window(),
           proto.convolution_dimension_numbers(), precision_config);
+      if (proto.conv_kind() != CONVOLUTION_KIND_UNSET) {
+        HloConvolutionInstruction::ConvKind conv_kind =
+            HloConvolutionInstruction::ConvKind::UNSET;
+        switch (proto.conv_kind()) {
+          case CONVOLUTION_KIND_FPROP:
+            conv_kind = HloConvolutionInstruction::ConvKind::FPROP;
+            break;
+          case CONVOLUTION_KIND_WGRAD:
+            conv_kind = HloConvolutionInstruction::ConvKind::WGRAD;
+            break;
+          case CONVOLUTION_KIND_DGRAD:
+            conv_kind = HloConvolutionInstruction::ConvKind::DGRAD;
+            break;
+          default:
+            break;
+        }
+        Cast<HloConvolutionInstruction>(instruction.get())
+            ->set_conv_kind(conv_kind);
+      }
       break;
     }
     case HloOpcode::kReduceWindow:
@@ -3027,6 +3049,44 @@ HloInstruction::InstructionVector HloInstruction::unique_operands() const {
   return unique;
 }
 
+std::optional<int64_t> HloInstruction::MapUnaryOutputDimToOperandDim(
+    int64_t output_dim_idx) const {
+  if (operand_count() != 1) {
+    return std::nullopt;
+  }
+  if (IsElementwise()) {
+    return output_dim_idx;
+  }
+  switch (opcode()) {
+    case HloOpcode::kBroadcast: {
+      // dimensions() maps operand dim -> output dim.
+      const auto& bcast_dims = dimensions();
+      auto it = absl::c_find(bcast_dims, output_dim_idx);
+      if (it == bcast_dims.end()) {
+        return std::nullopt;
+      }
+      return std::distance(bcast_dims.begin(), it);
+    }
+    case HloOpcode::kReshape:
+    case HloOpcode::kBitcast: {
+      if (!ShapeUtil::InsertedOrDeleted1SizedDimensions(operand(0)->shape(),
+                                                        shape())) {
+        return std::nullopt;
+      }
+      auto unmodified_dims = ShapeUtil::DimensionsUnmodifiedByReshape(
+          operand(0)->shape(), shape());
+      for (const auto& [input_dim, output_dim] : unmodified_dims) {
+        if (output_dim == output_dim_idx) {
+          return input_dim;
+        }
+      }
+      return std::nullopt;
+    }
+    default:
+      return std::nullopt;
+  }
+}
+
 absl::Status HloInstruction::AddControlDependencyTo(
     HloInstruction* instruction) {
   TF_RET_CHECK(instruction->parent() == parent());
@@ -3969,8 +4029,9 @@ bool HloInstruction::IsElementwiseImpl(
     return operand_idx.has_value() && operand_idx.value() == 0;
   }
   if (opcode_ == HloOpcode::kBitcastConvert &&
-      primitive_util::BitWidth(shape().element_type()) !=
-          primitive_util::BitWidth(operands_[0]->shape().element_type())) {
+      primitive_util::StorageBitWidth(shape().element_type()) !=
+          primitive_util::StorageBitWidth(
+              operands_[0]->shape().element_type())) {
     return false;
   }
   return IsOpElementwise(opcode_);
@@ -4074,10 +4135,25 @@ void HloInstruction::PrintWithCanonicalNameMap(
       (metadata_ != nullptr &&
        (!metadata_->op_type().empty() || !metadata_->op_name().empty() ||
         !metadata_->source_file().empty() ||
-        !metadata_->scheduling_name().empty()))) {
+        !metadata_->scheduling_name().empty() ||
+        metadata_->stack_frame_id() != 0))) {
     printer->Append(", metadata={");
-    printer->Append(xla::OpMetadataToString(
-        *metadata_, options.print_metadata_only_op_name()));
+    if (options.print_inline_stack_frames() &&
+        metadata_->stack_frame_id() != 0 && GetModule() != nullptr) {
+      OpMetadata metadata = *metadata_;
+      metadata.set_stack_frame_id(0);
+      auto frame = GetModule()->get_stack_frame(metadata_->stack_frame_id());
+      if (!frame.empty()) {
+        metadata.set_source_file(frame.file_name);
+        metadata.set_source_line(frame.line);
+        metadata.set_source_column(frame.column);
+      }
+      printer->Append(xla::OpMetadataToString(
+          metadata, options.print_metadata_only_op_name()));
+    } else {
+      printer->Append(xla::OpMetadataToString(
+          *metadata_, options.print_metadata_only_op_name()));
+    }
     printer->Append("}");
   }
   if (options.print_backend_config() && !backend_config_.empty()) {

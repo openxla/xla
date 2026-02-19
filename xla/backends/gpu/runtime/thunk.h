@@ -21,6 +21,7 @@ limitations under the License.
 #include <optional>
 #include <ostream>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -36,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
+#include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_multimem_registry.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -46,6 +48,7 @@ limitations under the License.
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/runtime/buffer_use.h"
+#include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -54,6 +57,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/gtl/int_type.h"
 #include "xla/util.h"
+#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -120,6 +124,9 @@ class Thunk {
  public:
   using ExecutionStreamIdMap =
       absl::flat_hash_map<ExecutionStreamId, se::Stream*>;
+
+  using BufferUses = absl::InlinedVector<BufferUse, 4>;
+  using ResourceUses = absl::InlinedVector<ResourceUse, 4>;
 
   // When default execution stream id is used, operations launched by a thunk
   // must be synchronized with a stream passed in ExecuteOptions.
@@ -288,8 +295,11 @@ class Thunk {
     // Parameters for executing collective operations.
     CollectiveParams* collective_params = nullptr;
 
-    // Collective cliques acquired based on resource requests.
+    // Collective cliques acquired based on clique requests.
     CollectiveCliques* collective_cliques = nullptr;
+
+    // Collective memory acquired based on memory requests.
+    CollectiveMemory* collective_memory = nullptr;
 
     // Multimem registry for preparing collective communicators.
     CollectiveMultimemRegistry* multicast_memory_registry = nullptr;
@@ -317,6 +327,7 @@ class Thunk {
         se::Stream* command_buffer_trace_stream,
         CollectiveParams* collective_params,
         CollectiveCliques* collective_cliques,
+        CollectiveMemory* collective_memory,
         ExecutionStreamIdMap additional_compute_streams = {});
 
     // Constructs execute parameters from an existing parameters but with
@@ -339,6 +350,9 @@ class Thunk {
 
     // Collective cliques acquired based on resource requests.
     CollectiveCliques* collective_cliques;
+
+    // Collective memory acquired based on memory requests.
+    CollectiveMemory* collective_memory;
 
     // Streams for moving data between host and device.
     se::Stream* device_to_host_stream;
@@ -365,6 +379,7 @@ class Thunk {
                   se::Stream* stream, se::Stream* command_buffer_trace_stream,
                   CollectiveParams* collective_params,
                   CollectiveCliques* collective_cliques,
+                  CollectiveMemory* collective_memory,
                   se::Stream* device_to_host_stream,
                   se::Stream* host_to_device_stream,
                   SendDeviceMemoryFunction* send_device_memory_function,
@@ -415,8 +430,6 @@ class Thunk {
   // Precondition: Initialize(initialize_params) has been called.
   virtual absl::Status ExecuteOnStream(const ExecuteParams& params) = 0;
 
-  using BufferUses = absl::InlinedVector<BufferUse, 4>;
-
   // Returns all device buffers used by the thunk.
   //
   // Does not propagate buffers from nested thunks.
@@ -445,11 +458,17 @@ class Thunk {
     return std::vector<Communicator*>();
   }
 
-  // Invokes `fn` with this thunk and all nested thunks.
-  virtual void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const;
+  // Type predicate for `Walk` callback.
+  template <typename F, typename Arg>
+  using Walker = std::enable_if_t<std::is_invocable_v<F, Arg> ||
+                                  std::is_invocable_r_v<absl::Status, F, Arg>>;
 
-  // Invokes `fn` with this thunk and all nested thunks.
-  virtual void ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn);
+  // Recursively walks all the thunks nested inside *this one and calls the
+  // user provided callback on every thunk. Always starts traversal with *this.
+  template <typename F, Walker<F, Thunk*>* = nullptr>
+  std::invoke_result_t<F, Thunk*> Walk(F&& callback);
+  template <typename F, Walker<F, const Thunk*>* = nullptr>
+  std::invoke_result_t<F, const Thunk*> Walk(F&& callback) const;
 
   // Recursively replaces all nested thunks with the result of applying `fn` to
   // them.
@@ -494,6 +513,13 @@ class Thunk {
 
   virtual bool IsAsyncDone() const { return false; }
 
+ protected:
+  // Walks all nested thunks and calls `callback` for them.
+  virtual absl::Status WalkNested(
+      absl::FunctionRef<absl::Status(Thunk*)> callback) {
+    return absl::OkStatus();
+  }
+
  private:
   Kind kind_;
   ThunkInfo thunk_info_;
@@ -518,6 +544,28 @@ bool IsReductionCollective(Thunk::Kind kind);
 // Returns the metadata from all thunks in the given thunk graph.
 ThunkMetadataListProto GetMetadataListProtoFromThunkGraph(
     const Thunk& root_thunk);
+
+//===----------------------------------------------------------------------===//
+// Thunk templates implementation.
+//===----------------------------------------------------------------------===//
+
+template <typename F, Thunk::Walker<F, Thunk*>*>
+std::invoke_result_t<F, Thunk*> Thunk::Walk(F&& callback) {
+  if constexpr (std::is_void_v<std::invoke_result_t<F, Thunk*>>) {
+    Walk([f = std::forward<F>(callback)](Thunk* thunk) {
+      return (f(thunk), absl::OkStatus());
+    }).IgnoreError();  // Error can never happen here.
+  } else {
+    RETURN_IF_ERROR(callback(this));
+    return WalkNested(callback);
+  }
+}
+
+template <typename F, Thunk::Walker<F, const Thunk*>*>
+std::invoke_result_t<F, const Thunk*> Thunk::Walk(F&& callback) const {
+  return const_cast<Thunk*>(this)->Walk(  // NOLINT
+      std::forward<F>(callback));
+}
 
 }  // namespace gpu
 }  // namespace xla

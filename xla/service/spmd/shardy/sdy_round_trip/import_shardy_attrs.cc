@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cassert>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -291,6 +292,9 @@ class SdyRoundTripImportShardyAttrsPass
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
       SdyRoundTripImportShardyAttrsPass)
 
+  SdyRoundTripImportShardyAttrsPass(bool enableHloShardingV3)
+      : enableHloShardingV3(enableHloShardingV3) {}
+
   void runOnOperation() final {
     ModuleOp moduleOp = getOperation();
 
@@ -354,16 +358,22 @@ class SdyRoundTripImportShardyAttrsPass
   void getDependentDialects(mlir::DialectRegistry& registry) const final {
     registry.insert<mlir::sdy::SdyDialect>();
   }
+
+ private:
+  bool enableHloShardingV3;
 };
 
 }  // namespace
 
-std::unique_ptr<mlir::Pass> createSdyRoundTripImportShardyAttrsPass() {
-  return std::make_unique<SdyRoundTripImportShardyAttrsPass>();
+std::unique_ptr<mlir::Pass> createSdyRoundTripImportShardyAttrsPass(
+    bool enableHloShardingV3) {
+  return std::make_unique<SdyRoundTripImportShardyAttrsPass>(
+      enableHloShardingV3);
 }
 
 void registerSdyRoundTripImportShardyAttrsPass() {
-  mlir::registerPass(createSdyRoundTripImportShardyAttrsPass);
+  mlir::registerPass(std::bind(createSdyRoundTripImportShardyAttrsPass,
+                               /*enableHloShardingV3=*/false));
 }
 
 }  // namespace sdy

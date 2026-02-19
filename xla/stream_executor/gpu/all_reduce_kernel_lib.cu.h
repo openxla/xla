@@ -102,11 +102,12 @@ __device__ __forceinline__ RestrictedPtr<T> GetMultimemPtr(
       (uint64_t)metadata.param_to_peers[argument_offset + metadata.rank];
   uint64_t offset = (uint64_t)ptr - current_base;
 
-  return (RestrictedPtr<T>)((uint64_t)metadata.multicast_buffer_ptr + offset);
+  return (RestrictedPtr<T>)((uint64_t)metadata
+                                .param_to_multimem_addresses[argument_index] +
+                            offset);
 }
 
-template <typename T, xla::ReductionKind ReductionKindT,
-          PlatformType PlatformT = PlatformType::NOGPU>
+template <typename T, xla::ReductionKind ReductionKindT, PlatformType PlatformT>
 __device__ __forceinline__ void OneShotAllReduceKernelImpl(
     const AllReduceKernelParams<T>& args) {
   __shared__ std::array<RestrictedPtr<uint32_t>, kMaxNumAllReduceInputPtrs>
@@ -160,8 +161,7 @@ __device__ __forceinline__ void OneShotAllReduceKernelImpl(
 // Right now all devices are copying their data to the remote buffer after
 // which, the first device performs the reduce and broadcast operations using
 // multimem instructions.
-template <typename T, xla::ReductionKind ReductionKindT,
-          PlatformType PlatformT = PlatformType::NOGPU>
+template <typename T, xla::ReductionKind ReductionKindT, PlatformType PlatformT>
 __device__ __forceinline__ void MultimemAllReduceKernelImpl(
     const AllReduceKernelParams<T>& args) {
   if (!std::is_same_v<T, float>) {
@@ -182,20 +182,19 @@ __device__ __forceinline__ void MultimemAllReduceKernelImpl(
       kNumElementsPerThread * (blockIdx.x * blockDim.x + threadIdx.x);
   int64_t stride = kNumElementsPerThread * blockDim.x * gridDim.x;
 
-  // Copy data from local input buffer to remote input buffer.
-  for (int i = offset; i < args.num_elements; i += stride) {
-    VecStore(args.symmetric_input_ptrs + i, VecLoad(args.input_buffer + i));
-  }
-
+  __syncthreads();
   SyncRemoteBlocks<PlatformT, kMaxNumAllReduceInputPtrs>(
       signal_flags_buffers, args.rank, args.num_ranks, args.signal_value);
   __syncthreads();
 
-  RestrictedPtr<T> multimem_ptr = GetMultimemPtr<T>(
-      args.symmetric_input_ptrs, 0, args.num_ranks, *args.metadata);
+  RestrictedPtr<T> src_multimem =
+      GetMultimemPtr<T>(args.input_buffer, 0, args.num_ranks, *args.metadata);
+  RestrictedPtr<T> dst_multimem =
+      GetMultimemPtr<T>(args.output_buffer, 2, args.num_ranks, *args.metadata);
   if (args.metadata->rank == 0) {
     for (int i = offset; i < args.num_elements; i += stride) {
-      T* multimem_element_ptr = multimem_ptr + i;
+      T* src_multimem_element_ptr = src_multimem + i;
+      T* dst_multimem_element_ptr = dst_multimem + i;
 
       // Reduce
       Vec<T> vec;
@@ -204,13 +203,13 @@ __device__ __forceinline__ void MultimemAllReduceKernelImpl(
           "[%4];"
           : "=f"(vec.data[0]), "=f"(vec.data[1]), "=f"(vec.data[2]),
             "=f"(vec.data[3])
-          : "l"(multimem_element_ptr)
+          : "l"(src_multimem_element_ptr)
           : "memory");
 
       // Broadcast
       asm volatile(
           "multimem.st.relaxed.sys.global.v4.f32 [%0], {%1,%2,%3,%4};" ::"l"(
-              multimem_element_ptr),
+              dst_multimem_element_ptr),
           "f"(vec.data[0]), "f"(vec.data[1]), "f"(vec.data[2]), "f"(vec.data[3])
           : "memory");
     }
@@ -221,15 +220,10 @@ __device__ __forceinline__ void MultimemAllReduceKernelImpl(
   SyncRemoteBlocks<PlatformT, kMaxNumAllReduceInputPtrs>(
       signal_flags_buffers, args.rank, args.num_ranks, args.signal_value + 1);
   __syncthreads();
-
-  for (int i = offset; i < args.num_elements; i += stride) {
-    VecStore(args.output_buffer + i, VecLoad(args.symmetric_input_ptrs + i));
-  }
 }
 #endif  // __CUDA_ARCH__ >= 900
 
-template <typename T, xla::ReductionKind ReductionKindT,
-          PlatformType PlatformT = PlatformType::NOGPU>
+template <typename T, xla::ReductionKind ReductionKindT, PlatformType PlatformT>
 __device__ __forceinline__ void TwoShotAllReduceKernelImpl(
     const AllReduceKernelParams<T>& args) {
   __shared__ std::array<RestrictedPtr<uint32_t>, kMaxNumAllReduceInputPtrs>
@@ -337,8 +331,7 @@ __device__ __forceinline__ void TwoShotAllReduceKernelImpl(
 }
 
 template <typename T, xla::ReductionKind ReductionKindT,
-          AllReduceStrategy kAllReduceStrategy,
-          PlatformType PlatformT = PlatformType::NOGPU>
+          AllReduceStrategy kAllReduceStrategy, PlatformType PlatformT>
 __global__ void AllReduceKernelImpl(AllReduceKernelParams<T> args) {
   if constexpr (kAllReduceStrategy == AllReduceStrategy::kOneShot) {
     OneShotAllReduceKernelImpl<T, ReductionKindT, PlatformT>(args);

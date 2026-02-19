@@ -63,6 +63,8 @@ class CommonPjRtClient : public PjRtClient {
   // Some clients do not support recursion eg: calling to_literal in host
   // callbacks. Those clients should return false here.
   virtual bool allows_recursion() const { return true; }
+  virtual bool allows_execute_recursion() const { return allows_recursion(); }
+  virtual bool allow_fallback_for_donation() const { return false; }
 
   // Backend specific handlers for when an oom is detected during execute.
   virtual void CallOomHandlers() const {}
@@ -194,6 +196,12 @@ class CommonPjRtClient : public PjRtClient {
       HostBufferSemantics host_buffer_semantics,
       absl::AnyInvocable<void() &&> on_done_with_host_buffer,
       PjRtMemorySpace* memory_space, const Layout* device_layout) override;
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBuffer(
+      const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
+      std::optional<absl::Span<int64_t const>> byte_strides,
+      HostBufferSemantics host_buffer_semantics,
+      absl::AnyInvocable<void() &&> on_done_with_host_buffer,
+      PjRtBuffer* donated_dst, const Layout* device_layout) override;
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostLiteral(
       const LiteralSlice& literal, PjRtMemorySpace* memory_space,
@@ -304,6 +312,7 @@ class PjRtRawLoadedExecutable {
   struct RawExecuteResult {
     std::optional<tsl::Future<>> future;
     tsl::RCReference<PjRtDeviceEvent> primary_execute_event;
+    absl::Status inline_status;
   };
   virtual RawExecuteResult Execute(
       const ExecuteOptions& options,
@@ -316,8 +325,8 @@ class PjRtRawLoadedExecutable {
 class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
  public:
   CommonPjRtLoadedExecutable(
-      CommonPjRtClient* client, std::vector<Shape> parameter_device_shapes,
-      Shape output_device_shape, std::vector<int> output_memory_space_kind_ids,
+      std::vector<Shape> parameter_device_shapes, Shape output_device_shape,
+      std::vector<int> output_memory_space_kind_ids,
       std::vector<PjRtDevice*> addressable_devices,
       std::vector<LogicalDeviceIds> addressable_device_logical_ids)
       : parameter_device_shapes_(std::move(parameter_device_shapes)),
@@ -371,8 +380,8 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
   };
 
   virtual absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>>
-  StartRawExecutable(const ExecuteOptions& options, int replica, int partition,
-                     PjRtDevice* device) const = 0;
+  StartRawExecutable(const ExecuteOptions& options, xla::RunId run_id,
+                     int replica, int partition, PjRtDevice* device) const = 0;
 
   // Returns a sorted list of the parameters that must be donated as a
   // side-effect of the execution. Derived classes may use custom logic.
@@ -390,22 +399,22 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
 
   absl::Status ExecutePrepare(ExecuteLaunchArgs& launch_args,
                               absl::Span<PjRtBuffer* const> argument_handles,
-                              int replica, int partition,
+                              xla::RunId run_id, int replica, int partition,
                               const ExecuteOptions& options,
                               size_t host_callback_idx,
                               PjRtDevice* device) const;
 
   // Run Prepare and Launch phases on a single device.
   absl::StatusOr<Result> ExecuteHelperOnSingleDevice(
-      absl::Span<PjRtBuffer* const> argument_handles, int replica,
-      int partition, const ExecuteOptions& options, bool fill_future,
-      PjRtDevice* device = nullptr) const;
+      absl::Span<PjRtBuffer* const> argument_handles, xla::RunId run_id,
+      int replica, int partition, const ExecuteOptions& options,
+      bool fill_future, PjRtDevice* device = nullptr) const;
 
   absl::Status ExecutePrepareWithOomRetries(
       std::optional<ExecuteLaunchArgs>& launch_args,
-      absl::Span<PjRtBuffer* const> argument_handles, int replica,
-      int partition, const ExecuteOptions& options, size_t host_callback_idx,
-      PjRtDevice* device = nullptr) const;
+      absl::Span<PjRtBuffer* const> argument_handles, xla::RunId run_id,
+      int replica, int partition, const ExecuteOptions& options,
+      size_t host_callback_idx, PjRtDevice* device = nullptr) const;
 
   virtual void LaunchOnDevice(PjRtDevice* device,
                               absl::AnyInvocable<void()> execute_fn) const = 0;
@@ -415,7 +424,8 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
     return false;
   }
 
-  Result ExecuteLaunch(ExecuteLaunchArgs& launch_args, bool fill_future) const;
+  absl::StatusOr<Result> ExecuteLaunch(ExecuteLaunchArgs& launch_args,
+                                       bool fill_future) const;
 
   // Parameter shapes.
   std::vector<Shape> parameter_device_shapes_;
@@ -484,11 +494,15 @@ class CommonPjRtBufferImpl : public CommonPjRtBuffer {
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override;
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
+      PjRtBuffer* donated_dst) override;
 
   // This behaves like CopyToMemorySpace for memory space pairs which
   // require no layout changes.
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> DirectCopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space);
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> DirectCopyToMemorySpace(
+      PjRtBuffer* donated_dst);
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToCpuMemorySpace(
       const xla::Shape& shape, PjRtMemorySpace* dst_memory_space);

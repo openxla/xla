@@ -20,6 +20,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology.pb.h"
+#include "xla/runtime/device_id.h"
 #include "tsl/platform/protobuf.h"
 
 namespace xla {
@@ -56,7 +57,7 @@ TEST(CpuTopology, ToProto) {
 }
 
 TEST(PackCpuDeviceId, PackAndUnpack) {
-  PjRtGlobalDeviceId device_id = PackCpuDeviceId(2, 3);
+  GlobalDeviceId device_id = PackCpuDeviceId(2, 3);
   EXPECT_EQ(UnpackCpuProcessIndex(device_id), 2);
   EXPECT_EQ(UnpackCpuLocalDeviceId(device_id), 3);
 }
