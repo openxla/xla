@@ -23,4 +23,8 @@ cc_binary(
     srcs = [
         "xxd.c",
     ],
+    local_defines = select({
+        "@platforms//os:windows": ["WIN32=1"],
+        "//conditions:default": [],
+    }),
 )
