@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "mhlo/IR/register.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -50,6 +51,8 @@ limitations under the License.
 #include "shardy/dialect/sdy/ir/utils.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/mesh_and_axis.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/service/spmd/shardy/constants.h"
@@ -478,6 +481,120 @@ mlir::sdy::TensorShardingPerValueAttr getFuncResultShardings(
   }
   return mlir::sdy::TensorShardingPerValueAttr::get(funcOp.getContext(),
                                                     resultShardings);
+}
+
+mlir::sdy::MeshAttr toSdyMeshAttr(const Mesh& mesh,
+                                  mlir::MLIRContext* context) {
+  if (mesh.axis_names().empty()) {
+    if (mesh.device_assignment().num_elements() == 1) {
+      return mlir::sdy::MeshAttr::getMaximal(
+          context, mesh.device_assignment().array()(0));
+    }
+    return mlir::sdy::MeshAttr::get(context, {}, {});
+  }
+
+  llvm::SmallVector<mlir::sdy::MeshAxisAttr> sdyAxes;
+  absl::Span<const std::string> axis_names = mesh.axis_names();
+  absl::Span<const int64_t> axis_sizes = mesh.axis_sizes();
+  sdyAxes.reserve(axis_names.size());
+  for (auto [axis_name, axis_size] : llvm::zip_equal(axis_names, axis_sizes)) {
+    sdyAxes.push_back(
+        mlir::sdy::MeshAxisAttr::get(context, axis_name, axis_size));
+  }
+
+  llvm::SmallVector<int64_t> deviceIds;
+  bool isSimpleIota =
+      mesh.device_assignment().iota().has_value() &&
+      mesh.device_assignment().iota()->reshape_dims().size() == 1;
+  if (!isSimpleIota) {
+    LOG(WARNING) << "This branch is not expected as JAX is not known to use "
+                    "device lists";
+    deviceIds.reserve(mesh.device_assignment().num_elements());
+    for (int64_t deviceId : mesh.device_assignment().array()) {
+      deviceIds.push_back(deviceId);
+    }
+  }
+  return mlir::sdy::MeshAttr::get(context, sdyAxes, deviceIds);
+}
+
+mlir::sdy::AxisRefAttr toSdyAxisRefAttr(const AxisRef& axisRef,
+                                        const Mesh& mesh,
+                                        mlir::MLIRContext* context) {
+  absl::Span<const std::string> axisNames = mesh.axis_names();
+  if (axisRef.sub_axis_info().has_value()) {
+    return mlir::sdy::AxisRefAttr::get(
+        context, axisNames[axisRef.mesh_axis_index()],
+        mlir::sdy::SubAxisInfoAttr::get(context,
+                                        axisRef.sub_axis_info()->pre_size,
+                                        axisRef.sub_axis_info()->size));
+  }
+  return mlir::sdy::AxisRefAttr::get(context,
+                                     axisNames[axisRef.mesh_axis_index()]);
+}
+
+mlir::sdy::TensorShardingAttr convertToSdyShardingAttr(
+    HloSharding hloSharding, mlir::MLIRContext* context) {
+  CHECK(!hloSharding.IsTuple());
+  CHECK(hloSharding.UseNamedShardingLeaf());
+
+  if (hloSharding.IsTileMaximal()) {
+    if (hloSharding.IsReplicated()) {
+      // TODO: We don't have rank here as if sharding is replicated we don't
+      // store rank in HloShardingV3 and why should it be even required ?
+      return mlir::sdy::TensorShardingAttr::getFullyReplicated(
+          context, /*rank=*/0, mlir::sdy::MeshAttr::get(context, {}, {}),
+          /*isClosed=*/true);
+    }
+    return mlir::sdy::TensorShardingAttr::getFullyClosed(
+        context, /*rank=*/0,
+        mlir::sdy::MeshAttr::getMaximal(context,
+                                        hloSharding.GetUniqueDevice()));
+  }
+
+  const NamedSharding& namedSharding = hloSharding.named_sharding();
+  mlir::sdy::MeshAttr meshAttr = toSdyMeshAttr(namedSharding.mesh(), context);
+
+  llvm::SmallVector<mlir::sdy::DimensionShardingAttr> dimShardings;
+  for (const auto& dimSharding : namedSharding.dim_shardings()) {
+    llvm::SmallVector<mlir::sdy::AxisRefAttr> axes;
+    for (const auto& axisRef : dimSharding.axes()) {
+      axes.push_back(toSdyAxisRefAttr(axisRef, namedSharding.mesh(), context));
+    }
+    dimShardings.push_back(mlir::sdy::DimensionShardingAttr::get(
+        context, axes, dimSharding.is_closed()));
+  }
+
+  llvm::SmallVector<mlir::sdy::AxisRefAttr> replicatedAxes;
+  for (const auto& axisRef : namedSharding.replicated_axes()) {
+    replicatedAxes.push_back(
+        toSdyAxisRefAttr(axisRef, namedSharding.mesh(), context));
+  }
+
+  llvm::SmallVector<mlir::sdy::AxisRefAttr> unreducedAxes;
+  for (const auto& axisRef : namedSharding.unreduced_axes()) {
+    unreducedAxes.push_back(
+        toSdyAxisRefAttr(axisRef, namedSharding.mesh(), context));
+  }
+
+  // TODO: Confirm we don't need to import HloSharding manual axes as it will be
+  // handled by shard maps import. Then what is sharding is MANUAL
+
+  return mlir::sdy::TensorShardingAttr::get(context, meshAttr, dimShardings,
+                                            replicatedAxes, unreducedAxes);
+}
+
+mlir::sdy::TensorShardingPerValueAttr convertToSdySharding(
+    HloSharding hloSharding, mlir::MLIRContext* context) {
+  if (hloSharding.IsTuple()) {
+    llvm::SmallVector<TensorShardingAttr> sdyShardings;
+    for (const HloSharding& sharding : hloSharding.tuple_elements()) {
+      sdyShardings.push_back(convertToSdyShardingAttr(sharding, context));
+    }
+    return TensorShardingPerValueAttr::get(context, sdyShardings);
+  }
+
+  return TensorShardingPerValueAttr::get(
+      context, convertToSdyShardingAttr(hloSharding, context));
 }
 
 }  // namespace sdy
