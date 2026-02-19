@@ -72,6 +72,39 @@ absl::StatusOr<bool> AllGatherSimplifier::RunImpl(
           TF_RETURN_IF_ERROR(ds->ReplaceAllUsesWith(ag_operand));
           TF_RETURN_IF_ERROR(
               computation->RemoveInstructionAndUnusedOperands(ds));
+        } else {
+          // Explicit check if multiple dynamic slice users can use the operand
+          // of all gather instead
+          for (HloInstruction* user : all_gather->users()) {
+            if (user->opcode() != HloOpcode::kDynamicSlice) {
+              return false;
+            }
+          }
+          // For the root
+          if (all_gather->users().empty()) {
+            return false;
+          }
+          HloInstruction* ag_operand = all_gather->mutable_operand(0);
+          bool all_dynamic_slices_from_local_device = true;
+          for (HloInstruction* user : all_gather->users()) {
+            bool is_cross_module =
+                all_gather->channel_id() &&
+                all_gather->opcode() == HloOpcode::kAllGather;
+            if (!IsDynamicSlicingLocalDeviceFromAllGather(
+                    user, all_gather, config.num_partitions(),
+                    config.replica_count(), is_cross_module,
+                    all_gather->use_global_device_ids())) {
+              all_dynamic_slices_from_local_device = false;
+              break;
+            }
+          }
+          if (all_dynamic_slices_from_local_device) {
+            changed = true;
+            TF_RETURN_IF_ERROR(
+                all_gather->ReplaceAllUsesWithDifferentShape(ag_operand));
+            TF_RETURN_IF_ERROR(
+                computation->RemoveInstructionAndUnusedOperands(all_gather));
+          }
         }
       }
     }
