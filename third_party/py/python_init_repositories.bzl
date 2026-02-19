@@ -9,7 +9,8 @@ def python_init_repositories(
         local_wheel_dist_folder = None,
         default_python_version = None,
         local_wheel_inclusion_list = ["*"],
-        local_wheel_exclusion_list = []):
+        local_wheel_exclusion_list = [],
+        rules_python_strict = False):
     python_repository(
         name = "python_version_repo",
         requirements_versions = requirements.keys(),
@@ -19,5 +20,6 @@ def python_init_repositories(
         default_python_version = default_python_version,
         local_wheel_inclusion_list = local_wheel_inclusion_list,
         local_wheel_exclusion_list = local_wheel_exclusion_list,
+        rules_python_strict = rules_python_strict,
     )
     py_repositories()
