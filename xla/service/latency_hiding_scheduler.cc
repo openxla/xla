@@ -576,13 +576,13 @@ AsyncTracker::RecursivelyComputeResourceMap(
                                      seen_resources_per_inst.end());
     }
     for (const HloComputation* called_comp : instr->called_computations()) {
-      for (auto& called_per_opcode_pair :
+      for (const auto& [type, usage] :
            RecursivelyComputeResourceMap(called_comp)) {
-        if (seen_resources_per_comp.contains(called_per_opcode_pair.first)) {
+        if (seen_resources_per_comp.contains(type)) {
           continue;
         }
-        (*m)[called_per_opcode_pair.first] += called_per_opcode_pair.second;
-        seen_resources_per_comp.insert(called_per_opcode_pair.first);
+        (*m)[type] += usage;
+        seen_resources_per_comp.insert(type);
       }
     }
   }
@@ -618,11 +618,9 @@ AsyncTracker::RecursivelyComputeResourceMapForScheduledComputation(
       }
     }
     for (const HloComputation* called_comp : inst->called_computations()) {
-      for (auto& called_per_opcode_pair :
+      for (const auto& [type, usage] :
            RecursivelyComputeResourceMap(called_comp)) {
-        int64_t type = called_per_opcode_pair.first;
-        int64_t current_usage =
-            inflight_resource_usage[type] + called_per_opcode_pair.second;
+        int64_t current_usage = inflight_resource_usage[type] + usage;
         int64_t& max_usage = res_map[type];
         max_usage = std::max(max_usage, current_usage);
       }
@@ -1817,14 +1815,14 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
       const HloComputation* comp =
           sched_state.sched_graph.GetOriginalInstrList()[0]->parent();
 
-      for (const auto& pair : skipped_nodes_and_reasons) {
-        if (pair.second == SkipNodeReason::kAnnotationGroupNotReady) {
-          int64_t annotation = pair.first->GetAnnotation();
+      for (const auto& [node, reason] : skipped_nodes_and_reasons) {
+        if (reason == SkipNodeReason::kAnnotationGroupNotReady) {
+          int64_t annotation = node->GetAnnotation();
           int64_t current_annotation_size =
               annotation_tracker_->GetNumInstructions(comp, annotation);
           if (current_annotation_size < min_annotation_size) {
             min_annotation_size = current_annotation_size;
-            node_to_deannotate = pair.first;
+            node_to_deannotate = node;
           }
         }
       }
