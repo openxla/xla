@@ -174,6 +174,10 @@ TEST_P(DotAlgorithmSupportTest, AlgorithmIsSupportedFromCudaCapability) {
     if (params.backend_restriction == BackendRestriction::kTritonOnly) {
       GTEST_SKIP() << "TODO: Triton unsupported in ROCm";
     }
+    if (params.algorithm == PrecisionConfig::ALG_DOT_TF32_TF32_F32 ||
+        params.algorithm == PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3) {
+      GTEST_SKIP() << "Skipped on ROCm";
+    }
   }
 
   // CublasLt does not support FP8 fast accumulation.

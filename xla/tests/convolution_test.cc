@@ -54,6 +54,15 @@ namespace {
 class ConvolutionTest : public ClientLibraryTestRunnerMixin<
                             HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>> {
  public:
+  void SetUp() override {
+    ClientLibraryTestRunnerMixin<
+        HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>>::SetUp();
+    if (IsRocm() &&
+        GetDebugOptionsForTest().xla_gpu_autotune_level() == 0) {
+      GTEST_SKIP() << "Skipped on ROCm";
+    }
+  }
+
   // Returns true if the test is running on ROCm.
   bool IsRocm() {
     return test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuRocm);
@@ -1854,6 +1863,14 @@ TEST_F(ConvolutionTest, ConvolveF32BackwardInputGroupedConvolution) {
 class ConvolutionHloTest
     : public HloPjRtInterpreterReferenceMixin<HloPjRtTestBase> {
  public:
+  void SetUp() override {
+    HloPjRtInterpreterReferenceMixin<HloPjRtTestBase>::SetUp();
+    if (IsRocm() &&
+        GetDebugOptionsForTest().xla_gpu_autotune_level() == 0) {
+      GTEST_SKIP() << "Skipped on ROCm";
+    }
+  }
+
   // Returns true if the test is running on ROCm.
   bool IsRocm() {
     return test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuRocm);

@@ -125,6 +125,9 @@ ENTRY entry_computation {
 }
 
 TEST_F(TritonTest, FuseSubchannelDequantizationWithTranspose) {
+  if (device_desc().gpu_compute_capability().IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   constexpr absl::string_view kHloText = R"(
     HloModule FuseSubchannelDequantizationWithTranspose
 

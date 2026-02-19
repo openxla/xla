@@ -997,6 +997,10 @@ TEST(StreamExecutorGpuClientTest, FromHostAsyncPinnedHostChunked) {
 TEST(StreamExecutorGpuClientTest, DeleteBufferThenFulfillBufferNoDeadLock) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
                           GetStreamExecutorGpuClient(GpuClientOptions()));
+  // Skip on ROCm due to thread resource exhaustion
+  if (client->platform_name() == "rocm") {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   ASSERT_THAT(client->addressable_devices(), SizeIs(Gt(0)));
   TF_ASSERT_OK_AND_ASSIGN(
       PjRtMemorySpace * memspace,
@@ -1902,6 +1906,11 @@ TEST(StreamExecutorGpuClientTest,
      GetCompiledMemoryStatsWithTupleAndNcclUserBuffers) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(DefaultOptions()));
+
+  // Skip on ROCm as memory stats differ between CUDA and ROCm
+  if (client->platform_name() == "rocm") {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
 
   xla::CompileOptions options;
   options.executable_build_options.mutable_debug_options()
@@ -3340,6 +3349,15 @@ class ShardedAutotuningTest
 };
 
 TEST_P(ShardedAutotuningTest, ShardedAutotuningWorks) {
+  // Skip on ROCm as this test uses CUDA-specific features
+  {
+    TF_ASSERT_OK_AND_ASSIGN(auto client,
+                            GetStreamExecutorGpuClient(DefaultOptions()));
+    if (client->platform_name() == "rocm") {
+      GTEST_SKIP() << "Skipped on ROCm";
+    }
+  }
+
   ShardedAutotuningTestInfo param = GetParam();
 
   std::string cache_dir;

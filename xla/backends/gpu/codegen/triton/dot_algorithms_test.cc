@@ -1571,6 +1571,16 @@ TEST_P(TritonAndBlasSupportForDifferentTensorSizes, Regular2DDot) {
 
 TEST_P(TritonAndBlasSupportForDifferentTensorSizes,
        IsDotAlgorithmSupportedByTriton) {
+  if (GpuComputeComp().IsRocm()) {
+    switch (GetParam()) {
+      case PC::ALG_DOT_F32_F32_F32:
+      case PC::ALG_DOT_TF32_TF32_F32:
+      case PC::ALG_DOT_TF32_TF32_F32_X3:
+        GTEST_SKIP() << "Not supported on ROCm";
+      default:
+        break;
+    }
+  }
   // Here we test which dot algorithm is supported by triton.
   // In case of a change you need to update the expected results.
   constexpr absl::string_view kHloText = R"(

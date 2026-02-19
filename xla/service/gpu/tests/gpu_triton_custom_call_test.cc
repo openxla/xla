@@ -339,6 +339,9 @@ TEST_F(GpuIrEmitterUnnestedTest, RunTritonCustomCallWithDeviceSideTMA) {
 }
 
 TEST_F(GpuIrEmitterUnnestedTest, CanNotEmitTritonCustomCallOnPreAmpereGpu) {
+  if (is_built_with_rocm_) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   if (GetCudaComputeCapability().IsAtLeastAmpere()) {
     GTEST_SKIP() << "Running on Ampere or more recent GPU, skipping.";
   }

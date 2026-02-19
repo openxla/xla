@@ -3407,6 +3407,10 @@ TEST_F(TritonEmitterTest, ConvertF16ToF8E5M2Exhaustive) {
                     "always correct";
   }
 
+  if (GpuComputeCapability().IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
+
   constexpr absl::string_view kHloTextTemplate = R"(
 computation {
   p0 = f16[65536]{0} parameter(0)

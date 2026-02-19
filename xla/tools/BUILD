@@ -1215,6 +1215,7 @@ xla_cc_test(
         "//xla/service:symbol_repository",
         "//xla/service:xla_compile_result_proto_cc_impl",
         "//xla/stream_executor:device_description_proto_cc",
+        "//xla/stream_executor:platform_manager",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",

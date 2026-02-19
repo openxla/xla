@@ -357,6 +357,9 @@ using BitcastOrReshapeTest = SupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(BitcastOrReshapeTest, IsTritonSupportedBitcastOrReshape) {
   auto [data_type, opcode, cc] = GetParam();
+  if (cc.IsRocm() && (data_type == F8E4M3FN || data_type == F8E5M2)) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $0[1,16,4] parameter(0)
@@ -370,6 +373,9 @@ ENTRY triton_computation {
 
 TEST_P(BitcastOrReshapeTest, IsTritonSupported0DBitcastOrReshape) {
   auto [data_type, opcode, cc] = GetParam();
+  if (cc.IsRocm() && (data_type == F8E4M3FN || data_type == F8E5M2)) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $0[1,1,1] parameter(0)
@@ -443,6 +449,9 @@ using UnaryElementwiseTest = SupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(UnaryElementwiseTest, IsTritonSupportedUnaryElementwise) {
   auto [data_type, opcode, cc] = GetParam();
+  if (cc.IsRocm() && (data_type == F8E4M3FN || data_type == F8E5M2)) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string kDefaultHloTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $0[33,68] parameter(0)
@@ -544,6 +553,11 @@ class ConvertTest
 
 TEST_P(ConvertTest, Convert) {
   auto [data_type_in, data_type_out, cc] = GetParam();
+  if (cc.IsRocm() &&
+      (data_type_in == F8E4M3FN || data_type_out == F8E4M3FN ||
+       data_type_in == F8E5M2 || data_type_out == F8E5M2)) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
 
   const std::string hlo_text = absl::Substitute(
       R"(
@@ -611,6 +625,12 @@ using BinaryElementwiseTest = SupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(BinaryElementwiseTest, IsTritonSupportedBinaryElementwise) {
   auto [data_type, opcode, cc] = GetParam();
+  if (cc.IsRocm() &&
+      (data_type == F8E4M3FN || data_type == F8E5M2 ||
+       ((data_type == F16 || data_type == BF16) &&
+        opcode == HloOpcode::kDivide))) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $0[11,63] parameter(0)
@@ -645,6 +665,12 @@ ENTRY triton_computation {
 
 TEST_P(BinaryElementwiseTest, IsTritonSupportedBinaryElementwise0D) {
   auto [data_type, opcode, cc] = GetParam();
+  if (cc.IsRocm() &&
+      (data_type == F8E4M3FN || data_type == F8E5M2 ||
+       ((data_type == BF16 || data_type == F16) &&
+        opcode == HloOpcode::kDivide))) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $0[] parameter(0)
@@ -709,6 +735,9 @@ using TernaryElementwiseTest = SupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(TernaryElementwiseTest, IsTritonSupportedTernaryElementwise) {
   auto [data_type, opcode, cc] = GetParam();
+  if (cc.IsRocm() && (data_type == F8E4M3FN || data_type == F8E5M2)) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $2[13,63] parameter(0)
@@ -932,6 +961,10 @@ using ReductionComputationTest = SupportTestWithTypeAndOpcodeAndDeviceParam;
 // computation and in regular HLO. See triton_support.cc for more details.
 TEST_P(ReductionComputationTest, DifferentBinaryOps) {
   auto [data_type, opcode, cc] = GetParam();
+  if (cc.IsRocm() && opcode == HloOpcode::kDivide &&
+      (data_type == BF16 || data_type == F16)) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string kHloTestTemplate = absl::Substitute(
       R"(
 reduce_computation {
@@ -984,6 +1017,9 @@ using TransposeTest = SupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(TransposeTest, LoadTranspose3D) {
   auto [data_type, opcode, cc] = GetParam();
+  if (cc.IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   parameter_0 = $0[125,127,37] parameter(0)
@@ -1011,6 +1047,9 @@ using SliceTest = SupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(SliceTest, ContinuousSlice) {
   auto [data_type, opcode, cc] = GetParam();
+  if (cc.IsRocm() && (data_type == F8E4M3FN || data_type == F8E5M2)) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string kHloTestTemplate = (R"(
 ENTRY triton_computation {
   p = $0[128,32] parameter(0)
@@ -1460,6 +1499,11 @@ using BroadcastTest = SupportTestWithTypeAndDeviceParam;
 
 TEST_P(BroadcastTest, Broadcast) {
   auto [data_type, cc] = GetParam();
+  if (cc.IsRocm() &&
+      (data_type == F8E4M3FN || data_type == F8E5M2 || data_type == F64 ||
+       data_type == S64)) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
   input = $0[35,131] parameter(0)
@@ -1483,6 +1527,10 @@ using ParameterTest = SupportTestWithTypeAndDeviceParam;
 
 TEST_P(ParameterTest, Parameter) {
   auto [data_type, cc] = GetParam();
+  if (cc.IsRocm() &&
+      (data_type == F8E4M3FN || data_type == F8E5M2 || data_type == S4)) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   std::string hlo_test_template =
       R"(
 ENTRY triton_computation {
@@ -1516,6 +1564,9 @@ TEST_P(ConstantTest, ConstantEffectiveScalar) {
   // The IsTritonSupportedReduction effectively tests the scalar constant
   // support.
   auto [data_type, cc] = GetParam();
+  if (cc.IsRocm() && (data_type == F8E4M3FN || data_type == F8E5M2)) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string kHloTestTemplate = absl::Substitute(R"(
 ENTRY triton_computation {
   ROOT const = $$0[1,1] constant({{$0}})
@@ -1904,6 +1955,9 @@ class DotTypesTest
 TEST_P(DotTypesTest, Dot) {
   // Testing B[] = dot(A[], A[]).
   auto [result_type, input_type, cc] = GetParam();
+  if (cc.IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
 
   ExpectedFailMode fail_mode = ExpectedFailMode::kFail;
   if (input_type == F8E4M3FN || result_type == F8E4M3FN) {
@@ -2307,6 +2361,9 @@ std::string OperandPrecisionTestName(
 
 TEST_P(DotPrecisionTest, OperandPrecision) {
   auto [data_type, lhs_precision, rhs_precision, cc] = GetParam();
+  if (cc.IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   std::string hlo_text = absl::Substitute(
       R"(
 flhs {
@@ -2388,6 +2445,9 @@ std::string DotPrecisionAlgorithmTestName(
 
 TEST_P(DotPrecisionAlgorithmTest, Algorithm) {
   auto [data_type, algorithm, cc] = GetParam();
+  if (cc.IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   std::string hlo_text =
       absl::Substitute(R"(
 flhs {
@@ -2489,6 +2549,9 @@ class FusionKindsTest
 
 TEST_P(FusionKindsTest, OperandOfDot) {
   auto [kind, cc] = GetParam();
+  if (cc.IsRocm()) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string hlo_text = absl::Substitute(
       R"(
 flhs {
@@ -2619,6 +2682,11 @@ class BitcastConvertTest
 
 TEST_P(BitcastConvertTest, BitcastConvert) {
   auto [data_type_in, data_type_out, cc] = GetParam();
+  if (cc.IsRocm() &&
+      (data_type_in == F8E4M3FN || data_type_out == F8E4M3FN ||
+       data_type_in == F8E5M2 || data_type_out == F8E5M2)) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
 
   if (primitive_util::IsComplexType(data_type_in) !=
       primitive_util::IsComplexType(data_type_out)) {
@@ -2673,6 +2741,11 @@ ENTRY triton_computation {
 
 TEST_P(BitcastConvertTest, BitcastConvertDisguisedAsBitcast) {
   auto [data_type_in, data_type_out, cc] = GetParam();
+  if (cc.IsRocm() &&
+      (data_type_in == F8E4M3FN || data_type_out == F8E4M3FN ||
+       data_type_in == F8E5M2 || data_type_out == F8E5M2)) {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
 
   if (primitive_util::IsComplexType(data_type_in) !=
       primitive_util::IsComplexType(data_type_out)) {

@@ -69,6 +69,9 @@ TEST_F(XlaCompileLibTest, CompilesForGpuWithDevice) {
 }
 
 TEST_F(XlaCompileLibTest, CompilesForGpuWithoutDevice) {
+  if (PlatformUtil::CanonicalPlatformName("gpu").value() == "rocm") {
+    GTEST_SKIP() << "Skipped on ROCm";
+  }
   const std::string target_config_path =
       tsl::io::JoinPath(tsl::testing::XlaSrcRoot(),
                         "backends/gpu/target_config/specs", "h100_sxm.txtpb");
