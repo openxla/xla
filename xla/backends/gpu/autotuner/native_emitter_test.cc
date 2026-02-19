@@ -225,8 +225,10 @@ TEST_F(NativeEmitterBackendTest, CompileSetsIsAutotuningCompilationOption) {
       mock_compiler,
       RunBackend(
           testing::_, testing::_,
-          testing::Field(&Compiler::CompileOptions::embed_hlo_module, false)))
+          testing::Field(&Compiler::CompileOptions::embed_hlo_module, true)))
       .WillOnce(testing::Return(std::unique_ptr<Executable>()));
+  // embed_hlo_module must be set to true, because we need the hlo_module
+  // to autotune hipblaslt group-gemm.
   // Attempt to compile the fusion using the retrieved backend config.
   EXPECT_THAT(backend.Compile(*fusion, *config), absl_testing::IsOk());
 }

@@ -59,6 +59,10 @@ class GpuProfiler : public Profiler {
                                  ScopedShapedBuffer& reference,
                                  float rtol) override;
 
+  absl::Status InitializeInputBuffer(InputBuffers& buffers, int buffer_index,
+                                     const void* values,
+                                     size_t size_bytes) override;
+
  private:
   explicit GpuProfiler(
       se::StreamExecutor* stream_executor,

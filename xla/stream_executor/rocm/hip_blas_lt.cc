@@ -755,7 +755,7 @@ auto BlasLt::GetGroupedMatmulPlan(gpu::GroupedGemmConfig &cfg,
       AsHipblasComputeType(*compute_type));
 
   // Set the Matrix orders does not seem to change anything.
-  // This unexpectec behavior worth to be further investigated.
+  // This unexpected behavior is worth investigating further.
   // For the moment, we do not defined a specific order and
   // go with the default order (i.e., COLUMN-MAJOR)
   // problem.setOrderA(HIPBLASLT_ORDER_COL);
@@ -815,12 +815,13 @@ absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
         return 2;
       case blas::DataType::kFloat:
       case blas::DataType::kInt32:
-      case blas::DataType::kComplexFloat:
         return 4;
+      case blas::DataType::kComplexFloat:
       case blas::DataType::kDouble:
-      case blas::DataType::kComplexDouble:
       case blas::DataType::kInt64:
         return 8;
+      case blas::DataType::kComplexDouble:
+        return 16;
       default:
         LOG(FATAL) << "Unknown DataType " << static_cast<int32_t>(ty);
     }
@@ -847,12 +848,13 @@ absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
         return 1;
       case blas::DataType::kFloat:
       case blas::DataType::kInt32:
-      case blas::DataType::kComplexFloat:
         return 2;
+      case blas::DataType::kComplexFloat:
       case blas::DataType::kDouble:
-      case blas::DataType::kComplexDouble:
       case blas::DataType::kInt64:
         return 3;
+      case blas::DataType::kComplexDouble:
+        return 4;
       default:
         LOG(FATAL) << "Unknown DataType " << static_cast<int32_t>(ty);
     }
@@ -908,10 +910,9 @@ absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
   GroupGemmUpdateArgs(
       hip_stream,
       static_cast<hipblaslt_ext::UserArguments *>(d_userArgs->opaque()),
-      a.opaque(), b.opaque(), args.c.opaque(), args.d.opaque(),
-      args.group_sizes.opaque(), group_size_bytewidth, log2_byte_width_elem_a,
-      log2_byte_width_elem_b, log2_byte_width_elem_d,
-      cfg_->stride_ragged_dim, cfg_->stride_group_dim,
+      a.opaque(), b.opaque(), args.d.opaque(), args.group_sizes.opaque(),
+      group_size_bytewidth, log2_byte_width_elem_a, log2_byte_width_elem_b,
+      log2_byte_width_elem_d, cfg_->stride_ragged_dim, cfg_->stride_group_dim,
       cfg_->output_stride_ragged_dim, cfg_->must_swap_operands, cfg_->m,
       cfg_->n, cfg_->k, cfg_->batch_count, strideA1, strideA2, strideB1,
       strideB2, strideD1, strideD2,

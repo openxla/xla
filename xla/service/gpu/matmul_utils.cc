@@ -487,14 +487,14 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
     PrecisionConfig::Algorithm precision_algorithm,
     std::optional<int64_t> algorithm, int64_t compute_precision,
     uint64_t group_count, const se::GpuComputeCapability& gpu_version) {
-  se::gpu::RaggedDotMode raggedMode =
+  se::gpu::RaggedDotMode ragged_mode =
       se::gpu::RaggedDotMode::kRaggedNonContracting;
   if (std::find(lhs_batch_dims.begin(), lhs_batch_dims.end(),
                 lhs_ragged_dimension) != lhs_batch_dims.end()) {
-    raggedMode = se::gpu::RaggedDotMode::kRaggedBatch;
+    ragged_mode = se::gpu::RaggedDotMode::kRaggedBatch;
   } else if (std::find(lhs_contracting_dims.begin(), lhs_contracting_dims.end(),
                        lhs_ragged_dimension) != lhs_contracting_dims.end()) {
-    raggedMode = se::gpu::RaggedDotMode::kRaggedContracting;
+    ragged_mode = se::gpu::RaggedDotMode::kRaggedContracting;
   }
 
   absl::Span<const int64_t> lhs_col_dims = lhs_contracting_dims;
@@ -522,7 +522,7 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
   uint64_t num_batch_dims =
       std::max(lhs_batch_dims.size(), rhs_batch_dims.size());
 
-  if (raggedMode == se::gpu::RaggedDotMode::kRaggedContracting) {
+  if (ragged_mode == se::gpu::RaggedDotMode::kRaggedContracting) {
     num_batch_dims += 1;
   }
 
@@ -546,25 +546,25 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
                num_batch_dims + lhs_row_dims.size() + rhs_col_dims.size());
 
   if (lhs_row_dims.size() != 1) {
-    return Internal("A single non-contracting dimension is exepected for lhs");
+    return Internal("A single non-contracting dimension is expected for lhs");
   }
   if (rhs_col_dims.size() != 1) {
-    return Internal("A single non-contracting dimension is exepected for rhs");
+    return Internal("A single non-contracting dimension is expected for rhs");
   }
 
   if (lhs_batch_dims.size() > 1) {
-    return Internal("A single batch dimension is exepected");
+    return Internal("A single batch dimension is expected");
   }
 
-  if ((raggedMode == se::gpu::RaggedDotMode::kRaggedNonContracting) &&
+  if ((ragged_mode == se::gpu::RaggedDotMode::kRaggedNonContracting) &&
       (rhs_group_dimensions.size() != 1)) {
     return Internal(
-        "A single group dimension is exepected for rhs when the ragged "
+        "A single group dimension is expected for rhs when the ragged "
         "dimension is in the non-contracting dimension.");
-  } else if ((raggedMode != se::gpu::RaggedDotMode::kRaggedNonContracting) &&
+  } else if ((ragged_mode != se::gpu::RaggedDotMode::kRaggedNonContracting) &&
              (rhs_group_dimensions.size() != 0)) {
     return Internal(
-        "No group dimension is exepected for rhs when the ragged dimension is "
+        "No group dimension is expected for rhs when the ragged dimension is "
         "in the contracting or the batch dimensions.");
   }
 
@@ -585,7 +585,7 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
   int64_t input_stride_ragged_dim = (lhs_ragged_dimension == leading_dim_a)
                                         ? lhs_layout.leading_dim_stride
                                         : 1;
-  if (raggedMode == se::gpu::RaggedDotMode::kRaggedBatch) {
+  if (ragged_mode == se::gpu::RaggedDotMode::kRaggedBatch) {
     input_stride_ragged_dim = m * k;
   }
 
@@ -598,14 +598,14 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
     }
     input_stride_group_dim *= rhs_shape.dimensions(dim);
   }
-  if (raggedMode == se::gpu::RaggedDotMode::kRaggedContracting) {
+  if (ragged_mode == se::gpu::RaggedDotMode::kRaggedContracting) {
     input_stride_group_dim = (rhs_contracting_dims.back() == leading_dim_b)
                                  ? rhs_layout.leading_dim_stride
                                  : 1;
   }
 
   int64_t output_stride_ragged_dim = 1;
-  switch (raggedMode) {
+  switch (ragged_mode) {
     case se::gpu::RaggedDotMode::kRaggedNonContracting: {
       if ((lhs_ragged_dimension == leading_dim_d) ||
           (lhs_layout.order == se::gpu::MatrixLayout::Order::kColumnMajor)) {
@@ -687,7 +687,7 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
                                  output_stride_ragged_dim,
                                  precision_algorithm,
                                  compute_precision,
-                                 raggedMode,
+                                 ragged_mode,
                                  compute_type});
 }
 

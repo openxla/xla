@@ -195,7 +195,7 @@ __device__ __forceinline__ void copy_shared_to_global(void* shared_src,
 }
 
 template <typename T>
-__launch_bounds__(BLOCK_SIZE) __global__ __global__
+__launch_bounds__(BLOCK_SIZE) __global__
     void SetUserArgsKernelRaggedInNonContractingDim(
         hipblaslt_ext::UserArguments* dest_args, const void* a, const void* b,
         void* d, const void* group_sizes, uint8_t log2_byte_width_elem_a,
@@ -219,7 +219,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ __global__
   auto* sharedUserArgs =
       reinterpret_cast<hipblaslt_ext::UserArguments*>(shared_mem);
 
-  // Last thread initilize cumulative offset
+  // Last thread initialize cumulative offset
   // No need to syncthread here as this variable will be
   // updated later by the last thread before
   // being read by other threads.
@@ -300,7 +300,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ __global__
       arg.strideE1 = 0;
       arg.strideE2 = 0;
       // Set alpha to float(1) and beta to float(0).
-      // As these values are imposed in the gemm_rewritter pass anyway.
+      // As these values are imposed in the gemm_rewriter pass anyway.
       for (int8_t i = 0; i < 16; i++) {
         arg.alpha[i] = 0;
         arg.beta[i] = 0;
@@ -331,7 +331,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ __global__
 }
 
 template <typename T>
-__launch_bounds__(BLOCK_SIZE) __global__ __global__
+__launch_bounds__(BLOCK_SIZE) __global__
     void SetUserArgsKernelRaggedInContractingDim(
         hipblaslt_ext::UserArguments* dest_args, const void* a, const void* b,
         void* d, const void* group_sizes, uint8_t log2_byte_width_elem_a,
@@ -355,7 +355,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ __global__
   auto* sharedUserArgs =
       reinterpret_cast<hipblaslt_ext::UserArguments*>(shared_mem);
 
-  // Last thread initilize cumulative offset
+  // Last thread initialize cumulative offset
   // No need to syncthread here as this variable will be
   // updated later by the last thread before
   // being read by other threads.
@@ -387,7 +387,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ __global__
         min(BLOCK_SIZE, static_cast<uint32_t>(num_gemms - batch_start));
 
     // Last thread updates cumulative offset for next batch
-    if (threadIdx.x == BLOCK_SIZE - 1) {
+    if (threadIdx.x == batch_size - 1) {
       cumulative_offset += offset_in_batch + group_size;
     }
 
@@ -424,7 +424,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ __global__
       arg.strideE1 = 0;
       arg.strideE2 = 0;
       // Set alpha to float(1) and beta to float(0).
-      // As these values are imposed in the gemm_rewritter pass anyway.
+      // As these values are imposed in the gemm_rewriter pass anyway.
       for (int8_t i = 0; i < 16; i++) {
         arg.alpha[i] = 0;
         arg.beta[i] = 0;
@@ -455,7 +455,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ __global__
 }
 
 template <typename T>
-__launch_bounds__(BLOCK_SIZE) __global__ __global__
+__launch_bounds__(BLOCK_SIZE) __global__
     void SetUserArgsKernelRaggedInBatchDim(
         hipblaslt_ext::UserArguments* dest_args, const void* a, const void* b,
         void* d, const void* group_sizes, uint8_t log2_byte_width_elem_a,
@@ -479,7 +479,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ __global__
   auto* sharedUserArgs =
       reinterpret_cast<hipblaslt_ext::UserArguments*>(shared_mem);
 
-  // Last thread initilize cumulative offset
+  // Last thread initialize cumulative offset
   // No need to syncthread here as this variable will be
   // updated later by the last thread before
   // being read by other threads.
@@ -548,7 +548,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ __global__
       arg.strideE1 = 0;
       arg.strideE2 = 0;
       // Set alpha to float(1) and beta to float(0).
-      // As these values are imposed in the gemm_rewritter pass anyway.
+      // As these values are imposed in the gemm_rewriter pass anyway.
       for (int8_t i = 0; i < 16; i++) {
         arg.alpha[i] = 0;
         arg.beta[i] = 0;

@@ -335,23 +335,6 @@ struct BlasLt {
                              profile_result);
     }
 
-    // API that uses pre-allocated buffer as workspace (grouped matmul).
-    absl::Status ExecuteOnStream(
-        Stream* stream, DeviceMemoryBase a, DeviceMemoryBase b,
-        DeviceMemoryBase c, DeviceMemoryBase d, DeviceMemoryBase group_sizes,
-        DeviceMemoryBase bias,  // may be null
-        DeviceMemoryBase aux,   // may be null
-        DeviceMemoryBase a_scale, DeviceMemoryBase b_scale,
-        DeviceMemoryBase c_scale, DeviceMemoryBase d_scale,
-        DeviceMemoryBase d_amax, DeviceMemoryBase workspace,
-        blas::ProfileResult* profile_result = nullptr) const {
-      return ExecuteOnStream(
-          stream,
-          MemoryArgs{a, b, c, d, bias, aux, a_scale, b_scale, c_scale, d_scale,
-                     group_sizes, workspace, nullptr},
-          profile_result);
-    }
-
     // The most general form: to be implemented by derived clases.
     virtual absl::Status ExecuteOnStream(
         Stream* stream, const MemoryArgs& args,
