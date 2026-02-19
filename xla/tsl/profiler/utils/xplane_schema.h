@@ -198,7 +198,6 @@ enum HostEventType {
 };
 
 enum StatType {
-  // LINT.IfChange(stat_type_enum)
   kFirstStatType = 0,
   kUnknownStatType = kFirstStatType,
   // TraceMe arguments.
@@ -387,20 +386,7 @@ enum StatType {
   kMetadataLibtpuVersion,
   kMetadataCudaRuntimeVersion,
   kMetadataCudaDriverVersion,
-  // Total VDD core energy consumed in nano Joules.
-  kVddCoreEnergy,
-  // Number of VDD core power events.
-  kVddCorePowerEvents,
-  // Total HBM energy consumed in nano Joules.
-  kHbmEnergy,
-  // Number of HBM power events.
-  kHbmPowerEvents,
-  // LINT.ThenChange(:last_stat_type)
-
-  // LINT.IfChange(last_stat_type)
-  // Change this to point to the last stat type when adding a new one.
-  kLastStatType = kHbmPowerEvents,
-  // LINT.ThenChange(:stat_type_enum)
+  kLastStatType = kMetadataCudaDriverVersion,
 };
 
 enum MegaScaleStatType : uint8_t {
