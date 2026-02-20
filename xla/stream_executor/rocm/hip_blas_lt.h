@@ -32,9 +32,9 @@ limitations under the License.
 #include "xla/stream_executor/rocm/hip_blas_utils.h"
 
 namespace hipblaslt_ext {
-  class GroupedGemm;
-  struct UserArguments;
-}
+class GroupedGemm;
+struct UserArguments;
+}  // namespace hipblaslt_ext
 
 namespace stream_executor {
 
@@ -165,7 +165,8 @@ class BlasLt : public gpu::BlasLt {
     mutable DeviceMemoryBase saved_address_workspace_{};
   };  // class MatmulPlan
 
-  explicit BlasLt(StreamExecutor* parent) : parent_(parent), blas_lt_(nullptr, wrap::hipblasLtDestroy) {}
+  explicit BlasLt(StreamExecutor* parent)
+      : parent_(parent), blas_lt_(nullptr, wrap::hipblasLtDestroy) {}
 
   absl::Status Init() override;
 

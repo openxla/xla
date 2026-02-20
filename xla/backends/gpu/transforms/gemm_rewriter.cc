@@ -722,7 +722,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (!is_supported_matmul) {
       return absl::OkStatus();
     }
-    HloRaggedDotInstruction* ragged_dot = DynCast<HloRaggedDotInstruction>(instr);
+    HloRaggedDotInstruction* ragged_dot =
+        DynCast<HloRaggedDotInstruction>(instr);
     if (ragged_dot == nullptr) {
       return absl::OkStatus();
     }
@@ -734,24 +735,24 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     int lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
 
     auto isLhsRaggedDimInContractingDim = [](int lhs_ragged_dim,
-                               const DotDimensionNumbers& dnums) {
-        if (std::find(dnums.lhs_contracting_dimensions().begin(),
-                dnums.lhs_contracting_dimensions().end(),
-                lhs_ragged_dim) != dnums.lhs_contracting_dimensions().end()) {
-          return true;
-        }
-        return false;
-      };
+                                             const DotDimensionNumbers& dnums) {
+      if (std::find(dnums.lhs_contracting_dimensions().begin(),
+                    dnums.lhs_contracting_dimensions().end(), lhs_ragged_dim) !=
+          dnums.lhs_contracting_dimensions().end()) {
+        return true;
+      }
+      return false;
+    };
 
     auto isLhsRaggedDimInBatchDim = [](int lhs_ragged_dim,
-                               const DotDimensionNumbers& dnums) {
-        if (std::find(dnums.lhs_batch_dimensions().begin(),
-                      dnums.lhs_batch_dimensions().end(),
-                      lhs_ragged_dim) != dnums.lhs_batch_dimensions().end()) {
-          return true;
-        }
-        return false;
-      };
+                                       const DotDimensionNumbers& dnums) {
+      if (std::find(dnums.lhs_batch_dimensions().begin(),
+                    dnums.lhs_batch_dimensions().end(),
+                    lhs_ragged_dim) != dnums.lhs_batch_dimensions().end()) {
+        return true;
+      }
+      return false;
+    };
 
     if (!isLhsRaggedDimInContractingDim(lhs_ragged_dim, dot_dims) &&
         !isLhsRaggedDimInBatchDim(lhs_ragged_dim, dot_dims) &&
@@ -761,20 +762,23 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
           "dimension is a non-contracting dimension");
     }
     HloInstruction* grouped_gemm_call =
-              instr->AddInstruction(HloInstruction::CreateCustomCall(
-                      ragged_dot->shape(), ragged_dot->mutable_operands(),
-                       gpu::kCublasLtGroupedMatmulCallTarget));
+        instr->AddInstruction(HloInstruction::CreateCustomCall(
+            ragged_dot->shape(), ragged_dot->mutable_operands(),
+            gpu::kCublasLtGroupedMatmulCallTarget));
 
     // Create a GroupedGemmBackendConfig based on the instruction.
-    TF_ASSIGN_OR_RETURN(gpu::GpuBackendConfig gpu_backend_config,
-                       grouped_gemm_call->backend_config<gpu::GpuBackendConfig>());
-    GroupedGemmBackendConfig& grouped_gemm_backend_config = *gpu_backend_config.mutable_grouped_gemm_backend_config();
-    RaggedDotDimensionNumbers& ragged_dot_dimension_numbers = *grouped_gemm_backend_config.mutable_ragged_dot_dimension_numbers();
+    TF_ASSIGN_OR_RETURN(
+        gpu::GpuBackendConfig gpu_backend_config,
+        grouped_gemm_call->backend_config<gpu::GpuBackendConfig>());
+    GroupedGemmBackendConfig& grouped_gemm_backend_config =
+        *gpu_backend_config.mutable_grouped_gemm_backend_config();
+    RaggedDotDimensionNumbers& ragged_dot_dimension_numbers =
+        *grouped_gemm_backend_config.mutable_ragged_dot_dimension_numbers();
     ragged_dot_dimension_numbers = ragged_dot->ragged_dot_dimension_numbers();
 
     // Create a GemmBackendConfig based on the instruction.
     GemmBackendConfig& gemm_backend_config =
-          *grouped_gemm_backend_config.mutable_gemm_backend_config();
+        *grouped_gemm_backend_config.mutable_gemm_backend_config();
     gemm_backend_config.set_alpha_real(1.0);
     gemm_backend_config.set_alpha_imag(0.0);
     gemm_backend_config.set_beta(0.0);
@@ -784,8 +788,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     gemm_backend_config.set_grad_x(attributes["grad_x"] == "true");
     gemm_backend_config.set_grad_y(attributes["grad_y"] == "true");
 
-
-    TF_RETURN_IF_ERROR(grouped_gemm_call->set_backend_config(gpu_backend_config));
+    TF_RETURN_IF_ERROR(
+        grouped_gemm_call->set_backend_config(gpu_backend_config));
 
     TF_RETURN_IF_ERROR(ReplaceInstruction(instr, grouped_gemm_call));
     return absl::OkStatus();
