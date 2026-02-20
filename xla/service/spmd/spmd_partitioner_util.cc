@@ -3121,6 +3121,11 @@ GetMeshAxesPartitionGroupsAcrossTargetDims(
   axis_refs.reserve(target_dims.size());
   for (int64_t i = 0; i < target_dims.size(); ++i) {
     int64_t target_dim = target_dims[i];
+    // TODO(b/489183642): Remove this fallback once we support sub-axes
+    // in this function.
+    if (target_dim >= mesh->num_axes()) {
+      return std::nullopt;
+    }
     int64_t axis_size = mesh->axis_size(target_dim);
     int64_t group_size = group_sizes[i];
     if (axis_size == group_size) {
