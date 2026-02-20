@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/reshape_mover.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/service/call_inliner.h"
+#include "xla/service/compilation_stats.h"
 #include "xla/service/compiler.h"
 #include "xla/service/dump.h"
 #include "xla/service/float_support.h"
@@ -165,11 +166,12 @@ class MatmulBfloat16Support : public FloatSupport {
 absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
     HloModule* hlo_module, const se::GpuComputeCapability& gpu_version,
     se::dnn::VersionInfo dnn_version,
-    const se::SemanticVersion& toolkit_version) {
+    const se::SemanticVersion& toolkit_version,
+    CompilationStats* compilation_stats) {
   auto* cuda_compute_capability = gpu_version.cuda_compute_capability();
   // Convert convolutions into CustomCalls to cudnn, then canonicalize them
   // (ConvPaddingLegalization). Also expand cuSolver calls.
-  HloPassPipeline pipeline("conv_canonicalization");
+  HloPassPipeline pipeline("conv_canonicalization", compilation_stats);
   pipeline.AddInvariantCheckerDebug<HloVerifier>(
       /*layout_sensitive=*/false,
       /*allow_mixed_precision=*/false);
@@ -251,14 +253,16 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
 absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
     const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
-    const GpuAliasInfo* alias_info, tsl::thread::ThreadPool* thread_pool) {
+    const GpuAliasInfo* alias_info, tsl::thread::ThreadPool* thread_pool,
+    CompilationStats* compilation_stats) {
   // This needs to run before GemmRewriter, which is part of
   // OptimizeHloPostLayoutAssignment().
   auto* cuda_compute_capability =
       gpu_target_config.device_description.gpu_compute_capability()
           .cuda_compute_capability();
 
-  HloPassPipeline pre_pipeline("nvptx post-layout_assignment part 1");
+  HloPassPipeline pre_pipeline("nvptx post-layout_assignment part 1",
+                               compilation_stats);
   if (hlo_module->config().debug_options().xla_gpu_enable_cudnn_layer_norm() &&
       !hlo_module->config()
            .debug_options()
@@ -295,9 +299,10 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
 
   TF_RETURN_IF_ERROR(GpuCompiler::OptimizeHloPostLayoutAssignment(
       hlo_module, stream_exec, options, gpu_target_config, alias_info,
-      thread_pool));
+      thread_pool, compilation_stats));
 
-  HloPassPipeline post_pipeline("nvptx post-layout_assignment part 2");
+  HloPassPipeline post_pipeline("nvptx post-layout_assignment part 2",
+                                compilation_stats);
 
   // Transform TriangularSolve ops into custom-calls, so we can add temp
   // memory.
@@ -308,7 +313,6 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
 
   return absl::OkStatus();
 }
-
 
 absl::Status NVPTXCompiler::RunCudnnCompilerPasses(
     HloModule* module, se::StreamExecutor* stream_exec,

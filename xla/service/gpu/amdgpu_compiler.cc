@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/reshape_mover.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/service/call_inliner.h"
+#include "xla/service/compilation_stats.h"
 #include "xla/service/compiler.h"
 #include "xla/service/float_support.h"
 #include "xla/service/gpu/alias_info.h"
@@ -104,10 +105,11 @@ class ConvBfloat16Support : public FloatSupport {
 absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
     HloModule* hlo_module, const se::GpuComputeCapability& gpu_version,
     se::dnn::VersionInfo dnn_version,
-    const se::SemanticVersion& toolkit_version) {
+    const se::SemanticVersion& toolkit_version,
+    CompilationStats* compilation_stats) {
   // Convert convolutions into CustomCalls to MIOpen, then canonicalize them
   // (PadInsertion).
-  HloPassPipeline pipeline("conv_canonicalization");
+  HloPassPipeline pipeline("conv_canonicalization", compilation_stats);
   pipeline.AddInvariantCheckerDebug<HloVerifier>(
       /*layout_sensitive=*/false,
       /*allow_mixed_precision=*/false);
@@ -175,8 +177,10 @@ absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
 absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
     const CompileOptions& options, const GpuTargetConfig& gpu_target_config,
-    const GpuAliasInfo* alias_info, tsl::thread::ThreadPool* thread_pool) {
-  HloPassPipeline pre_pipeline("AMDGPU post-layout_assignment part 1");
+    const GpuAliasInfo* alias_info, tsl::thread::ThreadPool* thread_pool,
+    CompilationStats* compilation_stats) {
+  HloPassPipeline pre_pipeline("AMDGPU post-layout_assignment part 1",
+                               compilation_stats);
 
   pre_pipeline.AddPass<DotDimensionMerger>();
 
@@ -196,9 +200,10 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
 
   TF_RETURN_IF_ERROR(GpuCompiler::OptimizeHloPostLayoutAssignment(
       hlo_module, stream_exec, options, gpu_target_config, alias_info,
-      thread_pool));
+      thread_pool, compilation_stats));
 
-  HloPassPipeline post_pipeline("AMDGPU post-layout_assignment part 2");
+  HloPassPipeline post_pipeline("AMDGPU post-layout_assignment part 2",
+                                compilation_stats);
 
   // Transform TriangularSolve ops into custom-calls, so we can add temp
   // memory.
