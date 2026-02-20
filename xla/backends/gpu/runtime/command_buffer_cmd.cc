@@ -1398,10 +1398,11 @@ CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
                 execute_params.buffer_allocations->device_ordinal(),
                 ffi::InvokeContext::GpuContext{
                     stream,
-                    execute_params.buffer_allocations->memory_allocator()},
+                    execute_params.buffer_allocations->memory_allocator(),
+                },
+                ffi::InvokeContext::StateContext{execution_state_.get()},
                 /*called_computation=*/nullptr,  // TODO(b/342285364)
-                execute_params.ffi_execution_context,
-                execution_state_.get()};
+                execute_params.ffi_execution_context};
             return ffi::Invoke(ffi::GetXlaFfiApi(), handler_, *call_frame,
                                context);
           }));

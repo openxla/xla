@@ -66,10 +66,25 @@ CodegenDecision IsTritonSupportedDataType(
         return CodegenDecision::Allow();
       }
       if (gpu_version.IsRocm()) {
-        return CodegenDecision::Forbid("F8E4M3FN is not supported on ROCm.");
+        if (gpu_version.rocm_compute_capability()->has_ocp_fp8_support()) {
+          return CodegenDecision::Allow();
+        }
+        return CodegenDecision::Forbid(
+            "F8E4M3FN/F8E5M2 requires OCP FP8 support on ROCm.");
       }
       return CodegenDecision::Forbid(
-          "Unsupported GPU architecture for F8E4M3FN.");
+          "Unsupported GPU architecture for F8E4M3FN/F8E5M2.");
+    case F8E4M3FNUZ:
+    case F8E5M2FNUZ:
+      if (gpu_version.IsRocm()) {
+        if (gpu_version.rocm_compute_capability()->has_nanoo_fp8_support()) {
+          return CodegenDecision::Allow();
+        }
+        return CodegenDecision::Forbid(
+            "F8E4M3FNUZ/F8E5M2FNUZ requires NANOO FP8 support on ROCm.");
+      }
+      return CodegenDecision::Forbid(
+          "F8E4M3FNUZ/F8E5M2FNUZ is only supported on ROCm.");
     case BF16:
       if (gpu_version.IsCuda()) {
         return CodegenDecision::Allow();
@@ -397,6 +412,11 @@ CodegenDecision AreTypesSupportedByAlgUnsetDot(
         cuda_cc && !cuda_cc->IsAtLeastHopper()) {
       return CodegenDecision::Forbid(
           "Dot operation for F8E4M3FN is not supported before Hopper.");
+    }
+    if (auto* rocm_cc = gpu_version.rocm_compute_capability();
+        rocm_cc && !rocm_cc->has_ocp_fp8_support()) {
+      return CodegenDecision::Forbid(
+          "Dot operation for F8E4M3FN requires OCP FP8 support on ROCm.");
     }
   }
 

@@ -2622,7 +2622,8 @@ PjRtStreamExecutorClient::LoadInternal(
 
   if (IsEarlyExitCompilation(compile_options)) {
     return InvalidArgument(
-        "Excutable from early exit with layouts cannot be loaded.");
+        "Executable compiled with xla_early_exit_with_layouts cannot be "
+        "loaded.");
   }
 
   const auto& ex_options = compile_options.executable_build_options;

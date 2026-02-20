@@ -86,6 +86,18 @@ void saveOpShardingPerValueAttr(
                        shardingPerValueAttr);
 }
 
+// Exports sharding rules from `kShardingRuleAttr` to
+// `kShardingRuleRoundTripAttr` as a frontend attribute.
+void exportShardingRules(FuncOp funcOp) {
+  funcOp.front().walk([&](Operation* op) {
+    if (auto oldShardingRule =
+            op->getAttrOfType<OpShardingRuleAttr>(kShardingRuleAttr)) {
+      setFrontendAttribute(op, kShardingRuleRoundTripAttr, oldShardingRule);
+      op->removeAttr(kShardingRuleAttr);
+    }
+  });
+}
+
 // Converts the shardings from `kShardingAttr` into
 // `HloSharding::kShardingFrontendAttrName`.
 LogicalResult exportFunc(FuncOp funcOp, OpBuilder& builder) {
@@ -130,11 +142,6 @@ LogicalResult exportFunc(FuncOp funcOp, OpBuilder& builder) {
             mlir::sdy::getShardingPerValue(op)) {
       saveOpShardingPerValueAttr(op, oldShardingPerValue);
     }
-    if (auto oldShardingRule =
-            op->getAttrOfType<OpShardingRuleAttr>(kShardingRuleAttr)) {
-      setFrontendAttribute(op, kShardingRuleRoundTripAttr, oldShardingRule);
-      op->removeAttr(kShardingRuleAttr);
-    }
   });
 
   return mlir::success();
@@ -155,22 +162,30 @@ class SdyRoundTripExportShardyAttrsPass
     MLIRContext* context = moduleOp.getContext();
     auto builder = OpBuilder(context);
 
-    for (auto funcOp : moduleOp.getOps<FuncOp>()) {
-      if (mlir::failed(exportFunc(funcOp, builder))) {
-        signalPassFailure();
+    if (enableHloShardingV3) {
+      // If HloShardingV3 is enabled, frontend attributes are used only for
+      // sharding rules
+      for (auto funcOp : moduleOp.getOps<FuncOp>()) {
+        exportShardingRules(funcOp);
       }
-    }
-
-    SmallVector<NamedAttribute> stablehloMeshes;
-    // Saves the MeshOps for StableHLO<->HLO round-trip and removes them from
-    // the ModuleOp.
-    for (MeshOp meshOp : moduleOp.getOps<MeshOp>()) {
-      stablehloMeshes.emplace_back(meshOp.getSymNameAttr(),
-                                   meshOp.getMeshAttr());
-    }
-    if (!stablehloMeshes.empty()) {
-      setFrontendAttribute(moduleOp, kMeshesRoundTripAttr,
-                           DictionaryAttr::get(context, stablehloMeshes));
+    } else {
+      for (auto funcOp : moduleOp.getOps<FuncOp>()) {
+        if (mlir::failed(exportFunc(funcOp, builder))) {
+          signalPassFailure();
+        }
+        exportShardingRules(funcOp);
+      }
+      SmallVector<NamedAttribute> stablehloMeshes;
+      // Saves the MeshOps for StableHLO<->HLO round-trip and removes them from
+      // the ModuleOp.
+      for (MeshOp meshOp : moduleOp.getOps<MeshOp>()) {
+        stablehloMeshes.emplace_back(meshOp.getSymNameAttr(),
+                                     meshOp.getMeshAttr());
+      }
+      if (!stablehloMeshes.empty()) {
+        setFrontendAttribute(moduleOp, kMeshesRoundTripAttr,
+                             DictionaryAttr::get(context, stablehloMeshes));
+      }
     }
   }
 
