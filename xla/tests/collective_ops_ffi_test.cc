@@ -507,9 +507,10 @@ TEST_F(CollectiveOpsTestFFI, DeviceAllReduce) {
       ENTRY test_computation {
         id = u32[] replica-id()
         in = u32[]{:S(1)} copy(id)
-        ROOT all-reduce = u32[]{:S(1)} custom-call(in),
+        all-reduce = u32[]{:S(1)} custom-call(in),
           custom_call_target="__xla_test$$device_all_reduce",
           api_version=API_VERSION_TYPED_FFI
+        ROOT out = u32[] copy(all-reduce)
       }
     )";
 
