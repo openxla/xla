@@ -292,6 +292,11 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
   return std::make_unique<CuDnnCmd>(thunk.arguments(), thunk.graph());
 }
 
+static absl::StatusOr<std::unique_ptr<Command>> Convert(
+    const ConvolutionThunk& thunk) {
+  return std::make_unique<ConvolutionCmd>(thunk);
+}
+
 //===----------------------------------------------------------------------===//
 static absl::StatusOr<std::unique_ptr<Command>> CopyMetadata(
     absl::StatusOr<std::unique_ptr<Command>> cmd, const Thunk& thunk) {
@@ -378,6 +383,8 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return append(Convert<WhileThunk>(thunk, options));
     case Thunk::Kind::kCuDnn:
       return append(Convert<CuDnnThunk>(thunk));
+    case Thunk::Kind::kConvolution:
+      return append(Convert<ConvolutionThunk>(thunk));
     case Thunk::Kind::kDynamicSlice:
       return append(Convert<DynamicSliceThunk>(thunk, options));
 

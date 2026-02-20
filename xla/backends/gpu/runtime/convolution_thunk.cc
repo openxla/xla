@@ -71,49 +71,56 @@ ConvolutionThunk::ConvolutionThunk(ThunkInfo thunk_info,
       descriptor_(std::move(descriptor)),
       config_(std::move(config)) {}
 
-GenericConvRunner& ConvolutionThunk::GetOrCreateRunner(
-    const stream_executor::Stream* stream, bool* runner_created) {
+RunConvOptions ConvRunnerCache::GetOrCreate(
+          const GpuConvConfig& config, const se::Stream* stream) {
   absl::MutexLock lock(mu_);
-  auto it = runner_cache_.find(stream);
-  *runner_created = (it == runner_cache_.end());
-  if (*runner_created) {
-    it = runner_cache_
-             .insert({stream, std::make_unique<GenericConvRunner>(config_)})
-             .first;
+  auto [it, inserted] = cache_.emplace(stream->parent(), 
+          std::unique_ptr<GenericConvRunner>{});
+  if (inserted) {
+    it->second = std::make_unique<GenericConvRunner>(config);
   }
-  return *it->second;
+  return RunConvOptions{ nullptr, it->second.get() };
 }
 
-absl::Status ConvolutionThunk::ExecuteOnStream(const ExecuteParams& params) {
+absl::Status RunConvolutionOnStream(const Thunk::ExecuteParams& params,
+    const std::vector<ShapedSlice>& operand_buffers,
+    const std::vector<ShapedSlice>& result_buffers,
+    const BufferAllocation::Slice& scratch_buffer,
+    const GpuConvConfig& config, ConvRunnerCache& cache, se::Stream* stream) {
+
   const auto& buffer_allocations = *params.buffer_allocations;
 
   std::vector<se::DeviceAddressBase> operand_se_buffers, result_se_buffers;
-  operand_se_buffers.reserve(operand_buffers_.size());
-  for (const ShapedSlice& buffer : operand_buffers_) {
+  operand_se_buffers.reserve(operand_buffers.size());
+
+  for (const ShapedSlice& buffer : operand_buffers) {
     operand_se_buffers.push_back(
         buffer_allocations.GetDeviceAddress(buffer.slice));
+    VLOG(5) << "operand buffer: " << buffer.slice.ToString() 
+            << " addr: " << operand_se_buffers.back().opaque();
   }
 
-  result_se_buffers.reserve(result_buffers_.size());
-  for (const ShapedSlice& buffer : result_buffers_) {
+  result_se_buffers.reserve(result_buffers.size());
+  for (const ShapedSlice& buffer : result_buffers) {
     result_se_buffers.push_back(
         buffer_allocations.GetDeviceAddress(buffer.slice));
+    VLOG(5) << "result buffer: " << buffer.slice.ToString() 
+            << " addr: " << result_se_buffers.back().opaque();
   }
 
   se::DeviceAddressBase scratch =
-      buffer_allocations.GetDeviceAddress(scratch_buffer_);
+      buffer_allocations.GetDeviceAddress(scratch_buffer);
+  VLOG(5) << "scratch buffer: " << scratch_buffer 
+          << " addr: " << scratch.opaque();
 
-  bool runner_created = false;
-  RunConvOptions opts;
-  opts.runner_cache = &GetOrCreateRunner(params.stream, &runner_created);
-
-  TF_RETURN_IF_ERROR(RunGpuConv(config_, absl::MakeSpan(operand_se_buffers),
+  auto opts = cache.GetOrCreate(config, stream);
+  TF_RETURN_IF_ERROR(RunGpuConv(config, absl::MakeSpan(operand_se_buffers),
                                 absl::MakeSpan(result_se_buffers), scratch,
-                                params.stream, opts));
+                                stream, opts));
 
   // Note: Convolution has a tuple buffer as an output, but we don't need to
   // populate it as no one should be reading from the tuple directly.
-  if (!params.stream->ok()) {
+  if (!stream->ok()) {
     return Internal("ConvolutionThunk::ExecuteOnStream failed.");
   }
   return absl::OkStatus();
