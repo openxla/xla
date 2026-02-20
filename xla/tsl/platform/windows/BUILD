@@ -107,6 +107,7 @@ cc_library(
         ":wide_char",
         "//xla/tsl/platform:logging",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:load_library",
         "@tsl//tsl/platform:mutex",
     ],
