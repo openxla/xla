@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 #include "xla/pjrt/pjrt_abi_version.h"
+#include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_dimensions.h"
@@ -314,6 +315,17 @@ ENTRY Identity() -> f32[2, 2] {
 
   EXPECT_OK(runtime_abi_version->IsCompatibleWith(
       *executable_abi_version_from_proto));
+}
+
+TEST(PjRtCApiClientTpuTest, DeviceAttributes) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetXlaPjrtTpuClient());
+
+  ASSERT_FALSE(client->addressable_devices().empty());
+  for (PjRtDevice* device : client->addressable_devices()) {
+    const auto& attributes = device->Attributes();
+    EXPECT_TRUE(attributes.contains("physical_location"));
+  }
 }
 
 }  // namespace

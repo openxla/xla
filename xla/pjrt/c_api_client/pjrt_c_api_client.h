@@ -188,12 +188,20 @@ class PjRtCApiDevice : public PjRtDevice {
     return description_;
   }
 
+  const absl::flat_hash_map<std::string, PjRtDeviceAttribute>& Attributes()
+      const override {
+    return attributes_;
+  }
+
   absl::StatusOr<tsl::AllocatorStats> GetAllocatorStats() const override;
 
   absl::StatusOr<std::intptr_t> GetStreamForExternalReadyEvents()
       const override;
 
  private:
+  // Initializes device specific attributes.
+  void InitAttributes();
+
   friend class PjRtCApiClient;
 
   PjRtCApiClient* client_ = nullptr;
@@ -201,6 +209,7 @@ class PjRtCApiDevice : public PjRtDevice {
   PJRT_Device* device_;
   PjRtCApiDeviceDescription description_;
   std::vector<PjRtMemorySpace*> memory_spaces_;
+  absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute> attributes_;
 };
 
 class PjRtCApiCompiler : public PjRtCompiler {
