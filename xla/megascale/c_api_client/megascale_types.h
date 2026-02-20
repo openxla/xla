@@ -62,8 +62,7 @@ class CApiPjRtClientContext {
 
 class PjRtCApiMultiSliceConfig : public xla::MultiSliceConfig {
  public:
-  PjRtCApiMultiSliceConfig(PJRT_Megascale_MultiSliceConfig* config,
-                           const PJRT_Api* c_api,
+  PjRtCApiMultiSliceConfig(PJRT_MultiSliceConfig* config, const PJRT_Api* c_api,
                            PJRT_Megascale_Extension* extension)
       : config_(config), c_api_(c_api), extension_(CHECK_NOTNULL(extension)) {}
 
@@ -73,10 +72,10 @@ class PjRtCApiMultiSliceConfig : public xla::MultiSliceConfig {
   int32_t SliceId() const override;
   absl::flat_hash_map<int32_t, int32_t> NumDevicesPerSlice() const override;
   std::string Serialize() const override;
-  PJRT_Megascale_MultiSliceConfig* get() const { return config_; }
+  PJRT_MultiSliceConfig* get() const { return config_; }
 
  private:
-  PJRT_Megascale_MultiSliceConfig* config_;
+  PJRT_MultiSliceConfig* config_;
   const PJRT_Api* c_api_;
   const PJRT_Megascale_Extension* extension_;
 };
