@@ -541,8 +541,8 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
 // send.
 absl::StatusOr<PreparedSend> PrepareSend(
     StreamExecutorGpuClient* client, gpu::GpuCollectives* gpu_collectives,
-    se::Stream* stream, PjRtBuffer* buffer,
-    PjRtGlobalDeviceId dst_global_device_id, CrossHostTransferKey transfer_key,
+    se::Stream* stream, PjRtBuffer* buffer, GlobalDeviceId dst_global_device_id,
+    CrossHostTransferKey transfer_key,
     gpu::AcquiredCliquesMap& acquired_cliques_map,
     std::shared_ptr<Promise<>> promise,
     tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event) {
@@ -595,7 +595,7 @@ absl::StatusOr<PreparedSend> PrepareSend(
 absl::StatusOr<PreparedReceive> PrepareReceive(
     StreamExecutorGpuClient* client, gpu::GpuCollectives* gpu_collectives,
     se::Stream* stream, PjRtDevice* device, PjRtMemorySpace* memory_space,
-    PjRtGlobalDeviceId src_global_device_id, CrossHostTransferKey transfer_key,
+    GlobalDeviceId src_global_device_id, CrossHostTransferKey transfer_key,
     Shape shape, gpu::AcquiredCliquesMap& acquired_cliques_map,
     tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event) {
   GlobalDeviceId src_device(src_global_device_id.value());
@@ -690,7 +690,7 @@ void FulfillPromises(std::vector<std::shared_ptr<Promise<>>>& promises,
 absl::StatusOr<std::vector<Future<>>>
 StreamExecutorGpuClient::CrossHostSendBuffers(
     absl::Span<PjRtBuffer* const> buffers,
-    absl::Span<const PjRtGlobalDeviceId> dst_global_device_ids,
+    absl::Span<const GlobalDeviceId> dst_global_device_ids,
     std::vector<CrossHostTransferKey> transfer_keys) {
   // Validate arguments.
   if (dst_global_device_ids.size() != buffers.size() ||
@@ -745,7 +745,7 @@ StreamExecutorGpuClient::CrossHostSendBuffers(
   for (auto& [device, send_idxs] : sends_by_device) {
     // Execute sends.
     std::vector<PjRtBuffer*> curr_buffers;
-    std::vector<PjRtGlobalDeviceId> curr_dst_ids;
+    std::vector<GlobalDeviceId> curr_dst_ids;
     std::vector<CrossHostTransferKey> curr_transfer_keys;
     std::vector<std::shared_ptr<Promise<>>> curr_promises;
     for (int idx : send_idxs) {
@@ -765,7 +765,7 @@ StreamExecutorGpuClient::CrossHostSendBuffers(
 
 void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
     PjRtDevice* device, std::vector<PjRtBuffer*> buffers,
-    const std::vector<PjRtGlobalDeviceId> dst_global_device_ids,
+    const std::vector<GlobalDeviceId> dst_global_device_ids,
     const std::vector<CrossHostTransferKey> transfer_keys,
     std::vector<std::shared_ptr<Promise<>>> promises) {
   // Get the local device state, transfer stream, and prepare the send
@@ -948,7 +948,7 @@ StreamExecutorGpuClient::PrepareReceiveBuffer(PjRtDevice* device, Shape shape) {
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 StreamExecutorGpuClient::CrossHostReceiveBuffers(
     xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
-    absl::Span<const PjRtGlobalDeviceId> src_global_device_ids,
+    absl::Span<const GlobalDeviceId> src_global_device_ids,
     std::vector<CrossHostTransferKey> transfer_keys) {
   // Validate arguments.
   if (shapes.empty()) {
