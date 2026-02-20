@@ -101,6 +101,40 @@ cc_library(
 )
 
 cc_library(
+    name = "pjrt_c_api_collectives_extension_hdrs",
+    hdrs = ["pjrt_c_api_collectives_extension.h"],
+    deps = [":pjrt_c_api_hdrs"],
+)
+
+cc_library(
+    name = "pjrt_c_api_collectives_internal",
+    srcs = ["pjrt_c_api_collectives_internal.cc"],
+    hdrs = ["pjrt_c_api_collectives_internal.h"],
+    deps = [
+        "//xla:executable_run_options",
+        "//xla/backends/cpu/collectives:cpu_clique_key",
+        "//xla/backends/cpu/collectives:cpu_collectives",
+        "//xla/core/collectives",
+        "//xla/core/collectives:clique_id",
+        "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
+        "//xla/core/collectives:reduction_kind",
+        "//xla/pjrt/c:pjrt_c_api_collectives_extension_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_helpers",
+        "//xla/pjrt/c:pjrt_c_api_wrapper_impl",
+        "//xla/runtime:device_id",
+        "//xla/service:collective_ops_utils",
+        "//xla/tsl/concurrency:future",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
+    ],
+)
+
+cc_library(
     name = "pjrt_c_api_ffi_extension_hdrs",
     hdrs = ["pjrt_c_api_ffi_extension.h"],
     visibility = ["//visibility:public"],
