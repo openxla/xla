@@ -346,12 +346,14 @@ RaggedAllToAllStartThunk::InitializeOnce(const InitializeParams& params) {
     return absl::InternalError("Failed to allocate output offsets buffer.");
   }
 
-  if (is_local() && !use_multi_gpu_barrier_in_one_shot_kernel_) {
+  if (is_local(params.local_device_count) &&
+      !use_multi_gpu_barrier_in_one_shot_kernel_) {
     ASSIGN_OR_RETURN(state->start_event, executor->CreateEvent());
     ASSIGN_OR_RETURN(state->end_event, executor->CreateEvent());
   }
 
-  if (is_local() && use_multi_gpu_barrier_in_one_shot_kernel_) {
+  if (is_local(params.local_device_count) &&
+      use_multi_gpu_barrier_in_one_shot_kernel_) {
     using MultiGpuBarrierKernel = se::gpu::MultiGpuBarrierKernel;
 
     // 1. Allocate Signal Buffer (Array of uint32_t)
@@ -394,11 +396,11 @@ RaggedAllToAllStartThunk::InitializeOnce(const InitializeParams& params) {
 absl::Status RaggedAllToAllStartThunk::Initialize(
     const InitializeParams& params) {
   RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
-  device_count_ = params.local_device_count;
 
   ASSIGN_OR_RETURN(RaggedAllToAllStreamState * state, InitializeOnce(params));
 
-  if (is_local() && use_multi_gpu_barrier_in_one_shot_kernel_) {
+  if (is_local(params.local_device_count) &&
+      use_multi_gpu_barrier_in_one_shot_kernel_) {
     // Rendezvous - Exchange output pointers and barrier signal buffers.
     ASSIGN_OR_RETURN(
         std::vector<DeviceBufferPair> device_buffers,
@@ -513,9 +515,10 @@ absl::StatusOr<bool> RaggedAllToAllStartThunk::RunCollective(
     state = per_stream_states_[stream.parent()].get();
   }
 
-  bool should_use_one_shot_kernel = one_shot_kernel_enabled_ &&
-                                    peer_access_enabled &&
-                                    IsOneShotKernelSupported() && is_local();
+  bool should_use_one_shot_kernel =
+      one_shot_kernel_enabled_ && peer_access_enabled &&
+      IsOneShotKernelSupported() &&
+      is_local(params.collective_params->local_device_count);
 
   if (should_use_one_shot_kernel &&
       !use_multi_gpu_barrier_in_one_shot_kernel_) {

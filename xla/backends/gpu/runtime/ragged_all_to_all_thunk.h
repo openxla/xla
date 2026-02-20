@@ -185,13 +185,12 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
                                      Communicator& comm) override;
 
  private:
-  bool is_local() const {
-    return IsAllReplicasLocal(device_count_, config_.config);
+  bool is_local(int device_count) const {
+    return IsAllReplicasLocal(device_count, config_.config);
   }
 
   const RaggedAllToAllConfig config_;
   const std::vector<Buffer> buffers_;
-  int64_t device_count_ = -1;
   const bool one_shot_kernel_enabled_;
   const bool use_multi_gpu_barrier_in_one_shot_kernel_;
 
