@@ -316,6 +316,9 @@ Build(
         "TF_ROCM_RBE_DOCKER_IMAGE": "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa",
         "ROCM_PATH": "/opt/rocm",
     },
+    startup_options={
+        "bazelrc": "build_tools/rocm/rocm_xla_ci.bazelrc",
+    },
   options={
         **_DEFAULT_BAZEL_OPTIONS,
         "test_filter": rocm_test_filters,
@@ -349,6 +352,9 @@ Build(
         "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
         "TF_ROCM_RBE_DOCKER_IMAGE": "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa",
         "ROCM_PATH": "/opt/rocm",
+    },
+    startup_options={
+        "bazelrc": "build_tools/rocm/rocm_xla_ci.bazelrc",
     },
     options={
         **_DEFAULT_BAZEL_OPTIONS,
