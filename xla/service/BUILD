@@ -3518,20 +3518,25 @@ cc_library(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "hlo_execution_profile_test",
     srcs = ["hlo_execution_profile_test.cc"],
+    backends = [
+        "cpu",
+        "gpu",
+    ],
     tags = [
         "no_mac_arm64",
-        "pjrt_migration_candidate",
+        "nofixdeps",
     ],
     deps = [
-        ":cpu_plugin",
         ":hlo_cost_analysis",
         ":hlo_execution_profile",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:xla_internal_test_main",
+        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:xla_test_backend_predicates",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 
