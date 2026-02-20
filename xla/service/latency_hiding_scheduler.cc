@@ -288,6 +288,28 @@ bool LatencyEstimator::IsP2pPair(const HloGraphNode& from,
           target.GetInstr().opcode() == HloOpcode::kRecvDone);
 }
 
+std::optional<LatencyEstimator::TimeCost>
+LatencyEstimator::GetLatencyFromMetadata(
+    const HloInstruction& instruction) const {
+  const auto& attrs = instruction.frontend_attributes().map();
+  const auto it = attrs.find("latency_metadata");
+  if (it == attrs.end()) {
+    return std::nullopt;
+  }
+  int64_t latency_ns;
+  if (!absl::SimpleAtoi(it->second, &latency_ns)) {
+    LOG(WARNING) << "Failed to parse latency from custom call for "
+                 << instruction.name()
+                 << " from latency_metadata:" << it->second;
+    return std::nullopt;
+  }
+  VLOG(10)
+      << "LatencyEstimator::GetLatencyFromMetadata: Returning latency from "
+         "custom call for "
+      << instruction.name() << ": " << latency_ns << " ns";
+  return (TimeCost)latency_ns * CyclesPerMicrosecond() / 1000.0;
+}
+
 LatencyEstimator::TimeCost ApproximateLatencyEstimator::GetLatencyBetween(
     const HloGraphNode& from, const HloGraphNode& target) const {
   if (IsAsyncPair(from, target)) {
