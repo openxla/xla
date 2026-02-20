@@ -425,8 +425,9 @@ common:avx_linux --copt=-mavx
 common:avx_linux --host_copt=-mavx
 common:avx_win --copt=/arch:AVX
 
-common:win_clang_base --@com_google_protobuf//build_defs:use_dlls=True
-common:win_clang_base --@com_google_absl//absl:use_dlls=True
+# Introduced in cl/738203468
+# common:win_clang_base --@com_google_protobuf//build_defs:use_dlls=True
+# common:win_clang_base --@com_google_absl//absl:use_dlls=True
 common:win_clang_base --linkopt=/demangle:no --host_linkopt=/demangle:no
 common:win_clang_base --linkopt=/errorlimit:0 --host_linkopt=/errorlimit:0
 common:win_clang_base --copt=/clang:-Weverything
@@ -665,6 +666,7 @@ common:cross_compile_base --config=clang_local
 common:cross_compile_base --host_cpu=k8
 common:cross_compile_base --host_crosstool_top=//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
 common:cross_compile_base --extra_execution_platforms=//tools/toolchains/cross_compile/config:linux_x86_64
+common:cross_compile_base --extra_toolchains=//tools/toolchains/cross_compile/cc:linux_x86_toolchain
 
 common:rbe_cross_compile_base --config=rbe_base
 common:rbe_cross_compile_base --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
@@ -683,6 +685,7 @@ common:cross_compile_linux_arm64 --config=cross_compile_base
 common:cross_compile_linux_arm64 --platforms=//tools/toolchains/cross_compile/config:linux_aarch64
 common:cross_compile_linux_arm64 --cpu=aarch64
 common:cross_compile_linux_arm64 --crosstool_top=//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
+common:cross_compile_linux_arm64 --extra_toolchains=//tools/toolchains/cross_compile/cc:linux_aarch64_toolchain
 
 # RBE cross-compile configs for Linux Aarch64
 common:rbe_cross_compile_linux_arm64 --config=cross_compile_linux_arm64

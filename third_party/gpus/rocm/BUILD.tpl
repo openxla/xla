@@ -85,7 +85,7 @@ cc_library(
     name = "rocm_headers_includes",
     hdrs = glob([
         "%{rocm_root}/include/**",
-    ]),
+    ], allow_empty = True),
     strip_include_prefix = "%{rocm_root}/include",
 )
 
@@ -94,7 +94,7 @@ cc_library(
     hdrs = glob([
         "%{rocm_root}/include/**",
         "%{rocm_root}/lib/llvm/lib/**/*.h",
-    ]),
+    ], allow_empty = True),
     defines = ["MIOPEN_BETA_API=1"],
     include_prefix = "rocm",
     strip_include_prefix = "%{rocm_root}",
@@ -130,8 +130,8 @@ cc_library(
 
 cc_library(
     name = "hsa_rocr",
-    srcs = glob(["%{rocm_root}/lib/libhsa-runtime*.so*"]),
-    hdrs = glob(["%{rocm_root}/include/hsa/**"]),
+    srcs = glob(["%{rocm_root}/lib/libhsa-runtime*.so*"], allow_empty = True),
+    hdrs = glob(["%{rocm_root}/include/hsa/**"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -187,12 +187,13 @@ cc_library(
             "%{rocm_root}/lib/libhiprtc.so*",
             "%{rocm_root}/lib/libhiprtc-builtins.so*",
         ],
+        allow_empty = True,
         exclude = [
             # exclude files like libamdhip64.so.7.1.25445-7484b05b13 -> misplaced
             "%{rocm_root}/**/*.so.*.*",
         ],
     ),
-    hdrs = glob(["%{rocm_root}/include/hip/**"]),
+    hdrs = glob(["%{rocm_root}/include/hip/**"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -218,12 +219,13 @@ cc_library(
             "%{rocm_root}/lib/libhiprtc.so*",
             "%{rocm_root}/lib/libhiprtc-builtins.so*",
         ],
+        allow_empty = True,
         exclude = [
             # exclude files like libamdhip64.so.7.1.25445-7484b05b13 -> misplaced
             "%{rocm_root}/**/*.so.*.*",
         ],
     ),
-    hdrs = glob(["%{rocm_root}/include/hip/**"]),
+    hdrs = glob(["%{rocm_root}/include/hip/**"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -241,12 +243,12 @@ cc_library(
 
 cc_library(
     name = "rocblas",
-    hdrs = glob(["%{rocm_root}/include/rocblas/**"]),
+    hdrs = glob(["%{rocm_root}/include/rocblas/**"], allow_empty = True),
     data = glob([
         "%{rocm_root}/lib/librocblas*.so*",
         "%{rocm_root}/lib/librocroller*.so*",
         "%{rocm_root}/lib/rocblas/**",
-    ]),
+    ], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -263,7 +265,7 @@ cc_library(
 
 cc_library(
     name = "rocfft",
-    data = glob(["%{rocm_root}/lib/librocfft*.so*"]),
+    data = glob(["%{rocm_root}/lib/librocfft*.so*"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -278,7 +280,7 @@ cc_library(
 
 cc_library(
     name = "hipfft",
-    data = glob(["%{rocm_root}/lib/libhipfft*.so*"]),
+    data = glob(["%{rocm_root}/lib/libhipfft*.so*"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -293,8 +295,8 @@ cc_library(
 
 cc_library(
     name = "hiprand",
-    srcs = glob(["%{rocm_root}/lib/libhiprand*.so*"]),
-    hdrs = glob(["%{rocm_root}/include/hiprand/**"]),
+    srcs = glob(["%{rocm_root}/lib/libhiprand*.so*"], allow_empty = True),
+    hdrs = glob(["%{rocm_root}/include/hiprand/**"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -308,11 +310,11 @@ cc_library(
 
 cc_library(
     name = "miopen",
-    hdrs = glob(["%{rocm_root}/include/miopen/**"]),
+    hdrs = glob(["%{rocm_root}/include/miopen/**"], allow_empty = True),
     data = glob([
         "%{rocm_root}/lib/libMIOpen*.so*",
         "%{rocm_root}/share/miopen/**",
-    ]),
+    ], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -329,8 +331,8 @@ cc_library(
 
 cc_library(
     name = "rccl",
-    srcs = glob(["%{rocm_root}/lib/librccl*.so*"]),
-    hdrs = glob(["%{rocm_root}/include/rccl/**"]),
+    srcs = glob(["%{rocm_root}/lib/librccl*.so*"], allow_empty = True),
+    hdrs = glob(["%{rocm_root}/include/rccl/**"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -361,7 +363,7 @@ cc_library(
     hdrs = glob([
         "%{rocm_root}/include/hipcub/**",
         "%{rocm_root}/include/rocprim/**",
-    ]),
+    ], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/hipcub",
@@ -377,9 +379,9 @@ cc_library(
 
 cc_library(
     name = "hipsparse",
-    srcs = glob(["%{rocm_root}/lib/libhipsparse*.so*"]),
-    hdrs = glob(["%{rocm_root}/include/hipsparse/**"]),
-    data = glob(["%{rocm_root}/lib/libhipsparse*.so*"]),
+    srcs = glob(["%{rocm_root}/lib/libhipsparse*.so*"], allow_empty = True),
+    hdrs = glob(["%{rocm_root}/include/hipsparse/**"], allow_empty = True),
+    data = glob(["%{rocm_root}/lib/libhipsparse*.so*"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -394,8 +396,8 @@ cc_library(
     srcs = glob([
         "%{rocm_root}/lib/libroctracer*.so*",
         "%{rocm_root}/lib/libroctx64.so*",
-    ]),
-    hdrs = glob(["%{rocm_root}/include/roctracer/**"]),
+    ], allow_empty = True),
+    hdrs = glob(["%{rocm_root}/include/roctracer/**"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -407,8 +409,8 @@ cc_library(
 
 cc_library(
     name = "rocprofiler-sdk",
-    srcs = glob(["%{rocm_root}/lib/librocprofiler-sdk*.so*"]),
-    hdrs = glob(["%{rocm_root}/include/rocprofiler-sdk/**"]),
+    srcs = glob(["%{rocm_root}/lib/librocprofiler-sdk*.so*"], allow_empty = True),
+    hdrs = glob(["%{rocm_root}/include/rocprofiler-sdk/**"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -420,11 +422,11 @@ cc_library(
 
 cc_library(
     name = "rocsolver",
-    hdrs = glob(["%{rocm_root}/include/rocsolver/**"]),
+    hdrs = glob(["%{rocm_root}/include/rocsolver/**"], allow_empty = True),
     data = glob([
         "%{rocm_root}/lib/librocsolver*.so*",
         "%{rocm_root}/lib/host-math/lib/*.so*",
-    ]),
+    ], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -440,7 +442,7 @@ cc_library(
 
 cc_library(
     name = "rocsparse",
-    data = glob(["%{rocm_root}/lib/librocsparse*.so*"]),
+    data = glob(["%{rocm_root}/lib/librocsparse*.so*"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -456,8 +458,8 @@ cc_library(
 
 cc_library(
     name = "hipsolver",
-    hdrs = glob(["%{rocm_root}/include/hipsolver/**"]),
-    data = glob(["%{rocm_root}/lib/libhipsolver*.so*"]),
+    hdrs = glob(["%{rocm_root}/include/hipsolver/**"], allow_empty = True),
+    data = glob(["%{rocm_root}/lib/libhipsolver*.so*"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -474,8 +476,8 @@ cc_library(
 
 cc_library(
     name = "hipblas",
-    hdrs = glob(["%{rocm_root}/include/hipblas/**"]),
-    data = glob(["%{rocm_root}/lib/libhipblas.so*"]),
+    hdrs = glob(["%{rocm_root}/include/hipblas/**"], allow_empty = True),
+    data = glob(["%{rocm_root}/lib/libhipblas.so*"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -492,7 +494,7 @@ cc_library(
 
 cc_library(
     name = "hipblas-common",
-    hdrs = glob(["%{rocm_root}/include/hipblas-common/**"]),
+    hdrs = glob(["%{rocm_root}/include/hipblas-common/**"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -506,18 +508,18 @@ cc_library(
     name = "rocm-core",
     srcs = glob([
         "%{rocm_root}/lib/librocm-core.so*",
-    ]),
+    ], allow_empty = True),
     visibility = ["//visibility:public"],
     deps = [":rocm_config"],
 )
 
 cc_library(
     name = "hipblaslt",
-    hdrs = glob(["%{rocm_root}/include/hipblaslt/**"]),
+    hdrs = glob(["%{rocm_root}/include/hipblaslt/**"], allow_empty = True),
     data = glob([
         "%{rocm_root}/lib/hipblaslt/**",
         "%{rocm_root}/lib/libhipblaslt.so*",
-    ]),
+    ], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/hipblaslt",
@@ -533,8 +535,8 @@ cc_library(
 
 cc_library(
     name = "rocrand",
-    srcs = glob(["%{rocm_root}/lib/librocrand*.so*"]),
-    hdrs = glob(["%{rocm_root}/include/rocrand/**"]),
+    srcs = glob(["%{rocm_root}/lib/librocrand*.so*"], allow_empty = True),
+    hdrs = glob(["%{rocm_root}/include/rocrand/**"], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",
@@ -548,7 +550,7 @@ cc_library(
     name = "rocprofiler_register",
     srcs = glob([
         "%{rocm_root}/lib/librocprofiler-register.so*",
-    ]),
+    ], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -560,12 +562,12 @@ cc_library(
 cc_library(
     name = "amd_comgr_dynamic",
     srcs = ["%{rocm_root}/lib/libamd_comgr_stub.a"],
-    hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
+    hdrs = glob(["%{rocm_root}/include/amd_comgr/**"], allow_empty = True),
     data = glob([
         "%{rocm_root}/lib/libamd_comgr_loader.so*",
         "%{rocm_root}/lib/libamd_comgr.so*",
         "%{rocm_root}/lib/llvm/lib/libLLVM.so*",
-    ]),
+    ], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -581,10 +583,10 @@ cc_library(
 
 cc_library(
     name = "amd_comgr_static",
-    hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
+    hdrs = glob(["%{rocm_root}/include/amd_comgr/**"], allow_empty = True),
     data = glob([
         "%{rocm_root}/lib/libamd_comgr.so*",
-    ]),
+    ], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -613,11 +615,11 @@ cc_library(
     srcs = glob([
         "%{rocm_root}/lib/librocm_smi64.so*",
         "%{rocm_root}/lib/libroam.so*",
-    ]),
+    ], allow_empty = True),
     hdrs = glob([
         "%{rocm_root}/include/oam/**",
         "%{rocm_root}/include/rocm_smi/**",
-    ]),
+    ], allow_empty = True),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -630,10 +632,10 @@ cc_library(
     name = "system_libs",
     srcs = glob([
         "%{rocm_root}/lib/rocm_sysdeps/lib/*.so*",
-    ]),
+    ], allow_empty = True),
     data = glob([
         "%{rocm_root}/lib/rocm_sysdeps/share/**",
-    ]),
+    ], allow_empty = True),
 )
 
 filegroup(
@@ -654,13 +656,13 @@ filegroup(
         "%{rocm_root}/lib/rocm_sysdeps/lib/*.so*",
         "%{rocm_root}/lib/libamd_comgr_loader.so*",
         "%{rocm_root}/lib/libamd_comgr.so*",
-    ]),
+    ], allow_empty = True),
     visibility = ["//visibility:public"],
 )
 
 filegroup(
     name = "all_files",
-    srcs = glob(["%{rocm_root}/**"]),
+    srcs = glob(["%{rocm_root}/**"], allow_empty = True),
     visibility = ["//visibility:public"],
 )
 
@@ -671,7 +673,7 @@ filegroup(
         "%{rocm_root}/lib/libhsa-runtime64.so*",
         "%{rocm_root}/lib/rocm_sysdeps/lib/*",
         "%{rocm_root}/lib/librocprofiler-register.so.0*",
-    ]),
+    ], allow_empty = True),
     visibility = ["//visibility:public"],
 )
 

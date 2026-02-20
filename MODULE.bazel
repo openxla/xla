@@ -45,9 +45,9 @@ bazel_dep(name = "rules_ml_toolchain")
 # echo "sha256-${HASH}"
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-KIfZtJ4Y7132+HQ4pNmXWUCNIaH0Y8YfS+arMdiS3Ig=",
-    strip_prefix = "rules_ml_toolchain-de6fc6c38ea0368a198daa3f8c7cb829cc8db185",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/de6fc6c38ea0368a198daa3f8c7cb829cc8db185.tar.gz"],
+    integrity = "sha256-+08asgV1bUG9UZvMeT7ucW1edNj1NzCZvX57t0BvWx8=",
+    strip_prefix = "rules_ml_toolchain-6d19ed7e900ccf6fae6301a09c9139299ea41ef4",
+    urls = ["https://github.com/meteorcloudy/rules_ml_toolchain/archive/6d19ed7e900ccf6fae6301a09c9139299ea41ef4.tar.gz"],
 )
 
 # TODO: Upstream the patch?
@@ -90,12 +90,14 @@ use_repo(
     "FXdiv",
     "XNNPACK",
     "cpuinfo",
+    "cutlass_archive",
     "cudnn_frontend_archive",
     "dlpack",
     "ducc",
     "eigen_archive",
     "farmhash_archive",
     "farmhash_gpu_archive",
+    "fmt",
     "gloo",
     "highwayhash",
     "hwloc",
@@ -106,14 +108,22 @@ use_repo(
     "mpitrampoline",
     "nanobind",
     "nvshmem",
+    "nvtx_archive",
+    "nccl_archive",
     "onednn",
     "pthreadpool",
+    "raft",
+    "rmm",
+    "rapids_logger",
     "riegeli",
+    "robin_map",
     "rocm_device_libs",
     "shardy",
     "slinky",
+    "spdlog",
     "stablehlo",
     "triton",
+    "uv",
 )
 
 ##############################################################
@@ -141,12 +151,12 @@ pip.whl_mods(
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 cc_library(
     name = "numpy_headers_2",
-    hdrs = glob(["site-packages/numpy/_core/include/**/*.h"]),
+    hdrs = glob(["site-packages/numpy/_core/include/**/*.h"], allow_empty = True),
     strip_include_prefix="site-packages/numpy/_core/include/",
 )
 cc_library(
     name = "numpy_headers_1",
-    hdrs = glob(["site-packages/numpy/core/include/**/*.h"]),
+    hdrs = glob(["site-packages/numpy/core/include/**/*.h"], allow_empty = True),
     strip_include_prefix="site-packages/numpy/core/include/",
 )
 cc_library(
@@ -205,15 +215,40 @@ use_repo(cuda_configure, "local_config_cuda")
 nccl_configure = use_extension("@rules_ml_toolchain//extensions:nccl_configure.bzl", "nccl_configure_ext")
 use_repo(nccl_configure, "local_config_nccl")
 
+nccl_redist = use_extension("@rules_ml_toolchain//extensions:nccl_redist.bzl", "nccl_redist_ext")
+use_repo(nccl_redist, "cuda_nccl")
+
 sycl_configure = use_extension("@rules_ml_toolchain//extensions:sycl_configure.bzl", "sycl_configure_ext")
-use_repo(sycl_configure, "local_config_sycl")
+use_repo(sycl_configure, "local_config_sycl", "oneapi", "level_zero", "zero_loader")
 
 cuda_redist_init_ext = use_extension("@rules_ml_toolchain//extensions:cuda_redist_init.bzl", "cuda_redist_init_ext")
-use_repo(cuda_redist_init_ext, "cuda_cudart")
+use_repo(
+    cuda_redist_init_ext,
+    "cuda_cccl",
+    "cuda_cublas",
+    "cuda_cudart",
+    "cuda_cudnn",
+    "cuda_cufft",
+    "cuda_cupti",
+    "cuda_curand",
+    "cuda_cusolver",
+    "cuda_cusparse",
+    "cuda_driver",
+    "cuda_nvcc",
+    "cuda_nvjitlink",
+    "cuda_nvml",
+    "cuda_nvrtc",
+    "cuda_nvtx",
+)
+
+nvshmem_redist = use_extension("@rules_ml_toolchain//extensions:nvshmem_redist.bzl", "nvshmem_redist_ext")
+use_repo(nvshmem_redist, "nvidia_nvshmem")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_sycl")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 

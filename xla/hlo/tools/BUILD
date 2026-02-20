@@ -19,7 +19,7 @@ filegroup(
     data = glob([
         "**/*.cc",
         "**/*.h",
-    ]),
+    ], allow_empty = True),
     visibility = ["//xla:internal"],
 )
 

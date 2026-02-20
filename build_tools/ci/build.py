@@ -109,7 +109,6 @@ class BuildType(enum.Enum):
 
   XLA_LINUX_X86_CPU_GITHUB_ACTIONS = enum.auto()
   XLA_WINDOWS_X86_CPU_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_ARM64_CPU_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_L4_GITHUB_ACTIONS = enum.auto()
   XLA_LINUX_X86_GPU_8X_H100_GITHUB_ACTIONS = enum.auto()
@@ -430,16 +429,6 @@ Build(
     startup_options={
         "output_user_root": "C:/x",
     },
-)
-
-Build(
-    type_=BuildType.XLA_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS,
-    repo="openxla/xla",
-    configs=("warnings", "nonccl", "rbe_linux_cpu", "bzlmod"),
-    target_patterns=_XLA_DEFAULT_TARGET_PATTERNS,
-    build_tag_filters=cpu_x86_tag_filter,
-    test_tag_filters=cpu_x86_tag_filter,
-    options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
 )
 
 cpu_arm_tag_filter = (
