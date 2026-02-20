@@ -1,5 +1,28 @@
 # PJRT C API changelog
 
+## 0.93
+
+* Added `PJRT_Layouts_PJRT_Executable_GetParameterLayouts`. This extension API
+  complements `PJRT_Layouts_PJRT_Executable_GetOutputLayouts`.
+
+## 0.92
+
+* Added `PJRT_Device_GetAttributes`.
+
+## 0.91
+
+* Added `PJRT_Extension_Type::PJRT_Extension_Type_Shardings`. This extension
+  defines `PJRT_Executable_ParameterShardings` and
+  `PJRT_Executable_OutputShardings`. They are currently optional API; if the
+  plugin does not support shardings, they can be `nullptr`, or set the
+  `shardings` and `sharding_sizes` fields of
+  `PJRT_Executable_ParameterShardings_Args` and
+  `PJRT_Executable_OutputShardings_Args` to `nullptr`.
+
+## 0.90
+
+* Added `total_size_in_bytes` field to `PJRT_Executable_GetCompiledMemoryStats_Args`.
+
 ## 0.89
 
 * Add `PJRT_Event_Create` and `PJRT_Event_Set`.

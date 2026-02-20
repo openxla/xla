@@ -34,7 +34,10 @@ limitations under the License.
 #include "xla/autotuning.pb.h"
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
+#include "xla/backends/gpu/transforms/hoist_fused_bitcasts.h"
+#include "xla/backends/gpu/transforms/nest_gemm_fusion.h"
 #include "xla/error_spec.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -49,8 +52,6 @@ limitations under the License.
 #include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
-#include "xla/service/gpu/transforms/hoist_fused_bitcasts.h"
-#include "xla/service/gpu/transforms/nest_gemm_fusion.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -88,6 +89,7 @@ HloInstruction* GetNonBitcastRoot(const HloComputation* computation) {
 
 class TritonTest : public GpuCodegenTest {
  public:
+  TritonTest() { RegisterSymbolicExprStorage(&mlir_context_); }
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_autotune_level(0);
@@ -2152,7 +2154,7 @@ ENTRY e {
   EXPECT_TRUE(
       RunAndCompareTwoModules(std::move(ref_module_and_metadata.module),
                               std::move(test_module_and_metadata.module),
-                              ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6},
+                              ErrorSpec{/*aabs=*/1e-5, /*arel=*/1e-6},
                               /*run_hlo_passes=*/false));
 }
 

@@ -173,6 +173,17 @@ void HloInstruction::Users::RemoveUser(HloInstruction* user) {
 }
 
 void HloInstruction::Users::SortInstructionUsers(
+    absl::FunctionRef<bool(const HloInstruction*, const HloInstruction*)>
+        compare) {
+  absl::c_sort(users_, compare);
+  if (user_map_ != nullptr) {
+    user_map_->clear();
+    RebuildMap();
+  }
+  DCHECK(CheckInvariants());
+}
+
+void HloInstruction::Users::SortInstructionUsers(
     const MappedPtrContainerSorter<HloInstruction>::MapPtrFn& map_fn,
     const Users& sorted_instruction_users) {
   using Sorter = MappedPtrContainerSorter<HloInstruction>;
@@ -630,20 +641,12 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
           << "Scan instruction should have 1 called computation but sees "
           << proto.called_computation_ids_size();
       int64_t num_carries = proto.num_carries();
-      if (num_carries == 0) {
-        TF_RET_CHECK(proto.operand_ids_size() % 2 == 0)
-            << "Scan instruction should have an even number of operands but "
-               "sees "
-            << proto.operand_ids_size();
-        num_carries = proto.operand_ids_size() / 2;
-      }
       TF_RET_CHECK(num_carries >= 0 && num_carries <= proto.operand_ids_size());
+      int64_t num_inputs = proto.operand_ids_size() - num_carries;
       const auto scan_operands = all_operands();
-      auto inputs = absl::MakeSpan(scan_operands)
-                        .subspan(0, scan_operands.size() - num_carries);
+      auto inputs = absl::MakeSpan(scan_operands).subspan(0, num_inputs);
       auto inits =
-          absl::MakeSpan(scan_operands)
-              .subspan(scan_operands.size() - num_carries, num_carries);
+          absl::MakeSpan(scan_operands).subspan(num_inputs, num_carries);
       instruction =
           CreateScan(shape, inputs, inits, computations(0), proto.dimensions(0),
                      proto.is_reverse(), proto.is_associative());
@@ -757,16 +760,19 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       TF_RET_CHECK(proto.dimensions().size() == 1)
           << "AllGather cannot have more than 1 all-gather dimensions";
       int64_t all_gather_dimension = proto.dimensions(0);
+      std::unique_ptr<CollectiveDeviceListBase> device_list =
+          CollectiveDeviceListBase::DeviceListFromProto(proto);
+
       if (opcode == HloOpcode::kAllGather) {
-        instruction = CreateAllGather(
-            shape, all_operands(), all_gather_dimension,
-            CollectiveDeviceList::FromProto(proto), proto.constrain_layout(),
-            channel_id, proto.use_global_device_ids());
+        instruction =
+            CreateAllGather(shape, all_operands(), all_gather_dimension,
+                            *device_list, proto.constrain_layout(), channel_id,
+                            proto.use_global_device_ids());
       } else {
-        instruction = CreateAllGatherStart(
-            shape, all_operands(), all_gather_dimension,
-            CollectiveDeviceList::FromProto(proto), proto.constrain_layout(),
-            channel_id, proto.use_global_device_ids());
+        instruction =
+            CreateAllGatherStart(shape, all_operands(), all_gather_dimension,
+                                 *device_list, proto.constrain_layout(),
+                                 channel_id, proto.use_global_device_ids());
       }
       break;
     }
@@ -785,24 +791,25 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       if (proto.all_reduce_id() > 0) {
         channel_id = proto.all_reduce_id();
       }
-      CollectiveDeviceList device_list = CollectiveDeviceList::FromProto(proto);
+      std::unique_ptr<CollectiveDeviceListBase> device_list =
+          CollectiveDeviceListBase::DeviceListFromProto(proto);
       if (opcode == HloOpcode::kAllReduce) {
         instruction =
-            CreateAllReduce(shape, all_operands(), computations(0), device_list,
-                            proto.constrain_layout(), channel_id,
+            CreateAllReduce(shape, all_operands(), computations(0),
+                            *device_list, proto.constrain_layout(), channel_id,
                             proto.use_global_device_ids());
       } else if (opcode == HloOpcode::kReduceScatter) {
         TF_RET_CHECK(proto.dimensions().size() == 1)
             << "ReduceScatter cannot have more than 1 scatter dimensions";
         int64_t scatter_dimension = proto.dimensions(0);
         instruction = CreateReduceScatter(
-            shape, all_operands(), computations(0), device_list,
+            shape, all_operands(), computations(0), *device_list,
             proto.constrain_layout(), channel_id, proto.use_global_device_ids(),
             scatter_dimension);
       } else {
         instruction =
             CreateAllReduceStart(shape, all_operands(), computations(0),
-                                 device_list, proto.constrain_layout(),
+                                 *device_list, proto.constrain_layout(),
                                  channel_id, proto.use_global_device_ids());
       }
       break;
@@ -821,9 +828,10 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
                "is specified";
         split_dimension = proto.dimensions(0);
       }
-      instruction = CreateAllToAll(
-          shape, all_operands(), CollectiveDeviceList::FromProto(proto),
-          proto.constrain_layout(), channel_id, split_dimension);
+      instruction =
+          CreateAllToAll(shape, all_operands(),
+                         *CollectiveDeviceListBase::DeviceListFromProto(proto),
+                         proto.constrain_layout(), channel_id, split_dimension);
       break;
     }
     case HloOpcode::kRaggedAllToAll: {
@@ -833,9 +841,9 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       }
       TF_RET_CHECK(all_operands().size() == 6)
           << "RaggedAllToAll must have 6 operands";
-      instruction = CreateRaggedAllToAll(shape, all_operands(),
-                                         CollectiveDeviceList::FromProto(proto),
-                                         channel_id);
+      instruction = CreateRaggedAllToAll(
+          shape, all_operands(),
+          *CollectiveDeviceListBase::DeviceListFromProto(proto), channel_id);
       break;
     }
     case HloOpcode::kCollectiveBroadcast: {
@@ -844,7 +852,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
         channel_id = proto.channel_id();
       }
       instruction = CreateCollectiveBroadcast(
-          shape, all_operands(), CollectiveDeviceList::FromProto(proto), false,
+          shape, all_operands(),
+          *CollectiveDeviceListBase::DeviceListFromProto(proto), false,
           channel_id);
       break;
     }
@@ -982,6 +991,25 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
           std::max<int64_t>(proto.feature_group_count(), 1),
           std::max<int64_t>(proto.batch_group_count(), 1), proto.window(),
           proto.convolution_dimension_numbers(), precision_config);
+      if (proto.conv_kind() != CONVOLUTION_KIND_UNSET) {
+        HloConvolutionInstruction::ConvKind conv_kind =
+            HloConvolutionInstruction::ConvKind::UNSET;
+        switch (proto.conv_kind()) {
+          case CONVOLUTION_KIND_FPROP:
+            conv_kind = HloConvolutionInstruction::ConvKind::FPROP;
+            break;
+          case CONVOLUTION_KIND_WGRAD:
+            conv_kind = HloConvolutionInstruction::ConvKind::WGRAD;
+            break;
+          case CONVOLUTION_KIND_DGRAD:
+            conv_kind = HloConvolutionInstruction::ConvKind::DGRAD;
+            break;
+          default:
+            break;
+        }
+        Cast<HloConvolutionInstruction>(instruction.get())
+            ->set_conv_kind(conv_kind);
+      }
       break;
     }
     case HloOpcode::kReduceWindow:
@@ -3021,6 +3049,44 @@ HloInstruction::InstructionVector HloInstruction::unique_operands() const {
   return unique;
 }
 
+std::optional<int64_t> HloInstruction::MapUnaryOutputDimToOperandDim(
+    int64_t output_dim_idx) const {
+  if (operand_count() != 1) {
+    return std::nullopt;
+  }
+  if (IsElementwise()) {
+    return output_dim_idx;
+  }
+  switch (opcode()) {
+    case HloOpcode::kBroadcast: {
+      // dimensions() maps operand dim -> output dim.
+      const auto& bcast_dims = dimensions();
+      auto it = absl::c_find(bcast_dims, output_dim_idx);
+      if (it == bcast_dims.end()) {
+        return std::nullopt;
+      }
+      return std::distance(bcast_dims.begin(), it);
+    }
+    case HloOpcode::kReshape:
+    case HloOpcode::kBitcast: {
+      if (!ShapeUtil::InsertedOrDeleted1SizedDimensions(operand(0)->shape(),
+                                                        shape())) {
+        return std::nullopt;
+      }
+      auto unmodified_dims = ShapeUtil::DimensionsUnmodifiedByReshape(
+          operand(0)->shape(), shape());
+      for (const auto& [input_dim, output_dim] : unmodified_dims) {
+        if (output_dim == output_dim_idx) {
+          return input_dim;
+        }
+      }
+      return std::nullopt;
+    }
+    default:
+      return std::nullopt;
+  }
+}
+
 absl::Status HloInstruction::AddControlDependencyTo(
     HloInstruction* instruction) {
   TF_RET_CHECK(instruction->parent() == parent());
@@ -3963,8 +4029,9 @@ bool HloInstruction::IsElementwiseImpl(
     return operand_idx.has_value() && operand_idx.value() == 0;
   }
   if (opcode_ == HloOpcode::kBitcastConvert &&
-      primitive_util::BitWidth(shape().element_type()) !=
-          primitive_util::BitWidth(operands_[0]->shape().element_type())) {
+      primitive_util::StorageBitWidth(shape().element_type()) !=
+          primitive_util::StorageBitWidth(
+              operands_[0]->shape().element_type())) {
     return false;
   }
   return IsOpElementwise(opcode_);
@@ -3973,13 +4040,13 @@ bool HloInstruction::IsElementwiseImpl(
 bool HloInstruction::IsCrossModuleAllReduce() const {
   if (opcode() == HloOpcode::kAllReduce ||
       opcode() == HloOpcode::kAllReduceStart) {
-    return channel_id() != std::nullopt;
+    return channel_id().has_value();
   }
   if (opcode() == HloOpcode::kAllReduceDone) {
     CHECK_EQ(operand_count(), 1);
     const HloInstruction* operand = this->operand(0);
     CHECK_EQ(operand->opcode(), HloOpcode::kAllReduceStart);
-    return operand->channel_id() != std::nullopt;
+    return operand->channel_id().has_value();
   }
   return false;
 }
@@ -4068,10 +4135,25 @@ void HloInstruction::PrintWithCanonicalNameMap(
       (metadata_ != nullptr &&
        (!metadata_->op_type().empty() || !metadata_->op_name().empty() ||
         !metadata_->source_file().empty() ||
-        !metadata_->scheduling_name().empty()))) {
+        !metadata_->scheduling_name().empty() ||
+        metadata_->stack_frame_id() != 0))) {
     printer->Append(", metadata={");
-    printer->Append(xla::OpMetadataToString(
-        *metadata_, options.print_metadata_only_op_name()));
+    if (options.print_inline_stack_frames() &&
+        metadata_->stack_frame_id() != 0 && GetModule() != nullptr) {
+      OpMetadata metadata = *metadata_;
+      metadata.set_stack_frame_id(0);
+      auto frame = GetModule()->get_stack_frame(metadata_->stack_frame_id());
+      if (!frame.empty()) {
+        metadata.set_source_file(frame.file_name);
+        metadata.set_source_line(frame.line);
+        metadata.set_source_column(frame.column);
+      }
+      printer->Append(xla::OpMetadataToString(
+          metadata, options.print_metadata_only_op_name()));
+    } else {
+      printer->Append(xla::OpMetadataToString(
+          *metadata_, options.print_metadata_only_op_name()));
+    }
     printer->Append("}");
   }
   if (options.print_backend_config() && !backend_config_.empty()) {
@@ -4462,48 +4544,45 @@ std::string HloInstruction::ToShortString() const {
                 ")");
 }
 
-HloInstructionProto HloInstruction::ToProto() const {
-  HloInstructionProto proto;
+void HloInstruction::ToProto(HloInstructionProto* proto) const {
   CHECK(local_id_ != -1)
       << "This instruction does not have a valid id. Please make sure the "
          "instruction is inside a module before dumping it.";
-  proto.set_id(unique_id());
-  proto.set_name(name_);
-  *proto.mutable_opcode() = std::string(HloOpcodeString(opcode_));
-  *proto.mutable_shape() = shape().ToProto();
+  proto->set_id(unique_id());
+  proto->set_name(name_);
+  *proto->mutable_opcode() = std::string(HloOpcodeString(opcode_));
+  shape().ToProto(*proto->mutable_shape());
   for (const HloInstruction* operand : operands_) {
-    proto.add_operand_ids(operand->unique_id());
+    proto->add_operand_ids(operand->unique_id());
   }
   for (const HloInstruction* control : control_predecessors()) {
-    proto.add_control_predecessor_ids(control->unique_id());
+    proto->add_control_predecessor_ids(control->unique_id());
   }
 
-  *proto.mutable_metadata() = metadata();
-  proto.set_backend_config(backend_config_.GetRawString());
+  *proto->mutable_metadata() = metadata();
+  proto->set_backend_config(backend_config_.GetRawString());
   if (opcode() != HloOpcode::kFusion) {
     for (const HloComputation* computation : called_computations()) {
-      proto.add_called_computation_ids(computation->unique_id());
+      proto->add_called_computation_ids(computation->unique_id());
     }
   }
 
   if (has_sharding()) {
-    *proto.mutable_sharding() = sharding().ToProto();
+    *proto->mutable_sharding() = sharding().ToProto();
   }
 
-  *proto.mutable_frontend_attributes() = frontend_attributes();
-  proto.set_is_composite(is_composite());
+  *proto->mutable_frontend_attributes() = frontend_attributes();
+  proto->set_is_composite(is_composite());
 
-  *proto.mutable_statistics_viz() = statistics_viz();
+  *proto->mutable_statistics_viz() = statistics_viz();
 
   if (original_value_) {
-    *proto.mutable_original_value() = original_value_->ToProto();
+    *proto->mutable_original_value() = original_value_->ToProto();
   }
 
   if (has_result_accuracy()) {
-    *proto.mutable_result_accuracy() = result_accuracy();
+    *proto->mutable_result_accuracy() = result_accuracy();
   }
-
-  return proto;
 }
 
 std::string HloInstruction::ToCategory() const {
@@ -4981,7 +5060,7 @@ static absl::Status PostOrderDFS(
       }
     }
 
-    if (operand_order != std::nullopt) {
+    if (operand_order.has_value()) {
       std::sort(dfs_stack.begin() + old_dfs_stack_size, dfs_stack.end(),
                 *operand_order);
     }
@@ -5876,6 +5955,10 @@ const std::vector<ReplicaGroup>& HloInstruction::replica_groups() const {
 
 const CollectiveDeviceListBase& HloInstruction::device_list() const {
   return Cast<HloCollectiveInstruction>(this)->device_list();
+}
+
+bool HloInstruction::has_replica_groups() const {
+  return device_list().num_replica_groups() > 0;
 }
 
 const std::vector<std::pair<int64_t, int64_t>>&

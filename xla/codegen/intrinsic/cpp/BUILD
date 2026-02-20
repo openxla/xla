@@ -24,6 +24,10 @@ cc_library(
 cc_binary(
     name = "ir_to_string",
     srcs = ["ir_to_string.cc"],
+    deps = [
+        "@llvm-project//llvm:Object",
+        "@llvm-project//llvm:Support",
+    ],
 )
 
 cc_library(

@@ -45,8 +45,8 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
-#include "xla/python/ifrt/program.h"
 #include "xla/python/ifrt/remap_plan.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
@@ -54,7 +54,9 @@ limitations under the License.
 #include "xla/python/ifrt/tuple.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
+#include "xla/python/pjrt_ifrt/pjrt_compiler.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
+#include "xla/python/pjrt_ifrt/pjrt_layout.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/service/computation_placer.h"
 #include "xla/tsl/concurrency/future.h"
@@ -160,34 +162,6 @@ class CompileOnlyDevice
   std::vector<std::unique_ptr<ifrt::Memory>> owned_memories_;
 };
 
-class CompileOnlyIfrtCompiler final
-    : public llvm::RTTIExtends<CompileOnlyIfrtCompiler, ifrt::Compiler> {
- public:
-  absl::StatusOr<ifrt::LoadedExecutableRef> CompileAndLoad(
-      std::unique_ptr<ifrt::Program> program,
-      std::unique_ptr<ifrt::CompileOptions> options) override {
-    return Unimplemented("Compile not implemented.");
-  }
-
-  absl::StatusOr<ifrt::ExecutableRef> Compile(
-      std::unique_ptr<ifrt::Program> program, const ifrt::Topology& topology,
-      std::unique_ptr<ifrt::CompileOptions> options) override;
-
-  absl::Status IsExecutableVersionCompatible(
-      const xla::ifrt::ExecutableVersion& executable_version,
-      const xla::ifrt::DeviceListRef& devices) const override {
-    return absl::UnimplementedError("Not implemented");
-  }
-
-  absl::StatusOr<ifrt::LoadedExecutableRef> DeserializeLoadedExecutable(
-      absl::string_view serialized,
-      std::unique_ptr<ifrt::DeserializeExecutableOptions> options) override {
-    return Unimplemented("DeserializeLoadedExecutable not implemented.");
-  }
-
-  static char ID;  // NOLINT
-};
-
 class CompileOnlyIfRtClient final
     : public llvm::RTTIExtends<CompileOnlyIfRtClient, ifrt::Client> {
  public:
@@ -219,11 +193,14 @@ class CompileOnlyIfRtClient final
   absl::StatusOr<xla::ifrt::ArrayRef> MakeArrayFromHostBuffer(
       const void* data, xla::ifrt::DType dtype, xla::ifrt::Shape shape,
       std::optional<absl::Span<const int64_t>> byte_strides,
-      xla::ifrt::ShardingRef sharding, HostBufferSemantics semantics,
+      xla::ifrt::ShardingRef sharding, xla::ifrt::LayoutRef layout,
+      HostBufferSemantics semantics,
       std::function<void()> on_done_with_host_buffer) override {
     return Unimplemented(
         "MakeArrayFromHostBuffer not available with compile-only client.");
   }
+  // Expose the base class's `MakeArrayFromHostBuffer` overloads.
+  using xla::ifrt::Client::MakeArrayFromHostBuffer;
 
   absl::StatusOr<std::vector<ifrt::ArrayRef>> MakeArraysFromHostBufferShards(
       absl::Span<MakeArraysFromHostBufferShardsSpec> specs,
@@ -345,7 +322,7 @@ class CompileOnlyIfRtClient final
     return topology_;
   }
 
-  absl::StatusOr<std::shared_ptr<const PjRtLayout>> GetDefaultPjRtLayout(
+  absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> GetDefaultPjRtLayout(
       ifrt::DType dtype, absl::Span<const int64_t> dims, ifrt::Device* device,
       ifrt::MemoryKind memory_kind) const override {
     if (memory_kind == ifrt::MemoryKind(UnpinnedHostMemorySpace::kKind)) {
@@ -356,6 +333,18 @@ class CompileOnlyIfRtClient final
     TF_ASSIGN_OR_RETURN(xla::Layout layout,
                         topology_->GetDefaultLayout(element_type, dims));
     return std::make_shared<PjRtLayout>(std::move(layout));
+  }
+  absl::StatusOr<ifrt::CustomLayoutRef> GetDefaultLayout(
+      ifrt::DType dtype, const ifrt::Shape& shape,
+      const ifrt::ShardingRef& sharding) const override {
+    TF_ASSIGN_OR_RETURN(const ifrt::Shape shard_shape,
+                        sharding->GetShardShape(shape));
+    TF_ASSIGN_OR_RETURN(
+        std::shared_ptr<const xla::PjRtLayout> layout,
+        GetDefaultPjRtLayout(dtype, shard_shape.dims(),
+                             sharding->devices()->devices().front(),
+                             sharding->memory_kind()));
+    return ifrt::PjRtLayout::Create(std::move(layout));
   }
 
   absl::StatusOr<std::unique_ptr<ifrt::DeviceAttributeSubscription>>
@@ -369,7 +358,10 @@ class CompileOnlyIfRtClient final
   }
 
  private:
-  CompileOnlyIfrtCompiler default_compiler_;
+  xla::ifrt::PjRtCompiler default_compiler_{
+      /*client=*/nullptr,
+      /*num_threads=*/0,
+  };
   std::shared_ptr<ifrt::PjRtTopology> topology_;
   std::vector<std::unique_ptr<const PjRtDeviceDescription>> descriptions_;
   ifrt::AttributeMap attributes_;

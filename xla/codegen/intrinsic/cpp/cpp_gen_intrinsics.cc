@@ -25,12 +25,15 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Attributes.h"
+#include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/raw_ostream.h"
 #include "xla/codegen/intrinsic/cpp/eigen_unary_ll.h"
 #include "xla/codegen/intrinsic/intrinsic.h"
 #include "xla/service/llvm_ir/llvm_util.h"
@@ -40,6 +43,10 @@ namespace xla::codegen {
 const std::string& GetCppGenIrString(
     const intrinsics::IntrinsicOptions& options) {
   return ::llvm_ir::kEigenUnaryLlIr;
+}
+
+bool AreEigenIntrinsicsAvailable() {
+  return !GetCppGenIrString(intrinsics::IntrinsicOptions()).empty();
 }
 
 llvm::Function* GetCppGenFunction(llvm::Module* module,
@@ -63,6 +70,13 @@ llvm::Function* GetCppGenFunction(llvm::Module* module,
 std::unique_ptr<llvm::Module> ParseEmbeddedBitcode(
     llvm::LLVMContext& context, absl::string_view bitcode,
     absl::string_view source_name) {
+  if (bitcode.empty()) {
+    LOG_FIRST_N(WARNING, 1)
+        << "Empty bitcode string provided for " << source_name
+        << ". Optimizations relying on this IR will be disabled.";
+    return std::make_unique<llvm::Module>("empty", context);
+  }
+
   llvm::SMDiagnostic diagnostic;
   std::unique_ptr<llvm::MemoryBuffer> buffer = llvm::MemoryBuffer::getMemBuffer(
       llvm::StringRef(bitcode.data(), bitcode.size()),
@@ -75,6 +89,22 @@ std::unique_ptr<llvm::Module> ParseEmbeddedBitcode(
                            << diagnostic.getMessage().str() << "\n"
                            << bitcode;
   return module;
+}
+
+// The default LLVM diagnostic handler uses llvm::errs(), which is not
+// thread-safe.
+static void DiagnosticHandler(const llvm::DiagnosticInfo* diag_info,
+                              void* context) {
+  std::string error_string;
+  llvm::raw_string_ostream string_printer(error_string);
+  llvm::DiagnosticPrinterRawOStream diagnostic_printer(string_printer);
+  diag_info->print(diagnostic_printer);
+
+  if (diag_info->getSeverity() == llvm::DS_Error) {
+    LOG(ERROR) << error_string;
+  } else {
+    VLOG(1) << error_string;
+  }
 }
 
 void CppGenIntrinsicLibrary::LinkIntoModule(llvm::Module& dst_module) const {
@@ -93,11 +123,18 @@ void CppGenIntrinsicLibrary::LinkIntoModule(llvm::Module& dst_module) const {
   const llvm::DataLayout& hostDataLayout = dst_module.getDataLayout();
   lib_module->setDataLayout(hostDataLayout);
 
+  auto old_handler = context.getDiagnosticHandlerCallBack();
+  void* old_handler_context = context.getDiagnosticContext();
+
+  context.setDiagnosticHandlerCallBack(DiagnosticHandler, nullptr);
+
   // Using static Linker::linkModules based on previous success, but matching
   // logic
   if (llvm::Linker::linkModules(dst_module, std::move(lib_module))) {
     LOG(FATAL) << "LLVM Linker failed to link CppGen library.";
   }
+
+  context.setDiagnosticHandlerCallBack(old_handler, old_handler_context);
 
   for (const auto& func : lib_functions) {
     llvm::Function* linked_func = dst_module.getFunction(func);

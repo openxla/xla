@@ -29,19 +29,17 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/future.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -78,8 +76,7 @@ AllGatherStartThunk::AllGatherStartThunk(
     ThunkInfo thunk_info,
     std::shared_ptr<CollectiveThunk::AsyncEvents> async_events,
     CollectiveConfig config, std::vector<Buffer> buffers)
-    : CollectiveThunk(Thunk::kAllGatherStart, thunk_info, async_events,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
+    : CollectiveThunk(Thunk::kAllGatherStart, thunk_info, async_events, false),
       config_(AllGatherConfig{config}),
       buffers_(std::move(buffers)) {}
 
@@ -88,8 +85,7 @@ AllGatherStartThunk::AllGatherStartThunk(ThunkInfo thunk_info,
                                          std::vector<Buffer> buffers,
                                          bool p2p_memcpy_enabled)
     : CollectiveThunk(Thunk::kAllGatherStart, thunk_info,
-                      IsGPUSyncCollective(*inst),
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
+                      IsGPUSyncCollective(*inst), false),
       config_(GetAllGatherConfig(inst)),
       buffers_(std::move(buffers)) {
   CHECK_EQ(config_.config.operand_element_type.size(), buffers_.size());
@@ -161,7 +157,7 @@ absl::StatusOr<bool> AllGatherStartThunk::RunCollective(
     const ExecuteParams& params, const GpuCliqueKey& clique_key,
     se::Stream& stream, Communicator& comm) {
   ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
-                   ConvertToDeviceBuffers(params, buffers_,
+                   ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
                                           config_.config.operand_element_type));
   RETURN_IF_ERROR(xla::gpu::RunAllGather(device_buffers, stream, comm,
                                          config_.config.use_symmetric_buffer));

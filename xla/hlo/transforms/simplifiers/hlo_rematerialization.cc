@@ -1711,6 +1711,23 @@ UsesList MemoryUsageTracker::GetItemUses(HloRematItem* item) const {
   return combined_users;
 }
 
+// Inserts `item` into `place_before` if `item` is not something previously
+// touched by remat and dead. This is used to avoid inserting new instructions
+// based on now dead instructions into the schedule, which can cause dependency
+// issues. This is needed when rematerializing multiple instructions without
+// running a DCE pass in between. Mostly applicable to peak priority mode.
+void InsertIntoPlaceBeforeSafely(
+    HloRematItem* item, ItemList& place_before,
+    absl::flat_hash_map<const HloInstruction*, bool>* rematerializable_map) {
+  // Skips inserting instructions previously killed by rematerialization.
+  if (rematerializable_map != nullptr &&
+      rematerializable_map->contains(item->instruction) &&
+      item->instruction->IsDead()) {
+    return;
+  }
+  place_before.push_back(item);
+}
+
 // Performs the rematerialization of all items in `best_items` and returns the
 // number of net instructions added.
 absl::StatusOr<int64_t> RematerializeInstructions(
@@ -1833,13 +1850,15 @@ absl::StatusOr<int64_t> RematerializeInstructions(
         indirect_users.begin(), indirect_users.end());
     for (auto user : remat->users()) {
       if (!indirect_users_set.contains(instruction_list->GetItem(user))) {
-        place_before.push_back(instruction_list->GetItem(user));
+        InsertIntoPlaceBeforeSafely(instruction_list->GetItem(user),
+                                    place_before, rematerializable_map);
       }
     }
     for (auto* indirect_user : indirect_users) {
       for (auto user : indirect_user->instruction->users()) {
         if (!indirect_users_set.contains(instruction_list->GetItem(user))) {
-          place_before.push_back(instruction_list->GetItem(user));
+          InsertIntoPlaceBeforeSafely(instruction_list->GetItem(user),
+                                      place_before, rematerializable_map);
         }
       }
     }
@@ -1874,7 +1893,8 @@ absl::StatusOr<int64_t> RematerializeInstructions(
                 continue;
               }
             }
-            place_before.push_back(operand_user_item);
+            InsertIntoPlaceBeforeSafely(operand_user_item, place_before,
+                                        rematerializable_map);
           }
         }
       }
@@ -1886,7 +1906,8 @@ absl::StatusOr<int64_t> RematerializeInstructions(
       // Assert to make sure we never remat an operation with control
       // successor already placed.
       CHECK(!successor_item->placed) << successor_item->instruction->name();
-      place_before.push_back(successor_item);
+      InsertIntoPlaceBeforeSafely(successor_item, place_before,
+                                  rematerializable_map);
     }
     instruction_list->InsertBeforeInstructions(remat_item, place_before);
 

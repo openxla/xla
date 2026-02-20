@@ -27,7 +27,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/backends/gpu/runtime/command_buffer_cmd.h"
+#include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -56,8 +56,8 @@ class CommandBufferThunk : public Thunk {
   absl::StatusOr<se::DeviceAddressBase> GetCommandBufferAllocationAddress(
       const ExecuteParams& params, int64_t index);
 
-  void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const override;
-  void ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn) override;
+  absl::Status WalkNested(
+      absl::FunctionRef<absl::Status(Thunk*)> callback) override;
 
   std::string ToString(int indent) const override;
 

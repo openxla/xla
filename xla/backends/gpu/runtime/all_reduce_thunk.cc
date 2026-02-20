@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/future.h"
@@ -39,7 +40,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
@@ -148,8 +148,7 @@ absl::Status RunAllReduce(ReductionKind reduction_kind,
 AllReduceReduceScatterThunkBase::AllReduceReduceScatterThunkBase(
     Thunk::Kind kind, ThunkInfo thunk_info, AllReduceConfig config,
     std::vector<Buffer> buffers, bool is_sync)
-    : CollectiveThunk(kind, thunk_info, is_sync,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
+    : CollectiveThunk(kind, thunk_info, is_sync, false),
       config_(std::move(config)),
       buffers_(std::move(buffers)) {
   CHECK_EQ(config_.config.operand_element_type.size(), buffers_.size());
@@ -159,8 +158,7 @@ AllReduceReduceScatterThunkBase::AllReduceReduceScatterThunkBase(
     Thunk::Kind kind, ThunkInfo thunk_info, AllReduceConfig config,
     std::vector<Buffer> buffers,
     std::shared_ptr<CollectiveThunk::AsyncEvents> async_events)
-    : CollectiveThunk(kind, thunk_info, async_events,
-                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE),
+    : CollectiveThunk(kind, thunk_info, async_events, false),
       config_(std::move(config)),
       buffers_(std::move(buffers)) {
   CHECK_EQ(config_.config.operand_element_type.size(), buffers_.size());
@@ -207,9 +205,9 @@ absl::Status AllReduceStartThunk::Prepare(const PrepareParams& params) {
 
 absl::Status AllReduceStartThunk::Initialize(const InitializeParams& params) {
   TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
-  TF_ASSIGN_OR_RETURN(
-      GpuCliqueKey clique_key,
-      GetCollectiveGpuCliqueKey(*params.collective_params, config()));
+  TF_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
+                      GetCollectiveGpuCliqueKey(*params.collective_params,
+                                                config(), /*is_p2p=*/false));
   TF_ASSIGN_OR_RETURN(
       bool use_collective_kernel,
       collective_kernel_thunk_->IsSupported(clique_key, *params.executor,
@@ -225,7 +223,7 @@ absl::StatusOr<bool> AllReduceStartThunk::RunCollective(
     se::Stream& stream, Communicator& comm) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(params, buffers_,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
                              config_.config.operand_element_type));
 
   TF_ASSIGN_OR_RETURN(
@@ -336,12 +334,78 @@ ReduceScatterStartThunk::ReduceScatterStartThunk(
   return GetGroupModeInst(inst);
 }
 
+ReduceScatterStartThunk::ReduceScatterStartThunk(
+    ThunkInfo thunk_info, const AllReduceConfig& config,
+    std::vector<Buffer> buffers,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events)
+    : AllReduceReduceScatterThunkBase(Thunk::kReduceScatterStart, thunk_info,
+                                      config, std::move(buffers),
+                                      async_events) {}
+
+absl::StatusOr<std::unique_ptr<ReduceScatterStartThunk>>
+ReduceScatterStartThunk::FromProto(
+    ThunkInfo thunk_info, const ReduceScatterStartThunkProto& thunk_proto,
+    absl::Span<const BufferAllocation> buffer_allocations,
+    CollectiveThunk::AsyncEventsMap& async_events_map) {
+  std::vector<CollectiveThunk::Buffer> buffers;
+  buffers.reserve(thunk_proto.buffers_size());
+  for (const CollectiveBufferProto& proto : thunk_proto.buffers()) {
+    ASSIGN_OR_RETURN(
+        CollectiveThunk::Buffer buffer,
+        CollectiveThunk::Buffer::FromProto(proto, buffer_allocations));
+    buffers.push_back(buffer);
+  }
+
+  std::shared_ptr<CollectiveThunk::AsyncEvents> async_events;
+  if (thunk_proto.has_async_events_unique_id()) {
+    std::shared_ptr<CollectiveThunk::AsyncEvents>& events =
+        async_events_map[AsyncEventsUniqueId{
+            thunk_proto.async_events_unique_id()}];
+    if (!events) {
+      events = std::make_shared<CollectiveThunk::AsyncEvents>();
+    }
+    async_events = events;
+  }
+
+  CollectiveConfig config =
+      CollectiveConfig::FromProto(thunk_proto.collective_config());
+
+  ASSIGN_OR_RETURN(ReductionKind reduction_kind,
+                   FromReductionKindProto(thunk_proto.reduction_kind()));
+
+  return std::make_unique<ReduceScatterStartThunk>(
+      std::move(thunk_info), AllReduceConfig{config, reduction_kind},
+      std::move(buffers), async_events);
+}
+
+absl::StatusOr<ThunkProto> ReduceScatterStartThunk::ToProto() const {
+  ThunkProto proto;
+  *proto.mutable_thunk_info() = thunk_info().ToProto();
+
+  ReduceScatterStartThunkProto* thunk_proto =
+      proto.mutable_reduce_scatter_start_thunk();
+
+  std::optional<AsyncEventsUniqueId> async_events_id = GetAsyncEventsUniqueId();
+  if (async_events_id.has_value()) {
+    thunk_proto->set_async_events_unique_id(async_events_id->value());
+  }
+
+  for (const Buffer& buffer : buffers_) {
+    ASSIGN_OR_RETURN(*thunk_proto->add_buffers(), buffer.ToProto());
+  }
+
+  *thunk_proto->mutable_collective_config() = config_.config.ToProto();
+  thunk_proto->set_reduction_kind(ToReductionKindProto(config_.reduction_kind));
+
+  return proto;
+}
+
 absl::StatusOr<bool> ReduceScatterStartThunk::RunCollective(
     const ExecuteParams& params, const GpuCliqueKey& clique_key,
     se::Stream& stream, Communicator& comm) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(params, buffers_,
+      ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
                              config_.config.operand_element_type));
   TF_RETURN_IF_ERROR(RunReduceScatter(config_.reduction_kind, device_buffers,
                                       stream, comm,

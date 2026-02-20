@@ -38,14 +38,16 @@ class CollectiveGroupThunk : public Thunk {
  public:
   CollectiveGroupThunk(
       ThunkInfo thunk_info, Thunk::Kind kind,
-      std::vector<std::unique_ptr<Thunk>> thunks, AsyncStreamKind stream_kind,
+      std::vector<std::unique_ptr<Thunk>> thunks,
       std::shared_ptr<CollectiveThunk::AsyncEvents> async_events =
           std::make_shared<CollectiveThunk::AsyncEvents>());
   absl::Status Prepare(const PrepareParams& params) override;
   absl::Status ExecuteOnStream(const Thunk::ExecuteParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
-  void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const override;
-  void ForAllThunksMutable(absl::FunctionRef<void(Thunk*)> fn) override;
+
+  absl::Status WalkNested(
+      absl::FunctionRef<absl::Status(Thunk*)> callback) override;
+
   absl::Status TransformAllNestedThunks(
       absl::FunctionRef<
           absl::StatusOr<std::unique_ptr<Thunk>>(std::unique_ptr<Thunk>)>
@@ -65,7 +67,6 @@ class CollectiveGroupThunk : public Thunk {
 
  private:
   ThunkSequence thunks_;
-  AsyncStreamKind stream_kind_;
   std::shared_ptr<CollectiveThunk::AsyncEvents> async_events_;
 };
 

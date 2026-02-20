@@ -209,6 +209,7 @@ enum StatType {
   kQueueId,
   kQueueAddr,
   kRequestId,
+  kGlobalChipId,
   kRunId,
   kReplicaId,
   kGraphType,
@@ -291,6 +292,10 @@ enum StatType {
   kThreadId,
   kMatrixUnitUtilizationPercent,
   kHbmUtilizationPercent,
+  kPerformanceCounterId,
+  kCounterValue,
+  kPerformanceCounterDescription,
+  kPerformanceCounterSets,
   // Cost analysis related.
   kTimeScaleMultiplier,
   // XLA metadata map related.
@@ -377,7 +382,11 @@ enum StatType {
   kTcOffloadStartId,
   kOffloadExecutionIndex,
   kMarkerPayloadString,
-  kLastStatType = kMarkerPayloadString,
+  kMetadataCudaVersion,
+  kMetadataLibtpuVersion,
+  kMetadataCudaRuntimeVersion,
+  kMetadataCudaDriverVersion,
+  kLastStatType = kMetadataCudaDriverVersion,
 };
 
 enum MegaScaleStatType : uint8_t {
@@ -416,7 +425,8 @@ enum TaskEnvStatType {
   kFirstTaskEnvStatType = 1,
   kEnvProfileStartTime = kFirstTaskEnvStatType,
   kEnvProfileStopTime,
-  kLastTaskEnvStatType = kEnvProfileStopTime,
+  kEnvProfileOptions,
+  kLastTaskEnvStatType = kEnvProfileOptions,
 };
 
 static constexpr uint32_t kLineIdOffset = 10000;

@@ -18,6 +18,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -29,26 +30,30 @@ namespace {
 using ::testing::ElementsAre;
 
 struct SymbolicMapTest : public ::testing::Test {
+  static constexpr int kSampleDims = 2;
+  static constexpr int kSampleSymbols = 2;
+  SymbolicMapTest() {
+    RegisterSymbolicExprStorage(&ctx);
+    d0 = CreateDimExpr(0, &ctx);
+    d1 = CreateDimExpr(1, &ctx);
+    s0 = CreateSymbolExpr(0, kSampleDims, &ctx);
+    s1 = CreateSymbolExpr(1, kSampleDims, &ctx);
+    s2 = CreateSymbolExpr(2, kSampleDims, &ctx);
+    c2 = CreateSymbolicConstant(2, &ctx);
+    c10 = CreateSymbolicConstant(10, &ctx);
+    sample_map =
+        SymbolicMap::Get(&ctx, kSampleDims, kSampleSymbols, {d0 + s0, d1 * s1});
+  }
+
   mlir::MLIRContext ctx;
   SymbolicExpr d0;
   SymbolicExpr d1;
-  static constexpr int kSampleDims = 2;
   SymbolicExpr s0;
   SymbolicExpr s1;
-  static constexpr int kSampleSymbols = 2;
+  SymbolicExpr s2;
   SymbolicExpr c2;
   SymbolicExpr c10;
   SymbolicMap sample_map;
-
-  SymbolicMapTest()
-      : d0(CreateDimExpr(0, &ctx)),
-        d1(CreateDimExpr(1, &ctx)),
-        s0(CreateSymbolExpr(0, kSampleDims, &ctx)),
-        s1(CreateSymbolExpr(1, kSampleDims, &ctx)),
-        c2(CreateSymbolicConstant(2, &ctx)),
-        c10(CreateSymbolicConstant(10, &ctx)),
-        sample_map(SymbolicMap::Get(&ctx, kSampleDims, kSampleSymbols,
-                                    {d0 + s0, d1 * s1})) {}
 };
 
 TEST_F(SymbolicMapTest, GetSymbolAndDimExpressions) {
@@ -237,6 +242,18 @@ TEST_F(SymbolicMapTest, Replace) {
   SymbolicMap no_replacement_map =
       map.Replace(CreateSymbolicVariable(99, &ctx), c5);
   EXPECT_EQ(no_replacement_map, map);
+}
+
+TEST_F(SymbolicMapTest, ReplaceWithMap) {
+  SymbolicExpr expr = (d0 + 1) * (d1 + 2);
+  SymbolicMap map = SymbolicMap::Get(&ctx, 2, 0, {expr});
+
+  llvm::DenseMap<SymbolicExpr, SymbolicExpr> replacements;
+  replacements[d0 + 1] = c10;
+  replacements[d1] = d0;
+  SymbolicMap replaced1 = map.Replace(replacements, 1, 0);
+  EXPECT_THAT(replaced1.GetResults(), ElementsAre(c10 * (d0 + 2)));
+  EXPECT_EQ(replaced1.GetNumDims(), 1);
 }
 
 TEST_F(SymbolicMapTest, GetUnusedVariables) {

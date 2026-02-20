@@ -106,6 +106,9 @@ absl::StatusOr<CompileOptionsProto> CompileOptions::ToProto() const {
   if (gpu_target_config.has_value()) {
     *output.mutable_target_config() = gpu_target_config->ToProto();
   }
+  if (compiler_variant.has_value()) {
+    output.set_compiler_variant(*compiler_variant);
+  }
   return output;
 }
 
@@ -144,6 +147,9 @@ absl::StatusOr<CompileOptions> CompileOptions::FromProto(
     TF_ASSIGN_OR_RETURN(
         output.gpu_target_config,
         Compiler::GpuTargetConfig::FromProto(proto.target_config()));
+  }
+  if (proto.has_compiler_variant()) {
+    output.compiler_variant = proto.compiler_variant();
   }
   return output;
 }
@@ -256,6 +262,7 @@ CompiledMemoryStatsProto CompiledMemoryStats::ToProto() const {
   proto.set_host_alias_size_in_bytes(host_alias_size_in_bytes);
   proto.set_host_temp_size_in_bytes(host_temp_size_in_bytes);
   proto.set_peak_memory_in_bytes(peak_memory_in_bytes);
+  proto.set_total_size_in_bytes(total_size_in_bytes);
   return proto;
 }
 
@@ -275,6 +282,7 @@ CompiledMemoryStats CompiledMemoryStats::FromProto(
   stats.host_alias_size_in_bytes = proto.host_alias_size_in_bytes();
   stats.host_temp_size_in_bytes = proto.host_temp_size_in_bytes();
   stats.peak_memory_in_bytes = proto.peak_memory_in_bytes();
+  stats.total_size_in_bytes = proto.total_size_in_bytes();
   return stats;
 }
 

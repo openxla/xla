@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/executable_run_options.h"
@@ -49,7 +50,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/service/rendezvous.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
@@ -91,23 +91,21 @@ bool IsLocalPeerTransfer(const P2PConfig::SourceTargetMapEntry& source_target,
 CollectivePermuteStartThunk::CollectivePermuteStartThunk(
     ThunkInfo thunk_info, const HloCollectivePermuteInstruction* instr,
     int64_t replica_count, int64_t partition_count,
-    const std::vector<Buffer>& buffers, bool p2p_memcpy_enabled,
-    AsyncStreamKind stream_kind)
+    const std::vector<Buffer>& buffers, bool p2p_memcpy_enabled)
     : CollectivePermuteStartThunk(
           std::move(thunk_info),
           GetP2PConfig(instr, replica_count, partition_count),
           IsGPUSyncCollective(*instr)
               ? nullptr
               : std::make_shared<CollectiveThunk::AsyncEvents>(),
-          buffers, p2p_memcpy_enabled, stream_kind) {}
+          buffers, p2p_memcpy_enabled) {}
 
 CollectivePermuteStartThunk::CollectivePermuteStartThunk(
     ThunkInfo thunk_info, const P2PConfig& config,
     std::shared_ptr<AsyncEvents> async_events,
-    const std::vector<Buffer>& buffers, bool p2p_memcpy_enabled,
-    AsyncStreamKind stream_kind)
+    const std::vector<Buffer>& buffers, bool p2p_memcpy_enabled)
     : CollectiveThunk(Thunk::kCollectivePermuteStart, thunk_info, async_events,
-                      stream_kind),
+                      p2p_memcpy_enabled),
       config_(config),
       buffers_(buffers),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {}
@@ -184,9 +182,8 @@ CollectivePermuteStartThunk::CollectivePermuteStartThunk(
 absl::Status CollectivePermuteStartThunk::Initialize(
     const InitializeParams& params) {
   TF_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
-  device_count_ = params.local_device_count;
-  CHECK_GT(device_count_, 0);
-  VLOG(5) << "Local device count: " << device_count_;
+  CHECK_GT(params.local_device_count, 0);
+  VLOG(5) << "Local device count: " << params.local_device_count;
 
   if (p2p_memcpy_enabled_) {
     TF_ASSIGN_OR_RETURN(
@@ -284,8 +281,7 @@ CollectivePermuteStartThunk::FromProto(
 
   return std::make_unique<CollectivePermuteStartThunk>(
       std::move(thunk_info), P2PConfig{config, std::move(id_to_source_target)},
-      async_events, std::move(buffers), thunk_proto.p2p_memcpy_enabled(),
-      thunk_proto.async_stream_kind());
+      async_events, std::move(buffers), thunk_proto.p2p_memcpy_enabled());
 }
 
 absl::StatusOr<ThunkProto> CollectivePermuteStartThunk::ToProto() const {
@@ -333,7 +329,7 @@ absl::StatusOr<bool> CollectivePermuteStartThunk::RunCollective(
     se::Stream& stream, Communicator& comm) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(params,
+      ConvertToDeviceBuffers(params.buffer_allocations,
                              std::vector<CollectiveThunk::Buffer>(buffers_),
                              config_.config.operand_element_type));
   TF_ASSIGN_OR_RETURN(
@@ -343,8 +339,8 @@ absl::StatusOr<bool> CollectivePermuteStartThunk::RunCollective(
 
   const P2PConfig::SourceTargetMapEntry source_target =
       P2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
-  bool is_local_peer =
-      IsLocalPeerTransfer(source_target, current_id, device_count_);
+  bool is_local_peer = IsLocalPeerTransfer(
+      source_target, current_id, params.collective_params->local_device_count);
   VLOG(5) << "Is local peer : " << (is_local_peer ? "true" : "false");
 
   bool use_memcpy = is_local_peer && recv_ptr_map_.IsInitialized(current_id) &&

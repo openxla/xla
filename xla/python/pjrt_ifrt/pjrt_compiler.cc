@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/functional/bind_front.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -35,11 +36,14 @@ limitations under the License.
 #include "xla/python/ifrt/hlo/hlo_program.h"
 #include "xla/python/ifrt/program.h"
 #include "xla/python/ifrt/topology.h"
+#include "xla/python/ifrt/user_context.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/service/computation_placer.h"
+#include "xla/tsl/concurrency/future.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
@@ -51,12 +55,12 @@ char PjRtCompiler::ID = 0;
 
 // Translates IFRT device IDs to PjRt global device IDs in place. When an error
 // occurs, `options` may have invalid device IDs.
-absl::Status TranslateDeviceIds(PjRtClient* client,
-                                xla::CompileOptions& options) {
+static absl::Status TranslateDeviceIds(PjRtClient* client,
+                                       xla::CompileOptions& options) {
   if (options.executable_build_options.device_ordinal() != -1) {
     TF_ASSIGN_OR_RETURN(
         auto pjrt_global_device_id,
-        client->GetPjRtGlobalDeviceId(
+        client->GetGlobalDeviceId(
             DeviceId(options.executable_build_options.device_ordinal())));
     options.executable_build_options.set_device_ordinal(
         pjrt_global_device_id.value());
@@ -71,7 +75,7 @@ absl::Status TranslateDeviceIds(PjRtClient* client,
             return;
           }
           auto pjrt_global_device_id =
-              client->GetPjRtGlobalDeviceId(DeviceId(*device_id));
+              client->GetGlobalDeviceId(DeviceId(*device_id));
           if (pjrt_global_device_id.ok()) {
             *device_id = pjrt_global_device_id->value();
           } else {
@@ -85,9 +89,24 @@ absl::Status TranslateDeviceIds(PjRtClient* client,
   return absl::OkStatus();
 }
 
-absl::StatusOr<LoadedExecutableRef> PjRtCompiler::CompileAndLoad(
+PjRtCompiler::PjRtCompiler(PjRtClient* client, int num_threads)
+    : client_(client) {
+  if (num_threads > 0) {
+    tsl::ThreadOptions thread_options;
+    thread_options.stack_size = 512 * 1024;
+    thread_pool_.emplace(tsl::Env::Default(), thread_options,
+                         "PjRtCompilerThreadPool", num_threads);
+  }
+}
+
+tsl::Future<LoadedExecutableRef> PjRtCompiler::CompileAndLoad(
     std::unique_ptr<Program> program, std::unique_ptr<CompileOptions> options) {
   DCHECK(this);
+  if (client_ == nullptr) {
+    return absl::InvalidArgumentError(
+        "PjRtCompiler must be constructed with a Client to call "
+        "CompileAndLoad.");
+  }
   const auto* xla_program = llvm::dyn_cast<HloProgram>(program.get());
   if (xla_program == nullptr) {
     return absl::InvalidArgumentError("PjRtCompiler requires an HloProgram");
@@ -96,14 +115,23 @@ absl::StatusOr<LoadedExecutableRef> PjRtCompiler::CompileAndLoad(
                       GetXlaCompileOptions(std::move(options)));
   TF_RETURN_IF_ERROR(
       TranslateDeviceIds(client_, xla_compile_options->compile_options));
-  return PjRtLoadedExecutable::Create(
-      client_, xla_program->mlir_module(),
-      std::move(xla_compile_options->compile_options),
-      std::move(xla_compile_options->loaded_host_callbacks),
-      std::move(xla_compile_options->devices));
+  auto compile = [client = client_, program = std::move(program), xla_program,
+                  xla_compile_options = std::move(xla_compile_options),
+                  user_context = UserContextScope::current()]() mutable {
+    UserContextScope scope(std::move(user_context));
+    return PjRtLoadedExecutable::Create(
+        client, xla_program->mlir_module(),
+        std::move(xla_compile_options->compile_options),
+        std::move(xla_compile_options->loaded_host_callbacks),
+        std::move(xla_compile_options->devices));
+  };
+  if (thread_pool_.has_value()) {
+    return tsl::MakeFutureOn(*thread_pool_->AsExecutor(), std::move(compile));
+  }
+  return compile();
 }
 
-absl::StatusOr<ExecutableRef> PjRtCompiler::Compile(
+tsl::Future<ExecutableRef> PjRtCompiler::Compile(
     std::unique_ptr<Program> program, const Topology& topology,
     std::unique_ptr<CompileOptions> options) {
   DCHECK(this);
@@ -113,21 +141,41 @@ absl::StatusOr<ExecutableRef> PjRtCompiler::Compile(
   }
   TF_ASSIGN_OR_RETURN(auto xla_compile_options,
                       GetXlaCompileOptions(std::move(options)));
-  TF_RETURN_IF_ERROR(
-      TranslateDeviceIds(client_, xla_compile_options->compile_options));
+  if (client_ != nullptr) {
+    // Device ID translation is unnecessary because it is a property of the
+    // client.
+    TF_RETURN_IF_ERROR(
+        TranslateDeviceIds(client_, xla_compile_options->compile_options));
+  }
   const auto* pjrt_topology = llvm::dyn_cast<PjRtTopology>(&topology);
   if (pjrt_topology == nullptr) {
     return absl::InvalidArgumentError("PjRtCompiler requires a PjRtTopology");
   }
-  return PjRtExecutable::Create(xla_program->mlir_module(),
-                                std::move(xla_compile_options->compile_options),
-                                *pjrt_topology->description());
+  auto compile = [program = std::move(program), xla_program,
+                  xla_compile_options = std::move(xla_compile_options),
+                  pjrt_topology,
+                  user_context = UserContextScope::current()]() mutable {
+    UserContextScope scope(std::move(user_context));
+    return PjRtExecutable::Create(
+        xla_program->mlir_module(),
+        std::move(xla_compile_options->compile_options),
+        *pjrt_topology->description());
+  };
+  if (thread_pool_.has_value()) {
+    return tsl::MakeFutureOn(*thread_pool_->AsExecutor(), std::move(compile));
+  }
+  return compile();
 }
 
-absl::StatusOr<LoadedExecutableRef> PjRtCompiler::DeserializeLoadedExecutable(
+tsl::Future<LoadedExecutableRef> PjRtCompiler::DeserializeLoadedExecutable(
     absl::string_view serialized,
     std::unique_ptr<DeserializeExecutableOptions> options) {
   DCHECK(this);
+  if (client_ == nullptr) {
+    return absl::InvalidArgumentError(
+        "PjRtCompiler must be constructed with a Client to call "
+        "DeserializeLoadedExecutable.");
+  }
   TF_ASSIGN_OR_RETURN(auto xla_deserialize_options,
                       GetXlaDeserializeExecutableOptions(std::move(options)));
   if (xla_deserialize_options->compile_options.has_value()) {
@@ -135,26 +183,51 @@ absl::StatusOr<LoadedExecutableRef> PjRtCompiler::DeserializeLoadedExecutable(
         TranslateDeviceIds(client_, *xla_deserialize_options->compile_options));
   }
   TF_ASSIGN_OR_RETURN(
-      auto pjrt_loaded_executable,
-      client_->pjrt_client()->LoadSerializedExecutable(
-          serialized, std::move(xla_deserialize_options->compile_options),
-          xla::LoadOptions()));
-  // TODO(emilyaf): Remove the else branch once devices are plumbed through from
-  // Australis and are always present in the DeserializeExecutableOptions.
-  DeviceListRef device_list;
-  if (xla_deserialize_options->devices.has_value()) {
-    device_list = std::move(xla_deserialize_options->devices.value());
-  } else {
+      auto common_metadata_and_serialized_pjrt_executable,
+      PjRtExecutable::CommonMetadata::Deserialize(
+          serialized,
+          absl::bind_front(&PjRtCompiler::IsExecutableVersionCompatible, this),
+          *xla_deserialize_options));
+
+  auto deserialize =
+      [client = client_,
+       common_metadata_and_serialized_pjrt_executable =
+           std::move(common_metadata_and_serialized_pjrt_executable),
+       xla_deserialize_options = std::move(xla_deserialize_options),
+       user_context = UserContextScope::current()]() mutable
+      -> absl::StatusOr<LoadedExecutableRef> {
+    UserContextScope scope(std::move(user_context));
     TF_ASSIGN_OR_RETURN(
-        device_list, GetDeviceListFromDeviceAssignment(
-                         client_, pjrt_loaded_executable->device_assignment()));
+        auto pjrt_loaded_executable,
+        client->pjrt_client()->LoadSerializedExecutable(
+            common_metadata_and_serialized_pjrt_executable.second,
+            std::move(xla_deserialize_options->compile_options),
+            xla::LoadOptions()));
+    // TODO(emilyaf): Remove the else branch once devices are plumbed
+    // through from Australis and are always present in the
+    // DeserializeExecutableOptions.
+    DeviceListRef device_list;
+    if (xla_deserialize_options->devices.has_value()) {
+      device_list = std::move(xla_deserialize_options->devices.value());
+    } else {
+      TF_ASSIGN_OR_RETURN(
+          device_list,
+          GetDeviceListFromDeviceAssignment(
+              client, pjrt_loaded_executable->device_assignment()));
+    }
+    return PjRtLoadedExecutable::Create(
+        client,
+        std::shared_ptr<xla::PjRtLoadedExecutable>(
+            std::move(pjrt_loaded_executable)),
+        std::move(xla_deserialize_options->loaded_host_callbacks),
+        std::move(device_list),
+        std::move(common_metadata_and_serialized_pjrt_executable.first));
+  };
+  if (thread_pool_.has_value()) {
+    return tsl::MakeFutureOn(*thread_pool_->AsExecutor(),
+                             std::move(deserialize));
   }
-  return PjRtLoadedExecutable::Create(
-      client_,
-      std::shared_ptr<xla::PjRtLoadedExecutable>(
-          std::move(pjrt_loaded_executable)),
-      std::move(xla_deserialize_options->loaded_host_callbacks),
-      std::move(device_list));
+  return deserialize();
 }
 
 }  // namespace ifrt

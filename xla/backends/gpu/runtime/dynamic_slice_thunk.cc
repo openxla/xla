@@ -241,7 +241,7 @@ absl::Status DynamicSliceThunk::Prepare(const PrepareParams& params) {
 
   TF_RETURN_IF_ERROR(embedded_thunk_->Prepare(params));
 
-  if (offset_as_function_of_indvar_metadata_ != std::nullopt) {
+  if (offset_as_function_of_indvar_metadata_.has_value()) {
     Indvar(this) =
         HloEvaluator()
             .Evaluate(
@@ -421,7 +421,7 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
   // Execute the underlying custom call thunk with the new buffers.
   TF_RETURN_IF_ERROR(embedded_thunk_->ExecuteOnStream(new_params));
 
-  if (offset_as_function_of_indvar_metadata_ != std::nullopt) {
+  if (offset_as_function_of_indvar_metadata_.has_value()) {
     Indvar(this) =
         HloEvaluator()
             .Evaluate(*offset_as_function_of_indvar_metadata_->indvar_update,
@@ -433,16 +433,9 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
   return absl::OkStatus();
 }
 
-void DynamicSliceThunk::ForAllThunks(
-    absl::FunctionRef<void(const Thunk*)> fn) const {
-  fn(this);
-  embedded_thunk_->ForAllThunks(fn);
-}
-
-void DynamicSliceThunk::ForAllThunksMutable(
-    absl::FunctionRef<void(Thunk*)> fn) {
-  fn(this);
-  embedded_thunk_->ForAllThunksMutable(fn);
+absl::Status DynamicSliceThunk::WalkNested(
+    absl::FunctionRef<absl::Status(Thunk*)> callback) {
+  return embedded_thunk_->Walk(callback);
 }
 
 absl::Status DynamicSliceThunk::TransformAllNestedThunks(

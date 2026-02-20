@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/StringRef.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -53,6 +54,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/service/computation_placer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -202,6 +204,30 @@ TEST(PjRtCApiClientTest, ConcurrentGetReadyFuture) {
     }
     blocking_counter.Wait();
   }
+}
+
+TEST(PjRtCApiClientTest, GetReadyFutureDeletedBuffer) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+
+  std::vector<int32_t> data{1};
+  Shape shape = ShapeUtil::MakeShape(S32, {});
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          client->memory_spaces()[0], /*device_layout=*/nullptr));
+
+  buffer->Delete();
+  EXPECT_TRUE(buffer->IsDeleted());
+
+  auto future = buffer->GetReadyFuture();
+  EXPECT_THAT(future.Await(), StatusIs(absl::StatusCode::kInvalidArgument,
+                                       HasSubstr("deleted or donated")));
 }
 
 TEST(PjRtCApiClientTest, IsDynamicDimension) {
@@ -623,6 +649,76 @@ TEST(PjRtCApiClientTest, GetOutputShapes) {
   EXPECT_EQ(output_shapes.size(), 1);
   Shape expected_shape = ShapeUtil::MakeShape(F32, {4});
   EXPECT_EQ(output_shapes[0], expected_shape);
+}
+
+TEST(PjRtCApiClientTest, GetParameterAndOutputShardings) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+  Shape shape = ShapeUtil::MakeShapeWithType<float>({4});
+  XlaBuilder builder("sum");
+  auto inp_0 = Parameter(&builder, 0, shape, "input0");
+  auto inp_1 = Parameter(&builder, 1, shape, "input1");
+  auto sum = Add(inp_0, inp_1);
+  auto computation = builder.Build(sum).value();
+
+  CompileOptions options;
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtLoadedExecutable> executable,
+                          client->CompileAndLoad(computation, options));
+
+  // CPU usually returns nullopt for shardings if not explicitly set.
+  auto parameter_shardings = executable->GetParameterShardings();
+  auto output_shardings = executable->GetOutputShardings();
+
+  // We expect them to be either nullopt or some default shardings.
+  // For CPU with default options, they are typically nullopt.
+  if (parameter_shardings.has_value()) {
+    EXPECT_EQ(parameter_shardings->size(), 2);
+  }
+  if (output_shardings.has_value()) {
+    EXPECT_EQ(output_shardings->size(), 1);
+  }
+}
+
+TEST(PjRtCApiClientTest, GetParameterAndOutputLayouts) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+
+  Shape shape = ShapeUtil::MakeShapeWithType<float>({4});
+  XlaBuilder builder("sum");
+  auto inp_0 = Parameter(&builder, 0, shape, "input0");
+  auto inp_1 = Parameter(&builder, 1, shape, "input1");
+  auto sum = Add(inp_0, inp_1);
+  auto computation = builder.Build(sum).value();
+
+  CompileOptions options;
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtLoadedExecutable> executable,
+                          client->CompileAndLoad(computation, options));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::shared_ptr<const PjRtLayout>> parameter_layouts,
+      executable->GetParameterLayouts());
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::shared_ptr<const PjRtLayout>> output_layouts,
+      executable->GetOutputLayouts());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      xla::Layout expected_layout,
+      client->GetDefaultLayout(shape.element_type(), shape.dimensions()));
+
+  // We expect parameter and output layouts to be a default layout because we
+  // didn't specify any layouts in the HLO.
+  EXPECT_EQ(parameter_layouts.size(), 2);
+  for (const std::shared_ptr<const PjRtLayout>& parameter_layout :
+       parameter_layouts) {
+    EXPECT_EQ(parameter_layout->xla_layout(), expected_layout);
+  }
+  EXPECT_EQ(output_layouts.size(), 1);
+  for (const std::shared_ptr<const PjRtLayout>& output_layout :
+       output_layouts) {
+    EXPECT_EQ(output_layout->xla_layout(), expected_layout);
+  }
 }
 
 TEST(PjRtClientTest, BufferFromLiteralInt4) {

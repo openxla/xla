@@ -48,11 +48,10 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-namespace {
-
 AutotuneConfig GetAutotuneConfig(const DebugOptions& debug_options,
                                  bool is_deviceless,
-                                 bool optimize_scratch_bytes) {
+                                 bool optimize_scratch_bytes,
+                                 bool allow_reg_spills) {
   AutotuneConfig autotune_config;
   autotune_config.check_buffers = debug_options.xla_gpu_autotune_level() >= 4;
   autotune_config.relative_tolerance =
@@ -76,7 +75,21 @@ AutotuneConfig GetAutotuneConfig(const DebugOptions& debug_options,
   autotune_config.expect_all_instructions_in_cache =
       debug_options.xla_gpu_require_complete_aot_autotune_results();
   autotune_config.dump_hlos =
-      debug_options.xla_gpu_dump_autotuned_gemm_fusions();
+      debug_options.xla_gpu_dump_autotuned_gemm_fusions() ||
+      debug_options.xla_gpu_dump_autotuned_instructions();
+  if (!debug_options.xla_gpu_fail_ptx_compilation_on_register_spilling() &&
+      allow_reg_spills) {
+    autotune_config.allow_reg_spills = true;
+  }
+  // xla_gpu_filter_kernels_spilling_registers_on_autotuning is true by default,
+  // but some autotuner passes need to set it to false explicitly as there
+  // aren't enough configs to guarantee that no config will spill. So we allow
+  // allow_reg_spills to override the autotuner config unless this flag is
+  // explicitly set to false.
+  if (!debug_options
+           .xla_gpu_filter_kernels_spilling_registers_on_autotuning()) {
+    autotune_config.allow_reg_spills = false;
+  }
 
   return autotune_config;
 }
@@ -90,7 +103,6 @@ ProfileOptions GetProfileOptions(const DebugOptions& debug_options,
   return profile_options;
 }
 
-}  // namespace
 
 absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
     std::vector<std::unique_ptr<CodegenBackend>> backends,
@@ -99,11 +111,11 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
     tsl::thread::ThreadPool* thread_pool, InstructionFilterFn should_autotune,
     const Compiler::GpuTargetConfig* target_config,
     se::DeviceAddressAllocator* allocator, bool optimize_scratch_bytes,
-    MultiProcessKeyValueStore key_value_store) {
+    MultiProcessKeyValueStore key_value_store, bool allow_reg_spills) {
   std::unique_ptr<Profiler> profiler = nullptr;
   bool is_deviceless = stream_executor == nullptr;
-  AutotuneConfig autotune_config =
-      GetAutotuneConfig(debug_options, is_deviceless, optimize_scratch_bytes);
+  AutotuneConfig autotune_config = GetAutotuneConfig(
+      debug_options, is_deviceless, optimize_scratch_bytes, allow_reg_spills);
   VLOG(1) << "Autotune config: " << autotune_config.ToString();
 
   if (!is_deviceless) {
@@ -112,19 +124,21 @@ absl::StatusOr<std::unique_ptr<AutotunerPass>> AutotunerPass::Create(
         allocator);
   }
 
-  std::unique_ptr<AutotunerCacheInterface> cache =
-      std::make_unique<LegacyCache>(
-          debug_options.xla_gpu_experimental_autotuner_cache_dir(),
-          debug_options.xla_gpu_experimental_autotune_cache_mode(),
-          target_config->device_description);
+  std::string cache_dir = debug_options.xla_gpu_per_fusion_autotune_cache_dir();
+  if (cache_dir.empty()) {
+    cache_dir = debug_options.xla_gpu_experimental_autotuner_cache_dir();
+  }
+  auto cache = std::make_unique<LegacyCache>(
+      cache_dir, debug_options.xla_gpu_experimental_autotune_cache_mode(),
+      target_config->device_description);
 
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<Autotuner> autotuner,
       Autotuner::Create(std::move(backends), std::move(profiler),
                         autotune_config, std::move(cache), thread_pool));
   return absl::WrapUnique(new AutotunerPass(
-      std::move(autotuner), should_autotune, std::move(key_value_store),
-      debug_options.xla_gpu_shard_autotuning()));
+      std::move(autotuner), std::move(should_autotune),
+      std::move(key_value_store), debug_options.xla_gpu_shard_autotuning()));
 }
 
 absl::StatusOr<bool> AutotunerPass::RunImpl(
@@ -141,6 +155,8 @@ absl::StatusOr<bool> AutotunerPass::RunImpl(
   } else {
     TF_RETURN_IF_ERROR(autotuner_->Autotune(module, should_autotune_));
   }
+  VLOG(1) << "Autotuner cache stats: hits=" << autotuner_->GetCacheStats().hits
+          << ", misses=" << autotuner_->GetCacheStats().misses;
   return true;
 }
 

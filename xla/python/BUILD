@@ -266,7 +266,6 @@ nanobind_pywrap_extension(
     pytype_srcs = ["_hlo_pass.pyi"],
     visibility = [":friends"],
     deps = [
-        "//xla/hlo/ir:hlo_module_group",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/transforms/simplifiers:flatten_call_graph",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
@@ -415,6 +414,7 @@ nanobind_pywrap_extension(
         "//xla/backends/profiler:profiler_backends",
         "//xla/backends/profiler/cpu:python_tracer",
         "//xla/backends/profiler/plugin:plugin_tracer",
+        "//xla/backends/profiler/util:metadata_registry",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:status_casters",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
@@ -423,6 +423,7 @@ nanobind_pywrap_extension(
         "//xla/tsl/profiler/rpc:profiler_server_impl",
         "//xla/tsl/profiler/rpc/client:capture_profile",
         "//xla/tsl/profiler/rpc/client:profiler_client_impl",
+        "//xla/tsl/profiler/utils:xplane_schema",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:profiler_session",
         "@tsl//tsl/profiler/lib:traceme",

@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/tuple_points_to_analysis.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
@@ -156,13 +157,15 @@ std::optional<int> GetSlicedDimension(
 
 bool CheckIndexIsMonotonic(
     const HloInstruction* index,
-    absl::flat_hash_map<const HloInstruction*, Range>& induction_map) {
+    absl::flat_hash_map<const HloInstruction*, Range>& induction_map,
+    HloDataflowAnalysis* dataflow_analysis) {
   // Because the only math operations supported by RecursivelyIdentifyRange()
   // are only sub/add then checking that we can compute the range here is enough
   // to guarantee that the index is monotonic if the base index is monotonic. If
   // we want to make the function more powerful we need to have a more
   // sophisticated check for monotonicity.
-  Range range = RecursivelyIdentifyRange(index, induction_map);
+  Range range =
+      RecursivelyIdentifyRange(index, induction_map, dataflow_analysis);
   VLOG(6) << "Range for: " << index->ToString() << " " << range.ToString();
   return !range.IsEmpty() && range.IsBounded() && range.IsLinear();
 }
@@ -836,6 +839,7 @@ class WhileLoopAnalysis {
       HloInstruction* while_instr, int64_t max_pipelining_per_loop,
       bool pipeline_use_tree, bool process_different_sized_options,
       TuplePointsToAnalysis* tuple_points_to_analysis,
+      HloDataflowAnalysis* dataflow_analysis,
       std::optional<ConstantValue> known_start = std::nullopt,
       bool delay_sinking_large_collectives = false,
       int64_t collective_size_threshold = INT64_MAX)
@@ -843,6 +847,7 @@ class WhileLoopAnalysis {
         loop_start_(known_start),
         max_pipelining_per_loop_(max_pipelining_per_loop),
         tuple_points_to_analysis_(tuple_points_to_analysis),
+        dataflow_analysis_(dataflow_analysis),
         pipeline_use_tree_(pipeline_use_tree),
         process_different_sized_options_(process_different_sized_options),
         delay_sinking_large_collectives_(delay_sinking_large_collectives),
@@ -946,6 +951,7 @@ class WhileLoopAnalysis {
   // Precomputed TuplePointsToAnalysis for the HLO module containing `while_`.
   // May be null, in which case the analysis will be performed from scratch.
   TuplePointsToAnalysis* tuple_points_to_analysis_;
+  HloDataflowAnalysis* dataflow_analysis_;
 
   bool pipeline_use_tree_;
   bool process_different_sized_options_;
@@ -1164,7 +1170,8 @@ WhileLoopAnalysis::IsSupportedDynamicUpdateSlice(
               << " because update slicing doesn't match expectation";
       return std::nullopt;
     }
-    if (!CheckIndexIsMonotonic(dyn_update_idx, index_ranges)) {
+    if (!CheckIndexIsMonotonic(dyn_update_idx, index_ranges,
+                               dataflow_analysis_)) {
       VLOG(5) << "Skipping " << instr->name()
               << " because update index is not monotonic";
       return std::nullopt;
@@ -1721,7 +1728,8 @@ absl::StatusOr<HloInstruction*> TransformLoopForward(
   InstructionMap while_body_to_peeled;
   absl::flat_hash_set<HloInstruction*> to_skip_set;
   absl::flat_hash_map<HloInstruction*, HloInstruction*> formatting_map;
-  absl::flat_hash_map<HloInstruction*, int64_t> is_output_instruction;
+  absl::flat_hash_map<HloInstruction*, absl::InlinedVector<int64_t, 1>>
+      is_output_instruction;
   std::vector<int64_t> moves_requiring_special_output;
   int64_t count = 0;
   // Add all-reduces to duplicate into a set.
@@ -1770,8 +1778,8 @@ absl::StatusOr<HloInstruction*> TransformLoopForward(
   }
   CHECK_EQ(while_body->root_instruction()->opcode(), HloOpcode::kTuple);
   for (int i = 0; i < while_body->root_instruction()->operand_count(); ++i) {
-    is_output_instruction[while_body->root_instruction()->mutable_operand(i)] =
-        i;
+    is_output_instruction[while_body->root_instruction()->mutable_operand(i)]
+        .push_back(i);
   }
 
   // Collect the new parameter shapes with the additional state for the indices
@@ -1846,7 +1854,9 @@ absl::StatusOr<HloInstruction*> TransformLoopForward(
     while_body_to_peeled[instr] = cloned_instr;
     auto output_it = is_output_instruction.find(instr);
     if (output_it != is_output_instruction.end()) {
-      new_init_operands[output_it->second] = cloned_instr;
+      for (int64_t i : output_it->second) {
+        new_init_operands[i] = cloned_instr;
+      }
     }
   }
 
@@ -1879,7 +1889,7 @@ absl::StatusOr<HloInstruction*> TransformLoopForward(
         absl::MakeConstSpan(move_info.collectives_to_move),
         absl::MakeSpan(move_info.formatting_ops));
     for (auto* pipelined : pipelined_instrs) {
-      is_output_instruction[pipelined] = new_init_operands.size();
+      is_output_instruction[pipelined].push_back(new_init_operands.size());
       new_parameter_shapes.push_back(pipelined->shape());
       new_root_operands.push_back(pipelined);
       new_init_operands.push_back(while_body_to_peeled[pipelined]);
@@ -1918,14 +1928,19 @@ absl::StatusOr<HloInstruction*> TransformLoopForward(
       while_loop->ReplaceAllUsesWithDifferentShape(new_while_loop));
   TF_RETURN_IF_ERROR(
       loop_computation->RemoveInstructionAndUnusedOperands(while_loop));
+  TF_RETURN_IF_ERROR(new_while_loop->GetModule()->RemoveUnusedComputations());
   // Run WhileLoopAnalysis again on the new loop to collect the position of the
   // all-reduces in the new cloned loop as they aren't the same of the old.
   // Loop analysis should result exactly the same, because the loop is the same
   // except some new scalar unused parameters added at the end.
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloDataflowAnalysis> new_dataflow_analysis,
+      HloDataflowAnalysis::Run(*(new_while_loop->GetModule()),
+                               /*ssa_form=*/true));
   WhileLoopAnalysis new_loop_analysis(
       new_while_loop, loop_analysis.GetMaxPipeliningPerLoop(),
       pipeline_use_tree, process_different_sized_ops,
-      /*tuple_points_to_analysis=*/nullptr,
+      /*tuple_points_to_analysis=*/nullptr, new_dataflow_analysis.get(),
       loop_analysis.GetLoopStart()->add(*loop_analysis.GetLoopIncrement()));
   new_loop_analysis.ComputeLoopStatistics();
   new_loop_analysis.CollectCollectivesToMove(
@@ -2496,6 +2511,7 @@ absl::StatusOr<HloInstruction*> TransformLoopForwardSink(
       collective_to_new_tuple_index[collective] = new_root_operands.size();
       indices_to_insert.insert(new_root_operands.size());
       new_root_operands.push_back(collective->mutable_operand(0));
+      invariant_cache[collective] = false;
     }
     CHECK_EQ(to_move.dynamic_update_slices.size(),
              to_move.output_indices.size());
@@ -3172,6 +3188,8 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<TuplePointsToAnalysis> tuple_points_to_analysis,
       TuplePointsToAnalysis::Run(module));
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<HloDataflowAnalysis> dataflow_analysis,
+                      HloDataflowAnalysis::Run(*module, /*ssa_form=*/true));
 
   std::vector<std::pair<HloInstruction*, std::unique_ptr<WhileLoopAnalysis>>>
       loop_analyses;
@@ -3191,8 +3209,8 @@ absl::StatusOr<bool> CollectivePipeliner::RunPipeliner(
       auto loop_analysis = std::make_unique<WhileLoopAnalysis>(
           instruction, config_.max_pipelining_per_loop,
           config_.pipeline_use_tree, config_.process_different_sized_ops,
-          tuple_points_to_analysis.get(), /*known_start=*/std::nullopt,
-          config_.delay_sinking_large_collectives,
+          tuple_points_to_analysis.get(), dataflow_analysis.get(),
+          /*known_start=*/std::nullopt, config_.delay_sinking_large_collectives,
           config_.collective_size_threshold_to_delay_sinking);
       loop_analysis->ComputeLoopStatistics();
       if (loop_analysis->GetLoopIterationCount() &&

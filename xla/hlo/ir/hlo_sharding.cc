@@ -30,16 +30,20 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/optimization.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
 #include "xla/hlo/ir/hlo_op_metadata.h"
+#include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/named_sharding.h"
 #include "xla/overflow_util.h"
 #include "xla/printer.h"
@@ -134,6 +138,58 @@ bool NextIndex(absl::InlinedVector<int64_t, 6>* index,
     (*index)[i] = 0;
   }
   return false;
+}
+
+std::vector<AxisRef> GetOrderedAxisRefs(const NamedSharding& sharding) {
+  absl::flat_hash_map<int64_t, std::vector<int64_t>> axis_index_to_pre_sizes;
+  const Mesh& mesh = sharding.mesh();
+  for (int64_t i = 0; i < mesh.axis_sizes().size(); ++i) {
+    axis_index_to_pre_sizes[i].push_back(1);
+    axis_index_to_pre_sizes[i].push_back(mesh.axis_sizes()[i]);
+  }
+
+  auto collect_axis_ref = [&](const AxisRef& axis_ref) {
+    if (axis_ref.sub_axis_info()) {
+      axis_index_to_pre_sizes[axis_ref.mesh_axis_index()].push_back(
+          axis_ref.sub_axis_info()->pre_size);
+      axis_index_to_pre_sizes[axis_ref.mesh_axis_index()].push_back(
+          axis_ref.sub_axis_info()->next_pre_size());
+    }
+  };
+
+  for (const NamedSharding::DimensionSharding& dim_sharding :
+       sharding.dim_shardings()) {
+    for (const AxisRef& axis_ref : dim_sharding.axes()) {
+      collect_axis_ref(axis_ref);
+    }
+  }
+  for (const AxisRef& axis_ref : sharding.replicated_axes()) {
+    collect_axis_ref(axis_ref);
+  }
+  for (const AxisRef& axis_ref : sharding.unreduced_axes()) {
+    collect_axis_ref(axis_ref);
+  }
+  for (const AxisRef& axis_ref : sharding.manual_axes()) {
+    collect_axis_ref(axis_ref);
+  }
+
+  std::vector<AxisRef> axis_refs;
+  for (int64_t i = 0; i < mesh.axis_sizes().size(); ++i) {
+    std::vector<int64_t>& pre_sizes = axis_index_to_pre_sizes[i];
+    absl::c_sort(pre_sizes);
+    pre_sizes.erase(std::unique(pre_sizes.begin(), pre_sizes.end()),
+                    pre_sizes.end());
+    if (pre_sizes.size() == 2) {
+      axis_refs.push_back(AxisRef(i));
+      continue;
+    }
+    for (int64_t j = 0; j < pre_sizes.size() - 1; ++j) {
+      int64_t pre_size = pre_sizes[j];
+      int64_t size = pre_sizes[j + 1] / pre_size;
+      axis_refs.push_back(AxisRef(i, {pre_size, size}));
+    }
+  }
+  return axis_refs;
 }
 
 }  // namespace
@@ -533,7 +589,7 @@ std::vector<int64_t> HloSharding::TileIndexForDevice(int64_t device) const {
   CHECK(!IsUnknown());
   CHECK(!IsTuple());
   std::vector<int64_t> ret_index;
-  tile_assignment_.Each([&](absl::Span<const int64_t> index, int64_t d) {
+  EachTile([&](absl::Span<const int64_t> index, int64_t d) {
     if (d == device) {
       ret_index = {index.begin(), index.end()};
     }
@@ -583,6 +639,15 @@ std::vector<int64_t> HloSharding::TileLimitForDevice(const Shape& shape,
   return index;
 }
 
+void HloSharding::EachTile(
+    absl::FunctionRef<void(absl::Span<const int64_t>, int64_t)> f) const {
+  if (UseNamedShardingLeaf()) {
+    V3ToV2Sharding(*named_sharding_).EachTile(f);
+    return;
+  }
+  return tile_assignment_.Each(f);
+}
+
 absl::Status HloSharding::EachTile(
     absl::Span<const int64_t> dims,
     absl::FunctionRef<void(int64_t, absl::Span<const int64_t>,
@@ -599,13 +664,17 @@ absl::Status HloSharding::EachTile(
   // replication/sharding and other semantics.  They do not participate in
   // determining the tile origin and shape.
   const absl::Span<const int64_t> sharding_dims = dimensions();
-  const int num_devices = tile_assignment().array().num_elements();
 
   if (dims.size() != TiledDataRank()) {
     return absl::InvalidArgumentError(
         absl::StrFormat("Shape rank is not same as tile rank: %d vs %d",
                         dims.size(), TiledDataRank()));
   }
+
+  if (UseNamedShardingLeaf()) {
+    return V3ToV2Sharding(*named_sharding_).EachTile(dims, f);
+  }
+
   absl::InlinedVector<int64_t, 6> tile_dims;
   tile_dims.reserve(dims.size());
   for (int64_t i = 0; i < dims.size(); ++i) {
@@ -636,13 +705,13 @@ absl::Status HloSharding::EachTile(
           std::min(tile_dims[i] * (unique_tile_index[i] + 1), dims[i]);
     }
     for (int64_t i = 0; i < num_replicas; ++i) {
-      CHECK_LT(flat_tile_index, num_devices);
+      CHECK_LT(flat_tile_index, num_devices());
       const int64_t device_id = flat_tile_assignment[flat_tile_index];
-      if (device_id < 0 || device_id >= num_devices) {
+      if (device_id < 0 || device_id >= num_devices()) {
         return absl::InvalidArgumentError(
             absl::StrFormat("Out of range device id in device_assignment: %d; "
                             "valid range: [0, %d)",
-                            device_id, num_devices));
+                            device_id, num_devices()));
       }
       f(device_id, tile_offset, tile_limit);
       ++flat_tile_index;
@@ -826,6 +895,15 @@ absl::Status HloSharding::ValidateNonTuple(
         ToString(), ", input_shape=", ShapeUtil::HumanString(shape)));
   }
 
+  if (UseNamedShardingLeaf()) {
+    if (num_devices.has_value() && this->num_devices() != *num_devices) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("sharding should have %d devices but has %d",
+                          *num_devices, this->num_devices()));
+    }
+    return absl::OkStatus();
+  }
+
   if (tile_assignment_.iota_) {
     if (num_devices.has_value() &&
         tile_assignment_.iota_->num_elements() != *num_devices) {
@@ -874,6 +952,10 @@ const TileAssignment& HloSharding::TileAgnosticDeviceAssignment() const {
 
 /*static*/ absl::StatusOr<HloSharding> HloSharding::FromProto(
     const OpSharding& proto) {
+  if (proto.has_named_sharding()) {
+    return HloSharding(NamedSharding::FromProto(proto.named_sharding()));
+  }
+
   std::vector<OpMetadata> metadata(proto.metadata().begin(),
                                    proto.metadata().end());
   std::vector<int> subgroup_types_int(proto.last_tile_dims().begin(),
@@ -1002,6 +1084,11 @@ OpSharding HloSharding::ToProto() const {
     return result;
   }
 
+  if (UseNamedShardingLeaf()) {
+    *result.mutable_named_sharding() = named_sharding_->ToProto();
+    return result;
+  }
+
   result.mutable_metadata()->Reserve(metadata_.size());
   for (const auto& metadata : metadata_) {
     *result.add_metadata() = metadata;
@@ -1058,6 +1145,218 @@ OpSharding HloSharding::ToProto() const {
     }
   }
   return result;
+}
+
+/*static*/ HloSharding HloSharding::ToV3Sharding(const HloSharding& sharding) {
+  if (sharding.IsTuple()) {
+    std::vector<HloSharding> v3_elements;
+    v3_elements.reserve(sharding.tuple_elements().size());
+    for (const HloSharding& element : sharding.tuple_elements()) {
+      v3_elements.push_back(ToV3Sharding(element));
+    }
+    return HloSharding::FlatTuple(std::move(v3_elements));
+  }
+  return HloSharding(ToNamedSharding(sharding));
+}
+
+/*static*/ NamedSharding HloSharding::ToNamedSharding(
+    const HloSharding& sharding) {
+  CHECK(!sharding.IsTuple());
+  if (sharding.UseNamedShardingLeaf()) {
+    return sharding.named_sharding();
+  }
+  if (sharding.IsReplicated()) {
+    return NamedSharding::Replicate(sharding.metadata());
+  }
+  if (sharding.IsTileMaximal()) {
+    return NamedSharding::MaximalSharding(sharding.tile_assignment().first(),
+                                          sharding.metadata());
+  }
+
+  // Tiled sharding.
+  const TileAssignment& tile_assignment = sharding.tile_assignment();
+  std::optional<AnalyzeTileAssignmentResult> result =
+      AnalyzeTileAssignment(tile_assignment);
+
+  std::vector<int64_t> local_mesh;
+  std::vector<SubDimInfo> sub_dims;
+
+  if (result.has_value()) {
+    local_mesh = std::move(result->local_mesh);
+    sub_dims = std::move(result->sub_dims);
+  } else {
+    local_mesh.assign(tile_assignment.dimensions().begin(),
+                      tile_assignment.dimensions().end());
+    sub_dims.reserve(tile_assignment.num_dimensions());
+    for (int64_t i = 0; i < tile_assignment.num_dimensions(); ++i) {
+      sub_dims.push_back(SubDimInfo{
+          /* .tile_dim_index = */ i,
+          /* .tile_sub_dim_index = */ 0,
+          /* .reshape_dim_index = */ i,  // Fake reshape dim index
+          /* .size = */ tile_assignment.dim(i),
+      });
+    }
+  }
+
+  // Construct Mesh.
+  std::vector<std::string> axes_names;
+  axes_names.reserve(local_mesh.size());
+  for (int64_t i = 0; i < local_mesh.size(); ++i) {
+    axes_names.push_back(absl::StrCat("axis_", i));
+  }
+  std::vector<absl::string_view> axes_names_views(axes_names.begin(),
+                                                  axes_names.end());
+
+  // If we successfully factorized the iota tile assignment, the resulting
+  // mesh is guaranteed to be an iota mesh (0, 1, ..., N-1) corresponding
+  // to the linearized order of the reshape dimensions (permuted).
+  Mesh mesh = result.has_value()
+                  ? Mesh(local_mesh, axes_names_views)
+                  : Mesh(tile_assignment.array(), axes_names_views);
+
+  const int64_t rank = sharding.TiledDataRank();
+  const int64_t total_dims = tile_assignment.num_dimensions();
+
+  // Map from logical dimension to list of local axis indices (minor-to-major).
+  std::vector<std::vector<int64_t>> dim_to_local_axes(total_dims);
+
+  for (size_t local_axis_index = 0; local_axis_index < sub_dims.size();
+       ++local_axis_index) {
+    const SubDimInfo& sub_dim_info = sub_dims[local_axis_index];
+    std::vector<int64_t>& axes = dim_to_local_axes[sub_dim_info.tile_dim_index];
+    if (sub_dim_info.tile_sub_dim_index >= axes.size()) {
+      axes.resize(sub_dim_info.tile_sub_dim_index + 1);
+    }
+    axes[sub_dim_info.tile_sub_dim_index] = local_axis_index;
+  }
+
+  std::vector<AxisRef> manual_axes;
+  std::vector<AxisRef> unreduced_axes;
+  std::vector<AxisRef> replicated_axes;
+
+  // Classify subgroup axes based on the sharding type.
+  for (size_t local_axis_index = 0; local_axis_index < sub_dims.size();
+       ++local_axis_index) {
+    const SubDimInfo& sub_dim_info = sub_dims[local_axis_index];
+    if (sub_dim_info.tile_dim_index >= rank) {
+      int64_t subgroup_idx = sub_dim_info.tile_dim_index - rank;
+      OpSharding::Type type;
+      if (sharding.ReplicateOnLastTileDim()) {
+        CHECK_EQ(subgroup_idx, 0);
+        type = OpSharding::REPLICATED;
+      } else {
+        type = sharding.subgroup_types()[subgroup_idx];
+      }
+
+      if (type == OpSharding::MANUAL) {
+        manual_axes.emplace_back(local_axis_index);
+      } else if (type == OpSharding::UNREDUCED) {
+        unreduced_axes.emplace_back(local_axis_index);
+      } else if (type == OpSharding::REPLICATED) {
+        replicated_axes.emplace_back(local_axis_index);
+      } else {
+        LOG(FATAL) << "Unsupported subgroup type: "
+                   << OpSharding::Type_Name(type);
+      }
+    }
+  }
+
+  // Construct dimension shardings, ensuring axes are ordered major-to-minor.
+  std::vector<NamedSharding::DimensionSharding> dim_shardings;
+  dim_shardings.reserve(rank);
+  for (int i = 0; i < rank; ++i) {
+    const std::vector<int64_t>& axes = dim_to_local_axes[i];
+    std::vector<AxisRef> axis_refs;
+    for (auto it = axes.rbegin(); it != axes.rend(); ++it) {
+      axis_refs.emplace_back(*it);
+    }
+    dim_shardings.emplace_back(axis_refs, /*is_closed=*/true);
+  }
+
+  return NamedSharding(mesh, dim_shardings, replicated_axes, unreduced_axes,
+                       manual_axes, sharding.metadata());
+}
+
+/*static*/ HloSharding HloSharding::V3ToV2Sharding(
+    const NamedSharding& sharding) {
+  // TODO(b/477900810): Remove sharding conversions.
+  LOG(WARNING) << "V3ToV2Sharding method involves sharding conversions for "
+                  "HloShardingV3, its use cases should be avoided.";
+  const Mesh& mesh = sharding.mesh();
+  absl::Span<const OpMetadata> metadata = sharding.metadata();
+  if (sharding.IsReplicated()) {
+    return HloSharding::Replicate(metadata);
+  }
+  if (sharding.IsMaximal()) {
+    return HloSharding::AssignDevice(mesh.device_assignment()(0), metadata);
+  }
+
+  std::vector<int64_t> tile_assignment_dims;
+  tile_assignment_dims.reserve(sharding.dim_shardings().size());
+  absl::flat_hash_map<AxisRef, int64_t> axis_ref_to_sharded_pos;
+  int64_t sharded_pos = 0;
+  for (const NamedSharding::DimensionSharding& dim_sharding :
+       sharding.dim_shardings()) {
+    tile_assignment_dims.push_back(dim_sharding.getShardedSize(mesh));
+    for (const AxisRef& axis_ref : dim_sharding.axes()) {
+      axis_ref_to_sharded_pos[axis_ref] = sharded_pos++;
+    }
+  }
+
+  std::vector<OpSharding::Type> types;
+  auto add_subgroup_axes = [&](absl::Span<const AxisRef> axes,
+                               OpSharding::Type type) {
+    if (axes.empty()) {
+      return;
+    }
+    types.push_back(type);
+    int64_t& dim = tile_assignment_dims.emplace_back(1);
+    for (const AxisRef& axis_ref : axes) {
+      dim *= axis_ref.size(mesh);
+      axis_ref_to_sharded_pos[axis_ref] = sharded_pos++;
+    }
+  };
+  add_subgroup_axes(sharding.manual_axes(), OpSharding::MANUAL);
+  add_subgroup_axes(sharding.unreduced_axes(), OpSharding::UNREDUCED);
+
+  std::vector<AxisRef> mesh_axis_refs = GetOrderedAxisRefs(sharding);
+  std::vector<int64_t> reshape_dims;
+  reshape_dims.reserve(mesh_axis_refs.size());
+  std::vector<int> transpose_perm(mesh_axis_refs.size());
+
+  int64_t total_replicated_size = 1;
+  int64_t replicated_pos = sharded_pos;
+  for (int64_t i = 0; i < mesh_axis_refs.size(); ++i) {
+    const AxisRef& axis_ref = mesh_axis_refs[i];
+    reshape_dims.push_back(axis_ref.size(mesh));
+
+    auto sharded_pos_it = axis_ref_to_sharded_pos.find(axis_ref);
+    if (sharded_pos_it == axis_ref_to_sharded_pos.end()) {
+      transpose_perm[replicated_pos++] = i;
+      total_replicated_size *= axis_ref.size(mesh);
+    } else {
+      transpose_perm[sharded_pos_it->second] = i;
+    }
+  }
+
+  if (total_replicated_size > 1) {
+    tile_assignment_dims.push_back(total_replicated_size);
+    types.push_back(OpSharding::REPLICATED);
+  }
+
+  if (mesh.device_assignment().iota().has_value() &&
+      mesh.device_assignment().iota()->reshape_dims().size() == 1) {
+    // Simple iota case
+    return HloSharding::Subgroup(
+        TileAssignment(tile_assignment_dims, reshape_dims, transpose_perm),
+        types, metadata);
+  }
+
+  TileAssignment tile_assignment = mesh.device_assignment()
+                                       .Reshape(reshape_dims)
+                                       .Transpose(transpose_perm)
+                                       .Reshape(tile_assignment_dims);
+  return HloSharding::Subgroup(tile_assignment, types, metadata);
 }
 
 Shape HloSharding::TileShape(const Shape& shape) const {

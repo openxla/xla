@@ -60,6 +60,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_context.h"
+#include "xla/stream_executor/cuda/cuda_core_info_table.h"
 #include "xla/stream_executor/cuda/cuda_event.h"
 #include "xla/stream_executor/cuda/cuda_kernel.h"
 #include "xla/stream_executor/cuda/cuda_memory_allocator.h"
@@ -1331,19 +1332,6 @@ absl::uint128 Fingerprint128(const absl::string_view s) {
   return absl::MakeUint128(fp.high64, fp.low64);
 }
 
-int fpus_per_core(int cc_major, int cc_minor) {
-  // Source:
-  // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#arithmetic-instructions
-  int n = 128;          // 5.x, 6.1, 6.2, 8.6, 9.0 -> 128.
-  if (cc_major == 3) {  // 3.x -> 192.
-    n = 192;
-  } else if ((cc_major == 6 && cc_minor == 0) || (cc_major == 7) ||
-             (cc_major == 8 && cc_minor == 0)) {
-    n = 64;  // 6.0, 7.x, 8.0 -> 64.
-  }
-  return n;
-}
-
 }  // namespace
 
 absl::StatusOr<std::shared_ptr<DeviceAddressBase>>
@@ -1802,7 +1790,8 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
 
   int sm_clock_khz =
       GetDeviceAttribute(CU_DEVICE_ATTRIBUTE_CLOCK_RATE, device).value();
-  desc.set_clock_rate_ghz(static_cast<float>(sm_clock_khz) / 1e6);
+  float device_clock_rate_ghz = static_cast<float>(sm_clock_khz) / 1e6;
+  desc.set_clock_rate_ghz(device_clock_rate_ghz);
 
   {
     bool ecc_enabled = false;
@@ -1823,6 +1812,16 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   absl::StatusOr<int> mem_bus_width_bits = GetDeviceAttribute(
       CU_DEVICE_ATTRIBUTE_GLOBAL_MEMORY_BUS_WIDTH, device_ordinal);
   if (mem_clock_khz.ok() && mem_bus_width_bits.ok()) {
+    // Temporary fix when driver reports 0.
+    // Affected CUDA 13.1, driver r590, should be fixed in later releases.
+    if (mem_clock_khz.value() == 0 || mem_bus_width_bits.value() == 0) {
+      LOG(WARNING) << "Memory clock rate or bus width is 0";
+      if (cc.major == 11 && cc.minor == 0) {  // Thor
+        LOG(WARNING) << "Using hardcoded values for Thor";
+        mem_clock_khz = 4266000;
+        mem_bus_width_bits = 256;
+      }
+    }
     // Times 2 because HBM is DDR memory; it gets two data bits per each data
     // lane.
     desc.set_memory_bandwidth(2 * int64_t{mem_clock_khz.value()} * 1000 *
@@ -1881,7 +1880,7 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
       GetMaxSharedMemoryPerBlockOptin(device).value());
   int core_count = GetMultiprocessorCount(device).value();
   desc.set_core_count(core_count);
-  desc.set_fpus_per_core(fpus_per_core(cc.major, cc.minor));
+  desc.set_fpus_per_core(GetFpusPerCore(cc));
   desc.set_threads_per_core_limit(
       GetMaxThreadsPerMultiprocessor(device).value());
   desc.set_registers_per_block_limit(GetMaxRegistersPerBlock(device).value());
@@ -1890,6 +1889,8 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
       GetDeviceAttribute(CU_DEVICE_ATTRIBUTE_MAX_REGISTERS_PER_MULTIPROCESSOR,
                          device)
           .value());
+
+  FillExecutionUnitDesc(cc, device_clock_rate_ghz, desc);
 
   auto value_or = [](const auto& status_or, auto default_val) {
     if (status_or.ok()) {
@@ -2157,7 +2158,11 @@ absl::StatusOr<void*> CudaExecutor::CudaMulticastMemory::MapMemory(
 
   absl::MutexLock subscription_lock(mapped_devices_mu_);
   mapped_devices_.emplace(cuda_executor->device_, multicast_device_ptr);
-  return reinterpret_cast<void*>(multicast_device_ptr);
+  void* multicast_address = reinterpret_cast<void*>(multicast_device_ptr);
+  XLA_VLOG_DEVICE(3, cuda_executor->device_ordinal())
+      << "Mapped address: " << location.opaque()
+      << " to multimem address: " << multicast_address;
+  return multicast_address;
 }
 
 }  // namespace gpu

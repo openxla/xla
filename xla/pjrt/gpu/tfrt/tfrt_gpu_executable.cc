@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "unsupported/Eigen/CXX11/Tensor"
+#include "riegeli/bytes/string_writer.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/client/executable_build_options.h"
@@ -63,6 +64,7 @@ limitations under the License.
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/utils.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiled_module.h"
 #include "xla/service/compiler.h"
@@ -88,12 +90,14 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/context_types.h"
 #include "tsl/profiler/lib/traceme.h"
+#include "xla/tsl/platform/status_macros.h"
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
@@ -221,7 +225,11 @@ absl::StatusOr<std::string> TfrtGpuExecutable::SerializeExecutable() const {
   TF_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
                       compile_options_.ToProto());
   *proto.mutable_pjrt_client_name() = kPjRtClientName;
-  return proto.SerializeAsString();
+
+  std::string result;
+  RETURN_IF_ERROR(WriteSplitExecutableAndOptions(
+      proto, std::make_unique<riegeli::StringWriter<>>(&result)));
+  return result;
 }
 
 PjRtClient* TfrtGpuExecutable::client() const { return (PjRtClient*)client_; }
@@ -339,7 +347,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
     const int device_id = (*device_assignment_)(replica, partition);
     VLOG(3) << "device_id: " << device_id;
     TF_ASSIGN_OR_RETURN(PjRtDevice * pjrt_device,
-                        client_->LookupDevice(PjRtGlobalDeviceId(device_id)));
+                        client_->LookupDevice(GlobalDeviceId(device_id)));
     device = tsl::down_cast<TfrtGpuDevice*>(pjrt_device);
     device_assignment = device_assignment_;
   } else {
@@ -844,7 +852,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
     for (const std::unique_ptr<CliqueKey>& clique_key : clique_keys) {
       gpu::GpuCliqueKey* gpu_clique_key = CHECK_NOTNULL(
           tensorflow::down_cast<gpu::GpuCliqueKey*>(clique_key.get()));
-      if (absl::Status s = CheckCliqueKeyIsntStale(*gpu_clique_key); !s.ok()) {
+      if (absl::Status s = CheckCliqueIsntStale(*gpu_clique_key); !s.ok()) {
         VLOG(1) << "GPU clique key " << gpu_clique_key->ToString()
                 << " is stale";
         complete_event.SetError(s);
@@ -1033,7 +1041,7 @@ TfrtGpuExecutable::Execute(
       const int partition = addressable_device_logical_ids_[i].partition;
       const int device_id = (*device_assignment_)(replica, partition);
       TF_ASSIGN_OR_RETURN(PjRtDevice * pjrt_device,
-                          client_->LookupDevice(PjRtGlobalDeviceId(device_id)));
+                          client_->LookupDevice(GlobalDeviceId(device_id)));
       TfrtGpuDevice* gpu_device =
           tensorflow::down_cast<TfrtGpuDevice*>(pjrt_device);
 

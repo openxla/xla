@@ -24,10 +24,10 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
+#include "xla/backends/gpu/transforms/sort_rewriter.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/primitive_util.h"
-#include "xla/service/gpu/transforms/sort_rewriter.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
@@ -51,14 +51,11 @@ class CubSortTestBase
   }
 
   absl::StatusOr<bool> IsRewrittenToUseCubSort(absl::string_view hlo_text) {
-    HloModuleConfig config = GetModuleConfigForTest();
-    const HloModule* optimized_module;
-    std::unique_ptr<OpaqueExecutable> executable;
-    ASSIGN_OR_RETURN(std::tie(optimized_module, executable),
-                     GetOptimizedModuleForExecutable(hlo_text, config));
+    ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_module,
+                     GetOptimizedModule(hlo_text));
 
     for (const auto& pass_metadata :
-         optimized_module->metadata().proto().pass_metadata()) {
+         optimized_module->metadata()->proto().pass_metadata()) {
       if (pass_metadata.pass_name() == "sort-rewriter") {
         return pass_metadata.module_changed();
       }

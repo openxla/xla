@@ -78,8 +78,11 @@ TEST(NanoIfrtClientTest, BigResult) {
   mlir::MLIRContext context;
   auto module = xla::ParseMlirModuleString(kBigResult, context);
 
-  auto executable = compiler->CompileAndLoad(
-      std::make_unique<ifrt::HloProgram>(**module), nullptr);
+  auto executable =
+      compiler
+          ->CompileAndLoad(std::make_unique<ifrt::HloProgram>(**module),
+                           nullptr)
+          .Await();
   CHECK_OK(executable);
 
   ifrt::DType dtype(ifrt::DType::kF32);
@@ -125,8 +128,10 @@ static absl::StatusOr<ifrt::LoadedExecutableRef> CompileAndLoad(
       xla::CompileOptions(), std::move(devices));
   compile_options->compile_options.compile_portable_executable = true;
 
-  return compiler->CompileAndLoad(std::make_unique<ifrt::HloProgram>(**module),
-                                  std::move(compile_options));
+  return compiler
+      ->CompileAndLoad(std::make_unique<ifrt::HloProgram>(**module),
+                       std::move(compile_options))
+      .Await();
 }
 
 static ifrt::DType DTypeFromPrimitiveType(PrimitiveType type) {
@@ -144,9 +149,9 @@ static absl::StatusOr<ifrt::ArrayRef> MakeArrayFromLiteral(
   return client->MakeArrayFromHostBuffer(
       literal.untyped_data(),
       DTypeFromPrimitiveType(literal.shape().element_type()),
-      ifrt::Shape(literal.shape().dimensions()),
-      /*byte_strides=*/std::nullopt, std::move(sharding),
-      ifrt::Client::HostBufferSemantics::kImmutableZeroCopy,
+      ifrt::Shape(literal.shape().dimensions()), /*byte_strides=*/std::nullopt,
+      std::move(sharding),
+      /*layout=*/nullptr, ifrt::Client::HostBufferSemantics::kImmutableZeroCopy,
       /*on_done_with_host_buffer=*/nullptr);
 }
 
@@ -321,6 +326,9 @@ int main(int argc, char** argv) {
       "MakeArraysFromHostBufferShardsAndCopyToHostBufferWithString:"
       // Custom layouts are not supported in NanoIfrtClient.
       "ArrayImplTest.MakeArraysFromHostBufferShardsWithLayout:"
+      // Custom layouts are not supported in NanoIfrtClient even if the layout
+      // is a concrete layout of a default layout.
+      "ArrayImplTest.MakeArrayFromHostBufferWithCustomLayout:"
       // `MakeErrorArrays` is not supported in NanoIfrtClient.
       "ArrayImplTest.MakeErrorArrays:"
       "ArrayImplTest.CopyPoisonedArray:"

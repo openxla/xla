@@ -55,6 +55,8 @@ class CollectiveDeviceListBase {
   CollectiveDeviceListBase(CollectiveDeviceListBase&&) = default;
   CollectiveDeviceListBase& operator=(CollectiveDeviceListBase&&) = default;
 
+  std::optional<IotaReplicaGroupList> MaybeConvertToIotaReplicaGroupList()
+      const;
   // This is strict equality, which means that two different types
   // can't be compared for functional equality (i.e. even though an
   // IotaReplicaGroup and a CollectiveDeviceList may correspond to the same
@@ -99,6 +101,9 @@ class CollectiveDeviceListBase {
   virtual std::string ToString(bool print_full_replica_group_list) const {
     return ToString();
   };
+
+  static std::unique_ptr<CollectiveDeviceListBase> DeviceListFromProto(
+      const HloInstructionProto& proto);
 
   virtual std::unique_ptr<CollectiveDeviceListBase> Clone() const = 0;
   virtual CollectiveDeviceListVersion version() const = 0;
@@ -187,6 +192,13 @@ class IotaReplicaGroupList : public CollectiveDeviceListBase {
         num_replica_groups_(num_replica_groups),
         num_devices_per_group_(num_devices_per_group) {}
 
+  explicit IotaReplicaGroupList(int64_t num_replica_groups,
+                                int64_t num_devices_per_group,
+                                const IotaTileAssignment& iota_tile_assignment)
+      : iota_tile_assignment_(iota_tile_assignment),
+        num_replica_groups_(num_replica_groups),
+        num_devices_per_group_(num_devices_per_group) {}
+
   bool operator==(const IotaReplicaGroupList& other) const {
     return num_replica_groups() == other.num_replica_groups() &&
            num_devices_per_group() == other.num_devices_per_group() &&
@@ -258,15 +270,7 @@ class CollectiveDeviceList : public CollectiveDeviceListBase {
     replica_groups_ = ToReplicaGroupVector(replica_groups);
   };
 
-  explicit CollectiveDeviceList(
-      const IotaReplicaGroupList& iota_replica_group_list)
-      : iota_replica_group_list_(iota_replica_group_list) {}
-
   bool operator==(const CollectiveDeviceList& other) const {
-    if (iota_replica_group_list_.has_value() &&
-        other.iota_replica_group_list_.has_value()) {
-      return *iota_replica_group_list_ == *other.iota_replica_group_list_;
-    }
     const auto& this_groups = replica_groups();
     const auto& other_groups = other.replica_groups();
     if (this_groups.size() != other_groups.size()) {
@@ -295,19 +299,14 @@ class CollectiveDeviceList : public CollectiveDeviceListBase {
   // Overrides
   const std::vector<ReplicaGroup>& replica_groups() const override;
   std::vector<std::vector<int64_t>> flattened_replica_groups() const override;
-  const std::optional<IotaReplicaGroupList>& iota_replica_group_list() const {
-    return iota_replica_group_list_;
-  }
 
   int64_t num_replica_groups() const override {
-    return iota_replica_group_list_.has_value()
-               ? iota_replica_group_list_->num_replica_groups()
-               : replica_groups_->size();
+    return replica_groups_->size();
   }
 
   int64_t num_devices_per_group() const override {
-    return iota_replica_group_list_.has_value()
-               ? iota_replica_group_list_->num_devices_per_group()
+    return replica_groups_->empty()
+               ? 0
                : replica_groups_->begin()->replica_ids_size();
   }
 
@@ -318,9 +317,6 @@ class CollectiveDeviceList : public CollectiveDeviceListBase {
   std::string ToString(bool print_full_replica_group_list) const override;
 
   CollectiveDeviceListVersion version() const override {
-    if (iota_replica_group_list_.has_value()) {
-      return CollectiveDeviceListVersion::kIota;
-    }
     return CollectiveDeviceListVersion::kListOfLists;
   }
 
@@ -357,8 +353,6 @@ class CollectiveDeviceList : public CollectiveDeviceListBase {
   }
 
   void MaybeMaterializeFullReplicaGroupList() const;
-
-  std::optional<IotaReplicaGroupList> iota_replica_group_list_;
 };
 
 std::string ReplicaGroupsToString(

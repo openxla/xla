@@ -17,33 +17,45 @@ limitations under the License.
 
 #include <unistd.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 #include <utility>
-#include <vector>
+#include <variant>
 
-#include "absl/functional/any_invocable.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/numeric/int128.h"
 #include "absl/status/status.h"
-#include "absl/strings/ascii.h"
-#include "absl/strings/numbers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/types/span.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/generic_memory_allocation.h"
 #include "xla/stream_executor/generic_memory_allocator.h"
-#include "xla/stream_executor/gpu/gpu_command_buffer.h"
+#include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/memory_space.h"
+#include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/util/env_var.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
+#include "xla/stream_executor/sycl/sycl_context.h"
+#include "xla/stream_executor/sycl/sycl_event.h"
+#include "xla/stream_executor/sycl/sycl_gpu_runtime.h"
+#include "xla/stream_executor/sycl/sycl_kernel.h"
+#include "xla/stream_executor/sycl/sycl_stream.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tsl/platform/fingerprint.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/platform/statusor.h"
 
 namespace stream_executor::sycl {
 
@@ -352,7 +364,7 @@ absl::StatusOr<std::unique_ptr<MemoryAllocation>> AllocateHostMemory(
       host_mem, size,
       [sycl_context, device_ordinal](void* location, uint64_t size) {
         absl::Status free_status = SyclFree(device_ordinal, location);
-        if (free_status != absl::OkStatus()) {
+        if (!free_status.ok()) {
           LOG(ERROR) << absl::StrFormat(
               "AllocateHostMemory: failed to free host memory at %p, got %s",
               location, free_status.ToString());

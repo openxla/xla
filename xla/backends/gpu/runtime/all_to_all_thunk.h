@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -81,20 +82,29 @@ class AllToAllStartThunk : public CollectiveThunk {
   bool has_split_dimension() const { return config_.has_split_dimension; }
   absl::Span<const Buffer> buffers() const { return buffers_; }
 
+  BufferUses buffer_uses() const override {
+    BufferUses uses;
+    uses.reserve(buffers_.size() * 2);
+    for (const Buffer& buffer : buffers_) {
+      uses.push_back(BufferUse::Read(buffer.source_buffer.slice,
+                                     buffer.source_buffer.shape));
+      uses.push_back(BufferUse::Write(buffer.destination_buffer.slice,
+                                      buffer.destination_buffer.shape));
+    }
+    return uses;
+  }
+
  protected:
   absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
                                      const GpuCliqueKey& clique_key,
                                      se::Stream& stream,
                                      Communicator& comm) override;
 
-  AsyncStreamKind GetAsyncStreamKind() const override;
-
-  bool is_local() const;
+  bool is_local(int device_count) const;
 
  private:
   const AllToAllConfig config_;
   const std::vector<Buffer> buffers_;
-  int64_t device_count_ = 1;
   bool p2p_memcpy_enabled_ = false;
 
   absl::Mutex pointer_maps_mutex_;

@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
@@ -47,6 +48,11 @@ class AbstractTrackedDeviceBuffer {
   // will become ready when this buffer is ready.
   virtual std::vector<tsl::RCReference<tsl::AsyncValue>>
   GetAsyncValueDefinitionEvents() = 0;
+
+  // Construct (or return) a vector of tsl::AsyncValue events which
+  // will become ready when this buffer is ok to mutate.
+  virtual std::vector<tsl::RCReference<tsl::AsyncValue>>
+  GetAsyncValueDefinitionAndUsageEvents() = 0;
 
   // Returns a raw buffer which aliases the same
   // underlying memory as this AbstractTrackedDeviceBuffer.

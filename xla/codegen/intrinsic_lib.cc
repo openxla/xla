@@ -304,6 +304,7 @@ IntrinsicFunctionLib::DefineIntrinsicFunctions(llvm::Module& module) {
             for (const auto& lib : ir_libraries_) {
               lib->LinkIntoModule(module);
             }
+            ir_libraries_linked = true;
           }
 
           CreateDefinitionAndReplaceDeclaration(module, signature, options_,

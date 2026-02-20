@@ -32,10 +32,13 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "grpcpp/channel.h"
 #include "xla/pjrt/distributed/coordination/coordination_client.h"
+#include "xla/pjrt/distributed/coordination/coordination_service.h"
 #include "xla/pjrt/distributed/coordination/coordination_service_agent.h"
 #include "xla/pjrt/distributed/coordination/grpc_coordination_client.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/runtime/device_id.h"
+#include "xla/tsl/distributed_runtime/call_options.h"
+#include "xla/tsl/distributed_runtime/coordination/coordination_service_agent.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
@@ -56,6 +59,14 @@ class DistributedRuntimeCoordinationServiceClient
   absl::Status Shutdown() override;
   absl::StatusOr<std::string> BlockingKeyValueGet(
       absl::string_view key, absl::Duration timeout) override;
+
+  // Async version of `BlockingKeyValueGet`. The `done` callback is invoked when
+  // the key-value becomes available.
+  // The caller can cancel the underlying RPC call with the `StartCancel()` and
+  // `ClearCancelCallback()` methods on the returned `CallOptions`.
+  std::shared_ptr<tsl::CallOptions> AsyncKeyValueGet(
+      absl::string_view key,
+      tsl::CoordinationServiceAgent::StatusOrValueCallback done) override;
   absl::StatusOr<std::string> KeyValueTryGet(absl::string_view key) override;
   absl::StatusOr<int64_t> KeyValueIncrement(absl::string_view key,
                                             int64_t increment) override;
@@ -88,7 +99,6 @@ DistributedRuntimeCoordinationServiceClient::
         std::shared_ptr<::grpc::Channel> channel, const Options& options) {
   // Convert options to coordination config.
   CoordinationServiceAgent::Config config;
-  config.service_leader = "/job:jax_worker/task:0";
   if (options.init_timeout > absl::ZeroDuration()) {
     config.cluster_register_timeout = options.init_timeout;
   }
@@ -101,9 +111,8 @@ DistributedRuntimeCoordinationServiceClient::
   std::unique_ptr<CoordinationClient> leader_client;
   leader_client.reset(NewGrpcCoordinationClient(channel));
   auto agent = CoordinationServiceAgent::Create(
-      options.env, "jax_worker", options.node_id, config,
-      std::move(leader_client), options.missed_heartbeat_callback,
-      options.recoverable);
+      options.env, options.node_id, config, std::move(leader_client),
+      options.missed_heartbeat_callback);
   if (!agent.ok()) {
     LOG(ERROR) << "Coordination agent failed to initialize: " << agent.status();
   } else {
@@ -148,6 +157,13 @@ absl::StatusOr<std::string>
 DistributedRuntimeCoordinationServiceClient::BlockingKeyValueGet(
     absl::string_view key, absl::Duration timeout) {
   return coord_agent_->GetKeyValue(key, timeout);
+}
+
+std::shared_ptr<tsl::CallOptions>
+DistributedRuntimeCoordinationServiceClient::AsyncKeyValueGet(
+    absl::string_view key,
+    tsl::CoordinationServiceAgent::StatusOrValueCallback done) {
+  return coord_agent_->GetKeyValueAsync(key, std::move(done));
 }
 
 absl::StatusOr<std::string>
@@ -196,14 +212,11 @@ absl::Status DistributedRuntimeCoordinationServiceClient::KeyValueSet(
 absl::Status DistributedRuntimeCoordinationServiceClient::WaitAtBarrier(
     std::string barrier_id, absl::Duration timeout,
     std::optional<absl::Span<const int32_t>> process_ids) {
-  std::vector<tensorflow::CoordinatedTask> tasks;
+  std::vector<CoordinationService::TaskId> tasks;
   if (process_ids.has_value()) {
     tasks.reserve(process_ids->size());
     for (int32_t process_id : process_ids.value()) {
-      tensorflow::CoordinatedTask task;
-      task.set_job_name("jax_worker");
-      task.set_task_id(process_id);
-      tasks.push_back(std::move(task));
+      tasks.push_back(process_id);
     }
   }
   return coord_agent_->WaitAtBarrier(barrier_id, timeout, tasks);
@@ -218,13 +231,10 @@ DistributedRuntimeCoordinationServiceClient::GetLiveNodesWithIncarnations(
   // abstraction boundary from jax.distributed into the coordination service.
 
   // Wrap the node ids into tasks.
-  std::vector<tensorflow::CoordinatedTask> tasks;
+  std::vector<CoordinationService::TaskId> tasks;
   tasks.reserve(nodes.size());
   for (int32_t task_id : nodes) {
-    tensorflow::CoordinatedTask task;
-    task.set_job_name("jax_worker");
-    task.set_task_id(task_id);
-    tasks.push_back(std::move(task));
+    tasks.push_back(task_id);
   }
 
   // Get the set of live tasks.
@@ -286,6 +296,13 @@ class DistributedKeyValueStore : public KeyValueStoreInterface {
 
   absl::Status Set(absl::string_view key, absl::string_view value) override {
     return client_->KeyValueSet(absl::StrCat(prefix_, key), value);
+  }
+
+  std::shared_ptr<tsl::CallOptions> AsyncGet(
+      absl::string_view key,
+      tsl::CoordinationServiceAgent::StatusOrValueCallback done) override {
+    return client_->AsyncKeyValueGet(absl::StrCat(prefix_, key),
+                                     std::move(done));
   }
 
  private:

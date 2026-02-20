@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/gpu/transforms/priority_fusion.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/service/compiler.h"
-#include "xla/service/gpu/transforms/priority_fusion.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/platform/errors.h"
@@ -127,7 +127,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> FissionBackend::RunHloPasses(
   priority_fusion_options.count_multiple_input_accesses = true;
   // TODO: b/407494653 - Get rid of PriorityFusion.
   PriorityFusion priority_fusion(
-      /*thread_pool=*/nullptr, target_config().device_description,
+      /*thread_pool=*/nullptr, target_config().device_description, alias_info_,
       priority_fusion_options, mlir_context_);
   TF_RETURN_IF_ERROR(priority_fusion.Run(module.get()).status());
   return module;

@@ -79,6 +79,8 @@ common --@rules_python//python/config_settings:precompile=force_disabled
 # would conflict with our protobuf linkage.
 #common --define=use_fast_cpp_protos=true
 
+common --incompatible_default_to_explicit_init_py
+
 # For local build, without dependency on rbe
 common:linux_cpu --config=avx_linux
 common:linux_cpu --linkopt=-lrt
@@ -279,6 +281,7 @@ common:rocm_base --repo_env TF_NEED_ROCM=1
 
 common:rocm_clang_official --config=rocm_base
 common:rocm_clang_official --action_env=CLANG_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
+common:rocm_clang_official --action_env=HIPCC_COMPILE_FLAGS_APPEND="--offload-compress"
 common:rocm_clang_official --action_env=TF_ROCM_CLANG="1"
 common:rocm_clang_official --linkopt="-fuse-ld=lld"
 common:rocm_clang_official --host_linkopt="-fuse-ld=lld"
@@ -559,7 +562,22 @@ common:rbe_win_base --nobuild_runfile_links
 common:rbe_win_base --define=override_eigen_strong_inline=true
 
 common:rbe_windows_x86_cpu_2022 --config=rbe_win_base --config=windows_x86_cpu_2022
+
+# Override the remote instance and BES instance names to use the new RBE pools
+common:rbe_windows_x86_cpu_2022 --remote_instance_name=projects/ml-oss-rbe-general/instances/default_instance
+common:rbe_windows_x86_cpu_2022 --bes_instance_name="ml-oss-rbe-general"
+
+common:rbe_windows_x86_cpu_2022 --host_platform="//tensorflow/tools/toolchains/win2022:windows_ltsc2022_clang_new"
+common:rbe_windows_x86_cpu_2022 --extra_execution_platforms="//tensorflow/tools/toolchains/win2022:windows_ltsc2022_clang_new"
+common:rbe_windows_x86_cpu_2022 --platforms="//tensorflow/tools/toolchains/win2022:windows_ltsc2022_clang_new"
+
 common:rbe_xla_windows_x86_cpu_2022 --config=rbe_win_base --config=xla_windows_x86_cpu_2022
+common:rbe_xla_windows_x86_cpu_2022 --remote_instance_name=projects/ml-oss-rbe-general/instances/default_instance
+common:rbe_xla_windows_x86_cpu_2022 --bes_instance_name="ml-oss-rbe-general"
+
+common:rbe_xla_windows_x86_cpu_2022 --host_platform="//tools/toolchains/win2022:windows_ltsc2022_clang_new"
+common:rbe_xla_windows_x86_cpu_2022 --extra_execution_platforms="//tools/toolchains/win2022:windows_ltsc2022_clang_new"
+common:rbe_xla_windows_x86_cpu_2022 --platforms="//tools/toolchains/win2022:windows_ltsc2022_clang_new"
 
 # END TF REMOTE BUILD EXECUTION OPTIONS
 

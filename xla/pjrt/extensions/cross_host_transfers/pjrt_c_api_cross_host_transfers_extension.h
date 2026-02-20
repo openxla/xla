@@ -35,7 +35,7 @@ extern "C" {
 // CrossHostSendBuffers and CrossHostReceiveBuffers. These methods allow PjRt
 // clients to implement various optimizations for cross-host transfers.
 
-#define PJRT_API_CROSS_HOST_TRANSFERS_EXTENSION_VERSION 4
+#define PJRT_API_CROSS_HOST_TRANSFERS_EXTENSION_VERSION 5
 
 // ---------------------------------- Methods ----------------------------------
 
@@ -48,8 +48,7 @@ struct PJRT_Transfers_PJRT_Client_CrossHostSendBuffers_Args {
   PJRT_Client* client;
   size_t num_buffers;
   PJRT_Buffer** buffers;
-  const xla::PjRtGlobalDeviceId*
-      dst_global_device_ids;                       // Has size num_buffers.
+  const xla::GlobalDeviceId* dst_global_device_ids;  // Has size num_buffers.
   const xla::CrossHostTransferKey* transfer_keys;  // Has size num_buffers.
   PJRT_Event** send_events;  // Output; has size num_buffers.
 };
@@ -70,7 +69,7 @@ struct PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args {
   PJRT_Buffer_Type* element_types;
   PJRT_Buffer_MemoryLayout** layouts;
   PJRT_Device* device;
-  const xla::PjRtGlobalDeviceId* src_global_device_ids;  // Has size num_shapes.
+  const xla::GlobalDeviceId* src_global_device_ids;      // Has size num_shapes.
   const xla::CrossHostTransferKey* transfer_keys;        // Has size num_shapes.
   PJRT_Buffer** buffers;  // Output; has size num_shapes.
 };
@@ -139,8 +138,11 @@ struct PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args {
   size_t struct_size;
   PJRT_Extension_Base* extension_start;
   PJRT_Buffer* buffer;
-  const char* serialized_descriptor;
-  size_t serialized_descriptor_size;
+  // `PJRT_Buffer_CopyToRemoteDevice` is responsible for freeing the event.
+  PJRT_Event* event;
+  // The lifetime of the descriptor data extends until the event is set.
+  char** serialized_descriptor;
+  size_t* serialized_descriptor_size;
   PJRT_Transfers_CrossHostRemoteSendCallbackInfo on_done;
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Transfers_PJRT_Buffer_CopyToRemoteDevice_Args,

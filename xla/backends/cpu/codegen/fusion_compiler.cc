@@ -116,6 +116,7 @@ limitations under the License.
 #include "xla/codegen/xtile/ir/transforms/passes.h"
 #include "xla/codegen/xtile/ir/xtile_dialect.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/mlir/tools/mlir_replay/public/compiler_trace.pb.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/status_macros.h"
@@ -327,6 +328,7 @@ static void AddTiledOptimizationPasses(mlir::OpPassManager& pm) {
   pm.addNestedPass<mlir::func::FuncOp>(
       mlir::stablehlo::createStablehloTargetIndependentOptimizationPass());
 
+  pm.addPass(xtile::createStablehloLowerToArithPass());
   pm.addPass(CreateShloToVectorPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addNestedPass<mlir::func::FuncOp>(
@@ -337,6 +339,9 @@ static void AddTiledOptimizationPasses(mlir::OpPassManager& pm) {
   mlir::stablehlo::StablehloLegalizeToLinalgPassOptions
       stablehlo_to_linalg_options;
   stablehlo_to_linalg_options.enablePrimitiveOps = true;
+  // Has to run before legalize-to-linalg for specialzed implementations of SHLO
+  // ops for XTile.
+  pm.addPass(xtile::createStablehloLowerToXtilePass());
   pm.addPass(mlir::stablehlo::createStablehloLegalizeToLinalgPass());
   pm.addPass(xtile::createConvertElementwise0DTensorToScalarPass());
 
@@ -536,6 +541,7 @@ std::unique_ptr<mlir::MLIRContext> FusionCompiler::CreateContext() {
 
   context->appendDialectRegistry(CreateDialectRegistry());
   context->loadAllAvailableDialects();
+  RegisterSymbolicExprStorage(context.get());
 
   return context;
 }

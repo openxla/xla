@@ -23,6 +23,7 @@ limitations under the License.
 #include <tuple>
 #include <utility>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -31,11 +32,11 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/buffer_debug_log_entry_metadata_store.h"
 #include "xla/backends/gpu/runtime/buffer_debug_log_structs.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/gpu/buffer_debug_float_check_kernel.h"
 #include "xla/stream_executor/gpu/buffer_debug_log.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
@@ -51,6 +52,29 @@ namespace xla::gpu {
 
 namespace se = stream_executor;
 
+BuffersDebugFloatCheckThunk::BuffersDebugFloatCheckThunk(
+    ThunkInfo info, const ThunkInfo& checked_thunk_info,
+    BufferAllocation::Slice log_slice, BufferAllocation::Slice tmp_slice,
+    absl::flat_hash_map<size_t, BufferAllocation::Slice> checked_thunk_buffers,
+    std::shared_ptr<BufferDebugLogEntryMetadataStore> metadata_store)
+    : Thunk(Thunk::Kind::kBuffersDebugFloatCheck, std::move(info)),
+      log_slice_(log_slice),
+      tmp_slice_(tmp_slice),
+      checked_thunk_info_(checked_thunk_info),
+      checked_thunk_buffers_(std::move(checked_thunk_buffers)),
+      metadata_store_(std::move(metadata_store)) {
+  absl::erase_if(
+      checked_thunk_buffers_,
+      [this](const std::pair<size_t, BufferAllocation::Slice>& pair) {
+        if (pair.second.size() == 0) {
+          VLOG(1) << "Buffer " << pair.first << " in thunk "
+                  << checked_thunk_info_.thunk_id
+                  << " has zero size, skipping float check";
+          return true;
+        }
+        return false;
+      });
+}
 absl::Status BuffersDebugFloatCheckThunk::Initialize(
     const InitializeParams& params) {
   if (params.executor->GetPlatform()->id() != se::cuda::kCudaPlatformId) {
@@ -82,13 +106,17 @@ absl::Status BuffersDebugFloatCheckThunk::Initialize(
           registry.LoadKernel<se::gpu::BufferDebugFloatCheckBf16Kernel>(
               params.executor));
       TF_ASSIGN_OR_RETURN(
+          auto kernel_f64,
+          registry.LoadKernel<se::gpu::BufferDebugFloatCheckF64Kernel>(
+              params.executor));
+      TF_ASSIGN_OR_RETURN(
           auto kernel_reduce,
           registry.LoadKernel<
               se::gpu::BufferDebugAppendReducedFloatCheckResultsKernel>(
               params.executor));
       kernels_[params.executor] = std::make_unique<Kernels>(
           Kernels{std::move(kernel_f32), std::move(kernel_bf16),
-                  std::move(kernel_reduce)});
+                  std::move(kernel_f64), std::move(kernel_reduce)});
       VLOG(1) << "NanCount kernels loaded";
     }
   }
@@ -98,7 +126,7 @@ absl::Status BuffersDebugFloatCheckThunk::Initialize(
 
 template <typename T>
 se::BlockDim GetBlockDimForBuffer(se::Stream* stream,
-                                  se::DeviceMemory<T> buffer,
+                                  se::DeviceAddress<T> buffer,
                                   int64_t max_blocks) {
   const int64_t num_elements = buffer.size() / sizeof(T);
   const se::DeviceDescription& desc = stream->parent()->GetDeviceDescription();
@@ -106,6 +134,49 @@ se::BlockDim GetBlockDimForBuffer(se::Stream* stream,
       std::min(xla::CeilOfRatio(num_elements, desc.threads_per_block_limit()),
                max_blocks);
   return se::BlockDim(num_blocks);
+}
+
+template <typename T>
+constexpr const char* FloatTypeString() {
+  if constexpr (std::is_same_v<T, float>) {
+    return "F32";
+  } else if constexpr (std::is_same_v<T, Eigen::bfloat16>) {
+    return "BF16";
+  } else if constexpr (std::is_same_v<T, double>) {
+    return "F64";
+  } else {
+    static_assert(false, "Unsupported type");
+  }
+}
+
+template <typename T, typename MapKernel, typename ReduceAppendKernel>
+absl::Status CheckFloatsAndLog(
+    se::Stream* stream, const BufferDebugLogEntryId entry_id,
+    se::gpu::BufferDebugLog<BufferDebugFloatCheckEntry>& buffer_debug_log,
+    se::DeviceAddressBase device_buffer,
+    se::DeviceAddress<xla::gpu::FloatCheckResult> tmp_ptr,
+    MapKernel& map_kernel, ReduceAppendKernel& reduce_append_kernel) {
+  VLOG(1) << FloatTypeString<T>() << " buffer detected with id: " << entry_id
+          << " and size: " << device_buffer.size();
+
+  se::DeviceAddress<T> buffer(device_buffer);
+  // The kernels assume 1024 threads per block.
+  const se::ThreadDim thread_dim(1024);
+  const se::BlockDim block_dim =
+      GetBlockDimForBuffer<T>(stream, buffer, tmp_ptr.ElementCount());
+  const size_t num_blocks = block_dim.x * block_dim.y * block_dim.z;
+
+  TF_RETURN_IF_ERROR(map_kernel.Launch(thread_dim, block_dim, stream, buffer,
+                                       buffer.ElementCount(), tmp_ptr,
+                                       tmp_ptr.ElementCount()));
+  // Operations on the same stream perform in sequence, so at this point the
+  // results of the previous FloatCheck operation are available.
+  TF_RETURN_IF_ERROR(reduce_append_kernel.Launch(
+      thread_dim, se::BlockDim(1, 1, 1), stream, tmp_ptr,
+      std::min(tmp_ptr.ElementCount(), num_blocks), entry_id,
+      buffer_debug_log.GetDeviceHeader(), buffer_debug_log.GetDeviceEntries()));
+
+  return absl::OkStatus();
 }
 
 absl::Status BuffersDebugFloatCheckThunk::ExecuteOnStream(
@@ -142,8 +213,6 @@ absl::Status BuffersDebugFloatCheckThunk::ExecuteOnStream(
       se::gpu::BufferDebugLog<
           BufferDebugFloatCheckEntry>::FromDeviceAddressUnchecked(log_ptr);
   const uint32_t execution_id = execution_count_.fetch_add(1);
-  // The kernel assumes 1024 threads per block.
-  const se::ThreadDim thread_dim(1024);
 
   for (const auto& [buffer_idx, buffer] : checked_thunk_buffers_) {
     BufferDebugLogEntryMetadataStore::Metadata metadata{
@@ -159,36 +228,24 @@ absl::Status BuffersDebugFloatCheckThunk::ExecuteOnStream(
     PrimitiveType buffer_type = buffer.element_type();
     se::DeviceAddressBase device_buffer =
         params.buffer_allocations->GetDeviceAddress(buffer);
+
     if (buffer_type == PrimitiveType::F32) {
-      VLOG(1) << "F32 buffer detected with id: " << entry_id
-              << " and size: " << device_buffer.size();
-      se::DeviceAddress<float> f32_buffer(device_buffer);
-      const se::BlockDim block_dim = GetBlockDimForBuffer<float>(
-          params.stream, f32_buffer, tmp_size_elements);
-      TF_RETURN_IF_ERROR(kernels->f32.Launch(
-          thread_dim, block_dim, params.stream, f32_buffer,
-          f32_buffer.ElementCount(), tmp_ptr, tmp_size_elements));
+      TF_RETURN_IF_ERROR(CheckFloatsAndLog<float>(
+          params.stream, entry_id, buffer_debug_log, device_buffer, tmp_ptr,
+          kernels->f32, kernels->reduce));
     } else if (buffer_type == PrimitiveType::BF16) {
-      VLOG(1) << "BF16 buffer detected with id: " << entry_id
-              << " and size: " << device_buffer.size();
-      se::DeviceAddress<Eigen::bfloat16> bf16_buffer(device_buffer);
-      const se::BlockDim block_dim = GetBlockDimForBuffer<Eigen::bfloat16>(
-          params.stream, bf16_buffer, tmp_size_elements);
-      TF_RETURN_IF_ERROR(kernels->bf16.Launch(
-          thread_dim, block_dim, params.stream, bf16_buffer,
-          bf16_buffer.ElementCount(), tmp_ptr, tmp_size_elements));
+      TF_RETURN_IF_ERROR(CheckFloatsAndLog<Eigen::bfloat16>(
+          params.stream, entry_id, buffer_debug_log, device_buffer, tmp_ptr,
+          kernels->bf16, kernels->reduce));
+    } else if (buffer_type == PrimitiveType::F64) {
+      TF_RETURN_IF_ERROR(CheckFloatsAndLog<double>(
+          params.stream, entry_id, buffer_debug_log, device_buffer, tmp_ptr,
+          kernels->f64, kernels->reduce));
     } else {
       VLOG(1) << "Unsupported primitive type for float checking: "
               << PrimitiveType_Name(buffer_type);
       continue;
     }
-
-    // Operations on the same stream perform in sequence, so at this point the
-    // results of the previous FloatCheck operation are available.
-    TF_RETURN_IF_ERROR(kernels->reduce.Launch(
-        thread_dim, se::BlockDim(1, 1, 1), params.stream, tmp_ptr,
-        tmp_size_elements, entry_id, buffer_debug_log.GetDeviceHeader(),
-        buffer_debug_log.GetDeviceEntries()));
   }
 
   return absl::OkStatus();

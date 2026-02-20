@@ -16,21 +16,44 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_CLIQUE_REQUESTS_H_
 #define XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_CLIQUE_REQUESTS_H_
 
-#include <cstdint>
+#include <cstddef>
+#include <optional>
 #include <vector>
 
+#include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
+#include "xla/runtime/device_id.h"
 
 namespace xla::gpu {
 
 // Collective thunks (including collective FFI calls) can request communicators
-// for various collective clieques. XLA runtime is responsible for collecting
+// for various collective cliques. XLA runtime is responsible for collecting
 // such requests during the prepare stage and acquiring the cliques during the
 // initialize stage.
 class CollectiveCliqueRequests {
  public:
+  // Allows to request additional barrier with acquired cliques.
+  struct BarrierRequirements {
+    template <typename Sink>
+    friend void AbslStringify(Sink& sink, const BarrierRequirements& reqs) {
+      absl::Format(&sink, "{module_execution_barrier: %d}",
+                   reqs.module_execution_barrier);
+    }
+
+    bool operator==(const BarrierRequirements& other) const {
+      return other.module_execution_barrier == module_execution_barrier;
+    }
+
+    bool operator<(const BarrierRequirements& other) const {
+      return other.module_execution_barrier < module_execution_barrier;
+    }
+
+    bool module_execution_barrier = false;
+  };
+
   // For each requested clique key, we also assign a monotonically increasing
   // id, that allows us to deterministically order clique requests.
   //
@@ -62,12 +85,59 @@ class CollectiveCliqueRequests {
   // to reuse existing communicators when requesting smaller cliques via
   // communicator splitting.
   struct CliqueRequest {
+    size_t id;
     GpuCliqueKey key;
-    int64_t id;
+
+    // Device groups corresponding to the given clique key (derived from replica
+    // groups and device assignment at run time). We need this information to be
+    // able to decide if we can do communicator splitting or not. Remember that
+    // communicator splitting is a collective operation, and all ranks in the
+    // original communicator must participate (even if they choose to bail out
+    // of splitting, they must make this explicit), and to be able to decide if
+    // communicator splitting is safe or not, we must know that all ranks of the
+    // parent communicator will join. We rely on device groups to detect if all
+    // of the devices in the parent clique are present in the given grouping.
+    std::vector<std::vector<GlobalDeviceId>> device_groups;
+
+    // Requirements for device communicators. We keep them in a sorted container
+    // to guarantee that all ranks create device communicators in the same
+    // order, otherwise it might lead to deadlocks.
+    absl::btree_set<GpuDeviceCommunicator::Requirements> dev_comms;
+
+    // Requirements for barriers.
+    bool barrier_after_module_execution_requested = false;
+  };
+
+  // An extra set of requirements for the collective clique. When XLA runtime
+  // acquires collective cliques (see `collective_cliques.h`), it will satisfy
+  // all of the requirements, or will return an error.
+  struct CliqueRequirements {
+    template <typename Sink>
+    friend void AbslStringify(Sink& sink, const CliqueRequirements& reqs) {
+      if (reqs.dev_comm) {
+        absl::Format(&sink, "{dev_comm: %v, ", *reqs.dev_comm);
+      } else {
+        absl::Format(&sink, "{dev_comm: n/a, ");
+      }
+
+      if (reqs.barrier_reqs) {
+        absl::Format(&sink, "barrier_req: %v}", *reqs.barrier_reqs);
+      } else {
+        absl::Format(&sink, "barrier_req: n/a}");
+      }
+    }
+
+    // Create a device communicator for the given collective clique.
+    std::optional<GpuDeviceCommunicator::Requirements> dev_comm;
+    std::optional<BarrierRequirements> barrier_reqs;
   };
 
   // Adds a clique key to the list of requested cliques.
-  absl::Status RequestClique(const GpuCliqueKey& clique_key);
+  absl::Status RequestClique(
+      const GpuCliqueKey& clique_key,
+      // TODO(ezhulenev): Remove default once JAX is fixed.
+      std::vector<std::vector<GlobalDeviceId>> device_groups = {},
+      const CliqueRequirements& requirements = {});
 
   // Returns all requested cliques in undefined order.
   std::vector<GpuCliqueKey> RequestedCliques() const;
@@ -75,6 +145,11 @@ class CollectiveCliqueRequests {
   // Returns all requested cliques in a deterministic order optimized for
   // efficient communicator acquisition.
   std::vector<CliqueRequest> OrderedRequestedCliques() const;
+
+  size_t size() const { return cliques_.size(); }
+
+  // Returns true if any clique requests a barrier after module execution.
+  bool IsBarrierAfterModuleExecutionRequested() const;
 
  private:
   absl::flat_hash_map<GpuCliqueKey, CliqueRequest> cliques_;

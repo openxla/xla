@@ -27,15 +27,13 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/error_spec.h"
-#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/literal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/tests/collective_ops_e2e_test_base.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/hlo_runner.h"
-#include "xla/tests/collective_ops_e2e_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tsl/platform/statusor.h"
@@ -57,10 +55,9 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
       const std::string& hlo_text, const int64_t num_partitions = 2,
       bool enable_enzyme_comms_opt = false) {
     const int64_t num_replicas = 1;
-    if (hlo_runner_->device_count() < num_replicas * num_partitions) {
+    if (device_count() < num_replicas * num_partitions) {
       GTEST_SKIP() << "Test requires at least " << num_replicas * num_partitions
-                   << " devices (" << hlo_runner_->device_count()
-                   << " available)";
+                   << " devices (" << device_count() << " available)";
     }
 
     TF_ASSERT_OK_AND_ASSIGN(ExecutionResult ref_execution_result,
@@ -91,9 +88,8 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
     RE2::GlobalReplace(&hlo_text_ref, R"(, sharding=\{replicated\})", "");
 
     HloModuleConfig ref_config = GetModuleConfigForTest();
-    DebugOptions ref_opts = GetDebugOptionsForTest();
-    ref_opts.set_xla_gpu_enable_triton_gemm(false);
-    ref_config.set_debug_options(ref_opts);
+    ref_config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(false);
+
     TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> ref_module,
                         ParseAndReturnVerifiedModule(hlo_text_ref, ref_config));
 
@@ -116,11 +112,9 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
   absl::StatusOr<ExecutionResult> ExecuteSharded(
       const std::string& hlo_text, int64_t num_partitions,
       bool enable_enzyme_comms_opt = false) {
-    HloModuleConfig config = GetModuleConfigForTest();
-    DebugOptions opts = GetDebugOptionsForTest();
-    opts.set_xla_gpu_enable_triton_gemm(false);
-    config.set_debug_options(opts);
-    config.set_num_partitions(num_partitions);
+    HloModuleConfig config = GetModuleConfigForTest(
+        /*replica_count=*/1, /*num_partitions=*/num_partitions);
+    config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(false);
     if (enable_enzyme_comms_opt) {
       config.mutable_debug_options().set_xla_enable_enzyme_comms_opt(true);
     }
@@ -191,11 +185,10 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
                                const std::vector<Literal>& ref_results,
                                const std::vector<Literal>& results,
                                ErrorSpec& error_spec) {
-    HloModuleConfig config = GetModuleConfigForTest();
-    DebugOptions opts = GetDebugOptionsForTest();
-    opts.set_xla_gpu_enable_triton_gemm(false);
-    config.set_debug_options(opts);
-    config.set_num_partitions(num_partitions);
+    HloModuleConfig config = GetModuleConfigForTest(
+        /*replica_count=*/1, /*num_partitions=*/num_partitions);
+    config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(false);
+
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                             ParseAndReturnVerifiedModule(hlo_text, config));
     auto dimensions =

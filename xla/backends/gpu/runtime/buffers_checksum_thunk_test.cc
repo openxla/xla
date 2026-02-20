@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/buffer_debug_log_entry_metadata_store.h"
 #include "xla/backends/gpu/runtime/buffer_debug_log_structs.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_multimem_registry.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -165,16 +166,18 @@ TEST_F(BuffersDebugChecksumThunkTest, CalculatesChecksums) {
       CollectiveParams::Create(run_options, /*async_streams=*/{},
                                LocalDeviceId(executor_->device_ordinal())));
   CollectiveCliqueRequests clique_requests;
+  CollectiveMemoryRequests memory_requests(allocations);
   CollectiveMultimemRegistry multimem_registry(
       executor_, collective_params.global_device_id);
   Thunk::PrepareParams prepare_params{&collective_params, &clique_requests,
-                                      &multimem_registry, executor_,
-                                      &allocations};
+                                      &memory_requests,   &multimem_registry,
+                                      executor_,          &allocations};
 
   Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
       ServiceExecutableRunOptions(), allocations, stream_.get(),
       /*command_buffer_trace_stream=*/stream_.get(),
-      /*collective_params=*/nullptr, /*collective_cliques=*/nullptr);
+      /*collective_params=*/nullptr, /*collective_cliques=*/nullptr,
+      /*collective_memory=*/nullptr);
   auto metadata_store = std::make_shared<BufferDebugLogEntryMetadataStore>();
 
   BuffersDebugChecksumThunk thunk(
@@ -270,7 +273,7 @@ TEST_F(BuffersDebugChecksumThunkTest,
       ServiceExecutableRunOptions(), device0.allocations, device0.stream.get(),
       /*command_buffer_trace_stream=*/device0.stream.get(),
       /*collective_params=*/nullptr,
-      /*collective_cliques=*/nullptr)));
+      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr)));
   TF_ASSERT_OK(device0.stream->BlockHostUntilDone());
 
   TF_ASSERT_OK(
@@ -279,7 +282,7 @@ TEST_F(BuffersDebugChecksumThunkTest,
       ServiceExecutableRunOptions(), device1.allocations, device1.stream.get(),
       /*command_buffer_trace_stream=*/device1.stream.get(),
       /*collective_params=*/nullptr,
-      /*collective_cliques=*/nullptr)));
+      /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr)));
   TF_ASSERT_OK(device1.stream->BlockHostUntilDone());
 }
 

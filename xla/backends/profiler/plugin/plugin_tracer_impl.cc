@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "xla/backends/profiler/plugin/plugin_metadata.h"
 #include "xla/backends/profiler/plugin/profiler_c_api.h"
 #include "xla/backends/profiler/plugin/profiler_error.h"
 #include "xla/tsl/platform/logging.h"
@@ -63,6 +64,7 @@ PLUGIN_Profiler_Error* PLUGIN_Profiler_Start(PLUGIN_Profiler_Start_Args* args) {
   }
   args->profiler->byte_size = 0;
   PLUGIN_PROFILER_RETURN_IF_ERROR(args->profiler->impl->Start());
+  AddPluginMetadata();
   args->profiler->stopped = false;
   return nullptr;
 }

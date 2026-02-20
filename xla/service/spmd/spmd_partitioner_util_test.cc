@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/ir/tile_assignment.h"
+#include "xla/service/spmd/spmd_partitioner_util_internal.h"
 
 namespace xla {
 namespace spmd {
@@ -75,20 +76,20 @@ TEST(SPMDPartitionerUtilTest, PartialReplicateReshardCompatibleSharding2) {
   }
 }
 
-TEST(SPMDPartitionerUtilTest, GetPartitionGroupsForReplication) {
+TEST(SPMDPartitionerUtilTest, GetListOfListsPartitionGroupsForReplication) {
   HloSharding sharding = HloSharding::IotaTile({2, 2, 2});
   CollectiveDeviceList actual_partition_groups =
-      GetPartitionGroupsForReplication(sharding, {1});
+      GetListOfListsPartitionGroupsForReplication(sharding, {1});
   std::vector<std::vector<int64_t>> expected_partition_groups = {
       {0, 2}, {1, 3}, {4, 6}, {5, 7}};
   EXPECT_THAT(actual_partition_groups.flattened_replica_groups(),
               testing::ContainerEq(expected_partition_groups));
 }
 
-TEST(SPMDPartitionerUtilTest, GetPartitionGroupsForReplication2) {
+TEST(SPMDPartitionerUtilTest, GetListOfListsPartitionGroupsForReplication2) {
   HloSharding sharding = HloSharding::IotaTile({2, 2, 2}, {2, 2, 2}, {0, 2, 1});
   CollectiveDeviceList actual_partition_groups =
-      GetPartitionGroupsForReplication(sharding, {0, 2});
+      GetListOfListsPartitionGroupsForReplication(sharding, {0, 2});
   std::vector<std::vector<int64_t>> expected_partition_groups = {{0, 2, 4, 6},
                                                                  {1, 3, 5, 7}};
   EXPECT_THAT(actual_partition_groups.flattened_replica_groups(),
@@ -138,9 +139,7 @@ TEST(SPMDPartitionerUtilTest, ExpandPartitionGroupListAcrossReplicas) {
   IotaReplicaGroupList partition_group_list =
       IotaReplicaGroupList(10, 5, {2, 5, 5}, {0, 2, 1});
   IotaReplicaGroupList expanded_partition_group_list =
-      ExpandPartitionGroupListAcrossReplicas(partition_group_list, 2, 50)
-          .iota_replica_group_list()
-          .value();
+      ExpandPartitionGroupListAcrossReplicas(partition_group_list, 2, 50);
   EXPECT_EQ(expanded_partition_group_list.num_replica_groups(), 20);
   EXPECT_EQ(expanded_partition_group_list.num_devices_per_group(), 5);
   EXPECT_THAT(expanded_partition_group_list.reshape_dims(),
@@ -173,7 +172,7 @@ TEST(SPMDPartitionerUtilTest, GetMeshAxesPartitionGroupsAcrossTargetDims) {
   EXPECT_EQ(v3_group_list->num_replica_groups(), 64);
   EXPECT_EQ(v3_group_list->num_devices_per_group(), 16);
   EXPECT_EQ(v3_group_list->ToString(),
-            "@mesh<axis_0=8,axis_1=8,axis_2=16> {axis_0:(2)4,axis_1:(2)4}");
+            "mesh[axis_0=8,axis_1=8,axis_2=16] {axis_0:(2)4,axis_1:(2)4}");
 
   // V3 Sharding (Will correctly reflect the real mesh axis names)
   NamedSharding named_sharding(Mesh({8, 8, 16}, {"a", "b", "c"}));
@@ -183,7 +182,7 @@ TEST(SPMDPartitionerUtilTest, GetMeshAxesPartitionGroupsAcrossTargetDims) {
   EXPECT_TRUE(v3_group_list.has_value());
   EXPECT_EQ(v3_group_list->num_replica_groups(), 64);
   EXPECT_EQ(v3_group_list->num_devices_per_group(), 16);
-  EXPECT_EQ(v3_group_list->ToString(), "@mesh<a=8,b=8,c=16> {a:(2)4,b:(2)4}");
+  EXPECT_EQ(v3_group_list->ToString(), "mesh[a=8,b=8,c=16] {a:(2)4,b:(2)4}");
 }
 
 TEST(SPMDPartitionerUtilTest, GetMeshAxesPartitionGroupsForReplication) {
@@ -195,7 +194,7 @@ TEST(SPMDPartitionerUtilTest, GetMeshAxesPartitionGroupsForReplication) {
   EXPECT_EQ(v3_group_list->num_replica_groups(), 4);
   EXPECT_EQ(v3_group_list->num_devices_per_group(), 2);
   EXPECT_EQ(v3_group_list->ToString(),
-            "@mesh<axis_0=2,axis_1=2,axis_2=2> {axis_1}");
+            "mesh[axis_0=2,axis_1=2,axis_2=2] {axis_1}");
 
   // V3 Sharding (Will correctly reflect the real mesh axis names)
   NamedSharding named_sharding(Mesh({2, 2, 2}, {"Q", "K", "V"}));
@@ -204,7 +203,7 @@ TEST(SPMDPartitionerUtilTest, GetMeshAxesPartitionGroupsForReplication) {
   EXPECT_TRUE(v3_group_list.has_value());
   EXPECT_EQ(v3_group_list->num_replica_groups(), 4);
   EXPECT_EQ(v3_group_list->num_devices_per_group(), 2);
-  EXPECT_EQ(v3_group_list->ToString(), "@mesh<Q=2,K=2,V=2> {K}");
+  EXPECT_EQ(v3_group_list->ToString(), "mesh[Q=2,K=2,V=2] {K}");
 }
 
 TEST(SPMDPartitionerUtilTest, ReturnNulloptForEmptyReplicationDims) {

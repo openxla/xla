@@ -20,6 +20,8 @@ limitations under the License.
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#include <cstring>
 #if defined(PLATFORM_WINDOWS)
 #include <windows.h>
 #else
@@ -338,7 +340,8 @@ string GetTempFilename(const string& extension) {
         fd = mkstemp(&tmp_filepath[0]);
       }
       if (fd < 0) {
-        LOG(FATAL) << "Failed to create temp file.";
+        LOG(FATAL) << "Failed to create temp file " << tmp_filepath  // Crash OK
+                   << ", error: " << strerror(errno);
       } else {
         if (close(fd) < 0) {
           LOG(ERROR) << "close() failed: " << strerror(errno);

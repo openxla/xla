@@ -37,6 +37,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/attributes.h"
+#include "absl/base/macros.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -1658,7 +1659,13 @@ class HloInstruction {
                                  CanonicalNameMap* canonical_name_map) const;
 
   // Returns a serialized representation of this instruction.
-  virtual HloInstructionProto ToProto() const;
+  HloInstructionProto ToProto() const {
+    HloInstructionProto proto;
+    ToProto(&proto);
+    return proto;
+  }
+
+  virtual void ToProto(HloInstructionProto* proto) const;
 
   // Returns a category for the HLO. This could be something like "convolution"
   // or "elementwise".
@@ -1833,6 +1840,19 @@ class HloInstruction {
   // multiple times.
   absl::InlinedVector<int64_t, 4> OperandIndices(
       const HloInstruction* operand) const;
+
+  // Returns the dimension index of the operand that corresponds to the given
+  // output dimension index, if the instruction is a "transparent" unary
+  // operation (e.g., Broadcast, Bitcast, Reshape, Elementwise Unary).
+  //
+  // Returns std::nullopt if:
+  // 1. The operation is not supported or not unary.
+  // 2. The output dimension is "new" (e.g., created by Broadcast or Reshape
+  // insertion).
+  // 3. The reshape is not a "trivial" reshape (i.e., not just
+  // inserting/deleting 1-sized dims).
+  std::optional<int64_t> MapUnaryOutputDimToOperandDim(
+      int64_t output_dim_idx) const;
 
   // Convenience helper for ShapeUtil::InsertedOrDeleted1SizedDimensions. If
   // this reshape merely inserts or deletes 1-sized dimensions, return the input
@@ -2145,6 +2165,13 @@ class HloInstruction {
       const MappedPtrContainerSorter<HloInstruction>::MapPtrFn& map_fn,
       const HloInstruction& sorted_instruction);
 
+  // Sorts the users of this instruction using the given comparison function.
+  void SortUsers(
+      absl::FunctionRef<bool(const HloInstruction*, const HloInstruction*)>
+          compare) {
+    users_.SortInstructionUsers(compare);
+  }
+
   // Old methods kept for smooth subclassing transition BEGIN.
   // NOTE: Refrain from adding more delegates, prefer down casting to subclasses
   // rather than using these methods.
@@ -2319,6 +2346,9 @@ class HloInstruction {
 
   // Delegates to HloCollectiveInstruction::device_list.
   const CollectiveDeviceListBase& device_list() const;
+
+  // Returns true if device_list().num_replica_groups() > 0.
+  bool has_replica_groups() const;
 
   // Delegates to HloCollectivePermuteInstruction::source_target_pairs.
   const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs() const;
@@ -2675,6 +2705,9 @@ class HloInstruction {
     void MaybeRemoveUser(HloInstruction* user);  // Remove user if present
     void RemoveUser(HloInstruction* user);       // REQUIRES: Contains(user)
     int64_t UserId(HloInstruction* user);
+    void SortInstructionUsers(
+        absl::FunctionRef<bool(const HloInstruction*, const HloInstruction*)>
+            compare);
     void SortInstructionUsers(
         const MappedPtrContainerSorter<HloInstruction>::MapPtrFn& map_fn,
         const Users& sorted_instruction_users);

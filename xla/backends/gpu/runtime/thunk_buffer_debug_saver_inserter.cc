@@ -27,7 +27,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/runtime_intrinsics.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
-#include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_buffer_debug_filter.h"
 #include "xla/ffi/attribute_map.h"
@@ -35,36 +34,14 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/shape.h"
-#include "xla/shape_util.h"
+#include "xla/service/shaped_slice.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
-Shape FindShapeFor(const BufferAllocation::Slice& slice, const Thunk& thunk) {
-  for (const auto& [hlo, offset_size] :
-       slice.allocation()->assigned_buffers()) {
-    if (offset_size.offset != slice.offset() ||
-        offset_size.size != slice.size()) {
-      continue;
-    }
-    if (hlo->instruction()->name() != thunk.thunk_info().profile_annotation) {
-      continue;
-    }
-    if (hlo->shape().element_type() != slice.element_type()) {
-      continue;
-    }
-    return hlo->shape();
-  }
-
-  LOG(WARNING) << "Buffer assigment not found. Assuming flat shape.";
-  return ShapeUtil::MakeShape(
-      slice.element_type(),
-      std::vector<int64_t>{slice.size() / ShapeUtil::ByteSizeOfPrimitiveType(
-                                              slice.element_type())});
-}
 
 absl::StatusOr<std::unique_ptr<Thunk>> InsertBufferSaverCustomCall(
     const HloModule& hlo_module, std::unique_ptr<Thunk> thunk,
@@ -88,7 +65,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> InsertBufferSaverCustomCall(
       continue;
     }
 
-    ShapedSlice output{slice, FindShapeFor(slice, *sequence[0])};
+    ShapedSlice output{slice, buffer.shape()};
     ffi::AttributesMap attributes{
         {"dir", ffi::Attribute{path}},
         {"metadata", {sequence[0]->thunk_info().profile_annotation}}};
@@ -102,7 +79,8 @@ absl::StatusOr<std::unique_ptr<Thunk>> InsertBufferSaverCustomCall(
         auto log_thunk,
         CustomCallThunk::Create(
             info, std::string{kXlaGpuAppendToFileCustomCallTag}, {output},
-            {std::nullopt}, attributes, hlo_module.entry_computation(), "GPU"));
+            {std::nullopt}, attributes, hlo_module.entry_computation(), "GPU",
+            stream_executor::GpuComputeCapability()));
     log_thunk->add_control_predecessor(sequence[0].get());
     sequence.emplace_back(std::move(log_thunk));
   }

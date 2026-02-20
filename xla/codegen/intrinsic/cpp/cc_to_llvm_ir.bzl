@@ -102,12 +102,15 @@ def cc_ir_header(name, src, deps = [], copts = [], **kwargs):
         "-DNDEBUG",
         "-mprefer-vector-width=512",
         "-DEIGEN_VECTORIZE_GENERIC",
+        "-flax-vector-conversions",  # Jax Mac wheel build server has int64_t != long
         "-fno-builtin",
         "-Wno-psabi",
         "-std=c++17",
+        "-fno-experimental-sanitize-metadata=all",
+        "-fno-sanitize=all",
     ] + copts
 
-    # Disabled features to avoid instrumentations in the IR
+    # Disabled features to avoid instrumentations in the IR. ALL sanitizers must be disabled.
     # AND disable thin archives to ensure we have actual content to extract.
     disabled_features = [
         "thin_lto",
@@ -118,6 +121,7 @@ def cc_ir_header(name, src, deps = [], copts = [], **kwargs):
         "fdo_optimize",
         "fdo_instrument",
         "asan",
+        "hwasan",
         "msan",
         "tsan",
         "ubsan",
@@ -151,12 +155,23 @@ def cc_ir_header(name, src, deps = [], copts = [], **kwargs):
     # TODO(talts): In the next version, I will update this to store the bitcode in a shared object
     # file so that we aren't using LLVM's text format.
     variable_name = "k{}Ir".format(to_camel_case(base_name))
-
     ir_to_string_tool = "//xla/codegen/intrinsic/cpp:ir_to_string"
+
+    # Generate an empty bitcode file for MacOS.
+    native.genrule(
+        name = name + "_empty_bc",
+        outs = [name + "_empty.bc"],
+        cmd = "touch $@",
+        tags = ["manual"],
+        **common_attrs
+    )
 
     native.genrule(
         name = name + "_gen_header",
-        srcs = [":" + name + "_extract_bc"],
+        srcs = select({
+            "//xla/tsl:macos": [":" + name + "_empty_bc"],
+            "//conditions:default": [":" + name + "_extract_bc"],
+        }),
         outs = [out_header],
         tools = [ir_to_string_tool],
         cmd = "$(location {}) $< $@ {} {}".format(ir_to_string_tool, variable_name, namespace),

@@ -677,8 +677,18 @@ absl::Status HloComputation::RemoveInstructionAndUnusedOperands(
         computation_callers,
     bool remove_dead_parameters_from_entry_computation) {
   TF_RET_CHECK(root_instruction() != instruction);
-
   TF_RET_CHECK(instruction->IsDead());
+  if (instruction->opcode() == HloOpcode::kAfterAll) {
+    for (const HloInstruction* operand : instruction->operands()) {
+      const HloInstruction* source = operand;
+      if (operand->opcode() == HloOpcode::kGetTupleElement) {
+        source = operand->operand(0);
+      }
+      if (source->HasSideEffect()) {
+        return absl::OkStatus();
+      }
+    }
+  }
   TF_RET_CHECK(IsSafelyRemovable(instruction, ignore_control_dependencies,
                                  computation_callers,
                                  remove_dead_parameters_from_entry_computation))
@@ -711,7 +721,7 @@ absl::Status HloComputation::RemoveInstructionAndUnusedOperands(
       worklist.push(item->mutable_operand(i));
     }
 
-    if (cleanup != std::nullopt) {
+    if (cleanup.has_value()) {
       (*cleanup)(item);
     }
     if (item->opcode() == HloOpcode::kParameter) {
@@ -1244,23 +1254,20 @@ absl::Cord HloComputation::ToCord(
   return std::move(printer).ToCord();
 }
 
-HloComputationProto HloComputation::ToProto() const {
-  HloComputationProto proto;
+void HloComputation::ToProto(HloComputationProto* proto) const {
   CHECK(unique_id_ != -1)
       << "This computation does not have a valid id. Please make sure the "
          "computation is inside a module before dumping it.";
-  proto.set_id(unique_id_);
-  proto.set_name(name_);
+  proto->set_id(unique_id_);
+  proto->set_name(name_);
   for (const HloInstruction* instruction : MakeInstructionPostOrder()) {
-    HloInstructionProto instruction_proto = instruction->ToProto();
-    proto.add_instructions()->Swap(&instruction_proto);
+    instruction->ToProto(proto->add_instructions());
   }
-  proto.set_root_id(root_instruction()->unique_id());
-  *proto.mutable_program_shape() = ComputeProgramShape().ToProto();
-  proto.set_is_fusion_computation(IsFusionComputation());
-  proto.set_execution_thread(IsMainThread() ? ""
-                                            : std::string(execution_thread()));
-  return proto;
+  proto->set_root_id(root_instruction()->unique_id());
+  ComputeProgramShape().ToProto(*proto->mutable_program_shape());
+  proto->set_is_fusion_computation(IsFusionComputation());
+  proto->set_execution_thread(IsMainThread() ? ""
+                                             : std::string(execution_thread()));
 }
 
 /* static */ absl::StatusOr<std::unique_ptr<HloComputation>>
@@ -1721,7 +1728,7 @@ absl::Status HloComputation::ReplaceWithNewEntryComputationParameter(
 absl::StatusOr<bool> HloComputation::ReplaceInstruction(
     HloInstruction* old_instruction, HloInstruction* new_instruction,
     bool preserve_sharding, bool relay_control_dependency,
-    bool remove_unused_operands) {
+    bool remove_unused_operands, bool preserve_frontend_attributes) {
   TF_RET_CHECK(
       ShapeUtil::Compatible(old_instruction->shape(), new_instruction->shape()))
       << absl::StreamFormat(
@@ -1731,7 +1738,8 @@ absl::StatusOr<bool> HloComputation::ReplaceInstruction(
              new_instruction->shape().ToString(/*print_layout=*/true));
   return ReplaceInstructionWithDifferentShape(
       old_instruction, new_instruction, preserve_sharding,
-      relay_control_dependency, remove_unused_operands);
+      relay_control_dependency, remove_unused_operands,
+      preserve_frontend_attributes);
 }
 
 absl::Status HloComputation::ReplaceInstruction(
@@ -1746,7 +1754,7 @@ absl::Status HloComputation::ReplaceInstruction(
 absl::StatusOr<bool> HloComputation::ReplaceInstructionWithDifferentShape(
     HloInstruction* old_instruction, HloInstruction* new_instruction,
     bool preserve_sharding, bool relay_control_dependency,
-    bool remove_unused_operands) {
+    bool remove_unused_operands, bool preserve_frontend_attributes) {
   if (preserve_sharding && new_instruction->has_sharding() &&
       old_instruction->has_sharding() &&
       !new_instruction->has_compatible_sharding(old_instruction)) {
@@ -1775,7 +1783,8 @@ absl::StatusOr<bool> HloComputation::ReplaceInstructionWithDifferentShape(
   if (overwrite_op_name) {
     new_instruction->set_metadata(old_instruction->metadata());
   }
-  if (new_instruction->frontend_attributes().map().empty()) {
+  if (preserve_frontend_attributes &&
+      new_instruction->frontend_attributes().map().empty()) {
     new_instruction->set_frontend_attributes(
         old_instruction->frontend_attributes());
   }

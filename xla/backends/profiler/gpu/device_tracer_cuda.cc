@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_tracer.h"
 #include "xla/backends/profiler/gpu/cupti_tracer_options_utils.h"
+#include "xla/backends/profiler/gpu/gpu_metadata.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/profiler/utils/time_utils.h"
 #include "xla/tsl/util/env_var.h"
@@ -138,6 +139,7 @@ absl::Status GpuTracer::DoStart() {
   }
   TF_RETURN_IF_ERROR(
       cupti_tracer_->Enable(options_, cupti_collector_.get(), xplanes_));
+  AddGpuMetadata();
   return absl::OkStatus();
 }
 

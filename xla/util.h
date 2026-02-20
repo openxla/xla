@@ -130,7 +130,7 @@ struct TimerStats {
 };
 
 inline std::string XlaFormatDevice(int device_ordinal) {
-  return absl::StrFormat("device=[%d] ", device_ordinal);
+  return absl::StrFormat("[%d] ", device_ordinal);
 }
 
 #define XLA_VLOG_DEVICE(level, device_ordinal) \
@@ -290,7 +290,9 @@ absl::Status AppendStatus(absl::Status prior, absl::string_view context);
   }
 #endif
 
+XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Aborted);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Cancelled);
+XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(DeadlineExceeded);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(FailedPrecondition);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Internal);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(InvalidArgument);
@@ -818,8 +820,8 @@ DimensionVector GetNonContractingDims(
 std::string SanitizeFileName(std::string file_name);
 
 // Removes numerical identifiers and replaces separators in op names.
-std::string SanitizeOpName(std::string op_name, char separator,
-                           const std::string& replace_with);
+std::string SanitizeOpName(absl::string_view op_name, char separator,
+                           absl::string_view replace_with);
 
 // Check that a sequence of distinct numbers can form a continuous interval.
 bool DistinctNumbersAreConsecutiveIfSorted(absl::Span<const int64_t>);
