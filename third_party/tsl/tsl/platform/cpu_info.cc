@@ -217,12 +217,14 @@ class CPUIDInfo {
     cpuid->have_rdseed_ = (ebx >> 18) & 0x1;
     cpuid->have_smap_ = (ebx >> 20) & 0x1;
 
+    const bool have_avx512bw = have_avx512 && ((ebx >> 30) & 0x1);
+
     cpuid->have_avx512f_ = have_avx512 && ((ebx >> 16) & 0x1);
     cpuid->have_avx512cd_ = have_avx512 && ((ebx >> 28) & 0x1);
     cpuid->have_avx512er_ = have_avx512 && ((ebx >> 27) & 0x1);
     cpuid->have_avx512pf_ = have_avx512 && ((ebx >> 26) & 0x1);
     cpuid->have_avx512vl_ = have_avx512 && ((ebx >> 31) & 0x1);
-    cpuid->have_avx512bw_ = have_avx512 && ((ebx >> 30) & 0x1);
+    cpuid->have_avx512bw_ = have_avx512bw;
     cpuid->have_avx512dq_ = have_avx512 && ((ebx >> 17) & 0x1);
     cpuid->have_avx512vbmi_ = have_avx512 && ((ecx >> 1) & 0x1);
     cpuid->have_avx512ifma_ = have_avx512 && ((ebx >> 21) & 0x1);
@@ -240,7 +242,7 @@ class CPUIDInfo {
 
     // Check for avx512_fp16 using information from Xbyak in oneDNN:
     // https://github.com/oneapi-src/oneDNN/blob/acf8d214cedfe7e24c9446bacc1f9f648c9273f8/src/cpu/x64/xbyak/xbyak_util.h#L516
-    cpuid->have_avx512_fp16_ = have_avx512 && ((edx >> 23) & 0x1);
+    cpuid->have_avx512_fp16_ = have_avx512bw && ((edx >> 23) & 0x1);
 
     // Get more Structured Extended Feature info by issuing CPUID with
     // sub-leaf = 1 (eax = 7, ecx = 1)
