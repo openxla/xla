@@ -1,4 +1,4 @@
-/* Copyright 2019 The OpenXLA Authors.
+/* Copyright 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,18 +15,16 @@ limitations under the License.
 
 #include <string>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/hlo/testlib/test.h"
+#include "xla/service/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/tests/llvm_irgen_test_base.h"
 
 namespace xla {
 namespace {
 
-TEST_F(LlvmIrGenTestBase, LargeDynamicInput) {
-  if (!test::DeviceTypeIs(test::kGpu)) {
-    GTEST_SKIP();
-  }
+using DynamicPadderIrTest = gpu::GpuPjRtCodegenTest;
+
+TEST_F(DynamicPadderIrTest, LargeDynamicInput) {
   const std::string hlo_text = R"( // NOLINT: Will be executed for GPU.
 HloModule LargeDynamicInput
 
@@ -43,11 +41,11 @@ ENTRY main {
 }
 )";
   HloModuleConfig config;
-  CompileAndVerifyIr(hlo_text, R"(
+  EXPECT_OK(CompileAndVerifyIr(hlo_text, R"(
 ; CHECK-LABEL: @input_reduce_fusion
 ; CHECK: }
 )",
-                     /*match_optimized_ir=*/true);
+                               /*match_optimized_ir=*/true));
 }
 
 }  // namespace

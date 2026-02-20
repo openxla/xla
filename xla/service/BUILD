@@ -3267,19 +3267,13 @@ xla_test(
 xla_test(
     name = "dynamic_padder_ir_test",
     srcs = ["dynamic_padder_ir_test.cc"],
-    backends = [
-        "cpu",
-        "gpu",
-    ],
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
+    backends = ["gpu"],
     deps = [
         ":hlo_module_config",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:test",
-        "//xla/tests:llvm_irgen_test_base",
+        "//xla/service/gpu/tests:gpu_pjrt_codegen_test",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tests:xla_test_backend_predicates",
     ],
 )
 
