@@ -1,5 +1,9 @@
 # PJRT C API changelog
 
+## 0.92
+
+* Added `PJRT_Device_GetAttributes`.
+
 ## 0.91
 
 * Added `PJRT_Extension_Type::PJRT_Extension_Type_Shardings`. This extension

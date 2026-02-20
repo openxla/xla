@@ -338,7 +338,7 @@ absl::Status RewriteOneHotDotToGather(HloComputation* computation,
 
   // Broadcast mask to match the Dot output shape.
   // The Indices dimensions are either at the start or end of the output.
-  std::vector<int64_t> broadcast_dims(indices->shape().dimensions_size());
+  std::vector<int64_t> broadcast_dims(indices->shape().dimensions().size());
   int start_dim = match.lhs_is_one_hot ? 0 : weights_nc_rank;
   std::iota(broadcast_dims.begin(), broadcast_dims.end(), start_dim);
 

@@ -167,8 +167,10 @@ class ExportStablehloShardingsPass
  public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ExportStablehloShardingsPass)
 
-  explicit ExportStablehloShardingsPass(bool addMissingShardingToControlFlow)
-      : addMissingShardingToControlFlow(addMissingShardingToControlFlow) {}
+  explicit ExportStablehloShardingsPass(bool addMissingShardingToControlFlow,
+                                        bool enableHloShardingV3 = false)
+      : addMissingShardingToControlFlow(addMissingShardingToControlFlow),
+        enableHloShardingV3(enableHloShardingV3) {}
 
   void runOnOperation() final {
     ModuleOp moduleOp = getOperation();
@@ -227,6 +229,7 @@ class ExportStablehloShardingsPass
 
  private:
   bool addMissingShardingToControlFlow;
+  bool enableHloShardingV3;
 };
 
 HloSharding getHloShardingForOp(
@@ -370,13 +373,17 @@ void setHloShardingAttr(Operation* op, ArrayRef<TensorShardingAttr> shardings,
 }
 
 std::unique_ptr<Pass> createExportStablehloShardingsPass(
-    bool addMissingShardingToControlFlow) {
+    bool addMissingShardingToControlFlow, bool enableHloShardingV3) {
   return std::make_unique<ExportStablehloShardingsPass>(
-      addMissingShardingToControlFlow);
+      addMissingShardingToControlFlow, enableHloShardingV3);
 }
 
 void registerStablehloExportShardingsPass() {
-  mlir::registerPass(std::bind(createExportStablehloShardingsPass, false));
+  mlir::registerPass([]() {
+    return createExportStablehloShardingsPass(
+        /*addMissingShardingToControlFlow=*/false,
+        /*enableHloShardingV3=*/false);
+  });
 }
 
 }  // namespace sdy

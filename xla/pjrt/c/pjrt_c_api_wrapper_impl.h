@@ -237,6 +237,10 @@ struct PJRT_DeviceAssignmentSerialized {
   std::string serialized;
 };
 
+struct PJRT_Device_Attributes {
+  std::vector<PJRT_NamedValue> attributes;
+};
+
 struct PJRT_SerializedTopology {
   std::string serialized;
 };

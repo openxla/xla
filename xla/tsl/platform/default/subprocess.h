@@ -103,7 +103,9 @@ class SubProcess {
 
   // Wait()
   //    Block until the process exits.
-  //    Return true normally, or false if the process wasn't running.
+  //    Return true normally, or false if the process wasn't running or the
+  //    process had already exited and this fact had been reported in the return
+  //    value of another call of Wait() or CheckRunning().
   virtual bool Wait();
 
   // Communicate()
@@ -129,6 +131,16 @@ class SubProcess {
   void FreeArgs() TF_EXCLUSIVE_LOCKS_REQUIRED(data_mu_);
   void ClosePipes() TF_EXCLUSIVE_LOCKS_REQUIRED(data_mu_);
   bool WaitInternal(int* status);
+
+  // Returns kStillRunning if still running, kExited if exited, kNotRunning if
+  // not running. If returns kExited, *status is filled with the exit status.
+  // Will not block if flags is WNOHANG.
+  enum class WaitStatus {
+    kStillRunning = 0,
+    kExited = 1,
+    kNotRunning = 2,
+  };
+  WaitStatus WaitOrCheckRunningInternal(int flags, int* status);
 
   // The separation between proc_mu_ and data_mu_ mutexes allows Kill() to be
   // called by a thread while another thread is inside Wait() or Communicate().

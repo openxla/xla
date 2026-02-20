@@ -418,18 +418,18 @@ absl::Status RaggedAllToAllStartThunk::Initialize(
   return absl::OkStatus();
 }
 
-bool RaggedAllToAllStartThunk::is_local() const {
-  CHECK_NE(device_count_, -1);
-  for (const auto& replica_group : config_.config.replica_groups) {
-    const int64_t node_id = replica_group.replica_ids().at(0) / device_count_;
-    if (!absl::c_all_of(replica_group.replica_ids(),
-                        [this, node_id](const int64_t rank) {
-                          return rank / device_count_ == node_id;
-                        })) {
-      return false;
-    }
+bool RaggedAllToAllStartThunk::IsOneShotKernelSupported() const {
+  if (config_.config.replica_groups.empty() ||
+      config_.config.operand_element_type.empty()) {
+    return false;
   }
-  return true;
+
+  // In a collective, the number of ranks/outputs matches the size of the
+  // replica group.
+  int64_t num_outputs = config_.config.replica_groups[0].replica_ids_size();
+  PrimitiveType element_type = config_.config.operand_element_type[0];
+
+  return IsRaggedAllToAllKernelSupported(num_outputs, element_type);
 }
 
 absl::StatusOr<std::unique_ptr<RaggedAllToAllStartThunk>>
@@ -504,8 +504,6 @@ absl::StatusOr<bool> RaggedAllToAllStartThunk::RunCollective(
                    ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
                                           config_.config.operand_element_type));
 
-  ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
-
   ASSIGN_OR_RETURN(bool peer_access_enabled,
                    params.collective_cliques->peer_access_enabled(clique_key));
 
@@ -515,10 +513,9 @@ absl::StatusOr<bool> RaggedAllToAllStartThunk::RunCollective(
     state = per_stream_states_[stream.parent()].get();
   }
 
-  bool should_use_one_shot_kernel =
-      is_local() && one_shot_kernel_enabled_ && peer_access_enabled &&
-      IsRaggedAllToAllKernelSupported(num_ranks,
-                                      device_buffers[0].element_type);
+  bool should_use_one_shot_kernel = one_shot_kernel_enabled_ &&
+                                    peer_access_enabled &&
+                                    IsOneShotKernelSupported() && is_local();
 
   if (should_use_one_shot_kernel &&
       !use_multi_gpu_barrier_in_one_shot_kernel_) {
@@ -763,6 +760,20 @@ absl::Status RunOneShotRaggedAllToAll(
                                            participants, barrier_signal_value));
 
   return absl::OkStatus();
+}
+
+bool IsAllReplicasLocal(int64_t device_count, const CollectiveConfig& config) {
+  CHECK_NE(device_count, -1);
+  for (const auto& replica_group : config.replica_groups) {
+    const int64_t node_id = replica_group.replica_ids().at(0) / device_count;
+    if (!absl::c_all_of(replica_group.replica_ids(),
+                        [device_count, node_id](const int64_t rank) {
+                          return rank / device_count == node_id;
+                        })) {
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace gpu

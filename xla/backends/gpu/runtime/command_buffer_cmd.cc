@@ -63,11 +63,13 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
+#include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/recv_thunk.h"
 #include "xla/backends/gpu/runtime/send_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/debug_options_flags.h"
 #include "xla/executable_run_options.h"
@@ -95,7 +97,9 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_handle.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/gpu/multi_gpu_barrier_kernel.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_args.h"
@@ -2538,6 +2542,170 @@ Command::BufferUses DynamicSliceCopyFusionCmd::buffer_uses() const {
   buffers.emplace_back(
       BufferUse::Write(destination_buffer_.slice, destination_buffer_.shape));
   return buffers;
+}
+
+//===----------------------------------------------------------------------===//
+// RaggedAllToAllCmd
+//===----------------------------------------------------------------------===//
+
+namespace {
+struct RaggedAllToAllCmdState : CommandState {
+  // MultiGpuBarrier: Device memory buffer for signal values (one per peer).
+  // Peers write specific slots in this array to signal this device.
+  se::DeviceAddressHandle barrier_signal_buffer;
+
+  // MultiGpuBarrier: Device memory for the current local step counter.
+  // This value is incremented locally by the kernel after every barrier.
+  se::DeviceAddressHandle barrier_signal_value;
+};
+}  // namespace
+
+RaggedAllToAllCmd::RaggedAllToAllCmd(
+    RaggedAllToAllConfig ragged_all_to_all_config,
+    absl::Span<const CollectiveThunk::Buffer> buffers,
+    std::shared_ptr<CollectiveThunk::AsyncEvents> async_events)
+    : CollectiveCmd(CommandType::kRaggedAllToAllCmd,
+                    ragged_all_to_all_config.config, std::move(async_events)),
+      ragged_all_to_all_config_(std::move(ragged_all_to_all_config)),
+      buffers_(buffers.begin(), buffers.end()) {}
+
+absl::Status RaggedAllToAllCmd::Initialize(
+    const Thunk::InitializeParams& params) {
+  // Safety Checks
+  // Check if all replicas are local.
+  TF_RET_CHECK(IsAllReplicasLocal(params.local_device_count, config()))
+      << "RaggedAllToAllCmd: All replicas must be local for the one-shot "
+         "kernel to work";
+
+  return absl::OkStatus();
+}
+
+absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllCmd::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& record_params, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
+  se::StreamExecutor* executor = execute_params.stream->parent();
+
+  if (!execute_params.collective_params || !execute_params.collective_cliques) {
+    return absl::InvalidArgumentError(
+        "RaggedAllToAllCmd requires collective parameters and cliques");
+  }
+
+  // 1. Resolve Clique Key
+  TF_ASSIGN_OR_RETURN(
+      GpuCliqueKey clique_key,
+      GetGpuCliqueKey(*execute_params.collective_params,
+                      config().replica_groups, config().group_mode,
+                      AsyncStreamKind::ASYNC_STREAM_KIND_COLLECTIVE));
+
+  // 2. Prepare Local Data
+  auto device_ordinal = execute_params.stream->parent()->device_ordinal();
+  const std::optional<RankId> rank_opt =
+      clique_key.rank(execute_params.collective_params->global_device_id);
+  TF_RET_CHECK(rank_opt.has_value())
+      << "RaggedAllToAllCmd::Record: Current device is not part of the clique";
+  RankId rank = rank_opt.value();
+
+  // 3. Safety Checks
+  // Check if peer access is enabled.
+  TF_ASSIGN_OR_RETURN(
+      bool peer_access_enabled,
+      execute_params.collective_cliques->peer_access_enabled(clique_key));
+
+  TF_RET_CHECK(peer_access_enabled)
+      << "RaggedAllToAllCmd: Peer access must be enabled.";
+
+  // 4. Manage State (Allocations)
+  absl::Status state_status = absl::OkStatus();
+
+  RaggedAllToAllCmdState* cmd_state =
+      record_params.state.GetOrCreate<RaggedAllToAllCmdState>(
+          this, command_buffer,
+          [&]() -> std::unique_ptr<RaggedAllToAllCmdState> {
+            auto state = std::make_unique<RaggedAllToAllCmdState>();
+
+            // 1. Allocate Signal Buffer (Array of uint32_t)
+            int64_t signal_buf_bytes =
+                se::gpu::MultiGpuBarrierKernel::kMaxPeers * sizeof(uint32_t);
+            state->barrier_signal_buffer = se::DeviceAddressHandle{
+                executor, executor->Allocate(signal_buf_bytes)};
+
+            // 2. Allocate Counter (Scalar uint32_t)
+            state->barrier_signal_value = se::DeviceAddressHandle{
+                executor, executor->Allocate(sizeof(uint32_t))};
+
+            // Error Checking
+            if (state->barrier_signal_buffer.address().is_null() ||
+                state->barrier_signal_value.address().is_null()) {
+              state_status = absl::ResourceExhaustedError(
+                  "Failed to allocate RaggedAllToAll barrier buffers");
+              return nullptr;
+            }
+
+            // Zero buffers synchronously (Safe during graph construction)
+            state_status = executor->SynchronousMemZero(
+                state->barrier_signal_buffer.address_ptr(), signal_buf_bytes);
+            if (!state_status.ok()) {
+              return nullptr;
+            }
+
+            state_status = executor->SynchronousMemZero(
+                state->barrier_signal_value.address_ptr(), sizeof(uint32_t));
+            if (!state_status.ok()) {
+              return nullptr;
+            }
+
+            return state;
+          });
+
+  // Check the captured state_status *after* GetOrCreate returns.
+  TF_RETURN_IF_ERROR(state_status);
+  TF_RET_CHECK(cmd_state != nullptr)
+      << "Failed to get or create RaggedAllToAllCmdState";
+
+  // 5. Resolve Buffer Addresses (For the current run/capture)
+  TF_ASSIGN_OR_RETURN(
+      std::vector<DeviceBufferPair> device_buffers,
+      ConvertToDeviceBuffers(execute_params.buffer_allocations, buffers_,
+                             config().operand_element_type));
+
+  // 6. Define the Trace Callback
+  auto trace = [&](se::Stream* stream) -> absl::Status {
+    const se::DeviceAddressBase& output_buffer =
+        device_buffers[1].destination_buffer;
+
+    // A. Rendezvous
+    // Exchanges *current* buffer addresses to bake into the graph.
+    TF_ASSIGN_OR_RETURN(
+        std::shared_ptr<std::vector<RaggedAllToAllRendezvousValue>>
+            participants,
+        RendezvousResources(device_ordinal, rank, clique_key, output_buffer,
+                            cmd_state->barrier_signal_buffer.address()));
+
+    // B. Record Kernel Launches
+    return RunOneShotRaggedAllToAll(clique_key, *stream, rank,
+                                    cmd_state->barrier_signal_buffer.address(),
+                                    cmd_state->barrier_signal_value.address(),
+                                    ragged_all_to_all_config_.num_total_updates,
+                                    ragged_all_to_all_config_.num_input_rows,
+                                    ragged_all_to_all_config_.num_row_elements,
+                                    device_buffers, *participants);
+  };
+
+  return RecordTracedCommand(execute_params, record_params,
+                             std::move(record_action), command_buffer,
+                             std::move(trace));
+}
+
+Command::BufferUses RaggedAllToAllCmd::buffer_uses() const {
+  BufferUses buffer_usage;
+  for (const CollectiveThunk::Buffer& buffer : buffers_) {
+    buffer_usage.emplace_back(BufferUse::Read(buffer.source_buffer.slice,
+                                              buffer.source_buffer.shape));
+    buffer_usage.emplace_back(BufferUse::Write(
+        buffer.destination_buffer.slice, buffer.destination_buffer.shape));
+  }
+  return buffer_usage;
 }
 
 }  // namespace xla::gpu

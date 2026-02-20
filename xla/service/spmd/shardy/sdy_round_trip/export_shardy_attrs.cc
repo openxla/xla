@@ -147,6 +147,9 @@ class SdyRoundTripExportShardyAttrsPass
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
       SdyRoundTripExportShardyAttrsPass)
 
+  SdyRoundTripExportShardyAttrsPass(bool enableHloShardingV3)
+      : enableHloShardingV3(enableHloShardingV3) {}
+
   void runOnOperation() final {
     ModuleOp moduleOp = getOperation();
     MLIRContext* context = moduleOp.getContext();
@@ -186,16 +189,24 @@ class SdyRoundTripExportShardyAttrsPass
   void getDependentDialects(mlir::DialectRegistry& registry) const final {
     registry.insert<mlir::sdy::SdyDialect, mlir::stablehlo::StablehloDialect>();
   }
+
+ private:
+  bool enableHloShardingV3;
 };
 
 }  // namespace
 
 void registerSdyRoundTripExportShardyAttrsPass() {
-  mlir::registerPass(createSdyRoundTripExportShardyAttrsPass);
+  mlir::registerPass([]() {
+    return createSdyRoundTripExportShardyAttrsPass(
+        /*enableHloShardingV3=*/false);
+  });
 }
 
-std::unique_ptr<Pass> createSdyRoundTripExportShardyAttrsPass() {
-  return std::make_unique<SdyRoundTripExportShardyAttrsPass>();
+std::unique_ptr<Pass> createSdyRoundTripExportShardyAttrsPass(
+    bool enableHloShardingV3) {
+  return std::make_unique<SdyRoundTripExportShardyAttrsPass>(
+      enableHloShardingV3);
 }
 
 }  // namespace sdy
