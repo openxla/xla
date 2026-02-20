@@ -138,8 +138,8 @@ struct AllReduceTestParams {
         // TODO(b/485544055): Enable two-shot e2e tests for all-reduce.
         for (auto strategy : {AllReduceStrategy::kOneShot,
                               /* AllReduceStrategy::kTwoShot */}) {
-          params.emplace_back(is_async, use_all_reduce_one_shot_kernel,
-                              strategy);
+          params.push_back(
+              {is_async, use_all_reduce_one_shot_kernel, strategy});
         }
       }
     }
