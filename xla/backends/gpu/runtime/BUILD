@@ -2108,6 +2108,7 @@ cc_library(
         "//xla:util",
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/backends/gpu/collectives:gpu_communicator",
+        "//xla/core/collectives:rank_id",
         "//xla/runtime:device_id",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",

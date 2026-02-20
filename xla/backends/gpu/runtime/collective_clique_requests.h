@@ -148,8 +148,10 @@ class CollectiveCliqueRequests {
 
   size_t size() const { return cliques_.size(); }
 
-  // Returns true if any clique requests a barrier after module execution.
-  bool IsBarrierAfterModuleExecutionRequested() const;
+  // Returns the number of participants that require a barrier after module
+  // execution with the given device.
+  size_t NumParticipantsRequiringBarrierAfterModuleExecution(
+      GlobalDeviceId global_device_id) const;
 
  private:
   absl::flat_hash_map<GpuCliqueKey, CliqueRequest> cliques_;

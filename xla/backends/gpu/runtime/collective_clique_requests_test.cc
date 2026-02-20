@@ -29,6 +29,9 @@ limitations under the License.
 
 namespace xla::gpu {
 
+namespace {
+using ::testing::Eq;
+
 TEST(CollectiveCliqueRequestsTest, OrderedRequests) {
   GlobalDeviceId d0 = GlobalDeviceId(0);
   GlobalDeviceId d1 = GlobalDeviceId(1);
@@ -80,7 +83,10 @@ TEST(CollectiveCliqueRequestsTest, RequestDevComms) {
   EXPECT_TRUE(ordered_requests[0].dev_comms.contains(dev_comm0));
   EXPECT_TRUE(ordered_requests[0].dev_comms.contains(dev_comm1));
 
-  EXPECT_FALSE(requests.IsBarrierAfterModuleExecutionRequested());
+  EXPECT_THAT(requests.NumParticipantsRequiringBarrierAfterModuleExecution(d0),
+              Eq(0));
+  EXPECT_THAT(requests.NumParticipantsRequiringBarrierAfterModuleExecution(d1),
+              Eq(0));
 }
 
 TEST(CollectiveCliqueRequestsTest, DeviceGroupsNormalized) {
@@ -122,6 +128,7 @@ TEST(CollectiveCliqueRequestsTest, DeviceGroupsMismatch) {
 TEST(CollectiveCliqueRequestsTest, BarrierAfterModuleExecutionRequested) {
   GlobalDeviceId d0 = GlobalDeviceId(0);
   GlobalDeviceId d1 = GlobalDeviceId(1);
+  GlobalDeviceId d2 = GlobalDeviceId(2);
 
   GpuCliqueKey k0({d0, d1}, 2);
 
@@ -135,7 +142,12 @@ TEST(CollectiveCliqueRequestsTest, BarrierAfterModuleExecutionRequested) {
   TF_ASSERT_OK(requests.RequestClique(k0, dg0a, requirements));
   TF_ASSERT_OK(requests.RequestClique(k0, dg0b));
 
-  EXPECT_TRUE(requests.IsBarrierAfterModuleExecutionRequested());
+  EXPECT_THAT(requests.NumParticipantsRequiringBarrierAfterModuleExecution(d0),
+              Eq(2));
+  EXPECT_THAT(requests.NumParticipantsRequiringBarrierAfterModuleExecution(d1),
+              Eq(2));
+  EXPECT_THAT(requests.NumParticipantsRequiringBarrierAfterModuleExecution(d2),
+              Eq(0));
 }
-
+}  // namespace
 }  // namespace xla::gpu
