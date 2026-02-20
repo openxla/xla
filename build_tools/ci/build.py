@@ -308,7 +308,7 @@ Build(
     test_tag_filters=rocm_tag_filters + ("gpu", "-multi_gpu"),
     test_env={"TF_TESTS_PER_GPU": 1, "TF_GPU_COUNT": 8},
     action_env={
-        "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true --xla_gpu_force_compilation_parallelism=16"
+        "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true"
     },
     repo_env={
         "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942,gfx950",
@@ -341,7 +341,7 @@ Build(
     test_tag_filters=rocm_tag_filters + ("multi_gpu",),
     test_env={"TF_TESTS_PER_GPU": 1, "TF_GPU_COUNT": 8},
     action_env={
-        "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true --xla_gpu_force_compilation_parallelism=16",
+        "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true",
         "NCCL_MAX_NCHANNELS": 1,
     },
     repo_env={
