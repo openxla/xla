@@ -16,6 +16,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -25,8 +26,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/layout.h"
 #include "xla/pjrt/c/pjrt_c_api_abi_version_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_callback_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
@@ -37,8 +40,11 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_dimensions.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/plugin/xla_tpu/xla_tpu_pjrt_client.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla {
@@ -325,6 +331,46 @@ TEST(PjRtCApiClientTpuTest, DeviceAttributes) {
   for (PjRtDevice* device : client->addressable_devices()) {
     const auto& attributes = device->Attributes();
     EXPECT_TRUE(attributes.contains("physical_location"));
+  }
+}
+
+TEST(PjRtCApiClientTpuTest, GetParameterAndOutputLayouts) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetXlaPjrtTpuClient());
+
+  Shape shape = ShapeUtil::MakeShapeWithType<float>({4});
+  XlaBuilder builder("sum");
+  auto inp_0 = Parameter(&builder, 0, shape, "input0");
+  auto inp_1 = Parameter(&builder, 1, shape, "input1");
+  auto sum = Add(inp_0, inp_1);
+  auto computation = builder.Build(sum).value();
+
+  CompileOptions options;
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtLoadedExecutable> executable,
+                          client->CompileAndLoad(computation, options));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::shared_ptr<const PjRtLayout>> parameter_layouts,
+      executable->GetParameterLayouts());
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::shared_ptr<const PjRtLayout>> output_layouts,
+      executable->GetOutputLayouts());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      xla::Layout expected_layout,
+      client->GetDefaultLayout(shape.element_type(), shape.dimensions()));
+
+  // We expect parameter and output layouts to be a default layout because we
+  // didn't specify any layouts in the HLO.
+  EXPECT_EQ(parameter_layouts.size(), 2);
+  for (const std::shared_ptr<const PjRtLayout>& parameter_layout :
+       parameter_layouts) {
+    EXPECT_EQ(parameter_layout->xla_layout(), expected_layout);
+  }
+  EXPECT_EQ(output_layouts.size(), 1);
+  for (const std::shared_ptr<const PjRtLayout>& output_layout :
+       output_layouts) {
+    EXPECT_EQ(output_layout->xla_layout(), expected_layout);
   }
 }
 

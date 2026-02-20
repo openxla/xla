@@ -263,6 +263,33 @@ static absl::Status EnsureExecutableOutputDimensionsPopulated(
   return absl::OkStatus();
 }
 
+static absl::Status PopulateExecutableParameterLayouts(
+    PJRT_Executable* executable) {
+  TF_ASSIGN_OR_RETURN(
+      std::vector<std::shared_ptr<const xla::PjRtLayout>> cpp_parameter_layouts,
+      executable->get()->GetParameterLayouts());
+  executable->parameter_layouts.reserve(cpp_parameter_layouts.size());
+  executable->parameter_layouts_pointers.reserve(cpp_parameter_layouts.size());
+  for (std::shared_ptr<const xla::PjRtLayout>& layout : cpp_parameter_layouts) {
+    executable->parameter_layouts.push_back(
+        PJRT_Layouts_MemoryLayout{std::move(layout)});
+  }
+  for (PJRT_Layouts_MemoryLayout& layout : executable->parameter_layouts) {
+    executable->parameter_layouts_pointers.push_back(&layout);
+  }
+  return absl::OkStatus();
+}
+
+static absl::Status EnsureExecutableParameterLayoutsPopulated(
+    PJRT_Executable* executable) {
+  absl::MutexLock lock(executable->mutex);
+  if (!executable->parameter_layouts_ran) {
+    TF_RETURN_IF_ERROR(PopulateExecutableParameterLayouts(executable));
+    executable->parameter_layouts_ran = true;
+  }
+  return absl::OkStatus();
+}
+
 static absl::Status PopulateExecutableOutputLayouts(
     PJRT_Executable* executable) {
   TF_ASSIGN_OR_RETURN(
@@ -3081,6 +3108,19 @@ PJRT_Error* PJRT_Layouts_PJRT_Topology_GetDefaultLayout(
   return nullptr;
 }
 
+PJRT_Error* PJRT_Layouts_PJRT_Executable_GetParameterLayouts(
+    PJRT_Layouts_PJRT_Executable_GetParameterLayouts_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Layouts_PJRT_Executable_GetParameterLayouts_Args",
+      PJRT_Layouts_PJRT_Executable_GetParameterLayouts_Args_STRUCT_SIZE,
+      args->struct_size));
+  PJRT_RETURN_IF_ERROR(
+      EnsureExecutableParameterLayoutsPopulated(args->executable));
+  args->num_parameters = args->executable->parameter_layouts_pointers.size();
+  args->layouts = args->executable->parameter_layouts_pointers.data();
+  return nullptr;
+}
+
 PJRT_Error* PJRT_Layouts_PJRT_Executable_GetOutputLayouts(
     PJRT_Layouts_PJRT_Executable_GetOutputLayouts_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
@@ -3547,6 +3587,8 @@ PJRT_Layouts_Extension CreateLayoutsExtension(PJRT_Extension_Base* next) {
       &PJRT_Layouts_PJRT_Topology_GetDefaultLayout,
       /*PJRT_Layouts_PJRT_Executable_GetOutputLayouts=*/
       &PJRT_Layouts_PJRT_Executable_GetOutputLayouts,
+      /*PJRT_Layouts_PJRT_Executable_GetParameterLayouts=*/
+      &PJRT_Layouts_PJRT_Executable_GetParameterLayouts,
   };
 }
 

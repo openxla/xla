@@ -696,6 +696,9 @@ class PjRtCApiExecutable : public PjRtExecutable {
 
   std::optional<std::vector<OpSharding>> GetParameterShardings() const override;
 
+  absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
+  GetParameterLayouts() const override;
+
   absl::StatusOr<std::vector<Shape>> GetOutputShapes() const override;
 
   absl::StatusOr<std::vector<std::vector<PrimitiveType>>>
@@ -783,6 +786,11 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
   std::optional<std::vector<OpSharding>> GetParameterShardings()
       const override {
     return executable_->GetParameterShardings();
+  }
+
+  absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
+  GetParameterLayouts() const override {
+    return executable_->GetParameterLayouts();
   }
 
   absl::StatusOr<std::vector<Shape>> GetOutputShapes() const override {
