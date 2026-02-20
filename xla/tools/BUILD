@@ -521,7 +521,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
-        "//xla/service:hlo_runner",
         "//xla/service:hlo_runner_interface",
         "//xla/service:hlo_verifier",
         "//xla/tests:test_utils",
@@ -536,7 +535,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:status",
     ],
 )
 
