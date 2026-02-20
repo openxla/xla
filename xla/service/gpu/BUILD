@@ -3528,6 +3528,7 @@ xla_cc_test(
     srcs = ["flag_utils_test.cc"],
     deps = [
         ":flag_utils",
+        "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:double_buffer_loop_unrolling",
         "//xla/hlo/ir:hlo",
