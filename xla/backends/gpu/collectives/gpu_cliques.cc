@@ -860,6 +860,23 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireGpuClique(
                 // will get out of scope.
                 state.cliques.erase(clique_key);
 
+                // Erase sibling sub-cliques from the same old parent so they
+                // don't skip ncclCommSplit while this clique triggers it.
+                const GpuClique* old_parent = to_lock->parent();
+                std::vector<GpuCliqueKey> stale;
+                for (auto& [key, clique] : state.cliques) {
+                  if (old_parent && clique->HasParent(old_parent)) {
+                    stale.push_back(key);
+                  }
+                }
+                for (auto& key : stale) {
+                  auto it = state.cliques.find(key);
+                  if (it == state.cliques.end()) continue;
+                  std::shared_ptr<LockableGpuClique> s = it->second;
+                  auto lock = s->Acquire();
+                  state.cliques.erase(key);
+                }
+
                 return nullptr;
               }
 

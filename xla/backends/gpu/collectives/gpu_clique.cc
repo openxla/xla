@@ -146,6 +146,10 @@ bool LockableGpuClique::HasParent(const GpuClique* parent) const {
   return this->value().parent() == parent;
 }
 
+const GpuClique* LockableGpuClique::parent() const {
+  return this->value().parent();
+}
+
 std::string LockableGpuClique::DebugString() const {
   return absl::StrFormat("LockableGpuClique: %s", value().DebugString());
 }
