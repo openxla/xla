@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
+#include "xla/hlo/ir/stack_frames.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/printer.h"
@@ -85,7 +86,7 @@ TEST_F(HloInstructionTest, GetStackTraceStringFromStackFrameId) {
   frame2->set_file_location_id(2);
   frame2->set_parent_frame_id(1);
 
-  module->set_stack_frame_index(index);
+  module->set_stack_frames(StackFrames(index));
 
   // Set metadata on the instruction
   OpMetadata metadata;
@@ -121,7 +122,7 @@ TEST_F(HloInstructionTest, GetStackTraceString1BasedIndexing) {
   frame->set_file_location_id(1);  // 1-based
   frame->set_parent_frame_id(0);   // 0 means no parent
 
-  module->set_stack_frame_index(index);
+  module->set_stack_frames(StackFrames(index));
 
   // Set metadata on the instruction
   OpMetadata metadata;
@@ -184,7 +185,7 @@ TEST_F(HloInstructionTest, GetStackTraceStringCombined) {
   auto frame = index.add_stack_frames();
   frame->set_file_location_id(1);
   frame->set_parent_frame_id(0);
-  module->set_stack_frame_index(index);
+  module->set_stack_frames(StackFrames(index));
 
   // Set both stack_frame_id and source_info
   OpMetadata metadata;

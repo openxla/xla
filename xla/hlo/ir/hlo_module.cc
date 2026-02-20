@@ -51,11 +51,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value_util.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/stack_frames.h"
 #include "xla/map_util.h"
 #include "xla/printer.h"
 #include "xla/service/compilation_environments.h"
@@ -126,26 +128,8 @@ void HloModule::ReplaceEntryComputation(HloComputation* entry_computation) {
   buffer_donor_config_ = HloBufferDonorConfig();
 }
 
-HloModule::StackFrame HloModule::get_stack_frame(int id) const {
-  HloModule::StackFrame stack_frame;
-  if (!stack_frame_index_.has_value() || id < 1 ||
-      id > stack_frame_index_->stack_frames().size()) {
-    return stack_frame;
-  }
-
-  auto& frame = stack_frame_index_->stack_frames(id - 1);
-  auto& file_location =
-      stack_frame_index_->file_locations(frame.file_location_id() - 1);
-
-  stack_frame.file_name =
-      stack_frame_index_->file_names(file_location.file_name_id() - 1);
-  stack_frame.function_name =
-      stack_frame_index_->function_names(file_location.function_name_id() - 1);
-  stack_frame.line = file_location.line();
-  stack_frame.column = file_location.column();
-  stack_frame.parent_frame_id = frame.parent_frame_id();
-
-  return stack_frame;
+HloStackFrame HloModule::get_stack_frame(StackFrameId id) const {
+  return stack_frames_.GetStackFrame(id);
 }
 
 void HloModule::Finalize() {
@@ -478,25 +462,24 @@ void HloModule::PrintComputations(Printer* printer,
 
 void HloModule::PrintStackFrameIndex(Printer* printer,
                                      const HloPrintOptions& options) const {
-  if (!stack_frame_index_.has_value() ||
-      stack_frame_index_->file_names().empty() || !options.print_metadata()) {
+  if (stack_frames_.empty() || !options.print_metadata()) {
     return;
   }
+  const auto& proto = stack_frames_.proto();
   printer->Append("\n\nFileNames\n");
-  for (const auto& [index, file_name] :
-       llvm::enumerate(stack_frame_index_->file_names())) {
+  for (const auto& [index, file_name] : llvm::enumerate(proto.file_names())) {
     printer->Append(
         absl::StrFormat("%d \"%s\"\n", index + 1, absl::CEscape(file_name)));
   }
   printer->Append("\nFunctionNames\n");
   for (const auto& [index, function_name] :
-       llvm::enumerate(stack_frame_index_->function_names())) {
+       llvm::enumerate(proto.function_names())) {
     printer->Append(absl::StrFormat("%d \"%s\"\n", index + 1,
                                     absl::CEscape(function_name)));
   }
   printer->Append("\nFileLocations\n");
   for (const auto& [index, file_location] :
-       llvm::enumerate(stack_frame_index_->file_locations())) {
+       llvm::enumerate(proto.file_locations())) {
     printer->Append(
         absl::StrFormat("%d {file_name_id=%d function_name_id=%d line=%d "
                         "end_line=%d column=%d end_column=%d}\n",
@@ -506,8 +489,7 @@ void HloModule::PrintStackFrameIndex(Printer* printer,
                         file_location.end_column()));
   }
   printer->Append("\nStackFrames\n");
-  for (const auto& [index, frame] :
-       llvm::enumerate(stack_frame_index_->stack_frames())) {
+  for (const auto& [index, frame] : llvm::enumerate(proto.stack_frames())) {
     printer->Append(absl::StrFormat(
         "%d {file_location_id=%d parent_frame_id=%d}\n", index + 1,
         frame.file_location_id(), frame.parent_frame_id() + 1));
@@ -613,8 +595,8 @@ void HloModule::ToProto(HloModuleProto* proto) const {
     (*proto->mutable_device_assignment()) = device_assignment;
   }
 
-  if (stack_frame_index_.has_value()) {
-    (*proto->mutable_stack_frame_index()) = *stack_frame_index_;
+  if (!stack_frames_.empty()) {
+    (*proto->mutable_stack_frame_index()) = stack_frames_.proto();
   }
 
   if (!original_value_recovery_table_.empty()) {
@@ -901,9 +883,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
   }
 
   if (proto.has_stack_frame_index()) {
-    if (!module->stack_frame_index_.has_value()) {
-      module->stack_frame_index_ = std::move(proto.stack_frame_index());
-    }
+    module->stack_frames_ = StackFrames(proto.stack_frame_index());
   }
 
   if (proto.has_original_value_recovery_table()) {
@@ -1440,8 +1420,8 @@ void HloModule::Clone(const std::string& suffix, HloCloneContext* context,
   // The canonical module id should be the same as the unique id from the
   // module. We don't want to copy the id from the other metadata.
   module->metadata()->set_canonical_module_id(module->unique_id());
-  if (stack_frame_index().has_value()) {
-    module->set_stack_frame_index(stack_frame_index().value());
+  if (!stack_frames().empty()) {
+    module->set_stack_frames(stack_frames());
   }
   if (has_schedule() && schedule().Verify().ok()) {
     HloSchedule clone_schedule(module);

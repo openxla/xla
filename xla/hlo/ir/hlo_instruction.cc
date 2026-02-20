@@ -4142,7 +4142,8 @@ void HloInstruction::PrintWithCanonicalNameMap(
         metadata_->stack_frame_id() != 0 && GetModule() != nullptr) {
       OpMetadata metadata = *metadata_;
       metadata.set_stack_frame_id(0);
-      auto frame = GetModule()->get_stack_frame(metadata_->stack_frame_id());
+      auto frame = GetModule()->get_stack_frame(
+          StackFrameId{metadata_->stack_frame_id()});
       if (!frame.empty()) {
         metadata.set_source_file(frame.file_name);
         metadata.set_source_line(frame.line);
@@ -6218,8 +6219,8 @@ std::vector<HloStackFrame> HloInstruction::GetStackTraceFromMetadata() const {
     return frames;
   }
 
-  int frame_id = metadata.stack_frame_id();
-  while (frame_id != 0) {
+  StackFrameId frame_id = {metadata.stack_frame_id()};
+  while (frame_id.valid()) {
     HloStackFrame frame = hlo_module->get_stack_frame(frame_id);
     if (frame.empty()) {
       break;
