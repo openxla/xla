@@ -222,6 +222,24 @@ TEST_F(CustomCallTest, WithStatusFailed) {
   EXPECT_THAT(status.message(), ::testing::HasSubstr("Failed"));
 }
 
+TEST_F(CustomCallTest, WithNoCallback) {
+  XlaBuilder b(TestName());
+  CustomCall(
+      &b, "NoCallback", /*operands=*/{}, ShapeUtil::MakeShape(F32, {}),
+      /*opaque=*/"",
+      /*has_side_effect=*/false,
+      /*output_operand_aliasing=*/{}, /*literal=*/nullptr,
+      /*schedule=*/CustomCallSchedule::SCHEDULE_NONE,
+      /*api_version=*/CustomCallApiVersion::API_VERSION_STATUS_RETURNING);
+  auto status = ExecuteAndTransfer(&b, {}).status();
+  EXPECT_THAT(
+      status,
+      StatusIs(
+          absl::StatusCode::kNotFound,
+          HasSubstr(
+              "No registered implementation for custom call to NoCallback")));
+}
+
 //===----------------------------------------------------------------------===//
 // XLA runtime custom calls provides type-safe custom call API
 //===----------------------------------------------------------------------===//
