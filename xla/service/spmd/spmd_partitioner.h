@@ -750,6 +750,7 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   absl::Status HandleCustomCallTopK(HloInstruction* hlo);
   // Convenient custom ops defined by the partitioner itself.
   absl::Status HandleCustomCallSPMDInternal_RotateRight(HloInstruction* hlo);
+  absl::Status HandleCustomCallSPMDInternal_MultiRotate(HloInstruction* hlo);
 
   virtual std::unique_ptr<SpmdPartitioningVisitor> Clone() const;
 
