@@ -387,6 +387,8 @@ enum StatType {
   kMetadataCudaRuntimeVersion,
   kMetadataCudaDriverVersion,
   kLastStatType = kMetadataCudaDriverVersion,
+  // LLO Debug Dump.
+  kLloProto,
 };
 
 enum MegaScaleStatType : uint8_t {
