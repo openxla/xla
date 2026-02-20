@@ -154,12 +154,16 @@ static void MakeLLIR(mlir::OpPassManager* pm,
       mt::createAllocateSharedMemoryNvPass(cuda_cc_as_int, final_ptx_version));
   pm->addPass(ttng::createTritonTensorMemoryAllocationPass());
   pm->addPass(ttng::createTritonNvidiaGPUCheckMatmulTwoCTAPass());
-  // We could add a flag to XLA to optionally enable the following pass:
+  // We could add a flag to XLA to optionally enable the following passes:
+  // if "consan" in options.instrumentation_mode
   // pm->addPass(mt::instrument::createTritonInstrumentConcurrencySanitizer());
+  // pm->addPass(mlir::triton::gluon::createGluonCanonicalize());
+  // pm->addPass(mlir::createCSEPass());
   pm->addPass(mt::gpu::createTritonGPUGlobalScratchAllocationPass());
   pm->addPass(ttng::createTritonGPUProxyFenceInsertion({cuda_cc_as_int}));
   pm->addPass(
       mt::createConvertTritonGPUToLLVMPass(cuda_cc_as_int, final_ptx_version));
+  pm->addPass(mlir::triton::gpu::createCanonicalizeLLVMIR());
   pm->addPass(mlir::createCanonicalizerPass());
   pm->addPass(mlir::createCSEPass());
   pm->addPass(mt::createConvertNVGPUToLLVM());
