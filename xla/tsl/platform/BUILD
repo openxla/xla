@@ -422,6 +422,8 @@ tsl_cc_test(
     srcs = ["env_test.cc"],
     deps = [
         ":env",
+        "//tensorflow/core/platform:protobuf",
+        "//xla/tsl/protobuf:histogram_proto_cc",
         "//xla/tsl/testing:temporary_directory",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
@@ -430,6 +432,7 @@ tsl_cc_test(
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:path",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
 
