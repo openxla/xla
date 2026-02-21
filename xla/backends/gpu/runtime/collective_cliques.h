@@ -55,6 +55,9 @@ class CollectiveCliques {
 
   bool empty() const { return cliques_map_.empty(); }
 
+  absl::StatusOr<RendezvousFlag*> GetCliqueFirstRendezvousFlag(
+      const GpuCliqueKey& clique_key) const;
+
  private:
   AcquiredCliquesMap cliques_map_;
 };
@@ -67,6 +70,10 @@ class CollectiveCliques {
 // deadlock.
 absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
     const CollectiveParams& params, const CollectiveCliqueRequests& cliques);
+
+absl::StatusOr<bool> AllFirstRendezvousCompleted(
+    const CollectiveCliques& collective_cliques,
+    const std::vector<GpuCliqueKey>& requested_clique_keys);
 
 }  // namespace xla::gpu
 
