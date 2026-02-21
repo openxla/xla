@@ -225,6 +225,27 @@ absl::Status GpuProfiler::CheckOutputBuffer(ScopedShapedBuffer& output,
       });
 }
 
+absl::Status GpuProfiler::InitializeInputBuffer(InputBuffers& buffers,
+                                                int buffer_index,
+                                                const void* values,
+                                                size_t size_bytes) {
+  GpuInputBuffers& gpu_buffers = tsl::down_cast<GpuInputBuffers&>(buffers);
+  RedzoneBuffers& rz_buffers = gpu_buffers.redzone_buffers;
+
+  if (buffer_index < 0 || buffer_index >= rz_buffers.input_buffers().size()) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("Invalid buffer_index %d, must be in range [0, %d)",
+                        buffer_index, rz_buffers.input_buffers().size()));
+  }
+
+  se::DeviceAddressBase buffer = rz_buffers.input_buffers()[buffer_index];
+  TF_RETURN_IF_ERROR(stream_->Memcpy(
+      const_cast<se::DeviceAddressBase*>(&buffer), values, size_bytes));
+  TF_RETURN_IF_ERROR(stream_->BlockHostUntilDone());
+
+  return absl::OkStatus();
+}
+
 }  // namespace gpu
 
 }  // namespace xla

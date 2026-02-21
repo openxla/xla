@@ -86,6 +86,20 @@ class Profiler {
   virtual absl::Status CheckOutputBuffer(ScopedShapedBuffer& output,
                                          ScopedShapedBuffer& reference,
                                          float rtol) = 0;
+
+  // Initialize a specific input buffer with custom values.
+  // This is useful for initializing constant parameters like group sizes
+  // in group-gemm operations after buffers are created.
+  // buffer_index: which input buffer to initialize
+  // values: pointer to the values to copy
+  // size_bytes: number of bytes to copy
+  virtual absl::Status InitializeInputBuffer(InputBuffers& buffers,
+                                             int buffer_index,
+                                             const void* values,
+                                             size_t size_bytes) {
+    // Default implementation does nothing
+    return absl::OkStatus();
+  }
 };
 }  // namespace xla
 

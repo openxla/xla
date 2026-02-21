@@ -641,7 +641,7 @@ absl::Status RunOptimizationPasses(
       DebugOptions::DETECTION_MODE_NONE) {
     pipeline.AddPass<UnstableReductionDetector>();
   }
-  pipeline.AddPass<RaggedDotRewriter>();
+  pipeline.AddPass<RaggedDotRewriter>(gpu_version);
   if (!debug_options.xla_gpu_experimental_scaled_dot_with_triton()) {
     pipeline.AddPass<ScaledDotRewriter>();
   }
