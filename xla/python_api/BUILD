@@ -1,4 +1,5 @@
-load("//xla:py_strict.bzl", "py_strict_library", "py_strict_test")
+load("@rules_python//python:py_library.bzl", "py_library")
+load("//xla:py_strict.bzl", "py_strict_test")
 
 # Description:
 #   Python API for XLA.
@@ -11,9 +12,10 @@ package(
 
 generate_backend_suites()
 
-py_strict_library(
+py_library(
     name = "types",
     srcs = ["types_.py"],
+    strict_deps = True,
     visibility = ["//visibility:public"],
     deps = [
         "//third_party/py/numpy",
@@ -22,9 +24,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "xla_shape",
     srcs = ["xla_shape.py"],
+    strict_deps = True,
     visibility = ["//visibility:public"],
     deps = [
         ":types",
@@ -33,9 +36,10 @@ py_strict_library(
     ],
 )
 
-py_strict_library(
+py_library(
     name = "xla_literal",
     srcs = ["xla_literal.py"],
+    strict_deps = True,
     visibility = ["//visibility:public"],
     deps = [
         ":types",
