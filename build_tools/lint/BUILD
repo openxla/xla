@@ -45,6 +45,7 @@ py_test(
         "testdata/bad_cc.diff",
         "testdata/important_cc.diff",
     ],
+    strict_deps = False,  # copybara:strip(attribute-not-in-bazel)
     deps = [
         ":check_contents",
         ":diff_parser",
@@ -61,6 +62,7 @@ py_test(
         "testdata/crosstool.diff",
         "testdata/important_cc.diff",
     ],
+    strict_deps = False,  # copybara:strip(attribute-not-in-bazel)
     deps = [
         ":diff_parser",
         "//build_tools:test_utils",
@@ -71,6 +73,7 @@ py_test(
 py_test(
     name = "generate_compile_commands_test",
     srcs = ["generate_compile_commands_test.py"],
+    strict_deps = False,  # copybara:strip(attribute-not-in-bazel)
     deps = [
         ":generate_compile_commands",
         "@absl_py//absl/testing:absltest",
