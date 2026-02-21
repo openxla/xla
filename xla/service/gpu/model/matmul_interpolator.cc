@@ -40,10 +40,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/model/default_matmul_perf_table.h"
 #include "xla/service/gpu/model/hlo_op_profile.pb.h"
 #include "xla/service/gpu/model/hlo_op_profiles.h"
 #include "xla/service/gpu/model/interpolator.h"
-#include "xla/service/gpu/model/matmul_interpolator_data.h"
 #include "xla/service/gpu/model/matmul_interpolator_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -58,8 +58,8 @@ namespace {
 static const GemmPerfTable& Profile() {
   static const GemmPerfTable* profile = []() {
     auto* profile = new GemmPerfTable();
-    CHECK(tsl::protobuf::TextFormat::ParseFromString(kDefaultMatmulPTable,
-                                                     profile))
+    CHECK(tsl::protobuf::TextFormat::ParseFromString(
+        get_default_matmul_perf_table(), profile))
         << "Cannot parse a default profile.";
     return profile;
   }();
