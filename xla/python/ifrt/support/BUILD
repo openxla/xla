@@ -46,6 +46,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt/ir:sharding_param",
         "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
