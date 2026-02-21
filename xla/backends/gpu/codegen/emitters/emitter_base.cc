@@ -311,7 +311,7 @@ absl::StatusOr<FusionEmissionResult> EmitterBase::Emit(
   auto [status_or_entry, cached] =
       ir_emitter_context.kernel_cache().GetWithStatus(
           fusion.fused_instructions_computation(), args.args(),
-          /*discriminator=*/"",
+          /*discriminator=*/"EmitterBase",
           [&]() -> absl::StatusOr<KernelReuseCache::Entry> {
             std::string kernel_name = ir_emitter_context.GetSanitizedUniqueName(
                 std::string(fusion.name()));
@@ -355,7 +355,7 @@ absl::StatusOr<FusionEmissionResult> EmitterBase::Emit(
   result.thunks.emplace_back(std::make_unique<KernelThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(
           &fusion, ir_emitter_context.GetNextThunkId()),
-      entry->kernel_name, args, launch_dims, entry->cluster_dim,
+      entry->kernel_name, args, entry->launch_dimensions, entry->cluster_dim,
       entry->shmem_bytes,
       /*tma_metadata=*/se::gpu::TmaMetadata()));
   return result;
