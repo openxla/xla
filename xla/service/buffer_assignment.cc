@@ -23,6 +23,7 @@ limitations under the License.
 #include <deque>
 #include <iterator>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <ostream>
 #include <set>
@@ -989,65 +990,134 @@ std::string BufferAssignment::ToString() const {
   return output;
 }
 
+static std::string MemorySpaceColorToName(int64_t color) {
+  switch (color) {
+    case 0:
+      return "hbm";
+    case 1:
+      return "vmem";
+    case 2:
+      return "sflag";
+    case 3:
+      return "cmem";
+    case 4:
+      return "smem";
+    case 5:
+      return "host";
+    case 6:
+      return "none";
+    case 7:
+      return "memory_space_7";
+    case 8:
+      return "memory_space_8";
+    case 9:
+      return "pinned_hbm";
+    default:
+      return absl::StrCat("memory_space_", color);
+  }
+}
+
 std::string BufferAssignment::MemoryUsageReport(float percentile,
                                                 int64_t more_than_k) const {
   std::string output;
-  int64_t total_size = 0;
-  for (auto& allocation : allocations_) {
-    total_size += allocation.size();
+
+  // Group allocations by color (memory space).
+  absl::flat_hash_map<int64_t, std::vector<const BufferAllocation*>>
+      allocations_by_color;
+  for (const auto& allocation : allocations_) {
+    allocations_by_color[allocation.color()].push_back(&allocation);
   }
-  absl::StrAppend(&output, "Total bytes used: ", total_size, " (",
-                  HumanReadableNumBytes(total_size), ")\n");
 
-  absl::StrAppend(&output, "\nAllocations sorted by size:\n\n");
-  auto allocations = allocations_;
-  std::sort(allocations.begin(), allocations.end(),
-            [](const BufferAllocation& a, const BufferAllocation& b) {
-              if (a.size() > b.size()) return true;
-              if (a.size() < b.size()) return false;
-              return a.index() < b.index();
-            });
+  // Sort memory spaces by color for consistent output.
+  std::vector<int64_t> colors;
+  for (const auto& [color, _] : allocations_by_color) {
+    colors.push_back(color);
+  }
+  std::sort(colors.begin(), colors.end());
 
-  int64_t cumulative_size = 0;
-  absl::StrAppend(
-      &output, "cumulative_size; total_size - cumulative_size; allocation\n");
-  absl::StrAppend(&output,
-                  "------------------------------------------------------------"
-                  "------------------\n");
-  int64_t index = 0;
-  for (auto& allocation : allocations) {
-    cumulative_size += allocation.size();
+  // Process each memory space.
+  for (int64_t color : colors) {
+    auto& color_allocations = allocations_by_color[color];
+
+    // Sort allocations by size (largest first), then by index for stability.
+    std::sort(color_allocations.begin(), color_allocations.end(),
+              [](const BufferAllocation* a, const BufferAllocation* b) {
+                if (a->size() > b->size()) {
+                  return true;
+                }
+                if (a->size() < b->size()) {
+                  return false;
+                }
+                return a->index() < b->index();
+              });
+
+    // Calculate total size for this memory space.
+    int64_t total_size = std::accumulate(
+        color_allocations.begin(), color_allocations.end(), int64_t{0},
+        [](int64_t sum, const BufferAllocation* a) { return sum + a->size(); });
+
+    absl::StrAppend(&output, "\n");
     absl::StrAppend(
         &output,
-        absl::StrFormat("%10s(%3.0f%%); %10s; %s",
-                        HumanReadableNumBytes(cumulative_size),
-                        100. * cumulative_size / total_size,
-                        HumanReadableNumBytes(total_size - cumulative_size),
-                        allocation.ToShortString(true)));
+        "============================================================"
+        "==================\n");
 
-    // Skip the rest of the allocations if they are less than percentile of the
-    // total size and not more than k.
-    if (++index > more_than_k &&
-        total_size - cumulative_size < total_size * percentile) {
+    std::string memory_space_name = MemorySpaceColorToName(color);
+
+    absl::StrAppend(&output, "Memory Space: ", memory_space_name,
+                    " (color=", color, ")\n");
+    absl::StrAppend(&output, "Total bytes: ", total_size, " (",
+                    HumanReadableNumBytes(total_size), ")\n");
+    absl::StrAppend(
+        &output,
+        "============================================================"
+        "==================\n\n");
+
+    absl::StrAppend(&output, "Allocations sorted by size:\n\n");
+    absl::StrAppend(
+        &output, "cumulative_size; total_size - cumulative_size; allocation\n");
+    absl::StrAppend(
+        &output,
+        "------------------------------------------------------------"
+        "------------------\n");
+
+    int64_t cumulative_size = 0;
+    int64_t index = 0;
+    for (const auto* allocation : color_allocations) {
+      cumulative_size += allocation->size();
       absl::StrAppend(
           &output,
-          absl::StrFormat(
-              "The rest %d allocations are less than %d%% of the total "
-              "size and not shown.\n",
-              allocations.size() - index, static_cast<int>(percentile * 100)));
-      break;
-    }
-  }
+          absl::StrFormat("%10s(%3.0f%%); %10s; %s",
+                          HumanReadableNumBytes(cumulative_size),
+                          100. * cumulative_size / total_size,
+                          HumanReadableNumBytes(total_size - cumulative_size),
+                          allocation->ToShortString(true)));
 
-  absl::StrAppend(&output,
-                  "\n\nAllocations sorted by size with their values:\n");
-  for (auto& allocation : allocations) {
-    if (allocation.assigned_buffers().size() == 1) {
-      absl::StrAppend(&output, allocation.ToShortString(true));
-    } else {
-      StrAppendFormat(
-          &output, "%s\n%s\n", allocation.ToShortString(true),
-          allocation.MemoryUsageReport("\t", percentile, more_than_k));
+      // Skip the rest of the allocations if they are less than percentile of
+      // the total size and not more than k.
+      if (++index > more_than_k &&
+          total_size - cumulative_size < total_size * percentile) {
+        absl::StrAppend(
+            &output,
+            absl::StrFormat(
+                "The rest %d allocations are less than %d%% of the total "
+                "size and not shown.\n",
+                color_allocations.size() - index,
+                static_cast<int>(percentile * 100)));
+        break;
+      }
+    }
+
+    absl::StrAppend(&output,
+                    "\n\nAllocations sorted by size with their values:\n");
+    for (const auto* allocation : color_allocations) {
+      if (allocation->assigned_buffers().size() == 1) {
+        absl::StrAppend(&output, allocation->ToShortString(true));
+      } else {
+        StrAppendFormat(
+            &output, "%s\n%s\n", allocation->ToShortString(true),
+            allocation->MemoryUsageReport("\t", percentile, more_than_k));
+      }
     }
   }
   return output;
@@ -1332,6 +1402,84 @@ void BufferAssignment::ToProto(BufferAssignmentProto* proto) const {
       *proto->add_heap_simulator_traces() = heap_trace;
     }
   }
+}
+
+MemoryUsageReportProto BufferAssignment::MemoryUsageReportToProto(
+    float percentile, int64_t more_than_k) const {
+  MemoryUsageReportProto proto;
+
+  // Group allocations by color (memory space).
+  absl::flat_hash_map<int64_t, std::vector<const BufferAllocation*>>
+      allocations_by_color;
+  for (const auto& allocation : allocations_) {
+    allocations_by_color[allocation.color()].push_back(&allocation);
+  }
+
+  // Sort memory space colors for stable output ordering.
+  std::vector<int64_t> sorted_colors;
+  sorted_colors.reserve(allocations_by_color.size());
+  for (const auto& [color, _] : allocations_by_color) {
+    sorted_colors.push_back(color);
+  }
+  std::sort(sorted_colors.begin(), sorted_colors.end());
+
+  // Process each memory space.
+  for (int64_t color : sorted_colors) {
+    auto& color_allocations = allocations_by_color[color];
+    // Sort allocations by size (largest first), then by index for stability.
+    std::sort(color_allocations.begin(), color_allocations.end(),
+              [](const BufferAllocation* a, const BufferAllocation* b) {
+                if (a->size() > b->size()) {
+                  return true;
+                }
+                if (a->size() < b->size()) {
+                  return false;
+                }
+                return a->index() < b->index();
+              });
+
+    // Calculate total size for this memory space.
+    int64_t total_size = std::accumulate(
+        color_allocations.begin(), color_allocations.end(), int64_t{0},
+        [](int64_t sum, const BufferAllocation* a) { return sum + a->size(); });
+
+    auto* memory_space_entry = proto.add_memory_space_allocation_entries();
+    memory_space_entry->set_total_bytes(total_size);
+    // Explicitly set the optional field so that color 0 is not dropped during
+    // proto printing.
+    memory_space_entry->set_memory_space_color(color);
+
+    memory_space_entry->set_memory_space_name(MemorySpaceColorToName(color));
+
+    int64_t cumulative_size = 0;
+    int64_t index = 0;
+    for (const auto* allocation : color_allocations) {
+      cumulative_size += allocation->size();
+      auto* entry = memory_space_entry->add_allocation_entries();
+      entry->set_index(allocation->index());
+      entry->set_size(allocation->size());
+      entry->set_cumulative_size(cumulative_size);
+      if (total_size > 0) {
+        entry->set_cumulative_percentage(static_cast<double>(cumulative_size) /
+                                         total_size);
+      } else {
+        entry->set_cumulative_percentage(0.0);
+      }
+
+      // Use the first instruction name for hlo_name.
+      const auto& assigned = allocation->assigned_buffers();
+      if (!assigned.empty()) {
+        entry->set_hlo_name(assigned.begin()->first->instruction()->name());
+      }
+
+      if (++index > more_than_k &&
+          static_cast<double>(total_size - cumulative_size) <
+              total_size * percentile) {
+        break;
+      }
+    }
+  }
+  return proto;
 }
 
 /* static */
