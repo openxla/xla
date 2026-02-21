@@ -94,6 +94,7 @@ def cc_ir_header(name, src, deps = [], copts = [], **kwargs):
 
     # Define intermediate targets
     lib_name = name + "_lib"
+    out_o = name + ".o"
     out_header = name + ".h"
 
     compile_flags = [
@@ -151,11 +152,9 @@ def cc_ir_header(name, src, deps = [], copts = [], **kwargs):
         **common_attrs
     )
 
-    # Generate the header file from the IR (Bitcode).
-    # TODO(talts): In the next version, I will update this to store the bitcode in a shared object
-    # file so that we aren't using LLVM's text format.
+    # Generate the header and object file storing the embedded bitcode.
     variable_name = "k{}Ir".format(to_camel_case(base_name))
-    ir_to_string_tool = "//xla/codegen/intrinsic/cpp:ir_to_string"
+    embed_bitcode_tool = "//xla/codegen/intrinsic/cpp:embed_bitcode"
 
     # Generate an empty bitcode file for MacOS.
     native.genrule(
@@ -167,14 +166,20 @@ def cc_ir_header(name, src, deps = [], copts = [], **kwargs):
     )
 
     native.genrule(
-        name = name + "_gen_header",
+        name = name + "_gen_object_and_header",
         srcs = select({
             "//xla/tsl:macos": [":" + name + "_empty_bc"],
             "//conditions:default": [":" + name + "_extract_bc"],
         }),
-        outs = [out_header],
-        tools = [ir_to_string_tool],
-        cmd = "$(location {}) $< $@ {} {}".format(ir_to_string_tool, variable_name, namespace),
+        outs = [out_o, out_header],
+        tools = [embed_bitcode_tool],
+        cmd = "$(location {}) $< $(location {}) $(location {}) {} {}".format(
+            embed_bitcode_tool,
+            out_o,
+            out_header,
+            variable_name,
+            namespace,
+        ),
         tags = ["manual"],
         **common_attrs
     )
@@ -182,7 +187,14 @@ def cc_ir_header(name, src, deps = [], copts = [], **kwargs):
     # Exposed library
     cc_library(
         name = name,
+        srcs = select({
+            "//xla/tsl:macos": [],
+            "//conditions:default": [":" + out_o],
+        }),
         hdrs = [":" + out_header],
-        deps = deps,
+        deps = deps + [
+            "//xla/util:embedded_constant_buffers",
+            "@com_google_absl//absl/strings:string_view",
+        ],
         **kwargs
     )
