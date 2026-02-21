@@ -1,36 +1,27 @@
 diff --git a/python/private/python_register_toolchains.bzl b/python/private/python_register_toolchains.bzl
-index 2e0748de..42223d51 100644
+index 9e75c419..c74643d3 100644
 --- a/python/private/python_register_toolchains.bzl
 +++ b/python/private/python_register_toolchains.bzl
-@@ -94,6 +94,7 @@ def python_register_toolchains(
+@@ -43,6 +43,7 @@ def python_register_toolchains(
+         tool_versions = None,
+         platforms = PLATFORMS,
+         minor_mapping = None,
++        python_version_kind = "",
+         **kwargs):
+     """Convenience macro for users which does typical setup.
+
+@@ -94,6 +95,7 @@ def python_register_toolchains(
      minor_mapping = minor_mapping or MINOR_MAPPING
- 
+
      python_version = full_version(version = python_version, minor_mapping = minor_mapping)
 +    python_version_kind = kwargs.pop("python_version_kind", "")
- 
+
      toolchain_repo_name = "{name}_toolchains".format(name = name)
- 
-@@ -189,6 +190,7 @@ def python_register_toolchains(
-         name = name + "_host",
-         platforms = loaded_platforms,
-         python_version = python_version,
-+        python_version_kind = python_version_kind,
-     )
- 
-     toolchains_repo(
+
 diff --git a/python/private/toolchains_repo.bzl b/python/private/toolchains_repo.bzl
-index 93bbb521..ad9cd7fd 100644
+index f7ff19c3..458f2885 100644
 --- a/python/private/toolchains_repo.bzl
 +++ b/python/private/toolchains_repo.bzl
-@@ -214,7 +214,7 @@ def python_toolchain_build_file_content(
-             user_repository_name = "{}_{}".format(user_repository_name, platform),
-             python_version = python_version,
-             set_python_version_constraint = set_python_version_constraint,
--            target_settings = [],
-+            target_settings = meta.target_settings,
-         ))
-     return "\n\n".join(entries)
- 
 @@ -445,6 +445,10 @@ Full python version, Major.Minor.Micro.
  Only set in workspace calls.
  """,
@@ -42,7 +33,7 @@ index 93bbb521..ad9cd7fd 100644
          "python_versions": attr.string_dict(
              doc = """
  If set, the Python version for the corresponding selected platform. Values in
-@@ -603,6 +609,9 @@ def _get_host_impl_repo_name(*, rctx, logger, python_version, os_name, cpu_name,
+@@ -603,6 +607,9 @@ def _get_host_impl_repo_name(*, rctx, logger, python_version, os_name, cpu_name,
          else:
              candidates = [preference]
  
