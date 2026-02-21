@@ -95,25 +95,29 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForCuda(
       stream_executor, debug_options, compiler, target_config));
   backends.push_back(std::make_unique<TritonBackend>(
       debug_options, compiler, target_config, alias_info, mlir_context));
-  backends.push_back(std::make_unique<CublasBackend>(
-      stream_executor, debug_options, compiler, target_config,
-      /*fp8_lt_fallback=*/true));
-  backends.push_back(std::make_unique<CublasLtBackend>(
-      stream_executor, debug_options, compiler, target_config));
-  backends.push_back(std::make_unique<FissionBackend>(
-      debug_options, compiler, target_config,
-      std::make_unique<CublasBackend>(stream_executor, debug_options, compiler,
-                                      target_config, /*fp8_lt_fallback=*/true),
-      GetCublasRewriterPipeline(target_config->device_description,
-                                /*enable_cublaslt=*/false),
-      alias_info, mlir_context));
-  backends.push_back(std::make_unique<FissionBackend>(
-      debug_options, compiler, target_config,
-      std::make_unique<CublasLtBackend>(stream_executor, debug_options,
-                                        compiler, target_config),
-      GetCublasRewriterPipeline(target_config->device_description,
-                                /*enable_cublaslt=*/true),
-      alias_info, mlir_context));
+  if (debug_options->xla_gpu_enable_cublaslt()) {
+    backends.push_back(std::make_unique<CublasLtBackend>(
+        stream_executor, debug_options, compiler, target_config));
+    backends.push_back(std::make_unique<FissionBackend>(
+        debug_options, compiler, target_config,
+        std::make_unique<CublasLtBackend>(stream_executor, debug_options,
+                                          compiler, target_config),
+        GetCublasRewriterPipeline(target_config->device_description,
+                                  /*enable_cublaslt=*/true),
+        alias_info, mlir_context));
+  } else {
+    backends.push_back(std::make_unique<CublasBackend>(
+        stream_executor, debug_options, compiler, target_config,
+        /*fp8_lt_fallback=*/true));
+    backends.push_back(std::make_unique<FissionBackend>(
+        debug_options, compiler, target_config,
+        std::make_unique<CublasBackend>(stream_executor, debug_options,
+                                        compiler, target_config,
+                                        /*fp8_lt_fallback=*/true),
+        GetCublasRewriterPipeline(target_config->device_description,
+                                  /*enable_cublaslt=*/false),
+        alias_info, mlir_context));
+  }
   backends.push_back(std::make_unique<FissionBackend>(
       debug_options, compiler, target_config,
       std::make_unique<CustomKernelBackend>(stream_executor, debug_options,
