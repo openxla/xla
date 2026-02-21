@@ -160,6 +160,7 @@ limitations under the License.
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
@@ -173,7 +174,6 @@ limitations under the License.
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/context_types.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 
@@ -1685,9 +1685,14 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
                            ->local_device_id()
                            .value();
   LocalDeviceState* device_state = &(client_->device_state(device_ordinal));
-  tsl::profiler::TraceMeConsumer activity(
-      "PjRtStreamExecutorLoadedExecutable::EnqueueExecution",
-      tsl::profiler::ContextType::kPjRt, run_id_.ToInt());
+
+  tsl::profiler::TraceMe trace([&] {
+    return tsl::profiler::TraceMeEncode(
+        absl::StrFormat("[%d] PjRtStreamExecutorRawLoadedExecutable::Execute",
+                        device_ordinal),
+        {{"replica", replica_}, {"partition", partition_}});
+  });
+
   VLOG(3) << "Replica " << replica_ << ", partition " << partition_
           << " mapped to device ordinal for execution: " << device_ordinal;
 
@@ -1762,9 +1767,14 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     // launch is delayed.
     std::shared_ptr<Semaphore::ScopedReservation> compute_reservation;
     {
-      tsl::profiler::TraceMe traceme("ComputeSemaphoreAcquire");
+      Semaphore& compute_semaphore = device_state->compute_semaphore();
+      tsl::profiler::TraceMe traceme([&] {
+        return absl::StrFormat(
+            "ComputeSemaphoreAcquire [capacity=%d, value=%d]",
+            compute_semaphore.capacity(), compute_semaphore.value());
+      });
       compute_reservation = std::make_shared<Semaphore::ScopedReservation>(
-          device_state->compute_semaphore().ScopedAcquire(1));
+          compute_semaphore.ScopedAcquire(1));
     }
 
     absl::Status predetermined_error;
