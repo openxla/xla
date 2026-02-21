@@ -91,17 +91,31 @@ TEST_F(ChangeOpDataTypeTest, DotAndConv) {
   TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
   SCOPED_TRACE(module->ToString());
   EXPECT_TRUE(changed);
-  EXPECT_THAT(
-      module->entry_computation()->root_instruction(),
-      GmockMatch(m::Tuple(
-          m::Convert(
-              m::Dot(m::Convert(m::Parameter(0)).WithShape(F32, {10, 10}),
-                     m::Convert(m::Parameter(1)).WithShape(F32, {10, 10})))
-              .WithShape(F16, {10, 10}),
-          m::Convert(m::Convolution(
-                         m::Convert(m::Parameter(2)).WithShape(F32, {1, 2, 1}),
-                         m::Convert(m::Parameter(3)).WithShape(F32, {1, 1, 1})))
-              .WithShape(F16, {1, 2, 1}))));
+  if (test_runner().Name() == "host") {
+    EXPECT_THAT(
+        module->entry_computation()->root_instruction(),
+        GmockMatch(m::Tuple(
+            m::Convert(
+                m::Dot(m::Convert(m::Parameter(0)).WithShape(F32, {10, 10}),
+                       m::Convert(m::Parameter(1)).WithShape(F32, {10, 10})))
+                .WithShape(F16, {10, 10}),
+            m::Convert(
+                m::Convolution(
+                    m::Convert(m::Parameter(2)).WithShape(F32, {1, 2, 1}),
+                    m::Convert(m::Parameter(3)).WithShape(F32, {1, 1, 1})))
+                .WithShape(F16, {1, 2, 1}))));
+  } else {
+    EXPECT_THAT(
+        module->entry_computation()->root_instruction(),
+        GmockMatch(m::Tuple(
+            m::Convert(
+                m::Dot(m::Convert(m::Parameter(0)).WithShape(F32, {10, 10}),
+                       m::Convert(m::Parameter(1)).WithShape(F32, {10, 10})))
+                .WithShape(F16, {10, 10}),
+            m::Convolution(m::Parameter(2).WithShape(F16, {1, 2, 1}),
+                           m::Parameter(3).WithShape(F16, {1, 1, 1}))
+                .WithShape(F16, {1, 2, 1}))));
+  }
 }
 
 TEST_F(ChangeOpDataTypeTest, WideningDotAndConv) {
