@@ -113,6 +113,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
@@ -120,7 +121,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -1180,8 +1180,10 @@ absl::Status GpuExecutable::ExecuteThunks(
     const BufferAllocations& buffer_allocations,
     const ServiceExecutableRunOptions* run_options) {
   tsl::profiler::TraceMe trace([&] {
-    return tsl::profiler::TraceMeEncode("GpuExecutable::ExecuteThunks",
-                                        {{"module_name", module_name_}});
+    return tsl::profiler::TraceMeEncode(
+        absl::StrFormat("[%d] GpuExecutable::ExecuteThunks",
+                        run_options->device_ordinal()),
+        {{"module_name", module_name_}});
   });
 
   if (VLOG_IS_ON(5)) {
