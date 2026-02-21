@@ -101,7 +101,7 @@ std::shared_ptr<HangWatchdog::Guard> HangWatchdog::Watch(
                        absl::LocalTimeZone()));
 
   {  // Track newly created guard.
-    absl::MutexLock lock(&mu_);
+    absl::MutexLock lock(mu_);
     guards_.push_back(guard);
   }
 
