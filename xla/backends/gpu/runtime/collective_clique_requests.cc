@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 
+#include <cstddef>
+#include <optional>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -25,6 +28,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/runtime/device_id.h"
 #include "xla/util.h"
 
@@ -122,13 +126,25 @@ CollectiveCliqueRequests::OrderedRequestedCliques() const {
   return cliques;
 }
 
-bool CollectiveCliqueRequests::IsBarrierAfterModuleExecutionRequested() const {
+size_t
+CollectiveCliqueRequests::NumParticipantsRequiringBarrierAfterModuleExecution(
+    GlobalDeviceId global_device_id) const {
+  std::set<int> participating_devices;
   for (const auto& [key, request] : cliques_) {
     if (request.barrier_after_module_execution_requested) {
-      return true;
+      std::optional<RankId> rank = key.rank(global_device_id);
+      if (!rank.has_value()) {
+        continue;
+      }
+
+      for (const auto& group : request.device_groups) {
+        for (const auto& device : group) {
+          participating_devices.insert(device.value());
+        }
+      }
     }
   }
-  return false;
+  return participating_devices.size();
 }
 
 }  // namespace xla::gpu
