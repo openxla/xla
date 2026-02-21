@@ -20,6 +20,7 @@ def _python_repository_impl(ctx):
     hermetic_sha256 = ctx.os.environ.get("HERMETIC_PYTHON_SHA256", "")
     hermetic_prefix = ctx.os.environ.get("HERMETIC_PYTHON_PREFIX", "python")
     custom_requirements = ctx.os.environ.get("HERMETIC_REQUIREMENTS_LOCK", None)
+    rules_python_strict = ctx.attr.rules_python_strict
 
     if not (hermetic_url + hermetic_sha256) and (hermetic_url or hermetic_sha256):
         fail("""
@@ -62,17 +63,61 @@ Please check python_init_repositories() in your WORKSPACE file.
             ctx.attr.local_wheel_workspaces,
             base_requirements,
         )
-        requirements_content = [base_requirements] + local_wheel_requirements
-        merged_requirements_content = "\n".join(requirements_content)
 
-        requirements_with_local_wheels = "@{repo}//:{label}".format(
-            repo = ctx.name,
-            label = requirements.name,
-        )
-        ctx.file(
-            requirements.name,
-            merged_requirements_content,
-        )
+        if rules_python_strict:
+            # Extract the names of the injected packages (e.g., "libtpu")
+            # Cleans up hashes and provides just a clean list of injected
+            # packages without extra @ file://
+            injected_pkg_names = []
+            for req in local_wheel_requirements:
+                injected_pkg_names.append(req.split(" @ ")[0].strip().lower())
+
+            cleaned_lines = []
+            for line in base_requirements.splitlines():
+                if "--hash=" in line:
+                    continue
+
+                # Remove trailing line continuations (\)
+                if line.endswith("\\"):
+                    line = line[:-1].rstrip()
+
+                line_lower = line.lower()
+                skip_line = False
+                for pkg in injected_pkg_names:
+                    if line_lower.startswith(pkg + "==") or \
+                       line_lower.startswith(pkg + " ") or \
+                       line_lower.startswith(pkg + ">") or \
+                       line_lower.startswith(pkg + "~"):
+                        skip_line = True
+                        break
+
+                if not skip_line and line.strip():
+                    cleaned_lines.append(line)
+
+            # 3. Merge the cleaned base with the local overrides
+            requirements_content = cleaned_lines + local_wheel_requirements
+            merged_requirements_content = "\n".join(requirements_content)
+
+            requirements_with_local_wheels = "@{repo}//:{label}".format(
+                repo = ctx.name,
+                label = requirements.name,
+            )
+            ctx.file(
+                requirements.name,
+                merged_requirements_content,
+            )
+        else:
+            requirements_content = [base_requirements] + local_wheel_requirements
+            merged_requirements_content = "\n".join(requirements_content)
+
+            requirements_with_local_wheels = "@{repo}//:{label}".format(
+                repo = ctx.name,
+                label = requirements.name,
+            )
+            ctx.file(
+                requirements.name,
+                merged_requirements_content,
+            )
     else:
         requirements_with_local_wheels = str(requirements)
 
@@ -254,6 +299,11 @@ python_repository = repository_rule(
         "local_wheel_exclusion_list": attr.string_list(
             mandatory = False,
             default = [],
+        ),
+        # Python strict rules are set for rules_python 1.7.0 and above.
+        "rules_python_strict": attr.bool(
+            mandatory = False,
+            default = False,
         ),
     },
     environ = [
