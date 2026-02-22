@@ -193,6 +193,7 @@ cc_library(
         "//xla/pjrt/plugin/xla_cpu:cpu_topology",
         "//xla/pjrt/plugin/xla_cpu:cpu_topology_description",
         "//xla/pjrt/proto:compile_options_proto_cc",
+        "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",
         "//xla/service:compiler",
         "//xla/service:computation_layout",

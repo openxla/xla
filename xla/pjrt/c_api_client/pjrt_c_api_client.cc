@@ -84,6 +84,9 @@ limitations under the License.
 #include "xla/pjrt/proto/pjrt_abi_version.pb.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/pjrt/scoped_async_tracking_event.h"
+#include "xla/runtime/chip_id.h"
+#include "xla/runtime/device_id.h"
+#include "xla/runtime/process_id.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
@@ -454,7 +457,7 @@ absl::StatusOr<DeviceAssignment> PjRtCApiClient::GetDefaultDeviceAssignment(
 }
 
 absl::StatusOr<PjRtDevice*> PjRtCApiClient::LookupDevice(
-    PjRtGlobalDeviceId global_device_id) const {
+    GlobalDeviceId global_device_id) const {
   PJRT_Client_LookupDevice_Args args;
   args.struct_size = PJRT_Client_LookupDevice_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
@@ -465,7 +468,7 @@ absl::StatusOr<PjRtDevice*> PjRtCApiClient::LookupDevice(
 }
 
 absl::StatusOr<PjRtDevice*> PjRtCApiClient::LookupAddressableDevice(
-    PjRtLocalDeviceId local_device_id) const {
+    LocalDeviceId local_device_id) const {
   PJRT_Client_LookupAddressableDevice_Args args;
   args.struct_size = PJRT_Client_LookupAddressableDevice_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
@@ -1199,7 +1202,7 @@ PjRtCApiClient::MakeCrossHostReceiveBuffers(
 
 absl::StatusOr<std::vector<Future<>>> PjRtCApiClient::CrossHostSendBuffers(
     absl::Span<PjRtBuffer* const> buffers,
-    absl::Span<const PjRtGlobalDeviceId> dst_global_device_ids,
+    absl::Span<const GlobalDeviceId> dst_global_device_ids,
     std::vector<CrossHostTransferKey> transfer_keys) {
   // Get C API extension.
   const PJRT_Api* c_api = pjrt_c_api();
@@ -1249,7 +1252,7 @@ absl::StatusOr<std::vector<Future<>>> PjRtCApiClient::CrossHostSendBuffers(
 absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCApiClient::CrossHostReceiveBuffers(
     xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
-    absl::Span<const PjRtGlobalDeviceId> src_global_device_ids,
+    absl::Span<const GlobalDeviceId> src_global_device_ids,
     std::vector<CrossHostTransferKey> transfer_keys) {
   // Get C API extension.
   const PJRT_Api* c_api = pjrt_c_api();
@@ -1703,14 +1706,14 @@ bool PjRtCApiDevice::IsAddressable() const {
   return args.is_addressable;
 }
 
-PjRtLocalHardwareId PjRtCApiDevice::local_hardware_id() const {
+LocalChipId PjRtCApiDevice::local_hardware_id() const {
   PJRT_Device_LocalHardwareId_Args args;
   args.struct_size = PJRT_Device_LocalHardwareId_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
   args.device = device_;
   const PJRT_Api* api = client_->pjrt_c_api();
   pjrt::LogFatalIfPjrtError(api->PJRT_Device_LocalHardwareId(&args), api);
-  return PjRtLocalHardwareId(args.local_hardware_id);
+  return LocalChipId(args.local_hardware_id);
 }
 
 absl::StatusOr<PjRtMemorySpace*> PjRtCApiDevice::default_memory_space() const {
@@ -4095,7 +4098,7 @@ PjRtCApiTopologyDescription::CoreCountOfDefaultTypePerProcess() const {
   return args.core_count_of_default_type_per_process;
 }
 
-absl::StatusOr<PjRtIdContainer<PjRtProcessId>>
+absl::StatusOr<PjRtIdContainer<ProcessId>>
 PjRtCApiTopologyDescription::ProcessIds() const {
   if (tpu_topology_extension_ == nullptr) {
     return Unimplemented("ProcessIds is not supported by the PJRT C API.");
@@ -4109,17 +4112,17 @@ PjRtCApiTopologyDescription::ProcessIds() const {
   args.process_ids = process_ids_storage.data();
   RETURN_STATUS_IF_PJRT_ERROR(tpu_topology_extension_->process_ids(&args),
                               c_api_);
-  PjRtIdContainer<PjRtProcessId> ids;
+  PjRtIdContainer<ProcessId> ids;
   ids.reserve(args.num_process_ids);
   for (size_t i = 0; i < args.num_process_ids; ++i) {
-    ids.push_back(PjRtProcessId(args.process_ids[i]));
+    ids.push_back(ProcessId(args.process_ids[i]));
   }
   return ids;
 }
 
-absl::StatusOr<PjRtIdContainer<PjRtGlobalDeviceId>>
+absl::StatusOr<PjRtIdContainer<GlobalDeviceId>>
 PjRtCApiTopologyDescription::LogicalDeviceOfDefaultTypeIdsOnProcess(
-    PjRtProcessId process_id) const {
+    ProcessId process_id) const {
   if (tpu_topology_extension_ == nullptr) {
     return Unimplemented(
         "LogicalDeviceOfDefaultTypeIdsOnProcess is not supported by the PJRT "
@@ -4136,18 +4139,17 @@ PjRtCApiTopologyDescription::LogicalDeviceOfDefaultTypeIdsOnProcess(
   args.logical_device_of_default_type_ids = logical_device_ids_storage.data();
   RETURN_STATUS_IF_PJRT_ERROR(
       tpu_topology_extension_->logical_device_ids_on_process(&args), c_api_);
-  PjRtIdContainer<PjRtGlobalDeviceId> ids;
+  PjRtIdContainer<GlobalDeviceId> ids;
   ids.reserve(args.num_logical_device_ids);
   for (size_t i = 0; i < args.num_logical_device_ids; ++i) {
-    ids.push_back(
-        PjRtGlobalDeviceId(args.logical_device_of_default_type_ids[i]));
+    ids.push_back(GlobalDeviceId(args.logical_device_of_default_type_ids[i]));
   }
   return ids;
 }
 
-absl::StatusOr<std::pair<PjRtProcessId, int>>
+absl::StatusOr<std::pair<ProcessId, int>>
 PjRtCApiTopologyDescription::ProcessIdAndIndexOnProcessForChip(
-    PjRtGlobalChipId chip_id) const {
+    GlobalChipId chip_id) const {
   if (tpu_topology_extension_ == nullptr) {
     return Unimplemented(
         "ProcessIdAndIndexOnProcessForChip is not supported by the PJRT C "
@@ -4160,12 +4162,12 @@ PjRtCApiTopologyDescription::ProcessIdAndIndexOnProcessForChip(
   args.chip_id = chip_id.value();
   RETURN_STATUS_IF_PJRT_ERROR(
       tpu_topology_extension_->proc_id_and_idx_on_proc_for_chip(&args), c_api_);
-  return std::make_pair(PjRtProcessId(args.process_id), args.index_on_process);
+  return std::make_pair(ProcessId(args.process_id), args.index_on_process);
 }
 
-absl::StatusOr<std::pair<PjRtProcessId, int>> PjRtCApiTopologyDescription::
+absl::StatusOr<std::pair<ProcessId, int>> PjRtCApiTopologyDescription::
     ProcessIdAndIndexOnProcessForLogicalDeviceOfDefaultType(
-        xla::PjRtGlobalDeviceId device_id) const {
+        xla::GlobalDeviceId device_id) const {
   if (tpu_topology_extension_ == nullptr) {
     return Unimplemented(
         "ProcessIdAndIndexOnProcessForLogicalDeviceOfDefaultType is not "
@@ -4179,12 +4181,11 @@ absl::StatusOr<std::pair<PjRtProcessId, int>> PjRtCApiTopologyDescription::
   RETURN_STATUS_IF_PJRT_ERROR(
       tpu_topology_extension_->proc_id_and_idx_on_proc_for_logi_device(&args),
       c_api_);
-  return std::make_pair(PjRtProcessId(args.process_id), args.index_on_process);
+  return std::make_pair(ProcessId(args.process_id), args.index_on_process);
 }
 
 absl::StatusOr<PjRtDeviceDimensions>
-PjRtCApiTopologyDescription::ProcessCoordFromId(
-    PjRtProcessId process_id) const {
+PjRtCApiTopologyDescription::ProcessCoordFromId(ProcessId process_id) const {
   if (tpu_topology_extension_ == nullptr) {
     return Unimplemented(
         "ProcessCoordFromId is not supported by the PJRT C API.");
@@ -4202,7 +4203,7 @@ PjRtCApiTopologyDescription::ProcessCoordFromId(
       absl::MakeSpan(coords.data(), args.coords_num_dims));
 }
 
-absl::StatusOr<PjRtGlobalChipId> PjRtCApiTopologyDescription::ChipIdFromCoord(
+absl::StatusOr<GlobalChipId> PjRtCApiTopologyDescription::ChipIdFromCoord(
     const PjRtDeviceDimensions& chip) const {
   if (tpu_topology_extension_ == nullptr) {
     return Unimplemented("ChipIdFromCoord is not supported by the PJRT C API.");
@@ -4214,10 +4215,10 @@ absl::StatusOr<PjRtGlobalChipId> PjRtCApiTopologyDescription::ChipIdFromCoord(
   args.coords_num_dims = chip.size();
   RETURN_STATUS_IF_PJRT_ERROR(
       tpu_topology_extension_->chip_id_from_coord(&args), c_api_);
-  return PjRtGlobalChipId(args.chip_id);
+  return GlobalChipId(args.chip_id);
 }
 
-absl::StatusOr<xla::PjRtGlobalDeviceId> PjRtCApiTopologyDescription::
+absl::StatusOr<xla::GlobalDeviceId> PjRtCApiTopologyDescription::
     LogicalDeviceOfDefaultTypeIdFromChipCoordAndCoreIndex(
         const PjRtDeviceDimensions& chip, int core_index) const {
   if (tpu_topology_extension_ == nullptr) {
@@ -4239,12 +4240,12 @@ absl::StatusOr<xla::PjRtGlobalDeviceId> PjRtCApiTopologyDescription::
   RETURN_STATUS_IF_PJRT_ERROR(
       tpu_topology_extension_->logical_device_id_from_chip_coord_and_idx(&args),
       c_api_);
-  return PjRtGlobalDeviceId(args.logical_device_of_default_type_id);
+  return GlobalDeviceId(args.logical_device_of_default_type_id);
 }
 
 absl::StatusOr<std::pair<PjRtDeviceDimensions, int32_t>>
 PjRtCApiTopologyDescription::ChipCoordAndCoreIndexForLogicalDeviceOfDefaultType(
-    xla::PjRtGlobalDeviceId device_id) const {
+    xla::GlobalDeviceId device_id) const {
   if (tpu_topology_extension_ == nullptr) {
     return Unimplemented(
         "ChipCoordAndCoreIndexForLogicalDeviceOfDefaultType is not supported "
