@@ -559,7 +559,6 @@ cc_library(
         "//xla/runtime:chip_id",
         "//xla/runtime:device_id",
         "//xla/runtime:process_id",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
     ],
 )
