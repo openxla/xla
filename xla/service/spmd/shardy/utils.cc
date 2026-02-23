@@ -303,59 +303,6 @@ std::string duplicateShardingsAtIndices(
       TensorShardingPerValueAttr::get(context.get(), newShardings));
 }
 
-SmallVector<AxisRefAttr> getOrderedAxisRefs(Attribute shardingOrAxisList,
-                                            MeshAttr mesh) {
-  // We use a map vector to maintain the order of mesh axes.
-  llvm::MapVector<StringRef, SmallVector<int64_t>> axisNameToPreSizes;
-  axisNameToPreSizes.reserve(mesh.getAxes().size());
-  for (MeshAxisAttr meshAxis : mesh.getAxes()) {
-    SmallVector<int64_t>& preSizes = axisNameToPreSizes[meshAxis.getName()];
-    preSizes.push_back(1);
-    preSizes.push_back(meshAxis.getSize());
-  }
-
-  auto consumeAxisRefList = [&](ArrayRef<AxisRefAttr> axisRefs) {
-    for (AxisRefAttr axisRef : axisRefs) {
-      // Add sub-axis pre-sizes to `axisNameToPreSizes`. We'll dedup later.
-      if (axisRef.getSubAxisInfo()) {
-        SmallVector<int64_t>& preSizes = axisNameToPreSizes[axisRef.getName()];
-        preSizes.push_back(axisRef.getSubAxisInfo().getPreSize());
-        preSizes.push_back(axisRef.getSubAxisInfo().getNextPreSize());
-      }
-    }
-  };
-
-  if (auto sharding = mlir::dyn_cast<TensorShardingAttr>(shardingOrAxisList)) {
-    for (DimensionShardingAttr dimSharding : sharding.getDimShardings()) {
-      consumeAxisRefList(dimSharding.getAxes());
-    }
-    consumeAxisRefList(sharding.getUnreducedAxes());
-  } else {
-    consumeAxisRefList(
-        mlir::cast<AxisRefListAttr>(shardingOrAxisList).getValue());
-  }
-
-  SmallVector<AxisRefAttr> axisRefs;
-  mlir::MLIRContext* ctx = mesh.getContext();
-  for (auto& [axisName, preSizes] : axisNameToPreSizes) {
-    if (preSizes.size() == 2) {
-      // Full axis
-      axisRefs.push_back(AxisRefAttr::get(ctx, axisName));
-      continue;
-    }
-    llvm::sort(preSizes);
-    preSizes.erase(llvm::unique(preSizes), preSizes.end());
-    for (int64_t i = 0; i < preSizes.size() - 1; ++i) {
-      int64_t preSize = preSizes[i];
-      int64_t size = preSizes[i + 1] / preSize;
-      axisRefs.push_back(AxisRefAttr::get(
-          ctx, axisName, SubAxisInfoAttr::get(ctx, preSize, size)));
-    }
-  }
-
-  return axisRefs;
-}
-
 namespace {
 
 // Check if the func result is meant for Shardy.
