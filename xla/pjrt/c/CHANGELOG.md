@@ -1,5 +1,9 @@
 # PJRT C API changelog
 
+## 0.94
+
+* Added types S1 and U1.
+
 ## 0.93
 
 * Added `PJRT_Layouts_PJRT_Executable_GetParameterLayouts`. This extension API
