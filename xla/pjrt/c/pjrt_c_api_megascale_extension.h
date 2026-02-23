@@ -30,7 +30,7 @@ extern "C" {
 #define PJRT_API_MEGASCALE_EXTENSION_VERSION 1
 
 typedef struct PJRT_Megascale_ClientContext PJRT_Megascale_ClientContext;
-typedef struct PJRT_Megascale_MultiSliceConfig PJRT_Megascale_MultiSliceConfig;
+typedef struct PJRT_MultiSlice_Config PJRT_MultiSlice_Config;
 typedef struct PJRT_Megascale_NumDevicesPerSlice
     PJRT_Megascale_NumDevicesPerSlice;
 typedef struct PJRT_Megascale_SerializedConfig PJRT_Megascale_SerializedConfig;
@@ -74,7 +74,7 @@ struct PJRT_Megascale_CreateAoTConfig_Args {
   const PJRT_TopologyDescription* topology;
   int32_t num_slices;
 
-  PJRT_Megascale_MultiSliceConfig* multi_slice_config;  // out
+  PJRT_MultiSlice_Config* multi_slice_config;  // out
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Megascale_CreateAoTConfig_Args,
                           multi_slice_config);
@@ -97,7 +97,7 @@ struct PJRT_Megascale_CreateMultiSliceConfig_Args {
   int32_t dcn_topology_size;
   PJRT_Megascale_ClientContext* client_context;
 
-  PJRT_Megascale_MultiSliceConfig* multi_slice_config;  // out
+  PJRT_MultiSlice_Config* multi_slice_config;  // out
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Megascale_CreateMultiSliceConfig_Args,
                           multi_slice_config);
@@ -108,7 +108,7 @@ typedef PJRT_Error* PJRT_Megascale_CreateMultiSliceConfig(
 
 struct PJRT_Megascale_DeleteMultiSliceConfig_Args {
   size_t struct_size;
-  PJRT_Megascale_MultiSliceConfig* multi_slice_config;
+  PJRT_MultiSlice_Config* multi_slice_config;
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Megascale_DeleteMultiSliceConfig_Args,
                           multi_slice_config);
@@ -149,7 +149,7 @@ typedef PJRT_Error* PJRT_Megascale_ClientContext_MegascalePort(
 
 struct PJRT_Megascale_MultiSliceConfig_NumSlices_Args {
   size_t struct_size;
-  PJRT_Megascale_MultiSliceConfig* config;
+  PJRT_MultiSlice_Config* config;
   int32_t num_slices;  // out
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Megascale_MultiSliceConfig_NumSlices_Args,
@@ -159,7 +159,7 @@ typedef PJRT_Error* PJRT_Megascale_MultiSliceConfig_NumSlices(
 
 struct PJRT_Megascale_MultiSliceConfig_SliceId_Args {
   size_t struct_size;
-  PJRT_Megascale_MultiSliceConfig* config;
+  PJRT_MultiSlice_Config* config;
   int32_t slice_id;  // out
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Megascale_MultiSliceConfig_SliceId_Args,
@@ -169,7 +169,7 @@ typedef PJRT_Error* PJRT_Megascale_MultiSliceConfig_SliceId(
 
 struct PJRT_Megascale_MultiSliceConfig_GetNumDevicesPerSlice_Args {
   size_t struct_size;
-  PJRT_Megascale_MultiSliceConfig* config;
+  PJRT_MultiSlice_Config* config;
   size_t num_devices_per_slice_map;                              // out
   const int32_t* slice_ids;                                      // out
   const int32_t* num_devices;                                    // out
@@ -185,7 +185,7 @@ typedef PJRT_Error* PJRT_Megascale_MultiSliceConfig_GetNumDevicesPerSlice(
 
 struct PJRT_Megascale_MultiSliceConfig_Serialize_Args {
   size_t struct_size;
-  PJRT_Megascale_MultiSliceConfig* config;
+  PJRT_MultiSlice_Config* config;
   const char* serialized;                                  // out
   size_t size;                                             // out
   PJRT_Megascale_SerializedConfig* serialized_config_ptr;  // out
