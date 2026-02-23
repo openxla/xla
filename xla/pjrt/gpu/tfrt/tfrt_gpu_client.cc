@@ -42,9 +42,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "unsupported/Eigen/CXX11/Tensor"
 #include "mlir/IR/BuiltinOps.h"
 #include "riegeli/bytes/string_reader.h"
+#include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/local_client.h"
@@ -109,6 +109,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
@@ -118,7 +119,6 @@ limitations under the License.
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/unbounded_work_queue.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
@@ -141,21 +141,12 @@ class UnboundedAsyncWorkRunner : public AsyncWorkRunner {
   explicit UnboundedAsyncWorkRunner(const std::string& name)
       : queue_(tsl::Env::Default(), name, {/*stack_size=*/512 * 1024}) {}
 
-  void Schedule(absl::AnyInvocable<void() &&> work) override {
-    // TSL TheadPool expects std::function that must be copyable, so we are
+  void Execute(Task task) final {
+    // UnboundedWorkQueue expects std::function that must be copyable, so we are
     // forced to do a little bit of manual memory management here.
-    queue_.Schedule(
-        [ptr = new absl::AnyInvocable<void() &&>(std::move(work))]() {
-          std::move (*ptr)();
-          delete ptr;
-        });
-  }
-
-  void ScheduleWhenReady(
-      absl::Span<const tsl::RCReference<tsl::AsyncValue>> values,
-      absl::AnyInvocable<void() &&> work) override {
-    tsl::RunWhenReady(values, [this, work = std::move(work)]() mutable {
-      Schedule([work = std::move(work)]() mutable { std::move(work)(); });
+    queue_.Schedule([ptr = new Task(std::move(task))] {
+      std::move (*ptr)();
+      delete ptr;
     });
   }
 
