@@ -579,6 +579,7 @@ message StackFrameIndexProto {
 }
 
 // Serialization of HloModule.
+// Next ID: 22
 message HloModuleProto {
   string name = 1;
   string entry_computation_name = 2;
@@ -661,6 +662,9 @@ message HloModuleProto {
   xla.FrontendAttributes frontend_attributes = 19;
 
   xla.OriginalValueRecoveryTableProto original_value_recovery_table = 20;
+
+  // The type of the device that the module is targeted for.
+  string device_type = 21;
 
   reserved 9;
   reserved "dynamic_parameter_binding";
