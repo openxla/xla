@@ -343,6 +343,7 @@ absl::StatusOr<void*> HostAllocate(SyclContext* context, int device_ordinal,
                                    uint64_t bytes) {
   TF_ASSIGN_OR_RETURN(void* host_mem, SyclMallocHost(device_ordinal, bytes));
   if (host_mem == nullptr) {
+    // Allocation failed, possibly due to out-of-memory.
     return absl::InternalError(
         absl::StrFormat("HostAllocate: failed to allocate %u bytes of host "
                         "memory for device ordinal %d.",
