@@ -896,7 +896,8 @@ absl::Status CommonPjRtLoadedExecutable::ExecutePrepare(
       options, argument_handles, ParametersThatMustBeDonated(),
       *launch_args.extra_deps, *launch_args.control_deps,
       launch_args.input_buffers, launch_args.device_buffers, device, replica,
-      partition, parameter_device_shapes_, is_error));
+      partition, parameter_device_shapes_, is_error,
+      client()->allow_fallback_for_donation()));
 
   absl::InlinedVector<tsl::RCReference<CommonPjRtRawBuffer>, 4>
       output_leaf_buffers;
@@ -954,8 +955,9 @@ absl::Status CommonPjRtLoadedExecutable::CheckBufferCompatibilities(
   return absl::OkStatus();
 }
 
-PjRtLoadedExecutable::Result CommonPjRtLoadedExecutable::ExecuteLaunch(
-    ExecuteLaunchArgs& launch_args, bool fill_future) const {
+absl::StatusOr<PjRtLoadedExecutable::Result>
+CommonPjRtLoadedExecutable::ExecuteLaunch(ExecuteLaunchArgs& launch_args,
+                                          bool fill_future) const {
   CHECK(launch_args.extra_deps.get()) << "extra_deps is nullptr";
   CHECK(launch_args.control_deps.get()) << "control_deps is nullptr";
   auto results =
@@ -976,6 +978,9 @@ PjRtLoadedExecutable::Result CommonPjRtLoadedExecutable::ExecuteLaunch(
       }
     }
   }
+
+  TF_RETURN_IF_ERROR(results.inline_status);
+
   return PjRtLoadedExecutable::Result(
       {/*future=*/std::move(results.future),
        /*buffers=*/client()->CreateOutputs(

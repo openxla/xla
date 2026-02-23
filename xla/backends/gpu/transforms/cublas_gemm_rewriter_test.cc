@@ -2212,6 +2212,62 @@ ENTRY test {
       )");
 }
 
+// Test Swish/SILU activation with bitcast - expects no-fusion when there are
+// additional users beyond the Swish pattern
+TEST_F(CublasLtGemmRewriteTest, SwishActivationWithBitcastAndAuxiliaryOutput) {
+  auto runtime_version = GetRuntimeVersion();
+  bool rocm_swish_available =
+      IsRocm() &&
+      (runtime_version >= stream_executor::SemanticVersion(7, 0, 0));
+  if (!rocm_swish_available) {
+    GTEST_SKIP() << "Swish/SILU activation fusion only available on ROCm 7.0+";
+  }
+
+  const char* hlo_text = R"(
+HloModule test
+
+ENTRY test (x: bf16[49152,11008], y: bf16[11008,11008]) -> (bf16[12,4096,11008], bf16[49152,11008]) {
+  x = bf16[49152,11008]{1,0} parameter(0)
+  y = bf16[11008,11008]{1,0} parameter(1)
+  dot = bf16[49152,11008]{1,0} dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  bitcast = bf16[12,4096,11008]{2,1,0} bitcast(dot)
+  
+  one = bf16[] constant(1)
+  one_bcast = bf16[12,4096,11008]{2,1,0} broadcast(one), dimensions={}
+  neg = bf16[12,4096,11008]{2,1,0} negate(bitcast)
+  exp = bf16[12,4096,11008]{2,1,0} exponential(neg)
+  add = bf16[12,4096,11008]{2,1,0} add(exp, one_bcast)
+  sigmoid = bf16[12,4096,11008]{2,1,0} divide(one_bcast, add)
+  swish = bf16[12,4096,11008]{2,1,0} multiply(bitcast, sigmoid)
+  
+  extra_user = bf16[49152,11008]{1,0} negate(dot)
+  
+  ROOT out = (bf16[12,4096,11008]{2,1,0}, bf16[49152,11008]{1,0}) tuple(swish, extra_user)
+}
+)";
+
+  HloModuleConfig config;
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  config.set_debug_options(debug_options);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
+
+  GemmRewriterOptions options;
+  options.enable_cublaslt = true;
+  GemmRewriter pass(Capability(), GetToolkitVersion(), options);
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
+  EXPECT_TRUE(changed);
+
+  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_result,
+                          RunFileCheck(module->ToString(), R"(
+; CHECK:           [[GEMM_TUPLE:%[^ ]+]] = {{.*}} custom-call
+; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK-DAG:         "epilogue":"DEFAULT"
+      )"));
+  EXPECT_TRUE(filecheck_result);
+}
+
 TEST_F(CublasLtGemmRewriteTest, VectorBiasThenApproxGeluActivation) {
   auto runtime_version = GetRuntimeVersion();
   bool rocm_gelu_available =

@@ -1176,6 +1176,7 @@ cc_library(
     srcs = ["collective_ops_e2e_test_base.cc"],
     hdrs = ["collective_ops_e2e_test_base.h"],
     deps = [
+        ":hlo_pjrt_gpu_test_base",
         "//xla:literal",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/target_config",
@@ -1226,6 +1227,8 @@ xla_test(
         "//xla:literal_util",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_runner_interface",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream",
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
@@ -1234,5 +1237,6 @@ xla_test(
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
     ],
 )

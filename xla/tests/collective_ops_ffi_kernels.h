@@ -55,6 +55,16 @@ struct MultimemAllReduce {
                       size_t>;                                   // count
 };
 
+// Trivial peer all-reduce for U32 data type without any barriers,
+// the kernel assumes that data is ready when it is launched.
+struct Peer2AllReduce {
+  using KernelType =
+      se::TypedKernel<stream_executor::DeviceAddress<uint32_t>,  // src0
+                      stream_executor::DeviceAddress<uint32_t>,  // src1
+                      stream_executor::DeviceAddress<uint32_t>,  // dst
+                      size_t>;                                   // count
+};
+
 }  // namespace xla::gpu
 
 #endif  // XLA_TESTS_COLLECTIVE_OPS_FFI_KERNELS_H_

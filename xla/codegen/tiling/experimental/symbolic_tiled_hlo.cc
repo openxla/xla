@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/STLExtras.h"
 #include "xla/codegen/tiling/experimental/symbolic_tile.h"
 
 namespace xla::gpu::experimental {
@@ -27,7 +28,16 @@ std::string SymbolicTiledHloInstruction::ToString(
     absl::string_view field_separator) const {
   std::stringstream ss;
   ss << "hlo: " << hlo_->ToString() << field_separator;
-  ss << "tile: " << symbolic_tile().ToString() << field_separator;
+  ss << "tile: " << symbolic_tile().ToString();
+  if (!regions_.empty()) {
+    for (const auto& [index, region] : llvm::enumerate(regions_)) {
+      ss << field_separator << "region #" << index << " {";
+      for (const auto& instruction : region) {
+        ss << field_separator << instruction->ToString(field_separator);
+      }
+      ss << field_separator << "}";
+    }
+  }
   return ss.str();
 }
 

@@ -73,6 +73,7 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/raw_buffer.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/gpu_topology.pb.h"
 #include "xla/service/platform_util.h"
@@ -1124,9 +1125,8 @@ TEST_F(TfrtGpuClientTest, LookupDevice) {
   ASSERT_GE(client_->devices().size(), 2);
   TfrtGpuDevice* device =
       absl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto* looked_up_device,
-      client_->LookupDevice(PjRtGlobalDeviceId(device->id())));
+  TF_ASSERT_OK_AND_ASSIGN(auto* looked_up_device,
+                          client_->LookupDevice(GlobalDeviceId(device->id())));
   EXPECT_EQ(looked_up_device, device);
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -1668,8 +1668,8 @@ TEST(TfrtGpuClientWithOptionsTest, DeviceAttributes) {
         client->addressable_devices()[device_index]);
 
     // Attribute `compute_capability`.
-    auto compute_capability =
-        std::get<std::string>(device->Attributes().at("compute_capability"));
+    auto compute_capability = std::get<std::string>(
+        device->description().Attributes().at("compute_capability"));
 
     // Gets the expected compute capability.
     const se::Platform* platform = device->executor()->GetPlatform();
@@ -1687,17 +1687,18 @@ TEST(TfrtGpuClientWithOptionsTest, DeviceAttributes) {
                 ElementsAre(0, 0, device->local_device_id().value()));
 
     // Attribute `device_vendor`.
-    auto device_vendor =
-        std::get<std::string>(device->Attributes().at("device_vendor"));
+    auto device_vendor = std::get<std::string>(
+        device->description().Attributes().at("device_vendor"));
     EXPECT_EQ(device_vendor, desc->device_vendor());
 
     // Attribute `partition_index`.
-    auto partition_index =
-        std::get<int64_t>(device->Attributes().at("partition_index"));
+    auto partition_index = std::get<int64_t>(
+        device->description().Attributes().at("partition_index"));
     EXPECT_EQ(partition_index, 0);
 
     // Attribute `core_count`.
-    auto core_count = std::get<int64_t>(device->Attributes().at("core_count"));
+    auto core_count =
+        std::get<int64_t>(device->description().Attributes().at("core_count"));
     EXPECT_EQ(core_count, desc->core_count());
   }
 }

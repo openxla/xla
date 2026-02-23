@@ -34,6 +34,8 @@ namespace xla::gpu::experimental {
 class SymbolicTiledComputation;
 using SymbolicTileAnalysisOrError =
     std::variant<SymbolicTiledComputation, FusionDecision>;
+using SymbolicTiledHloRegionOrError =
+    std::variant<SymbolicTiledHloInstruction::Region, FusionDecision>;
 
 // Constructs and holds symbolic tiles for all the instructions within a fusion.
 class SymbolicTiledComputation {
@@ -68,6 +70,10 @@ class SymbolicTiledComputation {
           tiled_hlo_instructions)
       : tiling_space_(std::move(tiling_space)),
         tiled_hlo_instructions_(std::move(tiled_hlo_instructions)) {}
+
+  static SymbolicTiledHloRegionOrError CreateRegion(
+      std::unique_ptr<SymbolicTiledHloInstruction> tiled_root,
+      const HloFusionAdaptor& fusion, const TilingSpace& tiling_space);
 
   std::unique_ptr<TilingSpace> tiling_space_;
   // The tiled HLO instructions in def-before-use order.

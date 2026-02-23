@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -26,6 +27,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/algorithm/container.h"
+#include "absl/base/no_destructor.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -69,6 +72,7 @@ limitations under the License.
 #include "xla/map_util.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/runtime/device_id.h"
+#include "xla/runtime/hang_watchdog.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
@@ -108,6 +112,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
@@ -123,6 +128,12 @@ namespace xla {
 namespace gpu {
 
 namespace {
+
+HangWatchdog& StaticHangWatchDog() {
+  static absl::NoDestructor<HangWatchdog> watchdog(tsl::Env::Default(),
+                                                   "gpu-executable");
+  return *watchdog;
+}
 
 // Chooses the correct allocations to be used within the GpuExecutable code.
 std::vector<const BufferAllocation*> GatherAllocationPtrs(
@@ -186,7 +197,7 @@ using ::tsl::profiler::ScopedAnnotation;
 static absl::flat_hash_set<ExecutionStreamId> GetExecutionStreamIds(
     const SequentialThunk& thunks) {
   absl::flat_hash_set<ExecutionStreamId> stream_ids;
-  thunks.ForAllThunks([&](const Thunk* thunk) {
+  thunks.Walk([&](const Thunk* thunk) {
     if (thunk->execution_stream_id() > 0) {
       stream_ids.insert(thunk->execution_stream_id());
     }
@@ -211,8 +222,9 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
   if ((debug_options.xla_gpu_detect_nan() !=
        DebugOptions::DETECTION_MODE_NONE) ||
       (debug_options.xla_gpu_detect_inf() !=
-       DebugOptions::DETECTION_MODE_NONE)) {
-    LOG(ERROR) << "Adding ThunkBufferDebugPass for nan/inf checking";
+       DebugOptions::DETECTION_MODE_NONE) ||
+      debug_options.xla_gpu_log_minmax()) {
+    LOG(ERROR) << "Adding ThunkBufferDebugPass for nan/inf/minmax checking";
     pipeline.AddPass(std::make_unique<ThunkBufferDebugPass>(
         ThunkBufferDebugPass::Mode::kFloatChecker));
   }
@@ -365,11 +377,13 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
                                  se::Stream* stream_to_sync);
 
 absl::Status RendezvousAfterInitialization(
-    const ServiceExecutableRunOptions* run_options,
-    const DebugOptions* debug_options);
+    const ServiceExecutableRunOptions& run_options,
+    const DebugOptions* absl_nullable debug_options);
 
-absl::Status BarrierAfterExecutable(const DebugOptions* debug_options,
-                                    se::Stream* stream_to_sync);
+absl::Status BarrierAfterExecutable(
+    const ServiceExecutableRunOptions& run_options,
+    const DebugOptions* absl_nullable debug_options, se::Stream& stream_to_sync,
+    size_t num_participants);
 
 absl::Status ExecuteThunksImpl(
     const DebugOptions* debug_options, const std::string& module_name,
@@ -405,6 +419,25 @@ absl::Status ExecuteThunksImpl(
   }
   if (use_highest_priority_for_async_stream) {
     stream_priority = stream_executor::StreamPriority::Highest;
+  }
+
+  // Maybe add a watch guard for this execution.
+  absl::Duration watchdog_timeout = absl::InfiniteDuration();
+  if (debug_options &&
+      !debug_options->xla_gpu_execution_terminate_timeout().empty()) {
+    TF_RET_CHECK(absl::ParseDuration(
+        debug_options->xla_gpu_execution_terminate_timeout(),
+        &watchdog_timeout))
+        << "Failed to parse XLA execution terminate timeout";
+  }
+
+  std::shared_ptr<HangWatchdog::Guard> guard = nullptr;
+  if (watchdog_timeout < absl::InfiniteDuration()) {
+    std::string watchdog_name = absl::StrFormat(
+        "[%d] XLA GPU execution `%s`", executor->device_ordinal(), module_name);
+    guard = StaticHangWatchDog().Watch(
+        watchdog_name, watchdog_timeout,
+        HangWatchdog::Abort(watchdog_name, watchdog_timeout));
   }
 
   // Borrow streams required for CollectiveThunk.
@@ -465,6 +498,9 @@ absl::Status ExecuteThunksImpl(
                                           profile->warmup_run_executed()));
   }
 
+  // A state container for this execution.
+  Thunk::ExecutionScopedState execution_scoped_state;
+
   // Parameters for executing collective operations.
   ASSIGN_OR_RETURN(CollectiveParams collective_params,
                    CollectiveParams::Create(
@@ -483,7 +519,8 @@ absl::Status ExecuteThunksImpl(
                                         &collective_memory_requests,
                                         &multimem_registry,
                                         executor,
-                                        &buffer_allocations};
+                                        &buffer_allocations,
+                                        &execution_scoped_state};
 
     tsl::profiler::TraceMe trace_prepare("Thunks::Prepare");
     RETURN_IF_ERROR(thunk_sequence.Prepare(prepare_params));
@@ -533,7 +570,8 @@ absl::Status ExecuteThunksImpl(
         &collective_memory,
         &multimem_registry,
         run_options->run_options().ffi_execution_context(),
-        run_options->local_device_count()};
+        run_options->local_device_count(),
+        &execution_scoped_state};
 
     tsl::profiler::TraceMe trace_initialize("Thunks::Initialize");
     RETURN_IF_ERROR(thunk_sequence.Initialize(initialize_params));
@@ -545,14 +583,15 @@ absl::Status ExecuteThunksImpl(
   // deadlocks if we try to execute it concurrently with other potentially
   // memory-allocating operations.
   if (!collective_cliques.empty()) {
-    RETURN_IF_ERROR(RendezvousAfterInitialization(run_options, debug_options));
+    RETURN_IF_ERROR(RendezvousAfterInitialization(*run_options, debug_options));
   }
 
   // Prepare parameters for thunks execution.
   Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
       *run_options, buffer_allocations, main_stream,
       command_buffer_trace_stream, &collective_params, &collective_cliques,
-      &collective_memory, std::move(additional_execution_streams));
+      &collective_memory, std::move(additional_execution_streams),
+      &execution_scoped_state);
 
   XLA_VLOG_DEVICE(1, run_options->device_ordinal())
       << "Start GpuExecutable::ExecuteOnStream module: " << module_name;
@@ -560,9 +599,25 @@ absl::Status ExecuteThunksImpl(
   XLA_VLOG_DEVICE(1, run_options->device_ordinal())
       << "End GpuExecutable::ExecuteOnStream module: " << module_name;
 
-  if (collective_params.need_barrier) {
-    RETURN_IF_ERROR(BarrierAfterExecutable(debug_options, main_stream));
+  // Collective kernel thunks may request a barrier after the module execution.
+  // This might be needed for several reasons:
+  // 1. To make sure that at the end of graph execution all reads and writes to
+  //    the symmetric buffers are finished.
+  // 2. To make sure that cuda module which uses a multimem handler used by
+  //    another GPU will be unloaded only after all kernels are finished.
+  //    Otherwise module unloading can cause a deadlock.
+  absl::flat_hash_set<GlobalDeviceId> requested_barrier_devices =
+      collective_clique_requests.GetDevicesRequiringBarrier();
+  if (absl::c_linear_search(requested_barrier_devices,
+                            collective_params.global_device_id.value())) {
+    XLA_VLOG_DEVICE(1, collective_params.global_device_id.value())
+        << "Barrier after executable required by participants: ("
+        << absl::StrJoin(requested_barrier_devices, ", ") << ")";
+    RETURN_IF_ERROR(BarrierAfterExecutable(*run_options, debug_options,
+                                           *main_stream,
+                                           requested_barrier_devices.size()));
   }
+
   return MaybeSyncAndProfile(run_options, execution_timer.get(),
                              block_host_until_done ? main_stream : nullptr);
 }
@@ -585,20 +640,22 @@ bool operator==(const InitializationKey& a, const InitializationKey& b) {
 }  // namespace
 
 absl::Status RendezvousAfterInitialization(
-    const ServiceExecutableRunOptions* run_options,
-    const DebugOptions* debug_options) {
+    const ServiceExecutableRunOptions& run_options,
+    const DebugOptions* absl_nullable debug_options) {
   // Thunk initialization can allocate new control data structures on device
   // that can lead to deadlocks if other replicas are executing concurrently
   // (i.e. this happens if we try to instantiate CUDA graph when other replica
   // is executing NCCL kernels). If we detect that we are running in multi-gpu
   // setup we synchronize after first initialization to make sure that all
   // replicas completed initialization process before we start execution.
-  auto* gpu_opts = run_options->run_options().gpu_executable_run_options();
-  auto* device_assn = run_options->run_options().device_assignment();
+  auto* gpu_opts = run_options.run_options().gpu_executable_run_options();
+  auto* device_assn = run_options.run_options().device_assignment();
 
   // If we don't have Gpu executable options or device assignment it means we
   // are running in a single Gpu config and don't need a rendezvous.
-  if (!gpu_opts || !device_assn) return absl::OkStatus();
+  if (!gpu_opts || !device_assn) {
+    return absl::OkStatus();
+  }
 
   // Assume that all participants execute locally first, if we have a local
   // device id to global device id map we will use it to get the real number of
@@ -621,22 +678,21 @@ absl::Status RendezvousAfterInitialization(
     }
   }
 
-  VLOG(1) << "Join thunks initialization rendezvous with "
+  VLOG(1) << absl::StrFormat("Join thunks initialization rendezvous with ")
           << num_local_participants << " local participants"
-          << "; device_ordinal=" << run_options->device_ordinal();
+          << "; device_ordinal=" << run_options.device_ordinal();
 
   tsl::profiler::TraceMe trace([&] {
     return tsl::profiler::TraceMeEncode(
         "RendezvousAfterInitialization",
-        {{"run_id", run_options->run_options().run_id().ToInt()},
+        {{"run_id", run_options.run_options().run_id().ToInt()},
          {"num_local_participants", num_local_participants}});
   });
 
-  auto rendezvous_key = InitializationKey{run_options->run_options().run_id()};
+  auto rendezvous_key = InitializationKey{run_options.run_options().run_id()};
   auto rendezvous_name = absl::StrFormat(
       "thunk initialization completion for device ordinal %d; run_id=%d",
-      run_options->device_ordinal(),
-      run_options->run_options().run_id().ToInt());
+      run_options.device_ordinal(), run_options.run_options().run_id().ToInt());
 
   return Rendezvous(
       rendezvous_name, rendezvous_key, num_local_participants,
@@ -680,14 +736,50 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
   return absl::OkStatus();
 }
 
-absl::Status BarrierAfterExecutable(const DebugOptions* debug_options,
-                                    se::Stream* stream) {
-  if (debug_options->xla_gpu_experimental_enable_nvshmem()) {
+absl::Status BarrierAfterExecutable(
+    const ServiceExecutableRunOptions& run_options,
+    const DebugOptions* absl_nullable debug_options, se::Stream& stream,
+    const size_t num_participants) {
+  if (debug_options != nullptr &&
+      debug_options->xla_gpu_experimental_enable_nvshmem()) {
     ASSIGN_OR_RETURN(auto* collectives, GetNvshmemCollectivesFromRegistry());
     ASSIGN_OR_RETURN(std::unique_ptr<Communicator> nvshmem_comm,
                      collectives->CreateCommunicator());
 
-    RETURN_IF_ERROR(nvshmem_comm->Barrier(GpuCollectives::On(*stream)));
+    RETURN_IF_ERROR(nvshmem_comm->Barrier(GpuCollectives::On(stream)));
+  } else {
+    RETURN_IF_ERROR(stream.BlockHostUntilDone());
+
+    VLOG(1)
+        << absl::StrFormat(
+               "Join thunks in barrier after module execution rendezvous with ")
+        << num_participants << " local participants"
+        << "; device_ordinal=" << run_options.device_ordinal();
+
+    tsl::profiler::TraceMe trace([&] {
+      return tsl::profiler::TraceMeEncode(
+          "RendezvousAfterExecution",
+          {{"run_id", run_options.run_options().run_id().ToInt()},
+           {"num_local_participants", num_participants}});
+    });
+
+    auto rendezvous_key = InitializationKey{run_options.run_options().run_id()};
+    auto rendezvous_name = absl::StrFormat(
+        "thunk barrier after module execution completion for device ordinal "
+        "%d; run_id=%d",
+        run_options.device_ordinal(),
+        run_options.run_options().run_id().ToInt());
+
+    return Rendezvous(
+        rendezvous_name, rendezvous_key, num_participants,
+        absl::Seconds(
+            debug_options
+                ? debug_options->xla_gpu_executable_warn_stuck_timeout_seconds()
+                : 10),
+        absl::Seconds(
+            debug_options
+                ? debug_options->xla_gpu_executable_terminate_timeout_seconds()
+                : 30));
   }
   return absl::OkStatus();
 }

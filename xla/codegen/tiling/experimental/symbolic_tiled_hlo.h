@@ -17,10 +17,13 @@ limitations under the License.
 #define XLA_CODEGEN_TILING_EXPERIMENTAL_SYMBOLIC_TILED_HLO_H_
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
 #include "xla/codegen/tiling/experimental/symbolic_tile.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -66,6 +69,16 @@ class SymbolicTiledHloInstruction {
     sink.Append(tiled_hlo.ToString());
   }
 
+  // A region is a collection of instructions grouped to represent a nested
+  // control flow (e.g., loops) or a distinct computation branch.
+  using Region = std::vector<std::unique_ptr<SymbolicTiledHloInstruction>>;
+
+  // Returns the regions of the instruction.
+  absl::Span<const Region> regions() const { return regions_; }
+
+  // Adds a region to the instruction. The region is owned by the instruction.
+  void AddRegion(Region region) { regions_.push_back(std::move(region)); }
+
  private:
   // Pointer to the original HLO instruction.
   const HloInstruction* hlo_;
@@ -75,6 +88,9 @@ class SymbolicTiledHloInstruction {
 
   // Operands of the instruction in the tiled computation graph.
   llvm::SmallVector<const SymbolicTiledHloInstruction*, 2> operands_;
+
+  // Regions of the instruction.
+  llvm::SmallVector<Region> regions_;
 };
 
 inline bool operator==(const SymbolicTiledHloInstruction& lhs,

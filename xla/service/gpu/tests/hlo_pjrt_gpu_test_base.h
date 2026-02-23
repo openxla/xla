@@ -33,9 +33,14 @@ class HloPjRtGpuTestBase : public HloRunnerAgnosticTestBase,
  protected:
   explicit HloPjRtGpuTestBase(HloPjRtTestBaseOptions options = {});
 
+  explicit HloPjRtGpuTestBase(std::unique_ptr<PjRtClient> client)
+      : HloPjRtGpuTestBase(client.release(), HloPjRtTestBaseOptions()) {}
+
   const GpuTargetConfig& gpu_target_config() const override {
     return gpu_target_config_;
   }
+
+  int device_count() const { return test_runner().device_count(); }
 
   const stream_executor::DeviceDescription& device_description()
       const override {

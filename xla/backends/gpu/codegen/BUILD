@@ -96,6 +96,7 @@ xla_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/gpu/transforms:cudnn_fusion_compiler",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
@@ -202,6 +203,11 @@ xla_test(
         {},
     ),
     backend_tags = {
+        "h100": [
+            "full",
+            "multi_gpu",
+            "no_oss",
+        ],
         "gpu": [
             "multi_gpu",
             "no_oss",
@@ -247,6 +253,7 @@ xla_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
@@ -264,6 +271,7 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla:status_macros",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/codegen/emitters:kernel_api_builder",
         "//xla/codegen/emitters:kernel_arguments",
