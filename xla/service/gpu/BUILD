@@ -764,6 +764,7 @@ cc_library(
         "//xla/tsl/platform:status_macros",
         "//xla/util/split_proto:split_executable_and_options_writer",
         "//xla/util/split_proto:split_gpu_executable_writer",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/base:nullability",
