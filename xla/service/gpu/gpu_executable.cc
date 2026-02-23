@@ -1180,8 +1180,10 @@ absl::Status GpuExecutable::ExecuteThunks(
     const BufferAllocations& buffer_allocations,
     const ServiceExecutableRunOptions* run_options) {
   tsl::profiler::TraceMe trace([&] {
-    return tsl::profiler::TraceMeEncode("GpuExecutable::ExecuteThunks",
-                                        {{"module_name", module_name_}});
+    return tsl::profiler::TraceMeEncode(
+        absl::StrFormat("[%d] GpuExecutable::ExecuteThunks",
+                        run_options->device_ordinal()),
+        {{"module_name", module_name_}});
   });
 
   if (VLOG_IS_ON(5)) {
