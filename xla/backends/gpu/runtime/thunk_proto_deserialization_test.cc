@@ -870,11 +870,26 @@ TEST(ThunkProtoDeserializationTest, CublasLtGroupedMatmulThunk) {
           }
           epilogue: EPILOGUE_DEFAULT
           canonical_hlo: "(f32[101,400]{1,0}, s8[33554432]{0}) custom-call(f32[101,407]{1,0}, f32[2, 407,400]{1,0}, s32[2]{0}), custom_call_target=\"__cublas$lt$groupedMatmul backend_config={\"operation_queue_id\":\"0\",\"wait_on_operation_queues\":[], \"force_earliest_schedule\":false,\"reification_cost\":[], \"device_type\":\"DEVICE_TYPE_INVALID\", \"grouped_gemm_backend_config\":{\"gemm_backend_config\":{\"alpha_real\":1,\"beta\":0,\"dot_dimension_numbers\":{\"lhs_contracting_dimensions\":[\"1\"],\"rhs_contracting_dimensions\":[\"1\"],\"lhs_batch_dimensions\":[],\"rhs_batch_dimensions\":[]},\"alpha_imag\":0,\"epilogue\":\"DEFAULT\",\"grad_x\":false,\"grad_y\":false,\"damax_output\":false},\"ragged_dot_dimension_numbers\":{\"dot_dimension_numbers\":{\"lhs_contracting_dimensions\":[\"1\"],\"rhs_contracting_dimensions\":[\"1\"],\"lhs_batch_dimensions\":[],\"rhs_batch_dimensions\":[]},\"lhs_ragged_dimensions\":[\"0\"],\"rhs_group_dimensions\":[\"0\"]}}})"
-          a { size: 164428 buffer_allocation_index: 3 }
-          b { size: 1302400 buffer_allocation_index: 4 }
-          c { size: 161600 buffer_allocation_index: 5 }
-          d { size: 161600 buffer_allocation_index: 5 }
-          group_sizes { size: 8 buffer_allocation_index: 6 }
+          a {
+            slice { size: 164428 buffer_allocation_index: 3 }
+            shape { element_type: F32 }
+          }
+          b {
+            slice { size: 1302400 buffer_allocation_index: 4 }
+            shape { element_type: F32 }
+          }
+          c {
+            slice { size: 161600 buffer_allocation_index: 5 }
+            shape { element_type: F32 }
+          }
+          d {
+            slice { size: 161600 buffer_allocation_index: 5 }
+            shape { element_type: F32 }
+          }
+          group_sizes {
+            slice { size: 8 buffer_allocation_index: 6 }
+            shape { element_type: S32 }
+          }
         }
       )pb");
 
@@ -888,8 +903,10 @@ TEST(ThunkProtoDeserializationTest, CublasLtGroupedMatmulThunk) {
       BufferAllocation(/*index=*/6, /*size=*/8, /*color=*/0),
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Thunk> thunk,
-                          DeserializeThunkProto(proto, allocations));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Thunk> thunk,
+      DeserializeThunkProto(proto, allocations, /*hlo_module=*/nullptr,
+                            kTestPlatformName, se::GpuComputeCapability()));
   TF_ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }

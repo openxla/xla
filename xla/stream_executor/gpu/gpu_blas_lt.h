@@ -236,11 +236,21 @@ struct BlasLt {
       // Temporary hack until Tensorflow side is fixed
       TF_RETURN_IF_ERROR(
           const_cast<MatmulPlan*>(this)->SetAlgorithm(algorithm));
-      return ExecuteOnStream(
-          stream,
-          MemoryArgs{a, b, c, d, bias, aux, a_scale, b_scale, c_scale, d_scale,
-                     d_amax, DeviceAddressBase{}, &scratch_allocator},
-          profile_result);
+      return ExecuteOnStream(stream,
+                             MemoryArgs{a,
+                                        b,
+                                        c,
+                                        d,
+                                        bias,
+                                        aux,
+                                        a_scale,
+                                        b_scale,
+                                        c_scale,
+                                        d_scale,
+                                        {d_amax},
+                                        DeviceAddressBase{},
+                                        &scratch_allocator},
+                             profile_result);
     }
 
     // API that uses scratch_allocator to allocate workspace.
@@ -254,11 +264,21 @@ struct BlasLt {
         DeviceAddressBase c_scale, DeviceAddressBase d_scale,
         DeviceAddressBase d_amax, ScratchAllocator& scratch_allocator,
         blas::ProfileResult* profile_result = nullptr) const {
-      return ExecuteOnStream(
-          stream,
-          MemoryArgs{a, b, c, d, bias, aux, a_scale, b_scale, c_scale, d_scale,
-                     d_amax, DeviceAddressBase{}, &scratch_allocator},
-          profile_result);
+      return ExecuteOnStream(stream,
+                             MemoryArgs{a,
+                                        b,
+                                        c,
+                                        d,
+                                        bias,
+                                        aux,
+                                        a_scale,
+                                        b_scale,
+                                        c_scale,
+                                        d_scale,
+                                        {d_amax},
+                                        DeviceAddressBase{},
+                                        &scratch_allocator},
+                             profile_result);
     }
 
     // API that uses pre-allocated buffer as workspace (regular matmul).
@@ -271,11 +291,21 @@ struct BlasLt {
         DeviceAddressBase c_scale, DeviceAddressBase d_scale,
         DeviceAddressBase d_amax, DeviceAddressBase workspace,
         blas::ProfileResult* profile_result = nullptr) const {
-      return ExecuteOnStream(
-          stream,
-          MemoryArgs{a, b, c, d, bias, aux, a_scale, b_scale, c_scale, d_scale,
-                     d_amax, workspace, nullptr},
-          profile_result);
+      return ExecuteOnStream(stream,
+                             MemoryArgs{a,
+                                        b,
+                                        c,
+                                        d,
+                                        bias,
+                                        aux,
+                                        a_scale,
+                                        b_scale,
+                                        c_scale,
+                                        d_scale,
+                                        {d_amax},
+                                        workspace,
+                                        nullptr},
+                             profile_result);
     }
 
     // API that uses pre-allocated buffer as workspace (grouped matmul).
@@ -288,11 +318,21 @@ struct BlasLt {
         DeviceMemoryBase c_scale, DeviceMemoryBase d_scale,
         DeviceMemoryBase d_amax, DeviceMemoryBase workspace,
         blas::ProfileResult* profile_result = nullptr) const {
-      return ExecuteOnStream(
-          stream,
-          MemoryArgs{a, b, c, d, bias, aux, a_scale, b_scale, c_scale, d_scale,
-                     group_sizes, workspace, nullptr},
-          profile_result);
+      return ExecuteOnStream(stream,
+                             MemoryArgs{a,
+                                        b,
+                                        c,
+                                        d,
+                                        bias,
+                                        aux,
+                                        a_scale,
+                                        b_scale,
+                                        c_scale,
+                                        d_scale,
+                                        {group_sizes},
+                                        workspace,
+                                        nullptr},
+                             profile_result);
     }
 
     // The most general form: to be implemented by derived clases.

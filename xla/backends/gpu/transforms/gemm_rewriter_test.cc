@@ -56,6 +56,8 @@ namespace {
 
 namespace m = ::xla::match;
 
+using GemmRewriteTest = GemmRewriteTestBase;
+
 TEST_F(GemmRewriteTest, CheckCustomCallTarget) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";

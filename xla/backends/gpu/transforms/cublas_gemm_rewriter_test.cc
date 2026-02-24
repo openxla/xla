@@ -3586,12 +3586,16 @@ class GroupedGemmRewriteTest : public GemmRewriteTest {
     debug_options.set_xla_gpu_autotune_level(0);
     return debug_options;
   }
+
+ protected:
+  void SetUp() override {
+    if (SkipGroupedGemmTest()) {
+      GTEST_SKIP() << "Grouped GEMM is only supported on ROCm with hipBLASLt";
+    }
+  }
 };
 
 TEST_F(GroupedGemmRewriteTest, CheckCustomCallTargetGroupedGemm) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -3629,9 +3633,6 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(GroupedGemmRewriteTest,
        CheckCustomCallTargetGroupedGemmLargeGroupCount600) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   // Test with 600 groups (> 256) to test single batch processing in grid-stride
   // loop Sum of group sizes: 600 * 4 = 2400 (matches p0 first dim)
   const char* hlo_text = R"(
@@ -3651,9 +3652,6 @@ ENTRY AddRaggedDotsFunc {
 }
 
 TEST_F(GroupedGemmRewriteTest, CheckCustomCallTargetGroupedGemmMulipleGroups) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -3700,9 +3698,6 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(GroupedGemmRewriteTest,
        CheckCustomCallTargetGroupedGemmMulipleGroupsOutputColumnMajor) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -3740,9 +3735,6 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(GroupedGemmRewriteTest,
        CheckCustomCallTargetGroupedGemmNonContractingWithBatchDim) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -3789,9 +3781,6 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(GroupedGemmRewriteTest,
        CheckCustomCallTargetGroupedGemmRaggedDimInContractingDim) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -3830,9 +3819,6 @@ ENTRY AddRaggedDotsFunc {
 TEST_F(
     GroupedGemmRewriteTest,
     CheckCustomCallTargetGroupedGemmRaggedDimInContractingDimMultipleGroups) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -3879,9 +3865,6 @@ ENTRY AddRaggedDotsFunc {
 TEST_F(
     GroupedGemmRewriteTest,
     CheckCustomCallTargetGroupedGemmRaggedDimInContractingDimMultipleGroupsOutputColumnMajor) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -3920,9 +3903,6 @@ ENTRY AddRaggedDotsFunc {
 TEST_F(
     GroupedGemmRewriteTest,
     CheckCustomCallTargetGroupedGemmRaggedDimInContractingDimLargeGroupCount600) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   // Disable autotuning for this large test (600 groups)
   DebugOptions debug_options = GetDebugOptionsForTest();
   debug_options.set_xla_gpu_autotune_level(0);
@@ -3946,9 +3926,6 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(GroupedGemmRewriteTest,
        CheckCustomCallTargetGroupedGemmRaggedDimInContractingDimWithBatchDim) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -3994,9 +3971,6 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(GroupedGemmRewriteTest,
        CheckCustomCallTargetGroupedGemmRaggedDimInBatchDim) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -4035,9 +4009,6 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(GroupedGemmRewriteTest,
        CheckCustomCallTargetGroupedGemmRaggedDimInBatchDimMultipleGroups) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -4084,9 +4055,6 @@ ENTRY AddRaggedDotsFunc {
 TEST_F(
     GroupedGemmRewriteTest,
     CheckCustomCallTargetGroupedGemmRaggedDimInBatchDimMultipleGroupsOutputColumnMajor) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -4124,9 +4092,6 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(GroupedGemmRewriteTest,
        CheckCustomCallTargetGroupedGemmRaggedDimInBatchDimLargeGroupCount600) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   // Test with 600 groups (> 256) for RaggedDimInBatchDim
   // Sum of group sizes: 600 * 4 = 2400 (matches p0 first dim for batch)
   const char* hlo_text = R"(
@@ -4148,9 +4113,6 @@ ENTRY AddRaggedDotsFunc {
 TEST_F(
     GroupedGemmRewriteTest,
     CheckCustomCallTargetGroupedGemmRaggedInNonContractingGroupDimNoOuterDim) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -4188,9 +4150,6 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(GroupedGemmRewriteTest,
        CheckCustomCallTargetGroupedGemmRaggedInContractingGroupDimNoOuterDim) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -4228,9 +4187,6 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(GroupedGemmRewriteTest,
        CheckCustomCallTargetGroupedGemmRaggedInContractingTranspose) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 
@@ -4268,9 +4224,6 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(GroupedGemmRewriteTest,
        CheckCustomCallTargetGroupedGemmRaggedNonContractingTranspose) {
-  if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
-  }
   const char* hlo_text = R"(
 HloModule GroupedGemm
 

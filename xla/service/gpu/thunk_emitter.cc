@@ -668,7 +668,6 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmulThunk(
   ASSIGN_OR_RETURN(const auto gpu_config,
                    instr->backend_config<xla::gpu::GpuBackendConfig>());
   const xla::gpu::GemmBackendConfig& config = gpu_config.gemm_backend_config();
-  bool has_aux_output = false;
 
   TF_RET_CHECK(instr->operand_count() == 3);
 
