@@ -135,9 +135,8 @@ struct AllReduceTestParams {
     std::vector<AllReduceTestParams> params;
     for (bool is_async : {true, false}) {
       for (bool use_all_reduce_one_shot_kernel : {true, false}) {
-        // TODO(b/485544055): Enable two-shot e2e tests for all-reduce.
-        for (auto strategy : {AllReduceStrategy::kOneShot,
-                              /* AllReduceStrategy::kTwoShot */}) {
+        for (auto strategy :
+             {AllReduceStrategy::kOneShot, AllReduceStrategy::kTwoShot}) {
           params.push_back(
               {is_async, use_all_reduce_one_shot_kernel, strategy});
         }
