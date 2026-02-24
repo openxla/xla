@@ -16,6 +16,7 @@ cc_library(
     srcs = ["megascale_c_api_client.cc"],
     hdrs = ["megascale_c_api_client.h"],
     deps = [
+        ":megascale_types",
         "//xla/megascale:addresses_proto_cc",
         "//xla/megascale:dcn_topology_proto_cc",
         "//xla/pjrt:pjrt_api",
@@ -28,13 +29,33 @@ cc_library(
         "//xla/pjrt/plugin:plugin_names",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:casts",
+    ],
+)
+
+cc_library(
+    name = "megascale_types",
+    srcs = ["megascale_types.cc"],
+    hdrs = ["megascale_types.h"],
+    visibility = ["//xla/pjrt/c_api_client:__subpackages__"],
+    deps = [
+        "//xla/megascale:addresses_proto_cc",
+        "//xla/megascale:dcn_topology_proto_cc",
+        "//xla/pjrt:pjrt_executable",
+        "//xla/pjrt/c:pjrt_c_api_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_helpers",
+        "//xla/pjrt/c:pjrt_c_api_megascale_extension_hdrs",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
-        "@tsl//tsl/platform:casts",
     ],
 )
 

@@ -144,10 +144,10 @@ absl::StatusOr<ExecuteOptions> GenerateExecuteOptions(const HloModule& module) {
   return execute_options;
 }
 
-inline PjRtGlobalDeviceId DeviceIdForInvocation(
+inline GlobalDeviceId DeviceIdForInvocation(
     const DeviceAssignment& device_assignment, const int64_t i) {
   const int64_t computation_count = device_assignment.computation_count();
-  return PjRtGlobalDeviceId(
+  return GlobalDeviceId(
       device_assignment(i / computation_count, i % computation_count));
 }
 

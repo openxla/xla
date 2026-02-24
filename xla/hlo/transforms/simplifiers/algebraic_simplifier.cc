@@ -10138,28 +10138,25 @@ absl::StatusOr<bool> AlgebraicSimplifier::RunImpl(
 
 absl::Status AlgebraicSimplifierVisitor::HandleConditional(
     HloInstruction* conditional) {
+  // TODO: b/427635449 - Investigate TPU regression and re-enable this pass for
+  // TPU.
+  if (!options_.enable_conditional_simplification()) {
+    return absl::OkStatus();
+  }
   HloInstruction* pred = conditional->mutable_operand(0);
 
-  // conditional(convert(pred), a, b) => conditional(not(pred), a, b)
-  //
-  // We use the inverse of the predicate (not(pred)) so that the operands a and
-  // b can be passed to the new conditional in the same order as the original
-  // conditional. This is done to preserve buffer assignments.
+  // conditional(convert(pred), a, b) => conditional(pred, a, b)
   if (pred->opcode() == HloOpcode::kConvert &&
       pred->operand(0)->shape().element_type() == PRED &&
       conditional->branch_computations().size() == 2) {
-    HloInstruction* boolean_pred = pred->mutable_operand(0);
-    HloInstruction* not_pred =
-        conditional->AddInstruction(HloInstruction::CreateUnary(
-            boolean_pred->shape(), HloOpcode::kNot, boolean_pred));
     return ReplaceWithNewInstruction(
         conditional,
         HloInstruction::CreateConditional(
-            conditional->shape(), not_pred,
-            conditional->mutable_operand(1),          // True Op (Branch 0)
-            conditional->branch_computations()[0],    // True Comp (Branch 0)
-            conditional->mutable_operand(2),          // False Op (Branch 1)
-            conditional->branch_computations()[1]));  // False Comp (Branch 1)
+            conditional->shape(), pred->mutable_operand(0),
+            conditional->mutable_operand(2),          // True Op (Branch 1)
+            conditional->branch_computations()[1],    // True Comp (Branch 1)
+            conditional->mutable_operand(1),          // False Op (Branch 0)
+            conditional->branch_computations()[0]));  // False Comp (Branch 0)
   }
 
   return absl::OkStatus();

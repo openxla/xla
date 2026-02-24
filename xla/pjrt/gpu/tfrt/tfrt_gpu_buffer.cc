@@ -295,12 +295,12 @@ TfrtGpuBuffer::AcquireExternalReference() {
         tsl::MakeConstructedAsyncValueRef<GpuEvent>();
   }
 
-  ++external_reference_counter_;
 
   tsl::BlockUntilReady(tracked_device_buffer_->definition_event());
   if (tracked_device_buffer_->definition_event().IsError()) {
     return tracked_device_buffer_->definition_event().GetError();
   }
+  ++external_reference_counter_;
   return {std::make_unique<ScopedExternalReference>(
       this, tracked_device_buffer_->buffer())};
 }

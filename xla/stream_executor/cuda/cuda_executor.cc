@@ -1812,6 +1812,16 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   absl::StatusOr<int> mem_bus_width_bits = GetDeviceAttribute(
       CU_DEVICE_ATTRIBUTE_GLOBAL_MEMORY_BUS_WIDTH, device_ordinal);
   if (mem_clock_khz.ok() && mem_bus_width_bits.ok()) {
+    // Temporary fix when driver reports 0.
+    // Affected CUDA 13.1, driver r590, should be fixed in later releases.
+    if (mem_clock_khz.value() == 0 || mem_bus_width_bits.value() == 0) {
+      LOG(WARNING) << "Memory clock rate or bus width is 0";
+      if (cc.major == 11 && cc.minor == 0) {  // Thor
+        LOG(WARNING) << "Using hardcoded values for Thor";
+        mem_clock_khz = 4266000;
+        mem_bus_width_bits = 256;
+      }
+    }
     // Times 2 because HBM is DDR memory; it gets two data bits per each data
     // lane.
     desc.set_memory_bandwidth(2 * int64_t{mem_clock_khz.value()} * 1000 *

@@ -1197,7 +1197,15 @@ HloSharding ReverseSharding(const HloSharding& sharding,
     return sharding;
   }
 
-  Array<int64_t> new_tile_assignment(sharding.dimensions());
+  // Supporting reverse operation on NamedSharding would require reversing
+  // mesh's device assignment, creating multiple meshes. Instead it's better to
+  // convert to tile-based sharding.
+  HloSharding tile_based_sharding =
+      sharding.UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(sharding.named_sharding())
+          : sharding;
+
+  Array<int64_t> new_tile_assignment(tile_based_sharding.dimensions());
   new_tile_assignment.Each(
       [&](absl::Span<const int64_t> indices, int64_t* device) {
         std::vector<int64_t> original_indices(indices.begin(), indices.end());
@@ -1205,14 +1213,14 @@ HloSharding ReverseSharding(const HloSharding& sharding,
           original_indices[d] =
               new_tile_assignment.dim(d) - 1 - original_indices[d];
         }
-        *device = sharding.tile_assignment()(original_indices);
+        *device = tile_based_sharding.tile_assignment()(original_indices);
       });
-  return sharding.ReplicateOnLastTileDim()
+  return tile_based_sharding.ReplicateOnLastTileDim()
              ? HloSharding::PartialTile(new_tile_assignment,
-                                        sharding.metadata())
+                                        tile_based_sharding.metadata())
              : HloSharding::Subgroup(new_tile_assignment,
-                                     sharding.subgroup_types(),
-                                     sharding.metadata());
+                                     tile_based_sharding.subgroup_types(),
+                                     tile_based_sharding.metadata());
 }
 
 HloSharding PropagateShardingAlongDimsAndReplicateOthers(

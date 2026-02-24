@@ -50,6 +50,7 @@ absl::Status RegisterBuiltInFiles(const char* absl_nonnull name,
     absl::string_view contents(toc->data, toc->size);
     const std::string path =
         tsl::io::JoinPath(uri_scheme, name, tsl::io::Basename(toc->name));
+    VLOG(1) << "Registering memfile at " << path;
     TF_RETURN_IF_ERROR(
         tsl::WriteStringToFile(tsl::Env::Default(), path, contents));
   }

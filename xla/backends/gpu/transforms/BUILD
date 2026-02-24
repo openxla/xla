@@ -329,7 +329,6 @@ cc_library(
 xla_cc_test(
     name = "block_scaling_rewriter_test",
     srcs = ["block_scaling_rewriter_test.cc"],
-    tags = ["pjrt_migration_candidate"],
     deps = [
         ":block_scaling_rewriter",
         "//xla/hlo/ir:hlo",
@@ -481,7 +480,6 @@ cc_library(
 xla_cc_test(
     name = "conv_rewriter_test",
     srcs = ["conv_rewriter_test.cc"],
-    tags = ["pjrt_migration_candidate"],
     deps = [
         ":conv_rewriter",
         "//xla:array4d",
@@ -513,7 +511,6 @@ xla_cc_test(
 xla_cc_test(
     name = "conv_kind_assignment_test",
     srcs = ["conv_kind_assignment_test.cc"],
-    tags = ["pjrt_migration_candidate"],
     deps = [
         ":conv_kind_assignment",
         "//xla:array4d",
@@ -1831,7 +1828,6 @@ cc_library(
 xla_cc_test(
     name = "layout_assignment_test",
     srcs = ["layout_assignment_test.cc"],
-    tags = ["pjrt_migration_candidate"],
     deps = [
         ":layout_assignment",
         "//xla:shape_layout",

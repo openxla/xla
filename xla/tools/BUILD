@@ -521,7 +521,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
-        "//xla/service:hlo_runner",
         "//xla/service:hlo_runner_interface",
         "//xla/service:hlo_verifier",
         "//xla/tests:test_utils",
@@ -536,7 +535,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -1174,6 +1172,7 @@ xla_test(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiler",
+        "//xla/service:hlo_runner_interface",
         "//xla/service:platform_util",
         "//xla/service:symbol_repository",
         "//xla/service:xla_compile_result_proto_cc_impl",
@@ -1212,6 +1211,7 @@ xla_cc_test(
         "//xla/hlo/parser:hlo_parser",
         "//xla/service:compiler",
         "//xla/service:gpu_plugin",
+        "//xla/service:platform_util",
         "//xla/service:symbol_repository",
         "//xla/service:xla_compile_result_proto_cc_impl",
         "//xla/stream_executor:device_description_proto_cc",

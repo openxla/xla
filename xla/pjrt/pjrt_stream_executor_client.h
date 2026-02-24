@@ -98,7 +98,7 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
       : local_device_id_(local_device_id),
         local_hardware_id_(local_device_state
                                ? local_device_state->local_hardware_id()
-                               : PjRtLocalHardwareId(-1)),
+                               : LocalChipId(-1)),
         local_device_state_(std::move(local_device_state)),
         description_(id, local_device_id_.value(), process_index,
                      process_index_in_partition, partition_index,
@@ -142,13 +142,9 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
 
   bool IsAddressable() const override { return local_device_state_ != nullptr; }
 
-  PjRtLocalDeviceId local_device_id() const override {
-    return local_device_id_;
-  }
+  LocalDeviceId local_device_id() const override { return local_device_id_; }
 
-  PjRtLocalHardwareId local_hardware_id() const override {
-    return local_hardware_id_;
-  }
+  LocalChipId local_hardware_id() const override { return local_hardware_id_; }
 
   const absl::flat_hash_map<std::string, PjRtDeviceAttribute>& Attributes()
       const override {
@@ -192,8 +188,8 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
   }
 
  private:
-  const PjRtLocalDeviceId local_device_id_;
-  const PjRtLocalHardwareId local_hardware_id_;
+  const LocalDeviceId local_device_id_;
+  const LocalChipId local_hardware_id_;
   const std::unique_ptr<LocalDeviceState> local_device_state_;
   PjRtStreamExecutorDeviceDescription description_;
   absl::flat_hash_map<std::string, PjRtDeviceAttribute> attributes_;
@@ -259,7 +255,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   }
 
   absl::StatusOr<PjRtDevice*> LookupDevice(
-      PjRtGlobalDeviceId global_device_id) const override {
+      GlobalDeviceId global_device_id) const override {
     auto it = id_to_device_.find(global_device_id.value());
     if (it != id_to_device_.end()) {
       return it->second;
@@ -269,7 +265,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   }
 
   absl::StatusOr<PjRtDevice*> LookupAddressableDevice(
-      PjRtLocalDeviceId local_device_id) const override;
+      LocalDeviceId local_device_id) const override;
 
   absl::Span<PjRtMemorySpace* const> memory_spaces() const override;
 
@@ -342,7 +338,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
 
   LocalDeviceState& device_state(int device_ordinal) const {
     return *tensorflow::down_cast<PjRtStreamExecutorDevice*>(
-                LookupAddressableDevice(xla::PjRtLocalDeviceId(device_ordinal))
+                LookupAddressableDevice(xla::LocalDeviceId(device_ordinal))
                     .value())
                 ->local_device_state();
   }

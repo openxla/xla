@@ -295,7 +295,7 @@ inline bool MayPipelineSendRecvChannel(int64_t channel_id) {
 // When a Send or Recv is annotated with frontend attribute
 // _xla_send_recv_pipeline="1", asynchronous stream kP2P1 is used to execute the
 // Send or Recv. For all other cases, asynchronous stream kP2P0 is used.
-constexpr char kSendRecvPipelineAttr[] = "_xla_send_recv_pipeline";
+inline constexpr char kSendRecvPipelineAttr[] = "_xla_send_recv_pipeline";
 
 // Attribute to indicate that collective operations should be issued on a
 // dedicated p2p stream. This is a hint and there is no guarantee that this will
