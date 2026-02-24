@@ -152,8 +152,7 @@ static absl::string_view ReductionKindString(ReductionKind kind) {
 
 // Create a callback to create a command buffer from a command sequence.
 static se::CommandBuffer::CreateCommands CreateCommands(
-    const CommandBufferCmdExecutor* commands,
-    const Thunk::ExecuteParams* execute_params,
+    const CommandExecutor* commands, const Thunk::ExecuteParams* execute_params,
     const Command::RecordParams* record_params) {
   return [=](se::CommandBuffer* command_buffer,
              absl::Span<const se::CommandBuffer::Command* const> dependencies) {
@@ -164,11 +163,11 @@ static se::CommandBuffer::CreateCommands CreateCommands(
 
 // Create callbacks to create a command buffer from command sequences.
 static std::vector<se::CommandBuffer::CreateCommands> CreateCommands(
-    absl::Span<const CommandBufferCmdExecutor> commands,
+    absl::Span<const CommandExecutor> commands,
     const Thunk::ExecuteParams* execute_params,
     const Command::RecordParams* record_params) {
   std::vector<se::CommandBuffer::CreateCommands> create_commands;
-  for (const CommandBufferCmdExecutor& cmd : commands) {
+  for (const CommandExecutor& cmd : commands) {
     create_commands.push_back(
         CreateCommands(&cmd, execute_params, record_params));
   }
@@ -177,8 +176,7 @@ static std::vector<se::CommandBuffer::CreateCommands> CreateCommands(
 
 // Create a callback to update a command buffer with command sequence.
 static se::CommandBuffer::UpdateCommands UpdateCommands(
-    const CommandBufferCmdExecutor* commands,
-    const Thunk::ExecuteParams* execute_params,
+    const CommandExecutor* commands, const Thunk::ExecuteParams* execute_params,
     const Command::RecordParams* record_params) {
   return [=](se::CommandBuffer* command_buffer) {
     return commands->RecordUpdate(*execute_params, *record_params,
@@ -188,11 +186,11 @@ static se::CommandBuffer::UpdateCommands UpdateCommands(
 
 // Create callbacks to update a command buffer with command sequence.
 static std::vector<se::CommandBuffer::UpdateCommands> UpdateCommands(
-    absl::Span<const CommandBufferCmdExecutor> commands,
+    absl::Span<const CommandExecutor> commands,
     const Thunk::ExecuteParams* execute_params,
     const Command::RecordParams* record_params) {
   std::vector<se::CommandBuffer::UpdateCommands> update_commands;
-  for (const CommandBufferCmdExecutor& cmd : commands) {
+  for (const CommandExecutor& cmd : commands) {
     update_commands.push_back(
         UpdateCommands(&cmd, execute_params, record_params));
   }
@@ -740,20 +738,9 @@ Command::BufferUses Memset32Cmd::buffer_uses() const {
 // ChildCmd
 //===----------------------------------------------------------------------===//
 
-ChildCmd::ChildCmd(CommandBufferCmdExecutor child_commands)
+ChildCmd::ChildCmd(CommandExecutor child_commands)
     : Command(CommandType::kChildCmd),
       child_commands_(std::move(child_commands)) {}
-
-bool ChildCmd::requires_initialization() {
-  return child_commands_.requires_initialization();
-}
-
-bool ChildCmd::force_update() { return child_commands_.force_update(); }
-
-Command::BufferUses ChildCmd::buffer_uses() const {
-  return {child_commands_.buffer_uses().begin(),
-          child_commands_.buffer_uses().end()};
-}
 
 absl::Status ChildCmd::Initialize(const Thunk::InitializeParams& params) {
   TF_RETURN_IF_ERROR(child_commands_.Initialize(params));
@@ -797,8 +784,7 @@ absl::Status ChildCmd::WalkNested(
 // CaseCmd
 //===----------------------------------------------------------------------===//
 
-CaseCmd::CaseCmd(ShapedSlice index,
-                 std::vector<CommandBufferCmdExecutor> branches)
+CaseCmd::CaseCmd(ShapedSlice index, std::vector<CommandExecutor> branches)
     : Command(CommandType::kCaseCmd),
       index_(index),
       index_is_bool_(index.shape.element_type() == PRED),
@@ -847,23 +833,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> CaseCmd::Record(
       });
 }
 
-bool CaseCmd::requires_initialization() {
-  return absl::c_any_of(
-      branches_, [](const auto& seq) { return seq.requires_initialization(); });
-}
-
-bool CaseCmd::force_update() {
-  return absl::c_any_of(branches_,
-                        [](const auto& seq) { return seq.force_update(); });
-}
-
 Command::BufferUses CaseCmd::buffer_uses() const {
-  absl::flat_hash_set<BufferUse> buffers;
-  buffers.emplace(BufferUse::Read(index_.slice, index_.shape));
-  for (auto& branch : branches_) {
-    buffers.insert(branch.buffer_uses().begin(), branch.buffer_uses().end());
-  }
-  return {buffers.begin(), buffers.end()};
+  return {BufferUse::Read(index_.slice, index_.shape)};
 }
 
 absl::Status CaseCmd::WalkNested(
@@ -878,9 +849,8 @@ absl::Status CaseCmd::WalkNested(
 // WhileCmd
 //===----------------------------------------------------------------------===//
 
-WhileCmd::WhileCmd(BufferAllocation::Slice pred,
-                   CommandBufferCmdExecutor cond_commands,
-                   CommandBufferCmdExecutor body_commands,
+WhileCmd::WhileCmd(BufferAllocation::Slice pred, CommandExecutor cond_commands,
+                   CommandExecutor body_commands,
                    std::optional<int64_t> trip_count, bool enable_loop_unroll)
     : Command(CommandType::kWhileCmd),
       pred_(pred),
@@ -1005,23 +975,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> WhileCmd::Record(
       });
 }
 
-bool WhileCmd::requires_initialization() {
-  return (cond_commands_.requires_initialization() ||
-          body_commands_.requires_initialization());
-}
-
-bool WhileCmd::force_update() {
-  return cond_commands_.force_update() || body_commands_.force_update();
-}
-
 Command::BufferUses WhileCmd::buffer_uses() const {
-  absl::flat_hash_set<BufferUse> buffers;
-  buffers.emplace(BufferUse::Read(pred_, ShapeUtil::MakeShape(PRED, {})));
-  buffers.insert(cond_commands_.buffer_uses().begin(),
-                 cond_commands_.buffer_uses().end());
-  buffers.insert(body_commands_.buffer_uses().begin(),
-                 body_commands_.buffer_uses().end());
-  return {buffers.begin(), buffers.end()};
+  return {BufferUse::Read(pred_, ShapeUtil::MakeShape(PRED, {}))};
 }
 
 absl::Status WhileCmd::WalkNested(
@@ -1086,16 +1041,16 @@ absl::StatusOr<const se::CommandBuffer::Command*> GemmCmd::Record(
 }
 
 Command::BufferUses GemmCmd::buffer_uses() const {
-  Command::BufferUses res{
+  Command::BufferUses buffer_uses = {
       BufferUse::Read(lhs_buffer_, config_.lhs_layout.ToShape()),
       BufferUse::Read(rhs_buffer_, config_.rhs_layout.ToShape()),
       BufferUse::Write(output_buffer_, config_.output_layout.ToShape()),
   };
   if (workspace_.has_value()) {
-    res.push_back(BufferUse::Write(
+    buffer_uses.push_back(BufferUse::Write(
         *workspace_, ShapeUtil::MakeShape(S8, {workspace_->size()})));
   }
-  return res;
+  return buffer_uses;
 }
 
 //===----------------------------------------------------------------------===//
@@ -2156,7 +2111,7 @@ Command::BufferUses CollectivePermuteCmd::buffer_uses() const {
 //===----------------------------------------------------------------------===//
 
 DynamicSliceFusionCmd::DynamicSliceFusionCmd(
-    CommandBufferCmdExecutor embedded_commands,
+    CommandExecutor embedded_commands,
     std::vector<std::optional<BufferAllocation::Slice>> arguments,
     std::vector<BufferAllocation> fake_allocations,
     std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>> offsets,
@@ -2203,7 +2158,7 @@ DynamicSliceFusionCmd::DynamicSliceFusionCmd(
 // because the memory address might changed if the offset is loop
 // iterator or operator outputs even if the parent command's memory pointers
 // do not change.
-bool DynamicSliceFusionCmd::requires_initialization() {
+bool DynamicSliceFusionCmd::requires_initialization() const {
   return !absl::c_all_of(slices_, [](const DynamicSliceThunk::SliceDef& slice) {
     if (!slice.offsets.has_value()) {
       return true;
@@ -2453,17 +2408,6 @@ absl::StatusOr<const se::CommandBuffer::Command*> DynamicSliceFusionCmd::Record(
         return command_buffer->UpdateChildCommand(command,
                                                   *nested_command_buffer);
       });
-}
-
-Command::BufferUses DynamicSliceFusionCmd::buffer_uses() const {
-  Command::BufferUses buffers;
-  auto embed_buffers = embedded_commands_.buffer_uses();
-  for (const BufferUse& buffer_usage : embed_buffers) {
-    buffers.emplace_back(
-        *embedded_to_origin_slice_map_.at(buffer_usage.slice().index()),
-        buffer_usage.access(), buffer_usage.shape());
-  }
-  return buffers;
 }
 
 absl::Status DynamicSliceFusionCmd::WalkNested(
