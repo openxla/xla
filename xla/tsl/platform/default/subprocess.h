@@ -108,6 +108,13 @@ class SubProcess {
   //    value of another call of Wait() or CheckRunning().
   virtual bool Wait();
 
+  // pid()
+  //    Return the process ID of the child process.
+  virtual inline pid_t pid() const {
+    absl::MutexLock lock(&proc_mu_);
+    return pid_;
+  }
+
   //  Return the raw exit status of the process.
   virtual inline int exit_status() const {
     absl::MutexLock lock(wait_mu_);
