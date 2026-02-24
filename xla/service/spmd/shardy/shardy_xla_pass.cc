@@ -476,9 +476,9 @@ absl::StatusOr<bool> ShardyXLA::RunImpl(
                                      useTupleArgs);
 
   if (runSdyShardingPropagation) {
-    TF_RETURN_IF_ERROR(
-        runShardingPropagation(hloModule, mlirModule.get(), importMhloShardings,
-                               defaultOptions, dedupFunctionsFully, name()));
+    TF_RETURN_IF_ERROR(runShardingPropagation(
+        hloModule, mlirModule.get(), importMhloShardings, propagationOptions,
+        dedupFunctionsFully, name()));
   }
 
   // TODO(b/431836696): Remove once issue is fixed.
