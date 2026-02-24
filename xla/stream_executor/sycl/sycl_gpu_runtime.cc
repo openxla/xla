@@ -577,7 +577,7 @@ absl::Status SyclMemsetDeviceAsync(::sycl::queue* stream_handle,
                "skipping operation.";
     return absl::OkStatus();
   }
-  if (dst_device == nullptr || stream_handle == nullptr) {
+  if (dst_device == nullptr) {
     return absl::InvalidArgumentError(
         "SyclMemsetDeviceAsync: Null pointer provided for destination handle.");
   }
@@ -609,7 +609,7 @@ absl::Status SyclMemfillDeviceAsync(::sycl::queue* stream_handle,
                "skipping operation.";
     return absl::OkStatus();
   }
-  if (dst_device == nullptr || stream_handle == nullptr) {
+  if (dst_device == nullptr) {
     return absl::InvalidArgumentError(
         "SyclMemfillDeviceAsync: Null pointer provided for destination handle");
   }
