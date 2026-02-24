@@ -489,7 +489,8 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadInternal(
       std::optional<HloModuleProto> unoptimized_hlo_module_proto,
       std::unique_ptr<LocalExecutable> local_executables,
-      CompileOptions compile_options, bool dump);
+      CompileOptions compile_options, bool dump,
+      std::optional<std::string> fingerprint = std::nullopt);
 
   const PjRtPlatformId platform_id_;
   const std::string platform_name_;
@@ -593,6 +594,7 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
  public:
   PjRtStreamExecutorLoadedExecutable(
       std::unique_ptr<LocalExecutable> executables,
+      std::optional<std::string> fingerprint,
       bool parameter_is_tupled_arguments,
       std::shared_ptr<DeviceAssignment> device_assignment,
       CompileOptions compile_options,
