@@ -328,7 +328,7 @@ ModuleComputationsTransitivelyContainCustomCall(const HloModule& module) {
 namespace cpu {
 
 inline bool IsOneDnnCompatible(bool is_aot_compile) {
-#if defined(XLA_ONEDNN) && defined(ENABLE_ONEDNN_ASYNC)
+#if defined(XLA_ONEDNN)
   return !is_aot_compile;
 #endif
   return false;

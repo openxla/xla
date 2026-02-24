@@ -66,9 +66,6 @@ class OneDnnThreadPool final
 
   uint64_t get_flags() const final { return is_async_ ? ASYNCHRONOUS : 0; }
 
-#ifdef ENABLE_ONEDNN_ASYNC
-  // The wait() method only exists with oneDNN's experimental support for
-  // asynchronous execution determined by the ENABLE_ONEDNN_ASYNC.
   void wait() override {
     if (is_async_) {
       // While performing asynchronous execution, wait() method is needed to
@@ -77,7 +74,6 @@ class OneDnnThreadPool final
       tsl::BlockUntilReady(done_event_);
     }
   }
-#endif  // ENABLE_ONEDNN_ASYNC
 
   void parallel_for(int n, const std::function<void(int, int)>& fn) final {
     if (is_async_) {
