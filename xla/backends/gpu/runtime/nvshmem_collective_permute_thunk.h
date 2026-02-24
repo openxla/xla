@@ -75,6 +75,13 @@ class NvshmemCollectivePermuteDoneThunk : public NvshmemCollectiveDoneThunk {
       std::shared_ptr<CollectiveThunk::AsyncEvents> async_events);
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+
+  absl::StatusOr<ThunkProto> ToProto() const override;
+
+  static absl::StatusOr<std::unique_ptr<NvshmemCollectivePermuteDoneThunk>>
+  FromProto(ThunkInfo thunk_info,
+            const NvshmemCollectivePermuteDoneThunkProto& thunk_proto,
+            CollectiveThunk::AsyncEventsMap& async_events_map);
 };
 
 absl::Status RunCollectivePermute(P2PConfig::SourceTargetMapEntry source_target,
