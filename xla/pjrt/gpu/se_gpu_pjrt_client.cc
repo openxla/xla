@@ -549,6 +549,12 @@ absl::StatusOr<PreparedSend> PrepareSend(
   GlobalDeviceId src_device(buffer->device()->global_device_id().value());
   GlobalDeviceId dst_device(dst_global_device_id.value());
 
+  tsl::profiler::TraceMe trace([&] {
+    return tsl::profiler::TraceMeEncode(
+        absl::StrFormat("PrepareSend: src=%v dst=%v", src_device, dst_device),
+        {{"transfer_key", transfer_key}});
+  });
+
   // Form the GPU clique key.
   // TODO(asrao, mwhittaker): Supply correct incarnations when creating the
   // clique key.
@@ -600,6 +606,13 @@ absl::StatusOr<PreparedReceive> PrepareReceive(
     tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event) {
   GlobalDeviceId src_device(src_global_device_id.value());
   GlobalDeviceId dst_device(device->global_device_id().value());
+
+  tsl::profiler::TraceMe trace([&] {
+    return tsl::profiler::TraceMeEncode(
+        absl::StrFormat("PrepareReceive: src=%v dst=%v", src_device,
+                        dst_device),
+        {{"transfer_key", transfer_key}});
+  });
 
   // Form the GPU clique key.
   // TODO(asrao, mwhittaker): Supply correct incarnations when creating the
@@ -776,6 +789,14 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
   prepared_sends.reserve(buffers.size());
   tsl::RCReference<PjRtStreamExecutorDeviceEvent> usage_event;
 
+  tsl::profiler::TraceMe trace([&] {
+    return tsl::profiler::TraceMeEncode(
+        absl::StrFormat(
+            "[%v] StreamExecutorGpuClient::ScheduleSendsOnLocalDevice",
+            device->local_device_id()),
+        {{"num_buffers", buffers.size()}});
+  });
+
   auto setup_sends = [&]() -> absl::Status {
     TF_ASSIGN_OR_RETURN(local_device_state, GetLocalDeviceState(device));
     stream = local_device_state->GetDeviceToDeviceStream();
@@ -853,6 +874,10 @@ void StreamExecutorGpuClient::ScheduleSendsOnLocalDevice(
     group_futures.reserve(grouped_sends.size());
 
     for (auto& [clique_key, curr_sends] : grouped_sends) {
+      tsl::profiler::TraceMe trace([&k = clique_key] {
+        return tsl::profiler::TraceMeEncode("LaunchSend", {{"clique", k}});
+      });
+
       // Get the communicator on which we will execute this group of
       // transfers. We assume each clique key is associated with a unique
       // communicator, so we just take the communicator of the first
@@ -994,6 +1019,13 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
   prepared_receives.reserve(shapes.size());
   tsl::RCReference<PjRtStreamExecutorDeviceEvent> definition_event;
 
+  tsl::profiler::TraceMe trace([&] {
+    return tsl::profiler::TraceMeEncode(
+        absl::StrFormat("[%v] StreamExecutorGpuClient::CrossHostReceiveBuffers",
+                        device->local_device_id()),
+        {{"num_shapes", shapes.size()}});
+  });
+
   auto setup_receives = [&]() -> absl::Status {
     TF_ASSIGN_OR_RETURN(local_device_state, GetLocalDeviceState(device));
     stream = local_device_state->GetDeviceToDeviceStream();
@@ -1064,6 +1096,10 @@ StreamExecutorGpuClient::CrossHostReceiveBuffers(
         group_futures.reserve(grouped_receives.size());
 
         for (auto& [clique_key, curr_receives] : grouped_receives) {
+          tsl::profiler::TraceMe trace([&k = clique_key] {
+            return tsl::profiler::TraceMeEncode("LaunchRecv", {{"clique", k}});
+          });
+
           // Get the communicator on which we will execute this group of
           // transfers. We assume each clique key is associated with a unique
           // communicator, so we just take the communicator of the first
