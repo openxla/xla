@@ -22,11 +22,19 @@ cc_library(
 )
 
 cc_binary(
-    name = "ir_to_string",
-    srcs = ["ir_to_string.cc"],
+    name = "embed_bitcode",
+    srcs = ["embed_bitcode.cc"],
     deps = [
+        "//xla/util:embedded_constant_buffers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:AllTargetsAsmParsers",  # buildcleaner: keep
+        "@llvm-project//llvm:AllTargetsCodeGens",  # buildcleaner: keep
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:IRReader",
         "@llvm-project//llvm:Object",
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
     ],
 )
 
