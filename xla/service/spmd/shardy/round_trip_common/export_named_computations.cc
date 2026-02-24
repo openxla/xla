@@ -178,8 +178,7 @@ void exportNamedComputations(ModuleOp moduleOp, SymbolTable& symbolTable,
           funcToNamedComputations.find(funcNameKey)->second;
       mlir::IRRewriter rewriter(namedComputationOp);
       rewriter.setInsertionPointToEnd(&moduleBlock);
-      ManualAxesAttr manualAxesAttr =
-          namedComputationOp->getAttrOfType<ManualAxesAttr>(kManualAxes);
+      ManualAxesAttr manualAxesAttr = funcNameKey.second;
       StringAttr funcSymName =
           createFuncOp(namedComputationOp, rewriter, symbolTable,
                        namedComputationOp.getInShardings(),
