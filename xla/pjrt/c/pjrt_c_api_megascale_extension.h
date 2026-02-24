@@ -29,11 +29,14 @@ extern "C" {
 
 #define PJRT_API_MEGASCALE_EXTENSION_VERSION 1
 
+// NOLINTBEGIN(modernize-use-using)
 typedef struct PJRT_Megascale_ClientContext PJRT_Megascale_ClientContext;
 typedef struct PJRT_MultiSlice_Config PJRT_MultiSlice_Config;
+typedef struct PJRT_Collectives PJRT_Megascale_Collectives;
 typedef struct PJRT_Megascale_NumDevicesPerSlice
     PJRT_Megascale_NumDevicesPerSlice;
 typedef struct PJRT_Megascale_SerializedConfig PJRT_Megascale_SerializedConfig;
+// NOLINTEND(modernize-use-using)
 
 struct PJRT_Megascale_CreateClientContextFromPjRtClient_Args {
   size_t struct_size;
@@ -197,6 +200,31 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Megascale_MultiSliceConfig_Serialize_Args,
 typedef PJRT_Error* PJRT_Megascale_MultiSliceConfig_Serialize(
     PJRT_Megascale_MultiSliceConfig_Serialize_Args* args);
 
+struct PJRT_Megascale_ProcessesInfo {
+  const char** addresses;
+  size_t* address_sizes;
+  size_t num_addresses;
+  int32_t* slice_indexes;  // May be null if not set.
+  size_t num_slice_indexes;
+  int32_t* per_slice_indexes;  // May be null if not set.
+  size_t num_per_slice_indexes;
+  int32_t num_devices_per_process;
+};
+
+struct PJRT_Megascale_CreateMegascaleCollectives_Args {
+  size_t struct_size;
+  PJRT_Megascale_ClientContext* client_context;
+  PJRT_Megascale_ProcessesInfo* processes_info;
+  const char* dcn_topology;  // Serialized DCNTopology proto. May be null.
+  size_t dcn_topology_size;
+  PJRT_Collectives* collectives;  // out
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Megascale_CreateMegascaleCollectives_Args,
+                          collectives);
+
+// NOLINTNEXTLINE(modernize-use-using)
+typedef PJRT_Error* PJRT_Megascale_CreateMegascaleCollectives(
+    PJRT_Megascale_CreateMegascaleCollectives_Args* args);
 typedef struct PJRT_Megascale_Extension {
   PJRT_Extension_Base base;
   PJRT_Megascale_CreateClientContextFromPjRtClient*
@@ -215,9 +243,10 @@ typedef struct PJRT_Megascale_Extension {
   PJRT_Megascale_ClientContext_UnblockPendingWork*
       client_context_unblock_pending_work;
   PJRT_Megascale_ClientContext_MegascalePort* client_context_megascale_port;
+  PJRT_Megascale_CreateMegascaleCollectives* create_megascale_collectives;
 } PJRT_Megascale_Extension;
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Megascale_Extension,
-                          client_context_megascale_port);
+                          create_megascale_collectives);
 
 #ifdef __cplusplus
 }

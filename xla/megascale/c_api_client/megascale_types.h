@@ -38,7 +38,7 @@ class CApiPjRtClientContext {
  public:
   CApiPjRtClientContext(PJRT_Megascale_ClientContext* client_context,
                         const PJRT_Api* c_api,
-                        PJRT_Megascale_Extension* extension)
+                        const PJRT_Megascale_Extension* extension)
       : client_context_(client_context),
         c_api_(c_api),
         extension_(CHECK_NOTNULL(extension)) {}
@@ -54,6 +54,9 @@ class CApiPjRtClientContext {
 
   absl::StatusOr<int> megascale_port();
 
+  const PJRT_Api* c_api() const { return c_api_; }
+  const PJRT_Megascale_Extension* extension() const { return extension_; }
+
  private:
   PJRT_Megascale_ClientContext* client_context_;
   const PJRT_Api* c_api_;
@@ -64,7 +67,7 @@ class PjRtCApiMultiSliceConfig : public xla::MultiSliceConfig {
  public:
   PjRtCApiMultiSliceConfig(PJRT_MultiSlice_Config* config,
                            const PJRT_Api* c_api,
-                           PJRT_Megascale_Extension* extension)
+                           const PJRT_Megascale_Extension* extension)
       : config_(config), c_api_(c_api), extension_(CHECK_NOTNULL(extension)) {}
 
   ~PjRtCApiMultiSliceConfig() override;

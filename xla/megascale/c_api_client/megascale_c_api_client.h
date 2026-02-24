@@ -18,9 +18,13 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
+#include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/megascale/addresses.pb.h"
 #include "xla/megascale/c_api_client/megascale_types.h"
 #include "xla/megascale/dcn_topology.pb.h"
@@ -31,6 +35,17 @@ limitations under the License.
 namespace xla {
 namespace megascale {
 namespace c_api_client {
+
+struct ProcessesInfo {
+  // Mapping of dense process ids to their network addresses.
+  std::vector<std::string> addresses;
+  // Dense slice index of each process.
+  std::optional<std::vector<int32_t>> slice_indexes = std::nullopt;
+  // Dense per-slice index of each process.
+  std::optional<std::vector<int32_t>> per_slice_indexes = std::nullopt;
+  // The number of devices per process.
+  int32_t num_devices_per_process = 0;
+};
 
 // Returns AoT config for megascale multi slice compilation.
 // REQUIRES: num_slices > 1.
@@ -50,6 +65,12 @@ MegaScaleClientContextFromClient(xla::PjRtClient* client);
 
 absl::StatusOr<std::shared_ptr<CApiPjRtClientContext>>
 CreateDefaultMegaScaleClientContext();
+
+absl::StatusOr<std::unique_ptr<xla::cpu::CpuCollectives>>
+CreateMegascaleCollectives(
+    const CApiPjRtClientContext& megascale_client_ctx,
+    ProcessesInfo&& processes_info,
+    std::optional<xla::megascale::runtime::DCNTopology>&& dcn_topology);
 
 }  // namespace c_api_client
 }  // namespace megascale
