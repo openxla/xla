@@ -400,7 +400,12 @@ const StatTypeMap& GetStatTypeMap() {
        {"cuda_runtime_version", kMetadataCudaRuntimeVersion},
        {"cuda_driver_version", kMetadataCudaDriverVersion},
        // LLO Debug Dump.
-       {"llo_proto", kLloProto}});
+       {"llo_proto", kLloProto},
+       // Power-related stats
+       {"vdd_core_energy_nj", kVddCoreEnergy},
+       {"vdd_core_power_events", kVddCorePowerEvents},
+       {"hbm_energy_nj", kHbmEnergy},
+       {"hbm_power_events", kHbmPowerEvents}});
   DCHECK_EQ(stat_type_map->size(), kNumStatTypes);
   return *stat_type_map;
 }
