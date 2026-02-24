@@ -44,8 +44,8 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/literal_util.h"
 #include "xla/service/custom_call_sharding_helper.h"
+#include "xla/service/dot_as_convolution_util.h"
 #include "xla/service/hlo_creation_utils.h"
-#include "xla/service/hlo_module_config.h"
 #include "xla/service/memory_annotations.h"
 #include "xla/service/spmd/spmd_partitioner.h"
 #include "xla/service/spmd/spmd_partitioner_util.h"
@@ -100,11 +100,11 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallTopK(
       sharding.ReplicateOnLastTileDim()) {
     return DefaultAction(hlo);
   }
+  TF_RET_CHECK(sharding.IsTiled());
 
   const int64_t batch_dim = 0;
   const int64_t sort_dim = 1;
 
-  CHECK(sharding.IsTiled());
   const int64_t shard_count = sharding.dimension(sort_dim);
   const int64_t batch_dim_partition = sharding.dimension(batch_dim);
 
@@ -391,14 +391,12 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_MultiRotate(
   auto left_amount_it = attrs.find("left_amount");
   TF_RET_CHECK(left_amount_it != attrs.end())
       << "No left_amount attribute in SPMD multi rotate op";
-  int64_t left_amount = left_amount_it->second;
+  const int64_t left_amount = left_amount_it->second;
 
   auto right_amount_it = attrs.find("right_amount");
   TF_RET_CHECK(right_amount_it != attrs.end())
       << "No right_amount attribute in SPMD multi rotate op";
-  int64_t right_amount = right_amount_it->second;
-
-  int32_t totalResults = left_amount + right_amount + 1;
+  const int64_t right_amount = right_amount_it->second;
 
   PartitionedHlo input = GetPartitionedHlo(hlo->operand(0));
   HloSharding element_sharding = hlo->sharding().IsTuple()
@@ -434,14 +432,14 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_MultiRotate(
   auto create_slice = [&](HloInstruction* val, int64_t start, int64_t limit) {
     Shape slice_shape = val->shape();
     slice_shape.set_dimensions(dim, limit - start);
-    std::vector<int64_t> slice_starts(full_shape.dimensions_size(), 0);
+    std::vector<int64_t> slice_starts(full_shape.dimensions().size(), 0);
     slice_starts[dim] = start;
     std::vector<int64_t> slice_limits(val->shape().dimensions().begin(),
                                       val->shape().dimensions().end());
     slice_limits[dim] = limit;
     return b_.AddInstruction(HloInstruction::CreateSlice(
         slice_shape, val, slice_starts, slice_limits,
-        std::vector<int64_t>(full_shape.dimensions_size(), 1)));
+        std::vector<int64_t>(full_shape.dimensions().size(), 1)));
   };
 
   HloInstruction* local_input = input.hlo();
@@ -516,10 +514,8 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_MultiRotate(
     Shape dynamic_slice_shape = local_input->shape();
     dynamic_slice_shape.set_dimensions(dim, right_amount);
 
-    std::vector<HloInstruction*> start_indices(full_shape.dimensions_size());
-    for (int i = 0; i < full_shape.dimensions_size(); i++) {
-      start_indices[i] = zero_offset;
-    }
+    std::vector<HloInstruction*> start_indices(full_shape.dimensions().size(),
+                                               zero_offset);
     start_indices[dim] = start_idx;
 
     std::vector<int64_t> slice_sizes(local_input->shape().dimensions().begin(),
@@ -561,7 +557,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_MultiRotate(
 
     if (left_halo) {
       auto paddingConfig =
-          MakeNoPaddingConfig(super_shard->shape().dimensions_size());
+          MakeNoPaddingConfig(super_shard->shape().dimensions().size());
       paddingConfig.mutable_dimensions(dim)->set_edge_padding_high(left_amount);
       auto zero = b_.AddInstruction(HloInstruction::CreateConstant(
           LiteralUtil::Zero(super_shard->shape().element_type())));
@@ -572,10 +568,8 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_MultiRotate(
       auto padded_super_shard = b_.AddInstruction(HloInstruction::CreatePad(
           padded_shape, super_shard, zero, paddingConfig));
 
-      std::vector<HloInstruction*> start_indices(full_shape.dimensions_size());
-      for (int i = 0; i < full_shape.dimensions_size(); i++) {
-        start_indices[i] = zero_offset;
-      }
+      std::vector<HloInstruction*> start_indices(full_shape.dimensions().size(),
+                                                 zero_offset);
 
       HloInstruction* last_offset = b_.AddInstruction(
           HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(
@@ -598,7 +592,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_MultiRotate(
 
   std::vector<HloInstruction*> sliced_results;
 
-  for (int i = 0; i < totalResults; ++i) {
+  for (int64_t i = 0; i < left_amount + right_amount + 1; ++i) {
     int64_t amount = left_amount - i;
     int64_t slice_start = amount + right_amount;
 
@@ -609,7 +603,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_MultiRotate(
 
   HloInstruction* result_tuple =
       b_.AddInstruction(HloInstruction::CreateTuple(sliced_results));
-  SetPartitionedHlo(hlo, [&] { return result_tuple; });
+  SetPartitionedHlo(hlo, result_tuple);
   return absl::OkStatus();
 }
 
@@ -618,17 +612,17 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_Wrap(
   TF_ASSIGN_OR_RETURN(auto attrs, ParseOpaqueAsAttributes(hlo));
   auto dim_it = attrs.find("dimension");
   TF_RET_CHECK(dim_it != attrs.end())
-      << "No dimension attribute in SPMD multi rotate op";
+      << "No dimension attribute in SPMD wrap op";
   int64_t dim = dim_it->second;
 
   auto left_amount_it = attrs.find("left_amount");
   TF_RET_CHECK(left_amount_it != attrs.end())
-      << "No left_amount attribute in SPMD multi rotate op";
+      << "No left_amount attribute in SPMD wrap op";
   int64_t left_amount = left_amount_it->second;
 
   auto right_amount_it = attrs.find("right_amount");
   TF_RET_CHECK(right_amount_it != attrs.end())
-      << "No right_amount attribute in SPMD multi rotate op";
+      << "No right_amount attribute in SPMD wrap op";
   int64_t right_amount = right_amount_it->second;
 
   PartitionedHlo input = GetPartitionedHlo(hlo->operand(0));
@@ -636,7 +630,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_Wrap(
 
   TF_RET_CHECK(
       !(element_sharding.IsReplicated() || element_sharding.IsTileMaximal()))
-      << "MultiRotate op requires sharding along the rotate dimension.";
+      << "Wrap op requires sharding along the wrap dimension.";
 
   input = input.Reshard(element_sharding);
 
@@ -680,15 +674,14 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_Wrap(
 
     Shape slice_shape = local_input->shape();
     slice_shape.set_dimensions(dim, right_amount);
-    std::vector<int64_t> slice_starts(pre_wrap_shape.dimensions_size(), 0);
-    slice_starts[dim] = 0;
+    std::vector<int64_t> slice_starts(pre_wrap_shape.dimensions().size(), 0);
     std::vector<int64_t> slice_limits(local_input->shape().dimensions().begin(),
                                       local_input->shape().dimensions().end());
     slice_limits[dim] = right_amount;
     HloInstruction* slice_to_send =
         b_.AddInstruction(HloInstruction::CreateSlice(
             slice_shape, local_input, slice_starts, slice_limits,
-            std::vector<int64_t>(pre_wrap_shape.dimensions_size(), 1)));
+            std::vector<int64_t>(pre_wrap_shape.dimensions().size(), 1)));
 
     right_halo = collective_ops_creator_.create_collective_permute(
         &b_, slice_to_send, pairs, NewChannel());
@@ -746,10 +739,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_Wrap(
     dynamic_slice_shape.set_dimensions(dim, left_amount);
 
     std::vector<HloInstruction*> start_indices(
-        pre_wrap_shape.dimensions_size());
-    for (int i = 0; i < pre_wrap_shape.dimensions_size(); i++) {
-      start_indices[i] = zero_offset;
-    }
+        pre_wrap_shape.dimensions().size(), zero_offset);
     start_indices[dim] = start_idx;
 
     std::vector<int64_t> slice_sizes(local_input->shape().dimensions().begin(),
@@ -803,7 +793,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_Wrap(
 
     if (right_halo) {
       auto paddingConfig =
-          MakeNoPaddingConfig(super_shard->shape().dimensions_size());
+          MakeNoPaddingConfig(super_shard->shape().dimensions().size());
       paddingConfig.mutable_dimensions(dim)->set_edge_padding_high(
           right_amount + result_right_padding);
       auto zero = b_.AddInstruction(HloInstruction::CreateConstant(
@@ -816,10 +806,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_Wrap(
           padded_shape, super_shard, zero, paddingConfig));
 
       std::vector<HloInstruction*> start_indices(
-          pre_wrap_shape.dimensions_size());
-      for (int i = 0; i < pre_wrap_shape.dimensions_size(); i++) {
-        start_indices[i] = zero_offset;
-      }
+          pre_wrap_shape.dimensions().size(), zero_offset);
 
       HloInstruction* last_offset = b_.AddInstruction(
           HloInstruction::CreateConstant(LiteralUtil::CreateR0<int32_t>(
@@ -843,7 +830,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_Wrap(
 
   if (result_right_padding > 0) {
     auto paddingConfig =
-        MakeNoPaddingConfig(super_shard->shape().dimensions_size());
+        MakeNoPaddingConfig(super_shard->shape().dimensions().size());
     paddingConfig.mutable_dimensions(dim)->set_edge_padding_high(
         result_right_padding);
     auto zero = b_.AddInstruction(HloInstruction::CreateConstant(
@@ -866,10 +853,8 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_Wrap(
       HloInstruction::CreateBinary(shard_offset->shape(), HloOpcode::kMultiply,
                                    shard_offset, shard_size_change));
 
-  std::vector<HloInstruction*> start_indices(pre_wrap_shape.dimensions_size());
-  for (int i = 0; i < pre_wrap_shape.dimensions_size(); i++) {
-    start_indices[i] = zero_offset;
-  }
+  std::vector<HloInstruction*> start_indices(pre_wrap_shape.dimensions().size(),
+                                             zero_offset);
   start_indices[dim] = start;
 
   std::vector<int64_t> slice_sizes(super_shard->shape().dimensions().begin(),
@@ -879,7 +864,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallSPMDInternal_Wrap(
   HloInstruction* result = b_.AddInstruction(HloInstruction::CreateDynamicSlice(
       slice_shape, super_shard, start_indices, slice_sizes));
 
-  SetPartitionedHlo(hlo, [&] { return result; });
+  SetPartitionedHlo(hlo, result);
   return absl::OkStatus();
 }
 
@@ -902,8 +887,9 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCall(HloInstruction* hlo) {
           CreateR0WithType(hlo->shape().element_type(), 0, &b_));
     }
     auto input = input_partitioned.hlo();
-    CHECK(hlo->sharding().IsManual() || hlo->sharding().IsManualSubgroup());
-    CHECK(ShapeUtil::Compatible(
+    TF_RET_CHECK(hlo->sharding().IsManual() ||
+                 hlo->sharding().IsManualSubgroup());
+    TF_RET_CHECK(ShapeUtil::Compatible(
         input->shape(), MakePartitionedShape(hlo->shape(), hlo->sharding())));
     auto copy = b_.AddInstruction(
         HloInstruction::CreateUnary(input->shape(), HloOpcode::kCopy, input));
@@ -913,10 +899,11 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCall(HloInstruction* hlo) {
   if (hlo->custom_call_target() == "SPMDShardToFullShape") {
     // This op switches from manual partitioning to auto partitioning.
     auto input = GetPartitionedHlo(hlo->operand(0)).hlo();
-    CHECK(input->sharding().IsManual() || input->sharding().IsManualSubgroup());
+    TF_RET_CHECK(input->sharding().IsManual() ||
+                 input->sharding().IsManualSubgroup());
     auto copy = b_.AddInstruction(
         HloInstruction::CreateUnary(input->shape(), HloOpcode::kCopy, input));
-    CHECK(ShapeUtil::Compatible(
+    TF_RET_CHECK(ShapeUtil::Compatible(
         copy->shape(), MakePartitionedShape(hlo->shape(), hlo->sharding())));
     SetPartitionedHlo(hlo, copy);
     return absl::OkStatus();
