@@ -624,7 +624,7 @@ struct IsSpmdPartitioningVisitorPointerType<
     : std::true_type {};
 
 template <typename T>
-constexpr bool IsSpmdPartitioningVisitorPointerType_v =
+inline constexpr bool IsSpmdPartitioningVisitorPointerType_v =
     IsSpmdPartitioningVisitorPointerType<T>::value;
 
 template <typename T>
@@ -646,7 +646,8 @@ struct IsSpmdBuilderPointerType<
     : std::true_type {};
 
 template <typename T>
-constexpr bool IsSpmdBuilderPointerType_v = IsSpmdBuilderPointerType<T>::value;
+inline constexpr bool IsSpmdBuilderPointerType_v =
+    IsSpmdBuilderPointerType<T>::value;
 
 template <typename T>
 using IsSpmdBuilderPointer =
@@ -666,7 +667,8 @@ struct IsHloModulePointerType<
     : std::true_type {};
 
 template <typename T>
-constexpr bool IsHloModulePointerType_v = IsHloModulePointerType<T>::value;
+inline constexpr bool IsHloModulePointerType_v =
+    IsHloModulePointerType<T>::value;
 
 template <typename T>
 using IsHloModulePointer = std::enable_if_t<IsHloModulePointerType_v<T>, int>;
@@ -685,7 +687,7 @@ struct IsPartitionedHloType<
     : std::true_type {};
 
 template <typename T>
-constexpr bool IsPartitionedHloType_v = IsPartitionedHloType<T>::value;
+inline constexpr bool IsPartitionedHloType_v = IsPartitionedHloType<T>::value;
 
 template <typename T>
 using IsPartitionedHlo = std::enable_if_t<IsPartitionedHloType_v<T>, int>;
@@ -703,7 +705,7 @@ struct is_iterable<T, std::void_t<decltype(std::declval<T>().begin()),
     : std::true_type {};
 
 template <typename T>
-constexpr bool is_iterable_v = is_iterable<T>::value;
+inline constexpr bool is_iterable_v = is_iterable<T>::value;
 
 template <typename T>
 using iterable_element_type =
@@ -721,7 +723,7 @@ struct IsIterablePartitionedHloContainerType<
     : std::true_type {};
 
 template <typename T>
-constexpr bool IsIterablePartitionedHloContainerType_v =
+inline constexpr bool IsIterablePartitionedHloContainerType_v =
     IsIterablePartitionedHloContainerType<T>::value;
 
 template <typename T>

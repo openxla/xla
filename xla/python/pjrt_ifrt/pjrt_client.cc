@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
+#include "xla/pjrt/distributed/coordination/coordination_service.h"
 #include "xla/pjrt/distributed/coordination/coordination_service_agent.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/topology_util.h"
@@ -1547,19 +1548,18 @@ CrossHostTransferKey PjRtClient::CreateNewTransferKey() {
 
 absl::Status PjRtClient::WatchGlobalProcessInfo(
     xla::CoordinationServiceAgent& agent) {
-  TF_ASSIGN_OR_RETURN(tensorflow::CoordinatedTask task, agent.GetOwnTask());
-  VLOG(3) << "Watching global process info for task "
-          << task.ShortDebugString();
+  CoordinationService::TaskId task_id = agent.task_id();
+  VLOG(3) << "Watching global process info for task " << task_id;
 
   int64_t version_number = -1;  // latest job state version
   while (true) {
     // Call WatchJobStateAsync.
-    VLOG(3) << "Calling WatchJobStateAsync for task " << task.ShortDebugString()
+    VLOG(3) << "Calling WatchJobStateAsync for task " << task_id
             << " with version number " << version_number;
     absl::StatusOr<tensorflow::WatchJobStateResponse> response;
     bool done = false;
     std::shared_ptr<tsl::CallOptions> call_opts = agent.WatchJobStateAsync(
-        task.job_name(), version_number,
+        version_number,
         [this, &response,
          &done](absl::StatusOr<tensorflow::WatchJobStateResponse> r) {
           response = std::move(r);
@@ -1579,8 +1579,7 @@ absl::Status PjRtClient::WatchGlobalProcessInfo(
 
       if (shutting_down_) {
         // Cancel the call the WatchJobStateAsync and wait for it to terminate.
-        VLOG(3) << "WatchGlobalProcessInfo shutting down for task "
-                << task.ShortDebugString();
+        VLOG(3) << "WatchGlobalProcessInfo shutting down for task " << task_id;
         call_opts->StartCancel();
         shutting_down_mu_.Await(absl::Condition(&done));
         return absl::OkStatus();
@@ -1590,8 +1589,8 @@ absl::Status PjRtClient::WatchGlobalProcessInfo(
         // Sleep to avoid repeatedly issuing a request that fails immediately.
         //
         // TODO: mwhittaker - Perform exponential backoff.
-        LOG(WARNING) << "WatchJobStateAsync failed for task "
-                     << task.ShortDebugString() << ": " << response.status();
+        LOG(WARNING) << "WatchJobStateAsync failed for task " << task_id << ": "
+                     << response.status();
         shutting_down_mu_.AwaitWithTimeout(absl::Condition(&shutting_down_),
                                            absl::Seconds(1));
         continue;
@@ -1610,7 +1609,7 @@ absl::Status PjRtClient::WatchGlobalProcessInfo(
 
     // Pretty print the job state, if VLOG is on.
     if (VLOG_IS_ON(3)) {
-      VLOG(3) << "Job state for task " << task.ShortDebugString() << ":";
+      VLOG(3) << "Job state for task " << task_id << ":";
       for (const auto& info : state) {
         VLOG(3) << "- " << info.DebugString();
       }

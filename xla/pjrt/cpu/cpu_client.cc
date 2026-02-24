@@ -101,6 +101,7 @@ limitations under the License.
 #include "xla/pjrt/thread_pool_async_work_runner.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/pjrt/utils.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_layout.h"
@@ -150,16 +151,6 @@ static int CpuDeviceCount() {
   // parallel across multiple devices, e.g. pmap.
   return GetDebugOptionsFromFlags().xla_force_host_platform_device_count();
 }
-
-namespace cpu {
-
-PjRtPlatformId PlatformId() { return tsl::Fingerprint64(CpuName()); }
-
-absl::string_view PlatformName() { return CpuName(); }
-
-absl::string_view PlatformVersion() { return CpuName(); }
-
-}  // namespace cpu
 
 namespace {
 
@@ -221,12 +212,9 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetPjRtCpuClient(
     }
 
     topology = std::make_unique<CpuTopologyDescription>(
-        cpu::PlatformId(), cpu::PlatformName(), cpu::PlatformVersion(),
-        cpu_topology_devices,
-        cpu::DetectMachineAttributes(
-            cpu::CpuFeatureFromString(
-                GetDebugOptionsFromFlags().xla_cpu_max_isa()))
-            .features);
+        xla::CpuPlatformId(), xla::CpuPlatformName(), xla::CpuPlatformVersion(),
+        CpuTopology(cpu_topology_devices,
+                    cpu::TargetMachineOptions(GetDebugOptionsFromFlags())));
   } else {
     topology = std::make_unique<CpuTopologyDescription>(*options.topology);
     if (topology->cpu_topology().number_of_devices() != cpu_device_count) {
@@ -348,7 +336,7 @@ PjRtCpuClient::PjRtCpuClient(
 PjRtCpuClient::~PjRtCpuClient() { VLOG(1) << "PjRtCpuClient destroyed."; }
 
 absl::StatusOr<PjRtDevice*> PjRtCpuClient::LookupDevice(
-    xla::PjRtGlobalDeviceId global_device_id) const {
+    xla::GlobalDeviceId global_device_id) const {
   auto it = id_to_device_.find(global_device_id);
   if (it != id_to_device_.end()) {
     return it->second;
@@ -358,7 +346,7 @@ absl::StatusOr<PjRtDevice*> PjRtCpuClient::LookupDevice(
 }
 
 absl::StatusOr<PjRtDevice*> PjRtCpuClient::LookupAddressableDevice(
-    PjRtLocalDeviceId local_device_id) const {
+    LocalDeviceId local_device_id) const {
   for (auto* device : addressable_devices_) {
     if (local_device_id == device->local_device_id()) {
       return device;
@@ -555,7 +543,7 @@ PjRtCpuClient::LoadInternal(
     addressable_devices.reserve(num_replicas * num_partitions);
     for (int replica = 0; replica < num_replicas; ++replica) {
       for (int partition = 0; partition < num_partitions; ++partition) {
-        PjRtGlobalDeviceId device_id((*device_assignment)(replica, partition));
+        GlobalDeviceId device_id((*device_assignment)(replica, partition));
         if (UnpackCpuProcessIndex(device_id) != process_index()) {
           VLOG(3) << "Non-local device: " << device_id;
           continue;
@@ -825,7 +813,7 @@ PjRtCpuClient::CompileInternal(
       for (int computation = 0;
            computation < device_assignment->computation_count();
            ++computation) {
-        PjRtGlobalDeviceId id((*device_assignment)(replica, computation));
+        GlobalDeviceId id((*device_assignment)(replica, computation));
         if (UnpackCpuProcessIndex(id) != process_index()) {
           // TODO(phawkins): improve this error message when we're ready to
           // publicize that multiprocess collectives exist.
@@ -842,8 +830,7 @@ PjRtCpuClient::CompileInternal(
     TF_RETURN_IF_ERROR([&]() -> absl::Status {
       for (int replica = 0; replica < num_replicas; ++replica) {
         for (int partition = 0; partition < num_partitions; ++partition) {
-          PjRtGlobalDeviceId device_id(
-              (*device_assignment)(replica, partition));
+          GlobalDeviceId device_id((*device_assignment)(replica, partition));
           if (UnpackCpuProcessIndex(device_id) != process_index()) {
             VLOG(3) << "Non-local device: " << device_id;
             continue;
@@ -895,12 +882,8 @@ PjRtCpuClient::CompileInternal(
       compile_options.thread_pool = pjrt_client_thread_pool();
     }
 
-    cpu::TargetMachineOptions target_machine_options(
-        hlo_module->config().debug_options());
-    // Overwrite the features with the machine attributes from the topology.
-
-    TF_RETURN_IF_ERROR(target_machine_options.SetFeatures(
-        absl::StrJoin(topology_->cpu_topology().machine_attributes(), ",")));
+    const cpu::TargetMachineOptions& target_machine_options =
+        topology_->cpu_topology().target_machine_options();
 
     compile_options.cpu_target_config.emplace(target_machine_options);
 
@@ -1453,7 +1436,7 @@ PjRtCpuLoadedExecutable::StartRawExecutable(const ExecuteOptions& options,
   if (device == nullptr) {
     CHECK(device_assignment_ != nullptr);
     const int64_t device_id = (*device_assignment_)(replica, partition);
-    PjRtGlobalDeviceId global_device_id(device_id);
+    GlobalDeviceId global_device_id(device_id);
     TF_ASSIGN_OR_RETURN(PjRtDevice * pjrt_device,
                         client_->LookupDevice(global_device_id));
     device = tsl::down_cast<PjRtCpuDevice*>(pjrt_device);

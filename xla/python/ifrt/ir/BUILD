@@ -201,7 +201,7 @@ cc_library(
     srcs = ["ifrt_ir_program.cc"],
     hdrs = ["ifrt_ir_program.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:users"],
+    visibility = internal_visibility(["//xla/python/ifrt:users"]),
     deps = [
         ":ifrt_ir_compile_options_proto_cc",
         "//xla/pjrt:pjrt_executable",
@@ -331,7 +331,7 @@ cc_library(
     srcs = ["basic_atom_program_compiler.cc"],
     hdrs = ["basic_atom_program_compiler.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:friends"],
+    visibility = internal_visibility(["//xla/python/ifrt:friends"]),
     deps = [
         ":atom_program_compiler",
         ":ir",
@@ -357,7 +357,7 @@ cc_library(
     srcs = ["version.cc"],
     hdrs = ["version.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:users"],
+    visibility = internal_visibility(["//xla/python/ifrt:users"]),
     deps = [
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -456,7 +456,7 @@ cc_library(
         "vifrt_dialect.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:users"],
+    visibility = internal_visibility(["//xla/python/ifrt:users"]),
     deps = [
         ":sharding_param",
         ":version",
@@ -479,7 +479,7 @@ tsl_pybind_extension(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    visibility = ["//xla/python/ifrt:users"],
+    visibility = internal_visibility(["//xla/python/ifrt:users"]),
     deps = [
         ":ifrt_ir_program",
         ":ifrt_ir_program_serdes",
@@ -503,7 +503,10 @@ cc_library(
     srcs = ["compiled_ifrt_ir_program.cc"],
     hdrs = ["compiled_ifrt_ir_program.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = ["//xla/python/ifrt:users"],
+    visibility = if_google(
+        ["//xla/python/ifrt/ir/google:__pkg__"],
+        ["//visibility:private"],
+    ),
     deps = [
         ":atom_program_compiler",
         ":ifrt_ir_program",
@@ -545,7 +548,7 @@ cc_library(
     srcs = ["compiler.cc"],
     hdrs = ["compiler.h"],
     compatible_with = get_compatible_with_libtpu_portable(),
-    visibility = ["//xla/python/ifrt:users"],
+    visibility = internal_visibility(["//xla/python/ifrt:users"]),
     deps = [
         ":atom_program_compiler",
         ":compiled_ifrt_ir_program",

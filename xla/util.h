@@ -820,8 +820,8 @@ DimensionVector GetNonContractingDims(
 std::string SanitizeFileName(std::string file_name);
 
 // Removes numerical identifiers and replaces separators in op names.
-std::string SanitizeOpName(std::string op_name, char separator,
-                           const std::string& replace_with);
+std::string SanitizeOpName(absl::string_view op_name, char separator,
+                           absl::string_view replace_with);
 
 // Check that a sequence of distinct numbers can form a continuous interval.
 bool DistinctNumbersAreConsecutiveIfSorted(absl::Span<const int64_t>);

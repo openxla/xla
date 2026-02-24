@@ -13204,20 +13204,21 @@ TEST_F(AlgebraicSimplifierTest, ConditionalWithConvert) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_conditional_simplification(true);
   AlgebraicSimplifier simplifier(options);
   ASSERT_THAT(simplifier.Run(m.get()), absl_testing::IsOkAndHolds(true));
 
   // The simplified Boolean Conditional should be:
-  // conditional(not(pred), false_arg, true_arg)
+  // conditional(pred, true_arg, false_arg)
   //
   // We expect:
-  // True Arg  -> val_false (10.0)  [Originally Index 0]
-  // False Arg -> val_true (20.0) [Originally Index 1]
+  // True Arg  -> val_true (20.0)  [Originally Index 1]
+  // False Arg -> val_false (10.0) [Originally Index 0]
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::Conditional(
-                  m::Not(m::Parameter(0)),
-                  m::ConstantEffectiveScalar(10.0),  // Expected True Slot
-                  m::ConstantEffectiveScalar(20.0)   // Expected False Slot
+                  m::Parameter(0),
+                  m::ConstantEffectiveScalar(20.0),  // Expected True Slot
+                  m::ConstantEffectiveScalar(10.0)   // Expected False Slot
                   )));
 }
 

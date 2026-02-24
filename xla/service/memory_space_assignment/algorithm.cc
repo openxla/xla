@@ -4605,7 +4605,7 @@ bool AsynchronousCopyResource::ConsumeResource(
   int64_t* initial_resources_scaled_ptr = initial_resources_scaled_.data();
   int64_t* delay_ptr = delay_.data();
 
-  std::list<AsynchronousCopy>::iterator current_copy = async_copies_.end();
+  auto current_copy = async_copies_.end();
   // In order to propagate the resource to the next scheduled copy, we iterate
   // over the copies in start time order until we either find enough free
   // resource (and return true), or find out that we don't have enough free
@@ -4641,7 +4641,7 @@ bool AsynchronousCopyResource::ConsumeResource(
     // Find the copy that is right after this one. If there are leftover
     // resources by the time the next copy starts, the next copy will be pushed
     // further later in time.
-    std::list<AsynchronousCopy>::iterator next_copy = async_copies_.end();
+    auto next_copy = async_copies_.end();
     if (current_copy != async_copies_.end()) {
       next_copy = std::next(current_copy);
     } else {
@@ -8244,7 +8244,7 @@ int64_t AsynchronousCopyResource::GetScaledIntegerResource(
                  << std::numeric_limits<int64_t>::max();
     return std::numeric_limits<int64_t>::max();
   }
-  int64_t scaled_value_int = static_cast<int64_t>(scaled_value);
+  auto scaled_value_int = static_cast<int64_t>(scaled_value);
   return scaled_value_int;
 }
 

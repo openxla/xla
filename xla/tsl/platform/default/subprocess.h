@@ -103,8 +103,26 @@ class SubProcess {
 
   // Wait()
   //    Block until the process exits.
-  //    Return true normally, or false if the process wasn't running.
+  //    Return true normally, or false if the process wasn't running or the
+  //    process had already exited and this fact had been reported in the return
+  //    value of another call of Wait() or CheckRunning().
   virtual bool Wait();
+
+  //  Return the raw exit status of the process.
+  virtual inline int exit_status() const {
+    absl::MutexLock lock(wait_mu_);
+    return exit_status_;
+  }
+
+  //  Return a useful string describing why the child failed
+  virtual std::string error_text() const {
+    absl::MutexLock lock(&data_mu_);
+    return error_text_;
+  }
+
+  //  Return true if the process exited successfully
+  //  (zero return code, no signal).
+  virtual inline bool exit_normal() const { return exit_status() == 0; }
 
   // Communicate()
   //    Read from stdout and stderr and writes to stdin until all pipes have
@@ -130,6 +148,16 @@ class SubProcess {
   void ClosePipes() TF_EXCLUSIVE_LOCKS_REQUIRED(data_mu_);
   bool WaitInternal(int* status);
 
+  // Returns kStillRunning if still running, kExited if exited, kNotRunning if
+  // not running. If returns kExited, *status is filled with the exit status.
+  // Will not block if flags is WNOHANG.
+  enum class WaitStatus {
+    kStillRunning = 0,
+    kExited = 1,
+    kNotRunning = 2,
+  };
+  WaitStatus WaitOrCheckRunningInternal(int flags, int* status);
+
   // The separation between proc_mu_ and data_mu_ mutexes allows Kill() to be
   // called by a thread while another thread is inside Wait() or Communicate().
   mutable absl::Mutex proc_mu_;
@@ -138,11 +166,13 @@ class SubProcess {
   std::function<void(SubProcess*)> exit_cb_ ABSL_GUARDED_BY(proc_mu_);
   int64_t exit_cb_tid_ ABSL_GUARDED_BY(proc_mu_);
 
-  mutable absl::Mutex wait_mu_;
+  mutable absl::Mutex wait_mu_ ABSL_ACQUIRED_AFTER(proc_mu_, data_mu_);
+  int exit_status_ ABSL_GUARDED_BY(wait_mu_);
   mutable absl::Mutex data_mu_ TF_ACQUIRED_AFTER(proc_mu_);
   char* exec_path_ TF_GUARDED_BY(data_mu_);
   char** exec_argv_ TF_GUARDED_BY(data_mu_);
   std::string chdir_ ABSL_GUARDED_BY(data_mu_);
+  std::string error_text_ ABSL_GUARDED_BY(data_mu_);
   ChannelAction action_[kNFds] TF_GUARDED_BY(data_mu_);
   int parent_pipe_[kNFds] TF_GUARDED_BY(data_mu_);
   int child_pipe_[kNFds] TF_GUARDED_BY(data_mu_);

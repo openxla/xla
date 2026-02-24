@@ -379,10 +379,6 @@ absl::StatusOr<SyclTimerProperties> SyclGetTimerProperties(int device_ordinal) {
 }
 
 absl::Status SyclStreamSynchronize(::sycl::queue* stream_handle) {
-  if (stream_handle == nullptr) {
-    return absl::InvalidArgumentError(
-        "SyclStreamSynchronize: Null stream handle provided.");
-  }
   try {
     stream_handle->wait();
   } catch (const ::sycl::exception& e) {
@@ -395,10 +391,6 @@ absl::Status SyclStreamSynchronize(::sycl::queue* stream_handle) {
 
 absl::StatusOr<std::optional<::sycl::event>> SyclGetRecentEventFromStream(
     ::sycl::queue* stream_handle) {
-  if (stream_handle == nullptr) {
-    return absl::InvalidArgumentError(
-        "SyclGetRecentEventFromStream: Null stream handle provided.");
-  }
   try {
     // Use the new DPC++/SYCL API when oneAPI version is at least 2024.2.
     std::optional<::sycl::event> event =
@@ -515,10 +507,6 @@ absl::Status SyclMemcpyDeviceToHostAsync(::sycl::queue* stream_handle,
         "SyclMemcpyDeviceToHostAsync: Null pointer provided for destination or "
         "source.");
   }
-  if (stream_handle == nullptr) {
-    return absl::InvalidArgumentError(
-        "SyclMemcpyDeviceToHostAsync: Null stream handle provided.");
-  }
   ::sycl::usm::alloc dst_alloc_type =
       ::sycl::get_pointer_type(dst_host, stream_handle->get_context());
   bool async = (dst_alloc_type == ::sycl::usm::alloc::host);
@@ -538,10 +526,6 @@ absl::Status SyclMemcpyHostToDeviceAsync(::sycl::queue* stream_handle,
     return absl::InvalidArgumentError(
         "SyclMemcpyHostToDeviceAsync: Null pointer provided for destination or "
         "source.");
-  }
-  if (stream_handle == nullptr) {
-    return absl::InvalidArgumentError(
-        "SyclMemcpyHostToDeviceAsync: Null stream handle provided.");
   }
   ::sycl::usm::alloc src_alloc_type =
       ::sycl::get_pointer_type(src_host, stream_handle->get_context());
@@ -563,10 +547,6 @@ absl::Status SyclMemcpyDeviceToDeviceAsync(::sycl::queue* stream_handle,
     return absl::InvalidArgumentError(
         "SyclMemcpyDeviceToDeviceAsync: Null pointer provided for destination "
         "or source.");
-  }
-  if (stream_handle == nullptr) {
-    return absl::InvalidArgumentError(
-        "SyclMemcpyDeviceToDeviceAsync: Null stream handle provided.");
   }
   return MemcpyDeviceToDevice(stream_handle, dst_device, src_device, byte_count,
                               /*async=*/true);

@@ -72,6 +72,29 @@ cc_library(
 )
 
 cc_library(
+    name = "pjrt_c_api_abi_version_extension_hdrs",
+    hdrs = ["pjrt_c_api_abi_version_extension.h"],
+    deps = [":pjrt_c_api_hdrs"],
+)
+
+cc_library(
+    name = "pjrt_c_api_abi_version_helpers",
+    srcs = ["pjrt_c_api_abi_version_helpers.cc"],
+    hdrs = ["pjrt_c_api_abi_version_helpers.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pjrt_c_api_abi_version_extension_hdrs",
+        ":pjrt_c_api_hdrs",
+        ":pjrt_c_api_helpers",
+        "//xla/pjrt:pjrt_abi_version",
+        "//xla/pjrt/c_api_client:pjrt_c_api_client",
+        "//xla/pjrt/proto:pjrt_abi_version_proto_cc",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
     name = "pjrt_c_api_megascale_extension_hdrs",
     hdrs = ["pjrt_c_api_megascale_extension.h"],
     deps = [":pjrt_c_api_hdrs"],
