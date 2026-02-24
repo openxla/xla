@@ -65,6 +65,7 @@ class CommonPjRtClient : public PjRtClient {
   virtual bool allows_recursion() const { return true; }
   virtual bool allows_execute_recursion() const { return allows_recursion(); }
   virtual bool allow_fallback_for_donation() const { return false; }
+  virtual bool supports_two_phase_launch() const { return true; }
 
   // Backend specific handlers for when an oom is detected during execute.
   virtual void CallOomHandlers() const {}

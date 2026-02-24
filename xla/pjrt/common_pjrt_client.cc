@@ -1050,8 +1050,7 @@ CommonPjRtLoadedExecutable::ExecuteSharded(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options,
     std::optional<tsl::Future<void>>& returned_future, bool fill_future) const {
-  RunId run_id = options.launch_id != 0 ? RunId(options.launch_id)
-                                        : RunId::CreateUniqueId();
+  RunId run_id = RunId(options.launch_id);
   tsl::profiler::TraceMe traceme("CommonPjRtLoadedExecutable::ExecuteSharded");
   for (int i = 0; i < addressable_devices_.size(); ++i) {
     if (addressable_devices_[i] == device) {
@@ -1204,7 +1203,7 @@ CommonPjRtLoadedExecutable::Execute(
                                            run_id, replica, partition, options,
                                            /*host_callback_idx=*/i);
           // Wait for prepare to finish on all cores.
-          {
+          if (client()->supports_two_phase_launch()) {
             absl::MutexLock lock(mu);
             preparing--;
             auto done_preparing = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu) {
