@@ -709,6 +709,16 @@ class HloCollectiveInstruction : public HloChannelInstruction {
 
   static bool ClassOf(const HloInstruction* hlo);
 
+  // TODO(b/462498901): We are trending towards removing channel IDs for
+  // collectives - or, rather, turning it into a boolean field indicating
+  // whether the collective is cross-replica or cross-partition. This method is
+  // a temporary crutch to be consistent without generating unique channel IDs
+  // whenever a new collective is created.
+  static int64_t GetDefaultChannelId() {
+    constexpr int64_t kDefaultCollectiveChannelId = 1;
+    return kDefaultCollectiveChannelId;
+  }
+
  protected:
   explicit HloCollectiveInstruction(
       HloOpcode opcode, const Shape& shape,
