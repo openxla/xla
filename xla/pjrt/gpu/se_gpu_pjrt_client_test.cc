@@ -1005,7 +1005,7 @@ TEST(StreamExecutorGpuClientTest, DeleteBufferThenFulfillBufferNoDeadLock) {
   std::vector<float> data{1, 3, 5, 7, 11, 13, 17, 19};
   Shape shape = ShapeUtil::MakeShape(F32, {static_cast<int64_t>(data.size())});
   // On ROCm 10k buffers hit vm.max_map_count causing pthread_create to fail
-  const int num_buffers = client->platform_name() == "rocm" ? 2000 : 10000;
+  const int num_buffers = client->platform_name() == xla::RocmName() ? 2000 : 10000;
   std::vector<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
       txms;
   for (int i = 0; i < num_buffers; ++i) {
@@ -1333,8 +1333,8 @@ TEST(StreamExecutorGpuClientTest, DistributedInit) {
       options.num_nodes = num_nodes;
       options.kv_store = kv_store;
       TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
-      EXPECT_TRUE(client->platform_name() == "cuda" ||
-                  client->platform_name() == "rocm");
+      EXPECT_TRUE(client->platform_name() == xla::CudaName() ||
+                  client->platform_name() == xla::RocmName());
       EXPECT_EQ(client->addressable_device_count(), 2);
       EXPECT_EQ(client->device_count(), 4);
     });
@@ -1973,7 +1973,7 @@ TEST(StreamExecutorGpuClientTest,
   EXPECT_EQ(memory_stats.output_size_in_bytes, 1764786624);
   EXPECT_EQ(memory_stats.host_output_size_in_bytes, 0);
   // Difference in buffer aliasing causes a difference in peak memory usage
-  if (client->platform_name() == "rocm") {
+  if (client->platform_name() == xla::RocmName()) {
     EXPECT_EQ(memory_stats.peak_memory_in_bytes, 1845006788);
   } else {
     EXPECT_EQ(memory_stats.peak_memory_in_bytes, 1845010888);
@@ -3447,9 +3447,9 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
                                                  /*key_prefix=*/"gpu:");
   TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtClient> client,
                       GetStreamExecutorGpuClient(options));
-  TF_RET_CHECK(client->platform_name() == "cuda" ||
-               client->platform_name() == "rocm");
-  if (client->platform_name() == "cuda") {
+  TF_RET_CHECK(client->platform_name() == xla::CudaName() ||
+               client->platform_name() == xla::RocmName());
+  if (client->platform_name() == xla::CudaName()) {
     TF_ASSIGN_OR_RETURN(
         se::CudaComputeCapability cc,
         se::CudaComputeCapability::FromString(
