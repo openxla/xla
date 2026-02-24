@@ -6549,7 +6549,9 @@ AllocationResult MsaAlgorithm::AllocateSegment(AllocationRequest& request) {
   // default memory.
   (*prev_allocation_in_default_mem_it)->Extend(request.end_time);
   (*prev_allocation_in_default_mem_it)->AddUse(request.use->hlo_use);
-  uses_in_default_memory_.insert(request.use->hlo_use);
+  if (uses_in_default_memory_set_.insert(request.use->hlo_use).second) {
+    uses_in_default_memory_.push_back(request.use->hlo_use);
+  }
   return allocation_result;
 }
 
@@ -7203,7 +7205,10 @@ absl::Status MsaAlgorithm::WindowPrefetch() {
   // cloned computation and use the cloned computation to determine the operand
   // span size.
 
-  // Map of the original instruction to a clone of the instruction.
+  // Map of the original instruction to a clone of the instruction. Use a
+  // vector to ensure deterministic traversal for memory space propagation
+  // and cleanup.
+  std::vector<HloInstruction*> cloned_insts_order;
   absl::flat_hash_map<HloInstruction*, HloInstruction*> cloned_insts;
   const std::vector<HloInstruction*>& instruction_sequence =
       hlo_live_range_.flattened_instruction_sequence().instructions();
@@ -7228,6 +7233,7 @@ absl::Status MsaAlgorithm::WindowPrefetch() {
     HloInstruction* cloned =
         instruction->parent()->AddInstruction(instruction->Clone());
     cloned_insts[instruction] = cloned;
+    cloned_insts_order.push_back(instruction);
 
     // Color the cloned instruction's fused parameters.
     auto it = operands_in_alternate_memory_map_.find(instruction);
@@ -7263,7 +7269,8 @@ absl::Status MsaAlgorithm::WindowPrefetch() {
                       HloDataflowAnalysis::Run(*module_, /*ssa_form=*/false,
                                                /*bitcast_defines_value=*/true));
   MemorySpacePropagation memory_space_propagation(std::move(dataflow_analysis));
-  for (auto [_, cloned] : cloned_insts) {
+  for (HloInstruction* inst : cloned_insts_order) {
+    HloInstruction* cloned = cloned_insts[inst];
     for (HloComputation* computation : cloned->called_computations()) {
       memory_space_propagation.RunOnComputation(computation);
     }
@@ -7284,7 +7291,8 @@ absl::Status MsaAlgorithm::WindowPrefetch() {
   }
 
   // Remove the cloned instructions.
-  for (auto [_, cloned] : cloned_insts) {
+  for (HloInstruction* inst : cloned_insts_order) {
+    HloInstruction* cloned = cloned_insts[inst];
     HloComputation* computation = cloned->parent();
     CHECK_OK(computation->RemoveInstruction(cloned));
     computation->Cleanup();
