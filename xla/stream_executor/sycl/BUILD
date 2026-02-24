@@ -298,6 +298,7 @@ cc_library(
         ":sycl_event",
         ":sycl_gpu_runtime",
         ":sycl_kernel",
+        ":sycl_platform_id",
         ":sycl_stream",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_memory",
