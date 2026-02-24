@@ -424,7 +424,7 @@ message DebugOptions {
   // If non-zero, limits the number of solutions to be used by GEMM autotuner.
   // This might be useful if underlying math library returns too many GEMM
   // solutions.
-  optional int64 xla_gpu_autotune_max_solutions = 288;
+  optional int64 xla_gpu_autotune_max_solutions = 288 [deprecated = true];
 
   // If true, each fusion instruction will have a cost model runtime estimate in
   // backend config after compilation.
