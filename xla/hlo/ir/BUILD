@@ -35,6 +35,7 @@ cc_library(
         "hlo_schedule.cc",
         "hlo_sharding_metadata.cc",
         "replica_group.cc",
+        "stack_frames.cc",
     ],
     hdrs = [
         "dfs_hlo_visitor.h",
@@ -58,6 +59,7 @@ cc_library(
         "hlo_sharding.h",
         "hlo_sharding_metadata.h",
         "replica_group.h",
+        "stack_frames.h",
     ],
     deps = [
         ":backend_config",
@@ -141,6 +143,17 @@ xla_cc_test(
         ":hlo",
         "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_cc_test(
+    name = "stack_frames_test",
+    srcs = ["stack_frames_test.cc"],
+    deps = [
+        ":hlo",
+        "//xla/service:hlo_proto_cc",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
