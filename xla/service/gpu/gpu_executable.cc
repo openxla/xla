@@ -115,6 +115,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
@@ -122,7 +123,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -424,6 +424,15 @@ absl::Status ExecuteThunksImpl(
     stream_priority = stream_executor::StreamPriority::Highest;
   }
 
+  // Maybe install progress tracker for this execution.
+  int32_t progress_tracking_n =
+      debug_options ? debug_options->xla_gpu_execution_progress_tracking() : 0;
+
+  std::optional<SequentialThunk::ScopedProgressTracker> tracker;
+  if (progress_tracking_n > 0) {
+    ASSIGN_OR_RETURN(tracker, InstallProgressTracker(executor, thunk_sequence));
+  }
+
   // Maybe add a watch guard for this execution.
   absl::Duration watchdog_timeout = absl::InfiniteDuration();
   if (debug_options &&
@@ -436,11 +445,52 @@ absl::Status ExecuteThunksImpl(
 
   std::shared_ptr<HangWatchdog::Guard> guard = nullptr;
   if (watchdog_timeout < absl::InfiniteDuration()) {
-    std::string watchdog_name = absl::StrFormat(
-        "[%d] XLA GPU execution `%s`", executor->device_ordinal(), module_name);
+    int32_t device_ordinal = executor->device_ordinal();
+    std::string watchdog_name = absl::StrFormat("[%d] XLA GPU execution `%s`",
+                                                device_ordinal, module_name);
+
+    // If we have installed progress tracker, log how far thunk execution
+    // progressed before getting stuck. This is helpful for identifying kernels
+    // that never finish and stall the stream execution.
+    HangWatchdog::CancelCallback pre_abort;
+    if (tracker.has_value()) {
+      pre_abort = [&tracker, progress_tracking_n, device_ordinal] {
+        auto tz = absl::LocalTimeZone();
+        size_t num_thunks = tracker->num_thunks();
+
+        auto completed = tracker->LastCompletedThunks(progress_tracking_n);
+        LOG(ERROR) << absl::StreamFormat("[%d] Last completed thunks: size=%d",
+                                         device_ordinal, completed.size());
+        for (auto& thunk : completed) {
+          LOG(ERROR) << absl::StreamFormat(
+              "  - thunk[%d/%d]: %s at %s", thunk.index, num_thunks, thunk.name,
+              absl::FormatTime("%Y-%m-%d %H:%M:%S.%E6f", thunk.executed, tz));
+        }
+
+        auto fist_pending = tracker->FirstPendingThunks(progress_tracking_n);
+        LOG(ERROR) << absl::StreamFormat("[%d] First pending thunks: size=%d",
+                                         device_ordinal, fist_pending.size());
+        for (auto& thunk : fist_pending) {
+          LOG(ERROR) << absl::StreamFormat(
+              "  - thunk[%d/%d]: %s at %s", thunk.index, num_thunks, thunk.name,
+              absl::FormatTime("%Y-%m-%d %H:%M:%S.%E6f", thunk.executed, tz));
+        }
+
+        auto last_pending = tracker->LastPendingThunks(progress_tracking_n);
+        LOG(ERROR) << absl::StreamFormat("[%d] Last pending thunks: size=%d",
+                                         device_ordinal, last_pending.size());
+        for (auto& thunk : last_pending) {
+          LOG(ERROR) << absl::StreamFormat(
+              "  - thunk[%d/%d]: %s at %s", thunk.index, num_thunks, thunk.name,
+              absl::FormatTime("%Y-%m-%d %H:%M:%S.%E6f", thunk.executed, tz));
+        }
+      };
+    }
+
     guard = StaticHangWatchDog().Watch(
         watchdog_name, watchdog_timeout,
-        HangWatchdog::Abort(watchdog_name, watchdog_timeout));
+        HangWatchdog::Abort(watchdog_name, watchdog_timeout,
+                            std::move(pre_abort)));
   }
 
   // Borrow streams required for CollectiveThunk.

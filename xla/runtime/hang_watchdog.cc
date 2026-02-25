@@ -84,23 +84,27 @@ HangWatchdog::HangWatchdog(tsl::Env* env, absl::string_view name,
     : thread_pool_(env, absl::StrCat(name, "-hang-watchdog"), num_threads) {}
 
 HangWatchdog::CancelCallback HangWatchdog::Abort(absl::string_view action,
-                                                 absl::Duration duration) {
+                                                 absl::Duration duration,
+                                                 CancelCallback pre_abort) {
   // Only one thread actually aborts the process. We wait 10 seconds before
   // aborting to give other hang watchdogs a chance to trigger their cancel
   // callbacks and log useful debugging information.
   static absl::once_flag abort_once;
 
-  return [action = std::string(action), duration] {
-    LOG(ERROR) << absl::StreamFormat(
-        "%s didn't finish in %v. Prepare to abort the process to avoid "
-        "infinite hangs.",
-        action, duration);
+  return [action = std::string(action), duration,
+          pre_abort = std::move(pre_abort)]() mutable {
+    LOG(ERROR) << absl::StreamFormat("%s failed to finish in %v.", action,
+                                     duration);
+    if (pre_abort) {
+      std::move(pre_abort)();
+    }
 
     absl::call_once(abort_once, [&] {
+      LOG(ERROR) << absl::StreamFormat(
+          "%s: prepare to abort the process to avoid infinite hangs.", action);
       absl::SleepFor(absl::Seconds(10));
       LOG(FATAL) << absl::StreamFormat(
-          "%s didn't finish in %v. Abort the process to avoid infinite hangs.",
-          action, duration);
+          "%s: abort the process to avoid infinite hangs.", action);
     });
   };
 }
