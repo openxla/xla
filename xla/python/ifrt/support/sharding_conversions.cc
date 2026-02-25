@@ -29,8 +29,6 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
 #include "xla/hlo/ir/hlo_sharding.h"
-#include "xla/python/ifrt/device.h"
-#include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/ir/sharding_param.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/xla_data.pb.h"
@@ -42,17 +40,14 @@ namespace support {
 absl::StatusOr<OpSharding> ToOpSharding(const Sharding& sharding) {
   if (auto* sharding_param_sharding =
           llvm::dyn_cast<xla::ifrt::ShardingParamSharding>(&sharding)) {
-    return ToOpSharding(sharding_param_sharding->sharding_param(),
-                        sharding_param_sharding->devices());
+    return ToOpSharding(sharding_param_sharding->sharding_param());
   }
   return absl::InvalidArgumentError(
       "Only conversion from `ShardingParamSharding` to `OpSharding` is "
       "supported.");
 }
 
-absl::StatusOr<OpSharding> ToOpSharding(
-    const ShardingParam& sharding_param,
-    const xla::ifrt::DeviceListRef& device_mapping) {
+absl::StatusOr<OpSharding> ToOpSharding(const ShardingParam& sharding_param) {
   OpSharding op_sharding;
   {
     bool all_dim_replicated = true;
@@ -98,23 +93,20 @@ absl::StatusOr<OpSharding> ToOpSharding(
     tile_assignment_dims->Add(device_count / cum_size);
   }
 
-  // Populate tile_assignment_devices.
-  llvm::SmallVector<int> logical_device_ids;
-  sharding_param.minor_to_major().ToDeviceList(logical_device_ids);
-  auto* tile_assignment_devices = op_sharding.mutable_tile_assignment_devices();
-  tile_assignment_devices->Reserve(logical_device_ids.size());
-  const absl::Span<Device* const> device_mapping_devices =
-      device_mapping->devices();
-  for (const int logical_device_id : logical_device_ids) {
-    if (logical_device_id < 0 ||
-        logical_device_id >= device_mapping_devices.size()) {
-      return absl::OutOfRangeError(
-          absl::StrCat("Can't map device with logical id ", logical_device_id,
-                       ". The logical device id should be within [0, ",
-                       device_mapping_devices.size(), ")."));
-    }
-    tile_assignment_devices->Add(
-        device_mapping_devices[logical_device_id]->Id().value());
+  // Populate iota_reshape_dims and iota_transpose_perm.
+  auto* iota_reshape_dims = op_sharding.mutable_iota_reshape_dims();
+  iota_reshape_dims->Reserve(sharding_param.minor_to_major().axis_sizes.size());
+  for (const int axis_size :
+       llvm::reverse(sharding_param.minor_to_major().axis_sizes)) {
+    iota_reshape_dims->Add(axis_size);
+  }
+  auto* iota_transpose_perm = op_sharding.mutable_iota_transpose_perm();
+  iota_transpose_perm->Reserve(
+      sharding_param.minor_to_major().permutation.size());
+  const int num_axis = sharding_param.minor_to_major().permutation.size();
+  for (const int axis_id :
+       llvm::reverse(sharding_param.minor_to_major().permutation)) {
+    iota_transpose_perm->Add(num_axis - axis_id - 1);
   }
 
   return op_sharding;
