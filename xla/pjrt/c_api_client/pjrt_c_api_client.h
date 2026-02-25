@@ -26,6 +26,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
@@ -552,8 +553,9 @@ class PjRtCApiClient : public PjRtClient {
   const std::string platform_name_;
   const PjRtPlatformId platform_id_;
   absl::flat_hash_map<std::string, xla::PjRtValueType> attributes_;
-  std::vector<std::unique_ptr<std::function<void(void*)>>>
-      registered_callbacks_;
+  absl::Mutex registered_callbacks_mu_;
+  std::vector<std::unique_ptr<std::function<void(void*)>>> registered_callbacks_
+      ABSL_GUARDED_BY(registered_callbacks_mu_);
 };
 
 class PjRtCApiBuffer : public PjRtBuffer {

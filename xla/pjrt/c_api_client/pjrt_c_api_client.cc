@@ -348,6 +348,8 @@ absl::Status PjRtCApiClient::RegisterCallbackImpl(
   };
 
   RETURN_STATUS_IF_PJRT_ERROR(callbacks_ext->register_callback(&args), c_api_);
+
+  absl::MutexLock lock(registered_callbacks_mu_);
   registered_callbacks_.push_back(std::move(callback_fn));
   return absl::OkStatus();
 }
