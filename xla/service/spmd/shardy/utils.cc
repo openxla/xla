@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "mhlo/IR/register.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -50,6 +51,8 @@ limitations under the License.
 #include "shardy/dialect/sdy/ir/utils.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/mesh_and_axis.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/service/spmd/shardy/constants.h"
@@ -300,59 +303,6 @@ std::string duplicateShardingsAtIndices(
       TensorShardingPerValueAttr::get(context.get(), newShardings));
 }
 
-SmallVector<AxisRefAttr> getOrderedAxisRefs(Attribute shardingOrAxisList,
-                                            MeshAttr mesh) {
-  // We use a map vector to maintain the order of mesh axes.
-  llvm::MapVector<StringRef, SmallVector<int64_t>> axisNameToPreSizes;
-  axisNameToPreSizes.reserve(mesh.getAxes().size());
-  for (MeshAxisAttr meshAxis : mesh.getAxes()) {
-    SmallVector<int64_t>& preSizes = axisNameToPreSizes[meshAxis.getName()];
-    preSizes.push_back(1);
-    preSizes.push_back(meshAxis.getSize());
-  }
-
-  auto consumeAxisRefList = [&](ArrayRef<AxisRefAttr> axisRefs) {
-    for (AxisRefAttr axisRef : axisRefs) {
-      // Add sub-axis pre-sizes to `axisNameToPreSizes`. We'll dedup later.
-      if (axisRef.getSubAxisInfo()) {
-        SmallVector<int64_t>& preSizes = axisNameToPreSizes[axisRef.getName()];
-        preSizes.push_back(axisRef.getSubAxisInfo().getPreSize());
-        preSizes.push_back(axisRef.getSubAxisInfo().getNextPreSize());
-      }
-    }
-  };
-
-  if (auto sharding = mlir::dyn_cast<TensorShardingAttr>(shardingOrAxisList)) {
-    for (DimensionShardingAttr dimSharding : sharding.getDimShardings()) {
-      consumeAxisRefList(dimSharding.getAxes());
-    }
-    consumeAxisRefList(sharding.getUnreducedAxes());
-  } else {
-    consumeAxisRefList(
-        mlir::cast<AxisRefListAttr>(shardingOrAxisList).getValue());
-  }
-
-  SmallVector<AxisRefAttr> axisRefs;
-  mlir::MLIRContext* ctx = mesh.getContext();
-  for (auto& [axisName, preSizes] : axisNameToPreSizes) {
-    if (preSizes.size() == 2) {
-      // Full axis
-      axisRefs.push_back(AxisRefAttr::get(ctx, axisName));
-      continue;
-    }
-    llvm::sort(preSizes);
-    preSizes.erase(llvm::unique(preSizes), preSizes.end());
-    for (int64_t i = 0; i < preSizes.size() - 1; ++i) {
-      int64_t preSize = preSizes[i];
-      int64_t size = preSizes[i + 1] / preSize;
-      axisRefs.push_back(AxisRefAttr::get(
-          ctx, axisName, SubAxisInfoAttr::get(ctx, preSize, size)));
-    }
-  }
-
-  return axisRefs;
-}
-
 namespace {
 
 // Check if the func result is meant for Shardy.
@@ -478,6 +428,118 @@ mlir::sdy::TensorShardingPerValueAttr getFuncResultShardings(
   }
   return mlir::sdy::TensorShardingPerValueAttr::get(funcOp.getContext(),
                                                     resultShardings);
+}
+
+mlir::sdy::MeshAttr toSdyMeshAttr(const Mesh& mesh,
+                                  mlir::MLIRContext* context) {
+  if (mesh.axis_names().empty()) {
+    if (mesh.device_assignment().num_elements() == 1) {
+      return mlir::sdy::MeshAttr::getMaximal(
+          context, mesh.device_assignment().array()(0));
+    }
+    return mlir::sdy::MeshAttr::get(context, {}, {});
+  }
+
+  SmallVector<mlir::sdy::MeshAxisAttr> sdyAxes;
+  absl::Span<const std::string> axisNames = mesh.axis_names();
+  absl::Span<const int64_t> axisSizes = mesh.axis_sizes();
+  sdyAxes.reserve(axisNames.size());
+  for (auto [axis_name, axis_size] : llvm::zip_equal(axisNames, axisSizes)) {
+    sdyAxes.push_back(
+        mlir::sdy::MeshAxisAttr::get(context, axis_name, axis_size));
+  }
+
+  SmallVector<int64_t> deviceIds;
+  bool isSimpleIota =
+      mesh.device_assignment().iota().has_value() &&
+      mesh.device_assignment().iota()->reshape_dims().size() == 1;
+  if (!isSimpleIota) {
+    LOG(WARNING) << "This branch is not expected as JAX is not known to use "
+                    "device lists";
+    deviceIds.reserve(mesh.device_assignment().num_elements());
+    for (int64_t deviceId : mesh.device_assignment().array()) {
+      deviceIds.push_back(deviceId);
+    }
+  }
+  return mlir::sdy::MeshAttr::get(context, sdyAxes, deviceIds);
+}
+
+mlir::sdy::AxisRefAttr toSdyAxisRefAttr(const AxisRef& axisRef,
+                                        const Mesh& mesh,
+                                        mlir::MLIRContext* context) {
+  absl::Span<const std::string> axisNames = mesh.axis_names();
+  if (axisRef.sub_axis_info().has_value()) {
+    return mlir::sdy::AxisRefAttr::get(
+        context, axisNames[axisRef.mesh_axis_index()],
+        mlir::sdy::SubAxisInfoAttr::get(context,
+                                        axisRef.sub_axis_info()->pre_size,
+                                        axisRef.sub_axis_info()->size));
+  }
+  return mlir::sdy::AxisRefAttr::get(context,
+                                     axisNames[axisRef.mesh_axis_index()]);
+}
+
+mlir::sdy::TensorShardingAttr convertToSdyShardingAttr(
+    const HloSharding& hloSharding, mlir::MLIRContext* context) {
+  CHECK(!hloSharding.IsTuple());
+  CHECK(hloSharding.UseNamedShardingLeaf());
+
+  if (hloSharding.IsReplicated()) {
+    return mlir::sdy::TensorShardingAttr::getFullyReplicated(
+        context, /*rank=*/0, mlir::sdy::MeshAttr::get(context, {}, {}),
+        /*isClosed=*/true);
+  }
+  if (hloSharding.IsTileMaximal()) {
+    return mlir::sdy::TensorShardingAttr::getFullyClosed(
+        context, /*rank=*/0,
+        mlir::sdy::MeshAttr::getMaximal(context,
+                                        hloSharding.GetUniqueDevice()));
+  }
+
+  const NamedSharding& namedSharding = hloSharding.named_sharding();
+  mlir::sdy::MeshAttr meshAttr = toSdyMeshAttr(namedSharding.mesh(), context);
+
+  SmallVector<mlir::sdy::DimensionShardingAttr> dimShardings;
+  for (const auto& dimSharding : namedSharding.dim_shardings()) {
+    SmallVector<mlir::sdy::AxisRefAttr> axes;
+    for (const auto& axisRef : dimSharding.axes()) {
+      axes.push_back(toSdyAxisRefAttr(axisRef, namedSharding.mesh(), context));
+    }
+    dimShardings.push_back(mlir::sdy::DimensionShardingAttr::get(
+        context, axes, dimSharding.is_closed()));
+  }
+
+  SmallVector<mlir::sdy::AxisRefAttr> replicatedAxes;
+  for (const auto& axisRef : namedSharding.replicated_axes()) {
+    replicatedAxes.push_back(
+        toSdyAxisRefAttr(axisRef, namedSharding.mesh(), context));
+  }
+
+  SmallVector<mlir::sdy::AxisRefAttr> unreducedAxes;
+  for (const auto& axisRef : namedSharding.unreduced_axes()) {
+    unreducedAxes.push_back(
+        toSdyAxisRefAttr(axisRef, namedSharding.mesh(), context));
+  }
+
+  CHECK(namedSharding.manual_axes().empty())
+      << "Manual axes should be handled by shard maps import.";
+
+  return mlir::sdy::TensorShardingAttr::get(context, meshAttr, dimShardings,
+                                            replicatedAxes, unreducedAxes);
+}
+
+mlir::sdy::TensorShardingPerValueAttr convertToSdySharding(
+    const HloSharding& hloSharding, mlir::MLIRContext* context) {
+  if (hloSharding.IsTuple()) {
+    SmallVector<TensorShardingAttr> sdyShardings;
+    for (const HloSharding& sharding : hloSharding.tuple_elements()) {
+      sdyShardings.push_back(convertToSdyShardingAttr(sharding, context));
+    }
+    return TensorShardingPerValueAttr::get(context, sdyShardings);
+  }
+
+  return TensorShardingPerValueAttr::get(
+      context, convertToSdyShardingAttr(hloSharding, context));
 }
 
 }  // namespace sdy

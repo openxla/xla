@@ -58,17 +58,12 @@ jobs:
         with:
           # Use inputs.checkout_ref if provided, otherwise default to the event's ref
           # (e.g., PR's HEAD SHA or caller's commit SHA)
-          ref: ${{ inputs.checkout_ref || github.ref }} 
+          ref: ${{ inputs.checkout_ref || github.ref }}
           fetch-depth: 0 # Fetch all history, might be needed by build/configure scripts
+          persist-credentials: false
 
       - name: Configure OpenXLA
-        run: |
-          echo "Configuring OpenXLA for CPU to build the generator tool..."
-          if [ -f "./configure.py" ]; then
-            ./configure.py --backend=CPU 
-          else
-            echo "::warning::configure.py not found. Assuming C++ tool build doesn't require it or is pre-configured."
-          fi
+        run: "echo \"Configuring OpenXLA for CPU to build the generator tool...\"\nif [ -f \"./configure.py\" ]; then\n  ./configure.py --backend=CPU \nelse\n  echo \"::warning::configure.py not found. Assuming C++ tool build doesn't require it or is pre-configured.\"\nfi\n"
       # TODO(juliagmt): Use build.py to build the binary.
       - name: Build generate_benchmark_matrices_main
         run: |
@@ -93,8 +88,6 @@ jobs:
              echo "::error::Failed to build generate_benchmark_matrices_main"
              exit 1
           fi
-
-
       - name: Run generate_benchmark_matrices_main
         id: run_generator
         run: |
@@ -142,3 +135,52 @@ jobs:
         env:
           INPUTS_REGISTRY_FILE: ${{ inputs.registry_file }}
           INPUTS_WORKFLOW_TYPE: ${{ inputs.workflow_type }}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

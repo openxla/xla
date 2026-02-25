@@ -1133,7 +1133,7 @@ ColorScheme HloDotDumper::GetInstructionColor(const HloInstruction* instr) {
     if (it != sharding_colors_.end()) {
       return it->second;
     }
-    ColorScheme color = static_cast<ColorScheme>(
+    auto color = static_cast<ColorScheme>(
         kBlue + (next_shard_color_++ % (kDashedBorder - kBlue)));
     sharding_colors_.emplace(instr->sharding(), color);
     return color;
@@ -1368,8 +1368,8 @@ std::string HloDotDumper::GetInstructionNodeMetadata(
   }
   if (instr->metadata().stack_frame_id() != 0) {
     auto hlo_module = instr->parent()->parent();
-    int frame_id = instr->metadata().stack_frame_id();
-    while (frame_id != 0) {
+    StackFrameId frame_id{instr->metadata().stack_frame_id()};
+    while (frame_id.valid()) {
       HloModule::StackFrame frame = hlo_module->get_stack_frame(frame_id);
       if (frame.empty()) {
         break;

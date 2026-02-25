@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/stack_frames.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/translate/stablehlo.h"
@@ -135,7 +136,7 @@ absl::Status createFromProtoAndReplaceComputations(
   // Remove the old computations, which are currently dead.
   CHECK_OK(HloDCE().Run(module));
 
-  module->set_stack_frame_index(proto.stack_frame_index());
+  module->set_stack_frames(StackFrames(proto.stack_frame_index()));
 
   return absl::OkStatus();
 }
@@ -379,7 +380,8 @@ absl::Status runShardingPropagation(HloModule* hloModule,
     // This branch is in production.
     addSdyRoundTripImportPipeline(pm, /*enableConstantImport=*/true,
                                   /*importFuncCalls=*/true,
-                                  /*liftAndDedupMeshes=*/true);
+                                  /*liftAndDedupMeshes=*/true,
+                                  debugOptions.xla_enable_hlo_sharding_v3());
   }
 
   // NOTE: if we are using auto-spmd, we will use conservative propagation
@@ -391,6 +393,8 @@ absl::Status runShardingPropagation(HloModule* hloModule,
 
   xla::sdy::StablehloExportPipelineOptions stablehloExportPipelineOptions;
   stablehloExportPipelineOptions.dedupFunctionsFully = dedupFunctionsFully;
+  stablehloExportPipelineOptions.enableHloShardingV3 =
+      debugOptions.xla_enable_hlo_sharding_v3();
   addStablehloExportPipeline(pm, stablehloExportPipelineOptions);
   pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir, "output_module",
                                                dumpIndex++));
@@ -473,9 +477,9 @@ absl::StatusOr<bool> ShardyXLA::RunImpl(
                                      useTupleArgs);
 
   if (runSdyShardingPropagation) {
-    TF_RETURN_IF_ERROR(
-        runShardingPropagation(hloModule, mlirModule.get(), importMhloShardings,
-                               defaultOptions, dedupFunctionsFully, name()));
+    TF_RETURN_IF_ERROR(runShardingPropagation(
+        hloModule, mlirModule.get(), importMhloShardings, propagationOptions,
+        dedupFunctionsFully, name()));
   }
 
   // TODO(b/431836696): Remove once issue is fixed.

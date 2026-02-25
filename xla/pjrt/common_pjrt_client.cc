@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1049,8 +1050,7 @@ CommonPjRtLoadedExecutable::ExecuteSharded(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
     const ExecuteOptions& options,
     std::optional<tsl::Future<void>>& returned_future, bool fill_future) const {
-  RunId run_id = options.launch_id != 0 ? RunId(options.launch_id)
-                                        : RunId::CreateUniqueId();
+  RunId run_id = RunId(options.launch_id);
   tsl::profiler::TraceMe traceme("CommonPjRtLoadedExecutable::ExecuteSharded");
   for (int i = 0; i < addressable_devices_.size(); ++i) {
     if (addressable_devices_[i] == device) {
@@ -1108,8 +1108,14 @@ CommonPjRtLoadedExecutable::Execute(
     absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
     const ExecuteOptions& options,
     std::optional<std::vector<tsl::Future<void>>>& returned_futures) const {
-  tsl::profiler::TraceMe traceme("CommonPjRtLoadedExecutable::Execute");
-  VLOG(1) << "CommonPjRtLoadedExecutable::Execute";
+  RunId run_id = options.launch_id != 0 ? RunId(options.launch_id)
+                                        : RunId::CreateUniqueId();
+  int num_addressable_devices = addressable_devices_.size();
+
+  VLOG(1) << absl::StreamFormat(
+      "CommonPjRtLoadedExecutable::Execute: run_id=%d, execution_mode=%v",
+      run_id.ToInt(), options.execution_mode);
+
   if (!client()->allows_execute_recursion() &&
       ThisThreadIsInsideHostCallback()) {
     // Because TPU is single threaded, and the host callback currently blocking
@@ -1118,13 +1124,18 @@ CommonPjRtLoadedExecutable::Execute(
     return InvalidArgument("Execute() called from inside host callback.");
   }
 
-  RunId run_id = options.launch_id != 0 ? RunId(options.launch_id)
-                                        : RunId::CreateUniqueId();
-  tsl::profiler::TraceMeProducer producer("CommonPjRtLoadedExecutable::Execute",
-                                          tsl::profiler::ContextType::kPjRt,
-                                          run_id.ToInt());
-
-  const int num_addressable_devices = addressable_devices_.size();
+  tsl::profiler::TraceMeProducer producer(
+      [&] {
+        return tsl::profiler::TraceMeEncode(
+            absl::StrFormat("CommonPjRtLoadedExecutable::Execute (%s)", name()),
+            {{"run_id", run_id.ToInt()},
+             {"execution_mode", absl::StrCat(options.execution_mode)},
+             {"name", name()},
+             {"num_replicas", num_replicas()},
+             {"num_partitions", num_partitions()},
+             {"num_addressable_devices", num_addressable_devices}});
+      },
+      tsl::profiler::ContextType::kPjRt, run_id.ToInt());
 
   if (argument_handles.size() != num_addressable_devices) {
     return InvalidArgument(
@@ -1170,9 +1181,18 @@ CommonPjRtLoadedExecutable::Execute(
         const int replica = addressable_device_logical_ids_[i].replica;
         const int partition = addressable_device_logical_ids_[i].partition;
         PjRtDevice* device = addressable_devices_[i];
-        LaunchOnDevice(device, [&, replica, partition, i, context_id] {
+        LaunchOnDevice(device, [&, context_id, i, replica, partition, device] {
           tsl::profiler::TraceMeConsumer consumer(
-              "Scheduled CommonPjRtLoadedExecutable::Execute",
+              [&] {
+                return tsl::profiler::TraceMeEncode(
+                    absl::StrFormat(
+                        "[%d] CommonPjRtLoadedExecutable::Execute (%s)", i,
+                        name()),
+                    {{"name", name()},
+                     {"replica", replica},
+                     {"partition", partition},
+                     {"global_device_id", device->global_device_id()}});
+              },
               tsl::profiler::ContextType::kPjRt, context_id);
 
           // Two phase launch. Phase 1: Prepare on all cores. Abort
@@ -1183,7 +1203,7 @@ CommonPjRtLoadedExecutable::Execute(
                                            run_id, replica, partition, options,
                                            /*host_callback_idx=*/i);
           // Wait for prepare to finish on all cores.
-          {
+          if (client()->supports_two_phase_launch()) {
             absl::MutexLock lock(mu);
             preparing--;
             auto done_preparing = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu) {
@@ -1216,6 +1236,7 @@ CommonPjRtLoadedExecutable::Execute(
     }
 
     // Wait until we either fail Phase 1 or completes two phases.
+    tsl::profiler::TraceMe trace_wait("Wait for LaunchOnDevice completion");
     auto done = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu) {
       return launching == 0;
     };

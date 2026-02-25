@@ -372,7 +372,8 @@ class DeviceGroupTileAssignment : public TileAssignment {
  public:
   explicit DeviceGroupTileAssignment(int64_t num_groups,
                                      int64_t num_devices_per_group)
-      : TileAssignment({num_groups, num_devices_per_group}) {}
+      : TileAssignment(
+            absl::Span<const int64_t>{num_groups, num_devices_per_group}) {}
   explicit DeviceGroupTileAssignment(int64_t num_groups,
                                      int64_t num_devices_per_group,
                                      absl::Span<const int64_t> reshape_dims,
