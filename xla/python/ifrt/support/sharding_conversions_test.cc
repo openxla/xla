@@ -241,6 +241,21 @@ TEST_P(ShardingConversionsTest, VerifyIncorrectShardings) {
       /*dim_shards=*/{4, 1},
       {/*permutation=*/{0, 1, 1}, /*axis_sizes=*/{2, 2, 2}}};
   EXPECT_FALSE(incorrect_permutation.verify().ok());
+  ShardingParam unreduced_on_wrong_axis{
+      /*dim_shards=*/{2, 1},
+      {/*permutation=*/{0, 1}, /*axis_sizes=*/{2, 3}},
+      /*unreduced_axes=*/{0, 1}};
+  EXPECT_FALSE(unreduced_on_wrong_axis.verify().ok());
+  ShardingParam unreduced_repeated_axis{
+      /*dim_shards=*/{1, 1},
+      {/*permutation=*/{0, 1}, /*axis_sizes=*/{2, 2}},
+      /*unreduced_axes=*/{0, 1, 0}};
+  EXPECT_FALSE(unreduced_repeated_axis.verify().ok());
+  ShardingParam unreduced_out_of_bounds_axis{/*dim_shards=*/{1, 1},
+                                             {/*permutation=*/{0, 1},
+                                              /*axis_sizes=*/{2, 2}},
+                                             /*unreduced_axes=*/{2}};
+  EXPECT_FALSE(unreduced_out_of_bounds_axis.verify().ok());
 }
 
 TEST_P(ShardingConversionsTest, ErrorOnDeviceAssignment) {
@@ -296,6 +311,41 @@ TEST_P(ShardingConversionsTest, OpShardingReplicated) {
   EXPECT_EQ(actual, expected);
 }
 
+TEST_P(ShardingConversionsTest, ShardingParamUnreduced) {
+  ShardingParam expected_sharding_param{
+      /*dim_shards=*/{1, 1, 1},
+      {/*permutation=*/{0, 1}, /*axis_sizes=*/{2, 3}},
+      /*unreduced_axes=*/{0, 1}};
+  TF_EXPECT_OK(expected_sharding_param.verify());
+  TF_ASSERT_OK_AND_ASSIGN(const HloSharding hlo_sharding,
+                          ToHloSharding(expected_sharding_param));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const HloSharding hlo_via_op_sharding,
+      ToHloShardingViaOpSharding(expected_sharding_param,
+                                 GetDevices({0, 1, 2, 3, 4, 5})));
+  EXPECT_EQ(hlo_via_op_sharding.ToString(), "{unreduced}");
+  EXPECT_EQ(hlo_via_op_sharding, hlo_sharding);
+  TF_ASSERT_OK_AND_ASSIGN(ShardingParam sharding_param,
+                          ToShardingParam(hlo_sharding, 3, 6));
+  TF_ASSERT_OK_AND_ASSIGN(const HloSharding actual_hlo_sharding,
+                          ToHloSharding(sharding_param));
+  EXPECT_EQ(hlo_sharding, actual_hlo_sharding);
+}
+
+TEST_P(ShardingConversionsTest, OpShardingUnreduced) {
+  OpSharding op_sharding;
+  op_sharding.set_type(OpSharding::UNREDUCED);
+  TF_ASSERT_OK_AND_ASSIGN(const HloSharding hlo_sharding,
+                          HloSharding::FromProto(op_sharding));
+  TF_ASSERT_OK_AND_ASSIGN(ShardingParam actual,
+                          ToShardingParam(hlo_sharding, 2, 6));
+  ShardingParam expected{/*dim_shards=*/{1, 1},
+                         {/*permutation=*/{0}, /*axis_sizes=*/{6}},
+                         /*unreduced_axes=*/{0}};
+  TF_EXPECT_OK(expected.verify());
+  EXPECT_EQ(actual, expected);
+}
+
 INSTANTIATE_TEST_SUITE_P(NumDevices, ShardingConversionsTest,
                          testing::Values(7));
 
@@ -342,50 +392,51 @@ TEST_P(HloShardingToShardingParamTest, HloShardingToShardingParam) {
 
 INSTANTIATE_TEST_SUITE_P(
     HloShardingConversionTests, HloShardingToShardingParamTest,
-    testing::ValuesIn<HloShardingTestStruct>({
-        {HloSharding::IotaTile({4, 2}), 2, 8},
-        {HloSharding::IotaTile({2, 4}, {4, 2}, {1, 0}), 2, 8},
-        {HloSharding::IotaTile({8, 1}), 2, 8},
-        {HloSharding::IotaTile({8, 1}, {4, 2}, {1, 0}), 2, 8},
-        {HloSharding::PartialTile(TileAssignment({4, 1, 2}, {8}, {0})), 2, 8},
-        {HloSharding::PartialTile(TileAssignment({2, 1, 4}, {4, 2}, {1, 0})), 2,
-         8},
-        {HloSharding::PartialTile(TileAssignment({1, 4, 2}, {8}, {0})), 2, 8},
-        {HloSharding::PartialTile(TileAssignment({1, 2, 4}, {4, 2}, {1, 0})), 2,
-         8},
-        {HloSharding::PartialTile(TileAssignment({4, 3, 2}, {2, 3, 4},
-                                                 {2, 1, 0})),
-         2, 24},
-        {HloSharding::PartialTile(TileAssignment({4, 2, 3}, {6, 4}, {1, 0})), 2,
-         24},
-        {HloSharding::PartialTile(TileAssignment({6, 1, 4}, {24}, {0})), 2, 24},
-        {HloSharding::PartialTile(TileAssignment({12, 1, 2}, {2, 12}, {1, 0})),
-         2, 24},
-        {HloSharding::PartialTile(TileAssignment({8, 1, 3}, {6, 4}, {1, 0})), 2,
-         24},
-        {HloSharding::PartialTile(TileAssignment({2, 1, 12}, {24}, {0})), 2,
-         24},
-        {HloSharding::PartialTile(TileAssignment({3, 1, 8}, {2, 3, 4},
-                                                 {1, 0, 2})),
-         2, 24},
-        {HloSharding::PartialTile(TileAssignment({1, 4, 6}, {6, 4}, {1, 0})), 2,
-         24},
-        {HloSharding::PartialTile(TileAssignment({1, 12, 2}, {2, 12}, {1, 0})),
-         2, 24},
+    testing::ValuesIn<HloShardingTestStruct>(
+        {{HloSharding::IotaTile({4, 2}), 2, 8},
+         {HloSharding::IotaTile({2, 4}, {4, 2}, {1, 0}), 2, 8},
+         {HloSharding::IotaTile({8, 1}), 2, 8},
+         {HloSharding::IotaTile({8, 1}, {4, 2}, {1, 0}), 2, 8},
+         {HloSharding::PartialTile(TileAssignment({4, 1, 2}, {8}, {0})), 2, 8},
+         {HloSharding::PartialTile(TileAssignment({2, 1, 4}, {4, 2}, {1, 0})),
+          2, 8},
+         {HloSharding::PartialTile(TileAssignment({1, 4, 2}, {8}, {0})), 2, 8},
+         {HloSharding::PartialTile(TileAssignment({1, 2, 4}, {4, 2}, {1, 0})),
+          2, 8},
+         {HloSharding::PartialTile(TileAssignment({4, 3, 2}, {2, 3, 4},
+                                                  {2, 1, 0})),
+          2, 24},
+         {HloSharding::PartialTile(TileAssignment({4, 2, 3}, {6, 4}, {1, 0})),
+          2, 24},
+         {HloSharding::PartialTile(TileAssignment({6, 1, 4}, {24}, {0})), 2,
+          24},
+         {HloSharding::PartialTile(TileAssignment({12, 1, 2}, {2, 12}, {1, 0})),
+          2, 24},
+         {HloSharding::PartialTile(TileAssignment({8, 1, 3}, {6, 4}, {1, 0})),
+          2, 24},
+         {HloSharding::PartialTile(TileAssignment({2, 1, 12}, {24}, {0})), 2,
+          24},
+         {HloSharding::PartialTile(TileAssignment({3, 1, 8}, {2, 3, 4},
+                                                  {1, 0, 2})),
+          2, 24},
+         {HloSharding::PartialTile(TileAssignment({1, 4, 6}, {6, 4}, {1, 0})),
+          2, 24},
+         {HloSharding::PartialTile(TileAssignment({1, 12, 2}, {2, 12}, {1, 0})),
+          2, 24},
 
-        {HloSharding::PartialTile(TileAssignment({3, 2, 1, 4}, {2, 3, 4},
-                                                 {1, 0, 2})),
-         3, 24},
-        {HloSharding::PartialTile(TileAssignment({2, 4, 1, 3}, {2, 3, 4},
-                                                 {0, 2, 1})),
-         3, 24},
-        {HloSharding::PartialTile(TileAssignment({4, 3, 1, 2}, {2, 3, 4},
-                                                 {2, 1, 0})),
-         3, 24},
-        {HloSharding::PartialTile(TileAssignment({12, 1, 1, 2}, {2, 12},
-                                                 {1, 0})),
-         3, 24},
-    }));
+         {HloSharding::PartialTile(TileAssignment({3, 2, 1, 4}, {2, 3, 4},
+                                                  {1, 0, 2})),
+          3, 24},
+         {HloSharding::PartialTile(TileAssignment({2, 4, 1, 3}, {2, 3, 4},
+                                                  {0, 2, 1})),
+          3, 24},
+         {HloSharding::PartialTile(TileAssignment({4, 3, 1, 2}, {2, 3, 4},
+                                                  {2, 1, 0})),
+          3, 24},
+         {HloSharding::PartialTile(TileAssignment({12, 1, 1, 2}, {2, 12},
+                                                  {1, 0})),
+          3, 24},
+         {HloSharding::Unreduced(), 3, 24}}));
 
 }  // namespace
 }  // namespace support

@@ -19,6 +19,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -60,6 +61,18 @@ absl::StatusOr<OpSharding> ToOpSharding(
         all_dim_replicated = false;
         break;
       }
+    }
+    if (!sharding_param.unreduced_axes().empty()) {
+      if (sharding_param.unreduced_axes().size() ==
+          sharding_param.minor_to_major().axis_sizes.size()) {
+        DCHECK(all_dim_replicated);
+        op_sharding.set_type(OpSharding::UNREDUCED);
+        return op_sharding;
+      }
+      // TODO(emilyaf): Support this.
+      return absl::InvalidArgumentError(
+          "Unsupported conversion to `OpSharding` from `ShardingParam` with "
+          "only a subset of axes unreduced");
     }
     if (all_dim_replicated) {
       op_sharding.set_type(OpSharding::REPLICATED);
@@ -120,6 +133,16 @@ absl::StatusOr<HloSharding> ToHloSharding(const ShardingParam& sharding_param) {
     // Generate single-device sharding as TileMaximal.
     return HloSharding::Replicate();
   }
+  if (!sharding_param.unreduced_axes().empty()) {
+    if (sharding_param.unreduced_axes().size() ==
+        sharding_param.minor_to_major().axis_sizes.size()) {
+      return HloSharding::Unreduced();
+    }
+    // TODO(emilyaf): Support this.
+    return absl::InvalidArgumentError(
+        "Unsupported conversion to `HloSharding` from `ShardingParam` "
+        "with only a subset of axes unreduced");
+  }
   int64_t cum_size = 1;
   llvm::SmallVector<int64_t> dims;
   dims.reserve(sharding_param.dim_shards().size());
@@ -152,16 +175,21 @@ absl::StatusOr<ShardingParam> ToShardingParam(const HloSharding& hlo_sharding,
   // of the same size, and specify how the shards are mapped over the axis in
   // `minor_to_major` order.
   ShardingParam::MinorToMajor minor_to_major;
-
-  if (hlo_sharding.IsReplicated() ||
+  if (hlo_sharding.IsReplicated() || hlo_sharding.IsUnreduced() ||
       (hlo_sharding.IsTileMaximal() && hlo_sharding.HasUniqueDevice() &&
        num_devices == 1)) {
-    // Convert replicated or TileMaximal. Only single-device TileMaximal
-    // conversion is supported.
+    // Convert replicated, unreduced, or TileMaximal. Only single-device
+    // TileMaximal conversion is supported. These shardings are represented
+    // as ShardingParam with a single axis (at index 0) of size num_devices.
+    std::vector<int> unreduced_axes;
+    if (hlo_sharding.IsUnreduced()) {
+      unreduced_axes = {0};
+    }
     std::vector<int64_t> dim_shards(rank, 1);
     minor_to_major.permutation.push_back(0);
     minor_to_major.axis_sizes.push_back(num_devices);
-    return ShardingParam(std::move(dim_shards), std::move(minor_to_major));
+    return ShardingParam(std::move(dim_shards), std::move(minor_to_major),
+                         std::move(unreduced_axes));
   }
   if (!hlo_sharding.IsTiled()) {
     return absl::UnimplementedError(
