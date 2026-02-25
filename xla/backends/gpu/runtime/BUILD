@@ -2336,6 +2336,7 @@ cc_library(
     deps = [
         ":collective_execution",
         ":collective_params",
+        ":collective_thunk_proto_cc",
         ":thunk",
         ":thunk_proto_cc",
         "//xla:debug_options_flags",
@@ -3407,10 +3408,21 @@ tf_proto_library(
 )
 
 tf_proto_library(
+    name = "collective_thunk_proto",
+    srcs = ["collective_thunk.proto"],
+    deps = [
+        "//xla:xla_data_proto",
+        "//xla/service:shaped_slice_proto",
+    ],
+)
+
+tf_proto_library(
     name = "nvshmem_collective_thunk_proto",
     srcs = ["nvshmem_collective_thunk.proto"],
     deps = [
+        ":collective_thunk_proto",
         ":thunk_kind_proto",
+        "//xla/core/collectives:reduction_kind_proto",
     ],
 )
 
@@ -3420,6 +3432,7 @@ tf_proto_library(
         "thunk.proto",
     ],
     deps = [
+        ":collective_thunk_proto",
         ":convolution_filter_thunk_proto",
         ":copy_thunk_proto",
         ":dynamic_slice_thunk_proto",
@@ -3495,6 +3508,7 @@ cc_library(
         ":kernel_thunk",
         ":memset_thunk",
         ":norm_thunk",
+        ":nvshmem_all_reduce_thunk",
         ":nvshmem_collective_permute_thunk",
         ":nvshmem_collective_thunk",
         ":outfeed_thunk",
@@ -3610,10 +3624,12 @@ xla_cc_test(
     srcs = ["nvshmem_collective_thunk_test.cc"],
     deps = [
         ":collective_thunk",
+        ":nvshmem_all_reduce_thunk",
         ":nvshmem_collective_permute_thunk",
         ":nvshmem_collective_thunk",
         ":thunk",
         ":thunk_proto_cc",
+        "//xla/service:buffer_assignment",
         "//xla/tsl/util/proto:parse_text_proto",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/base",
@@ -3722,7 +3738,6 @@ cc_library(
     hdrs = ["nvshmem_all_reduce_thunk.h"],
     deps = [
         ":all_reduce_thunk",
-        ":collective_kernel_thunk",
         ":collective_thunk",
         ":nvshmem_collective_thunk",
         ":thunk",
@@ -3732,15 +3747,19 @@ cc_library(
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:reduction_kind",
         "//xla/hlo/ir:hlo",
+        "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
         "//xla/service:computation_placer",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/stream_executor:stream",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
     ],
 )
