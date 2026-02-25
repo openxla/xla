@@ -529,10 +529,169 @@ bool MergeShardingIfCompatible(const HloSharding& to_merge, HloSharding* dst) {
                                    /*minimum_tiles=*/dst->NumTiles() + 1, dst);
 }
 
+namespace {
+
+std::vector<OpMetadata> MergeMetadata(std::vector<OpMetadata> dest,
+                                      absl::Span<const OpMetadata> src) {
+  dest.reserve(dest.size() + src.size());
+  const absl::flat_hash_set<OpMetadata,
+                            protobuf_util::ProtobufHashBySerializationFunctor,
+                            protobuf_util::HaveSameSerializationFunctor>
+      metadata_set(dest.begin(), dest.end());
+  absl::c_copy_if(src, std::back_inserter(dest),
+                  [&metadata_set](const OpMetadata& data) {
+                    return !metadata_set.contains(data);
+                  });
+  return dest;
+}
+
+std::vector<AxisRef> GetUsedAxes(const NamedSharding& sharding,
+                                 int64_t exclude_dim,
+                                 const std::vector<AxisRef>& common_used_axes) {
+  std::vector<AxisRef> axes = common_used_axes;
+  for (int i = 0; i < sharding.dim_shardings().size(); ++i) {
+    if (i == exclude_dim) {
+      continue;
+    }
+    axes.insert(axes.end(), sharding.dim_shardings()[i].axes().begin(),
+                sharding.dim_shardings()[i].axes().end());
+  }
+  return axes;
+}
+
+// Returns the merged axes if compatible, otherwise std::nullopt.
+std::optional<std::vector<AxisRef>> MergeDimensionAxes(
+    absl::Span<const AxisRef> src_axes_span,
+    absl::Span<const AxisRef> dst_axes_span, std::vector<AxisRef> used_axes_dst,
+    const Mesh& mesh) {
+  SortAndMergeAxes(used_axes_dst, mesh);
+
+  std::vector<AxisRef> src_axes(src_axes_span.begin(), src_axes_span.end());
+  bool truncated = TruncateAxesByRemovingOverlaps(src_axes, used_axes_dst);
+
+  // Check if src (truncated) strictly extends dst.
+  bool s_extends_d_strictly =
+      (src_axes.size() > dst_axes_span.size()) &&
+      std::equal(dst_axes_span.begin(), dst_axes_span.end(), src_axes.begin());
+
+  if (s_extends_d_strictly) {
+    return std::move(src_axes);
+  }
+
+  // Check if dst extends src (truncated).
+  bool d_extends_s =
+      (dst_axes_span.size() >= src_axes.size()) &&
+      std::equal(src_axes.begin(), src_axes.end(), dst_axes_span.begin());
+
+  if (d_extends_s) {
+    if (truncated) {
+      return std::nullopt;
+    }
+    return std::vector<AxisRef>(dst_axes_span.begin(), dst_axes_span.end());
+  }
+
+  return std::nullopt;
+}
+
+}  // namespace
+
+bool MergeNamedShardingIfCompatible(const NamedSharding& src,
+                                    NamedSharding* dst) {
+  if (src.IsTileMaximal()) {
+    return false;
+  }
+  if (dst->IsTileMaximal()) {
+    *dst = src;
+    return true;
+  }
+
+  if (!src.mesh().DeviceAssignmentEquals(dst->mesh()) ||
+      src.num_dimensions() != dst->num_dimensions()) {
+    return false;
+  }
+
+  if (src.manual_axes() != dst->manual_axes() ||
+      src.unreduced_axes() != dst->unreduced_axes()) {
+    return false;
+  }
+
+  int64_t rank = src.dim_shardings().size();
+  std::vector<NamedSharding::DimensionSharding> new_dim_shardings(rank);
+
+  std::vector<AxisRef> shared_fixed_axes;
+  shared_fixed_axes.reserve(dst->manual_axes().size() +
+                            dst->unreduced_axes().size());
+  shared_fixed_axes.insert(shared_fixed_axes.end(), dst->manual_axes().begin(),
+                           dst->manual_axes().end());
+  shared_fixed_axes.insert(shared_fixed_axes.end(),
+                           dst->unreduced_axes().begin(),
+                           dst->unreduced_axes().end());
+
+  // For each dimension, we want to find a compatible sharding that is as
+  // specific as possible (uses more axes). We do this by checking if the
+  // axes used in one sharding can extend the axes used in the other,
+  // without conflicting with axes used in other dimensions.
+  for (int64_t i = 0; i < rank; ++i) {
+    std::optional<std::vector<AxisRef>> merged_axes = MergeDimensionAxes(
+        src.dim_shardings()[i].axes(), dst->dim_shardings()[i].axes(),
+        GetUsedAxes(*dst, i, shared_fixed_axes), dst->mesh());
+
+    if (!merged_axes) {
+      return false;
+    }
+
+    bool is_closed = src.dim_shardings()[i].is_closed() &&
+                     dst->dim_shardings()[i].is_closed();
+
+    new_dim_shardings[i] =
+        NamedSharding::DimensionSharding(std::move(*merged_axes), is_closed);
+  }
+
+  // Re-collect used axes from merged result so far.
+  absl::flat_hash_set<AxisRef> new_used_axes;
+  for (const NamedSharding::DimensionSharding& dim_sharding :
+       new_dim_shardings) {
+    for (const AxisRef& axis : dim_sharding.axes()) {
+      new_used_axes.insert(axis);
+    }
+  }
+  for (const AxisRef& axis : src.manual_axes()) {
+    new_used_axes.insert(axis);
+  }
+  for (const AxisRef& axis : src.unreduced_axes()) {
+    new_used_axes.insert(axis);
+  }
+
+  std::vector<AxisRef> merged_replicated_axes;
+  for (const AxisRef& axis : dst->replicated_axes()) {
+    if (!new_used_axes.contains(axis)) {
+      merged_replicated_axes.push_back(axis);
+    }
+  }
+
+  std::vector<OpMetadata> merged_metadata = MergeMetadata(
+      std::vector<OpMetadata>(dst->metadata().begin(), dst->metadata().end()),
+      src.metadata());
+
+  *dst =
+      NamedSharding(dst->mesh(), new_dim_shardings, merged_replicated_axes,
+                    src.unreduced_axes(), src.manual_axes(), merged_metadata);
+  return true;
+}
+
 bool MergeShardingIfCompatible(const HloSharding& to_merge,
                                int64_t minimum_tiles, HloSharding* dst) {
   CHECK(!to_merge.IsTuple() && !to_merge.IsManual() && !dst->IsTuple() &&
         !dst->IsManual());
+  CHECK_EQ(to_merge.UseNamedShardingLeaf(), dst->UseNamedShardingLeaf());
+  if (to_merge.UseNamedShardingLeaf()) {
+    NamedSharding dst_named = dst->named_sharding();
+    if (MergeNamedShardingIfCompatible(to_merge.named_sharding(), &dst_named)) {
+      *dst = HloSharding(dst_named);
+      return true;
+    }
+    return false;
+  }
   if (to_merge.IsTileMaximal()) {
     return false;
   }
