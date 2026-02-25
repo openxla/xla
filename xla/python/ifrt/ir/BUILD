@@ -847,5 +847,6 @@ cc_library(
         "@riegeli//riegeli/bytes:cord_writer",
         "@riegeli//riegeli/messages:serialize_message",
         "@stablehlo//:version",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
