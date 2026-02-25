@@ -598,16 +598,56 @@ std::string GetPluginStablehloVersionOrDefault(PjRtClient* client) {
   return absl::StrFormat("%d.%d.%d", v[0], v[1], v[2]);
 }
 
+// Initializes `PJRT_Compile_Args`, which will be used to call
+// API PJRT_Compile().
+static absl::StatusOr<std::unique_ptr<PjRtExecutable>>
+InitializeArgsAndCompileAot(const PJRT_Api* c_api, PjRtClient* client,
+                            const CompileOptions& options,
+                            const PjRtTopologyDescription& topology,
+                            const std::string& code,
+                            const std::string& format) {
+  PJRT_Compile_Args args;
+  args.struct_size = PJRT_Compile_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  if (client == nullptr) {
+    args.client = nullptr;
+  } else {
+    args.client =
+        tensorflow::down_cast<PjRtCApiClient*>(client)->pjrt_c_client();
+  }
+  args.topology =
+      tensorflow::down_cast<const PjRtCApiTopologyDescription*>(&topology)
+          ->c_topology();
+  TF_ASSIGN_OR_RETURN(const CompileOptionsProto options_proto,
+                      options.ToProto());
+  std::string options_str = options_proto.SerializeAsString();
+  args.compile_options = options_str.c_str();
+  args.compile_options_size = options_str.size();
+
+  PJRT_Program program;
+  program.struct_size = PJRT_Program_STRUCT_SIZE;
+  program.extension_start = nullptr;
+  program.code = const_cast<char*>(code.c_str());
+  program.code_size = code.size();
+  program.format = format.c_str();
+  program.format_size = format.size();
+  args.program = &program;
+
+  RETURN_STATUS_IF_PJRT_ERROR(c_api->PJRT_Compile(&args), c_api);
+  std::unique_ptr<PjRtExecutable> ret =
+      std::make_unique<PjRtCApiExecutable>(c_api, args.executable);
+  return ret;
+}
+
 }  // namespace
 
-absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-PjRtCApiClient::CompileAndLoad(mlir::ModuleOp module, CompileOptions options) {
+absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCApiClient::Compile(
+    mlir::ModuleOp module, CompileOptions options) {
   if (!pjrt_c_api()) llvm::report_fatal_error("pjrt_c_api is null");
 
-  std::string version_string = GetPluginStablehloVersionOrDefault(this);
-
+  const std::string version_string = GetPluginStablehloVersionOrDefault(this);
   TF_ASSIGN_OR_RETURN(
-      std::string serialized,
+      const std::string serialized,
       xla::Serialize(module, version_string,
                      /*inplace=*/options.allow_in_place_mlir_modification));
   if (options.allow_in_place_mlir_modification) {
@@ -615,7 +655,29 @@ PjRtCApiClient::CompileAndLoad(mlir::ModuleOp module, CompileOptions options) {
     // MLIR. We don't use them anymore, and this reduces peak memory.
     module.getBody()->clear();
   }
-  std::string format(pjrt::kMlirFormat);
+
+  TF_ASSIGN_OR_RETURN(const PjRtTopologyDescription* const topology,
+                      GetTopologyDescription());
+  const std::string format(pjrt::kMlirFormat);
+  return InitializeArgsAndCompileAot(c_api_, this, options, *topology,
+                                     serialized, format);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
+PjRtCApiClient::CompileAndLoad(mlir::ModuleOp module, CompileOptions options) {
+  if (!pjrt_c_api()) llvm::report_fatal_error("pjrt_c_api is null");
+
+  const std::string version_string = GetPluginStablehloVersionOrDefault(this);
+  TF_ASSIGN_OR_RETURN(
+      const std::string serialized,
+      xla::Serialize(module, version_string,
+                     /*inplace=*/options.allow_in_place_mlir_modification));
+  if (options.allow_in_place_mlir_modification) {
+    // If we're allowed to modify the computation, free the functions in the
+    // MLIR. We don't use them anymore, and this reduces peak memory.
+    module.getBody()->clear();
+  }
+  const std::string format(pjrt::kMlirFormat);
   return InitializeArgsAndCompile(this, c_api_, c_client_.get(), options,
                                   serialized, format);
 }
@@ -4320,47 +4382,6 @@ PjRtCApiTopologyDescription::ProcessBounds() const {
                               c_api_);
   return PjRtDeviceDimensions(
       absl::MakeSpan(bounds.data(), args.process_bounds_num_dims));
-}
-
-// Initializes `PJRT_Compile_Args`, which will be used to call
-// API PJRT_Compile().
-static absl::StatusOr<std::unique_ptr<PjRtExecutable>>
-InitializeArgsAndCompileAot(const PJRT_Api* c_api, PjRtClient* client,
-                            const CompileOptions& options,
-                            const PjRtTopologyDescription& topology,
-                            const std::string& code,
-                            const std::string& format) {
-  PJRT_Compile_Args args;
-  args.struct_size = PJRT_Compile_Args_STRUCT_SIZE;
-  args.extension_start = nullptr;
-  if (client == nullptr) {
-    args.client = nullptr;
-  } else {
-    args.client =
-        tensorflow::down_cast<PjRtCApiClient*>(client)->pjrt_c_client();
-  }
-  args.topology =
-      tensorflow::down_cast<const PjRtCApiTopologyDescription*>(&topology)
-          ->c_topology();
-  TF_ASSIGN_OR_RETURN(const CompileOptionsProto options_proto,
-                      options.ToProto());
-  std::string options_str = options_proto.SerializeAsString();
-  args.compile_options = options_str.c_str();
-  args.compile_options_size = options_str.size();
-
-  PJRT_Program program;
-  program.struct_size = PJRT_Program_STRUCT_SIZE;
-  program.extension_start = nullptr;
-  program.code = const_cast<char*>(code.c_str());
-  program.code_size = code.size();
-  program.format = format.c_str();
-  program.format_size = format.size();
-  args.program = &program;
-
-  RETURN_STATUS_IF_PJRT_ERROR(c_api->PJRT_Compile(&args), c_api);
-  std::unique_ptr<PjRtExecutable> ret =
-      std::make_unique<PjRtCApiExecutable>(c_api, args.executable);
-  return ret;
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCApiCompiler::Compile(
