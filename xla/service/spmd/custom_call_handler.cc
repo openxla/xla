@@ -97,7 +97,7 @@ absl::Status SpmdPartitioningVisitor::HandleCustomCallTopK(
   const HloSharding& sharding = hlo->operand(0)->sharding();
   // No support for partial replicate yet.
   if (sharding.IsTileMaximal() || sharding.IsReplicated() ||
-      sharding.ReplicateOnLastTileDim()) {
+      sharding.HasPartialReplication()) {
     return DefaultAction(hlo);
   }
   TF_RET_CHECK(sharding.IsTiled());
