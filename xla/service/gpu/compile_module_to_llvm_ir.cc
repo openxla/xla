@@ -280,17 +280,23 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   results.executable = std::move(sequential_thunk);
 
   // Assemble the LLVM module with all kernels.
-  results.llvm_module =
-      split_constants_module
-          ? ir_emitter_context.CreateLLVMModule(hlo_module->name())
-          : thunk_emitter.ConsumeConstantsModule();
-  llvm::Linker linker(*results.llvm_module);
-  for (auto& kernel_module : thunk_emitter.ConsumeKernelModules()) {
-    CHECK(!linker.linkInModule(std::move(kernel_module),
-                               llvm::Linker::Flags::OverrideFromSrc));
-  }
+  std::vector<std::unique_ptr<llvm::Module>> modules =
+      thunk_emitter.ConsumeKernelModules();
+
   if (split_constants_module) {
     results.llvm_module_constants = thunk_emitter.ConsumeConstantsModule();
+  } else {
+    modules.push_back(thunk_emitter.ConsumeConstantsModule());
+  }
+
+  if (modules.empty()) {
+    results.llvm_module =
+        ir_emitter_context.CreateLLVMModule(hlo_module->name());
+  } else {
+    LinkLlvmModulesInPlace(modules);
+    CHECK_EQ(modules.size(), 1);
+
+    results.llvm_module = std::move(modules[0]);
   }
 
   RemoveUnusedAndUninitializedGlobals(platform_id, options,
@@ -311,6 +317,18 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   }
 
   return results;
+}
+
+void LinkLlvmModulesInPlace(
+    std::vector<std::unique_ptr<llvm::Module>>& llvm_modules) {
+  CHECK(!llvm_modules.empty());
+
+  llvm::Linker linker(*llvm_modules[0]);
+  for (int i = 1; i < llvm_modules.size(); i++) {
+    CHECK(!linker.linkInModule(std::move(llvm_modules[i]),
+                               llvm::Linker::Flags::OverrideFromSrc));
+  }
+  llvm_modules.resize(1);
 }
 
 }  // namespace xla::gpu
