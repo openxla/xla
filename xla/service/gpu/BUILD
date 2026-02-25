@@ -1560,6 +1560,7 @@ cc_library(
     deps = [
         ":alias_info",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/transforms:conv_fusion_rewriter",
         "//xla/backends/gpu/transforms:multi_output_fusion",
         "//xla/backends/gpu/transforms:priority_fusion",
         "//xla/backends/gpu/transforms:sort_iota_fusion",
@@ -2271,6 +2272,8 @@ cc_library(
         "//xla/backends/autotuner:codegen_backend",
         "//xla/backends/gpu/transforms:algebraic_simplifier",
         "//xla/backends/gpu/transforms:block_scaling_rewriter",
+        "//xla/backends/gpu/transforms:conv_kind_assignment",
+        "//xla/backends/gpu/transforms:conv_fusion_rewriter",
         "//xla/backends/gpu/transforms:conv_padding_legalization",
         "//xla/backends/gpu/transforms:conv_rewriter",
         "//xla/backends/gpu/transforms:cublas_pad_for_gemms",

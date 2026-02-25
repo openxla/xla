@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/conv_utils.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
@@ -153,13 +154,15 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
       if (num_spatial_dimensions > 2) {
         VLOG(2) << "Using NHWC for " << num_spatial_dimensions << "D conv "
                 << instr->ToString() << " on " << cc->ToString();
-        return kAllNCHW;
+        return kAllNHWC;
       }
       return kAllNHWC;
     }
   }
 
   const bool isFloat16 = (input_ty == F16) || (input_ty == BF16);
+  Shape conv_shape = instr->shape().IsTuple() ? instr->shape().tuple_shapes(0)
+                                              : instr->shape();
   if (const auto* cuda_compute_capability =
           gpu_version.cuda_compute_capability()) {
     // CUDA:
@@ -168,8 +171,7 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
     bool is_volta =
         cuda_compute_capability &&
         cuda_compute_capability->IsAtLeast(se::CudaComputeCapability::kVolta);
-    if (!isFloat16 || !is_volta ||
-        instr->shape().tuple_shapes(0).dimensions().size() != 4) {
+    if (!isFloat16 || !is_volta || conv_shape.dimensions().size() != 4) {
       return kAllNCHW;
     }
   } else if (auto rocm_compute_capability =
@@ -181,8 +183,7 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
     CHECK_OK(tsl::ReadBoolFromEnvVar("TF_USE_ROCM_NHWC",
                                      /*default_val=*/false, &is_enabled));
     if (!isFloat16 || (!rocm_compute_capability->has_nhwc_layout_support()) ||
-        instr->shape().tuple_shapes(0).dimensions().size() != 4 ||
-        !is_enabled) {
+        conv_shape.dimensions().size() != 4 || !is_enabled) {
       return kAllNCHW;
     }
   }
@@ -190,6 +191,34 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
   VLOG(2) << "Using heuristic to figure out layouts for " << instr->ToString();
 
   // For other f16 convolutions, use NHWC.
+  return kAllNHWC;
+}
+
+// Returns (input, filter, output) layouts for conv fusion.
+static std::tuple<DataLayout, FilterLayout, DataLayout>
+HeuristicLayoutAssignmentForConvFusion(
+    const HloInstruction* instr, const se::GpuComputeCapability& gpu_version) {
+  constexpr auto kAllNCHW =
+      std::make_tuple(DataLayout::kBatchDepthYX, FilterLayout::kOutputInputYX,
+                      DataLayout::kBatchDepthYX);
+  constexpr auto kAllNHWC =
+      std::make_tuple(DataLayout::kBatchYXDepth, FilterLayout::kOutputYXInput,
+                      DataLayout::kBatchYXDepth);
+
+  const DebugOptions& debug_options =
+      instr->GetModule()->config().debug_options();
+
+  if (debug_options.xla_gpu_force_conv_nchw()) {
+    VLOG(2) << "Overriding layout to NCHW for " << instr->ToString();
+    return kAllNCHW;
+  }
+
+  if (debug_options.xla_gpu_force_conv_nhwc()) {
+    VLOG(2) << "Overriding layout to NHWC for " << instr->ToString();
+    return kAllNHWC;
+  }
+
+  VLOG(2) << "Using heuristic to figure out layouts for " << instr->ToString();
   return kAllNHWC;
 }
 
@@ -281,6 +310,45 @@ absl::Status GpuLayoutAssignment::AddBackendConstraintsToDnnConvCustomCall(
         instr->ToString());
   }
 
+  return absl::OkStatus();
+}
+
+absl::Status GpuLayoutAssignment::AddBackendConstraintsTocuDNNConv(
+    HloConvolutionInstruction* conv, LayoutConstraints* constraints) {
+  Shape input_shape = conv->operand(0)->shape();
+  Shape filter_shape = conv->operand(1)->shape();
+  Shape output_shape = conv->shape();
+  ConvolutionDimensionNumbers dnums = RestoreDimNumber(conv);
+  {
+    DataLayout input;
+    FilterLayout filter;
+    DataLayout output;
+    std::tie(input, filter, output) =
+        HeuristicLayoutAssignmentForConvFusion(conv, gpu_version_);
+
+    TF_ASSIGN_OR_RETURN(
+        std::tie(*input_shape.mutable_layout(), *filter_shape.mutable_layout(),
+                 *output_shape.mutable_layout()),
+        StreamExecutorConvLayoutsToXlaLayouts(dnums, input, filter, output));
+  }
+
+  TF_RETURN_IF_ERROR(SetOperandLayout(input_shape, conv, 0, /*mandatory=*/true,
+                                      /*dfs=*/true,
+                                      /*priority=*/current_priority() + 1));
+  TF_RETURN_IF_ERROR(SetOperandLayout(filter_shape, conv, 1, /*mandatory=*/true,
+                                      /*dfs=*/true,
+                                      /*priority=*/current_priority() + 1));
+
+  TF_ASSIGN_OR_RETURN(
+      const LogicalBuffer* output_buf,
+      points_to_analysis_->GetBufferDefinedAt(conv, /*index=*/{}));
+
+  // Set layouts of the instructions' shapes.
+  TF_RETURN_IF_ERROR(SetBufferLayout(output_shape.layout(), *output_buf,
+                                     /*mandatory=*/true, /*dfs=*/true,
+                                     /*priority=*/current_priority() + 1));
+
+  // Change layouts of instructions inside the fusion computation
   return absl::OkStatus();
 }
 
@@ -493,7 +561,12 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
     CHECK(!IsCublasGemm(*instruction))
         << "Gemm rewriting should run after layout assignment";
 
-    if (HloPredicateIsOp<HloOpcode::kDot>(instruction)) {
+    if (HloPredicateIsOp<HloOpcode::kConvolution>(instruction) &&
+        DynCast<HloConvolutionInstruction>(instruction)->conv_kind() !=
+            HloConvolutionInstruction::ConvKind::UNSET) {
+      TF_RETURN_IF_ERROR(AddBackendConstraintsTocuDNNConv(
+          Cast<HloConvolutionInstruction>(instruction), constraints));
+    } else if (HloPredicateIsOp<HloOpcode::kDot>(instruction)) {
       TF_RETURN_IF_ERROR(AddDotBackendConstraints(
           constraints, Cast<HloDotInstruction>(instruction)));
     } else if (HloPredicateIsOp<HloOpcode::kTranspose>(instruction)) {
