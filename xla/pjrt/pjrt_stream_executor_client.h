@@ -437,6 +437,9 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   void WaitForAllocation(se::Stream* stream,
                          const CommonPjRtRawBuffer& raw_buffer);
 
+  void LaunchOnDevice(PjRtDevice* device,
+                      absl::AnyInvocable<void()> execute_fn) const override;
+
  protected:
   friend class PjRtStreamExecutorRawBuffer;
 
@@ -643,9 +646,6 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
   absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>> StartRawExecutable(
       const ExecuteOptions& options, xla::RunId run_id, int replica,
       int partition, PjRtDevice* device) const override;
-
-  void LaunchOnDevice(PjRtDevice* device,
-                      absl::AnyInvocable<void()> execute_fn) const;
 
   const DeviceAssignment& device_assignment() const override {
     return *device_assignment_;

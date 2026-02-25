@@ -2035,7 +2035,7 @@ PjRtStreamExecutorLoadedExecutable::StartRawExecutable(
       on_device_executable_parameter_shapes_);
 }
 
-void PjRtStreamExecutorLoadedExecutable::LaunchOnDevice(
+void PjRtStreamExecutorClient::LaunchOnDevice(
     PjRtDevice* device, absl::AnyInvocable<void()> execute_fn) const {
   const LocalDeviceState& device_state =
       *tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)

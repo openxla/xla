@@ -566,11 +566,6 @@ class PjRtCpuLoadedExecutable final : public CommonPjRtLoadedExecutable {
     return executable_->cpu_executable_->module().input_output_alias_config();
   }
 
-  void LaunchOnDevice(PjRtDevice* device,
-                      absl::AnyInvocable<void()> execute_fn) const override {
-    client()->async_work_runner()->Schedule(std::move(execute_fn));
-  }
-
  private:
   friend class PjRtCpuClient;
   friend class CpuPjRtRawLoadedExecutable;
