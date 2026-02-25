@@ -235,7 +235,7 @@ class HloSharding {
     if (UseNamedShardingLeaf()) {
       return named_sharding_->IsTileMaximal();
     }
-    return maximal_;
+    return replicated_ || single_device_;
   }
 
   // Returns whether the sharding represents manual partitioning.
@@ -439,7 +439,8 @@ class HloSharding {
   // REQUIRES: !IsTuple()
   // REQUIRES: !IsManual()
   // REQUIRES: !IsUnknown()
-  // REQUIRES: !maximal_
+  // REQUIRES: !replicated_
+  // REQUIRES: !single_device_
   //
   // For NamedSharding we convert it to tile based HloShardingV2 and then invoke
   // callback on the tile based sharding.
@@ -505,7 +506,8 @@ class HloSharding {
 
   bool operator==(const HloSharding& other) const {
     if (named_sharding_.has_value() == other.named_sharding_.has_value()) {
-      return replicated_ == other.replicated_ && maximal_ == other.maximal_ &&
+      return replicated_ == other.replicated_ &&
+             single_device_ == other.single_device_ &&
              manual_ == other.manual_ && unknown_ == other.unknown_ &&
              unreduced_ == other.unreduced_ &&
              tile_assignment_ == other.tile_assignment_ &&
@@ -738,7 +740,7 @@ class HloSharding {
 
   explicit HloSharding(NamedSharding named_sharding)
       : replicated_(false),
-        maximal_(false),
+        single_device_(false),
         tuple_(false),
         manual_(false),
         unknown_(false),
@@ -751,7 +753,7 @@ class HloSharding {
                        bool unreduced, absl::Span<const OpMetadata> metadata)
       : metadata_(metadata.begin(), metadata.end()),
         replicated_(replicated),
-        maximal_(replicated),
+        single_device_(false),
         tuple_(false),
         manual_(manual),
         unknown_(unknown),
@@ -768,7 +770,7 @@ class HloSharding {
       : tile_assignment_(device_id),
         metadata_(metadata.begin(), metadata.end()),
         replicated_(false),
-        maximal_(true),
+        single_device_(true),
         tuple_(false),
         manual_(false),
         unknown_(false),
@@ -781,7 +783,7 @@ class HloSharding {
       : tile_assignment_(std::move(tile_assignment)),
         metadata_(metadata.begin(), metadata.end()),
         replicated_(false),
-        maximal_(false),
+        single_device_(false),
         tuple_(false),
         manual_(false),
         unknown_(false),
@@ -795,7 +797,7 @@ class HloSharding {
         metadata_(metadata.begin(), metadata.end()),
         subgroup_types_(subgroup_types.begin(), subgroup_types.end()),
         replicated_(false),
-        maximal_(false),
+        single_device_(false),
         tuple_(false),
         manual_(false),
         unknown_(false),
@@ -805,7 +807,7 @@ class HloSharding {
   explicit HloSharding(std::vector<HloSharding> tuple_shardings)
       : tuple_elements_(std::move(tuple_shardings)),
         replicated_(false),
-        maximal_(false),
+        single_device_(false),
         tuple_(true),
         manual_(false),
         unknown_(false),
@@ -821,7 +823,7 @@ class HloSharding {
         metadata_(other.metadata_),
         subgroup_types_(other.subgroup_types_),
         replicated_(other.replicated_),
-        maximal_(other.maximal_),
+        single_device_(other.single_device_),
         tuple_(other.tuple_),
         manual_(other.manual_),
         unknown_(other.unknown_),
@@ -848,14 +850,15 @@ class HloSharding {
 
   const TileAssignment& TileAgnosticDeviceAssignment() const;
 
-  // This field is only used if replicated_ is false. If maximal_ is true, then
-  // the field contains a rank 1 array with a single element, which is the
-  // device the HLO is assigned to. If maximal_ is false, the field contains an
-  // array with the same rank as the corresponding HLO. The dimension sizes of
-  // the array describe the number of ways the HLO is partitioned along each
-  // dimension. The values of the array specify which device each tile of
-  // the HLO is assigned to. The index of each value determines which tile it
-  // takes.
+  // This field is only used if replicated_ is false. If single_device_ is true,
+  // then the field contains a rank 1 array with a single element, which is the
+  // device the HLO is assigned to. If single_device_ is false, the field
+  // contains an array with the same rank as the corresponding HLO. The
+  // dimension sizes of the array describe the number of ways the HLO is
+  // partitioned along each dimension. The values of the array specify which
+  // device each tile of the HLO is assigned to. The index of each value
+  // determines which tile it takes.
+  //
   // For example, {{{2, 3}}, {{5, 7}}} (whose ToString representation is
   // "{devices=[2,1,2]2,3,5,7}"), means that dimension 1 is split two way and
   // dimension 3 is split 2 way. Core 5, whose index is [2,1,1] will take the
@@ -878,9 +881,10 @@ class HloSharding {
   // When creating HloSharding, subgroup dims of the same type will be merged,
   // so that the elements in subgroup_types_ are unique.
   std::vector<OpSharding::Type> subgroup_types_;
+
   bool replicated_ : 1;  // When non-tuple, true if the sharding is trivial.
-  bool maximal_ : 1;     // When non-tuple, true if the tile size is the same as
-                         // the input size.
+  bool single_device_ : 1;  // When non-tuple, true if the tensor is on a single
+                            // device.
   bool tuple_ : 1;       // True if this is a tuple.
   bool manual_ : 1;   // When non-tuple, true if the sharding represents manual
                       // partitioning.

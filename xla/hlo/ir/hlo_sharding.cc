@@ -521,7 +521,7 @@ void HloSharding::Print(Printer* printer, bool include_metadata) const {
     return;
   }
 
-  if (maximal_) {
+  if (single_device_) {
     AppendCat(printer, "{maximal device=",
               static_cast<int64_t>(*tile_assignment_.array().begin()));
     print_shard_group();
@@ -584,7 +584,8 @@ bool HloSharding::UsesDevice(int64_t device) const {
 }
 
 std::vector<int64_t> HloSharding::TileIndexForDevice(int64_t device) const {
-  CHECK(!maximal_);
+  CHECK(!replicated_);
+  CHECK(!single_device_);
   CHECK(!IsManual());
   CHECK(!IsUnknown());
   CHECK(!IsTuple());
@@ -605,7 +606,7 @@ std::vector<int64_t> HloSharding::TileOffsetForDevice(const Shape& shape,
   CHECK(!IsManual());
   CHECK(!IsUnknown());
 
-  if (maximal_) {
+  if (replicated_ || single_device_) {
     return std::vector<int64_t>(shape.dimensions().size(), 0);
   }
   CHECK_EQ(shape.dimensions().size(), TiledDataRank());
@@ -624,7 +625,7 @@ std::vector<int64_t> HloSharding::TileLimitForDevice(const Shape& shape,
   CHECK(!IsManual());
   CHECK(!IsUnknown());
 
-  if (maximal_) {
+  if (replicated_ || single_device_) {
     return std::vector<int64_t>(shape.dimensions().begin(),
                                 shape.dimensions().end());
   }
@@ -656,7 +657,8 @@ absl::Status HloSharding::EachTile(
   CHECK(!IsTuple());
   CHECK(!IsManual());
   CHECK(!IsUnknown());
-  CHECK(!maximal_);
+  CHECK(!replicated_);
+  CHECK(!single_device_);
 
   // At the high-level, sharding_dims[i] describes the number of ways the shape
   // is partitioned along i-th dimension. Note that sharding_dims[i] with i >=
