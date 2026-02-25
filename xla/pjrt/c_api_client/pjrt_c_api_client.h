@@ -534,6 +534,9 @@ class PjRtCApiClient : public PjRtClient {
       std::variant<PjRtDevice*, PjRtMemorySpace*> device_or_memory,
       const Layout* device_layout);
 
+  absl::StatusOr<std::string> SerializeMlirModule(
+      mlir::ModuleOp module, const CompileOptions& options);
+
   const PJRT_Api* c_api_;
   std::unique_ptr<PJRT_Client, ::pjrt::PJRT_ClientDeleter> c_client_;
   std::unique_ptr<::pjrt::PJRT_KeyValueCallbackData> kv_callback_data_;

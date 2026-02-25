@@ -641,13 +641,15 @@ InitializeArgsAndCompileAot(const PJRT_Api* c_api, PjRtClient* client,
 
 }  // namespace
 
-absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCApiClient::Compile(
-    mlir::ModuleOp module, CompileOptions options) {
-  if (!pjrt_c_api()) llvm::report_fatal_error("pjrt_c_api is null");
+absl::StatusOr<std::string> PjRtCApiClient::SerializeMlirModule(
+    mlir::ModuleOp module, const CompileOptions& options) {
+  if (!pjrt_c_api()) {
+    llvm::report_fatal_error("pjrt_c_api is null");
+  }
 
   const std::string version_string = GetPluginStablehloVersionOrDefault(this);
   TF_ASSIGN_OR_RETURN(
-      const std::string serialized,
+      std::string serialized,
       xla::Serialize(module, version_string,
                      /*inplace=*/options.allow_in_place_mlir_modification));
   if (options.allow_in_place_mlir_modification) {
@@ -655,31 +657,26 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCApiClient::Compile(
     // MLIR. We don't use them anymore, and this reduces peak memory.
     module.getBody()->clear();
   }
+  return serialized;
+}
 
+absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCApiClient::Compile(
+    mlir::ModuleOp module, CompileOptions options) {
   TF_ASSIGN_OR_RETURN(const PjRtTopologyDescription* const topology,
                       GetTopologyDescription());
-  const std::string format(pjrt::kMlirFormat);
+  TF_ASSIGN_OR_RETURN(const std::string serialized,
+                      SerializeMlirModule(module, options));
   return InitializeArgsAndCompileAot(c_api_, this, options, *topology,
-                                     serialized, format);
+                                     serialized,
+                                     std::string(pjrt::kMlirFormat));
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtCApiClient::CompileAndLoad(mlir::ModuleOp module, CompileOptions options) {
-  if (!pjrt_c_api()) llvm::report_fatal_error("pjrt_c_api is null");
-
-  const std::string version_string = GetPluginStablehloVersionOrDefault(this);
-  TF_ASSIGN_OR_RETURN(
-      const std::string serialized,
-      xla::Serialize(module, version_string,
-                     /*inplace=*/options.allow_in_place_mlir_modification));
-  if (options.allow_in_place_mlir_modification) {
-    // If we're allowed to modify the computation, free the functions in the
-    // MLIR. We don't use them anymore, and this reduces peak memory.
-    module.getBody()->clear();
-  }
-  const std::string format(pjrt::kMlirFormat);
+  TF_ASSIGN_OR_RETURN(const std::string serialized,
+                      SerializeMlirModule(module, options));
   return InitializeArgsAndCompile(this, c_api_, c_client_.get(), options,
-                                  serialized, format);
+                                  serialized, std::string(pjrt::kMlirFormat));
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
