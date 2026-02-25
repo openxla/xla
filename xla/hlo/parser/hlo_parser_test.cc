@@ -6248,4 +6248,25 @@ ENTRY entry {
 }
 
 }  // namespace
+
+TEST_F(HloParserTest, CrashReproduction453565958) {
+  const char data[] = {'(',
+                       'f',
+                       '6',
+                       '4',
+                       '[',
+                       ']',
+                       '{',
+                       ':',
+                       'T',
+                       '}',
+                       'C',
+                       'G',
+                       static_cast<char>(0xA3),
+                       '"'};
+  auto result =
+      ParseAndReturnUnverifiedModule(absl::string_view(data, sizeof(data)));
+  (void)result;
+}
+
 }  // namespace xla
