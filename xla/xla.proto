@@ -609,7 +609,7 @@ message DebugOptions {
 
   // Enables shared constants for XLA/GPU. This allows large constants to be
   // shared among multiple GPU executables.
-  optional bool xla_gpu_enable_shared_constants = 165;
+  optional bool xla_gpu_enable_shared_constants = 165 [deprecated = true];
 
   optional bool xla_gpu_enable_split_k_autotuning = 241;
 

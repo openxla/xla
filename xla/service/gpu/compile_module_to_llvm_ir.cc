@@ -93,33 +93,6 @@ static mlir::LogicalResult DiagnosticHandler(mlir::Diagnostic& diag) {
   return mlir::failure();
 }
 
-// Removes all globals from the given module that are both uninitialized and
-// have no uses within that module.
-void RemoveUnusedAndUninitializedGlobals(
-    se::Platform::Id platform_id, const DebugOptions& options,
-    llvm::Module* llvm_module,
-    const std::vector<GpuExecutable::ConstantInfo>& constants) {
-  bool supports_runtime_managed_constants =
-      platform_id != se::rocm::kROCmPlatformId &&
-      options.xla_gpu_enable_shared_constants();
-  if (!supports_runtime_managed_constants) {
-    return;
-  }
-
-  for (const auto& info : constants) {
-    // Empty content means the constant is initialized in the LLVM IR, so we
-    // must not remove it.
-    if (!info.content.span().empty()) {
-      llvm::GlobalVariable* global =
-          llvm_module->getGlobalVariable(info.symbol_name);
-      CHECK(global != nullptr);
-      if (global->use_empty()) {
-        global->eraseFromParent();
-      }
-    }
-  }
-}
-
 CompileModuleResults InitializeResults(const HloModule* hlo_module) {
   CompileModuleResults results;
   results.module_name = hlo_module->name();
@@ -298,12 +271,6 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
 
     results.llvm_module = std::move(modules[0]);
   }
-
-  RemoveUnusedAndUninitializedGlobals(platform_id, options,
-                                      split_constants_module
-                                          ? results.llvm_module_constants.get()
-                                          : results.llvm_module.get(),
-                                      ir_emitter_context.constants());
 
   // This won't record values for calls that error out (because if they error
   // out we have no way of telling how far through the process we got).
