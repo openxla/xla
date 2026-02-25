@@ -841,6 +841,22 @@ GpuExecutable::ResolveConstantGlobals(se::Stream* stream) {
     } else {
       // The constant was not defined in the PTX and therefore must be both
       // allocated and initialized by XLA here.
+      if (executor->GetPlatform()->id() ==
+          stream_executor::sycl::kSyclPlatformId) {
+        // Empty constant has zero size and the corresponding info has empty
+        // content. Skip allocation on SYCL platform.
+        bool skip_for_empty_const = false;
+        if (info.allocation_index != -1 &&
+            info.allocation_index < GetAllocations().size()) {
+          skip_for_empty_const =
+              GetAllocations()[info.allocation_index]->size() == 0;
+        }
+        if (skip_for_empty_const) {
+          VLOG(3) << "Skipping allocation of global " << info.symbol_name
+                  << " since it has zero size.";
+          continue;
+        }
+      }
       CHECK(!info.content.span().empty());
 
       ASSIGN_OR_RETURN(auto shared, executor->CreateOrShareConstant(
