@@ -109,7 +109,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 94
+#define PJRT_API_MINOR 95
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -708,6 +708,21 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Client_Compile_Args, executable);
 // Compiles a program in specified format (such as MLIR or HLO) with given
 // `options`.
 typedef PJRT_Error* PJRT_Client_Compile(PJRT_Client_Compile_Args* args);
+
+struct PJRT_Client_Load_Args {
+  size_t struct_size;
+  PJRT_Extension_Base* extension_start;
+  PJRT_Client* client;
+  PJRT_Executable* executable;
+  // Serialized CompileOptionsProto.
+  const char* compile_options;
+  size_t compile_options_size;
+  PJRT_LoadedExecutable* loaded_executable;  // out
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Client_Load_Args, loaded_executable);
+
+// Loads a PJRT_Executable.
+typedef PJRT_Error* PJRT_Client_Load(PJRT_Client_Load_Args* args);
 
 struct PJRT_Client_DefaultDeviceAssignment_Args {
   size_t struct_size;
@@ -2938,11 +2953,11 @@ typedef struct PJRT_Api {
   _PJRT_API_STRUCT_FIELD(PJRT_Event_Create);
   _PJRT_API_STRUCT_FIELD(PJRT_Event_Set);
   _PJRT_API_STRUCT_FIELD(PJRT_Device_GetAttributes);
+
+  _PJRT_API_STRUCT_FIELD(PJRT_Client_Load);
 } PJRT_Api;
 
-enum {
-  PJRT_Api_STRUCT_SIZE = PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Device_GetAttributes)
-};
+enum { PJRT_Api_STRUCT_SIZE = PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Client_Load) };
 
 #undef _PJRT_API_STRUCT_FIELD
 

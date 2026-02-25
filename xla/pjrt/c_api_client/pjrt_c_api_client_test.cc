@@ -488,6 +488,73 @@ TEST(PjRtClientTest, CompileMlirModule) {
   EXPECT_NE(executable.get(), nullptr);
 }
 
+TEST(PjRtCApiClientTest, LoadExecutable) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+  constexpr char kProgram[] = "func.func @main() {return}";
+  mlir::MLIRContext context;
+  TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                          ParseMlirModuleString(kProgram, context));
+  CompileOptions options;
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtExecutable> executable,
+                          client->Compile(*module, options));
+  ASSERT_NE(executable.get(), nullptr);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> loaded_executable,
+      client->Load(std::move(executable), LoadOptions{}));
+  ASSERT_NE(loaded_executable.get(), nullptr);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> results,
+      loaded_executable->Execute(/*argument_handles=*/{{}}, ExecuteOptions()));
+  ASSERT_EQ(results.size(), 1);
+  EXPECT_EQ(results[0].size(), 0);
+}
+
+TEST(PjRtCApiClientTest, LoadSameExecutableTwice) {
+  SetUpCpuPjRtApi();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetCApiClient("cpu"));
+  constexpr char kProgram[] = "func.func @main() {return}";
+  mlir::MLIRContext context;
+  TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                          ParseMlirModuleString(kProgram, context));
+  CompileOptions options;
+  TF_ASSERT_OK_AND_ASSIGN(const std::shared_ptr<PjRtExecutable> executable,
+                          client->Compile(*module, options));
+  ASSERT_NE(executable.get(), nullptr);
+
+  // Load the executable twice.
+  {
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PjRtLoadedExecutable> loaded_executable,
+        client->Load(executable, LoadOptions{}));
+    ASSERT_NE(loaded_executable.get(), nullptr);
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> results,
+        loaded_executable->Execute(/*argument_handles=*/{{}},
+                                   ExecuteOptions()));
+    ASSERT_EQ(results.size(), 1);
+    EXPECT_EQ(results[0].size(), 0);
+  }
+  {
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PjRtLoadedExecutable> loaded_executable,
+        client->Load(executable, LoadOptions{}));
+    ASSERT_NE(loaded_executable.get(), nullptr);
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> results,
+        loaded_executable->Execute(/*argument_handles=*/{{}},
+                                   ExecuteOptions()));
+    ASSERT_EQ(results.size(), 1);
+    EXPECT_EQ(results[0].size(), 0);
+  }
+}
+
 TEST(PjRtClientTest, CanQueryMemoryDescriptions) {
   SetUpCpuPjRtApi();
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,

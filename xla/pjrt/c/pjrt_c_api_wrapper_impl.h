@@ -325,8 +325,10 @@ PJRT_Error* PJRT_Client_UpdateGlobalProcessInfo(
 PJRT_Error* PJRT_Client_AddressableMemories(
     PJRT_Client_AddressableMemories_Args* args);
 PJRT_Error* PJRT_Client_Compile(PJRT_Client_Compile_Args* args);
+PJRT_Error* PJRT_Client_Load(PJRT_Client_Load_Args* args);
 PJRT_Error* PJRT_Client_DefaultDeviceAssignment(
     PJRT_Client_DefaultDeviceAssignment_Args* args);
+
 PJRT_Error* PJRT_Client_CreateUninitializedBuffer(
     PJRT_Client_CreateUninitializedBuffer_Args* args);
 PJRT_Error* PJRT_Client_CreateAliasBuffer(

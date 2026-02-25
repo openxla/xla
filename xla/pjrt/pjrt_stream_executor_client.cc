@@ -2722,10 +2722,10 @@ PjRtStreamExecutorClient::LoadInternal(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-PjRtStreamExecutorClient::Load(std::unique_ptr<PjRtExecutable> executable,
+PjRtStreamExecutorClient::Load(std::shared_ptr<PjRtExecutable> executable,
                                const LoadOptions& load_options) {
-  auto se_executable = absl::WrapUnique(
-      tensorflow::down_cast<StreamExecutorExecutable*>(executable.release()));
+  auto se_executable =
+      std::static_pointer_cast<StreamExecutorExecutable>(executable);
   CompileOptions compile_options = se_executable->compile_options();
 
   tsl::profiler::TraceMe traceme("PjRtStreamExecutorClient::Load");

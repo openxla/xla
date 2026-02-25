@@ -405,6 +405,10 @@ class PjRtCApiClient : public PjRtClient {
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
       mlir::ModuleOp module, CompileOptions options) override;
 
+  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Load(
+      std::shared_ptr<PjRtExecutable> executable,
+      const LoadOptions& load_options) override;
+
   // `PjRtCApiClient::LoadSerializedExecutable()` ignores `LoadOptions` arg
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
   LoadSerializedExecutable(absl::string_view serialized,

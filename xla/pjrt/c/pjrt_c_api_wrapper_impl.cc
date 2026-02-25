@@ -1104,6 +1104,32 @@ PJRT_Error* PJRT_Client_Compile(PJRT_Client_Compile_Args* args) {
   return nullptr;
 }
 
+PJRT_Error* PJRT_Client_Load(PJRT_Client_Load_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Client_Load_Args", PJRT_Client_Load_Args_STRUCT_SIZE,
+      args->struct_size));
+  if (args->executable->shared_executable == nullptr) {
+    absl::Status status =
+        absl::InvalidArgumentError("Missing shared_executable in the input.");
+    return new PJRT_Error{status};
+  }
+
+  std::optional<xla::CompileOptions> options;
+  if (args->compile_options && args->compile_options_size > 0) {
+    PJRT_ASSIGN_OR_RETURN(
+        options, ParseCompileOptions(absl::string_view(
+                     args->compile_options, args->compile_options_size)));
+  }
+
+  PJRT_ASSIGN_OR_RETURN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> loaded,
+      args->client->client->Load(args->executable->shared_executable,
+                                 xla::LoadOptions()));
+  args->loaded_executable =
+      new PJRT_LoadedExecutable(std::move(loaded), args->client);
+  return nullptr;
+}
+
 static void PopulateDeviceAssignment(int* const device_assignment_buffer,
                                      int num_replicas, int num_partitions,
                                      xla::DeviceAssignment device_assignment) {
@@ -3565,6 +3591,8 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       /*PJRT_Event_Create=*/pjrt::PJRT_Event_Create,
       /*PJRT_Event_Set=*/pjrt::PJRT_Event_Set,
       /*PJRT_Device_GetAttributes=*/pjrt::PJRT_Device_GetAttributes,
+
+      /*PJRT_Client_Load=*/pjrt::PJRT_Client_Load,
   };
 }
 
