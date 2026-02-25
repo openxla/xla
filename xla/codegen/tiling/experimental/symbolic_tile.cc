@@ -40,6 +40,7 @@ using ::llvm::SmallVector;
 using ::mlir::AffineExpr;
 using ::mlir::getAffineConstantExpr;
 using ::mlir::getAffineDimExpr;
+using ::mlir::getAffineSymbolExpr;
 using ::mlir::MLIRContext;
 
 SmallVector<std::string> GetVarNames(int64_t num_vars, llvm::StringRef prefix) {
@@ -60,9 +61,9 @@ DimTile GetFullDimTile(int64_t dim_size, MLIRContext* ctx) {
                  getAffineConstantExpr(dim_size, ctx)};
 }
 
-DimTile GetDefaultDimTile(int64_t id, AffineExpr tile_size, int64_t dim_size) {
-  MLIRContext* ctx = tile_size.getContext();
+DimTile GetDefaultDimTile(int64_t id, int64_t dim_size, MLIRContext* ctx) {
   auto tile_id = getAffineDimExpr(id, ctx);
+  auto tile_size = getAffineSymbolExpr(id, ctx);
   return DimTile{tile_id * tile_size, tile_size, getAffineConstantExpr(1, ctx),
                  getAffineConstantExpr(dim_size, ctx)};
 }
@@ -105,6 +106,8 @@ std::string SymbolicTile::ToString(bool print_variables) const {
   if (print_variables) {
     // Tile IDs.
     ss << '(' << absl::StrJoin(tid_names, ", ") << ')';
+    // Tile size.
+    ss << '[' << absl::StrJoin(ts_names, ", ") << ']';
     // Runtime identifiers.
     if (!rt_names.empty()) {
       ss << '{' << absl::StrJoin(rt_names, ", ") << '}';
@@ -165,16 +168,6 @@ SmallVector<AffineExpr> SymbolicTile::upper_bounds() const {
     upper_bounds.push_back(dim_tile.upper_bound);
   }
   return upper_bounds;
-}
-
-void SymbolicTile::Replace(
-    const mlir::DenseMap<mlir::AffineExpr, mlir::AffineExpr>& map) {
-  for (DimTile& dim_tile : dim_tiles_) {
-    dim_tile.offset = dim_tile.offset.replace(map);
-    dim_tile.size = dim_tile.size.replace(map);
-    dim_tile.stride = dim_tile.stride.replace(map);
-    dim_tile.upper_bound = dim_tile.upper_bound.replace(map);
-  }
 }
 
 bool SymbolicTile::operator==(const SymbolicTile& other) const {
