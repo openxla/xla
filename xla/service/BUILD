@@ -6004,21 +6004,16 @@ xla_cc_binary(
         "@tsl//tsl/platform:types",
     ] + if_cuda_or_rocm_is_configured([
         # keep sorted
-        ":gpu_plugin",
         "//xla/service/gpu:gpu_compiler",
         "//xla/stream_executor/gpu:gpu_init",
     ]) + if_cuda_is_configured([
         # keep sorted
         "//xla/service/gpu:nvptx_compiler",
         "//xla/service/gpu:nvptx_compiler_impl",
-        "//xla/stream_executor/cuda:all_runtime",
-        "//xla/stream_executor/cuda:cuda_platform",
     ]) + if_rocm_is_configured([
         # keep sorted
         "//xla/service/gpu:amdgpu_compiler",
         "//xla/service/gpu:amdgpu_compiler_impl",
-        "//xla/stream_executor/rocm:all_runtime",
-        "//xla/stream_executor/rocm:rocm_platform",
     ]) + xla_internal(["tools:xsymbol_repository"]),
 )
 
