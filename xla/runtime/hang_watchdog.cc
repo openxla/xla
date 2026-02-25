@@ -81,11 +81,18 @@ HangWatchdog::HangWatchdog(tsl::Env* env, absl::string_view name)
                    /*num_threads*/ 1) {}
 
 HangWatchdog::CancelCallback HangWatchdog::Abort(absl::string_view action,
-                                                 absl::Duration duration) {
-  return [action = std::string(action), duration] {
-    LOG(FATAL) << absl::StreamFormat(
+                                                 absl::Duration duration,
+                                                 CancelCallback pre_abort) {
+  return [action = std::string(action), duration,
+          pre_abort = std::move(pre_abort)] {
+    LOG(ERROR) << absl::StreamFormat(
         "%s didn't finish in %v. Abort the process to avoid infinite hangs.",
         action, duration);
+    if (pre_abort) {
+      pre_abort();
+    }
+    LOG(FATAL) << absl::StreamFormat("%s didn't finish in %v. Aborting.",
+                                     action, duration);
   };
 }
 

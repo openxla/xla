@@ -707,6 +707,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_proto_cc",
+        "//xla/stream_executor/gpu:coredump",
         "//xla/backends/gpu/collectives:gpu_clique_key",
         "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/backends/gpu/runtime:annotation",

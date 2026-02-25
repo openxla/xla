@@ -104,6 +104,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/event_based_timer.h"
+#include "xla/stream_executor/gpu/coredump.h"
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
@@ -115,6 +116,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
@@ -122,7 +124,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -435,9 +436,27 @@ absl::Status ExecuteThunksImpl(
   if (watchdog_timeout < absl::InfiniteDuration()) {
     std::string watchdog_name = absl::StrFormat(
         "[%d] XLA GPU execution `%s`", executor->device_ordinal(), module_name);
+    std::string coredump_pipe =
+        debug_options
+            ? debug_options->xla_gpu_execution_terminate_coredump_pipe()
+            : "";
+
+    // Maybe collect coredump from GPU to be able to analyze what was running on
+    // the device at the time of detected hang.
+    HangWatchdog::CancelCallback coredump;
+    if (!coredump_pipe.empty()) {
+      coredump = [coredump_pipe] {
+        absl::Status status = stream_executor::gpu::TriggerGpuCoredump(
+            coredump_pipe, absl::Minutes(1));
+        LOG_IF(ERROR, !status.ok())
+            << "GPU coredump trigger failed: " << status;
+      };
+    }
+
     guard = StaticHangWatchDog().Watch(
         watchdog_name, watchdog_timeout,
-        HangWatchdog::Abort(watchdog_name, watchdog_timeout));
+        HangWatchdog::Abort(watchdog_name, watchdog_timeout,
+                            std::move(coredump)));
   }
 
   // Borrow streams required for CollectiveThunk.

@@ -50,9 +50,13 @@ class HangWatchdog {
 
   HangWatchdog(tsl::Env* env, absl::string_view name);
 
-  // Returns a cancel callback that will abort the process.
+  // Returns a cancel callback that will abort the process. If `pre_abort` is
+  // provided, it is invoked after logging the timeout but before aborting,
+  // giving callers a chance to collect diagnostics (e.g. trigger GPU
+  // coredumps).
   static CancelCallback Abort(absl::string_view action,
-                              absl::Duration duration);
+                              absl::Duration duration,
+                              CancelCallback pre_abort = nullptr);
 
   // Issues the watch guard to a caller that watchdog started tracking progress
   // of the action and expects it to finish in the given duration. If action

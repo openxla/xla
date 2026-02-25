@@ -434,6 +434,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
   opts.set_xla_gpu_executable_terminate_timeout_seconds(30);
   opts.set_xla_gpu_execution_terminate_timeout("inf");
+  opts.set_xla_gpu_execution_terminate_coredump_pipe("");
 
   opts.set_xla_gpu_first_collective_call_warn_stuck_timeout_seconds(20);
   opts.set_xla_gpu_first_collective_call_terminate_timeout_seconds(40);
@@ -2517,6 +2518,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_execution_terminate_timeout),
       debug_options->xla_gpu_execution_terminate_timeout(),
       "Set timeout for XLA:GPU execution to prevent undetected deadlocks"));
+
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_execution_terminate_coredump_pipe",
+      string_setter_for(
+          &DebugOptions::set_xla_gpu_execution_terminate_coredump_pipe),
+      debug_options->xla_gpu_execution_terminate_coredump_pipe(),
+      "Path to the GPU coredump named pipe (e.g. the same path as "
+      "CUDA_COREDUMP_PIPE). When set, XLA writes to this pipe to trigger a "
+      "GPU coredump before aborting on execution timeout."));
 
   flag_list->push_back(tsl::Flag(
       "xla_gpu_first_collective_call_warn_stuck_timeout_seconds",
