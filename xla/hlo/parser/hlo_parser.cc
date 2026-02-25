@@ -31,6 +31,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -726,6 +727,9 @@ class HloParserImpl : public HloParser {
   NameUniquer name_uniquer_{/*separator=*/"."};
 
   const HloParserOptions options_;
+
+  // Tracks recursion depth to prevent stack overflow from deeply nested input.
+  int current_recursion_depth_ = 0;
 };
 
 bool SplitToInt64s(absl::string_view s, char delim, std::vector<int64_t>* out) {
@@ -1487,6 +1491,11 @@ bool HloParserImpl::ParseInstruction(HloComputation::Builder* builder,
 bool HloParserImpl::ParseInstructionRhs(HloComputation::Builder* builder,
                                         std::string name, LocTy name_loc,
                                         bool allow_attributes) {
+  if (++current_recursion_depth_ > options_.max_recursion_depth()) {
+    return Error(lexer_.GetLoc(), "maximum recursion depth exceeded");
+  }
+  auto depth_guard = absl::MakeCleanup([this] { --current_recursion_depth_; });
+
   Shape shape;
   HloOpcode opcode;
   std::optional<HloOpcode> async_wrapped_opcode;
@@ -5081,6 +5090,10 @@ bool HloParserImpl::SetValueInLiteral(LocTy loc, std::complex<double> value,
 // Similar to ParseLiteral(Literal* literal, const Shape& shape), but parse the
 // shape instead of accepting one as argument.
 bool HloParserImpl::ParseLiteral(Literal* literal) {
+  if (++current_recursion_depth_ > options_.max_recursion_depth()) {
+    return Error(lexer_.GetLoc(), "maximum recursion depth exceeded");
+  }
+  auto depth_guard = absl::MakeCleanup([this] { --current_recursion_depth_; });
   if (lexer_.GetKind() == TokKind::kLparen) {
     // Consume Lparen
     lexer_.Lex();
@@ -5121,6 +5134,10 @@ bool HloParserImpl::ParseLiteral(Literal* literal, const Shape& shape) {
 //  ::= /*empty*/
 //  ::= literal (',' literal)*
 bool HloParserImpl::ParseTupleLiteral(Literal* literal, const Shape& shape) {
+  if (++current_recursion_depth_ > options_.max_recursion_depth()) {
+    return Error(lexer_.GetLoc(), "maximum recursion depth exceeded");
+  }
+  auto depth_guard = absl::MakeCleanup([this] { --current_recursion_depth_; });
   if (!ParseToken(TokKind::kLparen, "expects '(' in front of tuple elements")) {
     return false;
   }
@@ -5357,6 +5374,11 @@ bool HloParserImpl::ParseDenseLiteral(Literal* literal, const Shape& shape) {
 bool HloParserImpl::ParseOperands(std::vector<HloInstruction*>* operands,
                                   HloComputation::Builder* builder) {
   CHECK(operands != nullptr);
+  if (++current_recursion_depth_ > options_.max_recursion_depth()) {
+    return Error(lexer_.GetLoc(), "maximum recursion depth exceeded");
+  }
+  auto depth_guard = absl::MakeCleanup([this] { --current_recursion_depth_; });
+
   if (!ParseToken(TokKind::kLparen,
                   "expects '(' at the beginning of operands")) {
     return false;
@@ -6446,6 +6468,10 @@ bool HloParserImpl::ParsePrecisionList(
 }
 
 bool HloParserImpl::ParseHloComputation(HloComputation** result) {
+  if (++current_recursion_depth_ > options_.max_recursion_depth()) {
+    return Error(lexer_.GetLoc(), "maximum recursion depth exceeded");
+  }
+  auto depth_guard = absl::MakeCleanup([this] { --current_recursion_depth_; });
   if (lexer_.GetKind() == TokKind::kLbrace) {
     // This means it is a nested computation.
     return ParseInstructionList(result, /*computation_name=*/"_");
@@ -6966,6 +6992,10 @@ bool HloParserImpl::ParseLayout(Layout* layout) {
 //   ::= shape (',' shape)*
 bool HloParserImpl::ParseShape(Shape* result,
                                bool allow_fallback_to_default_layout) {
+  if (++current_recursion_depth_ > options_.max_recursion_depth()) {
+    return Error(lexer_.GetLoc(), "maximum recursion depth exceeded");
+  }
+  auto depth_guard = absl::MakeCleanup([this] { --current_recursion_depth_; });
   if (lexer_.GetKind() == TokKind::kIdent && lexer_.GetStrVal() == "b" &&
       lexer_.LookAhead() == TokKind::kLparen) {  // Buffer shape
     lexer_.Lex();
