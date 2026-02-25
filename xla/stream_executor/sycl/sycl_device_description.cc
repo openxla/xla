@@ -131,7 +131,8 @@ SemanticVersion GetOrDefaultLevelZeroDriverVersion(ze_driver_handle_t driver) {
     std::vector<char> driver_version_string(driver_version_string_size);
     driver_version_func(driver, driver_version_string.data(),
                         &driver_version_string_size);
-    return ParseOrDefaultDriverVersion(driver_version_string.data());
+    return ParseOrDefaultDriverVersion(absl::string_view(
+        driver_version_string.data(), driver_version_string_size));
   }
   return SemanticVersion{0, 0, 0};
 }
