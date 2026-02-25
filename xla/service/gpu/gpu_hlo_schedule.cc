@@ -556,6 +556,56 @@ LegalizeSchedulingAnnotations::Config SchedulingAnnotationsConfig() {
   return annotation_config;
 }
 
+// Delays MoveToHostAsyncStart as late as possible
+// to achieve better overlapping with computation.
+// The only pattern we are seeing is async start of a fusion with a dynamic update slice:
+// ```
+// %async_start = async_start(%fusion), async_wrapped={%fusion}
+// %dynamic_update_slice = dynamic_update_slice(%param, %update, %indices)
+// %wrapped_dynamic-update-slice_computation {
+//   %param_0.38286 = ... parameter(0)
+//   %param_1.38949 = ... parameter(1)
+//   %param_2.30408 = s32[] parameter(2)
+//   %param_3.25973 = s32[] parameter(3)
+//   %param_4.20600 = s32[] parameter(4)
+//   %param_5.16397 = s32[] parameter(5)
+//   %param_6.12209 = s32[] parameter(6)
+//   ROOT %dynamic-update-slice.1 = dynamic-update-slice()
+// }
+// ```
+// To add more patterns like non-fused when observed on real workloads.
+std::optional<DefaultSchedulerCore::CandidateResult>
+DelayMoveToHostAsyncStartCandidateCondition(
+    DefaultSchedulerCore::ScheduleCandidate& a,
+    DefaultSchedulerCore::ScheduleCandidate& b) {
+  auto is_send_host_dus_fn =
+      [=](DefaultSchedulerCore::ScheduleCandidate& a) -> bool {
+    bool is_send_host_dus = false;
+    if (a.node->GetOpcode() == HloOpcode::kAsyncStart) {
+      if (a.node->GetInstr().async_wrapped_instruction()->opcode() ==
+          HloOpcode::kFusion) {
+        auto fused_instrs = a.node->GetInstr()
+                                .async_wrapped_instruction()
+                                ->fused_instructions();
+        for (auto instr : fused_instrs) {
+          if (instr->opcode() == HloOpcode::kDynamicUpdateSlice) {
+            is_send_host_dus = true;
+            break;
+          }
+        }
+      }
+    }
+    return is_send_host_dus;
+  };
+
+  if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
+          !is_send_host_dus_fn(a), a, !is_send_host_dus_fn(b), b,
+          "kDelayMoveToHostAsyncStart")) {
+    return value;
+  }
+  return std::nullopt;
+}
+
 // Adds necessary passes to perform latency hiding estimations for the
 // `pipeline`.
 absl::Status RunLatencyHidingSchedulerPasses(
@@ -589,10 +639,12 @@ absl::Status RunLatencyHidingSchedulerPasses(
       std::make_shared<const SchedulingContext>(
           module, std::move(estimator), std::move(async_tracker), alias_info,
           shape_size_in_bytes);
+
   auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
       scheduling_context, config,
       /*target_scheduling_rule=*/nullptr,
-      /*early_target_scheduling_rule=*/nullptr,
+      /*early_target_scheduling_rule=*/
+      DelayMoveToHostAsyncStartCandidateCondition,
       /*post_processing_fn=*/nullptr);
 
   pipeline.AddPass<LatencyHidingScheduler>(scheduling_context,
