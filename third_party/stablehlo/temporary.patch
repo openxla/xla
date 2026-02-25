@@ -261,7 +261,7 @@ diff --ruN a/stablehlo/stablehlo/dialect/VhloBytecode.cpp b/stablehlo/stablehlo/
  #include "llvm/Support/raw_ostream.h"
  #include "mlir/Bytecode/BytecodeImplementation.h"
  #include "mlir/IR/Attributes.h"
-@@ -933,12 +935,87 @@
+@@ -933,12 +935,82 @@
  // TensorV1Attr
  //===----------------------------------------------------------------------===//
  
@@ -270,10 +270,6 @@ diff --ruN a/stablehlo/stablehlo/dialect/VhloBytecode.cpp b/stablehlo/stablehlo/
 +bool isBooleanType(Type type) {
 +  auto tensorType = dyn_cast<RankedTensorV1Type>(type);
 +  return tensorType && isa<BooleanV1Type>(tensorType.getElementType());
-+}
-+
-+bool isSplat(ArrayRef<char> blob) {
-+  return blob.size() == 1 && (blob[0] == 0x00 || blob[0] == 0xFF);
 +}
 +
 +static LogicalResult readVhloTensorV1Attr(DialectBytecodeReader& reader,
@@ -296,8 +292,7 @@ diff --ruN a/stablehlo/stablehlo/dialect/VhloBytecode.cpp b/stablehlo/stablehlo/
 +  // cheap.
 +  size_t numElements = cast<RankedTensorV1Type>(type).getNumElements();
 +  size_t packedSize = llvm::divideCeil(numElements, 8);
-+  if (blob.size() == packedSize && blob.size() != numElements &&
-+      !isSplat(blob)) {
++  if (blob.size() == packedSize && blob.size() != numElements) {
 +    // Unpack the blob.
 +    rawData.resize(numElements);
 +    for (size_t i = 0; i < numElements; ++i)
@@ -351,7 +346,7 @@ diff --ruN a/stablehlo/stablehlo/dialect/VhloBytecode.cpp b/stablehlo/stablehlo/
      return TensorV1Attr();
    return TensorV1Attr::get(getContext(), type, blob);
  }
-@@ -947,7 +1024,7 @@
+@@ -947,7 +1019,7 @@
                                    DialectBytecodeWriter& writer) const {
    writer.writeVarInt(vhlo_encoding::kTensorV1Attr);
    writer.writeType(attr.getType());
@@ -612,7 +607,7 @@ diff --ruN a/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.1_13_0.ml
 diff --ruN a/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir b/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir
 --- stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir
 +++ stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir
-@@ -416,6 +416,21 @@
+@@ -416,6 +416,23 @@
    // CHECK: some.unregistered_attr
    %1 = stablehlo.cosine %arg0 {some.unregistered_attr = 1 : i32} : tensor<f32>
    return %1 : tensor<f32>
@@ -621,16 +616,18 @@ diff --ruN a/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir b/st
 +// Builtin attriubute tests
 +
 +// CHECK-LABEL: "byte_packed_boolean"
-+func.func @byte_packed_boolean() -> (tensor<8xi1>, tensor<8xi1>, tensor<4xi1>, tensor<16xi1>) {
++func.func @byte_packed_boolean() -> (tensor<8xi1>, tensor<8xi1>, tensor<4xi1>, tensor<4xi1>, tensor<16xi1>) {
 +  // CHECK: #vhlo.tensor_v1<dense<[true, false, false, false, false, false, false, false]
 +  // CHECK-NEXT: #vhlo.tensor_v1<dense<true> : tensor<8xi1>>
 +  // CHECK-NEXT: #vhlo.tensor_v1<dense<[true, false, false, false]> : tensor<4xi1>>
++  // CHECK-NEXT: #vhlo.tensor_v1<dense<true> : tensor<4xi1>>
 +  // CHECK-NEXT: #vhlo.tensor_v1<dense<[true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false]> : tensor<16xi1>>
 +  %c = stablehlo.constant dense<[true, false, false, false, false, false, false, false]> : tensor<8xi1>
 +  %c_0 = stablehlo.constant dense<true> : tensor<8xi1>
 +  %c_1 = stablehlo.constant dense<[true, false, false, false]> : tensor<4xi1>
-+  %c_2 = stablehlo.constant dense<[true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false]> : tensor<16xi1>
-+  return %c, %c_0, %c_1, %c_2 : tensor<8xi1>, tensor<8xi1>, tensor<4xi1>, tensor<16xi1>
++  %c_2 = stablehlo.constant dense<true> : tensor<4xi1>
++  %c_3 = stablehlo.constant dense<[true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false]> : tensor<16xi1>
++  return %c, %c_0, %c_1, %c_2, %c_3 : tensor<8xi1>, tensor<8xi1>, tensor<4xi1>, tensor<4xi1>, tensor<16xi1>
  }
  
  // ============ DEFAULTS ============
