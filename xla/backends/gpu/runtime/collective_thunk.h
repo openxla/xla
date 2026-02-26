@@ -154,6 +154,7 @@ class CollectiveThunk : public Thunk {
   }
 
   bool IsP2PCollective() const { return is_p2p_; }
+  // TODO: b/450529094 - I think this isn't actually used and can be removed.
   absl::StatusOr<CollectiveThunkProto> ToCollectiveThunkProto() const;
 
  protected:

@@ -2824,11 +2824,11 @@ cc_library(
         ":collective_multimem_registry",
         ":collective_params",
         ":thunk_id",
+        ":thunk_kind_proto_cc",
         ":thunk_proto_cc",
         "//xla:executable_run_options",
         "//xla:status_macros",
         "//xla:util",
-        "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/core/collectives:communicator",
         "//xla/ffi:execution_context",
         "//xla/hlo/ir:hlo",
@@ -3406,6 +3406,19 @@ xla_test(
 )
 
 tf_proto_library(
+    name = "thunk_kind_proto",
+    srcs = ["thunk_kind.proto"],
+)
+
+tf_proto_library(
+    name = "nvshmem_collective_thunk_proto",
+    srcs = ["nvshmem_collective_thunk.proto"],
+    deps = [
+        ":thunk_kind_proto",
+    ],
+)
+
+tf_proto_library(
     name = "thunk_proto",
     srcs = [
         "thunk.proto",
@@ -3414,6 +3427,8 @@ tf_proto_library(
         ":convolution_filter_thunk_proto",
         ":copy_thunk_proto",
         ":dynamic_slice_thunk_proto",
+        ":nvshmem_collective_thunk_proto",
+        ":thunk_kind_proto",
         "//xla:xla_data_proto",
         "//xla/backends/gpu/codegen/kernels:custom_kernel_proto",
         "//xla/core/host_offloading:host_offloading_executable_proto",
@@ -3483,6 +3498,7 @@ cc_library(
         ":kernel_thunk",
         ":memset_thunk",
         ":norm_thunk",
+        ":nvshmem_collective_thunk",
         ":outfeed_thunk",
         ":ragged_all_to_all_thunk",
         ":recv_thunk",
@@ -3558,7 +3574,10 @@ cc_library(
         ":collective_clique_requests",
         ":collective_execution",
         ":collective_thunk",
+        ":nvshmem_collective_thunk_proto_cc",
         ":thunk",
+        ":thunk_kind_proto_cc",
+        ":thunk_proto_cc",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
@@ -3573,6 +3592,7 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -3584,6 +3604,21 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:casts",
+    ],
+)
+
+xla_cc_test(
+    name = "nvshmem_collective_thunk_test",
+    srcs = ["nvshmem_collective_thunk_test.cc"],
+    deps = [
+        ":collective_thunk",
+        ":nvshmem_collective_thunk",
+        ":thunk",
+        ":thunk_proto_cc",
+        "//xla/tsl/util/proto:parse_text_proto",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/base",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
