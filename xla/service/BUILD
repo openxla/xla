@@ -1149,6 +1149,7 @@ xla_cc_test(
     deps = [
         ":call_graph",
         ":call_inliner",
+        ":hlo_proto_cc",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
