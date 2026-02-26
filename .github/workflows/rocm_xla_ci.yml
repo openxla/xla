@@ -57,6 +57,7 @@ jobs:
         volumes:
           - /data/ci-cert.crt:/data/ci-cert.crt
           - /data/ci-cert.key:/data/ci-cert.key
+        options: --device=/dev/kfd --device=/dev/dri --group-add render --group-add video --ipc=host --cap-add=SYS_PTRACE --security-opt=seccomp=unconfined
     defaults:
       run:
         shell: bash
