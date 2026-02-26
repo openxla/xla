@@ -293,7 +293,13 @@ def _tag_filters_for_compute_capability(
   tag_filters += ("-requires-gpu-intel",)
   return tag_filters
 
-rocm_tag_filters = ()
+rocm_tag_filters = (
+    "-no_oss",
+    "-requires-gpu-nvidia",
+    "-requires-gpu-intel",
+    "-cuda-only",
+    "-oneapi-only",
+)
 
 rocm_test_filters = ""
 
