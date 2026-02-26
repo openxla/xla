@@ -422,6 +422,7 @@ cc_library(
         "//xla/pjrt:host_callback",
         "//xla/pjrt:host_memory_spaces",
         "//xla/pjrt:layout_mode",
+        "//xla/pjrt:maybe_owning_mlir_module",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_compiler",

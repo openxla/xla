@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/layout_mode.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -411,9 +412,11 @@ absl::StatusOr<ExecutableRef> PjRtExecutable::Create(
   TF_ASSIGN_OR_RETURN(const std::vector<xla::LayoutMode> output_layout_modes,
                       GetOutputLayoutModes(module));
 
-  TF_ASSIGN_OR_RETURN(auto pjrt_executable,
-                      PjRtCompile(std::move(compile_options), std::move(module),
-                                  topology, /*client=*/nullptr));
+  TF_ASSIGN_OR_RETURN(
+      auto pjrt_executable,
+      PjRtCompile(std::move(compile_options),
+                  MaybeOwningMlirModule(std::move(module)), topology,
+                  /*client=*/nullptr));
 
   TF_ASSIGN_OR_RETURN(auto output_dtypes_and_shapes,
                       GetDTypesAndShapes(mlir_module_output_xla_shapes));
@@ -760,8 +763,9 @@ absl::StatusOr<LoadedExecutableRef> PjRtLoadedExecutable::Create(
 
   TF_ASSIGN_OR_RETURN(
       std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable,
-      client->pjrt_client()->CompileAndLoad(std::move(module),
-                                            std::move(compile_options)));
+      client->pjrt_client()->CompileAndLoad(
+          MaybeOwningMlirModule(std::move(module)),
+          std::move(compile_options)));
 
   TF_ASSIGN_OR_RETURN(
       executable_devices,
