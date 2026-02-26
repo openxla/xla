@@ -299,13 +299,38 @@ rocm_test_filters = ""
 
 rocm_excluded_targets = ()
 
+rocm_multi_gpu_targets = (
+    "//xla/tests:collective_ops_e2e_test",
+    "//xla/tests:collective_ops_test",
+    "//xla/tests:collective_pipeline_parallelism_test",
+    "//xla/tests:replicated_io_feed_test",
+    "//xla/backends/gpu/collectives:gpu_clique_key_test",
+    "//xla/backends/gpu/runtime:all_reduce_test",
+    "//xla/service:collective_ops_utils_test",
+    "//xla/service:collective_pipeliner_test",
+    "//xla/service:collective_permute_cycle_test",
+    "//xla/service:batched_gather_scatter_normalizer_test",
+    "//xla/service:all_reduce_simplifier_test",
+    "//xla/service:all_gather_simplifier_test",
+    "//xla/service:reduce_scatter_decomposer_test",
+    "//xla/service:reduce_scatter_reassociate_test",
+    "//xla/service:reduce_scatter_combiner_test",
+    "//xla/service:scatter_simplifier_test",
+    "//xla/service:sharding_propagation_test",
+    "//xla/service:sharding_remover_test",
+    "//xla/service:p2p_schedule_preparation_test",
+    "//xla/tools/multihost_hlo_runner:functional_hlo_runner_test",
+    "//xla/pjrt/distributed:topology_util_test",
+    "//xla/pjrt/distributed:client_server_test",
+)
+
 Build(
     type_=BuildType.XLA_LINUX_X86_AMD_INSTINCT_GPU_SINGLE_GITHUB_ACTIONS,
     repo="openxla/xla",
     configs=("rocm_ci", "rocm_rbe", "ci_single_gpu"),
     target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_excluded_targets,
     build_tag_filters=rocm_tag_filters,
-    test_tag_filters=rocm_tag_filters + ("gpu", "-multi_gpu"),
+    test_tag_filters=rocm_tag_filters + ("gpu", "-multi_gpu", "-no_oss"),
     test_env={"TF_TESTS_PER_GPU": 1, "TF_GPU_COUNT": 8},
     action_env={
         "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true"
@@ -319,12 +344,11 @@ Build(
     startup_options={
         "bazelrc": "build_tools/rocm/rocm_xla_ci.bazelrc",
     },
-  options={
+    options={
         **_DEFAULT_BAZEL_OPTIONS,
         "test_filter": rocm_test_filters,
         "keep_going": True,
         "test_output": "errors",
-        "run_under": "//build_tools/rocm:run_xla_ci_build",
         "test_timeout": "920,2400,7200,9600",
         "test_sharding_strategy": "disabled",
         "flaky_test_attempts": 3,
@@ -339,9 +363,9 @@ Build(
     type_=BuildType.XLA_LINUX_X86_AMD_INSTINCT_GPU_MULTI_GITHUB_ACTIONS,
     repo="openxla/xla",
     configs=("rocm_ci", "rocm_rbe", "ci_multi_gpu"),
-    target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_excluded_targets,
+    target_patterns=rocm_multi_gpu_targets,
     build_tag_filters=rocm_tag_filters,
-    test_tag_filters=rocm_tag_filters + ("multi_gpu",),
+    test_tag_filters=rocm_tag_filters,
     test_env={"TF_TESTS_PER_GPU": 1, "TF_GPU_COUNT": 8},
     action_env={
         "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true",
@@ -366,7 +390,6 @@ Build(
         "strategy": "TestRunner=local",
         "keep_going": True,
         "test_output": "errors",
-        "run_under": "//build_tools/rocm:run_xla_ci_build",
         "test_timeout": "920,2400,7200,9600",
         "test_sharding_strategy": "disabled",
         "flaky_test_attempts": 3,
