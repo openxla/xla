@@ -91,18 +91,10 @@ class AllReduceTestNoParams : public CollectiveOpsWithFlagsBase {
 
   void SetUp() override {
     CollectiveOpsE2ETestBase::SetUp();
-    // Check for Triton support: Ampere+ for CUDA, MI300+ for ROCm
-    bool has_triton_support = false;
-    if (Capability().IsCuda()) {
-      has_triton_support = IsAmpereAndHigher();
-    } else if (Capability().IsRocm()) {
-      has_triton_support =
-          Capability().rocm_compute_capability()->gfx9_mi300_series();
-    }
-
-    if (!has_triton_support) {
-      GTEST_SKIP() << "Test requires Ampere or newer architecture (CUDA) or "
-                      "MI300+ (ROCm) since it's using triton.";
+    // Check for Triton support: Ampere+ for CUDA, any supported GPU for ROCm
+    if (Capability().IsCuda() && !IsAmpereAndHigher()) {
+      GTEST_SKIP() << "Test requires Ampere or newer architecture for CUDA "
+                      "since it's using triton.";
     }
   }
 };
