@@ -23,6 +23,7 @@ import "xla/backends/gpu/runtime/copy_thunk.proto";
 import "xla/backends/gpu/runtime/dynamic_slice_thunk.proto";
 import "xla/backends/gpu/runtime/nvshmem_collective_thunk.proto";
 import "xla/backends/gpu/runtime/thunk_kind.proto";
+import "xla/core/collectives/reduction_kind.proto";
 import "xla/core/host_offloading/host_offloading_executable.proto";
 import "xla/ffi/attribute_map.proto";
 import "xla/ffi/execution_state.proto";
@@ -299,20 +300,12 @@ message AllGatherStartThunkProto {
   repeated CollectiveBufferProto buffers = 3;
 }
 
-enum ReductionKindProto {
-  REDUCTION_KIND_UNSPECIFIED = 0;
-  REDUCTION_KIND_SUM = 1;
-  REDUCTION_KIND_PRODUCT = 2;
-  REDUCTION_KIND_MIN = 3;
-  REDUCTION_KIND_MAX = 4;
-}
-
 message AllReduceStartThunkProto {
   optional uint64 async_events_unique_id = 1;
   CollectiveConfigProto collective_config = 2;
   repeated CollectiveBufferProto buffers = 3;
 
-  ReductionKindProto reduction_kind = 4;
+  xla.ReductionKindProto reduction_kind = 4;
   bool is_multimem_enabled = 5;
   int32 shmem_bytes = 6;
   string kernel_name = 7;
@@ -324,7 +317,7 @@ message ReduceScatterStartThunkProto {
   optional uint64 async_events_unique_id = 1;
   CollectiveConfigProto collective_config = 2;
   repeated CollectiveBufferProto buffers = 3;
-  ReductionKindProto reduction_kind = 4;
+  xla.ReductionKindProto reduction_kind = 4;
 }
 
 message AllToAllStartThunkProto {

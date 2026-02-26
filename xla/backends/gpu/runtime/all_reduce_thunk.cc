@@ -56,36 +56,6 @@ namespace xla {
 namespace gpu {
 namespace {
 
-ReductionKindProto ToReductionKindProto(ReductionKind kind) {
-  switch (kind) {
-    case ReductionKind::SUM:
-      return REDUCTION_KIND_SUM;
-    case ReductionKind::PRODUCT:
-      return REDUCTION_KIND_PRODUCT;
-    case ReductionKind::MIN:
-      return REDUCTION_KIND_MIN;
-    case ReductionKind::MAX:
-      return REDUCTION_KIND_MAX;
-  }
-}
-
-absl::StatusOr<ReductionKind> FromReductionKindProto(
-    const ReductionKindProto& proto) {
-  switch (proto) {
-    case REDUCTION_KIND_SUM:
-      return ReductionKind::SUM;
-    case REDUCTION_KIND_PRODUCT:
-      return ReductionKind::PRODUCT;
-    case REDUCTION_KIND_MIN:
-      return ReductionKind::MIN;
-    case REDUCTION_KIND_MAX:
-      return ReductionKind::MAX;
-    default:
-      return absl::InvalidArgumentError(
-          absl::StrCat("Unknown ReductionKindProto: ", proto));
-  }
-}
-
 absl::Status CheckImplementableInst(const HloInstruction* inst,
                                     Thunk::Kind reduction_op) {
   for (HloInstruction* operand : inst->operands()) {

@@ -3431,6 +3431,7 @@ tf_proto_library(
         ":thunk_kind_proto",
         "//xla:xla_data_proto",
         "//xla/backends/gpu/codegen/kernels:custom_kernel_proto",
+        "//xla/core/collectives:reduction_kind_proto",
         "//xla/core/host_offloading:host_offloading_executable_proto",
         "//xla/ffi:attribute_map_proto",
         "//xla/ffi:execution_state_proto",
