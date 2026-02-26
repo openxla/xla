@@ -1,7 +1,6 @@
-diff --git a/include/triton/Dialect/Gluon/IR/GluonDialect.td b/include/triton/Dialect/Gluon/IR/GluonDialect.td
 --- a/include/triton/Dialect/Gluon/IR/GluonDialect.td
 +++ b/include/triton/Dialect/Gluon/IR/GluonDialect.td
-@@ -16,7 +16,6 @@ def Gluon_Dialect : Dialect {
+@@ -16,7 +16,6 @@
      "mlir::gpu::GPUDialect",
    ];
    let useDefaultAttributePrinterParser = 1;
@@ -9,10 +8,10 @@ diff --git a/include/triton/Dialect/Gluon/IR/GluonDialect.td b/include/triton/Di
  }
  
  #endif
-diff --git a/include/triton/Dialect/Triton/IR/TritonDialect.td b/include/triton/Dialect/Triton/IR/TritonDialect.td
+
 --- a/include/triton/Dialect/Triton/IR/TritonDialect.td
 +++ b/include/triton/Dialect/Triton/IR/TritonDialect.td
-@@ -51,7 +51,6 @@ def Triton_Dialect : Dialect {
+@@ -51,7 +51,6 @@
  
    let hasConstantMaterializer = 1;
    let useDefaultTypePrinterParser = 1;
@@ -20,10 +19,10 @@ diff --git a/include/triton/Dialect/Triton/IR/TritonDialect.td b/include/triton/
  }
  
  include "triton/Dialect/Triton/IR/TritonTypes.td"
-diff --git a/include/triton/Dialect/TritonGPU/IR/TritonGPUDialect.td b/include/triton/Dialect/TritonGPU/IR/TritonGPUDialect.td
+
 --- a/include/triton/Dialect/TritonGPU/IR/TritonGPUDialect.td
 +++ b/include/triton/Dialect/TritonGPU/IR/TritonGPUDialect.td
-@@ -35,7 +35,6 @@ def TritonGPU_Dialect : Dialect {
+@@ -35,7 +35,6 @@
  
    let useDefaultTypePrinterParser = 1;
    let useDefaultAttributePrinterParser = 1;
@@ -31,21 +30,21 @@ diff --git a/include/triton/Dialect/TritonGPU/IR/TritonGPUDialect.td b/include/t
  }
  
  #endif
-diff --git a/include/triton/Dialect/TritonNvidiaGPU/IR/TritonNvidiaGPUDialect.td b/include/triton/Dialect/TritonNvidiaGPU/IR/TritonNvidiaGPUDialect.td
+
 --- a/include/triton/Dialect/TritonNvidiaGPU/IR/TritonNvidiaGPUDialect.td
 +++ b/include/triton/Dialect/TritonNvidiaGPU/IR/TritonNvidiaGPUDialect.td
-@@ -42,7 +42,6 @@ def TritonNvidiaGPU_Dialect : Dialect {
-   ];
+@@ -43,7 +43,6 @@
  
    let useDefaultAttributePrinterParser = 1;
+   let useDefaultTypePrinterParser = 1;
 -  let usePropertiesForAttributes = 1;
  }
  
  #endif
-diff --git a/third_party/amd/include/Dialect/TritonAMDGPU/IR/TritonAMDGPUDialect.td b/third_party/amd/include/Dialect/TritonAMDGPU/IR/TritonAMDGPUDialect.td
+
 --- a/third_party/amd/include/Dialect/TritonAMDGPU/IR/TritonAMDGPUDialect.td
 +++ b/third_party/amd/include/Dialect/TritonAMDGPU/IR/TritonAMDGPUDialect.td
-@@ -37,7 +37,6 @@ def TritonAMDGPU_Dialect : Dialect {
+@@ -37,7 +37,6 @@
    let dependentDialects = ["triton::TritonDialect"];
  
    let useDefaultAttributePrinterParser = 1;
@@ -53,10 +52,10 @@ diff --git a/third_party/amd/include/Dialect/TritonAMDGPU/IR/TritonAMDGPUDialect
  }
  
  #endif
-diff --git a/third_party/nvidia/include/Dialect/NVWS/IR/NVWSDialect.td b/third_party/nvidia/include/Dialect/NVWS/IR/NVWSDialect.td
+
 --- a/third_party/nvidia/include/Dialect/NVWS/IR/NVWSDialect.td
 +++ b/third_party/nvidia/include/Dialect/NVWS/IR/NVWSDialect.td
-@@ -39,7 +39,6 @@ def NVWS_Dialect : Dialect {
+@@ -39,7 +39,6 @@
  
    let useDefaultTypePrinterParser = 1;
    let useDefaultAttributePrinterParser = 1;
@@ -64,10 +63,10 @@ diff --git a/third_party/nvidia/include/Dialect/NVWS/IR/NVWSDialect.td b/third_p
  }
  
  #endif
-diff --git a/third_party/proton/Dialect/include/Dialect/Proton/IR/ProtonDialect.td b/third_party/proton/Dialect/include/Dialect/Proton/IR/ProtonDialect.td
+
 --- a/third_party/proton/Dialect/include/Dialect/Proton/IR/ProtonDialect.td
 +++ b/third_party/proton/Dialect/include/Dialect/Proton/IR/ProtonDialect.td
-@@ -14,7 +14,6 @@ def Proton_Dialect : Dialect {
+@@ -14,7 +14,6 @@
  
    let dependentDialects = [];
  
@@ -75,10 +74,10 @@ diff --git a/third_party/proton/Dialect/include/Dialect/Proton/IR/ProtonDialect.
  }
  
  #endif
-diff --git a/third_party/proton/Dialect/include/Dialect/ProtonGPU/IR/ProtonGPUDialect.td b/third_party/proton/Dialect/include/Dialect/ProtonGPU/IR/ProtonGPUDialect.td
+
 --- a/third_party/proton/Dialect/include/Dialect/ProtonGPU/IR/ProtonGPUDialect.td
 +++ b/third_party/proton/Dialect/include/Dialect/ProtonGPU/IR/ProtonGPUDialect.td
-@@ -22,7 +22,6 @@ def ProtonGPU_Dialect : Dialect {
+@@ -22,7 +22,6 @@
  
    let useDefaultTypePrinterParser = 1;
    let useDefaultAttributePrinterParser = 1;

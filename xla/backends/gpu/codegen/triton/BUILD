@@ -161,6 +161,7 @@ cc_library(
         "@llvm-project//mlir:ArithToLLVM",
         "@llvm-project//mlir:ControlFlowToLLVM",
         "@llvm-project//mlir:IndexToLLVM",
+        "@llvm-project//mlir:LLVMDialect",
         "@llvm-project//mlir:NVVMToLLVM",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFToControlFlow",
