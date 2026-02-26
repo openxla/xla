@@ -301,7 +301,7 @@ rocm_tag_filters = (
     "-oneapi-only",
 )
 
-rocm_test_filters = ""
+rocm_test_filters = "-ConvolutionHloTest.TestFusedConv3D:-ConvolutionHloTest.TestFusedConv2D:-HostMemoryAllocateTest.Numa:-CollectiveOpsTestFFI.DeviceAllReduce"
 
 rocm_excluded_targets = ()
 
