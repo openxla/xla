@@ -6619,3 +6619,20 @@ tf_proto_library(
         "//xla:xla_data_proto",
     ],
 )
+
+cc_library(
+    name = "pjrt_gpu_utils",
+    srcs = ["pjrt_gpu_utils.cc"],
+    hdrs = ["pjrt_gpu_utils.h"],
+    deps = [
+        "//xla/backends/gpu/target_config",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_compiler",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_protobuf//:protobuf",
+    ],
+)
