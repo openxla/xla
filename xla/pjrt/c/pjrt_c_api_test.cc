@@ -976,6 +976,10 @@ FieldOffsetsAndSizesForVersion(int major_version, int minor_version) {
     if (minor_version >= 95) {
       add_field("PJRT_Client_Load", kFnPtrSize);
     }
+    if (minor_version >= 96) {
+      add_field("PJRT_LoadedExecutable_AddressableDeviceLogicalIds",
+                kFnPtrSize);
+    }
     return version_offsets_and_sizes;
   }
   LOG(FATAL) << "Unsupported API version: " << major_version << "."
@@ -1405,6 +1409,11 @@ TEST_F(PjrtCAbiTestBase, FieldOffsetsAndSizes) {
           {"PJRT_Client_Load",
            {offsetof(PJRT_Api, PJRT_Client_Load),
             sizeof(PJRT_Api::PJRT_Client_Load)}},
+          {"PJRT_LoadedExecutable_AddressableDeviceLogicalIds",
+           {offsetof(PJRT_Api,
+                     PJRT_LoadedExecutable_AddressableDeviceLogicalIds),
+            sizeof(
+                PJRT_Api::PJRT_LoadedExecutable_AddressableDeviceLogicalIds)}},
       };
   ASSERT_EQ(api_->pjrt_api_version.major_version, PJRT_API_MAJOR);
   ASSERT_EQ(api_->pjrt_api_version.minor_version, PJRT_API_MINOR);

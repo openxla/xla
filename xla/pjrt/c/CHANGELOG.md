@@ -1,5 +1,9 @@
 # PJRT C API changelog
 
+## 0.96
+
+* Added `PJRT_LoadedExecutable_AddressableDeviceLogicalIds`.
+
 ## 0.95
 
 * Added `PJRT_Client_Load`.

@@ -1750,6 +1750,20 @@ PJRT_Error* PJRT_LoadedExecutable_AddressableDevices(
   return nullptr;
 }
 
+PJRT_Error* PJRT_LoadedExecutable_AddressableDeviceLogicalIds(
+    PJRT_LoadedExecutable_AddressableDeviceLogicalIds_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_LoadedExecutable_AddressableDeviceLogicalIds_Args",
+      PJRT_LoadedExecutable_AddressableDeviceLogicalIds_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  args->num_addressable_device_logical_ids =
+      args->executable->addressable_device_logical_ids.size();
+  args->addressable_device_logical_ids =
+      args->executable->addressable_device_logical_ids.data();
+  return nullptr;
+}
+
 PJRT_Error* PJRT_Executable_NumOutputs(PJRT_Executable_NumOutputs_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_NumOutputs_Args",
@@ -3356,10 +3370,25 @@ PJRT_Executable::PJRT_Executable(xla::PjRtExecutable* unowned_executable)
     : executable(unowned_executable),
       fingerprint(executable->FingerprintExecutable()) {}
 
+static void PopulatePjrtExecutableAddressableDeviceLogicalIds(
+    PJRT_LoadedExecutable* executable) {
+  CHECK(executable->client != nullptr) << ": client was null";
+  absl::Span<const xla::PjRtLoadedExecutable::LogicalDeviceIds> cpp_ids =
+      executable->get()->addressable_device_logical_ids();
+
+  std::vector<PJRT_LogicalDeviceIds>& exec_ids =
+      executable->addressable_device_logical_ids;
+  exec_ids.reserve(cpp_ids.size());
+  for (const auto& id : cpp_ids) {
+    exec_ids.push_back(PJRT_LogicalDeviceIds{id.replica, id.partition});
+  }
+}
+
 PJRT_LoadedExecutable::PJRT_LoadedExecutable(
     std::shared_ptr<xla::PjRtLoadedExecutable> executable, PJRT_Client* client)
     : executable(std::move(executable)), client(client) {
   pjrt::PopulatePjrtExecutableAddressableDevices(this);
+  PopulatePjrtExecutableAddressableDeviceLogicalIds(this);
 }
 
 namespace pjrt {
@@ -3593,6 +3622,8 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       /*PJRT_Device_GetAttributes=*/pjrt::PJRT_Device_GetAttributes,
 
       /*PJRT_Client_Load=*/pjrt::PJRT_Client_Load,
+      /*PJRT_LoadedExecutable_AddressableDeviceLogicalIds=*/
+      pjrt::PJRT_LoadedExecutable_AddressableDeviceLogicalIds,
   };
 }
 
