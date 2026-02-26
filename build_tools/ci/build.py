@@ -301,7 +301,7 @@ rocm_tag_filters = (
     "-oneapi-only",
 )
 
-rocm_test_filters = "-ConvolutionHloTest.TestFusedConv3D:-ConvolutionHloTest.TestFusedConv2D:-HostMemoryAllocateTest.Numa:-CollectiveOpsTestFFI.DeviceAllReduce"
+rocm_test_filters = ""
 
 rocm_excluded_targets = ()
 
@@ -330,11 +330,13 @@ rocm_multi_gpu_targets = (
     "//xla/pjrt/distributed:client_server_test",
 )
 
+rocm_single_gpu_exclusions = tuple(f"-{t}" for t in rocm_multi_gpu_targets)
+
 Build(
     type_=BuildType.XLA_LINUX_X86_AMD_INSTINCT_GPU_SINGLE_GITHUB_ACTIONS,
     repo="openxla/xla",
     configs=("rocm_ci", "rocm_rbe", "ci_single_gpu"),
-    target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_excluded_targets,
+    target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_single_gpu_exclusions,
     build_tag_filters=rocm_tag_filters,
     test_tag_filters=rocm_tag_filters + ("gpu", "-multi_gpu", "-no_oss"),
     test_env={"TF_TESTS_PER_GPU": 1, "TF_GPU_COUNT": 8},
