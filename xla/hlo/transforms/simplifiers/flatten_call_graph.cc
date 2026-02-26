@@ -38,7 +38,10 @@ absl::StatusOr<bool> FlattenCallGraph::RunImpl(
   std::vector<HloComputation*> computations =
       module->MakeComputationPostOrder(execution_threads);
 
-  for (const HloComputation* computation : computations) {
+  for (auto* computation : computations) {
+    if (skip_cloning_handler_(*computation)) {
+      continue;
+    }
     absl::InlinedVector<HloInstruction*, 1> callers;
     for (HloInstruction* caller : computation->caller_instructions()) {
       if (execution_threads.empty() ||
@@ -80,7 +83,7 @@ absl::StatusOr<bool> FlattenCallGraph::RunImpl(
       changed = true;
       std::vector<HloComputation*> worklist;
       caller->ReplaceCalledComputations([&](HloComputation* callee) {
-        if (callee == computation) {
+        if (callee == computation && !skip_cloning_handler_(*callee)) {
           HloComputation* clone =
               module->AddEmbeddedComputation(callee->Clone());
           worklist.push_back(clone);
@@ -95,6 +98,9 @@ absl::StatusOr<bool> FlattenCallGraph::RunImpl(
         worklist.pop_back();
         for (HloInstruction* instruction : current->instructions()) {
           instruction->ReplaceCalledComputations([&](HloComputation* callee) {
+            if (skip_cloning_handler_(*callee)) {
+              return callee;
+            }
             HloComputation* clone =
                 module->AddEmbeddedComputation(callee->Clone());
             worklist.push_back(clone);
