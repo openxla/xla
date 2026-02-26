@@ -1261,13 +1261,17 @@ TEST(ArrayImplTest, CopyToSameDevices) {
 
 TEST(ArrayImplTest, BitcastArrays) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+  if (client->addressable_devices().size() < 2) {
+    GTEST_SKIP() << "Skipping test; needs at least 2 addressable devices.";
+  }
 
   DType dtype(DType::kF32);
   Shape shape({});
   Shape shard_shape({});
   std::vector<float> data(1);
   absl::c_iota(data, 3);
-  absl::Span<Device* const> devices = client->addressable_devices();
+  absl::Span<Device* const> devices =
+      client->addressable_devices().subspan(0, 2);
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
                           client->MakeDeviceList(devices));
   ShardingRef sharding = ConcreteEvenSharding::Create(
