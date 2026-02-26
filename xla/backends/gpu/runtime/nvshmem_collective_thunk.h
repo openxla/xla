@@ -43,8 +43,6 @@ namespace gpu {
 // to have a single parent class for all gpu comm backends.
 class NvshmemCollectiveThunk : public Thunk {
  public:
-  NvshmemCollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_sync);
-
   absl::Status Prepare(const PrepareParams& params) override;
 
   absl::Status Initialize(const InitializeParams& params) override;
@@ -64,6 +62,8 @@ class NvshmemCollectiveThunk : public Thunk {
   bool IsAsyncStart() const override { return async_events_ != nullptr; }
 
  protected:
+  NvshmemCollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_sync);
+
   virtual absl::Status RunNvshmemCollective(const ExecuteParams& params,
                                             se::Stream& stream) = 0;
   virtual const CollectiveConfig& config() const = 0;
