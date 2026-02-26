@@ -22,6 +22,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
+#include "xla/backends/gpu/runtime/nvshmem_collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
@@ -64,6 +65,40 @@ TEST(CollectiveThunkTest, NvshmemCollectiveDoneThunkProtoRoundTrip) {
   ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
 
   reference_proto.mutable_nvshmem_collective_done_thunk()
+      ->set_async_events_unique_id(
+          absl::bit_cast<uint64_t>(event->second.get()));
+  EXPECT_THAT(round_trip_proto, EqualsProto(reference_proto));
+}
+
+TEST(CollectiveThunkTest, NvshmemCollectivePermuteDoneThunkProtoRoundTrip) {
+  ThunkProto reference_proto =
+      tsl::proto_testing::ParseTextProtoOrDie<ThunkProto>(
+          R"pb(
+            thunk_info {
+              profile_annotation: "profile_annotation"
+              execution_stream_id: 2
+            }
+            nvshmem_collective_permute_done_thunk { async_events_unique_id: 3 }
+          )pb");
+
+  ASSERT_OK_AND_ASSIGN(
+      Thunk::ThunkInfo thunk_info,
+      Thunk::ThunkInfo::FromProto(reference_proto.thunk_info()));
+
+  CollectiveThunk::AsyncEventsMap async_events_map;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NvshmemCollectivePermuteDoneThunk> thunk,
+      NvshmemCollectivePermuteDoneThunk::FromProto(
+          thunk_info, reference_proto.nvshmem_collective_permute_done_thunk(),
+          async_events_map));
+  auto event = async_events_map.find(AsyncEventsUniqueId{
+      reference_proto.nvshmem_collective_permute_done_thunk()
+          .async_events_unique_id()});
+  EXPECT_NE(event, async_events_map.end());
+
+  ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
+
+  reference_proto.mutable_nvshmem_collective_permute_done_thunk()
       ->set_async_events_unique_id(
           absl::bit_cast<uint64_t>(event->second.get()));
   EXPECT_THAT(round_trip_proto, EqualsProto(reference_proto));

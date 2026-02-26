@@ -445,6 +445,8 @@ message ThunkProto {
     DynamicMemcpyThunkProto dynamic_memcpy_thunk = 48;
     CopyDoneThunkProto copy_done_thunk = 49;
     NvshmemCollectiveDoneThunkProto nvshmem_collective_done_thunk = 50;
+    NvshmemCollectivePermuteDoneThunkProto
+        nvshmem_collective_permute_done_thunk = 51;
   }
 }
 
