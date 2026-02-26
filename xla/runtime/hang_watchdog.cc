@@ -22,6 +22,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/base/call_once.h"
 #include "absl/log/log.h"
@@ -55,29 +56,6 @@ struct HangWatchdog::Guard {
   absl::Time deadline;
   CancelCallback cancel;
 };
-
-// Checks if the guard is completed or has to be cancelled. If the guard is
-// still pending, returns a shared pointer that gives access to it.
-static std::shared_ptr<HangWatchdog::Guard> CheckGuard(
-    std::weak_ptr<HangWatchdog::Guard> guard) {
-  std::shared_ptr<HangWatchdog::Guard> locked = guard.lock();
-
-  // Action already completed (or was cancelled by a racing thread).
-  if (!locked) {
-    return nullptr;
-  }
-
-  // Action timed out, cancel it via the user-defined callback.
-  if (absl::Now() > locked->deadline) {
-    VLOG(3) << absl::StreamFormat(
-        "%s didn't finish in %v, calling cancel callback.", locked->action,
-        locked->duration);
-    std::move(locked->cancel)();
-    return nullptr;
-  }
-
-  return locked;
-}
 
 HangWatchdog::HangWatchdog(tsl::Env* env, absl::string_view name,
                            size_t num_threads)
@@ -145,22 +123,37 @@ void HangWatchdog::ScheduleCheck(std::weak_ptr<Guard> guard,
       return;
     }
 
-    // If our guard is not expired, process all pending guards and find the
-    // next deadline to sleep for just enough time to be able to check the next
-    // guard. All tasks will be racing to check the guards, but this is OK
-    // because of the scheduling jitter.
+    // Process pending guards: collect expired guards for later cancellation.
     absl::Time deadline = absl::InfiniteFuture();
+    std::vector<std::shared_ptr<Guard>> expired;
     {
       absl::MutexLock lock(mu_);
-      auto completed = [&](std::weak_ptr<Guard> ptr) {
-        if (std::shared_ptr<Guard> pending = CheckGuard(ptr)) {
-          deadline = std::min(deadline, pending->deadline);
-          return false;
+      auto is_expired = [&](std::weak_ptr<Guard>& weak_guard) {
+        if (std::shared_ptr<Guard> guard = weak_guard.lock()) {
+          // Guard is still active, keep it in the list of pending guards.
+          if (absl::Now() < guard->deadline) {
+            deadline = std::min(deadline, guard->deadline);
+            return false;
+          }
+          // Guard is expired, we pass the ownership to `expired` vector and
+          // will call the cancellation callback from the current task.
+          expired.push_back(std::move(guard));
+          return true;
         }
         return true;
       };
-      auto remove = std::remove_if(guards_.begin(), guards_.end(), completed);
-      guards_.erase(remove, guards_.end());
+      auto it = std::remove_if(guards_.begin(), guards_.end(), is_expired);
+      guards_.erase(it, guards_.end());
+    }
+
+    // Process expired guards and call cancel callbacks, we do it without
+    // holding the mutex to allow running multiple cancellation callbacks
+    // concurrently.
+    for (std::shared_ptr<Guard>& guard : expired) {
+      VLOG(3) << absl::StreamFormat(
+          "%s didn't finish in %v, calling cancel callback.", guard->action,
+          guard->duration);
+      std::move(guard->cancel)();
     }
 
     // We have no more guards to process, stop recursive scheduling loop.
@@ -168,7 +161,7 @@ void HangWatchdog::ScheduleCheck(std::weak_ptr<Guard> guard,
       return;
     }
 
-    // We do not hold `mu_` here because `Schedule` can execute the task in
+    // We must not hold `mu_` here because `Schedule` can execute the task in
     // the caller thread if the task queue is full, which can lead to a
     // deadlock.
 

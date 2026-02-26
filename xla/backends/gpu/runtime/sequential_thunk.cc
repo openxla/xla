@@ -135,15 +135,16 @@ absl::Status SequentialThunk::ExecuteOnStream(const ExecuteParams& params) {
         "[thunk=%d/%d] Start SequentialThunk::ExecuteOnStream: %s", i,
         thunks_.size(), thunk->profile_annotation());
 
-    if (tracker) {  // Record when thunk was executed last time.
-      absl::MutexLock lock(&tracker->mu);
-      tracker->map.at(thunk).executed = absl::Now();
-    }
-
     // Execute thunk and launch "work" on the GPU stream.
     TF_RETURN_IF_ERROR(thunk->ExecuteOnStream(params));
 
-    if (tracker) {  // Record execution completion event on a stream.
+    // Maybe track thunk execution to report the progress.
+    if (tracker) {
+      absl::MutexLock lock(&tracker->mu);
+      // Record when thunk was executed last time.
+      tracker->map.at(thunk).executed = absl::Now();
+
+      // Record execution completion event on a stream.
       se::Stream* execution_stream = params.stream;
       // Async collectives launch work on a dedicated async stream, so we
       // must record the event there instead of on the main compute stream.
@@ -152,7 +153,6 @@ absl::Status SequentialThunk::ExecuteOnStream(const ExecuteParams& params) {
         execution_stream = params.collective_params->async_streams.at(
             thunk->execution_stream_id().value());
       }
-      absl::MutexLock lock(&tracker->mu);
       RETURN_IF_ERROR(
           execution_stream->RecordEvent(tracker->map.at(thunk).event.get()));
     }

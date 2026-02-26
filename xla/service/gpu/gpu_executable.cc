@@ -455,35 +455,24 @@ absl::Status ExecuteThunksImpl(
     HangWatchdog::CancelCallback pre_abort;
     if (tracker.has_value()) {
       pre_abort = [&tracker, progress_tracking_n, device_ordinal] {
-        auto tz = absl::LocalTimeZone();
-        size_t num_thunks = tracker->num_thunks();
+        auto log_progress = [&](auto label, auto thunks) {
+          LOG(ERROR) << absl::StreamFormat("[%d] %s: size=%d", device_ordinal,
+                                           label, thunks.size());
+          for (auto& thunk : thunks) {
+            LOG(ERROR) << absl::StreamFormat(
+                "  - thunk[%d/%d]: %s at %s", thunk.index,
+                tracker->num_thunks(), thunk.name,
+                absl::FormatTime("%Y-%m-%d %H:%M:%S.%E6f", thunk.executed,
+                                 absl::LocalTimeZone()));
+          }
+        };
 
-        auto completed = tracker->LastCompletedThunks(progress_tracking_n);
-        LOG(ERROR) << absl::StreamFormat("[%d] Last completed thunks: size=%d",
-                                         device_ordinal, completed.size());
-        for (auto& thunk : completed) {
-          LOG(ERROR) << absl::StreamFormat(
-              "  - thunk[%d/%d]: %s at %s", thunk.index, num_thunks, thunk.name,
-              absl::FormatTime("%Y-%m-%d %H:%M:%S.%E6f", thunk.executed, tz));
-        }
-
-        auto fist_pending = tracker->FirstPendingThunks(progress_tracking_n);
-        LOG(ERROR) << absl::StreamFormat("[%d] First pending thunks: size=%d",
-                                         device_ordinal, fist_pending.size());
-        for (auto& thunk : fist_pending) {
-          LOG(ERROR) << absl::StreamFormat(
-              "  - thunk[%d/%d]: %s at %s", thunk.index, num_thunks, thunk.name,
-              absl::FormatTime("%Y-%m-%d %H:%M:%S.%E6f", thunk.executed, tz));
-        }
-
-        auto last_pending = tracker->LastPendingThunks(progress_tracking_n);
-        LOG(ERROR) << absl::StreamFormat("[%d] Last pending thunks: size=%d",
-                                         device_ordinal, last_pending.size());
-        for (auto& thunk : last_pending) {
-          LOG(ERROR) << absl::StreamFormat(
-              "  - thunk[%d/%d]: %s at %s", thunk.index, num_thunks, thunk.name,
-              absl::FormatTime("%Y-%m-%d %H:%M:%S.%E6f", thunk.executed, tz));
-        }
+        log_progress("Last completed thunks",
+                     tracker->LastCompletedThunks(progress_tracking_n));
+        log_progress("First pending thunks",
+                     tracker->FirstPendingThunks(progress_tracking_n));
+        log_progress("Last pending thunks",
+                     tracker->LastPendingThunks(progress_tracking_n));
       };
     }
 

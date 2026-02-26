@@ -639,6 +639,14 @@ message DebugOptions {
   // Timeout to issue a warning on stuck rendez-vous.
   optional int32 xla_gpu_executable_warn_stuck_timeout_seconds = 327;
 
+  // Number of thunks to track for execution progress reporting. When this
+  // value is greater than 0, XLA:GPU installs a progress tracker for the
+  // sequential thunk execution. On execution timeout, the last N completed
+  // and first N pending thunks are logged before aborting the process. This
+  // helps diagnose which GPU kernel or collective operation caused a hang.
+  // Default is 0 (disabled).
+  optional int32 xla_gpu_execution_progress_tracking = 456;
+
   // Timeout to terminate XLA:GPU execution if it doesn't complete successfully.
   //
   // If XLA:GPU executable doesn't complete it's execution within some
@@ -652,14 +660,6 @@ message DebugOptions {
   // suffix. The valid suffixes are "ns", "us" "ms", "s", "m", and "h".
   // Simple examples include "300ms", "-1.5h", and "2h45m". Default is "inf".
   optional string xla_gpu_execution_terminate_timeout = 451;
-
-  // Number of thunks to track for execution progress reporting. When this
-  // value is greater than 0, XLA:GPU installs a progress tracker for the
-  // sequential thunk execution. On execution timeout, the last N completed
-  // and first N pending thunks are logged before aborting the process. This
-  // helps diagnose which GPU kernel or collective operation caused a hang.
-  // Default is 0 (disabled).
-  optional int32 xla_gpu_execution_progress_tracking = 456;
 
   optional bool xla_gpu_exhaustive_tiling_search = 219;
 

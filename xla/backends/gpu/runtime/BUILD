@@ -2774,6 +2774,7 @@ xla_test(
         ":sequential_thunk",
         ":thunk",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
         "//xla/service:platform_util",
