@@ -1728,6 +1728,13 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PjRtClient::RemapArrays(
   return PjRtCompatibleClientRemapArrays(this, plan, arrays, semantics);
 }
 
+absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PjRtClient::BitcastArrays(
+    absl::Span<xla::ifrt::ArrayRef> arrays,
+    absl::Span<const xla::ifrt::ArraySpec> specs,
+    ArrayCopySemantics semantics) {
+  return Unimplemented("BitcastArrays not available with pjrt-ifrt client.");
+}
+
 absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> PjRtClient::ReshardArrays(
     absl::Span<ArrayRef> arrays, absl::Span<const ArraySpec> specs,
     ArrayCopySemantics semantics) {
