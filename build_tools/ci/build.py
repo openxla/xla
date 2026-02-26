@@ -53,6 +53,9 @@ _XLA_DEFAULT_TARGET_PATTERNS = (
     "//build_tools/...",
     "@tsl//tsl/...",
 )
+_XLA_ROCM_TARGET_PATTERNS = (
+    "//xla/...",
+)
 _XLA_ONEAPI_TARGET_PATTERNS = (
     "//xla/stream_executor/sycl/...",
     "//xla/service/gpu/...",
@@ -352,7 +355,7 @@ Build(
     type_=BuildType.XLA_LINUX_X86_AMD_INSTINCT_GPU_SINGLE_GITHUB_ACTIONS,
     repo="openxla/xla",
     configs=("rocm_ci", "rocm_rbe", "ci_single_gpu"),
-    target_patterns=_XLA_DEFAULT_TARGET_PATTERNS + rocm_single_gpu_exclusions,
+    target_patterns=_XLA_ROCM_TARGET_PATTERNS + rocm_single_gpu_exclusions,
     build_tag_filters=rocm_tag_filters,
     test_tag_filters=rocm_tag_filters + ("gpu", "-multi_gpu", "-no_oss"),
     test_env={"TF_TESTS_PER_GPU": 1, "TF_GPU_COUNT": 8},
