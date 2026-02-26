@@ -140,6 +140,9 @@ class PjRtCpuClient final : public CommonPjRtClient {
                            std::shared_ptr<DeviceAssignment>>>
   CompileAndAssignDevices(mlir::ModuleOp module, CompileOptions options);
 
+  using PjRtClient::Compile;
+  using PjRtClient::CompileAndLoad;
+
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
       const XlaComputation& computation, CompileOptions options) override;
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(

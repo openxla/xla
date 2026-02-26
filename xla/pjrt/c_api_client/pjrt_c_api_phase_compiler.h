@@ -60,6 +60,8 @@ class PjRtCApiPhaseCompiler : public PjRtPhaseCompiler {
   // Returns the reference to the phase compiler.
   const PJRT_PhaseCompiler* GetPhaseCompiler() const;
 
+  using PjRtPhaseCompiler::Compile;
+
   // Compiles the 'computation' and returns a 'PjRtExecutable'. The returned
   // PjRtExecutable must be loaded by a compatible client before execution.
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(

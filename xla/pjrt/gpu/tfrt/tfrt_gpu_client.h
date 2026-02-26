@@ -198,6 +198,9 @@ class TfrtGpuClient final : public PjRtClient {
     return non_blocking_thread_pool_.get();
   }
 
+  using PjRtClient::Compile;
+  using PjRtClient::CompileAndLoad;
+
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
       const XlaComputation& computation, CompileOptions options) override;
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(

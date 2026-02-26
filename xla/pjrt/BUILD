@@ -298,12 +298,22 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "maybe_owning_mlir_module",
+    hdrs = ["maybe_owning_mlir_module.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
     name = "pjrt_client",
     srcs = ["pjrt_client.cc"],
     hdrs = ["pjrt_client.h"],
     visibility = internal_visibility(["//xla:friends"]),
     deps = [
         ":host_memory_allocator",
+        ":maybe_owning_mlir_module",
         ":pjrt_abi_version",
         ":pjrt_common",
         ":pjrt_compiler",
@@ -497,6 +507,7 @@ cc_library(
     hdrs = ["pjrt_compiler.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        ":maybe_owning_mlir_module",
         ":pjrt_abi_version",
         ":pjrt_common",
         ":pjrt_device_description",
@@ -528,6 +539,7 @@ xla_cc_test(
     name = "pjrt_compiler_test",
     srcs = ["pjrt_compiler_test.cc"],
     deps = [
+        ":maybe_owning_mlir_module",
         ":pjrt_client",
         ":pjrt_common",
         ":pjrt_compiler",
@@ -545,7 +557,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-        "@llvm-project//mlir:IR",
     ],
 )
 
