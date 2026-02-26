@@ -1715,14 +1715,16 @@ xla_test(
         "b200",
     ],
     data = ["data/cudnn_reproducer.hlo"],
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
     deps = [
-        ":hlo_test_base",
-        ":xla_internal_test_main",
+        ":hlo_pjrt_interpreter_reference_mixin",
+        "//xla:error_spec",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_module_util",
+        "//xla/service/gpu/tests:hlo_pjrt_gpu_test_base",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:test",
     ],
 )
 
