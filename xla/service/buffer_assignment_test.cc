@@ -2031,7 +2031,7 @@ TEST_F(BufferAssignmentTest, OneTempAllocation) {
   dot_dnums.add_lhs_contracting_dimensions(1);
   dot_dnums.add_rhs_contracting_dimensions(0);
   PrecisionConfig precision_config;
-  precision_config.mutable_operand_precision()->Resize(
+  precision_config.mutable_operand_precision()->resize(
       2, PrecisionConfig::DEFAULT);
   auto dot_ab = builder.AddInstruction(HloInstruction::CreateDot(
       shape_2x4, param_a, param_b, dot_dnums, precision_config));
@@ -2105,7 +2105,7 @@ TEST_F(BufferAssignmentTest, TempAllocationLimitResetsBuffer) {
   dot_dnums.add_lhs_contracting_dimensions(1);
   dot_dnums.add_rhs_contracting_dimensions(0);
   PrecisionConfig precision_config;
-  precision_config.mutable_operand_precision()->Resize(
+  precision_config.mutable_operand_precision()->resize(
       2, PrecisionConfig::DEFAULT);
   auto dot_ab = builder.AddInstruction(HloInstruction::CreateDot(
       shape_10x10, param_a, param_b, dot_dnums, precision_config));
