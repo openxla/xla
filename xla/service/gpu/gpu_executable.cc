@@ -115,6 +115,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
@@ -122,7 +123,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -130,8 +130,11 @@ namespace gpu {
 namespace {
 
 HangWatchdog& StaticHangWatchDog() {
-  static absl::NoDestructor<HangWatchdog> watchdog(tsl::Env::Default(),
-                                                   "gpu-executable");
+  // Create a GPU execution hang watchdog with 2 threads. One thread counts down
+  // a grace period before aborting. The other thread reports detected hangs for
+  // all devices in the current process.
+  static absl::NoDestructor<HangWatchdog> watchdog(
+      tsl::Env::Default(), "gpu-executable", /*num_threads=*/2);
   return *watchdog;
 }
 
