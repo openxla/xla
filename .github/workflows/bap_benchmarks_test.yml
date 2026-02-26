@@ -1,0 +1,25 @@
+name: BAP Onboarding
+
+on:
+  push:
+    branches:
+      - bap-onboarding
+  workflow_dispatch:
+
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# Cancel any previous runs on the same branch when a new commit is pushed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  run_benchmarks:
+    name: Run HLO benchmarks
+    uses: google-ml-infra/actions/.github/workflows/run-benchmarks.yaml@34dfd0eeb034f93329ae87d953bc51940ce1c908
+    with:
+      registry_file: "xla/tools/benchmarks/bap/benchmark_registry.pbtxt"
+      ml_actions_ref: "34dfd0eeb034f93329ae87d953bc51940ce1c908"

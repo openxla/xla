@@ -1,0 +1,85 @@
+# proto-file: https://github.com/google-ml-infra/actions/blob/main/benchmarking/proto/benchmark_registry.proto
+# proto-message: BenchmarkSuite
+
+benchmarks {
+  name: "gemma3_1b_flax_call"
+  description: "Gemma3 1b in Flax running on GPU L4"
+  owner: "XLA Team"
+  update_frequency_policy: QUARTERLY
+  workload {
+    action: "./user_repo/xla/tools/benchmarks/bap/hlo_workload_executor"
+    action_inputs { key: "hlo_path" value: "https://storage.googleapis.com/xla-benchmarking-temp/gemma3_1b_flax_call.hlo" }
+  }
+
+  environment_configs {
+    id: "GPU_L4"
+    runner_label: "linux-x86-g2-16-l4-1gpu"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.8-cudnn9.8:latest"
+    workload_action_inputs { key: "runtime_flags" value: "--num_repeats=5" }
+    workload_action_inputs { key: "hardware_category" value: "GPU_L4" }
+  }
+
+  metrics {
+    name: "GPU_DEVICE_TIME"
+    unit: "ms"
+    stats {
+      stat: MEDIAN
+    }
+  }
+
+  metrics {
+    name: "GPU_DEVICE_MEMCPY_TIME"
+    unit: "ms"
+    stats {
+      stat: MEDIAN
+    }
+  }
+}
+
+benchmarks {
+  name: "nv_maxtext_1n1g_jit_train_step_before_optimization.hlo"
+  description: "Nvidia benchmark for Maxtext 1 node 1 gpu config for gpt3-52k model."
+  owner: "XLA Team"
+  update_frequency_policy: QUARTERLY
+  workload {
+    action: "./user_repo/xla/tools/benchmarks/bap/hlo_workload_executor"
+    action_inputs { key: "hlo_path" value: "user_repo/xla/tools/benchmarks/hlo/nv_maxtext_1n1g_jit_train_step_before_optimization.hlo" }
+  }
+
+  environment_configs {
+    id: "GPU_B200"
+    runner_label: "linux-x86-a4-224-b200-1gpu"
+    container_image: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.8-cudnn9.8:latest"
+    workload_action_inputs { 
+      key: "runtime_flags" 
+      value:  "--num_repeats=5 "
+              "--xla_gpu_enable_latency_hiding_scheduler "
+              "--xla_gpu_all_reduce_combine_threshold_bytes=1073741824 "
+              "--xla_gpu_all_gather_combine_threshold_bytes=1073741824 "
+              "--xla_gpu_reduce_scatter_combine_threshold_bytes=134217728 "
+              "--xla_gpu_enable_pipelined_all_gather "
+              "--xla_gpu_enable_pipelined_all_reduce "
+              "--xla_gpu_enable_while_loop_double_buffering "
+              "--xla_gpu_enable_all_gather_combine_by_dim=false "
+              "--xla_gpu_enable_reduce_scatter_combine_by_dim=false "
+              "--xla_disable_hlo_passes=rematerialization" 
+    }
+    workload_action_inputs { key: "hardware_category" value: "GPU_B200" }
+  }
+
+  metrics {
+    name: "GPU_DEVICE_TIME"
+    unit: "ms"
+    stats {
+      stat: MEDIAN
+    }
+  }
+
+  metrics {
+    name: "GPU_DEVICE_MEMCPY_TIME"
+    unit: "ms"
+    stats {
+      stat: MEDIAN
+    }
+  }
+}
