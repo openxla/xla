@@ -293,11 +293,6 @@ message CollectiveConfigProto {
   bool use_symmetric_buffer = 4;
 }
 
-message CollectiveThunkProto {
-  ThunkKindProto thunk_kind = 1;
-  uint64 async_events_unique_id = 3;
-}
-
 message AllGatherStartThunkProto {
   optional uint64 async_events_unique_id = 1;
   CollectiveConfigProto collective_config = 2;
