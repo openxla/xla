@@ -227,6 +227,7 @@ cc_library(
     deps = [
         ":constraint_expression",
         "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/analysis:interval",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
