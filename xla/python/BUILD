@@ -1,4 +1,4 @@
-load("//xla:py_strict.bzl", "py_strict_test")
+load("@xla//third_party/rules_python/python:py_test.bzl", "py_test")
 load("//xla:pytype.bzl", "pytype_strict_library")
 load(
     "//xla:xla.default.bzl",
@@ -77,10 +77,11 @@ tsl_pybind_extension(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "status_casters_test",
     srcs = ["status_casters_test.py"],
     main = "status_casters_test.py",
+    strict_deps = True,
     tags = ["no_oss"],
     deps = [
         ":status_casters_ext",
@@ -453,10 +454,11 @@ nanobind_pywrap_extension(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "profile_data_test",
     srcs = ["profile_data_test.py"],
     main = "profile_data_test.py",
+    strict_deps = True,
     tags = [
         "no_oss",
         "optonly",
@@ -657,10 +659,11 @@ xla_cc_test(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "xla_compiler_test",
     srcs = ["xla_compiler_test.py"],
     main = "xla_compiler_test.py",
+    strict_deps = True,
     tags = ["no_oss"],
     deps = [
         ":xla_extension",
