@@ -16,11 +16,14 @@ limitations under the License.
 #include "xla/runtime/hang_watchdog.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <string>
 #include <utility>
 
+#include "absl/base/call_once.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -54,7 +57,7 @@ struct HangWatchdog::Guard {
 };
 
 // Checks if the guard is completed or has to be cancelled. If the guard is
-// still pending returns a shared pointer that gives access to it.
+// still pending, returns a shared pointer that gives access to it.
 static std::shared_ptr<HangWatchdog::Guard> CheckGuard(
     std::weak_ptr<HangWatchdog::Guard> guard) {
   std::shared_ptr<HangWatchdog::Guard> locked = guard.lock();
@@ -69,23 +72,36 @@ static std::shared_ptr<HangWatchdog::Guard> CheckGuard(
     VLOG(3) << absl::StreamFormat(
         "%s didn't finish in %v, calling cancel callback.", locked->action,
         locked->duration);
-    locked->cancel();
+    std::move(locked->cancel)();
     return nullptr;
   }
 
   return locked;
 }
 
-HangWatchdog::HangWatchdog(tsl::Env* env, absl::string_view name)
-    : thread_pool_(env, absl::StrCat(name, "-hang-watchdog"),
-                   /*num_threads*/ 1) {}
+HangWatchdog::HangWatchdog(tsl::Env* env, absl::string_view name,
+                           size_t num_threads)
+    : thread_pool_(env, absl::StrCat(name, "-hang-watchdog"), num_threads) {}
 
 HangWatchdog::CancelCallback HangWatchdog::Abort(absl::string_view action,
                                                  absl::Duration duration) {
+  // Only one thread actually aborts the process. We wait 10 seconds before
+  // aborting to give other hang watchdogs a chance to trigger their cancel
+  // callbacks and log useful debugging information.
+  static absl::once_flag abort_once;
+
   return [action = std::string(action), duration] {
-    LOG(FATAL) << absl::StreamFormat(
-        "%s didn't finish in %v. Abort the process to avoid infinite hangs.",
+    LOG(ERROR) << absl::StreamFormat(
+        "%s didn't finish in %v. Prepare to abort the process to avoid "
+        "infinite hangs.",
         action, duration);
+
+    absl::call_once(abort_once, [&] {
+      absl::SleepFor(absl::Seconds(10));
+      LOG(FATAL) << absl::StreamFormat(
+          "%s didn't finish in %v. Abort the process to avoid infinite hangs.",
+          action, duration);
+    });
   };
 }
 
@@ -117,18 +133,19 @@ void HangWatchdog::ScheduleCheck(std::weak_ptr<Guard> guard,
   static constexpr absl::Duration kMaxSleepInterval = absl::Seconds(5);
 
   thread_pool_.Schedule([this, guard = std::move(guard), sleep_interval] {
-    // Check if the guard is already completed.
-    std::shared_ptr<Guard> locked = CheckGuard(guard);
-
-    // If the guard is completed we are done.
-    if (locked == nullptr) {
+    // If the guard is expired, we are done. We schedule one task per guard
+    // because it's easier than dealing with persistent tasks and the
+    // synchronization required to make it safe. Missing a timed out guard
+    // is a guaranteed way to get a deadlock; we prefer to keep things simple!
+    if (guard.expired()) {
       return;
     }
 
-    // Before sleeping try to do something useful and check the other guards,
-    // while doing that also update the deadline to sleep just enough time to be
-    // able to check the next guard immediately.
-    absl::Time deadline = locked->deadline;
+    // If our guard is not expired, process all pending guards and find the
+    // next deadline to sleep for just enough time to be able to check the next
+    // guard. All tasks will be racing to check the guards, but this is OK
+    // because of the scheduling jitter.
+    absl::Time deadline = absl::InfiniteFuture();
     {
       absl::MutexLock lock(mu_);
       auto completed = [&](std::weak_ptr<Guard> ptr) {
@@ -141,6 +158,15 @@ void HangWatchdog::ScheduleCheck(std::weak_ptr<Guard> guard,
       auto remove = std::remove_if(guards_.begin(), guards_.end(), completed);
       guards_.erase(remove, guards_.end());
     }
+
+    // We have no more guards to process, stop recursive scheduling loop.
+    if (deadline == absl::InfiniteFuture()) {
+      return;
+    }
+
+    // We do not hold `mu_` here because `Schedule` can execute the task in
+    // the caller thread if the task queue is full, which can lead to a
+    // deadlock.
 
     // Sleep for the current interval (capped at remaining time to deadline)
     // and schedule the next check with a doubled interval.

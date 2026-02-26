@@ -130,8 +130,11 @@ namespace gpu {
 namespace {
 
 HangWatchdog& StaticHangWatchDog() {
-  static absl::NoDestructor<HangWatchdog> watchdog(tsl::Env::Default(),
-                                                   "gpu-executable");
+  // Create a GPU execution hang watchdog with 2 threads. One thread counts down
+  // a grace period before aborting. The other thread reports detected hangs for
+  // all devices in the current process.
+  static absl::NoDestructor<HangWatchdog> watchdog(
+      tsl::Env::Default(), "gpu-executable", /*num_threads=*/2);
   return *watchdog;
 }
 
