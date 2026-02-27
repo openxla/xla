@@ -1071,6 +1071,7 @@ cc_library(
     hdrs = ["tf_pjrt_client.h"],
     visibility = ["//visibility:public"],
     deps = [
+        ":maybe_owning_mlir_module",
         ":pjrt_client",
         ":pjrt_common",
         ":pjrt_compiler",
