@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_phase_compile_extension.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/proto/pjrt_partial_program.pb.h"
@@ -60,8 +61,6 @@ class PjRtCApiPhaseCompiler : public PjRtPhaseCompiler {
   // Returns the reference to the phase compiler.
   const PJRT_PhaseCompiler* GetPhaseCompiler() const;
 
-  using PjRtPhaseCompiler::Compile;
-
   // Compiles the 'computation' and returns a 'PjRtExecutable'. The returned
   // PjRtExecutable must be loaded by a compatible client before execution.
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
@@ -74,6 +73,13 @@ class PjRtCApiPhaseCompiler : public PjRtPhaseCompiler {
   // Variant of `Compile` that accepts an MLIR module.
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
       CompileOptions options, mlir::ModuleOp module,
+      const PjRtTopologyDescription& topology, PjRtClient* client) override {
+    return Compile(options, MaybeOwningMlirModule(std::move(module)), topology,
+                   client);
+  }
+
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
+      CompileOptions options, MaybeOwningMlirModule module,
       const PjRtTopologyDescription& topology, PjRtClient* client) override {
     return absl::UnimplementedError(
         "PjRtCApiPhaseCompiler::Compile is not implemented.");
