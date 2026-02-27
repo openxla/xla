@@ -27,6 +27,7 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -382,7 +383,7 @@ absl::Status Env::CopyFile(const std::string& src, const std::string& target) {
   return FileSystemCopyFile(src_fs, src, target_fs, target);
 }
 
-std::string Env::GetExecutablePath() {
+std::string Env::GetExecutablePath(bool test_force_python) {
   char exe_path[PATH_MAX] = {0};
 #ifdef __APPLE__
   uint32_t buffer_size(0U);
@@ -409,7 +410,8 @@ std::string Env::GetExecutablePath() {
   int path_length = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
   CHECK_NE(-1, path_length);
 
-  if (strstr(buf, "python") != nullptr) {
+  absl::string_view basename = tsl::io::Basename(buf);
+  if (test_force_python || absl::StartsWith(basename, "python")) {
     // Discard the path of the python binary, and any flags.
     int fd = open("/proc/self/cmdline", O_RDONLY);
     CHECK_NE(-1, fd);

@@ -408,8 +408,9 @@ class Env {
   }
 
   /// \brief Returns the absolute path of the current executable. It resolves
-  /// symlinks if there is any.
-  std::string GetExecutablePath();
+  /// symlinks if there is any. If `test_force_python` is true, the current
+  /// binary is treated as a python interpreter regardless of its name.
+  std::string GetExecutablePath(bool test_force_python = false);
 
   /// Creates a local unique temporary file name. Returns true if success.
   bool LocalTempFilename(std::string* filename);
