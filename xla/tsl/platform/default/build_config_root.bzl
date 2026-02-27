@@ -112,6 +112,13 @@ def if_static_and_not_mobile(extra_deps, otherwise = []):
         "//conditions:default": extra_deps,
     })
 
+def if_not_tflite_converter(if_true, if_false = []):
+    """Include deps if not tflite_converter."""
+    return select({
+        "//tensorflow:tflite_converter": if_false,
+        "//conditions:default": if_true,
+    })
+
 # TODO(b/356020232): remove completely after migration is done
 def if_pywrap(if_true = [], if_false = []):
     return if_true if use_pywrap_rules() else if_false
