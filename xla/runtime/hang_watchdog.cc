@@ -22,6 +22,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/base/call_once.h"
 #include "absl/log/log.h"
@@ -56,51 +57,32 @@ struct HangWatchdog::Guard {
   CancelCallback cancel;
 };
 
-// Checks if the guard is completed or has to be cancelled. If the guard is
-// still pending, returns a shared pointer that gives access to it.
-static std::shared_ptr<HangWatchdog::Guard> CheckGuard(
-    std::weak_ptr<HangWatchdog::Guard> guard) {
-  std::shared_ptr<HangWatchdog::Guard> locked = guard.lock();
-
-  // Action already completed (or was cancelled by a racing thread).
-  if (!locked) {
-    return nullptr;
-  }
-
-  // Action timed out, cancel it via the user-defined callback.
-  if (absl::Now() > locked->deadline) {
-    VLOG(3) << absl::StreamFormat(
-        "%s didn't finish in %v, calling cancel callback.", locked->action,
-        locked->duration);
-    std::move(locked->cancel)();
-    return nullptr;
-  }
-
-  return locked;
-}
-
 HangWatchdog::HangWatchdog(tsl::Env* env, absl::string_view name,
                            size_t num_threads)
     : thread_pool_(env, absl::StrCat(name, "-hang-watchdog"), num_threads) {}
 
 HangWatchdog::CancelCallback HangWatchdog::Abort(absl::string_view action,
-                                                 absl::Duration duration) {
+                                                 absl::Duration duration,
+                                                 CancelCallback pre_abort) {
   // Only one thread actually aborts the process. We wait 10 seconds before
   // aborting to give other hang watchdogs a chance to trigger their cancel
   // callbacks and log useful debugging information.
   static absl::once_flag abort_once;
 
-  return [action = std::string(action), duration] {
-    LOG(ERROR) << absl::StreamFormat(
-        "%s didn't finish in %v. Prepare to abort the process to avoid "
-        "infinite hangs.",
-        action, duration);
+  return [action = std::string(action), duration,
+          pre_abort = std::move(pre_abort)]() mutable {
+    LOG(ERROR) << absl::StreamFormat("%s failed to finish in %v.", action,
+                                     duration);
+    if (pre_abort) {
+      std::move(pre_abort)();
+    }
 
     absl::call_once(abort_once, [&] {
+      LOG(ERROR) << absl::StreamFormat(
+          "%s: prepare to abort the process to avoid infinite hangs.", action);
       absl::SleepFor(absl::Seconds(10));
       LOG(FATAL) << absl::StreamFormat(
-          "%s didn't finish in %v. Abort the process to avoid infinite hangs.",
-          action, duration);
+          "%s: abort the process to avoid infinite hangs.", action);
     });
   };
 }
@@ -128,6 +110,33 @@ std::shared_ptr<HangWatchdog::Guard> HangWatchdog::Watch(
   return guard;
 }
 
+std::pair<std::shared_ptr<HangWatchdog::Guard>, absl::Time>
+HangWatchdog::ExtractTimedOutGuard() {
+  absl::MutexLock lock(&mu_);
+
+  absl::Time deadline = absl::InfiniteFuture();
+  for (auto it = guards_.begin(); it != guards_.end();) {
+    std::shared_ptr<Guard> guard = it->lock();
+
+    // Immediately erase expired guard and move to the next.
+    if (!guard) {
+      it = guards_.erase(it);
+      continue;
+    }
+
+    // Erase timed-out guard and return it to the caller.
+    if (absl::Now() >= guard->deadline) {
+      guards_.erase(it);
+      return {std::move(guard), deadline};
+    }
+
+    deadline = std::min(deadline, guard->deadline);
+    ++it;
+  }
+
+  return {nullptr, deadline};
+}
+
 void HangWatchdog::ScheduleCheck(std::weak_ptr<Guard> guard,
                                  absl::Duration sleep_interval) {
   static constexpr absl::Duration kMaxSleepInterval = absl::Seconds(5);
@@ -136,27 +145,28 @@ void HangWatchdog::ScheduleCheck(std::weak_ptr<Guard> guard,
     // If the guard is expired, we are done. We schedule one task per guard
     // because it's easier than dealing with persistent tasks and the
     // synchronization required to make it safe. Missing a timed out guard
-    // is a guaranteed way to get a deadlock; we prefer to keep things simple!
+    // is a guaranteed way to get a deadlock. We prefer to keep things simple!
     if (guard.expired()) {
       return;
     }
 
-    // If our guard is not expired, process all pending guards and find the
-    // next deadline to sleep for just enough time to be able to check the next
-    // guard. All tasks will be racing to check the guards, but this is OK
-    // because of the scheduling jitter.
+    // Collect the nearest deadline from all pending guards.
     absl::Time deadline = absl::InfiniteFuture();
-    {
-      absl::MutexLock lock(mu_);
-      auto completed = [&](std::weak_ptr<Guard> ptr) {
-        if (std::shared_ptr<Guard> pending = CheckGuard(ptr)) {
-          deadline = std::min(deadline, pending->deadline);
-          return false;
-        }
-        return true;
-      };
-      auto remove = std::remove_if(guards_.begin(), guards_.end(), completed);
-      guards_.erase(remove, guards_.end());
+
+    // Process timed-out guards one at a time: find and erase one timed-out
+    // guard under the lock, then run its callback without the lock. This
+    // allows all threads to process timed-out guards concurrently.
+    for (;;) {
+      auto [timed_out, extracted_deadline] = ExtractTimedOutGuard();
+      deadline = std::min(deadline, extracted_deadline);
+      if (!timed_out) {
+        break;
+      }
+
+      VLOG(3) << absl::StreamFormat(
+          "%s didn't finish in %v, calling cancel callback.", timed_out->action,
+          timed_out->duration);
+      std::move(timed_out->cancel)();
     }
 
     // We have no more guards to process, stop recursive scheduling loop.
@@ -164,7 +174,7 @@ void HangWatchdog::ScheduleCheck(std::weak_ptr<Guard> guard,
       return;
     }
 
-    // We do not hold `mu_` here because `Schedule` can execute the task in
+    // We must not hold `mu_` here because `Schedule` can execute the task in
     // the caller thread if the task queue is full, which can lead to a
     // deadlock.
 

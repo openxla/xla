@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -56,9 +57,10 @@ class HangWatchdog {
 
   HangWatchdog(tsl::Env* env, absl::string_view name, size_t num_threads = 1);
 
-  // Returns a cancel callback that will abort the process.
-  static CancelCallback Abort(absl::string_view action,
-                              absl::Duration duration);
+  // Returns a cancel callback that will abort the process. If `pre_abort` is
+  // provided, it will be called before the process is aborted.
+  static CancelCallback Abort(absl::string_view action, absl::Duration duration,
+                              CancelCallback pre_abort = nullptr);
 
   // Issues a watch guard to the caller indicating that the watchdog has started
   // tracking the action and expects it to finish in the given duration. If the
@@ -75,6 +77,10 @@ class HangWatchdog {
   // recursively schedules the next check with a doubled interval. This avoids
   // head-of-line blocking a thread pool thread for the entire watch duration.
   void ScheduleCheck(std::weak_ptr<Guard> guard, absl::Duration sleep_interval);
+
+  // Finds and erases one timed-out guard. Returns the timed-out guard (or
+  // nullptr) and the nearest deadline among processed non-timed-out guards.
+  std::pair<std::shared_ptr<Guard>, absl::Time> ExtractTimedOutGuard();
 
   absl::Mutex mu_;
   std::vector<std::weak_ptr<Guard>> guards_ ABSL_GUARDED_BY(mu_);

@@ -424,6 +424,15 @@ absl::Status ExecuteThunksImpl(
     stream_priority = stream_executor::StreamPriority::Highest;
   }
 
+  // Maybe install progress tracker for this execution.
+  int32_t progress_tracking_n =
+      debug_options ? debug_options->xla_gpu_execution_progress_tracking() : 0;
+
+  std::optional<SequentialThunk::ScopedProgressTracker> tracker;
+  if (progress_tracking_n > 0) {
+    ASSIGN_OR_RETURN(tracker, InstallProgressTracker(executor, thunk_sequence));
+  }
+
   // Maybe add a watch guard for this execution.
   absl::Duration watchdog_timeout = absl::InfiniteDuration();
   if (debug_options &&
@@ -436,11 +445,41 @@ absl::Status ExecuteThunksImpl(
 
   std::shared_ptr<HangWatchdog::Guard> guard = nullptr;
   if (watchdog_timeout < absl::InfiniteDuration()) {
-    std::string watchdog_name = absl::StrFormat(
-        "[%d] XLA GPU execution `%s`", executor->device_ordinal(), module_name);
+    int32_t device_ordinal = executor->device_ordinal();
+    std::string watchdog_name = absl::StrFormat("[%d] XLA GPU execution `%s`",
+                                                device_ordinal, module_name);
+
+    // If we have installed progress tracker, log how far thunk execution
+    // progressed before getting stuck. This is helpful for identifying kernels
+    // that never finish and stall the stream execution.
+    HangWatchdog::CancelCallback pre_abort;
+    if (tracker.has_value()) {
+      pre_abort = [&tracker, progress_tracking_n, device_ordinal] {
+        auto log_progress = [&](auto label, auto thunks) {
+          LOG(ERROR) << absl::StreamFormat("[%d] %s: size=%d", device_ordinal,
+                                           label, thunks.size());
+          for (auto& thunk : thunks) {
+            LOG(ERROR) << absl::StreamFormat(
+                "  - thunk[%d/%d]: %s at %s", thunk.index,
+                tracker->num_thunks(), thunk.name,
+                absl::FormatTime("%Y-%m-%d %H:%M:%S.%E6f", thunk.executed,
+                                 absl::LocalTimeZone()));
+          }
+        };
+
+        log_progress("Last completed thunks",
+                     tracker->LastCompletedThunks(progress_tracking_n));
+        log_progress("First pending thunks",
+                     tracker->FirstPendingThunks(progress_tracking_n));
+        log_progress("Last pending thunks",
+                     tracker->LastPendingThunks(progress_tracking_n));
+      };
+    }
+
     guard = StaticHangWatchDog().Watch(
         watchdog_name, watchdog_timeout,
-        HangWatchdog::Abort(watchdog_name, watchdog_timeout));
+        HangWatchdog::Abort(watchdog_name, watchdog_timeout,
+                            std::move(pre_abort)));
   }
 
   // Borrow streams required for CollectiveThunk.
