@@ -462,23 +462,13 @@ TEST_F(GemmFusionAutotunerTest, RunAutotuningKernelNotSpillingRegisters) {
   const std::string kHloText = R"(
 HloModule m
 
-rhs_computation {
-  %p0 = s8[12288,1536] parameter(0)
-  ROOT %convert = f16[12288,1536] convert(%p0)
-}
-
-lhs_computation {
-  ROOT %p1 = f16[4,12288] parameter(0)
-}
-
 %triton_gemm_dot {
   %p0 = s8[12288,1536] parameter(0)
   %p1 = f16[4,12288] parameter(1)
-  %rhs = f16[12288,1536] fusion(%p0), kind=kCustom, calls=rhs_computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{"output_tiles":[{"sizes":["16","16"]}]}}}
-  %lhs = f16[4,12288] fusion(%p1), kind=kCustom, calls=lhs_computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{"output_tiles":[{"sizes":["16","32"]}]}}}
-  ROOT %dot = f16[4,1536] dot(%lhs, %rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %convert = f16[12288,1536] convert(%p0)
+  ROOT %dot = f16[4,1536] dot(%p1, %convert),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    backend_config={sizes:[16]}
 }
 
 ENTRY %e {
