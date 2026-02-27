@@ -731,6 +731,7 @@ cc_library(
         ":host_memory_spaces",
         ":layout_mode",
         ":local_device_state",
+        ":maybe_owning_mlir_module",
         ":metrics",
         ":mlir_to_hlo",
         ":never_run_on_fiber",
