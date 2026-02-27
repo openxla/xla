@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_shardings_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_stream_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_tpu_topology_extension.h"
+#include "xla/pjrt/c_api_client/pjrt_c_api_multi_slice_config.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_phase_compiler.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/extensions/cross_host_transfers/pjrt_c_api_cross_host_transfers_extension.h"
@@ -3015,6 +3016,13 @@ PjRtCApiLoadedExecutable::GetCommonExecuteArgs(
   args.options = &c_options;
   args.options->struct_size = PJRT_ExecuteOptions_STRUCT_SIZE;
   args.options->launch_id = options.launch_id;
+  args.options->multi_slice_config = nullptr;
+  if (options.multi_slice_config != nullptr) {
+    args.options->multi_slice_config =
+        tsl::down_cast<const pjrt::PjRtCApiMultiSliceConfig*>(
+            options.multi_slice_config)
+            ->get();
+  }
   for (auto i : options.non_donatable_input_indices) {
     non_donatable_input_indices_storage.push_back(i);
   }

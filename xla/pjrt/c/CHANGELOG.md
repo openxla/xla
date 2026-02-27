@@ -1,5 +1,9 @@
 # PJRT C API changelog
 
+## 0.97
+
+* Add `multi_slice_config` field to `PJRT_ExecuteOptions`.
+
 ## 0.96
 
 * Added `PJRT_LoadedExecutable_AddressableDeviceLogicalIds`.

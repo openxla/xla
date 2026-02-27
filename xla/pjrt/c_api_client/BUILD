@@ -52,6 +52,7 @@ cc_library(
     ],
     visibility = internal_visibility([":friends"]),
     deps = [
+        ":pjrt_c_api_multi_slice_config",
         "//xla:future",
         "//xla:literal",
         "//xla:shape_util",
