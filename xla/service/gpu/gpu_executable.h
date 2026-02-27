@@ -22,11 +22,13 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -124,6 +126,21 @@ class GpuExecutable : public Executable {
     std::unique_ptr<HloModule> debug_module = nullptr;
     bool enable_debug_info_manager = true;
     ModuleStats module_stats;
+  };
+
+  struct VaRanges {
+    // Mutex to protect VA range operations (map/execute/unmap) for this
+    // executor. This ensures only one thread can use the VA ranges at a time.
+    absl::Mutex mutex;
+
+    // One single large VA range that is reserved for mapping all command buffer
+    // allocations.
+    se::DeviceAddressBase va_address;
+
+    // Event used to synchronize VA range reuse, when device has completed
+    // the task that uses the VA range, it will mark the event, then host
+    // knows that its VA range can be remapped to other physical addresses.
+    std::unique_ptr<se::Event> unmap_event;
   };
 
   static absl::StatusOr<std::unique_ptr<GpuExecutable>> Create(Params params);
@@ -347,6 +364,10 @@ class GpuExecutable : public Executable {
     return ModuleAnnotations(module_name_);
   }();
 
+  // The allocations that are used by command buffer. Using btree_set for
+  // deterministic iteration order.
+  absl::btree_set<BufferAllocation::Index> command_buffer_allocation_indexes_;
+
   int64_t debug_buffer_assignment_show_max_;
 
   absl::Mutex module_handle_mutex_;
@@ -364,6 +385,13 @@ class GpuExecutable : public Executable {
   absl::flat_hash_map<stream_executor::StreamExecutor*,
                       std::vector<se::DeviceAddressBase>>
       module_allocations_ ABSL_GUARDED_BY(module_handle_mutex_);
+
+  // Separate mutex for VA ranges to avoid contention with module_handle_mutex_
+  // during VA remapping operations which may involve GPU synchronization.
+  absl::Mutex va_ranges_mutex_;
+  absl::flat_hash_map<std::pair<stream_executor::StreamExecutor*, int>,
+                      std::unique_ptr<VaRanges>>
+      module_va_ranges_ ABSL_GUARDED_BY(va_ranges_mutex_);
 
   std::vector<ConstantInfo> constants_;
   const absl::flat_hash_map<ShapeIndex, OutputInfo> output_info_;

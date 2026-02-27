@@ -132,6 +132,7 @@ cc_library(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:stream_executor_vmm_allocator",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
@@ -512,6 +513,15 @@ cc_library(
         "//xla/stream_executor/platform:initialize",
     ],
     alwayslink = 1,
+)
+
+cc_library(
+    name = "se_gpu_pjrt_compiler_cuda_registration_for_tests",
+    testonly = True,
+    deps = [":se_gpu_pjrt_compiler_cuda_registration"],
+    visibility = [
+        "//xla/tests:__pkg__",
+    ],
 )
 
 cc_library(

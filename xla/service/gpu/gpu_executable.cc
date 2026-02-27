@@ -23,6 +23,7 @@ limitations under the License.
 #include <optional>
 #include <set>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -55,6 +56,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_multimem_registry.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
+#include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -105,12 +107,14 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/event_based_timer.h"
 #include "xla/stream_executor/kernel_stats.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/scoped_module_handle.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/stream_executor_vmm_allocator.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
@@ -123,6 +127,8 @@ limitations under the License.
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "riegeli/bytes/string_writer.h"
+#include "riegeli/bytes/writer.h"
 
 namespace xla {
 namespace gpu {
@@ -337,6 +343,27 @@ GpuExecutable::GpuExecutable(
                                                buffer_assignment_);
   }
   set_module_stats(std::move(module_stats));
+
+  // Populate command_buffer_allocation_indexes_ with buffer indices accessed by
+  // command buffer thunks. Skip constant allocations since they don't need VA
+  // remapping (they are allocated as global values with fixed addresses).
+  if (thunks_) {
+    thunks_->Walk([this](const Thunk* thunk) {
+      if (auto* cmd_buffer_thunk =
+              dynamic_cast<const CommandBufferThunk*>(thunk)) {
+        for (BufferAllocation::Index index :
+             cmd_buffer_thunk->allocs_indices()) {
+          // Skip constant allocations - they are allocated as global values
+          // and don't require VA remapping.
+          if (buffer_assignment_ &&
+              buffer_assignment_->GetAllocation(index).is_constant()) {
+            continue;
+          }
+          command_buffer_allocation_indexes_.insert(index);
+        }
+      }
+    });
+  }
 }
 
 GpuExecutable::~GpuExecutable() {
@@ -488,7 +515,6 @@ absl::Status ExecuteThunksImpl(
       }
     }
   }
-
   tsl::profiler::TraceMe hlo_module_activity(
       [&] { return absl::StrCat(module_name, ":XLA GPU module"); },
       tsl::profiler::TraceMeLevel::kInfo);
@@ -574,7 +600,8 @@ absl::Status ExecuteThunksImpl(
         &multimem_registry,
         run_options->run_options().ffi_execution_context(),
         run_options->local_device_count(),
-        &execution_scoped_state};
+        &execution_scoped_state,
+        run_options->command_buffer_va_range_idx()};
 
     tsl::profiler::TraceMe trace_initialize("Thunks::Initialize");
     RETURN_IF_ERROR(thunk_sequence.Initialize(initialize_params));
@@ -974,6 +1001,10 @@ absl::StatusOr<BufferAllocations> GpuExecutable::GenerateBufferAllocations(
     allocate_granularity[kCollectiveMemoryColor] =
         collectives->SymmetricMemoryAlignment();
   }
+  ScopedAnnotation annotation_va_reserve([&] {
+    return absl::StrFormat("build_buffer_allocations:#module=%s#",
+                           module_name_);
+  });
 
   absl::Span<const BufferAllocation* const> allocations = GetAllocations();
   const int64_t num_buffers = allocations.size();
@@ -1085,7 +1116,7 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     if (output_info.alias_config) {
       MaybeOwningDeviceAddress* maybe_owning_memory =
           [&]() -> xla::MaybeOwningDeviceAddress* {
-        // ScopedBuffer is never an owned buffer.
+        // ShapedBuffer is never an owned buffer.
         if (std::holds_alternative<absl::Span<const ShapedBuffer* const>>(
                 arguments)) {
           return nullptr;
@@ -1255,10 +1286,251 @@ absl::Status GpuExecutable::ExecuteThunks(
   Thunk::ExecutableSource executable_source = {text_, binary_,
                                                dnn_compiled_graphs_};
 
-  RETURN_IF_ERROR(ExecuteThunksImpl(
-      has_module() ? &module_config().debug_options() : nullptr, module_name_,
-      unique_id, *thunks_, executable_source, run_options, buffer_allocations,
-      block_host_until_done, execution_stream_ids_));
+  se::StreamExecutor* executor = run_options->stream()->parent();
+
+  // Check if command buffer VA remapping is enabled.
+  bool enable_command_buffer_va_remapping =
+      (command_buffer_allocation_indexes_.size() > 0) && has_module() &&
+      module_config()
+          .debug_options()
+          .xla_gpu_enable_command_buffer_va_remapping() &&
+      dynamic_cast<se::DeviceAddressVmmAllocator*>(memory_allocator) !=
+          nullptr;
+
+  VLOG(3) << "ExecuteThunks: command_buffer_allocation_indexes_.size()="
+          << command_buffer_allocation_indexes_.size()
+          << " enable_command_buffer_va_remapping="
+          << enable_command_buffer_va_remapping;
+
+  if (enable_command_buffer_va_remapping) {
+    // Get or create VaRanges for this executor. We hold va_ranges_mutex_
+    // briefly just to access/create the VaRanges entry.
+    // The int in the key is the VA range index for interleaving.
+    int command_buffer_va_range_idx =
+        run_options->command_buffer_va_range_idx();
+    VLOG(3) << "GpuExecutable name: " << module_name_
+            << " device_ordinal=" << executor->device_ordinal()
+            << " ExecuteThunks: command_buffer_va_range_idx="
+            << command_buffer_va_range_idx << " with run_id "
+            << run_options->run_options().run_id().ToInt();
+    auto va_ranges_key = std::make_pair(executor, command_buffer_va_range_idx);
+    VaRanges* va_ranges = nullptr;
+    {
+      absl::MutexLock lock(&va_ranges_mutex_);
+      // Initialize VA ranges for this executor if not already done.
+      bool need_init =
+          module_va_ranges_.find(va_ranges_key) == module_va_ranges_.end();
+
+      if (need_init) {
+        module_va_ranges_[va_ranges_key] = std::make_unique<VaRanges>();
+      }
+      va_ranges = module_va_ranges_[va_ranges_key].get();
+    }
+
+    // Acquire per-executor mutex to protect VA range operations.
+    // This ensures only one thread uses the VA ranges at a time for this
+    // executor.
+    absl::MutexLock va_lock(&va_ranges->mutex);
+    // Initialize VA ranges if this is first use (allocation_va_map is empty).
+    if (va_ranges->va_address.is_null()) {
+      ScopedAnnotation annotation_va_reserve([&] {
+        return absl::StrFormat("command_buffer_va_range_reserve:#module=%s#",
+                               module_name_);
+      });
+
+      // Calculate total size for all command buffer allocations, rounding each
+      // allocation up to the allocation granularity.
+      const uint64_t granularity = executor->GetAllocationGranularity();
+      uint64_t total_va_size = 0;
+      for (BufferAllocation::Index i : command_buffer_allocation_indexes_) {
+        se::DeviceAddressBase device_address =
+            buffer_allocations.GetDeviceAddress(i);
+        const uint64_t size = device_address.size();
+
+        // Skip zero-size allocations - no need to reserve VA for them.
+        if (size == 0) {
+          continue;
+        }
+
+        // Round up size to allocation granularity.
+        uint64_t rounded_size = size;
+        if (granularity > 0) {
+          rounded_size = ((size + granularity - 1) / granularity) * granularity;
+        }
+        total_va_size += rounded_size;
+      }
+
+      // Reserve a single large VA range for all command buffer allocations.
+      if (total_va_size > 0) {
+        TF_ASSIGN_OR_RETURN(va_ranges->va_address,
+                            executor->ReserveAddress(total_va_size));
+      }
+      TF_ASSIGN_OR_RETURN(va_ranges->unmap_event, executor->CreateEvent());
+
+      if (VLOG_IS_ON(3)) {
+        // Log reserved VA range for debugging.
+        VLOG(3) << "VA remapping: Reserved single VA range for module "
+                << module_name_ << " VA: " << va_ranges->va_address.opaque()
+                << " total_size: " << total_va_size
+                << " granularity: " << granularity;
+      }
+    } else {
+      ScopedAnnotation annotation_va_unmap([&] {
+        return absl::StrFormat(
+            "command_buffer_va_range_unmap:#module=%s,va_range_idx=%d#",
+            module_name_, command_buffer_va_range_idx);
+      });
+
+      // VA range is already initialized, first wait for the unmap event to be
+      // marked and then do the VA unmapping.
+      TF_RETURN_IF_ERROR(va_ranges->unmap_event->Synchronize());
+
+      // Unmap physical addresses from the single reserved VA range.
+      if (!va_ranges->va_address.is_null()) {
+        TF_RETURN_IF_ERROR(executor->UnmapRawAddress(&va_ranges->va_address));
+      }
+    }
+
+    // Build a map from allocation index to its offset within va_address.
+    // Iterate through command_buffer_allocation_indexes_ in order (btree_set
+    // provides deterministic iteration order) and accumulate offsets.
+    const uint64_t granularity = executor->GetAllocationGranularity();
+    absl::flat_hash_map<BufferAllocation::Index, uint64_t>
+        allocation_va_offsets;
+    uint64_t current_offset = 0;
+    for (BufferAllocation::Index idx : command_buffer_allocation_indexes_) {
+      se::DeviceAddressBase device_address =
+          buffer_allocations.GetDeviceAddress(idx);
+      const uint64_t size = device_address.size();
+
+      // Skip zero-size allocations.
+      if (size == 0) {
+        continue;
+      }
+
+      allocation_va_offsets[idx] = current_offset;
+
+      // Round up size to allocation granularity for the next offset.
+      uint64_t rounded_size = size;
+      if (granularity > 0) {
+        rounded_size = ((size + granularity - 1) / granularity) * granularity;
+      }
+      current_offset += rounded_size;
+    }
+
+    // Validate the single VA range is not null before mapping.
+    if (!allocation_va_offsets.empty() && va_ranges->va_address.is_null()) {
+      return absl::InternalError("Reserved VA address range is null");
+    }
+
+    // Map physical memory to reserved VA addresses.
+    std::vector<se::DeviceAddressBase> mapped_buffers;
+    mapped_buffers.reserve(buffer_allocations.size());
+
+    {
+      ScopedAnnotation annotation_va_remap([&] {
+        return absl::StrFormat(
+            "command_buffer_va_range_remap:#module=%s,va_range_idx=%d#",
+            module_name_, command_buffer_va_range_idx);
+      });
+
+      for (BufferAllocation::Index i = 0;
+           i < static_cast<BufferAllocation::Index>(buffer_allocations.size());
+           ++i) {
+        se::DeviceAddressBase original_buffer =
+            buffer_allocations.GetDeviceAddress(i);
+
+        // Only do VA mapping for allocations accessed by CommandBufferThunk.
+        auto offset_it = allocation_va_offsets.find(i);
+        if (offset_it == allocation_va_offsets.end()) {
+          // Not a command buffer allocation (or zero-size), use the original
+          // buffer.
+          mapped_buffers.push_back(original_buffer);
+          continue;
+        }
+
+        // This allocation is used by command buffer - validate it's not null.
+        if (original_buffer.is_null()) {
+          return absl::InternalError(absl::StrFormat(
+              "Command buffer allocation %d has null address", i));
+        }
+
+        // Get the raw handle from the original buffer for physical memory
+        // mapping.
+        std::optional<se::RawAddressHandle> raw_handle =
+            original_buffer.raw_handle();
+        if (!raw_handle.has_value()) {
+          return absl::InvalidArgumentError(
+              absl::StrFormat("Buffer allocation %d does not have a raw handle "
+                              "for VA mapping",
+                              i));
+        }
+
+        // Calculate the sub-range VA address for this allocation.
+        uint64_t va_offset = offset_it->second;
+        void* sub_range_ptr = reinterpret_cast<void*>(
+            reinterpret_cast<uintptr_t>(va_ranges->va_address.opaque()) +
+            va_offset);
+        se::DeviceAddressBase sub_range_va(sub_range_ptr,
+                                           original_buffer.size());
+
+        // Map the physical memory (via raw_handle) to the sub-range VA.
+        TF_RETURN_IF_ERROR(executor->MapRawAddress(&sub_range_va, /*offset=*/0,
+                                                   raw_handle.value()));
+
+        VLOG(3) << "Mapped allocation " << i
+                << " physical: " << original_buffer.opaque()
+                << " -> VA: " << sub_range_va.opaque()
+                << " (offset: " << va_offset << ")"
+                << " size: " << original_buffer.size();
+
+        // Use VA address with the original raw handle for execution, so the
+        // caller can later unmap and access the physical memory.
+        se::DeviceAddressBase mapped_address(
+            sub_range_va.opaque(), original_buffer.size(), raw_handle.value());
+        mapped_buffers.push_back(mapped_address);
+      }
+
+      TF_RETURN_IF_ERROR(executor->VmmSetAccess(&va_ranges->va_address));
+    }
+
+    BufferAllocations remapped_buffer_allocations(
+        mapped_buffers, buffer_allocations.device_ordinal(),
+        buffer_allocations.memory_allocator());
+
+    if (VLOG_IS_ON(3)) {
+      VLOG(3) << "VA remapping: Mapped " << allocation_va_offsets.size()
+              << " allocations to single VA range at "
+              << va_ranges->va_address.opaque();
+      for (const auto& [alloc_idx, va_offset] : allocation_va_offsets) {
+        se::DeviceAddressBase physical_addr =
+            buffer_allocations.GetDeviceAddress(alloc_idx);
+        void* va_ptr = reinterpret_cast<void*>(
+            reinterpret_cast<uintptr_t>(va_ranges->va_address.opaque()) +
+            va_offset);
+        VLOG(3) << "  allocation[" << alloc_idx
+                << "] physical: " << physical_addr.opaque()
+                << " -> VA: " << va_ptr << " (offset: " << va_offset << ")"
+                << " size: " << physical_addr.size();
+      }
+    }
+    // Execute thunks with remapped addresses.
+    TF_RETURN_IF_ERROR(ExecuteThunksImpl(
+        has_module() ? &module_config().debug_options() : nullptr, module_name_,
+        unique_id, *thunks_, executable_source, run_options,
+        remapped_buffer_allocations, block_host_until_done,
+        execution_stream_ids_));
+    // Wait for execution to complete and unmap.
+    TF_RETURN_IF_ERROR(
+        run_options->stream()->RecordEvent(va_ranges->unmap_event.get()));
+
+  } else {
+    TF_RETURN_IF_ERROR(ExecuteThunksImpl(
+        has_module() ? &module_config().debug_options() : nullptr, module_name_,
+        unique_id, *thunks_, executable_source, run_options, buffer_allocations,
+        block_host_until_done, execution_stream_ids_));
+  }
+
   return absl::OkStatus();
 }
 

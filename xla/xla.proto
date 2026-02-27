@@ -529,6 +529,8 @@ message DebugOptions {
   // Determine the types of commands that are recorded into command buffers.
   repeated CommandBufferCmdType xla_gpu_enable_command_buffer = 258;
 
+  optional bool xla_gpu_enable_command_buffer_va_remapping = 455;
+
   // Enable radix sort using CUB.
   optional bool xla_gpu_enable_cub_radix_sort = 259;
 

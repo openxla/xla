@@ -212,7 +212,7 @@ class Thunk {
   };
 
   static ThunkKindProto KindToProto(Kind kind);
-  static absl::StatusOr<Thunk::Kind> KindFromProto(ThunkKindProto kind);
+  static absl::StatusOr<Kind> KindFromProto(ThunkKindProto kind);
 
   // TODO(ezhulenev): This should become a part of StreamExecutor library, but
   // for now we keep it here as a Thunk implementation detail. It's not yet
@@ -334,6 +334,10 @@ class Thunk {
 
     // Execution scoped state shared between prepare, initialize and execute.
     ExecutionScopedState* execution_scoped_state = nullptr;
+
+    // VA range index for interleaving VA range usage across executions.
+    // This should match the command_buffer_va_range_idx in ExecuteParams.
+    int command_buffer_va_range_idx = 0;
   };
 
   //===--------------------------------------------------------------------===//
@@ -401,6 +405,9 @@ class Thunk {
 
     int64_t execution_id = 0;
 
+    // VA range index for interleaving VA range usage across executions.
+    int command_buffer_va_range_idx = 0;
+
    private:
     friend class CommandBufferThunk;
 
@@ -416,7 +423,8 @@ class Thunk {
                   const ffi::ExecutionContext* ffi_execution_context,
                   ExecutionStreamIdMap additional_compute_streams = {},
                   ExecutionScopedState* execution_scoped_state = nullptr,
-                  bool mock_collectives = false, int64_t execution_id = 0);
+                  bool mock_collectives = false, int64_t execution_id = 0,
+                  int command_buffer_va_range_idx = 0);
   };
 
   //===--------------------------------------------------------------------===//

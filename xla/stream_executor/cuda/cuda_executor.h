@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -103,6 +104,16 @@ class CudaExecutor : public GpuExecutor {
       Stream* stream, absl::Span<const uint8_t> content) override;
   DeviceAddressBase Allocate(uint64_t size, int64_t memory_space) override;
   void Deallocate(DeviceAddressBase* mem) override;
+  absl::StatusOr<DeviceAddressBase> ReserveAddress(
+      uint64_t size, int64_t memory_space) override;
+  absl::Status FreeAddress(DeviceAddressBase* mem) override;
+  uint64_t GetAllocationGranularity() const override;
+  absl::Status MapRawAddress(DeviceAddressBase* address, size_t offset,
+                             RawAddressHandle handle) override;
+  absl::Status UnmapRawAddress(DeviceAddressBase* address) override;
+  absl::Status VmmSetAccess(DeviceAddressBase* address) override;
+  absl::StatusOr<DeviceAddressBase> VmmAllocateMemory(uint64_t bytes) override;
+  absl::StatusOr<bool> VmmDeallocateMemory(DeviceAddressBase addr) override;
   blas::BlasSupport* AsBlas() override;
   fft::FftSupport* AsFft() override;
   dnn::DnnSupport* AsDnn() override;
@@ -211,13 +222,13 @@ class CudaExecutor : public GpuExecutor {
     return is_multicast_supported_;
   }
 
- private:
-  // Checks if the memory was allocated with VMM API.
-  // If yes, deallocates the memory and returns true.
-  // If not, returns false.
-  absl::StatusOr<bool> VmmDeallocateMemory(void* ptr);
+  // Sets memory access permissions for a VMM-allocated address range.
+  // Uses cuMemSetAccess to configure access for the specified memory region.
+  // Must be called after MapRawAddress to enable access to the mapped memory.
+  absl::Status VmmSetAccess(DeviceAddressBase* address,
+                            CUmemAccessDesc access_desc, uint64_t count);
 
-  absl::StatusOr<void*> VmmAllocateMemory(uint64_t bytes);
+ private:
 
   // Loads a module in cubin format.
   absl::StatusOr<ModuleHandle> LoadModuleFromCuBin(const char* cubin)
@@ -320,6 +331,12 @@ class CudaExecutor : public GpuExecutor {
   int stream_priority_lowest_ = 0;
   int stream_priority_highest_ = 0;
   bool stream_priority_query_ok_ = false;
+
+  // Cached allocation granularity. Initialized once on first request.
+  mutable absl::once_flag allocation_granularity_once_;
+  mutable uint64_t allocation_granularity_ = 0;
+  mutable bool allocation_granularity_query_ok_ = false;
+
   absl::flat_hash_map<int, bool> peer_access_cache_;
 };
 
