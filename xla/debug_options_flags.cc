@@ -333,6 +333,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_cudnn_int8x32_convolution_reordering(true);
   opts.set_xla_gpu_triton_gemm_any(true);
   opts.set_xla_gpu_verify_triton_fusion_numerics(false);
+  opts.set_xla_gpu_experimental_enable_tiling_propagation(false);
 
   // Moving reduce-scatter out of while loops can increase memory footprint, so
   // turning it off by default.
@@ -2881,6 +2882,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_rocm_max_trace_events(),
       "Maximum number of ROCm trace events (applies to callback/activity/"
       "annotation). Set as high as memory allows; up to 1e9."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_tiling_propagation",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_enable_tiling_propagation),
+      debug_options->xla_gpu_experimental_enable_tiling_propagation(),
+      "If true, enable experimental tiling propagation."));
 
   auto setter_for_xla_gpu_detect_nan =
       [debug_options, detection_mode](const std::string& value) {
