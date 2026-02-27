@@ -110,6 +110,33 @@ std::shared_ptr<HangWatchdog::Guard> HangWatchdog::Watch(
   return guard;
 }
 
+std::pair<std::shared_ptr<HangWatchdog::Guard>, absl::Time>
+HangWatchdog::ExtractTimedOutGuard() {
+  absl::MutexLock lock(&mu_);
+
+  absl::Time deadline = absl::InfiniteFuture();
+  for (auto it = guards_.begin(); it != guards_.end();) {
+    std::shared_ptr<Guard> guard = it->lock();
+
+    // Immediately erase expired guard and move to the next.
+    if (!guard) {
+      it = guards_.erase(it);
+      continue;
+    }
+
+    // Erase timed-out guard and return it to the caller.
+    if (absl::Now() >= guard->deadline) {
+      guards_.erase(it);
+      return {std::move(guard), deadline};
+    }
+
+    deadline = std::min(deadline, guard->deadline);
+    ++it;
+  }
+
+  return {nullptr, deadline};
+}
+
 void HangWatchdog::ScheduleCheck(std::weak_ptr<Guard> guard,
                                  absl::Duration sleep_interval) {
   static constexpr absl::Duration kMaxSleepInterval = absl::Seconds(5);
@@ -118,42 +145,28 @@ void HangWatchdog::ScheduleCheck(std::weak_ptr<Guard> guard,
     // If the guard is expired, we are done. We schedule one task per guard
     // because it's easier than dealing with persistent tasks and the
     // synchronization required to make it safe. Missing a timed out guard
-    // is a guaranteed way to get a deadlock; we prefer to keep things simple!
+    // is a guaranteed way to get a deadlock. We prefer to keep things simple!
     if (guard.expired()) {
       return;
     }
 
-    // Process pending guards: collect expired guards for later cancellation.
+    // Collect the nearest deadline from all pending guards.
     absl::Time deadline = absl::InfiniteFuture();
-    std::vector<std::shared_ptr<Guard>> expired;
-    {
-      absl::MutexLock lock(mu_);
-      auto is_expired = [&](std::weak_ptr<Guard>& weak_guard) {
-        if (std::shared_ptr<Guard> guard = weak_guard.lock()) {
-          // Guard is still active, keep it in the list of pending guards.
-          if (absl::Now() < guard->deadline) {
-            deadline = std::min(deadline, guard->deadline);
-            return false;
-          }
-          // Guard is expired, we pass the ownership to `expired` vector and
-          // will call the cancellation callback from the current task.
-          expired.push_back(std::move(guard));
-          return true;
-        }
-        return true;
-      };
-      auto it = std::remove_if(guards_.begin(), guards_.end(), is_expired);
-      guards_.erase(it, guards_.end());
-    }
 
-    // Process expired guards and call cancel callbacks, we do it without
-    // holding the mutex to allow running multiple cancellation callbacks
-    // concurrently.
-    for (std::shared_ptr<Guard>& guard : expired) {
+    // Process timed-out guards one at a time: find and erase one timed-out
+    // guard under the lock, then run its callback without the lock. This
+    // allows all threads to process timed-out guards concurrently.
+    for (;;) {
+      auto [timed_out, extracted_deadline] = ExtractTimedOutGuard();
+      deadline = std::min(deadline, extracted_deadline);
+      if (!timed_out) {
+        break;
+      }
+
       VLOG(3) << absl::StreamFormat(
-          "%s didn't finish in %v, calling cancel callback.", guard->action,
-          guard->duration);
-      std::move(guard->cancel)();
+          "%s didn't finish in %v, calling cancel callback.", timed_out->action,
+          timed_out->duration);
+      std::move(timed_out->cancel)();
     }
 
     // We have no more guards to process, stop recursive scheduling loop.
