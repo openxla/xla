@@ -2990,6 +2990,7 @@ cc_library(
         ":ir_emission_utils",
         ":launch_dimensions",
         ":reduction_utils",
+        "//xla:comparison_util",
         "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:side_effect_util",
