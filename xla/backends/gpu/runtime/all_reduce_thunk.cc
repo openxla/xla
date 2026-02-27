@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/launch_dimensions.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
@@ -244,10 +245,17 @@ AllReduceStartThunk::FromProto(
   ASSIGN_OR_RETURN(ReductionKind reduction_kind,
                    FromReductionKindProto(thunk_proto.reduction_kind()));
 
+  std::optional<LaunchDimensions> launch_dimensions = std::nullopt;
+  if (thunk_proto.has_launch_dimensions()) {
+    TF_ASSIGN_OR_RETURN(
+        launch_dimensions,
+        LaunchDimensions::FromProto(thunk_proto.launch_dimensions()));
+  }
   auto kernel_thunk = std::make_unique<CollectiveKernelThunk>(
       thunk_info, config, reduction_kind, thunk_proto.is_async(), buffers,
       thunk_proto.collective_kernel_enabled(), thunk_proto.kernel_name(),
-      thunk_proto.shmem_bytes(), thunk_proto.is_multimem_enabled());
+      launch_dimensions, thunk_proto.shmem_bytes(),
+      thunk_proto.is_multimem_enabled());
 
   return std::make_unique<AllReduceStartThunk>(
       std::move(thunk_info), AllReduceConfig{config, reduction_kind},
@@ -280,6 +288,10 @@ absl::StatusOr<ThunkProto> AllReduceStartThunk::ToProto() const {
   thunk_proto->set_collective_kernel_enabled(
       collective_kernel_thunk_->collective_kernel_enabled());
   thunk_proto->set_is_async(collective_kernel_thunk_->is_async());
+  if (auto launch_dimensions = collective_kernel_thunk_->launch_dimensions();
+      launch_dimensions.has_value()) {
+    *thunk_proto->mutable_launch_dimensions() = launch_dimensions->ToProto();
+  }
 
   return proto;
 }
