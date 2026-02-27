@@ -1,6 +1,7 @@
 # Description:
 #    Libraries for helping construct LLVM IR for XLA backends.
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
@@ -293,6 +294,37 @@ cc_library(
     hdrs = ["ir_builder_mixin.h"],
     deps = [
         "@llvm-project//llvm:Core",
+    ],
+)
+
+cc_library(
+    name = "error_handler",
+    srcs = ["error_handler.cc"],
+    hdrs = ["error_handler.h"],
+    deps = [
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
+        "@tsl//tsl/platform:stacktrace",
+    ],
+)
+
+xla_cc_test(
+    name = "error_handler_test",
+    srcs = ["error_handler_test.cc"],
+    deps = [
+        ":error_handler",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
     ],
 )
 
