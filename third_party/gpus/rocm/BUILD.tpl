@@ -636,6 +636,23 @@ cc_library(
     ]),
 )
 
+cc_library(
+    name = "hipblaslt_link",
+    linkopts = select({
+        ":build_hermetic": [
+            "external/local_config_rocm/rocm/%{rocm_root}/lib/libhipblaslt.so",
+        ],
+        ":multiple_rocm_paths": [
+            # Use first path in the list
+            "%{rocm_lib_paths}".split(":")[0] + "/libhipblaslt.so",
+        ],
+        "//conditions:default": [
+            "%{rocm_toolkit_path}/lib/libhipblaslt.so",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+)
+
 filegroup(
     name = "rocm_root",
     srcs = [

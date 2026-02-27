@@ -80,7 +80,7 @@ class GpuCodegenBackend : public CodegenBackend {
 
     Compiler::CompileOptions options;
     options.gpu_topology = GetSingleDeviceGpuTopology("", target_config_);
-    options.embed_hlo_module = false;
+    options.embed_hlo_module = true;
     TF_ASSIGN_OR_RETURN(auto optimized_module,
                         RunHloPasses(std::move(hlo_module), options));
     return compiler_->RunBackend(std::move(optimized_module), stream_executor_,

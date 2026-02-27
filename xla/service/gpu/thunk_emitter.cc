@@ -165,6 +165,7 @@ limitations under the License.
 #include "xla/stream_executor/memory_space.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
@@ -173,7 +174,6 @@ limitations under the License.
 #include "tsl/platform/casts.h"
 #include "tsl/platform/human_readable_json.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 namespace {
@@ -274,10 +274,9 @@ std::optional<const HloInstruction*> GetCollectiveHeroForDynamicSliceFusion(
 
 }  // namespace
 
-ThunkEmitter::ThunkEmitter(
-    IrEmitterContext* absl_nonnull ir_emitter_context,
-    llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
-        llvm_options_lock)
+ThunkEmitter::ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
+                           llvm_ir::LLVMCommandLineOptionsReleasableLock*
+                               absl_nonnull llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
       send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
       copy_events_(std::make_shared<CopyThunk::AsyncEvents>()),
@@ -666,6 +665,57 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunkF8(
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
       bias, std::nullopt, a_scale, b_scale, std::nullopt, d_scale, d_amax,
       workspace_buffer);
+  return GetThunkSequence(std::move(thunk));
+}
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmulThunk(
+    const HloCustomCallInstruction* instr) {
+  ASSIGN_OR_RETURN(const auto gpu_config,
+                   instr->backend_config<xla::gpu::GpuBackendConfig>());
+  const xla::gpu::GemmBackendConfig& config = gpu_config.gemm_backend_config();
+
+  TF_RET_CHECK(instr->operand_count() == 3);
+
+  xla::ShapeIndex output_index =
+      instr->shape().IsTuple() ? xla::ShapeIndex{0} : xla::ShapeIndex{};
+
+  TF_ASSIGN_OR_RETURN(ShapedSlice a, GetShapedSliceForHlo(instr->operand(0)));
+  TF_ASSIGN_OR_RETURN(ShapedSlice b, GetShapedSliceForHlo(instr->operand(1)));
+  TF_ASSIGN_OR_RETURN(ShapedSlice group_sizes,
+                      GetShapedSliceForHlo(instr->operand(2)));
+  // No bias
+  TF_ASSIGN_OR_RETURN(ShapedSlice c, GetShapedSliceForHlo(instr, output_index));
+  TF_ASSIGN_OR_RETURN(ShapedSlice d, GetShapedSliceForHlo(instr, output_index));
+
+  std::optional<ShapedSlice> workspace_buffer;
+  if (instr->shape().IsTuple() && (instr->shape().tuple_shapes().size() - 1)) {
+    TF_ASSIGN_OR_RETURN(
+        workspace_buffer,
+        GetShapedSliceForHlo(instr, {instr->shape().tuple_shapes_size() - 1}));
+  }
+  TF_ASSIGN_OR_RETURN(
+      auto gemm_config,
+      GroupedGemmConfig::For(static_cast<const HloInstruction*>(instr),
+                             ir_emitter_context_->gpu_compute_capability()));
+
+  // Use the first algorithm by default (i.e. fastest according to
+  // heuristics).
+  int64_t algorithm =
+      config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
+          ? config.selected_algorithm()
+          : 0;
+
+  Thunk::ThunkInfo thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(
+      instr, ir_emitter_context_->GetNextThunkId());
+  std::string canonical_hlo = instr->ToString(
+      HloPrintOptions::Fingerprint().set_print_backend_config(true));
+
+  auto thunk = std::make_unique<CublasLtMatmulThunk>(
+      std::move(thunk_info), std::move(canonical_hlo), std::move(gemm_config),
+      se::gpu::BlasLt::Epilogue::kDefault, algorithm,
+      config.autotune_workspace_size(), a, b, c, d, group_sizes, std::nullopt,
+      std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+      std::nullopt, workspace_buffer);
   return GetThunkSequence(std::move(thunk));
 }
 
@@ -2514,6 +2564,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallSwitch(
   }
   if (IsCublasLtMatmulF8(*hlo)) {
     return EmitCublasLtMatmulThunkF8(custom_call);
+  }
+  if (IsCublasLtGroupedMatmul(*hlo)) {
+    return EmitCublasLtGroupedMatmulThunk(custom_call);
   }
   if (IsCudnnConvolutionReorder(*hlo)) {
     return EmitConvolutionReorderThunk(custom_call);

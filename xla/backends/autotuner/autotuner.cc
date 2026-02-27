@@ -26,7 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "google/protobuf/any.pb.h"
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
@@ -40,23 +39,30 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "google/protobuf/any.pb.h"
 #include "google/protobuf/text_format.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/autotuner_cache_interface.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/profiler.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/autotuning/autotuner_status_key.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/proto/proto_utils.h"
@@ -65,7 +71,6 @@ limitations under the License.
 #include "tsl/platform/fingerprint.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 
@@ -575,13 +580,99 @@ absl::StatusOr<std::vector<Autotuner::ConfigResult>> Autotuner::ProfileAll(
       std::unique_ptr<InputBuffers> input_buffers,
       profiler_->CreateInputBuffers(candidates[0].executable.get()));
 
+  // For group-gemm, initialize the group sizes buffer with uniform values
+  // Check if this is a group-gemm by examining the first candidate's executable
+  if (!candidates.empty() && candidates[0].executable != nullptr &&
+      candidates[0].executable->has_module()) {
+    const HloModule& module = candidates[0].executable->module();
+    const HloComputation* entry = module.entry_computation();
+    if (entry != nullptr) {
+      const HloInstruction* root = entry->root_instruction();
+
+      if (root != nullptr && root->opcode() == HloOpcode::kCustomCall &&
+          (root->custom_call_target() == "__cublas$lt$groupedMatmul")) {
+        // Get the backend config to extract ragged dimension information
+        TF_ASSIGN_OR_RETURN(gpu::GpuBackendConfig gpu_config,
+                            root->backend_config<gpu::GpuBackendConfig>());
+        const gpu::GroupedGemmBackendConfig& grouped_config =
+            gpu_config.grouped_gemm_backend_config();
+        const RaggedDotDimensionNumbers& ragged_dims =
+            grouped_config.ragged_dot_dimension_numbers();
+
+        // Get ragged dimension index from the config
+        int64_t ragged_dim_index = ragged_dims.lhs_ragged_dimensions(0);
+
+        // Get ragged dimension size from LHS operand
+        const Shape& lhs_shape = root->operand(0)->shape();
+        int64_t ragged_dim_size = lhs_shape.dimensions(ragged_dim_index);
+
+        // Get number of groups from the group sizes parameter shape
+        // The shape can be 1D [num_groups] or 2D [batch_size, groups_per_batch]
+        const Shape& group_sizes_shape =
+            root->operand(root->operand_count() - 1)->shape();
+        int64_t groups_per_batch = group_sizes_shape.dimensions(
+            group_sizes_shape.dimensions_size() - 1);
+        int64_t total_elements = ShapeUtil::ElementsIn(group_sizes_shape);
+
+        // Calculate group sizes based on groups_per_batch (not total elements)
+        int64_t base_group_size = ragged_dim_size / groups_per_batch;
+        int64_t last_group_size =
+            ragged_dim_size - ((groups_per_batch - 1) * base_group_size);
+
+        VLOG(3) << "  Ragged dim index: " << ragged_dim_index;
+        VLOG(3) << "  Ragged dim size: " << ragged_dim_size;
+        VLOG(3) << "  Group sizes shape: " << group_sizes_shape.ToString();
+        VLOG(3) << "  Groups per batch: " << groups_per_batch;
+        VLOG(3) << "  Total elements in group sizes buffer: " << total_elements;
+        VLOG(3) << "  Base group size (first n-1 groups): " << base_group_size;
+        VLOG(3) << "  Last group size: " << last_group_size;
+
+        // Determine the type of the group sizes parameter
+        PrimitiveType group_sizes_type = group_sizes_shape.element_type();
+
+        if (group_sizes_type == S32) {
+          std::vector<int32_t> group_sizes(total_elements);
+          // Fill with the pattern: [base_size, base_size, ..., last_size]
+          // repeated for each batch
+          for (int64_t i = 0; i < total_elements; ++i) {
+            int64_t group_idx_in_batch = i % groups_per_batch;
+            if (group_idx_in_batch == groups_per_batch - 1) {
+              group_sizes[i] = static_cast<int32_t>(last_group_size);
+            } else {
+              group_sizes[i] = static_cast<int32_t>(base_group_size);
+            }
+          }
+          TF_RETURN_IF_ERROR(profiler_->InitializeInputBuffer(
+              *input_buffers,
+              root->operand_count() - 1,  // Last parameter is group sizes
+              group_sizes.data(), total_elements * sizeof(int32_t)));
+        } else if (group_sizes_type == S64) {
+          std::vector<int64_t> group_sizes(total_elements);
+          // Fill with the pattern: [base_size, base_size, ..., last_size]
+          // repeated for each batch
+          for (int64_t i = 0; i < total_elements; ++i) {
+            int64_t group_idx_in_batch = i % groups_per_batch;
+            if (group_idx_in_batch == groups_per_batch - 1) {
+              group_sizes[i] = last_group_size;
+            } else {
+              group_sizes[i] = base_group_size;
+            }
+          }
+          TF_RETURN_IF_ERROR(profiler_->InitializeInputBuffer(
+              *input_buffers,
+              root->operand_count() - 1,  // Last parameter is group sizes
+              group_sizes.data(), total_elements * sizeof(int64_t)));
+        }
+      }
+    }
+  }
+
   std::optional<ScopedShapedBuffer> reference_output;
   if (autotune_config_.check_buffers) {
     VLOG(2) << "Checking buffers";
     reference_output = GetReferenceOutput(candidates, *input_buffers);
     if (!reference_output.has_value()) {
-      LOG(WARNING) << "No reference output found even though buffer checking "
-                      "was requested while autotuning";
+      LOG(WARNING) << "No reference output found even though buffer checking ";
     }
   }
 
