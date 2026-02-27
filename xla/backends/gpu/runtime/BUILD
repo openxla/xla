@@ -3250,6 +3250,7 @@ xla_test(
     },
     backends = ["gpu"],
     disabled_backends = [],
+    tags = ["pjrt_migration_candidate"],
     use_legacy_runtime = True,
     deps = [
         ":all_reduce",
