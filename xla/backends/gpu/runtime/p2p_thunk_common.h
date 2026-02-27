@@ -39,20 +39,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// Count the number of times a Send or Recv instruction executed on a device.
-class ExecutionCounters {
- public:
-  absl::Status Initialize(se::StreamExecutor* executor, RunId run_id);
-  absl::StatusOr<int64_t*> GetCounter(se::StreamExecutor* executor,
-                                      RunId run_id);
-
- private:
-  using CounterKey = std::pair<se::StreamExecutor*, RunId>;
-  absl::Mutex mu_;
-  // TODO(b/338288906): may need to clean up the counters for finished runs.
-  absl::flat_hash_map<CounterKey, int64_t> counters_ ABSL_GUARDED_BY(mu_);
-};
-
 // Records the information for implementing CollectivePermute, Send and Recv.
 struct P2PConfig {
   // Record the target ID for sending a data and the source ID from which to
@@ -64,11 +50,6 @@ struct P2PConfig {
 
   using IdToSourceTargetMap =
       absl::flat_hash_map<int64_t, SourceTargetMapEntry>;
-
-  enum class ValidationKind { kValid = 0, kInvalid = 1, kConditional = 2 };
-
-  using SourceTargetToBounds = absl::flat_hash_map<std::pair<int64_t, int64_t>,
-                                                   std::pair<int64_t, int64_t>>;
 
   // Returns the source and target ID corresponding to the given ID (these IDs
   // are replica_ids for cross replica permute or partition_ids for cross
@@ -86,11 +67,6 @@ struct P2PConfig {
 
   CollectiveConfig config;
   IdToSourceTargetMap id_to_source_target;
-  ValidationKind validation_kind = ValidationKind::kValid;
-  // When a Send or Recv has validation_kind = ValidationKind::kConditional,
-  // record the valid execution numbers as a pair of [lower-bound, upper-bound]
-  // for each source and target pair.
-  SourceTargetToBounds source_target_to_bounds;
 };
 
 // Extracts source/target pairs for send/recv from frontend attributes.

@@ -46,29 +46,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-absl::Status ExecutionCounters::Initialize(se::StreamExecutor* executor,
-                                           RunId run_id) {
-  absl::MutexLock lock(mu_);
-  CounterKey key = {executor, run_id};
-  if (counters_.contains(key)) {
-    return absl::OkStatus();
-  }
-  counters_.emplace(key, 0);
-  return absl::OkStatus();
-}
-
-absl::StatusOr<int64_t*> ExecutionCounters::GetCounter(
-    se::StreamExecutor* executor, RunId run_id) {
-  absl::MutexLock lock(mu_);
-  CounterKey key = {executor, run_id};
-  auto counter = counters_.find(key);
-  if (counter == counters_.end()) {
-    return absl::InternalError("Execution counter not initialized");
-  }
-
-  return &counter->second;
-}
-
 absl::StatusOr<std::vector<std::pair<int64_t, int64_t>>> GetSourceTargetPairs(
     mlir::DictionaryAttr frontend_attributes) {
   mlir::StringAttr src_dst_string = frontend_attributes.getAs<mlir::StringAttr>(
@@ -128,7 +105,6 @@ P2PConfig GetP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
   }
 
   std::vector<ReplicaGroup> replica_groups = statusor.value();
-  p2p_config.validation_kind = P2PConfig::ValidationKind::kValid;
   for (const ReplicaGroup& replica_group : replica_groups) {
     int64_t source = replica_group.replica_ids(0);
     int64_t target = replica_group.replica_ids(1);
