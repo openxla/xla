@@ -412,12 +412,10 @@ absl::StatusOr<bool> DoubleBufferingUnroll(HloInstruction* while_instr,
   return true;  // changed
 }
 
-}  // namespace
-
 // Function performs double buffering unrolling strategy iff there is any
 // collective operation within a body computation.
-absl::StatusOr<bool> DoubleBufferLoopUnrolling::AutoUnroll(
-    HloInstruction* while_instr, HloModule* module) {
+absl::StatusOr<bool> AutoUnroll(HloInstruction* while_instr,
+                                HloModule* module) {
   CHECK_EQ(while_instr->opcode(), HloOpcode::kWhile);
 
   bool any_collective_present = absl::c_any_of(
@@ -430,6 +428,8 @@ absl::StatusOr<bool> DoubleBufferLoopUnrolling::AutoUnroll(
   }
   return false;  // IR not changed.
 }
+
+}  // namespace
 
 absl::StatusOr<bool> DoubleBufferLoopUnrolling::RunImpl(
     HloModule* module,
@@ -482,63 +482,6 @@ absl::StatusOr<bool> DoubleBufferLoopUnrolling::RunImpl(
   }
 
   return changed;
-}
-
-// Fully unroll while loops with small enough body and static, slow trip count.
-absl::StatusOr<bool> WhileLoopUnrolling::AutoUnroll(HloInstruction* while_instr,
-                                                    HloModule* module) {
-  CHECK_EQ(while_instr->opcode(), HloOpcode::kWhile);
-
-  bool bail_out = absl::c_any_of(
-      while_instr->while_body()->MakeInstructionPostOrder(),
-      [](HloInstruction* instr) {
-        return
-            // Leave loops with collectives to the double buffering pass.
-            hlo_query::IsCollectiveCommunicationOp(instr->opcode()) ||
-            // Don't unroll nested while loops.
-            instr->opcode() == HloOpcode::kAsyncStart ||
-            instr->opcode() == HloOpcode::kWhile ||
-            instr->opcode() == HloOpcode::kCall ||
-            // Don't unroll loops with dynamic slices or dynamic update slices.
-            // FusionDynamicMemcpyRewriter and DynamicSliceFusionRewriter have
-            // specialized handling for these cases.
-            (instr->opcode() == HloOpcode::kFusion &&
-             absl::c_any_of(
-                 instr->fused_instructions_computation()->instructions(),
-                 [](HloInstruction* fused_instr) {
-                   return fused_instr->opcode() == HloOpcode::kDynamicSlice ||
-                          fused_instr->opcode() ==
-                              HloOpcode::kDynamicUpdateSlice;
-                 }));
-      });
-  if (bail_out) {
-    return false;
-  }
-
-  auto backend_config = while_instr->backend_config<WhileLoopBackendConfig>();
-  if (!backend_config.ok() || !backend_config->has_known_trip_count()) {
-    return false;
-  }
-
-  int64_t trip_count = backend_config->known_trip_count().n();
-  int64_t body_size = absl::c_count_if(
-      while_instr->while_body()->instructions(), [](HloInstruction* instr) {
-        return instr->opcode() != HloOpcode::kParameter &&
-               instr->opcode() != HloOpcode::kGetTupleElement &&
-               instr->opcode() != HloOpcode::kTuple;
-      });
-  VLOG(2) << "Considering full unrolling for while loop: "
-          << while_instr->name() << " with trip count: " << trip_count
-          << " and body size: " << body_size;
-  if (body_size * trip_count - 1 < kMaxUnrolledSize) {
-    VLOG(2) << "Fully unrolling while loop: " << while_instr->name();
-    return FullyUnroll(while_instr, module);
-  }
-  VLOG(2) << "Unrolling " << while_instr->name() << " would result in "
-          << body_size * trip_count
-          << " fusion ops, which exceeds kMaxUnrolledSize.";
-
-  return false;  // IR not changed.
 }
 
 }  // end namespace gpu

@@ -15,12 +15,9 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_TRANSFORMS_DOUBLE_BUFFER_LOOP_UNROLLING_H_
 #define XLA_BACKENDS_GPU_TRANSFORMS_DOUBLE_BUFFER_LOOP_UNROLLING_H_
 
-#include <cstdint>
-
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 
@@ -62,8 +59,6 @@ class DoubleBufferLoopUnrolling : public HloModulePass {
   }
 
  protected:
-  virtual absl::StatusOr<bool> AutoUnroll(HloInstruction* while_instr,
-                                          HloModule* module);
   absl::StatusOr<bool> RunImpl(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
@@ -72,25 +67,6 @@ class DoubleBufferLoopUnrolling : public HloModulePass {
   UnrollStrategy unroll_strategy_;
 };
 
-// Unroll while loops with small enough body and low, statically known trip
-// count. Unrolling allows while bodies to be in a single command buffer, which
-// can reduce scheduling overhead, particularly for latency-bound kernels.
-class WhileLoopUnrolling : public DoubleBufferLoopUnrolling {
- public:
-  explicit WhileLoopUnrolling()
-      : DoubleBufferLoopUnrolling(UnrollStrategy::kAuto) {};
-  ~WhileLoopUnrolling() override = default;
-
-  absl::string_view name() const override { return "while-loop-unrolling"; }
-
- protected:
-  absl::StatusOr<bool> AutoUnroll(HloInstruction* while_instr,
-                                  HloModule* module) override;
-
- private:
-  // Do not unroll if the number of fusion ops would exceed this threshold.
-  static constexpr int64_t kMaxUnrolledSize = 512;
-};
 }  // end namespace gpu
 }  // end namespace xla
 

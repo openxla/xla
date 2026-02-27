@@ -1309,7 +1309,7 @@ absl::Status RunPostFusionPasses(
   if (blueconnect_num_devices_per_host > 0) {
     pipeline.AddPass<AllReduceBlueConnect>(blueconnect_num_devices_per_host);
   }
-  pipeline.AddPass<WhileLoopUnrolling>();
+
   AddDoubleBufferingPasses(*hlo_module, pipeline);
 
   return pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
