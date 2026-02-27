@@ -1855,7 +1855,7 @@ CreateHostInductionVariableAndOffsetEvaluationThunk(
           /*precision_algorithm=*/PrecisionConfig::ALG_UNSET,
           /*algorithm=*/std::nullopt,
           /*compute_precision=*/se::blas::kDefaultComputePrecision,
-          /*grad_x=*/false, /*grad_y=*/false,
+          /*grad_x=*/false, /*grad_y=*/false, /*mx_mode=*/false,
           /*gpu_version=*/
           executor->GetDeviceDescription().gpu_compute_capability()));
 
