@@ -322,8 +322,6 @@ rocm_tag_filters = (
 
 rocm_test_filters = ""
 
-rocm_excluded_targets = ()
-
 rocm_multi_gpu_targets = (
     "//xla/tests:collective_ops_e2e_test",
     "//xla/tests:collective_ops_test",
@@ -365,7 +363,7 @@ Build(
     repo_env={
         "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942",
         "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
-        "TF_ROCM_RBE_DOCKER_IMAGE": "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa",
+        "TF_ROCM_RBE_DOCKER_IMAGE": "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa", #  rocm/tensorflow-build:latest-jammy-pythonall-rocm7.1.1-ci_official
         "ROCM_PATH": "/opt/rocm",
     },
     startup_options={
@@ -402,7 +400,7 @@ Build(
     repo_env={
         "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942",
         "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
-        "TF_ROCM_RBE_DOCKER_IMAGE": "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa",
+        "TF_ROCM_RBE_DOCKER_IMAGE": "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa", #  rocm/tensorflow-build:latest-jammy-pythonall-rocm7.1.1-ci_official
         "ROCM_PATH": "/opt/rocm",
     },
     startup_options={

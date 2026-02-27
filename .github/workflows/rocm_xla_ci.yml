@@ -51,6 +51,7 @@ jobs:
           },
         ]
     name: ${{ matrix.job_info.name }}
+    timeout-minutes: 120
     runs-on: ${{ matrix.job_info.pool }}
     container: 
         image: ${{ matrix.job_info.container }}
@@ -72,12 +73,14 @@ jobs:
         with:
           repository: ${{ matrix.job_info.repo }}
           path: ${{ matrix.job_info.repo }}
-      - name: "Run build.py"
+
+      - name: "Test XLA [Single GPU]"
         working-directory: ${{ matrix.job_info.repo }}
-        timeout-minutes: 60
         run: |
-          # Run Single GPU Tests
           $GITHUB_WORKSPACE/openxla/xla/build_tools/ci/build.py --build="XLA Linux x86 AMD Instinct GPU Single_github_actions"
 
-          # Run Multi GPU Tests
+      - name: "Test XLA [Multi GPU]"
+        if: always()
+        working-directory: ${{ matrix.job_info.repo }}
+        run: |
           $GITHUB_WORKSPACE/openxla/xla/build_tools/ci/build.py --build="XLA Linux x86 AMD Instinct GPU Multi_github_actions"
