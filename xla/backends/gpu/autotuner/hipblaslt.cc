@@ -212,8 +212,8 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
   if (!IsSupported(instr)) {
     return std::vector<std::unique_ptr<BackendConfig>>();
   } else if (IsCublasLtMatmul(instr) || IsCublasLtMatmulF8(instr)) {
-    GpuBackendConfig gpu_config =
-        instr.backend_config<GpuBackendConfig>().value();
+    TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                        instr.backend_config<GpuBackendConfig>());
     const GemmBackendConfig& backend_config = gpu_config.gemm_backend_config();
 
     TF_ASSIGN_OR_RETURN(
@@ -298,7 +298,7 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
       return std::vector<std::unique_ptr<BackendConfig>>();
     }
 
-    int64_t workspace_size = GemmConfig::kDefaultWorkspace;
+    int64_t workspace_size = GemmConfig::kGFX950Workspace;
     TF_ASSIGN_OR_RETURN(
         std::vector<BlasLt::MatmulAlgorithm> algorithms,
         (*plan_or)->GetAlgorithms(stream.get(), GemmConfig::kNumAlgorithms,
@@ -310,7 +310,7 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
 
     std::vector<std::unique_ptr<BackendConfig>> configs;
     configs.reserve(algorithms.size());
-    for (size_t i = 0; i < algorithms.size(); ++i) {
+    for (int64_t i = 0; i < static_cast<int64_t>(algorithms.size()); ++i) {
       HipblasLtBackendConfig gemm_key;
       gemm_key.set_algorithm(i);
       gemm_key.set_autotune_workspace_size(workspace_size);
