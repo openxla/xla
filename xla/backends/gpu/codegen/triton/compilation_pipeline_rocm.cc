@@ -120,7 +120,8 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
         mlir::createTritonAMDGPUInThreadTranspose());
     pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   }
-  pm->addPass(mlir::createTritonAMDGPUMoveUpPrologueLoads());
+  pm->addNestedPass<mlir::triton::FuncOp>(
+      mlir::createTritonAMDGPUMoveUpPrologueLoads());
   if (use_block_pingpong && num_stages > 1) {
     pm->addPass(mlir::createTritonAMDGPUBlockPingpong({num_stages}));
   }
@@ -133,7 +134,8 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
        /*analyzeSmallTensorOfst*/ false}));
 
   pm->addPass(mlir::createTritonAMDFoldTrueCmpI());
-  pm->addPass(mlir::createTritonAMDGPUPrepareIfCombining());
+  pm->addNestedPass<mlir::triton::FuncOp>(
+      mlir::createTritonAMDGPUPrepareIfCombining());
   pm->addPass(mlir::createCanonicalizerPass());
   pm->addPass(mlir::createCSEPass());
   pm->addPass(mlir::createSymbolDCEPass());
