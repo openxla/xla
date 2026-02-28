@@ -1297,7 +1297,7 @@ TEST(ArrayImplTest, BitcastArrays) {
 
   auto new_arrays =
       client->BitcastArrays(absl::MakeSpan(&array, 1), {new_array_spec},
-                            ArrayCopySemantics::kReuseInput);
+                            ArrayCopySemantics::kDonateInput);
   if (absl::IsUnimplemented(new_arrays.status())) {
     // This specific bitcast operation may not be supported by the runtime.
     GTEST_SKIP() << "Skipping test; bitcast is unimplemented.";
