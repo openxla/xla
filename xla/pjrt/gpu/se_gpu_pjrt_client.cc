@@ -48,7 +48,6 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
@@ -83,6 +82,7 @@ limitations under the License.
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/host_to_device_transfer_manager.h"
 #include "xla/pjrt/local_device_state.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -1347,9 +1347,10 @@ absl::StatusOr<Layout> StreamExecutorGpuClient::GetDefaultLayout(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-StreamExecutorGpuClient::CompileAndLoad(mlir::ModuleOp module,
+StreamExecutorGpuClient::CompileAndLoad(MaybeOwningMlirModule module,
                                         CompileOptions options) {
-  auto executable = PjRtStreamExecutorClient::CompileAndLoad(module, options);
+  auto executable =
+      PjRtStreamExecutorClient::CompileAndLoad(std::move(module), options);
 
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM)
   for (const PjRtDevice* device : addressable_devices()) {
