@@ -157,37 +157,6 @@ AssembleCompilationProvider(const CompilationProviderOptions& options) {
       absl::StrCat("Parallel compilation support is desired: ",
                    parallel_compilation_support_is_desired));
 
-  if (has_nvjitlink.ok() && has_nvptxcompiler.ok()) {
-    // If both libraries are supported, we will use them together. This setup
-    // supports parallel compilation and we have the most control over the
-    // versions being used.
-    VLOG(3) << "Using libnvptxcompiler for compilation and libnvjitlink for "
-               "linking.";
-    std::vector<std::unique_ptr<CompilationProvider>> providers;
-    providers.reserve(2);
-    providers.push_back(std::make_unique<NvptxcompilerCompilationProvider>());
-    providers.push_back(std::make_unique<NvJitLinkCompilationProvider>());
-    return CompositeCompilationProvider::Create(std::move(providers));
-  }
-
-  if (has_nvjitlink.ok() && !has_nvptxcompiler.ok()) {
-    // If we only have libnvjitlink, we use it for both compilation and
-    // linking. To support parallel compilation we defer compilation into
-    // relocatable modules to the linking step by using the
-    // DeferRelocatableCompilationCompilationProvider.
-    VLOG(3) << "Using libnvjitlink for compilation and linking.";
-    return DeferRelocatableCompilationCompilationProvider::Create(
-        std::make_unique<NvJitLinkCompilationProvider>());
-  }
-
-  if (has_nvptxcompiler.ok() && !parallel_compilation_support_is_desired) {
-    // If we only have libnvptxcompiler, but don't need parallel compilation, we
-    // can just use the library on its own - no linking required.
-    VLOG(3) << "Using only libnvptxcompiler for compilation - no parallel "
-               "compilation support needed.";
-    return std::make_unique<NvptxcompilerCompilationProvider>();
-  }
-
   absl::StatusOr<std::string> ptxas_path =
       FindPtxAsExecutable(options.cuda_data_dir());
   absl::StatusOr<SemanticVersion> ptxas_version =
@@ -216,6 +185,14 @@ AssembleCompilationProvider(const CompilationProviderOptions& options) {
             << "nvlink(path=" << nvlink_path.value()
             << ", version=" << nvlink_version.value()
             << ") for compilation and linking.";
+    if (has_nvptxcompiler.ok()) {
+      std::vector<std::unique_ptr<CompilationProvider>> providers;
+      providers.reserve(2);
+      providers.push_back(std::make_unique<NvptxcompilerCompilationProvider>());
+      providers.push_back(std::make_unique<SubprocessCompilationProvider>(
+          ptxas_path.value(), nvlink_path.value()));
+      return CompositeCompilationProvider::Create(std::move(providers));
+    }
     return std::make_unique<SubprocessCompilationProvider>(ptxas_path.value(),
                                                            nvlink_path.value());
   }
@@ -254,6 +231,37 @@ AssembleCompilationProvider(const CompilationProviderOptions& options) {
     providers.push_back(std::move(ptxas_provider));
     providers.push_back(std::make_unique<DriverCompilationProvider>());
     return CompositeCompilationProvider::Create(std::move(providers));
+  }
+
+  if (has_nvjitlink.ok() && has_nvptxcompiler.ok()) {
+    // If both libraries are supported, we will use them together. This setup
+    // supports parallel compilation and we have the most control over the
+    // versions being used.
+    VLOG(3) << "Using libnvptxcompiler for compilation and libnvjitlink for "
+               "linking.";
+    std::vector<std::unique_ptr<CompilationProvider>> providers;
+    providers.reserve(2);
+    providers.push_back(std::make_unique<NvptxcompilerCompilationProvider>());
+    providers.push_back(std::make_unique<NvJitLinkCompilationProvider>());
+    return CompositeCompilationProvider::Create(std::move(providers));
+  }
+
+  if (has_nvjitlink.ok() && !has_nvptxcompiler.ok()) {
+    // If we only have libnvjitlink, we use it for both compilation and
+    // linking. To support parallel compilation we defer compilation into
+    // relocatable modules to the linking step by using the
+    // DeferRelocatableCompilationCompilationProvider.
+    VLOG(3) << "Using libnvjitlink for compilation and linking.";
+    return DeferRelocatableCompilationCompilationProvider::Create(
+        std::make_unique<NvJitLinkCompilationProvider>());
+  }
+
+  if (has_nvptxcompiler.ok() && !parallel_compilation_support_is_desired) {
+    // If we only have libnvptxcompiler, but don't need parallel compilation, we
+    // can just use the library on its own - no linking required.
+    VLOG(3) << "Using only libnvptxcompiler for compilation - no parallel "
+               "compilation support needed.";
+    return std::make_unique<NvptxcompilerCompilationProvider>();
   }
 
   // Passed this point we won't be able to support parallel compilation, so we
