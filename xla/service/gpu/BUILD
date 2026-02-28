@@ -694,6 +694,7 @@ cc_library(
     hdrs = ["gpu_executable.h"],
     deps = [
         ":alias_info",
+        ":allocate_persistent_memory_pass",
         ":backend_configs_cc",
         ":buffer_allocations",
         ":gpu_constants",
@@ -2901,6 +2902,16 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "allocate_persistent_memory_pass",
+    srcs = ["allocate_persistent_memory_pass.cc"],
+    hdrs = ["allocate_persistent_memory_pass.h"],
+    deps = [
+        "//xla/backends/gpu/runtime:thunk",
+        "@com_google_absl//absl/status",
     ],
 )
 
