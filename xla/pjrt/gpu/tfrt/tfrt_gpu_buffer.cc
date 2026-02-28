@@ -838,10 +838,52 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::CopyToMemorySpace(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::Bitcast(
-    xla::PrimitiveType element_type, absl::Span<int64_t const> dims,
-    const xla::Layout* device_layout) {
-  return absl::UnimplementedError(
-      "Bitcast is not yet implemented for TfrtGpuBuffer.");
+    PrimitiveType element_type, absl::Span<const int64_t> dims,
+    const Layout* device_layout) {
+  if (!primitive_util::IsArrayType(on_device_shape_.element_type()) ||
+      !primitive_util::IsArrayType(element_type)) {
+    return InvalidArgument("Bitcast can only be used on array types.");
+  }
+  TF_ASSIGN_OR_RETURN(Shape new_on_device_shape,
+                      ShapeUtil::MakeValidatedShape(element_type, dims));
+  if (device_layout == nullptr) {
+    TF_ASSIGN_OR_RETURN(
+        *new_on_device_shape.mutable_layout(),
+        client()->GetDefaultLayout(new_on_device_shape.element_type(),
+                                   new_on_device_shape.dimensions()));
+  } else {
+    *new_on_device_shape.mutable_layout() = *device_layout;
+  }
+  if (ShapeUtil::ArraySize(on_device_shape_) !=
+      ShapeUtil::ArraySize(new_on_device_shape)) {
+    return InvalidArgument(
+        "Bitcast requires a new on-device shape to have the same size of %d "
+        "bytes, but got %d bytes.",
+        ShapeUtil::ArraySize(on_device_shape_),
+        ShapeUtil::ArraySize(new_on_device_shape));
+  }
+
+  std::unique_ptr<TrackedGpuDeviceBuffer> device_buffer;
+  {
+    absl::MutexLock lock(mu_);
+
+    if (tracked_device_buffer_ == nullptr) {
+      return InvalidArgument("Donation requested for invalid buffer");
+    }
+
+    if (external_reference_counter_ > 0) {
+      return InvalidArgument(
+          "Donation requested for buffer with external reference");
+    }
+
+    CHECK(donation_event_.IsAvailable());
+    CHECK(!donation_event_.get());
+
+    device_buffer = ReleaseBufferLocked();
+  }
+  return std::make_unique<TfrtGpuBuffer>(new_on_device_shape,
+                                         std::move(device_buffer), client_,
+                                         device_, memory_space_);
 }
 
 void TfrtGpuBuffer::DropExternalReference() {
