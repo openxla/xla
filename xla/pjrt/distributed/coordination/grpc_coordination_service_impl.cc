@@ -38,11 +38,12 @@ void GrpcCoordinationServiceImpl::HandleRPCsLoop() {
       continue;                                                               \
     }                                                                         \
     tsl::Call<GrpcCoordinationServiceImpl,                                    \
-              tensorflow::grpc::CoordinationService::AsyncService,            \
-              tensorflow::method##Request, tensorflow::method##Response>::    \
+              xla::coordination::grpc::CoordinationService::AsyncService,     \
+              xla::coordination::method##Request,                             \
+              xla::coordination::method##Response>::                          \
         EnqueueRequest(&service_, cq_.get(),                                  \
-                       &tensorflow::grpc::CoordinationService::AsyncService:: \
-                           Request##method,                                   \
+                       &xla::coordination::grpc::CoordinationService::        \
+                           AsyncService::Request##method,                     \
                        &GrpcCoordinationServiceImpl::method##Handler, false); \
   } while (0)
   ENQUEUE_REQUEST(RegisterTask);
