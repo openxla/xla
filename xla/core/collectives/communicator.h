@@ -60,6 +60,7 @@ class Communicator {
    public:
     virtual ~RegisteredBufferHandle() = default;
     virtual absl::Status Unregister() = 0;
+    virtual void* GetHandle() const = 0;
   };
 
   // Register `buffer_range` once for efficient collective operations (i.e. on
