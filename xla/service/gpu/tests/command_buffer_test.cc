@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
+#include "xla/service/hlo_runner_pjrt.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -128,68 +129,57 @@ class CommandBufferTest
 
   // Same as above, but generates fake inputs and compares results to a
   // reference execution. Useful for tests originally using RunAndCompare.
-  ::testing::AssertionResult RunAndCompareThreeIterations(
-      std::unique_ptr<HloModule> module, bool run_hlo_passes,
-      const std::optional<ErrorSpec>& error) {
+  void RunAndCompareThreeIterations(std::unique_ptr<HloModule> module,
+                                    bool run_hlo_passes,
+                                    const std::optional<ErrorSpec>& error) {
     // Verify module then clone for reference.
     CHECK_OK(this->verifier().Run(module.get()).status());
     std::unique_ptr<HloModule> reference_module = module->Clone();
 
     // Prepare fake args for both runners.
-    absl::StatusOr<std::vector<Literal>> fake_args_or =
-        MakeFakeArguments(module.get());
-    if (!fake_args_or.ok()) {
-      return ::testing::AssertionFailure() << fake_args_or.status().message();
-    }
-    std::vector<Literal> fake_args = std::move(*fake_args_or);
-    std::vector<const Literal*> arg_ptrs = LiteralUtil::MakePointers(fake_args);
+    TF_ASSERT_OK_AND_ASSIGN(auto fake_args, MakeFakeArguments(module.get()));
+    auto arg_ptrs = LiteralUtil::MakePointers(fake_args);
+
+    // Store input_layouts and untuple_results before the module is
+    // consumed by CreateExecutable.
+    auto input_layouts = module->entry_computation_layout().parameter_layouts();
+    bool untuple_results = module->result_shape().IsTuple();
 
     // Reference once.
-    absl::StatusOr<Literal> reference = reference_runner().Execute(
-        std::move(reference_module), absl::MakeSpan(arg_ptrs), run_hlo_passes);
-    if (!reference.ok()) {
-      return ::testing::AssertionFailure() << reference.status();
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto reference,
+        reference_runner().Execute(std::move(reference_module),
+                                   absl::MakeSpan(arg_ptrs), run_hlo_passes));
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto exec, CreateExecutable(std::move(module), run_hlo_passes));
+
+    auto* pjrt_runner = tsl::down_cast<HloRunnerPjRt*>(&test_runner());
+    EXPECT_TRUE(pjrt_runner != nullptr);
+
+    // Create two copies of device buffers to make sure command buffer saved
+    // pointers really get updated during the last "update run".
+    std::array<std::vector<std::unique_ptr<PjRtBuffer>>, 2> argument_handles;
+    for (auto& handle : argument_handles) {
+      TF_ASSERT_OK_AND_ASSIGN(handle,
+                              pjrt_runner->TransferLiteralsToDevice(
+                                  input_layouts, absl::MakeSpan(arg_ptrs)));
     }
+    for (int i = 0; i < 3; i++) {
+      TF_ASSERT_OK_AND_ASSIGN(auto output_buffers,
+                              pjrt_runner->ExecuteWithDeviceBuffers(
+                                  exec.get(), argument_handles[i < 2 ? 0 : 1]));
 
-    // Compile once on test backend and run three iterations.
-    absl::StatusOr<std::unique_ptr<OpaqueExecutable>> exec_or =
-        CreateExecutable(std::move(module), run_hlo_passes);
-    if (!exec_or.ok()) {
-      return ::testing::AssertionFailure() << exec_or.status();
-    }
-    std::unique_ptr<OpaqueExecutable> exec = std::move(*exec_or);
-
-    // 1) Warm-up
-    absl::StatusOr<Literal> r1 = test_runner().ExecuteWithExecutable(
-        exec.get(), absl::MakeSpan(arg_ptrs));
-    if (!r1.ok()) return ::testing::AssertionFailure() << r1.status();
-    if (!LiteralTestUtil::NearOrEqual(*reference, *r1, error))
-      return ::testing::AssertionFailure() << "Mismatch on warm-up run";
-
-    // 2) Create
-    absl::StatusOr<Literal> r2 = test_runner().ExecuteWithExecutable(
-        exec.get(), absl::MakeSpan(arg_ptrs));
-    if (!r2.ok()) return ::testing::AssertionFailure() << r2.status();
-    if (!LiteralTestUtil::NearOrEqual(*reference, *r2, error))
-      return ::testing::AssertionFailure() << "Mismatch on create run";
-
-    // 3) Update with cloned args
-    std::vector<Literal> cloned_args_storage;
-    cloned_args_storage.reserve(arg_ptrs.size());
-    std::vector<const Literal*> cloned_arg_ptrs;
-    cloned_arg_ptrs.reserve(arg_ptrs.size());
-    for (const Literal* a : arg_ptrs) {
-      cloned_args_storage.push_back(a->Clone());
-      cloned_arg_ptrs.push_back(&cloned_args_storage.back());
-    }
-
-    absl::StatusOr<Literal> r3 = test_runner().ExecuteWithExecutable(
-        exec.get(), absl::MakeSpan(cloned_arg_ptrs));
-    if (!r3.ok()) return ::testing::AssertionFailure() << r3.status();
-    if (!LiteralTestUtil::NearOrEqual(*reference, *r3, error))
-      return ::testing::AssertionFailure() << "Mismatch on update run";
-
-    return ::testing::AssertionSuccess();
+      TF_ASSERT_OK_AND_ASSIGN(auto result,
+                              pjrt_runner->TransferLiteralsFromDevice(
+                                  output_buffers, untuple_results));
+      if (!LiteralTestUtil::NearOrEqual(reference, result, error)) {
+        ::testing::AssertionFailure() << "Mismatch on "
+                                      << (i == 0   ? "warm-up run"
+                                          : i == 1 ? "create run"
+                                                   : "update run");
+      }
+    }  // for
   }
 };
 
@@ -242,6 +232,30 @@ TEST_P(CommandBufferTest, Fusions) {
 
   ExecuteThreePhasesAndExpect(std::move(module), {&argument}, expected,
                               /*run_hlo_passes=*/false);
+}
+
+TEST_P(CommandBufferTest, Convolutions) {
+  constexpr absl::string_view hlo_text = R"(
+HloModule test
+ENTRY Test {
+  input = f32[8,128,2,32] parameter(0)
+  filter = f32[3,3,128,128] parameter(1)
+  conv = f32[8,128,2,32] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_01io->bf01
+ })";
+
+  HloModuleConfig config;
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CONVOLUTION);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  config.set_debug_options(debug_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_text, config));
+
+  RunAndCompareThreeIterations(std::move(module), /*run_hlo_passes=*/true,
+                               ErrorSpec{1e-3, 2e-3});
 }
 
 // Empty memcpy state to test stateful custom calls.
@@ -754,8 +768,8 @@ TEST_P(CommandBufferTest, DynamicSliceCopyFusionCmd) {
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_text, config));
 
-  EXPECT_TRUE(RunAndCompareThreeIterations(
-      std::move(module), /*run_hlo_passes=*/false, ErrorSpec{1e-3, 2e-3}));
+  RunAndCompareThreeIterations(std::move(module), /*run_hlo_passes=*/false,
+                               ErrorSpec{1e-3, 2e-3});
 
   if (!IsAtLeastCuda12900(GpuExecutor())) {
     GTEST_SKIP() << "While loop unrolling is not supported for CUDA < 12.9";
@@ -776,9 +790,8 @@ TEST_P(CommandBufferTest, DynamicSliceCopyFusionCmd) {
   TF_ASSERT_OK_AND_ASSIGN(auto unrolled_module,
                           ParseAndReturnVerifiedModule(hlo_text, config));
 
-  EXPECT_TRUE(RunAndCompareThreeIterations(std::move(unrolled_module),
-                                           /*run_hlo_passes=*/false,
-                                           ErrorSpec{1e-3, 2e-3}));
+  RunAndCompareThreeIterations(std::move(unrolled_module),
+                               /*run_hlo_passes=*/false, ErrorSpec{1e-3, 2e-3});
 }
 
 TEST_P(CommandBufferUnrollTest, WhileLoop) {
