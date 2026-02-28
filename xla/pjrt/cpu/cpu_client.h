@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/pjrt/cpu/cpu_event.h"
 #include "xla/pjrt/cpu/tracked_cpu_device_buffer.h"
 #include "xla/pjrt/device_event.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -139,20 +140,25 @@ class PjRtCpuClient final : public CommonPjRtClient {
                           CompileOptions options);
   absl::StatusOr<std::pair<std::unique_ptr<PjRtCpuExecutable>,
                            std::shared_ptr<DeviceAssignment>>>
-  CompileAndAssignDevices(mlir::ModuleOp module, CompileOptions options);
-
-  using PjRtClient::Compile;
-  using PjRtClient::CompileAndLoad;
+  CompileAndAssignDevices(MaybeOwningMlirModule module, CompileOptions options);
 
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
       const XlaComputation& computation, CompileOptions options) override;
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
-      mlir::ModuleOp module, CompileOptions options) override;
+      mlir::ModuleOp module, CompileOptions options) override {
+    return Compile(MaybeOwningMlirModule(std::move(module)), options);
+  }
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
+      MaybeOwningMlirModule module, CompileOptions options) override;
 
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
       const XlaComputation& computation, CompileOptions options) override;
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
-      mlir::ModuleOp module, CompileOptions options) override;
+      mlir::ModuleOp module, CompileOptions options) override {
+    return CompileAndLoad(MaybeOwningMlirModule(std::move(module)), options);
+  }
+  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
+      MaybeOwningMlirModule module, CompileOptions options) override;
 
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Load(
       std::shared_ptr<PjRtExecutable> executable,
