@@ -2148,14 +2148,12 @@ namespace {
 bool ShouldAddCopyForCollectiveMemorySpace(const HloValue* value) {
   const HloInstruction* inst = value->defining_instruction();
   const HloModule* module = inst->GetModule();
-  // If no collective memory is needed, return.
-  if (!module->config().debug_options().xla_gpu_enable_nccl_user_buffers() &&
-      !module->config().debug_options().xla_gpu_experimental_enable_nvshmem() &&
-      !module->config()
+  const bool is_nccl_buffers_used =
+      (module->config().debug_options().xla_gpu_enable_nccl_user_buffers() ||
+       module->config()
            .debug_options()
-           .xla_gpu_experimental_enable_nccl_symmetric_buffers()) {
-    return false;
-  }
+           .xla_gpu_experimental_enable_nccl_symmetric_buffers());
+
   // Add copy if a potential collective-memory-spaced op directly consumes from
   // module input or a constant as they are allocated by bfc ahead of time and
   // the alignment might not match collective memory space's requirement.
@@ -2163,10 +2161,19 @@ bool ShouldAddCopyForCollectiveMemorySpace(const HloValue* value) {
           module->entry_computation()->parameter_instructions(), inst) ||
       (inst->opcode() == HloOpcode::kConstant)) {
     for (auto& use : value->GetUses()) {
-      if (IsCollective(use.instruction) ||
+      if ((is_nccl_buffers_used && IsCollective(use.instruction)) ||
           IsCollectiveMosaicGpuInstruction(*use.instruction)) {
         return true;
       }
+    }
+  }
+
+  // Add copy if the value is the module output to preserve collective memory
+  // space symmetric across all devices.
+  if (value->live_out_of_module()) {
+    if ((is_nccl_buffers_used && IsCollective(inst)) ||
+        IsCollectiveMosaicGpuInstruction(*inst)) {
+      return true;
     }
   }
   return false;
@@ -2198,6 +2205,10 @@ absl::Status RunPostSchedulingCopyInsertion(HloModule* module,
   RETURN_IF_ERROR(copy_insertion.CopyInsertion::AddSpecialCaseCopies(
       module, /*execution_threads=*/{}, ShouldAddCopyForCollectiveMemorySpace));
 
+  //  module->entry_computation()->root_instruction()->ToString()
+  VLOG(1) << "module: " << module->ToString();
+  VLOG(1) << "root: "
+          << module->entry_computation()->root_instruction()->ToString();
   RETURN_IF_ERROR(HloDCE().Run(module).status());
 
   // The passes above can add and remove copies, update the schedule to
