@@ -17,15 +17,14 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -44,8 +43,9 @@ limitations under the License.
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Inliner.h"
 #include "mlir/Transforms/InliningUtils.h"
-#include "xla/backends/gpu/codegen/triton/emitter_helpers.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
+#include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
@@ -70,68 +70,18 @@ llvm::SmallVector<mlir::Type> GetTransformedArgTypes(
   for (const auto& arg : entry_op.getBufferArgs()) {
     mlir::MemRefType memref_type = mlir::cast<mlir::MemRefType>(arg.getType());
     arg_types.push_back(
-        ::xla::gpu::triton::GetGlobalPointerType(memref_type.getElementType()));
+        ttir::getPointerTypeToElement(memref_type.getElementType()));
   }
   mlir::TypeRange opaque_args(entry_op.getOpaqueArgs());
   arg_types.append(opaque_args.begin(), opaque_args.end());
   return arg_types;
 }
 
-// Function to get the permutation vector from a MemRefType.
-// The motivation for extracting it from getStridesAndOffset vs directly from
-// triton_xla.layout is that when we fold memrefs (such as in a transpose) it
-// will have a generic strided layout that does not directly encode the
-// permutation.
-absl::StatusOr<llvm::SmallVector<int64_t>> getPermutationMinorToMajor(
-    mlir::MemRefType memref) {
-  llvm::SmallVector<int64_t> strides;
-  int64_t offset;
-  if (memref.getStridesAndOffset(strides, offset).failed()) {
-    // This can fail if the layout is not strided (e.g., has dynamic strides).
-    return absl::InvalidArgumentError("Failed to get strides and offset");
-  }
-
-  llvm::SmallVector<int64_t> permutation;
-  permutation.resize(strides.size());
-  absl::c_iota(permutation, 0);
-
-  absl::c_sort(permutation, [&](int64_t lhs_dim, int64_t rhs_dim) {
-    int64_t lhs_stride = strides[lhs_dim];
-    int64_t rhs_stride = strides[rhs_dim];
-    if (lhs_stride != rhs_stride) {
-      return lhs_stride < rhs_stride;
-    }
-
-    // If the strides are the same, we need to ensure that the unit dimension is
-    // the more minor.
-    int64_t lhs_size = memref.getDimSize(lhs_dim);
-    int64_t rhs_size = memref.getDimSize(rhs_dim);
-    if (lhs_size != rhs_size) {
-      return lhs_size < rhs_size;
-    }
-
-    // If all else fails just sort in the canonical order.
-    return lhs_dim > rhs_dim;
-  });
-
-  // Check that the strides actually represent a permutation,
-  // this could happen for example with padded buffers.
-  int64_t size_product = 1;
-  for (int64_t dim : permutation) {
-    if (strides[dim] != size_product) {
-      return absl::InvalidArgumentError("Layout is not a valid permutation");
-    }
-    size_product *= memref.getDimSize(dim);
-  }
-
-  return permutation;
-}
-
 MemrefToPtrOp CreateMemrefToPtr(mlir::OpBuilder& builder,
                                 mlir::TypedValue<mlir::MemRefType> memref) {
-  PointerType ptr_type = ::xla::gpu::triton::GetGlobalPointerType(
-      memref.getType().getElementType());
-  return builder.create<MemrefToPtrOp>(memref.getLoc(), ptr_type, memref);
+  mlir::Type ptr_type =
+      ttir::getPointerTypeToElement(memref.getType().getElementType());
+  return MemrefToPtrOp::create(builder, memref.getLoc(), ptr_type, memref);
 }
 
 // Rewrite a xtile entry to a func.func with the same body, but with memref
@@ -150,8 +100,9 @@ class XTileEntryToTriton
 
     const int64_t num_buffer_args = entry_op.getBufferArgs().size();
     auto new_arg_types = GetTransformedArgTypes(entry_op);
-    auto new_func_op = builder.create<mlir::func::FuncOp>(
-        entry_op.getName(), builder.getFunctionType(new_arg_types, {}));
+    auto new_func_op =
+        mlir::func::FuncOp::create(builder, entry_op.getName(),
+                                   builder.getFunctionType(new_arg_types, {}));
 
     // Move the old function's body to the new function
     rewriter.inlineRegionBefore(
@@ -167,9 +118,9 @@ class XTileEntryToTriton
 
     BlockArgument tile_id_arg = old_args.back();
 
-    auto pid = builder.create<ttir::GetProgramIdOp>(ttir::ProgramIDDim::X);
+    auto pid = ttir::GetProgramIdOp::create(builder, ttir::ProgramIDDim::X);
     Value pid_idx =
-        builder.create<ma::IndexCastOp>(builder.getIndexType(), pid);
+        ma::IndexCastOp::create(builder, builder.getIndexType(), pid);
     rewriter.replaceAllUsesWith(tile_id_arg, pid_idx);
 
     // Handle memref arguments.
@@ -180,7 +131,7 @@ class XTileEntryToTriton
           mlir::cast<mlir::MemRefType>(old_arg.getType());
 
       mlir::Value memref_cast =
-          builder.create<PtrToMemrefOp>(memref_type, new_arg);
+          PtrToMemrefOp::create(builder, memref_type, new_arg);
 
       // Replace all uses of the old argument with the result of the cast.
       rewriter.replaceAllUsesWith(old_arg, memref_cast);
@@ -220,25 +171,26 @@ class XTileExtractToTriton
     mlir::Value memref_to_ptr =
         CreateMemrefToPtr(rewriter, extract_op.getSource());
 
-    if (extract_op.getType().getRank() == 0) {
-      mlir::Value scalar_value = rewriter.create<ttir::LoadOp>(
-          extract_op->getLoc(), memref_to_ptr, ttir::CacheModifier::NONE,
-          ttir::EvictionPolicy::NORMAL, /*isVolatile=*/false);
+    if (result_type.getRank() == 0) {
+      mlir::Value scalar_value = ttir::LoadOp::create(
+          rewriter, extract_op->getLoc(), memref_to_ptr,
+          ttir::CacheModifier::NONE, ttir::EvictionPolicy::NORMAL,
+          /*isVolatile=*/false);
 
-      rewriter.replaceOpWithNewOp<::xla::xtile::ToTensorOp>(extract_op,
-                                                            scalar_value);
+      rewriter.replaceOpWithNewOp<mlir::tensor::FromElementsOp>(
+          extract_op, result_type, scalar_value);
       return mlir::success();
     }
 
     absl::StatusOr<SmallVector<int64_t>> minor_to_major_or =
-        getPermutationMinorToMajor(source_type);
+        ::xla::xtile::GetPermutationMinorToMajor(source_type);
     if (!minor_to_major_or.ok()) {
       return rewriter.notifyMatchFailure(extract_op,
                                          minor_to_major_or.status().ToString());
     }
     const SmallVector<int64_t>& minor_to_major = *minor_to_major_or;
-    auto triton_extract_op = rewriter.create<ExtractOp>(
-        extract_op.getLoc(), result_type, memref_to_ptr,
+    auto triton_extract_op = ExtractOp::create(
+        rewriter, extract_op.getLoc(), result_type, memref_to_ptr,
         extract_op.getOffsets(), extract_op.getFullTileShape(),
         extract_op.getStrides(), source_type.getShape(), minor_to_major);
 
@@ -263,7 +215,7 @@ class XTileInsertToTriton
         CreateMemrefToPtr(rewriter, insert_op.getDestination());
 
     if (insert_op.getSource().getType().getRank() == 0) {
-      mlir::Value scalar_value = ::xla::xtile::ToScalarOp::create(
+      mlir::Value scalar_value = mlir::tensor::ExtractOp::create(
           rewriter, insert_op.getLoc(), insert_op.getSource());
 
       rewriter.replaceOpWithNewOp<ttir::StoreOp>(
@@ -272,18 +224,62 @@ class XTileInsertToTriton
     }
 
     absl::StatusOr<SmallVector<int64_t>> minor_to_major_or =
-        getPermutationMinorToMajor(destination_type);
+        ::xla::xtile::GetPermutationMinorToMajor(destination_type);
     if (!minor_to_major_or.ok()) {
       return rewriter.notifyMatchFailure(insert_op,
                                          minor_to_major_or.status().ToString());
     }
     const SmallVector<int64_t>& minor_to_major = *minor_to_major_or;
-    auto triton_insert_op = rewriter.create<InsertOp>(
-        insert_op.getLoc(), insert_op.getSource(), memref_to_ptr,
+    auto triton_insert_op = InsertOp::create(
+        rewriter, insert_op.getLoc(), insert_op.getSource(), memref_to_ptr,
         insert_op.getOffsets(), insert_op.getFullTileShape(),
         insert_op.getStrides(), destination_type.getShape(), minor_to_major);
 
     rewriter.replaceOp(insert_op, triton_insert_op);
+
+    return mlir::success();
+  }
+};
+
+class XTileMaskToTriton : public mlir::OpRewritePattern<::xla::xtile::MaskOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult matchAndRewrite(
+      ::xla::xtile::MaskOp op, mlir::PatternRewriter& rewriter) const override {
+    llvm::SmallVector<int64_t> masked_dimensions = op.getMaskedDimensions();
+    if (masked_dimensions.size() != 1) {
+      return rewriter.notifyMatchFailure(
+          op, "triton masking only supports masking over a single dimension");
+    }
+
+    int64_t mask_dimension = masked_dimensions.front();
+    int64_t mask_bound = op.getBounds()[mask_dimension];
+    int64_t masked_dim_size = op.getType().getDimSize(mask_dimension);
+    auto iota_type =
+        mlir::RankedTensorType::get(masked_dim_size, rewriter.getI32Type());
+    auto range = stablehlo::IotaOp::create(rewriter, op.getLoc(), iota_type, 0);
+    auto bcast_type = mlir::RankedTensorType::get(op.getType().getShape(),
+                                                  iota_type.getElementType());
+    auto bcast = stablehlo::BroadcastInDimOp::create(
+        rewriter, op.getLoc(), bcast_type, range, {mask_dimension});
+    auto constant = mlir::arith::ConstantOp::create(
+        rewriter, op.getLoc(),
+        mlir::DenseElementsAttr::get(bcast_type,
+                                     rewriter.getI32IntegerAttr(mask_bound)));
+    Value mask = arith::CmpIOp::create(
+        rewriter, op.getLoc(), arith::CmpIPredicate::slt, bcast, constant);
+
+    auto mask_value_tensor = mlir::tensor::FromElementsOp::create(
+        rewriter, op.getLoc(),
+        mlir::RankedTensorType::get({}, op.getValue().getType()),
+        op.getValue());
+    auto neutral = stablehlo::BroadcastInDimOp::create(
+        rewriter, op.getLoc(), op.getType(), mask_value_tensor,
+        ArrayRef<int64_t>{});
+
+    rewriter.replaceOpWithNewOp<arith::SelectOp>(op, mask, op.getSource(),
+                                                 neutral);
 
     return mlir::success();
   }
@@ -320,7 +316,7 @@ class TritonXLALowerXTilePass
     mlir::RewritePatternSet patterns(context);
 
     patterns.add<XTileEntryToTriton, XTileExtractToTriton, XTileInsertToTriton,
-                 FoldIntoMemrefToPtr>(context);
+                 XTileMaskToTriton, FoldIntoMemrefToPtr>(context);
     if (mlir::failed(
             mlir::applyPatternsGreedily(module, std::move(patterns)))) {
       signalPassFailure();

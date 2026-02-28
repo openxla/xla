@@ -287,10 +287,19 @@ class Ffi {
   // Creates an empty binding for the instantiate stage.
   static Binding<ExecutionStage::kInstantiate> BindInstantiate();
 
+  // Creates an empty binding for the prepare stage.
+  static Binding<ExecutionStage::kPrepare> BindPrepare();
+
+  // Creates an empty binding for the initialize stage.
+  static Binding<ExecutionStage::kInitialize> BindInitialize();
+
+  // Creates an empty binding for the execute stage.
+  static Binding<ExecutionStage::kExecute> BindExecute();
+
   // Automatic FFI binding that does binding specification inference from the
   // `fn` type signature and binds `fn` to it. This enables a more concise FFI
   // handler registration with fully automatic type inference at the cost of
-  // less readable error messages, template metaprogramming "magic" and a risk
+  // less readable error messages, template metaprograming "magic" and a risk
   // to accidentally change handler type without noticing it.
   template <typename Fn, ExecutionStage stage = ExecutionStage::kExecute>
   static auto BindTo(Fn fn, std::initializer_list<Traits> traits = {});
@@ -360,7 +369,7 @@ class Ffi {
   template <typename... Args>
   static std::string StrCat(Args... args);
 
-  static XLA_FFI_Error* Sucess();
+  static XLA_FFI_Error* Success();
 
   static XLA_FFI_Error* MakeError(const XLA_FFI_Api* api,
                                   XLA_FFI_Error_Code errc, std::string message);
@@ -422,7 +431,7 @@ std::string Ffi::StrCat(Args... args) {
   return ss.str();
 }
 
-inline XLA_FFI_Error* Ffi::Sucess() { return nullptr; }
+inline XLA_FFI_Error* Ffi::Success() { return nullptr; }
 
 inline XLA_FFI_Error* Ffi::MakeError(const XLA_FFI_Api* api,
                                      XLA_FFI_Error_Code errc,
@@ -471,6 +480,32 @@ inline XLA_FFI_Error* Ffi::StructSizeIsGreaterOrEqual(
 }
 
 //===----------------------------------------------------------------------===//
+// XLA_FFI_Error helpers
+//===----------------------------------------------------------------------===//
+
+namespace internal {
+
+inline void DestroyError(const XLA_FFI_Api* api, XLA_FFI_Error* error) {
+  XLA_FFI_Error_Destroy_Args args;
+  args.struct_size = XLA_FFI_Error_Destroy_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.error = error;
+  api->XLA_FFI_Error_Destroy(&args);
+}
+
+inline const char* GetErrorMessage(const XLA_FFI_Api* api,
+                                   XLA_FFI_Error* error) {
+  XLA_FFI_Error_GetMessage_Args args;
+  args.struct_size = XLA_FFI_Error_GetMessage_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.error = error;
+  api->XLA_FFI_Error_GetMessage(&args);
+  return args.message;
+}
+
+}  // namespace internal
+
+//===----------------------------------------------------------------------===//
 // Type tags for distinguishing handler argument types
 //===----------------------------------------------------------------------===//
 
@@ -484,7 +519,7 @@ class Context;
 
 namespace internal {
 
-// WARNING: A lot of template metaprogramming on top of C++ variadic templates
+// WARNING: A lot of template metaprograming on top of C++ variadic templates
 // parameter packs. We need this to be able to pattern match FFI handler
 // signature at compile time.
 
@@ -728,12 +763,24 @@ inline Binding<ExecutionStage::kInstantiate> Ffi::BindInstantiate() {
   return Bind<ExecutionStage::kInstantiate>();
 }
 
+inline Binding<ExecutionStage::kPrepare> Ffi::BindPrepare() {
+  return Bind<ExecutionStage::kPrepare>();
+}
+
+inline Binding<ExecutionStage::kInitialize> Ffi::BindInitialize() {
+  return Bind<ExecutionStage::kInitialize>();
+}
+
+inline Binding<ExecutionStage::kExecute> Ffi::BindExecute() {
+  return Bind<ExecutionStage::kExecute>();
+}
+
 //===----------------------------------------------------------------------===//
-// Template metaprogramming to automatically infer Binding from invocable
+// Template metaprograming to automatically infer Binding from invocable
 // object.
 //===----------------------------------------------------------------------===//
 
-// A little bit of metaprogramming that automatically infers the binding schema
+// A little bit of metaprograming that automatically infers the binding schema
 // from an invocable type signature.
 
 // XLA FFI binding for an argument.
@@ -1505,7 +1552,7 @@ class ContextBase {
 }  // namespace internal
 
 //===----------------------------------------------------------------------===//
-// Template metaprogramming for decoding handler signature
+// Template metaprograming for decoding handler signature
 //===----------------------------------------------------------------------===//
 
 // Forward declare classes for decoding variadic number of arguments and
@@ -1567,16 +1614,17 @@ struct FnArgType<internal::CtxTag<T>> {
 
 // A template to detect result encodings that are state constructors. We use
 // this to report back the TypeId of the state as a part of the metadata.
-template <typename ResultEnconding, typename = void>
+template <typename ResultEncoding, typename = void>
 struct IsStateConstructor : std::false_type {};
 
-// Check if the ResultEncoding has a static `state_type_id()` method returning
-// the XLA_FFI_TypeId.
+// Check if the ResultEncoding has a static `state_type_id(const XLA_FFI_Api*)`
+// method returning the XLA_FFI_TypeId.
 template <typename ResultEncoding>
 struct IsStateConstructor<
     ResultEncoding,
     std::enable_if_t<std::is_same_v<XLA_FFI_TypeId,
-                                    decltype(ResultEncoding::state_type_id())>>>
+                                    decltype(ResultEncoding::state_type_id(
+                                        std::declval<const XLA_FFI_Api*>()))>>>
     : std::true_type {};
 
 template <typename ResultEncoding>
@@ -1623,13 +1671,10 @@ class Handler : public Ffi {
   using ResultType = std::invoke_result_t<Fn, FnArgType<Ts>...>;
 
  public:
-  // We deliberately opt-out from the cognitive complexity check, as this
-  // function is on a hot path, any any attempt to split it leads to measurable
-  // regressions in microbenchmarks. It is a straight line block of mostly
-  // constexpr conditionals, that gets optimized to a much smaller code size in
-  // all template instantiations.
-  //
-  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
+  // Note: this function is on a hot path, any any attempt to split it leads to
+  // measurable regressions in microbenchmarks. It is a straight line block of
+  // mostly constexpr conditionals, that gets optimized to a much smaller code
+  // size in all template instantiations.
   XLA_FFI_Error* Call(XLA_FFI_CallFrame* call_frame) const override {
     // Sanity checking call frame struct size.
     if (XLA_FFI_Error* err = CheckStructSize(
@@ -1664,7 +1709,8 @@ class Handler : public Ffi {
       if (XLA_FFI_PREDICT_FALSE(call_frame->args.size < kNumArgs)) {
         return InvalidArgument(
             call_frame->api,
-            StrCat("Wrong number of arguments: expected at least ",
+            StrCat("[", call_frame->stage, "] ",
+                   "Wrong number of arguments: expected at least ",
                    kNumArgs - kNumOptionalArgs - 1, " but got ",
                    call_frame->args.size));
       }
@@ -1672,15 +1718,21 @@ class Handler : public Ffi {
       if (XLA_FFI_PREDICT_FALSE(call_frame->args.size < kNumArgs)) {
         return InvalidArgument(
             call_frame->api,
-            StrCat("Wrong number of arguments: expected at least ",
+            StrCat("[", call_frame->stage, "] ",
+                   "Wrong number of arguments: expected at least ",
                    kNumArgs - kNumOptionalArgs, " but got ",
                    call_frame->args.size));
       }
     } else {
-      if (XLA_FFI_PREDICT_FALSE(call_frame->args.size != kNumArgs)) {
+      // It is safe to not check the number of arguments if we don't plan to
+      // decode any of them, i.e. for prepare/initialize stages where the FFI
+      // handler might be interested only in the attributes or context.
+      if (XLA_FFI_PREDICT_FALSE(call_frame->args.size != kNumArgs &&
+                                kNumArgs > 0)) {
         return InvalidArgument(
             call_frame->api,
-            StrCat("Wrong number of arguments: expected ", kNumArgs,
+            StrCat("[", call_frame->stage, "] ",
+                   "Wrong number of arguments: expected ", kNumArgs,
                    " but got ", call_frame->args.size));
       }
     }
@@ -1691,7 +1743,8 @@ class Handler : public Ffi {
       if (XLA_FFI_PREDICT_FALSE(call_frame->rets.size < kNumRets)) {
         return InvalidArgument(
             call_frame->api,
-            StrCat("Wrong number of results: expected at least ",
+            StrCat("[", call_frame->stage, "] ",
+                   "Wrong number of results: expected at least ",
                    kNumRets - kNumOptionalRets - 1, " but got ",
                    call_frame->rets.size));
       }
@@ -1699,28 +1752,43 @@ class Handler : public Ffi {
       if (XLA_FFI_PREDICT_FALSE(call_frame->rets.size < kNumRets)) {
         return InvalidArgument(
             call_frame->api,
-            StrCat("Wrong number of results: expected at least ",
+            StrCat("[", call_frame->stage, "] ",
+                   "Wrong number of results: expected at least ",
                    kNumRets - kNumOptionalRets, " but got ",
                    call_frame->rets.size));
       }
     } else {
-      if (XLA_FFI_PREDICT_FALSE(call_frame->rets.size != kNumRets)) {
+      // It is safe to not check the number of results if we don't plan to
+      // decode any of them, i.e. for prepare/initialize stages where the FFI
+      // handler might be interested only in the attributes or context.
+      if (XLA_FFI_PREDICT_FALSE(call_frame->rets.size != kNumRets &&
+                                kNumRets > 0)) {
         return InvalidArgument(
             call_frame->api,
-            StrCat("Wrong number of results: expected ", kNumRets, " but got ",
+            StrCat("[", call_frame->stage, "] ",
+                   "Wrong number of results: expected ", kNumRets, " but got ",
                    call_frame->rets.size));
       }
     }
 
     // Check that the number of passed attributes matches the signature. Each
-    // individual attribute decoding will check the actual type. If we decode
-    // attributes into a dictionary (or a custom struct decoded from a
-    // dictionary), then there is no need to check attributes, as the FFI
-    // handler (or a struct decoding) should be responsible for it.
-    if (XLA_FFI_PREDICT_FALSE(kNumDictAttrs == 0 &&
+    // individual attribute decoding will check the actual type.
+    //
+    // If we decode attributes into a dictionary (or a custom struct decoded
+    // from a dictionary), then there is no need to check the number of
+    // attributes, as the FFI handler (or a struct decoding) should be
+    // responsible for it.
+    //
+    // If the number of bound attributes is zero, then we also don't care about
+    // the number of attributes in the call frame. FFI handler can safely choose
+    // to ignore attributes in this case. We only need to check the number of
+    // attributes if we plan to decode them, as we build a mapping from the
+    // attribute name to its index in the call frame attributes.
+    if (XLA_FFI_PREDICT_FALSE(kNumDictAttrs == 0 && kNumAttrs > 0 &&
                               call_frame->attrs.size != kNumAttrs)) {
       std::stringstream msg;
-      msg << "Wrong number of attributes: expected " << kNumAttrs << " but got "
+      msg << "[" << call_frame->stage << "] "
+          << "Wrong number of attributes: expected " << kNumAttrs << " but got "
           << call_frame->attrs.size;
       if (call_frame->attrs.size > 0) {
         msg << " with name(s): ";
@@ -1777,17 +1845,17 @@ class Handler : public Ffi {
     // type id in the metadata.
     using ResultEncoding = ResultEncoding<stage, ResultType>;
     if constexpr (internal::is_state_constructor_v<ResultEncoding>) {
-      if (ResultEncoding::state_type_id() == XLA_FFI_UNKNOWN_TYPE_ID) {
+      if (ResultEncoding::state_type_id(api) == XLA_FFI_UNKNOWN_TYPE_ID) {
         return FailedPrecondition(api,
                                   "Types used by FFI handlers must be "
                                   "registered before the handler registration");
       }
-      extension->metadata->state_type_id = ResultEncoding::state_type_id();
+      extension->metadata->state_type_id = ResultEncoding::state_type_id(api);
     } else {
       extension->metadata->state_type_id = XLA_FFI_UNKNOWN_TYPE_ID;
     }
 
-    return Sucess();
+    return Success();
   }
 
   template <size_t... Is>
@@ -2150,12 +2218,6 @@ auto DictionaryDecoder(Members... m) {
 // Helper macro for registering FFI implementations
 //===----------------------------------------------------------------------===//
 
-#if (defined(__GNUC__) || defined(__APPLE__)) && !defined(SWIG)  // GCC-style
-#define XLA_FFI_ATTRIBUTE_UNUSED __attribute__((unused))
-#else  // Non-GCC equivalents
-#define XLA_FFI_ATTRIBUTE_UNUSED
-#endif
-
 // In all macros below we use captureless lambda to function pointer conversion
 // to create a static XLA_FFI_Handler function pointer variable.
 
@@ -2203,7 +2265,7 @@ auto DictionaryDecoder(Members... m) {
 #define XLA_FFI_REGISTER_HANDLER_(API, NAME, PLATFORM, FUNC, N, ...) \
   XLA_FFI_REGISTER_HANDLER__(API, NAME, PLATFORM, FUNC, N, ##__VA_ARGS__)
 #define XLA_FFI_REGISTER_HANDLER__(API, NAME, PLATFORM, FUNC, N, ...)       \
-  XLA_FFI_ATTRIBUTE_UNUSED static const XLA_FFI_Error*                      \
+  [[maybe_unused]] static const XLA_FFI_Error*                              \
       xla_ffi_static_handler_##N##_registered_ = [] {                       \
         return ::xla::ffi::Ffi::RegisterStaticHandler(API, NAME, PLATFORM,  \
                                                       FUNC, ##__VA_ARGS__); \
@@ -2211,6 +2273,14 @@ auto DictionaryDecoder(Members... m) {
 
 // Following two APIs are intended for users who want to export XLA FFI handler
 // from a shared library as a C function symbol.
+
+// Declares C function that returns FFI type id.
+#define XLA_FFI_DECLARE_TYPE_ID_SYMBOL(type_id_fn) \
+  extern "C" XLA_FFI_TypeId* type_id_fn()
+
+// Declares C function that returns FFI type info.
+#define XLA_FFI_DECLARE_TYPE_INFO_SYMBOL(type_info_fn) \
+  extern "C" const XLA_FFI_TypeInfo* type_info_fn()
 
 // Declares C function that implements FFI handler.
 #define XLA_FFI_DECLARE_HANDLER_SYMBOL(fn) \

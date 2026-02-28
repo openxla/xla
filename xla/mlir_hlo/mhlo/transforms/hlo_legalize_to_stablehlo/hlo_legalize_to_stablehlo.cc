@@ -28,6 +28,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
@@ -442,8 +443,8 @@ FailureOr<func::FuncOp> rewriteMhloRegionAsFunc(
   auto& block = region.getBlocks().front();
   auto type = rewriter.getFunctionType(
       block.getArgumentTypes(), block.getTerminator()->getOperandTypes());
-  auto funcOp = rewriter.create<func::FuncOp>(
-      region.getLoc(), op->getName().stripDialect(), type);
+  auto funcOp = func::FuncOp::create(rewriter, region.getLoc(),
+                                     op->getName().stripDialect(), type);
   symTable.insert(funcOp);
 
   // Move region into new function
@@ -679,24 +680,24 @@ class HloToStablehloOpConverter
     if (failed(convertAttributes(rewriter, hloOp, stablehloAttrs)))
       return failure();
 
-    // Convert the MHLO operation to a StableHLO equivalent.
-    // This can almost be done in a generic fashion, except for stablehlo.case
-    // that uses a variadic number of regions which means an additional argument
-    // for the generic builder.
+    // Convert the MHLO operation to a StableHLO equivalent. This can almost be
+    // done in a generic fashion, except for ops with a variadic number of
+    // regions which means an additional argument for the generic builder.
     HloToStablehloOp<HloOpTy> stablehloOp;
-    if constexpr (std::is_same<HloOpTy, mhlo::CaseOp>::value) {
-      stablehloOp = rewriter.create<stablehlo::CaseOp>(
-          hloOp.getLoc(), stablehloTypes, stablehloOperands, stablehloAttrs,
-          hloOp.getBranches().size());
+    if constexpr (HloOpTy::template hasTrait<OpTrait::VariadicRegions>()) {
+      stablehloOp = HloToStablehloOp<HloOpTy>::create(
+          rewriter, hloOp.getLoc(), stablehloTypes, stablehloOperands,
+          stablehloAttrs, hloOp.getNumRegions());
     } else {
-      stablehloOp = rewriter.create<HloToStablehloOp<HloOpTy>>(
-          hloOp.getLoc(), stablehloTypes, stablehloOperands, stablehloAttrs);
+      stablehloOp = HloToStablehloOp<HloOpTy>::create(
+          rewriter, hloOp.getLoc(), stablehloTypes, stablehloOperands,
+          stablehloAttrs);
     }
 
     // Finally, populate the regions while converting argument types
     // and nested operations.
     for (auto [hloRegion, stablehloRegion] :
-         llvm::zip(hloOp->getRegions(), stablehloOp->getRegions())) {
+         llvm::zip_equal(hloOp->getRegions(), stablehloOp->getRegions())) {
       rewriter.inlineRegionBefore(hloRegion, stablehloRegion,
                                   stablehloRegion.end());
       if (failed(rewriter.convertRegionTypes(&stablehloRegion,

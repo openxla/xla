@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/sort_json.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -104,7 +103,7 @@ absl::StatusOr<std::unique_ptr<T>> ParseSequence(absl::string_view outer_json,
 
 absl::Status EnsureValidLiteralStart(char c) {
   if (c != '"' && c != '+' && c != '-' && c != 'f' && c != 't' && c != 'n' &&
-      (c < '0' || c > '9')) {
+      !absl::ascii_isdigit(c)) {
     return absl::InvalidArgumentError(absl::StrCat(
         "Invalid first character of literal: '", std::string(1, c), "'."));
   }

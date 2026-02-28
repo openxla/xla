@@ -12,7 +12,7 @@ load(
     "if_google",
     "internal_visibility",
 )
-load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable", "tsl_pybind_extension")
+load("//xla/tsl:tsl.default.bzl", "get_compatible_with_libtpu_portable", "get_compatible_with_portable", "tsl_pybind_extension")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -89,6 +89,25 @@ py_strict_test(
 )
 
 cc_library(
+    name = "dlpack_types",
+    srcs = ["dlpack_types.cc"],
+    hdrs = ["dlpack_types.h"],
+    compatible_with = get_compatible_with_libtpu_portable(),
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/status:statusor",
+        "@dlpack",
+    ],
+)
+
+cc_library(
     name = "types",
     srcs = ["types.cc"],
     hdrs = [
@@ -105,6 +124,7 @@ cc_library(
     deps = [
         ":nb_numpy",
         ":safe_static_init",
+        ":strides",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -123,6 +143,20 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@nanobind",
         "@rules_python//python/cc:current_py_cc_headers",  # buildcleaner: keep
+    ],
+)
+
+cc_library(
+    name = "strides",
+    srcs = ["strides.cc"],
+    hdrs = ["strides.h"],
+    compatible_with = get_compatible_with_libtpu_portable(),
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -156,6 +190,7 @@ cc_library(
         "//xla/service:custom_call_sharding_helper",
         "//xla/service/spmd:spmd_partitioner",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
     ],
     # Always register 'InspectSharding' custom partitioning handler.
     alwayslink = 1,
@@ -181,10 +216,10 @@ cc_library(
         "//xla/service:custom_call_sharding_helper",
         "//xla/service/spmd:spmd_partitioner",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -231,7 +266,6 @@ nanobind_pywrap_extension(
     pytype_srcs = ["_hlo_pass.pyi"],
     visibility = [":friends"],
     deps = [
-        "//xla/hlo/ir:hlo_module_group",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/transforms/simplifiers:flatten_call_graph",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
@@ -365,6 +399,10 @@ nanobind_pywrap_extension(
     name = "_profiler",
     srcs = ["profiler.cc"],
     pytype_srcs = ["_profiler.pyi"],
+    visibility = internal_visibility([
+        ":jax",
+        "//third_party/py/torch_tpu:__subpackages__",
+    ]),
     deps = [
         ":aggregate_profile",
         ":profiler_utils",
@@ -376,6 +414,7 @@ nanobind_pywrap_extension(
         "//xla/backends/profiler:profiler_backends",
         "//xla/backends/profiler/cpu:python_tracer",
         "//xla/backends/profiler/plugin:plugin_tracer",
+        "//xla/backends/profiler/util:metadata_registry",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:status_casters",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
@@ -384,6 +423,7 @@ nanobind_pywrap_extension(
         "//xla/tsl/profiler/rpc:profiler_server_impl",
         "//xla/tsl/profiler/rpc/client:capture_profile",
         "//xla/tsl/profiler/rpc/client:profiler_client_impl",
+        "//xla/tsl/profiler/utils:xplane_schema",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:profiler_session",
         "@tsl//tsl/profiler/lib:traceme",
@@ -401,6 +441,10 @@ nanobind_pywrap_extension(
         "-fno-strict-aliasing",
     ],
     pytype_srcs = ["_profile_data.pyi"],
+    visibility = internal_visibility([
+        ":jax",
+        "//third_party/py/torch_tpu:__subpackages__",
+    ]),
     deps = [
         "//xla/python/profiler:profile_data_lib",
         "@nanobind",
@@ -571,6 +615,19 @@ cc_library(
     visibility = internal_visibility([":friends"]),
     deps = [
         "@com_google_absl//absl/container:flat_hash_set",
+        "@nanobind",
+    ],
+)
+
+cc_library(
+    name = "nb_status",
+    hdrs = ["nb_status.h"],
+    compatible_with = [],
+    copts = ["-fexceptions"],
+    features = ["-use_header_modules"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "@com_google_absl//absl/status",
         "@nanobind",
     ],
 )

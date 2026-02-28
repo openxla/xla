@@ -21,10 +21,12 @@ limitations under the License.
 #include <string>
 
 #include "absl/log/check.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 
 namespace xla {
@@ -32,14 +34,13 @@ namespace xla {
 // SymbolicMap abstracts away the fact that dimensions and symbols are both
 // implemented as SymbolicExpr variables. These free functions provide a way to
 // work with them without a SymbolicMap instance.
-inline SymbolicExpr CreateDimExpr(SymbolicExprContext* context,
-                                  unsigned dim_id) {
-  return context->CreateVariable(dim_id);
+inline SymbolicExpr CreateDimExpr(unsigned dim_id, mlir::MLIRContext* context) {
+  return CreateSymbolicVariable(dim_id, context);
 }
 
-inline SymbolicExpr CreateSymbolExpr(SymbolicExprContext* context,
-                                     unsigned symbol_id, int64_t num_dims) {
-  return context->CreateVariable(symbol_id + num_dims);
+inline SymbolicExpr CreateSymbolExpr(unsigned symbol_id, int64_t num_dims,
+                                     mlir::MLIRContext* context) {
+  return CreateSymbolicVariable(symbol_id + num_dims, context);
 }
 
 inline bool IsDimension(SymbolicExpr expr, int64_t num_dims) {
@@ -66,21 +67,24 @@ inline int64_t GetSymbolIndex(SymbolicExpr expr, int64_t num_dims) {
 class SymbolicMap {
  public:
   SymbolicMap() = default;
-  static SymbolicMap Get(SymbolicExprContext* ctx, int64_t num_dimensions,
+  static SymbolicMap Get(mlir::MLIRContext* ctx, int64_t num_dimensions,
                          int64_t num_symbols,
                          llvm::SmallVector<SymbolicExpr> exprs);
 
-  SymbolicExprContext* GetContext() const { return ctx_; }
+  explicit operator bool() const { return ctx_ != nullptr; }
+  bool operator!() const { return ctx_ == nullptr; }
+
+  mlir::MLIRContext* GetContext() const { return ctx_; }
   int64_t GetNumDims() const { return num_dimensions_; }
   int64_t GetNumSymbols() const { return num_symbols_; }
   SymbolicExpr GetDimExpression(unsigned idx) const {
-    return CreateDimExpr(ctx_, idx);
+    return CreateDimExpr(idx, ctx_);
   }
   SymbolicExpr GetSymbolExpression(unsigned idx) const {
-    return CreateSymbolExpr(ctx_, idx, num_dimensions_);
+    return CreateSymbolExpr(idx, num_dimensions_, ctx_);
   }
   int64_t GetNumResults() const { return exprs_.size(); }
-  const llvm::SmallVector<SymbolicExpr>& GetResults() const { return exprs_; }
+  llvm::ArrayRef<SymbolicExpr> GetResults() const { return exprs_; }
   SymbolicExpr GetResult(unsigned idx) const { return exprs_[idx]; }
   std::string ToString() const;
 
@@ -92,6 +96,12 @@ class SymbolicMap {
 
   // Returns true if all result expressions are constant.
   bool IsConstant() const;
+
+  // Returns true if any result expression depends on the given dimension.
+  bool IsFunctionOfDim(int64_t dim_id) const;
+
+  // Returns true if any result expression depends on the given symbol.
+  bool IsFunctionOfSymbol(int64_t symbol_id) const;
 
   // Returns a vector containing the values of all the results. CHECK-fails if
   // any result expression is not a constant.
@@ -127,6 +137,12 @@ class SymbolicMap {
 
   SymbolicMap Replace(SymbolicExpr expr, SymbolicExpr replacement) const;
 
+  /// Replaces multiple sub-expressions at once by applying
+  /// `SymbolicExpr::Replace(map)` to each expression. Returns a new SymbolicMap
+  /// with the new results and with the specified number of dims and symbols.
+  SymbolicMap Replace(const llvm::DenseMap<SymbolicExpr, SymbolicExpr>& map,
+                      int64_t numResultDims, int64_t numResultSyms) const;
+
   bool operator==(const SymbolicMap& other) const;
   bool operator!=(const SymbolicMap& other) const { return !(*this == other); }
 
@@ -148,10 +164,10 @@ class SymbolicMap {
   }
 
  private:
-  SymbolicMap(SymbolicExprContext* ctx, int64_t num_dimensions,
+  SymbolicMap(mlir::MLIRContext* ctx, int64_t num_dimensions,
               int64_t num_symbols, llvm::SmallVector<SymbolicExpr> exprs);
 
-  SymbolicExprContext* ctx_;
+  mlir::MLIRContext* ctx_;
   int64_t num_dimensions_;
   int64_t num_symbols_;
   llvm::SmallVector<SymbolicExpr> exprs_;

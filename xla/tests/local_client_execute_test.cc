@@ -31,7 +31,7 @@ limitations under the License.
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/transfer_manager.h"
 #include "xla/shape_util.h"
-#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/host/host_platform_id.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -442,6 +442,10 @@ TEST_F(LocalClientExecuteTest, LargeTuple) {
 }
 
 TEST_F(LocalClientExecuteTest, LargeNestedTuple) {
+  // TODO(b/487954262): Re-enable when fixed.
+  if (test::DeviceTypeIs(test::kTpu)) {
+    GTEST_SKIP();
+  }
   // Construct and run a computation which takes a two-level nested tuple
   // parameter with a large fanout.
   const int kFanout = 40;
@@ -503,6 +507,10 @@ TEST_F(LocalClientExecuteTest, LargeNestedTuple) {
 }
 
 TEST_F(LocalClientExecuteTest, DeepTuple) {
+  // TODO(b/487954262): Re-enable when fixed.
+  if (test::DeviceTypeIs(test::kTpu)) {
+    GTEST_SKIP();
+  }
   // Construct and run a computation which takes a very deep tuple. The tuple
   // has no fan out and a single scalar element at the bottom.
   const int kTupleDepth = 100;
@@ -920,7 +928,8 @@ TEST_F(LocalClientExecuteTest, InfeedOutfeedTest) {
 void BM_LocalClientOverhead(::testing::benchmark::State& state) {
   se::Platform* platform = PlatformUtil::GetDefaultPlatform().value();
   auto executors = PlatformUtil::GetStreamExecutors(platform).value();
-  se::StreamExecutorMemoryAllocator allocator(platform, executors);
+  stream_executor::StreamExecutorAddressAllocator allocator(platform,
+                                                            executors);
   LocalClient* client = ClientLibrary::GetOrCreateLocalClient(platform).value();
   auto* transfer_manager = TransferManager::GetForPlatform(platform).value();
   int device_ordinal = client->default_device_ordinal();

@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -209,11 +210,11 @@ class TfPjRtClient : public PjRtClient {
     return wrapped_->addressable_devices();
   }
   absl::StatusOr<PjRtDevice*> LookupDevice(
-      PjRtGlobalDeviceId global_device_id) const override {
+      GlobalDeviceId global_device_id) const override {
     return wrapped_->LookupDevice(global_device_id);
   }
   absl::StatusOr<PjRtDevice*> LookupAddressableDevice(
-      PjRtLocalDeviceId local_device_id) const override {
+      LocalDeviceId local_device_id) const override {
     if (wrapped_ == nullptr) {
       return absl::InternalError(
           "Wrapped PJRT client in TfPjRtClient is already destroyed.");
@@ -251,6 +252,10 @@ class TfPjRtClient : public PjRtClient {
   }
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
       mlir::ModuleOp module, CompileOptions options) override {
+    return CompileAndLoad(MaybeOwningMlirModule(std::move(module)), options);
+  }
+  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
+      MaybeOwningMlirModule module, CompileOptions options) override {
     return WrapExecutable(wrapped_->CompileAndLoad(std::move(module), options));
   }
 

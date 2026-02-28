@@ -15,13 +15,15 @@ limitations under the License.
 
 #include "tsl/platform/str_util.h"
 
-#include <cctype>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <system_error>  // NOLINT
 
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
+#include "absl/strings/string_view.h"
 #include "xla/tsl/platform/logging.h"
 #include "tsl/platform/stringpiece.h"
 
@@ -50,28 +52,16 @@ size_t RemoveWhitespaceContext(absl::string_view* text) {
 }
 
 bool ConsumeLeadingDigits(absl::string_view* s, uint64_t* val) {
-  const char* p = s->data();
-  const char* limit = p + s->size();
-  uint64_t v = 0;
-  while (p < limit) {
-    const char c = *p;
-    if (c < '0' || c > '9') break;
-    uint64_t new_v = (v * 10) + (c - '0');
-    if (new_v / 8 < v) {
-      // Overflow occurred
-      return false;
-    }
-    v = new_v;
-    p++;
-  }
-  if (p > s->data()) {
-    // Consume some digits
-    s->remove_prefix(p - s->data());
-    *val = v;
-    return true;
-  } else {
+  uint64_t v;
+  auto [p, ec] =
+      std::from_chars(s->data(), s->data() + s->size(), v, /*base=*/10);
+  if (ec != std::errc{}) {
     return false;
   }
+  // Consume some digits
+  s->remove_prefix(p - s->data());
+  *val = v;
+  return true;
 }
 
 bool ConsumeNonWhitespace(absl::string_view* s, absl::string_view* val) {
@@ -93,9 +83,9 @@ bool ConsumeNonWhitespace(absl::string_view* s, absl::string_view* val) {
   }
 }
 
-void TitlecaseString(string* s, absl::string_view delimiters) {
+void TitlecaseString(std::string* s, absl::string_view delimiters) {
   bool upper = true;
-  for (string::iterator ss = s->begin(); ss != s->end(); ++ss) {
+  for (std::string::iterator ss = s->begin(); ss != s->end(); ++ss) {
     if (upper) {
       *ss = absl::ascii_toupper(*ss);
     }
@@ -103,13 +93,14 @@ void TitlecaseString(string* s, absl::string_view delimiters) {
   }
 }
 
-string StringReplace(absl::string_view s, absl::string_view oldsub,
-                     absl::string_view newsub, bool replace_all) {
+std::string StringReplace(absl::string_view s, absl::string_view oldsub,
+                          absl::string_view newsub, bool replace_all) {
   // TODO(jlebar): We could avoid having to shift data around in the string if
   // we had a StringPiece::find() overload that searched for a StringPiece.
-  string res(s);
+  std::string res(s);
   size_t pos = 0;
-  while ((pos = res.find(oldsub.data(), pos, oldsub.size())) != string::npos) {
+  while ((pos = res.find(oldsub.data(), pos, oldsub.size())) !=
+         std::string::npos) {
     res.replace(pos, oldsub.size(), newsub.data(), newsub.size());
     pos += newsub.size();
     if (oldsub.empty()) {
@@ -122,15 +113,7 @@ string StringReplace(absl::string_view s, absl::string_view oldsub,
   return res;
 }
 
-size_t Strnlen(const char* str, const size_t string_max_len) {
-  size_t len = 0;
-  while (len < string_max_len && str[len] != '\0') {
-    ++len;
-  }
-  return len;
-}
-
-string ArgDefCase(absl::string_view s) {
+std::string ArgDefCase(absl::string_view s) {
   const size_t n = s.size();
 
   // Compute the size of resulting string.
@@ -157,7 +140,7 @@ string ArgDefCase(absl::string_view s) {
 
   // Initialize result with all '_'s. There is no string
   // constructor that does not initialize memory.
-  string result(n + extra_us - to_skip, '_');
+  std::string result(n + extra_us - to_skip, '_');
   // i - index into s
   // j - index into result
   for (size_t i = to_skip, j = 0; i < n; ++i, ++j) {

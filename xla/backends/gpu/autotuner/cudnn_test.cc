@@ -21,6 +21,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
@@ -34,7 +35,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
@@ -48,8 +48,6 @@ using CudnnBackendConfig = stream_executor::dnn::AlgorithmProto;
 using ::testing::Gt;
 using ::testing::SizeIs;
 using ::tsl::proto_testing::EqualsProto;
-using ::tsl::testing::IsOkAndHolds;
-using ::tsl::testing::StatusIs;
 
 const char kCudnnFusionHlo[] = R"(
   fusion1 {
@@ -65,6 +63,27 @@ const char kCudnnFusionHlo[] = R"(
     p1 = f32[3,28,32] parameter(1)
     ROOT _ = f32[3,32,32] fusion(p0, p1), kind=kCustom, calls=fusion1,
       backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
+  })";
+
+const char kCudnnConvolutionFusionHlo[] = R"(
+  fusion1 {
+    p0 = f32[16,56,56,16] parameter(0)
+    p1 = f32[16,3,3,16] parameter(1)
+    ROOT c = f32[16,54,54,16] convolution(p0, p1),
+      window={size=3x3},
+      dim_labels=f01b_i01o->f01b
+  }
+
+  ENTRY e {
+    p0 = f32[16,56,56,16] parameter(0)
+    p1 = f32[16,3,3,16] parameter(1)
+    ROOT _ = f32[16,54,54,16] fusion(p0, p1), kind=kCustom, calls=fusion1,
+      backend_config={
+        "fusion_backend_config": {
+          "kind": "__cudnn$fusion",
+          "cudnn_fusion_config": {"kind": "CONV_FPROP"}
+        }
+      }
   })";
 
 const char kCudnnCustomCallHlo[] = R"(
@@ -113,7 +132,7 @@ class CudnnBackendTest : public HloHardwareIndependentTestBase {
   DebugOptions debug_options_;
   NVPTXCompiler compiler_;
   se::StreamExecutor* stream_executor_;
-  Compiler::TargetConfig target_config_;
+  Compiler::GpuTargetConfig target_config_;
   CudnnBackend backend_;
 
   CudnnBackendTest()
@@ -138,6 +157,16 @@ TEST_F(CudnnBackendTest, CanCreateCublasBackend) {
 TEST_F(CudnnBackendTest, GetSupportedConfigsFromCudnnFusion) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                           ParseAndReturnVerifiedModule(kCudnnFusionHlo));
+  absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
+      backend_.GetSupportedConfigs(
+          (*hlo_module->entry_computation()->root_instruction()));
+  EXPECT_THAT(configs, absl_testing::IsOkAndHolds(SizeIs(Gt(0))));
+}
+
+TEST_F(CudnnBackendTest, GetSupportedConfigsFromCudnnConvolutionFusion) {
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> hlo_module,
+      ParseAndReturnVerifiedModule(kCudnnConvolutionFusionHlo));
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
           (*hlo_module->entry_computation()->root_instruction()));

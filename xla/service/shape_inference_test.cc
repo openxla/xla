@@ -26,6 +26,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -38,9 +39,9 @@ limitations under the License.
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
-#include "tsl/platform/status_matchers.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -250,6 +251,28 @@ TEST_F(ShapeInferenceTest, SelectPreservesElementSize) {
                                           int4_shape, int4_shape);
   ASSERT_IS_OK(inferred_shape.status());
   ASSERT_TRUE(ShapeUtil::Equal(*inferred_shape, int4_shape));
+}
+
+TEST_F(ShapeInferenceTest, BitcastConvertS8ToPred) {
+  TF_ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("s8[10]"));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const Shape inferred_shape,
+      ShapeInference::InferBitcastConvertShape(operand, PrimitiveType::PRED));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("pred[10]"));
+  EXPECT_TRUE(ShapeUtil::Equal(inferred_shape, expected))
+      << "inferred: " << ShapeUtil::HumanString(inferred_shape)
+      << " expected: " << ShapeUtil::HumanString(expected);
+}
+
+TEST_F(ShapeInferenceTest, BitcastConvertPredToF32) {
+  TF_ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("pred[10,4]"));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const Shape inferred_shape,
+      ShapeInference::InferBitcastConvertShape(operand, PrimitiveType::F32));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f32[10]"));
+  EXPECT_TRUE(ShapeUtil::Equal(inferred_shape, expected))
+      << "inferred: " << ShapeUtil::HumanString(inferred_shape)
+      << " expected: " << ShapeUtil::HumanString(expected);
 }
 
 TEST_F(ShapeInferenceTest, ClampAllMatrix) {
@@ -853,7 +876,7 @@ TEST_F(ShapeInferenceTest, ConvolveWithBF16_F16) {
       ShapeInference::InferConvolveShape(
           args.lhs_shape, args.rhs_shape, /*feature_group_count=*/1,
           /*batch_group_count=*/1, args.window, args.dnums,
-          /*preferred_element_type=*/std::nullopt))
+          /*preferred_element_type=*/std::nullopt));
   ASSERT_TRUE(ShapeUtil::Equal(ShapeUtil::MakeShape(BF16, {10, 12, 2, 3}),
                                inferred_shape));
 }
@@ -865,7 +888,7 @@ TEST_F(ShapeInferenceTest, ConvolveWithF16_BF16) {
       ShapeInference::InferConvolveShape(
           args.lhs_shape, args.rhs_shape, /*feature_group_count=*/1,
           /*batch_group_count=*/1, args.window, args.dnums,
-          /*preferred_element_type=*/std::nullopt))
+          /*preferred_element_type=*/std::nullopt));
   ASSERT_TRUE(ShapeUtil::Equal(ShapeUtil::MakeShape(BF16, {10, 12, 2, 3}),
                                inferred_shape));
 }
@@ -877,7 +900,7 @@ TEST_F(ShapeInferenceTest, ConvolveWithS32_U32) {
       ShapeInference::InferConvolveShape(
           args.lhs_shape, args.rhs_shape, /*feature_group_count=*/1,
           /*batch_group_count=*/1, args.window, args.dnums,
-          /*preferred_element_type=*/std::nullopt))
+          /*preferred_element_type=*/std::nullopt));
   ASSERT_TRUE(ShapeUtil::Equal(ShapeUtil::MakeShape(S32, {10, 12, 2, 3}),
                                inferred_shape));
 }
@@ -889,7 +912,7 @@ TEST_F(ShapeInferenceTest, ConvolveWithU32_S32) {
       ShapeInference::InferConvolveShape(
           args.lhs_shape, args.rhs_shape, /*feature_group_count=*/1,
           /*batch_group_count=*/1, args.window, args.dnums,
-          /*preferred_element_type=*/std::nullopt))
+          /*preferred_element_type=*/std::nullopt));
   ASSERT_TRUE(ShapeUtil::Equal(ShapeUtil::MakeShape(S32, {10, 12, 2, 3}),
                                inferred_shape));
 }
@@ -901,7 +924,7 @@ TEST_F(ShapeInferenceTest, ConvolveWithPreferredElementType) {
       ShapeInference::InferConvolveShape(
           args.lhs_shape, args.rhs_shape, /*feature_group_count=*/1,
           /*batch_group_count=*/1, args.window, args.dnums,
-          /*preferred_element_type=*/S16))
+          /*preferred_element_type=*/S16));
   ASSERT_TRUE(ShapeUtil::Equal(ShapeUtil::MakeShape(S16, {10, 12, 2, 3}),
                                inferred_shape));
 }
@@ -913,7 +936,7 @@ TEST_F(ShapeInferenceTest, ConvolveWithPreferredElementTypeSameAsInferredType) {
       ShapeInference::InferConvolveShape(
           args.lhs_shape, args.rhs_shape, /*feature_group_count=*/1,
           /*batch_group_count=*/1, args.window, args.dnums,
-          /*preferred_element_type=*/S32))
+          /*preferred_element_type=*/S32));
   ASSERT_TRUE(ShapeUtil::Equal(ShapeUtil::MakeShape(S32, {10, 12, 2, 3}),
                                inferred_shape));
 }
@@ -926,7 +949,7 @@ TEST_F(ShapeInferenceTest,
       ShapeInference::InferConvolveShape(
           args.lhs_shape, args.rhs_shape, /*feature_group_count=*/1,
           /*batch_group_count=*/1, args.window, args.dnums,
-          /*preferred_element_type=*/BF16))
+          /*preferred_element_type=*/BF16));
   ASSERT_TRUE(ShapeUtil::Equal(ShapeUtil::MakeShape(BF16, {10, 12, 2, 3}),
                                inferred_shape));
 }

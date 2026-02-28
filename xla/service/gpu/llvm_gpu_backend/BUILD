@@ -65,10 +65,7 @@ cc_library(
     name = "ptx_version_util",
     srcs = ["ptx_version_util.cc"],
     hdrs = ["ptx_version_util.h"],
-    deps = [
-        "//xla/stream_executor:semantic_version",
-        "@com_google_absl//absl/status:statusor",
-    ],
+    deps = ["//xla/stream_executor:semantic_version"],
 )
 
 cc_library(
@@ -173,6 +170,11 @@ cc_library(
         "HAS_SUPPORT_FOR_LLD_AS_A_LIBRARY=1",
         "HAS_SUPPORT_FOR_EMBEDDED_LIB_DEVICE=1",
     ]),
+    tags = [
+        "gpu",
+        "nofixdeps",  # This target crashes build_cleaner ¯\_(ツ)_/¯
+        "rocm-only",
+    ],
     deps = [
         ":llvm_gpu_backend",
         ":load_ir_module",
@@ -181,12 +183,14 @@ cc_library(
         "//xla/service/llvm_ir:llvm_command_line_options",
         "//xla/service/llvm_ir:llvm_type_conversion_util",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor:kernel_stats",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:rocm_rocdl_path",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:env_var",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log",
@@ -197,6 +201,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:AMDGPUAsmParser",  # buildcleaner: keep
         "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:BinaryFormat",
         "@llvm-project//llvm:BitReader",
         "@llvm-project//llvm:BitWriter",
         "@llvm-project//llvm:CodeGen",
@@ -205,6 +210,7 @@ cc_library(
         "@llvm-project//llvm:Linker",
         "@llvm-project//llvm:MC",
         "@llvm-project//llvm:ObjCARC",  # buildcleaner: keep
+        "@llvm-project//llvm:Object",
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Scalar",
         "@llvm-project//llvm:Support",
@@ -310,6 +316,35 @@ xla_cc_test(
 )
 
 xla_cc_test(
+    name = "amdgpu_register_spilling_test",
+    size = "small",
+    srcs = ["amdgpu_register_spilling_test.cc"],
+    data = [
+        "tests_data/amdgpu_dynamic_stack.ll",
+        "tests_data/amdgpu_no_spills.ll",
+        "tests_data/amdgpu_sgpr_spills.ll",
+        "tests_data/amdgpu_vgpr_spills.ll",
+    ],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":amdgpu_backend",
+        ":load_ir_module",
+        "//xla:xla_proto_cc",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:kernel_stats",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:ir_headers",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+xla_cc_test(
     name = "load_ir_module_test",
     size = "small",
     srcs = ["load_ir_module_test.cc"],
@@ -365,8 +400,35 @@ cc_library(
     ]),
     deps = [
         ":llvm_gpu_backend",
+        "//xla:xla_proto_cc",
         "//xla/service/llvm_ir:llvm_command_line_options",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:SPIRVCodeGen",
+        "@llvm-project//llvm:Scalar",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:ir_headers",
         "@tsl//tsl/platform:errors",
+    ],
+)
+
+xla_cc_test(
+    name = "spirv_backend_test",
+    srcs = ["spirv_backend_test.cc"],
+    tags = [
+        "gpu",
+        "oneapi-only",
+    ] + if_google([
+        "notap",
+        "nobuilder",
+        "manual",
+    ]),
+    deps = [
+        ":spirv_backend",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
     ],
 )

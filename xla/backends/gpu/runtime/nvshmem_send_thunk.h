@@ -49,8 +49,7 @@ class NvshmemSendThunk : public NvshmemCollectiveThunk {
  private:
   const P2PConfig config_;
   const CollectiveThunk::Buffer buffer_;
-  std::unique_ptr<ExecutionCounters> execution_counters_;
-  std::string hlo_name_;
+  const std::string hlo_name_;
   std::shared_ptr<NvshmemBufferAddresses> buffer_addresses_;
 };
 

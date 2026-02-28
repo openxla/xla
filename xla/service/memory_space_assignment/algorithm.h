@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/utils/hlo_live_range.h"
@@ -314,7 +315,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
  public:
   MsaAlgorithm(HloModule* module, AllocationSequence* allocations,
                const Options& options, const HloAliasAnalysis& alias_analysis,
-               const HloLiveRange& hlo_live_range);
+               const AliasInfo* alias_info, const HloLiveRange& hlo_live_range);
 
   // Allocates a buffer in preferred memory with whole program lifetime and
   // enables prefetching prefetch_candidate from default memory across program
@@ -365,13 +366,15 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   //
   // REQUIRED: Scoped vmem must be allocated at offset 0 at the time this method
   //           is called.
-  absl::Status AllocateAndScheduleExistingBlockPrefetches();
+  absl::Status AllocateAndScheduleExistingBlockPrefetches(
+      int64_t block_prefetching_starting_offset);
 
   // Create, allocate and schedule new block prefetches.
   //
   // REQUIRED: Scoped vmem must be allocated at offset 0 at the time this method
   //           is called.
-  absl::Status CreateNewBlockPrefetches();
+  absl::Status CreateNewBlockPrefetches(
+      int64_t block_prefetching_starting_offset);
 
   // Creates colocated allocations for values aliased to the new block
   // prefetches and finalizes them.
@@ -401,7 +404,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
 
   // Returns the maximum amount of scoped memory that is reserved at any time in
   // the program.
-  int64_t MaxScopedMemoryOffset();
+  int64_t MaxScopedMemorySize();
 
   // Finds and returns the earliest block prefetch start time subject to the
   // following constraints:
@@ -469,6 +472,11 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
     MemorySpace memory_space;
     int64_t time;
     AliasedOffset* offset = nullptr;
+    // The source of the required memory assignment. Required memory assignments
+    // are created for various reasons, this field is used to identify the
+    // reason for the required memory assignment. It improves logging and helps
+    // debugging.
+    std::string required_assignment_source;
 
     bool equals_ignoring_time(const RequiredMemoryAssignment& other) const {
       return memory_space == other.memory_space && offset == other.offset;
@@ -698,9 +706,11 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // Allocates buffers for instructions that need reserved scoped allocations in
   // the alternate memory space.
   void AllocateReservedScopedAllocations();
+
+  // Creates a ScopedAllocation for the given instruction.
   void AllocateScopedAllocation(HloInstruction* instruction,
-                                bool is_post_module, int64_t size,
-                                int64_t time);
+                                bool is_post_module, int64_t size, int64_t time,
+                                std::vector<AllocationBlock*>& colocations);
 
   // Returns the AliasedOffset object associated with the allocation.
   AliasedOffset* GetAliasedOffset(const Allocation& allocation);
@@ -935,24 +945,29 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // Propagates aliased required assignment for a given position.
   void AddAliasedRequiredAssignment(const HloInstruction* instruction,
                                     ShapeIndex index,
-                                    const Allocation* aliased_allocation);
+                                    const Allocation* aliased_allocation,
+                                    std::string required_assignment_source);
 
   // This sets a required assignment. CHECK fails if there is a conflicting
   // required assignment at the same time.
   void AddRequiredAssignment(const HloValue* value,
                              const HloInstruction* instruction,
                              MemorySpace memory_space, int64_t time,
+                             std::string required_assignment_source,
                              AliasedOffset* offset = nullptr,
                              bool add_to_pending = true);
   void AddRequiredAssignment(const HloInstruction* instruction,
                              ShapeIndex index, MemorySpace memory_space,
+                             std::string required_assignment_source,
                              AliasedOffset* offset = nullptr,
                              bool add_to_pending = true);
   void AddRequiredAssignment(const HloPosition& position,
                              MemorySpace memory_space,
+                             std::string required_assignment_source,
                              AliasedOffset* offset = nullptr,
                              bool add_to_pending = true);
   void AddRequiredAssignment(const HloUse& use, MemorySpace memory_space,
+                             std::string required_assignment_source,
                              AliasedOffset* offset = nullptr,
                              bool add_to_pending = true);
 
@@ -1234,6 +1249,14 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   bool IsPositionColoredInDefaultMemoryAtTime(const HloPosition& position,
                                               int64_t time) const;
 
+  // Reserves a chunk in alternate memory of size MaxScopedMemorySize() for
+  // the entire program duration for scoped memory allocations.
+  int64_t ReserveAlternateMemoryForScopedMemoryAllocations();
+
+  // Frees the alternate memory reserved for scoped memory allocations.
+  void FreeAlternateMemoryForScopedMemoryAllocations(
+      int64_t max_scoped_memory_size);
+
   HloModule* module_ = nullptr;
   AllocationSequence* allocations_;
   // Edge time indices store start and end times allocations in alternate
@@ -1241,6 +1264,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   absl::flat_hash_set<int64_t> edge_time_indices_;
   const Options& options_;
   const HloAliasAnalysis& alias_analysis_;
+  const AliasInfo* alias_info_;
   const HloLiveRange& hlo_live_range_;
   std::unique_ptr<CallGraph> call_graph_;
   // We use a interval tree to keep track of the number of outstanding
@@ -1339,7 +1363,10 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
       default_memory_coloring_requirements_;
 
   // Set of HloUses that are in the default memory.
-  absl::flat_hash_set<HloUse> uses_in_default_memory_;
+  absl::flat_hash_set<HloUse> uses_in_default_memory_set_;
+  // Vector to preserve insertion order for deterministic window prefetching
+  // results.
+  std::vector<HloUse> uses_in_default_memory_;
 };
 
 }  // namespace memory_space_assignment

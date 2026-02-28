@@ -25,22 +25,26 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 
 namespace xla::gpu {
 namespace {
 using tsl::proto_testing::EqualsProto;
-using tsl::testing::IsOkAndHolds;
 
 TEST(CuDnnThunkTest, TestSerializationDeserialization) {
   CudnnThunkProto cudnn_thunk_proto;
   ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
       R"pb(
         fingerprint: "fingerprint"
-        args { offset: 123 size: 456 }
-        args { offset: 789 size: 1011 }
+        args {
+          slice { offset: 123 size: 456 }
+          shape { element_type: U8 }
+        }
+        args {
+          slice { offset: 789 size: 1011 }
+          shape { element_type: U8 }
+        }
         output_args: false
         output_args: true
         sdpa_dropout_seed: 123456789

@@ -106,7 +106,7 @@ cc_library(
 )
 
 exhaustive_xla_test(
-    name = "exhaustive_unary_test",
+    name = "exhaustive_unary",
     timeout = "long",
     srcs = [
         "exhaustive_unary_test_definitions.h",
@@ -144,7 +144,6 @@ exhaustive_xla_test(
         "optonly",
         # This is a big test that we skip for capacity reasons in OSS testing.
         "no_oss",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":exhaustive_op_test_utils",
@@ -164,7 +163,7 @@ exhaustive_xla_test(
 )
 
 xla_test(
-    name = "exhaustive_unary_complex_test",
+    name = "exhaustive_unary_complex",
     timeout = "long",
     srcs = [
         "exhaustive_unary_complex_test.cc",
@@ -173,9 +172,13 @@ xla_test(
     # own synchronization. This can lead to TSAN false positives that are hard
     # to track down.
     backend_tags = {
-        gpu: ["notsan"]
-        for gpu in GPU_BACKENDS
-        if gpu != "nvgpu_any" and gpu != "amdgpu_any"
+        "h100": [
+            "full",
+            "notsan",
+        ],
+        "gpu": [
+            "notsan",
+        ],
     },
     backends = ["cpu"] + [
         gpu
@@ -187,7 +190,6 @@ xla_test(
         "optonly",
         # This is a big test that we skip for capacity reasons in OSS testing.
         "no_oss",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":exhaustive_op_test_utils",
@@ -213,7 +215,7 @@ cc_library(
 )
 
 exhaustive_xla_test(
-    name = "exhaustive_binary_test",
+    name = "exhaustive_binary",
     timeout = "long",
     srcs = [
         "exhaustive_binary_test_definitions.h",
@@ -253,7 +255,6 @@ exhaustive_xla_test(
         "optonly",
         # This is a big test that we skip for capacity reasons in OSS testing.
         "no_oss",
-        "test_migrated_to_hlo_runner_pjrt",
     ],
     deps = [
         ":exhaustive_binary_test_textual_hdrs",

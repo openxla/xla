@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
@@ -39,12 +40,12 @@ limitations under the License.
 #include "xla/runtime/device_id.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -59,20 +60,12 @@ NvshmemSendThunk::NvshmemSendThunk(
       config_(GetP2PConfigForSendRecv(instr, instr->operand(0)->shape(),
                                       replica_count, partition_count)),
       buffer_(buffer),
-      execution_counters_(config_.validation_kind ==
-                                  P2PConfig::ValidationKind::kConditional
-                              ? std::make_unique<ExecutionCounters>()
-                              : nullptr),
       hlo_name_(instr->name()),
       buffer_addresses_(std::move(buffer_addresses)) {}
 
 absl::Status NvshmemSendThunk::Initialize(const InitializeParams& params) {
   VLOG(3) << "Initializing NvshmemSendThunk for: " << hlo_name_;
   TF_RETURN_IF_ERROR(NvshmemCollectiveThunk::Initialize(params));
-  if (execution_counters_) {
-    TF_RETURN_IF_ERROR(execution_counters_->Initialize(
-        params.executor, params.collective_params->run_id));
-  }
   return absl::OkStatus();
 }
 
@@ -80,7 +73,7 @@ absl::Status NvshmemSendThunk::RunNvshmemCollective(const ExecuteParams& params,
                                                     se::Stream& stream) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(params, {buffer_},
+      ConvertToDeviceBuffers(params.buffer_allocations, {buffer_},
                              config_.config.operand_element_type));
   TF_RET_CHECK(device_buffers.size() == 1) << "Expected one buffer pair.";
 
@@ -120,8 +113,8 @@ absl::Status NvshmemSendThunk::RunNvshmemCollective(const ExecuteParams& params,
   if (recv_buffer_status.ok()) {
     void* recv_buffer_ptr = recv_buffer_status.value();
     VLOG(3) << "Using existing receive buffer for send: " << recv_buffer_ptr;
-    buffer.destination_buffer =
-        se::DeviceMemoryBase(recv_buffer_ptr, buffer.destination_buffer.size());
+    buffer.destination_buffer = se::DeviceAddressBase(
+        recv_buffer_ptr, buffer.destination_buffer.size());
   } else {
     VLOG(3) << "No receive buffer found";
   }
@@ -129,31 +122,6 @@ absl::Status NvshmemSendThunk::RunNvshmemCollective(const ExecuteParams& params,
   // Only proceed with Send operation if we have a target
   if (!target_id) {
     VLOG(3) << "No target ID found, skipping Send operation";
-    return absl::OkStatus();
-  }
-
-  // Determine if we should run the Send operation
-  bool should_run =
-      config_.validation_kind != P2PConfig::ValidationKind::kInvalid;
-  if (config_.validation_kind == P2PConfig::ValidationKind::kConditional) {
-    se::StreamExecutor* executor = params.stream->parent();
-    TF_ASSIGN_OR_RETURN(int64_t* counter,
-                        execution_counters_->GetCounter(
-                            executor, params.collective_params->run_id));
-    auto it = config_.source_target_to_bounds.find(
-        std::make_pair(current_id, *source_target.target));
-    if (it == config_.source_target_to_bounds.end()) {
-      return absl::InternalError("Missing bounds for conditional Send");
-    }
-    if (*counter < it->second.first || *counter > it->second.second) {
-      should_run = false;
-    }
-    VLOG(3) << "RunNvshmemCollective counter " << *counter << " " << should_run;
-    ++(*counter);
-  }
-
-  if (!should_run) {
-    VLOG(3) << "Skipping Send operation";
     return absl::OkStatus();
   }
 

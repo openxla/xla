@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 
+#include <cstdlib>
+
 #ifdef _MSC_VER
 #include <math.h>
 #endif  // _MSC_VER
@@ -83,9 +85,18 @@ static std::optional<llvm::orc::ExecutorSymbolDef> ResolveBuiltinSymbol(
 //===----------------------------------------------------------------------===//
 
 #if defined(PLATFORM_WINDOWS)
-// This function is used by compiler-generated code on windows, but it's not
-// declared anywhere. The signature does not matter, we just need the address.
-extern "C" void __chkstk(size_t);
+#ifdef __MINGW32__
+#if defined(__i386__)
+#undef _alloca
+extern "C" void _alloca(void);
+#elif defined(__x86_64__)
+extern "C" void ___chkstk_ms(void);
+#else
+extern "C" void __chkstk(void);
+#endif
+#else
+extern "C" void __chkstk(void);
+#endif
 #endif
 
 extern "C" {
@@ -148,6 +159,8 @@ static Registry CreateRegistry() {
       SymbolDef(static_cast<void* (*)(void*, const void*, size_t)>(memmove));
   registry["memset"] =
       SymbolDef(static_cast<void* (*)(void*, int, size_t)>(memset));
+  registry["malloc"] = SymbolDef(static_cast<void* (*)(size_t)>(malloc));
+  registry["free"] = SymbolDef(static_cast<void (*)(void*)>(free));
 
   registry["__gnu_f2h_ieee"] = SymbolDef(__gnu_f2h_ieee);
   registry["__gnu_h2f_ieee"] = SymbolDef(__gnu_h2f_ieee);
@@ -236,7 +249,19 @@ static Registry CreateRegistry() {
 #endif
 
 #if defined(PLATFORM_WINDOWS)
+
+#ifdef __MINGW32__
+#if defined(__i386__)
+  registry["__chkstk"] = SymbolDef(_alloca);
+#elif defined(__x86_64__)
+  registry["__chkstk"] = SymbolDef(___chkstk_ms);
+#else
   registry["__chkstk"] = SymbolDef(__chkstk);
+#endif
+#else
+  registry["__chkstk"] = SymbolDef(__chkstk);
+#endif
+
 #endif
 
 #ifdef MEMORY_SANITIZER

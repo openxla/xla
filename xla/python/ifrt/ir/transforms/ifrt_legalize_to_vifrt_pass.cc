@@ -113,7 +113,13 @@ mlir::Attribute convertGeneric(mlir::Attribute ifrt_attr,
     return VifrtDevicesV1Attr::get(attr.getContext(), attr.getIds());
   }
   if (auto attr = llvm::dyn_cast<IfrtShardingParamAttr>(ifrt_attr)) {
-    return VifrtShardingParamV1Attr::get(attr.getContext(), attr.getSharding());
+    // TODO(b/486973006): Always convert to V2 after compatibility window
+    // expires.
+    if (attr.getSharding().unreduced_axes().empty()) {
+      return VifrtShardingParamV1Attr::get(attr.getContext(),
+                                           attr.getSharding());
+    }
+    return VifrtShardingParamV2Attr::get(attr.getContext(), attr.getSharding());
   }
   if (auto attr = llvm::dyn_cast<IfrtUnspecifiedShardingAttr>(ifrt_attr)) {
     return VifrtUnspecifiedShardingV1Attr::get(attr.getContext());
@@ -396,8 +402,8 @@ class IfrtToVifrtOpConverter : public mlir::OpConversionPattern<IfrtOpTy> {
     mlir::ValueRange vifrt_operands = adaptor.getOperands();
 
     // Convert the IFRT op to a VIFRT equivalent op.
-    IfrtToVifrtOp<IfrtOpTy> vifrt_op = rewriter.create<IfrtToVifrtOp<IfrtOpTy>>(
-        ifrt_op.getLoc(), vifrt_types, vifrt_operands, vifrt_attrs);
+    IfrtToVifrtOp<IfrtOpTy> vifrt_op = IfrtToVifrtOp<IfrtOpTy>::create(
+        rewriter, ifrt_op.getLoc(), vifrt_types, vifrt_operands, vifrt_attrs);
 
     // Convert the IFRT region types to VIFRT region types.
     for (auto [ifrt_region, vifrt_region] :

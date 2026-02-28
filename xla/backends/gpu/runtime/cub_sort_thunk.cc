@@ -35,12 +35,17 @@ limitations under the License.
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/call_frame.h"
-#include "xla/ffi/ffi_api.h"
+#include "xla/ffi/ffi.h"
+#include "xla/ffi/ffi_registry.h"
+#include "xla/ffi/invoke.h"
 #include "xla/primitive_util.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/service/shaped_slice.h"
+#include "xla/shape_util.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -59,12 +64,12 @@ uint64_t GetOffsetsSize(int64_t batch_size) {
 }
 
 // Copies segment offsets to the device memory.
-absl::Status CopyOffsets(se::Stream* stream, se::DeviceMemoryBase scratch,
+absl::Status CopyOffsets(se::Stream* stream, se::DeviceAddressBase scratch,
                          int64_t batch_size, int64_t segment_size) {
   uint64_t offsets_size = GetOffsetsSize(batch_size);
   char* offsets_buffer =
       static_cast<char*>(scratch.opaque()) + scratch.size() - offsets_size;
-  se::DeviceMemoryBase d_offsets(offsets_buffer, offsets_size);
+  se::DeviceAddressBase d_offsets(offsets_buffer, offsets_size);
   std::vector<int> h_offsets(batch_size + 1);
   for (int i = 0; i <= batch_size; ++i) {
     h_offsets[i] = i * segment_size;
@@ -79,11 +84,11 @@ class CubSortKeysImpl : public CubSortRunnerInterface {
                            PrimitiveType type)
       : sort_keys_fn_(sort_keys_fn), type_(type) {}
 
-  absl::Status Run(se::DeviceMemoryBase input_keys,
-                   se::DeviceMemoryBase input_values,
-                   se::DeviceMemoryBase output_keys,
-                   se::DeviceMemoryBase output_values,
-                   se::DeviceMemoryBase scratch, bool descending,
+  absl::Status Run(se::DeviceAddressBase input_keys,
+                   se::DeviceAddressBase input_values,
+                   se::DeviceAddressBase output_keys,
+                   se::DeviceAddressBase output_values,
+                   se::DeviceAddressBase scratch, bool descending,
                    int64_t batch_size, se::Stream* stream) override;
   absl::Status Run(const Thunk::ExecuteParams& params,
                    const CubSortThunk* thunk) override;
@@ -95,12 +100,13 @@ class CubSortKeysImpl : public CubSortRunnerInterface {
   PrimitiveType type_;
 };
 
-absl::Status CubSortKeysImpl::Run(se::DeviceMemoryBase input_keys,
-                                  se::DeviceMemoryBase input_values,
-                                  se::DeviceMemoryBase output_keys,
-                                  se::DeviceMemoryBase output_values,
-                                  se::DeviceMemoryBase scratch, bool descending,
-                                  int64_t batch_size, se::Stream* stream) {
+absl::Status CubSortKeysImpl::Run(se::DeviceAddressBase input_keys,
+                                  se::DeviceAddressBase input_values,
+                                  se::DeviceAddressBase output_keys,
+                                  se::DeviceAddressBase output_values,
+                                  se::DeviceAddressBase scratch,
+                                  bool descending, int64_t batch_size,
+                                  se::Stream* stream) {
   size_t temp_bytes = scratch.size();
   size_t num_items = input_keys.size() * 8 / primitive_util::BitWidth(type_);
   CHECK(input_values.is_null());
@@ -126,19 +132,19 @@ absl::Status CubSortKeysImpl::Run(se::DeviceMemoryBase input_keys,
   builder.AddAttributes(attrs.Build());
   ffi::CallFrame call_frame = builder.Build();
 
-  ffi::CallOptions options{};
-  options.backend_options = ffi::CallOptions::GpuOptions{stream, nullptr};
-  return ffi::Call(sort_keys_fn_.bundle.execute, call_frame, options,
-                   XLA_FFI_ExecutionStage_EXECUTE);
+  ffi::InvokeContext context{};
+  context.backend_context = ffi::InvokeContext::GpuContext{stream, nullptr};
+  return ffi::Invoke(ffi::GetXlaFfiApi(), sort_keys_fn_.bundle.execute,
+                     call_frame, context, XLA_FFI_ExecutionStage_EXECUTE);
 }
 
 absl::Status CubSortKeysImpl::Run(const Thunk::ExecuteParams& params,
                                   const CubSortThunk* thunk) {
   const BufferAllocations& allocs = *params.buffer_allocations;
-  return Run(allocs.GetDeviceAddress(thunk->operand(0)), se::DeviceMemoryBase(),
-             allocs.GetDeviceAddress(thunk->result(0)), se::DeviceMemoryBase(),
-             allocs.GetDeviceAddress(thunk->scratch()), thunk->descending(),
-             thunk->batch_size(), params.stream);
+  return Run(allocs.GetDeviceAddress(thunk->operand(0)),
+             se::DeviceAddressBase(), allocs.GetDeviceAddress(thunk->result(0)),
+             se::DeviceAddressBase(), allocs.GetDeviceAddress(thunk->scratch()),
+             thunk->descending(), thunk->batch_size(), params.stream);
 }
 
 absl::StatusOr<int64_t> CubSortKeysImpl::GetScratchSize(int64_t num_items,
@@ -153,9 +159,9 @@ absl::StatusOr<int64_t> CubSortKeysImpl::GetScratchSize(int64_t num_items,
   builder.AddAttributes(attrs.Build());
   ffi::CallFrame call_frame = builder.Build();
 
-  TF_RETURN_IF_ERROR(ffi::Call(sort_keys_fn_.bundle.initialize, call_frame,
-                               ffi::CallOptions{},
-                               XLA_FFI_ExecutionStage_INITIALIZE));
+  TF_RETURN_IF_ERROR(ffi::Invoke(
+      ffi::GetXlaFfiApi(), sort_keys_fn_.bundle.initialize, call_frame,
+      ffi::InvokeContext{}, XLA_FFI_ExecutionStage_INITIALIZE));
   return temp_bytes;
 }
 
@@ -166,11 +172,11 @@ class CubSortPairsImpl : public CubSortRunnerInterface {
                             PrimitiveType type)
       : sort_pairs_fn_(sort_pairs_fn), type_(type) {}
 
-  absl::Status Run(se::DeviceMemoryBase input_keys,
-                   se::DeviceMemoryBase input_values,
-                   se::DeviceMemoryBase output_keys,
-                   se::DeviceMemoryBase output_values,
-                   se::DeviceMemoryBase scratch, bool descending,
+  absl::Status Run(se::DeviceAddressBase input_keys,
+                   se::DeviceAddressBase input_values,
+                   se::DeviceAddressBase output_keys,
+                   se::DeviceAddressBase output_values,
+                   se::DeviceAddressBase scratch, bool descending,
                    int64_t batch_size, se::Stream* stream) override;
   absl::Status Run(const Thunk::ExecuteParams& params,
                    const CubSortThunk* thunk) override;
@@ -182,11 +188,11 @@ class CubSortPairsImpl : public CubSortRunnerInterface {
   PrimitiveType type_;
 };
 
-absl::Status CubSortPairsImpl::Run(se::DeviceMemoryBase input_keys,
-                                   se::DeviceMemoryBase input_values,
-                                   se::DeviceMemoryBase output_keys,
-                                   se::DeviceMemoryBase output_values,
-                                   se::DeviceMemoryBase scratch,
+absl::Status CubSortPairsImpl::Run(se::DeviceAddressBase input_keys,
+                                   se::DeviceAddressBase input_values,
+                                   se::DeviceAddressBase output_keys,
+                                   se::DeviceAddressBase output_values,
+                                   se::DeviceAddressBase scratch,
                                    bool descending, int64_t batch_size,
                                    se::Stream* stream) {
   size_t temp_bytes = scratch.size();
@@ -216,10 +222,10 @@ absl::Status CubSortPairsImpl::Run(se::DeviceMemoryBase input_keys,
   builder.AddAttributes(attrs.Build());
   ffi::CallFrame call_frame = builder.Build();
 
-  ffi::CallOptions options{};
-  options.backend_options = ffi::CallOptions::GpuOptions{stream, nullptr};
-  return ffi::Call(sort_pairs_fn_.bundle.execute, call_frame, options,
-                   XLA_FFI_ExecutionStage_EXECUTE);
+  ffi::InvokeContext context{};
+  context.backend_context = ffi::InvokeContext::GpuContext{stream, nullptr};
+  return ffi::Invoke(ffi::GetXlaFfiApi(), sort_pairs_fn_.bundle.execute,
+                     call_frame, context, XLA_FFI_ExecutionStage_EXECUTE);
 }
 
 absl::Status CubSortPairsImpl::Run(const Thunk::ExecuteParams& params,
@@ -246,9 +252,9 @@ absl::StatusOr<int64_t> CubSortPairsImpl::GetScratchSize(int64_t num_items,
   builder.AddAttributes(attrs.Build());
   ffi::CallFrame call_frame = builder.Build();
 
-  TF_RETURN_IF_ERROR(ffi::Call(sort_pairs_fn_.bundle.initialize, call_frame,
-                               ffi::CallOptions{},
-                               XLA_FFI_ExecutionStage_INITIALIZE));
+  TF_RETURN_IF_ERROR(ffi::Invoke(
+      ffi::GetXlaFfiApi(), sort_pairs_fn_.bundle.initialize, call_frame,
+      ffi::InvokeContext{}, XLA_FFI_ExecutionStage_INITIALIZE));
   return temp_bytes;
 }
 
@@ -290,12 +296,14 @@ CubSortRunnerInterface::Create(PrimitiveType type,
 }
 
 absl::StatusOr<std::unique_ptr<CubSortThunk>> CubSortThunk::Create(
-    ThunkInfo thunk_info, PrimitiveType type,
-    std::optional<PrimitiveType> value_type,
-    absl::InlinedVector<BufferAllocation::Slice, 2> operands,
-    absl::InlinedVector<BufferAllocation::Slice, 2> results,
+    ThunkInfo thunk_info, absl::InlinedVector<ShapedSlice, 2> operands,
+    absl::InlinedVector<ShapedSlice, 2> results,
     BufferAllocation::Slice scratch, bool descending, int64_t batch_size,
     absl::string_view platform_name) {
+  PrimitiveType type = operands[0].shape.element_type();
+  std::optional<PrimitiveType> value_type =
+      operands.size() == 2 ? std::optional(operands[1].shape.element_type())
+                           : std::nullopt;
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<CubSortRunnerInterface> runner,
       CubSortRunnerInterface::Create(type, value_type, platform_name));
@@ -305,12 +313,14 @@ absl::StatusOr<std::unique_ptr<CubSortThunk>> CubSortThunk::Create(
       std::move(results), scratch, descending, batch_size));
 }
 
-CubSortThunk::CubSortThunk(
-    ThunkInfo thunk_info, std::unique_ptr<CubSortRunnerInterface> runner,
-    PrimitiveType type, std::optional<PrimitiveType> value_type,
-    absl::InlinedVector<BufferAllocation::Slice, 2> operands,
-    absl::InlinedVector<BufferAllocation::Slice, 2> results,
-    BufferAllocation::Slice scratch, bool descending, int64_t batch_size)
+CubSortThunk::CubSortThunk(ThunkInfo thunk_info,
+                           std::unique_ptr<CubSortRunnerInterface> runner,
+                           PrimitiveType type,
+                           std::optional<PrimitiveType> value_type,
+                           absl::InlinedVector<ShapedSlice, 2> operands,
+                           absl::InlinedVector<ShapedSlice, 2> results,
+                           BufferAllocation::Slice scratch, bool descending,
+                           int64_t batch_size)
     : Thunk(Thunk::kCubSort, thunk_info),
       runner_(std::move(runner)),
       operands_(std::move(operands)),
@@ -321,35 +331,44 @@ CubSortThunk::CubSortThunk(
       descending_(descending),
       batch_size_(batch_size) {}
 
+Thunk::BufferUses CubSortThunk::buffer_uses() const {
+  Thunk::BufferUses res;
+  res.reserve(operands_.size() + results_.size() + 1);
+  for (const ShapedSlice& slice : operands_) {
+    res.push_back(BufferUse::Read(slice.slice, slice.shape));
+  }
+  for (const ShapedSlice& slice : results_) {
+    res.push_back(BufferUse::Write(slice.slice, slice.shape));
+  }
+  res.push_back(BufferUse::Scratch(
+      scratch_, ShapeUtil::MakeShape(U8, {scratch_.size()})));
+  return res;
+}
+
 absl::StatusOr<std::unique_ptr<CubSortThunk>> CubSortThunk::FromProto(
     ThunkInfo thunk_info, const CubSortThunkProto& proto,
     absl::Span<const BufferAllocation> buffer_allocations,
     absl::string_view platform_name) {
-  absl::InlinedVector<BufferAllocation::Slice, 2> operands;
-  for (const BufferAllocationSliceProto& slice_proto : proto.operands()) {
+  absl::InlinedVector<ShapedSlice, 2> operands;
+  for (const ShapedSliceProto& slice_proto : proto.operands()) {
     TF_ASSIGN_OR_RETURN(
         operands.emplace_back(),
-        BufferAllocation::Slice::FromProto(slice_proto, buffer_allocations));
+        ShapedSlice::FromProto(slice_proto, buffer_allocations));
   }
 
-  absl::InlinedVector<BufferAllocation::Slice, 2> results;
-  for (const BufferAllocationSliceProto& slice_proto : proto.results()) {
+  absl::InlinedVector<ShapedSlice, 2> results;
+  for (const ShapedSliceProto& slice_proto : proto.results()) {
     TF_ASSIGN_OR_RETURN(
         results.emplace_back(),
-        BufferAllocation::Slice::FromProto(slice_proto, buffer_allocations));
+        ShapedSlice::FromProto(slice_proto, buffer_allocations));
   }
 
   TF_ASSIGN_OR_RETURN(
       BufferAllocation::Slice scratch,
       BufferAllocation::Slice::FromProto(proto.scratch(), buffer_allocations));
 
-  std::optional<PrimitiveType> value_type;
-  if (proto.has_value_type()) {
-    value_type = proto.value_type();
-  }
-
-  return Create(thunk_info, proto.type(), value_type, operands, results,
-                scratch, proto.descending(), proto.batch_size(), platform_name);
+  return Create(thunk_info, operands, results, scratch, proto.descending(),
+                proto.batch_size(), platform_name);
 }
 
 absl::StatusOr<ThunkProto> CubSortThunk::ToProto() const {
@@ -357,14 +376,10 @@ absl::StatusOr<ThunkProto> CubSortThunk::ToProto() const {
   *proto.mutable_thunk_info() = thunk_info().ToProto();
   CubSortThunkProto* cub_sort_proto = proto.mutable_cub_sort_thunk();
 
-  cub_sort_proto->set_type(type_);
-  if (value_type_.has_value()) {
-    cub_sort_proto->set_value_type(*value_type_);
-  }
-  for (const BufferAllocation::Slice& slice : operands_) {
+  for (const ShapedSlice& slice : operands_) {
     TF_ASSIGN_OR_RETURN(*cub_sort_proto->add_operands(), slice.ToProto());
   }
-  for (const BufferAllocation::Slice& slice : results_) {
+  for (const ShapedSlice& slice : results_) {
     TF_ASSIGN_OR_RETURN(*cub_sort_proto->add_results(), slice.ToProto());
   }
   TF_ASSIGN_OR_RETURN(*cub_sort_proto->mutable_scratch(), scratch_.ToProto());

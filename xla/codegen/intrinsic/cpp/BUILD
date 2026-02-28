@@ -1,5 +1,13 @@
-load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_binary", "cc_library")
+load(
+    "//xla/tsl/platform/default:build_config_root.bzl",
+    "if_llvm_aarch32_available",
+    "if_llvm_hexagon_available",
+    "if_llvm_powerpc_available",
+    "if_llvm_system_z_available",
+    "if_llvm_x86_available",
+)
 load(":cc_to_llvm_ir.bzl", "cc_ir_header")
 
 package(
@@ -21,10 +29,50 @@ cc_library(
     srcs = [],
 )
 
+cc_binary(
+    name = "embed_bitcode",
+    srcs = ["embed_bitcode.cc"],
+    defines = if_llvm_aarch32_available(["TF_LLVM_AARCH32_AVAILABLE=1"]) + [
+        "TF_LLVM_AARCH64_AVAILABLE=1",
+    ] + if_llvm_hexagon_available([
+        "TF_LLVM_HEXAGON_AVAILABLE=1",
+    ]) + if_llvm_powerpc_available([
+        "TF_LLVM_POWERPC_AVAILABLE=1",
+    ]) + if_llvm_system_z_available([
+        "TF_LLVM_S390X_AVAILABLE=1",
+    ]) + if_llvm_x86_available([
+        "TF_LLVM_X86_AVAILABLE=1",
+    ]),
+    deps = [
+        "//xla/util:embedded_constant_buffers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:AArch64CodeGen",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:IRReader",
+        "@llvm-project//llvm:Object",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
+    ] + if_llvm_aarch32_available([
+        "@llvm-project//llvm:ARMCodeGen",
+    ]) + if_llvm_hexagon_available([
+        "@llvm-project//llvm:HexagonCodeGen",
+    ]) + if_llvm_powerpc_available([
+        "@llvm-project//llvm:PowerPCCodeGen",
+    ]) + if_llvm_system_z_available([
+        "@llvm-project//llvm:SystemZCodeGen",
+    ]) + if_llvm_x86_available([
+        "@llvm-project//llvm:X86CodeGen",
+    ]),
+)
+
 cc_library(
     name = "tanh",
     srcs = ["tanh.cc"],
     hdrs = ["tanh.h"],
+    copts = [
+        "-Wno-psabi",
+    ],
     deps = [
         ":vector_ops",
     ],
@@ -33,29 +81,14 @@ cc_library(
 cc_library(
     name = "vector_ops",
     hdrs = ["vector_ops.h"],
+    deps = [
+        "@eigen_archive//:eigen3",
+    ],
 )
-
-cpu_features = select({
-    ":is_x86_64": {
-        "avx2": [
-            "-mavx2",
-            "-mno-avx512f",
-        ],
-        "avx512": [
-            "-mavx2",
-            "-mavx512f",
-        ],
-    },
-    ":is_aarch64": {
-        "neon": [],
-    },
-    "//conditions:default": {},
-})
 
 cc_ir_header(
     name = "tanh_ll",
     src = "tanh.cc",
-    cpu_features = cpu_features,
     deps = [
         ":cpp_context_provider",
         ":tanh",
@@ -67,8 +100,12 @@ xla_cc_test(
     name = "tanh_test",
     srcs = ["tanh_test.cc"],
     deps = [
+        ":_cpp_gen_intrinsics",
         ":tanh_ll",
         "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:IRReader",
+        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -76,6 +113,9 @@ cc_library(
     name = "eigen_unary_lib",
     srcs = ["eigen_unary.cc"],
     hdrs = ["eigen_unary.h"],
+    copts = [
+        "-Wno-psabi",
+    ],
     deps = [
         ":vector_ops",
         "@eigen_archive//:eigen3",
@@ -85,33 +125,75 @@ cc_library(
 cc_ir_header(
     name = "eigen_unary_ll",
     src = "eigen_unary.cc",
-    cpu_features = cpu_features,
     deps = [
         ":cpp_context_provider",
         ":eigen_unary_lib",
         ":vector_ops",
+        "@eigen_archive//:eigen3",
     ],
 )
 
 xla_cc_test(
     name = "eigen_unary_test",
     srcs = ["eigen_unary_test.cc"],
+    copts = [
+        "-Wno-psabi",
+    ],
+    deps = [
+        ":_cpp_gen_intrinsics",
+        ":eigen_unary_lib",
+        ":eigen_unary_ll",
+        ":vector_ops",
+        "//xla/codegen/intrinsic:test_matchers",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:IRReader",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_binary(
+    name = "dump_llvm_ir",
+    srcs = ["dump_llvm_ir.cc"],
+    deps = [
+        ":_cpp_gen_intrinsics",
+        ":eigen_unary_ll",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:IRReader",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
+    name = "_cpp_gen_intrinsics",
+    srcs = ["cpp_gen_intrinsics.cc"],
+    hdrs = ["cpp_gen_intrinsics.h"],
     deps = [
         ":eigen_unary_ll",
-        "@com_google_googletest//:gtest_main",
+        "//xla/codegen/intrinsic",
+        "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:IRReader",
+        "@llvm-project//llvm:Linker",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:ir_headers",
     ],
 )
 
-config_setting(
-    name = "is_x86_64",
-    constraint_values = [
-        "@platforms//cpu:x86_64",
-    ],
-)
-
-config_setting(
-    name = "is_aarch64",
-    constraint_values = [
-        "@platforms//cpu:aarch64",
+cc_library(
+    name = "_intrinsic_declarations",
+    hdrs = ["intrinsic_declarations.h"],
+    deps = [
+        ":_cpp_gen_intrinsics",
+        "//xla:xla_data_proto_cc",
+        "//xla/codegen/intrinsic",
+        "//xla/codegen/intrinsic:type",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:ir_headers",
     ],
 )

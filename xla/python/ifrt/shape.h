@@ -19,12 +19,14 @@ limitations under the License.
 #include <stdbool.h>
 
 #include <cstdint>
+#include <memory>
 #include <ostream>
 #include <string>
 #include <utility>
 #include <variant>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/nullability.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/types/span.h"
@@ -46,7 +48,8 @@ class Shape {
   using Dimensions = absl::InlinedVector<int64_t, kInlineDimensionSize>;
 
   explicit Shape(absl::Span<const int64_t> dims)
-      : dims_(Dimensions(dims.begin(), dims.end())) {}
+      : dims_(std::make_shared<Dimensions>(dims.begin(), dims.end())) {}
+
   Shape(const Shape&) = default;
   Shape(Shape&&) = default;
   Shape& operator=(const Shape&) = default;
@@ -55,14 +58,25 @@ class Shape {
   // Constructs `Shape` from `ShapeProto`.
   static absl::StatusOr<Shape> FromProto(const ShapeProto& proto);
 
-  // Returns a `ShapeProto` representation.
-  ShapeProto ToProto(
+  // Converts the shape to a protobuf.
+  void ToProto(
+      ShapeProto& proto,
       SerDesVersion version = SerDesDefaultVersionAccessor::Get()) const;
 
-  absl::Span<const int64_t> dims() const { return dims_; }
+  // Returns a `ShapeProto` representation.
+  ShapeProto ToProto(
+      SerDesVersion version = SerDesDefaultVersionAccessor::Get()) const {
+    ShapeProto proto;
+    ToProto(proto, version);
+    return proto;
+  }
 
-  bool operator==(const Shape& other) const { return dims_ == other.dims_; }
-  bool operator!=(const Shape& other) const { return dims_ != other.dims_; }
+  absl::Span<const int64_t> dims() const { return *dims_; }
+
+  bool operator==(const Shape& other) const {
+    return dims_ == other.dims_ || *dims_ == *other.dims_;
+  }
+  bool operator!=(const Shape& other) const { return !(*this == other); }
 
   template <typename H>
   friend H AbslHashValue(H h, const Shape& shape);
@@ -79,12 +93,12 @@ class Shape {
   }
 
  private:
-  Dimensions dims_;
+  absl_nonnull std::shared_ptr<const Dimensions> dims_;
 };
 
 template <typename H>
 H AbslHashValue(H h, const Shape& shape) {
-  return H::combine(std::move(h), shape.dims_);
+  return H::combine(std::move(h), *shape.dims_);
 }
 
 // A tag for `Shape` to indicate bounded dynamism. Should be used together with
@@ -129,9 +143,19 @@ class BoundedDynamicShapeTag {
   static absl::StatusOr<BoundedDynamicShapeTag> FromProto(
       const BoundedDynamicShapeTagProto& proto);
 
+  // Serializes the tag to `proto`. The caller must make sure that `proto` is
+  // empty.
+  void ToProto(
+      BoundedDynamicShapeTagProto& proto,
+      SerDesVersion version = SerDesDefaultVersionAccessor::Get()) const;
+
   // Returns a `BoundedDynamicShapeTagProto` representation.
   BoundedDynamicShapeTagProto ToProto(
-      SerDesVersion version = SerDesDefaultVersionAccessor::Get()) const;
+      SerDesVersion version = SerDesDefaultVersionAccessor::Get()) const {
+    BoundedDynamicShapeTagProto proto;
+    ToProto(proto, version);
+    return proto;
+  }
 
  private:
   // This vector is the same size as `Shape`'s 'dims()' and indicates whether
@@ -181,9 +205,19 @@ class DynamicShape {
   // Constructs `DynamicShape` from `DynamicShapeProto`.
   static absl::StatusOr<DynamicShape> FromProto(const DynamicShapeProto& proto);
 
+  // Serializes the shape to `proto`. The caller must make sure that `proto` is
+  // empty.
+  void ToProto(
+      DynamicShapeProto& proto,
+      SerDesVersion version = SerDesDefaultVersionAccessor::Get()) const;
+
   // Returns a `DynamicShapeProto` representation.
   DynamicShapeProto ToProto(
-      SerDesVersion version = SerDesDefaultVersionAccessor::Get()) const;
+      SerDesVersion version = SerDesDefaultVersionAccessor::Get()) const {
+    DynamicShapeProto proto;
+    ToProto(proto, version);
+    return proto;
+  }
 
   std::string DebugString() const;
 

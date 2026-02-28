@@ -21,9 +21,9 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
-#include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/compiler.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -47,9 +47,9 @@ class CublasLtBackend : public GpuCodegenBackend {
   explicit CublasLtBackend(stream_executor::StreamExecutor* stream_executor,
                            const DebugOptions* debug_options,
                            Compiler* compiler,
-                           const Compiler::TargetConfig* target_config)
-      : GpuCodegenBackend("CublasLt", debug_options, compiler, target_config,
-                          stream_executor) {}
+                           const Compiler::GpuTargetConfig* target_config)
+      : GpuCodegenBackend(autotuner::Backend::CUBLASLT, debug_options, compiler,
+                          target_config, stream_executor) {}
 
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
   GetSupportedConfigs(const HloInstruction& instr) override;

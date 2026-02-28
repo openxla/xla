@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 
 #include "absl/strings/string_view.h"
@@ -33,7 +34,6 @@ limitations under the License.
 
 namespace xla {
 
-class SymbolicExprContext;
 class SymbolicExprStorage;
 
 typedef int64_t VariableID;
@@ -63,29 +63,33 @@ class SymbolicExpr {
   bool operator!=(SymbolicExpr other) const { return !(*this == other); }
   bool operator<(const SymbolicExpr& other) const;
 
-  SymbolicExprContext* GetContext() const;
+  mlir::MLIRContext* GetContext() const;
   SymbolicExprType GetType() const;
   bool IsBinaryOp() const;
   SymbolicExpr GetLHS() const;
   SymbolicExpr GetRHS() const;
   int64_t GetValue() const;
   // If num_dims is provided, then the first num_dims variables are dimensions,
-  // and the rest are symbols.
-  std::string ToString(int64_t num_dims = -1) const;
+  // and the rest are symbols. If variable names are provided, then they are
+  // used instead of numbers.
+  std::string ToString(std::optional<int64_t> num_dims = std::nullopt) const;
+  std::string ToString(absl::Span<const std::string> var_names) const;
+  std::string ToString(absl::Span<const std::string> dim_names,
+                       absl::Span<const std::string> sym_names) const;
   int64_t Evaluate(absl::Span<const int64_t> variable_values) const;
   SymbolicExpr ReplaceVariables(
       absl::Span<const SymbolicExpr> substitutions) const;
-  // TODO(karupayun): These methods are needed for IndexingMap, but dimensions
-  // and symbols are SymbolicMap specific. We should remove them once we have a
-  // better way to integrate SymbolicExpr with IndexingMap. It is assuming that
-  // dimensions are the first (0...num_dims-1) variables and symbols are the
-  // rest.
+  // TODO: b/459357586 - These methods are needed for IndexingMap, but
+  // dimensions and symbols are SymbolicMap specific. We should remove them once
+  // we have a better way to integrate SymbolicExpr with IndexingMap. It is
+  // assuming that dimensions are the first (0...num_dims-1) variables and
+  // symbols are the rest.
+  SymbolicExpr ReplaceDims(absl::Span<const SymbolicExpr> replacements) const;
   SymbolicExpr ReplaceSymbols(absl::Span<const SymbolicExpr> replacements,
                               int64_t num_dims) const;
   SymbolicExpr ReplaceDimsAndSymbols(
       absl::Span<const SymbolicExpr> dim_replacements,
-      absl::Span<const SymbolicExpr> symbol_replacements,
-      int64_t num_dims) const;
+      absl::Span<const SymbolicExpr> symbol_replacements) const;
 
   SymbolicExpr Canonicalize() const;
 
@@ -101,9 +105,15 @@ class SymbolicExpr {
 
   void GetUsedVariables(llvm::DenseSet<VariableID>& used_vars) const;
 
+  // Returns true if this expression depends on the given variable.
+  bool IsFunctionOfVariable(VariableID var_id) const;
+
   // Traverses the expression tree and calls the callback for each
   // subexpression in postorder.
   void Walk(const std::function<void(SymbolicExpr)>& callback) const;
+
+  // Return true if the expression is a multiple of `factor`.
+  bool IsMultipleOf(int64_t factor) const;
 
   SymbolicExpr operator+(int64_t v) const;
   SymbolicExpr operator+(SymbolicExpr other) const;
@@ -144,6 +154,9 @@ class SymbolicExpr {
   const ImplType* impl_ = nullptr;
 };
 
+SymbolicExpr operator+(int64_t lhs, SymbolicExpr rhs);
+SymbolicExpr operator*(int64_t lhs, SymbolicExpr rhs);
+
 inline ::llvm::hash_code hash_value(SymbolicExpr expr) {
   return ::llvm::hash_value(expr.GetImpl());
 }
@@ -153,42 +166,21 @@ H AbslHashValue(H h, const SymbolicExpr& expr) {
   return H::combine(std::move(h), hash_value(expr));
 }
 
-class SymbolicExprContext {
- public:
-  explicit SymbolicExprContext(mlir::MLIRContext* mlir_context);
-  SymbolicExpr Parse(absl::string_view expr_str);
-  SymbolicExpr CreateConstant(int64_t value);
-  SymbolicExpr CreateVariable(int64_t var_id);
-  SymbolicExpr CreateBinaryOp(SymbolicExprType type, SymbolicExpr lhs,
-                              SymbolicExpr rhs);
+// This method should be called once permlir::MLIRContext to register the
+// SymbolicExprStorage type with themlir::MLIRContext's uniquifier. It should be
+// called before any SymbolicExprs are created.
+void RegisterSymbolicExprStorage(mlir::MLIRContext* mlir_context);
 
-  mlir::MLIRContext* GetMLIRContext() const { return mlir_context_; }
-
- private:
-  SymbolicExpr GetOrCreate(SymbolicExprType type, int64_t value,
-                           SymbolicExpr lhs, SymbolicExpr rhs);
-  // TODO(b/446856305): MLIRContext is only used here temporarily while we have
-  // AffineMap <-> SymbolicMap convertors. In the future, we only will need a
-  // StorageUniquer pointer.
-  mlir::MLIRContext* mlir_context_;
-};
-
-// Free function to create a constant SymbolicExpr.
-inline SymbolicExpr GetSymbolicConstantExpr(int64_t constant,
-                                            SymbolicExprContext* context) {
-  return context->CreateConstant(constant);
-}
-
-// Free function to create a vector of constant SymbolicExprs.
-inline llvm::SmallVector<SymbolicExpr> GetSymbolicConstantExprs(
-    llvm::ArrayRef<int64_t> constants, SymbolicExprContext* context) {
-  llvm::SmallVector<SymbolicExpr> exprs;
-  exprs.reserve(constants.size());
-  for (int64_t constant : constants) {
-    exprs.push_back(GetSymbolicConstantExpr(constant, context));
-  }
-  return exprs;
-}
+// Helpers to create SymbolicExprs.
+SymbolicExpr CreateSymbolicConstant(int64_t value,
+                                    mlir::MLIRContext* mlir_context);
+SymbolicExpr CreateSymbolicVariable(int64_t var_id,
+                                    mlir::MLIRContext* mlir_context);
+SymbolicExpr CreateSymbolicBinaryOp(SymbolicExprType type, SymbolicExpr lhs,
+                                    SymbolicExpr rhs,
+                                    mlir::MLIRContext* mlir_context);
+llvm::SmallVector<SymbolicExpr> CreateSymbolicConstantExprs(
+    llvm::ArrayRef<int64_t> constants, mlir::MLIRContext* mlir_context);
 
 }  // namespace xla
 

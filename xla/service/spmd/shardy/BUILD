@@ -73,9 +73,12 @@ cc_library(
     deps = [
         ":constants",
         "//xla/hlo/ir:hlo_sharding",
+        "//xla/hlo/ir:mesh_and_axis",
+        "//xla/hlo/ir:named_sharding",
         "//xla/hlo/translate/hlo_to_mhlo:hlo_utils",
         "//xla/mlir_hlo:hlo_dialect_registration",
         "//xla/service/spmd/shardy/extensions:mhlo_extensions",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -159,7 +162,7 @@ xla_cc_binary(
         "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MlirOptLib",
-        "@llvm-project//mlir:RegisterAllPasses",
+        "@llvm-project//mlir:RegisterAllPasses",  # build_cleaner: keep
         "@shardy//shardy/dialect/sdy/ir:register",
         "@shardy//shardy/dialect/sdy/transforms:passes",
     ],

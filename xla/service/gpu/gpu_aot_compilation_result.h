@@ -23,13 +23,20 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "riegeli/bytes/string_writer.h"
+#include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/service/compiler.h"
+#include "xla/service/compiled_module.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_executable.pb.h"
-#include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/kernel_symbol_registry.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util/split_proto/split_gpu_executable_writer.h"
 
 namespace xla::gpu {
 
@@ -39,38 +46,48 @@ namespace xla::gpu {
 // Unlike `LegacyGpuAotCompilationResult`, this result contains the entire
 // optimized executable, including the Thunks, as opposed to just the optimized
 // HLO.
-class GpuAotCompilationResult : public AotCompilationResult {
+class GpuAotCompilationResult : public CompiledModule {
  public:
-  static absl::StatusOr<std::unique_ptr<GpuAotCompilationResult>> Create(
+  static absl::StatusOr<std::unique_ptr<GpuAotCompilationResult>> FromProto(
       GpuExecutableProto executable) {
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<HloModule> module,
-        HloModule::CreateFromProtoWithConfig(executable.hlo_module()));
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                        HloModule::CreateFromProtoWithConfig(
+                            executable.hlo_module_with_config()));
 
     return absl::WrapUnique(
         new GpuAotCompilationResult(std::move(executable), std::move(module)));
   }
 
   absl::StatusOr<std::string> SerializeAsString() const final {
-    std::string serialized = executable_.SerializeAsString();
-    if (serialized.empty()) {
-      return absl::InternalError("Failed to serialize GpuExecutableProto.");
-    }
+    std::string serialized;
+    TF_RETURN_IF_ERROR(WriteSplitGpuExecutable(
+        executable_, std::make_unique<riegeli::StringWriter<>>(&serialized)));
     return serialized;
   }
 
+  absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable() && final {
+    return absl::UnimplementedError(
+        "LoadExecutable without parameters not supported");
+  }
+
   absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable(
-      Compiler* compiler, const se::StreamExecutor* stream_exec) &&
+      se::Platform::Id platform_id,
+      const se::DeviceDescription& device_description) &&
       final {
-    return GpuExecutable::FromProto(executable_,
-                                    stream_exec->GetDeviceDescription(),
-                                    stream_exec->GetPlatform()->Name());
+    const auto symbol_resolver = [&](absl::string_view symbol_name) {
+      stream_executor::KernelSymbolRegistry& registry =
+          stream_executor::KernelSymbolRegistry::GetGlobalInstance();
+      return registry.FindSymbol(symbol_name, platform_id);
+    };
+    return GpuExecutable::FromProto(
+        executable_, device_description, platform_id->ToName(),
+        GetDebugOptionsFromFlags(), symbol_resolver);
   }
 
   const HloModule* optimized_module() const final { return hlo_module_.get(); };
 
-  std::unique_ptr<HloModule> consume_optimized_module() final {
-    return std::move(hlo_module_);
+  std::shared_ptr<HloModule> shared_optimized_module() final {
+    return hlo_module_;
   };
 
  private:
@@ -80,7 +97,7 @@ class GpuAotCompilationResult : public AotCompilationResult {
         hlo_module_(std::move(hlo_module)) {}
 
   GpuExecutableProto executable_;
-  std::unique_ptr<HloModule> hlo_module_;
+  std::shared_ptr<HloModule> hlo_module_;
 };
 
 }  // namespace xla::gpu

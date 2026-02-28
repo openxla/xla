@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/types/span.h"
 #include "xla/future.h"
 #include "xla/literal.h"
 #include "xla/pjrt/async_work_runner.h"
@@ -176,6 +177,8 @@ class CommonPjRtRawBuffer : public PjRtRawBuffer {
     return absl::UnimplementedError(
         "GetRawBufferAsyncValue is not implemented.");
   }
+
+  virtual bool is_mutable() const { return true; }
 };
 
 class RegisterRawBufferFactory {

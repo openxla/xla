@@ -46,7 +46,6 @@ exports_files(
         "env.cc",
         "ram_file_system.h",
         "grpc_credentials.h",
-        "recordphase.h",
         "resource.h",
         "rocm_rocdl_path.h",
         "resource_loader.h",
@@ -133,7 +132,6 @@ filegroup(
         "file_system_helper.h",
         "prefetch.h",
         "ram_file_system.h",
-        "recordphase.h",
         "resource.h",
         "stack_frame.h",
         "statusor.h",
@@ -341,7 +339,10 @@ cc_library(
     textual_hdrs = [
         "subprocess.h",
     ],
-    deps = tf_windows_aware_platform_deps("subprocess"),
+    deps = tf_windows_aware_platform_deps("subprocess") + [
+        ":types",
+        "@tsl//tsl/platform",
+    ],
 )
 
 tsl_cc_test(
@@ -349,16 +350,21 @@ tsl_cc_test(
     size = "small",
     srcs = ["subprocess_test.cc"],
     data = [
+        "//xla/tsl/platform/testdata:test_crash",
         "//xla/tsl/platform/testdata:test_echo",
         "//xla/tsl/platform/testdata:test_echo_argv_1",
         "//xla/tsl/platform/testdata:test_noop",
+        "//xla/tsl/platform/testdata:test_pwd",
         "//xla/tsl/platform/testdata:test_stderr",
     ],
-    tags = ["no_oss"],  # TODO(b/327036247): revisit after this moves to XLA
+    tags = ["no_windows"],
     deps = [
+        ":env",
         ":subprocess",
         ":test",
         "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:strcat",
@@ -367,6 +373,9 @@ tsl_cc_test(
 
 cc_library(
     name = "env",
+    # TODO: b/456605953 - Adding the deps that build_clenaner wants may break some TF builds, so keep
+    # nofixdeps for now, and try to romove it in a separate CL.
+    tags = ["nofixdeps"],
     textual_hdrs = [
         "env.h",
         "file_system.h",
@@ -374,7 +383,32 @@ cc_library(
         "threadpool.h",
     ],
     deps = tf_windows_aware_platform_deps("env") + if_static([":env_impl"]) + [
+        ":env_time",
+        ":errors",
+        ":file_statistics",
+        ":macros",
+        ":status",
+        ":statusor",
+        ":threadpool_interface",
+        ":types",
+        "//xla/tsl/concurrency:executor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf",
+        "@com_google_protobuf//:protobuf_lite",
+        "@tsl//tsl/platform",
+        "@tsl//tsl/platform:cord",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:stringpiece",
     ],
 )
 
@@ -388,10 +422,14 @@ tsl_cc_test(
     srcs = ["env_test.cc"],
     deps = [
         ":env",
-        ":test",
+        "//xla/tsl/testing:temporary_directory",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:path",
     ],
 )
 
@@ -399,7 +437,7 @@ cc_library(
     name = "env_time",
     compatible_with = get_compatible_with_portable(),
     textual_hdrs = ["env_time.h"],
-    deps = tf_windows_aware_platform_deps("env_time"),
+    deps = tf_windows_aware_platform_deps("env_time") + [":types"],
 )
 
 cc_library(
@@ -445,8 +483,10 @@ cc_library(
         ":status",
         ":statusor",
         ":types",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
@@ -465,7 +505,7 @@ tsl_cc_test(
     srcs = ["file_system_helper_test.cc"],
     deps = [
         ":env",
-        ":env_impl",
+        ":env_impl",  # buildcleaner: keep
         ":file_system_helper",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_googletest//:gtest_main",
@@ -566,7 +606,6 @@ cc_library(
         "@tsl//tsl/platform:stacktrace",
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:strcat",
-        "@tsl//tsl/platform:stringprintf",
         "@tsl//tsl/platform:thread_annotations",
     ] + tf_platform_deps("status"),
 )
@@ -579,14 +618,15 @@ tsl_cc_test(
         ":errors",
         ":stack_frame",
         ":status",
-        ":status_matchers",
         ":status_to_from_proto",
         ":test",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "//xla/tsl/protobuf:status_proto_cc",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -638,13 +678,13 @@ tsl_cc_test(
     size = "small",
     srcs = ["statusor_test.cc"],
     deps = [
-        ":errors",
         ":macros",
         ":statusor",
         ":test",
         ":test_benchmark",
         ":test_main",
-        "@com_google_absl//absl/base:config",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -700,7 +740,7 @@ tsl_cc_test(
     srcs = ["threadpool_test.cc"],
     deps = [
         ":env",
-        ":env_impl",
+        ":env_impl",  # buildcleaner: keep
         ":test",
         "//xla/tsl/concurrency:executor",
         "@com_google_absl//absl/synchronization",
@@ -740,6 +780,16 @@ cc_library(
     ] + tf_platform_deps("types"),
 )
 
+# copybara:comment_begin(oss-only)
+cc_library(
+    name = "status_macros",
+    hdrs = ["status_macros.h"],
+    compatible_with = get_compatible_with_portable(),
+    visibility = internal_visibility([]),  # The header should be used only in OSS.
+    deps = [":statusor"],
+)
+# copybara:comment_end
+
 cc_library(
     name = "byte_order",
     hdrs = ["byte_order.h"],
@@ -767,6 +817,7 @@ cc_library(
 cc_library(
     name = "grpc_credentials",
     compatible_with = get_compatible_with_portable(),
+    tags = ["nofixdeps"],
     textual_hdrs = ["grpc_credentials.h"],
     deps = tsl_grpc_credentials_deps(),
 )
@@ -834,7 +885,7 @@ cc_library(
 cc_library(
     name = "rocm_rocdl_path",
     textual_hdrs = ["rocm_rocdl_path.h"],
-    deps = tf_platform_deps("rocm_rocdl_path"),
+    deps = tf_platform_deps("rocm_rocdl_path") + [":types"],
 )
 
 cc_library(
@@ -847,7 +898,7 @@ cc_library(
     name = "criticality",
     compatible_with = get_compatible_with_portable(),
     textual_hdrs = ["criticality.h"],
-    deps = tf_platform_deps("criticality"),
+    deps = tf_platform_deps("criticality") + ["@tsl//tsl/platform"],
 )
 
 tsl_cc_test(
@@ -864,13 +915,70 @@ tsl_cc_test(
 )
 
 cc_library(
-    name = "recordphase",
-    textual_hdrs = ["recordphase.h"],
-    deps = tf_platform_deps("recordphase") + ["@com_google_absl//absl/strings:string_view"],
-)
-
-cc_library(
     name = "debug_me_context",
     hdrs = ["debug_me_context.h"],
     deps = ["@com_google_absl//absl/container:flat_hash_map"],
+)
+
+cc_library(
+    name = "ram_file_system",
+    hdrs = ["ram_file_system.h"],
+    deps = [
+        ":env",
+        ":errors",
+        ":file_statistics",
+        ":types",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+tsl_cc_test(
+    name = "ram_file_system_test",
+    srcs = ["ram_file_system_test.cc"],
+    deps = [
+        ":env",
+        ":ram_file_system",
+        "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "embedded_filesystem",
+    srcs = ["embedded_filesystem.cc"],
+    hdrs = ["embedded_filesystem.h"],
+    deps = [
+        ":env",
+        ":file_statistics",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+tsl_cc_test(
+    name = "embedded_filesystem_test",
+    srcs = ["embedded_filesystem_test.cc"],
+    deps = [
+        ":embedded_filesystem",
+        ":env",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
 )

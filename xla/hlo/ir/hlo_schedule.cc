@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_schedule.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <ostream>
 #include <queue>
@@ -161,9 +162,32 @@ absl::Status HloSchedule::UpdateComputationSchedule(
     InsertOrDie(&id_to_instruction, instruction->unique_id(), instruction);
   }
 
+  // Invalidate the schedule of instructions that conflict with control
+  // dependencies.
+  auto sched_sequence = sequence(computation).instructions();
+  absl::flat_hash_set<HloInstruction*> invalid_instructions;
+  for (HloInstruction* inst : sched_sequence) {
+    auto inst_it = absl::c_find(sched_sequence, inst);
+    for (HloInstruction* pred : inst->control_predecessors()) {
+      // Found a pair of instructions whose schedule order is inconsistent with
+      // their control dependencies.
+      if (pred == inst) {
+        TF_RETURN_IF_ERROR(pred->RemoveControlDependencyTo(inst));
+      }
+      auto pred_it = absl::c_find(sched_sequence, pred);
+      if (pred_it != sched_sequence.end() && pred_it >= inst_it) {
+        invalid_instructions.insert(inst);
+        invalid_instructions.insert(pred);
+      }
+    }
+  }
+  for (HloInstruction* inst : invalid_instructions) {
+    sequences_.at(computation->unique_id()).remove_instruction(inst);
+  }
+
   // Set of all HloInstructions in the schedule.
   absl::flat_hash_set<int64_t> ids_in_schedule;
-  for (int64_t id : sequences_.at(computation->unique_id()).ids()) {
+  for (int64_t id : sequence(computation).ids()) {
     InsertOrDie(&ids_in_schedule, id);
   }
 
@@ -342,7 +366,25 @@ absl::Status HloSchedule::Verify() const {
        sequence_num_by_execution_threads) {
     std::vector<HloComputation*> nonfusion_computations =
         module_->MakeNonfusionComputations({thread_name});
-    TF_RET_CHECK(nonfusion_computations.size() == sequence_size)
+
+    // TODO(dasenov): Replace with std::erase_if after XLA uses C++20.
+    auto remove_it = std::remove_if(nonfusion_computations.begin(),
+                                    nonfusion_computations.end(),
+                                    [](const HloComputation* computation) {
+                                      return computation->IsDeadComputation();
+                                    });
+    nonfusion_computations.erase(remove_it, nonfusion_computations.end());
+
+    // It's possible to have more sequences than non_fusion_computations.
+    // This is because in some cases computations that have schedules are
+    // actually dead. The important thing to check is that each live non-fusion
+    // computation has a sequence.
+    //
+    // TODO(b/418034360): Consider strenghtening this check to equality. That
+    // would require cleaning up dead computations and/or recomputing the
+    // schedule in a number of tests. In its present state (using less or equal)
+    // this check is subsumed by the next one.
+    TF_RET_CHECK(nonfusion_computations.size() <= sequence_size)
         << "For thread " << thread_name << ", schedule has " << sequence_size
         << " sequences, but module has " << nonfusion_computations.size()
         << " non-fusion computations for thread " << thread_name;

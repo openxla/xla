@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_FFI_API_FFI_H_
 #define XLA_FFI_API_FFI_H_
 
-#include <string_view>
 #ifdef XLA_FFI_FFI_H_
 #error Two different XLA FFI implementations cannot be included together. \
        See README.md for more details.
@@ -38,6 +37,7 @@ limitations under the License.
 #include <optional>
 #include <ostream>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -50,6 +50,20 @@ limitations under the License.
 // IWYU pragma: end_exports
 
 namespace xla::ffi {
+
+//===----------------------------------------------------------------------===//
+// XLA FFI Api
+//===----------------------------------------------------------------------===//
+
+// This is a declaration of the API that returns an XLA:FFI instance for a
+// process. This API is implemented in `xla/ffi/ffi_api.cc` and implementation
+// must be linked into the target process exactly once, or it is possible to
+// have multiple global static registries of FFI handlers and types.
+const XLA_FFI_Api* GetXlaFfiApi();
+
+//===----------------------------------------------------------------------===//
+// Type aliases for XLA_FFI C structs.
+//===----------------------------------------------------------------------===//
 
 // All user data types that are passed via the execution context or state must
 // be registered with the XLA FFI ahead of time to get unique type id.
@@ -1172,24 +1186,6 @@ inline XLA_FFI_Error* CreateError(const XLA_FFI_Api* api, const Error& error) {
   return api->XLA_FFI_Error_Create(&args);
 }
 
-inline void DestroyError(const XLA_FFI_Api* api, XLA_FFI_Error* error) {
-  XLA_FFI_Error_Destroy_Args args;
-  args.struct_size = XLA_FFI_Error_Destroy_Args_STRUCT_SIZE;
-  args.extension_start = nullptr;
-  args.error = error;
-  api->XLA_FFI_Error_Destroy(&args);
-}
-
-inline const char* GetErrorMessage(const XLA_FFI_Api* api,
-                                   XLA_FFI_Error* error) {
-  XLA_FFI_Error_GetMessage_Args args;
-  args.struct_size = XLA_FFI_Error_GetMessage_Args_STRUCT_SIZE;
-  args.extension_start = nullptr;
-  args.error = error;
-  api->XLA_FFI_Error_GetMessage(&args);
-  return args.message;
-}
-
 }  // namespace internal
 
 //===----------------------------------------------------------------------===//
@@ -1211,13 +1207,15 @@ struct ResultEncoding<stage, Error> {
 };
 
 // Encodes `ErrorOr<std::unique_ptr<T>>` as an FFI state.
-template <typename T>
-struct ResultEncoding<ExecutionStage::kInstantiate,
-                      ErrorOr<std::unique_ptr<T>>> {
+template <typename T, ExecutionStage stage>
+struct ResultEncoding<stage, ErrorOr<std::unique_ptr<T>>> {
+  static_assert(stage != ExecutionStage::kExecute,
+                "Execute stage doesn't support setting a state");
+
   static_assert(std::is_same_v<decltype(T::id), TypeId>,
                 "State type must have a static `TypeId id` field");
 
-  static XLA_FFI_TypeId state_type_id() { return T::id; }
+  static XLA_FFI_TypeId state_type_id(const XLA_FFI_Api*) { return T::id; }
 
   XLA_FFI_ATTRIBUTE_ALWAYS_INLINE
   static XLA_FFI_Error* Encode(const XLA_FFI_Api* api,
@@ -1227,10 +1225,10 @@ struct ResultEncoding<ExecutionStage::kInstantiate,
       XLA_FFI_State_Set_Args args;
       args.struct_size = XLA_FFI_State_Set_Args_STRUCT_SIZE;
       args.extension_start = nullptr;
+      args.stage = static_cast<XLA_FFI_ExecutionStage>(stage);
       args.ctx = ctx;
       args.type_id = &T::id;
       args.state = state.value().release();
-      args.deleter = +[](void* state) { delete reinterpret_cast<T*>(state); };
       return api->XLA_FFI_State_Set(&args);
     }
 
@@ -1515,7 +1513,7 @@ inline ThreadPool::ThreadPool(const XLA_FFI_Api* api,
 //===----------------------------------------------------------------------===//
 
 template <typename T>
-inline constexpr XLA_FFI_TypeInfo MakeTypeInfo() {
+constexpr XLA_FFI_TypeInfo MakeTypeInfo() {
   return XLA_FFI_TypeInfo{
       XLA_FFI_TypeInfo_STRUCT_SIZE,
       /*extension_start=*/nullptr,
@@ -1527,11 +1525,18 @@ inline constexpr XLA_FFI_TypeInfo MakeTypeInfo() {
   XLA_FFI_REGISTER_TYPE_(API, NAME, TYPE_ID, TYPE_INFO, __COUNTER__)
 #define XLA_FFI_REGISTER_TYPE_(API, NAME, TYPE_ID, TYPE_INFO, N) \
   XLA_FFI_REGISTER_TYPE__(API, NAME, TYPE_ID, TYPE_INFO, N)
-#define XLA_FFI_REGISTER_TYPE__(API, NAME, TYPE_ID, TYPE_INFO, N)              \
-  XLA_FFI_ATTRIBUTE_UNUSED static const XLA_FFI_Error*                         \
-      xla_ffi_type_##N##_registered_ = [] {                                    \
-        return ::xla::ffi::Ffi::RegisterTypeId(API, NAME, TYPE_ID, TYPE_INFO); \
-      }()
+#define XLA_FFI_REGISTER_TYPE__(API, NAME, TYPE_ID, TYPE_INFO, N)             \
+  [[maybe_unused]] static const bool xla_ffi_type_##N##_registered_ = [] {    \
+    if (XLA_FFI_Error* error =                                                \
+            ::xla::ffi::Ffi::RegisterTypeId(API, NAME, TYPE_ID, TYPE_INFO)) { \
+      std::cerr << "Failed to register XLA FFI type: "                        \
+                << ::xla::ffi::internal::GetErrorMessage(API, error)          \
+                << std::endl;                                                 \
+      ::xla::ffi::internal::DestroyError(API, error);                         \
+      std::abort();                                                           \
+    }                                                                         \
+    return true;                                                              \
+  }()
 
 //===----------------------------------------------------------------------===//
 // UserData
@@ -1580,17 +1585,22 @@ struct CtxDecoding<UserData<T>> {
 // State
 //===----------------------------------------------------------------------===//
 
-// A type tag for automatic state decoding passed via the execution
-// context.
-template <typename T>
+// A type tag for automatic state decoding passed via the execution context.
+template <typename T, ExecutionStage stage = ExecutionStage::kInstantiate>
 struct State {};
+
+template <typename T>
+using Prepared = State<T, ExecutionStage::kPrepare>;
+
+template <typename T>
+using Initialized = State<T, ExecutionStage::kInitialize>;
 
 // Context decoding for state of type `T`.
 //
 // Example: Ffi::Bind().Ctx<State<MyState>>()
 //                     .To([](MyState* state) { ... });
-template <typename T>
-struct CtxDecoding<State<T>> {
+template <typename T, ExecutionStage stage>
+struct CtxDecoding<State<T, stage>> {
   using Type = T*;
 
   static_assert(std::is_same_v<decltype(T::id), TypeId>,
@@ -1602,6 +1612,7 @@ struct CtxDecoding<State<T>> {
     XLA_FFI_State_Get_Args args;
     args.struct_size = XLA_FFI_State_Get_Args_STRUCT_SIZE;
     args.extension_start = nullptr;
+    args.stage = static_cast<XLA_FFI_ExecutionStage>(stage);
     args.ctx = ctx;
     args.type_id = &T::id;
     args.state = nullptr;

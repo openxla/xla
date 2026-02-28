@@ -180,9 +180,9 @@ struct LowerDotGeneral : mlir::OpRewritePattern<mlir::stablehlo::DotGeneralOp> {
     mlir::ArrayAttr iterator_types = GetIteratorTypes(
         rewriter, iterator_count, lhs_batch.size(), lhs_contracting.size());
 
-    mlir::Value result = rewriter.create<mlir::vector::ContractionOp>(
-        op->getLoc(), lhs_vector, rhs_vector, accumulator, indexing_maps,
-        iterator_types);
+    mlir::Value result = mlir::vector::ContractionOp::create(
+        rewriter, op->getLoc(), lhs_vector, rhs_vector, accumulator,
+        indexing_maps, iterator_types);
 
     rewriter.replaceOp(op, WriteVectorToTensor(rewriter, result));
 
@@ -193,16 +193,16 @@ struct LowerDotGeneral : mlir::OpRewritePattern<mlir::stablehlo::DotGeneralOp> {
   mlir::Value GetAccumulator(mlir::OpBuilder& builder, mlir::Location loc,
                              mlir::RankedTensorType result_type) const {
     mlir::Type element_type = result_type.getElementType();
-    auto zero_const = builder.create<mlir::arith::ConstantOp>(
-        loc, element_type, builder.getZeroAttr(element_type));
+    auto zero_const = mlir::arith::ConstantOp::create(
+        builder, loc, element_type, builder.getZeroAttr(element_type));
 
     if (result_type.getRank() == 0) {
       return zero_const;
     }
 
     auto result_vector_type = GetVectorType(result_type);
-    return builder.create<mlir::vector::BroadcastOp>(loc, result_vector_type,
-                                                     zero_const);
+    return mlir::vector::BroadcastOp::create(builder, loc, result_vector_type,
+                                             zero_const);
   }
 };
 
@@ -215,8 +215,8 @@ struct LowerTranspose : mlir::OpRewritePattern<mlir::stablehlo::TransposeOp> {
     mlir::Value source_vector = ReadTensorToVector(rewriter, op.getOperand());
 
     mlir::TypedValue<mlir::VectorType> dest_vector =
-        rewriter.create<mlir::vector::TransposeOp>(op->getLoc(), source_vector,
-                                                   op.getPermutation());
+        mlir::vector::TransposeOp::create(rewriter, op->getLoc(), source_vector,
+                                          op.getPermutation());
 
     mlir::Value dest_tensor = WriteVectorToTensor(rewriter, dest_vector);
 
@@ -236,18 +236,15 @@ struct LowerReduce : mlir::OpRewritePattern<mlir::stablehlo::ReduceOp> {
           op, "reduce op with multiple results is not supported");
     }
 
-    mlir::TypedValue<mlir::VectorType> source_vector =
-        ReadTensorToVector(rewriter, op.getInputs().front());
-    mlir::VectorType source_vector_type = source_vector.getType();
-
-    mlir::Value init_value = rewriter.create<mlir::tensor::ExtractOp>(
-        op->getLoc(), source_vector_type.getElementType(),
-        op.getInitValues().front());
-
+    auto source_tensor = mlir::cast<mlir::TypedValue<mlir::RankedTensorType>>(
+        op.getInputs().front());
     mlir::Value result_tensor = op.getResult(0);
-    auto result_tensor_type =
+    auto result_type =
         mlir::cast<mlir::RankedTensorType>(result_tensor.getType());
-    auto result_vector_type = GetVectorType(result_tensor_type);
+
+    mlir::Value init_value = mlir::tensor::ExtractOp::create(
+        rewriter, op->getLoc(), result_type.getElementType(),
+        op.getInitValues().front());
 
     // Ensure the reduction dimensions are sorted so we can easily check if the
     // minor dimension is reduced.
@@ -255,10 +252,10 @@ struct LowerReduce : mlir::OpRewritePattern<mlir::stablehlo::ReduceOp> {
     absl::c_sort(reduction_dims);
 
     mlir::Value reduced_vector = EmitVectorizedReduction(
-        rewriter, op->getLoc(), result_vector_type, source_vector, init_value,
+        rewriter, op->getLoc(), result_type, source_tensor, init_value,
         reduction_dims, op.getBody().front());
 
-    rewriter.replaceOp(op, WriteVectorToTensor(rewriter, reduced_vector));
+    rewriter.replaceOp(op, reduced_vector);
 
     return mlir::success();
   }
@@ -300,23 +297,6 @@ struct LowerBroadcastInDim
   }
 };
 
-struct LowerReshape : mlir::OpRewritePattern<mlir::stablehlo::ReshapeOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  mlir::LogicalResult matchAndRewrite(
-      mlir::stablehlo::ReshapeOp op,
-      mlir::PatternRewriter& rewriter) const override {
-    auto source_vector = ReadTensorToVector(rewriter, op.getOperand());
-    auto result_vector_type = GetVectorType(op.getType());
-
-    mlir::Value reshaped_vector = mlir::vector::ShapeCastOp::create(
-        rewriter, op->getLoc(), result_vector_type, source_vector);
-
-    rewriter.replaceOp(op, WriteVectorToTensor(rewriter, reshaped_vector));
-    return mlir::success();
-  }
-};
-
 struct LowerIota : mlir::OpRewritePattern<mlir::stablehlo::IotaOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -328,9 +308,9 @@ struct LowerIota : mlir::OpRewritePattern<mlir::stablehlo::IotaOp> {
           op, "iota op with rank != 1 is not supported");
     }
 
-    auto result_vector_type = GetVectorType(op.getType());
-    auto element_type = result_vector_type.getElementType();
-    int64_t iota_size = result_vector_type.getNumElements();
+    auto result_type = op.getType();
+    auto element_type = result_type.getElementType();
+    int64_t iota_size = result_type.getNumElements();
 
     llvm::SmallVector<mlir::Attribute> iota_values(iota_size);
     for (int idx = 0; idx != iota_size; ++idx) {
@@ -339,9 +319,9 @@ struct LowerIota : mlir::OpRewritePattern<mlir::stablehlo::IotaOp> {
 
     mlir::Value iota_const = mlir::arith::ConstantOp::create(
         rewriter, op->getLoc(),
-        mlir::DenseElementsAttr::get(result_vector_type, iota_values));
+        mlir::DenseElementsAttr::get(result_type, iota_values));
 
-    rewriter.replaceOp(op, WriteVectorToTensor(rewriter, iota_const));
+    rewriter.replaceOp(op, iota_const);
     return mlir::success();
   }
 };
@@ -353,8 +333,8 @@ class ShloToVectorPass : public impl::ShloToVectorPassBase<ShloToVectorPass> {
   void runOnOperation() override {
     mlir::MLIRContext* context = &getContext();
     mlir::RewritePatternSet patterns(context);
-    patterns.add<LowerTranspose, LowerDotGeneral, LowerReduce,
-                 LowerBroadcastInDim, LowerReshape, LowerIota>(context);
+    patterns.add<LowerDotGeneral, LowerReduce, LowerBroadcastInDim, LowerIota>(
+        context);
     if (mlir::failed(
             mlir::applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();

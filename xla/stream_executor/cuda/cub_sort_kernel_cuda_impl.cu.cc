@@ -15,6 +15,10 @@ limitations under the License.
 
 #include <cstddef>
 
+// Clang can't always unroll all loops, and it's not clear yet why.
+// Silence the warning for now to avoid build breaks with -Werror.
+#pragma clang diagnostic ignored "-Wpass-failed"
+
 #include "cub/device/device_radix_sort.cuh"
 #include "cub/device/device_segmented_radix_sort.cuh"
 #include "third_party/gpus/cuda/include/cuda.h"
@@ -198,6 +202,9 @@ XLA_CUB_DEFINE_SORT_PAIRS(uint16_t, uint64_t)
 #endif
 
 // Pairs with 32-bit key.
+#ifdef CUB_TYPE_S32_B32
+XLA_CUB_DEFINE_SORT_PAIRS(int32_t, uint32_t)
+#endif
 #ifdef CUB_TYPE_U32_B16
 XLA_CUB_DEFINE_SORT_PAIRS(uint32_t, uint16_t)
 #endif

@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "google/protobuf/text_format.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -328,8 +329,7 @@ class MatmulInterpolatorDefaultTableTest
   }
 
   std::unique_ptr<MatmulInterpolator> GetMatmulInterpolatorB200() {
-    return GetMatmulInterpolator(TestGpuDeviceInfo::RTXA6000DeviceInfo(
-        se::CudaComputeCapability(10, 0)));
+    return GetMatmulInterpolator(TestGpuDeviceInfo::B200SXMDeviceInfo());
   }
 };
 
@@ -712,8 +712,6 @@ TEST_F(MatmulInterpolatorTest, SupportsCublasCustomCalls) {
       ROOT _ =  (bf16[1024,1024], s8[2097152]{0}) custom-call(p0,p1),
         custom_call_target="__cublas$gemm",
         backend_config={
-          "operation_queue_id":"0",
-          "wait_on_operation_queues":[],
           "gemm_backend_config":{
             "alpha_real":1,
             "beta":1,
@@ -750,8 +748,6 @@ TEST_F(MatmulInterpolatorTest, SupportsDotTritonFusion) {
         kind=kCustom,
         calls=comp,
         backend_config={
-          "operation_queue_id":"0",
-          "wait_on_operation_queues":[],
           "fusion_backend_config": {
             "kind":"__triton_gemm",
             "triton_gemm_config":{

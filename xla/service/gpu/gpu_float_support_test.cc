@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
@@ -278,6 +279,142 @@ TEST_F(FloatSupportTest, ShouldConvertTritonUnsupportedFp8Dot) {
       /*should_convert_rhs=*/false, F8E5M2);
 }
 
+struct DotTestParam {
+  std::string gpu_version;
+  PrimitiveType lhs_type;
+  PrimitiveType rhs_type;
+  PrimitiveType result_type;
+  bool should_convert_lhs;
+  bool should_convert_rhs;
+  PrimitiveType low_precision_type;
+};
+
+std::string DotTestParamToString(
+    const ::testing::TestParamInfo<DotTestParam>& info) {
+  const auto& p = info.param;
+  std::string norm_suffix;
+  if (p.should_convert_lhs && p.should_convert_rhs) {
+    norm_suffix = "_NormBoth";
+  } else if (p.should_convert_lhs) {
+    norm_suffix = "_NormLhs";
+  } else if (p.should_convert_rhs) {
+    norm_suffix = "_NormRhs";
+  }
+  return absl::StrCat(p.gpu_version, "_", PrimitiveType_Name(p.lhs_type), "_",
+                      PrimitiveType_Name(p.rhs_type), "_",
+                      PrimitiveType_Name(p.result_type), "_",
+                      PrimitiveType_Name(p.low_precision_type), norm_suffix);
+}
+
+class StandaloneDotTest : public FloatSupportTest,
+                          public ::testing::WithParamInterface<DotTestParam> {};
+
+TEST_P(StandaloneDotTest, Fp8DotConversion) {
+  const auto& param = GetParam();
+  auto cc = se::RocmComputeCapability(param.gpu_version);
+  TestDotConversion(param.lhs_type, param.rhs_type, param.result_type,
+                    se::GpuComputeCapability(cc), param.should_convert_lhs,
+                    param.should_convert_rhs, param.low_precision_type);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FloatSupportTestRocm, StandaloneDotTest,
+    ::testing::Values(
+        // MI300 (gfx942) - NANOO FP8 types
+        // Homogeneous F8E4M3FNUZ
+        DotTestParam{"gfx942", F8E4M3FNUZ, F8E4M3FNUZ, F16, true, true,
+                     F8E4M3FNUZ},
+        DotTestParam{"gfx942", F8E4M3FNUZ, F8E4M3FNUZ, F32, true, true,
+                     F8E4M3FNUZ},
+        // Homogeneous F8E5M2FNUZ
+        DotTestParam{"gfx942", F8E5M2FNUZ, F8E5M2FNUZ, F16, true, true,
+                     F8E5M2FNUZ},
+        DotTestParam{"gfx942", F8E5M2FNUZ, F8E5M2FNUZ, F32, true, true,
+                     F8E5M2FNUZ},
+        // Mixed FNUZ - normalizing F8E5M2FNUZ
+        DotTestParam{"gfx942", F8E5M2FNUZ, F8E4M3FNUZ, F16, true, false,
+                     F8E5M2FNUZ},
+        DotTestParam{"gfx942", F8E5M2FNUZ, F8E4M3FNUZ, F32, true, false,
+                     F8E5M2FNUZ},
+        // Mixed FNUZ - normalizing F8E4M3FNUZ
+        DotTestParam{"gfx942", F8E5M2FNUZ, F8E4M3FNUZ, F16, false, true,
+                     F8E4M3FNUZ},
+        DotTestParam{"gfx942", F8E5M2FNUZ, F8E4M3FNUZ, F32, false, true,
+                     F8E4M3FNUZ},
+        // MI350 (gfx950) - OCP FP8 types
+        // Homogeneous F8E4M3FN
+        DotTestParam{"gfx950", F8E4M3FN, F8E4M3FN, F16, true, true, F8E4M3FN},
+        DotTestParam{"gfx950", F8E4M3FN, F8E4M3FN, F32, true, true, F8E4M3FN},
+        // Homogeneous F8E5M2
+        DotTestParam{"gfx950", F8E5M2, F8E5M2, F16, true, true, F8E5M2},
+        DotTestParam{"gfx950", F8E5M2, F8E5M2, F32, true, true, F8E5M2},
+        // Mixed OCP - normalizing F8E5M2
+        DotTestParam{"gfx950", F8E5M2, F8E4M3FN, F16, true, false, F8E5M2},
+        DotTestParam{"gfx950", F8E5M2, F8E4M3FN, F32, true, false, F8E5M2},
+        // Mixed OCP - normalizing F8E4M3FN
+        DotTestParam{"gfx950", F8E5M2, F8E4M3FN, F16, false, true, F8E4M3FN},
+        DotTestParam{"gfx950", F8E5M2, F8E4M3FN, F32, false, true, F8E4M3FN}),
+    DotTestParamToString);
+
+class TritonFusedDotTest : public FloatSupportTest,
+                           public ::testing::WithParamInterface<DotTestParam> {
+};
+
+TEST_P(TritonFusedDotTest, Fp8DotConversion) {
+  const auto& param = GetParam();
+  auto cc = se::RocmComputeCapability(param.gpu_version);
+  TestTritonFusedDot(param.lhs_type, param.rhs_type, param.result_type,
+                     se::GpuComputeCapability(cc), param.should_convert_lhs,
+                     param.should_convert_rhs, param.low_precision_type);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FloatSupportTestRocm, TritonFusedDotTest,
+    ::testing::Values(
+        // MI300 (gfx942) - NANOO FP8 types (supported)
+        // F8E4M3FNUZ - F16 output needs conversion, F32 does not
+        DotTestParam{"gfx942", F8E4M3FNUZ, F8E4M3FNUZ, F16, true, true,
+                     F8E4M3FNUZ},
+        DotTestParam{"gfx942", F8E4M3FNUZ, F8E4M3FNUZ, F32, false, false,
+                     F8E4M3FNUZ},
+        // F8E5M2FNUZ - F16 output needs conversion, F32 does not
+        DotTestParam{"gfx942", F8E5M2FNUZ, F8E5M2FNUZ, F16, true, true,
+                     F8E5M2FNUZ},
+        DotTestParam{"gfx942", F8E5M2FNUZ, F8E5M2FNUZ, F32, false, false,
+                     F8E5M2FNUZ},
+        // Mixed FNUZ - normalizing F8E5M2FNUZ
+        DotTestParam{"gfx942", F8E5M2FNUZ, F8E4M3FNUZ, F16, true, false,
+                     F8E5M2FNUZ},
+        DotTestParam{"gfx942", F8E5M2FNUZ, F8E4M3FNUZ, F32, false, false,
+                     F8E5M2FNUZ},
+        // Mixed FNUZ - normalizing F8E4M3FNUZ
+        DotTestParam{"gfx942", F8E5M2FNUZ, F8E4M3FNUZ, F16, false, true,
+                     F8E4M3FNUZ},
+        DotTestParam{"gfx942", F8E5M2FNUZ, F8E4M3FNUZ, F32, false, false,
+                     F8E4M3FNUZ},
+        // MI300 (gfx942) - OCP FP8 types (unsupported, always convert)
+        DotTestParam{"gfx942", F8E4M3FN, F8E4M3FN, F32, true, true, F8E4M3FN},
+        DotTestParam{"gfx942", F8E5M2, F8E5M2, F32, true, true, F8E5M2},
+        // MI350 (gfx950) - OCP FP8 types (supported)
+        // F8E4M3FN - F16 output needs conversion, F32 does not
+        DotTestParam{"gfx950", F8E4M3FN, F8E4M3FN, F16, true, true, F8E4M3FN},
+        DotTestParam{"gfx950", F8E4M3FN, F8E4M3FN, F32, false, false, F8E4M3FN},
+        // F8E5M2 - F16 output needs conversion, F32 does not
+        DotTestParam{"gfx950", F8E5M2, F8E5M2, F16, true, true, F8E5M2},
+        DotTestParam{"gfx950", F8E5M2, F8E5M2, F32, false, false, F8E5M2},
+        // Mixed OCP - normalizing F8E5M2
+        DotTestParam{"gfx950", F8E5M2, F8E4M3FN, F16, true, false, F8E5M2},
+        DotTestParam{"gfx950", F8E5M2, F8E4M3FN, F32, false, false, F8E5M2},
+        // Mixed OCP - normalizing F8E4M3FN
+        DotTestParam{"gfx950", F8E5M2, F8E4M3FN, F16, false, true, F8E4M3FN},
+        DotTestParam{"gfx950", F8E5M2, F8E4M3FN, F32, false, false, F8E4M3FN},
+        // MI350 (gfx950) - NANOO FP8 types (unsupported, always convert)
+        DotTestParam{"gfx950", F8E4M3FNUZ, F8E4M3FNUZ, F32, true, true,
+                     F8E4M3FNUZ},
+        DotTestParam{"gfx950", F8E5M2FNUZ, F8E5M2FNUZ, F32, true, true,
+                     F8E5M2FNUZ}),
+    DotTestParamToString);
+
 TEST_F(FloatSupportTest, ShouldKeepBf16OnAmpere) {
   TestDotConversion(
       BF16, BF16, F32,
@@ -432,6 +569,35 @@ ENTRY main {
       se::GpuComputeCapability{se::CudaComputeCapability::Volta()}, BF16, F32));
 }
 
+class Bf16UnaryOpTest : public FloatSupportTest,
+                        public ::testing::WithParamInterface<HloOpcode> {};
+
+TEST_P(Bf16UnaryOpTest, IsOnlyNormalizedPreAmpere) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(
+                              absl::Substitute(R"(
+entry {
+  a = bf16[] parameter(0)
+  r = bf16[] $0(a)
+})",
+                                               HloOpcodeString(GetParam()))));
+  EXPECT_FALSE(
+      Normalize(module.get(),
+                se::GpuComputeCapability{se::CudaComputeCapability::Hopper()},
+                BF16, F32));
+  EXPECT_FALSE(
+      Normalize(module.get(),
+                se::GpuComputeCapability{se::CudaComputeCapability::Ampere()},
+                BF16, F32));
+  EXPECT_TRUE(Normalize(
+      module.get(),
+      se::GpuComputeCapability{se::CudaComputeCapability::Volta()}, BF16, F32));
+}
+
+INSTANTIATE_TEST_SUITE_P(Bf16UnaryOps, Bf16UnaryOpTest,
+                         ::testing::Values(HloOpcode::kNegate,
+                                           HloOpcode::kAbs));
+
 TEST_F(FloatSupportTest,
        BF16ReductionOnHopperIsOnlyNormalizedIfReducerIsUnsupported) {
   auto cc = se::CudaComputeCapability::Hopper();
@@ -508,6 +674,35 @@ TEST_F(FloatSupportTest, ScaledDotIsIgnored) {
                           ParseAndReturnVerifiedModule(kHloModule));
   EXPECT_FALSE(
       Normalize(module.get(), se::GpuComputeCapability{cc}, BF16, F32));
+}
+
+TEST_F(FloatSupportTest, AllToAllSplitDimensionS4IsNormalized) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule m
+
+    ENTRY main {
+      p0 = s4[128,128]{1,0:E(4)} parameter(0)
+      ROOT r = s4[128,128]{1,0:E(4)} all-to-all(p0), replica_groups={{0,1}}, dimensions={0}
+    }
+  )"));
+  EXPECT_TRUE(Normalize(
+      module.get(),
+      se::GpuComputeCapability{se::CudaComputeCapability::Hopper()}, S4, S8));
+}
+
+TEST_F(FloatSupportTest, AllToAllTupleShapeS4IsNormalized) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule m
+
+    ENTRY main {
+      p0 = s4[128,128]{1,0:E(4)} parameter(0)
+      p1 = s4[128,128]{1,0:E(4)} parameter(1)
+      ROOT r = (s4[128,128]{1,0:E(4)}, s4[128,128]{1,0:E(4)}) all-to-all(p0, p1), replica_groups={{0,1}}
+    }
+  )"));
+  EXPECT_TRUE(Normalize(
+      module.get(),
+      se::GpuComputeCapability{se::CudaComputeCapability::Hopper()}, S4, S8));
 }
 
 }  // namespace

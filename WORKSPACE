@@ -1,19 +1,19 @@
 # buildifier: disable=load-on-top
 workspace(name = "xla")
 
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 
 # Initialize toolchains for ML projects.
 #
 # A hermetic build system is designed to produce completely reproducible builds for C++.
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
-http_archive(
+tf_http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "38f1954af9336c3d020a3b807a3585fdaefa8e9bee725664663279cc4309b8c6",
-    strip_prefix = "rules_ml_toolchain-71d74ee1f7ad0e74c50b3c546d21872d42676e37",
-    urls = [
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/71d74ee1f7ad0e74c50b3c546d21872d42676e37.tar.gz",
-    ],
+    sha256 = "2887d9b49e18ef5df6f87438a4d99759408d21a1f463c61f4be6ab31d892dc88",
+    strip_prefix = "rules_ml_toolchain-de6fc6c38ea0368a198daa3f8c7cb829cc8db185",
+    urls = tf_mirror_urls(
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/de6fc6c38ea0368a198daa3f8c7cb829cc8db185.tar.gz",
+    ),
 )
 
 load(
@@ -103,9 +103,15 @@ load(
     "cuda_redist_init_repositories",
     "cudnn_redist_init_repository",
 )
+load(
+    "@rules_ml_toolchain//gpu/cuda:cuda_redist_versions.bzl",
+    "REDIST_VERSIONS_TO_BUILD_TEMPLATES",
+)
+load("//third_party/cccl:workspace.bzl", "CCCL_3_2_0_DIST_DICT", "CCCL_GITHUB_VERSIONS_TO_BUILD_TEMPLATES")
 
 cuda_redist_init_repositories(
-    cuda_redistributions = CUDA_REDISTRIBUTIONS,
+    cuda_redistributions = CUDA_REDISTRIBUTIONS | CCCL_3_2_0_DIST_DICT,
+    redist_versions_to_build_templates = REDIST_VERSIONS_TO_BUILD_TEMPLATES | CCCL_GITHUB_VERSIONS_TO_BUILD_TEMPLATES,
 )
 
 cudnn_redist_init_repository(

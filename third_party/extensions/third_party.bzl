@@ -1,8 +1,10 @@
 """Module extension for third party dependencies."""
 
 load("//third_party/benchmark:workspace.bzl", benchmark = "repo")
+load("//third_party/brotli:workspace.bzl", brotli = "repo")
 load("//third_party/cpuinfo:workspace.bzl", cpuinfo = "repo")
 load("//third_party/cudnn_frontend:workspace.bzl", cudnn_frontend = "repo")
+load("//third_party/cutlass:workspace.bzl", cutlass = "repo")
 load("//third_party/dlpack:workspace.bzl", dlpack = "repo")
 load("//third_party/ducc:workspace.bzl", ducc = "repo")
 load("//third_party/eigen3:workspace.bzl", eigen3 = "repo")
@@ -21,12 +23,14 @@ load("//third_party/mkl_dnn:workspace.bzl", onednn = "repo")
 load("//third_party/mpitrampoline:workspace.bzl", mpitrampoline = "repo")
 load("//third_party/nanobind:workspace.bzl", nanobind = "repo")
 load("//third_party/nasm:workspace.bzl", nasm = "repo")
+load("//third_party/net_zstd:workspace.bzl", net_zstd = "repo")
 load("//third_party/nvshmem:workspace.bzl", nvshmem = "repo")
 load("//third_party/pthreadpool:workspace.bzl", pthreadpool = "repo")
 load("//third_party/py/ml_dtypes:workspace.bzl", ml_dtypes = "repo")
-load("//third_party/raft:workspace.bzl", raft = "repo")
-load("//third_party/rapids_logger:workspace.bzl", rapids_logger = "repo")
-load("//third_party/rmm:workspace.bzl", rmm = "repo")
+load("//third_party/raft:workspace.bzl", raft = "xla_repo")
+load("//third_party/rapids_logger:workspace.bzl", rapids_logger = "xla_repo")
+load("//third_party/riegeli:workspace.bzl", riegeli = "repo")
+load("//third_party/rmm:workspace.bzl", rmm = "xla_repo")
 load("//third_party/robin_map:workspace.bzl", robin_map = "repo")
 load("//third_party/rocm_device_libs:workspace.bzl", rocm_device_libs = "repo")
 load("//third_party/shardy:workspace.bzl", shardy = "repo")
@@ -37,9 +41,11 @@ load("//third_party/tensorrt:workspace.bzl", tensorrt = "repo")
 load("//third_party/triton:workspace.bzl", triton = "repo")
 load("//third_party/uv:workspace.bzl", uv = "repo")
 load("//third_party/xnnpack:workspace.bzl", xnnpack = "repo")
+load("//third_party/xxd:workspace.bzl", xxd = "repo")
 
 def _third_party_ext_impl(mctx):  # @unused
     benchmark()
+    brotli()  # Needed for Riegeli
     cpuinfo()
     cudnn_frontend()
     dlpack()
@@ -65,6 +71,8 @@ def _third_party_ext_impl(mctx):  # @unused
     pthreadpool()
     raft()
     rapids_logger()
+    riegeli()
+    net_zstd()  # Needed for Riegeli
     rmm()
     robin_map()
     rocm_device_libs()
@@ -76,6 +84,8 @@ def _third_party_ext_impl(mctx):  # @unused
     triton()
     uv()
     xnnpack()
+    xxd()
+    cutlass()
 
 third_party_ext = module_extension(
     implementation = _third_party_ext_impl,

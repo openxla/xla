@@ -23,20 +23,19 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
-#include "xla/service/backend.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
+#include "xla/service/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/service/logical_buffer.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -65,19 +64,17 @@ int64_t CountCopies(const HloModule& module) {
   return count;
 }
 
-class NVPTXCompilerTest : public HloTestBase {
+class NVPTXCompilerTest : public HloPjRtGpuTestBase {
  public:
   absl::StatusOr<std::unique_ptr<BufferAssignment>> AssignBuffers(
       HloModule* module) {
     constexpr uint64_t pointer_size = 4;
-    const se::DeviceDescription& gpu_device_info =
-        backend().default_stream_executor()->GetDeviceDescription();
+    const se::DeviceDescription& gpu_device_info = device_description();
     NVPTXCompiler compiler;
     std::unique_ptr<GpuAliasInfo> alias_info =
         compiler.GetAliasInfo(gpu_device_info);
     TF_RETURN_IF_ERROR(ScheduleGpuModule(module, pointer_size, gpu_device_info,
-                                         &symbolic_expr_context_,
-                                         alias_info.get())
+                                         &mlir_context_, alias_info.get())
                            .status());
 
     auto buffer_size_bytes_function =
@@ -89,18 +86,18 @@ class NVPTXCompilerTest : public HloTestBase {
         module, std::make_unique<SequentialHloOrdering>(module->schedule()),
         buffer_size_bytes_function, alias_info.get(),
         /*color_alignment=*/
-        [](LogicalBuffer::Color) { return kXlaAllocatedBufferAlignBytes; });
+        [](LogicalBuffer::Color) { return kXlaAllocatedBufferAlignBytes; },
+        BufferAssigner::Options{});
   }
 
  protected:
   mlir::MLIRContext mlir_context_;
-  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 class NVPTXCompilerTestTriton : public NVPTXCompilerTest {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
+    DebugOptions debug_options = NVPTXCompilerTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_cublas_fallback(false);
     return debug_options;
   }
@@ -174,10 +171,7 @@ ENTRY e {
   rhs_batch_dims={0,1}, rhs_contracting_dims={2}
 })";
 
-  se::CudaComputeCapability cc = backend()
-                                     .default_stream_executor()
-                                     ->GetDeviceDescription()
-                                     .cuda_compute_capability();
+  se::CudaComputeCapability cc = device_description().cuda_compute_capability();
 
   if (cc.IsAtLeastAmpere()) {
     MatchOptimizedHlo(hlo_string, R"(
@@ -246,12 +240,10 @@ ENTRY main {
             HloOpcode::kCopy);
 
   NVPTXCompiler compiler;
-  const se::DeviceDescription& device_description =
-      backend().default_stream_executor()->GetDeviceDescription();
   std::unique_ptr<GpuAliasInfo> alias_info =
-      compiler.GetAliasInfo(device_description);
+      compiler.GetAliasInfo(device_description());
   TF_EXPECT_OK(compiler.RunPostSchedulingPipelines(
-      module.get(), 100000, device_description, alias_info.get()));
+      module.get(), 100000, device_description(), alias_info.get()));
   EXPECT_EQ(CountCopies(*module), 3);
   while_op = hlo_query::GetFirstInstructionWithOpcode(
       *module->entry_computation(), HloOpcode::kWhile);

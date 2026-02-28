@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 
+#include <any>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -37,8 +38,10 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_cliques.h"
+#include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/custom_call_target.h"
-#include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/c_api.h"
@@ -46,7 +49,8 @@ limitations under the License.
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_state.h"
 #include "xla/ffi/ffi.h"
-#include "xla/ffi/ffi_api.h"
+#include "xla/ffi/ffi_registry.h"
+#include "xla/ffi/invoke.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/primitive_util.h"
 #include "xla/runtime/object_pool.h"
@@ -55,20 +59,24 @@ limitations under the License.
 #include "xla/service/custom_call_status_internal.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/service/shaped_slice.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
 #include "tsl/platform/platform.h"
+#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
 
 using xla::ffi::CallFrame;
 using xla::ffi::CallFrameBuilder;
-using xla::ffi::CallOptions;
+using xla::ffi::InvokeContext;
 
 // Builds a call frame prototype for typed-FFI custom calls with dummy device
 // memory addresses. This is called once when creating the CustomCall thunk,
@@ -94,7 +102,7 @@ static absl::StatusOr<ffi::CallFrame> BuildCallFramePrototype(
     auto elements = absl::c_accumulate(operand->shape.dimensions(), 1ULL,
                                        std::multiplies<int64_t>());
     auto dtype_bytes = primitive_util::ByteWidth(operand->shape.element_type());
-    se::DeviceMemoryBase placeholder_arg(nullptr, elements * dtype_bytes);
+    se::DeviceAddressBase placeholder_arg(nullptr, elements * dtype_bytes);
     builder.AddBufferArg(placeholder_arg, operand->shape.element_type(),
                          operand->shape.dimensions());
   }
@@ -112,7 +120,7 @@ static absl::StatusOr<ffi::CallFrame> BuildCallFramePrototype(
     auto elements = absl::c_accumulate(result->shape.dimensions(), 1ULL,
                                        std::multiplies<int64_t>());
     auto dtype_bytes = primitive_util::ByteWidth(result->shape.element_type());
-    se::DeviceMemoryBase placeholder_ret(nullptr, elements * dtype_bytes);
+    se::DeviceAddressBase placeholder_ret(nullptr, elements * dtype_bytes);
     builder.AddBufferRet(placeholder_ret, result->shape.element_type(),
                          result->shape.dimensions());
   }
@@ -132,8 +140,14 @@ ResolveLegacyCustomCall(const CustomCallTargetRegistry& registry,
                         absl::string_view target_name,
                         absl::string_view platform_name,
                         CustomCallApiVersion api_version) {
-  void* call_target = CustomCallTargetRegistry::Global()->Lookup(
-      std::string(target_name), std::string(platform_name));
+  void* call_target =
+      registry.Lookup(std::string(target_name), std::string(platform_name));
+
+  if (call_target == nullptr) {
+    return NotFound(
+        "No registered implementation for custom call to %s for platform %s",
+        target_name, platform_name);
+  }
 
   // For information about this calling convention, see
   // xla/g3doc/custom_call.md.
@@ -212,38 +226,63 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
     ThunkInfo thunk_info, std::string target_name,
     std::vector<NullableShapedSlice> operands,
     std::vector<NullableShapedSlice> results, ffi::AttributesMap attributes,
-    const HloComputation* called_computation, absl::string_view platform_name) {
+    const HloComputation* called_computation, absl::string_view platform_name,
+    const se::GpuComputeCapability& gpu_compute_capability,
+    std::unique_ptr<ffi::ExecutionState> execution_state) {
   TF_ASSIGN_OR_RETURN(ffi::HandlerRegistration registration,
                       ffi::FindHandler(target_name, platform_name));
 
   return Create(thunk_info, std::move(target_name),
                 std::move(registration.bundle), std::move(operands),
-                std::move(results), std::move(attributes), called_computation);
+                std::move(results), std::move(attributes), called_computation,
+                gpu_compute_capability, std::move(execution_state));
+}
+
+static InvokeContext BuildInstantiateInvokeContext(
+    ffi::ExecutionState* execution_state,
+    const se::GpuComputeCapability* gpu_compute_capability) {
+  InvokeContext context{};
+  context.state_context = {execution_state};
+  context.backend_context = InvokeContext::GpuContext{
+      /*.stream=*/nullptr,
+      /*.allocator=*/nullptr,
+      /*.collective_params=*/nullptr,
+      /*.collective_clique_requests=*/nullptr,
+      /*.collective_memory_requests=*/nullptr,
+      /*.collective_cliques=*/nullptr,
+      /*.collective_memory=*/nullptr,
+      /*.gpu_target_config=*/gpu_compute_capability,
+  };
+  return context;
 }
 
 absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
     ThunkInfo thunk_info, std::string target_name,
     XLA_FFI_Handler_Bundle bundle, std::vector<NullableShapedSlice> operands,
     std::vector<NullableShapedSlice> results, ffi::AttributesMap attributes,
-    const HloComputation* called_computation) {
-  auto execution_state = std::make_unique<ffi::ExecutionState>();
-
+    const HloComputation* called_computation,
+    const se::GpuComputeCapability& gpu_compute_capability,
+    std::unique_ptr<ffi::ExecutionState> execution_state) {
   // Initialize FFI handler state if it has an instantiate callback.
-  if (bundle.instantiate) {
-    // At FFI handler instantiation time, we don't have any arguments or
-    // results or access to the underlying device (stream, etc.)
-    CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
+  if (execution_state == nullptr) {
+    execution_state = std::make_unique<ffi::ExecutionState>();
+    if (bundle.instantiate) {
+      // At FFI handler instantiation time, we don't have any arguments or
+      // results or access to the underlying device (stream, etc.)
+      CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
 
-    CallFrameBuilder::AttributesBuilder attrs;
-    attrs.Append(attributes);
+      CallFrameBuilder::AttributesBuilder attrs;
+      attrs.Append(attributes);
 
-    builder.AddAttributes(attrs.Build());
-    CallFrame call_frame = builder.Build();
+      builder.AddAttributes(attrs.Build());
+      CallFrame call_frame = builder.Build();
 
-    CallOptions options;
-    options.execution_state = execution_state.get();
-    TF_RETURN_IF_ERROR(Call(bundle.instantiate, call_frame, options,
-                            XLA_FFI_ExecutionStage_INSTANTIATE));
+      InvokeContext call_options = BuildInstantiateInvokeContext(
+          execution_state.get(), &gpu_compute_capability);
+      RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), bundle.instantiate,
+                             call_frame, call_options,
+                             XLA_FFI_ExecutionStage_INSTANTIATE));
+    }
   }
 
   TF_ASSIGN_OR_RETURN(CallFrame call_frame,
@@ -259,17 +298,21 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
     std::vector<NullableShapedSlice> operands,
     std::vector<NullableShapedSlice> results,
     xla::ffi::AttributesMap attributes,
-    const HloComputation* called_computation) {
+    const HloComputation* called_computation,
+    const se::GpuComputeCapability& gpu_compute_capability) {
   if (!bundle.execute) {
     return absl::InvalidArgumentError(
         "Execute handler is required for a CustomCallThunk");
   }
 
   auto execution_state = std::make_unique<ffi::ExecutionState>();
+
   // Initialize FFI handler state if it has an instantiate callback.
   if (bundle.instantiate) {
     // At FFI handler instantiation time, we don't have any arguments or
-    // results or access to the underlying device (stream, etc.)
+    // results or access to the underlying device (stream, etc.), however users
+    // have access to some information about the target architecture like
+    // `TargetGpuComputeCapability`.
     CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
 
     CallFrameBuilder::AttributesBuilder attrs;
@@ -278,10 +321,11 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
     builder.AddAttributes(attrs.Build());
     CallFrame call_frame = builder.Build();
 
-    CallOptions options;
-    options.execution_state = execution_state.get();
-    TF_RETURN_IF_ERROR(Call(*bundle.instantiate, call_frame, options,
-                            xla::ffi::ExecutionStage::kInstantiate));
+    InvokeContext context = BuildInstantiateInvokeContext(
+        execution_state.get(), &gpu_compute_capability);
+    TF_RETURN_IF_ERROR(Invoke(ffi::GetXlaFfiApi(), *bundle.instantiate,
+                              call_frame, context,
+                              xla::ffi::ExecutionStage::kInstantiate));
   }
 
   TF_ASSIGN_OR_RETURN(CallFrame call_frame,
@@ -370,26 +414,26 @@ CustomCallThunk::BuildCallFrame(
     const BufferAllocations* absl_nullable buffer_allocations) {
   auto device_memory = [&](BufferAllocation::Slice slice) {
     return buffer_allocations ? buffer_allocations->GetDeviceAddress(slice)
-                              : se::DeviceMemoryBase{};
+                              : se::DeviceAddressBase{};
   };
 
   // Collect arguments buffers.
-  absl::InlinedVector<se::DeviceMemoryBase, 8> arguments;
+  absl::InlinedVector<se::DeviceAddressBase, 8> arguments;
   arguments.reserve(operands_.size());
   for (auto& operand : operands_) {
     if (!operand.has_value()) {
-      arguments.push_back(se::DeviceMemoryBase{});
+      arguments.push_back(se::DeviceAddressBase{});
     } else {
       arguments.push_back(device_memory(operand->slice));
     }
   }
 
   // Collect results buffers.
-  absl::InlinedVector<se::DeviceMemoryBase, 4> results;
+  absl::InlinedVector<se::DeviceAddressBase, 4> results;
   results.reserve(results_.size());
   for (auto& result : results_) {
     if (!result.has_value()) {
-      results.push_back(se::DeviceMemoryBase{});
+      results.push_back(se::DeviceAddressBase{});
     } else {
       results.push_back(device_memory(result->slice));
     }
@@ -402,33 +446,77 @@ CustomCallThunk::BuildCallFrame(
   return call_frame;
 }
 
+namespace {
+// A per-execution state that holds state for prepare and initialize stages.
+struct PrepareAndInitState {
+  ffi::ExecutionState prepare;
+  ffi::ExecutionState init;
+};
+};  // namespace
+
 // Builds call options object for the custom call.
 //
 // `stream` and `buffer_allocations may only be non-null for options passed to
 // Prepare()_stage handler.
-CallOptions CustomCallThunk::BuildCallOptions(
+InvokeContext CustomCallThunk::BuildInvokeContext(
     RunId run_id, se::Stream* absl_nullable stream,
+    Thunk::ExecutionScopedState* absl_nullable execution_scoped_state,
     const BufferAllocations* absl_nullable buffer_allocations,
+    const CollectiveParams* absl_nullable collective_params,
+    CollectiveCliqueRequests* absl_nullable collective_clique_requests,
+    CollectiveMemoryRequests* absl_nullable collective_memory_requests,
+    const CollectiveCliques* absl_nullable collective_cliques,
+    const CollectiveMemory* absl_nullable collective_memory,
     const ffi::ExecutionContext* absl_nullable execution_context) {
   int32_t device_ordinal = -1;
-  se::DeviceMemoryAllocator* allocator = nullptr;
+  se::DeviceAddressAllocator* allocator = nullptr;
   if (buffer_allocations != nullptr) {
     device_ordinal = buffer_allocations->device_ordinal();
     allocator = buffer_allocations->memory_allocator();
   }
 
-  return CallOptions{run_id,
-                     device_ordinal,
-                     CallOptions::GpuOptions{stream, allocator},
-                     called_computation_,
-                     execution_context,
-                     execution_state_.get()};
+  const se::GpuComputeCapability* gpu_compute_capability = nullptr;
+  if (stream != nullptr) {
+    gpu_compute_capability =
+        &stream->parent()->GetDeviceDescription().gpu_compute_capability();
+  }
+
+  // Lookup per-execution state for prepare and init stages.
+  ffi::ExecutionState* prepare_state = nullptr;
+  ffi::ExecutionState* initialize_state = nullptr;
+
+  if (execution_scoped_state) {
+    auto [it, _] = execution_scoped_state->try_emplace(
+        this, std::in_place_type<PrepareAndInitState>);
+    PrepareAndInitState& prepare_and_init =
+        tsl::any_cast<PrepareAndInitState>(it->second);
+    prepare_state = &prepare_and_init.prepare;
+    initialize_state = &prepare_and_init.init;
+  }
+
+  return InvokeContext{
+      run_id,
+      device_ordinal,
+      InvokeContext::GpuContext{stream, allocator, collective_params,
+                                collective_clique_requests,
+                                collective_memory_requests, collective_cliques,
+                                collective_memory, gpu_compute_capability},
+      InvokeContext::StateContext{execution_state_.get(), prepare_state,
+                                  initialize_state},
+      called_computation_,
+      execution_context};
 }
 
 absl::Status CustomCallThunk::ExecuteFfiHandler(
     RunId run_id, XLA_FFI_Handler* handler, XLA_FFI_ExecutionStage stage,
-    se::Stream* stream, const ffi::ExecutionContext* execution_context,
-    const BufferAllocations* buffer_allocations) {
+    se::Stream* stream, Thunk::ExecutionScopedState* execution_scoped_state,
+    const ffi::ExecutionContext* execution_context,
+    const BufferAllocations* buffer_allocations,
+    const CollectiveParams* absl_nullable collective_params,
+    CollectiveCliqueRequests* absl_nullable collective_clique_requests,
+    CollectiveMemoryRequests* absl_nullable collective_memory_requests,
+    const CollectiveCliques* absl_nullable collective_cliques,
+    const CollectiveMemory* absl_nullable collective_memory) {
   if (handler == nullptr) {
     return absl::InternalError("FFI execute handler is not set");
   }
@@ -438,28 +526,37 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
   }
 
   TF_ASSIGN_OR_RETURN(auto call_frame, BuildCallFrame(buffer_allocations));
-  CallOptions options =
-      BuildCallOptions(run_id, stream, buffer_allocations, execution_context);
-  return Call(handler, *call_frame, options, stage);
+  InvokeContext context = BuildInvokeContext(
+      run_id, stream, execution_scoped_state, buffer_allocations,
+      collective_params, collective_clique_requests, collective_memory_requests,
+      collective_cliques, collective_memory, execution_context);
+  return Invoke(ffi::GetXlaFfiApi(), handler, *call_frame, context, stage);
 }
 
 absl::Status CustomCallThunk::ExecuteFfiHandler(
     RunId run_id, xla::ffi::Ffi& handler, xla::ffi::ExecutionStage stage,
-    se::Stream* stream, const ffi::ExecutionContext* execution_context,
-    const BufferAllocations* buffer_allocations) {
+    se::Stream* stream, Thunk::ExecutionScopedState* execution_scoped_state,
+    const ffi::ExecutionContext* execution_context,
+    const BufferAllocations* buffer_allocations,
+    const CollectiveParams* absl_nullable collective_params,
+    CollectiveCliqueRequests* absl_nullable collective_clique_requests,
+    CollectiveMemoryRequests* absl_nullable collective_memory_requests,
+    const CollectiveCliques* absl_nullable collective_cliques,
+    const CollectiveMemory* absl_nullable collective_memory) {
   if (stage != xla::ffi::ExecutionStage::kPrepare &&
       !(buffer_allocations && stream)) {
     return absl::InternalError("buffer allocations and stream are required");
   }
 
   TF_ASSIGN_OR_RETURN(auto call_frame, BuildCallFrame(buffer_allocations));
-  CallOptions options =
-      BuildCallOptions(run_id, stream, buffer_allocations, execution_context);
-  return Call(handler, *call_frame, options, stage);
+  InvokeContext context = BuildInvokeContext(
+      run_id, stream, execution_scoped_state, buffer_allocations,
+      collective_params, collective_clique_requests, collective_memory_requests,
+      collective_cliques, collective_memory, execution_context);
+  return Invoke(ffi::GetXlaFfiApi(), handler, *call_frame, context, stage);
 }
 
-absl::Status CustomCallThunk::Prepare(
-    const PrepareParams& params, ResourceRequestsInterface& resource_requests) {
+absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {
   if (bundle_.has_value()) {
     const RunId run_id =
         params.collective_params ? params.collective_params->run_id : RunId{-1};
@@ -467,20 +564,32 @@ absl::Status CustomCallThunk::Prepare(
     if (const auto* c_bundle =
             std::get_if<XLA_FFI_Handler_Bundle>(&bundle_.value());
         c_bundle && c_bundle->prepare) {
-      return ExecuteFfiHandler(run_id, c_bundle->prepare,
-                               XLA_FFI_ExecutionStage_PREPARE,
-                               /*stream=*/nullptr,
-                               /*execution_context=*/nullptr,
-                               /*buffer_allocations=*/nullptr);
+      return ExecuteFfiHandler(
+          run_id, c_bundle->prepare, XLA_FFI_ExecutionStage_PREPARE,
+          /*stream=*/nullptr,
+          /*execution_scoped_state=*/params.execution_scoped_state,
+          /*execution_context=*/nullptr,
+          /*buffer_allocations=*/params.buffer_allocations,
+          /*collective_params=*/params.collective_params,
+          /*collective_clique_requests=*/params.collective_clique_requests,
+          /*collective_memory_requests=*/params.collective_memory_requests,
+          /*collective_cliques=*/nullptr,
+          /*collective_memory=*/nullptr);
     }
     if (const auto* owned_bundle =
             std::get_if<OwnedHandlerBundle>(&bundle_.value());
         owned_bundle && owned_bundle->prepare) {
-      return ExecuteFfiHandler(run_id, *owned_bundle->prepare,
-                               xla::ffi::ExecutionStage::kPrepare,
-                               /*stream=*/nullptr,
-                               /*execution_context=*/nullptr,
-                               /*buffer_allocations=*/nullptr);
+      return ExecuteFfiHandler(
+          run_id, *owned_bundle->prepare, xla::ffi::ExecutionStage::kPrepare,
+          /*stream=*/nullptr,
+          /*execution_scoped_state=*/params.execution_scoped_state,
+          /*execution_context=*/nullptr,
+          /*buffer_allocations=*/params.buffer_allocations,
+          /*collective_params=*/params.collective_params,
+          /*collective_clique_requests=*/params.collective_clique_requests,
+          /*collective_memory_requests=*/params.collective_memory_requests,
+          /*collective_cliques=*/nullptr,
+          /*collective_memory=*/nullptr);
     }
   }
 
@@ -495,18 +604,26 @@ absl::Status CustomCallThunk::Initialize(const InitializeParams& params) {
     if (const auto* c_bundle =
             std::get_if<XLA_FFI_Handler_Bundle>(&bundle_.value());
         c_bundle && c_bundle->initialize) {
-      return ExecuteFfiHandler(run_id, *c_bundle->initialize,
-                               XLA_FFI_ExecutionStage_INITIALIZE, params.stream,
-                               params.ffi_execution_context,
-                               params.buffer_allocations);
+      return ExecuteFfiHandler(
+          run_id, *c_bundle->initialize, XLA_FFI_ExecutionStage_INITIALIZE,
+          params.stream, params.execution_scoped_state,
+          params.ffi_execution_context, params.buffer_allocations,
+          params.collective_params,
+          /*collective_clique_requests=*/nullptr,
+          /*collective_memory_requests=*/nullptr, params.collective_cliques,
+          params.collective_memory);
     }
     if (const auto* owned_bundle =
             std::get_if<OwnedHandlerBundle>(&bundle_.value());
         owned_bundle && owned_bundle->initialize) {
-      return ExecuteFfiHandler(run_id, *owned_bundle->initialize,
-                               xla::ffi::ExecutionStage::kInitialize,
-                               params.stream, params.ffi_execution_context,
-                               params.buffer_allocations);
+      return ExecuteFfiHandler(
+          run_id, *owned_bundle->initialize,
+          xla::ffi::ExecutionStage::kInitialize, params.stream,
+          params.execution_scoped_state, params.ffi_execution_context,
+          params.buffer_allocations, params.collective_params,
+          /*collective_clique_requests=*/nullptr,
+          /*collective_memory_requests=*/nullptr, params.collective_cliques,
+          params.collective_memory);
     }
   }
   return absl::OkStatus();
@@ -525,7 +642,11 @@ absl::Status CustomCallThunk::ExecuteOnStream(const ExecuteParams& params) {
         c_bundle) {
       return ExecuteFfiHandler(
           run_id, c_bundle->execute, XLA_FFI_ExecutionStage_EXECUTE, stream,
-          params.ffi_execution_context, params.buffer_allocations);
+          params.execution_scoped_state, params.ffi_execution_context,
+          params.buffer_allocations, params.collective_params,
+          /*collective_clique_requests=*/nullptr,
+          /*collective_memory_requests=*/nullptr, params.collective_cliques,
+          params.collective_memory);
     }
     if (const auto* owned_bundle =
             std::get_if<OwnedHandlerBundle>(&bundle_.value());
@@ -535,7 +656,11 @@ absl::Status CustomCallThunk::ExecuteOnStream(const ExecuteParams& params) {
       }
       return ExecuteFfiHandler(
           run_id, *owned_bundle->execute, xla::ffi::ExecutionStage::kExecute,
-          stream, params.ffi_execution_context, params.buffer_allocations);
+          stream, params.execution_scoped_state, params.ffi_execution_context,
+          params.buffer_allocations, params.collective_params,
+          /*collective_clique_requests=*/nullptr,
+          /*collective_memory_requests=*/nullptr, params.collective_cliques,
+          params.collective_memory);
     }
   }
 
@@ -573,14 +698,20 @@ absl::StatusOr<ThunkProto> CustomCallThunk::ToProto() const {
     *proto.mutable_custom_call_thunk()->mutable_attributes() =
         attributes_->ToProto();
   }
+
+  if (execution_state_ && execution_state_->IsSerializable()) {
+    TF_ASSIGN_OR_RETURN(
+        *proto.mutable_custom_call_thunk()->mutable_execution_state(),
+        execution_state_->ToProto());
+  }
   return proto;
 }
 
 absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::FromProto(
     ThunkInfo thunk_info, const CustomCallThunkProto& proto,
     absl::Span<const BufferAllocation> buffer_allocations,
-    const HloModule* absl_nullable hlo_module,
-    absl::string_view platform_name) {
+    const HloModule* absl_nullable hlo_module, absl::string_view platform_name,
+    const se::GpuComputeCapability& gpu_compute_capability) {
   if (hlo_module == nullptr && proto.has_called_computation()) {
     return absl::InvalidArgumentError(
         "HloModule is required to deserialize a CustomCallThunk with a "
@@ -600,6 +731,14 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::FromProto(
         NullableShapedSlice::FromProto(result_proto, buffer_allocations));
     results.push_back(std::move(result));
   }
+
+  if (proto.api_version() != CustomCallApiVersion::API_VERSION_TYPED_FFI) {
+    // Create a thunk that uses the legacy custom call registry.
+    return CustomCallThunk::Create(
+        std::move(thunk_info), proto.target_name(), std::move(operands),
+        std::move(results), proto.opaque(), proto.api_version(), platform_name);
+  }
+
   TF_ASSIGN_OR_RETURN(ffi::AttributesMap attributes,
                       ffi::AttributesMap::FromProto(proto.attributes()));
 
@@ -614,11 +753,17 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::FromProto(
           "' not found in the HloModule with name '", hlo_module->name(), "'"));
     }
   }
+  std::unique_ptr<ffi::ExecutionState> execution_state;
+  if (proto.has_execution_state()) {
+    TF_ASSIGN_OR_RETURN(
+        auto state, ffi::ExecutionState::FromProto(proto.execution_state()));
+    execution_state = std::make_unique<ffi::ExecutionState>(std::move(state));
+  }
 
-  return CustomCallThunk::Create(std::move(thunk_info), proto.target_name(),
-                                 std::move(operands), std::move(results),
-                                 std::move(attributes), called_computation,
-                                 platform_name);
+  return CustomCallThunk::Create(
+      std::move(thunk_info), proto.target_name(), std::move(operands),
+      std::move(results), std::move(attributes), called_computation,
+      platform_name, gpu_compute_capability, std::move(execution_state));
 }
 
 }  // namespace gpu

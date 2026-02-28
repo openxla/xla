@@ -24,30 +24,25 @@ limitations under the License.
 
 #include "absl/base/nullability.h"
 #include "absl/log/check.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/testlib/filecheck.h"
-#include "xla/pjrt/pjrt_client.h"
 #include "xla/service/backend.h"
 #include "xla/service/compiler.h"
 #include "xla/service/hlo_module_util.h"
 #include "xla/service/hlo_runner.h"
 #include "xla/service/hlo_runner_interface.h"
-#include "xla/service/hlo_runner_pjrt.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
-#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/tests/hlo_runner_agnostic_reference_mixin.h"
 #include "xla/tests/hlo_runner_agnostic_test_base.h"
 #include "xla/tests/pjrt_client_registry.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/util.h"
@@ -57,29 +52,11 @@ namespace {
 
 constexpr absl::string_view kInterpreter = "interpreter";
 
-// Returns either an HloRunner or HloRunnerPjRt implementation depending on
-// whether there exists a registered PjRtClientFactory.
 std::tuple<std::unique_ptr<HloRunnerInterface>,
            HloRunnerAgnosticTestBase::DeviceShapeRepresentationFn,
            HloRunnerAgnosticTestBase::DeviceShapeSizeFn>
 GetHloRunnerAndFunctionsForTest(se::Platform* test_platform) {
-  if (ShouldUsePjRt()) {
-    PjRtClientTestFactoryRegistry& pjrt_registry =
-        GetGlobalPjRtClientTestFactory();
-    absl::StatusOr<std::unique_ptr<PjRtClient>> client = pjrt_registry.Get()();
-    CHECK_OK(client.status())
-        << "Failed to create PjRt client. " << client.status();
-    PjRtClientTestFactoryRegistry::DeviceShapeRepresentationFn
-        device_shape_representation_fn =
-            pjrt_registry.GetDeviceShapeRepresentationFn(client->get());
-    PjRtClientTestFactoryRegistry::DeviceShapeSizeFn device_shape_size_fn =
-        pjrt_registry.GetDeviceShapeSizeFn(client->get());
-
-    return std::make_tuple(std::make_unique<HloRunnerPjRt>(*std::move(client)),
-                           device_shape_representation_fn,
-                           device_shape_size_fn);
-  }
-
+  CHECK(!ShouldUsePjRt());
   auto runner = std::make_unique<HloRunner>(test_platform);
   Compiler* const absl_nonnull compiler = runner->backend().compiler();
   return std::make_tuple(
@@ -140,13 +117,13 @@ HloTestBase::HloTestBase(
 
 /*static*/ se::Platform* HloTestBase::GetReferencePlatform() {
   auto result = PlatformUtil::GetPlatform(kInterpreter);
-  TF_CHECK_OK(result.status()) << "could not get interpreter platform";
+  CHECK_OK(result.status()) << "could not get interpreter platform";
   return result.value();
 }
 
 /*static*/ se::Platform* HloTestBase::GetTestPlatform() {
   auto result = PlatformUtil::GetDefaultPlatform();
-  TF_CHECK_OK(result.status()) << "could not get test platform";
+  CHECK_OK(result.status()) << "could not get test platform";
   return result.value();
 }
 
@@ -176,10 +153,11 @@ HloTestBase::HloTestBase(
                                   reference_preprocessor);
 }
 
-se::DeviceMemoryAllocator* HloTestBase::GetAllocator() {
+se::DeviceAddressAllocator* HloTestBase::GetAllocator() {
   if (allocator_ == nullptr) {
-    allocator_ = std::make_unique<se::StreamExecutorMemoryAllocator>(
-        backend().default_stream_executor());
+    allocator_ =
+        std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
+            backend().default_stream_executor());
   }
   return allocator_.get();
 }

@@ -48,13 +48,15 @@ MATCHER_P2(InstructionMapping, instruction, num_tiling_parameters,
 
 class TilingSpecificationTest : public HloHardwareIndependentTestBase {
  public:
+  TilingSpecificationTest() { RegisterSymbolicExprStorage(&mlir_context_); }
+
   SymbolicTileAnalysis AnalyzeModule(HloModule* module) {
     SymbolicTileAnalysisOrError analysis_or_error =
         SymbolicTileAnalysis::AnalyzeComputation(
             *module->entry_computation()
                  ->root_instruction()
                  ->fused_instructions_computation(),
-            &symbolic_expr_context_,
+            &mlir_context_,
             /*emitter_specific_constraints_builder=*/nullptr);
 
     CHECK(std::holds_alternative<SymbolicTileAnalysis>(analysis_or_error));
@@ -62,7 +64,6 @@ class TilingSpecificationTest : public HloHardwareIndependentTestBase {
   }
 
   mlir::MLIRContext mlir_context_;
-  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 TEST_F(TilingSpecificationTest, TilingSpecificationDerivesOutputParameters) {

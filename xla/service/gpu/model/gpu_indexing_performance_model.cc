@@ -254,7 +254,7 @@ int64_t GpuPerformanceModelWithIndexingAnalysis::FlopsPerElement(
   }
 
   // Encountered unexpected instruction, call into `GpuHloCostAnalysis`.
-  TF_CHECK_OK(
+  CHECK_OK(
       cost_analysis_.RevisitInstruction(const_cast<HloInstruction*>(instr)));
 
   return cost_analysis_.flop_count(*instr) /
@@ -310,7 +310,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
   auto root_shape = roots.front().shape();
 
   LaunchDimensions launch_dimensions =
-      EstimateFusionLaunchDimensions(fusion_analysis, symbolic_expr_context_);
+      EstimateFusionLaunchDimensions(fusion_analysis, mlir_context_);
 
   int64_t num_blocks = launch_dimensions.num_blocks();
 
@@ -318,7 +318,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
   // operands. For each instruction, tells which elements of the instructions
   // result will be used to compute one result element of the fusion.
   auto grouped_fusion_indexing = ComputeGroupedOutputToInputIndexing(
-      fusion_adaptor, roots[0], symbolic_expr_context_);
+      fusion_adaptor, roots[0], mlir_context_);
 
   int64_t flops = 0;
   int64_t bytes_read = 0;
@@ -571,7 +571,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledFusion(
   // TODO(b/332714755): Add caching for SymbolicTileAnalysis.
   SymbolicTileAnalysisOrError analysis_or_error =
       SymbolicTileAnalysis::AnalyzeFusion(
-          fusion_adaptor, symbolic_expr_context_,
+          fusion_adaptor, mlir_context_,
           /*emitter_specific_constraints_builder=*/nullptr);
   if (const auto* fusion_decision =
           std::get_if<FusionDecision>(&analysis_or_error)) {
@@ -589,7 +589,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledFusion(
                                                  real_root_tile_sizes.end())}});
 
   TF_ASSIGN_OR_RETURN(TiledHloComputation tiled_hlo_computation,
-                      analysis.ComputeTiledHloInstructions(tiling));
+                      analysis.ComputeTiledComputation(tiling));
 
   return EstimateRunTimeForTiledHloComputation(
       fusion_adaptor, tiled_hlo_computation, launch_dimensions);
@@ -638,7 +638,7 @@ GpuPerformanceModelWithIndexingAnalysis::TryFindBestTilingForFusion(
     const HloFusionAdaptor& fusion_adaptor) {
   SymbolicTileAnalysisOrError analysis_or_error =
       SymbolicTileAnalysis::AnalyzeFusion(
-          fusion_adaptor, symbolic_expr_context_,
+          fusion_adaptor, mlir_context_,
           TritonEmitterConstraints::GetBuilder(*device_info_));
 
   if (const auto* fusion_decision =
@@ -656,11 +656,10 @@ GpuPerformanceModelWithIndexingAnalysis::TryFindBestTilingForFusion(
   for (const auto& tiling : tilings) {
     // TODO(b/372454662): This needs to be adjusted if we want to support more
     // than one "real root" (i.e. a root without users).
-    // Currently ComputeTiledHloInstructions() may fail and return an
+    // Currently ComputeTiledComputation() may fail and return an
     // Unimplemented error for cases of multi-output fusion that we do not
     // support yet.
-    auto maybe_tiled_hlo_computation =
-        analysis.ComputeTiledHloInstructions(tiling);
+    auto maybe_tiled_hlo_computation = analysis.ComputeTiledComputation(tiling);
     if (!maybe_tiled_hlo_computation.ok()) {
       if (maybe_tiled_hlo_computation.status().code() ==
               absl::StatusCode::kUnimplemented &&
@@ -679,6 +678,11 @@ GpuPerformanceModelWithIndexingAnalysis::TryFindBestTilingForFusion(
         EstimateRunTimeData estimate_run_time_data,
         EstimateRunTimeForTiledHloComputation(
             fusion_adaptor, tiled_hlo_computation, launch_dimensions));
+
+    // Skip tilings with infinite runtime (e.g., due to register spilling).
+    if (estimate_run_time_data.exec_time == absl::InfiniteDuration()) {
+      continue;
+    }
 
     if (!best_tiled_run_time_data.has_value() ||
         estimate_run_time_data.exec_time <

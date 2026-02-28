@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -38,11 +39,10 @@ limitations under the License.
 #include "xla/service/gpu/gpu_conv_runner.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
-#include "xla/service/gpu/transforms/cudnn_fusion_compiler.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/engine_options.h"
 #include "xla/stream_executor/stream.h"
@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -124,15 +125,33 @@ bool IsSupportedCudnnFusion(const HloInstruction& instr,
     return false;
   }
 
-  HloDotInstruction* dot =
-      Cast<HloDotInstruction>(hlo_query::GetFirstInstructionWithOpcode(
-          *instr.fused_instructions_computation(), HloOpcode::kDot));
-  if (dot == nullptr) {
-    VLOG(1) << "Fusion does not contain a dot.";
+  const HloComputation* computation = instr.fused_instructions_computation();
+  const HloInstruction* hero =
+      hlo_query::GetFirstInstructionWithOpcode(*computation, HloOpcode::kDot);
+  if (hero == nullptr) {
+    hero = hlo_query::GetFirstInstructionWithOpcode(*computation,
+                                                    HloOpcode::kConvolution);
+  }
+  if (hero == nullptr) {
+    hero = hlo_query::GetFirstInstructionWithOpcode(*computation,
+                                                    HloOpcode::kScaledDot);
+  }
+
+  if (hero == nullptr) {
+    VLOG(1) << "Fusion does not contain a dot or convolution.";
     return false;
   }
-  if (!algorithm_util::IsSupportedByCudnn(
-          dot->precision_config().algorithm())) {
+
+  PrecisionConfig::Algorithm algorithm = PrecisionConfig::ALG_UNSET;
+  if (auto* dot = DynCast<HloDotInstruction>(hero)) {
+    algorithm = dot->precision_config().algorithm();
+  } else if (auto* conv = DynCast<HloConvolutionInstruction>(hero)) {
+    algorithm = conv->precision_config().algorithm();
+  } else if (auto* scaled_dot = DynCast<HloScaledDotInstruction>(hero)) {
+    algorithm = scaled_dot->precision_config().algorithm();
+  }
+
+  if (!algorithm_util::IsSupportedByCudnn(algorithm)) {
     VLOG(1) << "Fusion contains a precision config not supported by cudnn.";
     return false;
   }
@@ -140,6 +159,10 @@ bool IsSupportedCudnnFusion(const HloInstruction& instr,
   if (GetDnnVersionInfoOrDefault(stream_executor).major_version() < 9) {
     VLOG(1) << "Cudnn version is too old.";
     return false;
+  }
+
+  if (hero->opcode() == HloOpcode::kConvolution) {
+    return true;
   }
 
   stream_executor::CudaComputeCapability compute_capability =
@@ -198,11 +221,11 @@ absl::StatusOr<std::vector<CudnnBackendConfig>> GetAlgorithms(
       TF_RETURN_IF_ERROR(dnn->GetConvolveRunners(
           conv_kind, input_type, output_type, stream,
           gpu_conv_config.input_descriptor,
-          /*input_data=*/se::DeviceMemoryBase(nullptr),
+          /*input_data=*/se::DeviceAddressBase(nullptr),
           gpu_conv_config.filter_descriptor,
-          /*filter_data=*/se::DeviceMemoryBase(nullptr),
+          /*filter_data=*/se::DeviceAddressBase(nullptr),
           gpu_conv_config.output_descriptor,
-          /*output_data=*/se::DeviceMemoryBase(nullptr),
+          /*output_data=*/se::DeviceAddressBase(nullptr),
           gpu_conv_config.conv_desc, use_fallback,
           /*scratch_allocator=*/nullptr, engine_options, &conv_runners));
       break;
@@ -238,6 +261,7 @@ GetCudnnFusionConfigs(const HloInstruction& instr,
   std::vector<std::unique_ptr<BackendConfig>> configs;
   int plan_count = CuDnnFusionCompiler::GetAvailablePlanCount(
       *stream_executor, *DynCast<HloFusionInstruction>(&instr));
+  VLOG(2) << "Found " << plan_count << " plans for cudnn fusion.";
   configs.reserve(plan_count);
   for (int plan_id = 0; plan_id < plan_count; ++plan_id) {
     CudnnBackendConfig config;
@@ -263,7 +287,8 @@ GetConvolutionCustomCallConfigs(const HloCustomCallInstruction* instr,
       GetDNNDataTypeFromPrimitiveType(gpu_conv_config.output_type));
   se::dnn::DnnSupport* dnn = stream_executor->AsDnn();
   auto allocator =
-      std::make_unique<se::StreamExecutorMemoryAllocator>(stream_executor);
+      std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
+          stream_executor);
   TF_ASSIGN_OR_RETURN(se::Stream * stream,
                       allocator->GetStream(stream_executor->device_ordinal()));
   bool allow_tf32 = absl::c_all_of(

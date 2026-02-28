@@ -91,7 +91,7 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Extension_Base, next);
 // Minor changes include:
 // * Adding a new field to the XLA_FFI_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define XLA_FFI_API_MINOR 2
+#define XLA_FFI_API_MINOR 3
 
 struct XLA_FFI_Api_Version {
   size_t struct_size;
@@ -545,12 +545,12 @@ struct XLA_FFI_State_Set_Args {
   XLA_FFI_Extension_Base* extension_start;
 
   XLA_FFI_ExecutionContext* ctx;
+  XLA_FFI_ExecutionStage stage;
   XLA_FFI_TypeId* type_id;
   void* state;
-  void (*deleter)(void* state);
 };
 
-XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_State_Set_Args, deleter);
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_State_Set_Args, state);
 
 // Sets execution state to the `state` of type `type_id`. Returns an error if
 // state already set.
@@ -561,6 +561,7 @@ struct XLA_FFI_State_Get_Args {
   XLA_FFI_Extension_Base* extension_start;
 
   XLA_FFI_ExecutionContext* ctx;
+  XLA_FFI_ExecutionStage stage;
   XLA_FFI_TypeId* type_id;
   void* state;  // out
 };
@@ -752,7 +753,7 @@ struct XLA_FFI_Api {
   XLA_FFI_Extension_Base* extension_start;
 
   XLA_FFI_Api_Version api_version;
-  XLA_FFI_InternalApi* internal_api;
+  const XLA_FFI_InternalApi* internal_api;
 
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_Error_Create);
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_Error_GetMessage);

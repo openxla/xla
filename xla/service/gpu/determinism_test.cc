@@ -16,7 +16,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -24,6 +23,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
@@ -134,6 +134,12 @@ class DeterminismTest : public GpuCodegenTest {
     EXPECT_CALL(executor, SynchronizeAllActivity).WillRepeatedly([&]() -> bool {
       return true;
     });
+    EXPECT_CALL(executor, CreateStream).WillRepeatedly([&] {
+      return backend().default_stream_executor()->CreateStream();
+    });
+    EXPECT_CALL(executor, AsBlas).WillRepeatedly([&] {
+      return backend().default_stream_executor()->AsBlas();
+    });
 
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                             ParseAndReturnVerifiedModule(hlo_string));
@@ -166,6 +172,10 @@ class DeterminismTest : public GpuCodegenTest {
 };
 
 TEST_F(DeterminismTest, CublasDot) {
+  // This test expects to use Cublas. Disable other backends, including Triton.
+  debug_options_.clear_xla_gpu_experimental_autotune_backends();
+  debug_options_.add_xla_gpu_experimental_autotune_backends(
+      autotuner::Backend::CUBLAS);
   constexpr absl::string_view kHloText = R"(
 ENTRY e {
   p0 = f32[128,128] parameter(0)
@@ -180,13 +190,8 @@ ENTRY e {
     debug_options_.set_xla_gpu_enable_triton_gemm(false);
   }
 
+  debug_options_.set_xla_gpu_enable_cublaslt(false);
   MatchOptimizedHlo(kHloText, R"(; CHECK: custom_call_target="__cublas$gemm")",
-                    TimerCreation::kForbidden);
-  AssertDeterminism(kHloText);
-
-  debug_options_.set_xla_gpu_enable_cublaslt(true);
-  MatchOptimizedHlo(kHloText,
-                    R"(; CHECK: custom_call_target="__cublas$lt$matmul")",
                     TimerCreation::kForbidden);
   AssertDeterminism(kHloText);
 }

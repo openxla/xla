@@ -18,6 +18,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -29,28 +30,30 @@ namespace {
 using ::testing::ElementsAre;
 
 struct SymbolicMapTest : public ::testing::Test {
-  mlir::MLIRContext mlir_context;
-  SymbolicExprContext ctx;
+  static constexpr int kSampleDims = 2;
+  static constexpr int kSampleSymbols = 2;
+  SymbolicMapTest() {
+    RegisterSymbolicExprStorage(&ctx);
+    d0 = CreateDimExpr(0, &ctx);
+    d1 = CreateDimExpr(1, &ctx);
+    s0 = CreateSymbolExpr(0, kSampleDims, &ctx);
+    s1 = CreateSymbolExpr(1, kSampleDims, &ctx);
+    s2 = CreateSymbolExpr(2, kSampleDims, &ctx);
+    c2 = CreateSymbolicConstant(2, &ctx);
+    c10 = CreateSymbolicConstant(10, &ctx);
+    sample_map =
+        SymbolicMap::Get(&ctx, kSampleDims, kSampleSymbols, {d0 + s0, d1 * s1});
+  }
+
+  mlir::MLIRContext ctx;
   SymbolicExpr d0;
   SymbolicExpr d1;
-  static constexpr int kSampleDims = 2;
   SymbolicExpr s0;
   SymbolicExpr s1;
-  static constexpr int kSampleSymbols = 2;
+  SymbolicExpr s2;
   SymbolicExpr c2;
   SymbolicExpr c10;
   SymbolicMap sample_map;
-
-  SymbolicMapTest()
-      : ctx(&mlir_context),
-        d0(CreateDimExpr(&ctx, 0)),
-        d1(CreateDimExpr(&ctx, 1)),
-        s0(CreateSymbolExpr(&ctx, 0, kSampleDims)),
-        s1(CreateSymbolExpr(&ctx, 1, kSampleDims)),
-        c2(ctx.CreateConstant(2)),
-        c10(ctx.CreateConstant(10)),
-        sample_map(SymbolicMap::Get(&ctx, kSampleDims, kSampleSymbols,
-                                    {d0 + s0, d1 * s1})) {}
 };
 
 TEST_F(SymbolicMapTest, GetSymbolAndDimExpressions) {
@@ -71,9 +74,9 @@ TEST_F(SymbolicMapTest, ToString) {
   EXPECT_EQ(dims_only.ToString(), "(d0, d1)[] -> (d0, d1)");
 
   SymbolicExpr s0_no_dims =
-      CreateSymbolExpr(&ctx, /*symbol_id=*/0, /*num_dims=*/0);
+      CreateSymbolExpr(/*symbol_id=*/0, /*num_dims=*/0, &ctx);
   SymbolicExpr s1_no_dims =
-      CreateSymbolExpr(&ctx, /*symbol_id=*/1, /*num_dims=*/0);
+      CreateSymbolExpr(/*symbol_id=*/1, /*num_dims=*/0, &ctx);
   SymbolicMap symbols_only =
       SymbolicMap::Get(&ctx, 0, kSampleSymbols, {s0_no_dims, s1_no_dims});
   EXPECT_EQ(symbols_only.ToString(), "()[s0, s1] -> (s0, s1)");
@@ -83,43 +86,45 @@ TEST_F(SymbolicMapTest, IsEmpty) {
   EXPECT_TRUE(SymbolicMap::Get(&ctx, 0, 0, {}).IsEmpty());
   EXPECT_TRUE(SymbolicMap::Get(&ctx, 2, 1, {}).IsEmpty());
   EXPECT_FALSE(
-      SymbolicMap::Get(&ctx, 1, 0, {CreateDimExpr(&ctx, 0)}).IsEmpty());
+      SymbolicMap::Get(&ctx, 1, 0, {CreateDimExpr(0, &ctx)}).IsEmpty());
 }
 
 TEST_F(SymbolicMapTest, IsIdentity) {
   SymbolicMap true_identity = SymbolicMap::Get(
-      &ctx, 2, 0, {CreateDimExpr(&ctx, 0), CreateDimExpr(&ctx, 1)});
+      &ctx, 2, 0, {CreateDimExpr(0, &ctx), CreateDimExpr(1, &ctx)});
   EXPECT_TRUE(true_identity.IsIdentity());
 
   SymbolicMap true_identity_with_symbols = SymbolicMap::Get(
-      &ctx, 2, 1, {CreateDimExpr(&ctx, 0), CreateDimExpr(&ctx, 1)});
+      &ctx, 2, 1, {CreateDimExpr(0, &ctx), CreateDimExpr(1, &ctx)});
   EXPECT_TRUE(true_identity_with_symbols.IsIdentity());
 
   SymbolicMap few_results =
-      SymbolicMap::Get(&ctx, 2, 0, {CreateDimExpr(&ctx, 0)});
+      SymbolicMap::Get(&ctx, 2, 0, {CreateDimExpr(0, &ctx)});
   EXPECT_FALSE(few_results.IsIdentity());
 
   SymbolicMap too_many_results = SymbolicMap::Get(
-      &ctx, 1, 0, {CreateDimExpr(&ctx, 0), CreateDimExpr(&ctx, 1)});
+      &ctx, 1, 0, {CreateDimExpr(0, &ctx), CreateDimExpr(1, &ctx)});
   EXPECT_FALSE(too_many_results.IsIdentity());
 
   SymbolicMap wrong_expr_type = SymbolicMap::Get(
-      &ctx, 2, 0, {CreateDimExpr(&ctx, 0), ctx.CreateConstant(1)});
+      &ctx, 2, 0, {CreateDimExpr(0, &ctx), CreateSymbolicConstant(1, &ctx)});
   EXPECT_FALSE(wrong_expr_type.IsIdentity());
 
   SymbolicMap unordered_variable_id = SymbolicMap::Get(
-      &ctx, 2, 0, {CreateDimExpr(&ctx, 1), CreateDimExpr(&ctx, 0)});
+      &ctx, 2, 0, {CreateDimExpr(1, &ctx), CreateDimExpr(0, &ctx)});
   EXPECT_FALSE(unordered_variable_id.IsIdentity());
 }
 
 TEST_F(SymbolicMapTest, GetConstantResults) {
   SymbolicMap all_constants_map = SymbolicMap::Get(
-      &ctx, 0, 0, {ctx.CreateConstant(5), ctx.CreateConstant(10)});
+      &ctx, 0, 0,
+      {CreateSymbolicConstant(5, &ctx), CreateSymbolicConstant(10, &ctx)});
   EXPECT_TRUE(all_constants_map.IsConstant());
   EXPECT_THAT(all_constants_map.GetConstantResults(), ElementsAre(5, 10));
 
   SymbolicMap mixed_map = SymbolicMap::Get(
-      &ctx, 1, 0, {ctx.CreateConstant(5), ctx.CreateVariable(0)});
+      &ctx, 1, 0,
+      {CreateSymbolicConstant(5, &ctx), CreateSymbolicVariable(0, &ctx)});
   EXPECT_FALSE(mixed_map.IsConstant());
   EXPECT_DEATH(mixed_map.GetConstantResults(),
                "Cannot get constant results from a non-constant map");
@@ -130,11 +135,11 @@ TEST_F(SymbolicMapTest, GetConstantResults) {
 }
 
 TEST_F(SymbolicMapTest, ReplaceDimsAndSymbols) {
-  SymbolicExpr c3 = ctx.CreateConstant(30);
+  SymbolicExpr c3 = CreateSymbolicConstant(30, &ctx);
 
   SymbolicMap replaced_basic = sample_map.ReplaceDimsAndSymbols(
-      {c10, c2}, {c3, d0}, sample_map.GetNumDims(), sample_map.GetNumSymbols());
-  EXPECT_THAT(replaced_basic.GetResults(), ElementsAre(c10 + c3, c2 * d0));
+      {d1, c2}, {c3, d0}, sample_map.GetNumDims(), sample_map.GetNumSymbols());
+  EXPECT_THAT(replaced_basic.GetResults(), ElementsAre(d1 + c3, c2 * d0));
 
   SymbolicMap map_empty = SymbolicMap::Get(&ctx, 0, 0, {});
   SymbolicMap replaced_empty = map_empty.ReplaceDimsAndSymbols({}, {}, 0, 0);
@@ -142,9 +147,9 @@ TEST_F(SymbolicMapTest, ReplaceDimsAndSymbols) {
 
   SymbolicMap map_change_dims = SymbolicMap::Get(&ctx, 1, 1, {d0 + s0 * c2});
   // Replacements in the context of the NEW map (2 dims, 1 symbol)
-  SymbolicExpr new_d0 = CreateDimExpr(&ctx, 0);
-  SymbolicExpr new_d1 = CreateDimExpr(&ctx, 1);
-  SymbolicExpr new_s0 = CreateSymbolExpr(&ctx, /*symbol_id=*/0, /*num_dims=*/2);
+  SymbolicExpr new_d0 = CreateDimExpr(0, &ctx);
+  SymbolicExpr new_d1 = CreateDimExpr(1, &ctx);
+  SymbolicExpr new_s0 = CreateSymbolExpr(/*symbol_id=*/0, /*num_dims=*/2, &ctx);
   SymbolicMap replaced_change_dims = map_change_dims.ReplaceDimsAndSymbols(
       {new_d0 * c10 + new_d1}, {new_s0}, 2, 1);
   EXPECT_EQ(replaced_change_dims.GetNumDims(), 2);
@@ -176,9 +181,9 @@ TEST_F(SymbolicMapTest, Compose) {
 
   // Composition with Symbols
   SymbolicExpr s0_map1 =
-      CreateSymbolExpr(&ctx, /*symbol_id=*/0, /*num_dims=*/2);
+      CreateSymbolExpr(/*symbol_id=*/0, /*num_dims=*/2, &ctx);
   SymbolicExpr s0_map2 =
-      CreateSymbolExpr(&ctx, /*symbol_id=*/0, /*num_dims=*/1);
+      CreateSymbolExpr(/*symbol_id=*/0, /*num_dims=*/1, &ctx);
   SymbolicMap map1_symbols =
       SymbolicMap::Get(&ctx, 2, 1, {d0 + s0_map1, d1 * 2});
   SymbolicMap map2_symbols =
@@ -188,9 +193,9 @@ TEST_F(SymbolicMapTest, Compose) {
   EXPECT_EQ(compose_with_symbols.GetNumSymbols(), 2);
   SymbolicExpr new_d0 = d0;
   SymbolicExpr new_s0_map1 =
-      CreateSymbolExpr(&ctx, /*symbol_id=*/0, /*num_dims=*/1);
+      CreateSymbolExpr(/*symbol_id=*/0, /*num_dims=*/1, &ctx);
   SymbolicExpr new_s0_map2 =
-      CreateSymbolExpr(&ctx, /*symbol_id=*/1, /*num_dims=*/1);
+      CreateSymbolExpr(/*symbol_id=*/1, /*num_dims=*/1, &ctx);
   EXPECT_THAT(
       compose_with_symbols.GetResults(),
       ElementsAre((new_d0 - 10) + new_s0_map1, (new_d0 + new_s0_map2) * 2));
@@ -215,13 +220,13 @@ TEST_F(SymbolicMapTest, Compose) {
   // The reindexed symbol from map1_symbols is the second symbol in the composed
   // map.
   SymbolicExpr reindexed_map1_s0 =
-      CreateSymbolExpr(&ctx, /*symbol_id=*/1, /*num_dims=*/2);
+      CreateSymbolExpr(/*symbol_id=*/1, /*num_dims=*/2, &ctx);
   EXPECT_THAT(compose_left_with_id2dim_1sym.GetResults(),
               ElementsAre(d0 + reindexed_map1_s0, d1 * 2));
 }
 
 TEST_F(SymbolicMapTest, Replace) {
-  SymbolicExpr c5 = ctx.CreateConstant(5);
+  SymbolicExpr c5 = CreateSymbolicConstant(5, &ctx);
 
   SymbolicExpr expr0 = (d0 + c2) * d1;
   SymbolicExpr expr1 = d1 + c2;
@@ -234,17 +239,30 @@ TEST_F(SymbolicMapTest, Replace) {
   SymbolicMap replaced_just_one = map.Replace(d1 + c2, c5);
   EXPECT_THAT(replaced_just_one.GetResults(), ElementsAre(expr0, c5));
 
-  SymbolicMap no_replacement_map = map.Replace(ctx.CreateVariable(99), c5);
+  SymbolicMap no_replacement_map =
+      map.Replace(CreateSymbolicVariable(99, &ctx), c5);
   EXPECT_EQ(no_replacement_map, map);
 }
 
+TEST_F(SymbolicMapTest, ReplaceWithMap) {
+  SymbolicExpr expr = (d0 + 1) * (d1 + 2);
+  SymbolicMap map = SymbolicMap::Get(&ctx, 2, 0, {expr});
+
+  llvm::DenseMap<SymbolicExpr, SymbolicExpr> replacements;
+  replacements[d0 + 1] = c10;
+  replacements[d1] = d0;
+  SymbolicMap replaced1 = map.Replace(replacements, 1, 0);
+  EXPECT_THAT(replaced1.GetResults(), ElementsAre(c10 * (d0 + 2)));
+  EXPECT_EQ(replaced1.GetNumDims(), 1);
+}
+
 TEST_F(SymbolicMapTest, GetUnusedVariables) {
-  [[maybe_unused]] SymbolicExpr d2 = CreateDimExpr(&ctx, 2);
+  [[maybe_unused]] SymbolicExpr d2 = CreateDimExpr(2, &ctx);
   // d2 is unused.
   [[maybe_unused]] SymbolicExpr s0_3dims =
-      CreateSymbolExpr(&ctx, /*symbol_id=*/0, /*num_dims=*/3);
+      CreateSymbolExpr(/*symbol_id=*/0, /*num_dims=*/3, &ctx);
   SymbolicExpr s1_3dims =
-      CreateSymbolExpr(&ctx, /*symbol_id=*/1, /*num_dims=*/3);
+      CreateSymbolExpr(/*symbol_id=*/1, /*num_dims=*/3, &ctx);
 
   // Map with used and unused dims and symbols.
   SymbolicMap map = SymbolicMap::Get(&ctx, 3, 2, {d0 + s1_3dims, d1 * c2});
@@ -281,8 +299,8 @@ TEST_F(SymbolicMapTest, GetUnusedVariables) {
   EXPECT_EQ(no_sym_symbols.size(), 0);
 
   // Map with only symbols
-  s0 = CreateSymbolExpr(&ctx, /*symbol_id=*/0, /*num_dims=*/0);
-  s1 = CreateSymbolExpr(&ctx, /*symbol_id=*/1, /*num_dims=*/0);
+  s0 = CreateSymbolExpr(/*symbol_id=*/0, /*num_dims=*/0, &ctx);
+  s1 = CreateSymbolExpr(/*symbol_id=*/1, /*num_dims=*/0, &ctx);
   SymbolicMap no_dims_map = SymbolicMap::Get(&ctx, 0, 2, {s0 * s1});
   llvm::SmallBitVector no_dim_dims = GetUnusedDimensionsBitVector(no_dims_map);
   EXPECT_EQ(no_dim_dims.size(), 0);
@@ -293,10 +311,10 @@ TEST_F(SymbolicMapTest, GetUnusedVariables) {
 }
 
 TEST_F(SymbolicMapTest, CompressDims) {
-  SymbolicExpr d0 = CreateDimExpr(&ctx, 0);
-  [[maybe_unused]] SymbolicExpr d1 = CreateDimExpr(&ctx, 1);  // Unused
-  SymbolicExpr d2 = CreateDimExpr(&ctx, 2);
-  SymbolicExpr s0 = CreateSymbolExpr(&ctx, /*symbol_id=*/0, /*num_dims=*/3);
+  SymbolicExpr d0 = CreateDimExpr(0, &ctx);
+  [[maybe_unused]] SymbolicExpr d1 = CreateDimExpr(1, &ctx);  // Unused
+  SymbolicExpr d2 = CreateDimExpr(2, &ctx);
+  SymbolicExpr s0 = CreateSymbolExpr(/*symbol_id=*/0, /*num_dims=*/3, &ctx);
 
   // Map: (d0, d1, d2)[s0] -> {d0 + d2, s0 * 5}
   SymbolicMap map = SymbolicMap::Get(&ctx, 3, 1, {d0 + d2, s0 * 5});
@@ -308,9 +326,9 @@ TEST_F(SymbolicMapTest, CompressDims) {
   EXPECT_EQ(compressed.GetNumDims(), 2);
   EXPECT_EQ(compressed.GetNumSymbols(), 1);
 
-  SymbolicExpr new_d0 = CreateDimExpr(&ctx, 0);
-  SymbolicExpr new_d1 = CreateDimExpr(&ctx, 1);
-  SymbolicExpr new_s0 = CreateSymbolExpr(&ctx, /*symbol_id=*/0, /*num_dims=*/2);
+  SymbolicExpr new_d0 = CreateDimExpr(0, &ctx);
+  SymbolicExpr new_d1 = CreateDimExpr(1, &ctx);
+  SymbolicExpr new_s0 = CreateSymbolExpr(/*symbol_id=*/0, /*num_dims=*/2, &ctx);
   EXPECT_THAT(compressed.GetResults(),
               ElementsAre(new_d0 + new_d1, new_s0 * 5));
 
@@ -322,11 +340,11 @@ TEST_F(SymbolicMapTest, CompressDims) {
 }
 
 TEST_F(SymbolicMapTest, CompressSymbols) {
-  SymbolicExpr d0 = CreateDimExpr(&ctx, 0);
-  SymbolicExpr s0 = CreateSymbolExpr(&ctx, /*symbol_id=*/0, /*num_dims=*/1);
+  SymbolicExpr d0 = CreateDimExpr(0, &ctx);
+  SymbolicExpr s0 = CreateSymbolExpr(/*symbol_id=*/0, /*num_dims=*/1, &ctx);
   [[maybe_unused]] SymbolicExpr s1 =
-      CreateSymbolExpr(&ctx, /*symbol_id=*/1, /*num_dims=*/1);  // Unused
-  SymbolicExpr s2 = CreateSymbolExpr(&ctx, /*symbol_id=*/2, /*num_dims=*/1);
+      CreateSymbolExpr(/*symbol_id=*/1, /*num_dims=*/1, &ctx);  // Unused
+  SymbolicExpr s2 = CreateSymbolExpr(/*symbol_id=*/2, /*num_dims=*/1, &ctx);
 
   // Map: (d0)[s0, s1, s2] -> {d0 + s2, s0 * 5}
   SymbolicMap map = SymbolicMap::Get(&ctx, 1, 3, {d0 + s2, s0 * 5});
@@ -338,10 +356,10 @@ TEST_F(SymbolicMapTest, CompressSymbols) {
   EXPECT_EQ(compressed.GetNumDims(), 1);
   EXPECT_EQ(compressed.GetNumSymbols(), 2);
 
-  SymbolicExpr new_d0 = CreateDimExpr(&ctx, 0);
-  SymbolicExpr new_s0 = CreateSymbolExpr(&ctx, /*symbol_id=*/0, /*num_dims=*/1);
+  SymbolicExpr new_d0 = CreateDimExpr(0, &ctx);
+  SymbolicExpr new_s0 = CreateSymbolExpr(/*symbol_id=*/0, /*num_dims=*/1, &ctx);
   SymbolicExpr new_s1 =
-      CreateSymbolExpr(&ctx, /*symbol_id=*/1, /*num_dims=*/1);  // Original s2
+      CreateSymbolExpr(/*symbol_id=*/1, /*num_dims=*/1, &ctx);  // Original s2
   EXPECT_THAT(compressed.GetResults(),
               ElementsAre(new_d0 + new_s1, new_s0 * 5));
 
@@ -355,11 +373,11 @@ TEST_F(SymbolicMapTest, CompressSymbols) {
 TEST_F(SymbolicMapTest, Hashing) {
   absl::flat_hash_set<SymbolicMap> set;
 
-  SymbolicExpr d0 = CreateDimExpr(&ctx, 0);
-  SymbolicExpr d1 = CreateDimExpr(&ctx, 1);
-  SymbolicExpr s0 = CreateSymbolExpr(&ctx, /*symbol_id=*/0, /*num_dims=*/2);
-  SymbolicExpr c42 = ctx.CreateConstant(42);
-  SymbolicExpr c99 = ctx.CreateConstant(99);
+  SymbolicExpr d0 = CreateDimExpr(0, &ctx);
+  SymbolicExpr d1 = CreateDimExpr(1, &ctx);
+  SymbolicExpr s0 = CreateSymbolExpr(/*symbol_id=*/0, /*num_dims=*/2, &ctx);
+  SymbolicExpr c42 = CreateSymbolicConstant(42, &ctx);
+  SymbolicExpr c99 = CreateSymbolicConstant(99, &ctx);
 
   SymbolicMap map1 = SymbolicMap::Get(&ctx, 2, 1, {d0 + s0, d1 * c42});
   SymbolicMap map2 = SymbolicMap::Get(&ctx, 2, 1, {d0 + s0, d1 * c42});

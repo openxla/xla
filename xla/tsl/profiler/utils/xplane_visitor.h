@@ -151,7 +151,6 @@ class XEventMetadataVisitor : public XStatsOwner<XEventMetadata> {
   template <typename ForEachChildFunc>
   void ForEachChild(ForEachChildFunc&& for_each_child) const;
 
- private:
   const XEventMetadata* metadata() const { return stats_owner(); }
 };
 
@@ -168,6 +167,8 @@ class XEventVisitor : public XStatsOwner<XEvent> {
   int64_t Id() const { return event_->metadata_id(); }
 
   absl::string_view Name() const { return metadata_->name(); }
+
+  absl::string_view LineName() const { return line_->name(); }
 
   std::optional<int64_t> Type() const { return type_; }
 

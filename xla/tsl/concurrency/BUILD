@@ -124,7 +124,7 @@ tsl_cc_test(
     deps = [
         ":concurrent_vector",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:env_impl",
+        "//xla/tsl/platform:env_impl",  # buildcleaner: keep
         "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest_main",
     ],
@@ -159,7 +159,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@com_google_absl//absl/utility",
     ],
 )
 
@@ -170,12 +169,41 @@ tsl_cc_test(
         ":executor",
         ":future",
         "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "interop",
+    srcs = ["interop.cc"],
+    hdrs = ["interop.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        ":async_value",
+        ":future",
+        ":ref_count",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+tsl_cc_test(
+    name = "interop_test",
+    srcs = ["interop_test.cc"],
+    deps = [
+        ":async_value",
+        ":interop",
+        ":ref_count",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status",
     ],
 )
 
@@ -192,7 +220,6 @@ tsl_cc_test(
     deps = [
         ":ref_count",
         "//xla/tsl/platform:test",
-        "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/base:nullability",
     ],

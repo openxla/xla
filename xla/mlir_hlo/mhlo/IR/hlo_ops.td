@@ -1887,6 +1887,54 @@ def MHLO_ReduceOp: MHLO_ShapedInterfaceOp<"reduce", [
   let hasCustomHLOConverter = 1;
 }
 
+def MHLO_ScanOp: MHLO_Op<"scan", [
+      AttrSizedOperandSegments,
+      AttrSizedResultSegments,
+      InferTensorType,
+      IsolatedFromAbove,
+      OpAsmOpInterface,
+      RecursiveMemoryEffects
+    ]> {
+  let summary = "Scan operation";
+  let description = [{
+    Applies a reduction function `body` to `inputs` and `inits` along the
+    `dimension` and produces `results` (comprising `outputs` and `carries`).
+
+    If `is_reverse` is true, the scan is performed in reverse order.
+    `is_associative` indicates whether the reduction function is associative.
+
+    See: https://www.tensorflow.org/xla/operation_semantics#scan
+  }];
+  let arguments = (ins
+    Variadic<MHLO_Tensor>:$inputs,
+    Variadic<MHLO_Tensor>:$inits,
+    ConfinedAttr<I64Attr, [IntNonNegative]>:$dimension,
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$is_reverse,
+    OptionalAttr<BoolAttr>:$is_associative
+  );
+
+  let results = (outs
+    Variadic<MHLO_Tensor>:$outputs,
+    Variadic<MHLO_Tensor>:$carries
+  );
+
+  let regions = (region SizedRegion<1>:$body);
+
+  let extraClassDeclaration = [{
+    void getAsmBlockArgumentNames(Region &region, OpAsmSetValueNameFn setNameFn) {
+      for (size_t i = 0; i < region.getNumArguments(); ++i) {
+        setNameFn(region.getArgument(i), i < getInputs().size() ? "input" : "carry");
+      }
+    }
+    static bool isCompatibleReturnTypes(TypeRange l, TypeRange r) {
+      return mlir::hlo::isCompatibleForHloTypeInference(l, r);
+    }
+  }];
+
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // MHLO tuple op definitions.
 //===----------------------------------------------------------------------===//
@@ -2547,9 +2595,25 @@ def MHLO_CompositeOp : MHLO_Op<"composite", [DeclareOpInterfaceMethods<SymbolUse
     FlatSymbolRefAttr:$decomposition,
     DefaultValuedOptionalAttr<I32Attr, "0">:$version
   );
+  let regions = (region VariadicRegion<AnyRegion>:$composite_regions);
   let results = (outs Variadic<MHLO_TensorOrTokenOrTuple>);
+
+  let builders = [
+    OpBuilder<(ins
+      "::mlir::TypeRange":$resultTypes, "::mlir::ValueRange":$inputs,
+      "::mlir::StringRef":$name, "::mlir::DictionaryAttr":$attributes,
+      "::mlir::StringRef":$decomposition, "uint32_t":$version
+    ), [{
+      build($_builder, $_state, resultTypes, inputs, name, attributes,
+            decomposition, version, /*regionsCount=*/0);
+    }]>
+  ];
+
   let hasCustomHLOConverter = 1;
-  let assemblyFormat = "$name $inputs attr-dict `:` functional-type(operands, results)";
+  let assemblyFormat = [{
+    $name operands (` ` `(` $composite_regions^ `)`)? attr-dict
+    `:` functional-type(operands, results)
+  }];
 }
 
 def MHLO_ConvolutionOp : MHLO_Op<"convolution", [Pure]> {

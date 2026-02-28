@@ -17,21 +17,37 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_AUTOTUNER_FISSION_BACKEND_H_
 
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "mlir/IR/MLIRContext.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/service/compiler.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
+
+inline autotuner::Backend GetFissionBackend(autotuner::Backend backend) {
+  absl::string_view backend_name = autotuner::Backend_Name(backend);
+  std::string fission_name = absl::StrCat(backend_name, "_FISSION");
+  autotuner::Backend fission_backend;
+  if (autotuner::Backend_Parse(fission_name, &fission_backend)) {
+    return fission_backend;
+  }
+  LOG(FATAL) << "Could not parse fission backend name: " << fission_name;
+}
 
 // A proxy backend that wraps an actual codegen backend. The `rewriter_pipeline`
 // is used to transform unfused instructions to retarget them for the underlying
@@ -44,17 +60,17 @@ namespace xla::gpu {
 class FissionBackend : public GpuCodegenBackend {
  public:
   FissionBackend(const DebugOptions* debug_options, Compiler* compiler,
-                 const Compiler::TargetConfig* target_config,
+                 const Compiler::GpuTargetConfig* target_config,
                  std::unique_ptr<GpuCodegenBackend> backend,
                  std::unique_ptr<HloPassPipeline> rewriter_pipeline,
-                 SymbolicExprContext* symbolic_expr_context,
+                 const AliasInfo* alias_info, mlir::MLIRContext* mlir_context,
                  stream_executor::StreamExecutor* stream_executor = nullptr)
-      : GpuCodegenBackend(absl::StrCat(backend->name(), "_fission"),
-                          debug_options, compiler, target_config,
-                          stream_executor),
+      : GpuCodegenBackend(GetFissionBackend(backend->backend()), debug_options,
+                          compiler, target_config, stream_executor),
         rewriter_pipeline_(std::move(rewriter_pipeline)),
         codegen_backend_(std::move(backend)),
-        symbolic_expr_context_(symbolic_expr_context) {}
+        alias_info_(alias_info),
+        mlir_context_(mlir_context) {}
   ~FissionBackend() override = default;
 
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
@@ -80,7 +96,8 @@ class FissionBackend : public GpuCodegenBackend {
 
   std::unique_ptr<HloPassPipeline> rewriter_pipeline_;
   std::unique_ptr<GpuCodegenBackend> codegen_backend_;
-  SymbolicExprContext* symbolic_expr_context_;
+  const AliasInfo* alias_info_;
+  mlir::MLIRContext* mlir_context_;
 };
 
 }  // namespace xla::gpu

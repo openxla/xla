@@ -23,11 +23,13 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
 #include "xla/codegen/tiling/tiled_hlo_computation.h"
+#include "xla/codegen/tiling/tiling_specification.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -54,19 +56,21 @@ namespace {
 
 using ::testing::ElementsAre;
 using ::testing::HasSubstr;
-using ::tsl::testing::StatusIs;
 
 class GpuIndexingPerformanceModelTest : public HloHardwareIndependentTestBase {
  public:
+  GpuIndexingPerformanceModelTest() {
+    RegisterSymbolicExprStorage(&mlir_context_);
+  }
+
   mlir::MLIRContext mlir_context_;
-  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
   // The reference times in the test cases below are measured
   // on A6000 by profiling the execution of the HLOs.
   se::DeviceDescription device_info_{TestGpuDeviceInfo::RTXA6000DeviceInfo()};
   HloFusionAnalysisCache fusion_analysis_cache_{device_info_};
   GpuPerformanceModelWithIndexingAnalysis indexing_cost_model_{
       &device_info_, &fusion_analysis_cache_, HloCostAnalysis::DefaultShapeSize,
-      &symbolic_expr_context_};
+      &mlir_context_};
 
   size_t WarpSize() const { return ::xla::gpu::WarpSize(device_info_); }
 };
@@ -534,7 +538,7 @@ ENTRY main {
           *fusion_adaptor, launch_dimensions, /*output_tile_sizes=*/{{1, 1}}));
 
   EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.read_time), 2932, 2);
-  EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.compute_time), 19, 1);
+  EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.compute_time), 14, 1);
   EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.exec_time), 2932, 2);
 }
 
@@ -595,13 +599,12 @@ ENTRY main {
   auto result = indexing_cost_model_.EstimateRunTimeForTiledFusion(
       *fusion_adaptor, launch_dimensions, /*output_tile_sizes=*/{{1, 128}});
 
-  // Currently SymbolicTileAnalysis fails for concatenate. Once the analysis
-  // gets support of concatenate, this test should fail with an error from
-  // `EstimateRunTimeForTiledHloComputation` that propagation of the number of
-  // blocks is not supported (b/351342921).
-  EXPECT_THAT(result,
-              absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition,
-                                     HasSubstr("SymbolicTileAnalysis failed")));
+  EXPECT_THAT(
+      result,
+      absl_testing::StatusIs(
+          absl::StatusCode::kFailedPrecondition,
+          HasSubstr(
+              "Concatenate is not supported by the indexing cost model")));
 }
 
 TEST_F(GpuIndexingPerformanceModelTest,
@@ -682,7 +685,7 @@ ENTRY main {
                           indexing_cost_model_.EstimateRunTimeForTiledFusion(
                               *fusion_adaptor, /*launch_dimensions=*/{1024, 8},
                               /*output_tile_sizes=*/{{4, 4}}));
-  EXPECT_NEAR(absl::ToDoubleMicroseconds(res1.exec_time), 412, 1);
+  EXPECT_NEAR(absl::ToDoubleMicroseconds(res1.exec_time), 292, 1);
 
   TF_ASSERT_OK_AND_ASSIGN(auto res2,
                           indexing_cost_model_.EstimateRunTimeForTiledFusion(
@@ -849,13 +852,13 @@ ENTRY main {
 
   SymbolicTileAnalysisOrError analysis_or_error =
       SymbolicTileAnalysis::AnalyzeFusion(
-          *fusion_adaptor, &symbolic_expr_context_,
+          *fusion_adaptor, &mlir_context_,
           /*emitter_specific_constraints_builder=*/nullptr);
   ASSERT_TRUE(std::holds_alternative<SymbolicTileAnalysis>(analysis_or_error));
 
   TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
                           std::get<SymbolicTileAnalysis>(analysis_or_error)
-                              .ComputeTiledHloInstructions(Tiling(
+                              .ComputeTiledComputation(Tiling(
                                   {{fusion_root, FlatTiling({9, 9, 9})}})));
 
   LaunchDimensions launch_dimensions = GpuPerformanceModelWithIndexingAnalysis::
@@ -899,14 +902,14 @@ ENTRY main {
 
   SymbolicTileAnalysisOrError analysis_or_error =
       SymbolicTileAnalysis::AnalyzeFusion(
-          *fusion_adaptor, &symbolic_expr_context_,
+          *fusion_adaptor, &mlir_context_,
           /*emitter_specific_constraints_builder=*/nullptr);
   ASSERT_TRUE(std::holds_alternative<SymbolicTileAnalysis>(analysis_or_error));
 
-  TF_ASSERT_OK_AND_ASSIGN(TiledHloComputation tiled_hlo_computation,
-                          std::get<SymbolicTileAnalysis>(analysis_or_error)
-                              .ComputeTiledHloInstructions(
-                                  Tiling({{fusion_root, FlatTiling({1})}})));
+  TF_ASSERT_OK_AND_ASSIGN(
+      TiledHloComputation tiled_hlo_computation,
+      std::get<SymbolicTileAnalysis>(analysis_or_error)
+          .ComputeTiledComputation(Tiling({{fusion_root, FlatTiling({1})}})));
 
   LaunchDimensions launch_dimensions = GpuPerformanceModelWithIndexingAnalysis::
       GetLaunchDimensionsForTiledFusion(tiled_hlo_computation, device_info_);

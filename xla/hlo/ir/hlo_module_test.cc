@@ -29,34 +29,36 @@ limitations under the License.
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/hash/hash.h"
+#include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "google/protobuf/text_format.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/ir/stack_frames.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
+#include "xla/service/compilation_environments.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_proto_util.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {
@@ -222,7 +224,8 @@ TEST(HloModuleTest, CloneGeneral) {
   CreateComputation(m1, "TestComputation1", true, schedule);
   CreateComputation(m1, "TestComputation3", false, schedule);
   CreateComputation(m1, "TestComputation2", false, schedule);
-  TF_CHECK_OK(m1.set_schedule(schedule));
+  m1.metadata()->set_module_group_name("test");
+  CHECK_OK(m1.set_schedule(schedule));
   m1.AddCrossProgramPrefetch(7, ShapeIndex({8}), 100);
 
   std::unique_ptr<HloModule> m2 = m1.Clone(kCloneSuffix);
@@ -241,6 +244,10 @@ TEST(HloModuleTest, CloneGeneral) {
                 .instructions()
                 .front()
                 ->name());
+  EXPECT_EQ(m1.metadata()->proto().module_group_name(), "test");
+  EXPECT_EQ(m2->metadata()->proto().module_group_name(), "test");
+  EXPECT_EQ(m1.metadata()->proto().canonical_module_id(), m1.unique_id());
+  EXPECT_EQ(m2->metadata()->proto().canonical_module_id(), m2->unique_id());
 
   EXPECT_EQ(m1.CrossProgramPrefetches().front().alt_memory_offset,
             m2->CrossProgramPrefetches().front().alt_memory_offset);
@@ -264,7 +271,7 @@ TEST(HloModuleTest, CloneWithContextGeneral) {
   CreateComputation(m1, "TestComputation1", true, schedule);
   CreateComputation(m1, "TestComputation3", false, schedule);
   CreateComputation(m1, "TestComputation2", false, schedule);
-  TF_CHECK_OK(m1.set_schedule(schedule));
+  CHECK_OK(m1.set_schedule(schedule));
   m1.AddCrossProgramPrefetch(7, ShapeIndex({8}), 100);
 
   auto [m2, clone_context] = m1.CloneWithContext(kCloneSuffix);
@@ -325,6 +332,32 @@ TEST(HloModuleTest, CloneWithNewConfig) {
   EXPECT_EQ(pm2->config().device_type(), m1.config().device_type());
   EXPECT_NE(pm2->config().device_memory_size(),
             m1.config().device_memory_size());
+}
+
+TEST(HloModuleTest, ClonePreservesStackFrameIndex) {
+  HloModule m1("temp_module", HloModuleConfig());
+  HloSchedule schedule(&m1);
+  CreateComputation(m1, "TestComputation1", true, schedule);
+  CHECK_OK(m1.set_schedule(schedule));
+
+  StackFrameIndexProto stack_frame_index;
+  stack_frame_index.add_file_names("file1.cc");
+  stack_frame_index.add_function_names("func1");
+  auto* file_location = stack_frame_index.add_file_locations();
+  file_location->set_file_name_id(1);
+  file_location->set_function_name_id(1);
+  file_location->set_line(10);
+  file_location->set_column(5);
+  auto* stack_frame = stack_frame_index.add_stack_frames();
+  stack_frame->set_file_location_id(1);
+  stack_frame->set_parent_frame_id(0);
+  m1.set_stack_frames(StackFrames::FromProto(stack_frame_index).value());
+
+  std::unique_ptr<HloModule> m2 = m1.Clone(kCloneSuffix);
+
+  EXPECT_FALSE(m2->stack_frames().empty());
+  EXPECT_THAT(m2->stack_frames().proto(),
+              tsl::proto_testing::EqualsProto(stack_frame_index));
 }
 
 TEST(HloModuleTest, UniqueIdProvidesComputationPrefix) {
@@ -1165,6 +1198,8 @@ TEST(HloModuleTest, TestCreateFromProtoUpdatesBufferAssignment) {
     return ShapeUtil::ByteSizeOf(buffer.shape(), sizeof(void*));
   };
 
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
   TF_ASSERT_OK_AND_ASSIGN(
       auto buffer_assignment,
       BufferAssigner::Run(
@@ -1174,7 +1209,7 @@ TEST(HloModuleTest, TestCreateFromProtoUpdatesBufferAssignment) {
           /*buffer_size=*/std::move(buffer_size_func),
           /*alias_info=*/&alias_info,
           /*color_alignment=*/[](LogicalBuffer::Color) -> int64_t { return 1; },
-          /*allocate_buffers_for_constants=*/true));
+          /*options=*/std::move(opts)));
 
   BufferAssignmentProto buffer_assignment_proto = buffer_assignment->ToProto();
   *opt_hlo_module_proto.mutable_buffer_assignment() = buffer_assignment_proto;
@@ -1221,6 +1256,93 @@ TEST(HloModuleTest, TestCreateFromProtoUpdatesBufferAssignment) {
   TF_EXPECT_OK(BufferAssignment::FromProto(
       opt_hlo_module_proto_modified.buffer_assignment(),
       hlo_module_recreated.get(), std::move(buffer_size_func), &alias_info));
+}
+
+TEST(HloModuleTest, OnTheFlyCanonicalizeStackFrameId) {
+  HloModuleProto proto;
+  proto.set_name("test_module");
+  proto.set_entry_computation_id(1);
+
+  auto* entry = proto.add_computations();
+  entry->set_name("main");
+  entry->set_id(1);
+
+  auto* inst1 = entry->add_instructions();
+  inst1->set_name("inst1");
+  inst1->set_opcode("parameter");
+  inst1->set_id(2);
+  *inst1->mutable_shape() = ShapeUtil::MakeShape(F32, {}).ToProto();
+  inst1->set_parameter_number(0);
+  inst1->mutable_metadata()->set_stack_frame_id(1);
+
+  auto* inst2 = entry->add_instructions();
+  inst2->set_name("inst2");
+  inst2->set_opcode("parameter");
+  inst2->set_id(3);
+  *inst2->mutable_shape() = ShapeUtil::MakeShape(F32, {}).ToProto();
+  inst2->set_parameter_number(1);
+  inst2->mutable_metadata()->set_stack_frame_id(3);
+
+  auto* root = entry->add_instructions();
+  root->set_name("root");
+  root->set_opcode("add");
+  root->set_id(4);
+  *root->mutable_shape() = ShapeUtil::MakeShape(F32, {}).ToProto();
+  root->add_operand_ids(2);
+  root->add_operand_ids(3);
+  entry->set_root_id(4);
+
+  // Set host_program_shape
+  auto* shape_proto = proto.mutable_host_program_shape();
+  *shape_proto->add_parameters() = ShapeUtil::MakeShape(F32, {}).ToProto();
+  *shape_proto->add_parameters() = ShapeUtil::MakeShape(F32, {}).ToProto();
+  shape_proto->add_parameter_names("p0");
+  shape_proto->add_parameter_names("p1");
+  *shape_proto->mutable_result() = ShapeUtil::MakeShape(F32, {}).ToProto();
+
+  auto* index = proto.mutable_stack_frame_index();
+  index->add_file_names("file.py");
+  index->add_function_names("func");
+
+  auto* loc = index->add_file_locations();
+  loc->set_file_name_id(1);
+  loc->set_function_name_id(1);
+  loc->set_line(10);
+
+  // Frame 1: referenced by inst1
+  auto* frame1 = index->add_stack_frames();
+  frame1->set_file_location_id(1);
+  frame1->set_parent_frame_id(0);
+
+  // Frame 2: UNREFERENCED
+  auto* frame2 = index->add_stack_frames();
+  frame2->set_file_location_id(1);
+  frame2->set_parent_frame_id(0);
+
+  // Frame 3: referenced by inst2, structurally identical to Frame 1
+  auto* frame3 = index->add_stack_frames();
+  frame3->set_file_location_id(1);
+  frame3->set_parent_frame_id(0);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      HloModuleConfig config,
+      HloModule::CreateModuleConfigFromProto(proto, DebugOptions()));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          HloModule::CreateFromProto(proto, config));
+
+  // Only referenced and deduplicated frames should be present.
+  // Frame 1 and 3 are identical, Frame 2 is unreferenced.
+  // So we expect exactly 1 frame in the final DAG.
+  EXPECT_EQ(module->stack_frames().proto().stack_frames_size(), 1);
+
+  // Both instructions should now point to the same canonical frame ID.
+  HloInstruction* i1 =
+      module->entry_computation()->GetInstructionWithName("inst1");
+  HloInstruction* i2 =
+      module->entry_computation()->GetInstructionWithName("inst2");
+  EXPECT_EQ(i1->metadata().stack_frame_id(), 1);
+  EXPECT_EQ(i2->metadata().stack_frame_id(), 1);
 }
 
 }  // namespace

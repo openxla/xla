@@ -14,7 +14,6 @@ limitations under the License.
 ==============================================================================*/
 
 #include <string>
-#include <variant>
 
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
@@ -67,18 +66,19 @@ ENTRY e {
   const char* kHloTextTest = R"(
 HloModule t
 
-triton_dot {
+triton_dot_computation {
   p0 = f16[65536,32800] parameter(0)
   p1 = f16[32800,32] parameter(1)
   ROOT dot = f16[65536,32] dot(p0, p1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    backend_config={sizes:[32]}
 }
 
 ENTRY e {
   p0 = f16[65536,32800] parameter(0)
   p1 = f16[32800,32] parameter(1)
-  ROOT _ = f16[65536,32] fusion(p0, p1), kind=kCustom, calls=triton_dot,
-    backend_config="{\"fusion_backend_config\": {kind: \"__triton_gemm\", triton_gemm_config: {\"block_m\":\"32\",\"block_n\":\"32\",\"block_k\":\"32\",\"split_k\":\"1\",\"num_stages\":\"1\",\"num_warps\":\"1\",\"num_ctas\":\"1\"}}}"
+  ROOT _ = f16[65536,32] fusion(p0, p1), kind=kCustom, calls=triton_dot_computation,
+    backend_config="{\"fusion_backend_config\":{\"kind\":\"__triton_nested_gemm_fusion\",\"block_level_fusion_config\":{\"output_tiles\":[{\"sizes\":[\"32\",\"32\"]}],\"num_stages\":1,\"num_warps\":1,\"num_ctas\":1}}}"
 }
 )";
 
@@ -160,7 +160,7 @@ ENTRY main {
   ROOT fusion = f16[65538,32768]{1,0} fusion(param_0), kind=kCustom,
     calls=triton_fusion_computation, backend_config={
       "fusion_backend_config":{
-        "kind":"__triton", 
+        "kind":"__triton",
         "block_level_fusion_config":{
           "output_tiles":[{"sizes":["1","32768"]}],
           "num_warps":"1",

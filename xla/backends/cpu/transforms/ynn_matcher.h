@@ -43,7 +43,8 @@ class YnnMatcher : public LibraryMatcher {
     static const absl::NoDestructor<absl::flat_hash_set<HloOpcode>>
         kSupportedOps{[]() {
           absl::flat_hash_set<HloOpcode> supported_ops{
-              HloOpcode::kDot, HloOpcode::kReduce, HloOpcode::kConstant};
+              HloOpcode::kDot, HloOpcode::kReduce, HloOpcode::kReduceWindow,
+              HloOpcode::kConstant, HloOpcode::kConvolution};
           for (const auto& [op, _] : GetYnnUnaryOpMap()) {
             supported_ops.insert(op);
           }
@@ -62,8 +63,12 @@ class YnnMatcher : public LibraryMatcher {
                                  instr->operand(0)->shape(),
                                  instr->operand(1)->shape(), instr->shape());
     }
-    if (instr->opcode() == HloOpcode::kReduce) {
-      return IsReduceOpSupportedByYnn(instr);
+    if (instr->opcode() == HloOpcode::kReduce ||
+        instr->opcode() == HloOpcode::kReduceWindow) {
+      return IsReduceLikeOpOffloadedToYnn(instr);
+    }
+    if (instr->opcode() == HloOpcode::kConvolution) {
+      return IsConvolutionOpSupportedByYnn(instr);
     }
     if (instr->IsConstant()) {
       return IsConstantSupportedByYnn(instr);
@@ -86,7 +91,8 @@ class YnnMatcher : public LibraryMatcher {
     if (fuse_dot_ && instr->opcode() == HloOpcode::kDot) {
       return true;
     }
-    if (fuse_reduce_ && instr->opcode() == HloOpcode::kReduce) {
+    if (fuse_reduce_ && (instr->opcode() == HloOpcode::kReduce ||
+                         instr->opcode() == HloOpcode::kReduceWindow)) {
       return true;
     }
     return fuse_eltwise_ && instr->IsElementwise();

@@ -6,6 +6,7 @@
 load("@com_github_grpc_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
 load("@com_github_grpc_grpc//bazel:python_rules.bzl", "py_grpc_library")
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
 load("@com_google_protobuf//bazel:py_proto_library.bzl", "py_proto_library")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_test.bzl", _cc_test = "cc_test")
@@ -175,7 +176,8 @@ def tf_proto_library(
         create_service = False,  # @unused
         create_java_proto = False,  # @unused
         create_kotlin_proto = False,  # @unused
-        create_go_proto = False):  # @unused
+        create_go_proto = False,  # @unused
+        **kwargs):
     """A macro generating protobuf and/or gRPC stubs for C++ and Python.
 
     It is a backward-compatible (with old TF-custom protobuf and gGRPC rules) macro which wraps a
@@ -215,6 +217,7 @@ def tf_proto_library(
       create_java_proto: Obsolete.
       create_kotlin_proto: Obsolete.
       create_go_proto: Obsolete.
+      **kwargs: Other arguments to pass to the proto library.
     """
 
     native.filegroup(
@@ -228,19 +231,20 @@ def tf_proto_library(
         name_sans_proto = name[:-6]
     else:
         name_sans_proto = name
-    native.proto_library(
+    proto_library(
         name = name,
         srcs = srcs,
         deps = deps + protodeps + [
             proto_lib
             for proto_lib in well_known_proto_libs()
-            if proto_lib not in protodeps
+            if proto_lib not in (deps + protodeps)
         ],
         exports = exports,
         compatible_with = compatible_with,
         visibility = visibility,
         testonly = testonly,
         tags = tags,
+        **kwargs
     )
 
     cc_proto_name = name + "_cc"
@@ -311,7 +315,7 @@ def tf_proto_library(
             generate_mocks = True,
             visibility = visibility,
             compatible_with = compatible_with,
-            deps = [":{}".format(cc_proto_name)],
+            deps = [":{}".format(cc_proto_name), "@com_github_grpc_grpc//:grpc++"],
             plugin_flags = ["services_namespace=grpc"],
             grpc_only = True,
         )
@@ -419,18 +423,28 @@ def tf_fingerprint_deps():
         "@farmhash_archive//:farmhash",
     ]
 
+def _protobuf_deps():
+    return [
+        clean_dep("@com_google_protobuf//:delimited_message_util"),
+        clean_dep("@com_google_protobuf//:differencer"),
+        clean_dep("@com_google_protobuf//:json_util"),
+        clean_dep("@com_google_protobuf//:type_resolver"),
+        clean_dep("@com_google_protobuf//:protobuf"),
+        clean_dep("@com_google_protobuf//:protobuf_lite"),
+        clean_dep("@com_google_protobuf//src/google/protobuf/io"),
+        clean_dep("@com_google_protobuf//src/google/protobuf/io:tokenizer"),
+    ]
+
 def tf_protobuf_deps():
     return if_static(
-        [
-            clean_dep("@com_google_protobuf//:protobuf"),
-        ],
+        _protobuf_deps(),
         otherwise = [clean_dep("@com_google_protobuf//:protobuf_headers")],
     )
 
 # TODO(b/356020232): remove completely after migration is done
 # Link protobuf, unless the tsl_link_protobuf build flag is explicitly set to false.
 def tsl_protobuf_deps():
-    return if_tsl_link_protobuf([clean_dep("@com_google_protobuf//:protobuf")], [clean_dep("@com_google_protobuf//:protobuf_headers")])
+    return if_tsl_link_protobuf(_protobuf_deps(), [clean_dep("@com_google_protobuf//:protobuf_headers")])
 
 def strict_cc_test(
         name,
@@ -438,7 +452,7 @@ def strict_cc_test(
         shuffle_tests = True,
         args = None,
         fail_if_no_test_linked = True,
-        fail_if_no_test_selected = True,
+        fail_if_no_test_selected = False,
         **kwargs):
     """A drop-in replacement for cc_test that enforces some good practices by default.
 

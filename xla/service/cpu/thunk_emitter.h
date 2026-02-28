@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/sort_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/codegen/kernel_spec.h"
-#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -92,8 +91,8 @@ class ThunkEmitter {
 
  private:
   struct HostKernelAllocationSlices {
-    std::vector<BufferAllocation::Slice> arguments;
-    std::vector<BufferAllocation::Slice> results;
+    std::vector<ShapedSlice> arguments;
+    std::vector<ShapedSlice> results;
   };
 
   std::optional<SortThunk::SortDirection> MatchSortDirection(
@@ -274,7 +273,6 @@ class ThunkEmitter {
   std::vector<EmittedKernel> kernels_;
 
   std::unique_ptr<mlir::MLIRContext> mlir_context_;
-  SymbolicExprContext symbolic_expr_context_{mlir_context_.get()};
   FusionCompiler fusion_compiler_;
 
   absl::flat_hash_map<std::string, KernelSpec> kernel_spec_cache_;

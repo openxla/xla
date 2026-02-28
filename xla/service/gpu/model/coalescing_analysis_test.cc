@@ -64,12 +64,12 @@ class CoalescingTest : public HloHardwareIndependentTestBase {
     auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
     auto analysis = HloFusionAnalysis::Create(*root, device_info_);
     auto emitter = GetFusionEmitter(PreBufferAssignmentFusionInfo{analysis},
-                                    &symbolic_expr_context_);
+                                    &mlir_context_);
     auto fusion = dynamic_cast<KernelFusionInterface*>(emitter.get());
     EXPECT_NE(fusion, nullptr);
 
     CoalescingAnalysis coalescing_analysis = CoalescingAnalysis::Create(
-        root, root->operands(), analysis, &symbolic_expr_context_,
+        root, root->operands(), analysis, &mlir_context_,
         /*use_heuristic=*/false);
 
     std::vector<bool> results;
@@ -88,10 +88,10 @@ class CoalescingTest : public HloHardwareIndependentTestBase {
   }
 
  protected:
+  CoalescingTest() { RegisterSymbolicExprStorage(&mlir_context_); }
   stream_executor::DeviceDescription device_info_ =
       TestGpuDeviceInfo::RTXA6000DeviceInfo();
   mlir::MLIRContext mlir_context_;
-  SymbolicExprContext symbolic_expr_context_{&mlir_context_};
 };
 
 TEST_F(CoalescingTest, IdentityLayout) {
@@ -179,13 +179,13 @@ TEST_F(CoalescingTest, Transpose) {
     HloModule module
 
     fusion {
-      %input = f32[1, 6400, 32] parameter(0)
-      ROOT transpose = f32[1, 32, 6400] transpose(%input), dimensions={0, 2, 1}
+      %input = f32[100, 64, 32] parameter(0)
+      ROOT transpose = f32[32, 100, 64] transpose(%input), dimensions={2, 0, 1}
     }
 
     ENTRY entry {
-      %input = f32[1, 6400, 32] parameter(0)
-      ROOT %fusion = f32[1, 32, 6400] fusion(%input), kind=kLoop, calls=fusion
+      %input = f32[100, 64, 32] parameter(0)
+      ROOT %fusion = f32[32, 100, 64] fusion(%input), kind=kLoop, calls=fusion
   })";
   // thread_x to linearized input mapping for thread_x in [0, 31]:
   // Operand 1:  (thread_x)[s0] -> (thread_x + s0 * 128) for s0 in [0, 7]
@@ -260,15 +260,15 @@ TEST_F(CoalescingTest, TransposeOfBroadcastHeuristic) {
     HloModule module
 
     fusion {
-      input = f32[1, 32, 6400] parameter(0)
-      ROOT slice = f32[1, 32, 100] slice(input), slice={[0:1:1], [0:32:1], [0:6400:64]}
+      input = f32[32, 100, 64] parameter(0)
+      ROOT slice = f32[32, 100, 1] slice(input), slice={[0:32:1], [0:100:1], [0:1:1]}
     }
 
     ENTRY entry {
       p0 = f32[32] parameter(0)
-      broadcast = f32[1, 6400, 32] broadcast(p0), dimensions={2}
-      transpose = f32[1, 32, 6400] transpose(broadcast), dimensions={0, 2, 1}
-      ROOT %fusion = f32[1, 32, 100] fusion(transpose), kind=kLoop, calls=fusion
+      broadcast = f32[100, 64, 32] broadcast(p0), dimensions={2}
+      transpose = f32[32, 100, 64] transpose(broadcast), dimensions={2, 0, 1}
+      ROOT %fusion = f32[32, 100, 1] fusion(transpose), kind=kLoop, calls=fusion
   })";
   EXPECT_TRUE(IsReadCoalescedHeuristic(ir));
 }
@@ -593,10 +593,10 @@ class CoalescingForTiledHloTest : public CoalescingTest {
 
     SymbolicTileAnalysis symbolic_tile_analysis =
         std::get<SymbolicTileAnalysis>(SymbolicTileAnalysis::AnalyzeFusion(
-            *fusion_adaptor, &symbolic_expr_context_));
+            *fusion_adaptor, &mlir_context_));
 
     TiledHloComputation tiled_hlo_computation =
-        *symbolic_tile_analysis.ComputeTiledHloInstructions(
+        *symbolic_tile_analysis.ComputeTiledComputation(
             Tiling({{root, FlatTiling(tile_sizes.begin(), tile_sizes.end())}}),
             CreateMajorToMinorTiledHloSchedule,
             /*constraints_are_known_satisfied=*/true,
@@ -617,10 +617,10 @@ class CoalescingForTiledHloTest : public CoalescingTest {
 
     SymbolicTileAnalysis symbolic_tile_analysis =
         std::get<SymbolicTileAnalysis>(SymbolicTileAnalysis::AnalyzeFusion(
-            *fusion_adaptor, &symbolic_expr_context_));
+            *fusion_adaptor, &mlir_context_));
 
     TiledHloComputation tiled_hlo_computation =
-        *symbolic_tile_analysis.ComputeTiledHloInstructions(
+        *symbolic_tile_analysis.ComputeTiledComputation(
             Tiling({{root, FlatTiling(tile_sizes.begin(), tile_sizes.end())}}),
             CreateMajorToMinorTiledHloSchedule,
             /*constraints_are_known_satisfied=*/true,

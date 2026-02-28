@@ -5,10 +5,6 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load(
-    "@local_config_sycl//sycl:build_defs.bzl",
-    "if_sycl_is_configured",
-)
 load("//xla:xla.default.bzl", "xla_cc_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
@@ -22,7 +18,6 @@ load(
     "//xla/tsl:tsl.bzl",
     "internal_visibility",
     "tsl_copts",
-    "tsl_gpu_library",
 )
 load(
     "//xla/tsl/platform:build_config.bzl",
@@ -133,15 +128,13 @@ xla_cc_test(
 cc_library(
     name = "gpu_command_buffer",
     srcs = ["gpu_command_buffer.cc"],
-    hdrs = [
-        "gpu_command_buffer.h",
-    ],
+    hdrs = ["gpu_command_buffer.h"],
     deps = [
         "//xla:debug_options_flags",
         "//xla/service:dump",
         "//xla/stream_executor:bit_pattern",
         "//xla/stream_executor:command_buffer",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_spec",
@@ -161,8 +154,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:path",
     ],
 )
 
@@ -170,7 +161,7 @@ cc_library(
     name = "gpu_executor_header",
     hdrs = ["gpu_executor.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        ":multicast_memory",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_common",
         "//xla/stream_executor:stream_executor_h",
@@ -182,14 +173,24 @@ cc_library(
 )
 
 cc_library(
-    name = "gpu_helpers_header",
-    hdrs = ["gpu_helpers.h"],
+    name = "multicast_memory",
+    hdrs = ["multicast_memory.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
-tsl_gpu_library(
+cc_library(
+    name = "gpu_helpers_header",
+    hdrs = ["gpu_helpers.h"],
+    deps = [
+        "//xla/stream_executor:device_address",
+    ],
+)
+
+cc_library(
     name = "gpu_init",
     hdrs = [
         "gpu_init.h",
@@ -205,7 +206,7 @@ tsl_gpu_library(
     ),
 )
 
-tsl_gpu_library(
+cc_library(
     name = "gpu_init_impl",
     srcs = [
         "gpu_init.cc",
@@ -232,24 +233,11 @@ tsl_gpu_library(
 )
 
 cc_library(
-    name = "gpu_stream",
-    srcs = ["gpu_stream.cc"],
-    hdrs = ["gpu_stream.h"],
-    tags = ["gpu"],
-    deps = [
-        ":gpu_types_header",
-        "//xla/stream_executor:stream",
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/log:check",
-    ],
-)
-
-cc_library(
     name = "gpu_semaphore",
     srcs = ["gpu_semaphore.cc"],
     hdrs = ["gpu_semaphore.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/status:statusor",
@@ -258,27 +246,10 @@ cc_library(
 )
 
 cc_library(
-    name = "gpu_types_header",
-    hdrs = ["gpu_types.h"],
-    defines = if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]) + if_sycl_is_configured([
-        "TENSORFLOW_USE_SYCL=1",
-    ]),
-    tags = ["gpu"],
-    deps = if_cuda_is_configured([
-        "@local_config_cuda//cuda:cuda_headers",
-    ]) + if_rocm_is_configured([
-        "@local_config_rocm//rocm:rocm_headers",
-    ]) + if_sycl_is_configured([
-        "@local_config_sycl//sycl:sycl_headers",
-    ]),
-)
-
-cc_library(
     name = "gpu_asm_opts",
     hdrs = ["gpu_asm_opts.h"],
     visibility = internal_visibility([
+        "//third_party/py/jax/jaxlib/cuda:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/stream_executor:__subpackages__",
         "//tensorflow/core/kernels:__subpackages__",
@@ -304,7 +275,6 @@ cc_library(
     deps = [
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status",
         "//xla/tsl/platform:subprocess",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/log",
@@ -323,7 +293,7 @@ cc_library(
         "redzone_allocator_kernel.h",
     ],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -340,9 +310,9 @@ cc_library(
         ":redzone_allocator_kernel",
         "//xla:shape_util",
         "//xla/service/gpu:stream_executor_util",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:device_memory_allocator",
-        "//xla/stream_executor:device_memory_handle",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:device_address_handle",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:scratch_allocator",
         "//xla/stream_executor:stream",
@@ -365,11 +335,13 @@ xla_test(
     name = "redzone_allocator_test",
     srcs = ["redzone_allocator_test.cc"],
     backends = ["gpu"],
+    # TODO(intel-tf): Implement redzone allocator for oneAPI and enable this test.
+    tags = ["no-oneapi"],
     deps = [
         ":gpu_init",
         ":redzone_allocator",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_memory_allocator",
@@ -407,8 +379,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -437,10 +407,8 @@ cc_library(
     name = "gpu_blas_lt",
     srcs = ["gpu_blas_lt.cc"],
     hdrs = ["gpu_blas_lt.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":gpu_blas_lt_proto_cc",
-        "//xla:protobuf_util",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:types",
@@ -448,10 +416,12 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/service:algorithm_util",
         "//xla/stream_executor:blas",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:host_or_device_scalar",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:dnn_proto_cc",
         "@com_google_absl//absl/algorithm:container",
@@ -464,11 +434,9 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
-    ] + if_cuda_is_configured([
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
-    ]) + if_static([
+    ] + if_static([
         "@tsl//tsl/platform:tensor_float_32_utils",
     ]),
 )
@@ -476,7 +444,7 @@ cc_library(
 tf_proto_library(
     name = "gpu_blas_lt_proto",
     srcs = ["gpu_blas_lt.proto"],
-    protodeps = [
+    deps = [
         "//xla:xla_data_proto",
         "//xla/stream_executor:blas_proto",
     ],
@@ -505,7 +473,7 @@ cc_library(
     name = "gpu_test_kernel_traits",
     hdrs = ["gpu_test_kernel_traits.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -518,6 +486,7 @@ cc_library(
     linkstatic = True,
     tags = [
         "gpu",
+        # TODO(intel-tf): Implement gpu test kernels for oneAPI and enable this library.
         "no-oneapi",
     ],
     deps = [
@@ -562,7 +531,11 @@ cc_library(
 xla_cc_test(
     name = "gpu_test_kernels_fatbin_test",
     srcs = ["gpu_test_kernels_fatbin_test.cc"],
-    tags = ["gpu"],
+    tags = [
+        "gpu",
+        # TODO(intel-tf): Enable this test once oneAPI fatbin is supported for :gpu_test_kernels.
+        "no-oneapi",
+    ],
     deps = [
         ":gpu_test_kernels_fatbin",
         "//xla/stream_executor:platform",
@@ -577,6 +550,8 @@ xla_test(
     name = "gpu_kernel_test",
     srcs = ["gpu_kernel_test.cc"],
     backends = ["gpu"],
+    # TODO(intel-tf): Enable this test once oneAPI fatbin is supported for :gpu_test_kernels.
+    tags = ["no-oneapi"],
     deps = [
         ":gpu_test_kernels",
         ":gpu_test_kernels_fatbin",
@@ -584,8 +559,9 @@ xla_test(
         ":tma_metadata_proto_cc",
         "//xla/service:platform_util",
         "//xla/stream_executor:command_buffer",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
+        "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
@@ -597,13 +573,13 @@ xla_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/util/proto:parse_text_proto",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -611,12 +587,13 @@ xla_test(
     name = "gpu_command_buffer_test",
     srcs = ["gpu_command_buffer_test.cc"],
     backends = ["gpu"],
+    # TODO(intel-tf): Implement gpu command buffer for oneAPI and enable this test.
+    tags = ["no-oneapi"],
     deps = [
-        ":gpu_command_buffer",
         ":gpu_test_kernels",
         "//xla/service:platform_util",
         "//xla/stream_executor:command_buffer",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
@@ -626,18 +603,13 @@ xla_test(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:trace_command_buffer_factory",
-        "//xla/stream_executor:typed_kernel_factory",
         "//xla/stream_executor/cuda:cuda_platform_id",
-        "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:status",
-        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
-        "@com_google_absl//absl/base",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -652,7 +624,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         "//xla/service:platform_util",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
@@ -687,11 +659,12 @@ xla_test(
     size = "small",
     srcs = ["gpu_executor_test.cc"],
     backends = ["gpu"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
     deps = [
         "//xla/service:platform_util",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:memory_allocation",
+        "//xla/stream_executor:memory_space",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
@@ -700,8 +673,6 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -709,18 +680,9 @@ xla_test(
     name = "gpu_device_info_test",
     srcs = ["gpu_device_info_test.cc"],
     backends = ["gpu"],
-    data = [
-        "//xla/tools/hlo_opt:gpu_specs/a100_pcie_80.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/a100_sxm_40.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/a100_sxm_80.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/a6000.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/b200.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/h100_pcie.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/h100_sxm.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/mi200.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/p100.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/v100.txtpb",
-    ],
+    data = ["//xla/backends/gpu/target_config:all_gpu_specs"],
+    # TODO(intel-tf): Implement device description for oneAPI and enable this test.
+    tags = ["no-oneapi"],
     deps = [
         "//xla/service:platform_util",
         "//xla/stream_executor:device_description",
@@ -778,7 +740,6 @@ xla_cc_test(
     deps = [
         ":tma_metadata",
         ":tma_metadata_proto_cc",
-        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/status",
@@ -818,7 +779,6 @@ xla_cc_test(
         "//xla/stream_executor/platform:platform_object_registry",
         "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:status_matchers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
@@ -829,14 +789,16 @@ cc_library(
     name = "buffer_comparator_kernel",
     hdrs = ["buffer_comparator_kernel.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
 
 exports_files([
     "buffer_comparator_kernel_lib.cu.h",
+    "collective_signal.cu.h",
     "all_reduce_kernel_lib.cu.h",
+    "multi_gpu_barrier_kernel.cu.h",
     "ragged_all_to_all_kernel_lib.cu.h",
     "repeat_buffer_kernel.cu.h",
     "redzone_allocator_kernel_lib.cu.h",
@@ -847,7 +809,7 @@ cc_library(
     name = "make_batch_pointers_kernel",
     hdrs = ["make_batch_pointers_kernel.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -856,7 +818,16 @@ cc_library(
     name = "ragged_all_to_all_kernel",
     hdrs = ["ragged_all_to_all_kernel.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:kernel",
+    ],
+)
+
+cc_library(
+    name = "multi_gpu_barrier_kernel",
+    hdrs = ["multi_gpu_barrier_kernel.h"],
+    deps = [
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -874,13 +845,17 @@ cc_library(
 cc_library(
     name = "collective_kernel_metadata",
     hdrs = ["collective_kernel_metadata.h"],
+    visibility = internal_visibility([
+        "//third_party/py/jax:__subpackages__",
+        ":friends",
+    ]),
 )
 
 cc_library(
     name = "topk_kernel",
     hdrs = ["topk_kernel.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -889,7 +864,7 @@ cc_library(
     name = "repeat_buffer_kernel",
     hdrs = ["repeat_buffer_kernel.h"],
     deps = [
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -899,19 +874,20 @@ xla_test(
     srcs = ["repeat_buffer_kernel_test.cc"],
     backends = ["gpu"],
     disabled_backends = [],
+    # TODO(intel-tf): Implement repeat buffer kernel for oneAPI and enable this test.
+    tags = ["no-oneapi"],
     deps = [
         ":gpu_kernel_registry",
         ":repeat_buffer_kernel",
         "//xla/service:platform_util",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/tsl/platform:status",
-        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -952,10 +928,11 @@ cc_library(
     deps = [
         "//xla/backends/gpu/runtime:buffer_debug_log_proto_cc",
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:stream",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
@@ -966,12 +943,15 @@ xla_test(
     name = "buffer_debug_log_test",
     srcs = ["buffer_debug_log_test.cc"],
     backends = ["gpu"],
+    # TODO(intel-tf): Implement buffer debug log for oneAPI and enable this test.
+    tags = ["no-oneapi"],
     deps = [
         ":buffer_debug_log",
         "//xla/backends/gpu/runtime:buffer_debug_log_proto_cc",
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
         "//xla/backends/gpu/runtime:thunk_id",
-        "//xla/stream_executor:device_memory",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
@@ -980,6 +960,7 @@ xla_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -989,7 +970,7 @@ cc_library(
     hdrs = ["buffer_debug_xor_checksum_kernel.h"],
     deps = [
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -1000,7 +981,7 @@ cc_library(
     deps = [
         "//xla:types",
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
     ],
 )
@@ -1010,8 +991,23 @@ cc_library(
     hdrs = ["prefix_sum_kernel.h"],
     deps = [
         "//xla:types",
-        "//xla/backends/gpu/runtime:buffer_debug_log_structs",
-        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
+    ],
+)
+
+cc_library(
+    name = "kernel_serialization_check",
+    testonly = True,
+    srcs = ["kernel_serialization_check.cc"],
+    hdrs = ["kernel_serialization_check.h"],
+    deps = [
+        "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor:kernel_symbol_registry",
+        "//xla/stream_executor:platform",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_for_library",
     ],
 )

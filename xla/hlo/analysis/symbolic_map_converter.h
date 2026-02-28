@@ -29,33 +29,28 @@ namespace xla {
 
 // Converts an mlir::AffineExpr to xla::SymbolicExpr.
 SymbolicExpr AffineExprToSymbolicExpr(::mlir::AffineExpr affine_expr,
-                                      SymbolicExprContext* context,
                                       int num_dims);
 
 // Converts a list of mlir::AffineExpr to xla::SymbolicExpr.
 llvm::SmallVector<SymbolicExpr> AffineExprsToSymbolicExprs(
-    llvm::ArrayRef<mlir::AffineExpr> affine_exprs, SymbolicExprContext* context,
-    int num_dims);
+    llvm::ArrayRef<mlir::AffineExpr> affine_exprs, int num_dims);
 
 // Converts an xla::SymbolicExpr to an mlir::AffineExpr.
 mlir::AffineExpr SymbolicExprToAffineExpr(SymbolicExpr symbolic_expr,
-                                          mlir::MLIRContext* context,
                                           int num_dims);
 
 // Converts an mlir::AffineMap to xla::SymbolicMap.
-SymbolicMap AffineMapToSymbolicMap(const mlir::AffineMap& affine_map,
-                                   SymbolicExprContext* context);
+SymbolicMap AffineMapToSymbolicMap(const mlir::AffineMap& affine_map);
 
 // Converts xla::SymbolicMap to an mlir::AffineMap.
 // Returns a null AffineMap if the conversion is not possible.
-mlir::AffineMap SymbolicMapToAffineMap(SymbolicMap symbolic_map,
-                                       mlir::MLIRContext* context);
+mlir::AffineMap SymbolicMapToAffineMap(SymbolicMap symbolic_map);
 
 // Converts AffineExpr-based constraints to SymbolicExpr-based constraints.
 llvm::MapVector<SymbolicExpr, Interval>
 ConvertAffineConstraintsToSymbolicConstraints(
     const llvm::MapVector<mlir::AffineExpr, Interval>& affine_constraints,
-    SymbolicExprContext* context, int num_dims);
+    int num_dims);
 
 }  // namespace xla
 
