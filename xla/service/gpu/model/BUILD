@@ -8,6 +8,7 @@ load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
+load("//xla/util:build_defs.bzl", "embed_files")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -929,20 +930,13 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "collective_interpolator_data",
-    hdrs = ["collective_interpolator_data.h"],
-    compatible_with = get_compatible_with_portable(),
-)
-
-cc_library(
     name = "collective_interpolator",
     srcs = ["collective_interpolator.cc"],
     hdrs = [
         "collective_interpolator.h",
-        "collective_interpolator_data.h",
     ],
     deps = [
-        ":collective_interpolator_data",
+        ":default_collective_perf_table",
         ":gpu_hlo_cost_analysis",
         ":hlo_op_profile_proto_cc",
         ":hlo_op_profiles",
@@ -1055,9 +1049,9 @@ cc_library(
     srcs = ["matmul_interpolator.cc"],
     hdrs = [
         "matmul_interpolator.h",
-        "matmul_interpolator_data.h",
     ],
     deps = [
+        ":default_matmul_perf_table",
         ":hlo_op_profile_proto_cc",
         ":hlo_op_profiles",
         ":interpolator",
@@ -1169,4 +1163,16 @@ xla_cc_test(
         "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:path",
     ],
+)
+
+embed_files(
+    name = "default_matmul_perf_table",
+    srcs = ["default_matmul_perf_table.txtpb"],
+    cpp_namespace = "xla::gpu",
+)
+
+embed_files(
+    name = "default_collective_perf_table",
+    srcs = ["default_collective_perf_table.txtpb"],
+    cpp_namespace = "xla::gpu",
 )
