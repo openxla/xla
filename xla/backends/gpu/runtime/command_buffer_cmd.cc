@@ -1877,24 +1877,6 @@ absl::StatusOr<const se::CommandBuffer::Command*> RecvCmd::Record(
   P2PConfig::SourceTargetMapEntry source_target =
       P2PConfig::GetSourceTarget(p2p_config_.id_to_source_target, current_id);
 
-  bool should_run = false;
-  switch (p2p_config_.validation_kind) {
-    case P2PConfig::ValidationKind::kValid:
-      should_run = true;
-      break;
-    case P2PConfig::ValidationKind::kInvalid:
-      should_run = false;
-      break;
-    case P2PConfig::ValidationKind::kConditional:
-      return absl::UnimplementedError(
-          "Conditional validation is not supported in RecvCmd CommandBuffer");
-  }
-
-  if (!should_run) {
-    VLOG(3) << "[" << device_ordinal << "] Skipping Recv";
-    return nullptr;
-  }
-
   const std::optional<int64_t> source_id = source_target.source;
   std::function<absl::Status(se::Stream*)> trace = [&](se::Stream* stream) {
     return RunRecv(device_buffer_pair, *stream, *comm, current_id, source_id,
@@ -1985,21 +1967,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> SendCmd::Record(
   P2PConfig::SourceTargetMapEntry source_target =
       P2PConfig::GetSourceTarget(p2p_config_.id_to_source_target, current_id);
 
-  bool should_run = false;
-  switch (p2p_config_.validation_kind) {
-    case P2PConfig::ValidationKind::kValid:
-      should_run = true;
-      break;
-    case P2PConfig::ValidationKind::kInvalid:
-      should_run = false;
-      break;
-    case P2PConfig::ValidationKind::kConditional:
-      return absl::UnimplementedError(
-          "Conditional validation is not supported in SendCmd CommandBuffer");
-  }
-
   std::optional<int64_t> target_id = source_target.target;
-  if (!target_id || !should_run) {
+  if (!target_id) {
     VLOG(3) << "[" << device_ordinal << "] Skipping Send";
     return nullptr;
   }

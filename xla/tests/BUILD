@@ -750,7 +750,6 @@ xla_test(
 
 xla_test(
     name = "params_test",
-    timeout = "long",
     srcs = ["params_test.cc"],
     shard_count = 15,
     tags = ["optonly"],
@@ -3293,14 +3292,15 @@ xla_test(
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
+        ":local_client_test_base",
         ":xla_internal_test_main",
         "//xla:literal",
         "//xla:packed_literal_reader",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
-        "//xla/client:local_client",
         "//xla/service",
         "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/log:check",

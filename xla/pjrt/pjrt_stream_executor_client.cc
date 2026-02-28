@@ -121,6 +121,7 @@ limitations under the License.
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/layout_mode.h"
 #include "xla/pjrt/local_device_state.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/metrics.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/never_run_on_fiber.h"
@@ -2381,25 +2382,29 @@ PjRtStreamExecutorClient::Compile(const XlaComputation& computation,
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>
-PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
+PjRtStreamExecutorClient::Compile(MaybeOwningMlirModule module,
                                   CompileOptions options) {
-  return Compile(module, options, /*lookup_addressable_devices=*/false);
+  return Compile(std::move(module), options,
+                 /*lookup_addressable_devices=*/false);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>
-PjRtStreamExecutorClient::Compile(mlir::ModuleOp module, CompileOptions options,
+PjRtStreamExecutorClient::Compile(MaybeOwningMlirModule module,
+                                  CompileOptions options,
                                   bool lookup_addressable_devices) {
   TF_ASSIGN_OR_RETURN(const PjRtTopologyDescription* topology,
                       GetTopologyDescription());
-  TF_RETURN_IF_ERROR(pjrt::MaybeDumpCompileInputs(options, module, *topology));
+  TF_RETURN_IF_ERROR(
+      pjrt::MaybeDumpCompileInputs(options, module.mlir_module(), *topology));
 
   XlaComputation xla_computation;
   ExecutableBuildOptions& exec_build_options = options.executable_build_options;
   auto chlo_opts = gpu_run_options_ == nullptr
                        ? mlir::mhlo::getDefaultChloToHighLevelMhloOptions()
                        : mlir::mhlo::getGpuChloToHighLevelMhloOptions();
+
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
-      module, xla_computation,
+      module.mlir_module(), xla_computation,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
       /*return_tuple=*/false, &exec_build_options, chlo_opts));
 
@@ -2410,13 +2415,16 @@ PjRtStreamExecutorClient::Compile(mlir::ModuleOp module, CompileOptions options,
   }
 
   TF_ASSIGN_OR_RETURN(std::vector<LayoutMode> arg_layout_modes,
-                      GetArgLayoutModes(module));
+                      GetArgLayoutModes(module.mlir_module()));
   TF_ASSIGN_OR_RETURN(std::vector<LayoutMode> out_layout_modes,
-                      GetOutputLayoutModes(module));
+                      GetOutputLayoutModes(module.mlir_module()));
   TF_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> arg_memory_spaces,
-                      GetArgMemoryKinds(module));
+                      GetArgMemoryKinds(module.mlir_module()));
   TF_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> out_memory_spaces,
-                      GetOutputMemoryKinds(module));
+                      GetOutputMemoryKinds(module.mlir_module()));
+
+  // MLIR module no longer required - release any memory if owned.
+  module = MaybeOwningMlirModule();
 
   // If auto-sharding modifies shapes of arguments and/or result,
   // we get a callback to restore the layouts. Let us restore the layouts
@@ -2463,11 +2471,11 @@ PjRtStreamExecutorClient::CompileAndLoad(const XlaComputation& computation,
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-PjRtStreamExecutorClient::CompileAndLoad(mlir::ModuleOp module,
+PjRtStreamExecutorClient::CompileAndLoad(MaybeOwningMlirModule module,
                                          CompileOptions options) {
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<PjRtExecutable> executable,
-      Compile(module, options, /*lookup_addressable_devices=*/true));
+      Compile(std::move(module), options, /*lookup_addressable_devices=*/true));
   return Load(std::move(executable), LoadOptions());
 }
 

@@ -333,6 +333,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_cudnn_int8x32_convolution_reordering(true);
   opts.set_xla_gpu_triton_gemm_any(true);
   opts.set_xla_gpu_verify_triton_fusion_numerics(false);
+  opts.set_xla_gpu_experimental_enable_tiling_propagation(false);
 
   // Moving reduce-scatter out of while loops can increase memory footprint, so
   // turning it off by default.
@@ -434,6 +435,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
   opts.set_xla_gpu_executable_terminate_timeout_seconds(30);
   opts.set_xla_gpu_execution_terminate_timeout("inf");
+  opts.set_xla_gpu_execution_progress_tracking(0);
 
   opts.set_xla_gpu_first_collective_call_warn_stuck_timeout_seconds(20);
   opts.set_xla_gpu_first_collective_call_terminate_timeout_seconds(40);
@@ -2520,6 +2522,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Set timeout for XLA:GPU execution to prevent undetected deadlocks"));
 
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_execution_progress_tracking",
+      int32_setter_for(&DebugOptions::set_xla_gpu_execution_progress_tracking),
+      debug_options->xla_gpu_execution_progress_tracking(),
+      "Number of thunks to report in progress tracking on execution timeout "
+      "(0 to disable)"));
+
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_first_collective_call_warn_stuck_timeout_seconds",
       int32_setter_for(
           &DebugOptions::
@@ -2881,6 +2890,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_rocm_max_trace_events(),
       "Maximum number of ROCm trace events (applies to callback/activity/"
       "annotation). Set as high as memory allows; up to 1e9."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_tiling_propagation",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_enable_tiling_propagation),
+      debug_options->xla_gpu_experimental_enable_tiling_propagation(),
+      "If true, enable experimental tiling propagation."));
 
   auto setter_for_xla_gpu_detect_nan =
       [debug_options, detection_mode](const std::string& value) {

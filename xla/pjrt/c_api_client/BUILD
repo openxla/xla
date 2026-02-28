@@ -52,6 +52,7 @@ cc_library(
     ],
     visibility = internal_visibility([":friends"]),
     deps = [
+        ":pjrt_c_api_multi_slice_config",
         "//xla:future",
         "//xla:literal",
         "//xla:shape_util",
@@ -63,6 +64,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/translate/mhlo_to_hlo:mlir_hlo_to_hlo",
         "//xla/mlir_hlo:mhlo_passes",
+        "//xla/pjrt:maybe_owning_mlir_module",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:partial_program_utils",
         "//xla/pjrt:pjrt_abi_version",
@@ -153,6 +155,7 @@ xla_cc_test(
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/pjrt:maybe_owning_mlir_module",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_api",
         "//xla/pjrt:pjrt_client",

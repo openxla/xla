@@ -1009,9 +1009,7 @@ absl::StatusOr<tsl::RCReference<PjRtDeviceEvent>> PjRtCpuClient::LinearizeInto(
 
 absl::StatusOr<CompiledMemoryStats> PjRtCpuExecutable::GetCompiledMemoryStats()
     const {
-  auto cpu_executable_ptr =
-      tsl::down_cast<cpu::CpuExecutable*>(cpu_executable_.get());
-  const auto& buffer_assignment = cpu_executable_ptr->buffer_assignment();
+  const auto& buffer_assignment = cpu_executable_->buffer_assignment();
   auto proto = buffer_assignment.ToProto();
 
   CompiledMemoryStats memory_stats = CompiledMemoryStats();
@@ -1164,7 +1162,8 @@ PjRtCpuExecutable::PjRtCpuExecutable(
       num_partitions_(num_partitions),
       parameter_is_tupled_arguments_(parameter_is_tupled_arguments),
       compile_options_(std::move(compile_options)),
-      cpu_executable_(std::move(cpu_executable)),
+      cpu_executable_(
+          tsl::down_cast<cpu::CpuExecutable*>(cpu_executable.release())),
       parameter_device_shapes_(GetParameterShapes(
           cpu_executable_->module().entry_computation_layout())),
       result_buffer_indices_(std::move(result_buffer_indices)),
@@ -1182,11 +1181,7 @@ PjRtCpuExecutable::PjRtCpuExecutable(
   output_memory_space_kind_ids_.resize(result_buffer_indices_.size(),
                                        CpuDeviceMemorySpace::kKindId);
   output_indices_.resize(
-      tsl::down_pointer_cast<cpu::CpuExecutable>(cpu_executable_)
-          ->buffer_assignment()
-          .Allocations()
-          .size(),
-      -1);
+      cpu_executable_->buffer_assignment().Allocations().size(), -1);
   for (int i = 0; i < result_buffer_indices_.size(); ++i) {
     CHECK_LT(result_buffer_indices_[i], output_indices_.size());
     CHECK_EQ(output_indices_[result_buffer_indices_[i]], -1)
@@ -1517,8 +1512,8 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
   result.primary_execute_event =
       tsl::MakeRef<CpuTrackedDeviceEvent>(execute_event);
 
-  auto cpu_executable =
-      tsl::down_pointer_cast<cpu::CpuExecutable>(executable_->cpu_executable_);
+  std::shared_ptr<cpu::CpuExecutable> cpu_executable =
+      executable_->cpu_executable_;
   auto client = client_;
 
   // Tuplize the inputs if compiler expects a single tuple argument but runtime

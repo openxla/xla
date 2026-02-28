@@ -57,19 +57,11 @@ NvshmemRecvThunk::NvshmemRecvThunk(
       config_(GetP2PConfigForSendRecv(instr, instr->shape().tuple_shapes(0),
                                       replica_count, partition_count)),
       buffer_(buffer),
-      execution_counters_(config_.validation_kind ==
-                                  P2PConfig::ValidationKind::kConditional
-                              ? std::make_unique<ExecutionCounters>()
-                              : nullptr),
       hlo_name_(instr->name()),
       buffer_addresses_(std::move(buffer_addresses)) {}
 
 absl::Status NvshmemRecvThunk::Initialize(const InitializeParams& params) {
   TF_RETURN_IF_ERROR(NvshmemCollectiveThunk::Initialize(params));
-  if (execution_counters_) {
-    TF_RETURN_IF_ERROR(execution_counters_->Initialize(
-        params.executor, params.collective_params->run_id));
-  }
   return absl::OkStatus();
 }
 
@@ -121,31 +113,6 @@ absl::Status NvshmemRecvThunk::RunNvshmemCollective(const ExecuteParams& params,
 
   if (!source_id) {
     VLOG(3) << "No source ID found, skipping Recv operation";
-    return absl::OkStatus();
-  }
-
-  bool should_run =
-      config_.validation_kind != P2PConfig::ValidationKind::kInvalid;
-
-  if (config_.validation_kind == P2PConfig::ValidationKind::kConditional) {
-    se::StreamExecutor* executor = params.stream->parent();
-    TF_ASSIGN_OR_RETURN(int64_t* counter,
-                        execution_counters_->GetCounter(
-                            executor, params.collective_params->run_id));
-    auto it = config_.source_target_to_bounds.find(
-        std::make_pair(*source_target.source, current_id));
-    if (it == config_.source_target_to_bounds.end()) {
-      return absl::InternalError("Missing bounds for conditional Recv");
-    }
-    if (*counter < it->second.first || *counter > it->second.second) {
-      should_run = false;
-    }
-    VLOG(3) << "RunNvshmemCollective counter " << *counter << " " << should_run;
-    ++(*counter);
-  }
-
-  if (!should_run) {
-    VLOG(3) << "Skipping Recv operation";
     return absl::OkStatus();
   }
 

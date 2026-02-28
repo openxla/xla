@@ -110,7 +110,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 96
+#define PJRT_API_MINOR 97
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -1886,6 +1886,8 @@ struct PJRT_RecvCallbackInfo {
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_RecvCallbackInfo, recv_callback);
 
+typedef struct PJRT_MultiSlice_Config PJRT_MultiSlice_Config;
+
 struct PJRT_ExecuteOptions {
   size_t struct_size;
   PJRT_Extension_Base* extension_start;
@@ -1934,8 +1936,9 @@ struct PJRT_ExecuteOptions {
   size_t num_tasks;
   int* task_ids;
   int64_t* incarnation_ids;
+  PJRT_MultiSlice_Config* multi_slice_config;
 };
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_ExecuteOptions, incarnation_ids);
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_ExecuteOptions, multi_slice_config);
 
 struct PJRT_LoadedExecutable_Execute_Args {
   size_t struct_size;

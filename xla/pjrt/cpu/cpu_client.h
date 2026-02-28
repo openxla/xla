@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/executable.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -482,7 +483,7 @@ class PjRtCpuExecutable final : public PjRtExecutable {
   bool parameter_is_tupled_arguments_;
   CompileOptions compile_options_;
 
-  std::shared_ptr<Executable> cpu_executable_;
+  std::shared_ptr<cpu::CpuExecutable> cpu_executable_;
 
   std::vector<Shape> parameter_device_shapes_;
 

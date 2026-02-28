@@ -287,6 +287,15 @@ void MeshAxesReplicaGroupList::Print(Printer* printer) const {
   printer->Append(ToString());
 }
 
+void MeshAxesReplicaGroupList::Print(Printer* printer,
+                                     bool print_full_replica_group_list) const {
+  if (print_full_replica_group_list) {
+    ToCollectiveDeviceList().Print(printer, print_full_replica_group_list);
+    return;
+  }
+  Print(printer);
+}
+
 std::string MeshAxesReplicaGroupList::ToString() const {
   std::string rg_str = "";
   // Add the axes defining the replica group, using names from the mesh.
@@ -299,6 +308,14 @@ std::string MeshAxesReplicaGroupList::ToString() const {
   absl::StrAppend(&rg_str, mesh_.ToString(), " {",
                   absl::StrJoin(group_axes_str, ","), "}");
   return rg_str;
+}
+
+std::string MeshAxesReplicaGroupList::ToString(
+    bool print_full_replica_group_list) const {
+  if (print_full_replica_group_list) {
+    return ToCollectiveDeviceList().ToString(print_full_replica_group_list);
+  }
+  return ToString();
 }
 
 MeshAxesReplicaGroupListProto MeshAxesReplicaGroupList::ToProto() const {
@@ -361,8 +378,27 @@ std::string IotaReplicaGroupList::ToString() const {
   return iota_tile_assignment_.ToString();
 }
 
+std::string IotaReplicaGroupList::ToString(
+    bool print_full_replica_group_list) const {
+  if (print_full_replica_group_list) {
+    return CollectiveDeviceList(flattened_replica_groups())
+        .ToString(print_full_replica_group_list);
+  }
+  return ToString();
+}
+
 void IotaReplicaGroupList::Print(Printer* printer) const {
   iota_tile_assignment_.Print(printer);
+}
+
+void IotaReplicaGroupList::Print(Printer* printer,
+                                 bool print_full_replica_group_list) const {
+  if (print_full_replica_group_list) {
+    CollectiveDeviceList(flattened_replica_groups())
+        .Print(printer, print_full_replica_group_list);
+    return;
+  }
+  Print(printer);
 }
 
 IotaReplicaGroupListProto IotaReplicaGroupList::ToProto() const {

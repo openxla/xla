@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/functional/overload.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -52,8 +53,10 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_layouts_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_memory_descriptions_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_multi_slice_internal_types.h"
 #include "xla/pjrt/c/pjrt_c_api_shardings_extension.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -1033,23 +1036,19 @@ absl::StatusOr<xla::CompileOptions> ParseCompileOptions(
 }
 
 using ProgramVariant =
-    std::variant<mlir::OwningOpRef<mlir::ModuleOp>, xla::XlaComputation>;
-absl::StatusOr<
-    std::variant<mlir::OwningOpRef<mlir::ModuleOp>, xla::XlaComputation>>
-ParsePjrtProgram(std::optional<mlir::MLIRContext>& context,
-                 const PJRT_Program* program) {
+    std::variant<xla::MaybeOwningMlirModule, xla::XlaComputation>;
+absl::StatusOr<ProgramVariant> ParsePjrtProgram(const PJRT_Program* program) {
   auto format_str = absl::string_view(program->format, program->format_size);
   auto module_str = absl::string_view(program->code, program->code_size);
 
   if (format_str == pjrt::kMlirFormat) {
-    if (!context.has_value()) {
-      context.emplace();
-    }
+    auto context = std::make_unique<mlir::MLIRContext>();
     TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                         xla::ParseMlirModuleString(module_str, *context));
-
-    return ProgramVariant(std::move(module));
-  } else if (format_str == pjrt::kHloFormat) {
+    return ProgramVariant(
+        xla::MaybeOwningMlirModule(std::move(context), std::move(module)));
+  }
+  if (format_str == pjrt::kHloFormat) {
     xla::HloModuleProto module_proto;
     // Open source ParseFromString doesn't support string_view.
     if (!module_proto.ParseFromString(module_str)) {
@@ -1057,19 +1056,9 @@ ParsePjrtProgram(std::optional<mlir::MLIRContext>& context,
           "PJRT_Client_Compile: failed to deserialize HloModuleProto");
     }
     return ProgramVariant(xla::XlaComputation(module_proto));
-  } else {
-    return absl::InvalidArgumentError(ProgramFormatErrorMsg(format_str));
   }
+  return absl::InvalidArgumentError(ProgramFormatErrorMsg(format_str));
 }
-
-mlir::ModuleOp UnpackPjrtProgram(mlir::OwningOpRef<mlir::ModuleOp>& module) {
-  return *module;
-}
-const xla::XlaComputation& UnpackPjrtProgram(
-    const xla::XlaComputation& computation) {
-  return computation;
-}
-
 }  // namespace
 
 PJRT_Error* PJRT_Client_Compile(PJRT_Client_Compile_Args* args) {
@@ -1089,16 +1078,21 @@ PJRT_Error* PJRT_Client_Compile(PJRT_Client_Compile_Args* args) {
       ParseCompileOptions(absl::string_view(args->compile_options,
                                             args->compile_options_size)));
 
-  std::optional<mlir::MLIRContext> context;
-  PJRT_ASSIGN_OR_RETURN(auto module_or_hlo,
-                        ParsePjrtProgram(context, args->program));
-  PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtLoadedExecutable> executable,
-                        std::visit(
-                            [args, &options](auto& program) {
-                              return args->client->client->CompileAndLoad(
-                                  UnpackPjrtProgram(program), options);
-                            },
-                            module_or_hlo));
+  PJRT_ASSIGN_OR_RETURN(auto module_or_hlo, ParsePjrtProgram(args->program));
+  PJRT_ASSIGN_OR_RETURN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      std::visit(absl::Overload{
+                     [args, &options](xla::MaybeOwningMlirModule module) {
+                       return args->client->client->CompileAndLoad(
+                           std::move(module), options);
+                     },
+                     [args, &options](xla::XlaComputation program) {
+                       return args->client->client->CompileAndLoad(program,
+                                                                   options);
+                     },
+                 },
+                 std::move(module_or_hlo)));
+
   args->executable =
       new PJRT_LoadedExecutable(std::move(executable), args->client);
   return nullptr;
@@ -2103,8 +2097,11 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_LoadedExecutable_Execute_Args",
       PJRT_LoadedExecutable_Execute_Args_STRUCT_SIZE, args->struct_size));
+  // TODO(b/485591964): Make this check stricter after 12week compatibility
+  // window.
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
-      "PJRT_ExecuteOptions", PJRT_ExecuteOptions_STRUCT_SIZE,
+      "PJRT_ExecuteOptions",
+      PJRT_STRUCT_SIZE(PJRT_ExecuteOptions, incarnation_ids),
       args->options->struct_size));
 
   int64_t traceme_context_id = pjrt::GetTracemeContextId(args);
@@ -2121,6 +2118,12 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
                         ? args->options->context->execute_context.get()
                         : nullptr;
   options.multi_slice_config = nullptr;
+  // TODO(b/485591964): Remove this check after 12week compatibility window.
+  if (args->options->struct_size >= PJRT_ExecuteOptions_STRUCT_SIZE &&
+      args->options->multi_slice_config != nullptr) {
+    options.multi_slice_config =
+        args->options->multi_slice_config->config.get();
+  }
   options.use_major_to_minor_data_layout_for_callbacks = true;
   if (args->options->num_non_donatable_input_indices > 0) {
     for (int i = 0; i < args->options->num_non_donatable_input_indices; ++i) {
@@ -2983,17 +2986,20 @@ PJRT_Error* PJRT_Compile(PJRT_Compile_Args* args) {
       ParseCompileOptions(absl::string_view(args->compile_options,
                                             args->compile_options_size)));
 
-  std::optional<mlir::MLIRContext> context;
-  PJRT_ASSIGN_OR_RETURN(auto module_or_hlo,
-                        ParsePjrtProgram(context, args->program));
-  PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtExecutable> executable,
-                        std::visit(
-                            [&](auto& program) {
-                              return PjRtCompile(
-                                  options, UnpackPjrtProgram(program),
-                                  *args->topology->topology, client);
-                            },
-                            module_or_hlo));
+  PJRT_ASSIGN_OR_RETURN(auto module_or_hlo, ParsePjrtProgram(args->program));
+  PJRT_ASSIGN_OR_RETURN(
+      std::unique_ptr<xla::PjRtExecutable> executable,
+      std::visit(absl::Overload{
+                     [&](xla::MaybeOwningMlirModule module) {
+                       return PjRtCompile(options, std::move(module),
+                                          *args->topology->topology, client);
+                     },
+                     [&](xla::XlaComputation program) {
+                       return PjRtCompile(options, program,
+                                          *args->topology->topology, client);
+                     },
+                 },
+                 std::move(module_or_hlo)));
   args->executable = new PJRT_Executable(std::move(executable));
   return nullptr;
 }

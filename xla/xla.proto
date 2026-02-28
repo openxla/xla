@@ -639,6 +639,14 @@ message DebugOptions {
   // Timeout to issue a warning on stuck rendez-vous.
   optional int32 xla_gpu_executable_warn_stuck_timeout_seconds = 327;
 
+  // Number of thunks to track for execution progress reporting. When this
+  // value is greater than 0, XLA:GPU installs a progress tracker for the
+  // sequential thunk execution. On execution timeout, the last N completed
+  // and first N pending thunks are logged before aborting the process. This
+  // helps diagnose which GPU kernel or collective operation caused a hang.
+  // Default is 0 (disabled).
+  optional int32 xla_gpu_execution_progress_tracking = 457;
+
   // Timeout to terminate XLA:GPU execution if it doesn't complete successfully.
   //
   // If XLA:GPU executable doesn't complete it's execution within some
@@ -1262,7 +1270,7 @@ message DebugOptions {
 
   // Whether to force inline before llvm module split to get a more balanced
   // splits for parallel compilation.
-  optional bool xla_llvm_force_inline_before_split = 300;
+  optional bool xla_llvm_force_inline_before_split = 300 [deprecated = true];
 
   // Disable dumping metadata in HLO dumps.
   optional bool xla_dump_disable_metadata = 153;
@@ -1403,10 +1411,13 @@ message DebugOptions {
   // If true, use MultiGpuBarrierKernel in one-shot RaggedAllToAll thunk.
   optional bool xla_gpu_experimental_ragged_all_to_all_use_barrier = 450;
 
+  // If true, enable experimental tiling propagation.
+  optional bool xla_gpu_experimental_enable_tiling_propagation = 456;
+
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 456
+  // Next id: 458
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

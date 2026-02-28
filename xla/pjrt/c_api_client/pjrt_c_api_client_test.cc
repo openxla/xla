@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_cpu_internal.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_api.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -440,9 +441,9 @@ TEST(PjRtClientTest, CompileUsesStableHloVersion) {
                           GetCApiClient("cpu"));
   static auto PJRT_Client_Compile_Orig = c_api->PJRT_Client_Compile;
   constexpr char kProgram[] = "func.func @main() {return}";
-  mlir::MLIRContext context;
+  auto context = std::make_unique<mlir::MLIRContext>();
   TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                          ParseMlirModuleString(kProgram, context));
+                          ParseMlirModuleString(kProgram, *context));
   const_cast<PJRT_Api*>(c_api)->PJRT_Client_Compile =
       [](PJRT_Client_Compile_Args* args) -> PJRT_Error* {
     mlir::vhlo::Version version = mlir::vhlo::Version::getCurrentVersion();
@@ -454,8 +455,11 @@ TEST(PjRtClientTest, CompileUsesStableHloVersion) {
                     .contains(version_string));
     return PJRT_Client_Compile_Orig(args);
   };
-  std::unique_ptr<PjRtLoadedExecutable> executable =
-      client->CompileAndLoad(*module, CompileOptions()).value();
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(
+          MaybeOwningMlirModule(std::move(context), std::move(module)),
+          CompileOptions()));
   const_cast<PJRT_Api*>(c_api)->PJRT_Client_Compile = PJRT_Client_Compile_Orig;
 }
 
@@ -464,13 +468,17 @@ TEST(PjRtClientTest, CompileWorksInplace) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
                           GetCApiClient("cpu"));
   constexpr char kProgram[] = "func.func @main() {return}";
-  mlir::MLIRContext context;
+  auto context = std::make_unique<mlir::MLIRContext>();
   TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                          ParseMlirModuleString(kProgram, context));
+                          ParseMlirModuleString(kProgram, *context));
   CompileOptions options;
   options.allow_in_place_mlir_modification = true;
-  std::unique_ptr<PjRtLoadedExecutable> executable =
-      client->CompileAndLoad(*module, options).value();
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(
+          MaybeOwningMlirModule(std::move(context), std::move(module)),
+          options));
   EXPECT_NE(executable.get(), nullptr);
 }
 
@@ -479,12 +487,15 @@ TEST(PjRtClientTest, CompileMlirModule) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
                           GetCApiClient("cpu"));
   constexpr char kProgram[] = "func.func @main() {return}";
-  mlir::MLIRContext context;
+  auto context = std::make_unique<mlir::MLIRContext>();
   TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                          ParseMlirModuleString(kProgram, context));
+                          ParseMlirModuleString(kProgram, *context));
   CompileOptions options;
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtExecutable> executable,
-                          client->Compile(*module, options));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutable> executable,
+      client->Compile(
+          MaybeOwningMlirModule(std::move(context), std::move(module)),
+          options));
   EXPECT_NE(executable.get(), nullptr);
 }
 
@@ -493,12 +504,15 @@ TEST(PjRtCApiClientTest, LoadExecutable) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
                           GetCApiClient("cpu"));
   constexpr char kProgram[] = "func.func @main() {return}";
-  mlir::MLIRContext context;
+  auto context = std::make_unique<mlir::MLIRContext>();
   TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                          ParseMlirModuleString(kProgram, context));
+                          ParseMlirModuleString(kProgram, *context));
   CompileOptions options;
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtExecutable> executable,
-                          client->Compile(*module, options));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutable> executable,
+      client->Compile(
+          MaybeOwningMlirModule(std::move(context), std::move(module)),
+          options));
   ASSERT_NE(executable.get(), nullptr);
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -518,12 +532,15 @@ TEST(PjRtCApiClientTest, LoadSameExecutableTwice) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
                           GetCApiClient("cpu"));
   constexpr char kProgram[] = "func.func @main() {return}";
-  mlir::MLIRContext context;
+  auto context = std::make_unique<mlir::MLIRContext>();
   TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
-                          ParseMlirModuleString(kProgram, context));
+                          ParseMlirModuleString(kProgram, *context));
   CompileOptions options;
-  TF_ASSERT_OK_AND_ASSIGN(const std::shared_ptr<PjRtExecutable> executable,
-                          client->Compile(*module, options));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::shared_ptr<PjRtExecutable> executable,
+      client->Compile(
+          MaybeOwningMlirModule(std::move(context), std::move(module)),
+          options));
   ASSERT_NE(executable.get(), nullptr);
 
   // Load the executable twice.
