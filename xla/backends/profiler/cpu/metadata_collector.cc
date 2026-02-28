@@ -75,7 +75,7 @@ class MetadataCollector : public tsl::profiler::ProfilerInterface {
     if (!debug_info_.empty()) {
       MetadataXPlaneBuilder metadata_plane(plane);
       for (auto& hlo_proto : debug_info_) {
-        metadata_plane.AddHloProto(hlo_proto->hlo_module().id(), *hlo_proto);
+        metadata_plane.AddHloProto(*hlo_proto);
         hlo_proto.reset();
       }
       debug_info_.clear();
