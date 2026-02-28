@@ -248,7 +248,7 @@ void PjRtCApiClient::InitDevicesAndMemorySpaces() {
   // Attach memory spaces to devices.
   // TODO(yueshengys): switch to global devices when supported.
   for (const auto& device : addressable_devices_) {
-    PjRtCApiDevice* cpp_device = tensorflow::down_cast<PjRtCApiDevice*>(device);
+    PjRtCApiDevice* cpp_device = absl::down_cast<PjRtCApiDevice*>(device);
     PJRT_Device* c_device = cpp_device->c_device();
     PJRT_Device_AddressableMemories_Args args;
     args.struct_size = PJRT_Device_AddressableMemories_Args_STRUCT_SIZE;
@@ -277,7 +277,7 @@ void PjRtCApiClient::InitDevicesAndMemorySpaces() {
   // TODO(yueshengys): switch to global memories when supported.
   for (const auto& memory : addressable_memory_spaces_) {
     PjRtCApiMemorySpace* cpp_memory =
-        tensorflow::down_cast<PjRtCApiMemorySpace*>(memory);
+        absl::down_cast<PjRtCApiMemorySpace*>(memory);
     PJRT_Memory* c_memory = cpp_memory->c_memory();
     PJRT_Memory_AddressableByDevices_Args args;
     args.struct_size = PJRT_Memory_AddressableByDevices_Args_STRUCT_SIZE;
@@ -614,12 +614,10 @@ InitializeArgsAndCompileAot(const PJRT_Api* c_api, PjRtClient* client,
   if (client == nullptr) {
     args.client = nullptr;
   } else {
-    args.client =
-        tensorflow::down_cast<PjRtCApiClient*>(client)->pjrt_c_client();
+    args.client = absl::down_cast<PjRtCApiClient*>(client)->pjrt_c_client();
   }
-  args.topology =
-      tensorflow::down_cast<const PjRtCApiTopologyDescription*>(&topology)
-          ->c_topology();
+  args.topology = absl::down_cast<const PjRtCApiTopologyDescription*>(&topology)
+                      ->c_topology();
   TF_ASSIGN_OR_RETURN(const CompileOptionsProto options_proto,
                       options.ToProto());
   std::string options_str = options_proto.SerializeAsString();
@@ -779,8 +777,7 @@ PjRtCApiClient::CreateUninitializedBuffer(const Shape& shape,
     args.shape_layout = nullptr;
   }
 
-  args.memory =
-      tensorflow::down_cast<PjRtCApiMemorySpace*>(memory_space)->c_memory();
+  args.memory = absl::down_cast<PjRtCApiMemorySpace*>(memory_space)->c_memory();
 
   RETURN_STATUS_IF_PJRT_ERROR(
       c_api_->PJRT_Client_CreateUninitializedBuffer(&args), c_api_);
@@ -822,7 +819,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiClient::CreateErrorBuffer(
     args.shape_layout = nullptr;
   }
 
-  args.memory = tensorflow::down_cast<PjRtCApiMemorySpace*>(memory)->c_memory();
+  args.memory = absl::down_cast<PjRtCApiMemorySpace*>(memory)->c_memory();
 
   RETURN_STATUS_IF_PJRT_ERROR(c_api_->PJRT_Client_CreateErrorBuffer(&args),
                               c_api_);
@@ -851,7 +848,7 @@ absl::Status FulfillAliasBuffer(
     // We have a real buffer, make sure it's a PjRtCApiBuffer and pass it to the
     // C API.
     PjRtCApiBuffer* c_buffer =
-        tensorflow::down_cast<PjRtCApiBuffer*>(real_buffer_or.value());
+        absl::down_cast<PjRtCApiBuffer*>(real_buffer_or.value());
     args.buffer = c_buffer->c_buffer();
     args.status_code = PJRT_Error_Code_OK;
     args.error_message = nullptr;
@@ -902,8 +899,7 @@ PjRtCApiClient::CreateAliasBuffer(const Shape& shape,
     args.shape_layout = nullptr;
   }
 
-  args.memory =
-      tensorflow::down_cast<PjRtCApiMemorySpace*>(memory_space)->c_memory();
+  args.memory = absl::down_cast<PjRtCApiMemorySpace*>(memory_space)->c_memory();
   args.alias_buffer = nullptr;
 
   RETURN_STATUS_IF_PJRT_ERROR(c_api_->PJRT_Client_CreateAliasBuffer(&args),
@@ -957,8 +953,7 @@ absl::StatusOr<std::uintptr_t> PjRtCApiClient::UnsafeBufferPointer(
   PJRT_Buffer_UnsafePointer_Args args;
   args.struct_size = PJRT_Buffer_UnsafePointer_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
-  args.buffer =
-      tensorflow::down_cast<const PjRtCApiBuffer*>(buffer)->c_buffer();
+  args.buffer = absl::down_cast<const PjRtCApiBuffer*>(buffer)->c_buffer();
 
   RETURN_STATUS_IF_PJRT_ERROR(c_api_->PJRT_Buffer_UnsafePointer(&args), c_api_);
 
@@ -1012,14 +1007,14 @@ PjRtCApiClient::BufferFromHostBufferInternalImpl(
   args.host_buffer_semantics =
       ::pjrt::ConvertToPjRtHostBufferSemantics(host_buffer_semantics);
   if (std::holds_alternative<PjRtDevice*>(device_or_memory)) {
-    args.device = tensorflow::down_cast<PjRtCApiDevice*>(
+    args.device = absl::down_cast<PjRtCApiDevice*>(
                       std::get<PjRtDevice*>(device_or_memory))
                       ->c_device();
     args.memory = nullptr;
   } else {
     CHECK(std::holds_alternative<PjRtMemorySpace*>(device_or_memory));
     args.device = nullptr;
-    args.memory = tensorflow::down_cast<PjRtCApiMemorySpace*>(
+    args.memory = absl::down_cast<PjRtCApiMemorySpace*>(
                       std::get<PjRtMemorySpace*>(device_or_memory))
                       ->c_memory();
   }
@@ -1106,8 +1101,7 @@ PjRtCApiClient::CreateViewOfDeviceBuffer(
     args.on_delete_callback_arg = nullptr;
   }
   args.device = nullptr;
-  args.memory =
-      tensorflow::down_cast<PjRtCApiMemorySpace*>(memory_space)->c_memory();
+  args.memory = absl::down_cast<PjRtCApiMemorySpace*>(memory_space)->c_memory();
   if (stream.has_value()) {
     args.stream = *stream;
   } else {
@@ -1287,7 +1281,7 @@ PjRtCApiClient::MakeCrossHostReceiveBuffers(
   args.layouts = layout_list.data();
 
   args.notifier = pjrt::CppCrossHostRecvNotifierToC(c_api, std::move(notifier));
-  args.device = tensorflow::down_cast<PjRtCApiDevice*>(device)->c_device();
+  args.device = absl::down_cast<PjRtCApiDevice*>(device)->c_device();
 
   std::vector<PJRT_Buffer*> temp_buffers(shapes.size());
   args.buffers = temp_buffers.data();
@@ -1325,7 +1319,7 @@ absl::StatusOr<std::vector<Future<>>> PjRtCApiClient::CrossHostSendBuffers(
   c_buffers.reserve(buffers.size());
   for (PjRtBuffer* buffer : buffers) {
     c_buffers.push_back(
-        tensorflow::down_cast<const PjRtCApiBuffer*>(buffer)->c_buffer());
+        absl::down_cast<const PjRtCApiBuffer*>(buffer)->c_buffer());
   }
 
   args.buffers = c_buffers.data();
@@ -1386,7 +1380,7 @@ PjRtCApiClient::CrossHostReceiveBuffers(
   }
   args.layouts = layout_list.data();
 
-  args.device = tensorflow::down_cast<PjRtCApiDevice*>(device)->c_device();
+  args.device = absl::down_cast<PjRtCApiDevice*>(device)->c_device();
   args.src_global_device_ids = src_global_device_ids.data();
   args.transfer_keys = transfer_keys.data();
 
@@ -1617,8 +1611,7 @@ PjRtCApiClient::CreateBuffersForAsyncHostToDevice(
     args.num_device_layouts = 0;
     args.device_layouts = nullptr;
   }
-  args.memory =
-      tensorflow::down_cast<PjRtCApiMemorySpace*>(memory_space)->c_memory();
+  args.memory = absl::down_cast<PjRtCApiMemorySpace*>(memory_space)->c_memory();
 
   RETURN_STATUS_IF_PJRT_ERROR(
       c_api->PJRT_Client_CreateBuffersForAsyncHostToDevice(&args), c_api);
@@ -2746,7 +2739,7 @@ static std::vector<std::vector<PJRT_Buffer*>> Convert2DCppBuffersToCBuffers(
     auto& c_list = c_lists.emplace_back();
     c_list.reserve(cpp_list.size());
     for (PjRtBuffer* buffer : cpp_list) {
-      auto* c_api_argument = tensorflow::down_cast<PjRtCApiBuffer*>(buffer);
+      auto* c_api_argument = absl::down_cast<PjRtCApiBuffer*>(buffer);
       c_list.push_back(c_api_argument->c_buffer());
     }
   }
@@ -3255,8 +3248,7 @@ PjRtCApiLoadedExecutable::ExecuteWithSingleDevice(
                       InitializeOutputLists(c_output_lists_storage));
   args.output_lists = c_output_lists.data();
 
-  args.execute_device =
-      tensorflow::down_cast<PjRtCApiDevice*>(device)->c_device();
+  args.execute_device = absl::down_cast<PjRtCApiDevice*>(device)->c_device();
   PJRT_Profiler_Extension profiler_extension =
       pjrt::CreatePjrtProfilerExtension(
           "PJRT_LoadedExecutable_Execute linkage");
@@ -3649,7 +3641,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiBuffer::CopyToMemorySpace(
     args.extension_start = nullptr;
     args.buffer = buffer_.get();
     args.dst_memory =
-        tensorflow::down_cast<PjRtCApiMemorySpace*>(dst_memory)->c_memory();
+        absl::down_cast<PjRtCApiMemorySpace*>(dst_memory)->c_memory();
     RETURN_STATUS_IF_PJRT_ERROR(api->PJRT_Buffer_CopyToMemory(&args), api);
     return std::unique_ptr<PjRtBuffer>(
         std::make_unique<PjRtCApiBuffer>(client_, args.dst_buffer));
@@ -4678,8 +4670,7 @@ absl::Status PjRtCApiRuntimeAbiVersion::IsCompatibleWith(
       PJRT_RuntimeAbiVersion_IsCompatibleWithRuntime_Args_STRUCT_SIZE;
   args.abi_version = c_abi_version_;
   args.other_abi_version =
-      tensorflow::down_cast<const PjRtCApiRuntimeAbiVersion&>(
-          runtime_abi_version)
+      absl::down_cast<const PjRtCApiRuntimeAbiVersion&>(runtime_abi_version)
           .c_abi_version();
   RETURN_STATUS_IF_PJRT_ERROR(
       extension_->runtime_abi_version_is_compatible_with_runtime(&args),
@@ -4694,7 +4685,7 @@ absl::Status PjRtCApiRuntimeAbiVersion::IsCompatibleWith(
       PJRT_RuntimeAbiVersion_IsCompatibleWithExecutable_Args_STRUCT_SIZE;
   args.abi_version = c_abi_version_;
   args.executable_abi_version =
-      tensorflow::down_cast<const PjRtCApiExecutableAbiVersion&>(
+      absl::down_cast<const PjRtCApiExecutableAbiVersion&>(
           executable_abi_version)
           .c_abi_version();
   RETURN_STATUS_IF_PJRT_ERROR(
