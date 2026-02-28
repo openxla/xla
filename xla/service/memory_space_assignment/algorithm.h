@@ -479,7 +479,10 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
     std::string required_assignment_source;
 
     bool equals_ignoring_time(const RequiredMemoryAssignment& other) const {
-      return memory_space == other.memory_space && offset == other.offset;
+      return memory_space == other.memory_space &&
+             ((offset == nullptr && other.offset == nullptr) ||
+              (offset != nullptr && other.offset != nullptr &&
+               offset->offset == other.offset->offset));
     }
 
     bool operator==(const RequiredMemoryAssignment& other) const {
@@ -1186,6 +1189,11 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // instruction.
   const std::vector<const HloInstruction*>* GetRepeatedInstructionList(
       const HloInstruction* instruction) const;
+
+  // Adds an operand to the alternate memory map.
+  void AddOperandToAlternateMemoryMap(const HloInstruction* instruction,
+                                      int operand_number,
+                                      const ShapeIndex& index);
 
   // Returns true if the interval is pinned in the alternate memory. Buffers are
   // pinned when their layout has the alternate memory space before MSA runs.
