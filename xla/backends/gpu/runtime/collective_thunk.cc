@@ -58,10 +58,10 @@ limitations under the License.
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 namespace {
@@ -400,10 +400,11 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
   // rendezvous with other participants to make sure that all of them allocated
   // required state (internal to NCCL) and ready to continue. Going too far
   // ahead on one rank leads to deadlocks in NCCL.
-  if (is_first_rendezvous_needed &&
-      !first_call_rendezvous_flag_.IsCompleted()) {
+  ASSIGN_OR_RETURN(
+      RendezvousFlag * rend_flag,
+      params.collective_cliques->GetCliqueFirstRendezvousFlag(clique_key));
+  if (is_first_rendezvous_needed && !rend_flag->IsCompleted()) {
     size_t num_local_participants = clique_key.num_local_participants();
-
     auto global_device_id = params.collective_params->global_device_id;
     RankId rank = clique_key.rank(global_device_id).value_or(RankId(-1));
     XLA_VLOG_DEVICE(1, global_device_id.value())
@@ -422,8 +423,7 @@ absl::Status CollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
     const xla::DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
 
     RETURN_IF_ERROR(Rendezvous(
-        first_call_rendezvous_flag_, rendezvous_name, rendezvous_key,
-        num_local_participants,
+        *rend_flag, rendezvous_name, rendezvous_key, num_local_participants,
         /*warn_stuck_timeout=*/
         absl::Seconds(
             debug_options

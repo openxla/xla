@@ -183,15 +183,6 @@ class CollectiveThunk : public Thunk {
 
   std::shared_ptr<AsyncEvents> async_events_;
 
-  // After a first call to this particular instance of a collective thunk we do
-  // a round of rendezvous to make sure that all participants successfully
-  // allocated on-device state required for executing collective operation. This
-  // is required to avoid deadlocks when one device goes too far ahead and
-  // causes a deadlock in CUDA driver (root cause is mysterious).
-  //
-  // TODO(ezhulenev): Try to move this flag to NCCL clique as we need to make
-  // sure that all NCCL resources are allocated just once.
-  RendezvousFlag first_call_rendezvous_flag_;
   bool is_p2p_;
 };
 

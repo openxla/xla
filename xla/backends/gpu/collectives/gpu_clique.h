@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/service/lockable.h"
+#include "xla/service/rendezvous.h"
 
 namespace xla::gpu {
 
@@ -82,6 +83,10 @@ class GpuClique : public Clique {
   // Returns a parent clique iff *this one was created by clique splitting.
   const GpuClique* parent() const { return parent_; }
 
+  RendezvousFlag* GetFirstRendezvousFlag() {
+    return &first_call_rendezvous_flag_;
+  }
+
  private:
   friend LockableGpuClique;
 
@@ -102,6 +107,13 @@ class GpuClique : public Clique {
 
   // A parent GPU clique iff *this clique was constructed by split operation.
   const GpuClique* parent_;
+
+  // This is keep track of the rendezvous state of each clique.
+  // NCCL collectives perform lazy initialization the first time they run,
+  // rendezvous is needed to make sure all the ranks in a clique are
+  // synchronized before proceeding to avoid deadlocks with other
+  // CUDA calls or other collective operations.
+  RendezvousFlag first_call_rendezvous_flag_;
 
   // We keep device communicators in a sorted container to guarantee that they
   // are destroyed in determenistic order.
