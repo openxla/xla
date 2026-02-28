@@ -438,16 +438,8 @@ absl::Status DynamicSliceThunk::WalkNested(
   return embedded_thunk_->Walk(callback);
 }
 
-absl::Status DynamicSliceThunk::TransformAllNestedThunks(
-    absl::FunctionRef<
-        absl::StatusOr<std::unique_ptr<Thunk>>(std::unique_ptr<Thunk>)>
-        fn) {
-  TF_RETURN_IF_ERROR(embedded_thunk_->TransformAllNestedThunks(fn));
-
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<Thunk> thunk,
-                      fn(std::move(embedded_thunk_)));
-  embedded_thunk_ = SequentialThunk::FromThunk(std::move(thunk));
-  return absl::OkStatus();
+absl::Status DynamicSliceThunk::TransformNested(Transformer callback) {
+  return embedded_thunk_->TransformNested(callback);
 }
 
 Thunk::BufferUses DynamicSliceThunk::buffer_uses() const {

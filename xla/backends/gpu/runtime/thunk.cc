@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <ostream>
 #include <string>
 #include <utility>
@@ -43,6 +44,7 @@ limitations under the License.
 #include "xla/service/service_executable_run_options.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 
 namespace xla::gpu {
@@ -523,6 +525,15 @@ absl::StatusOr<se::Stream*> Thunk::GetStreamForExecution(
 
 std::ostream& operator<<(std::ostream& os, Thunk::Kind kind) {
   return os << Thunk::KindToString(kind);
+}
+
+absl::StatusOr<ThunkSequence> TransformThunkSequence(
+    ThunkSequence sequence, Thunk::Transformer callback) {
+  ThunkSequence transformed;
+  for (std::unique_ptr<Thunk>& thunk : sequence) {
+    ASSIGN_OR_RETURN(transformed.emplace_back(), callback(std::move(thunk)));
+  }
+  return transformed;
 }
 
 bool IsReductionCollective(Thunk::Kind kind) {

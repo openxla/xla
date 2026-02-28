@@ -48,10 +48,7 @@ class CollectiveGroupThunk : public Thunk {
   absl::Status WalkNested(
       absl::FunctionRef<absl::Status(Thunk*)> callback) override;
 
-  absl::Status TransformAllNestedThunks(
-      absl::FunctionRef<
-          absl::StatusOr<std::unique_ptr<Thunk>>(std::unique_ptr<Thunk>)>
-          fn) override;
+  absl::Status TransformNested(Transformer callback) override;
 
   std::shared_ptr<CollectiveThunk::AsyncEvents> async_events() const {
     return async_events_;

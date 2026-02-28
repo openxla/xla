@@ -163,16 +163,9 @@ absl::Status ConditionalThunk::WalkNested(
   return absl::OkStatus();
 }
 
-absl::Status ConditionalThunk::TransformAllNestedThunks(
-    absl::FunctionRef<
-        absl::StatusOr<std::unique_ptr<Thunk>>(std::unique_ptr<Thunk>)>
-        fn) {
+absl::Status ConditionalThunk::TransformNested(Transformer callback) {
   for (std::unique_ptr<SequentialThunk>& branch_thunk : branch_thunks_) {
-    TF_RETURN_IF_ERROR(branch_thunk->TransformAllNestedThunks(fn));
-
-    TF_ASSIGN_OR_RETURN(std::unique_ptr<Thunk> thunk,
-                        fn(std::move(branch_thunk)));
-    branch_thunk = SequentialThunk::FromThunk(std::move(thunk));
+    TF_RETURN_IF_ERROR(branch_thunk->TransformNested(callback));
   }
   return absl::OkStatus();
 }

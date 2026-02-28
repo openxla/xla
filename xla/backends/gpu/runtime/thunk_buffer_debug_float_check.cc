@@ -434,9 +434,9 @@ absl::Status RunFloatCheckPassInternal(SequentialThunk* root_thunk,
       CreateBufferDebugFloatCheckThunk(metadata_store, log_slice, hlo_module));
 
   ThunkFilter thunk_filter = CreateThunkFilter(debug_options);
-  TF_RETURN_IF_ERROR(root_thunk->TransformAllNestedThunks(
-      [&](std::unique_ptr<Thunk> thunk)
-          -> absl::StatusOr<std::unique_ptr<Thunk>> {
+  TF_RETURN_IF_ERROR(
+      root_thunk->Transform([&](std::unique_ptr<Thunk> thunk)
+                                -> absl::StatusOr<std::unique_ptr<Thunk>> {
         if (thunk_filter(*thunk) == InstrumentAction::kSkip) {
           return thunk;
         }

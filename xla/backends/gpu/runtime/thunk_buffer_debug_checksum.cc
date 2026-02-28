@@ -235,17 +235,16 @@ absl::Status RunChecksumPassInternal(SequentialThunk* root_thunk,
       CreateBufferDebugDumpThunk(metadata_store, log_slice, hlo_module));
 
   ThunkFilter thunk_filter = CreateThunkFilter(debug_options);
-  TF_RETURN_IF_ERROR(
-      root_thunk->TransformAllNestedThunks([&](std::unique_ptr<Thunk> thunk) {
-        if (thunk_filter(*thunk) == InstrumentAction::kSkip) {
-          return thunk;
-        }
-        VLOG(1) << "Wrapping with checksum thunk";
-        return WrapWithChecksumThunk(
-            std::move(thunk), log_slice,
-            /*predecessor_thunk=*/*buffer_debug_init_thunk,
-            /*successor_thunk=*/*buffer_debug_dump_thunk, metadata_store);
-      }));
+  TF_RETURN_IF_ERROR(root_thunk->Transform([&](std::unique_ptr<Thunk> thunk) {
+    if (thunk_filter(*thunk) == InstrumentAction::kSkip) {
+      return thunk;
+    }
+    VLOG(1) << "Wrapping with checksum thunk";
+    return WrapWithChecksumThunk(std::move(thunk), log_slice,
+                                 /*predecessor_thunk=*/*buffer_debug_init_thunk,
+                                 /*successor_thunk=*/*buffer_debug_dump_thunk,
+                                 metadata_store);
+  }));
 
   ThunkSequence& thunks = root_thunk->thunks();
   thunks.reserve(thunks.size() + 2);

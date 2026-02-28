@@ -158,7 +158,7 @@ TEST(SequentialThunkTest, ToString) {
             "  003: kGemm\t\n");
 }
 
-TEST(SequentialThunkTest, TransformAllNestedThunks) {
+TEST(SequentialThunkTest, Transform) {
   auto make_info = [](uint64_t id) {
     Thunk::ThunkInfo info;
     info.thunk_id = ThunkId(id);
@@ -173,12 +173,11 @@ TEST(SequentialThunkTest, TransformAllNestedThunks) {
       std::make_unique<DummyThunk>(Thunk::Kind::kGemm, make_info(3)));
   SequentialThunk sequential_thunk(Thunk::ThunkInfo(), std::move(thunks));
 
-  TF_EXPECT_OK(sequential_thunk.TransformAllNestedThunks(
-      [&](std::unique_ptr<Thunk> thunk) -> std::unique_ptr<Thunk> {
-        return std::make_unique<DummyThunk>(
-            Thunk::Kind::kCopy,
-            make_info(thunk->thunk_info().thunk_id.value() + 10));
-      }));
+  TF_EXPECT_OK(sequential_thunk.Transform([&](std::unique_ptr<Thunk> thunk) {
+    return std::make_unique<DummyThunk>(
+        Thunk::Kind::kCopy,
+        make_info(thunk->thunk_info().thunk_id.value() + 10));
+  }));
 
   EXPECT_EQ(sequential_thunk.thunks().size(), 3);
   EXPECT_EQ(sequential_thunk.thunks()[0]->kind(), Thunk::Kind::kCopy);

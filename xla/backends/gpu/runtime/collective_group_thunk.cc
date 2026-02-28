@@ -34,8 +34,8 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
-#include "tsl/platform/casts.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "tsl/platform/casts.h"
 
 namespace xla {
 namespace gpu {
@@ -119,14 +119,9 @@ absl::Status CollectiveGroupThunk::WalkNested(
   return absl::OkStatus();
 }
 
-absl::Status CollectiveGroupThunk::TransformAllNestedThunks(
-    absl::FunctionRef<
-        absl::StatusOr<std::unique_ptr<Thunk>>(std::unique_ptr<Thunk>)>
-        fn) {
-  for (std::unique_ptr<Thunk>& thunk : thunks_) {
-    RETURN_IF_ERROR(thunk->TransformAllNestedThunks(fn));
-    ASSIGN_OR_RETURN(thunk, fn(std::move(thunk)));
-  }
+absl::Status CollectiveGroupThunk::TransformNested(Transformer callback) {
+  ASSIGN_OR_RETURN(thunks_,
+                   TransformThunkSequence(std::move(thunks_), callback));
   return absl::OkStatus();
 }
 

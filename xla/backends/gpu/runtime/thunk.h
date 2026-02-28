@@ -56,9 +56,9 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/gtl/int_type.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -500,16 +500,13 @@ class Thunk {
   template <typename F, Walker<F, const Thunk*>* = nullptr>
   std::invoke_result_t<F, const Thunk*> Walk(F&& callback) const;
 
-  // Recursively replaces all nested thunks with the result of applying `fn` to
-  // them.
-  // An error will leave the transformation in invalid state.
-  // InternalError should be used for status.
-  virtual absl::Status TransformAllNestedThunks(
-      absl::FunctionRef<
-          absl::StatusOr<std::unique_ptr<Thunk>>(std::unique_ptr<Thunk>)>
-          fn) {
-    return absl::OkStatus();
-  }
+  // Recursively transforms thunks nested inside *this one. Always starts
+  // traversal with *this. Transformer callback is recursively applied to all
+  // immediately nested thunks within the thunk "AST". Traverses thunks using
+  // DFS traversal order (comes from using the `Walk` API).
+  using Transformer = absl::FunctionRef<absl::StatusOr<std::unique_ptr<Thunk>>(
+      std::unique_ptr<Thunk>)>;
+  absl::Status Transform(Transformer callback);
 
   // Serializes the thunk into a `ThunkProto`.
   virtual absl::StatusOr<ThunkProto> ToProto() const;
@@ -544,9 +541,18 @@ class Thunk {
   virtual bool IsAsyncDone() const { return false; }
 
  protected:
-  // Walks all nested thunks and calls `callback` for them.
+  // Walks all immediately nested thunks and calls `callback` for them. For
+  // recursive walking of all thunks, use the `Walk` API.
   virtual absl::Status WalkNested(
       absl::FunctionRef<absl::Status(Thunk*)> callback) {
+    return absl::OkStatus();
+  }
+
+  // Transforms immediately nested thunks using a given callback. If
+  // transformation is not applicable, it must simply return the argument back
+  // to the caller. If transformation fails, the thunk is left in an invalid
+  // state and must not be executed.
+  virtual absl::Status TransformNested(Transformer callback) {
     return absl::OkStatus();
   }
 
@@ -562,10 +568,15 @@ class Thunk {
   std::vector<const Thunk*> control_predecessors_;
 };
 
+std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);
+
 // A sequence of thunks.
 using ThunkSequence = std::vector<std::unique_ptr<Thunk>>;
 
-std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);
+// Applies a Thunk transformer callback to all thunks in a sequence and returns
+// a transformed sequence if all transformations are successful.
+absl::StatusOr<ThunkSequence> TransformThunkSequence(
+    ThunkSequence sequence, Thunk::Transformer callback);
 
 // Returns if the thunk implements a reduction collective (all-reduce or
 // reduce-scatter).
@@ -576,7 +587,7 @@ ThunkMetadataListProto GetMetadataListProtoFromThunkGraph(
     const Thunk& root_thunk);
 
 //===----------------------------------------------------------------------===//
-// Thunk templates implementation.
+// Thunk walking and transformation implementation.
 //===----------------------------------------------------------------------===//
 
 template <typename F, Thunk::Walker<F, Thunk*>*>
@@ -595,6 +606,12 @@ template <typename F, Thunk::Walker<F, const Thunk*>*>
 std::invoke_result_t<F, const Thunk*> Thunk::Walk(F&& callback) const {
   return const_cast<Thunk*>(this)->Walk(  // NOLINT
       std::forward<F>(callback));
+}
+
+inline absl::Status Thunk::Transform(Transformer callback) {
+  return this->Walk([&](Thunk* thunk) -> absl::Status {
+    return thunk->TransformNested(callback);
+  });
 }
 
 }  // namespace gpu
