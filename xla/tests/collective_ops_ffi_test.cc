@@ -90,10 +90,15 @@ static absl::Status PrepareAllReduce(
           *collective_params, {AllDevices()},
           CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_FLATTENED_ID, false));
 
+  std::vector<GlobalDeviceId> all_device_groups;
+  for (int i = 0; i < kNumReplicas; ++i) {
+    all_device_groups.push_back(GlobalDeviceId(i));
+  }
+
   // Ask XLA:GPU runtime to acquire a clique for this key. Later we will be
   // able to get access to it from the execute handler.
-  TF_RETURN_IF_ERROR(
-      clique_requests->RequestClique(clique_key, /*device_groups=*/{{}}));
+  TF_RETURN_IF_ERROR(clique_requests->RequestClique(
+      clique_key, /*device_groups=*/{all_device_groups}));
 
   return absl::OkStatus();
 }
@@ -118,11 +123,14 @@ static absl::Status PrepareDeviceAllReduce(
   // Ask for a device communicator with 8 lsa barriers.
   CollectiveCliqueRequests::CliqueRequirements requirements;
   requirements.dev_comm = GpuDeviceCommunicator::Requirements{8};
-
+  std::vector<GlobalDeviceId> all_device_groups;
+  for (int i = 0; i < kNumReplicas; ++i) {
+    all_device_groups.push_back(GlobalDeviceId(i));
+  }
   // Request XLA:GPU runtime to acquire a clique for this key. Later we will be
   // able to get access to it from the execute handler.
   TF_RETURN_IF_ERROR(clique_requests->RequestClique(
-      clique_key, /*device_groups=*/{{}}, requirements));
+      clique_key, /*device_groups=*/{all_device_groups}, requirements));
 
   // Request src and dst buffers to be symmetric on the given clique.
   TF_RETURN_IF_ERROR(memory_requests->RequestSymmetricAddress(
