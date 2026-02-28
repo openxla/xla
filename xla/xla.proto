@@ -594,9 +594,6 @@ message DebugOptions {
   // dimension.
   optional bool xla_gpu_enable_reduce_scatter_combine_by_dim = 257;
 
-  // Whether reduction epilogue fusion is enabled in fusion passes.
-  optional bool xla_gpu_enable_reduction_epilogue_fusion = 243;
-
   // Makes scatter ops deterministic and enables the use of the scatter
   // determinism expander. This is an optimized pass that rewrites scatter
   // operations to ensure deterministic behavior with high performance. If the
@@ -1477,6 +1474,7 @@ message DebugOptions {
   reserved "xla_gpu_enable_persistent_temp_buffers";
   reserved "xla_gpu_enable_pgle_accuracy_checker";
   reserved "xla_gpu_enable_priority_fusion";
+  reserved "xla_gpu_enable_reduction_epilogue_fusion";
   reserved "xla_gpu_enable_softmax_fusion";
   reserved "xla_gpu_enable_triton_gemm_int4";
   reserved "xla_gpu_enable_triton_hopper";
