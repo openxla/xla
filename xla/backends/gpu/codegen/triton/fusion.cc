@@ -210,7 +210,7 @@ absl::StatusOr<TritonFusion::EmitResult> TritonFusion::Emit(
   auto [status_or_entry, was_cached] =
       ir_emitter_context.kernel_cache().GetWithStatus(
           hlo_computation, kernel_arguments.args(),
-          /*discriminator=*/"", generate);
+          /*discriminator=*/"TritonFusion", generate);
   TF_ASSIGN_OR_RETURN(const KernelReuseCache::Entry* entry, status_or_entry);
   return EmitResult{
       std::make_unique<KernelThunk>(
