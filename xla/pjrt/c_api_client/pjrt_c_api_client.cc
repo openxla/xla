@@ -3918,6 +3918,13 @@ void PjRtCApiBuffer::CopyToRemoteDevice(
 #endif
 }
 
+absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiBuffer::Bitcast(
+    xla::PrimitiveType element_type, absl::Span<int64_t const> dims,
+    const xla::Layout* device_layout) {
+  return absl::UnimplementedError(
+      "Bitcast is not yet implemented for PjRtCApiBuffer.");
+}
+
 PjRtCApiExternalReference::~PjRtCApiExternalReference() {
   PJRT_Buffer_DecreaseExternalReferenceCount_Args args;
   args.struct_size =

@@ -106,6 +106,11 @@ class TfPjRtBuffer : public PjRtBuffer {
     wrapped_->CopyToRemoteDevice(std::move(serialized_descriptor),
                                  std::move(on_done));
   }
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> Bitcast(
+      xla::PrimitiveType element_type, absl::Span<const int64_t> dims,
+      const Layout* device_layout) override {
+    return wrapped_->Bitcast(element_type, dims, device_layout);
+  }
   Future<> GetReadyFuture() override { return wrapped_->GetReadyFuture(); }
   bool IsOnCpu() const override { return wrapped_->IsOnCpu(); }
 

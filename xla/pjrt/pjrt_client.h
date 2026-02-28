@@ -1333,6 +1333,15 @@ class PjRtBuffer {
   virtual void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
                                   RemoteSendCallback on_done) = 0;
 
+  // Bitcasts the buffer to a new buffer of the same on-device size but possibly
+  // different `element_type`, `dims`, and `device_layout`. This is a
+  // metadata-only operation and does not copy any data. The original buffer
+  // will be donated, and underlying device memory will be handed over to the
+  // new buffer.
+  virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> Bitcast(
+      xla::PrimitiveType element_type, absl::Span<const int64_t> dims,
+      const Layout* device_layout) = 0;
+
   // Donates 'this' and returns a new buffer that is ready only when both 'this'
   // and 'dependency' are ready.
   //

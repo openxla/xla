@@ -648,6 +648,10 @@ class PjRtCApiBuffer : public PjRtBuffer {
   void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
                           RemoteSendCallback on_done) override;
 
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> Bitcast(
+      PrimitiveType element_type, absl::Span<const int64_t> dims,
+      const Layout* device_layout) override;
+
   Future<> GetReadyFuture() override;
 
   bool IsOnCpu() const override;

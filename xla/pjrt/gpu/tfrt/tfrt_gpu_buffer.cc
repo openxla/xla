@@ -295,7 +295,6 @@ TfrtGpuBuffer::AcquireExternalReference() {
         tsl::MakeConstructedAsyncValueRef<GpuEvent>();
   }
 
-
   tsl::BlockUntilReady(tracked_device_buffer_->definition_event());
   if (tracked_device_buffer_->definition_event().IsError()) {
     return tracked_device_buffer_->definition_event().GetError();
@@ -836,6 +835,13 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::CopyToMemorySpace(
   client_->blocking_thread_pool()->ScheduleWhenReady(
       {src_device_buffer->ready_event().CopyRCRef()}, std::move(transfer_d2d));
   return output_buffer;
+}
+
+absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtGpuBuffer::Bitcast(
+    xla::PrimitiveType element_type, absl::Span<int64_t const> dims,
+    const xla::Layout* device_layout) {
+  return absl::UnimplementedError(
+      "Bitcast is not yet implemented for TfrtGpuBuffer.");
 }
 
 void TfrtGpuBuffer::DropExternalReference() {

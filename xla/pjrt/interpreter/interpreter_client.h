@@ -270,6 +270,13 @@ class InterpreterLiteralWrapperBuffer final : public PjRtBuffer {
                   "called but is not implemented.";
   }
 
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> Bitcast(
+      PrimitiveType element_type, absl::Span<const int64_t> dims,
+      const Layout* device_layout) override {
+    return absl::UnimplementedError(
+        "Bitcast not supported by InterpreterLiteralWrapperBuffer.");
+  }
+
   Future<> GetReadyFuture() override { return Future<>(absl::OkStatus()); }
 
   bool IsOnCpu() const override { return true; }

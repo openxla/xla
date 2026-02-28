@@ -498,6 +498,13 @@ void CommonPjRtBufferImpl::CopyToRemoteDevice(
       std::move(on_done));
 }
 
+absl::StatusOr<std::unique_ptr<PjRtBuffer>> CommonPjRtBufferImpl::Bitcast(
+    PrimitiveType element_type, absl::Span<int64_t const> dims,
+    const Layout* device_layout) {
+  return absl::UnimplementedError(
+      "Bitcast is not yet implemented for CommonPjRtBufferImpl.");
+}
+
 void CommonPjRtClient::ScheduleRemoteSend(
     PjRtMemorySpace* memory_space,
     tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
@@ -1182,58 +1189,58 @@ CommonPjRtLoadedExecutable::Execute(
         const int replica = addressable_device_logical_ids_[i].replica;
         const int partition = addressable_device_logical_ids_[i].partition;
         PjRtDevice* device = addressable_devices_[i];
-        client()->LaunchOnDevice(device, [&, context_id, i, replica, partition,
-                                          device] {
-          tsl::profiler::TraceMeConsumer consumer(
-              [&] {
-                return tsl::profiler::TraceMeEncode(
-                    absl::StrFormat(
-                        "[%d] CommonPjRtLoadedExecutable::Execute (%s)", i,
-                        name()),
-                    {{"name", name()},
-                     {"replica", replica},
-                     {"partition", partition},
-                     {"global_device_id", device->global_device_id()}});
-              },
-              tsl::profiler::ContextType::kPjRt, context_id);
+        client()->LaunchOnDevice(
+            device, [&, context_id, i, replica, partition, device] {
+              tsl::profiler::TraceMeConsumer consumer(
+                  [&] {
+                    return tsl::profiler::TraceMeEncode(
+                        absl::StrFormat(
+                            "[%d] CommonPjRtLoadedExecutable::Execute (%s)", i,
+                            name()),
+                        {{"name", name()},
+                         {"replica", replica},
+                         {"partition", partition},
+                         {"global_device_id", device->global_device_id()}});
+                  },
+                  tsl::profiler::ContextType::kPjRt, context_id);
 
-          // Two phase launch. Phase 1: Prepare on all cores. Abort
-          // launch on prepare failure.
-          std::optional<ExecuteLaunchArgs> launch_args;
-          absl::Status launch_status =
-              ExecutePrepareWithOomRetries(launch_args, argument_handles[i],
-                                           run_id, replica, partition, options,
-                                           /*host_callback_idx=*/i);
-          // Wait for prepare to finish on all cores.
-          if (client()->supports_two_phase_launch()) {
-            absl::MutexLock lock(mu);
-            preparing--;
-            auto done_preparing = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu) {
-              return preparing == 0;
-            };
-            mu.Await(absl::Condition(&done_preparing));
-            if (!launch_status.ok()) {
-              if (failed == 0) {
-                first_failure_status = launch_status;
+              // Two phase launch. Phase 1: Prepare on all cores. Abort
+              // launch on prepare failure.
+              std::optional<ExecuteLaunchArgs> launch_args;
+              absl::Status launch_status = ExecutePrepareWithOomRetries(
+                  launch_args, argument_handles[i], run_id, replica, partition,
+                  options,
+                  /*host_callback_idx=*/i);
+              // Wait for prepare to finish on all cores.
+              if (client()->supports_two_phase_launch()) {
+                absl::MutexLock lock(mu);
+                preparing--;
+                auto done_preparing = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu) {
+                  return preparing == 0;
+                };
+                mu.Await(absl::Condition(&done_preparing));
+                if (!launch_status.ok()) {
+                  if (failed == 0) {
+                    first_failure_status = launch_status;
+                  }
+                  failed++;
+                }
+                if (failed > 0) {
+                  // Poison results for all cores.
+                  results[i] = first_failure_status;
+                  // Abort phase 2 if Prepare fails for any core.
+                  --launching;
+                  return;
+                }
               }
-              failed++;
-            }
-            if (failed > 0) {
-              // Poison results for all cores.
-              results[i] = first_failure_status;
-              // Abort phase 2 if Prepare fails for any core.
+
+              // Phase 2: Launch. It cannot fail.
+              results[i] =
+                  ExecuteLaunch(*launch_args, returned_futures.has_value());
+
+              absl::MutexLock lock(mu);
               --launching;
-              return;
-            }
-          }
-
-          // Phase 2: Launch. It cannot fail.
-          results[i] =
-              ExecuteLaunch(*launch_args, returned_futures.has_value());
-
-          absl::MutexLock lock(mu);
-          --launching;
-        });
+            });
       }
     }
 
