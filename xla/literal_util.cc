@@ -340,6 +340,24 @@ void PopulateWithRandomFloatingPointData(Literal* literal,
   }
 }
 
+template <>
+void PopulateWithRandomFloatingPointData<tsl::float8_e8m0fnu, float>(
+    Literal* literal, std::minstd_rand0* engine) {
+  std::uniform_real_distribution<float> generator(0.0f, 2.0f);
+  for (tsl::float8_e8m0fnu& value : literal->data<tsl::float8_e8m0fnu>()) {
+    value = static_cast<tsl::float8_e8m0fnu>(generator(*engine));
+  }
+}
+
+template <>
+void PopulateWithRandomFloatingPointData<tsl::float4_e2m1fn, float>(
+    Literal* literal, std::minstd_rand0* engine) {
+  std::uniform_real_distribution<float> generator(-6.0f, 6.0f);
+  for (tsl::float4_e2m1fn& value : literal->data<tsl::float4_e2m1fn>()) {
+    value = static_cast<tsl::float4_e2m1fn>(generator(*engine));
+  }
+}
+
 template <typename FloatT>
 void PopulateWithFloatingPointData(
     Literal* literal, std::minstd_rand0* engine, bool no_duplicates,
