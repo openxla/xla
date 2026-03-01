@@ -20,11 +20,12 @@ limitations under the License.
 #ifndef XLA_TSL_LIB_MONITORING_COLLECTED_METRICS_H_
 #define XLA_TSL_LIB_MONITORING_COLLECTED_METRICS_H_
 
-#include <map>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "xla/tsl/lib/monitoring/metric_def.h"
 #include "xla/tsl/lib/monitoring/types.h"
 #include "xla/tsl/protobuf/histogram.pb.h"
@@ -147,9 +148,9 @@ struct PointSet {
 // Standard format in which the metrics are collected, before being exported.
 struct CollectedMetrics {
   // The keys are the metric-names.
-  std::map<std::string, std::unique_ptr<MetricDescriptor>>
+  absl::flat_hash_map<std::string, std::unique_ptr<MetricDescriptor>>
       metric_descriptor_map;
-  std::map<std::string, std::unique_ptr<PointSet>> point_set_map;
+  absl::flat_hash_map<std::string, std::unique_ptr<PointSet>> point_set_map;
 };
 
 }  // namespace monitoring
