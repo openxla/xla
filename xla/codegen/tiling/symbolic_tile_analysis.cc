@@ -445,14 +445,11 @@ FusionDecision ShouldProceedWithSymbolicTileDerivation(
   const HloInstruction* hlo = tiled_hlo_instruction.hlo();
   const IndexingMap& indexing_map = tiled_hlo_instruction.indexing_map();
   // TODO(b/446827313): update comment after disabling nested fusions.
-  // Bail out on concatenates in the general path for now, but allow a
-  // restricted form of concatenates for the nested GEMM fusion path.
-  //
-  // Relaxing this restriction will require making sure that the cost model
-  // works well with concatenates, and that we always construct nested fusions
-  // for concatenates.
-  if ((hlo->opcode() == HloOpcode::kConcatenate ||
-       hlo->opcode() == HloOpcode::kPad) &&
+  // Relaxing this restriction will require making sure that
+  // the cost model works well with concatenates and pads - it needs to
+  // understand that read of output of the concatenate or pad accessed only part
+  // of the input(s).
+  if (hlo->opcode() == HloOpcode::kConcatenate &&
       !(IsWithinNestedGemmFusion(*hlo) || IsControlFlowCondition(*hlo))) {
     return FusionDecision::Forbid("Bailing out on ") << hlo->ToString();
   }
