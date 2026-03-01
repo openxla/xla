@@ -634,6 +634,8 @@ xla_cc_binary(
         "//xla/stream_executor:cuda_platform",
     ]) + if_rocm_is_configured([
         "//xla/stream_executor:rocm_platform",
+    ]) + if_sycl_is_configured([
+        "//xla/stream_executor:sycl_platform",
     ]),
 )
 
