@@ -56,9 +56,9 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/gtl/int_type.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -563,7 +563,10 @@ class Thunk {
 };
 
 // A sequence of thunks.
-using ThunkSequence = std::vector<std::unique_ptr<Thunk>>;
+class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
+ public:
+  using std::vector<std::unique_ptr<Thunk>>::vector;
+};
 
 std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);
 
@@ -571,9 +574,9 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);
 // reduce-scatter).
 bool IsReductionCollective(Thunk::Kind kind);
 
-// Returns the metadata from all thunks in the given thunk graph.
+// Returns the metadata from all thunks in the given thunk sequence.
 ThunkMetadataListProto GetMetadataListProtoFromThunkGraph(
-    const Thunk& root_thunk);
+    const ThunkSequence& thunk_sequence);
 
 //===----------------------------------------------------------------------===//
 // Thunk templates implementation.

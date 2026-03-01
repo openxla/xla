@@ -720,6 +720,7 @@ cc_library(
         "//xla/backends/gpu/runtime:nvshmem_collective_thunk",
         "//xla/backends/gpu/runtime:sequential_thunk",
         "//xla/backends/gpu/runtime:thunk",
+        "//xla/backends/gpu/runtime:thunk_executor",
         "//xla/backends/gpu/runtime:thunk_buffer_debug_pass",
         "//xla/backends/gpu/runtime:thunk_pass_pipeline",
         "//xla/backends/gpu/runtime:thunk_proto_cc",
