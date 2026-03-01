@@ -236,6 +236,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_fast_math_honor_functions(true);
   opts.set_xla_cpu_fast_math_honor_division(true);
 
+  // Default to true for backwards compatibility (always flush denormals).
+  opts.set_xla_cpu_ftz(true);
+
   opts.set_xla_gpu_fused_attention_use_cudnn_rng(false);
 
   // By default, copy TF's Eigen style min_max behavior with nans.
@@ -1044,6 +1047,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "When xla_cpu_enable_fast_math is true then this controls whether we "
       "forbid to approximate calculations for functions. Ignored when "
       "xla_cpu_enable_fast_math is false."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_ftz", bool_setter_for(&DebugOptions::set_xla_cpu_ftz),
+      debug_options->xla_cpu_ftz(),
+      "If true, flush-to-zero semantics are enabled in the code generated for "
+      "CPUs. Default is true."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_enable_fast_min_max",
       bool_setter_for(&DebugOptions::set_xla_cpu_enable_fast_min_max),
