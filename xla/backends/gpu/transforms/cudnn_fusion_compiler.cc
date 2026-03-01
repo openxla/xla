@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -24,12 +25,11 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
@@ -47,19 +47,23 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/conv_utils.h"
 #include "xla/service/gpu/cudnn_support_utils.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/service/matmul_indexing_utils.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "xla/stream_executor/cuda/cudnn_frontend_helpers.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/engine_options.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -281,43 +285,43 @@ class GemmDimensionAdapter {
             result.strides.empty() ? 1 : result.strides.back());
         result.slices->push_back({0, 1});
         continue;
-      } else {
-        if (spec->size() == 1) {
-          // The dimension is not split, nothing to do.
-        } else if (spec->size() == 2) {
-          if (!dims.lhs_batch_dimensions().empty()) {
-            VLOG(8) << "Noncontracting dimension split is not compatible with "
-                       "batch dimensions.";
-            return std::nullopt;
-          }
-          if (index != lhs_noncontracting_index) {
-            VLOG(8) << "Only LHS noncontracting dimension can be split.";
-            return std::nullopt;
-          }
-          switch (scope) {
-            case TritonFusionAnalysis::Scope::LHS:
-              lhs_noncontracting_split_ = spec->back().count;
-              break;
-            case TritonFusionAnalysis::Scope::OUTPUT:
-              if (lhs_noncontracting_split_ != spec->back().count) {
-                VLOG(8) << "Output non-contracting dimension has to be split "
-                           "the same way as the LHS input one if it is split.";
-                return std::nullopt;
-              }
-              break;
-            default:
-              VLOG(8) << "Only LHS noncontracting dimension can be split.";
-              return std::nullopt;
-          }
-          // Assign the major part of the noncontracting dimension to the
-          // unused batch one.
-          CHECK_EQ(result.sizes[kBatchDimensionIndex], 1);
-          result.sizes[kBatchDimensionIndex] = spec->back().count;
-          result.strides[kBatchDimensionIndex] = spec->back().stride;
-        } else {
-          VLOG(8) << "The dimension is split multiple times.";
+      }
+      if (spec->size() == 1) {
+        // The dimension is not split, nothing to do.
+      } else if (spec->size() == 2) {
+        if (!dims.lhs_batch_dimensions().empty()) {
+          VLOG(8) << "Noncontracting dimension split is not compatible with "
+                     "batch dimensions.";
           return std::nullopt;
         }
+        if (index != lhs_noncontracting_index) {
+          VLOG(8) << "Only LHS noncontracting dimension can be split.";
+          return std::nullopt;
+        }
+        switch (scope) {
+          case TritonFusionAnalysis::Scope::LHS:
+            lhs_noncontracting_split_ = spec->back().count;
+            break;
+          case TritonFusionAnalysis::Scope::OUTPUT:
+            if (lhs_noncontracting_split_ != spec->back().count) {
+              VLOG(8) << "Output non-contracting dimension has to be split "
+                         "the same way as the LHS input one if it is split.";
+              return std::nullopt;
+            }
+            break;
+          default:
+            VLOG(8) << "Only LHS noncontracting dimension can be split.";
+            return std::nullopt;
+        }
+        // Assign the major part of the noncontracting dimension to the
+        // unused batch one.
+        CHECK_EQ(result.sizes[kBatchDimensionIndex], 1);
+        result.sizes[kBatchDimensionIndex] = spec->back().count;
+        result.strides[kBatchDimensionIndex] = spec->back().stride;
+      } else {
+        VLOG(8) << "The dimension is split multiple times.";
+        return std::nullopt;
+      }
         result.sizes.push_back(spec->front().count);
         result.strides.push_back(spec->front().stride);
         result.slices->push_back(
@@ -326,7 +330,6 @@ class GemmDimensionAdapter {
         if (spec->front().count != spec->front().sliced_count) {
           slicing_is_present = true;
         }
-      }
     }
     if (lhs_noncontracting_split_ > 1 &&
         scope == TritonFusionAnalysis::Scope::OUTPUT &&
@@ -366,15 +369,16 @@ class GemmDimensionAdapter {
   const HloInstruction& dot_;
 };
 
+using ConvKind = HloConvolutionInstruction::ConvKind;
+
 class ConvDimensionAdapter {
-  explicit ConvDimensionAdapter(const HloInstruction& conv,
-                                CuDnnFusionConfig_Kind conv_kind,
+  explicit ConvDimensionAdapter(const HloInstruction& conv, ConvKind conv_kind,
                                 ConvolutionDimensionNumbers dums)
       : conv_(conv), conv_kind_(conv_kind), dums_(dums) {}
 
  public:
   const HloInstruction& conv_;
-  CuDnnFusionConfig_Kind conv_kind_;
+  ConvKind conv_kind_;
 
   static absl::StatusOr<std::optional<ConvDimensionAdapter>> Create(
       const HloFusionInstruction& fusion, const HloComputation& computation) {
@@ -384,45 +388,11 @@ class ConvDimensionAdapter {
       VLOG(3) << "Not a Conv fusion.";
       return std::nullopt;
     }
+    ConvKind conv_kind =
+        DynCast<HloConvolutionInstruction>(maybe_conv)->conv_kind();
 
-    // get conv type from backend config
-    TF_ASSIGN_OR_RETURN(auto gpu_config,
-                        fusion.backend_config<GpuBackendConfig>());
-    const FusionBackendConfig& fusion_backend_config =
-        gpu_config.fusion_backend_config();
-    if (!fusion_backend_config.has_cudnn_fusion_config() ||
-        !fusion_backend_config.cudnn_fusion_config().has_kind()) {
-      VLOG(3) << "Can't find cudnn fusion config or conv kind for cudnn conv "
-                 "fusion.";
-      return std::nullopt;
-    }
-    CuDnnFusionConfig_Kind conv_kind =
-        fusion_backend_config.cudnn_fusion_config().kind();
-
-    const ConvolutionDimensionNumbers& dnums =
-        DynCast<HloConvolutionInstruction>(maybe_conv)
-            ->convolution_dimension_numbers();
-    // for fprop, we do nothing, copy directly
-    ConvolutionDimensionNumbers dnums_for_layout = dnums;
-    if (conv_kind == CuDnnFusionConfig::CONV_WGRAD) {
-      dnums_for_layout.set_input_batch_dimension(
-          dnums.input_feature_dimension());
-      dnums_for_layout.set_input_feature_dimension(
-          dnums.input_batch_dimension());
-      dnums_for_layout.set_output_batch_dimension(
-          dnums.output_feature_dimension());
-      dnums_for_layout.set_output_feature_dimension(
-          dnums.output_batch_dimension());
-      dnums_for_layout.set_kernel_input_feature_dimension(
-          dnums.kernel_output_feature_dimension());
-      dnums_for_layout.set_kernel_output_feature_dimension(
-          dnums.kernel_input_feature_dimension());
-    } else if (conv_kind == CuDnnFusionConfig::CONV_DGRAD) {
-      dnums_for_layout.set_kernel_input_feature_dimension(
-          dnums.kernel_output_feature_dimension());
-      dnums_for_layout.set_kernel_output_feature_dimension(
-          dnums.kernel_input_feature_dimension());
-    }
+    ConvolutionDimensionNumbers dnums_for_layout =
+        RestoreDimNumber(DynCast<HloConvolutionInstruction>(maybe_conv));
 
     // make sure input/kernel/output has the same layout
     TF_RET_CHECK(dnums_for_layout.input_batch_dimension() ==
@@ -444,16 +414,23 @@ class ConvDimensionAdapter {
   }
 
   std::optional<Result> DimensionsAndStrides(const HloInstruction& hlo) {
-    // placeholder FP32 data type here, it is not used
+    if (ShapeUtil::IsScalar(hlo.shape())) {
+      Result result;
+      result.sizes =
+          std::vector<int64_t>(dums_.input_spatial_dimensions_size() + 2, 1);
+      result.strides =
+          std::vector<int64_t>(dums_.input_spatial_dimensions_size() + 2, 1);
+      return result;
+    }
+    // Placeholder FP32 data type here, it is not used
     auto desc = se::dnn::TensorDescriptor::For(
         se::dnn::DataType::kFloat, hlo.shape().dimensions(),
         hlo.shape().layout().minor_to_major());
-    // logical layout and physical layout should be the same after layout
+    // Logical layout and physical layout should be the same after layout
     // assignment.
     std::vector<int64_t> logical_dims = desc.dimensions();
     std::vector<int64_t> logical_strides = desc.GetLogicalStrides();
-    // cuDNN conv frontend requires logical layout to be NCHW. return logical
-    // NCHW layout. we shouldn't need to know if this hlo is LHS, RHS or Output,
+    // We shouldn't need to know if this hlo is LHS, RHS or Output,
     // they should have same layout after layout assignment. Use input dums
     // here.
     Result result;
@@ -639,7 +616,8 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
     if (HloPredicateIsOp<HloOpcode::kParameter>(hlo)) {
       CHECK(hlo_to_cudnn.contains(hlo));
       continue;
-    } else if (HloPredicateIsOp<HloOpcode::kCustomCall>(hlo)) {
+    }
+    if (HloPredicateIsOp<HloOpcode::kCustomCall>(hlo)) {
       if (hlo->user_count() != 1 ||
           !IsWorkspaceAllocationRoot(*hlo->users()[0])) {
         VLOG(3) << "Custom calls are only expected to be used for workspace "
@@ -647,7 +625,8 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
         return std::nullopt;
       }
       continue;
-    } else if (HloPredicateIsOp<HloOpcode::kTuple>(hlo)) {
+    }
+    if (HloPredicateIsOp<HloOpcode::kTuple>(hlo)) {
       if (!IsWorkspaceAllocationRoot(*hlo)) {
         VLOG(3) << "Tuples are only expected at outputs for workspace "
                    "allocation.";
@@ -788,22 +767,23 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
             .set_dilation(dilation)
             .set_compute_data_type(compute_dtype.value());
       };
-      if (conv_adapter->conv_kind_ == CuDnnFusionConfig::CONV_FPROP) {
+      if (conv_adapter->conv_kind_ == ConvKind::FPROP) {
         hlo_to_cudnn[hlo] =
             graph.conv_fprop(operand(0), operand(1),
                              set_conv_attr(graph::Conv_fprop_attributes()));
-      } else if (conv_adapter->conv_kind_ == CuDnnFusionConfig::CONV_DGRAD) {
+      } else if (conv_adapter->conv_kind_ == ConvKind::DGRAD) {
         hlo_to_cudnn[hlo] =
             graph.conv_dgrad(operand(0), operand(1),
                              set_conv_attr(graph::Conv_dgrad_attributes()));
-      } else if (conv_adapter->conv_kind_ == CuDnnFusionConfig::CONV_WGRAD) {
+      } else if (conv_adapter->conv_kind_ == ConvKind::WGRAD) {
         // cudnn frontend accepts operand in the order of dout, input, but xla
         // uses reverse order
         hlo_to_cudnn[hlo] =
             graph.conv_wgrad(operand(1), operand(0),
                              set_conv_attr(graph::Conv_wgrad_attributes()));
       } else {
-        VLOG(3) << "Unimplemented conv type.";
+        LOG(ERROR) << "Unimplemented conv type. Value: "
+                   << static_cast<int>(conv_adapter->conv_kind_);
         return std::nullopt;
       }
       // cuDNN requires output dims to be set for conv dgrad and wgrad, it is
