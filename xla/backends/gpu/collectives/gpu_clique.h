@@ -124,6 +124,9 @@ class LockableGpuClique : public Lockable<GpuClique, GpuClique::LockableName> {
   // Returns if *this lockable clique has a given parent.
   bool HasParent(const GpuClique* parent) const;
 
+  // Returns the parent clique pointer, or nullptr if not created by splitting.
+  const GpuClique* parent() const;
+
   std::string DebugString() const;
 
   // Checks for async errors for all the communicators in the clique without
