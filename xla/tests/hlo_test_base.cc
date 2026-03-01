@@ -162,9 +162,9 @@ se::DeviceAddressAllocator* HloTestBase::GetAllocator() {
   return allocator_.get();
 }
 
-void HloTestBase::MatchOptimizedHlo(absl::string_view hlo,
-                                    absl::string_view pattern,
-                                    bool print_operand_shape) {
+void HloTestBase::MatchOptimizedHlo(
+    absl::string_view hlo, absl::string_view pattern, bool print_operand_shape,
+    std::unique_ptr<HloModule>* optimized_module_out) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
                           GetOptimizedModule(hlo));
   HloPrintOptions print_opts;
@@ -173,6 +173,9 @@ void HloTestBase::MatchOptimizedHlo(absl::string_view hlo,
       RunFileCheck(optimized_module->ToString(print_opts), pattern);
   TF_ASSERT_OK(filecheck_result.status());
   EXPECT_TRUE(filecheck_result.value());
+  if (optimized_module_out) {
+    *optimized_module_out = std::move(optimized_module);
+  }
 }
 
 absl::StatusOr<std::unique_ptr<HloModule>> HloTestBase::GetOptimizedModule(

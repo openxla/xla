@@ -138,7 +138,8 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
     const memory::desc& plain_weights_md, const memory::desc& output_md,
     const std::vector<memory::desc>& fused_mds,
     const OneDnnMatMulConfig& matmul_config,
-    FusedOperandsRef* fused_operands_ref = nullptr) {
+    FusedOperandsRef* fused_operands_ref = nullptr,
+    QuantizationParams* qparams = nullptr) {
   auto bias_md = memory::desc();
   bool weights_packed = matmul_config.optimization_config().weights_prepacked();
   auto weights_md = plain_weights_md;
@@ -147,9 +148,10 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
                               memory::format_tag::any);
   }
 
-  dnnl::post_ops post_ops =
-      PopulateOneDnnPostOps(cpu_engine, fused_mds, &matmul_config.fusions(),
-                            fused_operands_ref, &bias_md);
+  int fused_operand_idx = 0;
+  dnnl::post_ops post_ops = PopulateOneDnnPostOps(
+      fused_operand_idx, cpu_engine, fused_mds, &matmul_config.fusions(),
+      fused_operands_ref, &bias_md);
 
   dnnl::primitive_attr attrs;
   if (matmul_config.optimization_config().user_scratchpad()) {
@@ -157,6 +159,15 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
   }
   if (post_ops.len() > 0) {
     attrs.set_post_ops(post_ops);
+  }
+
+  if (qparams) {
+    qparams->negated_src_zp = matmul_config.quant_config().negated_src_zp();
+    qparams->inversed_dst_scale =
+        matmul_config.quant_config().inversed_dst_scale();
+    AddQuantParamArgs(/*is_conv=*/false, /*conv_groups=*/false, attrs,
+                      fused_operand_idx, cpu_engine, fused_mds, input_md,
+                      plain_weights_md, output_md, fused_operands_ref, qparams);
   }
   return std::make_unique<matmul::primitive_desc>(
       cpu_engine, input_md, weights_md, bias_md, output_md, attrs);
@@ -178,8 +189,10 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
   std::vector<memory::desc> fused_mds;
   absl::c_transform(fused_shapes, std::back_inserter(fused_mds),
                     [](const Shape& shape) { return ShapeToMemDesc(shape); });
+  QuantizationParams qparams;
   return CreateMatMulPrimDesc(engine(engine::kind::cpu, 0), input_md,
-                              weights_md, output_md, fused_mds, matmul_config);
+                              weights_md, output_md, fused_mds, matmul_config,
+                              nullptr, &qparams);
 }
 
 template <>

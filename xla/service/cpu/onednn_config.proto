@@ -86,6 +86,7 @@ message OneDnnMatMulConfig {
   OneDnnTensorLayoutProto lhs = 9;
   OneDnnTensorLayoutProto rhs = 10;
   OneDnnTensorLayoutProto result = 11;
+  OneDnnQuantizationConfig quant_config = 12;
 }
 
 message OneDnnWindowProto {
@@ -119,4 +120,10 @@ message OneDnnConvolutionConfig {
   uint64 feature_groups = 7;
 
   OneDnnOptimizationConfig optimization_config = 8;
+  OneDnnQuantizationConfig quant_config = 9;
+}
+
+message OneDnnQuantizationConfig {
+  bool inversed_dst_scale = 1;
+  bool negated_src_zp = 2;
 }

@@ -32,7 +32,8 @@ namespace xla {
 namespace cpu {
 
 class ConvolutionTest : public HloTestBase,
-                        public ::testing::WithParamInterface<PrimitiveType> {
+                        public ::testing::WithParamInterface<
+                            std::tuple<PrimitiveType, PrimitiveType>> {
  protected:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
@@ -68,7 +69,7 @@ class ConvolutionTest : public HloTestBase,
     ; CHECK-DAG:      })";
 
   ConvolutionTest() {
-    dtype_ = GetParam();
+    dtype_ = std::get<0>(GetParam());
     atol_ = rtol_ = (dtype_ == F32) ? 1e-4 : 1e-2;
     user_scratchpad_ = true;
     weights_prepacked_ = false;
@@ -152,6 +153,77 @@ class ConvolutionTest : public HloTestBase,
     EXPECT_TRUE(RunAndCompare(convolution_module_str, ErrorSpec{atol_, rtol_}));
     MatchOptimizedHlo(convolution_module_str,
                       ConvStringWithOptimizations(fused_ops));
+  }
+};
+
+class QuantizedConvolutionTest : public ConvolutionTest {
+ protected:
+  PrimitiveType quant_dtype_;
+  std::string quant_dtype_str_;
+  int clamp_min_;
+  int clamp_max_;
+
+  QuantizedConvolutionTest() : ConvolutionTest() {
+    quant_dtype_ = std::get<1>(GetParam());
+    quant_dtype_str_ = primitive_util::LowercasePrimitiveTypeName(quant_dtype_);
+    atol_ = rtol_ = 1e-2;
+    if (quant_dtype_ == S8) {
+      clamp_min_ = -128;
+      clamp_max_ = 127;
+    } else {
+      // U8 case
+      clamp_min_ = 0;
+      clamp_max_ = 255;
+    }
+  }
+
+  void SetUp() override {
+    ConvolutionTest::SetUp();
+    if (!IsSupportedType(quant_dtype_)) {
+      GTEST_SKIP() << "CPU does not support " << quant_dtype_str_;
+    }
+  }
+
+  void RunCompareAndMatchOptimizedHlo(
+      const absl::string_view outline,
+      const std::vector<absl::string_view> fused_ops,
+      std::vector<PrimitiveType>& operand0_types,
+      std::vector<PrimitiveType>& operand1_types,
+      std::vector<PrimitiveType>& result_types) {
+    const std::string convolution_module_str = absl::StrReplaceAll(
+        outline, {{"$dtype", dtypeString_},
+                  {"$quant_dtype", quant_dtype_str_},
+                  {"$clamp_min", std::to_string(clamp_min_)},
+                  {"$clamp_max", std::to_string(clamp_max_)}});
+    EXPECT_TRUE(RunAndCompare(convolution_module_str, ErrorSpec{atol_, rtol_}));
+    std::unique_ptr<HloModule> optimized_module;
+    MatchOptimizedHlo(convolution_module_str,
+                      ConvStringWithOptimizations(fused_ops),
+                      /*print_operand_shape=*/false, &optimized_module);
+    CheckCustomCallTypes(optimized_module, operand0_types, operand1_types,
+                         result_types);
+  }
+
+  void CheckCustomCallTypes(std::unique_ptr<HloModule>& module,
+                            std::vector<PrimitiveType>& operand0_types,
+                            std::vector<PrimitiveType>& operand1_types,
+                            std::vector<PrimitiveType>& result_types) {
+    std::vector<HloInstruction*> custom_calls =
+        FindInstructions(module.get(), HloOpcode::kCustomCall);
+    if (custom_calls.size() == 0) {
+      FAIL() << "CustomCall not found in the optimized module";
+    }
+    for (int i = 0; i < custom_calls.size(); ++i) {
+      EXPECT_EQ(custom_calls[i]->operand(0)->shape().element_type(),
+                operand0_types[i]);
+      EXPECT_EQ(custom_calls[i]->operand(1)->shape().element_type(),
+                operand1_types[i]);
+      auto actual_type =
+          custom_calls[i]->shape().IsTuple()
+              ? custom_calls[i]->shape().tuple_shapes(0).element_type()
+              : custom_calls[i]->shape().element_type();
+      EXPECT_EQ(actual_type, result_types[i]);
+    }
   }
 };
 
@@ -752,11 +824,198 @@ TEST_P(ConvolutionTest, Conv2DWithBiasAndSwishTest) {
   RunCompareAndMatchOptimizedHlo(outline, {"BIAS", "SWISH"});
 }
 
+TEST_P(QuantizedConvolutionTest, DequantizeConv2D) {
+  const char* module_str = R"(
+  HloModule quant.convolution.test
+
+  ENTRY quant.convolution.test {
+    param_inp = $quant_dtype[1,224,224,3] parameter(0), parameter_replication={false}
+    convert.14 = s32[1,224,224,3] convert(param_inp)
+    constant = s32[] constant(4)
+    broadcast = s32[1,224,224,3] broadcast(constant), dimensions={}
+    add = s32[1,224,224,3] add(convert.14, broadcast)
+    convert.16 = $dtype[1,224,224,3] convert(add)
+    constant.9 = $dtype[] constant(0.5)
+    broadcast.10 = $dtype[1,224,224,3] broadcast(constant.9), dimensions={}
+    multiply.17 = $dtype[1,224,224,3] multiply(convert.16, broadcast.10)
+    param_wei = s8[7,7,3,64] parameter(1), parameter_replication={false}
+    convert.25 = s32[7,7,3,64] convert(param_wei)
+    convert.27 = $dtype[7,7,3,64] convert(convert.25)
+    constant.20 = $dtype[] constant(0.2)
+    broadcast.21 = $dtype[7,7,3,64] broadcast(constant.20), dimensions={}
+    multiply.28 = $dtype[7,7,3,64] multiply(convert.27, broadcast.21)
+    ROOT convolution.29 = $dtype[1,112,112,64] convolution(multiply.17, multiply.28),
+          window={size=7x7 stride=2x2 pad=2_3x2_3}, dim_labels=b01f_01io->b01f
+  })";
+
+  std::vector<PrimitiveType> operand0_types = {quant_dtype_};
+  std::vector<PrimitiveType> operand1_types = {S8};
+  std::vector<PrimitiveType> result_types = {dtype_};
+  RunCompareAndMatchOptimizedHlo(module_str, {}, operand0_types,
+                                 operand1_types, result_types);
+}
+
+TEST_P(QuantizedConvolutionTest, DequantizeConv2DBias) {
+  const char* module_str = R"(
+  HloModule quant.convolution.test
+  ENTRY quant.convolution.test {
+    param_inp = $quant_dtype[1,224,224,3] parameter(0), parameter_replication={false}
+    convert.14 = s32[1,224,224,3] convert(param_inp)
+    constant = s32[] constant(4)
+    broadcast = s32[1,224,224,3] broadcast(constant), dimensions={}
+    add = s32[1,224,224,3] add(convert.14, broadcast)
+    convert.16 = $dtype[1,224,224,3] convert(add)
+    constant.9 = $dtype[] constant(0.5)
+    broadcast.10 = $dtype[1,224,224,3] broadcast(constant.9), dimensions={}
+    multiply.17 = $dtype[1,224,224,3] multiply(convert.16, broadcast.10)
+    param_wei = s8[7,7,3,64] parameter(1), parameter_replication={false}
+    convert.25 = s32[7,7,3,64] convert(param_wei)
+    convert.27 = $dtype[7,7,3,64] convert(convert.25)
+    constant.20 = $dtype[] constant(0.2)
+    broadcast.21 = $dtype[7,7,3,64] broadcast(constant.20), dimensions={}
+    multiply.28 = $dtype[7,7,3,64] multiply(convert.27, broadcast.21)
+    convolution.29 = $dtype[1,112,112,64] convolution(multiply.17, multiply.28),
+          window={size=7x7 stride=2x2 pad=2_3x2_3}, dim_labels=b01f_01io->b01f
+    arg2.3 = $dtype[64] parameter(2), parameter_replication={false}
+    broadcast.30 = $dtype[1,112,112,64] broadcast(arg2.3), dimensions={3}
+    ROOT add.31 = $dtype[1,112,112,64] add(convolution.29, broadcast.30)
+  })";
+
+  std::vector<PrimitiveType> operand0_types = {quant_dtype_};
+  std::vector<PrimitiveType> operand1_types = {S8};
+  std::vector<PrimitiveType> result_types = {dtype_};
+  RunCompareAndMatchOptimizedHlo(module_str, {"BIAS"}, operand0_types,
+                                 operand1_types, result_types);
+}
+
+TEST_P(QuantizedConvolutionTest,
+       DequantizeConv2DBiasRequantizeQDQParamsMismatchedScale) {
+  const char* module_str = R"(
+  HloModule quant.convolution.test
+  ENTRY quant.convolution.test {
+    constant.36 = $dtype[] constant($clamp_min)
+    broadcast.41 = $dtype[1,28,28,64] broadcast(constant.36), dimensions={}
+    param_inp = $quant_dtype[1,56,56,3] parameter(0), parameter_replication={false}
+    convert.16 = s32[1,56,56,3] convert(param_inp)
+    constant.1 = s32[] constant(4)
+    broadcast = s32[1,56,56,3] broadcast(constant.1), dimensions={}
+    add = s32[1,56,56,3] add(convert.16, broadcast)
+    convert.18 = $dtype[1,56,56,3] convert(add)
+    constant.11 = $dtype[] constant(0.5)
+    broadcast.12 = $dtype[1,56,56,3] broadcast(constant.11), dimensions={}
+    multiply.19 = $dtype[1,56,56,3] multiply(convert.18, broadcast.12)
+    param_wei = s8[3,3,3,64] parameter(1), parameter_replication={false}
+    convert.27 = s32[3,3,3,64] convert(param_wei)
+    convert.29 = $dtype[3,3,3,64] convert(convert.27)
+    constant.22 = $dtype[] constant(0.2)
+    broadcast.23 = $dtype[3,3,3,64] broadcast(constant.22), dimensions={}
+    multiply.30 = $dtype[3,3,3,64] multiply(convert.29, broadcast.23)
+    convolution.31 = $dtype[1,28,28,64] convolution(multiply.19, multiply.30),
+          window={size=3x3 stride=2x2 pad=0_1x0_1}, dim_labels=b01f_01io->b01f
+    arg2.3 = $dtype[64] parameter(2), parameter_replication={false}
+    broadcast.32 = $dtype[1,28,28,64] broadcast(arg2.3), dimensions={3}
+    add.33 = $dtype[1,28,28,64] add(convolution.31, broadcast.32)
+    constant = $dtype[] constant(10)
+    broadcast.1 = $dtype[1,28,28,64] broadcast(constant), dimensions={}
+    multiply = $dtype[1,28,28,64] multiply(add.33, broadcast.1)
+    constant.37 = $dtype[] constant($clamp_max)
+    broadcast.42 = $dtype[1,28,28,64] broadcast(constant.37), dimensions={}
+    clamp.43 = $dtype[1,28,28,64] clamp(broadcast.41, multiply, broadcast.42)
+    round-nearest-even.44 = $dtype[1,28,28,64] round-nearest-even(clamp.43)
+    convert.45 = $quant_dtype[1,28,28,64] convert(round-nearest-even.44)
+    convert.54 = s32[1,28,28,64] convert(convert.45)
+    convert.56 = $dtype[1,28,28,64] convert(convert.54)
+    constant.49 = $dtype[] constant(0.2)
+    broadcast.50 = $dtype[1,28,28,64] broadcast(constant.49), dimensions={}
+    multiply.57 = $dtype[1,28,28,64] multiply(convert.56, broadcast.50)
+    param.wei.1 = s8[3,3,64,64] parameter(3), parameter_replication={false}
+    convert.65 = s32[3,3,64,64] convert(param.wei.1)
+    convert.67 = $dtype[3,3,64,64] convert(convert.65)
+    broadcast.61 = $dtype[3,3,64,64] broadcast(constant.22), dimensions={}
+    multiply.68 = $dtype[3,3,64,64] multiply(convert.67, broadcast.61)
+    ROOT convolution.69 = $dtype[1,14,14,64] convolution(multiply.57, multiply.68),
+          window={size=3x3 stride=2x2 pad=0_1x0_1}, dim_labels=b01f_01io->b01f
+  })";
+
+  std::vector<PrimitiveType> operand0_types = {quant_dtype_, dtype_};
+  std::vector<PrimitiveType> operand1_types = {S8, dtype_};
+  std::vector<PrimitiveType> result_types = {dtype_, dtype_};
+  RunCompareAndMatchOptimizedHlo(module_str, {"BIAS"}, operand0_types,
+                                 operand1_types, result_types);
+}
+
+TEST_P(QuantizedConvolutionTest,
+       QuantizeDequantizeConv2DBiasRequantizeConstWeights) {
+  const char* module_str = R"(
+  HloModule quant.convolution.test
+  ENTRY quant.convolution.test {
+    constant.34 = $dtype[] constant($clamp_min)
+    broadcast.39 = $dtype[1,112,112,64] broadcast(constant.34), dimensions={}
+    constant.5 = $dtype[] constant($clamp_min)
+    broadcast.10 = $dtype[1,224,224,3] broadcast(constant.5), dimensions={}
+    param_inp = $dtype[1,224,224,3] parameter(0), parameter_replication={false}
+    constant = $dtype[] constant(10)
+    broadcast = $dtype[1,224,224,3] broadcast(constant), dimensions={}
+    multiply = $dtype[1,224,224,3] multiply(param_inp, broadcast)
+    constant.6 = $dtype[] constant($clamp_max)
+    broadcast.11 = $dtype[1,224,224,3] broadcast(constant.6), dimensions={}
+    clamp.12 = $dtype[1,224,224,3] clamp(broadcast.10, multiply, broadcast.11)
+    round-nearest-even.13 = $dtype[1,224,224,3] round-nearest-even(clamp.12)
+    convert.14 = $quant_dtype[1,224,224,3] convert(round-nearest-even.13)
+    convert.23 = s32[1,224,224,3] convert(convert.14)
+    convert.25 = $dtype[1,224,224,3] convert(convert.23)
+    constant.18 = $dtype[] constant(0.1)
+    broadcast.19 = $dtype[1,224,224,3] broadcast(constant.18), dimensions={}
+    multiply.26 = $dtype[1,224,224,3] multiply(convert.25, broadcast.19)
+    constant.27 = $dtype[7,7,3,64] constant({...})
+    convolution.28 = $dtype[1,112,112,64] convolution(multiply.26, constant.27),
+          window={size=7x7 stride=2x2 pad=2_3x2_3}, dim_labels=b01f_01io->b01f
+    constant.29 = $dtype[64] constant({...})
+    broadcast.30 = $dtype[1,112,112,64] broadcast(constant.29), dimensions={3}
+    add.31 = $dtype[1,112,112,64] add(convolution.28, broadcast.30)
+    broadcast.1 = $dtype[1,112,112,64] broadcast(constant), dimensions={}
+    multiply.1 = $dtype[1,112,112,64] multiply(add.31, broadcast.1)
+    constant.35 = $dtype[] constant($clamp_max)
+    broadcast.40 = $dtype[1,112,112,64] broadcast(constant.35), dimensions={}
+    clamp.41 = $dtype[1,112,112,64] clamp(broadcast.39, multiply.1, broadcast.40)
+    round-nearest-even.42 = $dtype[1,112,112,64] round-nearest-even(clamp.41)
+    convert.43 = $quant_dtype[1,112,112,64] convert(round-nearest-even.42)
+    convert.52 = s32[1,112,112,64] convert(convert.43)
+    convert.54 = $dtype[1,112,112,64] convert(convert.52)
+    broadcast.48 = $dtype[1,112,112,64] broadcast(constant.18), dimensions={}
+    multiply.55 = $dtype[1,112,112,64] multiply(convert.54, broadcast.48)
+    constant.56 = $dtype[3,3,64,64] constant({...})
+    ROOT convolution.57 = $dtype[1,56,56,64] convolution(multiply.55, constant.56),
+          window={size=3x3 stride=2x2 pad=0_1x0_1}, dim_labels=b01f_01io->b01f
+  })";
+
+  std::vector<PrimitiveType> operand0_types = {quant_dtype_, quant_dtype_};
+  std::vector<PrimitiveType> operand1_types = {S8, S8};
+  std::vector<PrimitiveType> result_types = {quant_dtype_, dtype_};
+  RunCompareAndMatchOptimizedHlo(module_str, {"BIAS"}, operand0_types,
+                                 operand1_types, result_types);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     OneDnnConvolutionTestSuite, ConvolutionTest,
-    ::testing::Values(F32, BF16, F16),
+    ::testing::Combine(::testing::Values(F32, BF16, F16),
+                       ::testing::Values(PRIMITIVE_TYPE_INVALID)),
     [](const ::testing::TestParamInfo<ConvolutionTest::ParamType>& info) {
-      auto test_name = primitive_util::LowercasePrimitiveTypeName(info.param);
+      auto test_name = primitive_util::LowercasePrimitiveTypeName(std::get<0>(info.param));
+      absl::AsciiStrToUpper(&test_name);
+      return test_name;
+    });
+
+INSTANTIATE_TEST_SUITE_P(
+    OneDnnQuantConvolutionTestSuite, QuantizedConvolutionTest,
+    // TODO(intel-tf): Add BF16 type when quantization supports it.
+    ::testing::Combine(::testing::Values(F32), ::testing::Values(S8, U8)),
+    [](const ::testing::TestParamInfo<QuantizedConvolutionTest::ParamType>&
+           info) {
+      auto test_name =
+          primitive_util::LowercasePrimitiveTypeName(std::get<0>(info.param)) +
+          "_" +
+          primitive_util::LowercasePrimitiveTypeName(std::get<1>(info.param));
       absl::AsciiStrToUpper(&test_name);
       return test_name;
     });

@@ -57,14 +57,21 @@ struct MemrefInfoPOD {
 MemrefInfoHandler CreateMemrefFromShape(const Shape& shape, const void* buf) {
   MemrefInfoHandler result(new MemrefInfoPOD);
   result->dtype = shape.element_type();
-  result->rank = shape.dimensions().size();
-  auto dimensions = shape.dimensions();
+  const bool is_scalar = shape.dimensions().size() == 0;
+  result->rank = is_scalar ? 1 : shape.dimensions().size();
+  std::vector<int64_t> scalar_shape(1, 1);
+  auto dimensions =
+      is_scalar ? scalar_shape : shape.dimensions();
   absl::c_copy(dimensions, absl::MakeSpan(result->dims).begin());
 
-  int64_t stride = 1;
-  for (int i : shape.layout().minor_to_major()) {
-    result->strides[i] = stride;
-    stride *= dimensions.at(i);
+  if (is_scalar) {
+    result->strides[0] = 1;
+  } else {
+    int64_t stride = 1;
+    for (int i : shape.layout().minor_to_major()) {
+      result->strides[i] = stride;
+      stride *= dimensions.at(i);
+    }
   }
   result->data = buf;
   return result;
