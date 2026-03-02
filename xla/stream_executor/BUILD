@@ -341,7 +341,10 @@ cc_library(
 xla_cc_test(
     name = "stream_executor_vmm_allocator_test",
     srcs = ["stream_executor_vmm_allocator_test.cc"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "requires-gpu-nvidia",
+    ],
     deps = [
         ":device_address",
         ":platform",
