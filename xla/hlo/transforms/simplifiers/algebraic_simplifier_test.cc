@@ -12015,6 +12015,20 @@ TEST_F(AlgebraicSimplifierTest, BitcastUnaryBitcast_ElementTypeChange) {
   ASSERT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
 }
 
+TEST_F(AlgebraicSimplifierTest, BitcastUnaryBitcast_TilingChange) {
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"(
+    e {
+      p0 = s32[2,512]{1,0:T(2,128)} parameter(0)
+      b1 = s32[512,2]{1,0:T(8,128)} bitcast(p0)
+      neg = s32[512,2]{1,0:T(8,128)} negate(b1)
+      b2 = s32[2,512]{1,0:T(2,128)} bitcast(neg)
+    }
+  )"));
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_is_layout_sensitive(true);
+  ASSERT_FALSE(AlgebraicSimplifier(options).Run(m.get()).value());
+}
+
 // Reverse(Reverse(A)) ==> A.
 TEST_F(AlgebraicSimplifierTest, RemoveIdenticalNestedReverse) {
   constexpr absl::string_view kModuleStr = R"(

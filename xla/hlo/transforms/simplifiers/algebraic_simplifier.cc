@@ -1307,6 +1307,11 @@ absl::Status AlgebraicSimplifierVisitor::HandleBitcast(
     return absl::OkStatus();
   }
 
+  auto not_tiled = [](const HloInstruction& instr) {
+    return !instr.shape().has_layout() ||
+           instr.shape().layout().tiles().empty();
+  };
+
   // Simplify bitcast(unary_elementwise(bitcast(x))) to
   // bitcast(unary_elementwise(x)).
   if (HloInstruction * unary_op, *inner_bitcast;
@@ -1321,7 +1326,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleBitcast(
       ShapeUtil::SameElementType(bitcast->shape(), unary_op->shape()) &&
       ShapeUtil::SameElementType(unary_op->shape(), inner_bitcast->shape()) &&
       ShapeUtil::SameElementType(inner_bitcast->shape(),
-                                 inner_bitcast->operand(0)->shape())) {
+                                 inner_bitcast->operand(0)->shape()) &&
+      not_tiled(*inner_bitcast) && not_tiled(*inner_bitcast->operand(0))) {
     auto new_unary = unary_op->parent()->AddInstruction(
         unary_op->CloneWithNewOperands(inner_bitcast->operand(0)->shape(),
                                        {inner_bitcast->mutable_operand(0)}));
