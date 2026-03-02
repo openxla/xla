@@ -400,15 +400,12 @@ CodegenDecision IsSupportedDotAlgorithm(PrecisionConfig::Algorithm algorithm,
     case PrecisionConfig::ALG_DOT_TF32_TF32_F32:
     case PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3:
     case PrecisionConfig::ALG_DOT_BF16_BF16_F32_X9:
-      if (!gpu_version.IsRocm()) {
-        return CodegenDecision::Allow();
-      }
-      [[fallthrough]];
+      return CodegenDecision::Allow();
     case PrecisionConfig::ALG_DOT_BF16_BF16_BF16:
       if (gpu_version.IsRocm()) {
         return CodegenDecision::Allow();
       }
-      [[fallthrough]];
+      break;
     case PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32:
     case PrecisionConfig::ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM:
     default:
