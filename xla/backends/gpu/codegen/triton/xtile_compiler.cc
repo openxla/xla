@@ -261,7 +261,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
       ir_emitter_triton_internal::TilingFromAnnotatedFusion(
           fusion, symbolic_tile_analysis, block_level_parameters));
 
-          TF_ASSIGN_OR_RETURN(
+  TF_ASSIGN_OR_RETURN(
       auto triton_module,
       xtile::EmitXTileModule(
           fn_name, fusion, symbolic_tile_analysis, tiling, mlir_context,
