@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/log/check.h"
+#include "absl/numeric/bits.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -151,10 +152,10 @@ mlir::VectorType GetVectorType(mlir::RankedTensorType tensor_type,
       mlir::getConstantIntValue(loop.getLowerBound()) != 0) {
     return nullptr;
   }
-  std::optional<unsigned int> vector_size =
+  std::optional<int64_t> vector_size =
       mlir::getConstantIntValue(loop.getUpperBound());
   if (vector_size < 2 || vector_size > 32 ||
-      !absl::has_single_bit(*vector_size)) {
+      !absl::has_single_bit(static_cast<unsigned int>(*vector_size))) {
     return nullptr;  // Unsupported vector size.
   }
   if (tensor_type.getElementTypeBitWidth() * *vector_size > 256) {

@@ -164,7 +164,8 @@ int64_t MaxUnrollFactor(const HloFusionAnalysis* analysis) {
       !HloAnyOf(analysis->fusion(), [](HloInstructionAdaptor node) {
         return node.opcode() == HloOpcode::kReduce;
       })) {
-    int64_t max_dtype_bits = 0;
+    // Do not unroll sub-byte types further for now.
+    int64_t max_dtype_bits = 8;
     for (const HloInstruction* param : analysis->fusion().GetParameters()) {
       max_dtype_bits = std::max(
           max_dtype_bits, static_cast<int64_t>(primitive_util::StorageBitWidth(
@@ -175,26 +176,23 @@ int64_t MaxUnrollFactor(const HloFusionAnalysis* analysis) {
           max_dtype_bits, static_cast<int64_t>(primitive_util::StorageBitWidth(
                               root.instruction().shape().element_type())));
     }
-    // Do not unroll sub-byte types further for now.
-    max_dtype_bits = std::max(int64_t{8}, max_dtype_bits);
 
-    int64_t unroll_factor =
-        std::min(int64_t(analysis->fusion_root(0)
-                             .instruction()
-                             .GetModule()
-                             ->config()
-                             .debug_options()
-                             .xla_gpu_experimental_max_unroll_factor()),
-                 max_vector_bit_width / max_dtype_bits);
+    int64_t unroll_factor = std::min(
+        static_cast<int64_t>(analysis->fusion_root(0)
+                                 .instruction()
+                                 .GetModule()
+                                 ->config()
+                                 .debug_options()
+                                 .xla_gpu_experimental_max_unroll_factor()),
+        max_vector_bit_width / max_dtype_bits);
     unroll_factor =
         1LL << (absl::bit_width(static_cast<uint64_t>(unroll_factor)) - 1);
-    while (unroll_factor > kDefaultUnrollFactor) {
-      if (!ContainsTransposeWithSmallMostMinorDim(analysis->fusion(),
+    while (unroll_factor > kDefaultUnrollFactor &&
+           ContainsTransposeWithSmallMostMinorDim(analysis->fusion(),
                                                   unroll_factor)) {
-        return unroll_factor;
-      }
       unroll_factor /= 2;
     }
+    return unroll_factor;
   }
   return kDefaultUnrollFactor;
 }
