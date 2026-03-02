@@ -6248,5 +6248,47 @@ ENTRY entry {
             *module_without_mode->entry_computation());
 }
 
+TEST_F(HloParserTest, SparsityConfig_RHSOnly) {
+  const char* const hlo_string = R"(
+  HloModule SparsityConfigModule
+  ENTRY SparsityConfig {
+    %input = f32[1,2] parameter(0)
+    %filter = f32[2,2] parameter(1)
+    ROOT %convolution = f32[1,2] convolution(%input, %filter), dim_labels=bf_io->bf,
+      sparsity_config={rhs={sparsity=3x4 dimension=0 stride=1}}
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+  auto* conv = module->entry_computation()->root_instruction();
+  auto config = conv->sparsity_config();
+  EXPECT_EQ(config.rhs().block_size(), 4);
+  EXPECT_EQ(config.rhs().num_non_zero(), 3);
+  EXPECT_EQ(config.rhs().dimension(), 0);
+  EXPECT_EQ(config.rhs().stride(), 1);
+}
+
+TEST_F(HloParserTest, SparsityConfig_Both) {
+  const char* const hlo_string = R"(
+  HloModule SparsityConfigModule
+  ENTRY SparsityConfig {
+    %input = f32[1,2] parameter(0)
+    %filter = f32[2,2] parameter(1)
+    ROOT %convolution = f32[1,2] convolution(%input, %filter), dim_labels=bf_io->bf,
+      sparsity_config={lhs={sparsity=1x4 dimension=1 stride=1} rhs={sparsity=3x4 dimension=0 stride=1}}
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+  auto* conv = module->entry_computation()->root_instruction();
+  auto config = conv->sparsity_config();
+  EXPECT_EQ(config.lhs().block_size(), 4);
+  EXPECT_EQ(config.lhs().num_non_zero(), 1);
+  EXPECT_EQ(config.lhs().dimension(), 1);
+  EXPECT_EQ(config.lhs().stride(), 1);
+  EXPECT_EQ(config.rhs().block_size(), 4);
+  EXPECT_EQ(config.rhs().num_non_zero(), 3);
+  EXPECT_EQ(config.rhs().dimension(), 0);
+  EXPECT_EQ(config.rhs().stride(), 1);
+}
+
 }  // namespace
 }  // namespace xla

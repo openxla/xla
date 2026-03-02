@@ -126,7 +126,7 @@ enum CustomCallApiVersion {
 }
 
 // Serialization of HloInstruction.
-// Next ID: 98
+// Next ID: 99
 message HloInstructionProto {
   reserved 10;
   reserved "parameter_name";
@@ -424,6 +424,9 @@ message HloInstructionProto {
 
   // Conv type (fprop, dgrad, wgrad)
   ConvolutionKind conv_kind = 97;
+
+  // Convolution sparsity config.
+  SparsityConfig sparsity_config = 98;
 }
 
 // Serialization of HloComputation.

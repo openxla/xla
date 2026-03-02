@@ -1969,7 +1969,8 @@ class HloConvolutionInstruction : public HloInstruction {
       int64_t feature_group_count, int64_t batch_group_count,
       const Window& window,
       const ConvolutionDimensionNumbers& dimension_numbers,
-      const PrecisionConfig& precision_config);
+      const PrecisionConfig& precision_config,
+      const SparsityConfig& sparsity_config);
   enum class ConvKind { UNSET, FPROP, WGRAD, DGRAD };
   const Window& window() const override { return window_; }
   void set_window(const Window& window) override { window_ = window; }
@@ -2005,6 +2006,11 @@ class HloConvolutionInstruction : public HloInstruction {
   const PrecisionConfig& precision_config() const { return precision_config_; }
   PrecisionConfig* mutable_precision_config() { return &precision_config_; }
 
+  const SparsityConfig& sparsity_config() const { return sparsity_config_; }
+  void set_sparsity_config(const SparsityConfig& sparsity_config) {
+    sparsity_config_ = sparsity_config;
+  }
+
   std::string ToCategory() const override;
   void ToProto(HloInstructionProto* proto) const override;
 
@@ -2035,6 +2041,8 @@ class HloConvolutionInstruction : public HloInstruction {
   // Information used to communicate to the implementation about the algorithm
   // used to produce results. See the documentation on precision_config().
   PrecisionConfig precision_config_;
+  // The sparsity configuration used for the convolution.
+  SparsityConfig sparsity_config_;
   // Conv type (fprop, dgrad, wgrad)
   ConvKind conv_kind_ = ConvKind::UNSET;
 };

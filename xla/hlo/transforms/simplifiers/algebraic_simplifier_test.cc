@@ -2795,7 +2795,8 @@ TEST_F(AlgebraicSimplifierTest, ZeroSizedConvolution) {
   // Create add computation.
   builder.AddInstruction(HloInstruction::CreateConvolve(
       ShapeUtil::MakeShape(F32, {3, 3, 3}), lhs, rhs, /*feature_group_count=*/1,
-      /*batch_group_count=*/1, window, dnums, DefaultPrecisionConfig(2)));
+      /*batch_group_count=*/1, window, dnums, DefaultPrecisionConfig(2),
+      SparsityConfig()));
   m->AddEntryComputationWithLayouts(builder.Build());
   HloPassFix<AlgebraicSimplifier> simplifier(default_options_);
   EXPECT_THAT(m->entry_computation()->root_instruction(),
@@ -5787,10 +5788,11 @@ TEST_P(ConvInputPaddingTest, DoTest) {
           lhs_pad->shape(), filter->shape(),
           /*feature_group_count=*/1,
           /*batch_group_count=*/1, window, dnums,
+          /*sparsity_config=*/SparsityConfig(),
           /*preferred_element_type=*/std::nullopt)
           .value(),
       lhs_pad, filter, /*feature_group_count=*/1, /*batch_group_count=*/1,
-      window, dnums, DefaultPrecisionConfig(2)));
+      window, dnums, DefaultPrecisionConfig(2), SparsityConfig()));
   auto module = CreateNewVerifiedModule();
   module->AddEntryComputationWithLayouts(builder.Build());
 
@@ -5905,6 +5907,7 @@ TEST_P(ConvFilterPaddingTest, DoIt) {
           input->shape(), rhs_pad->shape(),
           /*feature_group_count=*/1,
           /*batch_group_count=*/1, window, dnums,
+          /*sparsity_config=*/SparsityConfig(),
           /*preferred_element_type=*/std::nullopt)
           .value(),
       input, rhs_pad, /*feature_group_count=*/1, /*batch_group_count=*/1,
@@ -6051,6 +6054,7 @@ TEST_F(AlgebraicSimplifierTest, ConvertConvToMatmul) {
     Shape out_shape = ShapeInference::InferConvolveShape(
                           in_shape, f_shape, /*feature_group_count=*/1,
                           /*batch_group_count=*/1, window, dnums,
+                          /*sparsity_config=*/SparsityConfig(),
                           /*preferred_element_type=*/std::nullopt)
                           .value();
     if (options.output_minor_to_major_layout) {
@@ -6247,11 +6251,12 @@ struct ConvTestOptions {
         ParseConvolutionDimensionNumbers(
             absl::StrCat(input_order, "_", kernel_order, "->", output_order))
             .value();
-    Shape inferred_shape =
-        ShapeInference::InferConvolveShape(
-            input_shape, kernel_shape, feature_group_count,
-            /*batch_group_count=*/1, window, dnums, output_type)
-            .value();
+    SparsityConfig sparsity_config;
+    Shape inferred_shape = ShapeInference::InferConvolveShape(
+                               input_shape, kernel_shape, feature_group_count,
+                               /*batch_group_count=*/1, window, dnums,
+                               sparsity_config, output_type)
+                               .value();
 
     HloComputation::Builder b(test_name);
     HloInstruction* input = b.AddInstruction(

@@ -296,6 +296,8 @@ class HloParserImpl : public HloParser {
   absl::StatusOr<CollectiveDeviceList> ParseCollectiveDeviceListOnly();
   absl::StatusOr<std::unique_ptr<CollectiveDeviceListBase>>
   ParseCollectiveDeviceListBaseOnly();
+  bool ParseSparsityConfig(SparsityConfig* result);
+  bool ParseTensorSparsityConfig(SparsityConfig::TensorSparsityConfig* result);
 
  private:
   // Types of attributes.
@@ -351,6 +353,7 @@ class HloParserImpl : public HloParser {
     kOriginalValueRecoveryTable,
     kMode,
     kConvKind,
+    kSparsityConfig,
   };
 
   struct AttrConfig {
@@ -2558,6 +2561,9 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       optional<std::vector<PrecisionConfig::Precision>> operand_precision;
       attrs["operand_precision"] = {/*required=*/false, AttrTy::kPrecisionList,
                                     &operand_precision};
+      optional<SparsityConfig> parsed_sparsity_config;
+      attrs["sparsity_config"] = {/*required=*/false, AttrTy::kSparsityConfig,
+                                  &parsed_sparsity_config};
       if ((!preset_operands &&
            !ParseOperands(&operands, builder, /*expected_size=*/2)) ||
           !ParseAttributes(attrs, allow_attributes, shape)) {
@@ -2580,26 +2586,24 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         precision_config.mutable_operand_precision()->Resize(
             operands.size(), PrecisionConfig::DEFAULT);
       }
+      SparsityConfig sparsity_config =
+          parsed_sparsity_config.value_or(SparsityConfig());
       if (!maybe_infer_shape([&] {
             return ShapeInference::InferConvolveShape(
                 operands[0]->shape(), operands[1]->shape(),
                 *feature_group_count, *batch_group_count, *window, *dnums,
-                /*preferred_element_type=*/std::nullopt);
+                sparsity_config, /*preferred_element_type=*/std::nullopt);
           })) {
         return nullptr;
       }
       auto convolution = builder->AddInstruction(HloInstruction::CreateConvolve(
           *shape, /*lhs=*/operands[0], /*rhs=*/operands[1],
           feature_group_count.value(), batch_group_count.value(), *window,
-          *dnums, precision_config));
+          *dnums, precision_config, sparsity_config));
       if (conv_kind) {
         Cast<HloConvolutionInstruction>(convolution)->set_conv_kind(*conv_kind);
       }
       return convolution;
-      return builder->AddInstruction(HloInstruction::CreateConvolve(
-          *shape, /*lhs=*/operands[0], /*rhs=*/operands[1],
-          feature_group_count.value(), batch_group_count.value(), *window,
-          *dnums, precision_config));
     }
     case HloOpcode::kFft: {
       optional<FftType> fft_type;
@@ -6004,6 +6008,14 @@ bool HloParserImpl::ParseAttributeHelper(
             ->emplace(mode);
         return true;
       }
+      case AttrTy::kSparsityConfig: {
+        SparsityConfig result;
+        if (!ParseSparsityConfig(&result)) {
+          return false;
+        }
+        static_cast<optional<SparsityConfig>*>(attr_out_ptr)->emplace(result);
+        return true;
+      }
     }
   }();
   if (!success) {
@@ -7111,6 +7123,88 @@ bool HloParserImpl::ParseJsonDict(std::string* result) {
   *result = lexer_.GetStrVal();
   lexer_.Lex();
   return true;
+}
+
+bool HloParserImpl::ParseSparsityConfig(SparsityConfig* result) {
+  VLOG(kDebugLevel) << "ParseSparsityConfig";
+  if (!ParseToken(TokKind::kLbrace, "expected '{' to start SparsityConfig")) {
+    return false;
+  }
+  if (lexer_.GetKind() == TokKind::kRbrace) {
+    // empty
+  } else {
+    do {
+      std::string attribute;
+      if (!ParseAttributeName(&attribute)) {
+        return false;
+      }
+      if (attribute == "lhs" || attribute == "rhs") {
+        SparsityConfig::TensorSparsityConfig* tensor_sparsity_config;
+        if (attribute == "lhs") {
+          tensor_sparsity_config = result->mutable_lhs();
+        } else {
+          tensor_sparsity_config = result->mutable_rhs();
+        }
+        if (!ParseTensorSparsityConfig(tensor_sparsity_config)) {
+          return false;
+        }
+      } else {
+        return Error(lexer_.GetLoc(), "unknown attribute");
+      }
+    } while (lexer_.GetKind() != TokKind::kRbrace);
+  }
+  return ParseToken(TokKind::kRbrace,
+                    "expects '}' at the end of SparsityConfig");
+}
+
+// We need to implement a custom parser for TensorSparsityConfig because we want
+// to print sparsity as "1:4" but parse it as (num_non_zero, block_size).
+bool HloParserImpl::ParseTensorSparsityConfig(
+    SparsityConfig::TensorSparsityConfig* result) {
+  VLOG(kDebugLevel) << "ParseTensorSparsityConfig";
+  CHECK(result != nullptr);
+  if (!ParseToken(TokKind::kLbrace,
+                  "expected '{' to start TensorSparsityConfig")) {
+    return false;
+  }
+  if (lexer_.GetKind() == TokKind::kRbrace) {
+    // empty
+  } else {
+    do {
+      std::string attribute;
+      if (!ParseAttributeName(&attribute)) {
+        return false;
+      }
+      if (attribute == "sparsity") {
+        // Parse "num_non_zero:block_size"
+        std::vector<int64_t> sparsity;
+        if (!ParseDxD("sparsity", &sparsity)) {
+          return Error(lexer_.GetLoc(), "expects string");
+        }
+        if (sparsity.size() != 2) {
+          return Error(lexer_.GetLoc(), "expects 'num_non_zero:block_size'");
+        }
+        result->set_num_non_zero(sparsity[0]);
+        result->set_block_size(sparsity[1]);
+      } else if (attribute == "dimension") {
+        int64_t dimension;
+        if (!ParseInt64(&dimension)) {
+          return Error(lexer_.GetLoc(), "expects int64_t");
+        }
+        result->set_dimension(dimension);
+      } else if (attribute == "stride") {
+        int64_t stride;
+        if (!ParseInt64(&stride)) {
+          return Error(lexer_.GetLoc(), "expects int64_t");
+        }
+        result->set_stride(stride);
+      } else {
+        return Error(lexer_.GetLoc(), "unknown attribute");
+      }
+    } while (lexer_.GetKind() != TokKind::kRbrace);
+  }
+  return ParseToken(TokKind::kRbrace,
+                    "expects '}' at the end of TensorSparsityConfig");
 }
 
 bool HloParserImpl::ParseDxD(const std::string& name,
