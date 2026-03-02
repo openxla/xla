@@ -333,7 +333,6 @@ HipblasLtBackend::GetDefaultConfig(const HloInstruction& instr) {
 
   AutotuneResult::GemmKey gemm_key;
   gemm_key.set_algorithm(0);
-  gemm_key.set_autotune_workspace_size(GemmConfig::kDefaultWorkspace);
   auto any = std::make_unique<google::protobuf::Any>();
   any->PackFrom(gemm_key);
   return any;
