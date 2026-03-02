@@ -59,6 +59,8 @@ limitations under the License.
 
 namespace stream_executor {
 
+TSL_LIB_GTL_DEFINE_INT_TYPE(RawAddressHandle, uint64_t);
+
 /// The StreamExecutor is a single-device abstraction for:
 //
 // * Loading/launching data-parallel-kernels
@@ -174,6 +176,63 @@ class StreamExecutor {
   // Deallocates the DeviceAddress previously allocated via this interface.
   // Deallocation of a nullptr-representative value is permitted.
   virtual void Deallocate(DeviceAddressBase* mem) = 0;
+
+  // Reserves size bytes on the underlying platform and returns a
+  // DeviceAddressBase representing that reservation.
+  virtual absl::StatusOr<DeviceAddressBase> ReserveAddress(
+      uint64_t size, int64_t memory_space) {
+    return absl::UnimplementedError("ReserveAddress not supported");
+  }
+  absl::StatusOr<DeviceAddressBase> ReserveAddress(uint64_t size) {
+    return ReserveAddress(size, /*memory_space=*/0);
+  }
+
+  // Frees the DeviceAddress previously reserved via this interface.
+  // Deallocation of a nullptr-representative value is permitted.
+  virtual absl::Status FreeAddress(DeviceAddressBase* mem) {
+    return absl::UnimplementedError("FreeAddress not supported");
+  }
+
+  // Maps raw physical memory to a reserved virtual address.
+  virtual absl::Status MapRawAddress(DeviceAddressBase* address, size_t offset,
+                                     RawAddressHandle handle) {
+    return absl::UnimplementedError("MapRawAddress not supported");
+  }
+
+  virtual absl::Status VmmSetAccess(DeviceAddressBase* address) {
+    return absl::UnimplementedError("MapRawAddress not supported");
+  }
+
+  // Unmaps raw physical memory from a virtual address.
+  virtual absl::Status UnmapRawAddress(DeviceAddressBase* address) {
+    return absl::UnimplementedError("UnmapRawAddress not supported");
+  }
+
+  // Allocates memory using VMM (Virtual Memory Management) APIs.
+  // Returns a DeviceAddressBase for the allocated virtual address. The
+  // raw VMM handle is tracked internally and can be retrieved via
+  // GetRawHandleForVmmAddress. The caller is responsible for setting memory
+  // access permissions and eventually calling VmmDeallocateMemory.
+  virtual absl::StatusOr<DeviceAddressBase> VmmAllocateMemory(uint64_t bytes) {
+    return absl::UnimplementedError("VMM allocation not supported");
+  }
+
+  // Deallocates memory that was allocated with VmmAllocateMemory.
+  // Returns true if the memory was deallocated, false if the memory was not
+  // allocated with VMM API.
+  virtual absl::StatusOr<bool> VmmDeallocateMemory(DeviceAddressBase addr) {
+    return absl::UnimplementedError("VMM deallocation not supported");
+  }
+
+  // Returns the raw VMM handle for the given virtual address, which must have
+  // been previously allocated via VmmAllocateMemory or mapped via MapRawAddress.
+  virtual absl::StatusOr<RawAddressHandle> GetRawHandleForVmmAddress(
+      DeviceAddressBase& addr) {
+    return absl::UnimplementedError("GetRawHandleForVmmAddress not supported");
+  }
+
+  // Returns the allocation granularity for VMM operations.
+  virtual uint64_t GetAllocationGranularity() const { return 0; }
 
   // Allocates a region of host memory and registers it with the platform API.
   // Memory allocated in this manner is required for use in asynchronous memcpy
