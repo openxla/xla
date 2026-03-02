@@ -388,6 +388,7 @@ def tf_additional_core_deps():
         clean_dep("//xla/tsl:linux_s390x"): [],
         "//conditions:default": [
             clean_dep("//xla/tsl/platform/cloud:gcs_file_system"),
+            clean_dep("//xla/tsl/platform/cloud:s3_file_system"),
         ],
     })
 

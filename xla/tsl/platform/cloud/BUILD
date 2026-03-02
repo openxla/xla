@@ -202,6 +202,34 @@ cc_library(
 )
 
 cc_library(
+    name = "s3_file_system",
+    srcs = ["s3_file_system.cc"],
+    hdrs = ["s3_file_system.h"],
+    copts = tsl_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":curl_http_request",
+        ":http_request",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:file_statistics",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:types",
+        "@boringssl//:crypto",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@jsoncpp_git//:jsoncpp",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:retrying_file_system",
+        "@tsl//tsl/platform:retrying_utils",
+        "@tsl//tsl/platform:str_util",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
     name = "http_request",
     hdrs = ["http_request.h"],
     copts = tsl_copts(),
