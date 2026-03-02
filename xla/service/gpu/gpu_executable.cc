@@ -117,6 +117,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
@@ -124,7 +125,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -237,8 +237,8 @@ static absl::Status RunThunkPasses(const DebugOptions& debug_options,
       hlo_module ? hlo_module->name() : "Anonymous"));
 
   ASSIGN_OR_RETURN(bool changed,
-                   pipeline.Run(root_thunk, debug_options, hlo_module,
-                                device_info, allocator));
+                   pipeline.Run(&root_thunk->thunks(), debug_options,
+                                hlo_module, device_info, allocator));
   if (changed) {
     VLOG(3) << "Thunk passes changed the thunk tree.";
     if (hlo_module && DumpingEnabledForHloModule(*hlo_module)) {
