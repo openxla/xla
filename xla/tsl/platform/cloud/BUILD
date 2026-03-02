@@ -590,6 +590,26 @@ tsl_cc_test(
 )
 
 tsl_cc_test(
+    name = "s3_file_system_test",
+    size = "small",
+    srcs = ["s3_file_system_test.cc"],
+    deps = [
+        ":curl_http_request",
+        ":http_request",
+        ":s3_file_system",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:file_statistics",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:retrying_utils",
+    ],
+)
+
+tsl_cc_test(
     name = "time_util_test",
     size = "small",
     srcs = ["time_util_test.cc"],

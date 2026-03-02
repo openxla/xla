@@ -117,12 +117,18 @@ class S3FileSystem : public FileSystem {
   absl::Status HasAtomicMove(const std::string& path,
                              bool* has_atomic_move) override;
 
- protected:
   /// Splits an S3 path into bucket and object components.
   /// For example, "s3://my-bucket/path/to/file" splits into
   /// bucket="my-bucket" and object="path/to/file".
   absl::Status ParseS3Path(absl::string_view fname, bool empty_object_ok,
                             std::string* bucket, std::string* object);
+
+  /// Computes HMAC-SHA256 (exposed for testing).
+  static std::string HmacSha256(const std::string& key,
+                                const std::string& data);
+
+  /// Computes SHA256 hex digest (exposed for testing).
+  static std::string Sha256Hex(const std::string& data);
 
  private:
   /// Creates an HttpRequest with AWS SigV4 authentication headers.
@@ -146,13 +152,6 @@ class S3FileSystem : public FileSystem {
       const std::string& canonical_headers_str,
       const std::string& payload_hash, const std::string& datestamp,
       const std::string& amz_date);
-
-  /// Computes HMAC-SHA256.
-  static std::string HmacSha256(const std::string& key,
-                                const std::string& data);
-
-  /// Computes SHA256 hex digest.
-  static std::string Sha256Hex(const std::string& data);
 
   std::shared_ptr<HttpRequest::Factory> http_request_factory_;
 
