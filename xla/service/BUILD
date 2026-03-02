@@ -2212,11 +2212,12 @@ cc_library(
     hdrs = ["fusion_node_indexing_evaluation.h"],
     deps = [
         ":elemental_ir_emitter",
+        "//xla:shape_util",
         "//xla:types",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@tsl//tsl/platform:logging",
+        "@com_google_absl//absl/log:check",
     ],
 )
 
