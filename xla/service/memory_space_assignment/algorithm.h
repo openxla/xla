@@ -479,7 +479,10 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
     std::string required_assignment_source;
 
     bool equals_ignoring_time(const RequiredMemoryAssignment& other) const {
-      return memory_space == other.memory_space && offset == other.offset;
+      return memory_space == other.memory_space &&
+             ((offset == nullptr && other.offset == nullptr) ||
+              (offset != nullptr && other.offset != nullptr &&
+               offset->offset == other.offset->offset));
     }
 
     bool operator==(const RequiredMemoryAssignment& other) const {
@@ -760,6 +763,22 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
       absl::flat_hash_map<const HloComputation*, AliasedOffset*>&
           preferred_offset_for_computation);
 
+  // For conditional operands, if they are allocated in the alternate
+  // memory space throughout the conditional live range, create a mirrored
+  // allocation in the alternate memory space for the branch parameters.
+  void MaybeCreateMirroredAllocationForConditionalBranchParameters(
+      AllocationValue& allocation_value, const AllocationValue::Use& use,
+      const AllocationValue::Use* previous_use,
+      absl::Span<AllocationValue> allocation_values,
+      absl::flat_hash_set<AllocationValue*>& skip_allocation_values);
+
+  // Returns true if a conditional operand requires an eviction before the
+  // conditional.
+  bool RequireEvictionForConditionalOperand(
+      AllocationValue& allocation_value, const AllocationValue::Use& use,
+      const AllocationValue::Use* previous_use,
+      absl::Span<AllocationValue> allocation_values);
+
   // Creates a detailed memory allocation request for a given use of an
   // allocation value. Analyzes the usage pattern of the use to determine if it
   // can be placed in alternate memory, considering the restrictions for loops
@@ -785,6 +804,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
       const std::vector<int64_t>& all_use_times,
       bool only_extend_existing_allocation,
       absl::Span<AllocationValue> processed_allocation_values,
+      absl::Span<AllocationValue> all_allocation_values,
       std::optional<Shape> shape_override);
 
   // Returns true, if the allocation value requires a pinned allocation in the
@@ -812,7 +832,16 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // other. Returns either kSuccess if all of the sites could be placed in the
   // alternate memory or a bitwise OR of failure reasons why they couldn't
   absl::StatusOr<AllocationResult> AllocateAllocationValues(
-      absl::Span<AllocationValue> allocation_values);
+      absl::Span<AllocationValue> allocation_values,
+      std::vector<std::vector<const MsaBufferInterval*>>& colocated_intervals);
+
+  // Returns a map from AllocationValues that have their defining position in
+  // the same buffer as a conditional phi position to the conditional phi
+  // position.
+  absl::flat_hash_map<const AllocationValue*, HloPosition>
+  GetAllocationValuesToConditionalPhiPositionsMap(
+      absl::Span<AllocationValue> allocation_values,
+      std::vector<std::vector<const MsaBufferInterval*>>& colocated_intervals);
 
   // Checks for a situation in which an HloValue has more than one live
   // AllocationValue at the same time, and the already processed AllocationValue
@@ -938,9 +967,15 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   std::optional<RequiredMemoryAssignment> AliasedRequiredAssignmentForUse(
       const AllocationValue::Use& use) const;
 
-  // Goes through the colocated intervals and adds any required assignment.
-  void AddRequiredAssignmentsForColocatedIntervals(
-      absl::Span<const MsaBufferInterval* const> colocated_intervals);
+  // Returns the required assignment for a given use.
+  std::optional<RequiredMemoryAssignment> RequiredAssignmentForUse(
+      const AllocationValue::Use& use) const;
+
+  // Adds required assignment in the default memory for conditional outputs
+  // aliased to the given conditional phi position.
+  void RequireConditionalOutputsInDefaultMemory(
+      absl::Span<const MsaBufferInterval* const> colocated_intervals,
+      HloPosition conditional_phi_position);
 
   // Propagates aliased required assignment for a given position.
   void AddAliasedRequiredAssignment(const HloInstruction* instruction,
@@ -1187,6 +1222,11 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   const std::vector<const HloInstruction*>* GetRepeatedInstructionList(
       const HloInstruction* instruction) const;
 
+  // Adds an operand to the alternate memory map.
+  void AddOperandToAlternateMemoryMap(const HloInstruction* instruction,
+                                      int operand_number,
+                                      const ShapeIndex& index);
+
   // Returns true if the interval is pinned in the alternate memory. Buffers are
   // pinned when their layout has the alternate memory space before MSA runs.
   bool IsIntervalPinnedToAlternateMemory(
@@ -1364,6 +1404,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
 
   // Set of HloUses that are in the default memory.
   absl::flat_hash_set<HloUse> uses_in_default_memory_set_;
+
   // Vector to preserve insertion order for deterministic window prefetching
   // results.
   std::vector<HloUse> uses_in_default_memory_;
