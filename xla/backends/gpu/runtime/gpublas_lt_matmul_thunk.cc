@@ -35,8 +35,8 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -97,7 +97,7 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
     Thunk::ThunkInfo thunk_info, std::string canonical_hlo,
     se::gpu::GroupedGemmConfig gemm_config, se::gpu::BlasLt::Epilogue epilogue,
     int64_t algorithm_idx, int64_t autotune_workspace_size, ShapedSlice a,
-    ShapedSlice b, ShapedSlice c, ShapedSlice d, ShapedSlice group_sizes,
+    ShapedSlice b, ShapedSlice c, ShapedSlice d, std::optional<ShapedSlice> group_sizes,
     std::optional<ShapedSlice> bias, std::optional<ShapedSlice> aux,
     std::optional<ShapedSlice> a_scale, std::optional<ShapedSlice> b_scale,
     std::optional<ShapedSlice> c_scale, std::optional<ShapedSlice> d_scale,
@@ -322,41 +322,42 @@ absl::StatusOr<ThunkProto> CublasLtMatmulThunk::ToProto() const {
   cublas_lt_matmul_thunk->set_epilogue(
       stream_executor::gpu::BlasLt::EpilogueToProto(epilogue_));
   cublas_lt_matmul_thunk->set_algorithm_idx(algorithm_idx_);
-  cublas_lt_matmul_thunk->set_autotune_workspace_size(autotune_workspace_size_);
   cublas_lt_matmul_thunk->set_canonical_hlo(canonical_hlo_);
-  ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_a(), a_.ToProto());
-  ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_b(), b_.ToProto());
-  ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_c(), c_.ToProto());
-  ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d(), d_.ToProto());
+  TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_a(), a_.ToProto());
+  TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_b(), b_.ToProto());
+  TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_c(), c_.ToProto());
+  TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d(), d_.ToProto());
   if (bias_.has_value()) {
-    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_bias(), bias_->ToProto());
+    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_bias(),
+                        bias_->ToProto());
   }
   if (aux_.has_value()) {
-    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_aux(), aux_->ToProto());
+    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_aux(),
+                        aux_->ToProto());
   }
   if (a_scale_.has_value()) {
-    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_a_scale(),
-                     a_scale_->ToProto());
+    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_a_scale(),
+                        a_scale_->ToProto());
   }
   if (b_scale_.has_value()) {
-    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_b_scale(),
-                     b_scale_->ToProto());
+    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_b_scale(),
+                        b_scale_->ToProto());
   }
   if (c_scale_.has_value()) {
-    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_c_scale(),
-                     c_scale_->ToProto());
+    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_c_scale(),
+                        c_scale_->ToProto());
   }
   if (d_scale_.has_value()) {
-    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d_scale(),
-                     d_scale_->ToProto());
+    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d_scale(),
+                        d_scale_->ToProto());
   }
   if (d_amax_.has_value()) {
-    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d_amax(),
-                     d_amax_->ToProto());
+    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d_amax(),
+                        d_amax_->ToProto());
   }
   if (workspace_.has_value()) {
-    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_workspace(),
-                     workspace_->ToProto());
+    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_workspace(),
+                        workspace_->ToProto());
   }
   return proto;
 }

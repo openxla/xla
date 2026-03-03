@@ -94,6 +94,37 @@ void ExpectGroupedGemmConfigEq(const GroupedGemmConfig& lhs,
   EXPECT_EQ(lhs.compute_type, rhs.compute_type);
 }
 
+// Helper to compare GemmConfig structs.
+void ExpectGroupedGemmConfigEq(const GroupedGemmConfig& lhs,
+                               const GroupedGemmConfig& rhs) {
+  EXPECT_EQ(lhs.m, rhs.m);
+  EXPECT_EQ(lhs.n, rhs.n);
+  EXPECT_EQ(lhs.k, rhs.k);
+  EXPECT_EQ(lhs.batch_count, rhs.batch_count);
+  EXPECT_EQ(lhs.group_count, rhs.group_count);
+  EXPECT_EQ(lhs.lhs_leading_dim_stride, rhs.lhs_leading_dim_stride);
+  EXPECT_EQ(lhs.rhs_leading_dim_stride, rhs.rhs_leading_dim_stride);
+  EXPECT_EQ(lhs.c_leading_dim_stride, rhs.c_leading_dim_stride);
+  EXPECT_EQ(lhs.output_leading_dim_stride, rhs.output_leading_dim_stride);
+  EXPECT_EQ(lhs.trans_a, rhs.trans_a);
+  EXPECT_EQ(lhs.trans_b, rhs.trans_b);
+  EXPECT_EQ(lhs.must_swap_operands, rhs.must_swap_operands);
+  EXPECT_EQ(lhs.alpha.real(), rhs.alpha.real());
+  EXPECT_EQ(lhs.alpha.imag(), rhs.alpha.imag());
+  EXPECT_EQ(lhs.beta, rhs.beta);
+  EXPECT_EQ(lhs.type_a, rhs.type_a);
+  EXPECT_EQ(lhs.type_b, rhs.type_b);
+  EXPECT_EQ(lhs.type_c, rhs.type_c);
+  EXPECT_EQ(lhs.type_d, rhs.type_d);
+  EXPECT_EQ(lhs.stride_ragged_dim, rhs.stride_ragged_dim);
+  EXPECT_EQ(lhs.stride_group_dim, rhs.stride_group_dim);
+  EXPECT_EQ(lhs.output_stride_ragged_dim, rhs.output_stride_ragged_dim);
+  EXPECT_EQ(lhs.precision_algorithm, rhs.precision_algorithm);
+  EXPECT_EQ(lhs.compute_precision, rhs.compute_precision);
+  EXPECT_EQ(lhs.ragged_mode, rhs.ragged_mode);
+  EXPECT_EQ(lhs.compute_type, rhs.compute_type);
+}
+
 TEST(GemmConfigTest, ProtoConversion) {
   MatrixLayout layout(xla::PrimitiveType::F32, 16, 16,
                       MatrixLayout::Order::kRowMajor);
