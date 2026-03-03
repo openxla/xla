@@ -718,7 +718,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleRaggedDot(HloInstruction* instr) override {
-    if (!IsGpublasLtSupportedGroupedMatMul(*instr)) {
+    TF_ASSIGN_OR_RETURN(bool is_supported_matmul,
+                        IsCublasLtSupportedGroupedMatMul(*instr));
+    if (!is_supported_matmul) {
       return absl::OkStatus();
     }
     HloRaggedDotInstruction* ragged_dot =
