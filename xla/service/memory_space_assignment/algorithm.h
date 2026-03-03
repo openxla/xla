@@ -478,8 +478,12 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
     // debugging.
     std::string required_assignment_source;
 
-    bool equals_ignoring_time(const RequiredMemoryAssignment& other) const {
-      return memory_space == other.memory_space && offset == other.offset;
+    bool memory_space_and_offset_equal(
+        const RequiredMemoryAssignment& other) const {
+      return memory_space == other.memory_space &&
+             ((offset == nullptr && other.offset == nullptr) ||
+              (offset != nullptr && other.offset != nullptr &&
+               offset->offset == other.offset->offset));
     }
 
     bool operator==(const RequiredMemoryAssignment& other) const {
@@ -735,7 +739,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // constraints into account. If the use already has a preferred offset in the
   // alternate memory space (e.g., due to prior allocations), the offset derived
   // from aliasing considerations must match the existing preferred offset.
-  AliasedOffset* UpdatePreferredOffsetForUse(
+  AliasedOffset* CheckOrUpdatePreferredOffsetForUse(
       const AllocationValue::Use& use, AliasedOffset* preferred_offset) const;
 
   // Propagate the allocation at the use time to any aliases that this use might
@@ -813,6 +817,11 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   // alternate memory or a bitwise OR of failure reasons why they couldn't
   absl::StatusOr<AllocationResult> AllocateAllocationValues(
       absl::Span<AllocationValue> allocation_values);
+
+  // Returns true if the conditional outputs should be required in the default
+  // memory.
+  bool ShouldRequireConditionalOutputsInDefaultMemory(
+      HloPosition conditional_phi_position, const HloValue* hlo_value);
 
   // Checks for a situation in which an HloValue has more than one live
   // AllocationValue at the same time, and the already processed AllocationValue
@@ -938,8 +947,9 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   std::optional<RequiredMemoryAssignment> AliasedRequiredAssignmentForUse(
       const AllocationValue::Use& use) const;
 
-  // Goes through the colocated intervals and adds any required assignment.
-  void AddRequiredAssignmentsForColocatedIntervals(
+  // Adds required assignment in the default memory for conditional outputs
+  // that ShouldRequireConditionalOutputsInDefaultMemory() returns true for.
+  void AddRequiredAssignmentsForConditionalOutputsIfNecessary(
       absl::Span<const MsaBufferInterval* const> colocated_intervals);
 
   // Propagates aliased required assignment for a given position.
@@ -1187,6 +1197,11 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
   const std::vector<const HloInstruction*>* GetRepeatedInstructionList(
       const HloInstruction* instruction) const;
 
+  // Adds an operand to the alternate memory map.
+  void AddOperandToAlternateMemoryMap(const HloInstruction* instruction,
+                                      int operand_number,
+                                      const ShapeIndex& index);
+
   // Returns true if the interval is pinned in the alternate memory. Buffers are
   // pinned when their layout has the alternate memory space before MSA runs.
   bool IsIntervalPinnedToAlternateMemory(
@@ -1364,6 +1379,7 @@ class MsaAlgorithm : public GlobalDecreasingSizeBestFitHeap<HloValue> {
 
   // Set of HloUses that are in the default memory.
   absl::flat_hash_set<HloUse> uses_in_default_memory_set_;
+
   // Vector to preserve insertion order for deterministic window prefetching
   // results.
   std::vector<HloUse> uses_in_default_memory_;
