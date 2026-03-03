@@ -878,12 +878,12 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
 
   absl::Status HandleRaggedDot(HloInstruction* ragged_dot) override {
     auto module = ragged_dot->GetModule();
-    const bool hasGroupedGemm =
+    const bool has_grouped_gemm =
         module->config()
             .debug_options()
             .xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
         module->config().debug_options().xla_gpu_enable_cublaslt();
-    if (hasGroupedGemm) {
+    if (has_grouped_gemm) {
       return absl::OkStatus();
     }
 

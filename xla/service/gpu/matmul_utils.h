@@ -162,9 +162,6 @@ struct GroupedGemmConfig : public se::gpu::GroupedGemmConfig {
   // it to all BLAS API calls.
   static constexpr int64_t kUserArgsSizeBytes = 196;
 
-  // the number of algorithms to consider for autotuning by default
-  static constexpr int64_t kNumAlgorithms = 128;
-
   // Gets the GroupedGemmConfig of the `grouped_gemm` instruction with
   // overridden GroupedGemmBackendConfig.
   static absl::StatusOr<GroupedGemmConfig> For(

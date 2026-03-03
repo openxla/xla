@@ -343,7 +343,7 @@ size_t BlasLt::GetMatmulPlanCacheSize() const {
 
 absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateGroupedMatmulPlan(
     const std::string& key, PlanCreateFunc create) {
-  absl::MutexLock lock(plan_cache_mu_);  // double mutex ???
+  absl::MutexLock lock(plan_cache_mu_);
   auto res = grouped_plan_cache_.emplace(key, MatmulPlanPtr{});
   // New entry inserted: always create a new matmul plan if key is empty,
   // this is used by command_buffer_thunk test.
