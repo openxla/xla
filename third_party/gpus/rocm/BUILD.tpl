@@ -511,25 +511,6 @@ cc_library(
     deps = [":rocm_config"],
 )
 
-cc_library(
-    name = "hipblaslt",
-    hdrs = glob(["%{rocm_root}/include/hipblaslt/**"]),
-    data = glob([
-        "%{rocm_root}/lib/hipblaslt/**",
-        "%{rocm_root}/lib/libhipblaslt.so*",
-    ]),
-    include_prefix = "rocm",
-    includes = [
-        "%{rocm_root}/include/hipblaslt",
-    ],
-    strip_include_prefix = "%{rocm_root}",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":hip_runtime",
-        ":rocm_config",
-        ":rocm_rpath",
-    ],
-)
 
 cc_library(
     name = "rocrand",
@@ -637,20 +618,21 @@ cc_library(
 )
 
 cc_library(
-    name = "hipblaslt_link",
-    linkopts = select({
-        ":build_hermetic": [
-            "external/local_config_rocm/rocm/%{rocm_root}/lib/libhipblaslt.so",
-        ],
-        ":multiple_rocm_paths": [
-            # Use first path in the list
-            "%{rocm_lib_paths}".split(":")[0] + "/libhipblaslt.so",
-        ],
-        "//conditions:default": [
-            "%{rocm_toolkit_path}/lib/libhipblaslt.so",
-        ],
-    }),
+    name = "hipblaslt",
+    srcs = ["%{rocm_root}/lib/libhipblaslt.so"],
+    hdrs = glob(["%{rocm_root}/include/hipblaslt/**"]),
+    data = glob(["%{rocm_root}/lib/hipblaslt/**"]),
+    include_prefix = "rocm",
+    includes = [
+        "%{rocm_root}/include/hipblaslt",
+    ],
+    strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
+    deps = [
+        ":hip_runtime",
+        ":rocm_config",
+        ":rocm_rpath",
+    ],
 )
 
 filegroup(

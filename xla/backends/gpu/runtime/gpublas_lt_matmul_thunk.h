@@ -58,22 +58,6 @@ class CublasLtMatmulThunk : public Thunk {
                       se::gpu::BlasLt::Epilogue epilogue, int64_t algorithm_idx,
                       int64_t autotune_workspace_size, ShapedSlice a,
                       ShapedSlice b, ShapedSlice c, ShapedSlice d,
-                      std::optional<ShapedSlice> group_sizes,
-                      std::optional<ShapedSlice> bias /* may be null */,
-                      std::optional<ShapedSlice> aux /* may be null */,
-                      std::optional<ShapedSlice> a_scale /* may be null */,
-                      std::optional<ShapedSlice> b_scale /* may be null */,
-                      std::optional<ShapedSlice> c_scale /* may be null */,
-                      std::optional<ShapedSlice> d_scale /* may be null */,
-                      std::optional<ShapedSlice> d_amax /* may be null */,
-                      std::optional<const ShapedSlice> workspace);
-
-  // Constructor for grouped matmul
-  CublasLtMatmulThunk(Thunk::ThunkInfo thunk_info, std::string canonical_hlo,
-                      se::gpu::GroupedGemmConfig gemm_config,
-                      se::gpu::BlasLt::Epilogue epilogue, int64_t algorithm_idx,
-                      int64_t autotune_workspace_size, ShapedSlice a,
-                      ShapedSlice b, ShapedSlice c, ShapedSlice d,
                       ShapedSlice group_sizes, std::optional<ShapedSlice> bias,
                       std::optional<ShapedSlice> aux,
                       std::optional<ShapedSlice> a_scale,

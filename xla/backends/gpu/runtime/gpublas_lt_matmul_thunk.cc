@@ -97,7 +97,7 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
     Thunk::ThunkInfo thunk_info, std::string canonical_hlo,
     se::gpu::GroupedGemmConfig gemm_config, se::gpu::BlasLt::Epilogue epilogue,
     int64_t algorithm_idx, int64_t autotune_workspace_size, ShapedSlice a,
-    ShapedSlice b, ShapedSlice c, ShapedSlice d, std::optional<ShapedSlice> group_sizes,
+    ShapedSlice b, ShapedSlice c, ShapedSlice d, ShapedSlice group_sizes,
     std::optional<ShapedSlice> bias, std::optional<ShapedSlice> aux,
     std::optional<ShapedSlice> a_scale, std::optional<ShapedSlice> b_scale,
     std::optional<ShapedSlice> c_scale, std::optional<ShapedSlice> d_scale,

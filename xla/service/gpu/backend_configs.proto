@@ -126,15 +126,6 @@ message GroupedGemmBackendConfig {
   xla.RaggedDotDimensionNumbers ragged_dot_dimension_numbers = 2;
 }
 
-// Backend config for the GEMM operation running through cuBLASLt.
-message GroupedGemmBackendConfig {
-  oneof gemm_config {
-    GemmBackendConfig gemm_backend_config = 1;
-  }
-
-  xla.RaggedDotDimensionNumbers ragged_dot_dimension_numbers = 2;
-}
-
 // Backend config for bitcast operation generated from MLIR MHLO dialect.
 message BitcastBackendConfig {
   LayoutProto source_layout = 1;
@@ -449,7 +440,7 @@ message GpuBackendConfig {
     NativeEmitterBackendConfig native_emitter_backend_config = 15;
 
     CollectiveMetadataBackendConfig collective_metadata_backend_config = 16;
-    
+
     GroupedGemmBackendConfig grouped_gemm_backend_config = 17;
   }
 
