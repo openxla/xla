@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
@@ -1635,6 +1636,38 @@ HloSharding GetAllToAllSharding(const HloSharding& source_sharding,
                                 absl::Span<const int64_t> source_dims,
                                 absl::Span<const int64_t> target_dims) {
   CHECK_EQ(source_dims.size(), target_dims.size());
+  if (source_sharding.UseNamedShardingLeaf()) {
+    NamedSharding new_named_sharding = source_sharding.named_sharding();
+    std::vector<NamedSharding::DimensionSharding> new_dim_shardings(
+        new_named_sharding.dim_shardings().begin(),
+        new_named_sharding.dim_shardings().end());
+    for (int64_t i = 0; i < source_dims.size(); ++i) {
+      const int64_t source_dim = source_dims[i];
+      const int64_t target_dim = target_dims[i];
+      CHECK_NE(source_dim, target_dim);
+      int64_t target_size = new_named_sharding.dimension(target_dim);
+      CHECK_EQ(new_named_sharding.dimension(source_dim) % target_size, 0);
+
+      NamedSharding::DimensionSharding& src_sharding =
+          new_dim_shardings[source_dim];
+      NamedSharding::DimensionSharding& tgt_sharding =
+          new_dim_shardings[target_dim];
+
+      NamedSharding::DimensionSharding to_move = src_sharding;
+      std::optional<NamedSharding::DimensionSharding> keep =
+          to_move.Slice(new_named_sharding.mesh(), target_size);
+      CHECK(keep.has_value());
+
+      src_sharding = *keep;
+      tgt_sharding.Append(to_move, new_named_sharding.mesh());
+    }
+    return HloSharding(NamedSharding(
+        new_named_sharding.mesh(), new_dim_shardings,
+        new_named_sharding.replicated_axes(),
+        new_named_sharding.unreduced_axes(), new_named_sharding.manual_axes(),
+        new_named_sharding.metadata()));
+  }
+
   TileAssignment result = source_sharding.tile_assignment();
 
   for (int64_t i = 0; i < source_dims.size(); ++i) {

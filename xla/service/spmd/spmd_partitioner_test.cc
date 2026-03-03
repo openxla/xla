@@ -16823,6 +16823,80 @@ ENTRY entry {
   }
 }
 
+class SpmdPartitioningV3Test : public HloHardwareIndependentTestBase {
+ public:
+  absl::StatusOr<std::unique_ptr<HloModule>> PartitionComputation(
+      absl::string_view hlo_module, int64_t num_devices,
+      SpmdPartitionerOptions options = SpmdPartitionerOptions()) {
+    options.allow_module_signature_change = true;
+    auto collective_ops_creator =
+        GetDefaultCollectiveOpsCreator(num_devices, /*num_replicas=*/1);
+
+    HloModuleConfig config = GetModuleConfigForTest();
+    config.set_use_spmd_partitioning(true);
+    config.set_num_partitions(num_devices);
+    config.set_use_shardy_partitioner(true);
+    TF_ASSIGN_OR_RETURN(auto module,
+                        ParseAndReturnVerifiedModule(hlo_module, config));
+
+    HloPassPipeline pass("spmd-partitioning");
+    pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
+                              /*allow_mixed_precision=*/false);
+    pass.AddPass<SpmdPrepare>();
+    pass.AddPass<SpmdPartitioner>(num_devices, /*num_replicas=*/1, options,
+                                  collective_ops_creator);
+    pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
+                              /*allow_mixed_precision=*/false);
+    TF_RETURN_IF_ERROR(pass.Run(module.get()).status());
+    VerifyNoShardingOnCollectives(module.get());
+    return absl::StatusOr<std::unique_ptr<HloModule>>(std::move(module));
+  }
+
+  void VerifyNoShardingOnCollectives(HloModule* module) {
+    for (const HloComputation* c : module->computations()) {
+      for (const HloInstruction* inst : c->instructions()) {
+        if (!absl::c_linear_search(
+                std::vector<HloOpcode>{
+                    HloOpcode::kAllToAll, HloOpcode::kAllReduce,
+                    HloOpcode::kAllGather, HloOpcode::kCollectivePermute,
+                    HloOpcode::kReduceScatter},
+                inst->opcode())) {
+          continue;
+        }
+        EXPECT_FALSE(inst->has_sharding());
+      }
+    }
+  }
+};
+
+TEST_F(SpmdPartitioningV3Test, GetAllToAllNamedSharding) {
+  const char* hlo_text = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[128,128] parameter(0), sharding={mesh[x=2,y=2,z=2] [{x},{y,z}]}
+  ROOT p1 = f32[128,128] copy(p0), sharding={mesh[x=2,y=2,z=2] [{x,z},{y}]}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, PartitionComputation(hlo_text, 8));
+  auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, op::Copy(op::Reshape(op::Transpose(op::AllToAll()))));
+}
+
+TEST_F(SpmdPartitioningV3Test, TransposeAllToAllNamedSharding) {
+  const char* hlo_text = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[128,128] parameter(0), sharding={mesh[x=2,y=2,z=2] [{x},{y,z}]}
+  ROOT p1 = f32[128,128] transpose(p0), dimensions={1,0}, sharding={mesh[x=2,y=2,z=2] [{y},{x,z}]}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, PartitionComputation(hlo_text, 8));
+  auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, op::Transpose(op::Reshape(op::Transpose(op::AllToAll()))));
+}
+
 }  // namespace
 }  // namespace spmd
 }  // namespace xla
