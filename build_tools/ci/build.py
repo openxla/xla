@@ -318,6 +318,7 @@ rocm_tag_filters = (
     "-no_oss",
     "-oss_excluded",
     "-oss_serial",
+    "gpu",
 )
 
 rocm_test_filters = ""
@@ -354,8 +355,8 @@ Build(
     repo="openxla/xla",
     configs=("rocm_ci", "rocm_rbe", "ci_single_gpu"),
     target_patterns=_XLA_ROCM_TARGET_PATTERNS + rocm_single_gpu_exclusions,
-    build_tag_filters=rocm_tag_filters + ("gpu", "-multi_gpu", "-no_oss"),
-    test_tag_filters=rocm_tag_filters + ("gpu", "-multi_gpu", "-no_oss"),
+    build_tag_filters=rocm_tag_filters + ("-multi_gpu",),
+    test_tag_filters=rocm_tag_filters + ("-multi_gpu",),
     test_env={"TF_TESTS_PER_GPU": 1, "TF_GPU_COUNT": 8},
     action_env={
     "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true"
@@ -367,12 +368,11 @@ Build(
         "ROCM_PATH": "/opt/rocm",
     },
     startup_options={
-        "bazelrc": "build_tools/rocm/rocm_xla_ci.bazelrc",
+        "bazelrc": "build_tools/rocm/rocm_xla.bazelrc",
     },
     options={
         **_DEFAULT_BAZEL_OPTIONS,
         "build_tests_only": True,
-        "test_filter": rocm_test_filters,
         "keep_going": True,
         "test_output": "errors",
         "test_timeout": "920,2400,7200,9600",
@@ -381,6 +381,7 @@ Build(
         "spawn_strategy": "local",
         "remote_download_outputs": "minimal",
         "local_test_jobs": 8,
+        "jobs":  200,
         "//xla/tsl:ci_build": True,
     },
 )
@@ -404,12 +405,11 @@ Build(
         "ROCM_PATH": "/opt/rocm",
     },
     startup_options={
-        "bazelrc": "build_tools/rocm/rocm_xla_ci.bazelrc",
+        "bazelrc": "build_tools/rocm/rocm_xla.bazelrc",
     },
     options={
         **_DEFAULT_BAZEL_OPTIONS,
         "build_tests_only": True,
-        "test_filter": rocm_test_filters,
         "spawn_strategy": "local",
         "remote_download_outputs": "minimal",
         "local_test_jobs": 1,
@@ -419,6 +419,7 @@ Build(
         "test_output": "errors",
         "test_timeout": "920,2400,7200,9600",
         "test_sharding_strategy": "disabled",
+        "jobs":  200,
         "flaky_test_attempts": 3,
     },
 )
