@@ -625,6 +625,9 @@ TEST(CommandBufferConversionPassTest, DontConvertIfNotMinGraphSize) {
 }
 
 TEST(CommandBufferConversionPassTest, ConvertWhileThunk) {
+  if (GetPlatformName() == "ROCM") {
+    GTEST_SKIP() << "Not supported on ROCm";
+  }
   CommandBufferConversionPass pass{"test"};
 
   std::vector<std::unique_ptr<Thunk>> thunks;
@@ -736,6 +739,9 @@ TEST(CommandBufferConversionPassTest,
 }
 
 TEST(CommandBufferConversionPassTest, ConvertWhileThunkWithAsyncPair) {
+  if (GetPlatformName() == "ROCM") {
+    GTEST_SKIP() << "Not supported on ROCm";
+  }
   CommandBufferConversionPass pass{"test"};
 
   std::vector<std::unique_ptr<Thunk>> thunks;
