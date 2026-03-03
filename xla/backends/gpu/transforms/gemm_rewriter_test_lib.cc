@@ -83,6 +83,11 @@ bool GemmRewriteTestBase::SkipGpuBlasLtTest() {
          GetDebugOptionsForTest().xla_gpu_enable_cublaslt();
 }
 
+bool GemmRewriteTestBase::SkipGroupedGemmTest() {
+  // Grouped GEMM is only supported on ROCm with hipBLASLt
+  return IsCuda() || !Capability().rocm_compute_capability()->has_hipblaslt();
+}
+
 bool GemmRewriteTestBase::HasFp8Support() const {
   if (IsCuda()) {
     return Capability().cuda_compute_capability()->IsAtLeast(8, 9);
