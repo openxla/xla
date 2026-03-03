@@ -908,9 +908,10 @@ absl::Status BlasLt::MatmulPlan::ExecuteGroupedMatmul(
   GroupGemmUpdateArgs(
       hip_stream,
       static_cast<hipblaslt_ext::UserArguments *>(d_userArgs->opaque()),
-      a.opaque(), b.opaque(), args.d.opaque(), args.group_sizes.opaque(),
-      group_size_bytewidth, log2_byte_width_elem_a, log2_byte_width_elem_b,
-      log2_byte_width_elem_d, cfg_->stride_ragged_dim, cfg_->stride_group_dim,
+      a.opaque(), b.opaque(), args.c.opaque(), args.d.opaque(),
+      args.group_sizes.opaque(), group_size_bytewidth, log2_byte_width_elem_a,
+      log2_byte_width_elem_b, log2_byte_width_elem_d,
+      cfg_->stride_ragged_dim, cfg_->stride_group_dim,
       cfg_->output_stride_ragged_dim, cfg_->must_swap_operands, cfg_->m,
       cfg_->n, cfg_->k, cfg_->batch_count, strideA1, strideA2, strideB1,
       strideB2, strideD1, strideD2,
