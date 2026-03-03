@@ -102,9 +102,13 @@ AliasInfo::GetFusionInstructionInPlaceInputOutputPairs(
         }
       }
     }
-    // Skip bitcast
-    if (in_place_input_source != nullptr &&
-        in_place_input_source->opcode() == HloOpcode::kBitcast) {
+    // Skip zero-copy shape/layout modifiers to find the originating
+    // parameter. These ops reinterpret the same underlying buffer without
+    // creating new independent data.
+    while (in_place_input_source != nullptr &&
+           (in_place_input_source->opcode() == HloOpcode::kBitcast ||
+            in_place_input_source->opcode() == HloOpcode::kTranspose ||
+            in_place_input_source->opcode() == HloOpcode::kReshape)) {
       in_place_input_source = in_place_input_source->operand(0);
     }
     if (in_place_input_source != nullptr &&
