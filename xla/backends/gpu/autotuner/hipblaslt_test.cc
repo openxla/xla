@@ -265,7 +265,7 @@ class HipblasLtScaledDotTest : public HipblasLtBackendTest {
   }
 
   static constexpr const char* kScaledDotHlos[] = {kScaledDotFp8FusionHlo,
-                                                    kScaledDotFp4FusionHlo};
+                                                   kScaledDotFp4FusionHlo};
 };
 
 TEST_F(HipblasLtScaledDotTest, GetSupportedConfigs) {
@@ -282,17 +282,15 @@ TEST_F(HipblasLtScaledDotTest, ApplyConfig) {
   for (const char* hlo : kScaledDotHlos) {
     TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
     HloInstruction* fusion = module->entry_computation()->root_instruction();
-    TF_ASSERT_OK_AND_ASSIGN(auto config,
-                            backend_.GetDefaultConfig(*fusion));
+    TF_ASSERT_OK_AND_ASSIGN(auto config, backend_.GetDefaultConfig(*fusion));
 
     TF_EXPECT_OK(backend_.ApplyConfig(*fusion, *config));
 
-    EXPECT_THAT(
-        RunFileCheck(module->ToString(),
-                     R"(CHECK: custom-call
+    EXPECT_THAT(RunFileCheck(module->ToString(),
+                             R"(CHECK: custom-call
                         CHECK-SAME: custom_call_target="__cublas$lt$matmul$mx"
                         CHECK: "scale_mode":2)"),
-        absl_testing::IsOkAndHolds(true));
+                absl_testing::IsOkAndHolds(true));
   }
 }
 
@@ -300,8 +298,7 @@ TEST_F(HipblasLtScaledDotTest, Compile) {
   for (const char* hlo : kScaledDotHlos) {
     TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
     HloInstruction* fusion = module->entry_computation()->root_instruction();
-    TF_ASSERT_OK_AND_ASSIGN(auto config,
-                            backend_.GetDefaultConfig(*fusion));
+    TF_ASSERT_OK_AND_ASSIGN(auto config, backend_.GetDefaultConfig(*fusion));
 
     auto executable = backend_.Compile(*fusion, *config);
     EXPECT_THAT(executable, absl_testing::IsOk());

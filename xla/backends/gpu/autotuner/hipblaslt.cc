@@ -90,8 +90,7 @@ bool IsValidMxScaledDot(const HloInstruction* scaled_dot) {
   const Shape& lhs_scale_shape = scaled_dot->operand(2)->shape();
   const Shape& rhs_scale_shape = scaled_dot->operand(3)->shape();
   const Shape& output_shape = scaled_dot->shape();
-  const DotDimensionNumbers& dot_dims =
-      scaled_dot->dot_dimension_numbers();
+  const DotDimensionNumbers& dot_dims = scaled_dot->dot_dimension_numbers();
 
   auto IsValidInputType = [](PrimitiveType type) {
     return type == F8E4M3FN || type == F8E5M2 || type == F4E2M1FN;
@@ -124,8 +123,7 @@ bool IsValidMxScaledDot(const HloInstruction* scaled_dot) {
     batch_size *= lhs_shape.dimensions(dim);
   }
   if (batch_size != 1) {
-    VLOG(2) << "hipBLASLt MX: batch_size > 1 not supported, got "
-            << batch_size;
+    VLOG(2) << "hipBLASLt MX: batch_size > 1 not supported, got " << batch_size;
     return false;
   }
 
@@ -169,8 +167,8 @@ bool IsValidMxScaledDot(const HloInstruction* scaled_dot) {
   for (int64_t dim : dot_dims.rhs_contracting_dimensions()) {
     rhs_scale_k *= rhs_scale_shape.dimensions(dim);
   }
-  if (lhs_scale_k == 0 || k / lhs_scale_k != 32 ||
-      rhs_scale_k == 0 || k / rhs_scale_k != 32) {
+  if (lhs_scale_k == 0 || k / lhs_scale_k != 32 || rhs_scale_k == 0 ||
+      k / rhs_scale_k != 32) {
     VLOG(2) << "hipBLASLt MX: block size must be 32, got lhs="
             << (lhs_scale_k > 0 ? k / lhs_scale_k : 0)
             << " rhs=" << (rhs_scale_k > 0 ? k / rhs_scale_k : 0);
@@ -188,8 +186,8 @@ bool IsScaledDotFusion(const HloInstruction& instr) {
     return false;
   }
   return hlo_query::GetFirstInstructionWithOpcode(
-             *instr.fused_instructions_computation(),
-             HloOpcode::kScaledDot) != nullptr;
+             *instr.fused_instructions_computation(), HloOpcode::kScaledDot) !=
+         nullptr;
 }
 
 }  // namespace
@@ -218,9 +216,9 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
 
     TF_ASSIGN_OR_RETURN(
         GemmConfig gemm_config,
-        GemmConfig::For(&instr, target_config()
-                                    .device_description
-                                    .gpu_compute_capability()));
+        GemmConfig::For(
+            &instr,
+            target_config().device_description.gpu_compute_capability()));
 
     TF_ASSIGN_OR_RETURN(BlasLt::Epilogue epilogue,
                         AsBlasLtEpilogue(backend_config.epilogue()));
@@ -241,7 +239,7 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     const int64_t workspace_size =
         ShapeUtil::ByteSizeOf(output_shape.tuple_shapes().back());
 
-    TF_ASSIGN_OR_RETURN( 
+    TF_ASSIGN_OR_RETURN(
         std::vector<BlasLt::MatmulAlgorithm> algorithms,
         plan->GetAlgorithms(stream.get(), GemmConfig::kNumAlgorithms,
                             workspace_size));
@@ -258,9 +256,8 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     }
     return configs;
   } else if (IsScaledDotFusion(instr)) {
-    const HloInstruction* scaled_dot =
-        hlo_query::GetFirstInstructionWithOpcode(
-            *instr.fused_instructions_computation(), HloOpcode::kScaledDot);
+    const HloInstruction* scaled_dot = hlo_query::GetFirstInstructionWithOpcode(
+        *instr.fused_instructions_computation(), HloOpcode::kScaledDot);
     TF_RET_CHECK(scaled_dot != nullptr);
 
     if (!IsValidMxScaledDot(scaled_dot)) {
@@ -269,15 +266,14 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
 
     const Shape& lhs_shape = scaled_dot->operand(0)->shape();
     const Shape& rhs_shape = scaled_dot->operand(1)->shape();
-    const DotDimensionNumbers& dot_dims =
-        scaled_dot->dot_dimension_numbers();
+    const DotDimensionNumbers& dot_dims = scaled_dot->dot_dimension_numbers();
     const Shape& output_shape = scaled_dot->shape();
 
     auto gemm_config_or = GemmConfig::For(
         lhs_shape, dot_dims.lhs_batch_dimensions(),
         dot_dims.lhs_contracting_dimensions(), rhs_shape,
-        dot_dims.rhs_batch_dimensions(),
-        dot_dims.rhs_contracting_dimensions(), output_shape,
+        dot_dims.rhs_batch_dimensions(), dot_dims.rhs_contracting_dimensions(),
+        output_shape,
         /*alpha_real=*/1.0, /*alpha_imag=*/0.0, /*beta=*/0.0,
         PrecisionConfig::ALG_UNSET, /*algorithm=*/std::nullopt,
         se::blas::kDefaultComputePrecision, /*grad_x=*/false,
@@ -291,8 +287,8 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
 
     TF_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
                         stream_executor()->CreateStream());
-    auto plan_or = se::gpu::BlasLt::GetMatmulPlan(
-        stream.get(), *gemm_config_or, BlasLt::Epilogue::kDefault);
+    auto plan_or = se::gpu::BlasLt::GetMatmulPlan(stream.get(), *gemm_config_or,
+                                                  BlasLt::Epilogue::kDefault);
     if (!plan_or.ok()) {
       VLOG(2) << "hipBLASLt MX: GetMatmulPlan failed: " << plan_or.status();
       return std::vector<std::unique_ptr<BackendConfig>>();
@@ -327,8 +323,7 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
 absl::StatusOr<std::unique_ptr<BackendConfig>>
 HipblasLtBackend::GetDefaultConfig(const HloInstruction& instr) {
   if (!IsSupported(instr)) {
-    return absl::InvalidArgumentError(
-        "Not a supported HipblasLt instruction.");
+    return absl::InvalidArgumentError("Not a supported HipblasLt instruction.");
   }
 
   AutotuneResult::GemmKey gemm_key;
@@ -361,8 +356,7 @@ absl::Status HipblasLtBackend::ApplyConfig(HloInstruction& instr,
           instr.shape().tuple_shapes().size() - 1);
       if (workspace_shape->element_type() == S8 &&
           workspace_shape->dimensions().size() == 1) {
-        workspace_shape->set_dimensions(0,
-                                        gemm_key.autotune_workspace_size());
+        workspace_shape->set_dimensions(0, gemm_key.autotune_workspace_size());
         if (HloModule* module = instr.GetModule()) {
           if (module->entry_computation() &&
               module->entry_computation()->root_instruction() == &instr) {
@@ -374,9 +368,8 @@ absl::Status HipblasLtBackend::ApplyConfig(HloInstruction& instr,
     }
     return absl::OkStatus();
   } else if (IsScaledDotFusion(instr)) {
-    const HloInstruction* scaled_dot =
-        hlo_query::GetFirstInstructionWithOpcode(
-            *instr.fused_instructions_computation(), HloOpcode::kScaledDot);
+    const HloInstruction* scaled_dot = hlo_query::GetFirstInstructionWithOpcode(
+        *instr.fused_instructions_computation(), HloOpcode::kScaledDot);
     TF_RET_CHECK(scaled_dot != nullptr);
     HloComputation* parent = instr.parent();
 

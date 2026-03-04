@@ -189,7 +189,8 @@ absl::Status BlasLt::Init() {
           << " scale_type: " << int(scale_type)
           << " epilogue: " << int(epilogue) << " trans_a: " << int(trans_a)
           << " trans_b: " << int(trans_b) << " pointer_mode "
-          << int(pointer_mode) << " scale_mode: " << static_cast<int>(scale_mode);
+          << int(pointer_mode)
+          << " scale_mode: " << static_cast<int>(scale_mode);
   auto hip_scale_type = AsHipblasDataType(scale_type);
   auto hip_compute_type = AsHipblasComputeType(compute_type);
   SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtMatmulDescCreate(
@@ -274,15 +275,12 @@ auto BlasLt::MatmulPlan::GetAlgorithms(const Stream* stream,
                                    &dummy_pointer));
         hipblasLtMatmulMatrixScale_t mx_scale =
             HIPBLASLT_MATMUL_MATRIX_SCALE_VEC32_UE8M0;
-        TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                   HIPBLASLT_MATMUL_DESC_A_SCALE_MODE,
-                                   mx_scale));
-        TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                   HIPBLASLT_MATMUL_DESC_B_SCALE_MODE,
-                                   mx_scale));
+        TF_RETURN_IF_ERROR(SetAttr(
+            op_desc_.get(), HIPBLASLT_MATMUL_DESC_A_SCALE_MODE, mx_scale));
+        TF_RETURN_IF_ERROR(SetAttr(
+            op_desc_.get(), HIPBLASLT_MATMUL_DESC_B_SCALE_MODE, mx_scale));
 #else
-        return absl::InternalError(
-            "Block scaling requires ROCm >= 7.0");
+        return absl::InternalError("Block scaling requires ROCm >= 7.0");
 #endif
         break;
       }
@@ -369,10 +367,9 @@ auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg, Epilogue epilogue) const
 
   TF_ASSIGN_OR_RETURN(
       auto op_desc,
-      MatmulDesc::Create(*compute_type,
-                         gpu::GetScaleType(output_dtype, *compute_type),
-                         trans_a, trans_b, epilogue,
-                         PointerMode::kHost, cfg.scale_mode));
+      MatmulDesc::Create(
+          *compute_type, gpu::GetScaleType(output_dtype, *compute_type),
+          trans_a, trans_b, epilogue, PointerMode::kHost, cfg.scale_mode));
 
   TF_ASSIGN_OR_RETURN(auto a_desc, MatrixLayout::Create(lhs_layout));
   TF_ASSIGN_OR_RETURN(auto b_desc, MatrixLayout::Create(rhs_layout));
