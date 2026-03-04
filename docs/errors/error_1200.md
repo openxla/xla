@@ -1,4 +1,4 @@
-# Error code: 1200
+# Error code: E1200
 
 **Category:** Compile Time: Host Offload Output Mismatch
 
@@ -38,7 +38,7 @@ To resolve this error, determine whether you intended for this tensor to be an
 output on the Host or if it should have been moved back to the Device before
 returning.
 
-### Verify Output Intent & Trace Path
+### Verify output intent and trace path
 
 *   **Intended to return on Host:** If you explicitly want this tensor to be
     returned in host memory (avoiding a transfer back to device), you should

@@ -1,4 +1,4 @@
-# Error code: 1001
+# Error code: E1001
 
 **Category:** Compile Time: Scoped Vmem OOM
 
@@ -29,11 +29,13 @@ results that are inputs and/or outputs of HLO instructions.
 A Compile Time Scoped Vmem OOM occurs when the instruction-scoped allocations
 exceed the allocation limit for that instruction. This limit is controlled
 
--   globally for the entire program via the flag
-    [--xla_tpu_scoped_vmem_limit_kib](https://openxla.org/xla/flags_guidance)
-    and
--   per custom kernel via
-    [vmem_limit_bytes param](https://docs.jax.dev/en/latest/_autosummary/jax.experimental.pallas.tpu.CompilerParams.html#jax.experimental.pallas.tpu.CompilerParams.vmem_limit_bytes).
+- globally for the entire program via the flag
+  [--xla_tpu_scoped_vmem_limit_kib](https://openxla.org/xla/flags_guidance)
+
+and
+
+- per custom kernel via
+  [vmem_limit_bytes param](https://docs.jax.dev/en/latest/_autosummary/jax.experimental.pallas.tpu.CompilerParams.html#jax.experimental.pallas.tpu.CompilerParams.vmem_limit_bytes).
 
 These errors are typically caused by an internal compiler bug or by a
 custom kernel exceeding its allocation limit.
@@ -48,15 +50,15 @@ the following signature:
 Ran out of memory in memory space vmem while allocating on stack for %my-custom-call = <output-shape> custom-call(<params>), custom_call_target="tpu_custom_call" ...
 ```
 
-*   **Custom Kernel Scoped Vmem OOM**: If the error points to a custom kernel →
-    Jump to [Retune the Kernel](#retune_the_kernel).
-*   **Non-Kernel Vmem Issues**: If the Vmem OOM occurs due to a
-    non-custom-kernel op, it is likely an internal compiler bug. Please file a
-    bug on XLA with an HLO dump.
+- **Custom kernel scoped Vmem OOM**: If the error points to a custom kernel →
+  Jump to [Retune the Kernel](#retune_the_kernel).
+- **Non-kernel Vmem issues**: If the Vmem OOM occurs due to a
+  non-custom-kernel op, it is likely an internal compiler bug. [Please file a
+  bug report on XLA](https://github.com/openxla/xla) with an HLO dump.
 
 ---
 
-### Retune the Kernel
+### Retune the kernel
 
 If the error originates from a custom kernel, use the following techniques to
 reduce the kernel's memory requirement:
@@ -67,9 +69,10 @@ configuration, to lower Scoped Vmem usage.
 of memory for that specific kernel using the
 [vmem_limit_bytes param](https://docs.jax.dev/en/latest/_autosummary/jax.experimental.pallas.tpu.CompilerParams.html#jax.experimental.pallas.tpu.CompilerParams.vmem_limit_bytes)
 * **Modify Memory Coloring:** Explicitly color/constrain the kernel's
-inputs/outputs to VMEM using
-[pallas.tpu.with_memory_space_constraint](https://docs.jax.dev/en/latest/_autosummary/jax.experimental.pallas.tpu.with_memory_space_constraint.html). But be careful not to color too many inputs
-outputs to Vmem, as that might cause an overall VMEM OOM.
+inputs/outputs to Vmem using
+[pallas.tpu.with_memory_space_constraint](https://docs.jax.dev/en/latest/_autosummary/jax.experimental.pallas.tpu.with_memory_space_constraint.html).
+Be careful not to color too many inputs outputs to Vmem, as that might cause
+an overall Vmem OOM.
 * If kernel specific retuning is difficult or the issue affects many kernels,
 you can adjust the global Vmem limit using the flag
 [--xla_tpu_scoped_vmem_limit_kib](https://openxla.org/xla/flags_guidance).
