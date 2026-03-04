@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_creation_utils.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 
 namespace xla {
@@ -72,10 +73,8 @@ absl::Status AllGatherMajorDimensionRewriter::Visitor::HandleAllGather(
   Cast<HloAllGatherInstruction>(new_all_gather)
       ->set_all_gather_dimension(new_gathered_dim);
 
-  const absl::Span<const int64_t> first_bitcast_dimensions =
-      ShapeUtil::InsertDimensionAtIndex(new_input->shape(), new_gathered_dim,
-                                        shard_count)
-          .dimensions();
+  const Shape first_bitcast_shape = ShapeUtil::InsertDimensionAtIndex(
+      new_input->shape(), new_gathered_dim, shard_count);
 
   auto insert_gathered_dimension =
       [&new_gathered_dim](const Layout& layout, const int64_t insert_after) {
@@ -92,7 +91,7 @@ absl::Status AllGatherMajorDimensionRewriter::Visitor::HandleAllGather(
   HloInstruction* first_bitcast = MakeBitcastHlo(
       new_all_gather,
       ShapeUtil::MakeShapeWithDenseLayout(
-          all_gather->shape().element_type(), first_bitcast_dimensions,
+          all_gather->shape().element_type(), first_bitcast_shape.dimensions(),
           insert_gathered_dimension(new_input->shape().layout(),
                                     new_gathered_dim)));
 
@@ -101,7 +100,7 @@ absl::Status AllGatherMajorDimensionRewriter::Visitor::HandleAllGather(
   HloInstruction* copy = MakeCopyHlo(
       first_bitcast,
       ShapeUtil::MakeShapeWithDenseLayout(
-          all_gather->shape().element_type(), first_bitcast_dimensions,
+          all_gather->shape().element_type(), first_bitcast_shape.dimensions(),
           insert_gathered_dimension(original_output_copy->shape().layout(),
                                     original_gather_dim)));
 
