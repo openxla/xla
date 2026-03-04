@@ -118,6 +118,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
@@ -126,7 +127,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -202,13 +202,14 @@ using ::tsl::profiler::ScopedAnnotation;
 // `GpuExecutable`. At run time `Thunks` may use additional streams to launch
 // compute operations in parallel.
 static absl::flat_hash_set<ExecutionStreamId> GetExecutionStreamIds(
-    const SequentialThunk& thunks) {
+    const ThunkExecutor& executor) {
   absl::flat_hash_set<ExecutionStreamId> stream_ids;
-  thunks.Walk([&](const Thunk* thunk) {
+  CHECK_OK(executor.WalkNested([&](const Thunk* thunk) -> absl::Status {
     if (thunk->execution_stream_id() > 0) {
       stream_ids.insert(thunk->execution_stream_id());
     }
-  });
+    return absl::OkStatus();
+  }));
   return stream_ids;
 }
 
@@ -276,22 +277,30 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
   // between compiler-generated and runtime-loaded GPU executables.
   absl::StatusOr<std::vector<ThunkProto>> thunk_sequence_proto =
       [&]() -> absl::StatusOr<std::vector<ThunkProto>> {
-    ASSIGN_OR_RETURN(ThunkProto thunk_proto, params.executable->ToProto());
-    return std::vector<ThunkProto>(
-        std::make_move_iterator(
-            thunk_proto.mutable_sequential_thunk()->mutable_thunks()->begin()),
-        std::make_move_iterator(
-            thunk_proto.mutable_sequential_thunk()->mutable_thunks()->end()));
+    std::vector<ThunkProto> protos;
+    protos.reserve(params.executable->thunks().size());
+    for (const auto& thunk : params.executable->thunks()) {
+      ASSIGN_OR_RETURN(ThunkProto proto, thunk->ToProto());
+      protos.push_back(std::move(proto));
+    }
+    return protos;
   }();
 
-  RETURN_IF_ERROR(RunThunkPasses(
-      params.debug_options, params.device_description, params.executable.get(),
-      params.debug_module.get(), allocator));
+  // Wrap the ThunkExecutor's thunks in a temporary SequentialThunk for running
+  // thunk passes (which operate on SequentialThunk).
+  auto seq_thunk = std::make_unique<SequentialThunk>(
+      Thunk::ThunkInfo(), std::move(params.executable->thunks()));
+  RETURN_IF_ERROR(RunThunkPasses(params.debug_options,
+                                 params.device_description, seq_thunk.get(),
+                                 params.debug_module.get(), allocator));
+  // Extract modified thunks back into a ThunkExecutor.
+  auto executor =
+      std::make_unique<ThunkExecutor>(std::move(seq_thunk->thunks()));
 
   return std::unique_ptr<GpuExecutable>(new GpuExecutable(
       std::move(params.debug_module), std::move(params.asm_text),
       std::move(params.binary), std::move(params.dnn_compiled_graphs),
-      std::move(params.device_description), std::move(params.executable),
+      std::move(params.device_description), std::move(executor),
       std::move(params.module_name), std::move(params.program_shape),
       std::move(params.mlir_allocations), std::move(params.buffer_assignment),
       std::move(allocator.MutableAllocations()), std::move(params.alias_info),
@@ -307,7 +316,7 @@ GpuExecutable::GpuExecutable(
     std::unique_ptr<HloModule> debug_module, std::string asm_text,
     std::vector<uint8_t> binary, BinaryMap dnn_compiled_graphs,
     se::DeviceDescription device_description,
-    std::unique_ptr<SequentialThunk> executable, std::string module_name,
+    std::unique_ptr<ThunkExecutor> executable, std::string module_name,
     ProgramShape program_shape,
     std::optional<std::vector<BufferAllocation>> mlir_allocations,
     std::unique_ptr<const BufferAssignment> buffer_assignment,
@@ -323,8 +332,8 @@ GpuExecutable::GpuExecutable(
       binary_(std::move(binary)),
       dnn_compiled_graphs_(std::move(dnn_compiled_graphs)),
       gpu_version_(device_description.gpu_compute_capability()),
-      thunks_(std::move(executable)),
-      execution_stream_ids_(GetExecutionStreamIds(*thunks_)),
+      thunk_executor_(std::move(executable)),
+      execution_stream_ids_(GetExecutionStreamIds(*thunk_executor_)),
       module_name_(std::move(module_name)),
       program_shape_(std::move(program_shape)),
       allocation_ptrs_(GatherAllocationPtrs(
@@ -405,7 +414,7 @@ absl::Status BarrierAfterExecutable(
 
 absl::Status ExecuteThunksImpl(
     const DebugOptions* debug_options, const std::string& module_name,
-    ModuleIdentifier module_id, SequentialThunk& thunk_sequence,
+    ModuleIdentifier module_id, ThunkExecutor& thunk_executor,
     Thunk::ExecutableSource executable_source,
     const ServiceExecutableRunOptions* run_options,
     const BufferAllocations& buffer_allocations, bool block_host_until_done,
@@ -445,8 +454,7 @@ absl::Status ExecuteThunksImpl(
 
   std::optional<ThunkExecutor::ScopedProgressTracker> tracker;
   if (progress_tracking_n > 0) {
-    ASSIGN_OR_RETURN(
-        tracker, InstallProgressTracker(executor, thunk_sequence.executor()));
+    ASSIGN_OR_RETURN(tracker, InstallProgressTracker(executor, thunk_executor));
   }
 
   // Maybe add a watch guard for this execution.
@@ -581,7 +589,7 @@ absl::Status ExecuteThunksImpl(
                                         &execution_scoped_state};
 
     tsl::profiler::TraceMe trace_prepare("Thunks::Prepare");
-    RETURN_IF_ERROR(thunk_sequence.Prepare(prepare_params));
+    RETURN_IF_ERROR(thunk_executor.Prepare(prepare_params));
   }
 
   XLA_VLOG_DEVICE(3, run_options->device_ordinal()) << absl::StreamFormat(
@@ -632,7 +640,7 @@ absl::Status ExecuteThunksImpl(
         &execution_scoped_state};
 
     tsl::profiler::TraceMe trace_initialize("Thunks::Initialize");
-    RETURN_IF_ERROR(thunk_sequence.Initialize(initialize_params));
+    RETURN_IF_ERROR(thunk_executor.Initialize(initialize_params));
   }
 
   // Join a round of rendezvous after thunk initialization. We do this only in
@@ -653,7 +661,7 @@ absl::Status ExecuteThunksImpl(
 
   XLA_VLOG_DEVICE(1, run_options->device_ordinal())
       << "Start GpuExecutable::ExecuteOnStream module: " << module_name;
-  RETURN_IF_ERROR(thunk_sequence.ExecuteOnStream(execute_params));
+  RETURN_IF_ERROR(thunk_executor.ExecuteOnStream(execute_params));
   XLA_VLOG_DEVICE(1, run_options->device_ordinal())
       << "End GpuExecutable::ExecuteOnStream module: " << module_name;
 
@@ -1312,8 +1320,8 @@ absl::Status GpuExecutable::ExecuteThunks(
 
   RETURN_IF_ERROR(ExecuteThunksImpl(
       has_module() ? &module_config().debug_options() : nullptr, module_name_,
-      unique_id, *thunks_, executable_source, run_options, buffer_allocations,
-      block_host_until_done, execution_stream_ids_));
+      unique_id, *thunk_executor_, executable_source, run_options,
+      buffer_allocations, block_host_until_done, execution_stream_ids_));
   return absl::OkStatus();
 }
 
@@ -1549,8 +1557,8 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
     thunk_sequence.push_back(std::move(thunk));
   }
 
-  params.executable = std::make_unique<SequentialThunk>(
-      Thunk::ThunkInfo(), std::move(thunk_sequence));
+  params.executable =
+      std::make_unique<ThunkExecutor>(std::move(thunk_sequence));
 
   params.constants.reserve(proto.constants().size());
   for (const auto& constant_proto : proto.constants()) {
