@@ -113,8 +113,8 @@ message GemmBackendConfig {
   // The workspace size used during autotuning when the algorithm was selected.
   int64 autotune_workspace_size = 20;
 
-  // Whether the GEMM uses MX block-scaling mode (hipBLASLt MX on ROCm).
-  bool mx_mode = 21;
+  // Scale mode: 0=none, 1=tensor_scaling (fp8), 2=block_scaling (MX).
+  int32 scale_mode = 21;
 }
 
 // Backend config for bitcast operation generated from MLIR MHLO dialect.

@@ -291,7 +291,7 @@ TEST_F(HipblasLtScaledDotTest, ApplyConfig) {
         RunFileCheck(module->ToString(),
                      R"(CHECK: custom-call
                         CHECK-SAME: custom_call_target="__cublas$lt$matmul$mx"
-                        CHECK: "mx_mode":true)"),
+                        CHECK: "scale_mode":2)"),
         absl_testing::IsOkAndHolds(true));
   }
 }

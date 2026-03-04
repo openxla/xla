@@ -281,7 +281,7 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
         /*alpha_real=*/1.0, /*alpha_imag=*/0.0, /*beta=*/0.0,
         PrecisionConfig::ALG_UNSET, /*algorithm=*/std::nullopt,
         se::blas::kDefaultComputePrecision, /*grad_x=*/false,
-        /*grad_y=*/false, /*mx_mode=*/true,
+        /*grad_y=*/false, /*scale_mode=*/se::gpu::ScaleMode::kBlockScaling,
         target_config().device_description.gpu_compute_capability());
     if (!gemm_config_or.ok()) {
       VLOG(2) << "hipBLASLt MX: GemmConfig::For failed: "
@@ -400,7 +400,8 @@ absl::Status HipblasLtBackend::ApplyConfig(HloInstruction& instr,
     gemm_config.set_alpha_real(1.0);
     gemm_config.set_alpha_imag(0.0);
     gemm_config.set_beta(0.0);
-    gemm_config.set_mx_mode(true);
+    gemm_config.set_scale_mode(
+        static_cast<int32_t>(se::gpu::ScaleMode::kBlockScaling));
     gemm_config.set_selected_algorithm(gemm_key.algorithm());
     gemm_config.set_autotune_workspace_size(workspace_size);
 
