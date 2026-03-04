@@ -3019,6 +3019,7 @@ cc_library(
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:instruction_fusion",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
