@@ -116,6 +116,9 @@ INSTANTIATE_TEST_SUITE_P(VersionTest, PtxVersionFromCudaVersionTest,
                              {{12, 6, 0}, {8, 5, 0}},
                              {{12, 8, 0}, {8, 7, 0}},
                              {{12, 9, 0}, {8, 8, 0}},
+                             // CUDA 13
+                             {{13, 0, 0}, {9, 0, 0}},
+                             {{13, 1, 0}, {9, 1, 0}},
                          }),
                          [](::testing::TestParamInfo<VersionPair> data) {
                            se::SemanticVersion cuda_version = data.param.first;
