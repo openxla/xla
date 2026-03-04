@@ -2423,7 +2423,7 @@ TEST_F(CollectiveOpsTestE2E, OptimizedSubByteAllGatherOnDim1OutputIsCorrect) {
 
 TEST_F(CollectiveOpsTestE2E, AllGatherOnChangedDimensionIsCorrect) {
   const int64_t kNumReplicas = 2;
-  ASSERT_GE(hlo_runner_->device_count(), kNumReplicas)
+  ASSERT_GE(device_count(), kNumReplicas)
       << "The test requires at least " << kNumReplicas << " devices";
 
   TF_ASSERT_OK_AND_ASSIGN(auto unoptimized_module,
@@ -2432,12 +2432,13 @@ TEST_F(CollectiveOpsTestE2E, AllGatherOnChangedDimensionIsCorrect) {
   e {
     a = u32[2,2,3] constant({{{0,1,2},{3,4,5}},{{6,7,8},{9,10,11}}})
     g = u32[2,4,3] all-gather(a), dimensions={1}
-  })"));
-  TF_ASSERT_OK_AND_ASSIGN(auto executable, hlo_runner_->CreateExecutable(
-                                               std::move(unoptimized_module),
-                                               /*run_hlo_passes=*/true));
+  })",
+                                                       kNumReplicas));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(std::move(unoptimized_module),
+                                           /*run_hlo_passes=*/true));
   TF_ASSERT_OK_AND_ASSIGN(const HloModule* module,
-                          hlo_runner_->HloModuleFromWrapped(executable.get()));
+                          test_runner().HloModuleFromWrapped(executable.get()));
   const HloInstruction* root = module->entry_computation()->root_instruction();
 
   EXPECT_THAT(root, GmockMatch(m::Fusion(m::AllGatherDone(
@@ -2446,7 +2447,7 @@ TEST_F(CollectiveOpsTestE2E, AllGatherOnChangedDimensionIsCorrect) {
               GmockMatch(m::Transpose(m::Bitcast(m::Parameter()))));
 
   TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
-                          ExecuteReplicated(executable.get(), kNumReplicas));
+                          ExecuteReplicated(executable.get(), {{}, {}}));
   ASSERT_EQ(results.size(), kNumReplicas);
   Literal expected = LiteralUtil::CreateR3<uint32_t>(
       {{{0, 1, 2}, {3, 4, 5}, {0, 1, 2}, {3, 4, 5}},
@@ -2456,13 +2457,6 @@ TEST_F(CollectiveOpsTestE2E, AllGatherOnChangedDimensionIsCorrect) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    AllReduceTest, AllReduceTest,
-    ::testing::Combine(::testing::Bool(), ::testing::Bool()),
-    [](const ::testing::TestParamInfo<std::tuple<bool, bool>>& info) {
-      return absl::StrCat(GetAsyncTestName(std::get<0>(info.param)), "_",
-                          std::get<1>(info.param) ? "one_shot" : "nccl");
-    });
 TEST_F(CollectiveOpsTestE2E, MultipleModuleDifferentDeviceGroupsShouldRun) {
   const absl::string_view kModuleStr_1 = R"(
   HloModule test
