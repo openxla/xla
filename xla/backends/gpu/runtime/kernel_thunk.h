@@ -131,6 +131,7 @@ class KernelThunk : public Thunk {
   // kernel.
   stream_executor::gpu::TmaMetadata tma_metadata_;
 
+  // Programmatic Dependent Launch.
   bool use_pdl_;
 
   // Loaded kernels for each `StreamExecutor`.

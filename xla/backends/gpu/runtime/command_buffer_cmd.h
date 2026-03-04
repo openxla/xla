@@ -190,6 +190,7 @@ class LaunchCmd : public Command {
   LaunchDimensions dims_;
   int64_t shmem_bytes_;
   std::optional<stream_executor::gpu::TmaMetadata> tma_metadata_;
+  // Programmatic Dependent Launch.
   bool use_pdl_;
 
   // Command sequence can be recorded concurrently for multiple command buffers

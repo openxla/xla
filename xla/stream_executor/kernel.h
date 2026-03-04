@@ -153,6 +153,7 @@ class Kernel {
 
   KernelMetadata metadata_;
   KernelArgsPacking args_packing_;
+  // Programmatic Dependent Launch.
   bool use_pdl_ = false;
 };
 
