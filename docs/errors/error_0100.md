@@ -73,6 +73,9 @@ action.
     intended. Holding on to `jax.Array` objects might prevent automatic
     de-allocation even after program compilation is completed.
 
+See also [Error code: E1000](https://openxla.org/xla/errors/error_1000) for
+other strategies you can use to reduce the amount of memory each program uses.
+
 ### Tooling
 
 Enable the `tpu_log_allocations_on_oom` flag for which the allocator will dump a
