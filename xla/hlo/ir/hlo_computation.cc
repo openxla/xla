@@ -1778,10 +1778,24 @@ absl::StatusOr<bool> HloComputation::ReplaceInstructionWithDifferentShape(
   // function, and that they would be correlated to the same TF op. This might
   // not always be correct since HLO optimizations can cross TF op boundaries.
   // But still this seems to be better than nothing.
-  bool overwrite_op_name = new_instruction->metadata().op_name().empty() &&
-                           !old_instruction->metadata().op_name().empty();
-  if (overwrite_op_name) {
-    new_instruction->set_metadata(old_instruction->metadata());
+  //
+  // We propagate metadata when the new instruction has no meaningful metadata
+  // and the old instruction does. This covers op_name as well as other
+  // provenance fields (op_type, source_file, source_line) that may be set
+  // independently of op_name (e.g. by frontends that populate source
+  // locations but not op names).
+  const auto& old_md = old_instruction->metadata();
+  const auto& new_md = new_instruction->metadata();
+  bool new_has_no_metadata = new_md.op_name().empty() &&
+                             new_md.op_type().empty() &&
+                             new_md.source_file().empty() &&
+                             new_md.source_line() == 0;
+  bool old_has_metadata = !old_md.op_name().empty() ||
+                          !old_md.op_type().empty() ||
+                          !old_md.source_file().empty() ||
+                          old_md.source_line() != 0;
+  if (new_has_no_metadata && old_has_metadata) {
+    new_instruction->set_metadata(old_md);
   }
   if (preserve_frontend_attributes &&
       new_instruction->frontend_attributes().map().empty()) {

@@ -13573,5 +13573,26 @@ TEST_F(AlgebraicSimplifierTest, HoistTransposeOfReshapeLayoutSensitive) {
   EXPECT_FALSE(simplifier.Run(m.get()).value());
 }
 
+TEST_F(AlgebraicSimplifierTest, MetadataPreservedThroughPowerSimplification) {
+  // pow(A, 2) => A*A should preserve metadata (source_file, etc.)
+  // even when op_name is empty.
+  const char* hlo_string = R"(
+    HloModule m
+    ENTRY test {
+      p0 = f32[4] parameter(0)
+      c = f32[] constant(2)
+      b = f32[4] broadcast(c), dimensions={}
+      ROOT pow = f32[4] power(p0, b), metadata={source_file="test.py" source_line=10}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  // pow(A,2) should become multiply(A,A)
+  auto* root = m->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kMultiply);
+  EXPECT_EQ(root->metadata().source_file(), "test.py");
+  EXPECT_EQ(root->metadata().source_line(), 10);
+}
+
 }  // namespace
 }  // namespace xla

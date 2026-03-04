@@ -213,5 +213,41 @@ ENTRY entry {
   EXPECT_EQ(mul_int->caller_computations().size(), 1);
   EXPECT_TRUE(mul_int->caller_computations().contains(entry));
 }
+TEST_F(HLOComputationTest, ReplaceInstructionPropagatesMetadataWithoutOpName) {
+  // Verify that metadata is propagated when the old instruction has
+  // source_file but no op_name.
+  auto builder = HloComputation::Builder("test");
+  auto p0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {4}), "p0"));
+  auto p1 = builder.AddInstruction(
+      HloInstruction::CreateParameter(1, ShapeUtil::MakeShape(F32, {4}), "p1"));
+  auto add = builder.AddInstruction(HloInstruction::CreateBinary(
+      ShapeUtil::MakeShape(F32, {4}), HloOpcode::kAdd, p0, p1));
+
+  // Set metadata with source_file but no op_name.
+  OpMetadata metadata;
+  metadata.set_source_file("test.py");
+  metadata.set_source_line(42);
+  add->set_metadata(metadata);
+
+  auto module = CreateNewVerifiedModule();
+  auto computation = module->AddEntryComputation(builder.Build());
+
+  // Replace add with multiply (no metadata on the new instruction).
+  auto new_mul = HloInstruction::CreateBinary(
+      ShapeUtil::MakeShape(F32, {4}), HloOpcode::kMultiply, p0, p1);
+  EXPECT_TRUE(new_mul->metadata().source_file().empty());
+
+  EXPECT_EQ(
+      computation->ReplaceWithNewInstruction(add, std::move(new_mul)),
+      absl::OkStatus());
+
+  // The new instruction should have inherited the metadata.
+  auto* root = computation->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kMultiply);
+  EXPECT_EQ(root->metadata().source_file(), "test.py");
+  EXPECT_EQ(root->metadata().source_line(), 42);
+}
+
 }  // namespace
 }  // namespace xla
