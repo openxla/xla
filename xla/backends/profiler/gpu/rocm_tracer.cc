@@ -405,9 +405,8 @@ int RocmTracer::toolInit(rocprofiler_client_finalize_t fini_func,
   // Gather agent info
   num_gpus_ = 0;
   for (const auto& agent : GetGpuDeviceAgents()) {
-    VLOG(1) << "agent id = " << agent.id.handle
-              << ", dev = " << agent.device_id
-              << ", name = " << (agent.name ? agent.name : "null");
+    VLOG(1) << "agent id = " << agent.id.handle << ", dev = " << agent.device_id
+            << ", name = " << (agent.name ? agent.name : "null");
     agents_[agent.id.handle] = agent;
     if (agent.type == ROCPROFILER_AGENT_TYPE_GPU) {
       num_gpus_++;
