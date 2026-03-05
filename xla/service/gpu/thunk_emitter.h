@@ -54,9 +54,10 @@ class ThunkEmitter {
     return ir_emitter_context_->platform_name();
   }
 
-  explicit ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
-                        llvm_ir::LLVMCommandLineOptionsReleasableLock*
-                            absl_nonnull llvm_options_lock);
+  explicit ThunkEmitter(
+      IrEmitterContext* absl_nonnull ir_emitter_context,
+      llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
+          llvm_options_lock);
   ThunkEmitter(const ThunkEmitter&) = delete;
   ThunkEmitter& operator=(const ThunkEmitter&) = delete;
 

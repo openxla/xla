@@ -354,7 +354,7 @@ auto BlasLt::MatmulPlan::GetAlgorithms(const Stream *stream,
 }
 
 absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
-    const gpu::GemmConfig& cfg, Epilogue epilogue) const {
+    const gpu::GemmConfig &cfg, Epilogue epilogue) const {
   auto lhs_layout = cfg.lhs_layout, rhs_layout = cfg.rhs_layout,
        output_layout = cfg.output_layout, c_layout = cfg.c_layout;
 
@@ -732,8 +732,8 @@ absl::Status BlasLt::MatmulPlan::ExecuteRegularMatmul(
 }
 
 absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetGroupedMatmulPlan(
-    gpu::GroupedGemmConfig& cfg,
-    const std::vector<gpu::BlasLt::Epilogue>& epilogues) const {
+    gpu::GroupedGemmConfig &cfg,
+    const std::vector<gpu::BlasLt::Epilogue> &epilogues) const {
   auto batch_stride_a = (cfg.m * cfg.k);
   auto batch_stride_b = (cfg.n * cfg.k);
   if (cfg.ragged_mode == gpu::RaggedDotMode::kRaggedNonContracting) {
