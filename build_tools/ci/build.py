@@ -362,7 +362,7 @@ Build(
     "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true"
 },
     repo_env={
-        "TF_ROCM_AMDGPU_TARGETS": "gfx942",
+        "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942",
         "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
         "TF_ROCM_RBE_DOCKER_IMAGE": "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa", #  rocm/tensorflow-build:latest-jammy-pythonall-rocm7.1.1-ci_official
         "ROCM_PATH": "/opt/rocm",
@@ -399,7 +399,7 @@ Build(
         "NCCL_MAX_NCHANNELS": 1,
     },
     repo_env={
-        "TF_ROCM_AMDGPU_TARGETS": "gfx942",
+        "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942",
         "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
         "TF_ROCM_RBE_DOCKER_IMAGE": "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa", #  rocm/tensorflow-build:latest-jammy-pythonall-rocm7.1.1-ci_official
         "ROCM_PATH": "/opt/rocm",
