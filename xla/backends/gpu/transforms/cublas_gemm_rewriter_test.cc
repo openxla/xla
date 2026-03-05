@@ -3585,7 +3585,7 @@ class GroupedGemmRewriteTest : public GemmRewriteTest {
     return debug_options;
   }
 
-  protected:
+ protected:
   void SetUp() override {
     if (SkipGroupedGemmTest()) {
       GTEST_SKIP() << "Grouped GEMM is only supported on ROCm with hipBLASLt";

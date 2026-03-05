@@ -670,7 +670,6 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulThunkF8(
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmulThunk(
     const HloCustomCallInstruction* instr) {
-
   TF_RET_CHECK(instr->operand_count() == 3);
 
   xla::ShapeIndex output_index =
