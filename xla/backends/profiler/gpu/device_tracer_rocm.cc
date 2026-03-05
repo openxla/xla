@@ -110,8 +110,8 @@ absl::Status GpuTracer::DoStart() {
   rocm_trace_collector_ = CreateRocmCollector(
       trace_collector_options, start_walltime_ns, start_gputime_ns);
 
-  rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
-
+  TF_RETURN_IF_ERROR(
+      rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get()));
   return absl::OkStatus();
 }
 
