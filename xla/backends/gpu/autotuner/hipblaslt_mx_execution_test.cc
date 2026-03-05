@@ -22,14 +22,22 @@ limitations under the License.
 #include "xla/error_spec.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/filecheck.h"
-#include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/service/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
 
-class HipblasLtMxExecutionTest : public HloPjRtTestBase {
+class HipblasLtMxExecutionTest : public HloPjRtGpuTestBase {
  protected:
+  void SetUp() override {
+    const auto& gpu_cc = device_description().gpu_compute_capability();
+    const auto* rocm_cc = gpu_cc.rocm_compute_capability();
+    if (rocm_cc == nullptr || !rocm_cc->has_mx_type_support()) {
+      GTEST_SKIP() << "MX execution test requires MX type support (gfx950+).";
+    }
+  }
+
   // Runs numerical correctness (hipBLASLt MX vs decomposed reference) and
   // verifies that the optimized HLO uses the expected custom call target.
   void RunMxCorrectnessTest(absl::string_view hlo_string,
