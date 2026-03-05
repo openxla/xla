@@ -490,7 +490,7 @@ xla_test(
     ],
 )
 
-cc_library(
+sycl_library(
     name = "sycl_device_description",
     srcs = ["sycl_device_description.cc"],
     hdrs = ["sycl_device_description.h"],
