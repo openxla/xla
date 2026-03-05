@@ -167,6 +167,9 @@ int64_t MaxUnrollFactor(const HloFusionAnalysis* analysis) {
     // Do not unroll sub-byte types further for now.
     int64_t max_dtype_bits = 8;
     for (const HloInstruction* param : analysis->fusion().GetParameters()) {
+      if (ShapeUtil::IsScalar(param->shape())) {
+        continue;
+      }
       max_dtype_bits = std::max(
           max_dtype_bits, static_cast<int64_t>(primitive_util::StorageBitWidth(
                               param->shape().element_type())));

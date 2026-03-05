@@ -1745,6 +1745,44 @@ ENTRY main {
       8);
 }
 
+TEST_F(GpuFusibleTest, ScalarParameterTypeDoesNotLimitUnrolling) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+f {
+  p0 = bf16[2048,1024] parameter(0)
+  p1 = f32[] parameter(1)
+  broadcast = f32[2048,1024] broadcast(p1), dimensions={}
+  convert = f32[2048,1024] convert(p0)
+  add = f32[2048,1024] add(convert, broadcast)
+  res = bf16[2048,1024] convert(add)
+}
+
+e {
+  p0 = bf16[2048,1024] parameter(0)
+  p1 = f32[] parameter(1)
+  r = bf16[2048,1024] fusion(p0, p1), kind=kLoop, calls=f
+})"));
+  const HloInstruction& root = *module->entry_computation()->root_instruction();
+  EXPECT_EQ(
+      ComputeLoopFusionConfig(HloFusionAnalysis::Create(
+                                  root, TestGpuDeviceInfo::H100SXMDeviceInfo()),
+                              root.shape())
+          .unroll_factor,
+      4);
+
+  EXPECT_EQ(
+      ComputeLoopFusionConfig(HloFusionAnalysis::Create(
+                                  root, TestGpuDeviceInfo::B200SXMDeviceInfo()),
+                              root.shape())
+          .unroll_factor,
+      8);
+
+  EXPECT_EQ(
+      ComputeLoopFusionConfig(
+          HloFusionAnalysis::Create(root, B200WithCUDA129()), root.shape())
+          .unroll_factor,
+      16);
+}
+
 TEST_F(GpuFusibleTest, FourBitTypeUnrolled16or32xOnBlackwell) {
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 e {
