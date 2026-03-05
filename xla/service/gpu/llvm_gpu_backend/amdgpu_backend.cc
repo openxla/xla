@@ -920,7 +920,6 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
   tsl::profiler::TraceMe activity(
         [&] { return absl::StrCat("Compiling IR", module->getName().str()); },
         tsl::profiler::TraceMeLevel::kInfo);
-  XLA_SCOPED_LOGGING_TIMER("Compile module " + module->getName().str());
       
   auto llvm_opts = GetAMDGPUBackendOptions(debug_options);
   llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_opts);
@@ -941,10 +940,16 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
   // NOTE: adding module_config_cache_key to the hash, invalidates the 
   // persistent file cache.
   // sha256.update(module_config_cache_key);
-  
-  auto opt_level = debug_options.xla_backend_optimization_level();
-  sha256.update(llvm::ArrayRef(reinterpret_cast< const uint8_t *>(&opt_level), 
-           sizeof(opt_level)));
+
+  // Add all relevant parameters to the hash to be on the safe side
+  for (int32_t param : {
+      static_cast<int32_t>(debug_options.xla_gpu_use_inprocess_lld()),
+      static_cast<int32_t>(
+        debug_options.xla_gpu_fail_ptx_compilation_on_register_spilling()),
+      static_cast<int32_t>(debug_options.xla_backend_optimization_level())}) {
+    sha256.update(llvm::ArrayRef(reinterpret_cast< const uint8_t *>(&param), 
+                 sizeof(param)));
+  }
   HsacoCache::HashType binary_hash = sha256.final();
 
   HsacoResult compile_result;
@@ -966,17 +971,17 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
           << "' (arch=" << comp_c->gcn_arch_name() << ")";
 
   std::string hsaco_temp_path;
-  TF_ASSIGN_OR_RETURN(compile_result,
-    CompileToHsacoInternal(
-        module, gpu_version, debug_options, &hsaco_temp_path));
-
-  cache.Insert(binary_hash, bitcode_size, hsaco_temp_path, 
-                 cache.HsacoFilePath(hash_str), compile_result);
-
+  auto compile_status = CompileToHsacoInternal(
+        module, gpu_version, debug_options, &hsaco_temp_path);
+  
+  if (compile_status.ok()) {
+    cache.Insert(binary_hash, bitcode_size, hsaco_temp_path, 
+                 cache.HsacoFilePath(hash_str), *compile_status);
+  }
   if (!cache.KeepTempFiles()) {
     std::remove(hsaco_temp_path.c_str());
   }
-  return compile_result;
+  return compile_status;
 }
 
 absl::StatusOr<HsacoResult> CompileToHsacoInternal(
