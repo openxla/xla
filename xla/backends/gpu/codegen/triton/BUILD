@@ -145,6 +145,7 @@ cc_library(
     deps = [
         "//xla/backends/gpu/codegen/emitters/transforms:passes",
         "//xla/backends/gpu/codegen/triton/transforms:passes",
+        "//xla/backends/gpu/codegen/triton/transforms:triton_xla_implement_extern_atomics_rocm_pass",
         "//xla/codegen/emitters/transforms:convert_pure_call_ops_pass",
         "//xla/codegen/emitters/transforms:passes",
         "//xla/service:hlo_module_config",
@@ -880,6 +881,7 @@ cc_library(
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:NVVMDialect",
+        "@llvm-project//mlir:ROCDLDialect",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
         "@stablehlo//:stablehlo_ops",

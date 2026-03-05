@@ -26,6 +26,7 @@ limitations under the License.
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
+#include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/stream_executor/device_description.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonToTritonGPU/Passes.h"
@@ -167,6 +168,11 @@ static void MakeLLIR(mlir::OpPassManager* pm,
   pm->addPass(mlir::createCanonicalizerPass());
   pm->addPass(mlir::createCSEPass());
   pm->addPass(mlir::createSymbolDCEPass());
+  
+  // Add XLA custom pass to implement extern_elementwise atomic functions
+  // This must run after MLIR->LLVM conversion but before final optimizations
+  pm->addPass(mlir::triton::xla::CreateTritonXLAImplementExternAtomicsROCmPass());
+  
   if (/*(instruction_sched_variant=="none") == */ /* DISABLES CODE */ (false)) {
     pm->addPass(mt::createTritonAMDGPULowerInstructionSchedHintsPass(
         rocm_cc.gfx_version(), num_stages));

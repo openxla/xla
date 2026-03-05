@@ -42,8 +42,10 @@ cc_library(
         "triton_xla_extract_insert_to_triton_pass.cc",
         "triton_xla_fold_transpose_pass.cc",
         "triton_xla_lower_atomics_pass.cc",
+        "triton_xla_lower_extern_atomics_pass.cc",
         "triton_xla_lower_block_barrier_pass.cc",
         "triton_xla_lower_get_tid_pass.cc",
+        "triton_xla_lower_extern_get_tid_pass.cc",
         "triton_xla_lower_remote_access_pass.cc",
         "triton_xla_lower_xtile_pass.cc",
         "triton_xla_math_to_libdevice.cc",
@@ -105,5 +107,23 @@ cc_library(
         "@stablehlo//:stablehlo_ops",
         "@triton//:TritonDialects",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
+    ],
+)
+
+cc_library(
+    name = "triton_xla_implement_extern_atomics_rocm_pass",
+    srcs = ["triton_xla_implement_extern_atomics_rocm_pass.cc"],
+    hdrs = ["passes.h"],
+    deps = [
+        ":passes_inc_gen",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:ToLLVMIRTranslation",
     ],
 )
