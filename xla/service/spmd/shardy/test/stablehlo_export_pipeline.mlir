@@ -14,6 +14,22 @@ sdy.mesh @empty_mesh_1 = <[]>
 
 // CHECK-NOT: sdy.mesh
 
+// CHECK-LABEL: func @open_dim_shardings(
+// CHECK-V2-SAME:      %arg0: tensor<8x8xf32> {mhlo.sharding = "{replicated}"},
+// CHECK-V2-SAME:      %arg1: tensor<8x8xf32> {mhlo.sharding = "{replicated}"},
+// CHECK-V2-SAME:      %arg2: tensor<8x16xf32> {mhlo.sharding = "{devices=[1,16]<=[16]}"})
+// CHECK-V3-SAME:      %arg0: tensor<8x8xf32> {mhlo.sharding = "{mesh['axis_0'=16], [{?}, {}]}"},
+// CHECK-V3-SAME:      %arg1: tensor<8x8xf32> {mhlo.sharding = "{mesh['axis_0'=16], replicated}"},
+// CHECK-V3-SAME:      %arg2: tensor<8x16xf32> {mhlo.sharding = "{mesh['axis_0'=16], [{?}, {'axis_0', ?}]}"})
+// CHECK-SAME:  -> tensor<8x16xf32> {
+func.func @open_dim_shardings(%arg0: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh_1, [{?}, {}]>},
+                              %arg1: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh_1, [{}, {}]>},
+                              %arg2: tensor<8x16xf32> {sdy.sharding = #sdy.sharding<@mesh_1, [{?}, {"axis_0", ?}]>}) -> tensor<8x16xf32> {
+  %0 = stablehlo.add %arg0, %arg1 : tensor<8x8xf32>
+  %1 = stablehlo.dot %0, %arg2 : (tensor<8x8xf32>, tensor<8x16xf32>) -> tensor<8x16xf32>
+  return %1 : tensor<8x16xf32>
+}
+
 // CHECK-LABEL: func @non_trivial_common_mesh(
 // CHECK-V2-SAME:      %arg0: tensor<8x8xf32> {mhlo.sharding = "{devices=[4,8]<=[8,4]T(1,0)}"},
 // CHECK-V2-SAME:      %arg1: tensor<8x8xf32> {mhlo.sharding = "{devices=[1,2,16]<=[32] last_tile_dim_replicate}"},

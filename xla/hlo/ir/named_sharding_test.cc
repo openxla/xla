@@ -34,14 +34,29 @@ using ::testing::ElementsAre;
 
 TEST(NamedShardingTest, CanonicalizedDimShardings) {
   Mesh mesh_abcd({2, 4}, {"a", "b"});
-
-  DimensionSharding empty_ds;
-  NamedSharding sharding1(mesh_abcd, {empty_ds, empty_ds});
-  EXPECT_TRUE(sharding1.dim_shardings().empty());
-
   DimensionSharding ds_a({AxisRef(0)}, /*is_closed=*/true);
-  NamedSharding sharding2(mesh_abcd, {ds_a, empty_ds});
+
+  NamedSharding sharding2(mesh_abcd, {ds_a, DimensionSharding()});
+
   EXPECT_FALSE(sharding2.dim_shardings().empty());
+}
+TEST(NamedShardingTest, CanonicalizedDimShardingsEmptyDims) {
+  Mesh mesh_abcd({2, 4}, {"a", "b"});
+  DimensionSharding empty_ds;
+
+  NamedSharding sharding1(mesh_abcd, {empty_ds, empty_ds});
+
+  EXPECT_TRUE(sharding1.dim_shardings().empty());
+}
+TEST(NamedShardingTest, CanonicalizedDimShardingsOpenShardings) {
+  // Dimension sharding should not be canonicalized to empty if any of the
+  // shardings are open.
+  Mesh mesh_abcd({2, 4}, {"a", "b"});
+  DimensionSharding empty_open_ds({}, /*is_closed=*/false);
+
+  NamedSharding sharding3(mesh_abcd, {DimensionSharding(), empty_open_ds});
+
+  EXPECT_FALSE(sharding3.dim_shardings().empty());
 }
 
 TEST(NamedShardingTest, AxisNameCtor) {

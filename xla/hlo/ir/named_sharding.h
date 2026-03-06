@@ -251,9 +251,16 @@ class NamedSharding {
     });
   }
 
+  bool AllDimShardingsEmptyAndClosed(
+      absl::Span<const DimensionSharding> dim_shardings) const {
+    return absl::c_all_of(dim_shardings, [](const DimensionSharding& s) {
+      return s.axes().empty() && s.is_closed();
+    });
+  }
+
   std::vector<DimensionSharding> CanonicalizedDimShardings(
       absl::Span<const DimensionSharding> dim_shardings) const {
-    if (AllDimShardingsEmpty(dim_shardings)) {
+    if (AllDimShardingsEmptyAndClosed(dim_shardings)) {
       return {};
     }
     return std::vector<DimensionSharding>(dim_shardings.begin(),
