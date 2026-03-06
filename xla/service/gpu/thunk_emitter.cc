@@ -165,6 +165,7 @@ limitations under the License.
 #include "xla/stream_executor/memory_space.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
@@ -173,7 +174,6 @@ limitations under the License.
 #include "tsl/platform/casts.h"
 #include "tsl/platform/human_readable_json.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 namespace {
@@ -371,9 +371,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSliceToDynamic(
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCommandBufferThunk(
     const HloInstruction* instr) {
   // Spawn a new ThunkEmitter to emit thunks for the command buffer computation.
-  // Then convert emitted thunks to a sequence of CommandBufferCmd. The
-  // resulting thunk added to the thunk sequence is a CommandBufferThunk. Thunks
-  // emitted from the command buffer computation are discarded.
+  // Then convert emitted thunks to a sequence of Commands. The resulting thunk
+  // added to the thunk sequence is a CommandBufferThunk. Thunks emitted from
+  // the command buffer computation are discarded.
   DCHECK_EQ(instr->called_computations().size(), 1);
   const HloComputation* command_buffer = instr->called_computations().front();
   TF_ASSIGN_OR_RETURN(auto thunk_sequence, EmitHloComputation(command_buffer));
