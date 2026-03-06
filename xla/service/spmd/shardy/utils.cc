@@ -591,5 +591,9 @@ bool isManualComputation(CallOp callOp) {
   return callOp.getCallee().contains(kManualComputationFuncName);
 }
 
+bool isManualComputation(FuncOp funcOp) {
+  return funcOp.getName().contains(kManualComputationFuncName);
+}
+
 }  // namespace sdy
 }  // namespace xla

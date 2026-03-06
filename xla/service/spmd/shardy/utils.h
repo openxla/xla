@@ -190,6 +190,9 @@ mlir::sdy::TensorShardingPerValueAttr convertToSdySharding(
 // Returns whether the call is on a manual computation. Returns false for
 // an 'inlineable' manual computation.
 bool isManualComputation(mlir::func::CallOp callOp);
+// Returns whether the func is a manual computation. Returns false for
+// an 'inlineable' manual computation.
+bool isManualComputation(mlir::func::FuncOp funcOp);
 
 }  // namespace sdy
 }  // namespace xla

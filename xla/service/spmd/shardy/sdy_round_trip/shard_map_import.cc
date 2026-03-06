@@ -235,10 +235,12 @@ class SdyRoundTripShardMapImportPass
       }
     });
 
-    // Erase all manual computation func ops that now have no call ops.
-    for (StringRef calleeName : manualComputationCalleeNames) {
-      symbolTable.erase(symbolTable.lookup(calleeName));
-    }
+    // Erase all manual computation func ops as now they have no call ops.
+    module->walk([](FuncOp funcOp) {
+      if (isManualComputation(funcOp)) {
+        funcOp.erase();
+      }
+    });
   }
 
   StringRef getArgument() const override {
