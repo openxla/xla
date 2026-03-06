@@ -21,10 +21,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/time/time.h"
-#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/model/block_level_parameters.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu::gpu_dot_fusion_cost_model {
 
@@ -39,13 +39,22 @@ absl::StatusOr<absl::Duration> EstimateRunTimeForDotOpWithBlockParameters(
 
 namespace detail {
 
-struct DotProblemDimensions {
-  int64_t b;
-  int64_t m;
-  int64_t n;
-  int64_t k;
+struct DotProblemInfo {
+  int64_t b = 0;
+  int64_t m = 0;
+  int64_t n = 0;
+  int64_t k = 0;
+  xla::PrimitiveType lhs_element_type = PrimitiveType::PRIMITIVE_TYPE_INVALID;
+  xla::PrimitiveType rhs_element_type = PrimitiveType::PRIMITIVE_TYPE_INVALID;
+  xla::PrimitiveType output_element_type =
+      PrimitiveType::PRIMITIVE_TYPE_INVALID;
 
-  explicit DotProblemDimensions(const HloDotInstruction& dot);
+  explicit DotProblemInfo(const HloDotInstruction& dot);
+};
+
+struct OutputTileSize {
+  int64_t m = 0;
+  int64_t n = 0;
 };
 
 // Returns the effective HBM bandwidth in bytes per second for a given dma_size.
@@ -56,12 +65,12 @@ float GetEffectiveHbmBandwidth(int64_t dma_size,
 // Calculates the HBM time for a GPU DOT operation. Current implementation
 // uses a flat derate on top of the spec bandwidth. A HBM bandwidth model based
 // derate lookup from profiled data will be added in the future.
-absl::Duration CalculateHbmTime(const HloDotInstruction* dot,
+absl::Duration CalculateHbmTime(const DotProblemInfo& dot,
                                 const se::DeviceDescription& device_info);
 
 // Calculates the L2 time for a GPU DOT operation.
 absl::StatusOr<absl::Duration> CalculateL2Time(
-    const HloDotInstruction* dot, absl::Span<const int64_t> tile_shape,
+    const DotProblemInfo& dot, const OutputTileSize& out_tile,
     const se::DeviceDescription& device_info);
 
 // Calculates the compute time for a GPU DOT operation with tile and wave
@@ -71,7 +80,7 @@ absl::StatusOr<absl::Duration> CalculateL2Time(
 // (2) Wave Quantization effects occur when the number of threadblocks is
 //     quantized to the number of SMs per GPU.
 absl::StatusOr<absl::Duration> CalculateComputeTimeWithTileAndWaveQuantization(
-    const HloDotInstruction* dot, absl::Span<const int64_t> tile_shape,
+    const DotProblemInfo& dot, const OutputTileSize& out_tile,
     const se::DeviceDescription& device_info);
 
 }  // namespace detail

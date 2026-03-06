@@ -65,7 +65,11 @@ lhs_contracting_dims={1}, rhs_contracting_dims={0}, algorithm=dot_bf16_bf16_bf16
       absl::Duration expected_runtime_compute_bound_h100,
       gpu_dot_fusion_cost_model::detail::
           CalculateComputeTimeWithTileAndWaveQuantization(
-              dot, block_params.output_tile_sizes[0], ddh100_));
+              gpu_dot_fusion_cost_model::detail::DotProblemInfo(*dot),
+              gpu_dot_fusion_cost_model::detail::OutputTileSize{
+                  block_params.output_tile_sizes[0][0],
+                  block_params.output_tile_sizes[0][1]},
+              ddh100_));
   ASSERT_EQ(runtime_h100, expected_runtime_compute_bound_h100);
 }
 
