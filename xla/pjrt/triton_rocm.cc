@@ -14,9 +14,9 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cstdint>
+#include <fstream>
 #include <memory>
 #include <string>
-#include <fstream>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -56,11 +56,10 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/random.h"
-
+#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 
 namespace xla::triton {
 
@@ -116,25 +115,25 @@ absl::StatusOr<std::string> LLVMToHSACO(mlir::ModuleOp module,
 
   xla::DebugOptions debug_opts = xla::DefaultDebugOptionsIgnoringFlags();
   TF_ASSIGN_OR_RETURN(auto compile_result,
-                      gpu::amdgpu::CompileToHsaco(
-                          llvm_module.get(), gpu_version, debug_opts, ""));
+                      gpu::amdgpu::CompileToHsaco(llvm_module.get(),
+                                                  gpu_version, debug_opts, ""));
 
   std::vector<std::string> tempdir_vector;
   tsl::Env::Default()->GetLocalTempDirectories(&tempdir_vector);
   if (tempdir_vector.empty()) {
     return absl::InternalError(
-      "Unable to locate a temporary directory for triton hsaco file!");
+        "Unable to locate a temporary directory for triton hsaco file!");
   }
   uint64_t rand_num = tsl::random::New64();
   std::string temp_file_path = tsl::io::JoinPath(
-    tempdir_vector[0], absl::StrCat("xla_triton_", rand_num, ".hsaco"));
-  
+      tempdir_vector[0], absl::StrCat("xla_triton_", rand_num, ".hsaco"));
+
   std::ofstream ofs(temp_file_path, std::ios::binary);
   if (!ofs) {
     return absl::InternalError("Failed to create an hsaco temp file!");
   }
   ofs.write(reinterpret_cast<const char*>(compile_result.hsaco.data()),
-              compile_result.hsaco.size());
+            compile_result.hsaco.size());
   return temp_file_path;
 }
 
