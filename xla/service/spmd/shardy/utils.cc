@@ -595,5 +595,14 @@ bool isManualComputation(FuncOp funcOp) {
   return funcOp.getName().contains(kManualComputationFuncName);
 }
 
+StringRef getOriginalFuncName(FuncOp funcOp) {
+  if (auto originalFuncName =
+          funcOp->getAttrOfType<StringAttr>(kOriginalFuncName);
+      originalFuncName) {
+    return originalFuncName.getValue();
+  }
+  return funcOp.getName();
+}
+
 }  // namespace sdy
 }  // namespace xla

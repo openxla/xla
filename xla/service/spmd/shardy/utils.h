@@ -194,6 +194,11 @@ bool isManualComputation(mlir::func::CallOp callOp);
 // an 'inlineable' manual computation.
 bool isManualComputation(mlir::func::FuncOp funcOp);
 
+// Gets the original func name of the funcOp before flattenning via the
+// `kOriginalFuncName` attribute attached to `funcOp`. In case there is no such
+// attribute attached, returns the name of `funcOp`.
+mlir::StringRef getOriginalFuncName(mlir::func::FuncOp funcOp);
+
 }  // namespace sdy
 }  // namespace xla
 
