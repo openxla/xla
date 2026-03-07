@@ -459,7 +459,7 @@ GetParticipatingFlattenedIdGroups(const HloInstruction* hlo,
                       GetCollectiveOpGroupMode(hlo));
   TF_ASSIGN_OR_RETURN(
       std::unique_ptr<CollectiveDeviceListBase> collective_device_list,
-      GetParticipatingFlattenedIdGroups(device_assignment, hlo->device_list(),
+      GetParticipatingFlattenedIdGroups(device_assignment, *hlo->device_list(),
                                         mode));
   return collective_device_list;
 }
@@ -646,19 +646,19 @@ absl::StatusOr<std::vector<int64_t>> GetPariticipantCountsForReplicaGroups(
 
 absl::StatusOr<std::optional<std::pair<int64_t, int64_t>>>
 GetReplicaGroupCountAndSize(const HloInstruction* hlo) {
-  const CollectiveDeviceListBase& device_list = hlo->device_list();
+  std::shared_ptr<CollectiveDeviceListBase> device_list = hlo->device_list();
   auto config = hlo->GetModule()->config();
 
-  if (device_list.version() == CollectiveDeviceListVersion::kIota) {
-    return std::make_pair(device_list.num_replica_groups(),
-                          device_list.num_devices_per_group());
+  if (device_list->version() == CollectiveDeviceListVersion::kIota) {
+    return std::make_pair(device_list->num_replica_groups(),
+                          device_list->num_devices_per_group());
   }
   TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
                       GetCollectiveOpGroupMode(hlo));
   TF_ASSIGN_OR_RETURN(std::vector<int64_t> participant_counts,
                       GetPariticipantCountsForReplicaGroups(
                           config.replica_count(), config.num_partitions(),
-                          device_list.replica_groups(), group_mode));
+                          device_list->replica_groups(), group_mode));
   int64_t replica_group_size = participant_counts[0];
   for (int64_t participant_count : participant_counts) {
     if (participant_count != replica_group_size) {
