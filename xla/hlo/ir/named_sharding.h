@@ -151,32 +151,34 @@ class NamedSharding {
   }
 
   bool IsReplicated() const {
-    return !IsMaximal() && AllDimShardingsEmpty(dim_shardings_) &&
+    return !IsSingleDevice() && AllDimShardingsEmpty(dim_shardings_) &&
            unreduced_axes_.empty() && manual_axes_.empty();
   }
 
-  bool IsMaximal() const { return mesh_.IsMaximal(); }
+  bool IsSingleDevice() const { return mesh_.IsMaximal(); }
 
   bool IsManual() const {
-    return !IsMaximal() && AllDimShardingsEmpty(dim_shardings_) &&
+    return !IsSingleDevice() && AllDimShardingsEmpty(dim_shardings_) &&
            replicated_axes_.empty() && unreduced_axes_.empty() &&
            mesh_.ContainsAllMeshAxesInOrder(manual_axes_);
   }
 
   bool IsUnreduced() const {
-    return !IsMaximal() && AllDimShardingsEmpty(dim_shardings_) &&
+    return !IsSingleDevice() && AllDimShardingsEmpty(dim_shardings_) &&
            replicated_axes_.empty() && manual_axes_.empty() &&
            mesh_.ContainsAllMeshAxesInOrder(unreduced_axes_);
   }
 
   // Returns true if the tile size is the same as the input size.
   //
-  // This checks for both replicated and maximal sharding, as in both cases tile
+  // This checks for replicated or single-device sharding, as in both cases tile
   // size is same as input size.
-  bool IsTileMaximal() const { return IsReplicated() || IsMaximal(); }
+  bool IsReplicatedOrSingleDevice() const {
+    return IsReplicated() || IsSingleDevice();
+  }
 
   bool HasPartialReplication() const {
-    if (IsTileMaximal()) {
+    if (IsReplicatedOrSingleDevice()) {
       return false;
     }
     if (!replicated_axes().empty()) {
@@ -204,7 +206,7 @@ class NamedSharding {
                          /*manual_axes=*/{}, metadata);
   }
 
-  static NamedSharding MaximalSharding(
+  static NamedSharding SingleDevice(
       int64_t device_id, absl::Span<const OpMetadata> metadata = {}) {
     return NamedSharding(Mesh(device_id), /*dim_shardings=*/{},
                          /*replicated_axes=*/{},

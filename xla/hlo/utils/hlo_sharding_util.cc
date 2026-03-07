@@ -263,10 +263,10 @@ bool VerifySubTilingDataContainment(const Shape& potential_sharded_shape,
 bool IsSubTilingOrEqualNamedSharding(const Shape& potential_sharded_shape,
                                      const NamedSharding& potential_subsharding,
                                      const NamedSharding& sharding) {
-  if (sharding.IsTileMaximal()) {
+  if (sharding.IsReplicatedOrSingleDevice()) {
     return true;
   }
-  if (potential_subsharding.IsTileMaximal()) {
+  if (potential_subsharding.IsReplicatedOrSingleDevice()) {
     return false;
   }
 

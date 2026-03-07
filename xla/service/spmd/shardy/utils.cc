@@ -505,7 +505,7 @@ mlir::sdy::TensorShardingAttr convertToSdyShardingAttr(
   CHECK(hloSharding.UseNamedShardingLeaf());
 
   const NamedSharding& namedSharding = hloSharding.named_sharding();
-  if (namedSharding.IsMaximal()) {
+  if (namedSharding.IsSingleDevice()) {
     return mlir::sdy::TensorShardingAttr::getFullyClosed(
         context, /*rank=*/0,
         mlir::sdy::MeshAttr::getMaximal(context,
