@@ -132,7 +132,8 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
   pm->addPass(mlir::createTritonAMDGPUConvertToBufferOps(
       {rocm_cc.gfx_version(), /*allowBufferAtomics*/ true,
        /*analyzeSmallTensorOfst*/ false}));
-  pm->addPass(mlir::createTritonAMDGPUOptimizeBufferOpPtr());
+  pm->addNestedPass<mlir::triton::FuncOp>(
+      mlir::createTritonAMDGPUOptimizeBufferOpPtr());
 
   pm->addPass(mlir::createTritonAMDFoldTrueCmpI());
   pm->addNestedPass<mlir::triton::FuncOp>(
