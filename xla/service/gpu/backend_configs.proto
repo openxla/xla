@@ -414,7 +414,7 @@ message GpuBackendConfig {
     NativeEmitterBackendConfig native_emitter_backend_config = 15;
 
     CollectiveMetadataBackendConfig collective_metadata_backend_config = 16;
-
+    
     GroupedGemmBackendConfig grouped_gemm_backend_config = 17;
   }
 
