@@ -560,6 +560,9 @@ TEST(CommandBufferConversionPassTest, DontConvertIfNotMinGraphSize) {
 }
 
 TEST(CommandBufferConversionPassTest, ConvertWhileThunk) {
+  if (GetPlatformName() == "ROCM") {
+    GTEST_SKIP() << "Not supported on ROCm";
+  }
   CommandBufferConversionPass pass{"test"};
 
   ThunkSequence thunks;
@@ -669,6 +672,9 @@ TEST(CommandBufferConversionPassTest,
 }
 
 TEST(CommandBufferConversionPassTest, ConvertWhileThunkWithAsyncPair) {
+  if (GetPlatformName() == "ROCM") {
+    GTEST_SKIP() << "Not supported on ROCm";
+  }
   CommandBufferConversionPass pass{"test"};
 
   ThunkSequence thunks;
