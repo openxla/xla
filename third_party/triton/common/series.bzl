@@ -29,5 +29,6 @@ common_patch_list = [
     "//third_party/triton:common/remove_already_default_ods_setting.patch",
     "//third_party/triton:common/wgmma_pipeline_fix.patch",
     "//third_party/triton:common/nvdisasm_bin_path.patch",
+    "//third_party/triton:common/llvm_cl880642665.patch",
     # Add new patches just above this line
 ]
