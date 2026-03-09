@@ -38,9 +38,9 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -127,15 +127,13 @@ absl::StatusOr<ThunkProto> CollectiveBroadcastStartThunk::ToProto() const {
   return proto;
 }
 
-absl::StatusOr<bool> CollectiveBroadcastStartThunk::RunCollective(
+absl::Status CollectiveBroadcastStartThunk::RunCollective(
     const ExecuteParams& params, const GpuCliqueKey& clique_key,
     se::Stream& stream, Communicator& comm) {
   ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
                    ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
                                           config_.operand_element_type));
-  RETURN_IF_ERROR(
-      ::xla::gpu::RunCollectiveBroadcast(device_buffers, stream, comm));
-  return true;
+  return ::xla::gpu::RunCollectiveBroadcast(device_buffers, stream, comm);
 }
 
 absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,

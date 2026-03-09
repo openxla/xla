@@ -54,11 +54,11 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -321,7 +321,7 @@ absl::StatusOr<ThunkProto> CollectivePermuteStartThunk::ToProto() const {
   return proto;
 }
 
-absl::StatusOr<bool> CollectivePermuteStartThunk::RunCollective(
+absl::Status CollectivePermuteStartThunk::RunCollective(
     const ExecuteParams& params, const GpuCliqueKey& clique_key,
     se::Stream& stream, Communicator& comm) {
   TF_ASSIGN_OR_RETURN(
@@ -418,7 +418,7 @@ absl::StatusOr<bool> CollectivePermuteStartThunk::RunCollective(
     }
   }
 
-  return !use_memcpy;
+  return absl::OkStatus();
 }
 
 absl::Status RunCollectivePermute(

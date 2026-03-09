@@ -40,9 +40,9 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -153,15 +153,15 @@ absl::StatusOr<ThunkProto> AllGatherStartThunk::ToProto() const {
   return proto;
 }
 
-absl::StatusOr<bool> AllGatherStartThunk::RunCollective(
-    const ExecuteParams& params, const GpuCliqueKey& clique_key,
-    se::Stream& stream, Communicator& comm) {
+absl::Status AllGatherStartThunk::RunCollective(const ExecuteParams& params,
+                                                const GpuCliqueKey& clique_key,
+                                                se::Stream& stream,
+                                                Communicator& comm) {
   ASSIGN_OR_RETURN(std::vector<DeviceBufferPair> device_buffers,
                    ConvertToDeviceBuffers(params.buffer_allocations, buffers_,
                                           config_.config.operand_element_type));
-  RETURN_IF_ERROR(xla::gpu::RunAllGather(device_buffers, stream, comm,
-                                         config_.config.use_symmetric_buffer));
-  return true;
+  return xla::gpu::RunAllGather(device_buffers, stream, comm,
+                                config_.config.use_symmetric_buffer);
 }
 
 absl::Status RunAllGather(std::vector<DeviceBufferPair>& buffers,

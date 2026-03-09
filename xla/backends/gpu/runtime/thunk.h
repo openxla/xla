@@ -56,9 +56,9 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/gtl/int_type.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -467,6 +467,11 @@ class Thunk {
   virtual BufferUses buffer_uses() const { return {}; }
 
   static absl::string_view KindToString(Thunk::Kind kind);
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, Kind kind) {
+    sink.Append(KindToString(kind));
+  }
 
   ExecutionStreamId execution_stream_id() const {
     return thunk_info_.execution_stream_id;
