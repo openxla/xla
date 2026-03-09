@@ -42,7 +42,6 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
-#include "xla/python/ifrt/ir/sharding_param.h"
 #include "xla/python/ifrt/ir/transforms/passes.h"
 #include "xla/python/ifrt/ir/version.h"
 #include "xla/python/ifrt/memory.h"
@@ -126,14 +125,14 @@ IfrtIrLoadedExecutableTestBase::SerDeRoundTrip(
 }
 
 absl::StatusOr<ArrayRef> IfrtIrLoadedExecutableTestBase::CreateArray(
-    absl::Span<void* const> per_shard_data, Shape shape, DType dtype,
-    ShardingParam sharding_param, DeviceListRef device_list) {
+    absl::Span<void* const> per_shard_data, Shape shape, Shape shard_shape,
+    DType dtype, DeviceListRef device_list) {
   TF_RET_CHECK(per_shard_data.size() == device_list->devices().size())
       << "Inconsistent sizes. per_shard_data " << per_shard_data.size()
       << " vs device_list " << device_list->devices().size();
-  TF_ASSIGN_OR_RETURN(
-      ShardingRef sharding,
-      ShardingParamSharding::Create(sharding_param, device_list, MemoryKind()));
+  ShardingRef sharding = ConcreteEvenSharding::Create(
+      device_list, MemoryKind(), shape, shard_shape,
+      /*is_fully_replicated=*/shape == shard_shape);
   TF_ASSIGN_OR_RETURN(
       auto per_shard,
       sharding->Disassemble(shape, SingleDeviceShardSemantics::kAllShards));

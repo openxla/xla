@@ -41,7 +41,6 @@ limitations under the License.
 #include "xla/python/ifrt/ir/ifrt_ir_executable_version.h"
 #include "xla/python/ifrt/ir/ifrt_ir_loaded_executable_test_base.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
-#include "xla/python/ifrt/ir/sharding_param.h"
 #include "xla/python/ifrt/ir/version.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/serdes.h"
@@ -154,10 +153,11 @@ module {
 
   std::vector<int> data0 = {0, 1};
   std::vector<int> data1 = {2, 3};
+  Shape shard_shape({1, 2});
+  DType dtype(DType::kS32);
   TF_ASSERT_OK_AND_ASSIGN(
       ArrayRef input, CreateArray({data0.data(), data1.data()}, Shape({2, 2}),
-                                  DType(DType::kS32),
-                                  ShardingParam({2, 1}, {{0}, {2}}), devices));
+                                  shard_shape, dtype, devices));
 
   TF_ASSERT_OK_AND_ASSIGN(LoadedExecutable::ExecuteResult result,
                           loaded_exec->Execute(absl::MakeSpan(&input, 1),
@@ -166,9 +166,8 @@ module {
 
   TF_ASSERT_OK(result.status.Await());
   ASSERT_EQ(result.outputs.size(), 1);
-  ASSERT_NO_FATAL_FAILURE(
-      AssertPerShardData<int>(result.outputs[0], DType(DType::kS32),
-                              Shape({1, 2}), {{1, 2}, {3, 4}}, devices));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+      result.outputs[0], dtype, shard_shape, {{1, 2}, {3, 4}}, devices));
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, ControlDepXla) {
@@ -204,10 +203,11 @@ module {
 
   std::vector<int> data_shard0 = {0, 1};
   std::vector<int> data_shard1 = {2, 3};
+  DType dtype(DType::kS32);
+  Shape shard_shape({1, 2});
   TF_ASSERT_OK_AND_ASSIGN(
       ArrayRef input, CreateArray({data_shard0.data(), data_shard1.data()},
-                                  Shape({2, 2}), DType(DType::kS32),
-                                  ShardingParam({2, 1}, {{0}, {2}}), devices));
+                                  Shape({2, 2}), shard_shape, dtype, devices));
 
   TF_ASSERT_OK_AND_ASSIGN(
       LoadedExecutable::ExecuteResult result,
@@ -215,9 +215,8 @@ module {
                            ExecuteOptionsWithFillStatus(), devices));
   TF_ASSERT_OK(result.status.Await());
   ASSERT_EQ(result.outputs.size(), 1);
-  ASSERT_NO_FATAL_FAILURE(
-      AssertPerShardData<int>(result.outputs[0], DType(DType::kS32),
-                              Shape({1, 2}), {{1, 2}, {3, 4}}, devices));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+      result.outputs[0], dtype, shard_shape, {{1, 2}, {3, 4}}, devices));
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, CopyArrays) {
@@ -243,12 +242,13 @@ module {
           .Await());
 
   std::vector<int> data = {1, 2};
+  DType dtype(DType::kS32);
+  Shape shape({2});
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list0,
                           client_->MakeDeviceList({devices->devices()[0]}));
   TF_ASSERT_OK_AND_ASSIGN(
-      ArrayRef input,
-      CreateArray({data.data()}, Shape({2}), DType(DType::kS32),
-                  ShardingParam({1}, {{0}, {1}}), std::move(device_list0)));
+      ArrayRef input, CreateArray({data.data()}, shape, /*shard_shape=*/shape,
+                                  dtype, std::move(device_list0)));
 
   TF_ASSERT_OK_AND_ASSIGN(LoadedExecutable::ExecuteResult result,
                           loaded_exec->Execute(absl::MakeSpan(&input, 1),
@@ -259,9 +259,8 @@ module {
   ASSERT_EQ(result.outputs.size(), 1);
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list1,
                           client_->MakeDeviceList({devices->devices()[1]}));
-  ASSERT_NO_FATAL_FAILURE(
-      AssertPerShardData<int>(result.outputs[0], DType(DType::kS32), Shape({2}),
-                              {{1, 2}}, std::move(device_list1)));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+      result.outputs[0], dtype, shape, {{1, 2}}, std::move(device_list1)));
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, Reshard) {
@@ -293,12 +292,13 @@ module {
           .Await());
 
   std::vector<int> data = {0, 1, 2, 3};
+  DType dtype(DType::kS32);
+  Shape shape({2, 2});
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list0,
                           client_->MakeDeviceList({devices->devices()[0]}));
   TF_ASSERT_OK_AND_ASSIGN(
-      ArrayRef input,
-      CreateArray({data.data()}, Shape({2, 2}), DType(DType::kS32),
-                  ShardingParam({1, 1}, {{0}, {1}}), std::move(device_list0)));
+      ArrayRef input, CreateArray({data.data()}, shape, /*shard_shape=*/shape,
+                                  dtype, std::move(device_list0)));
 
   TF_ASSERT_OK_AND_ASSIGN(LoadedExecutable::ExecuteResult result,
                           loaded_exec->Execute(absl::MakeSpan(&input, 1),
@@ -307,14 +307,13 @@ module {
 
   TF_ASSERT_OK(result.status.Await());
   ASSERT_EQ(result.outputs.size(), 2);
-  ASSERT_NO_FATAL_FAILURE(
-      AssertPerShardData<int>(result.outputs[0], DType(DType::kS32),
-                              Shape({1, 2}), {{0, 1}, {2, 3}}, devices));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+      result.outputs[0], dtype, Shape({1, 2}), {{0, 1}, {2, 3}}, devices));
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list1,
                           client_->MakeDeviceList({devices->devices()[1]}));
-  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
-      result.outputs[1], DType(DType::kS32), Shape({2, 2}), {{0, 1, 2, 3}},
-      std::move(device_list1)));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(result.outputs[1], dtype,
+                                                  shape, {{0, 1, 2, 3}},
+                                                  std::move(device_list1)));
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, ZeroInput) {
@@ -386,10 +385,10 @@ module {
 
   std::vector<int> data0 = {0, 1};
   std::vector<int> data1 = {2, 3};
+  Shape shard_shape({1, 2});
   TF_ASSERT_OK_AND_ASSIGN(
       ArrayRef input, CreateArray({data0.data(), data1.data()}, Shape({2, 2}),
-                                  DType(DType::kS32),
-                                  ShardingParam({2, 1}, {{0}, {2}}), devices));
+                                  shard_shape, DType(DType::kS32), devices));
 
   TF_ASSERT_OK_AND_ASSIGN(LoadedExecutable::ExecuteResult result,
                           loaded_exec->Execute(absl::MakeSpan(&input, 1),
@@ -432,10 +431,11 @@ module {
 
   std::vector<int> data0 = {0, 1};
   std::vector<int> data1 = {2, 3};
+  DType dtype(DType::kS32);
+  Shape shard_shape({1, 2});
   TF_ASSERT_OK_AND_ASSIGN(
       ArrayRef input, CreateArray({data0.data(), data1.data()}, Shape({2, 2}),
-                                  DType(DType::kS32),
-                                  ShardingParam({2, 1}, {{0}, {2}}), devices));
+                                  shard_shape, dtype, devices));
 
   TF_ASSERT_OK_AND_ASSIGN(LoadedExecutable::ExecuteResult result,
                           loaded_exec->Execute(absl::MakeSpan(&input, 1),
@@ -443,9 +443,8 @@ module {
                                                /*devices=*/std::nullopt));
   TF_ASSERT_OK(result.status.Await());
   ASSERT_EQ(result.outputs.size(), 1);
-  ASSERT_NO_FATAL_FAILURE(
-      AssertPerShardData<int>(result.outputs[0], DType(DType::kS32),
-                              Shape({1, 2}), {{1, 2}, {3, 4}}, devices));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+      result.outputs[0], dtype, shard_shape, {{1, 2}, {3, 4}}, devices));
 
   std::vector<int> data(input->shape().num_elements());
   EXPECT_THAT(input
@@ -487,10 +486,11 @@ module {
 
   std::vector<int> data0 = {0, 1};
   std::vector<int> data1 = {2, 3};
+  DType dtype(DType::kS32);
+  Shape shard_shape({1, 2});
   TF_ASSERT_OK_AND_ASSIGN(
       ArrayRef input, CreateArray({data0.data(), data1.data()}, Shape({2, 2}),
-                                  DType(DType::kS32),
-                                  ShardingParam({2, 1}, {{0}, {2}}), devices));
+                                  shard_shape, dtype, devices));
 
   ExecuteOptions options;
   options.fill_status = true;
@@ -501,9 +501,8 @@ module {
                            /*devices=*/std::nullopt));
   TF_ASSERT_OK(result.status.Await());
   ASSERT_EQ(result.outputs.size(), 1);
-  ASSERT_NO_FATAL_FAILURE(
-      AssertPerShardData<int>(result.outputs[0], DType(DType::kS32),
-                              Shape({1, 2}), {{1, 2}, {3, 4}}, devices));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+      result.outputs[0], dtype, shard_shape, {{1, 2}, {3, 4}}, devices));
   // Not using `CopyToHostBuffer` because some implementations don't support it.
   ASSERT_FALSE(input->IsDeleted());
   EXPECT_THAT(input->DisassembleIntoSingleDeviceArrays(
@@ -537,10 +536,11 @@ module {
 
   std::vector<int> data0 = {0, 1};
   std::vector<int> data1 = {2, 3};
+  DType dtype(DType::kS32);
+  Shape shard_shape({1, 2});
   TF_ASSERT_OK_AND_ASSIGN(
       ArrayRef input, CreateArray({data0.data(), data1.data()}, Shape({2, 2}),
-                                  DType(DType::kS32),
-                                  ShardingParam({2, 1}, {{0}, {2}}), devices));
+                                  shard_shape, dtype, devices));
 
   ExecuteOptions options;
   options.fill_status = true;
@@ -551,9 +551,8 @@ module {
                            /*devices=*/std::nullopt));
   TF_ASSERT_OK(result.status.Await());
   ASSERT_EQ(result.outputs.size(), 1);
-  ASSERT_NO_FATAL_FAILURE(
-      AssertPerShardData<int>(result.outputs[0], DType(DType::kS32),
-                              Shape({1, 2}), {{0, 1}, {2, 3}}, devices));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+      result.outputs[0], dtype, shard_shape, {{0, 1}, {2, 3}}, devices));
   // Not using `CopyToHostBuffer` because some implementations don't support it.
   ASSERT_FALSE(input->IsDeleted());
   EXPECT_THAT(input->DisassembleIntoSingleDeviceArrays(
@@ -594,10 +593,11 @@ module {
 
   std::vector<int> data_shard0 = {0, 1};
   std::vector<int> data_shard1 = {2, 3};
+  DType dtype(DType::kS32);
+  Shape shard_shape({1, 2});
   TF_ASSERT_OK_AND_ASSIGN(
       ArrayRef input, CreateArray({data_shard0.data(), data_shard1.data()},
-                                  Shape({2, 2}), DType(DType::kS32),
-                                  ShardingParam({2, 1}, {{0}, {2}}), devices));
+                                  Shape({2, 2}), shard_shape, dtype, devices));
 
   ExecuteOptions options;
   options.fill_status = true;
@@ -609,14 +609,14 @@ module {
   ASSERT_EQ(result.outputs.size(), 2);
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list0,
                           client_->MakeDeviceList({devices->devices()[0]}));
-  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
-      result.outputs[0], DType(DType::kS32), Shape({1, 2}), {{0, 1}},
-      std::move(device_list0)));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(result.outputs[0], dtype,
+                                                  shard_shape, {{0, 1}},
+                                                  std::move(device_list0)));
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list1,
                           client_->MakeDeviceList({devices->devices()[1]}));
-  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
-      result.outputs[1], DType(DType::kS32), Shape({1, 2}), {{2, 3}},
-      std::move(device_list1)));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(result.outputs[1], dtype,
+                                                  shard_shape, {{2, 3}},
+                                                  std::move(device_list1)));
   // Not using `CopyToHostBuffer` because some implementations don't support it.
   ASSERT_FALSE(input->IsDeleted());
   EXPECT_THAT(input->DisassembleIntoSingleDeviceArrays(
@@ -658,10 +658,11 @@ module {
 
   std::vector<int> data_shard0 = {0, 1};
   std::vector<int> data_shard1 = {2, 3};
+  DType dtype(DType::kS32);
+  Shape shard_shape({1, 2});
   TF_ASSERT_OK_AND_ASSIGN(
       ArrayRef input, CreateArray({data_shard0.data(), data_shard1.data()},
-                                  Shape({2, 2}), DType(DType::kS32),
-                                  ShardingParam({2, 1}, {{0}, {2}}), devices));
+                                  Shape({2, 2}), shard_shape, dtype, devices));
 
   TF_ASSERT_OK_AND_ASSIGN(
       LoadedExecutable::ExecuteResult result,
@@ -669,9 +670,8 @@ module {
                            ExecuteOptionsWithFillStatus(), devices));
   TF_ASSERT_OK(result.status.Await());
   ASSERT_EQ(result.outputs.size(), 1);
-  ASSERT_NO_FATAL_FAILURE(
-      AssertPerShardData<int>(result.outputs[0], DType(DType::kS32),
-                              Shape({1, 2}), {{2, 3}, {4, 5}}, devices));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+      result.outputs[0], dtype, shard_shape, {{2, 3}, {4, 5}}, devices));
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, RemapFromOneToTwoArrays) {
@@ -706,10 +706,11 @@ module {
 
   std::vector<int> data_shard0 = {0, 1};
   std::vector<int> data_shard1 = {2, 3};
+  DType dtype(DType::kS32);
+  Shape shard_shape({1, 2});
   TF_ASSERT_OK_AND_ASSIGN(
       ArrayRef input, CreateArray({data_shard0.data(), data_shard1.data()},
-                                  Shape({2, 2}), DType(DType::kS32),
-                                  ShardingParam({2, 1}, {{0}, {2}}), devices));
+                                  Shape({2, 2}), shard_shape, dtype, devices));
 
   TF_ASSERT_OK_AND_ASSIGN(
       LoadedExecutable::ExecuteResult result,
@@ -719,14 +720,14 @@ module {
   ASSERT_EQ(result.outputs.size(), 2);
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list0,
                           client_->MakeDeviceList({devices->devices()[0]}));
-  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
-      result.outputs[0], DType(DType::kS32), Shape({1, 2}), {{0, 1}},
-      std::move(device_list0)));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(result.outputs[0], dtype,
+                                                  shard_shape, {{0, 1}},
+                                                  std::move(device_list0)));
   TF_ASSERT_OK_AND_ASSIGN(DeviceListRef device_list1,
                           client_->MakeDeviceList({devices->devices()[1]}));
-  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
-      result.outputs[1], DType(DType::kS32), Shape({1, 2}), {{2, 3}},
-      std::move(device_list1)));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(result.outputs[1], dtype,
+                                                  shard_shape, {{2, 3}},
+                                                  std::move(device_list1)));
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, LoadedExecBinding) {
@@ -789,10 +790,11 @@ module {
 
   std::vector<int> data0 = {0, 1};
   std::vector<int> data1 = {2, 3};
+  DType dtype(DType::kS32);
+  Shape shard_shape({1, 2});
   TF_ASSERT_OK_AND_ASSIGN(
       ArrayRef input, CreateArray({data0.data(), data1.data()}, Shape({2, 2}),
-                                  DType(DType::kS32),
-                                  ShardingParam({2, 1}, {{0}, {2}}), devices));
+                                  shard_shape, dtype, devices));
 
   TF_ASSERT_OK_AND_ASSIGN(LoadedExecutable::ExecuteResult result,
                           loaded_exec->Execute(absl::MakeSpan(&input, 1),
@@ -801,9 +803,8 @@ module {
 
   TF_ASSERT_OK(result.status.Await());
   ASSERT_EQ(result.outputs.size(), 1);
-  ASSERT_NO_FATAL_FAILURE(
-      AssertPerShardData<int>(result.outputs[0], DType(DType::kS32),
-                              Shape({1, 2}), {{1, 2}, {3, 4}}, devices));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+      result.outputs[0], dtype, shard_shape, {{1, 2}, {3, 4}}, devices));
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, ConcurrentCompilation) {
@@ -1029,6 +1030,9 @@ module {
 
   std::vector<int> data1_shard0 = {0, 1};
   std::vector<int> data1_shard1 = {2, 3};
+  DType dtype(DType::kS32);
+  Shape shape({2, 2});
+  Shape shard_shape({1, 2});
   ASSERT_OK_AND_ASSIGN(
       DeviceListRef first_two_devices,
       client_->MakeDeviceList({devices->devices()[0], devices->devices()[1]}));
@@ -1037,16 +1041,14 @@ module {
       client_->MakeDeviceList({devices->devices()[2], devices->devices()[3]}));
   ASSERT_OK_AND_ASSIGN(
       ArrayRef input1,
-      CreateArray({data1_shard0.data(), data1_shard1.data()}, Shape({2, 2}),
-                  DType(DType::kS32), ShardingParam({2, 1}, {{0}, {2}}),
-                  first_two_devices));
+      CreateArray({data1_shard0.data(), data1_shard1.data()}, shape,
+                  shard_shape, dtype, first_two_devices));
   std::vector<int> data2_shard0 = {10, 11};
   std::vector<int> data2_shard1 = {12, 13};
   ASSERT_OK_AND_ASSIGN(
       ArrayRef input2,
-      CreateArray({data2_shard0.data(), data2_shard1.data()}, Shape({2, 2}),
-                  DType(DType::kS32), ShardingParam({2, 1}, {{0}, {2}}),
-                  last_two_devices));
+      CreateArray({data2_shard0.data(), data2_shard1.data()}, shape,
+                  shard_shape, dtype, last_two_devices));
 
   std::vector<ArrayRef> inputs = {input1, input2};
   ASSERT_OK_AND_ASSIGN(
@@ -1055,12 +1057,12 @@ module {
                                   ExecuteOptionsWithFillStatus(), devices));
   ASSERT_OK(result.status.Await());
   ASSERT_EQ(result.outputs.size(), 2);
-  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
-      result.outputs[0], DType(DType::kS32), Shape({1, 2}), {{1, 2}, {3, 4}},
-      first_two_devices));
-  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
-      result.outputs[1], DType(DType::kS32), Shape({1, 2}),
-      {{12, 13}, {14, 15}}, last_two_devices));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(result.outputs[0], dtype,
+                                                  shard_shape, {{1, 2}, {3, 4}},
+                                                  first_two_devices));
+  ASSERT_NO_FATAL_FAILURE(
+      AssertPerShardData<int>(result.outputs[1], dtype, shard_shape,
+                              {{12, 13}, {14, 15}}, last_two_devices));
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, CallStableHlo) {
@@ -1141,14 +1143,15 @@ module {
           .Await());
 
   std::vector<int> data = {1, 2};
+  DType dtype(DType::kS32);
+  Shape shape({2});
   ASSERT_OK_AND_ASSIGN(DeviceListRef first_device,
                        client_->MakeDeviceList({devices->devices()[0]}));
   ASSERT_OK_AND_ASSIGN(DeviceListRef second_device,
                        client_->MakeDeviceList({devices->devices()[1]}));
-  ASSERT_OK_AND_ASSIGN(
-      ArrayRef input,
-      CreateArray({data.data()}, Shape({2}), DType(DType::kS32),
-                  ShardingParam({1}, {{0}, {1}}), first_device));
+  ASSERT_OK_AND_ASSIGN(ArrayRef input,
+                       CreateArray({data.data()}, shape, /*shard_shape=*/shape,
+                                   dtype, first_device));
 
   ASSERT_OK_AND_ASSIGN(
       LoadedExecutable::ExecuteResult result,
@@ -1157,9 +1160,8 @@ module {
   ASSERT_OK(result.status.Await());
   ASSERT_EQ(result.outputs.size(), 2);
   for (int i = 0; i < result.outputs.size(); ++i) {
-    ASSERT_NO_FATAL_FAILURE(
-        AssertPerShardData<int>(result.outputs[i], DType(DType::kS32),
-                                Shape({2}), {{1, 2}}, second_device));
+    ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+        result.outputs[i], dtype, shape, {{1, 2}}, second_device));
   }
 }
 
@@ -1204,10 +1206,11 @@ module {
           .Await());
 
   std::vector<int> data = {0, 1};
-  ASSERT_OK_AND_ASSIGN(
-      ArrayRef input,
-      CreateArray({data.data()}, Shape({2, 1}), DType(DType::kS32),
-                  ShardingParam({1, 1}, {{0}, {1}}), cpu_device));
+  DType dtype(DType::kS32);
+  Shape shape({2, 1});
+  ASSERT_OK_AND_ASSIGN(ArrayRef input,
+                       CreateArray({data.data()}, shape, /*shard_shape=*/shape,
+                                   dtype, cpu_device));
 
   ASSERT_OK_AND_ASSIGN(
       LoadedExecutable::ExecuteResult result,
@@ -1215,8 +1218,8 @@ module {
                                   ExecuteOptionsWithFillStatus(), devices));
   ASSERT_OK(result.status.Await());
   ASSERT_EQ(result.outputs.size(), 1);
-  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
-      result.outputs[0], DType(DType::kS32), Shape({2, 1}), {{0, 1}}, device));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(result.outputs[0], dtype,
+                                                  shape, {{0, 1}}, device));
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, LoadedExecBindingWithDiffNumInputsErrors) {
@@ -1411,10 +1414,11 @@ module {
 
   std::vector<int> data_shard0 = {0, 1};
   std::vector<int> data_shard1 = {2, 3};
-  ASSERT_OK_AND_ASSIGN(ArrayRef input,
-                       CreateArray({data_shard0.data(), data_shard1.data()},
-                                   Shape({2, 2}), DType(DType::kS32),
-                                   ShardingParam({2, 1}, {{0}, {2}}), devices));
+  Shape shard_shape({1, 2});
+  ASSERT_OK_AND_ASSIGN(
+      ArrayRef input,
+      CreateArray({data_shard0.data(), data_shard1.data()}, Shape({2, 2}),
+                  shard_shape, DType(DType::kS32), devices));
 
   ASSERT_OK_AND_ASSIGN(
       LoadedExecutable::ExecuteResult result,
@@ -1473,10 +1477,11 @@ module {
 
   std::vector<int> data_shard0 = {0, 1};
   std::vector<int> data_shard1 = {2, 3};
-  ASSERT_OK_AND_ASSIGN(ArrayRef input,
-                       CreateArray({data_shard0.data(), data_shard1.data()},
-                                   Shape({2, 2}), DType(DType::kS32),
-                                   ShardingParam({2, 1}, {{0}, {2}}), devices));
+  Shape shard_shape({1, 2});
+  ASSERT_OK_AND_ASSIGN(
+      ArrayRef input,
+      CreateArray({data_shard0.data(), data_shard1.data()}, Shape({2, 2}),
+                  shard_shape, DType(DType::kS32), devices));
 
   ASSERT_OK_AND_ASSIGN(
       LoadedExecutable::ExecuteResult result,
@@ -1541,19 +1546,21 @@ module {
           .Await());
 
   std::vector<int> array_0_data = {0, 1};
+  DType dtype(DType::kS32);
+  Shape shape({1, 2});
   ASSERT_OK_AND_ASSIGN(DeviceListRef device_list0,
                        client_->MakeDeviceList({devices->devices()[0]}));
   ASSERT_OK_AND_ASSIGN(
       ArrayRef input0,
-      CreateArray({array_0_data.data()}, Shape({1, 2}), DType(DType::kS32),
-                  ShardingParam({1, 1}, {{0}, {1}}), std::move(device_list0)));
+      CreateArray({array_0_data.data()}, shape, /*shard_shape=*/shape, dtype,
+                  std::move(device_list0)));
   std::vector<int> array_1_data = {2, 3};
   ASSERT_OK_AND_ASSIGN(DeviceListRef device_list1,
                        client_->MakeDeviceList({devices->devices()[1]}));
   ASSERT_OK_AND_ASSIGN(
       ArrayRef input1,
-      CreateArray({array_1_data.data()}, Shape({1, 2}), DType(DType::kS32),
-                  ShardingParam({1, 1}, {{0}, {1}}), std::move(device_list1)));
+      CreateArray({array_1_data.data()}, shape, /*shard_shape=*/shape, dtype,
+                  std::move(device_list1)));
 
   std::vector<ArrayRef> inputs = {input0, input1};
   ASSERT_OK_AND_ASSIGN(
@@ -1562,9 +1569,8 @@ module {
                                   ExecuteOptionsWithFillStatus(), devices));
   ASSERT_OK(result.status.Await());
   ASSERT_EQ(result.outputs.size(), 1);
-  ASSERT_NO_FATAL_FAILURE(
-      AssertPerShardData<int>(result.outputs[0], DType(DType::kS32),
-                              Shape({1, 2}), {{0, 1}, {2, 3}}, devices));
+  ASSERT_NO_FATAL_FAILURE(AssertPerShardData<int>(
+      result.outputs[0], dtype, shape, {{0, 1}, {2, 3}}, devices));
 
   // Check that the inputs got donated.
   EXPECT_TRUE(input0->IsDeleted());
@@ -1724,12 +1730,13 @@ module {
               std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices)))
           .Await());
   std::vector<int> input_data = {1};
+  Shape shape({1, 1});
   ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
                        client_->MakeDeviceList({devices->devices().front()}));
   ASSERT_OK_AND_ASSIGN(
       ArrayRef input,
-      CreateArray({input_data.data()}, Shape({1, 1}), DType(DType::kS32),
-                  ShardingParam({1, 1}, {{0}, {1}}), std::move(device_list)));
+      CreateArray({input_data.data()}, shape, /*shard_shape=*/shape,
+                  DType(DType::kS32), std::move(device_list)));
 
   ASSERT_OK_AND_ASSIGN(
       LoadedExecutable::ExecuteResult result,
@@ -1819,10 +1826,10 @@ module {
           .Await());
 
   std::vector<int> data = {42};
-  ASSERT_OK_AND_ASSIGN(
-      ArrayRef input,
-      CreateArray({data.data()}, Shape({1, 1}), DType(DType::kS32),
-                  ShardingParam({1, 1}, {{0}, {1}}), devices));
+  Shape shape({1, 1});
+  ASSERT_OK_AND_ASSIGN(ArrayRef input,
+                       CreateArray({data.data()}, shape, /*shard_shape=*/shape,
+                                   DType(DType::kS32), devices));
   ASSERT_OK_AND_ASSIGN(
       LoadedExecutable::ExecuteResult result,
       ifrt_ir_executable->Execute(absl::MakeSpan(&input, 1),
@@ -1919,10 +1926,10 @@ module {
           .Await());
 
   std::vector<int> data = {42};
-  ASSERT_OK_AND_ASSIGN(
-      ArrayRef input,
-      CreateArray({data.data()}, Shape({1, 1}), DType(DType::kS32),
-                  ShardingParam({1, 1}, {{0}, {1}}), devices));
+  Shape shape({1, 1});
+  ASSERT_OK_AND_ASSIGN(ArrayRef input,
+                       CreateArray({data.data()}, shape, /*shard_shape=*/shape,
+                                   DType(DType::kS32), devices));
   ASSERT_OK_AND_ASSIGN(
       LoadedExecutable::ExecuteResult result,
       ifrt_ir_executable->Execute(absl::MakeSpan(&input, 1),
@@ -2019,10 +2026,10 @@ module {
           .Await());
 
   std::vector<int> data = {42};
-  ASSERT_OK_AND_ASSIGN(
-      ArrayRef input,
-      CreateArray({data.data()}, Shape({1, 1}), DType(DType::kS32),
-                  ShardingParam({1, 1}, {{0}, {1}}), devices));
+  Shape shape({1, 1});
+  ASSERT_OK_AND_ASSIGN(ArrayRef input,
+                       CreateArray({data.data()}, shape, /*shard_shape=*/shape,
+                                   DType(DType::kS32), devices));
   ASSERT_OK_AND_ASSIGN(
       LoadedExecutable::ExecuteResult result,
       ifrt_ir_executable->Execute(absl::MakeSpan(&input, 1),

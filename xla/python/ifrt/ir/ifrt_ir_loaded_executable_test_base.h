@@ -31,7 +31,6 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
-#include "xla/python/ifrt/ir/sharding_param.h"
 #include "xla/python/ifrt/ir/version.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/tsl/platform/test.h"
@@ -67,9 +66,8 @@ class IfrtIrLoadedExecutableTestBase : public testing::Test {
   // TODO(hyeontaek): Remove this when MakeArrayFromHostBuffer supports it
   // directly.
   absl::StatusOr<ArrayRef> CreateArray(absl::Span<void* const> per_shard_data,
-                                       Shape shape, DType dtype,
-                                       ShardingParam sharding_param,
-                                       DeviceListRef device_list);
+                                       Shape shape, Shape shard_shape,
+                                       DType dtype, DeviceListRef device_list);
 
   int32_t GetNumDevices();
 
