@@ -104,6 +104,51 @@ lhs_contracting_dims={1}, rhs_contracting_dims={0}, algorithm=dot_bf16_bf16_bf16
   ASSERT_EQ(runtime_h100, approx_hbm_time);
 }
 
+TEST_F(GpuDotFusionCostModelTest, DifferentContractingDimsHaveSameRuntime) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module_1_0,
+                          ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+p0 = bf16[8192,1024] parameter(0)
+p1 = bf16[1024,4096] parameter(1)
+ROOT r = bf16[8192,4096] dot(p0, p1),
+lhs_contracting_dims={1}, rhs_contracting_dims={0}, algorithm=dot_bf16_bf16_bf16
+})"));
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module_0_1,
+                          ParseAndReturnVerifiedModule(R"(
+ENTRY e {
+p0 = bf16[1024,8192] parameter(0)
+p1 = bf16[4096,1024] parameter(1)
+ROOT r = bf16[8192,4096] dot(p0, p1),
+lhs_contracting_dims={0}, rhs_contracting_dims={1}, algorithm=dot_bf16_bf16_bf16
+})"));
+
+  BlockLevelParameters block_params;
+  block_params.output_tile_sizes = {{128, 256}};
+  block_params.num_warps = 4;
+  block_params.num_ctas = 1;
+  block_params.num_stages = 1;
+
+  auto* dot_1_0 = Cast<HloDotInstruction>(
+      module_1_0->entry_computation()->root_instruction());
+  ASSERT_IS_OK(gpu_dot_fusion_cost_model::IsSupported(dot_1_0));
+  TF_ASSERT_OK_AND_ASSIGN(
+      absl::Duration runtime_h100_1_0,
+      gpu_dot_fusion_cost_model::EstimateRunTimeForDotOpWithBlockParameters(
+          dot_1_0, block_params, ddh100_));
+
+  auto* dot_0_1 = Cast<HloDotInstruction>(
+      module_0_1->entry_computation()->root_instruction());
+  ASSERT_IS_OK(gpu_dot_fusion_cost_model::IsSupported(dot_0_1));
+  TF_ASSERT_OK_AND_ASSIGN(
+      absl::Duration runtime_h100_0_1,
+      gpu_dot_fusion_cost_model::EstimateRunTimeForDotOpWithBlockParameters(
+          dot_0_1, block_params, ddh100_));
+
+  ASSERT_GT(absl::ToInt64Microseconds(runtime_h100_1_0), 0);
+  ASSERT_EQ(runtime_h100_1_0, runtime_h100_0_1);
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

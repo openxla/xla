@@ -314,19 +314,13 @@ absl::Status IsSupported(const HloDotInstruction* dot) {
         absl::StrCat("Batch dimension > 1 is not supported, got ",
                      absl::StrJoin(dim_numbers.lhs_batch_dimensions(), ",")));
   }
-  if (dim_numbers.lhs_contracting_dimensions_size() != 1) {
+  if (dim_numbers.lhs_contracting_dimensions_size() != 1 ||
+      dim_numbers.rhs_contracting_dimensions_size() != 1) {
     return absl::UnimplementedError(absl::StrCat(
-        "Exactly one contracting dimension is supported, got ",
-        absl::StrJoin(dim_numbers.lhs_contracting_dimensions(), ",")));
-  }
-  if (dim_numbers.lhs_contracting_dimensions(0) != 1 ||
-      dim_numbers.rhs_contracting_dimensions(0) != 0) {
-    return absl::UnimplementedError(absl::StrCat(
-        "Only lhs_contracting_dimensions=1 (got ",
+        "Exactly one contracting dimension is supported, got LHS: [",
         absl::StrJoin(dim_numbers.lhs_contracting_dimensions(), ","),
-        ") and  rhs_contracting_dimensions=0 (got ",
-        absl::StrJoin(dim_numbers.rhs_contracting_dimensions(), ","),
-        ") are supported."));
+        "], RHS: [",
+        absl::StrJoin(dim_numbers.rhs_contracting_dimensions(), ","), "]"));
   }
 
   return absl::OkStatus();
