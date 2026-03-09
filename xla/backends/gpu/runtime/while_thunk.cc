@@ -34,7 +34,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/backends/gpu/runtime/while_loop.h"
-#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
@@ -50,12 +49,11 @@ using ::tsl::profiler::TraceMe;
 using ::tsl::profiler::TraceMeEncode;
 
 WhileThunk::WhileThunk(
-    ThunkInfo thunk_info, const HloInstruction* loop,
+    ThunkInfo thunk_info,
     const BufferAllocation::Slice& condition_result_buffer_index,
     ThunkSequence condition_thunks, ThunkSequence body_thunks,
     std::optional<int64_t> trip_count)
     : Thunk(Kind::kWhile, thunk_info),
-      loop_(loop),
       condition_result_buffer_index_(condition_result_buffer_index),
       condition_executor_(std::move(condition_thunks)),
       body_executor_(std::move(body_thunks)),
@@ -218,7 +216,7 @@ absl::StatusOr<std::unique_ptr<WhileThunk>> WhileThunk::FromProto(
     trip_count = thunk_proto.trip_count();
   }
   return std::make_unique<WhileThunk>(
-      std::move(thunk_info), /*loop=*/nullptr, condition_result_buffer_index,
+      std::move(thunk_info), condition_result_buffer_index,
       std::move(condition_seq_thunk->thunks()),
       std::move(body_seq_thunk->thunks()), trip_count);
 }

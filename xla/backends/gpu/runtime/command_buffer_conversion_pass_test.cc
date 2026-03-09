@@ -170,8 +170,8 @@ std::unique_ptr<WhileThunk> CreateWhileThunk(ThunkSequence condition_thunks,
                                              const BufferAllocation& alloc) {
   BufferAllocation::Slice slice(&alloc, 0, 1024);
 
-  return std::make_unique<WhileThunk>(Thunk::ThunkInfo(), /*loop=*/nullptr,
-                                      slice, std::move(condition_thunks),
+  return std::make_unique<WhileThunk>(Thunk::ThunkInfo(), slice,
+                                      std::move(condition_thunks),
                                       std::move(body_thunks));
 }
 

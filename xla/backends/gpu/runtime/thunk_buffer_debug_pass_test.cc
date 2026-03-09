@@ -32,7 +32,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/runtime_intrinsics.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
-#include "xla/backends/gpu/runtime/shaped_slice.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_buffer_debug_saver_inserter.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
@@ -46,6 +45,7 @@ limitations under the License.
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/shaped_slice.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -311,7 +311,7 @@ TEST_F(ThunkBufferDebugPassTest, RecursivelyInsertsBuffersDebugChecksumThunks) {
   ThunkSequence while_condition_thunks;
   while_condition_thunks.push_back(std::move(while_condition_fake_thunk));
   auto while_thunk = std::make_unique<WhileThunk>(
-      Thunk::ThunkInfo(), /*loop=*/nullptr,
+      Thunk::ThunkInfo(),
       /*condition_result_buffer_index=*/BufferAllocation::Slice(),
       /*condition_thunks=*/std::move(while_condition_thunks),
       /*body_thunks=*/std::move(while_body_thunks));

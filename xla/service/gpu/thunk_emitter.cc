@@ -99,7 +99,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/nvshmem_recv_thunk.h"
 #include "xla/backends/gpu/runtime/nvshmem_send_thunk.h"
 #include "xla/backends/gpu/runtime/outfeed_thunk.h"
-#include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/recv_thunk.h"
 #include "xla/backends/gpu/runtime/replica_id_thunk.h"
@@ -1387,9 +1386,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitWhile(
 
   Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
-  return GetThunkSequence(
-      std::make_unique<WhileThunk>(info, instr, pred, std::move(cond_thunks),
-                                   std::move(body_thunks), trip_count));
+  return GetThunkSequence(std::make_unique<WhileThunk>(
+      info, pred, std::move(cond_thunks), std::move(body_thunks), trip_count));
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRngGetAndUpdateState(

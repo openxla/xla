@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/backends/gpu/runtime/while_loop.h"
 #include "xla/executable_run_options.h"
-#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -42,7 +41,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/stream_executor/stream_executor_memory_allocator.h"
+#include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
@@ -86,15 +85,15 @@ WhileThunk CreateWhileThunk(
     const BufferAllocation::Slice& condition_result_buffer_index,
     ThunkSequence condition_thunks, ThunkSequence body_thunks,
     std::optional<int64_t> trip_count) {
-  return WhileThunk(thunk_info, /*loop=*/nullptr, condition_result_buffer_index,
+  return WhileThunk(thunk_info, condition_result_buffer_index,
                     std::move(condition_thunks), std::move(body_thunks),
                     trip_count);
 }
 
 class IterationLoggerThunk : public Thunk {
  public:
-  explicit IterationLoggerThunk(const HloInstruction* loop)
-      : Thunk(Thunk::Kind::kKernel, Thunk::ThunkInfo()), loop_(loop) {}
+  explicit IterationLoggerThunk()
+      : Thunk(Thunk::Kind::kKernel, Thunk::ThunkInfo()) {}
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override {
     if (const WhileLoopState* state = IsInsideWhileLoop()) {
@@ -110,7 +109,6 @@ class IterationLoggerThunk : public Thunk {
   }
 
  private:
-  const HloInstruction* loop_;
   std::vector<std::optional<int64_t>> iteration_counters_;
 };
 
@@ -118,25 +116,6 @@ class IterationLoggerThunk : public Thunk {
 // a unit test for the known trip count case.
 class KnownTripCountWhileThunkTest : public HloPjRtTestBase {
  protected:
-  absl::StatusOr<const HloInstruction*> CreateFakeWhileInstruction() {
-    constexpr absl::string_view kDummyModule = R"(
-        body {
-          ROOT r = (pred[]) parameter(0)
-        }
-        cond {
-          param = (pred[]) parameter(0)
-          ROOT r = pred[] get-tuple-element(param), index=0
-        }
-        ENTRY main {
-          p = (pred[]) parameter(0)
-          ROOT while = (pred[]) while(p), condition=cond, body=body
-        })";
-
-    TF_ASSIGN_OR_RETURN(owned_modules_.emplace_back(),
-                        ParseAndReturnVerifiedModule(kDummyModule));
-    return owned_modules_.back()->entry_computation()->root_instruction();
-  }
-
   absl::Status ExecuteThunk(Thunk& thunk) {
     TF_ASSIGN_OR_RETURN(auto name, PlatformUtil::CanonicalPlatformName("gpu"));
     TF_ASSIGN_OR_RETURN(auto* platform,
@@ -151,9 +130,8 @@ class KnownTripCountWhileThunkTest : public HloPjRtTestBase {
     return thunk.ExecuteOnStream(Thunk::ExecuteParams(params));
   }
 
-  std::pair<ThunkSequence, IterationLoggerThunk*> CreateLoggingThunkSequence(
-      const HloInstruction* loop) {
-    auto owned_logger = std::make_unique<IterationLoggerThunk>(loop);
+  std::pair<ThunkSequence, IterationLoggerThunk*> CreateLoggingThunkSequence() {
+    auto owned_logger = std::make_unique<IterationLoggerThunk>();
     auto* logger = owned_logger.get();
     ThunkSequence sequence;
     sequence.push_back(std::move(owned_logger));
@@ -165,13 +143,10 @@ class KnownTripCountWhileThunkTest : public HloPjRtTestBase {
 };
 
 TEST_F(KnownTripCountWhileThunkTest, CurrentLoopIterationKnownTripCountTest) {
-  TF_ASSERT_OK_AND_ASSIGN(const HloInstruction* loop,
-                          CreateFakeWhileInstruction());
-
-  auto [body_thunks, logger] = CreateLoggingThunkSequence(loop);
+  auto [body_thunks, logger] = CreateLoggingThunkSequence();
 
   BufferAllocation::Slice slice;
-  WhileThunk while_thunk(Thunk::ThunkInfo(), loop,
+  WhileThunk while_thunk(Thunk::ThunkInfo(),
                          /*condition_result_buffer_index=*/slice,
                          /*condition_thunks=*/ThunkSequence(),
                          /*body_thunks=*/std::move(body_thunks),
@@ -180,18 +155,12 @@ TEST_F(KnownTripCountWhileThunkTest, CurrentLoopIterationKnownTripCountTest) {
   EXPECT_THAT(ExecuteThunk(while_thunk), absl_testing::IsOk());
   EXPECT_THAT(logger->logged_counters(), ElementsAre(0, 1, 2, 3, 4));
 }
-
 TEST_F(KnownTripCountWhileThunkTest, CurrentLoopIterationNestedTest) {
-  TF_ASSERT_OK_AND_ASSIGN(const HloInstruction* outer_loop,
-                          CreateFakeWhileInstruction());
-  TF_ASSERT_OK_AND_ASSIGN(const HloInstruction* inner_loop,
-                          CreateFakeWhileInstruction());
-
-  auto [body_thunks, logger] = CreateLoggingThunkSequence(outer_loop);
+  auto [body_thunks, logger] = CreateLoggingThunkSequence();
 
   BufferAllocation::Slice slice;
   auto inner_while_thunk =
-      std::make_unique<WhileThunk>(Thunk::ThunkInfo(), inner_loop,
+      std::make_unique<WhileThunk>(Thunk::ThunkInfo(),
                                    /*condition_result_buffer_index=*/slice,
                                    /*condition_thunks=*/ThunkSequence(),
                                    /*body_thunks=*/std::move(body_thunks),
@@ -200,7 +169,7 @@ TEST_F(KnownTripCountWhileThunkTest, CurrentLoopIterationNestedTest) {
   ThunkSequence outer_body_sequence;
   outer_body_sequence.push_back(std::move(inner_while_thunk));
 
-  WhileThunk outer_while_thunk(Thunk::ThunkInfo(), outer_loop,
+  WhileThunk outer_while_thunk(Thunk::ThunkInfo(),
                                /*condition_result_buffer_index=*/slice,
                                /*condition_thunks=*/ThunkSequence(),
                                /*body_thunks=*/std::move(outer_body_sequence),
@@ -350,7 +319,7 @@ TEST(WhileThunkTest, TransformNested) {
   body_thunks.push_back(std::make_unique<DummyThunk>(Kind::kGemm, thunk_info));
 
   auto while_thunk = std::make_unique<WhileThunk>(
-      Thunk::ThunkInfo(), /*loop=*/nullptr,
+      Thunk::ThunkInfo(),
       /*condition_result_buffer_index=*/slice,
       /*condition_thunks=*/std::move(condition_thunks),
       /*body_thunks=*/std::move(body_thunks),

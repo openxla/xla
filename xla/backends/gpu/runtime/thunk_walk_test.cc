@@ -130,9 +130,9 @@ TEST(ThunkWalkTest, WhileThunk) {
   ThunkSequence body_thunk_sequence;
   body_thunk_sequence.push_back(std::move(body_thunk));
 
-  WhileThunk while_thunk(
-      Thunk::ThunkInfo(), /*loop=*/nullptr, BufferAllocation::Slice(),
-      std::move(condition_thunk_sequence), std::move(body_thunk_sequence));
+  WhileThunk while_thunk(Thunk::ThunkInfo(), BufferAllocation::Slice(),
+                         std::move(condition_thunk_sequence),
+                         std::move(body_thunk_sequence));
 
   EXPECT_THAT(
       GetAllThunks(&while_thunk),

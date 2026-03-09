@@ -31,7 +31,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
-#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape_util.h"
@@ -57,7 +56,7 @@ namespace xla::gpu {
 class WhileThunk : public Thunk {
  public:
   // Constructs a WhileThunk to compute while instruction 'hlo'.
-  WhileThunk(ThunkInfo thunk_info, const HloInstruction* loop,
+  WhileThunk(ThunkInfo thunk_info,
              const BufferAllocation::Slice& condition_result_buffer_index,
              ThunkSequence condition_thunks, ThunkSequence body_thunks,
              std::optional<int64_t> trip_count = std::nullopt);
@@ -109,7 +108,6 @@ class WhileThunk : public Thunk {
       const Deserializer& deserializer);
 
  private:
-  const HloInstruction* loop_;
   const BufferAllocation::Slice condition_result_buffer_index_;
   ThunkExecutor condition_executor_;
   ThunkExecutor body_executor_;
