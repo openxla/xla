@@ -468,6 +468,11 @@ class Thunk {
 
   static absl::string_view KindToString(Thunk::Kind kind);
 
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, Kind kind) {
+    sink.Append(KindToString(kind));
+  }
+
   ExecutionStreamId execution_stream_id() const {
     return thunk_info_.execution_stream_id;
   }
