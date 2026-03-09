@@ -104,8 +104,8 @@ TPU core joined a synchronization group with a different program identifier
 than the current group leader, suggesting inconsistent programs across hosts.
 
 - **Verify XLA flags:** Ensure all hosts use the exact same `XLA_FLAGS`.
-- **Consistent JAX programs:** Check that all hosts are executing identical
-  Jax program. verify docker images, libtpu versions etc.
+- **Check for consistent JAX programs:** Check that all hosts are executing identical
+  JAX programs. Verify docker images, libtpu versions, etc.
 
 #### Scenario 3.B: Bounds check failure
 
@@ -124,7 +124,7 @@ error message often includes details about the memory access type (e.g.,
   or
   [`checkify`](https://docs.jax.dev/en/latest/_autosummary/jax.experimental.checkify.check.html)
   to validate tensor indices.
-- **Check Sharding:** Ensure sharding annotations are consistent with tensor
+- **Check sharding:** Ensure sharding annotations are consistent with tensor
   shapes.
 
 #### Scenario 3.C: Mosaic/Pallas synchronization

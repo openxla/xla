@@ -49,6 +49,6 @@ To resolve this error, ensure your kernel's block shapes align with the
 current hardware tiling. Modify your kernel code to align the block size such
 that it is a multiple of the required tiling.
 
-* **Example:** If the error states the tiling is `(16, 128)` but your block
+For example, if the error states the tiling is `(16, 128)` but your block
 shape is `(8, 128)`, change the block spec such that the shape matches
 `(16, 128)`.

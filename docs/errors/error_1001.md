@@ -56,8 +56,6 @@ Ran out of memory in memory space vmem while allocating on stack for %my-custom-
   non-custom-kernel op, it is likely an internal compiler bug. [Please file a
   bug report on XLA](https://github.com/openxla/xla) with an HLO dump.
 
----
-
 ### Retune the kernel
 
 If the error originates from a custom kernel, use the following techniques to
@@ -73,6 +71,6 @@ inputs/outputs to Vmem using
 [pallas.tpu.with_memory_space_constraint](https://docs.jax.dev/en/latest/_autosummary/jax.experimental.pallas.tpu.with_memory_space_constraint.html).
 Be careful not to color too many inputs outputs to Vmem, as that might cause
 an overall Vmem OOM.
-* If kernel specific retuning is difficult or the issue affects many kernels,
+* **Adjust Vmem limit:** If kernel specific retuning is difficult or the issue affects many kernels,
 you can adjust the global Vmem limit using the flag
 [--xla_tpu_scoped_vmem_limit_kib](https://openxla.org/xla/flags_guidance).
