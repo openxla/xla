@@ -56,9 +56,9 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/gtl/int_type.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -144,6 +144,8 @@ class Thunk {
     kAllToAll,
     kAllToAllDone,
     kAllToAllStart,
+    kAsyncDone,
+    kAsyncStart,
     kBuffersDebugChecksum,
     kBuffersDebugFloatCheck,
     kCollectiveBroadcast,
@@ -359,6 +361,9 @@ class Thunk {
     static ExecuteParams CloneWithNewAllocations(
         const ExecuteParams& params,
         const BufferAllocations& buffer_allocations);
+
+    // Creates a clone of *this parameters with a new compute stream.
+    ExecuteParams WithComputeStream(se::Stream* stream) const;
 
     const BufferAllocations* buffer_allocations;  // never null
 
