@@ -1745,6 +1745,27 @@ ENTRY main {
       8);
 }
 
+TEST_F(GpuFusibleTest, DoNotExceedMaxVectorBitWidth) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+e {
+  a = f64[2048,1024] parameter(0)
+  r = f64[2048,1024] negate(a)
+})"));
+  const HloInstruction& root = *module->entry_computation()->root_instruction();
+  EXPECT_EQ(
+      ComputeLoopFusionConfig(HloFusionAnalysis::Create(
+                                  root, TestGpuDeviceInfo::H100SXMDeviceInfo()),
+                              root.shape())
+          .unroll_factor,
+      4);
+
+  EXPECT_EQ(
+      ComputeLoopFusionConfig(
+          HloFusionAnalysis::Create(root, B200WithCUDA129()), root.shape())
+          .unroll_factor,
+      4);
+}
+
 TEST_F(GpuFusibleTest, ScalarParameterTypeDoesNotLimitUnrolling) {
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 f {
@@ -1858,7 +1879,7 @@ ENTRY main {
       TestGpuDeviceInfo::B200SXMDeviceInfo()};
   analysis = HloFusionAnalysis::Create(*root, device_info_b200);
   config = ComputeLoopFusionConfig(analysis, root->shape());
-  EXPECT_EQ(config.unroll_factor, 4);
+  EXPECT_EQ(config.unroll_factor, 8);
 }
 
 TEST_F(GpuFusibleTest, ComputeLoopFusionConfigForLoopTransposeLargerMinorDim) {

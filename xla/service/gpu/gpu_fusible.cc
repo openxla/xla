@@ -114,12 +114,12 @@ int ComputeMaxUnrollFactor(int64_t num_elements, int64_t max_unroll) {
 }  // namespace
 
 int64_t MaxUnrollFactor(const HloFusionAnalysis* analysis) {
-  constexpr int kDefaultUnrollFactor = 4;
+  constexpr int64_t kDefaultUnrollFactor = 4;
   if (analysis == nullptr) {
     return kDefaultUnrollFactor;
   }
 
-  // On Blackwell we would like to increase the maximum unroll factor to 8, as
+  // On Blackwell we would like to increase the maximum unroll factor, as
   // we need more vectorization for full performance.
   // However we need to check additional conditions:
   //   - Unrolling is potentially bad for fusions with reductions, where one
@@ -151,8 +151,10 @@ int64_t MaxUnrollFactor(const HloFusionAnalysis* analysis) {
            stream_executor::SemanticVersion(12, 9, 0))
           ? 256
           : 128;
+  // Apply unroll factors >= 2 * kDefaultUnrollFactor only to narrow enough data
+  // types.
   const int max_bits_for_aggressive_unrolling =
-      max_vector_bit_width / kDefaultUnrollFactor;
+      max_vector_bit_width / (2 * kDefaultUnrollFactor);
   if (analysis->device_info().cuda_compute_capability().IsBlackwell() &&
       (analysis->emitter_fusion_kind() ==
            HloFusionAnalysis::EmitterFusionKind::kLoop ||
@@ -195,7 +197,7 @@ int64_t MaxUnrollFactor(const HloFusionAnalysis* analysis) {
                                                   unroll_factor)) {
       unroll_factor /= 2;
     }
-    return unroll_factor;
+    return std::max(unroll_factor, kDefaultUnrollFactor * 2);
   }
   return kDefaultUnrollFactor;
 }
