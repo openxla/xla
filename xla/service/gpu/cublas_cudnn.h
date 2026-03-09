@@ -99,6 +99,9 @@ bool IsCublasLtMatmul(const HloInstruction& hlo);
 // Scaled matrix multiplication in FP8. Calls into cublasLt.
 bool IsCublasLtMatmulF8(const HloInstruction& hlo);
 
+// Matrix multiplication that calls into cublasLt-ext.
+bool IsCublasLtGroupedMatmul(const HloInstruction& hlo);
+
 // Triangular solve that calls into legacy cublas.
 bool IsTriangularSolve(const HloInstruction& hlo);
 
