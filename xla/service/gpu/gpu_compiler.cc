@@ -81,6 +81,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/async_wrapper.h"
 #include "xla/backends/gpu/transforms/collectives/all_gather_combiner.h"
 #include "xla/backends/gpu/transforms/collectives/all_gather_dynamic_slice_simplifier.h"
+#include "xla/backends/gpu/transforms/collectives/all_gather_major_dimension_rewriter.h"
 #include "xla/backends/gpu/transforms/collectives/all_gather_optimizer.h"
 #include "xla/backends/gpu/transforms/collectives/all_reduce_blueconnect.h"
 #include "xla/backends/gpu/transforms/collectives/all_reduce_combiner.h"
@@ -1183,6 +1184,7 @@ absl::Status RunLayoutAssignmentPasses(
   // the creation of invalid transpose/bitcast operations within
   // host memory offloading segments.
   pipeline.AddPass<HostOffloadLegalize>();
+  pipeline.AddPass<AllGatherMajorDimensionRewriter>();
   return pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
       .status();
 }
