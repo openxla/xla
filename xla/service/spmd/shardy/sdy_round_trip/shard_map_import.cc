@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cassert>
 #include <memory>
+#include <utility>
 
 #include "absl/log/check.h"
 #include "llvm/ADT/DenseSet.h"
@@ -165,6 +166,31 @@ mlir::LogicalResult rewriteManualComputation(
   return mlir::success();
 }
 
+void cloneManualComputations(
+    ModuleOp moduleOp, SymbolTable& symbolTable,
+    mlir::SymbolTableCollection& symbolTableCollection) {
+  mlir::CallGraph callGraph(moduleOp);
+  llvm::ReversePostOrderTraversal<const mlir::CallGraph*> rpo(&callGraph);
+  for (mlir::CallGraphNode* node : llvm::reverse(rpo)) {
+    if (node->isExternal()) {
+      continue;
+    }
+    node->getCallableRegion()->walk([&](CallOp callOp) {
+      if (!isManualComputation(callOp)) {
+        return;
+      }
+      // TODO(b/446881697): Clone just the body on demand like in
+      // shardy/stablehlo_round_trip/shard_map_import.cc.
+      FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
+      CHECK(funcOp) << "Failed to lookup function: "
+                    << callOp.getCallee().str();
+      callOp.setCallee(
+          symbolTable.insert(cloneFuncRecursively(funcOp, symbolTable)));
+    });
+  }
+  // TODO(enver): Clean up uncalled functions.
+}
+
 class SdyRoundTripShardMapImportPass
     : public mlir::PassWrapper<SdyRoundTripShardMapImportPass,
                                mlir::OperationPass<ModuleOp>> {
@@ -177,23 +203,8 @@ class SdyRoundTripShardMapImportPass
     mlir::SymbolTableCollection symbolTableCollection;
     SymbolTable& symbolTable = symbolTableCollection.getSymbolTable(module);
     mlir::IRRewriter rewriter(module);
-    llvm::SmallDenseSet<StringRef> manualComputationCalleeNames;
 
-    // Clone multiple calls to the same function.
-    module->walk([&](CallOp op) {
-      if (isManualComputation(op)) {
-        if (auto [_, inserted] =
-                manualComputationCalleeNames.insert(op.getCallee());
-            inserted) {
-          return;
-        }
-        // TODO(b/446881697): Clone just the body on demand like in
-        // shardy/stablehlo_round_trip/shard_map_import.cc.
-        FuncOp funcOp = symbolTable.lookup<FuncOp>(op.getCallee()).clone();
-        op.setCallee(symbolTable.insert(funcOp));
-        manualComputationCalleeNames.insert(funcOp.getName());
-      }
-    });
+    cloneManualComputations(module, symbolTable, symbolTableCollection);
 
     mlir::CallGraph callGraph(module);
     llvm::ReversePostOrderTraversal<const mlir::CallGraph*> rpo(&callGraph);
@@ -236,11 +247,11 @@ class SdyRoundTripShardMapImportPass
     });
 
     // Erase all manual computation func ops as now they have no call ops.
-    module->walk([](FuncOp funcOp) {
+    for (FuncOp funcOp : llvm::make_early_inc_range(module.getOps<FuncOp>())) {
       if (isManualComputation(funcOp)) {
-        funcOp.erase();
+        symbolTable.erase(symbolTable.lookup(funcOp.getName()));
       }
-    });
+    }
   }
 
   StringRef getArgument() const override {

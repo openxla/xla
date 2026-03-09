@@ -44,20 +44,6 @@ using ::mlir::func::CallOp;
 using ::mlir::func::FuncOp;
 using ::mlir::sdy::SdyDialect;
 
-FuncOp cloneFuncRecursively(FuncOp funcOp, SymbolTable& symbolTable) {
-  StringRef originalFuncName = getOriginalFuncName(funcOp);
-  // TODO(enver): Have a MLIR native error handling on the lookup.
-  FuncOp clonedFuncOp = symbolTable.lookup<FuncOp>(originalFuncName).clone();
-  clonedFuncOp->setAttr(kOriginalFuncName,
-                        StringAttr::get(funcOp.getContext(), originalFuncName));
-  clonedFuncOp->walk([&](CallOp callOp) {
-    FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
-    CHECK(funcOp) << "Failed to lookup function: " << callOp.getCallee().str();
-    callOp.setCallee(
-        symbolTable.insert(cloneFuncRecursively(funcOp, symbolTable)));
-  });
-  return clonedFuncOp;
-}
 class SdyRoundTripFlattenCallGraphPass
     : public mlir::PassWrapper<SdyRoundTripFlattenCallGraphPass,
                                mlir::OperationPass<ModuleOp>> {

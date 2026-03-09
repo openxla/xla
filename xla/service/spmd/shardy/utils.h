@@ -194,10 +194,13 @@ bool isManualComputation(mlir::func::CallOp callOp);
 // an 'inlineable' manual computation.
 bool isManualComputation(mlir::func::FuncOp funcOp);
 
-// Gets the original func name of the funcOp before flattenning via the
-// `kOriginalFuncName` attribute attached to `funcOp`. In case there is no such
-// attribute attached, returns the name of `funcOp`.
-mlir::StringRef getOriginalFuncName(mlir::func::FuncOp funcOp);
+// Gets `kOriginalFuncName` attribute attached to `funcOp`. In
+// case there is no such attribute attached, create one on the name of `funcOp`.
+mlir::StringAttr getOriginalFuncName(mlir::func::FuncOp funcOp);
+
+// Clones given `funcOp` recursively and returns the (top) cloned funcOp.
+mlir::func::FuncOp cloneFuncRecursively(mlir::func::FuncOp funcOp,
+                                        mlir::SymbolTable& symbolTable);
 
 }  // namespace sdy
 }  // namespace xla

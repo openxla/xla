@@ -606,13 +606,30 @@ bool isManualComputation(FuncOp funcOp) {
   return funcOp.getName().contains(kManualComputationFuncName);
 }
 
-StringRef getOriginalFuncName(FuncOp funcOp) {
+StringAttr getOriginalFuncName(FuncOp funcOp) {
   if (auto originalFuncName =
           funcOp->getAttrOfType<StringAttr>(kOriginalFuncName);
       originalFuncName) {
-    return originalFuncName.getValue();
+    return originalFuncName;
   }
-  return funcOp.getName();
+  return funcOp.getSymNameAttr();
+}
+
+FuncOp cloneFuncRecursively(FuncOp funcOp, mlir::SymbolTable& symbolTable) {
+  StringAttr originalFuncName = getOriginalFuncName(funcOp);
+  FuncOp clonedFuncOp =
+      symbolTable.lookup<FuncOp>(originalFuncName.getValue()).clone();
+  // TODO(enver): Have a MLIR native error handling, instead of CHECK.
+  CHECK(clonedFuncOp) << "Failed to lookup function: "
+                      << originalFuncName.str();
+  clonedFuncOp->setAttr(kOriginalFuncName, originalFuncName);
+  clonedFuncOp->walk([&](CallOp callOp) {
+    FuncOp funcOp = symbolTable.lookup<FuncOp>(callOp.getCallee());
+    CHECK(funcOp) << "Failed to lookup function: " << callOp.getCallee().str();
+    callOp.setCallee(
+        symbolTable.insert(cloneFuncRecursively(funcOp, symbolTable)));
+  });
+  return clonedFuncOp;
 }
 
 }  // namespace sdy
