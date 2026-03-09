@@ -73,6 +73,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/backends/gpu/transforms/add_tracking_suffix_to_instruction_names.h"
 #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
@@ -2728,7 +2729,9 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           /*binary=*/std::move(res.backend_result.binary),
           /*dnn_compiled_graphs=*/
           std::move(dnn_compiled_graphs),
-          /*executable=*/std::move(res.compile_module_results.executable),
+          /*executable=*/
+          std::make_unique<ThunkExecutor>(
+              std::move(res.compile_module_results.executable->thunks())),
           /*constants=*/std::move(res.compile_module_results.constants),
           /*output_info=*/std::move(res.compile_module_results.output_info),
           /*module_name=*/std::move(res.compile_module_results.module_name),
@@ -3210,7 +3213,8 @@ GpuCompiler::LoadExecutableFromAotResult(
         /*dnn_compiled_graphs=*/
         BinaryMap(proto.dnn_compiled_graphs().cbegin(),
                   proto.dnn_compiled_graphs().cend()),
-        /*executable=*/std::move(sequential_thunk),
+        /*executable=*/
+        std::make_unique<ThunkExecutor>(std::move(sequential_thunk->thunks())),
         /*constants=*/std::move(constants),
         /*output_info=*/std::move(output_info),
         /*module_name=*/std::move(hlo_module_name),

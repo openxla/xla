@@ -31,8 +31,8 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
-#include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -135,8 +135,8 @@ class GpuAotCompilationResultTest : public ::testing::Test {
     params.dnn_compiled_graphs = {{"test_dnn_compiled_graph", "test_json"}};
 
     thunk_info.thunk_id = 456;
-    params.executable = std::make_unique<SequentialThunk>(
-        thunk_info, std::move(thunk_sequence));
+    params.executable =
+        std::make_unique<ThunkExecutor>(std::move(thunk_sequence));
     params.device_description = device_description_;
 
     params.module_name = "test_module";
