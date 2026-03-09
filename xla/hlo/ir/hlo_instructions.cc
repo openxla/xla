@@ -2275,7 +2275,8 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
 
   if (add_output) {
     int64_t user_count = instruction_to_append->user_count();
-    CHECK(user_count > 0 || instruction_to_append->IsRoot())
+    CHECK(user_count > 0 || instruction_to_append->IsRoot() ||
+          instruction_to_append->HasSideEffect())
         << "Unable to append instruction: " << instruction_to_append->ToString()
         << ", which has " << user_count << " users.";
     HloInstruction* root = called_computation_root();

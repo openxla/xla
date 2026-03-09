@@ -28,6 +28,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
@@ -846,6 +847,39 @@ TEST_F(HloInstructionTest, MultiOutputCallOp) {
   EXPECT_THAT(add->operand(0)->operands(), ElementsAre(call));
   EXPECT_EQ(add->operand(1)->opcode(), HloOpcode::kGetTupleElement);
   EXPECT_THAT(add->operand(1)->operands(), ElementsAre(call));
+}
+
+// Tests that a side-effecting instruction with no users can be appended into
+// a called computation with add_output=true.
+TEST_F(HloInstructionTest, KeepSideEffectingInstruction) {
+  HloComputation::Builder builder(TestName());
+  auto constant = builder.AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(1.1f)));
+
+  // side_effect is added before exp so that exp (not side_effect) becomes
+  // the computation root. This ensures side_effect has no users and is not
+  // root. We must keep it, however, as it has a side effect.
+  auto side_effect = builder.AddInstruction(
+      HloInstruction::CreateCustomCall(r0f32_, {constant}, "my_side_effect"));
+  Cast<HloCustomCallInstruction>(side_effect)
+      ->set_custom_call_has_side_effect(true);
+
+  auto exp = builder.AddInstruction(
+      HloInstruction::CreateUnary(r0f32_, HloOpcode::kExp, constant));
+
+  auto module = CreateNewVerifiedModule();
+  auto* computation = module->AddEntryComputation(builder.Build());
+  auto* call = computation->CreateCallInstruction({exp});
+
+  call->AppendInstructionIntoCalledComputation(side_effect,
+                                               /*add_output=*/true);
+
+  // side_effect is still in the called computation and has side effects.
+  EXPECT_TRUE(absl::c_any_of(
+      Cast<HloCallableInstruction>(call)
+          ->called_computation()
+          ->MakeInstructionPostOrder(),
+      [](const HloInstruction* i) { return i->HasSideEffect(); }));
 }
 
 TEST_F(HloInstructionTest, AsyncOp) {
