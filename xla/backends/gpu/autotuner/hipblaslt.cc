@@ -82,7 +82,8 @@ absl::StatusOr<BlasLt::Epilogue> AsBlasLtEpilogue(
 }  // namespace
 
 bool HipblasLtBackend::IsSupported(const HloInstruction& instr) {
-  return IsCublasLtMatmul(instr) || IsCublasLtMatmulF8(instr);
+  return IsCublasLtMatmul(instr) || IsCublasLtMatmulF8(instr) ||
+         IsCublasLtGroupedMatmul(instr);
 }
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
@@ -93,31 +94,65 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
 
   GpuBackendConfig gpu_config =
       instr.backend_config<GpuBackendConfig>().value();
-  const GemmBackendConfig& backend_config = gpu_config.gemm_backend_config();
-
-  TF_ASSIGN_OR_RETURN(
-      GemmConfig gemm_config,
-      GemmConfig::For(
-          &instr, target_config().device_description.gpu_compute_capability()));
-
-  TF_ASSIGN_OR_RETURN(BlasLt::Epilogue epilogue,
-                      AsBlasLtEpilogue(backend_config.epilogue()));
 
   TF_ASSIGN_OR_RETURN(std::unique_ptr<se::Stream> stream,
                       stream_executor()->CreateStream());
 
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<BlasLt::MatmulPlan> plan,
-      se::gpu::BlasLt::GetMatmulPlan(stream.get(), gemm_config, epilogue));
+  std::unique_ptr<BlasLt::MatmulPlan> plan;
+  int64_t workspace_size;
 
-  const Shape& output_shape = instr.shape();
-  if (!output_shape.IsTuple() || output_shape.tuple_shapes().empty()) {
-    return Internal(
-        "Invalid shape for HipblasLt matmul: output is not a non-empty tuple.");
+  // Handle grouped matmul separately
+  if (IsCublasLtGroupedMatmul(instr)) {
+    const GroupedGemmBackendConfig& grouped_config =
+        gpu_config.grouped_gemm_backend_config();
+    const GemmBackendConfig& backend_config =
+        grouped_config.gemm_backend_config();
+
+    TF_ASSIGN_OR_RETURN(
+        GroupedGemmConfig grouped_gemm_config,
+        GroupedGemmConfig::For(
+            &instr,
+            target_config().device_description.gpu_compute_capability()));
+
+    TF_ASSIGN_OR_RETURN(BlasLt::Epilogue epilogue,
+                        AsBlasLtEpilogue(backend_config.epilogue()));
+
+    std::vector<BlasLt::Epilogue> epilogues = {epilogue};
+    TF_ASSIGN_OR_RETURN(plan,
+                        se::gpu::BlasLt::GetGroupedMatmulPlan(
+                            stream.get(), grouped_gemm_config, epilogues));
+
+    const Shape& output_shape = instr.shape();
+    if (!output_shape.IsTuple() || output_shape.tuple_shapes().empty()) {
+      return Internal(
+          "Invalid shape for HipblasLt grouped matmul: output is not a "
+          "non-empty tuple.");
+    }
+    workspace_size = ShapeUtil::ByteSizeOf(output_shape.tuple_shapes().back());
+  } else {
+    // Regular matmul
+    const GemmBackendConfig& backend_config = gpu_config.gemm_backend_config();
+
+    TF_ASSIGN_OR_RETURN(
+        GemmConfig gemm_config,
+        GemmConfig::For(
+            &instr,
+            target_config().device_description.gpu_compute_capability()));
+
+    TF_ASSIGN_OR_RETURN(BlasLt::Epilogue epilogue,
+                        AsBlasLtEpilogue(backend_config.epilogue()));
+
+    TF_ASSIGN_OR_RETURN(plan, se::gpu::BlasLt::GetMatmulPlan(
+                                  stream.get(), gemm_config, epilogue));
+
+    const Shape& output_shape = instr.shape();
+    if (!output_shape.IsTuple() || output_shape.tuple_shapes().empty()) {
+      return Internal(
+          "Invalid shape for HipblasLt matmul: output is not a non-empty "
+          "tuple.");
+    }
+    workspace_size = ShapeUtil::ByteSizeOf(output_shape.tuple_shapes().back());
   }
-  // The last element of the output tuple is the workspace.
-  const int64_t workspace_size =
-      ShapeUtil::ByteSizeOf(output_shape.tuple_shapes().back());
 
   TF_ASSIGN_OR_RETURN(
       std::vector<BlasLt::MatmulAlgorithm> algorithms,
@@ -161,9 +196,18 @@ absl::Status HipblasLtBackend::ApplyConfig(HloInstruction& instr,
   }
   TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                       instr.backend_config<GpuBackendConfig>());
-  GemmBackendConfig& backend_config = *gpu_config.mutable_gemm_backend_config();
-  backend_config.set_selected_algorithm(gemm_key.algorithm());
-  backend_config.set_autotune_workspace_size(
+
+  // Handle grouped matmul separately
+  GemmBackendConfig* backend_config;
+  if (IsCublasLtGroupedMatmul(instr)) {
+    backend_config = gpu_config.mutable_grouped_gemm_backend_config()
+                         ->mutable_gemm_backend_config();
+  } else {
+    backend_config = gpu_config.mutable_gemm_backend_config();
+  }
+
+  backend_config->set_selected_algorithm(gemm_key.algorithm());
+  backend_config->set_autotune_workspace_size(
       gemm_key.autotune_workspace_size());
   TF_RETURN_IF_ERROR(instr.set_backend_config(std::move(gpu_config)));
 
