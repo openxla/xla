@@ -502,7 +502,18 @@ mlir::sdy::TensorShardingAttr convertToSdyShardingAttr(
     const HloSharding& hloSharding, mlir::Type type,
     mlir::MLIRContext* context) {
   CHECK(!hloSharding.IsTuple());
-  CHECK(hloSharding.UseNamedShardingLeaf());
+
+  // Replicated HloShardingV1/V2 are treated as placeholder shardings, allowing
+  // modification. Since these are often added post JAX -> HLO lowering without
+  // frontend attributes, they are simply ignored by Shardy import. To match
+  // this behavior we handle them explicity in HloShardingV3 case.
+  if (!hloSharding.UseNamedShardingLeaf()) {
+    CHECK(hloSharding.IsReplicated())
+        << "Only V2 replicated sharding is supported for non-named sharding.";
+    return mlir::sdy::TensorShardingAttr::getFullyOpen(
+        context, mlir::sdy::getTensorRank(type),
+        mlir::sdy::MeshAttr::get(context, {}, {}));
+  }
 
   const NamedSharding& namedSharding = hloSharding.named_sharding();
   if (namedSharding.IsSingleDevice()) {
