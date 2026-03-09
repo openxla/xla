@@ -70,7 +70,7 @@ limitations under the License.
 #include "xla/service/computation_placer.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
-#include "xla/service/gpu/autotuning/autotuner_util.h"
+#include "xla/service/gpu/autotuning/autotuner_cache.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
@@ -373,11 +373,11 @@ ENTRY e {
 class PersistedAutotuningTest : public HloPjRtTestBase {
  protected:
   void SetUp() override {
-    AutotunerUtil::ClearAutotuneResults();
+    AutotunerCache::ClearAutotuneResults();
     xla_gpu_dump_autotune_results_to_ = GetUniqueTempFilePath(".txt");
   }
 
-  void TearDown() override { AutotunerUtil::ClearAutotuneResults(); }
+  void TearDown() override { AutotunerCache::ClearAutotuneResults(); }
 
   static constexpr absl::string_view kHloText = R"(
 HloModule t
@@ -627,11 +627,11 @@ class GpuCompilerTestWithAutotuneDb : public GpuCompilerTest {
         contents, {{kCudnnVersionPlaceholder, dnn_version.ToString()}});
 
     TF_EXPECT_OK(tsl::WriteStringToFile(env, tmp_filepath, contents));
-    AutotunerUtil::ClearAutotuneResults();
-    TF_EXPECT_OK(AutotunerUtil::LoadAutotuneResultsFromFile(tmp_filepath));
+    AutotunerCache::ClearAutotuneResults();
+    TF_EXPECT_OK(AutotunerCache::LoadAutotuneResultsFromFile(tmp_filepath));
   }
 
-  static void TearDownTestSuite() { AutotunerUtil::ClearAutotuneResults(); }
+  static void TearDownTestSuite() { AutotunerCache::ClearAutotuneResults(); }
 };
 
 TEST_F(GpuCompilerTestWithAutotuneDb,

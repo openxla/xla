@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/autotuning/autotuner_util.h"
+#include "xla/service/gpu/autotuning/autotuner_cache.h"
 
 #include <algorithm>
 #include <array>
@@ -64,7 +64,7 @@ constexpr int kVersion = 3;
 }  // namespace
 
 using AutotuneCacheMap = absl::flat_hash_map<AutotuneCacheKey, AutotuneResult>;
-using ResultAndInserted = AutotunerUtil::ResultAndInserted;
+using ResultAndInserted = AutotunerCache::ResultAndInserted;
 
 static absl::Mutex autotune_cache_mu(absl::kConstInit);
 static auto& autotune_cache ABSL_GUARDED_BY(autotune_cache_mu) =
@@ -224,7 +224,7 @@ void SerializeAutotuneEntry(AutotuneResults* results, const AutotuneCacheKey& k,
 }
 }  // namespace
 
-/*static*/ absl::Status AutotunerUtil::SerializeAutotuneResults(
+/*static*/ absl::Status AutotunerCache::SerializeAutotuneResults(
     AutotuneResults* results, std::optional<const AutotuneCacheKeySet*> keys) {
   absl::MutexLock lock(autotune_cache_mu);
   for (const auto& [k, result] : autotune_cache) {
@@ -239,7 +239,7 @@ void SerializeAutotuneEntry(AutotuneResults* results, const AutotuneCacheKey& k,
   return absl::OkStatus();
 }
 
-/*static*/ absl::Status AutotunerUtil::LoadAutotuneResults(
+/*static*/ absl::Status AutotunerCache::LoadAutotuneResults(
     const AutotuneResults& results, bool allow_override) {
   absl::MutexLock lock(autotune_cache_mu);
   for (const AutotuneResults::Entry& result : results.results()) {
@@ -257,12 +257,12 @@ void SerializeAutotuneEntry(AutotuneResults* results, const AutotuneCacheKey& k,
   return absl::OkStatus();
 }
 
-/*static*/ void AutotunerUtil::ClearAutotuneResults() {
+/*static*/ void AutotunerCache::ClearAutotuneResults() {
   absl::MutexLock lock(autotune_cache_mu);
   autotune_cache.clear();
 }
 
-/*static*/ bool AutotunerUtil::ResultCacheIsEmpty() {
+/*static*/ bool AutotunerCache::ResultCacheIsEmpty() {
   absl::MutexLock lock(autotune_cache_mu);
   return autotune_cache.empty();
 }
@@ -289,7 +289,7 @@ TryFindInAllCacheTypes(const AutotuneCacheKey& key, absl::string_view cache_dir)
 }
 }  // namespace
 
-absl::StatusOr<std::optional<AutotuneResult>> AutotunerUtil::TryFindInCache(
+absl::StatusOr<std::optional<AutotuneResult>> AutotunerCache::TryFindInCache(
     const AutotuneCacheKey& key, absl::string_view cache_dir)
     ABSL_LOCKS_EXCLUDED(autotune_cache_mu) {
   TF_ASSIGN_OR_RETURN(auto cached, TryFindInAllCacheTypes(key, cache_dir));
@@ -313,7 +313,7 @@ absl::StatusOr<std::optional<AutotuneResult>> AutotunerUtil::TryFindInCache(
   return std::move(cached.second);
 }
 
-absl::StatusOr<ResultAndInserted> AutotunerUtil::AddResultToCaches(
+absl::StatusOr<ResultAndInserted> AutotunerCache::AddResultToCaches(
     const AutotuneCacheKey& key, AutotuneResult result,
     absl::string_view cache_dir,
     DebugOptions::AutotuneCacheMode autotune_cache_mode)
@@ -338,7 +338,7 @@ bool IsTextProtoPath(absl::string_view file_path) {
 
 }  // anonymous namespace
 
-/*static*/ absl::Status AutotunerUtil::LoadAutotuneResults(
+/*static*/ absl::Status AutotunerCache::LoadAutotuneResults(
     absl::string_view data, bool as_textproto, bool allow_override) {
   AutotuneResults results;
   // The cast here is necessary for MacOS builds.
@@ -361,14 +361,14 @@ bool IsTextProtoPath(absl::string_view file_path) {
   return absl::OkStatus();
 }
 
-/*static*/ absl::StatusOr<std::string> AutotunerUtil::SerializeAutotuneResults(
+/*static*/ absl::StatusOr<std::string> AutotunerCache::SerializeAutotuneResults(
     bool as_textproto) {
   AutotuneResults results;
   TF_RETURN_IF_ERROR(SerializeAutotuneResults(&results));
   return AutotuneResultsToString(results, as_textproto);
 }
 
-/*static*/ absl::Status AutotunerUtil::SerializeAutotuneResultsToFile(
+/*static*/ absl::Status AutotunerCache::SerializeAutotuneResultsToFile(
     const AutotuneResults& results, absl::string_view file_path) {
   TF_RET_CHECK(!file_path.empty());
   TF_RET_CHECK(results.version() > 0)
@@ -389,14 +389,14 @@ bool IsTextProtoPath(absl::string_view file_path) {
   return absl::OkStatus();
 }
 
-/*static*/ absl::Status AutotunerUtil::SerializeAutotuneResultsToFile(
+/*static*/ absl::Status AutotunerCache::SerializeAutotuneResultsToFile(
     absl::string_view file_path) {
   AutotuneResults results;
   TF_RETURN_IF_ERROR(SerializeAutotuneResults(&results));
   return SerializeAutotuneResultsToFile(results, file_path);
 }
 
-/*static*/ absl::Status AutotunerUtil::LoadAutotuneResultsFromFile(
+/*static*/ absl::Status AutotunerCache::LoadAutotuneResultsFromFile(
     absl::string_view file_path) {
   TF_RET_CHECK(!file_path.empty());
 

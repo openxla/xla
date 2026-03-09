@@ -45,7 +45,7 @@ limitations under the License.
 #include "xla/service/cpu/cpu_compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/export_hlo.h"
-#include "xla/service/gpu/autotuning/autotuner_util.h"
+#include "xla/service/gpu/autotuning/autotuner_cache.h"
 #include "xla/service/gpu/gpu_symbol_repository.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/hlo.pb.h"
@@ -246,7 +246,7 @@ absl::StatusOr<bool> LoadAutotuneDataFromModule(HloModuleAndMetadata* mod,
         mod->hlo_module->config().debug_options().xla_gpu_autotune_level() >
             0) {
       TF_RETURN_IF_ERROR(
-          gpu::AutotunerUtil::LoadAutotuneResults(*data->autotune_results));
+          gpu::AutotunerCache::LoadAutotuneResults(*data->autotune_results));
       return true;
     }
   }
@@ -384,7 +384,7 @@ absl::Status XlaCompileMain(const XlaCompileOptions& options) {
               options.gpu_options.autotune_results_path;
           !found_autotune && !autotune_results_path.empty() &&
           hlo_module->config().debug_options().xla_gpu_autotune_level() > 0) {
-        TF_RETURN_IF_ERROR(gpu::AutotunerUtil::LoadAutotuneResultsFromFile(
+        TF_RETURN_IF_ERROR(gpu::AutotunerCache::LoadAutotuneResultsFromFile(
             autotune_results_path));
       }
     }

@@ -156,9 +156,9 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "autotuner_util",
-    srcs = ["autotuner_util.cc"],
-    hdrs = ["autotuner_util.h"],
+    name = "autotuner_cache",
+    srcs = ["autotuner_cache.cc"],
+    hdrs = ["autotuner_cache.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":autotune_cache_key",
@@ -291,8 +291,8 @@ tf_proto_library(
 )
 
 xla_cc_test(
-    name = "autotuner_util_test",
-    srcs = ["autotuner_util_test.cc"],
+    name = "autotuner_cache_test",
+    srcs = ["autotuner_cache_test.cc"],
     data = ["//xla/backends/gpu/target_config:all_gpu_specs"],
     tags = [
         "gpu",
@@ -300,7 +300,7 @@ xla_cc_test(
     ],
     deps = [
         ":autotune_cache_key",
-        ":autotuner_util",
+        ":autotuner_cache",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
         "//xla:xla_proto_cc",
