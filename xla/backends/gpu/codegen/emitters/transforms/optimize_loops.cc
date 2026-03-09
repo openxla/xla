@@ -28,14 +28,17 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "mlir/Support/WalkResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"  // IWYU pragma: keep
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"  // IWYU pragma: keep
+#include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/service/gpu/gpu_fusible.h"
 
 namespace xla {
@@ -63,7 +66,75 @@ bool IsExpensiveToUnroll(mlir::Operation* op) {
       >(op);
 }
 
-int GetUnrollingFactor(mlir::scf::ForOp op) {
+std::optional<int64_t> GetOperationSize(
+    mlir::Operation* op, mlir::SymbolTableCollection& symbol_table);
+
+std::optional<int64_t> GetRegionSize(
+    mlir::Region& region, mlir::SymbolTableCollection& symbol_table) {
+  int64_t size = 0;
+  auto walk_result = region.walk([&](mlir::Operation* nested_op) {
+    auto nested_size = GetOperationSize(nested_op, symbol_table);
+    if (!nested_size) {
+      return mlir::WalkResult::interrupt();
+    }
+    size += *nested_size;
+    return mlir::WalkResult::advance();
+  });
+  if (walk_result.wasInterrupted()) {
+    return std::nullopt;
+  }
+  return size;
+}
+
+std::optional<int64_t> GetOperationSize(
+    mlir::Operation* op, mlir::SymbolTableCollection& symbol_table) {
+  if (IsExpensiveToUnroll(op)) {
+    return std::nullopt;
+  }
+
+  constexpr int64_t kNonTrivialMathSize = 20;
+  constexpr int64_t kExpensiveMathSize = 40;
+
+  int64_t this_size = 1;
+  if (auto pure_call = mlir::dyn_cast<xla::PureCallOp>(op)) {
+    auto callee = symbol_table.lookupNearestSymbolFrom<mlir::func::FuncOp>(
+        op, pure_call.getCalleeAttr());
+    if (!callee || callee.isExternal()) {
+      return std::nullopt;
+    }
+    return GetRegionSize(callee.getBody(), symbol_table);
+  }
+
+  if (mlir::isa<mlir::math::MathDialect>(op->getDialect())) {
+    // Integer instructions in math are ok, but many float ops lower to lots
+    // of instructions.
+    if (!op->getResultTypes().empty() &&
+        !op->getResultTypes().front().isIntOrIndex()) {
+      namespace mm = mlir::math;
+      if (mlir::isa<mm::ExpOp, mm::LogOp>(op)) {
+        this_size = kExpensiveMathSize;
+      }
+      // We err on the side of not unrolling, so we maintain a list of ops
+      // known to be cheap.
+      else if (!mlir::isa<mm::AbsFOp, mm::CeilOp, mm::CopySignOp, mm::FloorOp,
+                          mm::FmaOp, mm::RoundEvenOp, mm::RoundOp, mm::RsqrtOp,
+                          mm::SqrtOp, mm::TruncOp>(op)) {
+        this_size = kNonTrivialMathSize;
+      }
+    }
+  }
+
+  if (!op->getResultTypes().empty()) {
+    if (auto vector_ty =
+            mlir::dyn_cast<mlir::VectorType>(op->getResultTypes().front())) {
+      this_size *= vector_ty.getNumElements();
+    }
+  }
+  return this_size;
+}
+
+int GetUnrollingFactor(mlir::scf::ForOp op,
+                       mlir::SymbolTableCollection& symbol_table) {
   // We only unroll loops with a step of 1 and a lower bound of 0. That's the
   // only type we generate.
   if (auto step = op.getConstantStep(); !step || step->getSExtValue() != 1) {
@@ -82,51 +153,12 @@ int GetUnrollingFactor(mlir::scf::ForOp op) {
   constexpr int kMaxSize = 400;  // Chosen empirically.
 
   // Get a rough estimate of the size of the loop body.
-  int64_t size = 0;
-  bool can_unroll = true;
-  op.getBodyRegion().walk([&](mlir::Operation* op) {
-    if (IsExpensiveToUnroll(op)) {
-      can_unroll = false;
-      return;
-    }
-
-    int64_t this_size = 1;
-    if (mlir::isa<mlir::math::MathDialect>(op->getDialect())) {
-      // Integer instructions in math are ok, but many float ops lower to lots
-      // of instructions.
-      if (!op->getResultTypes().front().isIntOrIndex()) {
-        namespace mm = mlir::math;
-        // We err on the side of not unrolling, so we maintain a list of ops
-        // known to be cheap.
-        if (!mlir::isa<mm::AbsFOp, mm::CeilOp, mm::CopySignOp, mm::FloorOp,
-                       mm::FmaOp, mm::RoundEvenOp, mm::RoundOp, mm::RsqrtOp,
-                       mm::SqrtOp, mm::TruncOp>(op)) {
-          this_size = 20;  // Rough estimate.
-        }
-      }
-    }
-
-    if (!op->getResultTypes().empty()) {
-      if (auto vector_ty =
-              mlir::dyn_cast<mlir::VectorType>(op->getResultTypes().front())) {
-        this_size *= vector_ty.getNumElements();
-      }
-    }
-
-    size += this_size;
-  });
-
-  if (!can_unroll) {
+  auto size = GetRegionSize(op.getBodyRegion(), symbol_table);
+  if (!size) {
     return 1;
   }
 
-  // Always unroll if the trip count is smaller than the max unroll factor,
-  // because it's very likely that the loop was meant to be unrolled.
-  if (trip_count <= MaxUnrollFactor()) {
-    return trip_count;
-  }
-
-  int factor = std::min(trip_count, kMaxSize / size);
+  int factor = std::min(trip_count, kMaxSize / *size);
   while (factor > 1 && trip_count % factor) {
     --factor;
   }
@@ -134,24 +166,31 @@ int GetUnrollingFactor(mlir::scf::ForOp op) {
 }
 
 struct UnrollLoops : mlir::OpRewritePattern<mlir::scf::ForOp> {
-  using mlir::OpRewritePattern<mlir::scf::ForOp>::OpRewritePattern;
+  UnrollLoops(mlir::MLIRContext* context,
+              mlir::SymbolTableCollection& symbol_table)
+      : mlir::OpRewritePattern<mlir::scf::ForOp>(context),
+        symbol_table(symbol_table) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::scf::ForOp op, mlir::PatternRewriter& rewriter) const override {
-    if (int factor = GetUnrollingFactor(op); factor > 1) {
+    if (int factor = GetUnrollingFactor(op, symbol_table); factor > 1) {
       return mlir::loopUnrollByFactor(op, factor);
     }
     return rewriter.notifyMatchFailure(op, "loop can't be unrolled");
   }
+
+ private:
+  mlir::SymbolTableCollection& symbol_table;
 };
 
 class OptimizeLoopsPass
     : public impl::OptimizeLoopsPassBase<OptimizeLoopsPass> {
  public:
   void runOnOperation() override {
+    mlir::SymbolTableCollection symbol_table;
     // First unroll loops. If unrolling is possible, we prefer it.
     mlir::RewritePatternSet unroll_patterns(&getContext());
-    unroll_patterns.add<UnrollLoops>(&getContext());
+    unroll_patterns.add<UnrollLoops>(&getContext(), symbol_table);
     if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
                                                  std::move(unroll_patterns)))) {
       signalPassFailure();
