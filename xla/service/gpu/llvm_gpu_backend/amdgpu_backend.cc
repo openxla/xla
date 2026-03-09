@@ -753,92 +753,91 @@ void AMDGPUBackendInit(const DebugOptions& debug_options,
   gpu::InitializePasses(registry);
 }
 
-
 absl::StatusOr<amdgpu::HsacoResult> CompileToHsacoInternal(
-  llvm::Module* module, se::GpuComputeCapability gpu_version,
-  const DebugOptions& debug_options, std::string* hsaco_temp_path) {
-static absl::once_flag backend_init_flag;
-// TODO(rocm) Ideally this would be refreshed if xla_gpu_cuda_data_dir
-// changes.
-static std::string rocdl_dir_path;  // NOLINT: static/global vars forbidden
-absl::call_once(backend_init_flag, AMDGPUBackendInit, debug_options,
-                std::ref(rocdl_dir_path));
+    llvm::Module* module, se::GpuComputeCapability gpu_version,
+    const DebugOptions& debug_options, std::string* hsaco_temp_path) {
+  static absl::once_flag backend_init_flag;
+  // TODO(rocm) Ideally this would be refreshed if xla_gpu_cuda_data_dir
+  // changes.
+  static std::string rocdl_dir_path;  // NOLINT: static/global vars forbidden
+  absl::call_once(backend_init_flag, AMDGPUBackendInit, debug_options,
+                  std::ref(rocdl_dir_path));
 
-auto cc = gpu_version.rocm_compute_capability();
-if (!cc) {
-  return xla::Internal("Incompatible compute capability was specified.");
-}
-llvm::Triple default_target_triple("amdgcn--amdhsa-amdgiz");
-// Construct LLVM TargetMachine for AMDGPU.
-auto [gfx, feature_str] = GetFeatureStrFromGCNArchName(cc->gcn_arch_name());
-auto target_machine =
-    GetTargetMachine(default_target_triple, gfx, debug_options, feature_str);
-
-// Link with ROCm-Device-Libs, and optimize the LLVM module.
-TF_RETURN_IF_ERROR(gpu::LinkAndOptimizeModule(
-    module, gpu_version, debug_options, rocdl_dir_path,
-    AMDGPUTargetModuleLinker, default_target_triple, target_machine.get(),
-    kAMDGPUInlineThreshold));
-
-// Lower optimized LLVM module to HSA code object.
-TF_ASSIGN_OR_RETURN(
-    std::string hsaco_path,
-    EmitModuleToHsaco(module, target_machine.get(), debug_options));
-
-// Check for register spilling using HSACO metadata
-VLOG(2) << "Checking for register spilling in: "
-        << module->getModuleIdentifier();
-
-std::vector<uint8_t> hsaco;
-if (!HsacoCache::i().ReadFromFile(hsaco_path, &hsaco)) {
-  return xla::Internal("Unable to read hsaco output file");
-}
-if (hsaco_temp_path) *hsaco_temp_path = std::move(hsaco_path);
-
-RegisterSpillInfo spill_info = ExtractRegisterSpillingFromHsaco(hsaco);
-if (spill_info.HasSpilling()) {
-  // We can have SGPR spills without stack being used. They are saved to
-  // VGPRs. In that case, we don't want to discard such kernel, so just
-  // report such cases.
-  for (const KernelSpillInfo& k : spill_info.kernels) {
-    if (k.HasSpilling()) {
-      VLOG(1) << "Register spilling in kernel '" << k.name
-              << "' (SGPR: " << k.sgpr_spill_count
-              << ", VGPR: " << k.vgpr_spill_count << ") in "
-              << module->getModuleIdentifier();
-    }
+  auto cc = gpu_version.rocm_compute_capability();
+  if (!cc) {
+    return xla::Internal("Incompatible compute capability was specified.");
   }
-} else {
-  VLOG(2) << "No register spilling detected in "
+  llvm::Triple default_target_triple("amdgcn--amdhsa-amdgiz");
+  // Construct LLVM TargetMachine for AMDGPU.
+  auto [gfx, feature_str] = GetFeatureStrFromGCNArchName(cc->gcn_arch_name());
+  auto target_machine =
+      GetTargetMachine(default_target_triple, gfx, debug_options, feature_str);
+
+  // Link with ROCm-Device-Libs, and optimize the LLVM module.
+  TF_RETURN_IF_ERROR(gpu::LinkAndOptimizeModule(
+      module, gpu_version, debug_options, rocdl_dir_path,
+      AMDGPUTargetModuleLinker, default_target_triple, target_machine.get(),
+      kAMDGPUInlineThreshold));
+
+  // Lower optimized LLVM module to HSA code object.
+  TF_ASSIGN_OR_RETURN(
+      std::string hsaco_path,
+      EmitModuleToHsaco(module, target_machine.get(), debug_options));
+
+  // Check for register spilling using HSACO metadata
+  VLOG(2) << "Checking for register spilling in: "
           << module->getModuleIdentifier();
-}
 
-if (spill_info.HasStackUsage()) {
-  for (const KernelSpillInfo& k : spill_info.kernels) {
-    if (k.HasStackUsage()) {
-      VLOG(1) << "Stack usage in kernel '" << k.name
-              << "' (private: " << k.private_segment_size
-              << ", dynamic: " << (k.uses_dynamic_stack ? "true" : "false")
-              << ") in " << module->getModuleIdentifier();
+  std::vector<uint8_t> hsaco;
+  if (!HsacoCache::i().ReadFromFile(hsaco_path, &hsaco)) {
+    return xla::Internal("Unable to read hsaco output file");
+  }
+  if (hsaco_temp_path) *hsaco_temp_path = std::move(hsaco_path);
+
+  RegisterSpillInfo spill_info = ExtractRegisterSpillingFromHsaco(hsaco);
+  if (spill_info.HasSpilling()) {
+    // We can have SGPR spills without stack being used. They are saved to
+    // VGPRs. In that case, we don't want to discard such kernel, so just
+    // report such cases.
+    for (const KernelSpillInfo& k : spill_info.kernels) {
+      if (k.HasSpilling()) {
+        VLOG(1) << "Register spilling in kernel '" << k.name
+                << "' (SGPR: " << k.sgpr_spill_count
+                << ", VGPR: " << k.vgpr_spill_count << ") in "
+                << module->getModuleIdentifier();
+      }
     }
+  } else {
+    VLOG(2) << "No register spilling detected in "
+            << module->getModuleIdentifier();
   }
 
-  // Filter out kernels with register spilling during autotuning
-  // This matches NVIDIA's behavior in ptx_compiler_impl.cc
-  // TODO: remove ptx from xla_gpu_fail_ptx_compilation_on_register_spilling
-  // to make the flag more general
-  if (debug_options.xla_gpu_fail_ptx_compilation_on_register_spilling()) {
-    VLOG(0) << "Discard module " << module->getModuleIdentifier()
-            << " due register spilling or stack usage";
-    return xla::Cancelled(
-        "Compilation result discarded due to register spilling or stack "
-        "usage");
-  }
-} else {
-  VLOG(2) << "No stack usage detected in " << module->getModuleIdentifier();
-}
+  if (spill_info.HasStackUsage()) {
+    for (const KernelSpillInfo& k : spill_info.kernels) {
+      if (k.HasStackUsage()) {
+        VLOG(1) << "Stack usage in kernel '" << k.name
+                << "' (private: " << k.private_segment_size
+                << ", dynamic: " << (k.uses_dynamic_stack ? "true" : "false")
+                << ") in " << module->getModuleIdentifier();
+      }
+    }
 
-return amdgpu::HsacoResult{std::move(hsaco), spill_info.ToModuleStats()};
+    // Filter out kernels with register spilling during autotuning
+    // This matches NVIDIA's behavior in ptx_compiler_impl.cc
+    // TODO: remove ptx from xla_gpu_fail_ptx_compilation_on_register_spilling
+    // to make the flag more general
+    if (debug_options.xla_gpu_fail_ptx_compilation_on_register_spilling()) {
+      VLOG(0) << "Discard module " << module->getModuleIdentifier()
+              << " due register spilling or stack usage";
+      return xla::Cancelled(
+          "Compilation result discarded due to register spilling or stack "
+          "usage");
+    }
+  } else {
+    VLOG(2) << "No stack usage detected in " << module->getModuleIdentifier();
+  }
+
+  return amdgpu::HsacoResult{std::move(hsaco), spill_info.ToModuleStats()};
 }
 
 class sha256_ostream : public llvm::raw_ostream {
@@ -994,7 +993,7 @@ absl::StatusOr<HsacoResult> CompileToHsaco(
   tsl::profiler::TraceMe activity(
       [&] { return absl::StrCat("Compiling IR", module->getName().str()); },
       tsl::profiler::TraceMeLevel::kInfo);
- 
+
   auto llvm_opts = GetAMDGPUBackendOptions(debug_options);
   llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_opts);
 

@@ -29,10 +29,11 @@ limitations under the License.
 
 namespace xla::gpu::amdgpu {
 
-// Result of compiling an LLVM module to HSACO format (in-memory bytes and path).
+// Result of compiling an LLVM module to HSACO format (in-memory bytes and
+// path).
 struct HsacoResult {
-  std::vector<uint8_t> hsaco;       // in-memory bytes of HSACO file
-  ModuleStats module_stats;         // module statistics
+  std::vector<uint8_t> hsaco;  // in-memory bytes of HSACO file
+  ModuleStats module_stats;    // module statistics
 };
 
 // Links ROCm-Device-Libs into the given module if the module needs it.
