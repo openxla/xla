@@ -346,6 +346,53 @@ cc_library(
 #===-------------------------------------------------------------------------------------------===//
 
 cc_library(
+    name = "async_execution",
+    srcs = ["async_execution.cc"],
+    hdrs = ["async_execution.h"],
+    deps = [
+        ":thunk",
+        ":thunk_id",
+        "//xla:executable_run_options",
+        "//xla:util",
+        "//xla/runtime:object_pool",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:status_macros",
+        "//xla/tsl/util:unique_any",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+xla_test(
+    name = "async_execution_test",
+    srcs = ["async_execution_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":async_execution",
+        ":thunk",
+        ":thunk_id",
+        "//xla:executable_run_options",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "dynamic_slice_thunk",
     srcs = ["dynamic_slice_thunk.cc"],
     hdrs = ["dynamic_slice_thunk.h"],
