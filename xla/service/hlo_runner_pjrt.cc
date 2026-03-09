@@ -1035,6 +1035,9 @@ std::string MakeFilename(const HloModule& module, const bool run_hlo_passes) {
                        module.comp_envs().ToProto())));
 
   if (module.config().has_static_device_assignment()) {
+    // Test cases may compile the same module with different device assignments
+    // (for example, to test different topologies). We include the device
+    // assignment in the fingerprint to tell them apart.
     DeviceAssignmentProto da_proto;
     module.config().static_device_assignment().Serialize(&da_proto);
     fingerprint = tsl::FingerprintCat128(
@@ -1085,14 +1088,14 @@ absl::Status CompilePhaseHloRunnerPjRt::WriteCompressedExecutable(
   TF_RETURN_IF_ERROR(
       tsl::Env::Default()->NewWritableFile(std::string(path), &file));
 
-  auto gz_opts = tsl::io::ZlibCompressionOptions::GZIP();
+  tsl::io::ZlibCompressionOptions gz_opts =
+      tsl::io::ZlibCompressionOptions::GZIP();
   tsl::io::ZlibOutputBuffer gz_file(file.get(), gz_opts.input_buffer_size,
                                     gz_opts.output_buffer_size, gz_opts);
   TF_RETURN_IF_ERROR(gz_file.Init());
   TF_RETURN_IF_ERROR(gz_file.Append(serialized_executable));
   TF_RETURN_IF_ERROR(gz_file.Close());
-  TF_RETURN_IF_ERROR(file->Close());
-  return absl::OkStatus();
+  return file->Close();
 }
 
 absl::StatusOr<DeviceAssignment>
@@ -1150,18 +1153,17 @@ ExecutePhaseHloRunnerPjRt::CreateExecutable(std::unique_ptr<HloModule> module,
 absl::Status ExecutePhaseHloRunnerPjRt::ReadCompressedExecutable(
     absl::string_view path, tsl::tstring* serialized_executable) {
   std::unique_ptr<tsl::RandomAccessFile> file;
-  absl::Status status =
-      tsl::Env::Default()->NewRandomAccessFile(std::string(path), &file);
+  TF_RETURN_IF_ERROR(
+      tsl::Env::Default()->NewRandomAccessFile(std::string(path), &file));
 
-  if (status.ok()) {
-    tsl::io::RandomAccessInputStream stream(file.get());
-    auto gz_opts = tsl::io::ZlibCompressionOptions::GZIP();
-    tsl::io::ZlibInputStream gz_stream(&stream, gz_opts.input_buffer_size,
-                                       gz_opts.output_buffer_size, gz_opts);
-    status = gz_stream.ReadNBytes(INT_MAX, serialized_executable);
-    if (absl::IsOutOfRange(status)) {
-      status = absl::OkStatus();
-    }
+  tsl::io::RandomAccessInputStream stream(file.get());
+  tsl::io::ZlibCompressionOptions gz_opts =
+      tsl::io::ZlibCompressionOptions::GZIP();
+  tsl::io::ZlibInputStream gz_stream(&stream, gz_opts.input_buffer_size,
+                                     gz_opts.output_buffer_size, gz_opts);
+  absl::Status status = gz_stream.ReadNBytes(INT_MAX, serialized_executable);
+  if (absl::IsOutOfRange(status)) {
+    return absl::OkStatus();
   }
   return status;
 }

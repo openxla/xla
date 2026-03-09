@@ -219,6 +219,33 @@ TEST_F(CompilePhaseHloRunnerPjRtTest,
   ASSERT_EQ(children[0], kModuleWithCompEnvSerializedName);
 }
 
+// Tests that a CreateExecutable call with a different device assignment
+// places the file in a different location.
+TEST_F(CompilePhaseHloRunnerPjRtTest,
+       CreateExecutablePlacesFilesCorrectlyWithDeviceAssignment) {
+  CompilePhaseHloRunnerPjRt runner(std::make_unique<FakeClient>(),
+                                   artifact_dir_);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m1, CreateFakeModule());
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m2, CreateFakeModule());
+
+  DeviceAssignment da1(1, 2);
+  da1.FillIota(0);
+  m1->mutable_config().set_static_device_assignment(da1);
+
+  DeviceAssignment da2(1, 2);
+  da2.FillIota(1);
+  m2->mutable_config().set_static_device_assignment(da2);
+
+  TF_ASSERT_OK(
+      runner.CreateExecutable(std::move(m1), /*run_hlo_passes=*/false));
+  TF_ASSERT_OK(
+      runner.CreateExecutable(std::move(m2), /*run_hlo_passes=*/false));
+
+  std::vector<std::string> children;
+  TF_ASSERT_OK(tsl::Env::Default()->GetChildren(artifact_dir_, &children));
+  ASSERT_EQ(children.size(), 2);
+}
+
 using ExecutePhaseHloRunnerPjRtTest = ArtifactDirTest;
 
 // Tests that a call to CreateExecutable reads the file from the correct path
