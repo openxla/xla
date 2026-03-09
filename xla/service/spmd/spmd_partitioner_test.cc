@@ -3156,6 +3156,81 @@ ENTRY entry {
                           op::Shape("(f32[128,7,257], s32[128,7,257])")));
 }
 
+TEST_P(SpmdPartitioningTest, CustomCallRotateRight) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[12] parameter(0), sharding={devices=[4]<=[4]}
+  ROOT %custom-call = f32[12] custom-call(%param0),
+    custom_call_target="_SPMDInternalOp_RotateRight",
+    backend_config="dimension=0,amount=2",
+    sharding={devices=[4]<=[4]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/4));
+  VLOG(1) << module->ToString();
+
+  const auto root = module->entry_computation()->root_instruction();
+  auto param0 = AllOf(op::Parameter(0), op::Shape("f32[3]"));
+  auto rotate = op::Concatenate(op::CollectivePermute(op::Slice(param0)),
+                                op::Slice(param0));
+  EXPECT_THAT(root, AllOf(rotate, op::Shape("f32[3]")));
+}
+
+TEST_P(SpmdPartitioningTest, CustomCallMultiRotate) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[12] parameter(0), sharding={devices=[4]<=[4]}
+  ROOT %custom-call = (f32[12], f32[12], f32[12]) custom-call(%param0),
+    custom_call_target="_SPMDInternalOp_MultiRotate",
+    backend_config="dimension=0,left_amount=1,right_amount=1",
+    sharding={{devices=[4]<=[4]}, {devices=[4]<=[4]}, {devices=[4]<=[4]}}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/4));
+  VLOG(1) << module->ToString();
+
+  const auto root = module->entry_computation()->root_instruction();
+  auto super_shard = op::Concatenate(op::CollectivePermute(_), op::Parameter(0),
+                                     op::CollectivePermute(_));
+  EXPECT_THAT(root,
+              AllOf(op::Tuple(op::Slice(super_shard), op::Slice(super_shard),
+                              op::Slice(super_shard)),
+                    op::Shape("(f32[3], f32[3], f32[3])")));
+}
+
+TEST_P(SpmdPartitioningTest, CustomCallWrap) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[12] parameter(0), sharding={devices=[4]<=[4]}
+  ROOT %custom-call = f32[20] custom-call(%param0),
+    custom_call_target="_SPMDInternalOp_Wrap",
+    backend_config="dimension=0,left_amount=1,right_amount=1",
+    sharding={devices=[4]<=[4]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/4));
+  VLOG(1) << module->ToString();
+
+  const auto root = module->entry_computation()->root_instruction();
+  auto slice_idx = op::Multiply(
+      op::Reshape(op::DynamicSlice(op::Constant(), op::PartitionId())),
+      op::Constant());
+
+  auto super_shard = op::Concatenate(op::CollectivePermute(_), op::Parameter(0),
+                                     op::CollectivePermute(_));
+  EXPECT_THAT(root, AllOf(op::DynamicSlice(op::Pad(super_shard, _), slice_idx),
+                          op::Shape("f32[5]")));
+}
+
 TEST_P(SpmdPartitioningTest, PartitionCustomCall) {
   absl::string_view hlo_string = R"(
 HloModule cluster_2013453984438090939__.47
