@@ -567,6 +567,14 @@ absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
   return xla::Internal("Unexpected dtype");
 }
 
+auto BlasLt::GetGroupedMatmulPlan(
+    gpu::GroupedGemmConfig& config,
+    const std::vector<gpu::BlasLt::Epilogue>& epilogues) const
+    -> absl::StatusOr<MatmulPlanPtr> {
+  return absl::UnimplementedError(
+      "Grouped GEMM is not supported for CUDA BlasLt");
+}
+
 }  // namespace cuda
 
 }  // namespace stream_executor
