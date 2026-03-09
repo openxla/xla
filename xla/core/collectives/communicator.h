@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
+#include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/util.h"
@@ -159,6 +160,20 @@ class Communicator {
                         se::DeviceAddressBase send_buffer, PrimitiveType dtype,
                         size_t count, RankId peer, const Executor& executor) {
     return Unimplemented("One-way recv is not implemented");
+  }
+
+  virtual Future<> Put(se::DeviceAddressBase send_buffer,
+                       SymmetricMemory* recv_buffer, size_t offset,
+                       size_t count, RankId peer, const Executor& executor) {
+    return Unimplemented("Put is not implemented");
+  }
+
+  virtual Future<> Signal(const Executor& executor) {
+    return Unimplemented("Signal is not implemented");
+  }
+
+  virtual Future<> WaitSignal(RankId peer, const Executor& executor) {
+    return Unimplemented("WaitSignal is not implemented");
   }
 
   // Returns the number of ranks in the communicator.

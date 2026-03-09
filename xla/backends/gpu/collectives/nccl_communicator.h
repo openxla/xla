@@ -143,6 +143,14 @@ class NcclCommunicator : public GpuCommunicator {
   Future<> Recv(se::DeviceAddressBase recv_buffer, PrimitiveType dtype,
                 size_t count, RankId peer, const Executor& executor) final;
 
+  Future<> Put(se::DeviceAddressBase send_buffer, SymmetricMemory* recv_buffer,
+               size_t offset, size_t count, RankId peer,
+               const Executor& executor) final;
+
+  Future<> Signal(const Executor& executor) final;
+
+  Future<> WaitSignal(RankId peer, const Executor& executor) final;
+
   std::string ToString() const final;
 
   ncclComm_t comm() const { return comm_; }
@@ -212,6 +220,15 @@ class NcclCommunicator : public GpuCommunicator {
   absl::Status LaunchRecv(se::DeviceAddressBase recv_buffer,
                           PrimitiveType dtype, size_t count, RankId peer,
                           const Executor& executor) final;
+
+  absl::Status LaunchPut(se::DeviceAddressBase send_buffer,
+                         SymmetricMemory* recv_buffer, size_t offset,
+                         size_t count, RankId peer,
+                         const Executor& executor) final;
+
+  absl::Status LaunchSignal(const Executor& executor) final;
+
+  absl::Status LaunchWaitSignal(RankId peer, const Executor& executor) final;
 
   // Polls the communicator until any pending non-blocking operations are "done"
   // or aborted.

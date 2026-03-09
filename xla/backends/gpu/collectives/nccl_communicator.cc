@@ -559,6 +559,25 @@ Future<> NcclCommunicator::Recv(se::DeviceAddressBase recv_buffer,
   });
 }
 
+Future<> NcclCommunicator::Put(se::DeviceAddressBase send_buffer,
+                               SymmetricMemory* recv_buffer, size_t offset,
+                               size_t count, RankId peer,
+                               const Executor& executor) {
+  return Execute([send_buffer, recv_buffer, offset, count, peer, &executor,
+                  this]() {
+    return LaunchPut(send_buffer, recv_buffer, offset, count, peer, executor);
+  });
+}
+
+Future<> NcclCommunicator::Signal(const Executor& executor) {
+  return Execute([&executor, this]() { return LaunchSignal(executor); });
+}
+
+Future<> NcclCommunicator::WaitSignal(RankId peer, const Executor& executor) {
+  return Execute(
+      [peer, &executor, this]() { return LaunchWaitSignal(peer, executor); });
+}
+
 absl::Status NcclCommunicator::GroupStart() {
   VLOG(5) << "Start NCCL group";
   XLA_NCCL_RETURN_IF_ERROR(ncclGroupStart());
@@ -924,6 +943,23 @@ absl::Status NcclCommunicator::LaunchRecv(se::DeviceAddressBase recv_buffer,
     TF_RETURN_IF_ERROR(PollUntilDone());
   }
   return absl::OkStatus();
+}
+
+absl::Status NcclCommunicator::LaunchPut(se::DeviceAddressBase send_buffer,
+                                         SymmetricMemory* recv_buffer,
+                                         size_t offset, size_t count,
+                                         RankId peer,
+                                         const Executor& executor) {
+  return Unimplemented("NCCL Put is not yet implemented");
+}
+
+absl::Status NcclCommunicator::LaunchSignal(const Executor& executor) {
+  return Unimplemented("NCCL Signal is not yet implemented");
+}
+
+absl::Status NcclCommunicator::LaunchWaitSignal(RankId peer,
+                                                const Executor& executor) {
+  return Unimplemented("NCCL WaitSignal is not yet implemented");
 }
 
 std::string NcclCommunicator::ToString() const {
