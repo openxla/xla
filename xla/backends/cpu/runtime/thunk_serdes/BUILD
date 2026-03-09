@@ -56,3 +56,13 @@ cc_library(
     ],
     alwayslink = 1,
 )
+
+# Utility target to link all thunk serdes implementations.
+cc_library(
+    name = "all_thunk_serdes",
+    deps = [
+        ":convolution_thunk_serdes",
+        ":dot_thunk_serdes",
+    ],
+    alwayslink = 1,
+)

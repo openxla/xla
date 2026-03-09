@@ -1296,8 +1296,7 @@ cc_library(
     hdrs = ["thunk_proto_serdes.h"],
     deps = [
         ":thunk_proto_serdes_impl",
-        "//xla/backends/cpu/runtime/thunk_serdes:convolution_thunk_serdes",
-        "//xla/backends/cpu/runtime/thunk_serdes:dot_thunk_serdes",
+        "//xla/backends/cpu/runtime/thunk_serdes:all_thunk_serdes",
     ] + THUNK_SERDES_HEADER_DEPS,
 )
 
@@ -1382,6 +1381,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu/runtime/thunk_serdes:all_thunk_serdes",
         "//xla/backends/cpu/runtime/ynnpack:ynn_fusion_thunk",
         "//xla/ffi",
         "//xla/ffi:ffi_api",
@@ -1404,10 +1404,6 @@ xla_cc_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:casts",
-    ] + [
-        # Thunk serdes deps
-        "//xla/backends/cpu/runtime/thunk_serdes:convolution_thunk_serdes",
-        "//xla/backends/cpu/runtime/thunk_serdes:dot_thunk_serdes",
     ],
 )
 
