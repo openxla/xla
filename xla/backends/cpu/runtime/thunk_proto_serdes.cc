@@ -45,7 +45,6 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/conditional_thunk.h"
 #include "xla/backends/cpu/runtime/copy_thunk.h"
 #include "xla/backends/cpu/runtime/custom_call_thunk.h"
-#include "xla/backends/cpu/runtime/dot_thunk.h"
 #include "xla/backends/cpu/runtime/fft_thunk.h"
 #include "xla/backends/cpu/runtime/infeed_thunk.h"
 #include "xla/backends/cpu/runtime/kernel_thunk.h"
@@ -537,23 +536,6 @@ static absl::Status ToProto(const CustomCallThunk& thunk, ThunkProto& proto) {
   return absl::OkStatus();
 }
 
-static absl::Status ToProto(const DotThunk& thunk, ThunkProto& proto) {
-  DotThunkProto* dot_thunk_proto = proto.mutable_dot_thunk();
-
-  *dot_thunk_proto->mutable_dot_dimensions() = thunk.dot_dimensions();
-  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
-      thunk.dot_slices().lhs_buffer, thunk.dot_slices().lhs_shape,
-      dot_thunk_proto->mutable_lhs_buffer_shape()));
-  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
-      thunk.dot_slices().rhs_buffer, thunk.dot_slices().rhs_shape,
-      dot_thunk_proto->mutable_rhs_buffer_shape()));
-  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
-      thunk.dot_slices().out_buffer, thunk.dot_slices().out_shape,
-      dot_thunk_proto->mutable_out_buffer_shape()));
-
-  return absl::OkStatus();
-}
-
 static absl::Status ToProto(const InfeedThunk& thunk, ThunkProto& proto) {
   InfeedThunkProto* infeed_thunk_proto = proto.mutable_infeed_thunk();
 
@@ -854,10 +836,6 @@ absl::StatusOr<ThunkProto> ThunkSerDesProtobuf::ToProto(
       TF_RETURN_IF_ERROR(::xla::cpu::ToProto(
           tsl::down_cast<const CustomCallThunk&>(thunk), proto));
       break;
-    case Thunk::Kind::kDot:
-      TF_RETURN_IF_ERROR(
-          ::xla::cpu::ToProto(tsl::down_cast<const DotThunk&>(thunk), proto));
-      break;
     case Thunk::Kind::kInfeed:
       TF_RETURN_IF_ERROR(::xla::cpu::ToProto(
           tsl::down_cast<const InfeedThunk&>(thunk), proto));
@@ -1095,34 +1073,6 @@ CustomCallThunkFromProto(
       std::move(info), proto.custom_call_thunk().target_name(),
       std::move(op_buffers), proto.custom_call_thunk().backend_config(),
       proto.custom_call_thunk().api_version());
-}
-
-static absl::StatusOr<std::unique_ptr<DotThunk>> DotThunkFromProto(
-    const ThunkProto& proto,
-    const std::vector<BufferAllocation>& buffer_allocations) {
-  TF_ASSIGN_OR_RETURN(Thunk::Info info, ThunkInfoFromProto(proto.info()));
-
-  TF_ASSIGN_OR_RETURN(
-      auto lhs_slice_shape,
-      DeserializeSliceShapeFromProto(proto.dot_thunk().lhs_buffer_shape(),
-                                     buffer_allocations));
-  TF_ASSIGN_OR_RETURN(
-      auto rhs_slice_shape,
-      DeserializeSliceShapeFromProto(proto.dot_thunk().rhs_buffer_shape(),
-                                     buffer_allocations));
-  TF_ASSIGN_OR_RETURN(
-      auto out_slice_shape,
-      DeserializeSliceShapeFromProto(proto.dot_thunk().out_buffer_shape(),
-                                     buffer_allocations));
-
-  const auto& [lhs_buffer, lhs_shape] = lhs_slice_shape;
-  const auto& [rhs_buffer, rhs_shape] = rhs_slice_shape;
-  const auto& [out_buffer, out_shape] = out_slice_shape;
-
-  return DotThunk::Create(std::move(info), proto.dot_thunk().dot_dimensions(),
-                          std::move(lhs_buffer), lhs_shape,
-                          std::move(rhs_buffer), rhs_shape,
-                          std::move(out_buffer), out_shape);
 }
 
 static absl::StatusOr<std::unique_ptr<FftThunk>> FftThunkFromProto(
@@ -1545,8 +1495,6 @@ absl::StatusOr<std::unique_ptr<Thunk>> ThunkSerDesProtobuf::FromProto(
       return CopyThunkFromProto(proto, *buffer_allocations_);
     case Thunk::Kind::kCustomCall:
       return CustomCallThunkFromProto(proto, *buffer_allocations_);
-    case Thunk::Kind::kDot:
-      return DotThunkFromProto(proto, *buffer_allocations_);
     case Thunk::Kind::kFft:
       return FftThunkFromProto(proto, *buffer_allocations_);
     case Thunk::Kind::kInfeed:

@@ -1252,7 +1252,6 @@ cc_library(
         ":conditional_thunk",
         ":copy_thunk",
         ":custom_call_thunk",
-        ":dot_thunk",
         ":fft_thunk",
         ":infeed_thunk",
         ":kernel_thunk",
@@ -1298,6 +1297,7 @@ cc_library(
     deps = [
         ":thunk_proto_serdes_impl",
         "//xla/backends/cpu/runtime/thunk_serdes:convolution_thunk_serdes",
+        "//xla/backends/cpu/runtime/thunk_serdes:dot_thunk_serdes",
     ] + THUNK_SERDES_HEADER_DEPS,
 )
 
@@ -1407,6 +1407,7 @@ xla_cc_test(
     ] + [
         # Thunk serdes deps
         "//xla/backends/cpu/runtime/thunk_serdes:convolution_thunk_serdes",
+        "//xla/backends/cpu/runtime/thunk_serdes:dot_thunk_serdes",
     ],
 )
 

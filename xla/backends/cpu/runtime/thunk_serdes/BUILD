@@ -35,3 +35,24 @@ cc_library(
     ],
     alwayslink = 1,
 )
+
+cc_library(
+    name = "dot_thunk_serdes",
+    srcs = ["dot_thunk_serdes.cc"],
+    hdrs = ["dot_thunk_serdes.h"],
+    deps = [
+        "//xla/backends/cpu/runtime:dot_thunk",
+        "//xla/backends/cpu/runtime:thunk",
+        "//xla/backends/cpu/runtime:thunk_proto_cc",
+        "//xla/backends/cpu/runtime:thunk_proto_serdes_impl",
+        "//xla/backends/cpu/runtime:thunk_proto_serdes_utils",
+        "//xla/service:buffer_assignment",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:casts",
+    ],
+    alwayslink = 1,
+)

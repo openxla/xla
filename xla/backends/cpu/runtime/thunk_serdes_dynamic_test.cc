@@ -37,5 +37,16 @@ TEST(ThunkSerDesDynamicTest, ConvolutionThunkFailsWhenNotLinked) {
       std::string(from_proto_fn_or.status().message()));
 }
 
+TEST(ThunkSerDesDynamicTest, DotThunkFailsWhenNotLinked) {
+  auto from_proto_fn_or =
+      ThunkSerDesRegistry::Get().GetFromProtoFn(Thunk::Kind::kDot);
+
+  EXPECT_FALSE(from_proto_fn_or.ok());
+  EXPECT_EQ(from_proto_fn_or.status().code(), absl::StatusCode::kNotFound);
+  EXPECT_PRED_FORMAT2(testing::IsSubstring,
+                      "No FromProto function registered for thunk kind: dot",
+                      std::string(from_proto_fn_or.status().message()));
+}
+
 }  // namespace
 }  // namespace xla::cpu
