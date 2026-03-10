@@ -59,6 +59,9 @@ class ServiceExecutableRunOptions {
     return run_options_.allocator();
   }
   int device_ordinal() const { return run_options_.device_ordinal(); }
+  int command_buffer_va_range_idx() const {
+    return run_options_.command_buffer_va_range_idx();
+  }
 
   int local_device_count() const { return run_options_.local_device_count(); };
   // Borrows a stream and returns a smart pointer which returns the stream on

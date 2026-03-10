@@ -91,7 +91,8 @@ Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
       params.collective_memory, params.device_to_host_stream,
       params.host_to_device_stream, params.send_device_memory_function,
       params.recv_device_memory_function, params.ffi_execution_context,
-      params.additional_compute_streams);
+      params.additional_compute_streams, params.execution_scoped_state,
+      params.mock_collectives, params.execution_id);
 }
 
 Thunk::ExecuteParams::ExecuteParams(

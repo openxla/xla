@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -59,6 +60,11 @@ class CommandBufferThunk : public Thunk {
   absl::Status WalkNested(Walker callback) override;
 
   std::string ToString(int indent) const override;
+
+  // Returns buffer allocation indices referenced by commands in this thunk.
+  absl::Span<const BufferAllocation::Index> allocs_indices() const {
+    return commands_.allocs_indices();
+  }
 
  private:
   // Command buffer instantiated on a `se::StreamExecutor` instance, and
@@ -111,16 +117,22 @@ class CommandBufferThunk : public Thunk {
   };
 
   // Command buffer thunk owns commands buffers instantiated on all executors.
+  // The key is a pair of (StreamExecutor*, first_alloc_address) to support
+  // separate command buffers for different buffer allocation VA ranges during
+  // interleaved execution.
   struct State {
     absl::Mutex mutex;
-    absl::flat_hash_map<se::StreamExecutor*,
+    absl::flat_hash_map<std::pair<se::StreamExecutor*, void*>,
                         std::shared_ptr<ExecutorCommandBuffer>>
         command_buffers ABSL_GUARDED_BY(mutex);
   };
 
-  // Returns a command buffer instantiated for `executor` or creates new one.
+  // Returns a command buffer instantiated for `executor` and
+  // `first_alloc_address` (device address of the first allocation in
+  // allocs_indices()) or creates a new one.
   absl::StatusOr<std::shared_ptr<ExecutorCommandBuffer>>
-  GetOrCreateCommandBuffer(se::StreamExecutor* executor);
+  GetOrCreateCommandBuffer(se::StreamExecutor* executor,
+                           void* first_alloc_address);
 
   // Each individual command buffer allocates state on device (CUDA graph) and
   // it adds up pretty quickly. To prevent OOM errors we proactively evict
@@ -153,6 +165,8 @@ class CommandBufferThunk : public Thunk {
   // Command buffer thunk state allocated in heap to allow global (per-process)
   // management of instantiated command buffers.
   std::shared_ptr<State> state_;
+
+  bool enable_command_buffer_va_remapping_;
 };
 
 }  // namespace xla::gpu
