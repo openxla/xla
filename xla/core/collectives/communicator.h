@@ -55,6 +55,11 @@ class Communicator {
     virtual ~Executor() = default;
   };
 
+  class SignalDesc {
+   public:
+    virtual ~SignalDesc() = default;
+  };
+
   // An RAII handle for buffers registered with the communicator. Child classes
   // are responsible for unregistering the buffer when the handle is destroyed.
   class RegisteredBufferHandle {
@@ -162,17 +167,29 @@ class Communicator {
     return Unimplemented("One-way recv is not implemented");
   }
 
+  // One-sided write: copies data from send_buffer to the peer's symmetric
+  // memory at recv_buffer + offset (count bytes). Used for RMA patterns such as
+  // ragged all-to-all. Does not send signal metadata; use Signal for that.
   virtual Future<> Put(se::DeviceAddressBase send_buffer,
                        SymmetricMemory* recv_buffer, size_t offset,
                        size_t count, RankId peer, const Executor& executor) {
     return Unimplemented("Put is not implemented");
   }
 
-  virtual Future<> Signal(const Executor& executor) {
+  // Sends a signal to peer without transferring data. Can be used as a barrier
+  // or to notify peer that prior Puts (and Signals) to the same descriptor have
+  // completed. desc carries backend-specific signal identity (e.g. sigIdx, ctx).
+  virtual Future<> Signal(RankId peer, const SignalDesc& desc,
+                          const Executor& executor) {
     return Unimplemented("Signal is not implemented");
   }
 
-  virtual Future<> WaitSignal(RankId peer, const Executor& executor) {
+  // Counted wait: completes when this rank has received op_cnt signals from
+  // peer that match desc (e.g. same sigIdx/ctx). Used to synchronize after
+  // Put/Signal; the backend uses desc to match which signals to wait for.
+  virtual Future<> WaitSignal(RankId peer, int op_cnt,
+                              const SignalDesc& desc,
+                              const Executor& executor) {
     return Unimplemented("WaitSignal is not implemented");
   }
 

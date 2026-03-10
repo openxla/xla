@@ -55,6 +55,17 @@ limitations under the License.
 
 namespace xla::gpu {
 
+class NcclSignalDesc final : public Communicator::SignalDesc {
+ public:
+  NcclSignalDesc(int sig_idx, int ctx) : sig_idx_(sig_idx), ctx_(ctx) {}
+  int sig_idx() const { return sig_idx_; }
+  int ctx() const { return ctx_; }
+
+ private:
+  int sig_idx_;
+  int ctx_;
+};
+
 // XLA collectives communicator wrapping an NCCL communicator.
 class NcclCommunicator : public GpuCommunicator {
  public:
@@ -147,9 +158,11 @@ class NcclCommunicator : public GpuCommunicator {
                size_t offset, size_t count, RankId peer,
                const Executor& executor) final;
 
-  Future<> Signal(const Executor& executor) final;
+  Future<> Signal(RankId peer, const SignalDesc& desc,
+                  const Executor& executor) final;
 
-  Future<> WaitSignal(RankId peer, const Executor& executor) final;
+  Future<> WaitSignal(RankId peer, int op_cnt, const SignalDesc& desc,
+                      const Executor& executor) final;
 
   std::string ToString() const final;
 
@@ -226,9 +239,12 @@ class NcclCommunicator : public GpuCommunicator {
                          size_t count, RankId peer,
                          const Executor& executor) final;
 
-  absl::Status LaunchSignal(const Executor& executor) final;
+  absl::Status LaunchSignal(RankId peer, const SignalDesc& desc,
+                            const Executor& executor) final;
 
-  absl::Status LaunchWaitSignal(RankId peer, const Executor& executor) final;
+  absl::Status LaunchWaitSignal(RankId peer, int op_cnt,
+                                const SignalDesc& desc,
+                                const Executor& executor) final;
 
   // Polls the communicator until any pending non-blocking operations are "done"
   // or aborted.
