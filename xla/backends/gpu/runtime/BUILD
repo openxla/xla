@@ -299,6 +299,7 @@ cc_library(
         ":all_gather_thunk",
         ":all_reduce_thunk",
         ":all_to_all_thunk",
+        ":async_thunk",
         ":collective_broadcast_thunk",
         ":collective_permute_thunk",
         ":collective_thunk",
@@ -408,6 +409,7 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )
 
@@ -430,9 +432,8 @@ xla_test(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
-        "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:stream_executor_address_allocator",
-        "//xla/stream_executor:stream_executor_memory_allocator",
+        "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:status_macros",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
@@ -4111,6 +4112,7 @@ cc_library(
     srcs = ["command_buffer_conversion_pass.cc"],
     hdrs = ["command_buffer_conversion_pass.h"],
     deps = [
+        ":async_thunk",
         ":command_buffer_cmd_emitter",
         ":command_buffer_thunk",
         ":command_executor",
@@ -4152,6 +4154,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":all_gather_thunk",
+        ":async_thunk",
         ":collective_thunk",
         ":command_buffer_conversion_pass",
         ":command_buffer_thunk",
