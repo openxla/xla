@@ -38,7 +38,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/local_client.h"
 #include "xla/executable_run_options.h"
@@ -51,6 +50,7 @@ limitations under the License.
 #include "xla/pjrt/common_pjrt_client.h"
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/local_device_state.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -291,9 +291,9 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
       const XlaComputation& computation, CompileOptions options) override;
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
-      mlir::ModuleOp mlir_module, CompileOptions options) override;
+      MaybeOwningMlirModule mlir_module, CompileOptions options) override;
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
-      mlir::ModuleOp mlir_module, CompileOptions options) override;
+      MaybeOwningMlirModule mlir_module, CompileOptions options) override;
 
   virtual absl::StatusOr<std::string> SerializeExecutable(
       const PjRtLoadedExecutable& executable) const;
@@ -311,7 +311,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
                            const LoadOptions& load_options) override;
 
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Load(
-      std::unique_ptr<PjRtExecutable> executable,
+      std::shared_ptr<PjRtExecutable> executable,
       const LoadOptions& load_options) override;
 
   absl::StatusOr<std::unique_ptr<HloCostAnalysis>> GetHloCostAnalysis()
@@ -437,6 +437,9 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   void WaitForAllocation(se::Stream* stream,
                          const CommonPjRtRawBuffer& raw_buffer);
 
+  void LaunchOnDevice(PjRtDevice* device,
+                      absl::AnyInvocable<void()> execute_fn) const override;
+
  protected:
   friend class PjRtStreamExecutorRawBuffer;
 
@@ -468,7 +471,7 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
       const XlaComputation& computation, CompileOptions options,
       bool lookup_addressable_devices);
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
-      mlir::ModuleOp mlir_module, CompileOptions options,
+      MaybeOwningMlirModule mlir_module, CompileOptions options,
       bool lookup_addressable_devices);
 
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> CompileInternal(
@@ -489,7 +492,8 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadInternal(
       std::optional<HloModuleProto> unoptimized_hlo_module_proto,
       std::unique_ptr<LocalExecutable> local_executables,
-      CompileOptions compile_options, bool dump);
+      CompileOptions compile_options, bool dump,
+      std::optional<std::string> fingerprint = std::nullopt);
 
   const PjRtPlatformId platform_id_;
   const std::string platform_name_;
@@ -593,6 +597,7 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
  public:
   PjRtStreamExecutorLoadedExecutable(
       std::unique_ptr<LocalExecutable> executables,
+      std::optional<std::string> fingerprint,
       bool parameter_is_tupled_arguments,
       std::shared_ptr<DeviceAssignment> device_assignment,
       CompileOptions compile_options,
@@ -641,9 +646,6 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
   absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>> StartRawExecutable(
       const ExecuteOptions& options, xla::RunId run_id, int replica,
       int partition, PjRtDevice* device) const override;
-
-  void LaunchOnDevice(PjRtDevice* device,
-                      absl::AnyInvocable<void()> execute_fn) const;
 
   const DeviceAssignment& device_assignment() const override {
     return *device_assignment_;

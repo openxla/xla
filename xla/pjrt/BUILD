@@ -298,12 +298,22 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "maybe_owning_mlir_module",
+    hdrs = ["maybe_owning_mlir_module.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
     name = "pjrt_client",
     srcs = ["pjrt_client.cc"],
     hdrs = ["pjrt_client.h"],
     visibility = internal_visibility(["//xla:friends"]),
     deps = [
         ":host_memory_allocator",
+        ":maybe_owning_mlir_module",
         ":pjrt_abi_version",
         ":pjrt_common",
         ":pjrt_compiler",
@@ -340,7 +350,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -421,6 +430,7 @@ cc_library(
     hdrs = ["pjrt_executable.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        ":compiled_memory_stats",
         ":pjrt_abi_version",
         ":pjrt_common",
         ":pjrt_device_dimensions",
@@ -430,6 +440,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/target_config",
         "//xla/client:executable_build_options",
         "//xla/ffi:execution_context",
         "//xla/hlo/ir:hlo",
@@ -497,6 +508,7 @@ cc_library(
     hdrs = ["pjrt_compiler.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        ":maybe_owning_mlir_module",
         ":pjrt_abi_version",
         ":pjrt_common",
         ":pjrt_device_description",
@@ -528,6 +540,7 @@ xla_cc_test(
     name = "pjrt_compiler_test",
     srcs = ["pjrt_compiler_test.cc"],
     deps = [
+        ":maybe_owning_mlir_module",
         ":pjrt_client",
         ":pjrt_common",
         ":pjrt_compiler",
@@ -545,7 +558,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -559,7 +571,6 @@ cc_library(
         "//xla/runtime:chip_id",
         "//xla/runtime:device_id",
         "//xla/runtime:process_id",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
     ],
 )
@@ -721,6 +732,7 @@ cc_library(
         ":host_memory_spaces",
         ":layout_mode",
         ":local_device_state",
+        ":maybe_owning_mlir_module",
         ":metrics",
         ":mlir_to_hlo",
         ":never_run_on_fiber",
@@ -1061,6 +1073,7 @@ cc_library(
     hdrs = ["tf_pjrt_client.h"],
     visibility = ["//visibility:public"],
     deps = [
+        ":maybe_owning_mlir_module",
         ":pjrt_client",
         ":pjrt_common",
         ":pjrt_compiler",
@@ -1085,7 +1098,6 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:casts",
     ],
 )
@@ -1418,6 +1430,7 @@ cc_library(
     hdrs = ["pjrt_phase_compile_sample_plugin.h"],
     visibility = ["//visibility:private"],
     deps = [
+        ":maybe_owning_mlir_module",
         ":pjrt_client",
         ":pjrt_compiler",
         ":pjrt_executable",
@@ -1462,9 +1475,12 @@ xla_cc_test(
     name = "pjrt_phase_compiler_test",
     srcs = ["pjrt_phase_compiler_test.cc"],
     deps = [
+        ":maybe_owning_mlir_module",
         ":pjrt_compiler",
         ":pjrt_executable",
         ":pjrt_phase_compile_sample_plugin",
+        "//xla:debug_options_flags",
+        "//xla/backends/cpu:target_machine_options",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/testlib:test",
         "//xla/pjrt/c:pjrt_c_api_phase_compile_internal",
@@ -1570,5 +1586,77 @@ xla_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "stream_executor_platform_id_mapping",
+    srcs = ["stream_executor_platform_id_mapping.cc"],
+    hdrs = ["stream_executor_platform_id_mapping.h"],
+    deps = [
+        ":pjrt_common",
+        "//xla/stream_executor:platform_id",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+xla_cc_test(
+    name = "stream_executor_platform_id_mapping_test",
+    srcs = ["stream_executor_platform_id_mapping_test.cc"],
+    deps = [
+        ":pjrt_common",
+        ":stream_executor_platform_id_mapping",
+        "//xla/stream_executor:platform_id",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "stream_executor_pjrt_abi_version",
+    srcs = ["stream_executor_pjrt_abi_version.cc"],
+    hdrs = ["stream_executor_pjrt_abi_version.h"],
+    deps = [
+        ":pjrt_abi_version",
+        ":pjrt_common",
+        "//xla/stream_executor/abi:executable_abi_version",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "stream_executor_pjrt_abi_version_test",
+    srcs = ["stream_executor_pjrt_abi_version_test.cc"],
+    deps = [
+        ":pjrt_common",
+        ":stream_executor_pjrt_abi_version",
+        "//xla/pjrt/proto:pjrt_abi_version_proto_cc",
+        "//xla/stream_executor/abi:executable_abi_version",
+        "//xla/stream_executor/abi:executable_abi_version_proto_cc",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "compiled_memory_stats",
+    srcs = ["compiled_memory_stats.cc"],
+    hdrs = ["compiled_memory_stats.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/pjrt/proto:executable_metadata_proto_cc",
+        "//xla/service:buffer_assignment",
+        "//xla/service:hlo_value",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/types:span",
     ],
 )

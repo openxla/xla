@@ -387,6 +387,8 @@ enum StatType {
   kMetadataLibtpuVersion,
   kMetadataCudaRuntimeVersion,
   kMetadataCudaDriverVersion,
+  // LLO Debug Dump.
+  kLloProto,
   // Total VDD core energy consumed in nano Joules.
   kVddCoreEnergy,
   // Number of VDD core power events.

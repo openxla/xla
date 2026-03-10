@@ -83,14 +83,15 @@ xla_cc_test(
     deps = [
         ":autotuner",
         ":autotuner_cache_interface",
+        ":backends_proto_cc",
         ":codegen_backend",
         ":profiler",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
         "//xla:literal_util",
         "//xla:shape_util",
-        "//xla/backends/gpu/runtime:sequential_thunk",
         "//xla/backends/gpu/runtime:thunk",
+        "//xla/backends/gpu/runtime:thunk_executor",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/pjrt/distributed:key_value_store_interface",
@@ -162,6 +163,7 @@ cc_library(
     deps = [
         ":autotuner_cache_interface",
         ":autotuner_cache_proto_cc",
+        ":backends_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
@@ -191,6 +193,7 @@ xla_cc_test(
     deps = [
         ":autotuner_cache_interface",
         ":autotuner_cache_proto_cc",
+        ":backends_proto_cc",
         ":file_based_autotuner_cache",
         "//xla:literal_util",
         "//xla/hlo/ir:hlo",

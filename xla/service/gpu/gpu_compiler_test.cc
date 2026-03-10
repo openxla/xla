@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/error_spec.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/ffi.h"
@@ -69,7 +70,7 @@ limitations under the License.
 #include "xla/service/computation_placer.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
-#include "xla/service/gpu/autotuning/autotuner_util.h"
+#include "xla/service/gpu/autotuning/autotuner_cache.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
@@ -372,11 +373,11 @@ ENTRY e {
 class PersistedAutotuningTest : public HloPjRtTestBase {
  protected:
   void SetUp() override {
-    AutotunerUtil::ClearAutotuneResults();
+    AutotunerCache::ClearAutotuneResults();
     xla_gpu_dump_autotune_results_to_ = GetUniqueTempFilePath(".txt");
   }
 
-  void TearDown() override { AutotunerUtil::ClearAutotuneResults(); }
+  void TearDown() override { AutotunerCache::ClearAutotuneResults(); }
 
   static constexpr absl::string_view kHloText = R"(
 HloModule t
@@ -626,11 +627,11 @@ class GpuCompilerTestWithAutotuneDb : public GpuCompilerTest {
         contents, {{kCudnnVersionPlaceholder, dnn_version.ToString()}});
 
     TF_EXPECT_OK(tsl::WriteStringToFile(env, tmp_filepath, contents));
-    AutotunerUtil::ClearAutotuneResults();
-    TF_EXPECT_OK(AutotunerUtil::LoadAutotuneResultsFromFile(tmp_filepath));
+    AutotunerCache::ClearAutotuneResults();
+    TF_EXPECT_OK(AutotunerCache::LoadAutotuneResultsFromFile(tmp_filepath));
   }
 
-  static void TearDownTestSuite() { AutotunerUtil::ClearAutotuneResults(); }
+  static void TearDownTestSuite() { AutotunerCache::ClearAutotuneResults(); }
 };
 
 TEST_F(GpuCompilerTestWithAutotuneDb,
@@ -806,7 +807,6 @@ ENTRY main {
 
   se::GpuComputeCapability gpu_cc =
       device_description().gpu_compute_capability();
-  bool is_cuda = gpu_cc.IsCuda();
   se::CudaComputeCapability cuda_cc = get_cuda_cc();
   se::RocmComputeCapability rocm_cc =
       device_description().rocm_compute_capability();
@@ -824,7 +824,7 @@ ENTRY main {
 
   HloPrintOptions print_options =
       HloPrintOptions().set_print_operand_shape(true);
-  if (is_cuda) {
+  {
     // Triton enabled, no fallback.
     ASSERT_OK_AND_ASSIGN(auto optimized_module_no_fallback_and_executable,
                          optimize_module(/*enable_triton=*/true,
@@ -834,7 +834,8 @@ ENTRY main {
     const std::string triton_expected_check =
         (cuda_cc.IsAtLeastHopper() ||
          (cuda_cc.IsAtLeastAmpere() && lhs_type == F8E5M2 &&
-          rhs_type == F8E5M2))
+          rhs_type == F8E5M2) ||
+         rocm_cc.has_ocp_fp8_support())
             ? triton_keep_types
             : cublas_convert_to_f16;
     ASSERT_OK_AND_ASSIGN(
@@ -1064,15 +1065,15 @@ ENTRY main {
   std::unique_ptr<GpuExecutable> gpu_exec(
       static_cast<GpuExecutable*>(executable.release()));
 
-  EXPECT_THAT(gpu_exec->GetThunk().thunks(),
+  EXPECT_THAT(gpu_exec->thunk_executor().thunks(),
               ::testing::ElementsAre(ThunkKindIs(Thunk::kWaitForStreams),
                                      ThunkKindIs(Thunk::kSequential),
                                      ThunkKindIs(Thunk::kWaitForStreams)));
 
   // Within the sequential thunk, there should only be a single gemm
   // thunk with an explicitly set execution stream id.
-  auto sequential_thunk =
-      static_cast<SequentialThunk*>(gpu_exec->GetThunk().thunks()[1].get());
+  auto sequential_thunk = static_cast<SequentialThunk*>(
+      gpu_exec->thunk_executor().thunks()[1].get());
   EXPECT_EQ(sequential_thunk->thunks().size(), 1);
   EXPECT_THAT(sequential_thunk->thunks(),
               ::testing::ElementsAre(ThunkKindIs(Thunk::kGemm)));
@@ -1128,15 +1129,15 @@ ENTRY main {
   std::unique_ptr<GpuExecutable> gpu_exec(
       static_cast<GpuExecutable*>(executable.release()));
 
-  EXPECT_THAT(gpu_exec->GetThunk().thunks(),
+  EXPECT_THAT(gpu_exec->thunk_executor().thunks(),
               ::testing::ElementsAre(ThunkKindIs(Thunk::kWaitForStreams),
                                      ThunkKindIs(Thunk::kSequential),
                                      ThunkKindIs(Thunk::kWaitForStreams)));
 
   // Within the sequential thunk, there should only be a single gemm
   // thunk with an explicitly set execution stream id.
-  auto sequential_thunk =
-      static_cast<SequentialThunk*>(gpu_exec->GetThunk().thunks()[1].get());
+  auto sequential_thunk = static_cast<SequentialThunk*>(
+      gpu_exec->thunk_executor().thunks()[1].get());
   EXPECT_EQ(sequential_thunk->thunks().size(), 1);
   EXPECT_THAT(sequential_thunk->thunks(),
               ::testing::ElementsAre(ThunkKindIs(Thunk::kGemm)));
@@ -1469,10 +1470,8 @@ TEST_F(PassOrderTest, HoistFusedBitcastsRunsAfterAutotuner) {
   VerifyPassRunsAtLeastOnceBefore("autotuner", "hoist-fused-bitcasts");
 }
 
-TEST_F(PassOrderTest, NestGemmFusionRunsAfterHoistFusedBitcasts) {
-  // NestGemmFusion expect to see __triton_gemm custom call with a backend
-  // config created by gemm_fusion_autotuner.
-  VerifyPassOrder("hoist-fused-bitcasts", "nest_gemm_fusion");
+TEST_F(PassOrderTest, ConvertTritonGemmConfigRunsAfterHoistFusedBitcasts) {
+  VerifyPassOrder("hoist-fused-bitcasts", "convert_triton_gemm_config");
 }
 
 TEST_F(PassOrderTest,
@@ -1780,7 +1779,7 @@ ENTRY main {
                              compile_options));
   std::unique_ptr<GpuExecutable> gpu_exec(
       static_cast<GpuExecutable*>(executable.release()));
-  const ThunkSequence& thunks = gpu_exec->GetThunk().thunks();
+  const ThunkSequence& thunks = gpu_exec->thunk_executor().thunks();
   ASSERT_EQ(thunks.size(), 1);
   EXPECT_EQ(thunks[0]->kind(), Thunk::Kind::kCommandBuffer);
 }
@@ -1909,7 +1908,7 @@ ENTRY main {
   ASSERT_NE(gpu_executable, nullptr);
 
   // Get the thunk sequence and check its size and type
-  const SequentialThunk& seq_thunk = gpu_executable->GetThunk();
+  const ThunkExecutor& seq_thunk = gpu_executable->thunk_executor();
   std::vector<Thunk::Kind> kinds;
   kinds.reserve(seq_thunk.thunks().size());
   for (const auto& thunk : seq_thunk.thunks()) {

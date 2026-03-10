@@ -81,7 +81,7 @@ jobs:
           {
             pool: "linux-x86-n2-16",
             container: "gcr.io/tensorflow-sigs/build:latest-python3.11",
-            name: "JAX Linux x86 CPU",
+            name: "JAX Linux x86 CPU Bzlmod",
             repo: "jax-ml/jax",
           },
           {

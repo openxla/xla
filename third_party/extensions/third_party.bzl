@@ -4,6 +4,7 @@ load("//third_party/benchmark:workspace.bzl", benchmark = "repo")
 load("//third_party/brotli:workspace.bzl", brotli = "repo")
 load("//third_party/cpuinfo:workspace.bzl", cpuinfo = "repo")
 load("//third_party/cudnn_frontend:workspace.bzl", cudnn_frontend = "repo")
+load("//third_party/cutlass:workspace.bzl", cutlass = "repo")
 load("//third_party/dlpack:workspace.bzl", dlpack = "repo")
 load("//third_party/ducc:workspace.bzl", ducc = "repo")
 load("//third_party/eigen3:workspace.bzl", eigen3 = "repo")
@@ -84,6 +85,7 @@ def _third_party_ext_impl(mctx):  # @unused
     uv()
     xnnpack()
     xxd()
+    cutlass()
 
 third_party_ext = module_extension(
     implementation = _third_party_ext_impl,

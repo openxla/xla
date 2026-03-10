@@ -17,8 +17,8 @@ limitations under the License.
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <ostream>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -33,126 +33,36 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
+#include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/error_spec.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/tests/collective_ops_e2e_test_base.h"
+#include "xla/shape_util.h"
+#include "xla/stream_executor/gpu/all_reduce_kernel.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {
 
+using ::xla::se::gpu::AllReduceStrategy;
+
 std::string GetAsyncTestName(bool is_async) {
   return is_async ? "async" : "sync";
 }
-
-class AllReduceTestNoParams : public CollectiveOpsWithFlagsBase {
- public:
-  explicit AllReduceTestNoParams(bool is_async = false)
-      : CollectiveOpsWithFlagsBase(/*enable_async=*/is_async,
-                                   /*enable_p2p_memcpy=*/false,
-                                   /*memory_size=*/32 * kMB,
-                                   /*collectives_memory_size=*/0) {}
-
-  void SetUp() override {
-    CollectiveOpsE2ETestBase::SetUp();
-    if (!IsAmpereAndHigher()) {
-      GTEST_SKIP() << "Test requires Ampere or newer architecture since it's "
-                      "using triton.";
-    }
-  }
-};
-
-class AllReduceTest
-    : public AllReduceTestNoParams,
-      public ::testing::WithParamInterface<std::tuple<bool, bool>> {
- public:
-  struct InputsOutputs {
-    std::vector<Literal> inputs;
-    std::vector<Literal> expected_outputs;
-
-    [[nodiscard]] std::vector<std::vector<Literal*>> InputLiteralPtrs() {
-      std::vector<std::vector<Literal*>> result;
-      for (auto& input : inputs) {
-        result.push_back(std::vector<Literal*>{&input});
-      }
-      return result;
-    }
-  };
-
-  AllReduceTest()
-      : AllReduceTestNoParams(/*is_async=*/std::get<0>(GetParam())) {}
-
- protected:
-  DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions opts = CollectiveOpsWithFlagsBase::GetDebugOptionsForTest();
-
-    opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(
-        std::get<1>(GetParam()));
-
-    return opts;
-  }
-
-  static absl::StatusOr<InputsOutputs> BuildTestInputsOutputs(
-      const HloModule& module, int64_t num_replicas, int64_t num_iterations) {
-    std::vector<Array<float>> inputs;
-    std::vector<Literal> input_literals;
-    const int64_t num_elements =
-        module.entry_computation()->root_instruction()->shape().dimensions()[0];
-    for (int i = 0; i < num_replicas; ++i) {
-      auto& input = inputs.emplace_back(Array<float>({num_elements}));
-      input.FillRandom(1.0f, 10.0f, /*seed=*/i);
-      input_literals.push_back(LiteralUtil::CreateFromArray(input));
-    }
-    std::vector<Array<float>> expected_outputs(num_replicas,
-                                               Array<float>({num_elements}));
-    std::vector<Literal> expected_output_literals;
-    const HloInstruction* const instr =
-        FindInstruction(&module, HloOpcode::kAllReduce);
-    if (instr == nullptr) {
-      return absl::InvalidArgumentError(
-          "Instruction 'all-reduce' not found in module.");
-    }
-    const std::vector<ReplicaGroup>& replica_groups =
-        instr->device_list().replica_groups();
-    // Map each device to set of replica groups it belongs to.
-    std::vector<std::vector<int64_t>> device_to_groups(num_replicas);
-    for (const auto& replica_group : replica_groups) {
-      const auto& replica_ids = replica_group.replica_ids();
-      for (int64_t replica : replica_group.replica_ids()) {
-        CHECK_EQ(device_to_groups[replica].size(), 0);
-        device_to_groups[replica].assign(replica_ids.begin(),
-                                         replica_ids.end());
-      }
-    }
-    // Sum inputs from each replica group
-    for (int i = 0; i < num_replicas; ++i) {
-      expected_outputs[i].Each(
-          [&](absl::Span<const int64_t> indices, float* val) {
-            for (const int64_t replica : device_to_groups[i]) {
-              *val += inputs[replica](indices);
-            }
-            // Each iteration after the first,the output is doubled.
-            *val *= std::pow(device_to_groups[i].size(), num_iterations - 1);
-          });
-    }
-    for (auto& expected_output : expected_outputs) {
-      expected_output_literals.push_back(
-          LiteralUtil::CreateFromArray(expected_output));
-    }
-    return InputsOutputs{std::move(input_literals),
-                         std::move(expected_output_literals)};
-  }
-};
 
 void VerifyAllReduceType(const HloModule* module, PrimitiveType expected_type) {
   bool found = false;
@@ -171,7 +81,194 @@ void VerifyAllReduceType(const HloModule* module, PrimitiveType expected_type) {
   ASSERT_TRUE(found) << "No AllReduce found in module";
 }
 
-TEST_P(AllReduceTest, AsyncAllReduce_PRED_2GPUs) {
+class AllReduceTestNoParams : public CollectiveOpsWithFlagsBase {
+ public:
+  explicit AllReduceTestNoParams(bool is_async = false)
+      : CollectiveOpsWithFlagsBase(/*enable_async=*/is_async,
+                                   /*enable_p2p_memcpy=*/false,
+                                   /*memory_size=*/32 * kMB,
+                                   /*collectives_memory_size=*/0) {}
+
+  void SetUp() override {
+    CollectiveOpsE2ETestBase::SetUp();
+    // Check for Triton support: Ampere+ for CUDA, any supported GPU for ROCm
+    if (Capability().IsCuda() && !IsAmpereAndHigher()) {
+      GTEST_SKIP() << "Test requires Ampere or newer architecture for CUDA "
+                      "since it's using triton.";
+    }
+  }
+};
+
+struct AllReduceTestParams {
+  // If true uses the async stream for the collective.
+  bool is_async;
+  // If true, uses the XLA generated kernel for all-reduce.
+  // If false, uses the NCCL kernel.
+  bool use_all_reduce_one_shot_kernel;
+  // The strategy to use for the all-reduce.
+  // The strategy determines the size of the supported inputs.
+  se::gpu::AllReduceStrategy strategy;
+
+  // Returns the range of supported element sizes for the given element type and
+  // strategy.
+  std::pair<int64_t, int64_t> RangeElements(PrimitiveType element_type) const {
+    const bool is_two_shot = strategy == AllReduceStrategy::kTwoShot;
+    int64_t min_supported_size = is_two_shot
+                                     ? gpu::GetMaxSupportedAllReduceSizeBytes(
+                                           AllReduceStrategy::kOneShot)
+                                     : 0;
+    int64_t element_size = ShapeUtil::ByteSizeOfPrimitiveType(element_type);
+    int64_t min_elements = min_supported_size / element_size;
+    int64_t max_elements =
+        gpu::GetMaxSupportedAllReduceSizeBytes(strategy) / element_size;
+    return {min_elements, max_elements};
+  }
+
+  // Returns a number of elements in the range of supported element sizes
+  // for the given element type.
+  // The fact that this is in the midpoint is arbitrary.
+  int64_t NumElements(PrimitiveType element_type) const {
+    auto [min_elements, max_elements] = RangeElements(element_type);
+    return max_elements - (max_elements - min_elements) / 2;
+  }
+
+  static std::vector<AllReduceTestParams> Generate() {
+    std::vector<AllReduceTestParams> params;
+    for (bool is_async : {true, false}) {
+      for (bool use_all_reduce_one_shot_kernel : {true, false}) {
+        for (auto strategy :
+             {AllReduceStrategy::kOneShot, AllReduceStrategy::kTwoShot}) {
+          params.push_back(
+              {is_async, use_all_reduce_one_shot_kernel, strategy});
+        }
+      }
+    }
+    return params;
+  }
+
+  // Convert to string for test naming.
+  // NB: This method is used by GTest to generate test names.
+  // Without this method, it will generate a byte string which is hard to read.
+  // Adding [[maybe_unused]] suppresses the clang unused function warning.
+  [[maybe_unused]] friend void PrintTo(const AllReduceTestParams& params,
+                                       std::ostream* os) {
+    *os << "{ .is_async=" << params.is_async
+        << ", .use_all_reduce_one_shot_kernel="
+        << params.use_all_reduce_one_shot_kernel
+        << ", .strategy=" << absl::StrFormat("%v", params.strategy) << " }";
+  }
+};
+
+class AllReduceTest
+    : public AllReduceTestNoParams,
+      public ::testing::WithParamInterface<AllReduceTestParams> {
+ public:
+  struct InputsOutputs {
+    std::vector<Literal> inputs;
+    std::vector<Literal> expected_outputs;
+
+    [[nodiscard]] std::vector<std::vector<Literal*>> InputLiteralPtrs() {
+      std::vector<std::vector<Literal*>> result;
+      for (auto& input : inputs) {
+        result.push_back(std::vector<Literal*>{&input});
+      }
+      return result;
+    }
+  };
+
+  AllReduceTest() : AllReduceTestNoParams(/*is_async=*/GetParam().is_async) {}
+
+ protected:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions opts = CollectiveOpsWithFlagsBase::GetDebugOptionsForTest();
+    opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(
+        GetParam().use_all_reduce_one_shot_kernel);
+    return opts;
+  }
+
+  template <PrimitiveType kElementType, HloOpcode kHloOpcode>
+  static absl::StatusOr<InputsOutputs> BuildTestInputsOutputs(
+      const HloModule& module, int64_t num_replicas, int64_t num_iterations) {
+    using ElementType = primitive_util::NativeTypeOf<kElementType>;
+
+    std::vector<Array<ElementType>> inputs;
+    std::vector<Literal> input_literals;
+    const HloInstruction* const hlo_instr =
+        FindInstruction(&module, HloOpcode::kAllReduce);
+    if (hlo_instr == nullptr) {
+      return absl::InvalidArgumentError(
+          "Instruction 'all-reduce' not found in module.");
+    }
+    const HloAllReduceInstruction* instr =
+        Cast<HloAllReduceInstruction>(hlo_instr);
+    const int64_t num_elements = Product(
+        module.entry_computation()->root_instruction()->shape().dimensions());
+    for (int i = 0; i < num_replicas; ++i) {
+      auto& input = inputs.emplace_back(Array<ElementType>({num_elements}));
+      if constexpr (std::is_same_v<ElementType, bool>) {
+        input.FillRandomBool(/*seed=*/i);
+      } else {
+        input.FillRandom(1.0f, 10.0f, /*seed=*/i);
+      }
+      input_literals.push_back(LiteralUtil::CreateFromArray(input));
+    }
+    std::vector<Literal> expected_output_literals;
+
+    const std::vector<ReplicaGroup>& replica_groups =
+        instr->device_list()->replica_groups();
+    // Map each device to set of replica groups it belongs to.
+    std::vector<std::vector<int64_t>> device_to_groups(num_replicas);
+    for (const auto& replica_group : replica_groups) {
+      const auto& replica_ids = replica_group.replica_ids();
+      for (int64_t replica : replica_group.replica_ids()) {
+        CHECK_EQ(device_to_groups[replica].size(), 0);
+        device_to_groups[replica].assign(replica_ids.begin(),
+                                         replica_ids.end());
+      }
+    }
+    std::vector<Array<ElementType>> expected_outputs(
+        num_replicas, Array<ElementType>({num_elements}));
+    // Aggregate inputs from each replica group
+    for (int i = 0; i < num_replicas; ++i) {
+      expected_outputs[i].Each(
+          [&](absl::Span<const int64_t> indices, ElementType* val) {
+            for (const int64_t replica : device_to_groups[i]) {
+              if constexpr (kHloOpcode == HloOpcode::kAdd) {
+                *val += inputs[replica](indices);
+              } else if (kHloOpcode == HloOpcode::kOr) {
+                *val |= inputs[replica](indices);
+              } else {
+                GTEST_FAIL() << "Unsupported reduction kind: "
+                             << absl::StrFormat("%v", kHloOpcode);
+              }
+            }
+            if constexpr (kHloOpcode == HloOpcode::kAdd) {
+              // Each iteration after the first,the output is doubled.
+              // For kOr, it remains the same.
+              *val *= std::pow(device_to_groups[i].size(), num_iterations - 1);
+            }
+          });
+    }
+    for (auto& expected_output : expected_outputs) {
+      expected_output_literals.push_back(
+          LiteralUtil::CreateFromArray(expected_output));
+    }
+    return InputsOutputs{std::move(input_literals),
+                         std::move(expected_output_literals)};
+  }
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    AllReduceTest, AllReduceTest,
+    ::testing::ValuesIn(AllReduceTestParams::Generate()),
+    [](const ::testing::TestParamInfo<AllReduceTestParams>& info) {
+      return absl::StrCat(
+          GetAsyncTestName(info.param.is_async), "_",
+          info.param.use_all_reduce_one_shot_kernel ? "xla" : "nccl", "_",
+          info.param.strategy);
+    });
+
+TEST_P(AllReduceTest, Pred_2GPUs) {
   const absl::string_view kModuleStr = R"(
   HloModule test
 
@@ -182,47 +279,39 @@ TEST_P(AllReduceTest, AsyncAllReduce_PRED_2GPUs) {
   }
 
   ENTRY test_computation {
-    param_0 = pred[65536] parameter(0)
-    ROOT all-reduce = pred[65536] all-reduce(param_0), to_apply=apply_op, replica_groups={{0,1}}
+    param_0 = pred[%1$d] parameter(0)
+    ROOT all-reduce = pred[%1$d] all-reduce(param_0), to_apply=apply_op, replica_groups={{0,1}}
   }
   )";
-
+  const int64_t num_elements = GetParam().NumElements(PrimitiveType::PRED);
   const int64_t kNumReplicas = 2;
   ASSERT_GE(device_count(), kNumReplicas)
       << "Test requires at least " << kNumReplicas << " devices ("
       << device_count() << " available)";
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+      auto module,
+      ParseAndReturnVerifiedModule(absl::StrFormat(kModuleStr, num_elements),
+                                   kNumReplicas));
 
-  int64_t num_elements =
-      module->entry_computation()->root_instruction()->shape().dimensions()[0];
-
-  Array<bool> input1({num_elements}), input2({num_elements});
-  input1.FillRandomBool(/*seed=*/0);
-  input2.FillRandomBool(/*seed=*/1);
-  Array<bool> expected_output({num_elements});
-  expected_output.Each([&](absl::Span<const int64_t> indices, bool* val) {
-    *val = input1(indices) | input2(indices);
-  });
-
-  Literal input_literal1 = LiteralUtil::CreateFromArray(input1);
-  Literal input_literal2 = LiteralUtil::CreateFromArray(input2);
-  Literal expected_output_literal =
-      LiteralUtil::CreateFromArray(expected_output);
+  TF_ASSERT_OK_AND_ASSIGN(
+      InputsOutputs test_io,
+      (BuildTestInputsOutputs<PrimitiveType::PRED, HloOpcode::kOr>(
+          *module, kNumReplicas, /*num_iterations=*/1)));
 
   TF_ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
       ExecuteReplicated(std::move(module),
-                        std::vector<std::vector<Literal*>>{{&input_literal1},
-                                                           {&input_literal2}}));
+                        /*arguments=*/test_io.InputLiteralPtrs()))
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
-  EXPECT_TRUE(LiteralTestUtil::Equal(expected_output_literal, results[0]));
-  EXPECT_TRUE(LiteralTestUtil::Equal(expected_output_literal, results[1]));
+  for (int i = 0; i < kNumReplicas; ++i) {
+    ASSERT_TRUE(LiteralTestUtil::Equal(test_io.expected_outputs[i], results[i]))
+        << "ExpectedOutput != Result at rank " << i;
+  }
 }
 
-TEST_P(AllReduceTest, AsyncAllReduce_8GPUs_AllReplicasOneGroup) {
+TEST_P(AllReduceTest, F32_8GPUs_AllReplicasOneGroup) {
   const absl::string_view kModuleStr = R"(
   HloModule test
 
@@ -233,8 +322,8 @@ TEST_P(AllReduceTest, AsyncAllReduce_8GPUs_AllReplicasOneGroup) {
   }
 
   ENTRY test_computation {
-    param_0 = f32[65536] parameter(0)
-    ROOT all-reduce = f32[65536] all-reduce(param_0), to_apply=apply_op,
+    param_0 = f32[%1$d] parameter(0)
+    ROOT all-reduce = f32[%1$d] all-reduce(param_0), to_apply=apply_op,
       replica_groups={{0,1,2,3,4,5,6,7}}
   }
   )";
@@ -245,11 +334,15 @@ TEST_P(AllReduceTest, AsyncAllReduce_8GPUs_AllReplicasOneGroup) {
                  << device_count() << " available)";
   }
 
+  const int64_t num_elements = GetParam().NumElements(PrimitiveType::F32);
   TF_ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+      auto module,
+      ParseAndReturnVerifiedModule(absl::StrFormat(kModuleStr, num_elements),
+                                   kNumReplicas));
   TF_ASSERT_OK_AND_ASSIGN(
       InputsOutputs test_io,
-      BuildTestInputsOutputs(*module, kNumReplicas, /*num_iterations=*/1));
+      (BuildTestInputsOutputs<PrimitiveType::F32, HloOpcode::kAdd>(
+          *module, kNumReplicas, /*num_iterations=*/1)));
 
   TF_ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
@@ -266,8 +359,8 @@ TEST_P(AllReduceTest, AsyncAllReduce_8GPUs_AllReplicasOneGroup) {
   }
 }
 
-TEST_P(AllReduceTest, AsyncAllReduce_8GPUs_2ReplicasPerGroup) {
-  const int64_t kNumElements = 65536;
+TEST_P(AllReduceTest, F32_8GPUs_2ReplicasPerGroup) {
+  const int64_t num_elements = GetParam().NumElements(PrimitiveType::F32);
   const int64_t kNumIterations = 3;
   const auto kModuleStr = absl::StrFormat(
       R"(
@@ -304,7 +397,7 @@ TEST_P(AllReduceTest, AsyncAllReduce_8GPUs_2ReplicasPerGroup) {
     ROOT result = get-tuple-element(while_result), index=1
   }
   )",
-      kNumIterations, kNumElements);
+      kNumIterations, num_elements);
 
   const int64_t kNumReplicas = 8;
   if (device_count() < kNumReplicas) {
@@ -317,7 +410,8 @@ TEST_P(AllReduceTest, AsyncAllReduce_8GPUs_2ReplicasPerGroup) {
 
   TF_ASSERT_OK_AND_ASSIGN(
       InputsOutputs test_io,
-      BuildTestInputsOutputs(*module, kNumReplicas, kNumIterations));
+      (BuildTestInputsOutputs<PrimitiveType::F32, HloOpcode::kAdd>(
+          *module, kNumReplicas, kNumIterations)));
 
   TF_ASSERT_OK_AND_ASSIGN(
       ExecutionResult execution_result,
@@ -333,9 +427,17 @@ TEST_P(AllReduceTest, AsyncAllReduce_8GPUs_2ReplicasPerGroup) {
 
 // FP8 vs FP16 training step comparison.
 TEST_F(AllReduceTestNoParams, AsyncAllReduce_F8E4M3FN_TrainingStep_2GPUs) {
-  if (!Capability().IsCuda() ||
-      !Capability().cuda_compute_capability()->IsAtLeast(9, 0)) {
-    GTEST_SKIP() << "FP8 requires CUDA with Hopper or newer architecture.";
+  bool has_fp8_support = false;
+  if (Capability().IsCuda()) {
+    has_fp8_support = Capability().cuda_compute_capability()->IsAtLeast(9, 0);
+  } else if (Capability().IsRocm()) {
+    has_fp8_support =
+        Capability().rocm_compute_capability()->has_ocp_fp8_support();
+  }
+
+  if (!has_fp8_support) {
+    GTEST_SKIP() << "FP8 requires GPU with OCP FP8 support (CUDA Hopper+ or "
+                    "ROCm MI350/gfx12xx with ROCm 7.0+).";
   }
 
   // FP16 baseline
@@ -457,11 +559,18 @@ TEST_F(AllReduceTestNoParams, AsyncAllReduce_F8E4M3FN_TrainingStep_2GPUs) {
   EXPECT_GT(max_abs_diff, 1e-3f);
 }
 
-// Test that FP8 all-reduce fails on pre-Hopper GPUs.
-TEST_F(AllReduceTestNoParams, AsyncAllReduce_F8E4M3FN_FailsOnPreHopper) {
+// Test that FP8 all-reduce fails on pre-Hopper CUDA GPUs without FP8 support.
+// Note: ROCm is skipped because it has a fallback to ncclInt8 for all GPUs.
+TEST_F(AllReduceTestNoParams, AsyncAllReduce_F8E4M3FN_FailsOnUnsupportedGPUs) {
+  if (Capability().IsRocm()) {
+    GTEST_SKIP()
+        << "Test is CUDA-only. ROCm has fallback to ncclInt8 for all GPUs.";
+  }
+
   if (!Capability().IsCuda()) {
     GTEST_SKIP() << "Test requires CUDA.";
   }
+
   if (Capability().cuda_compute_capability()->IsAtLeast(9, 0)) {
     GTEST_SKIP() << "Test requires pre-Hopper GPU (compute capability < 9.0).";
   }
@@ -501,12 +610,5 @@ TEST_F(AllReduceTestNoParams, AsyncAllReduce_F8E4M3FN_FailsOnPreHopper) {
               ::testing::HasSubstr("FP8 reduction support begins with sm90"));
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    AllReduceTest, AllReduceTest,
-    ::testing::Combine(::testing::Bool(), ::testing::Bool()),
-    [](const ::testing::TestParamInfo<std::tuple<bool, bool>>& info) {
-      return absl::StrCat(GetAsyncTestName(std::get<0>(info.param)), "_",
-                          std::get<1>(info.param) ? "one_shot" : "nccl");
-    });
 }  // namespace
 }  // namespace xla

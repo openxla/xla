@@ -104,6 +104,10 @@ cc_library(
     name = "device_address_handle",
     srcs = ["device_address_handle.cc"],
     hdrs = ["device_address_handle.h"],
+    visibility = internal_visibility([
+        "//third_party/py/jax:__subpackages__",
+        ":friends",
+    ]),
     deps = [
         ":device_address",
         ":stream_executor_h",
@@ -362,6 +366,23 @@ cc_library(
 )
 
 cc_library(
+    name = "memory_reservation",
+    srcs = ["memory_reservation.cc"],
+    hdrs = ["memory_reservation.h"],
+    deps = [
+        ":device_address",
+        ":memory_allocation",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
+    ],
+)
+
+cc_library(
     name = "platform_manager",
     srcs = ["platform_manager.cc"],
     hdrs = ["platform_manager.h"],
@@ -386,12 +407,21 @@ cc_library(
 )
 
 cc_library(
+    name = "platform_id",
+    hdrs = ["platform_id.h"],
+    deps = [
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
     name = "platform",
     srcs = ["platform.cc"],
     hdrs = ["platform.h"],
     deps = [
         ":device_description",
-        "@com_google_absl//absl/base",
+        ":platform_id",
+        "//xla/stream_executor/abi:runtime_abi_version",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
