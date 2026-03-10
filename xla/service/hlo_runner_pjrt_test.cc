@@ -243,7 +243,7 @@ TEST_F(CompilePhaseHloRunnerPjRtTest,
 
   std::vector<std::string> children;
   TF_ASSERT_OK(tsl::Env::Default()->GetChildren(artifact_dir_, &children));
-  ASSERT_EQ(children.size(), 2);
+  EXPECT_EQ(children.size(), 2);
 }
 
 using ExecutePhaseHloRunnerPjRtTest = ArtifactDirTest;
