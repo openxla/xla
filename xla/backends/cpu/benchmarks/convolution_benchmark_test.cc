@@ -18,12 +18,11 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "absl/base/no_destructor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "xla/backends/cpu/benchmarks/hlo_benchmark_runner.h"
-#include "xla/backends/cpu/benchmarks/multi_benchmark_config.h"
+#include "xla/backends/cpu/benchmarks/multi_benchmark_config.h"  // IWYU pragma: keep
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
@@ -46,12 +45,6 @@ struct TypeConfig {
 
 static const int64_t kValidPadding = 0;
 static const int64_t kSamePadding = 1;
-
-static const std::vector<TypeConfig>& GetTypeConfigs() {
-  static const absl::NoDestructor<std::vector<TypeConfig>> v(
-      {{F64, F64, F64}, {F32, F32, F32}, {BF16, BF16, F32}, {S8, S8, S32}});
-  return *v;
-}
 
 Literal GetRandomLiteral(PrimitiveType type, const Shape& shape,
                          std::minstd_rand0& engine) {
@@ -651,15 +644,26 @@ void RegisterBenchmarksForConfig(const TypeConfig& config) {
 }
 
 void RegisterBenchmarks() {
-  for (const auto& config : GetTypeConfigs()) {
-    RegisterBenchmarksForConfig(config);
-  }
+#if defined(XLA_CPU_CONVOLUTION_BENCHMARK_INPUT) &&  \
+    defined(XLA_CPU_CONVOLUTION_BENCHMARK_KERNEL) && \
+    defined(XLA_CPU_CONVOLUTION_BENCHMARK_OUTPUT)
+  static const TypeConfig config = {XLA_CPU_CONVOLUTION_BENCHMARK_INPUT,
+                                    XLA_CPU_CONVOLUTION_BENCHMARK_KERNEL,
+                                    XLA_CPU_CONVOLUTION_BENCHMARK_OUTPUT};
+  RegisterBenchmarksForConfig(config);
+#else
+#error XLA_CPU_CONVOLUTION_BENCHMARK_... must be defined
+#endif
 }
 
 static int registration = [] {
   RegisterBenchmarks();
   return 0;
 }();
+
+#ifdef XLA_CPU_CONVOLUTION_BENCHMARK_IS_F32
+// These benchmarks are hardcoded to use F32 types, so we only register them
+// if we're building for F32.
 
 // -------------------------------------------------------------------------- //
 // 1D and 2D strided convolutions
@@ -693,6 +697,8 @@ XLA_CPU_BENCHMARK(BM_GroupedConv2DTransposedStrided)
     ->MeasureProcessCPUTime()
     ->Args({128, 128, 128})
     ->Args({128, 128, 16});
+
+#endif  // XLA_CPU_CONVOLUTION_BENCHMARK_IS_F32
 
 }  // namespace
 }  // namespace xla::cpu
