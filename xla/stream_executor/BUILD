@@ -86,7 +86,6 @@ cc_library(
     name = "device_address",
     hdrs = ["device_address.h"],
     deps = [
-        "//xla/tsl/lib/gtl:int_type",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log:check",
     ],
