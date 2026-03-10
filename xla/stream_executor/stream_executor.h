@@ -51,7 +51,6 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/tensor_map.h"
-#include "xla/tsl/lib/gtl/int_type.h"
 #include "tsl/platform/numa.h"
 
 // TODO(ezhulenev): Remove this once transitive dependencies are fixed.
@@ -174,6 +173,9 @@ class StreamExecutor {
   // Deallocates the DeviceAddress previously allocated via this interface.
   // Deallocation of a nullptr-representative value is permitted.
   virtual void Deallocate(DeviceAddressBase* mem) = 0;
+
+  // Returns the allocation granularity for VMM operations.
+  virtual uint64_t GetAllocationGranularity() const { return 0; }
 
   // Allocates a region of host memory and registers it with the platform API.
   // Memory allocated in this manner is required for use in asynchronous memcpy

@@ -415,8 +415,8 @@ absl::Status CudaCommandBuffer::UpdateDnnGraphNode(
 
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateClonedChildNode(
     absl::Span<const GraphNodeHandle> dependencies,
-    const CommandBuffer& nested) {
-  auto& child_command_buffer = tsl::down_cast<const CudaCommandBuffer&>(nested);
+    CommandBuffer& nested) {
+  auto& child_command_buffer = tsl::down_cast<CudaCommandBuffer&>(nested);
   CHECK_EQ(child_command_buffer.parent_, nullptr)
       << "Nested command buffer's parent is not null";
 

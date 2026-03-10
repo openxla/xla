@@ -193,4 +193,10 @@ std::vector<std::unique_ptr<CliqueKey>>* ExecutableRunOptions::clique_keys()
   return clique_keys_;
 }
 
+ExecutableRunOptions& ExecutableRunOptions::set_command_buffer_va_range_idx(
+    int command_buffer_va_range_idx) {
+  command_buffer_va_range_idx_ = command_buffer_va_range_idx;
+  return *this;
+}
+
 }  // namespace xla
