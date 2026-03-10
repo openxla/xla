@@ -142,8 +142,8 @@ class CommandBufferTest
     TF_ASSERT_OK_AND_ASSIGN(auto fake_args, MakeFakeArguments(module.get()));
     auto arg_ptrs = LiteralUtil::MakePointers(fake_args);
 
-    // Store input_layouts and untuple_results before the module is
-    // consumed by CreateExecutable.
+    // Store input_layouts and untuple_results before the module is consumed
+    // by CreateExecutable.
     auto input_layouts = module->entry_computation_layout().parameter_layouts();
     bool untuple_results = module->result_shape().IsTuple();
 
@@ -161,26 +161,27 @@ class CommandBufferTest
 
     // Create two copies of device buffers to make sure command buffer saved
     // pointers really get updated during the last "update run".
+    enum BufferSet { kInitial = 0, kUpdated = 1 };
     std::array<std::vector<std::unique_ptr<PjRtBuffer>>, 2> argument_handles;
     for (auto& handle : argument_handles) {
       TF_ASSERT_OK_AND_ASSIGN(handle,
                               pjrt_runner->TransferLiteralsToDefaultDevice(
                                   input_layouts, absl::MakeSpan(arg_ptrs)));
     }
+
+    static constexpr absl::string_view kPhases[] = {"warm-up", "create",
+                                                    "update"};
     for (int i = 0; i < 3; i++) {
+      BufferSet current_set = (i < 2) ? kInitial : kUpdated;
       TF_ASSERT_OK_AND_ASSIGN(auto output_buffers,
                               pjrt_runner->ExecuteWithDeviceBuffers(
-                                  exec.get(), argument_handles[i < 2 ? 0 : 1]));
+                                  exec.get(), argument_handles[current_set]));
 
       TF_ASSERT_OK_AND_ASSIGN(auto result,
                               pjrt_runner->TransferLiteralsFromDevice(
                                   output_buffers, untuple_results));
-      if (!LiteralTestUtil::NearOrEqual(reference, result, error)) {
-        ::testing::AssertionFailure() << "Mismatch on "
-                                      << (i == 0   ? "warm-up run"
-                                          : i == 1 ? "create run"
-                                                   : "update run");
-      }
+      EXPECT_TRUE(LiteralTestUtil::NearOrEqual(reference, result, error))
+          << "Mismatch on " << kPhases[i] << " run (iteration " << i << ")";
     }  // for
   }
 };
