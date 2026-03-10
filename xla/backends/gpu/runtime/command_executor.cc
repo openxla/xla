@@ -565,9 +565,29 @@ absl::Status CommandExecutor::RecordUpdate(
       return false;
     }
 
+    Command* command = commands_[id].get();
+
+    // For CUSTOM_LIBRARY_UPDATE_FREE mode, always skip updates for commands
+    // implemented via tracing (TracedCommandBufferCmd subclasses) or collective
+    // operations (CollectiveCmd subclasses). Their buffer allocations are
+    // VA-remapped to fixed offsets within the reserved VA range, so their
+    // recorded addresses remain valid across executions — no update is needed.
+    //
+    // Note: CollectiveCmd satisfies both IsTracedCommand() and
+    // requires_initialization(), but the requires_initialization() check below
+    // is intentionally unreachable for traced commands in this mode. Because
+    // their buffer addresses are stable (VA-mapped), re-initialization is
+    // unnecessary.
+    if (record_params.command_buffer_update_mode ==
+            DebugOptions::CUSTOM_LIBRARY_UPDATE_FREE &&
+        command->IsTracedCommand()) {
+      VLOG(3) << "Skipping update for traced command " << id
+              << " (CUSTOM_LIBRARY_UPDATE_FREE mode)";
+      return true;
+    }
+
     // We always update commands that require initialization, even if buffer
     // allocations didn't change.
-    Command* command = commands_[id].get();
     if (command->requires_initialization() && record_params.is_initialization) {
       return false;
     }

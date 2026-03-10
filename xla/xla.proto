@@ -357,6 +357,19 @@ message DebugOptions {
     CONCURRENT_REGIONS = 3;
   }
 
+  // Controls the VA remapping strategy for command buffer thunks.
+  //   FULL_UPDATE: VA remapping disabled; all commands update on every
+  //     execution.
+  //   FULL_UPDATE_FREE: All allocations VA-remapped to fixed addresses; no
+  //     command buffer update needed after initial recording.
+  //   CUSTOM_LIBRARY_UPDATE_FREE: Only traced/collective commands are
+  //     VA-remapped; other commands still update on each execution.
+  enum CommandBufferUpdateMode {
+    FULL_UPDATE = 0;
+    FULL_UPDATE_FREE = 1;
+    CUSTOM_LIBRARY_UPDATE_FREE = 2;
+  }
+
   // Experimental optimizations for SPMD-based pipeline parallelism on GPU.
   enum PipelineParallelismOptLevel {
     PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE = 0;
@@ -473,6 +486,10 @@ message DebugOptions {
   // loop count and the loop body does not have unsupported commands.
   optional bool xla_gpu_command_buffer_unroll_loops = 411;
 
+  // Controls the VA remapping update strategy for command buffer thunks.
+  // See CommandBufferUpdateMode for details.
+  optional CommandBufferUpdateMode xla_gpu_command_buffer_update_mode = 464;
+
   optional bool xla_gpu_copy_insertion_use_region_analysis = 236;
 
   // Crashes the program when any kind of verification fails, instead of just
@@ -554,11 +571,6 @@ message DebugOptions {
 
   // Determine the types of commands that are recorded into command buffers.
   repeated CommandBufferCmdType xla_gpu_enable_command_buffer = 258;
-
-  // Enable VA remapping for command buffer thunks. When enabled, command buffer
-  // thunks use fixed virtual addresses across executions, allowing the command
-  // buffer to be recorded once and replayed without updates.
-  optional bool xla_gpu_enable_command_buffer_va_remapping = 464;
 
   // Enable radix sort using CUB.
   optional bool xla_gpu_enable_cub_radix_sort = 259;

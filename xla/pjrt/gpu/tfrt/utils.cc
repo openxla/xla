@@ -45,13 +45,15 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "unsupported/Eigen/CXX11/Tensor"
 #include "google/protobuf/text_format.h"
+#include "xla/backends/cpu/target_machine_options.h"
+#include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/local_client.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
+#include "xla/debug_options_flags.h"
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
 #include "xla/layout.h"
@@ -652,9 +654,18 @@ absl::StatusOr<std::unique_ptr<tsl::Allocator>> CreateAllocatorForDevice(
 absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
     LocalClient* xla_client, const GpuAllocatorConfig& allocator_config,
     const std::vector<std::unique_ptr<TfrtGpuDevice>>& devices) {
-  if (allocator_config.kind == GpuAllocatorConfig::Kind::kPlatform) {
+  GpuAllocatorConfig effective_config = allocator_config;
+  if (GetDebugOptionsFromFlags().xla_gpu_command_buffer_update_mode() !=
+          DebugOptions::FULL_UPDATE &&
+      effective_config.kind != GpuAllocatorConfig::Kind::kVmm) {
+    LOG(WARNING) << "xla_gpu_command_buffer_update_mode requires the "
+                    "VMM allocator. Overriding allocator kind to kVmm.";
+    effective_config.kind = GpuAllocatorConfig::Kind::kVmm;
+  }
+
+  if (effective_config.kind == GpuAllocatorConfig::Kind::kPlatform) {
     LOG(INFO) << "Using platform allocator.";
-    if (allocator_config.collective_memory_size != 0) {
+    if (effective_config.collective_memory_size != 0) {
       LOG(WARNING)
           << "collective_memory_size is non-zero, but allocator kind is set "
              "to \"platform\". Collective memory will not be allocated.";
@@ -663,7 +674,7 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
         xla_client->backend().memory_allocator());
   }
 
-  if (allocator_config.kind == GpuAllocatorConfig::Kind::kVmm) {
+  if (effective_config.kind == GpuAllocatorConfig::Kind::kVmm) {
 #if GOOGLE_CUDA
     std::vector<std::pair<se::StreamExecutor*, se::Stream*>> executor_streams;
     for (const auto& device : devices) {
@@ -677,8 +688,8 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
     TF_ASSIGN_OR_RETURN(
         auto vmm_alloc,
         se::gpu::CudaDeviceAddressVmmAllocator::Create(
-            xla_client->platform(), allocator_config.memory_fraction,
-            allocator_config.gpu_system_memory_size, executor_streams));
+            xla_client->platform(), effective_config.memory_fraction,
+            effective_config.gpu_system_memory_size, executor_streams));
     return MaybeOwning<se::DeviceAddressAllocator>(std::move(vmm_alloc));
 #else
     return absl::UnimplementedError(
@@ -698,10 +709,10 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
     se::Stream* stream = device->stream();
 
     std::unique_ptr<tsl::Allocator> allocator;
-    if ((allocator_config.kind == GpuAllocatorConfig::Kind::kDefault ||
-         allocator_config.kind == GpuAllocatorConfig::Kind::kBFC) &&
-        allocator_config.preallocate) {
-      GpuAllocatorConfig device_allocator_config = allocator_config;
+    if ((effective_config.kind == GpuAllocatorConfig::Kind::kDefault ||
+         effective_config.kind == GpuAllocatorConfig::Kind::kBFC) &&
+        effective_config.preallocate) {
+      GpuAllocatorConfig device_allocator_config = effective_config;
       // Assert that CUDA alloc/free calls are not made on the caller thread.
       auto visitor = [](void*, int index, size_t) {
         TfrtGpuThreadChecker::AssertCudaCallAllowedOnThisThread();
@@ -727,7 +738,7 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
              "which is problematic if the calling thread is a fiber";
 #endif
       TF_ASSIGN_OR_RETURN(allocator,
-                          CreateAllocatorForDevice(executor, allocator_config));
+                          CreateAllocatorForDevice(executor, effective_config));
     }
     allocators.emplace_back(
         std::move(allocator), stream,
@@ -739,8 +750,8 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
         auto collective_bfc_allocator,
         CreateCollectiveBFCAllocator(
             executor,
-            /*memory_fraction=*/1.0 - allocator_config.memory_fraction,
-            allocator_config.collective_memory_size));
+            /*memory_fraction=*/1.0 - effective_config.memory_fraction,
+            effective_config.collective_memory_size));
     allocators.emplace_back(std::move(collective_bfc_allocator), stream,
                             /*memory_space=*/1, executor->device_ordinal(),
                             executor->GetPlatform());

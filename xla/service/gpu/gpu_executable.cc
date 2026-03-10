@@ -119,6 +119,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
@@ -127,7 +128,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -172,7 +172,7 @@ class GpuExecutableThunkPassBufferAllocator : public ThunkPassBufferAllocator {
       BufferAllocation::Index start_idx)
       : next_idx_(start_idx) {}
 
-  absl::StatusOr<BufferAllocation* absl_nonnull> NewEmptyAllocation(
+  absl::StatusOr<BufferAllocation * absl_nonnull> NewEmptyAllocation(
       int64_t size) override {
     allocations_.push_back(BufferAllocation(next_idx_++, size, /*color=*/0));
     return &allocations_.back();
@@ -361,25 +361,49 @@ GpuExecutable::GpuExecutable(
   // command buffer thunks. Skip constant and zero-size allocations since they
   // don't need VA remapping (constants are allocated as global values with
   // fixed addresses; zero-size allocations have nothing to map).
+  //
+  // The set of collected indices depends on xla_gpu_command_buffer_update_mode:
+  //   FULL_UPDATE - collect nothing (VA remapping disabled)
+  //   FULL_UPDATE_FREE - collect all allocations from all command buffer
+  //     commands
+  //   CUSTOM_LIBRARY_UPDATE_FREE - collect only allocations from traced
+  //     commands (TracedCommandBufferCmd subclasses) and collective commands
+  //     (CollectiveCmd subclasses)
   if (thunk_executor_) {
-    CHECK_OK(thunk_executor_->thunks().WalkNested(
-        [this](const Thunk* t) -> absl::Status {
-          auto* cmd_buffer_thunk = dynamic_cast<const CommandBufferThunk*>(t);
-          if (cmd_buffer_thunk == nullptr) {
-            return absl::OkStatus();
-          }
-          for (BufferAllocation::Index index :
-               cmd_buffer_thunk->allocs_indices()) {
-            if (buffer_assignment_) {
-              const auto& alloc = buffer_assignment_->GetAllocation(index);
-              if (alloc.is_constant() || alloc.size() == 0) {
-                continue;
+    DebugOptions::CommandBufferUpdateMode update_mode =
+        has_module() ? module_config()
+                           .debug_options()
+                           .xla_gpu_command_buffer_update_mode()
+                     : DebugOptions::FULL_UPDATE;
+
+    if (update_mode == DebugOptions::FULL_UPDATE_FREE ||
+        update_mode == DebugOptions::CUSTOM_LIBRARY_UPDATE_FREE) {
+      CHECK_OK(thunk_executor_->thunks().WalkNested(
+          [this, update_mode](const Thunk* t) -> absl::Status {
+            auto* cbt = dynamic_cast<const CommandBufferThunk*>(t);
+            if (cbt == nullptr) return absl::OkStatus();
+            return cbt->WalkCommands([this, update_mode](
+                                         const Command* cmd) -> absl::Status {
+              if (update_mode == DebugOptions::CUSTOM_LIBRARY_UPDATE_FREE &&
+                  !cmd->IsTracedCommand()) {
+                return absl::OkStatus();
               }
-            }
-            command_buffer_allocation_indexes_.insert(index);
-          }
-          return absl::OkStatus();
-        }));
+              for (const BufferUse& use : cmd->buffer_uses()) {
+                BufferAllocation::Index index = use.slice().index();
+                if (buffer_assignment_) {
+                  const auto& alloc = buffer_assignment_->GetAllocation(index);
+                  if (alloc.is_constant() || alloc.size() == 0) continue;
+                }
+                command_buffer_allocation_indexes_.insert(index);
+              }
+              return absl::OkStatus();
+            });
+          }));
+      VLOG(3) << "VA remapping: collected "
+              << command_buffer_allocation_indexes_.size()
+              << " allocation indexes for module " << module_name_;
+    }
+    // update_mode == FULL_UPDATE: collect nothing.
   }
 }
 
@@ -1292,39 +1316,40 @@ absl::Status GpuExecutable::VerboseAllocationError(absl::Status s) {
 //
 // clang-format off
 // NOLINTBEGIN
-//                                     +-------------------------+                +------------------------+
-// GPU                                 |      Execute Exec1      |                |     Execute Exec2      |
-//                                     +-------------------------+                +------------------------+
-//       +-------------------++-------++----------+  +-----------++-------++-------++----------+
-// CPU   | CreateReservation || MapTo ||  Submit  |  |Synchronize||  Unmap|| MapTo ||  Submit  |
-//       | + CreateEvent     ||       || +RecordEv|  | (wait GPU)||       ||       || +RecordEv|
-//       | (1st run only)    ||       ||          |  |           ||       ||       ||          |
-//       +-------------------++-------++----------+  +-----------++-------++-------++----------+
+//                   +---------------------+---------------------++---------------------+---------------------+
+// GPU               |  VA1 Execute        |  VA2 Execute        ||  VA1 Execute        |  VA2 Execute        |
+//                   +---------------------+---------------------++---------------------+---------------------+
+//         +---------++---------+           +---------++---------+ +---------++---------++---------+           +---------+
+// CPU     | VA1 Map || VA2 Map |           |VA1 UnMap|| VA1 Map | |VA2 UnMap|| VA2 Map ||VA1 UnMap|           |VA2 UnMap|
+//         +---------++---------+           +---------++---------+ +---------++---------++---------+           +---------+
 // NOLINTEND
 // clang-format on
-//
-// Submit      = ExecuteThunksImpl() enqueues GPU work; RecordEvent(unmap_event)
-//               queues the event to signal after GPU kernels complete.
-// Synchronize = unmap_event->Synchronize() blocks the CPU until GPU finishes
-//               Exec1 (i.e., GPU Execute Exec1 and CPU Synchronize overlap).
-// Unmap       = scoped_mapping.reset() unmaps physical pages from the VA range.
-// MapTo       = MapTo() maps new physical pages to the fixed VA range.
 absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
     const BufferAllocations& buffer_allocations,
     const ServiceExecutableRunOptions* run_options,
     se::StreamExecutor* executor, int64_t unique_id,
     Thunk::ExecutableSource executable_source, bool block_host_until_done) {
-  // Get or create VaRanges for this executor. We hold va_ranges_mutex_ briefly
-  // just to access/create the VaRanges entry.
+  // Get or create VaRanges for this executor and VA range index. We hold
+  // va_ranges_mutex_ briefly just to access/create the VaRanges entry.
+  // The VA range index allows multiplexing: with kNumVaReservationSets=2
+  // reservations, the CPU can remap one range while the GPU executes the other.
+  int command_buffer_va_range_idx =
+      run_options->run_options().command_buffer_va_range_idx();
   VaRanges* va_ranges = nullptr;
   {
     absl::MutexLock lock(&va_ranges_mutex_);
-    va_ranges = &module_va_ranges_[executor];
+    auto va_ranges_key = std::make_pair(executor, command_buffer_va_range_idx);
+    va_ranges = &module_va_ranges_[va_ranges_key];
   }
+
+  XLA_VLOG_DEVICE(3, executor->device_ordinal())
+      << "VA remapping: module " << module_name_
+      << " va_range_idx=" << command_buffer_va_range_idx
+      << " num_allocations=" << command_buffer_allocation_indexes_.size();
 
   // Get the DeviceAddressVmmAllocator to look up physical allocations.
   // vmm_allocator is guaranteed non-null here because
-  // enable_command_buffer_va_remapping already checked for it.
+  // use_command_buffer_va_remapping already checked for it.
   se::DeviceAddressVmmAllocator* vmm_allocator =
       dynamic_cast<se::DeviceAddressVmmAllocator*>(run_options->allocator());
   if (vmm_allocator == nullptr) {
@@ -1587,21 +1612,20 @@ absl::Status GpuExecutable::ExecuteThunks(
 
   se::StreamExecutor* executor = run_options->stream()->parent();
 
-  // Check if command buffer VA remapping is enabled.
-  bool enable_command_buffer_va_remapping =
+  // Check if command buffer VA remapping is active.
+  bool use_command_buffer_va_remapping =
       (command_buffer_allocation_indexes_.size() > 0) && has_module() &&
-      module_config()
-          .debug_options()
-          .xla_gpu_enable_command_buffer_va_remapping() &&
+      module_config().debug_options().xla_gpu_command_buffer_update_mode() !=
+          DebugOptions::FULL_UPDATE &&
       dynamic_cast<se::DeviceAddressVmmAllocator*>(memory_allocator) != nullptr;
 
   XLA_VLOG_DEVICE(3, executor->device_ordinal()) << absl::StreamFormat(
       "ExecuteThunks: command_buffer_allocation_indexes_.size()=%d "
-      "enable_command_buffer_va_remapping=%d",
+      "use_command_buffer_va_remapping=%d",
       command_buffer_allocation_indexes_.size(),
-      enable_command_buffer_va_remapping);
+      use_command_buffer_va_remapping);
 
-  if (enable_command_buffer_va_remapping) {
+  if (use_command_buffer_va_remapping) {
     TF_RETURN_IF_ERROR(ExecuteThunksWithVaRemapping(
         buffer_allocations, run_options, executor, unique_id, executable_source,
         block_host_until_done));

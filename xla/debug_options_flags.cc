@@ -105,7 +105,8 @@ absl::StatusOr<std::vector<RepeatedFlagModifier>> ParseRepeatedEnumModifiers(
 namespace {
 
 template <typename T>
-static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list, T value) {
+static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
+                                   T value) {
   for (auto it = list->begin(); it != list->end(); ++it) {
     if (*it == value) {
       return it;
@@ -502,7 +503,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_print_compilation_stats(false);
 
   opts.set_xla_gpu_enable_pdl(true);
-  opts.set_xla_gpu_enable_command_buffer_va_remapping(false);
+  opts.set_xla_gpu_command_buffer_update_mode(DebugOptions::FULL_UPDATE);
   return opts;
 }
 
@@ -710,6 +711,18 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           debug_options->set_xla_gpu_command_buffer_scheduling_mode(
               DebugOptions::SERIALIZE);
         }
+        return true;
+      };
+
+  // Custom "sub-parser" lambda for
+  // `xla_gpu_command_buffer_update_mode`.
+  auto setter_for_xla_gpu_command_buffer_update_mode =
+      [debug_options](const std::string& value) {
+        DebugOptions::CommandBufferUpdateMode mode;
+        if (!DebugOptions::CommandBufferUpdateMode_Parse(value, &mode)) {
+          return false;
+        }
+        debug_options->set_xla_gpu_command_buffer_update_mode(mode);
         return true;
       };
 
@@ -3005,13 +3018,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_gpu_enable_pdl(),
                 "Enable PDL (Programmatic Dependent Launch)."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_command_buffer_va_remapping",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_enable_command_buffer_va_remapping),
-      debug_options->xla_gpu_enable_command_buffer_va_remapping(),
-      "Enable VA remapping for command buffer thunks. When enabled, command "
-      "buffer thunks use fixed virtual addresses across executions, allowing "
-      "the command buffer to be recorded once and replayed without updates."));
+      "xla_gpu_command_buffer_update_mode",
+      setter_for_xla_gpu_command_buffer_update_mode,
+      DebugOptions::CommandBufferUpdateMode_Name(
+          debug_options->xla_gpu_command_buffer_update_mode()),
+      "Controls the VA remapping update strategy for command buffer thunks. "
+      "See CommandBufferUpdateMode for details."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
@@ -3105,8 +3117,7 @@ FlagStatus GetFlagStatus(absl::string_view flag_name) {
           "xla_gpu_all_reduce_combine_threshold_bytes",
           "xla_gpu_autotune_level",
           "xla_gpu_collective_permute_decomposer_threshold",
-          "xla_gpu_cublas_fallback",
-          "xla_gpu_dot_merger_threshold_mb",
+          "xla_gpu_cublas_fallback", "xla_gpu_dot_merger_threshold_mb",
           "xla_gpu_enable_dynamic_slice_fusion",
           "xla_gpu_enable_latency_hiding_scheduler",
           "xla_gpu_enable_pipelined_all_gather",
