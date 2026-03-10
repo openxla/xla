@@ -557,7 +557,6 @@ xla_test(
 
 xla_test(
     name = "conv_depthwise_test",
-    timeout = "long",
     srcs = [
         "conv_depthwise_test.cc",
     ],
