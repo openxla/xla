@@ -323,6 +323,57 @@ cc_library(
 )
 
 cc_library(
+    name = "stream_executor_vmm_allocator",
+    srcs = ["stream_executor_vmm_allocator.cc"],
+    hdrs = ["stream_executor_vmm_allocator.h"],
+    deps = [
+        ":device_address",
+        ":device_address_allocator",
+        ":memory_allocation",
+        ":memory_reservation",
+        ":platform",
+        ":stream",
+        ":stream_executor_h",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "stream_executor_vmm_allocator_test",
+    srcs = ["stream_executor_vmm_allocator_test.cc"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "requires-gpu-nvidia",
+    ],
+    deps = [
+        ":device_address",
+        ":platform",
+        ":platform_manager",
+        ":stream",
+        ":stream_executor_h",
+        ":stream_executor_vmm_allocator",
+        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
+        "//xla/stream_executor/cuda:cuda_platform",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "launch_dim",
     srcs = ["launch_dim.cc"],
     hdrs = ["launch_dim.h"],
