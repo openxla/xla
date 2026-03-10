@@ -219,6 +219,10 @@ void AppendToMessage(absl::Status* status, Args... args) {
 #endif
 
 // CANCELLED
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status Cancelled(const absl::Status& arg) {
+  return absl::CancelledError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::CancelledError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status Cancelled(Arg1 arg1) {
@@ -325,6 +329,10 @@ absl::Status CancelledWithPayloads(
 }
 
 // InvalidArgument
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status InvalidArgument(const absl::Status& arg) {
+  return absl::InvalidArgumentError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::InvalidArgumentError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status InvalidArgument(Arg1 arg1) {
@@ -431,6 +439,10 @@ inline absl::Status InvalidArgumentWithPayloads(
 }
 
 // NotFound
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status NotFound(const absl::Status& arg) {
+  return absl::NotFoundError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::NotFoundError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status NotFound(Arg1 arg1) {
@@ -535,6 +547,10 @@ inline absl::Status NotFoundWithPayloads(
 }
 
 // AlreadyExists
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status AlreadyExists(const absl::Status& arg) {
+  return absl::AlreadyExistsError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::AlreadyExistsError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status AlreadyExists(Arg1 arg1) {
@@ -641,6 +657,10 @@ inline absl::Status AlreadyExistsWithPayloads(
 }
 
 // ResourceExhausted
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status ResourceExhausted(const absl::Status& arg) {
+  return absl::ResourceExhaustedError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::ResourceExhaustedError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status ResourceExhausted(Arg1 arg1) {
@@ -749,6 +769,10 @@ inline absl::Status ResourceExhaustedWithPayloads(
 }
 
 // Unavailable
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status Unavailable(const absl::Status& arg) {
+  return absl::UnavailableError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::UnavailableError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status Unavailable(Arg1 arg1) {
@@ -854,6 +878,10 @@ inline absl::Status UnavailableWithPayloads(
 }
 
 // FailedPrecondition
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status FailedPrecondition(const absl::Status& arg) {
+  return absl::FailedPreconditionError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::FailedPreconditionError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status FailedPrecondition(Arg1 arg1) {
@@ -962,6 +990,10 @@ inline absl::Status FailedPreconditionWithPayloads(
 }
 
 // OutOfRange
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status OutOfRange(const absl::Status& arg) {
+  return absl::OutOfRangeError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::OutOfRangeError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status OutOfRange(Arg1 arg1) {
@@ -1067,6 +1099,10 @@ inline absl::Status OutOfRangeWithPayloads(
 }
 
 // Unimplemented
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status Unimplemented(const absl::Status& arg) {
+  return absl::UnimplementedError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::UnimplementedError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status Unimplemented(Arg1 arg1) {
@@ -1280,6 +1316,10 @@ inline absl::Status InternalWithPayloads(
 }
 
 // Aborted
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status Aborted(const absl::Status& arg) {
+  return absl::AbortedError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::AbortedError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status Aborted(Arg1 arg1) {
@@ -1384,6 +1424,10 @@ inline absl::Status AbortedWithPayloads(
 }
 
 // DeadlineExceeded
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status DeadlineExceeded(const absl::Status& arg) {
+  return absl::DeadlineExceededError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::DeadlineExceededError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status DeadlineExceeded(Arg1 arg1) {
@@ -1491,6 +1535,10 @@ inline absl::Status DeadlineExceededWithPayloads(
 }
 
 // DataLoss
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status DataLoss(const absl::Status& arg) {
+  return absl::DataLossError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::DataLossError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status DataLoss(Arg1 arg1) {
@@ -1595,6 +1643,10 @@ inline absl::Status DataLossWithPayloads(
 }
 
 // Unknown
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status Unknown(const absl::Status& arg) {
+  return absl::UnknownError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::UnknownError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status Unknown(Arg1 arg1) {
@@ -1698,6 +1750,10 @@ inline absl::Status UnknownPayloads(
   return errors::Create(absl::StatusCode::kUnknown, message, payloads);
 }
 // PermissionDenied
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status PermissionDenied(const absl::Status& arg) {
+  return absl::PermissionDeniedError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::PermissionDeniedError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status PermissionDenied(Arg1 arg1) {
@@ -1805,6 +1861,10 @@ inline absl::Status PermissionDeniedWithPayloads(
 }
 
 // Unauthenticated
+ABSL_DEPRECATE_AND_INLINE()
+inline absl::Status Unauthenticated(const absl::Status& arg) {
+  return absl::UnauthenticatedError(arg.message());
+}
 template <typename Arg1>
 ABSL_DEPRECATED("Use absl::UnauthenticatedError(arg1) instead.")
 ABSL_REFACTOR_INLINE inline absl::Status Unauthenticated(Arg1 arg1) {
