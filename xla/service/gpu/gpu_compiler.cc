@@ -352,6 +352,9 @@ namespace xla {
 namespace gpu {
 namespace {
 
+// Marker for hlo_opt to indicate start of the ptx.
+constexpr absl::string_view kGpuExecutablePtxMarker = "// GPU Executable\n";
+
 using MaybeOwningThreadPool = MaybeOwning<tsl::thread::ThreadPool>;
 
 MaybeOwningThreadPool CreateMaybeOwningThreadPool(
@@ -2614,6 +2617,12 @@ GpuCompiler::CompileToBackendResult(
                             /*relocatable=*/false, options,
                             /*shard_number=*/std::nullopt));
   }
+
+  if (!backend_result.asm_text.empty()) {
+    backend_result.asm_text =
+        absl::StrCat(kGpuExecutablePtxMarker, backend_result.asm_text);
+  }
+
   RecordXlaDeviceBinarySize(backend_result.binary.size());
   if (DumpingEnabledForHloModule(*module)) {
     DumpToFileInDirOrStdout(

@@ -3271,7 +3271,6 @@ xla_test(
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Core",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
     ],
 )
