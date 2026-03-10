@@ -21,6 +21,7 @@ cc_library(
         ":megascale_types",
         "//xla:future",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/collectives:cpu_collectives",
         "//xla/core/collectives:clique_id",
         "//xla/core/collectives:clique_key",
