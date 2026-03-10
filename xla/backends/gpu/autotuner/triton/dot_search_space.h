@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_AUTOTUNING_DOT_SEARCH_SPACE_H_
-#define XLA_SERVICE_GPU_AUTOTUNING_DOT_SEARCH_SPACE_H_
+#ifndef XLA_BACKENDS_GPU_AUTOTUNER_TRITON_DOT_SEARCH_SPACE_H_
+#define XLA_BACKENDS_GPU_AUTOTUNER_TRITON_DOT_SEARCH_SPACE_H_
 
 #include <cstdint>
 #include <optional>
@@ -244,4 +244,4 @@ class TritonDotFusionSearchSpace {
 
 }  // namespace xla::gpu
 
-#endif  // XLA_SERVICE_GPU_AUTOTUNING_DOT_SEARCH_SPACE_H_
+#endif  // XLA_BACKENDS_GPU_AUTOTUNER_TRITON_DOT_SEARCH_SPACE_H_

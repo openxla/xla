@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/autotuning/triton_configs.h"
+#include "xla/backends/gpu/autotuner/triton/triton_configs.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>

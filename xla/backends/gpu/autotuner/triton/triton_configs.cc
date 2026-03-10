@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/autotuning/triton_configs.h"
+#include "xla/backends/gpu/autotuner/triton/triton_configs.h"
 
 #include <initializer_list>
 #include <vector>
@@ -24,7 +24,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "google/protobuf/text_format.h"
 #include "xla/autotuning.pb.h"
-#include "xla/service/gpu/autotuning/embed_default_configs.h"
+#include "xla/backends/gpu/autotuner/triton/embed_default_configs.h"
 #include "xla/service/gpu/matmul_utils.h"
 
 namespace xla::gpu {

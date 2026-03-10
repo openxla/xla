@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/autotuning/dot_search_space.h"
+#include "xla/backends/gpu/autotuner/triton/dot_search_space.h"
 
 #include <algorithm>
 #include <cmath>
