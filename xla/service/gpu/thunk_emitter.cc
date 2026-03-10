@@ -686,6 +686,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmulThunk(
       auto gemm_config,
       GroupedGemmConfig::For(static_cast<const HloInstruction*>(instr),
                              ir_emitter_context_->gpu_compute_capability()));
+
+  // Autotuner does not support yet GroupedGemm operations.
+  // This will be enabled by PR https://github.com/openxla/xla/pull/38737
+  // For now, algorithm is set by default to 0 (autotuning disable).
   int64_t algorithm = 0;
   int64_t autotune_workspace_size = 0;
 

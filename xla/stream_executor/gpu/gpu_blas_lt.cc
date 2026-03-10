@@ -285,9 +285,8 @@ bool MakeOutputColumnMajor(MatrixLayout& lhs, MatrixLayout& rhs,
   return swap_operands;
 }
 
-/*static*/ auto BlasLt::GetMatmulPlan(const Stream* stream,
-                                      const GemmConfig& cfg, Epilogue epilogue)
-    -> absl::StatusOr<MatmulPlanPtr> {
+/*static*/ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
+    const Stream* stream, const GemmConfig& cfg, Epilogue epilogue) {
   auto blas = Get(stream);
   if (blas == nullptr) {
     return xla::Internal("BlasLt is unavailable");
@@ -331,9 +330,9 @@ size_t BlasLt::GetMatmulPlanCacheSize() const {
   return plan_cache_.size();
 }
 
-/*static*/ auto BlasLt::GetGroupedMatmulPlan(
+/*static*/ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetGroupedMatmulPlan(
     const Stream* stream, GroupedGemmConfig& cfg,
-    const std::vector<Epilogue>& epilogues) -> absl::StatusOr<MatmulPlanPtr> {
+    const std::vector<Epilogue>& epilogues) {
   auto blas = Get(stream);
   if (blas == nullptr) {
     return xla::Internal("BlasLt is unavailable");

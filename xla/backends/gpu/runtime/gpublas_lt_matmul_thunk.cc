@@ -97,11 +97,11 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
     Thunk::ThunkInfo thunk_info, std::string canonical_hlo,
     se::gpu::GroupedGemmConfig gemm_config, se::gpu::BlasLt::Epilogue epilogue,
     int64_t algorithm_idx, int64_t autotune_workspace_size, ShapedSlice a,
-    ShapedSlice b, ShapedSlice c, ShapedSlice d,
-    std::optional<ShapedSlice> group_sizes, std::optional<ShapedSlice> bias,
-    std::optional<ShapedSlice> aux, std::optional<ShapedSlice> a_scale,
-    std::optional<ShapedSlice> b_scale, std::optional<ShapedSlice> c_scale,
-    std::optional<ShapedSlice> d_scale, std::optional<ShapedSlice> d_amax,
+    ShapedSlice b, ShapedSlice c, ShapedSlice d, ShapedSlice group_sizes,
+    std::optional<ShapedSlice> bias, std::optional<ShapedSlice> aux,
+    std::optional<ShapedSlice> a_scale, std::optional<ShapedSlice> b_scale,
+    std::optional<ShapedSlice> c_scale, std::optional<ShapedSlice> d_scale,
+    std::optional<ShapedSlice> d_amax,
     std::optional<const ShapedSlice> workspace)
     : Thunk(Kind::kCublasLtMatmul, std::move(thunk_info)),
       gemm_config_(std::move(gemm_config)),
@@ -156,6 +156,10 @@ absl::Status CublasLtMatmulThunk::ExecuteOnStreamInternal(
   }
 
   if (is_grouped()) {
+    if (!group_sizes_.has_value()) {
+      return absl::InternalError(
+          "GroupedMatmul must have a non-empty group_sizes_");
+    }
     // Grouped matmul execution
     TF_ASSIGN_OR_RETURN(auto* plan, GetCachedGroupedMatmulPlan(params));
     return plan->ExecuteOnStream(
@@ -182,9 +186,13 @@ CublasLtMatmulThunk::GetCachedMatmulPlan(const ExecuteParams& params) {
     VLOG(2) << this << ": Adding new MatmulPlan for stream: " << params.stream
             << " instr: " << canonical_hlo_;
 
-    const auto& gemm_config = std::get<GemmConfig>(gemm_config_);
+    auto* gemm_config = std::get_if<GemmConfig>(&gemm_config_);
+    if (gemm_config == nullptr) {
+      return absl::InternalError(
+          "Expected GemmConfig but gemm_config_ holds a different type");
+    }
     TF_ASSIGN_OR_RETURN(auto plan,
-                        blas_lt->GetMatmulPlan(gemm_config, epilogue_));
+                        blas_lt->GetMatmulPlan(*gemm_config, epilogue_));
 
     // Set the workspace size to the size that was used for autotuning, so
     // algorithm index will be the same as returned by GetAlgorithms called
@@ -213,10 +221,14 @@ CublasLtMatmulThunk::GetCachedGroupedMatmulPlan(const ExecuteParams& params) {
             << ": Adding new Grouped MatmulPlan for stream: " << params.stream
             << " instr: " << canonical_hlo_;
 
-    auto gemm_config = std::get<se::gpu::GroupedGemmConfig>(gemm_config_);
+    auto* gemm_config = std::get_if<se::gpu::GroupedGemmConfig>(&gemm_config_);
+    if (gemm_config == nullptr) {
+      return absl::InternalError(
+          "Expected GroupedGemmConfig but gemm_config_ holds a different type");
+    }
     std::vector<se::gpu::BlasLt::Epilogue> epilogues(1, epilogue_);
     TF_ASSIGN_OR_RETURN(auto plan,
-                        blas_lt->GetGroupedMatmulPlan(gemm_config, epilogues));
+                        blas_lt->GetGroupedMatmulPlan(*gemm_config, epilogues));
 
     // Set the workspace size to the size that was used for autotuning, so
     // algorithm index will be the same as returned by GetAlgorithms called
@@ -289,56 +301,62 @@ absl::StatusOr<ThunkProto> CublasLtMatmulThunk::ToProto() const {
   CublasLtMatmulThunkProto* cublas_lt_matmul_thunk =
       proto.mutable_cublas_lt_matmul_thunk();
   if (is_grouped()) {
-    const auto& gemm_config =
-        std::get<se::gpu::GroupedGemmConfig>(gemm_config_);
+    auto* gemm_config = std::get_if<se::gpu::GroupedGemmConfig>(&gemm_config_);
+    if (gemm_config == nullptr) {
+      return absl::InternalError(
+          "Expected GroupedGemmConfig but gemm_config_ holds a different type");
+    }
     *cublas_lt_matmul_thunk->mutable_grouped_gemm_config() =
-        gemm_config.ToProto();
+        gemm_config->ToProto();
     TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_group_sizes(),
                         group_sizes_.value().ToProto());
   } else {
     // Serialize regular matmul
-    const auto& gemm_config = std::get<GemmConfig>(gemm_config_);
-    *cublas_lt_matmul_thunk->mutable_gemm_config() = gemm_config.ToProto();
+    auto* gemm_config = std::get_if<GemmConfig>(&gemm_config_);
+    if (gemm_config == nullptr) {
+      return absl::InternalError(
+          "Expected GemmConfig but gemm_config_ holds a different type");
+    }
+    *cublas_lt_matmul_thunk->mutable_gemm_config() = gemm_config->ToProto();
   }
   cublas_lt_matmul_thunk->set_epilogue(
       stream_executor::gpu::BlasLt::EpilogueToProto(epilogue_));
   cublas_lt_matmul_thunk->set_algorithm_idx(algorithm_idx_);
+  cublas_lt_matmul_thunk->set_autotune_workspace_size(autotune_workspace_size_);
   cublas_lt_matmul_thunk->set_canonical_hlo(canonical_hlo_);
-  TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_a(), a_.ToProto());
-  TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_b(), b_.ToProto());
-  TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_c(), c_.ToProto());
-  TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d(), d_.ToProto());
+  ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_a(), a_.ToProto());
+  ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_b(), b_.ToProto());
+  ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_c(), c_.ToProto());
+  ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d(), d_.ToProto());
   if (bias_.has_value()) {
-    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_bias(),
-                        bias_->ToProto());
+    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_bias(), bias_->ToProto());
   }
   if (aux_.has_value()) {
-    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_aux(),
-                        aux_->ToProto());
+    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_aux(), aux_->ToProto());
   }
   if (a_scale_.has_value()) {
-    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_a_scale(),
-                        a_scale_->ToProto());
+    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_a_scale(),
+                     a_scale_->ToProto());
   }
   if (b_scale_.has_value()) {
-    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_b_scale(),
-                        b_scale_->ToProto());
+    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_b_scale(),
+                     b_scale_->ToProto());
   }
   if (c_scale_.has_value()) {
-    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_c_scale(),
-                        c_scale_->ToProto());
+    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_c_scale(),
+                     c_scale_->ToProto());
   }
   if (d_scale_.has_value()) {
-    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d_scale(),
-                        d_scale_->ToProto());
+    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d_scale(),
+                     d_scale_->ToProto());
   }
   if (d_amax_.has_value()) {
-    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d_amax(),
-                        d_amax_->ToProto());
+    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d_amax(),
+                     d_amax_->ToProto());
   }
   if (workspace_.has_value()) {
-    TF_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_workspace(),
-                        workspace_->ToProto());
+    ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_workspace(),
+                     workspace_->ToProto());
   }
   return proto;
 }
@@ -346,7 +364,7 @@ absl::StatusOr<ThunkProto> CublasLtMatmulThunk::ToProto() const {
 absl::StatusOr<std::unique_ptr<Thunk>> CublasLtMatmulThunk::FromProto(
     Thunk::ThunkInfo thunk_info, const CublasLtMatmulThunkProto& proto,
     absl::Span<const BufferAllocation> allocations) {
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       stream_executor::gpu::BlasLt::Epilogue epilogue,
       stream_executor::gpu::BlasLt::EpilogueFromProto(proto.epilogue()));
   ASSIGN_OR_RETURN(ShapedSlice a,
@@ -402,9 +420,8 @@ absl::StatusOr<std::unique_ptr<Thunk>> CublasLtMatmulThunk::FromProto(
     TF_ASSIGN_OR_RETURN(stream_executor::gpu::GroupedGemmConfig gemm_config,
                         stream_executor::gpu::GroupedGemmConfig::FromProto(
                             proto.grouped_gemm_config()));
-    TF_ASSIGN_OR_RETURN(
-        ShapedSlice group_sizes,
-        ShapedSlice::FromProto(proto.group_sizes(), allocations));
+    ASSIGN_OR_RETURN(ShapedSlice group_sizes,
+                     ShapedSlice::FromProto(proto.group_sizes(), allocations));
     return std::make_unique<CublasLtMatmulThunk>(
         std::move(thunk_info), std::move(proto.canonical_hlo()),
         std::move(gemm_config), std::move(epilogue), proto.algorithm_idx(),
@@ -414,7 +431,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> CublasLtMatmulThunk::FromProto(
         std::move(c_scale), std::move(d_scale), std::move(d_amax),
         std::move(workspace));
   } else {
-    TF_ASSIGN_OR_RETURN(
+    ASSIGN_OR_RETURN(
         stream_executor::gpu::GemmConfig gemm_config,
         stream_executor::gpu::GemmConfig::FromProto(proto.gemm_config()));
 

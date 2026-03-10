@@ -287,8 +287,8 @@ auto BlasLt::MatmulPlan::GetAlgorithms(const Stream* stream,
   return std::move(algorithms);
 }
 
-auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg, Epilogue epilogue) const
-    -> absl::StatusOr<MatmulPlanPtr> {
+absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
+    const gpu::GemmConfig& cfg, Epilogue epilogue) const {
   auto lhs_layout = cfg.lhs_layout, rhs_layout = cfg.rhs_layout,
        output_layout = cfg.output_layout, c_layout = cfg.c_layout;
 
@@ -606,10 +606,9 @@ absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
 }
 
 /* Temporary code due to PR split*/
-auto BlasLt::GetGroupedMatmulPlan(
+absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetGroupedMatmulPlan(
     gpu::GroupedGemmConfig& config,
-    const std::vector<gpu::BlasLt::Epilogue>& epilogues) const
-    -> absl::StatusOr<MatmulPlanPtr> {
+    const std::vector<gpu::BlasLt::Epilogue>& epilogues) const {
   return absl::UnimplementedError(
       "Grouped GEMM is not supported for Hip BlasLt");
 }

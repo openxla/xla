@@ -546,10 +546,10 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
                num_batch_dims + lhs_row_dims.size() + rhs_col_dims.size());
 
   if (lhs_row_dims.size() != 1) {
-    return Internal("A single non-contracting dimension is exepected for lhs");
+    return Internal("A single non-contracting dimension is expected for lhs");
   }
   if (rhs_col_dims.size() != 1) {
-    return Internal("A single non-contracting dimension is exepected for rhs");
+    return Internal("A single non-contracting dimension is expected for rhs");
   }
 
   if (lhs_batch_dims.size() > 1) {
@@ -559,12 +559,12 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
   if ((ragged_mode == se::gpu::RaggedDotMode::kRaggedNonContracting) &&
       (rhs_group_dimensions.size() != 1)) {
     return Internal(
-        "A single group dimension is exepected for rhs when the ragged "
+        "A single group dimension is expected for rhs when the ragged "
         "dimension is in the non-contracting dimension.");
   } else if ((ragged_mode != se::gpu::RaggedDotMode::kRaggedNonContracting) &&
              (rhs_group_dimensions.size() != 0)) {
     return Internal(
-        "No group dimension is exepected for rhs when the ragged dimension is "
+        "No group dimension is expected for rhs when the ragged dimension is "
         "in the contracting or the batch dimensions.");
   }
 
