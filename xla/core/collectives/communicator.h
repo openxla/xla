@@ -178,17 +178,19 @@ class Communicator {
 
   // Sends a signal to peer without transferring data. Can be used as a barrier
   // or to notify peer that prior Puts (and Signals) to the same descriptor have
-  // completed. desc carries backend-specific signal identity (e.g. sigIdx, ctx).
-  virtual Future<> Signal(RankId peer, const SignalDesc& desc,
+  // completed. signal_desc carries backend-specific signal identity (e.g.
+  // sigIdx, ctx).
+  virtual Future<> Signal(RankId peer, const SignalDesc& signal_desc,
                           const Executor& executor) {
     return Unimplemented("Signal is not implemented");
   }
 
   // Counted wait: completes when this rank has received op_cnt signals from
-  // peer that match desc (e.g. same sigIdx/ctx). Used to synchronize after
-  // Put/Signal; the backend uses desc to match which signals to wait for.
+  // peer that match signal_desc (e.g. same sigIdx/ctx). Used to synchronize
+  // after Put/Signal; the backend uses signal_desc to match which signals to
+  // wait for.
   virtual Future<> WaitSignal(RankId peer, int op_cnt,
-                              const SignalDesc& desc,
+                              const SignalDesc& signal_desc,
                               const Executor& executor) {
     return Unimplemented("WaitSignal is not implemented");
   }

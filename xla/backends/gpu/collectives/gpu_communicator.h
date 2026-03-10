@@ -189,13 +189,13 @@ class GpuCommunicator : public Communicator {
     return Unimplemented("LaunchPut is not implemented");
   }
 
-  virtual absl::Status LaunchSignal(RankId peer, const SignalDesc& desc,
+  virtual absl::Status LaunchSignal(RankId peer, const SignalDesc& signal_desc,
                                     const Executor& executor) {
     return Unimplemented("LaunchSignal is not implemented");
   }
 
   virtual absl::Status LaunchWaitSignal(RankId peer, int op_cnt,
-                                        const SignalDesc& desc,
+                                        const SignalDesc& signal_desc,
                                         const Executor& executor) {
     return Unimplemented("LaunchWaitSignal is not implemented");
   }

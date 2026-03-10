@@ -158,10 +158,10 @@ class NcclCommunicator : public GpuCommunicator {
                size_t offset, size_t count, RankId peer,
                const Executor& executor) final;
 
-  Future<> Signal(RankId peer, const SignalDesc& desc,
+  Future<> Signal(RankId peer, const SignalDesc& signal_desc,
                   const Executor& executor) final;
 
-  Future<> WaitSignal(RankId peer, int op_cnt, const SignalDesc& desc,
+  Future<> WaitSignal(RankId peer, int op_cnt, const SignalDesc& signal_desc,
                       const Executor& executor) final;
 
   std::string ToString() const final;
@@ -239,11 +239,11 @@ class NcclCommunicator : public GpuCommunicator {
                          size_t count, RankId peer,
                          const Executor& executor) final;
 
-  absl::Status LaunchSignal(RankId peer, const SignalDesc& desc,
+  absl::Status LaunchSignal(RankId peer, const SignalDesc& signal_desc,
                             const Executor& executor) final;
 
   absl::Status LaunchWaitSignal(RankId peer, int op_cnt,
-                                const SignalDesc& desc,
+                                const SignalDesc& signal_desc,
                                 const Executor& executor) final;
 
   // Polls the communicator until any pending non-blocking operations are "done"
