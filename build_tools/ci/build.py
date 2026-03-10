@@ -355,8 +355,8 @@ Build(
     repo="openxla/xla",
     configs=("rocm_ci", "rocm_rbe", "ci_single_gpu"),
     target_patterns=_XLA_ROCM_TARGET_PATTERNS + rocm_single_gpu_exclusions,
-    build_tag_filters=rocm_tag_filters + ("-multi_gpu",),
-    test_tag_filters=rocm_tag_filters + ("-multi_gpu",),
+    build_tag_filters=rocm_tag_filters + ("gpu", "-multi_gpu"),
+    test_tag_filters=rocm_tag_filters + ("gpu", "-multi_gpu"),
     test_env={"TF_TESTS_PER_GPU": 1, "TF_GPU_COUNT": 8},
     action_env={
     "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true"
