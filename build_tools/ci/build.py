@@ -318,7 +318,6 @@ rocm_tag_filters = (
     "-no_oss",
     "-oss_excluded",
     "-oss_serial",
-    "gpu",
 )
 
 rocm_test_filters = ""
