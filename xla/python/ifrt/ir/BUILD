@@ -703,6 +703,7 @@ cc_library(
         ":ir",
         "//xla:status_macros",
         "//xla/hlo/ir:hlo_sharding",
+        "//xla/pjrt:host_memory_spaces",
         "//xla/python/ifrt",
         "//xla/python/ifrt:remap_plan_proto_cc",
         "//xla/python/ifrt/ir/transforms:utils",

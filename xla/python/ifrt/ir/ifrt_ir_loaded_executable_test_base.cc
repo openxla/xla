@@ -126,12 +126,13 @@ IfrtIrLoadedExecutableTestBase::SerDeRoundTrip(
 
 absl::StatusOr<ArrayRef> IfrtIrLoadedExecutableTestBase::CreateArray(
     absl::Span<void* const> per_shard_data, Shape shape, Shape shard_shape,
-    DType dtype, DeviceListRef device_list) {
+    DType dtype, DeviceListRef device_list,
+    std::optional<MemoryKind> memory_kind) {
   TF_RET_CHECK(per_shard_data.size() == device_list->devices().size())
       << "Inconsistent sizes. per_shard_data " << per_shard_data.size()
       << " vs device_list " << device_list->devices().size();
   ShardingRef sharding = ConcreteEvenSharding::Create(
-      device_list, MemoryKind(), shape, shard_shape,
+      device_list, memory_kind.value_or(MemoryKind()), shape, shard_shape,
       /*is_fully_replicated=*/shape == shard_shape);
   TF_ASSIGN_OR_RETURN(
       auto per_shard,
@@ -147,7 +148,8 @@ absl::StatusOr<ArrayRef> IfrtIrLoadedExecutableTestBase::CreateArray(
             per_shard_data[i], dtype, per_shard_shape,
             /*byte_strides=*/std::nullopt,
             SingleDeviceSharding::Create(device_list->devices()[i],
-                                         MemoryKind()),
+                                         memory_kind.value_or(MemoryKind())),
+            /*layout=*/nullptr,
             Client::HostBufferSemantics::kImmutableOnlyDuringCall,
             /*on_done_with_host_buffer=*/nullptr));
     per_shard_arrays.push_back(per_shard_array);
