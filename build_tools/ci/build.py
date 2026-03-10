@@ -323,6 +323,24 @@ rocm_tag_filters = (
 
 rocm_test_filters = ""
 
+
+def _amd_gpu_targets(base_targets: str = "gfx90a,gfx942") -> str:
+  """Returns AMD GPU targets, adding the detected arch if not already present."""
+  targets = base_targets.split(",")
+  try:
+    result = subprocess.run(
+        ["bash", "-c", "rocminfo | grep -m 1 -oP 'gfx[0-9a-fA-F]+'"],
+        capture_output=True, text=True, check=True,
+    )
+    arch = result.stdout.strip()
+    if arch and arch not in targets:
+      logging.info("Adding detected AMD GPU arch: %s", arch)
+      targets.append(arch)
+  except (subprocess.CalledProcessError, FileNotFoundError):
+    logging.info("Could not detect AMD GPU arch, using base targets: %s",
+                 base_targets)
+  return ",".join(targets)
+
 rocm_multi_gpu_targets = (
     "//xla/tests:collective_ops_e2e_test",
     "//xla/tests:collective_ops_test",
@@ -362,7 +380,7 @@ Build(
     "XLA_FLAGS": "--xla_gpu_enable_llvm_module_compilation_parallelism=true"
 },
     repo_env={
-        "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942",
+        "TF_ROCM_AMDGPU_TARGETS": _amd_gpu_targets(),
         "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
         "TF_ROCM_RBE_DOCKER_IMAGE": "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa", #  rocm/tensorflow-build:latest-jammy-pythonall-rocm7.1.1-ci_official
         "ROCM_PATH": "/opt/rocm",
@@ -399,7 +417,7 @@ Build(
         "NCCL_MAX_NCHANNELS": 1,
     },
     repo_env={
-        "TF_ROCM_AMDGPU_TARGETS": "gfx90a,gfx942",
+        "TF_ROCM_AMDGPU_TARGETS": _amd_gpu_targets(),
         "TF_ROCM_RBE_SINGLE_GPU_POOL": "linux_x64_gpu_gfx90a",
         "TF_ROCM_RBE_DOCKER_IMAGE": "rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa", #  rocm/tensorflow-build:latest-jammy-pythonall-rocm7.1.1-ci_official
         "ROCM_PATH": "/opt/rocm",
