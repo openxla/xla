@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/test_utils.h"
 
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
