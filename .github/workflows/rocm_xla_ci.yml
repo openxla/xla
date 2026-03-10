@@ -74,7 +74,7 @@ jobs:
           repository: ${{ matrix.job_info.repo }}
           path: ${{ matrix.job_info.repo }}
 
-      - name: "Runner's info"
+      - name: "Print runner's info"
         run: |
           # rocminfo
           rocminfo
