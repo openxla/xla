@@ -78,6 +78,21 @@ namespace {
 using absl::StrCat;
 using absl::StrFormat;
 
+// Number of VA reservation sets used for command buffer remapping multiplexing.
+constexpr int kNumOfVaReservationSets = 2;
+
+// Returns a VA range index for the given device, round-robining between
+// [0, kNumOfVaReservationSets) to enable CPU/GPU overlap during remapping.
+int GetNextCommandBufferVaRangeIdx(int device_ordinal) {
+  static absl::Mutex mu;
+  static auto* counters = new absl::flat_hash_map<int, int>();
+  absl::MutexLock lock(&mu);
+  int& idx = (*counters)[device_ordinal];
+  int result = idx;
+  idx = (idx + 1) % kNumOfVaReservationSets;
+  return result;
+}
+
 // Records the arguments used to invoke a computation in an HloSnapshot proto.
 absl::Status RecordArguments(
     const absl::Span<const ShapedBuffer* const> arguments, se::Stream* stream,
@@ -364,6 +379,8 @@ absl::StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
         backend->eigen_intra_op_thread_pool_device());
     options.set_device_assignment(device_assignment_ptr);
     options.set_execution_profile(profile);
+    options.set_command_buffer_va_range_idx(
+        GetNextCommandBufferVaRangeIdx(stream->parent()->device_ordinal()));
     run_options.emplace_back(options, backend->StreamBorrowerWithPriority());
   }
 

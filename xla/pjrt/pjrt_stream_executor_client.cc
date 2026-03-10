@@ -158,6 +158,7 @@ limitations under the License.
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
@@ -169,7 +170,6 @@ limitations under the License.
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/mem.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 
@@ -1680,6 +1680,11 @@ PjRtStreamExecutorClient::RunAsync(
   return PjRtStreamExecutorExecutionOutput({{}, std::move(se_to_be_released)});
 }
 
+// Number of VA reservation sets used for command buffer remapping multiplexing.
+// With 2 sets, one VA range can be remapped by the CPU while the GPU executes
+// commands on the other, enabling CPU/GPU overlap.
+constexpr int kNumOfVaReservationSets = 2;
+
 // Enqueues a computation onto the compute stream. Each buffer returned in
 // device_buffers has a usage hold added that must be dropped on error or
 // converted on success.
@@ -1779,6 +1784,8 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
         client->client()->backend().eigen_intra_op_thread_pool_device());
     run_options.set_device_assignment(device_assignment.get());
     run_options.set_run_id(run_id);
+    run_options.set_command_buffer_va_range_idx(
+        static_cast<int>(run_id.ToInt() % kNumOfVaReservationSets));
     run_options.set_rng_seed(device_state->GetNewPrngSeed());
     run_options.set_gpu_executable_run_options(std::move(gpu_run_options));
     run_options.set_launch_id(launch_id);

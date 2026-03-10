@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -45,6 +46,11 @@ class CommandBufferThunk : public Thunk {
                      bool enable_command_buffers_during_profiling = false);
 
   const std::unique_ptr<SequentialThunk>& thunks() const { return thunks_; }
+
+  // Returns buffer allocation indices referenced by commands in this thunk.
+  absl::Span<const BufferAllocation::Index> allocs_indices() const {
+    return commands_.allocs_indices();
+  }
 
   absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
@@ -111,16 +117,21 @@ class CommandBufferThunk : public Thunk {
   };
 
   // Command buffer thunk owns commands buffers instantiated on all executors.
+  // When VA remapping is enabled, the key includes the first allocation's VA
+  // address to distinguish between command buffers for different VA ranges.
   struct State {
     absl::Mutex mutex;
-    absl::flat_hash_map<se::StreamExecutor*,
+    absl::flat_hash_map<std::pair<se::StreamExecutor*, void*>,
                         std::shared_ptr<ExecutorCommandBuffer>>
         command_buffers ABSL_GUARDED_BY(mutex);
   };
 
-  // Returns a command buffer instantiated for `executor` or creates new one.
+  // Returns a command buffer for (executor, first_alloc_address) or creates a
+  // new one. Pass nullptr for first_alloc_address when VA remapping is disabled
+  // or the address is not yet known (e.g. during Initialize).
   absl::StatusOr<std::shared_ptr<ExecutorCommandBuffer>>
-  GetOrCreateCommandBuffer(se::StreamExecutor* executor);
+  GetOrCreateCommandBuffer(se::StreamExecutor* executor,
+                           void* first_alloc_address);
 
   // Each individual command buffer allocates state on device (CUDA graph) and
   // it adds up pretty quickly. To prevent OOM errors we proactively evict
@@ -149,6 +160,10 @@ class CommandBufferThunk : public Thunk {
   // When true, allows command buffers to be used while profiling active.
   // TODO(b/355487968): Remove this option when validation complete.
   bool enable_command_buffers_during_profiling_;
+
+  // When true, VA remapping is used for command buffer buffer allocations so
+  // that the command buffer can be recorded once and replayed without updates.
+  bool enable_command_buffer_va_remapping_;
 
   // Command buffer thunk state allocated in heap to allow global (per-process)
   // management of instantiated command buffers.

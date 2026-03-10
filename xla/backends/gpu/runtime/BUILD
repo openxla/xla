@@ -535,6 +535,7 @@ cc_library(
         ":command_state",
         ":sequential_thunk",  # build_cleaner: keep
         ":thunk",
+        "//xla:debug_options_flags",
         "//xla/service:buffer_assignment",  # build_cleaner: keep
         "//xla/service/gpu:buffer_allocations",  # build_cleaner: keep
         "//xla/stream_executor:command_buffer",

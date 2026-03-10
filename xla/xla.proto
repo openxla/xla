@@ -583,6 +583,11 @@ message DebugOptions {
   // Enable PDL - Programmatic Dependent Launch.
   optional bool xla_gpu_enable_pdl = 460;
 
+  // Enable VA remapping for command buffer thunks. When enabled, command buffer
+  // thunks use fixed virtual addresses across executions, allowing the command
+  // buffer to be recorded once and replayed without updates.
+  optional bool xla_gpu_enable_command_buffer_va_remapping = 462;
+
   optional bool xla_gpu_enable_pipelined_all_gather = 227;
 
   optional bool xla_gpu_enable_pipelined_all_reduce = 217;
@@ -1420,7 +1425,7 @@ message DebugOptions {
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
 
-  // Next id: 462
+  // Next id: 463
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
-#include <stdlib.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -56,6 +54,7 @@ limitations under the License.
 #include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
+#include <stdlib.h>
 #include "xla/backends/gpu/ffi.h"
 #include "xla/debug_options_flags.h"
 #include "xla/ffi/ffi.h"
@@ -3606,6 +3605,33 @@ INSTANTIATE_TEST_SUITE_P(
     ShardedAutotuningTestInfo::Name);
 
 #if GOOGLE_CUDA
+
+// Creates GpuClientOptions with VMM allocator on device 0.
+GpuClientOptions VmmClientOptions() {
+  GpuClientOptions options;
+  options.allowed_devices = {0};
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kVmm;
+  return options;
+}
+
+// Creates CompileOptions enabling command buffer VA remapping and all command
+// buffer types. Sets xla_gpu_graph_min_graph_size=1 so even small computations
+// are wrapped in command buffers.
+CompileOptions CmdBufVaRemappingOptions() {
+  CompileOptions opts;
+  auto* dbg = opts.executable_build_options.mutable_debug_options();
+  dbg->set_xla_gpu_enable_command_buffer_va_remapping(true);
+  dbg->set_xla_gpu_graph_min_graph_size(1);
+  dbg->add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  dbg->add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
+  dbg->add_xla_gpu_enable_command_buffer(DebugOptions::CUBLASLT);
+  dbg->add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+  dbg->add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
+  dbg->add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
+  dbg->add_xla_gpu_enable_command_buffer(DebugOptions::DYNAMIC_SLICE_FUSION);
+  return opts;
+}
+
 TEST(StreamExecutorGpuClientTest, VmmAllocatorCanBeSet) {
   GpuClientOptions options;
   options.allocator_config.kind = GpuAllocatorConfig::Kind::kVmm;
@@ -3619,6 +3645,337 @@ TEST(StreamExecutorGpuClientTest, VmmAllocatorCanBeSet) {
                 pjrt_se_client->allocator()),
             nullptr);
 }
+
+// Tests that element-wise fusion operations (FUSION command type) produce
+// correct results under command buffer VA remapping across multiple runs,
+// exercising both VA reservation sets (indices 0, 1, 0).
+TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingFusionOps) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(VmmClientOptions()));
+
+  static constexpr char kHlo[] = R"(
+    HloModule fusion_va_remapping_test
+    ENTRY main {
+      x = f32[8] parameter(0)
+      y = f32[8] parameter(1)
+      ROOT add = f32[8] add(x, y)
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kHlo, *client, CmdBufVaRemappingOptions()));
+
+  auto* device = client->addressable_devices()[0];
+  TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
+
+  // 3 runs cover VA reservation set indices 0, 1, 0.
+  for (int run = 0; run < 3; ++run) {
+    float base = static_cast<float>(run * 10);
+    auto x_lit = LiteralUtil::CreateR1<float>(
+        {base + 1, base + 2, base + 3, base + 4,
+         base + 5, base + 6, base + 7, base + 8});
+    auto y_lit = LiteralUtil::CreateR1<float>({1, 2, 3, 4, 5, 6, 7, 8});
+
+    TF_ASSERT_OK_AND_ASSIGN(auto x_buf, client->BufferFromHostLiteral(x_lit, mem));
+    TF_ASSERT_OK_AND_ASSIGN(auto y_buf, client->BufferFromHostLiteral(y_lit, mem));
+
+    auto result = executable->Execute({{x_buf.get(), y_buf.get()}}, {});
+    TF_ASSERT_OK_AND_ASSIGN(auto result_lit, ExtractSingleResult(result));
+
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR1<float>(
+            {base + 2, base + 4, base + 6, base + 8,
+             base + 10, base + 12, base + 14, base + 16}),
+        *result_lit))
+        << "Mismatch on run " << run;
+  }
+}
+
+// Tests that GEMM operations (CUBLAS/CUBLASLT command type) produce correct
+// results under command buffer VA remapping.
+TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingGemmOps) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(VmmClientOptions()));
+
+  static constexpr char kHlo[] = R"(
+    HloModule gemm_va_remapping_test
+    ENTRY main {
+      lhs = f32[4,4] parameter(0)
+      rhs = f32[4,4] parameter(1)
+      ROOT dot = f32[4,4] dot(lhs, rhs),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    })";
+
+  CompileOptions opts = CmdBufVaRemappingOptions();
+  // Force CUBLAS routing even for small matrices.
+  opts.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_gemm_rewrite_size_threshold(0);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable, CompileExecutable(kHlo, *client, opts));
+
+  auto* device = client->addressable_devices()[0];
+  TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
+
+  // rhs = identity matrix → lhs * identity == lhs.
+  auto identity = LiteralUtil::CreateR2<float>(
+      {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}});
+
+  for (int run = 0; run < 3; ++run) {
+    float s = static_cast<float>(run + 1);
+    // lhs = s * identity.
+    auto lhs = LiteralUtil::CreateR2<float>(
+        {{s, 0, 0, 0}, {0, s, 0, 0}, {0, 0, s, 0}, {0, 0, 0, s}});
+
+    TF_ASSERT_OK_AND_ASSIGN(auto lhs_buf, client->BufferFromHostLiteral(lhs, mem));
+    TF_ASSERT_OK_AND_ASSIGN(auto rhs_buf, client->BufferFromHostLiteral(identity, mem));
+
+    auto result = executable->Execute({{lhs_buf.get(), rhs_buf.get()}}, {});
+    TF_ASSERT_OK_AND_ASSIGN(auto result_lit, ExtractSingleResult(result));
+
+    EXPECT_TRUE(LiteralTestUtil::Near(lhs, *result_lit, ErrorSpec{1e-5}))
+        << "Mismatch on run " << run;
+  }
+}
+
+// Tests that cuDNN convolution operations (CUDNN command type) produce correct
+// results under command buffer VA remapping.
+TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingCudnnConv) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(VmmClientOptions()));
+
+  // NCHW: input=[N=1,C=1,H=4,W=4], filter=[O=1,I=1,kH=2,kW=2],
+  //        output=[N=1,C=1,H=3,W=3].
+  static constexpr char kHlo[] = R"(
+    HloModule conv_va_remapping_test
+    ENTRY main {
+      input = f32[1,1,4,4] parameter(0)
+      filter = f32[1,1,2,2] parameter(1)
+      ROOT conv = f32[1,1,3,3] convolution(input, filter),
+        window={size=2x2}, dim_labels=bf01_oi01->bf01
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kHlo, *client, CmdBufVaRemappingOptions()));
+
+  auto* device = client->addressable_devices()[0];
+  TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
+
+  // Filter [[1,0],[0,0]]: output[i,j] == input[i,j] (top-left of each window).
+  auto filter = LiteralUtil::CreateR4<float>({{{{1.0f, 0.0f}, {0.0f, 0.0f}}}});
+
+  for (int run = 0; run < 3; ++run) {
+    float v = static_cast<float>(run + 1);
+    // Uniform input: all elements equal to v.
+    auto input = LiteralUtil::CreateR4<float>(
+        {{{{v, v, v, v}, {v, v, v, v}, {v, v, v, v}, {v, v, v, v}}}});
+
+    TF_ASSERT_OK_AND_ASSIGN(auto input_buf, client->BufferFromHostLiteral(input, mem));
+    TF_ASSERT_OK_AND_ASSIGN(auto filter_buf, client->BufferFromHostLiteral(filter, mem));
+
+    auto result = executable->Execute({{input_buf.get(), filter_buf.get()}}, {});
+    TF_ASSERT_OK_AND_ASSIGN(auto result_lit, ExtractSingleResult(result));
+
+    // With uniform input v and filter [[1,0],[0,0]], every output value == v.
+    auto expected = LiteralUtil::CreateR4<float>(
+        {{{{v, v, v}, {v, v, v}, {v, v, v}}}});
+    EXPECT_TRUE(LiteralTestUtil::Near(expected, *result_lit, ErrorSpec{1e-5}))
+        << "Mismatch on run " << run;
+  }
+}
+
+// Tests that conditional operations (CONDITIONAL command type) produce correct
+// results under command buffer VA remapping.
+TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingConditional) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(VmmClientOptions()));
+
+  static constexpr char kHlo[] = R"(
+    HloModule conditional_va_remapping_test
+    true_branch {
+      p = f32[] parameter(0)
+      c = f32[] constant(10.0)
+      ROOT r = f32[] add(p, c)
+    }
+    false_branch {
+      p = f32[] parameter(0)
+      c = f32[] constant(20.0)
+      ROOT r = f32[] add(p, c)
+    }
+    ENTRY main {
+      cond = pred[] parameter(0)
+      val = f32[] parameter(1)
+      ROOT result = f32[] conditional(cond, val, val),
+        true_computation=true_branch, false_computation=false_branch
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kHlo, *client, CmdBufVaRemappingOptions()));
+
+  auto* device = client->addressable_devices()[0];
+  TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
+
+  // Alternate true/false to exercise both VA reservation sets.
+  struct RunConfig {
+    bool cond;
+    float val;
+    float expected;
+  };
+  std::vector<RunConfig> runs = {
+      {true, 5.0f, 15.0f}, {false, 5.0f, 25.0f}, {true, 7.0f, 17.0f}};
+
+  for (const auto& cfg : runs) {
+    auto cond_lit = LiteralUtil::CreateR0<bool>(cfg.cond);
+    auto val_lit = LiteralUtil::CreateR0<float>(cfg.val);
+
+    TF_ASSERT_OK_AND_ASSIGN(auto cond_buf, client->BufferFromHostLiteral(cond_lit, mem));
+    TF_ASSERT_OK_AND_ASSIGN(auto val_buf, client->BufferFromHostLiteral(val_lit, mem));
+
+    auto result = executable->Execute({{cond_buf.get(), val_buf.get()}}, {});
+    TF_ASSERT_OK_AND_ASSIGN(auto result_lit, ExtractSingleResult(result));
+
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR0<float>(cfg.expected), *result_lit));
+  }
+}
+
+// Tests that while-loop operations (WHILE command type) produce correct results
+// under command buffer VA remapping.
+TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingWhileLoop) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(VmmClientOptions()));
+
+  // Loop runs 4 iterations, adding 1.0 each time: result = init_val + 4.
+  static constexpr char kHlo[] = R"(
+    HloModule while_va_remapping_test
+    cond {
+      state = (s32[], f32[]) parameter(0)
+      i = s32[] get-tuple-element(state), index=0
+      limit = s32[] constant(4)
+      ROOT lt = pred[] compare(i, limit), direction=LT
+    }
+    body {
+      state = (s32[], f32[]) parameter(0)
+      i = s32[] get-tuple-element(state), index=0
+      val = f32[] get-tuple-element(state), index=1
+      one_i = s32[] constant(1)
+      one_f = f32[] constant(1.0)
+      i1 = s32[] add(i, one_i)
+      val1 = f32[] add(val, one_f)
+      ROOT next = (s32[], f32[]) tuple(i1, val1)
+    }
+    ENTRY main {
+      init_val = f32[] parameter(0)
+      init_i = s32[] constant(0)
+      init = (s32[], f32[]) tuple(init_i, init_val)
+      loop = (s32[], f32[]) while(init), condition=cond, body=body
+      ROOT result = f32[] get-tuple-element(loop), index=1
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kHlo, *client, CmdBufVaRemappingOptions()));
+
+  auto* device = client->addressable_devices()[0];
+  TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
+
+  for (int run = 0; run < 3; ++run) {
+    float init_val = static_cast<float>(run);
+    auto init_lit = LiteralUtil::CreateR0<float>(init_val);
+    TF_ASSERT_OK_AND_ASSIGN(auto init_buf, client->BufferFromHostLiteral(init_lit, mem));
+
+    auto result = executable->Execute({{init_buf.get()}}, {});
+    TF_ASSERT_OK_AND_ASSIGN(auto result_lit, ExtractSingleResult(result));
+
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR0<float>(init_val + 4.0f), *result_lit))
+        << "Mismatch on run " << run;
+  }
+}
+
+// Tests that dynamic-slice fusion operations (DYNAMIC_SLICE_FUSION command
+// type) produce correct results under command buffer VA remapping.
+// Pattern: dynamic-slice → element-wise op → dynamic-update-slice.
+TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingDynamicSliceFusion) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(VmmClientOptions()));
+
+  static constexpr char kHlo[] = R"(
+    HloModule ds_fusion_va_remapping_test
+    ENTRY main {
+      src = f32[8] parameter(0)
+      offset = s32[] parameter(1)
+      slice = f32[4] dynamic-slice(src, offset), dynamic_slice_sizes={4}
+      doubled = f32[4] add(slice, slice)
+      ROOT result = f32[8] dynamic-update-slice(src, doubled, offset)
+    })";
+
+  CompileOptions opts = CmdBufVaRemappingOptions();
+  opts.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_enable_dynamic_slice_fusion(true);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable, CompileExecutable(kHlo, *client, opts));
+
+  auto* device = client->addressable_devices()[0];
+  TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
+
+  struct RunConfig {
+    int32_t offset;
+    std::vector<float> expected;
+  };
+  // For each run: src={1,2,3,4,5,6,7,8}, slice src[offset:offset+4], double it,
+  // write back. Expected differs by offset.
+  std::vector<RunConfig> runs = {
+      {0, {2, 4, 6, 8, 5, 6, 7, 8}},
+      {2, {1, 2, 6, 8, 10, 12, 7, 8}},
+      {4, {1, 2, 3, 4, 10, 12, 14, 16}},
+  };
+
+  for (const auto& cfg : runs) {
+    auto src_lit = LiteralUtil::CreateR1<float>({1, 2, 3, 4, 5, 6, 7, 8});
+    auto offset_lit = LiteralUtil::CreateR0<int32_t>(cfg.offset);
+
+    TF_ASSERT_OK_AND_ASSIGN(auto src_buf, client->BufferFromHostLiteral(src_lit, mem));
+    TF_ASSERT_OK_AND_ASSIGN(auto off_buf, client->BufferFromHostLiteral(offset_lit, mem));
+
+    auto result = executable->Execute({{src_buf.get(), off_buf.get()}}, {});
+    TF_ASSERT_OK_AND_ASSIGN(auto result_lit, ExtractSingleResult(result));
+
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR1<float>(cfg.expected), *result_lit))
+        << "Mismatch at offset " << cfg.offset;
+  }
+}
+
+// Tests the kNumOfVaReservationSets=2 multiplexing: runs 6 iterations so the
+// VA range index cycles 0,1,0,1,0,1. Verifies no memory corruption from the
+// alternating remapping across all runs.
+TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingMultiplexing) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(VmmClientOptions()));
+
+  // add-constant: expected = input + {1,2,3,4}.
+  static constexpr char kHlo[] = R"(
+    HloModule multiplexing_va_remapping_test
+    ENTRY main {
+      x = f32[4] parameter(0)
+      c = f32[4] constant({1.0, 2.0, 3.0, 4.0})
+      ROOT add = f32[4] add(x, c)
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kHlo, *client, CmdBufVaRemappingOptions()));
+
+  auto* device = client->addressable_devices()[0];
+  TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
+
+  // 6 runs → VA range indices: 0, 1, 0, 1, 0, 1.
+  for (int run = 0; run < 6; ++run) {
+    float base = static_cast<float>(run * 10);
+    auto x_lit = LiteralUtil::CreateR1<float>({base, base, base, base});
+    TF_ASSERT_OK_AND_ASSIGN(auto x_buf, client->BufferFromHostLiteral(x_lit, mem));
+
+    auto result = executable->Execute({{x_buf.get()}}, {});
+    TF_ASSERT_OK_AND_ASSIGN(auto result_lit, ExtractSingleResult(result));
+
+    EXPECT_TRUE(LiteralTestUtil::Equal(
+        LiteralUtil::CreateR1<float>(
+            {base + 1, base + 2, base + 3, base + 4}),
+        *result_lit))
+        << "Mismatch on run " << run << " (VA range index " << (run % 2) << ")";
+  }
+}
+
 #endif  // GOOGLE_CUDA
 
 }  // namespace
