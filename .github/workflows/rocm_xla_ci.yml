@@ -74,6 +74,11 @@ jobs:
           repository: ${{ matrix.job_info.repo }}
           path: ${{ matrix.job_info.repo }}
 
+      - name: "Runner's info"
+        run: |
+          # rocminfo
+          rocminfo
+
       - name: "Test XLA [Single GPU]"
         working-directory: ${{ matrix.job_info.repo }}
         run: |
