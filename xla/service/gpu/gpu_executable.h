@@ -195,7 +195,7 @@ class GpuExecutable : public Executable {
       const ServiceExecutableRunOptions* run_options,
       VariantArguments arguments);
 
-  absl::Span<const BufferAllocation* absl_nonnull const> GetAllocations()
+  absl::Span<const BufferAllocation * absl_nonnull const> GetAllocations()
       const override {
     return allocation_ptrs_;
   }
@@ -427,7 +427,8 @@ class GpuExecutable : public Executable {
   // Separate mutex for VA ranges to avoid contention with module_handle_mutex_
   // during VA remapping operations which may involve GPU synchronization.
   absl::Mutex va_ranges_mutex_;
-  absl::node_hash_map<stream_executor::StreamExecutor*, VaRanges>
+  absl::node_hash_map<std::pair<stream_executor::StreamExecutor*, int>,
+                      VaRanges>
       module_va_ranges_ ABSL_GUARDED_BY(va_ranges_mutex_);
 
   GpuExecutable(const GpuExecutable&) = delete;
