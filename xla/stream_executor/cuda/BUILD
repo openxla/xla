@@ -956,6 +956,10 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
+<<<<<<< HEAD
+=======
+        "@com_google_googletest//:gtest",
+>>>>>>> 0ae03f372c (Add StreamExecutorVmmAllocator and DeviceAddressVmmAllocator)
         "@com_google_googletest//:gtest_main",
     ],
 )
