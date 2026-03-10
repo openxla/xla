@@ -3231,6 +3231,64 @@ ENTRY entry {
                           op::Shape("f32[5]")));
 }
 
+TEST_P(SpmdPartitioningTest, CustomCallMultiSlice) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f64[1536] parameter(0), sharding={devices=[2]<=[2]}
+  ROOT %custom-call = (f64[1520]{0}, f64[1520]{0}, f64[1520]{0}, f64[1520]{0}) custom-call(%param0),
+    custom_call_target="_SPMDInternalOp_MultiSlice",
+    sharding={{devices=[2]<=[2]}, {devices=[2]<=[2]}, {devices=[2]<=[2]}, {devices=[2]<=[2]}},
+    backend_config="dimension=0,amount=3,start_indices=[6],limit_indices=[1526],strides=[1]"
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+  const auto root = module->entry_computation()->root_instruction();
+  auto super_shard = op::Concatenate(op::CollectivePermute(_), op::Parameter(0),
+                                     op::CollectivePermute(_));
+
+  auto slice_idx = op::Add(op::Multiply(op::Reshape(op::DynamicSlice(
+                                            op::Constant(), op::PartitionId())),
+                                        op::Constant()),
+                           op::Constant());
+  auto pre_slice = op::DynamicSlice(super_shard, slice_idx);
+  EXPECT_THAT(root,
+              AllOf(op::Tuple(op::Slice(pre_slice), op::Slice(pre_slice),
+                              op::Slice(pre_slice), op::Slice(pre_slice)),
+                    op::Shape("(f64[760], f64[760], f64[760], f64[760])")));
+}
+
+TEST_P(SpmdPartitioningTest, CustomCallMultiSlice2) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f64[1536] parameter(0), sharding={devices=[2]<=[2]}
+  ROOT %custom-call = (f64[1520]{0}, f64[1520]{0}) custom-call(%param0),
+    custom_call_target="_SPMDInternalOp_MultiSlice",
+    sharding={{devices=[2]<=[2]}, {devices=[2]<=[2]}},
+    backend_config="dimension=0,amount=1,start_indices=[7],limit_indices=[1527],strides=[1]"
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+  const auto root = module->entry_computation()->root_instruction();
+  auto super_shard =
+      op::Concatenate(op::CollectivePermute(_), op::Parameter(0));
+
+  auto slice_idx = op::Add(op::Multiply(op::Reshape(op::DynamicSlice(
+                                            op::Constant(), op::PartitionId())),
+                                        op::Constant()),
+                           op::Constant());
+  auto pre_slice = op::DynamicSlice(super_shard, slice_idx);
+  EXPECT_THAT(root, AllOf(op::Tuple(op::Slice(pre_slice), op::Slice(pre_slice)),
+                          op::Shape("(f64[760], f64[760])")));
+}
+
 TEST_P(SpmdPartitioningTest, PartitionCustomCall) {
   absl::string_view hlo_string = R"(
 HloModule cluster_2013453984438090939__.47
