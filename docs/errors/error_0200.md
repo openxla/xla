@@ -35,7 +35,7 @@ signatures described below.
 
 - **"observed errors are: [Hardware/Network/Power]"**: This indicates a physical
   infrastructure failure. → Jump to
-  [Scenario 1: Infrastructure failures (hardware/newtwork/power)](#scenario_1_infrastructure_failures_hardware_network_power)
+  [Scenario 1: Infrastructure failures (hardware/newtwork/power)](#scenario_1_infrastructure_failures_hardwarenetworkpower)
 - **"observed errors are: [User]"**: This indicates a hardware constraint
   violation. → Jump to
   [Scenario 2: Hardware constraint violations](#scenario_2_hardware_constraint_violations)
