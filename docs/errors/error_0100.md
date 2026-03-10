@@ -61,7 +61,7 @@ action.
     decrease the memory footprint.
   - **Buffer donation:** Utilize framework features (such as: `jax.jit(...,
     donate_argnums=...)`) to signal to XLA that certain input buffers can be
-    overwritten and reused for outputs.
+    overwritten and reused for outputs. Read [Buffer donation](https://docs.jax.dev/en/latest/buffer_donation.html) for more details.
   - **Optimize checkpoint strategy:** Instead of saving the entire model state
     at once, consider saving only the model weights or using a sharded
     checkpointing strategy.
