@@ -118,6 +118,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
@@ -126,7 +127,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -1546,9 +1546,11 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
 
   params.device_description = device_description;
 
+  ThunkSequenceProto thunk_sequence_proto;
+  *thunk_sequence_proto.mutable_thunks() = proto.thunks();
   ASSIGN_OR_RETURN(ThunkSequence thunk_sequence,
                    DeserializeThunkSequenceProto(
-                       proto.thunks(), params.mlir_allocations.value(),
+                       thunk_sequence_proto, params.mlir_allocations.value(),
                        params.debug_module.get(), platform_name,
                        gpu_compute_capability, symbol_resolver));
 
