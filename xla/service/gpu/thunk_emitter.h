@@ -23,13 +23,14 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/nullability.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/IR/Module.h"
 #include "xla/autotuning.pb.h"
+#include "xla/backends/gpu/runtime/async_execution.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
-#include "xla/backends/gpu/runtime/copy_thunk.h"
 #include "xla/backends/gpu/runtime/host_send_recv_thunk.h"
 #include "xla/backends/gpu/runtime/nvshmem_collective_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -53,10 +54,9 @@ class ThunkEmitter {
     return ir_emitter_context_->platform_name();
   }
 
-  explicit ThunkEmitter(
-      IrEmitterContext* absl_nonnull ir_emitter_context,
-      llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
-          llvm_options_lock);
+  explicit ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
+                        llvm_ir::LLVMCommandLineOptionsReleasableLock*
+                            absl_nonnull llvm_options_lock);
   ThunkEmitter(const ThunkEmitter&) = delete;
   ThunkEmitter& operator=(const ThunkEmitter&) = delete;
 
@@ -236,11 +236,14 @@ class ThunkEmitter {
   // Container for async host send/recv events shared by host send/recv thunks.
   std::shared_ptr<HostSendRecvAsyncEvents> send_recv_events_;
 
-  // Container for async copy-start/copy-done events.
-  std::shared_ptr<CopyThunk::AsyncEvents> copy_events_;
-
   // Shared buffer addresses registry for NVSHMEM put/get operations.
   std::shared_ptr<NvshmemBufferAddresses> nvshmem_buffer_addresses_;
+
+  // Maps async-start instructions to their AsyncExecution so that the
+  // corresponding async-done can emit an AsyncDoneThunk sharing the same
+  // AsyncExecution.
+  absl::flat_hash_map<const HloInstruction*, std::shared_ptr<AsyncExecution>>
+      hlo_async_executions_;
 
   // Cache to store the call_graph.
   std::unique_ptr<CallGraph> call_graph_;
