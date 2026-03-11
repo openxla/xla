@@ -157,7 +157,7 @@ class CommandBufferTest
         auto exec, CreateExecutable(std::move(module), run_hlo_passes));
 
     auto* pjrt_runner = tsl::down_cast<HloRunnerPjRt*>(&test_runner());
-    EXPECT_TRUE(pjrt_runner != nullptr);
+    ASSERT_TRUE(pjrt_runner != nullptr);
 
     // Create two copies of device buffers to make sure command buffer saved
     // pointers really get updated during the last "update run".
@@ -171,7 +171,7 @@ class CommandBufferTest
 
     static constexpr absl::string_view kPhases[] = {"warm-up", "create",
                                                     "update"};
-    for (int i = 0; i < 3; i++) {
+    for (size_t i = 0; i < std::size(kPhases); i++) {
       BufferSet current_set = (i < 2) ? kInitial : kUpdated;
       TF_ASSERT_OK_AND_ASSIGN(auto output_buffers,
                               pjrt_runner->ExecuteWithDeviceBuffers(
