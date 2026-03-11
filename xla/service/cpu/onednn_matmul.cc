@@ -196,7 +196,7 @@ template <>
 dnnl::memory::desc GetSrcWeightMemDesc<kOnednnMatmulConfig>(
     HloInstruction* instr, const Shape& weights_shape) {
   auto src_md = ShapeToMemDesc(weights_shape);
-  auto& matmul_config =
+  const auto matmul_config =
       instr->backend_config<BackendConfig>().value().onednn_matmul_config();
   TransposeIfNecessary(matmul_config.rhs().tensor().dimensions(),
                        matmul_config.transpose_b(), src_md);
