@@ -55,11 +55,10 @@ class EmbedRandomAccessFile : public RandomAccessFile {
 
 class EmbedFileSystem : public tsl::FileSystem {
  public:
-  TF_USE_FILESYSTEM_METHODS_WITH_NO_TRANSACTION_SUPPORT;
-
   ~EmbedFileSystem() override;
 
   // Creates a new embedded file, overwriting it if it exists.
+
   absl::Status EmbedFile(absl::string_view fname, absl::string_view contents);
 
   absl::Status NewRandomAccessFile(

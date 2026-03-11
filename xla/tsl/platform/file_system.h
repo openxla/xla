@@ -51,10 +51,6 @@ class ReadOnlyMemoryRegion;
 class WritableFile;
 
 class FileSystem;
-struct TransactionToken {
-  FileSystem* owner;
-  void* token;
-};
 
 /// A generic interface for accessing a file system.  Implementations
 /// of custom filesystem adapters must implement this interface,
@@ -75,14 +71,6 @@ class FileSystem {
   /// and the object should be deleted when is not used.
   virtual absl::Status NewRandomAccessFile(
       const std::string& fname, std::unique_ptr<RandomAccessFile>* result) {
-    return NewRandomAccessFile(fname, nullptr, result);
-  }
-
-  virtual absl::Status NewRandomAccessFile(
-      const std::string& fname, TransactionToken* token,
-      std::unique_ptr<RandomAccessFile>* result) {
-    // We duplicate these methods due to Google internal coding style prevents
-    // virtual functions with default arguments. See PR #41615.
     return absl::OkStatus();
   }
 
@@ -100,12 +88,6 @@ class FileSystem {
   /// and the object should be deleted when is not used.
   virtual absl::Status NewWritableFile(const std::string& fname,
                                        std::unique_ptr<WritableFile>* result) {
-    return NewWritableFile(fname, nullptr, result);
-  }
-
-  virtual absl::Status NewWritableFile(const std::string& fname,
-                                       TransactionToken* token,
-                                       std::unique_ptr<WritableFile>* result) {
     return absl::OkStatus();
   }
 
@@ -122,12 +104,6 @@ class FileSystem {
   /// and the object should be deleted when is not used.
   virtual absl::Status NewAppendableFile(
       const std::string& fname, std::unique_ptr<WritableFile>* result) {
-    return NewAppendableFile(fname, nullptr, result);
-  }
-
-  virtual absl::Status NewAppendableFile(
-      const std::string& fname, TransactionToken* token,
-      std::unique_ptr<WritableFile>* result) {
     return absl::OkStatus();
   }
 
@@ -143,22 +119,11 @@ class FileSystem {
   /// and the object should be deleted when is not used.
   virtual absl::Status NewReadOnlyMemoryRegionFromFile(
       const std::string& fname, std::unique_ptr<ReadOnlyMemoryRegion>* result) {
-    return NewReadOnlyMemoryRegionFromFile(fname, nullptr, result);
-  }
-
-  virtual absl::Status NewReadOnlyMemoryRegionFromFile(
-      const std::string& fname, TransactionToken* token,
-      std::unique_ptr<ReadOnlyMemoryRegion>* result) {
     return absl::OkStatus();
   }
 
   /// Returns OK if the named path exists and NOT_FOUND otherwise.
   virtual absl::Status FileExists(const std::string& fname) {
-    return FileExists(fname, nullptr);
-  }
-
-  virtual absl::Status FileExists(const std::string& fname,
-                                  TransactionToken* token) {
     return absl::OkStatus();
   }
 
@@ -166,24 +131,12 @@ class FileSystem {
   /// if status is not null, populate the vector with a detailed status
   /// for each file.
   virtual bool FilesExist(const std::vector<std::string>& files,
-                          std::vector<absl::Status>* status) {
-    return FilesExist(files, nullptr, status);
-  }
-
-  virtual bool FilesExist(const std::vector<std::string>& files,
-                          TransactionToken* token,
                           std::vector<absl::Status>* status);
 
   /// \brief Returns the immediate children in the given directory.
   ///
   /// The returned paths are relative to 'dir'.
   virtual absl::Status GetChildren(const std::string& dir,
-                                   std::vector<std::string>* result) {
-    return GetChildren(dir, nullptr, result);
-  }
-
-  virtual absl::Status GetChildren(const std::string& dir,
-                                   TransactionToken* token,
                                    std::vector<std::string>* result) {
     return absl::OkStatus();
   }
@@ -212,12 +165,6 @@ class FileSystem {
   ///                    implemented
   virtual absl::Status GetMatchingPaths(const std::string& pattern,
                                         std::vector<std::string>* results) {
-    return GetMatchingPaths(pattern, nullptr, results);
-  }
-
-  virtual absl::Status GetMatchingPaths(const std::string& pattern,
-                                        TransactionToken* token,
-                                        std::vector<std::string>* results) {
     return absl::OkStatus();
   }
 
@@ -230,21 +177,11 @@ class FileSystem {
 
   /// \brief Obtains statistics for the given path.
   virtual absl::Status Stat(const std::string& fname, FileStatistics* stat) {
-    return Stat(fname, nullptr, stat);
-  }
-
-  virtual absl::Status Stat(const std::string& fname, TransactionToken* token,
-                            FileStatistics* stat) {
     return absl::OkStatus();
   }
 
   /// \brief Deletes the named file.
   virtual absl::Status DeleteFile(const std::string& fname) {
-    return DeleteFile(fname, nullptr);
-  }
-
-  virtual absl::Status DeleteFile(const std::string& fname,
-                                  TransactionToken* token) {
     return absl::OkStatus();
   }
 
@@ -254,11 +191,6 @@ class FileSystem {
   ///  * ALREADY_EXISTS - directory with name dirname already exists.
   ///  * PERMISSION_DENIED - dirname is not writable.
   virtual absl::Status CreateDir(const std::string& dirname) {
-    return CreateDir(dirname, nullptr);
-  }
-
-  virtual absl::Status CreateDir(const std::string& dirname,
-                                 TransactionToken* token) {
     return absl::OkStatus();
   }
 
@@ -268,20 +200,10 @@ class FileSystem {
   ///  * OK - successfully created the directory and sub directories, even if
   ///         they were already created.
   ///  * PERMISSION_DENIED - dirname or some subdirectory is not writable.
-  virtual absl::Status RecursivelyCreateDir(const std::string& dirname) {
-    return RecursivelyCreateDir(dirname, nullptr);
-  }
-
-  virtual absl::Status RecursivelyCreateDir(const std::string& dirname,
-                                            TransactionToken* token);
+  virtual absl::Status RecursivelyCreateDir(const std::string& dirname);
 
   /// \brief Deletes the specified directory.
   virtual absl::Status DeleteDir(const std::string& dirname) {
-    return DeleteDir(dirname, nullptr);
-  }
-
-  virtual absl::Status DeleteDir(const std::string& dirname,
-                                 TransactionToken* token) {
     return absl::OkStatus();
   }
 
@@ -311,23 +233,10 @@ class FileSystem {
   ///                    implemented
   virtual absl::Status DeleteRecursively(const std::string& dirname,
                                          int64_t* undeleted_files,
-                                         int64_t* undeleted_dirs) {
-    return DeleteRecursively(dirname, nullptr, undeleted_files, undeleted_dirs);
-  }
-
-  virtual absl::Status DeleteRecursively(const std::string& dirname,
-                                         TransactionToken* token,
-                                         int64_t* undeleted_files,
                                          int64_t* undeleted_dirs);
 
   /// \brief Stores the size of `fname` in `*file_size`.
   virtual absl::Status GetFileSize(const std::string& fname,
-                                   uint64_t* file_size) {
-    return GetFileSize(fname, nullptr, file_size);
-  }
-
-  virtual absl::Status GetFileSize(const std::string& fname,
-                                   TransactionToken* token,
                                    uint64_t* file_size) {
     return absl::OkStatus();
   }
@@ -335,24 +244,12 @@ class FileSystem {
   /// \brief Overwrites the target if it exists.
   virtual absl::Status RenameFile(const std::string& src,
                                   const std::string& target) {
-    return RenameFile(src, target, nullptr);
-  }
-
-  virtual absl::Status RenameFile(const std::string& src,
-                                  const std::string& target,
-                                  TransactionToken* token) {
     return absl::OkStatus();
   }
 
   /// \brief Copy the src to target.
   virtual absl::Status CopyFile(const std::string& src,
-                                const std::string& target) {
-    return CopyFile(src, target, nullptr);
-  }
-
-  virtual absl::Status CopyFile(const std::string& src,
-                                const std::string& target,
-                                TransactionToken* token);
+                                const std::string& target);
 
   /// \brief Translate an URI to a filename for the FileSystem implementation.
   ///
@@ -372,12 +269,7 @@ class FileSystem {
   ///  * NOT_FOUND - The path entry does not exist.
   ///  * PERMISSION_DENIED - Insufficient permissions.
   ///  * UNIMPLEMENTED - The file factory doesn't support directories.
-  virtual absl::Status IsDirectory(const std::string& fname) {
-    return IsDirectory(fname, nullptr);
-  }
-
-  virtual absl::Status IsDirectory(const std::string& fname,
-                                   TransactionToken* token);
+  virtual absl::Status IsDirectory(const std::string& fname);
 
   /// \brief Returns whether the given path is on a file system
   /// that has atomic move capabilities. This can be used
@@ -393,9 +285,7 @@ class FileSystem {
                                      bool* has_atomic_move);
 
   /// \brief Flushes any cached filesystem objects from memory.
-  virtual void FlushCaches() { FlushCaches(nullptr); }
-
-  virtual void FlushCaches(TransactionToken* token);
+  virtual void FlushCaches();
 
   /// \brief The separator this filesystem uses.
   ///
@@ -482,43 +372,6 @@ class FileSystem {
   void ParseURI(absl::string_view remaining, absl::string_view* scheme,
                 absl::string_view* host, absl::string_view* path) const;
 
-  // Transaction related API
-
-  /// \brief Starts a new transaction
-  virtual absl::Status StartTransaction(TransactionToken** token) {
-    *token = nullptr;
-    return absl::OkStatus();
-  }
-
-  /// \brief Adds `path` to transaction in `token`
-  virtual absl::Status AddToTransaction(const std::string& path,
-                                        TransactionToken* token) {
-    return absl::OkStatus();
-  }
-
-  /// \brief Ends transaction
-  virtual absl::Status EndTransaction(TransactionToken* token) {
-    return absl::OkStatus();
-  }
-
-  /// \brief Get token for `path` or start a new transaction and add `path` to
-  /// it.
-  virtual absl::Status GetTokenOrStartTransaction(const std::string& path,
-                                                  TransactionToken** token) {
-    *token = nullptr;
-    return absl::OkStatus();
-  }
-
-  /// \brief Return transaction for `path` or nullptr in `token`
-  virtual absl::Status GetTransactionForPath(const std::string& path,
-                                             TransactionToken** token) {
-    *token = nullptr;
-    return absl::OkStatus();
-  }
-
-  /// \brief Decode transaction to human readable string.
-  virtual std::string DecodeTransaction(const TransactionToken* token);
-
   /// \brief Set File System Configuration Options
   virtual absl::Status SetOption(const std::string& key,
                                  const std::string& value) {
@@ -554,30 +407,6 @@ class FileSystem {
 
   virtual ~FileSystem() = default;
 };
-/// This macro adds forwarding methods from FileSystem class to
-/// used class since name hiding will prevent these to be accessed from
-/// derived classes and would require all use locations to migrate to
-/// Transactional API. This is an interim solution until ModularFileSystem class
-/// becomes a singleton.
-// TODO(sami): Remove this macro when filesystem plugins migration is complete.
-#define TF_USE_FILESYSTEM_METHODS_WITH_NO_TRANSACTION_SUPPORT \
-  using FileSystem::NewRandomAccessFile;                      \
-  using FileSystem::NewWritableFile;                          \
-  using FileSystem::NewAppendableFile;                        \
-  using FileSystem::NewReadOnlyMemoryRegionFromFile;          \
-  using FileSystem::FileExists;                               \
-  using FileSystem::GetChildren;                              \
-  using FileSystem::GetMatchingPaths;                         \
-  using FileSystem::Stat;                                     \
-  using FileSystem::DeleteFile;                               \
-  using FileSystem::RecursivelyCreateDir;                     \
-  using FileSystem::DeleteDir;                                \
-  using FileSystem::DeleteRecursively;                        \
-  using FileSystem::GetFileSize;                              \
-  using FileSystem::RenameFile;                               \
-  using FileSystem::CopyFile;                                 \
-  using FileSystem::IsDirectory;                              \
-  using FileSystem::FlushCaches
 
 /// A Wrapper class for Transactional FileSystem support.
 /// This provides means to make use of the transactions with minimal code change
@@ -589,114 +418,103 @@ class FileSystem {
 /// transactional filesystem access with minimal code change.
 class WrappedFileSystem : public FileSystem {
  public:
-  TF_USE_FILESYSTEM_METHODS_WITH_NO_TRANSACTION_SUPPORT;
-
   absl::Status NewRandomAccessFile(
-      const std::string& fname, TransactionToken* token,
+      const std::string& fname,
       std::unique_ptr<RandomAccessFile>* result) override {
-    return fs_->NewRandomAccessFile(fname, (token ? token : token_), result);
+    return fs_->NewRandomAccessFile(fname, result);
   }
 
   absl::Status NewWritableFile(const std::string& fname,
-                               TransactionToken* token,
+
                                std::unique_ptr<WritableFile>* result) override {
-    return fs_->NewWritableFile(fname, (token ? token : token_), result);
+    return fs_->NewWritableFile(fname, result);
   }
 
   absl::Status NewAppendableFile(
-      const std::string& fname, TransactionToken* token,
+      const std::string& fname,
       std::unique_ptr<WritableFile>* result) override {
-    return fs_->NewAppendableFile(fname, (token ? token : token_), result);
+    return fs_->NewAppendableFile(fname, result);
   }
 
   absl::Status NewReadOnlyMemoryRegionFromFile(
-      const std::string& fname, TransactionToken* token,
+      const std::string& fname,
       std::unique_ptr<ReadOnlyMemoryRegion>* result) override {
-    return fs_->NewReadOnlyMemoryRegionFromFile(fname, (token ? token : token_),
-                                                result);
+    return fs_->NewReadOnlyMemoryRegionFromFile(fname, result);
   }
 
-  absl::Status FileExists(const std::string& fname,
-                          TransactionToken* token) override {
-    return fs_->FileExists(fname, (token ? token : token_));
+  absl::Status FileExists(const std::string& fname) override {
+    return fs_->FileExists(fname);
   }
 
   bool FilesExist(const std::vector<std::string>& files,
-                  TransactionToken* token,
+
                   std::vector<absl::Status>* status) override {
-    return fs_->FilesExist(files, (token ? token : token_), status);
+    return fs_->FilesExist(files, status);
   }
 
-  absl::Status GetChildren(const std::string& dir, TransactionToken* token,
+  absl::Status GetChildren(const std::string& dir,
                            std::vector<std::string>* result) override {
-    return fs_->GetChildren(dir, (token ? token : token_), result);
+    return fs_->GetChildren(dir, result);
   }
 
   absl::Status GetMatchingPaths(const std::string& pattern,
-                                TransactionToken* token,
+
                                 std::vector<std::string>* results) override {
-    return fs_->GetMatchingPaths(pattern, (token ? token : token_), results);
+    return fs_->GetMatchingPaths(pattern, results);
   }
 
   bool Match(const std::string& filename, const std::string& pattern) override {
     return fs_->Match(filename, pattern);
   }
 
-  absl::Status Stat(const std::string& fname, TransactionToken* token,
-                    FileStatistics* stat) override {
-    return fs_->Stat(fname, (token ? token : token_), stat);
+  absl::Status Stat(const std::string& fname, FileStatistics* stat) override {
+    return fs_->Stat(fname, stat);
   }
 
-  absl::Status DeleteFile(const std::string& fname,
-                          TransactionToken* token) override {
-    return fs_->DeleteFile(fname, (token ? token : token_));
+  absl::Status DeleteFile(const std::string& fname) override {
+    return fs_->DeleteFile(fname);
   }
 
-  absl::Status CreateDir(const std::string& dirname,
-                         TransactionToken* token) override {
-    return fs_->CreateDir(dirname, (token ? token : token_));
+  absl::Status CreateDir(const std::string& dirname) override {
+    return fs_->CreateDir(dirname);
   }
 
-  absl::Status RecursivelyCreateDir(const std::string& dirname,
-                                    TransactionToken* token) override {
-    return fs_->RecursivelyCreateDir(dirname, (token ? token : token_));
+  absl::Status RecursivelyCreateDir(const std::string& dirname) override {
+    return fs_->RecursivelyCreateDir(dirname);
   }
 
-  absl::Status DeleteDir(const std::string& dirname,
-                         TransactionToken* token) override {
-    return fs_->DeleteDir(dirname, (token ? token : token_));
+  absl::Status DeleteDir(const std::string& dirname) override {
+    return fs_->DeleteDir(dirname);
   }
 
   absl::Status DeleteRecursively(const std::string& dirname,
-                                 TransactionToken* token,
+
                                  int64_t* undeleted_files,
                                  int64_t* undeleted_dirs) override {
-    return fs_->DeleteRecursively(dirname, (token ? token : token_),
-                                  undeleted_files, undeleted_dirs);
+    return fs_->DeleteRecursively(dirname, undeleted_files, undeleted_dirs);
   }
 
-  absl::Status GetFileSize(const std::string& fname, TransactionToken* token,
+  absl::Status GetFileSize(const std::string& fname,
                            uint64_t* file_size) override {
-    return fs_->GetFileSize(fname, (token ? token : token_), file_size);
+    return fs_->GetFileSize(fname, file_size);
   }
 
-  absl::Status RenameFile(const std::string& src, const std::string& target,
-                          TransactionToken* token) override {
-    return fs_->RenameFile(src, target, (token ? token : token_));
+  absl::Status RenameFile(const std::string& src,
+                          const std::string& target) override {
+    return fs_->RenameFile(src, target);
   }
 
-  absl::Status CopyFile(const std::string& src, const std::string& target,
-                        TransactionToken* token) override {
-    return fs_->CopyFile(src, target, (token ? token : token_));
+  absl::Status CopyFile(const std::string& src,
+                        const std::string& target) override {
+    return fs_->CopyFile(src, target);
   }
 
   std::string TranslateName(const std::string& name) const override {
     return fs_->TranslateName(name);
   }
 
-  absl::Status IsDirectory(const std::string& fname,
-                           TransactionToken* token) override {
-    return fs_->IsDirectory(fname, (token ? token : token_));
+  absl::Status IsDirectory(const std::string& fname) override {
+    return fs_->IsDirectory(fname);
   }
 
   absl::Status HasAtomicMove(const std::string& path,
@@ -704,9 +522,7 @@ class WrappedFileSystem : public FileSystem {
     return fs_->HasAtomicMove(path, has_atomic_move);
   }
 
-  void FlushCaches(TransactionToken* token) override {
-    return fs_->FlushCaches((token ? token : token_));
-  }
+  void FlushCaches() override { return fs_->FlushCaches(); }
 
   char Separator() const override { return fs_->Separator(); }
 
@@ -714,41 +530,12 @@ class WrappedFileSystem : public FileSystem {
     return fs_->Basename(path);
   }
 
-  absl::Status StartTransaction(TransactionToken** token) override {
-    return fs_->StartTransaction(token);
-  }
-
-  absl::Status AddToTransaction(const std::string& path,
-                                TransactionToken* token) override {
-    return fs_->AddToTransaction(path, (token ? token : token_));
-  }
-
-  absl::Status EndTransaction(TransactionToken* token) override {
-    return fs_->EndTransaction(token);
-  }
-
-  absl::Status GetTransactionForPath(const std::string& path,
-                                     TransactionToken** token) override {
-    return fs_->GetTransactionForPath(path, token);
-  }
-
-  absl::Status GetTokenOrStartTransaction(const std::string& path,
-                                          TransactionToken** token) override {
-    return fs_->GetTokenOrStartTransaction(path, token);
-  }
-
-  std::string DecodeTransaction(const TransactionToken* token) override {
-    return fs_->DecodeTransaction((token ? token : token_));
-  }
-
-  WrappedFileSystem(FileSystem* file_system, TransactionToken* token)
-      : fs_(file_system), token_(token) {}
+  WrappedFileSystem(FileSystem* file_system) : fs_(file_system) {}
 
   ~WrappedFileSystem() override = default;
 
  private:
   FileSystem* fs_;
-  TransactionToken* token_;
 };
 
 /// A file abstraction for randomly reading the contents of a file.

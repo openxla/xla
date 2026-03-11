@@ -45,6 +45,7 @@ absl::Status EmbedRandomAccessFile::Name(absl::string_view* result) const {
 absl::Status EmbedRandomAccessFile::Read(uint64_t offset,
                                          absl::string_view& result,
                                          absl::Span<char> scratch) const {
+  size_t n = scratch.size();
   if (offset >= contents_.size()) {
     result = absl::string_view();
     return absl::OutOfRangeError(absl::StrCat("Offset ", offset,
@@ -52,12 +53,14 @@ absl::Status EmbedRandomAccessFile::Read(uint64_t offset,
                                               contents_.size()));
   }
 
-  size_t bytes_to_read = std::min(scratch.size(), contents_.size() - offset);
-  std::copy(contents_.begin() + offset,
-            contents_.begin() + offset + bytes_to_read, scratch.begin());
+  size_t bytes_to_read = std::min(n, contents_.size() - offset);
+  if (bytes_to_read > 0) {
+    std::copy(contents_.begin() + offset,
+              contents_.begin() + offset + bytes_to_read, scratch.data());
+  }
   result = absl::string_view(scratch.data(), bytes_to_read);
 
-  if (bytes_to_read < scratch.size()) {
+  if (bytes_to_read < n) {
     return absl::OutOfRangeError(
         absl::StrCat("EOF reached: only read ", bytes_to_read, " bytes."));
   }
@@ -69,14 +72,14 @@ EmbedFileSystem::~EmbedFileSystem() = default;
 
 absl::Status EmbedFileSystem::EmbedFile(absl::string_view fname,
                                         absl::string_view contents) {
-  absl::MutexLock ml(fs_lock_);
+  absl::MutexLock ml(&fs_lock_);
   fs_[fname] = contents;
   return absl::OkStatus();
 }
 
 absl::Status EmbedFileSystem::NewRandomAccessFile(
     const std::string& fname, std::unique_ptr<RandomAccessFile>* result) {
-  absl::MutexLock ml(fs_lock_);
+  absl::MutexLock ml(&fs_lock_);
   const auto it = fs_.find(fname);
   if (it == fs_.end()) {
     return absl::NotFoundError(absl::StrCat(fname, " does not exist."));
@@ -87,7 +90,7 @@ absl::Status EmbedFileSystem::NewRandomAccessFile(
 }
 
 absl::Status EmbedFileSystem::FileExists(const std::string& fname) {
-  absl::MutexLock ml(fs_lock_);
+  absl::MutexLock ml(&fs_lock_);
   if (!fs_.contains(fname)) {
     return absl::NotFoundError(absl::StrCat(fname, " does not exist."));
   }
@@ -97,7 +100,7 @@ absl::Status EmbedFileSystem::FileExists(const std::string& fname) {
 
 absl::Status EmbedFileSystem::GetFileSize(const std::string& fname,
                                           uint64_t* file_size) {
-  absl::MutexLock ml(fs_lock_);
+  absl::MutexLock ml(&fs_lock_);
   if (const auto it = fs_.find(fname); it != fs_.end()) {
     *file_size = it->second.size();
     return absl::OkStatus();
@@ -108,7 +111,7 @@ absl::Status EmbedFileSystem::GetFileSize(const std::string& fname,
 
 absl::Status EmbedFileSystem::GetMatchingPaths(
     const std::string& pattern, std::vector<std::string>* results) {
-  absl::MutexLock ml(fs_lock_);
+  absl::MutexLock ml(&fs_lock_);
   for (const auto& [file, contents] : fs_) {
     if (Match(file, pattern)) {
       results->push_back(std::string(file));
