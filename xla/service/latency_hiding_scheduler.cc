@@ -43,6 +43,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "re2/re2.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
@@ -71,6 +72,45 @@ limitations under the License.
 #include "xla/xla.pb.h"
 
 namespace xla {
+namespace {
+
+thread_local bool vlog_filter_match = true;
+
+// RAII Guard: Use this to "activate" the filter in ScheduleComputation.
+struct ScopedVlogFilter {
+  ScopedVlogFilter(absl::string_view name, absl::string_view pattern) {
+    if (pattern.empty()) {
+      vlog_filter_match = true;
+    } else {
+      // Compile the regex and evaluate it EXACTLY ONCE per computation.
+      // The RE2 object is destroyed immediately after, saving memory.
+      vlog_filter_match = RE2::PartialMatch(name, pattern);
+    }
+  }
+
+  ~ScopedVlogFilter() {
+    // Reset when leaving the scheduler
+    vlog_filter_match = true;
+  }
+};
+
+inline bool ShouldTriggerVlog() { return vlog_filter_match; }
+
+}  // namespace
+
+#undef VLOG
+#define VLOG(level) \
+  LOG_IF(INFO,      \
+         ABSL_PREDICT_FALSE(VLOG_IS_ON(level) && xla::ShouldTriggerVlog()))
+
+#undef XLA_VLOG_LINES
+#define XLA_VLOG_LINES(level, string)                                        \
+  do {                                                                       \
+    if (ABSL_PREDICT_FALSE(VLOG_IS_ON(level) && xla::ShouldTriggerVlog())) { \
+      XLA_LOG_LINES(INFO, string);                                           \
+    }                                                                        \
+  } while (false)
+
 namespace {
 
 const int64_t kDefaultMemorySpace = 0;
@@ -1576,7 +1616,11 @@ class ReadySetLt {
       // Try to favor paths that are dependent of chains of async operations
       // with long latency as we want to get to them as soon as possible to
       // overlap them with computation.
-      CMP_PROPERTY(GetAsyncDepth(), "kAsyncDepth");
+      if (top_down_scheduling_) {
+        CMP_PROPERTY(GetAsyncHeight(), "kAsyncHeight");
+      } else {
+        CMP_PROPERTY(GetAsyncDepth(), "kAsyncDepth");
+      }
 
       // Favor nodes that are the closest in amount of latency they hide
       // with the highest amount of latency that needs to be hidden to avoid
@@ -2788,6 +2832,8 @@ HloScheduleGraph::HloScheduleGraph(
   auto latency_estimator = scheduling_context->GetLatencyEstimator();
   auto async_tracker = scheduling_context->GetAsyncTracker();
   auto alias_analysis = scheduling_context->GetAliasAnalysis();
+  bool top_down_scheduling =
+      scheduling_context->GetAsyncTracker()->GetConfig().top_down_scheduling;
 
   const int n_inst = post_order_instructions->size();
   // Allocating the graph nodes. One for each of the instructions in the
@@ -2881,6 +2927,9 @@ HloScheduleGraph::HloScheduleGraph(
     }
     if (n->IsSupportedAsyncStart() && HasForceDelayAsyncAttribute(instr)) {
       n->SetForceDelay(true);
+    }
+    if (top_down_scheduling) {
+      n->SetTopDownScheduling(true);
     }
   }
 
@@ -3221,7 +3270,37 @@ void HloScheduleGraph::InitializeGraphAnalysis() {
       }
     }
   }
+  for (const HloInstruction* instr : original_order_) {
+    HloGraphNode& node = GetNode(instr);
+    current_rank[&node] = node.GetOutdegree();
+    node.SetAsyncHeight(0.0);
+    if (node.GetOutdegree() == 0) {
+      stack.push_back(&node);
+    }
+  }
+  while (!stack.empty()) {
+    auto* node = stack.back();
+    stack.pop_back();
+    if (node->IsSupportedAsyncStart()) {
+      for (auto& succ : node->GetSuccessors()) {
+        node->SetAsyncHeight(
+            std::max(succ.Target().GetAsyncHeight() + succ.Latency(),
+                     node->GetAsyncHeight()));
+      }
+    } else {
+      for (auto& succ : node->GetSuccessors()) {
+        node->SetAsyncHeight(
+            std::max(succ.Target().GetAsyncHeight(), node->GetAsyncHeight()));
+      }
+    }
+    for (auto& pred : node->GetPredecessors()) {
+      if (--current_rank[&pred.Target()] == 0) {
+        stack.push_back(&pred.Target());
+      }
+    }
+  }
 }
+
 void HloScheduleGraph::AnnotateGraph(
     const AnnotationTracker* annotation_tracker) {
   const HloComputation* comp = original_order_[0]->parent();
@@ -3447,6 +3526,9 @@ DefaultSchedulerCore::MakeSchedulingState(const HloComputation* computation) {
 absl::StatusOr<std::vector<HloInstruction*>>
 DefaultSchedulerCore::ScheduleComputation(const HloComputation* computation) {
   TF_ASSIGN_OR_RETURN(auto sched_state, MakeSchedulingState(computation));
+  // Activate the log filter for this computation.
+  ScopedVlogFilter filter_guard(computation->name(),
+                                config_.log_computation_re);
   return ScheduleComputation(computation, sched_state);
 }
 

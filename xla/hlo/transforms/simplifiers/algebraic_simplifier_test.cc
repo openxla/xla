@@ -11997,6 +11997,27 @@ TEST_F(AlgebraicSimplifierTest, BitcastUnaryBitcast) {
                                   m::Bitcast(m::Negate(m::Parameter(0))))));
 }
 
+TEST_F(AlgebraicSimplifierTest, BitcastElementwiseFusionBitcast) {
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"(
+  HloModule test
+
+  wrapped_negate {
+    param0 = f32[200] parameter(0)
+    ROOT negate = f32[200] negate(param0)
+  }
+
+  ENTRY main {
+    p0 = f32[10, 20] parameter(0)
+    b1 = f32[200] bitcast(p0)
+    fusion = f32[200] fusion(b1), kind=kLoop, calls=wrapped_negate
+    b2 = f32[20, 10] bitcast(fusion)
+    t = tuple(b1, b2)
+  })"));
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_is_layout_sensitive(false);
+  ASSERT_FALSE(AlgebraicSimplifier(options).Run(m.get()).value());
+}
+
 TEST_F(AlgebraicSimplifierTest, BitcastUnaryBitcast_MultiUser) {
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"(e {
     p0 = f32[10, 20] parameter(0)

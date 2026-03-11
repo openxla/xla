@@ -91,7 +91,6 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_stream_extension_hdrs",
         "//xla/pjrt/c:pjrt_c_api_tpu_topology_extension_hdrs",
         "//xla/pjrt/distributed:key_value_store_interface",
-        "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
         "//xla/pjrt/extensions/cross_host_transfers:pjrt_c_api_cross_host_transfer_extension",
         "//xla/pjrt/extensions/executable_metadata:executable_metadata_extension",
         "//xla/pjrt/extensions/host_allocator:host_allocator_extension",
@@ -118,6 +117,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/functional:overload",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -132,6 +132,9 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:fingerprint",
+        "@tsl//tsl/profiler/lib:connected_traceme",
+        "@tsl//tsl/profiler/lib:context_types_hdrs",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 

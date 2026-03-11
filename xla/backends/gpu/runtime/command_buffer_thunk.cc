@@ -58,7 +58,7 @@ CommandBufferThunk::ExecutorCommandBuffer::ExecutorCommandBuffer(
     : command_buffer(std::move(command_buffer)) {}
 
 CommandBufferThunk::CommandBufferThunk(
-    CommandBufferCmdExecutor commands, ThunkInfo thunk_info,
+    CommandExecutor commands, ThunkInfo thunk_info,
     std::unique_ptr<SequentialThunk> thunks,
     bool enable_command_buffers_during_profiling)
     : Thunk(Thunk::kCommandBuffer, std::move(thunk_info)),
@@ -95,8 +95,7 @@ CommandBufferThunk::CommandBufferThunk(
 
 std::vector<BufferAllocation::Index>
 CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
-    const CommandBufferCmdExecutor& commands,
-    const Thunk::ExecuteParams& params) {
+    const CommandExecutor& commands, const Thunk::ExecuteParams& params) {
   std::vector<BufferAllocation::Index> updated_allocs;
   const BufferAllocations* allocs = params.buffer_allocations;
 
@@ -126,13 +125,23 @@ absl::Status CommandBufferThunk::Prepare(const PrepareParams& params) {
     return absl::OkStatus();
   }
 
-  TF_RETURN_IF_ERROR(commands_.Prepare(params));
-
   // Always prepare thunks if they are present so we are ready to fall back
   // on them if we detect profiling activity.
   if (thunks_) {
     TF_RETURN_IF_ERROR(thunks_->Prepare(params));
   }
+
+  // TODO(b/290773547): Disabled CUDA graphs when profiling is active because of
+  // memory corruption.
+  if (tsl::profiler::ProfilerLock::HasActiveSession() && thunks_ &&
+      !enable_command_buffers_during_profiling_) {
+    VLOG(1) << "Prepare command buffer thunk as a regular thunk sequence "
+               "because we detected active profiling session";
+    TraceMe trace("WARNING: CommandBuffer disabled when profiling");
+    return absl::OkStatus();
+  }
+
+  TF_RETURN_IF_ERROR(commands_.Prepare(params));
 
   return absl::OkStatus();
 }
@@ -155,6 +164,16 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // on them if we detect profiling activity.
   if (thunks_) {
     TF_RETURN_IF_ERROR(thunks_->Initialize(params));
+  }
+
+  // TODO(b/290773547): Disabled CUDA graphs when profiling is active because of
+  // memory corruption.
+  if (tsl::profiler::ProfilerLock::HasActiveSession() && thunks_ &&
+      !enable_command_buffers_during_profiling_) {
+    VLOG(1) << "Initialize command buffer thunk as a regular thunk sequence "
+               "because we detected active profiling session";
+    TraceMe trace("WARNING: CommandBuffer disabled when profiling");
+    return absl::OkStatus();
   }
 
   // If there are no thunks, or command buffer does not require initialization,
