@@ -346,7 +346,18 @@ absl::Status RocmCommandBuffer::UpdateKernelNode(
 
 absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateEmptyNode(
     absl::Span<const GraphNodeHandle> dependencies) {
-  return absl::UnimplementedError("Empty nodes are not supported on ROCM.");
+  VLOG(2) << "Add empty node to a graph " << graph_
+          << "; deps: " << dependencies.size();
+
+  std::vector<hipGraphNode_t> deps = ToHipGraphHandles(dependencies);
+
+  hipGraphNode_t node_handle = nullptr;
+  TF_RETURN_IF_ERROR(
+      ToStatus(wrap::hipGraphAddEmptyNode(&node_handle, graph_, deps.data(),
+                                          deps.size()),
+               "Failed to add empty node to a HIP graph"));
+
+  return FromHipGraphHandle(node_handle);
 }
 
 absl::Status RocmCommandBuffer::Trace(
