@@ -103,10 +103,10 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/memory_space.h"
-#include "xla/stream_executor/stream_executor_vmm_allocator.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/stream_executor_vmm_allocator.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -1546,8 +1546,7 @@ GetStreamExecutorGpuDeviceAllocator(
         pa_budget = allocator_config.gpu_system_memory_size.value();
       }
       LOG(INFO) << "VMM allocator pa_budget for device "
-                << executor->device_ordinal() << ": " << pa_budget
-                << " bytes.";
+                << executor->device_ordinal() << ": " << pa_budget << " bytes.";
       return se::DeviceAddressVmmAllocator::Create(
           executor, ordinal_and_device.second->compute_stream(), pa_budget);
     }
