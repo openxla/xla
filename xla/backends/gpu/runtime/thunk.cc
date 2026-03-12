@@ -49,8 +49,8 @@ limitations under the License.
 #include "xla/service/service_executable_run_options.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/util.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/util.h"
 
 namespace xla::gpu {
 
@@ -178,8 +178,6 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_COPY_DONE;
     case kCuDnn:
       return THUNK_KIND_CU_DNN;
-    case kCubSort:
-      return THUNK_KIND_CUB_SORT;
     case kCublasLtMatmul:
       return THUNK_KIND_CUBLAS_LT_MATMUL;
     case kCustomCall:
@@ -329,8 +327,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kCopyDone;
     case THUNK_KIND_CU_DNN:
       return kCuDnn;
-    case THUNK_KIND_CUB_SORT:
-      return kCubSort;
     case THUNK_KIND_CUBLAS_LT_MATMUL:
       return kCublasLtMatmul;
     case THUNK_KIND_CUSTOM_CALL:
@@ -460,7 +456,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kCopy);
     CASE(kCopyDone);
     CASE(kCuDnn);
-    CASE(kCubSort);
     CASE(kCublasLtMatmul);
     CASE(kCustomCall);
     CASE(kCustomKernel);
