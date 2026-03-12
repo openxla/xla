@@ -85,14 +85,15 @@ class SpmdPartitioningTest
   absl::StatusOr<std::unique_ptr<HloModule>> PartitionComputation(
       absl::string_view hlo_module, int64_t num_devices,
       SpmdPartitionerOptions options = SpmdPartitionerOptions(),
-      bool enable_enzyme_opt = false) {
+      bool enable_enzyme_opt = false, int64_t num_replicas = 1) {
     options.allow_module_signature_change = true;
     auto collective_ops_creator =
-        GetDefaultCollectiveOpsCreator(num_devices, /*num_replicas=*/1);
+        GetDefaultCollectiveOpsCreator(num_devices, num_replicas);
 
     HloModuleConfig config = GetModuleConfigForTest();
     config.set_use_spmd_partitioning(true);
     config.set_num_partitions(num_devices);
+    config.set_replica_count(num_replicas);
     config.set_use_shardy_partitioner(true);
     if (enable_enzyme_opt) {
       config.mutable_debug_options().set_xla_enable_enzyme_comms_opt(true);
@@ -113,7 +114,7 @@ class SpmdPartitioningTest
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
     pass.AddPass<SpmdPrepare>();
-    pass.AddPass<SpmdPartitioner>(num_devices, /*num_replicas=*/1, options,
+    pass.AddPass<SpmdPartitioner>(num_devices, num_replicas, options,
                                   collective_ops_creator);
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
@@ -531,13 +532,15 @@ ENTRY entry {
       FindInstruction(module.get(), HloOpcode::kAllGather);
   EXPECT_NE(all_gather, nullptr);
 
-  // Verify all-gather instruction contains ReplicaGroupV2.
-  EXPECT_TRUE(all_gather->device_list()->version() ==
-              CollectiveDeviceListVersion::kIota);
-  EXPECT_EQ(*all_gather->device_list(),
+  // With RGV3 integration, this uses MeshAxesReplicaGroupList. It should be
+  // equivalent to a [1,4]<=[4]T(0) v2 device list.
+  EXPECT_EQ(all_gather->device_list()->version(),
+            CollectiveDeviceListVersion::kMeshAxes);
+  EXPECT_EQ(all_gather->device_list()->flattened_replica_groups(),
             IotaReplicaGroupList(
                 /*num_replica_groups=*/1, /*num_devices_per_group=*/4,
-                /*reshape_dims=*/{4}, /*transpose_perm=*/{0}));
+                /*reshape_dims=*/{4}, /*transpose_perm=*/{0})
+                .flattened_replica_groups());
 }
 
 TEST_P(SpmdPartitioningTest, TiledToSingleDevice) {
@@ -597,10 +600,15 @@ ENTRY entry {
   EXPECT_EQ(all_to_all->replica_groups().size(), 1);
   EXPECT_EQ(all_to_all->replica_groups()[0].replica_ids_size(), 8);
   if (GetParam() == ShardingFormatPicker::ShardingType::kBestEffortV2) {
-    EXPECT_EQ(*all_to_all->device_list(),
+    // With RGV3 integration, this uses MeshAxesReplicaGroupList. It should be
+    // equivalent to a [1,8]<=[4,2]T(1,0) v2 device list.
+    EXPECT_EQ(all_to_all->device_list()->version(),
+              CollectiveDeviceListVersion::kMeshAxes);
+    EXPECT_EQ(all_to_all->device_list()->flattened_replica_groups(),
               IotaReplicaGroupList(
                   /*num_replica_groups=*/1, /*num_devices_per_group=*/8,
-                  /*reshape_dims=*/{4, 2}, /*transpose_perm=*/{1, 0}));
+                  /*reshape_dims=*/{4, 2}, /*transpose_perm=*/{1, 0})
+                  .flattened_replica_groups());
   } else {
     std::vector<std::vector<int64_t>> expected_replica_groups = {
         {0, 2, 4, 6, 1, 3, 5, 7}};
@@ -2009,11 +2017,13 @@ ENTRY entry {
 
   // Verify all-reduce instruction contains ReplicaGroupV2.
   EXPECT_EQ((*all_reduce_instruction)->device_list()->version(),
-            CollectiveDeviceListVersion::kIota);
-  EXPECT_EQ(*(*all_reduce_instruction)->device_list(),
-            IotaReplicaGroupList(
-                /*num_replica_groups=*/1, /*num_devices_per_group=*/8,
-                /*reshape_dims=*/{8}, /*transpose_perm=*/{0}));
+            CollectiveDeviceListVersion::kMeshAxes);
+  EXPECT_EQ(
+      (*all_reduce_instruction)->device_list()->flattened_replica_groups(),
+      IotaReplicaGroupList(
+          /*num_replica_groups=*/1, /*num_devices_per_group=*/8,
+          /*reshape_dims=*/{8}, /*transpose_perm=*/{0})
+          .flattened_replica_groups());
 }
 
 TEST_P(SpmdPartitioningTest, ConvolutionLhsTiledRhsTiledWindowReversal) {
@@ -7144,7 +7154,7 @@ ENTRY entry {
       while_loop->while_condition()->root_instruction(),
       op::Compare(op::GetTupleElement(op::Parameter(0)), op::Constant()));
 
-  // Check loop body. There is not be any multple, subtract, reduce, etc.
+  // Check loop body. There should not be any multiply, subtract, reduce, etc.
   // that has been moved into the loop body.
   const auto next_i =
       op::Add(op::GetTupleElement(op::Parameter(0)), op::Constant());
@@ -10456,8 +10466,15 @@ ENTRY entry {
   const HloInstruction* all_gather =
       FindInstruction(module.get(), "all-gather");
   EXPECT_NE(all_gather, nullptr);
-  EXPECT_TRUE(
-      absl::StrContains(all_gather->ToString(), "replica_groups=[2,3]<=[6]"));
+  // With RGV3 integration, this uses MeshAxesReplicaGroupList. It should be
+  // equivalent to a [2,3]<=[6] v2 device list.
+  EXPECT_EQ(all_gather->device_list()->version(),
+            CollectiveDeviceListVersion::kMeshAxes);
+  EXPECT_EQ(all_gather->device_list()->flattened_replica_groups(),
+            IotaReplicaGroupList(
+                /*num_replica_groups=*/2, /*num_devices_per_group=*/3,
+                /*reshape_dims=*/{6}, /*transpose_perm=*/{0})
+                .flattened_replica_groups());
 }
 
 TEST_P(SpmdPartitioningTest, PartialReplicateToTileReshardUnevenPartition) {
@@ -12284,12 +12301,15 @@ ENTRY %module {
   EXPECT_TRUE(all_to_all != nullptr);
   if (GetParam() ==
       test_only::ShardingFormatPicker::ShardingType::kBestEffortV2) {
+    // With RGV3 integration, this uses MeshAxesReplicaGroupList. It should be
+    // equivalent to a [4,2]<=[2,2,2]T(0,2,1) v2 device list.
     EXPECT_EQ(all_to_all->device_list()->version(),
-              CollectiveDeviceListVersion::kIota);
-    EXPECT_EQ(*all_to_all->device_list(),
+              CollectiveDeviceListVersion::kMeshAxes);
+    EXPECT_EQ(all_to_all->device_list()->flattened_replica_groups(),
               IotaReplicaGroupList(
                   /*num_replica_groups=*/4, /*num_devices_per_group=*/2,
-                  /*reshape_dims=*/{2, 2, 2}, /*transpose_perm=*/{0, 2, 1}));
+                  /*reshape_dims=*/{2, 2, 2}, /*transpose_perm=*/{0, 2, 1})
+                  .flattened_replica_groups());
   } else {
     std::vector<std::vector<int64_t>> expected_replica_groups = {
         {0, 2}, {1, 3}, {4, 6}, {5, 7}};
@@ -17047,6 +17067,70 @@ ENTRY entry {
     EXPECT_TRUE(inst->has_sharding());
     EXPECT_EQ(inst->shape().dimensions()[0], 8);
   }
+}
+
+TEST_P(SpmdPartitioningTest, V2ShardingGeneratesRGV3) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %constant = s32[4,3]{1,0} constant({{1,1,1},{1,1,1},{1,1,1},{1,1,1}}),
+    sharding={devices=[4,1]<=[4]}
+  ROOT %copy = s32[4,3]{1,0} copy(%constant), sharding={replicated}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/4));
+
+  // Verify all-gather instruction is generated.
+  HloInstruction* all_gather =
+      FindInstruction(module.get(), HloOpcode::kAllGather);
+  EXPECT_NE(all_gather, nullptr);
+
+  CollectiveDeviceListVersion expected_version =
+      GetParam() == ShardingFormatPicker::ShardingType::kV1
+          ? CollectiveDeviceListVersion::kListOfLists
+          : CollectiveDeviceListVersion::kMeshAxes;
+
+  EXPECT_EQ(all_gather->device_list()->version(), expected_version);
+}
+
+TEST_P(SpmdPartitioningTest, V2ShardingGeneratesRGV3NamedAxisConflict) {
+  if (GetParam() == ShardingFormatPicker::ShardingType::kV1) {
+    GTEST_SKIP() << "This test only runs for V2 or V3 shardings.";
+  }
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %constant = s32[4,3]{1,0} constant({{1,1,1},{1,1,1},{1,1,1},{1,1,1}}),
+    sharding={mesh['replica'=4], [{'replica'}, {}]}
+  ROOT %copy = s32[4,3]{1,0} copy(%constant), sharding={replicated}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/4,
+                                               SpmdPartitionerOptions(),
+                                               /*enable_enzyme_opt=*/false,
+                                               /*num_replicas=*/2));
+
+  HloInstruction* all_gather =
+      FindInstruction(module.get(), HloOpcode::kAllGather);
+  EXPECT_NE(all_gather, nullptr);
+
+  EXPECT_EQ(all_gather->device_list()->version(),
+            CollectiveDeviceListVersion::kMeshAxes);
+
+  const auto& mesh_axes_list =
+      static_cast<const MeshAxesReplicaGroupList&>(*all_gather->device_list());
+
+  // Check the prepended replica axis in the expanded mesh.
+  // The original mesh has axis ["replica"], so the expanded mesh should have
+  // ["replica_0", "replica"] with sizes [2, 4].
+  EXPECT_EQ(mesh_axes_list.mesh().axis_names().size(), 2);
+  EXPECT_EQ(mesh_axes_list.mesh().axis_names()[0], "replica_0");
+  EXPECT_EQ(mesh_axes_list.mesh().axis_names()[1], "replica");
+  EXPECT_EQ(mesh_axes_list.mesh().axis_sizes()[0], 2);
+  EXPECT_EQ(mesh_axes_list.mesh().axis_sizes()[1], 4);
 }
 
 }  // namespace
