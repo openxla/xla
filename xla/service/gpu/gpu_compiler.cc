@@ -1836,6 +1836,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
          rocm_cc != nullptr)) {
       pipeline.AddPass<GemvRewriter>();
       pipeline.AddPass<GemmFusion>(gpu_version);
+      pipeline.AddPass<HoistFusedBitcasts>();
       pipeline.AddPass<GemmFusionSwapOperands>();
     } else if (cuda_cc != nullptr &&
                cuda_cc->major == se::CudaComputeCapability::kVolta) {
@@ -1940,9 +1941,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // normalized again.
   add_float_normalization(pipeline);
 
-  // GemmFusionAutotuner runs hoist-fused-bitcasts and nest-gemm-fusion,
-  // matching its behavior here.
-  pipeline.AddPass<HoistFusedBitcasts>();
   pipeline.AddPass<ConvertTritonGemmConfig>(
       gpu_target_config.device_description, &mlir_context_);
   pipeline.AddPass<NestGemmFusion>(gpu_target_config.device_description,
