@@ -1244,7 +1244,7 @@ TEST_F(CuDnnFusionRewriteTest, AutotuningPicksCuDnnForS8BF16OnHopper) {
   // The test case relies on measurements by the autotuner and current
   // performance comparison of the backends. May need to be updated if
   // the situation changes.
-  if (get_cuda_cc() != se::CudaComputeCapability::Hopper()) {
+  if (get_cuda_cc() != se::CudaComputeCapability::H100Accelerated()) {
     GTEST_SKIP() << "The test is for Hopper.";
   }
   MatchOptimizedHlo(R"(
@@ -1252,7 +1252,7 @@ e {
   p0 = bf16[720,720,720] parameter(0)
   p1 = s8[720,720,720] parameter(1)
   c = bf16[720,720,720] convert(p1)
-  ROOT d = bf16[720,720,720] dot(p0, c),
+  d = bf16[720,720,720] dot(p0, c),
     lhs_batch_dims={0}, lhs_contracting_dims={2},
     rhs_batch_dims={0}, rhs_contracting_dims={1}
 })",
