@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"  // IWYU pragma: keep
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
+#include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/permutation_util.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "triton/Dialect/Triton/IR/Types.h"
