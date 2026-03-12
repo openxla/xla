@@ -212,13 +212,25 @@ bool IsCustomCallWithForceEarlyAttribute(const HloInstruction* instr) {
 
 bool IsCustomCallWithForceDelayAttribute(const HloInstruction* instr) {
   auto attr = instr->get_frontend_attribute("scheduler_hint");
-  return instr->opcode() == HloOpcode::kCustomCall && attr.has_value() &&
+  return (instr->opcode() == HloOpcode::kCustomCall) && attr.has_value() &&
          attr.value() == "force_delay";
 }
 
 int GetCustomCallForceDelayPriority(const HloInstruction* instr) {
   auto attr = instr->get_frontend_attribute("scheduler_delay_priority");
-  if (instr->opcode() == HloOpcode::kCustomCall && attr.has_value()) {
+  if (attr.has_value()) {
+    int out;
+    CHECK(absl::SimpleAtoi(attr.value(), &out))
+        << "Failed to parse scheduler_delay_priority attribute: "
+        << attr.value();
+    return out;
+  }
+  return 0;
+}
+
+int GetCustomCallForceDelayAsyncPriority(const HloInstruction* instr) {
+  auto attr = instr->get_frontend_attribute("scheduler_delay_priority");
+  if (attr.has_value()) {
     int out;
     CHECK(absl::SimpleAtoi(attr.value(), &out))
         << "Failed to parse scheduler_delay_priority attribute: "
@@ -231,6 +243,10 @@ int GetCustomCallForceDelayPriority(const HloInstruction* instr) {
 bool HasForceDelayAsyncAttribute(const HloInstruction* instr) {
   auto attr = instr->get_frontend_attribute("scheduler_hint");
   return attr.has_value() && attr.value() == "force_delay_async";
+}
+bool HasForceDelayAttribute(const HloInstruction* instr) {
+  auto attr = instr->get_frontend_attribute("scheduler_hint");
+  return attr.has_value() && attr.value() == "force_delay";
 }
 
 absl::flat_hash_map<int64_t, int64_t>
@@ -1481,6 +1497,7 @@ class ReadySetLt {
     CMP_EXPLICIT(!an->GetForceDelay(), !bn->GetForceDelay(), "kForceDelay");
     // Schedule according to highest ForceDelay first, if both instructions
     // have ForceDelay set.
+    // returns true if priority of a is lower than b.
     CMP_EXPLICIT(-an->GetForceDelayPriority(), -bn->GetForceDelayPriority(),
                  "kForceDelayPriority");
     // Use the preference value (comes from a heuristic) to choose between
@@ -2925,8 +2942,17 @@ HloScheduleGraph::HloScheduleGraph(
       n->SetForceDelay(true);
       n->SetForceDelayPriority(GetCustomCallForceDelayPriority(instr));
     }
+    if ((n->IsSupportedAsyncStart() || n->IsSupportedAsyncDone()) &&
+        HasForceDelayAttribute(instr)) {
+      n->SetForceDelay(true);
+      n->SetForceDelayPriority(GetCustomCallForceDelayPriority(instr));
+    }
     if (n->IsSupportedAsyncStart() && HasForceDelayAsyncAttribute(instr)) {
       n->SetForceDelay(true);
+      n->SetForceDelayPriority(GetCustomCallForceDelayAsyncPriority(instr));
+    }
+    if (n->IsSupportedAsyncDone() && HasForceDelayAsyncAttribute(instr)) {
+      n->SetForceEarly(true);
     }
     if (top_down_scheduling) {
       n->SetTopDownScheduling(true);
