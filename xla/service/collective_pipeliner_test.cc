@@ -5724,6 +5724,11 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
 
   std::set<int64_t> expected_indices = {0, 5};
   EXPECT_EQ(dynamic_indices, expected_indices);
+
+  ASSERT_EQ(config.dynamic_variables_size(), 1);
+  EXPECT_EQ(config.dynamic_variables(0).tuple_index(), 5);
+  EXPECT_EQ(config.dynamic_variables(0).init(), 0);
+  EXPECT_EQ(config.dynamic_variables(0).step(), 1);
 }
 
 TEST_F(CollectivePipelinerTest, HostOffloadingBackward) {
@@ -5833,6 +5838,8 @@ ENTRY %main.117 (Arg_0.1: f32[10,1000,8000], Arg_1.2: f32[10,8000,1000], Arg_2.3
 
   std::set<int64_t> expected_indices = {0, 8};
   EXPECT_EQ(dynamic_indices, expected_indices);
+
+  EXPECT_EQ(config.dynamic_variables_size(), 0);
 }
 
 TEST_F(CollectivePipelinerTest, ForwardSubtractIndexWithGTELeaf) {
