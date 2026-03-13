@@ -18,6 +18,8 @@ permissions:
   contents: read
 on:
   pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
@@ -29,6 +31,7 @@ concurrency:
 
 jobs:
   execute-jax-ut:
+    if: github.event.repository.fork == false
     name: JAX Linux x86 AMD Instinct GPU
     runs-on: linux-x86-64-8gpu-amd
     env:
