@@ -58,7 +58,6 @@ int main(int argc, char** argv) {
   // Register all SDY passes and pipelines.
   mlir::sdy::registerAllSdyPassesAndPipelines();
 
-  xla::sdy::registerStablehloImportPipeline();
   xla::sdy::registerStablehloImportShardingsPass();
   xla::sdy::registerStablehloRoundTripShardMapImportPass();
   xla::sdy::registerImportSdyCustomCallsPass();

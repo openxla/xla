@@ -67,6 +67,7 @@ limitations under the License.
 #include "xla/service/spmd/shardy/round_trip_common/import_sdy_custom_calls.h"
 #include "xla/service/spmd/shardy/round_trip_common/open_while_free_vars_sharding.h"
 #include "xla/service/spmd/shardy/round_trip_common/pipeline_passes.h"
+#include "xla/service/spmd/shardy/sdy_round_trip/pipelines.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/shard_map_import.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -584,18 +585,16 @@ void registerStablehloImportShardingsPass() {
   });
 }
 
+// NOTE: Keep it is a wrapper of SDY import pipeline that first converts from
+// mhlo shardings to Shardy dialect shardings and calls SDY import pipeline.
+// This way Shardy XLA Pass tests run the logic that actually runs in prod.
 void addStablehloImportPipeline(mlir::OpPassManager& pm,
                                 ArrayRef<bool> allowPropagationToArgs,
                                 ArrayRef<bool> allowPropagationToResults,
                                 bool enableStablehloCanonicalizeFromHloImport) {
-  addCommonPreImportPasses(pm, /*enableConstantImport=*/true,
-                           enableStablehloCanonicalizeFromHloImport);
   pm.addPass(createImportShardingsPass(allowPropagationToArgs,
                                        allowPropagationToResults));
-  pm.addPass(createStablehloRoundTripShardMapImportPass());
-  pm.addPass(createImportSdyCustomCallsPass());
-  pm.addNestedPass<FuncOp>(createOpenWhileFreeVarsShardingPass());
-  pm.addPass(createImportFuncCallsPass());
+  addSdyRoundTripImportPipeline(pm);
 }
 
 void registerStablehloImportPipeline() {
