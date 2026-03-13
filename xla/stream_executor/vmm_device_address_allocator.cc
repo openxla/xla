@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/stream_executor/stream_executor_vmm_allocator.h"
+#include "xla/stream_executor/vmm_device_address_allocator.h"
 
 #include <cstdint>
 #include <memory>

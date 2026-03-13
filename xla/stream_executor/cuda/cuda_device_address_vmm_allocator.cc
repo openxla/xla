@@ -34,7 +34,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/stream_executor_vmm_allocator.h"
+#include "xla/stream_executor/vmm_device_address_allocator.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor::gpu {
