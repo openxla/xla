@@ -397,7 +397,9 @@ static XLA_FFI_Error* XLA_FFI_State_Get(XLA_FFI_State_Get_Args* args) {
       return err;
     }
 
-    args->state = compat.state;
+    v02.state = compat.state;
+    std::memcpy(args, &v02, XLA_FFI_State_Args_V02_STRUCT_SIZE);
+
     return nullptr;
   }
 
