@@ -1554,6 +1554,8 @@ TEST_P(TritonAndBlasSupportForDifferentTensorSizes,
       if (GpuComputeComp().IsRocm()) {
         ASSERT_TRUE(result_or_status.status().ok())
             << "failed to compile " << algorithm_;
+        // X6 and X9 algorithms on ROCm marked as not supported
+        // because they often require too much shared memory.
         EXPECT_FALSE(result_or_status.value())
             << "wrong result for " << algorithm_;
       } else {
