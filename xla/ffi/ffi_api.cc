@@ -392,7 +392,7 @@ static XLA_FFI_Error* XLA_FFI_State_Get(XLA_FFI_State_Get_Args* args) {
     compat.type_id = v02.type_id;
     compat.state = v02.state;
 
-    XLA_FFI_Error* err = XLA_FFI_State_Get(&compat); 
+    XLA_FFI_Error* err = XLA_FFI_State_Get(&compat);
     if (ABSL_PREDICT_FALSE(err != nullptr)) {
       return err;
     }
