@@ -51,6 +51,8 @@ limitations under the License.
 #include "xla/hlo/analysis/indexing_analysis_utils.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/indexing_map_serialization.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
+#include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -127,32 +129,32 @@ std::optional<int64_t> GetIntOrSplatIntValue(mlir::Attribute attr) {
 
 }  // namespace
 
-std::optional<AffineExpr> OptimizeHloRTVar(const HloInstruction* hlo,
-                                           const RuntimeVarIndexing& rt_var,
-                                           const Interval& feasible_values,
-                                           MLIRContext* mlir_context) {
+std::optional<SymbolicExpr> OptimizeHloRTVar(const HloInstruction* hlo,
+                                             const RuntimeVarIndexing& rt_var,
+                                             const Interval& feasible_values,
+                                             MLIRContext* mlir_context) {
   if (auto constant_expr = DynCast<HloConstantInstruction>(hlo)) {
-    if (rt_var.map.GetAffineMap().isConstant()) {
-      const auto idx = rt_var.map.GetAffineMap().getConstantResults();
+    if (rt_var.map.GetSymbolicMap().IsConstant()) {
+      const auto idx = rt_var.map.GetSymbolicMap().GetConstantResults();
       auto const_value = constant_expr->literal().GetIntegralAsS64(idx).value();
       if (!feasible_values.Contains(const_value)) {
         return std::nullopt;
       }
-      return getAffineConstantExpr(const_value, mlir_context);
+      return CreateSymbolicConstant(const_value, mlir_context);
     }
   }
   if (auto iota_expr = DynCast<HloIotaInstruction>(hlo)) {
     auto iota_dimension = iota_expr->iota_dimension();
-    CHECK(iota_dimension < rt_var.map.GetAffineMap().getNumResults());
-    return rt_var.map.GetAffineMap().getResults()[iota_dimension];
+    CHECK(iota_dimension < rt_var.map.GetSymbolicMap().GetNumResults());
+    return rt_var.map.GetSymbolicMap().GetResults()[iota_dimension];
   }
   return std::nullopt;
 }
 
-std::optional<AffineExpr> OptimizeMlirRTVar(mlir::Operation* op,
-                                            const RuntimeVarIndexing& rt_var,
-                                            const Interval& feasible_values,
-                                            MLIRContext* mlir_context) {
+std::optional<SymbolicExpr> OptimizeMlirRTVar(mlir::Operation* op,
+                                              const RuntimeVarIndexing& rt_var,
+                                              const Interval& feasible_values,
+                                              MLIRContext* mlir_context) {
   mlir::Attribute attr;
   if (mlir::matchPattern(op, mlir::m_Constant(&attr))) {
     auto int_val = GetIntOrSplatIntValue(attr);
@@ -160,21 +162,21 @@ std::optional<AffineExpr> OptimizeMlirRTVar(mlir::Operation* op,
       if (!feasible_values.Contains(*int_val)) {
         return std::nullopt;
       }
-      return getAffineConstantExpr(*int_val, mlir_context);
+      return CreateSymbolicConstant(*int_val, mlir_context);
     }
   }
   if (auto iota_op = llvm::dyn_cast<mlir::stablehlo::IotaOp>(op)) {
     int64_t iota_dim = iota_op.getIotaDimension();
-    if (iota_dim < rt_var.map.GetAffineMap().getNumResults()) {
-      return rt_var.map.GetAffineMap().getResults()[iota_dim];
+    if (iota_dim < rt_var.map.GetSymbolicMap().GetNumResults()) {
+      return rt_var.map.GetSymbolicMap().GetResults()[iota_dim];
     }
   }
   return std::nullopt;
 }
 
-std::optional<AffineExpr> OptimizeRTVar(const RuntimeVarIndexing& rt_var,
-                                        const Interval& feasible_values,
-                                        MLIRContext* mlir_context) {
+std::optional<SymbolicExpr> OptimizeRTVar(const RuntimeVarIndexing& rt_var,
+                                          const Interval& feasible_values,
+                                          MLIRContext* mlir_context) {
   if (const HloInstruction* hlo = rt_var.hlo()) {
     return OptimizeHloRTVar(hlo, rt_var, feasible_values, mlir_context);
   }
@@ -197,16 +199,16 @@ std::vector<IndexingMap::Variable> ConvertHLORTVarsToRTVars(
 }
 
 IndexingMap FoldRTVarsAndConstructIndexingMap(
-    AffineMap affine_map, std::vector<IndexingMap::Variable> dim_vars,
+    SymbolicMap symbolic_map, std::vector<IndexingMap::Variable> dim_vars,
     std::vector<HLORTVar> hlo_rt_vars) {
-  auto* mlir_context = affine_map.getContext();
+  auto* mlir_context = symbolic_map.GetContext();
   // TODO (b/446856820): Get context from SymbolicMap after refactoring.
   // Range and runtime variables share the symbol space in the affine map but
   // currently we never have range variables here.
-  CHECK_EQ(affine_map.getNumSymbols(), hlo_rt_vars.size());
-  for (auto idx = 0; idx < affine_map.getNumSymbols(); ++idx) {
+  CHECK_EQ(symbolic_map.GetNumSymbols(), hlo_rt_vars.size());
+  for (auto idx = 0; idx < symbolic_map.GetNumSymbols(); ++idx) {
     auto& rt_var = hlo_rt_vars[idx];
-    std::optional<AffineExpr> result = OptimizeRTVar(
+    std::optional<SymbolicExpr> result = OptimizeRTVar(
         RuntimeVarIndexing{rt_var.hlo, IndexingMap::FromTensorSizes(
                                            rt_var.map, rt_var.dim_upper_bounds,
                                            /*symbol_upper_bounds=*/{})},
@@ -214,18 +216,19 @@ IndexingMap FoldRTVarsAndConstructIndexingMap(
     if (!result) {
       continue;
     }
-    affine_map =
-        affine_map.replace({{getAffineSymbolExpr(idx, mlir_context), *result}},
-                           affine_map.getNumDims(), affine_map.getNumSymbols());
+    symbolic_map = symbolic_map.Replace(
+        {{CreateSymbolExpr(idx, symbolic_map.GetNumDims(), mlir_context),
+          *result}},
+        symbolic_map.GetNumDims(), symbolic_map.GetNumSymbols());
   }
-  return IndexingMap(affine_map, std::move(dim_vars), /*range_vars=*/{},
+  return IndexingMap(symbolic_map, std::move(dim_vars), /*range_vars=*/{},
                      ConvertHLORTVarsToRTVars(hlo_rt_vars));
 }
 
 // Creates an OperandIndexing from an affine map with dimensions, and runtime
 // variables.
 OperandIndexing CreateOperandIndexingWithRTVars(
-    AffineMap operand_map, const std::vector<IndexingMap::Variable>& dim_vars,
+    SymbolicMap operand_map, const std::vector<IndexingMap::Variable>& dim_vars,
     std::vector<HLORTVar> rt_vars) {
   std::vector<RuntimeVarIndexing> rt_indexing;
   rt_indexing.reserve(rt_vars.size());
@@ -372,12 +375,12 @@ std::pair<IndexingMap, IndexingMap> ComputeDotOperandsIndexingImpl(
 IndexingMap RescaleIndexingMap(const IndexingMap& operand_map,
                                const Shape& operand_shape,
                                const Shape& scale_shape) {
-  SmallVector<AffineExpr> exprs;
+  SmallVector<SymbolicExpr> exprs;
   exprs.reserve(operand_shape.dimensions().size());
-  AffineMap affine_map = operand_map.GetAffineMap();
+  SymbolicMap symbolic_map = operand_map.GetSymbolicMap();
   for (const auto& [scale_dim, operand_dim, expr] :
        llvm::zip(scale_shape.dimensions(), operand_shape.dimensions(),
-                 affine_map.getResults())) {
+                 symbolic_map.GetResults())) {
     CHECK_EQ(operand_dim % scale_dim, 0)
         << "Scale dimension must divide the operand dimension.";
     exprs.push_back(scale_dim == operand_dim
@@ -385,8 +388,8 @@ IndexingMap RescaleIndexingMap(const IndexingMap& operand_map,
                         : expr.floorDiv(operand_dim / scale_dim));
   }
   return IndexingMap{
-      AffineMap::get(affine_map.getNumDims(), affine_map.getNumSymbols(), exprs,
-                     affine_map.getContext()),
+      SymbolicMap::Get(symbolic_map.GetContext(), symbolic_map.GetNumDims(),
+                       symbolic_map.GetNumSymbols(), exprs),
       operand_map.GetDimVars(), operand_map.GetRangeVars(),
       operand_map.GetRTVars()};
 }
@@ -781,26 +784,31 @@ HloInstructionIndexing ComputeOutputToInputConvolutionOpIndexing(
   IndexingMap input_spatial_indexing =
       ComposeIndexingMapsForWindow(input_spatial_sizes, output_spatial_sizes,
                                    convolution->window(), mlir_context);
-  std::vector<AffineExpr> replacement_dims(spatial_rank);
+  std::vector<SymbolicExpr> replacement_dims(spatial_rank);
   for (int i = 0; i < spatial_rank; ++i) {
     replacement_dims[i] =
-        getAffineDimExpr(dnums.output_spatial_dimensions(i), mlir_context);
+        CreateDimExpr(dnums.output_spatial_dimensions(i), mlir_context);
   }
 
   // Build affine expressions and constraints for input spatial dimensions.
-  std::vector<AffineExpr> input_exprs(rank);
+  std::vector<SymbolicExpr> input_exprs(rank);
+  auto symbolic_map = input_spatial_indexing.GetSymbolicMap();
   for (int i = 0; i < spatial_rank; ++i) {
     input_exprs[dnums.input_spatial_dimensions(i)] =
-        input_spatial_indexing.GetAffineMap().getResult(i).replaceDims(
-            replacement_dims);
+        symbolic_map.GetResult(i).ReplaceDims(replacement_dims, spatial_rank,
+                                              symbolic_map.GetNumDims(),
+                                              symbolic_map.GetNumSymbols());
   }
-  llvm::MapVector<AffineExpr, Interval> input_constraints;
-  for (const auto& [key, val] : input_spatial_indexing.GetConstraints()) {
-    input_constraints[key.replaceDims(replacement_dims)] = val;
+  llvm::MapVector<SymbolicExpr, Interval> input_constraints;
+  for (const auto& [key, val] :
+       input_spatial_indexing.GetSymbolicConstraints()) {
+    input_constraints[key.ReplaceDims(replacement_dims, spatial_rank,
+                                      symbolic_map.GetNumDims(),
+                                      symbolic_map.GetNumSymbols())] = val;
   }
 
   // Build affine expressions for kernel spatial and output dimensions.
-  std::vector<AffineExpr> kernel_exprs(rank);
+  std::vector<SymbolicExpr> kernel_exprs(rank);
   for (int i = 0; i < spatial_rank; ++i) {
     kernel_exprs[dnums.kernel_spatial_dimensions(i)] =
         getAffineSymbolExpr(i, mlir_context);
@@ -1513,20 +1521,21 @@ void AssignValuesToRTVars(IndexingMap* indexing_map) {
   if (indexing_map->GetRTVarsCount() == 0) {
     return;
   }
-  llvm::SmallVector<AffineExpr, 2> symbol_replacements;
+  llvm::SmallVector<SymbolicExpr, 2> symbol_replacements;
   for (int64_t symbol_id = 0; symbol_id < indexing_map->GetRangeVarsCount();
        ++symbol_id) {
     symbol_replacements.push_back(
-        mlir::getAffineSymbolExpr(symbol_id, indexing_map->GetMLIRContext()));
+        CreateSymbolExpr(symbol_id, indexing_map->GetDimensionCount(),
+                         indexing_map->GetMLIRContext()));
   }
   for (const IndexingMap::Variable& rt_var : indexing_map->GetRTVars()) {
     // Take midpoint of the feasible interval for the RT variable.
     symbol_replacements.push_back(
-        getAffineConstantExpr((rt_var.bounds.lower + rt_var.bounds.upper) / 2,
-                              indexing_map->GetMLIRContext()));
+        CreateSymbolicConstant((rt_var.bounds.lower + rt_var.bounds.upper) / 2,
+                               indexing_map->GetMLIRContext()));
   }
-  AffineMap thread_x_to_input_no_dim_symbols =
-      indexing_map->GetAffineMap().replaceDimsAndSymbols(
+  SymbolicMap thread_x_to_input_no_dim_symbols =
+      indexing_map->GetSymbolicMap().ReplaceDimsAndSymbols(
           {}, symbol_replacements, indexing_map->GetDimVarsCount(),
           indexing_map->GetRangeVarsCount());
   *indexing_map = IndexingMap{thread_x_to_input_no_dim_symbols,

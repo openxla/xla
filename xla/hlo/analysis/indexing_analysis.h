@@ -36,6 +36,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/interval.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/shape.h"
@@ -240,9 +241,9 @@ llvm::SmallVector<IndexingMap, 4> MapLogicalToLinearizedPhysicalShape(
     mlir::MLIRContext* mlir_context);
 
 // Optimizes a runtime variable if it's possible to replace it with a constant.
-std::optional<mlir::AffineExpr> OptimizeRTVar(const RuntimeVarIndexing& rt_var,
-                                              const Interval& feasible_values,
-                                              mlir::MLIRContext* mlir_context);
+std::optional<SymbolicExpr> OptimizeRTVar(const RuntimeVarIndexing& rt_var,
+                                          const Interval& feasible_values,
+                                          mlir::MLIRContext* mlir_context);
 
 // Computes the indexing map from logical to linearized physical shape for each
 // operand and adds them to `result`. `result` may be non-empty when this
