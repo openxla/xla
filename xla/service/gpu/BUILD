@@ -532,6 +532,7 @@ cc_library(
         "//xla/backends/gpu/runtime:host_to_device_copy_thunk",
         "//xla/backends/gpu/runtime:infeed_thunk",
         "//xla/backends/gpu/runtime:kernel_thunk",
+        "//xla/backends/gpu/runtime:legacy_custom_call_thunk",
         "//xla/backends/gpu/runtime:norm_thunk",
         "//xla/backends/gpu/runtime:nvshmem_all_reduce_thunk",
         "//xla/backends/gpu/runtime:nvshmem_collective_permute_thunk",

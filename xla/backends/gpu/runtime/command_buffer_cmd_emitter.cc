@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
+#include "xla/backends/gpu/runtime/legacy_custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/recv_thunk.h"
@@ -236,9 +237,16 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
         thunk.execution_state(),
         /*called_computation=*/nullptr);  // TODO(b/342285364)
   }
-  return std::make_unique<CustomCallCmd>(thunk.target_name(),
-                                         thunk.call_target(), thunk.operands(),
-                                         thunk.results(), thunk.opaque());
+  return absl::InternalError(
+      "CustomCallThunk without FFI handler bundle cannot be converted to a "
+      "command buffer command");
+}
+
+static absl::StatusOr<std::unique_ptr<Command>> Convert(
+    const LegacyCustomCallThunk& thunk) {
+  return std::make_unique<LegacyCustomCallCmd>(
+      thunk.target_name(), thunk.call_target(), thunk.operands(),
+      thunk.results(), thunk.opaque());
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
@@ -291,7 +299,14 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       cmd_sequence.Append(static_cast<DeviceToDeviceCopyThunk*>(&thunk));
       return absl::OkStatus();
     case Thunk::Kind::kCustomCall:
-      return append(Convert<CustomCallThunk>(thunk));
+      if (auto* ffi_thunk = dynamic_cast<const CustomCallThunk*>(&thunk)) {
+        return append(Convert(*ffi_thunk));
+      }
+      if (auto* legacy_thunk =
+              dynamic_cast<const LegacyCustomCallThunk*>(&thunk)) {
+        return append(Convert(*legacy_thunk));
+      }
+      return absl::InternalError("Unknown custom call thunk type");
     case Thunk::Kind::kCustomKernel:
       return append(Convert<CustomKernelThunk>(thunk));
     // KernelThunk implements Command directly; append borrowed pointer.
