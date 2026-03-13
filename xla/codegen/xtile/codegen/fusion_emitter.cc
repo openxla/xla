@@ -98,6 +98,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/tsl/platform/errors.h"
@@ -131,12 +132,10 @@ TensorValue Iota(mlir::ImplicitLocOpBuilder& b, int32_t limit) {
   return stablehlo::IotaOp::create(b, type, /*iota_dimension=*/0);
 }
 
-// Returns whether we expect to see sub-regions defined for TiledHloInstruction.
-bool TilingControlFlowIsEnabled(const HloInstruction& hlo) {
-  return hlo.GetModule()
-      ->config()
-      .debug_options()
-      .xla_gpu_unsupported_disable_nested_gemm_fusions();
+bool AnyOperandIsFusion(const HloInstruction& hlo) {
+  return absl::c_any_of(hlo.operands(), [](const HloInstruction* operand) {
+    return operand->opcode() == HloOpcode::kFusion;
+  });
 }
 
 absl::Status EmitReduceComputation(mlir::ImplicitLocOpBuilder& b,
@@ -1520,7 +1519,7 @@ absl::StatusOr<TensorValue> EmitAllReduce(
     operands.push_back(values[operand]);
   }
 
-  if (all_reduce.device_list().replica_groups().empty()) {
+  if (all_reduce.device_list()->replica_groups().empty()) {
     return Internal(
         "Triton emitting AllReduce without replica groups is not supported.");
   }
@@ -1616,7 +1615,7 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
   }
 
   if (hlo->opcode() == HloOpcode::kConcatenate) {
-    if (TilingControlFlowIsEnabled(*hlo)) {
+    if (!AnyOperandIsFusion(*hlo)) {
       return EmitUnnestedConcatenate(b, fusion, tiled_hlo, fn, pid, values);
     }
     return EmitConcatenate(b, fusion, tiled_hlo, fn, pid, values);
@@ -1627,14 +1626,14 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
   }
 
   if (hlo->opcode() == HloOpcode::kDot) {
-    if (TilingControlFlowIsEnabled(*hlo)) {
+    if (!AnyOperandIsFusion(*hlo)) {
       return EmitUnnestedDot(b, fusion, tiled_hlo, fn, pid, values);
     }
     return EmitDot(b, fusion, tiled_hlo, fn, pid, values);
   }
 
   if (hlo->opcode() == HloOpcode::kScaledDot) {
-    if (TilingControlFlowIsEnabled(*hlo)) {
+    if (!AnyOperandIsFusion(*hlo)) {
       return EmitUnnestedScaledDot(b, fusion, tiled_hlo, fn, pid, values);
     }
     return EmitScaledDot(b, fusion, tiled_hlo, fn, pid, values);
@@ -1861,30 +1860,14 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
 
 }  // namespace
 
-mlir::MemRefType GetMemRefType(const Shape& shape, mlir::Type element_type) {
-  mlir::MLIRContext* context = element_type.getContext();
-  mlir::Type storage_type = StorageType(element_type);
-
-  // Don't add any attribute for default layouts as it adds a lot of noise to
-  // the printed IR.
-  if (LayoutUtil::IsMonotonicWithDim0Major(shape.layout())) {
-    return mlir::MemRefType::get(shape.dimensions(), storage_type);
-  }
-
-  auto minor_to_major_attr =
-      mlir::DenseI64ArrayAttr::get(context, shape.layout().minor_to_major());
-  auto layout = xtile::LayoutAttr::get(context, minor_to_major_attr);
-
-  return mlir::MemRefType::get(shape.dimensions(), storage_type, layout);
-}
-
 // TODO(b/447133106): Contrary to the name, this function still does a lot of
 // triton specific things. It should be migrated to use non-triton specific
 // utilities.
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     absl::string_view fn_name, const HloFusionInstruction* fusion,
     const SymbolicTileAnalysis& symbolic_tile_analysis, const Tiling& tiling,
-    MLIRContext& mlir_context, absl::Span<mlir::Type> opaque_args_types) {
+    MLIRContext& mlir_context, absl::Span<mlir::Type> opaque_args_types,
+    const std::optional<stream_executor::GpuComputeCapability>& gpu_cc) {
   const auto debug_options = fusion->GetModule()->config().debug_options();
 
   const HloComputation* hlo_computation =
@@ -1908,15 +1891,15 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
     } else if (type == S4) {
       ir_type = b.getI4Type();
     } else {
-      TF_ASSIGN_OR_RETURN(ir_type, PrimitiveTypeToMlirType(b, type));
+      TF_ASSIGN_OR_RETURN(ir_type, PrimitiveTypeToMlirType(b, type, gpu_cc));
     }
     fn_arg_types.push_back(GetMemRefType(p->shape(), ir_type));
   }
 
   for (const auto& [index, shape] : ShapeUtil::GetLeafShapes(fusion->shape())) {
-    TF_ASSIGN_OR_RETURN(Type triton_ty,
-                        PrimitiveTypeToMlirType(b, shape.element_type()));
-    fn_arg_types.push_back(GetMemRefType(shape, triton_ty));
+    TF_ASSIGN_OR_RETURN(
+        Type ir_type, PrimitiveTypeToMlirType(b, shape.element_type(), gpu_cc));
+    fn_arg_types.push_back(GetMemRefType(shape, ir_type));
   }
 
   // Add opaque arguments.

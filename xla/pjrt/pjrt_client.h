@@ -41,13 +41,13 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/host_memory_allocator.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -645,12 +645,12 @@ class PjRtClient {
 
   // Variant of `Compile` that accepts an MLIR module.
   virtual absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
-      mlir::ModuleOp module, CompileOptions options) {
+      MaybeOwningMlirModule module, CompileOptions options) {
     return absl::UnimplementedError(
         "Compile with MLIR Module is not supported.");
   }
   virtual absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
-      mlir::ModuleOp module, CompileOptions options) {
+      MaybeOwningMlirModule module, CompileOptions options) {
     return absl::UnimplementedError(
         "CompileAndLoad with MLIR Module is not supported.");
   }
@@ -689,7 +689,7 @@ class PjRtClient {
   // generate the executable. Load will use the CompileOptions from within the
   // executable.
   virtual absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Load(
-      std::unique_ptr<PjRtExecutable> executable,
+      std::shared_ptr<PjRtExecutable> executable,
       const LoadOptions& load_options) {
     return absl::UnimplementedError("Loading executable not supported.");
   }
@@ -1319,6 +1319,15 @@ class PjRtBuffer {
       std::function<void(absl::Status status, bool sends_were_enqueued)>;
   virtual void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
                                   RemoteSendCallback on_done) = 0;
+
+  // Bitcasts the buffer to a new buffer of the same on-device size but possibly
+  // different `element_type`, `dims`, and `device_layout`. This is a
+  // metadata-only operation and does not copy any data. The original buffer
+  // will be donated, and underlying device memory will be handed over to the
+  // new buffer.
+  virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> Bitcast(
+      xla::PrimitiveType element_type, absl::Span<const int64_t> dims,
+      const Layout* device_layout) = 0;
 
   // Donates 'this' and returns a new buffer that is ready only when both 'this'
   // and 'dependency' are ready.

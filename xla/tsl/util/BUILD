@@ -520,10 +520,11 @@ cc_library(
     hdrs = ["memfile_builtin.h"],
     deps = [
         ":file_toc",
+        "//xla/tsl/platform:embedded_filesystem",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:ram_file_system",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -594,5 +595,28 @@ bzl_library(
     deps = [
         ":cc_embed_data",
         "//xla/tsl/platform:rules_cc_bzl",
+    ],
+)
+
+cc_library(
+    name = "sorted_range",
+    hdrs = [
+        "sorted_range.h",
+        "sorted_range_internal.h",
+    ],
+    compatible_with = get_compatible_with_portable(),
+    deps = ["@com_google_absl//absl/container:fixed_array"],
+)
+
+tsl_cc_test(
+    name = "sorted_range_test",
+    srcs = ["sorted_range_test.cc"],
+    deps = [
+        ":sorted_range",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_googletest//:gtest_main",
     ],
 )

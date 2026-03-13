@@ -19,16 +19,21 @@ limitations under the License.
 #include <functional>
 
 #include "llvm/Support/CommandLine.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassOptions.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
 #include "shardy/dialect/sdy/transforms/import/passes.h"
 #include "xla/service/hlo.pb.h"
+#include "xla/service/spmd/shardy/round_trip_common/import_func_calls.h"
+#include "xla/service/spmd/shardy/round_trip_common/import_sdy_custom_calls.h"
+#include "xla/service/spmd/shardy/round_trip_common/open_while_free_vars_sharding.h"
 #include "xla/service/spmd/shardy/round_trip_common/pipeline_passes.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/dedup_meshes.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/export_ops.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/export_shardy_attrs.h"
+#include "xla/service/spmd/shardy/sdy_round_trip/flatten_call_graph.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/import_shardy_attrs.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/shard_map_export.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/shard_map_import.h"
@@ -61,19 +66,21 @@ void addSdyRoundTripExportPipeline(mlir::OpPassManager& pm,
 
 void addSdyRoundTripImportPipeline(mlir::OpPassManager& pm,
                                    bool enableConstantImport,
-                                   bool importFuncCalls,
                                    bool liftAndDedupMeshes,
                                    bool enableHloShardingV3) {
   addCommonPreImportPasses(pm, enableConstantImport);
   pm.addPass(createSdyRoundTripImportShardyAttrsPass(enableHloShardingV3));
+  pm.addPass(createSdyRoundTripFlattenCallGraphPass());
   pm.addPass(createSdyRoundTripShardMapImportPass());
-  addCommonPostImportPasses(pm, importFuncCalls);
+  pm.addPass(createImportSdyCustomCallsPass());
+  pm.addNestedPass<mlir::func::FuncOp>(createOpenWhileFreeVarsShardingPass());
   if (liftAndDedupMeshes) {
     // Lift and dedup meshes required here because of sdy shardings added
     // directly to hlo in tf2xla.
     pm.addPass(mlir::sdy::createLiftInlinedMeshesPass());
     pm.addPass(createSdyRoundTripDedupMeshesPass());
   }
+  pm.addPass(createImportFuncCallsPass());
 }
 
 namespace {
@@ -114,9 +121,6 @@ struct SdyRoundTripImportPipelineOptions
   Option<bool> enableConstantImport{*this, "enable-constant-import",
                                     llvm::cl::desc("Enable constant import."),
                                     llvm::cl::init(true)};
-  Option<bool> importFuncCalls{*this, "import-func-calls",
-                               llvm::cl::desc("Import func calls."),
-                               llvm::cl::init(false)};
   Option<bool> liftAndDedupMeshes{*this, "lift-and-dedup-meshes",
                                   llvm::cl::desc("Lift and dedup meshes."),
                                   llvm::cl::init(false)};
@@ -129,9 +133,9 @@ struct SdyRoundTripImportPipelineOptions
 
 void sdyRoundTripImportPipeline(
     mlir::OpPassManager& pm, const SdyRoundTripImportPipelineOptions& options) {
-  addSdyRoundTripImportPipeline(
-      pm, options.enableConstantImport, options.importFuncCalls,
-      options.liftAndDedupMeshes, options.enableHloShardingV3);
+  addSdyRoundTripImportPipeline(pm, options.enableConstantImport,
+                                options.liftAndDedupMeshes,
+                                options.enableHloShardingV3);
 }
 
 }  // namespace

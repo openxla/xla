@@ -73,19 +73,16 @@ class SendThunk : public CollectiveThunk {
   }
 
  protected:
-  absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
-                                     const GpuCliqueKey& clique_key,
-                                     se::Stream& stream,
-                                     Communicator& comm) override;
+  bool RequiresRendezvous() const override { return false; }
+
+  absl::Status RunCollective(const ExecuteParams& params,
+                             const GpuCliqueKey& clique_key, se::Stream& stream,
+                             Communicator& comm) override;
 
  private:
   const P2PConfig config_;
   const Buffer buffer_;
-  std::shared_ptr<ExecutionCounters> execution_counters_;
   std::string hlo_name_;
-  absl::StatusOr<bool> ConditionalShouldRun(const ExecuteParams& params,
-                                            int64_t current_id,
-                                            int64_t target_id) const;
 };
 
 absl::Status RunSend(DeviceBufferPair& buffer, se::Stream& stream,

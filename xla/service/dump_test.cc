@@ -166,7 +166,7 @@ TEST(DumpHloModule, WithBufferAssignment) {
   EXPECT_TRUE(absl::StrContains(data, "BufferAssignment:"));
   // Third file is the memory usage report.
   EXPECT_TRUE(ReadFileToString(env, paths[2], &data).ok());
-  EXPECT_TRUE(absl::StrContains(data, "Total bytes used:"));
+  EXPECT_TRUE(absl::StrContains(data, "Total bytes:"));
   // Fourth file is the debug options.
   EXPECT_TRUE(ReadFileToString(env, paths[3], &data).ok());
 }
@@ -386,7 +386,6 @@ TEST(DumpTest, GetNonDefaultDebugOptions) {
   options.set_xla_gpu_enable_nccl_user_buffers(
       !default_options.xla_gpu_enable_nccl_user_buffers());
   options.set_xla_enable_dumping(true);
-  options.set_xla_gpu_enable_shared_constants(false);
   // Enum field
   options.clear_xla_gpu_enable_command_buffer();
   options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);

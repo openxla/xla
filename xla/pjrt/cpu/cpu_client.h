@@ -39,7 +39,6 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "unsupported/Eigen/CXX11/Tensor"
-#include "mlir/IR/BuiltinOps.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
@@ -53,6 +52,7 @@ limitations under the License.
 #include "xla/pjrt/cpu/cpu_event.h"
 #include "xla/pjrt/cpu/tracked_cpu_device_buffer.h"
 #include "xla/pjrt/device_event.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/executable.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -85,6 +86,9 @@ class PjRtCpuClient final : public CommonPjRtClient {
   ~PjRtCpuClient() override;
 
   bool allow_fallback_for_donation() const override { return true; }
+  // This is needed because CPU currently doesn't have per-device dispatching
+  // threads for Execute() so two-phase launch can run into thread starvation.
+  bool supports_two_phase_launch() const override { return false; }
 
   int process_index() const override { return process_index_; }
 
@@ -135,20 +139,20 @@ class PjRtCpuClient final : public CommonPjRtClient {
                           CompileOptions options);
   absl::StatusOr<std::pair<std::unique_ptr<PjRtCpuExecutable>,
                            std::shared_ptr<DeviceAssignment>>>
-  CompileAndAssignDevices(mlir::ModuleOp module, CompileOptions options);
+  CompileAndAssignDevices(MaybeOwningMlirModule module, CompileOptions options);
 
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
       const XlaComputation& computation, CompileOptions options) override;
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
-      mlir::ModuleOp module, CompileOptions options) override;
+      MaybeOwningMlirModule module, CompileOptions options) override;
 
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
       const XlaComputation& computation, CompileOptions options) override;
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
-      mlir::ModuleOp module, CompileOptions options) override;
+      MaybeOwningMlirModule module, CompileOptions options) override;
 
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Load(
-      std::unique_ptr<PjRtExecutable> executable,
+      std::shared_ptr<PjRtExecutable> executable,
       const LoadOptions& load_options) override;
 
   // TODO(b/403584258): PJRT wants to have just one simple Compile API. When the
@@ -385,11 +389,6 @@ class CpuPjRtRawLoadedExecutable : public PjRtRawLoadedExecutable {
   explicit CpuPjRtRawLoadedExecutable(RunId run_id) : run_id_(run_id) {}
   PjRtDevice* device() override { return device_; }
 
-  absl::Status Load(const ExecuteOptions& options,
-                    size_t host_callback_idx) override {
-    return absl::OkStatus();
-  }
-
   PjRtRawLoadedExecutable::RawExecuteResult Execute(
       const ExecuteOptions& options,
       absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
@@ -476,7 +475,7 @@ class PjRtCpuExecutable final : public PjRtExecutable {
   bool parameter_is_tupled_arguments_;
   CompileOptions compile_options_;
 
-  std::shared_ptr<Executable> cpu_executable_;
+  std::shared_ptr<cpu::CpuExecutable> cpu_executable_;
 
   std::vector<Shape> parameter_device_shapes_;
 
@@ -524,19 +523,6 @@ class PjRtCpuLoadedExecutable final : public CommonPjRtLoadedExecutable {
 
   PjRtCpuClient* client() const override { return client_; }
 
-  const DeviceAssignment& device_assignment() const override {
-    return *device_assignment_;
-  }
-
-  absl::Span<const LogicalDeviceIds> addressable_device_logical_ids()
-      const override {
-    return addressable_device_logical_ids_;
-  }
-
-  absl::Span<PjRtDevice* const> addressable_devices() const override {
-    return addressable_devices_;
-  }
-
   using PjRtLoadedExecutable::Execute;
   absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
       absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
@@ -563,11 +549,6 @@ class PjRtCpuLoadedExecutable final : public CommonPjRtLoadedExecutable {
     return executable_->cpu_executable_->module().input_output_alias_config();
   }
 
-  void LaunchOnDevice(PjRtDevice* device,
-                      absl::AnyInvocable<void()> execute_fn) const override {
-    client()->async_work_runner()->Schedule(std::move(execute_fn));
-  }
-
  private:
   friend class PjRtCpuClient;
   friend class CpuPjRtRawLoadedExecutable;
@@ -580,9 +561,9 @@ class PjRtCpuLoadedExecutable final : public CommonPjRtLoadedExecutable {
       absl::Span<const CommonPjRtBuffer::ScopedHold> input_buffers,
       absl::Span<PjRtBuffer* const> argument_handles) const;
 
-  absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>> StartRawExecutable(
-      const ExecuteOptions& options, RunId run_id, int replica, int partition,
-      PjRtDevice* device) const override;
+  absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>> LoadRawExecutable(
+      const ExecuteOptions& options, size_t host_callback_idx,
+      xla::RunId run_id, DeviceAndAssignment device_and_assign) const override;
 
   absl::StatusOr<Result> ExecuteHelper(
       absl::Span<PjRtBuffer* const> argument_handles, int replica,
@@ -591,7 +572,6 @@ class PjRtCpuLoadedExecutable final : public CommonPjRtLoadedExecutable {
 
   PjRtCpuClient* client_;
   std::shared_ptr<PjRtCpuExecutable> executable_;
-  std::shared_ptr<DeviceAssignment> device_assignment_;
 };
 
 absl::StatusOr<std::unique_ptr<PjRtClient>> ABSL_DEPRECATED(

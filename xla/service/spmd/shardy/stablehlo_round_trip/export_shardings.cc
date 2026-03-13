@@ -297,7 +297,7 @@ NamedSharding convertToNamedSharding(
   if (sdyMesh.getAxes().empty()) {
     return sdyMesh.getDeviceIds().empty()
                ? NamedSharding::Replicate()
-               : NamedSharding::MaximalSharding(sdyMesh.getDeviceIds().front());
+               : NamedSharding::SingleDevice(sdyMesh.getDeviceIds().front());
   }
 
   std::vector<int64_t> axisSizes;
@@ -425,7 +425,8 @@ HloSharding convertToHloSharding(
   }
 
   // We will add all axes and let canonicalization merge adjacent axes.
-  SmallVector<AxisRefAttr> meshAxisRefs = getOrderedAxisRefs(sdySharding, mesh);
+  SmallVector<AxisRefAttr> meshAxisRefs =
+      mlir::sdy::getOrderedAxisRefs(sdySharding, mesh);
   SmallVector<int64_t> reshapeDims(meshAxisRefs.size());
   SmallVector<int> transposePerm(meshAxisRefs.size());
 

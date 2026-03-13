@@ -973,6 +973,16 @@ FieldOffsetsAndSizesForVersion(int major_version, int minor_version) {
     if (minor_version >= 92) {
       add_field("PJRT_Device_GetAttributes", kFnPtrSize);
     }
+    if (minor_version >= 95) {
+      add_field("PJRT_Client_Load", kFnPtrSize);
+    }
+    if (minor_version >= 96) {
+      add_field("PJRT_LoadedExecutable_AddressableDeviceLogicalIds",
+                kFnPtrSize);
+    }
+    if (minor_version >= 98) {
+      add_field("PJRT_Buffer_Bitcast", kFnPtrSize);
+    }
     return version_offsets_and_sizes;
   }
   LOG(FATAL) << "Unsupported API version: " << major_version << "."
@@ -1399,6 +1409,17 @@ TEST_F(PjrtCAbiTestBase, FieldOffsetsAndSizes) {
           {"PJRT_Device_GetAttributes",
            {offsetof(PJRT_Api, PJRT_Device_GetAttributes),
             sizeof(PJRT_Api::PJRT_Device_GetAttributes)}},
+          {"PJRT_Client_Load",
+           {offsetof(PJRT_Api, PJRT_Client_Load),
+            sizeof(PJRT_Api::PJRT_Client_Load)}},
+          {"PJRT_LoadedExecutable_AddressableDeviceLogicalIds",
+           {offsetof(PJRT_Api,
+                     PJRT_LoadedExecutable_AddressableDeviceLogicalIds),
+            sizeof(
+                PJRT_Api::PJRT_LoadedExecutable_AddressableDeviceLogicalIds)}},
+          {"PJRT_Buffer_Bitcast",
+           {offsetof(PJRT_Api, PJRT_Buffer_Bitcast),
+            sizeof(PJRT_Api::PJRT_Buffer_Bitcast)}},
       };
   ASSERT_EQ(api_->pjrt_api_version.major_version, PJRT_API_MAJOR);
   ASSERT_EQ(api_->pjrt_api_version.minor_version, PJRT_API_MINOR);
