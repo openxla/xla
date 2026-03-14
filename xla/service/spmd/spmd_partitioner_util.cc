@@ -2221,11 +2221,19 @@ GetReshardAllToAllSourceTargetDims(const HloSharding& source,
 
 bool CanReshardWithCollectivePermute(const HloSharding& source,
                                      const HloSharding& target) {
+  CHECK_EQ(source.UseNamedShardingLeaf(), target.UseNamedShardingLeaf());
+
+  bool equal_sharding;
+  if (source.UseNamedShardingLeaf()) {
+    equal_sharding = source.named_sharding() == target.named_sharding();
+  } else {
+    equal_sharding = source.tile_assignment() == target.tile_assignment();
+  }
   return !source.IsReplicatedOrSingleDevice() &&
          !target.IsReplicatedOrSingleDevice() &&
          source.dimensions() == target.dimensions() &&
          source.ReplicateOnLastTileDim() == target.ReplicateOnLastTileDim() &&
-         source.tile_assignment() != target.tile_assignment();
+         !equal_sharding;
 }
 
 std::optional<GroupedSharding> AlignGroupsWithInternal(
