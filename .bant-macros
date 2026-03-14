@@ -1,0 +1,10 @@
+# Bant macro expansions for XLA custom rules.
+#
+# Syntax: https://github.com/hzeller/bant?tab=readme-ov-file#macros.
+#
+# See developer guide on how to use Bant tool for making sure that your targets
+# list all required dependencies:
+# https://openxla.org/xla/developer_environment#remove_unused_dependencies_from_build_files.
+
+xla_test = bant_forward_args(cc_test())
+xla_cc_test = bant_forward_args(cc_test())
