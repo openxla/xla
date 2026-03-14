@@ -86,7 +86,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
-#include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
@@ -107,6 +106,10 @@ limitations under the License.
 #include "tsl/platform/casts.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/profiler/lib/traceme.h"
+
+#if GOOGLE_CUDA
+#include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
+#endif  // GOOGLE_CUDA
 
 #if defined(PLATFORM_WINDOWS)
 // Required to build successfully with Mingw
@@ -659,6 +662,7 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
   }
 
   if (allocator_config.kind == GpuAllocatorConfig::Kind::kVmm) {
+#if GOOGLE_CUDA
     LOG(INFO) << "Using VMM (Virtual Memory Management) allocator.";
     // Count devices with a valid executor.
     se::StreamExecutor* vmm_executor = nullptr;
@@ -682,6 +686,10 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
                         se::gpu::CudaDeviceAddressVmmAllocator::Create(
                             vmm_executor, vmm_stream));
     return MaybeOwning<se::DeviceAddressAllocator>(std::move(vmm_alloc));
+#else
+    return absl::UnimplementedError(
+        "VMM allocator is only supported with CUDA.");
+#endif  // GOOGLE_CUDA
   }
 
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;
