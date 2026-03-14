@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_blas_lt.h"
 
-#include <Eigen/Core>
 #include <algorithm>
 #include <any>
 #include <climits>
@@ -37,6 +36,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cublas_v2.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/library_types.h"
+#include <Eigen/Core>
 #include "xla/primitive_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/activate_context.h"
@@ -299,9 +299,8 @@ bool IsFastAccumEnabled(const xla::PrecisionConfig::Algorithm algorithm,
 
 }  // namespace
 
-auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& cfg,
-                           gpu::BlasLt::Epilogue epilogue) const
-    -> absl::StatusOr<MatmulPlanPtr> {
+absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
+    const gpu::GemmConfig& cfg, gpu::BlasLt::Epilogue epilogue) const {
   auto lhs_layout = cfg.lhs_layout, rhs_layout = cfg.rhs_layout,
        output_layout = cfg.output_layout, c_layout = cfg.c_layout;
   // cublasLt matmul requires batch sizes to be equal. If only one operand has a
@@ -565,6 +564,13 @@ absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
 #undef TYPED_MATMUL
 
   return xla::Internal("Unexpected dtype");
+}
+
+absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetGroupedMatmulPlan(
+    gpu::GroupedGemmConfig& config,
+    const std::vector<gpu::BlasLt::Epilogue>& epilogues) const {
+  return absl::UnimplementedError(
+      "Grouped GEMM is not supported for CUDA BlasLt");
 }
 
 }  // namespace cuda
