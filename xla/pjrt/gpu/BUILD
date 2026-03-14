@@ -192,6 +192,7 @@ cc_library(
         "//xla/service/gpu:stream_executor_util",
     ]) + if_cuda([
         # keep sorted
+        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
         "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm([
@@ -312,6 +313,35 @@ xla_test(
         # third_party/tensorflow/compiler/xla/xla.default.bzl.
         "//xla/tsl/framework:allocator",
     ]),
+)
+
+xla_test(
+    name = "se_gpu_pjrt_client_vmm_test",
+    srcs = ["se_gpu_pjrt_client_vmm_test.cc"],
+    backends = ["gpu"],
+    tags = [
+        "cuda-only",
+        "requires-gpu-nvidia",
+    ],
+    deps = [
+        ":se_gpu_pjrt_client",
+        ":se_gpu_pjrt_compiler_cuda_registration_for_tests",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_executable",
+        "//xla/pjrt:pjrt_stream_executor_client",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
+        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
+        "//xla/tests:literal_test_util",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
 )
 
 xla_test(
@@ -529,6 +559,15 @@ cc_library(
         "@com_google_absl//absl/log:check",
     ],
     alwayslink = 1,
+)
+
+cc_library(
+    name = "se_gpu_pjrt_compiler_cuda_registration_for_tests",
+    testonly = True,
+    deps = [":se_gpu_pjrt_compiler_cuda_registration"],
+    visibility = [
+        "//xla/tests:__pkg__",
+    ],
 )
 
 cc_library(

@@ -44,8 +44,8 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "unsupported/Eigen/CXX11/Tensor"
 #include "google/protobuf/text_format.h"
+#include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/local_client.h"
@@ -106,6 +106,10 @@ limitations under the License.
 #include "tsl/platform/casts.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/profiler/lib/traceme.h"
+
+#if GOOGLE_CUDA
+#include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
+#endif  // GOOGLE_CUDA
 
 #if defined(PLATFORM_WINDOWS)
 // Required to build successfully with Mingw
@@ -637,6 +641,9 @@ absl::StatusOr<std::unique_ptr<tsl::Allocator>> CreateAllocatorForDevice(
     case GpuAllocatorConfig::Kind::kPlatform:
       LOG(FATAL) << "Platform allocator should be handled before calling this "
                     "function.";
+    case GpuAllocatorConfig::Kind::kVmm:
+      LOG(FATAL) << "VMM allocator should be handled before calling this "
+                    "function.";
   }
 }
 
@@ -652,6 +659,37 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
     }
     return MaybeOwning<se::DeviceAddressAllocator>(
         xla_client->backend().memory_allocator());
+  }
+
+  if (allocator_config.kind == GpuAllocatorConfig::Kind::kVmm) {
+#if GOOGLE_CUDA
+    LOG(INFO) << "Using VMM (Virtual Memory Management) allocator.";
+    // Count devices with a valid executor.
+    se::StreamExecutor* vmm_executor = nullptr;
+    se::Stream* vmm_stream = nullptr;
+    int device_count = 0;
+    for (const auto& device : devices) {
+      se::StreamExecutor* executor = device->executor();
+      if (executor != nullptr) {
+        ++device_count;
+        vmm_executor = executor;
+        vmm_stream = device->stream();
+      }
+    }
+    if (device_count != 1) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "VMM allocator only supports a single addressable device, but %d "
+          "devices were provided.",
+          device_count));
+    }
+    TF_ASSIGN_OR_RETURN(auto vmm_alloc,
+                        se::gpu::CudaDeviceAddressVmmAllocator::Create(
+                            vmm_executor, vmm_stream));
+    return MaybeOwning<se::DeviceAddressAllocator>(std::move(vmm_alloc));
+#else
+    return absl::UnimplementedError(
+        "VMM allocator is only supported with CUDA.");
+#endif  // GOOGLE_CUDA
   }
 
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;

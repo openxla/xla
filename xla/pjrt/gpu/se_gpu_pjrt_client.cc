@@ -98,6 +98,7 @@ limitations under the License.
 #include "xla/service/gpu_topology.pb.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
@@ -137,6 +138,7 @@ limitations under the License.
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
 #include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 #elif TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
@@ -1521,6 +1523,39 @@ GetStreamExecutorGpuDeviceAllocator(
       // Returning null will cause the client to use the default backend
       // allocator.
       return nullptr;
+
+    case GpuAllocatorConfig::Kind::kVmm: {
+#if GOOGLE_CUDA
+      LOG(INFO) << "Using VMM (Virtual Memory Management) allocator.";
+      if (addressable_devices.size() != 1) {
+        return absl::InvalidArgumentError(absl::StrFormat(
+            "VMM allocator only supports a single addressable device, but %d "
+            "devices were provided.",
+            addressable_devices.size()));
+      }
+      const auto& ordinal_and_device = *addressable_devices.begin();
+      se::StreamExecutor* executor = ordinal_and_device.second->executor();
+      int64_t free_memory;
+      int64_t total_memory;
+      if (!executor->DeviceMemoryUsage(&free_memory, &total_memory)) {
+        return Unavailable("Failed to query available memory from device %i",
+                           executor->device_ordinal());
+      }
+      // Calculate pa_budget the same way as BFCAllocator.
+      uint64_t pa_budget = total_memory * allocator_config.memory_fraction;
+      // If gpu_system_memory_size is set, use it instead.
+      if (allocator_config.gpu_system_memory_size.has_value()) {
+        pa_budget = allocator_config.gpu_system_memory_size.value();
+      }
+      LOG(INFO) << "VMM allocator pa_budget for device "
+                << executor->device_ordinal() << ": " << pa_budget << " bytes.";
+      return se::gpu::CudaDeviceAddressVmmAllocator::Create(
+          executor, ordinal_and_device.second->compute_stream(), pa_budget);
+#else
+      return absl::UnimplementedError(
+          "VMM allocator is only supported with CUDA.");
+#endif  // GOOGLE_CUDA
+    }
   }
 
   // Add any additional allocators for alternate memory spaces.
