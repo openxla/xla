@@ -45,7 +45,7 @@ jobs:
       - name: Checkout rocAutomation using local creds
         run: |
           rm -rf rocAutomation
-          git clone -b jenkins-pipelines https://github.com/ROCm/rocAutomation.git rocAutomation
+          git clone -b handle_infra_failures https://github.com/ROCm/rocAutomation.git rocAutomation
 
       - name: Start Container
         run: |
@@ -89,6 +89,13 @@ jobs:
           docker exec \
             ${{ env.CONTAINER_NAME }} \
             bash -c "build_tools/rocm/execute_ci_build.sh --config=ci_multi_gpu --strategy=TestRunner=local --local_test_jobs=2 --repo_env=TF_ROCM_RBE_DOCKER_IMAGE=${{ env.DOCKER_IMAGE }}"
+
+      - name: BuildDir info
+        if: always()
+        run: |
+          docker exec \
+            ${{ env.CONTAINER_NAME }} \
+            bash -c "du -sh /root/.cache/*"
 
       - name: Cleanup container
         if: always()
