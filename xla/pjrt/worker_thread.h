@@ -43,12 +43,23 @@ class WorkerThread {
   // Adds 'fn' to the queue of closures to be executed by the worker thread.
   void Schedule(absl::AnyInvocable<void() &&> fn);
 
+  template <typename Generator>
+  bool ScheduleIfBacklog(bool always_schedule, Generator gen) {
+    absl::MutexLock lock(mu_);
+    if (!always_schedule && work_queue_.empty() && !is_running_) {
+      return true;
+    }
+    work_queue_.push(gen());
+    return false;
+  }
+
  private:
   bool WorkAvailable() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
   void WorkLoop();
 
   absl::Mutex mu_;
   std::queue<absl::AnyInvocable<void() &&>> work_queue_ ABSL_GUARDED_BY(mu_);
+  int is_running_ = 0;
 
   std::unique_ptr<tsl::Thread> thread_;
 };
