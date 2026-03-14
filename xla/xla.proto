@@ -282,6 +282,11 @@ message DebugOptions {
   // false.
   optional bool xla_cpu_fast_math_honor_nans = 120;
 
+  // Enable flush-to-zero semantics in the CPU backend. When true, denormal
+  // floating-point values are flushed to zero. Default is true for backwards
+  // compatibility.
+  optional bool xla_cpu_ftz = 443;
+
   // When true, XLA:CPU all LLVM kernels entry points will be prefixed with the
   // module name. They will also be converted to C style names. This is required
   // for AOT compilation.
