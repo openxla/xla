@@ -937,8 +937,11 @@ cc_library(
 xla_cc_test(
     name = "cuda_device_address_vmm_allocator_test",
     srcs = ["cuda_device_address_vmm_allocator_test.cc"],
-    backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "requires-gpu-nvidia",
+    ],
     deps = [
         ":cuda_device_address_vmm_allocator",
         ":cuda_platform",
