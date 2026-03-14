@@ -19,7 +19,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "cub/version.cuh"
 #include "absl/base/nullability.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -29,11 +28,12 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
+#include "cub/version.cuh"
 #include "xla/debug_options_flags.h"
 #include "xla/stream_executor/abi/runtime_abi_version.h"
+#include "xla/stream_executor/cuda/cuda_collective_allocator.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/cuda/cuda_executor.h"
-#include "xla/stream_executor/cuda/cuda_memory_allocator.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/cuda/cuda_runtime_abi_version.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
