@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/rocm/rocm_executor.h"
 
-#include <unistd.h>
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -47,6 +45,7 @@ limitations under the License.
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/hip/hip_version.h"
 #include "rocm/rocm_config.h"
+#include <unistd.h>
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -657,6 +656,23 @@ absl::Status RocmExecutor::Init() {
   TF_ASSIGN_OR_RETURN(rocm_context_,
                       RocmContext::Create(device_ordinal(), device_));
   TF_ASSIGN_OR_RETURN(version_, GetGpuISAVersion(device_));
+
+  // Initialize peer access cache for all devices
+  int device_count = 0;
+  TF_RETURN_IF_ERROR(ToStatus(wrap::hipGetDeviceCount(&device_count),
+                              "Failed to get device count"));
+  for (int i = 0; i < device_count; ++i) {
+    if (i == device_ordinal()) {
+      // A device can always access its own memory
+      peer_access_cache_[i] = true;
+      continue;
+    }
+
+    // Check peer access capability and cache the result
+    TF_ASSIGN_OR_RETURN(hipDevice_t peer_device, GetDevice(i));
+    peer_access_cache_[i] = CanEnablePeerAccess(device_, peer_device);
+  }
+
   // We initialize BLAS interfaces early here since otherwise it might create
   // us problems during hipBlasLt initialization under graph capture.
   // There is no real advantage of explicitly using 'lazy initialization' on
@@ -1025,6 +1041,20 @@ fft::FftSupport* RocmExecutor::AsFft() {
 bool RocmExecutor::CanEnablePeerAccessTo(StreamExecutor* other) {
   RocmExecutor* rocm_other = static_cast<RocmExecutor*>(other);
   return CanEnablePeerAccess(rocm_context_, rocm_other->rocm_context_);
+}
+
+bool RocmExecutor::CanEnablePeerAccessTo(int other_device_ordinal) {
+  // Check the cache first
+  auto it = peer_access_cache_.find(other_device_ordinal);
+  if (it != peer_access_cache_.end()) {
+    return it->second;
+  }
+
+  // If not in cache, log a warning and return false
+  LOG(WARNING) << "Attempting to enable peer access from: " << device_ordinal()
+               << " to: " << other_device_ordinal
+               << " which was not available during initialization.";
+  return false;
 }
 
 absl::Status RocmExecutor::EnablePeerAccessTo(StreamExecutor* other) {

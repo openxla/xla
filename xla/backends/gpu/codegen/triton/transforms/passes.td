@@ -138,6 +138,17 @@ def TritonXLALowerAtomicsPass
   let constructor = "CreateTritonXLALowerAtomicsPass()";
 }
 
+def TritonXLALowerAtomicsGenericPass
+    : Pass<"triton-xla-atomics-generic", "mlir::ModuleOp"> {
+  let summary = "Lower triton_xla.atomic operations using generic Triton ops.";
+  let description = [{
+    This pass lowers atomic operations to pure Triton atomic operations
+    (AtomicRMWOp and AtomicCASOp), avoiding platform-specific inline assembly.
+    This makes it suitable for ROCm and other targets.
+  }];
+  let constructor = "CreateTritonXLALowerAtomicsGenericPass()";
+}
+
 def TritonXLALowerBlockBarrierPass
     : Pass<"triton-xla-block-barrier", "mlir::ModuleOp"> {
   let summary = "Lower a block barrier to triton_xla/triton operations.";
@@ -146,6 +157,17 @@ def TritonXLALowerBlockBarrierPass
     spin-wait operations.
   }];
   let constructor = "CreateTritonXLALowerBlockBarrierPass()";
+}
+
+def TritonXLALowerBlockBarrierGenericPass
+    : Pass<"triton-xla-block-barrier-generic", "mlir::ModuleOp"> {
+  let summary = "Lower a block barrier using generic Triton operations.";
+  let description = [{
+    This pass lowers a block barrier to Triton IR using only generic Triton
+    tensor operations with masks. This approach makes it suitable
+    for ROCm and other targets.
+  }];
+  let constructor = "CreateTritonXLALowerBlockBarrierGenericPass()";
 }
 
 def TritonXLAConvertUnsupportedTypesPass
