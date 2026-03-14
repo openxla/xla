@@ -415,8 +415,8 @@ common:windows --features=compiler_param_file
 common:linux --experimental_guard_against_concurrent_changes
 
 # Configure short or long logs
-common:short_logs --output_filter=DONT_MATCH_ANYTHING
-common:verbose_logs --output_filter=
+common:short_logs --output_filter=DONT_MATCH_ANYTHING --experimental_ui_max_stdouterr_bytes=-1
+common:verbose_logs --output_filter=  --experimental_ui_max_stdouterr_bytes=-1
 
 # Instruction set optimizations
 # TODO(gunan): Create a feature in toolchains for avx/avx2 to
