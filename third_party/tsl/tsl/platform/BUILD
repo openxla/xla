@@ -1217,6 +1217,7 @@ cc_library(
     hdrs = ["null_file_system.h"],
     deps = [
         "@xla//xla/tsl/platform:env",
+        "@xla//xla/tsl/platform:errors",
     ],
 )
 

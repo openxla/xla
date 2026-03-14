@@ -37,49 +37,43 @@ class WindowsFileSystem : public FileSystem {
   TF_USE_FILESYSTEM_METHODS_WITH_NO_TRANSACTION_SUPPORT;
 
   Status NewRandomAccessFile(
-      const string& fname, TransactionToken* token,
-      std::unique_ptr<RandomAccessFile>* result) override;
+      const string& fname, std::unique_ptr<RandomAccessFile>* result) override;
 
-  Status NewWritableFile(const string& fname, TransactionToken* token,
+  Status NewWritableFile(const string& fname,
                          std::unique_ptr<WritableFile>* result) override;
 
-  Status NewAppendableFile(const string& fname, TransactionToken* token,
+  Status NewAppendableFile(const string& fname,
                            std::unique_ptr<WritableFile>* result) override;
 
   Status NewReadOnlyMemoryRegionFromFile(
-      const string& fname, TransactionToken* token,
+      const string& fname,
       std::unique_ptr<ReadOnlyMemoryRegion>* result) override;
 
-  Status FileExists(const string& fname, TransactionToken* token) override;
+  Status FileExists(const string& fname) override;
 
-  Status GetChildren(const string& dir, TransactionToken* token,
-                     std::vector<string>* result) override;
+  Status GetChildren(const string& dir, std::vector<string>* result) override;
 
-  Status GetMatchingPaths(const string& pattern, TransactionToken* token,
+  Status GetMatchingPaths(const string& pattern,
                           std::vector<string>* result) override;
 
   bool Match(const string& filename, const string& pattern) override;
 
-  Status Stat(const string& fname, TransactionToken* token,
-              FileStatistics* stat) override;
+  Status Stat(const string& fname, FileStatistics* stat) override;
 
-  Status DeleteFile(const string& fname, TransactionToken* token) override;
+  Status DeleteFile(const string& fname) override;
 
-  Status CreateDir(const string& name, TransactionToken* token) override;
+  Status CreateDir(const string& name) override;
 
-  Status DeleteDir(const string& name, TransactionToken* token) override;
+  Status DeleteDir(const string& name) override;
 
-  Status DeleteRecursively(const std::string& dirname, TransactionToken* token,
-                           int64_t* undeleted_files,
+  Status DeleteRecursively(const std::string& dirname, int64_t* undeleted_files,
                            int64_t* undeleted_dirs) override;
 
-  Status GetFileSize(const string& fname, TransactionToken* token,
-                     uint64* size) override;
+  Status GetFileSize(const string& fname, uint64* size) override;
 
-  Status IsDirectory(const string& fname, TransactionToken* token) override;
+  Status IsDirectory(const string& fname) override;
 
-  Status RenameFile(const string& src, const string& target,
-                    TransactionToken* token) override;
+  Status RenameFile(const string& src, const string& target) override;
 
   string TranslateName(const string& name) const override { return name; }
 
