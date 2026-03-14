@@ -16,6 +16,7 @@ limitations under the License.
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <optional>
 
 #include "absl/log/check.h"
 #include "llvm/ADT/DenseSet.h"
@@ -29,6 +30,8 @@ limitations under the License.
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -40,8 +43,11 @@ limitations under the License.
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
+#include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/backends/cpu/alignment.h"
 #include "xla/codegen/emitters/implicit_arith_op_builder.h"
+#include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 
 namespace xla::xtile {
@@ -168,8 +174,126 @@ static mlir::TypedValue<mlir::RankedTensorType> GetTensorSlice(
                                               tile_size, strides);
 }
 
+static bool IsStaticallyAligned(mlir::Value value, int64_t alignment) {
+  auto memref_type = mlir::cast<mlir::MemRefType>(value.getType());
+  if (memref_type.getMemorySpaceAsInt() != 0) {
+    return false;
+  }
+
+  int64_t offset;
+  llvm::SmallVector<int64_t> strides;
+  if (mlir::failed(memref_type.getStridesAndOffset(strides, offset))) {
+    return false;
+  }
+
+  if (offset == mlir::ShapedType::kDynamic || offset % alignment != 0) {
+    return false;
+  }
+
+  if (!strides.empty() && (strides.back() == mlir::ShapedType::kDynamic ||
+                           strides.back() % alignment != 0)) {
+    return false;
+  }
+
+  // Check if it's a subview and try to prove alignment of dynamic offsets.
+  if (auto subview = value.getDefiningOp<mlir::memref::SubViewOp>()) {
+    mlir::ValueRange subview_offsets = subview.getOffsets();
+    for (mlir::Value off : subview_offsets) {
+      if (std::optional<int64_t> constant_off =
+              mlir::getConstantIntValue(off)) {
+        if (*constant_off % alignment != 0) {
+          return false;
+        }
+      } else {
+        auto bound = mlir::ValueBoundsConstraintSet::computeConstantBound(
+            mlir::presburger::BoundType::EQ, off);
+        if (mlir::failed(bound) || (*bound % alignment != 0)) {
+          return false;
+        }
+      }
+    }
+    return IsStaticallyAligned(subview.getSource(), alignment);
+  }
+
+  return true;
+}
+
+static bool IsStaticallyFullTile(TiledBufferInterface op) {
+  llvm::ArrayRef<int64_t> full_tile_shape = op.getFullTileShape();
+  for (int64_t dim : full_tile_shape) {
+    if (mlir::ShapedType::isDynamic(dim)) {
+      return false;
+    }
+  }
+
+  auto buffer_type = mlir::cast<mlir::MemRefType>(op.getBuffer().getType());
+  if (!buffer_type.hasStaticShape()) {
+    return false;
+  }
+
+  llvm::ArrayRef<int64_t> buffer_shape = buffer_type.getShape();
+  if (buffer_shape.size() != full_tile_shape.size()) {
+    return false;
+  }
+
+  // Check that offsets are in bounds.
+  mlir::ValueRange offsets = op.getOffsets();
+  llvm::ArrayRef<int64_t> strides = op.getStrides();
+  for (int i = 0; i < offsets.size(); ++i) {
+    int64_t stride_i = strides[i];
+    std::optional<int64_t> offset = mlir::getConstantIntValue(offsets[i]);
+    if (offset) {
+      if (*offset + (full_tile_shape[i] - 1) * stride_i + 1 > buffer_shape[i]) {
+        return false;
+      }
+      continue;
+    }
+
+    if (auto range = xla::GetRange(offsets[i])) {
+      // If the range is within buffer bounds, this offset is statically full.
+      if (range->lower >= 0 &&
+          range->upper + (full_tile_shape[i] - 1) * stride_i + 1 <=
+              buffer_shape[i]) {
+        continue;
+      }
+    }
+    return false;
+  }
+
+  return true;
+}
+
+static bool IsContiguousLayout(mlir::MemRefType type) {
+  if (type.getLayout().isIdentity()) {
+    return true;
+  }
+  auto layout = mlir::dyn_cast<mlir::StridedLayoutAttr>(type.getLayout());
+  if (!layout) {
+    return false;
+  }
+
+  auto shape = type.getShape();
+  auto strides = layout.getStrides();
+  int64_t expected = 1;
+  for (int i = shape.size() - 1; i >= 0; --i) {
+    if (mlir::ShapedType::isDynamic(strides[i]) || strides[i] != expected) {
+      return false;
+    }
+    if (mlir::ShapedType::isDynamic(shape[i])) {
+      return false;
+    }
+    expected *= shape[i];
+  }
+  return true;
+}
+
 static mlir::Value TileIsFullSize(mlir::ImplicitLocOpBuilder& builder,
                                   TiledBufferInterface op) {
+  if (IsStaticallyFullTile(op)) {
+    return mlir::arith::ConstantIntOp::create(builder, builder.getI1Type(),
+                                              true);
+  }
+
   llvm::SmallVector<mlir::OpFoldResult> clamped_tile_size =
       GetClampedTileSize(builder, op, false);
   mlir::Value is_full_size =
@@ -193,6 +317,17 @@ static mlir::TypedValue<mlir::MemRefType> GetPaddedTileBuffer(
     mlir::ImplicitLocOpBuilder& builder, ExtractTileOp op) {
   auto buffer_tile_subview = GetClampedSubView(builder, op);
   mlir::RankedTensorType tile_type = op.getResult().getType();
+  mlir::MemRefType subview_type = buffer_tile_subview.getType();
+  int64_t offset;
+  llvm::SmallVector<int64_t> strides;
+  if (mlir::failed(subview_type.getStridesAndOffset(strides, offset))) {
+    // If we can't get strided metadata, fallback to default layout.
+    return mlir::memref::AllocOp::create(
+        builder, GetStaticFoldResult(builder, tile_type.getShape()),
+        tile_type.getElementType());
+  }
+
+  // Create a new contiguous buffer for the padded tile.
   auto buffer = mlir::memref::AllocOp::create(
       builder, GetStaticFoldResult(builder, tile_type.getShape()),
       tile_type.getElementType());
@@ -213,20 +348,49 @@ bool ExtractTileOp::bufferizesToMemoryRead(
   return true;
 }
 
+// ExtractTileOp is used to extract a tile from a buffer, so it does not
+// bufferize to a memory write.
 bool ExtractTileOp::bufferizesToMemoryWrite(
     mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
-  return true;
+  return false;
 }
 
+// ExtractTileOp bufferizes to an allocation if the tile is not statically full
+// or if the buffer layout is not contiguous.
 bool ExtractTileOp::bufferizesToAllocation(mlir::Value value) {
-  // As we don't know if we will emit an allocation at compile time we must be
-  // conservative.
-  return true;
+  if (!IsStaticallyFullTile(*this)) {
+    return true;
+  }
+
+  mlir::OpBuilder builder(getContext());
+  mlir::MemRefType buffer_type = getBuffer().getType();
+
+  mlir::SmallVector<mlir::OpFoldResult> offsets;
+  for (auto offset : getOffsets()) {
+    offsets.push_back(offset);
+  }
+
+  mlir::SmallVector<mlir::OpFoldResult> sizes;
+  for (auto size : getFullTileShape()) {
+    sizes.push_back(builder.getIndexAttr(size));
+  }
+
+  mlir::SmallVector<mlir::OpFoldResult> strides;
+  for (auto stride : getStrides()) {
+    strides.push_back(builder.getIndexAttr(stride));
+  }
+
+  mlir::RankedTensorType tile_type = getResult().getType();
+  mlir::MemRefType subview_type =
+      mlir::memref::SubViewOp::inferRankReducedResultType(
+          tile_type.getShape(), buffer_type, offsets, sizes, strides);
+
+  return !IsContiguousLayout(subview_type);
 }
 
 mlir::bufferization::AliasingValueList ExtractTileOp::getAliasingValues(
     mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
-  return {};
+  return {{getResult(), mlir::bufferization::BufferRelation::Unknown}};
 }
 
 mlir::bufferization::AliasingOpOperandList ExtractTileOp::getAliasingOpOperands(
@@ -249,52 +413,93 @@ llvm::LogicalResult ExtractTileOp::bufferize(
     mlir::bufferization::BufferizationState& state) {
   mlir::ImplicitLocOpBuilder builder(getLoc(), rewriter);
 
+  auto subview = GetFullTileSubView(builder, *this);
+  auto subview_type = llvm::cast<mlir::MemRefType>(subview.getType());
+
+  if (IsStaticallyFullTile(*this) && IsContiguousLayout(subview_type)) {
+    auto to_tensor_op = mlir::bufferization::ToTensorOp::create(
+        builder, getLoc(), getType(), subview,
+        /*restrict=*/true,
+        /*writable=*/false);
+    rewriter.replaceOp(getOperation(), to_tensor_op.getResult());
+    return mlir::success();
+  }
+
   mlir::Value is_full_size = TileIsFullSize(builder, *this);
+
+  int64_t alignment = xla::cpu::Align();
+  bool proved_alignment = IsStaticallyAligned(subview, alignment);
+
+  // Compute identity strides based on full_tile_shape
+  llvm::SmallVector<int64_t> identity_strides;
+  int64_t stride = 1;
+  auto full_tile_shape = getFullTileShape();
+  for (int i = subview_type.getRank() - 1; i >= 0; --i) {
+    identity_strides.push_back(stride);
+    stride *= full_tile_shape[i];
+  }
+  std::reverse(identity_strides.begin(), identity_strides.end());
+
+  auto yielded_layout = mlir::StridedLayoutAttr::get(
+      getContext(), mlir::ShapedType::kDynamic, identity_strides);
+  auto yielded_type = mlir::MemRefType::get(
+      subview_type.getShape(), subview_type.getElementType(), yielded_layout);
+
   auto if_op = mlir::scf::IfOp::create(
       builder, is_full_size,
       [&](mlir::OpBuilder& builder, mlir::Location loc) {
         mlir::ImplicitLocOpBuilder then_builder(loc, builder);
         auto buffer = GetFullTileSubView(then_builder, *this);
-        if (buffer.getType().getLayout().isIdentity()) {
-          auto to_tensor_op = mlir::bufferization::ToTensorOp::create(
-              then_builder, getType(), buffer);
-          mlir::scf::YieldOp::create(then_builder, {to_tensor_op});
-        } else {
-          // If the buffer doesn't have an identity layout, we can get a
-          // miscompile during bufferization as some ops don't support
-          // non-identity layouts. So we allocate a new buffer with the same
-          // shape but default layout.
-          // TODO(willfroom): Look into how we can remove this constraint.
-          mlir::MemRefType default_buffer_type =
-              mlir::MemRefType::Builder(buffer.getType()).setLayout(nullptr);
-          auto default_buffer =
-              mlir::memref::AllocOp::create(then_builder, default_buffer_type);
-          mlir::memref::CopyOp::create(then_builder, buffer, default_buffer);
-          auto to_tensor_op = mlir::bufferization::ToTensorOp::create(
-              then_builder, getType(), default_buffer);
-          to_tensor_op.setWritable(true);
-          to_tensor_op.setRestrict(true);
-          mlir::scf::YieldOp::create(then_builder, {to_tensor_op});
+        mlir::Value yielded_buffer = buffer;
+        if (!IsContiguousLayout(buffer.getType())) {
+          // Force allocation to obtain a contiguous buffer.
+          auto contiguous_type = mlir::MemRefType::get(
+              buffer.getType().getShape(), buffer.getType().getElementType());
+          auto alloc =
+              then_builder.create<mlir::memref::AllocOp>(contiguous_type);
+          then_builder.create<mlir::memref::CopyOp>(buffer, alloc);
+          yielded_buffer = alloc;
         }
+        if (proved_alignment) {
+          then_builder.create<mlir::memref::AssumeAlignmentOp>(yielded_buffer,
+                                                               alignment);
+        }
+        auto cast = then_builder.create<mlir::memref::CastOp>(yielded_type,
+                                                              yielded_buffer);
+        then_builder.create<mlir::scf::YieldOp>(cast.getResult());
       },
+
       [&](mlir::OpBuilder& builder, mlir::Location loc) {
         mlir::ImplicitLocOpBuilder else_builder(loc, builder);
         auto buffer = GetPaddedTileBuffer(else_builder, *this);
-        auto to_tensor_op = mlir::bufferization::ToTensorOp::create(
-            else_builder, getType(), buffer);
-        to_tensor_op.setWritable(true);
-        to_tensor_op.setRestrict(true);
-        mlir::scf::YieldOp::create(else_builder, {to_tensor_op});
+        else_builder.create<mlir::memref::AssumeAlignmentOp>(buffer, alignment);
+        auto cast =
+            else_builder.create<mlir::memref::CastOp>(yielded_type, buffer);
+        else_builder.create<mlir::scf::YieldOp>(cast.getResult());
       });
 
-  rewriter.replaceOp(getOperation(), if_op.getResults());
+  auto if_res = if_op.getResult(0);
+  if (proved_alignment) {
+    builder.create<mlir::memref::AssumeAlignmentOp>(if_res, alignment);
+  }
+
+  mlir::bufferization::ToTensorOp to_tensor_op =
+      mlir::bufferization::ToTensorOp::create(builder, getType(), if_res);
+  to_tensor_op.setRestrict(true);
+
+  if (proved_alignment) {
+    for (auto user : getResult().getUsers()) {
+      if (auto transfer_read =
+              mlir::dyn_cast_or_null<mlir::vector::TransferReadOp>(user)) {
+        transfer_read->setAttr("alignment",
+                               builder.getI64IntegerAttr(alignment));
+      }
+    }
+  }
+
+  rewriter.replaceOp(getOperation(), to_tensor_op.getResult());
 
   return mlir::success();
-}
-
-bool InsertTileOp::bufferizesToMemoryRead(
-    mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
-  return true;
 }
 
 bool InsertTileOp::bufferizesToMemoryWrite(
@@ -304,11 +509,7 @@ bool InsertTileOp::bufferizesToMemoryWrite(
   return false;
 }
 
-bool InsertTileOp::bufferizesToAllocation(mlir::Value value) {
-  // As we don't know if we will emit an allocation at compile time we must be
-  // conservative.
-  return true;
-}
+bool InsertTileOp::bufferizesToAllocation(mlir::Value value) { return false; }
 
 mlir::bufferization::AliasingValueList InsertTileOp::getAliasingValues(
     mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
@@ -320,13 +521,14 @@ mlir::bufferization::AliasingOpOperandList InsertTileOp::getAliasingOpOperands(
   return {};
 }
 
+bool InsertTileOp::bufferizesToMemoryRead(
+    mlir::OpOperand& operand, const mlir::bufferization::AnalysisState& state) {
+  return true;
+}
+
 bool InsertTileOp::isWritable(mlir::Value value,
                               const mlir::bufferization::AnalysisState& state) {
-  if (value == getDestination()) {
-    return true;
-  }
-
-  return false;
+  return value == getDestination();
 }
 
 llvm::LogicalResult InsertTileOp::bufferize(
@@ -335,7 +537,46 @@ llvm::LogicalResult InsertTileOp::bufferize(
     mlir::bufferization::BufferizationState& state) {
   mlir::ImplicitLocOpBuilder builder(getLoc(), rewriter);
 
+  if (IsStaticallyFullTile(*this)) {
+    auto buffer = GetFullTileSubView(builder, *this);
+
+    int64_t alignment = xla::cpu::Align();
+    if (auto transfer_write =
+            mlir::dyn_cast_or_null<mlir::vector::TransferWriteOp>(
+                getSource().getDefiningOp())) {
+      if (mlir::isa_and_nonnull<mlir::tensor::EmptyOp>(
+              transfer_write.getBase().getDefiningOp())) {
+        if (IsContiguousLayout(buffer.getType()) &&
+            IsStaticallyAligned(buffer, alignment)) {
+          builder.create<mlir::memref::AssumeAlignmentOp>(buffer, alignment);
+          auto new_transfer_write =
+              builder.create<mlir::vector::TransferWriteOp>(
+                  transfer_write.getVector(), buffer,
+                  transfer_write.getIndices(),
+                  transfer_write.getPermutationMapAttr(),
+                  transfer_write.getInBoundsAttr());
+          if (auto attr = transfer_write->getAttr("alignment")) {
+            new_transfer_write.getOperation()->setAttr("alignment", attr);
+          } else {
+            new_transfer_write.getOperation()->setAttr(
+                "alignment", builder.getI64IntegerAttr(alignment));
+          }
+          rewriter.eraseOp(getOperation());
+          return mlir::success();
+        }
+      }
+    }
+
+    if (IsStaticallyAligned(buffer, alignment)) {
+      builder.create<mlir::memref::AssumeAlignmentOp>(buffer, alignment);
+    }
+    builder.create<mlir::bufferization::MaterializeInDestinationOp>(getSource(),
+                                                                    buffer);
+    rewriter.eraseOp(getOperation());
+    return mlir::success();
+  }
   mlir::Value is_full_size = TileIsFullSize(builder, *this);
+
   mlir::scf::IfOp::create(
       builder, is_full_size,
       [&](mlir::OpBuilder& builder, mlir::Location loc) {
