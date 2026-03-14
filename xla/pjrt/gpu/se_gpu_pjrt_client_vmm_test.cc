@@ -36,7 +36,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_stream_executor_client.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_allocator_config.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
-#include "xla/stream_executor/stream_executor_vmm_allocator.h"
+#include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/statusor.h"
 
@@ -122,7 +122,8 @@ TEST_F(VmmAllocatorTest, AllocatorIsDeviceAddressVmmAllocator) {
   se::DeviceAddressAllocator* allocator = se_client->allocator();
   ASSERT_NE(allocator, nullptr);
   EXPECT_NE(dynamic_cast<se::DeviceAddressVmmAllocator*>(allocator), nullptr)
-      << "Expected DeviceAddressVmmAllocator but got a different allocator type";
+      << "Expected DeviceAddressVmmAllocator but got a different allocator "
+         "type";
 }
 
 TEST_F(VmmAllocatorTest, VectorAdd) {
@@ -139,9 +140,8 @@ TEST_F(VmmAllocatorTest, VectorAdd) {
   auto input0 = LiteralUtil::CreateR1<float>({1.0f, 2.0f, 3.0f, 4.0f});
   auto input1 = LiteralUtil::CreateR1<float>({10.0f, 20.0f, 30.0f, 40.0f});
   const Literal* inputs[] = {&input0, &input1};
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto result,
-      RunWithInputs(*executable, *client_, *memory_space_, inputs));
+  TF_ASSERT_OK_AND_ASSIGN(auto result, RunWithInputs(*executable, *client_,
+                                                     *memory_space_, inputs));
 
   auto expected = LiteralUtil::CreateR1<float>({11.0f, 22.0f, 33.0f, 44.0f});
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, *result));
@@ -161,9 +161,8 @@ TEST_F(VmmAllocatorTest, VectorMultiply) {
   auto input0 = LiteralUtil::CreateR1<float>({1, 2, 3, 4, 5, 6, 7, 8});
   auto input1 = LiteralUtil::CreateR1<float>({2, 2, 2, 2, 2, 2, 2, 2});
   const Literal* inputs[] = {&input0, &input1};
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto result,
-      RunWithInputs(*executable, *client_, *memory_space_, inputs));
+  TF_ASSERT_OK_AND_ASSIGN(auto result, RunWithInputs(*executable, *client_,
+                                                     *memory_space_, inputs));
 
   auto expected = LiteralUtil::CreateR1<float>({2, 4, 6, 8, 10, 12, 14, 16});
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, *result));
@@ -185,9 +184,8 @@ TEST_F(VmmAllocatorTest, MatrixAdd) {
   auto input1 = LiteralUtil::CreateR2<float>(
       {{1, 1, 1, 1}, {1, 1, 1, 1}, {1, 1, 1, 1}, {1, 1, 1, 1}});
   const Literal* inputs[] = {&input0, &input1};
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto result,
-      RunWithInputs(*executable, *client_, *memory_space_, inputs));
+  TF_ASSERT_OK_AND_ASSIGN(auto result, RunWithInputs(*executable, *client_,
+                                                     *memory_space_, inputs));
 
   auto expected = LiteralUtil::CreateR2<float>(
       {{2, 3, 4, 5}, {6, 7, 8, 9}, {10, 11, 12, 13}, {14, 15, 16, 17}});
@@ -213,9 +211,8 @@ TEST_F(VmmAllocatorTest, ScalarReduce) {
   auto input = LiteralUtil::CreateR1<float>(
       {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16});
   const Literal* inputs[] = {&input};
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto result,
-      RunWithInputs(*executable, *client_, *memory_space_, inputs));
+  TF_ASSERT_OK_AND_ASSIGN(auto result, RunWithInputs(*executable, *client_,
+                                                     *memory_space_, inputs));
 
   auto expected = LiteralUtil::CreateR0<float>(136.0f);
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, *result));
@@ -240,9 +237,8 @@ TEST_F(VmmAllocatorTest, MultipleExecutions) {
 
     auto input = LiteralUtil::CreateR1<float>(data);
     const Literal* inputs[] = {&input};
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto result,
-        RunWithInputs(*executable, *client_, *memory_space_, inputs));
+    TF_ASSERT_OK_AND_ASSIGN(auto result, RunWithInputs(*executable, *client_,
+                                                       *memory_space_, inputs));
 
     std::vector<float> expected_data(64);
     for (int i = 0; i < 64; ++i) expected_data[i] = -data[i];
@@ -274,9 +270,8 @@ TEST_F(VmmAllocatorTest, LargeAllocation) {
   auto input0 = LiteralUtil::CreateR1<float>(data0);
   auto input1 = LiteralUtil::CreateR1<float>(data1);
   const Literal* inputs[] = {&input0, &input1};
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto result,
-      RunWithInputs(*executable, *client_, *memory_space_, inputs));
+  TF_ASSERT_OK_AND_ASSIGN(auto result, RunWithInputs(*executable, *client_,
+                                                     *memory_space_, inputs));
 
   // Every element should be kN.
   std::vector<float> expected_data(kN, static_cast<float>(kN));

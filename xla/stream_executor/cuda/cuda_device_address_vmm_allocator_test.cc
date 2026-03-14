@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/stream_executor/stream_executor_vmm_allocator.h"
+#include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
 
 #include <cstdint>
 #include <memory>
@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/vmm_device_address_allocator.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor {
@@ -58,7 +59,8 @@ class DeviceAddressVmmAllocatorTest : public ::testing::Test {
     stream_ = std::move(stream_or.value());
 
     // Probe for cuStreamWriteValue64 support (requires CC >= 7.0).
-    auto probe = DeviceAddressVmmAllocator::Create(executor_, stream_.get());
+    auto probe =
+        gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get());
     if (absl::IsUnimplemented(probe.status())) {
       GTEST_SKIP() << "Device does not support cuStreamWriteValue64 "
                       "(requires compute capability >= 7.0): "
@@ -72,8 +74,9 @@ class DeviceAddressVmmAllocatorTest : public ::testing::Test {
 };
 
 TEST_F(DeviceAddressVmmAllocatorTest, AllocateAndDeallocate) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   // Allocate memory.
   TF_ASSERT_OK_AND_ASSIGN(
@@ -96,8 +99,9 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllocateAndDeallocate) {
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest, AllocateZeroSize) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   // Allocate zero-size memory.
   TF_ASSERT_OK_AND_ASSIGN(
@@ -111,8 +115,9 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllocateZeroSize) {
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest, AllocateMultiple) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   // Allocate multiple memory regions.
   TF_ASSERT_OK_AND_ASSIGN(
@@ -134,8 +139,9 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllocateMultiple) {
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest, MemoryReadWrite) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   // Allocate memory.
   TF_ASSERT_OK_AND_ASSIGN(
@@ -166,8 +172,9 @@ TEST_F(DeviceAddressVmmAllocatorTest, MemoryReadWrite) {
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest, GetStream) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   // Get the stream - should return the same stream that was provided at
   // construction.
@@ -182,8 +189,9 @@ TEST_F(DeviceAddressVmmAllocatorTest, GetStream) {
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest, GetStreamExecutor) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   TF_ASSERT_OK_AND_ASSIGN(
       StreamExecutor * se,
@@ -192,8 +200,9 @@ TEST_F(DeviceAddressVmmAllocatorTest, GetStreamExecutor) {
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest, AllowsAsynchronousDeallocation) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   // Virtual address allocator supports asynchronous deallocation via
   // GPU timeline-based processing.
@@ -201,8 +210,9 @@ TEST_F(DeviceAddressVmmAllocatorTest, AllowsAsynchronousDeallocation) {
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest, ExplicitDeallocate) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   // Allocate memory.
   TF_ASSERT_OK_AND_ASSIGN(
@@ -223,8 +233,9 @@ TEST_F(DeviceAddressVmmAllocatorTest, ExplicitDeallocate) {
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest, DeallocateNull) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   // Deallocating null address should succeed.
   DeviceAddressBase null_addr;
@@ -245,8 +256,9 @@ TEST_F(DeviceAddressVmmAllocatorTest, DeallocateNull) {
 // all prior GPU work finishes before any new work submitted after Allocate.
 TEST_F(DeviceAddressVmmAllocatorTest,
        PendingDeallocationReusesSameVirtualAddress) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   const int ordinal = executor_->device_ordinal();
   constexpr uint64_t kSize = 1024;
@@ -278,8 +290,9 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 // AFTER the memcpy, so the physical memory is not freed until the GPU finishes.
 TEST_F(DeviceAddressVmmAllocatorTest,
        DeferredDeallocationSafeWhileGpuWritesData) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   const int ordinal = executor_->device_ordinal();
 
@@ -308,8 +321,9 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 // re-allocating the same size should succeed by reusing the pending entries.
 TEST_F(DeviceAddressVmmAllocatorTest,
        MultipleSeqnosAllCompleteAfterStreamSync) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   const int ordinal = executor_->device_ordinal();
   constexpr int kCount = 8;
@@ -347,8 +361,9 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 // physical memory without crashing.
 TEST_F(DeviceAddressVmmAllocatorTest,
        DestructorWithPendingDeallocationsDoesNotCrash) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   const int ordinal = executor_->device_ordinal();
 
@@ -368,8 +383,9 @@ TEST_F(DeviceAddressVmmAllocatorTest,
 }
 
 TEST_F(DeviceAddressVmmAllocatorTest, UnknownDeviceOrdinalReturnsError) {
-  TF_ASSERT_OK_AND_ASSIGN(auto allocator, DeviceAddressVmmAllocator::Create(
-                                              executor_, stream_.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(executor_, stream_.get()));
 
   const int unknown_ordinal = 9999;
   EXPECT_FALSE(allocator
@@ -417,8 +433,8 @@ class MultiDeviceVmmAllocatorTest : public ::testing::Test {
 
     // Probe for cuStreamWriteValue64 support using device 0 (requires CC
     // >= 7.0).
-    auto probe =
-        DeviceAddressVmmAllocator::Create(executors_[0], streams_[0].get());
+    auto probe = gpu::CudaDeviceAddressVmmAllocator::Create(executors_[0],
+                                                            streams_[0].get());
     if (absl::IsUnimplemented(probe.status())) {
       GTEST_SKIP() << "Device does not support cuStreamWriteValue64 "
                       "(requires compute capability >= 7.0): "
@@ -437,7 +453,8 @@ TEST_F(MultiDeviceVmmAllocatorTest, AllocateOnBothDevices) {
     configs.push_back({executors_[i], streams_[i].get()});
   }
   TF_ASSERT_OK_AND_ASSIGN(
-      auto allocator, DeviceAddressVmmAllocator::Create(platform_, configs));
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(platform_, configs));
 
   for (int i = 0; i < 2; ++i) {
     TF_ASSERT_OK_AND_ASSIGN(
@@ -468,7 +485,8 @@ TEST_F(MultiDeviceVmmAllocatorTest, AllocationOnOneDeviceDoesNotAffectOther) {
     configs.push_back({executors_[i], streams_[i].get()});
   }
   TF_ASSERT_OK_AND_ASSIGN(
-      auto allocator, DeviceAddressVmmAllocator::Create(platform_, configs));
+      auto allocator,
+      gpu::CudaDeviceAddressVmmAllocator::Create(platform_, configs));
 
   // Allocate on device 0.
   TF_ASSERT_OK_AND_ASSIGN(

@@ -98,6 +98,8 @@ limitations under the License.
 #include "xla/service/gpu_topology.pb.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
@@ -106,7 +108,6 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/stream_executor/stream_executor_vmm_allocator.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -1547,7 +1548,7 @@ GetStreamExecutorGpuDeviceAllocator(
       }
       LOG(INFO) << "VMM allocator pa_budget for device "
                 << executor->device_ordinal() << ": " << pa_budget << " bytes.";
-      return se::DeviceAddressVmmAllocator::Create(
+      return se::gpu::CudaDeviceAddressVmmAllocator::Create(
           executor, ordinal_and_device.second->compute_stream(), pa_budget);
     }
   }

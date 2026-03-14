@@ -13,11 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_VMM_ALLOCATOR_H_
-#define XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_VMM_ALLOCATOR_H_
+#ifndef XLA_STREAM_EXECUTOR_VMM_DEVICE_ADDRESS_ALLOCATOR_H_
+#define XLA_STREAM_EXECUTOR_VMM_DEVICE_ADDRESS_ALLOCATOR_H_
 
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -37,10 +38,10 @@ limitations under the License.
 
 namespace stream_executor {
 
-// Virtual address allocator that separates virtual address reservation from
-// physical memory allocation. It can be bound to one or more GPU devices at
-// construction time and routes Allocate/Deallocate calls to per-device state
-// based on device_ordinal.
+// Abstract base class for virtual memory map (VMM) allocators that separate
+// virtual address reservation from physical memory allocation. It can be bound
+// to one or more GPU devices at construction time and routes
+// Allocate/Deallocate calls to per-device state based on device_ordinal.
 //
 // Concurrency model: each device has its own absl::Mutex, so operations on
 // different devices run fully in parallel. The per-device map is populated
@@ -65,9 +66,11 @@ namespace stream_executor {
 // allows callers to deallocate memory while device kernels may still be
 // consuming the data.
 //
-// Requires compute capability >= 7.0 (Volta and later) for
-// cuStreamWriteValue64 support. Use Create() to obtain an instance; it
-// returns an error if the device does not meet this requirement.
+// Concrete subclasses implement the platform-specific virtual methods
+// (InitializeDeviceState, CreateAllocation, CreateReservation,
+// EnqueueDeferredDeallocation) and expose platform-specific Create() factories.
+// Subclasses must also set PerDeviceState::destroy_fn in InitializeDeviceState
+// to release platform-specific resources (e.g. pinned timeline memory).
 //
 // This allocator is thread-safe for concurrent use by multiple threads across
 // any registered devices.
@@ -83,31 +86,6 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     // this device. Defaults to unlimited.
     uint64_t pa_budget = UINT64_MAX;
   };
-
-  // Creates an allocator supporting multiple devices.
-  //
-  // Returns an error if any device does not support cuStreamWriteValue64
-  // (compute capability < 7.0).
-  //
-  // Precondition: all entries in `devices` have distinct device ordinals.
-  static absl::StatusOr<std::unique_ptr<DeviceAddressVmmAllocator>> Create(
-      const Platform* platform, absl::Span<const DeviceConfig> devices);
-
-  // Creates an allocator for a single device.
-  //
-  // Returns an error if the device does not support cuStreamWriteValue64
-  // (compute capability < 7.0).
-  //
-  // Parameters:
-  //   executor:  StreamExecutor for this device. Must outlive the allocator.
-  //   stream:    Stream used for deferred deallocation. Must outlive the
-  //              allocator. This should typically be the main compute stream
-  //              from ServiceExecutableRunOptions.
-  //   pa_budget: Maximum bytes of physical memory that may be simultaneously
-  //              allocated on this device. Defaults to unlimited.
-  static absl::StatusOr<std::unique_ptr<DeviceAddressVmmAllocator>> Create(
-      StreamExecutor* executor, Stream* stream,
-      uint64_t pa_budget = UINT64_MAX);
 
   ~DeviceAddressVmmAllocator() override;
 
@@ -147,7 +125,7 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   MemoryReservation* GetReservation(int device_ordinal,
                                     DeviceAddressBase addr) const;
 
- private:
+ protected:
   struct PendingDeallocation {
     DeviceAddressBase mem;
     // GPU stream sequence number recorded at deallocation time. When the
@@ -159,20 +137,27 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
     StreamExecutor* executor;
     Stream* stream;
     uint64_t pa_budget;
-    // VMM allocation granularity for this device. Set once in Create() via
-    // cuMemGetAllocationGranularity; 0 means the query failed.
+    // VMM allocation granularity for this device. Set once in
+    // InitializeDeviceState(); 0 means the query failed.
     uint64_t allocation_granularity = 0;
 
     // Host-visible timeline counter. The GPU writes an increasing sequence
-    // number to this location via cuStreamWriteValue64 as each deallocation
-    // point is reached in the stream. The CPU reads it atomically to determine
-    // which pending deallocations are safe to execute.
-    // Allocated at construction via cuMemHostAlloc; freed in the destructor.
+    // number to this location as each deallocation point is reached in the
+    // stream. The CPU reads it atomically to determine which pending
+    // deallocations are safe to execute.
+    // Allocated at construction in InitializeDeviceState(); freed via
+    // destroy_fn in ~DeviceAddressVmmAllocator().
     // Never modified after construction other than by the GPU.
     volatile uint64_t* pinned_timeline = nullptr;
-    // Device-mapped pointer to pinned_timeline (as uint64_t to avoid CUDA
-    // types in this header). Passed to cuStreamWriteValue64.
+    // Device-mapped pointer to pinned_timeline (as uint64_t to avoid
+    // platform-specific types in this header). Passed to the platform-specific
+    // stream write operation.
     uint64_t timeline_dev_ptr = 0;
+
+    // Called at the end of ~DeviceAddressVmmAllocator() to release
+    // platform-specific resources (e.g. pinned timeline memory). Set once by
+    // InitializeDeviceState(); must not reference the subclass instance.
+    std::function<void()> destroy_fn;
 
     mutable absl::Mutex mu;
     uint64_t pa_allocated ABSL_GUARDED_BY(mu) = 0;
@@ -189,6 +174,33 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
   explicit DeviceAddressVmmAllocator(const Platform* platform);
 
+  // Validates no duplicate ordinals in `devices`, then iterates over each
+  // device config, constructs a PerDeviceState (setting executor, stream,
+  // pa_budget), calls InitializeDeviceState() for platform-specific
+  // initialization, and registers the state in allocator->per_device_.
+  //
+  // Called by platform-specific Create() factories.
+  static absl::Status PopulateDevices(DeviceAddressVmmAllocator* allocator,
+                                      absl::Span<const DeviceConfig> devices);
+
+  // Validates device capabilities and initializes timeline fields
+  // (pinned_timeline, timeline_dev_ptr, allocation_granularity) in state.
+  // state.executor, state.stream, and state.pa_budget are already set.
+  virtual absl::Status InitializeDeviceState(PerDeviceState& state) = 0;
+
+  // Creates a physical memory allocation of the given size.
+  virtual absl::StatusOr<std::unique_ptr<MemoryAllocation>> CreateAllocation(
+      StreamExecutor* executor, uint64_t size) = 0;
+
+  // Creates a virtual address reservation of the given size.
+  virtual absl::StatusOr<std::unique_ptr<MemoryReservation>> CreateReservation(
+      StreamExecutor* executor, uint64_t size) = 0;
+
+  // Enqueues a GPU timeline write at the given seqno on the device's stream.
+  virtual absl::Status EnqueueDeferredDeallocation(PerDeviceState& state,
+                                                   uint64_t seqno) = 0;
+
+ private:
   // Returns pointer into per_device_ map; null if device_ordinal not
   // registered. No lock needed — per_device_ is read-only after construction.
   PerDeviceState* GetPerDeviceState(int device_ordinal) const;
@@ -207,7 +219,8 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
   // cumulative size meets or exceeds the requested size, then spin-waits on
   // the GPU timeline counter and performs the deallocations.
   // Temporarily releases and reacquires state.mu around the blocking wait.
-  void WaitPendingDeallocationsToComplete(PerDeviceState& state, uint64_t size);
+  void WaitPendingDeallocationsToComplete(PerDeviceState& state, uint64_t size)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(state.mu);
 
   // Actually perform the synchronous deallocation.
   void DoDeallocate(PerDeviceState& state, DeviceAddressBase mem)
@@ -232,4 +245,4 @@ class DeviceAddressVmmAllocator : public DeviceAddressAllocator {
 
 }  // namespace stream_executor
 
-#endif  // XLA_STREAM_EXECUTOR_STREAM_EXECUTOR_VMM_ALLOCATOR_H_
+#endif  // XLA_STREAM_EXECUTOR_VMM_DEVICE_ADDRESS_ALLOCATOR_H_

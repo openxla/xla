@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/stream_executor/stream_executor_vmm_allocator.h"
+#include "xla/stream_executor/vmm_device_address_allocator.h"
 
 #include <cstdint>
 #include <memory>
@@ -29,11 +29,6 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "xla/stream_executor/activate_context.h"
-#include "xla/stream_executor/cuda/cuda_memory_reservation.h"
-#include "xla/stream_executor/cuda/cuda_raw_memory_allocation.h"
-#include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -41,8 +36,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace stream_executor {
 
@@ -65,9 +58,9 @@ static uint64_t LoadTimeline(const volatile uint64_t* pinned_timeline) {
 DeviceAddressVmmAllocator::DeviceAddressVmmAllocator(const Platform* platform)
     : DeviceAddressAllocator(platform) {}
 
-absl::StatusOr<std::unique_ptr<DeviceAddressVmmAllocator>>
-DeviceAddressVmmAllocator::Create(const Platform* platform,
-                                  absl::Span<const DeviceConfig> devices) {
+absl::Status DeviceAddressVmmAllocator::PopulateDevices(
+    DeviceAddressVmmAllocator* allocator,
+    absl::Span<const DeviceConfig> devices) {
   absl::flat_hash_set<int> seen_ordinals;
   for (const DeviceConfig& cfg : devices) {
     DCHECK_NE(cfg.executor, nullptr);
@@ -77,104 +70,38 @@ DeviceAddressVmmAllocator::Create(const Platform* platform,
         << "Duplicate device ordinal: " << ordinal;
   }
 
-  auto allocator = absl::WrapUnique(new DeviceAddressVmmAllocator(platform));
-
   for (const DeviceConfig& cfg : devices) {
     int ordinal = cfg.executor->device_ordinal();
-
-    // Verify that the device supports 64-bit stream memory operations
-    // (cuStreamWriteValue64), which requires compute capability >= 7.0.
-    CUdevice cu_device;
-    TF_RETURN_IF_ERROR(
-        cuda::ToStatus(cuDeviceGet(&cu_device, ordinal), "cuDeviceGet"));
-    int supported = 0;
-    TF_RETURN_IF_ERROR(cuda::ToStatus(
-        cuDeviceGetAttribute(&supported,
-                             CU_DEVICE_ATTRIBUTE_CAN_USE_64_BIT_STREAM_MEM_OPS,
-                             cu_device),
-        "cuDeviceGetAttribute"));
-    if (!supported) {
-      return absl::UnimplementedError(absl::StrFormat(
-          "Device %d does not support 64-bit stream memory operations "
-          "(cuStreamWriteValue64 requires compute capability >= 7.0). "
-          "Query CU_DEVICE_ATTRIBUTE_CAN_USE_64_BIT_STREAM_MEM_OPS returned "
-          "false.",
-          ordinal));
-    }
-
-    // Allocate one uint64_t of pinned host memory as the per-device timeline
-    // counter, then obtain the device-side pointer used by
-    // cuStreamWriteValue64. CU_MEMHOSTALLOC_PORTABLE makes it accessible from
-    // all CUDA contexts (important for multi-device scenarios).
-    void* host_ptr = nullptr;
-    CUdeviceptr dev_ptr = 0;
-    {
-      std::unique_ptr<ActivateContext> activation = cfg.executor->Activate();
-      TF_RETURN_IF_ERROR(cuda::ToStatus(
-          cuMemHostAlloc(&host_ptr, sizeof(uint64_t), CU_MEMHOSTALLOC_PORTABLE),
-          "cuMemHostAlloc for timeline counter"));
-      *static_cast<volatile uint64_t*>(host_ptr) = 0;
-      if (auto status =
-              cuda::ToStatus(cuMemHostGetDevicePointer(&dev_ptr, host_ptr,
-                                                       /*flags=*/0),
-                             "cuMemHostGetDevicePointer");
-          !status.ok()) {
-        cuMemFreeHost(host_ptr);
-        return status;
-      }
-    }
-
-    CUmemAllocationProp alloc_props = {};
-    alloc_props.type = CU_MEM_ALLOCATION_TYPE_PINNED;
-    alloc_props.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
-    alloc_props.location.id = cu_device;
-    alloc_props.requestedHandleTypes =
-        static_cast<CUmemAllocationHandleType>(CU_MEM_HANDLE_TYPE_NONE);
-    size_t granularity = 0;
-    if (auto s = cuda::ToStatus(
-            cuMemGetAllocationGranularity(&granularity, &alloc_props,
-                                          CU_MEM_ALLOC_GRANULARITY_RECOMMENDED),
-            "cuMemGetAllocationGranularity");
-        !s.ok()) {
-      LOG(ERROR) << "Failed to get allocation granularity for device "
-                 << ordinal << ": " << s;
-    }
 
     auto state = std::make_unique<PerDeviceState>();
     state->executor = cfg.executor;
     state->stream = cfg.stream;
     state->pa_budget = cfg.pa_budget;
-    state->allocation_granularity = static_cast<uint64_t>(granularity);
-    state->pinned_timeline = static_cast<volatile uint64_t*>(host_ptr);
-    state->timeline_dev_ptr = static_cast<uint64_t>(dev_ptr);
+
+    TF_RETURN_IF_ERROR(allocator->InitializeDeviceState(*state));
 
     VLOG(3) << "DeviceAddressVmmAllocator: registering device " << ordinal
             << " with pa_budget " << cfg.pa_budget;
     allocator->per_device_.emplace(ordinal, std::move(state));
   }
 
-  return allocator;
+  return absl::OkStatus();
 }
 
-absl::StatusOr<std::unique_ptr<DeviceAddressVmmAllocator>>
-DeviceAddressVmmAllocator::Create(StreamExecutor* executor, Stream* stream,
-                                  uint64_t pa_budget) {
-  return Create(executor->GetPlatform(),
-                {{DeviceConfig{executor, stream, pa_budget}}});
-}
-
-// ABSL_NO_THREAD_SAFETY_ANALYSIS because clang's thread-safety analysis cannot
-// reason through the spin-wait path where we read pending_deallocations without
-// the lock. In the destructor no concurrent callers exist.
-DeviceAddressVmmAllocator::~DeviceAddressVmmAllocator()
-    ABSL_NO_THREAD_SAFETY_ANALYSIS {
+DeviceAddressVmmAllocator::~DeviceAddressVmmAllocator() {
   for (auto& [ordinal, state] : per_device_) {
+    // Briefly acquire the lock to read the last pending seqno.
+    uint64_t last_seqno = 0;
+    {
+      absl::MutexLock lock(&state->mu);
+      if (!state->pending_deallocations.empty()) {
+        last_seqno = state->pending_deallocations.back().seqno;
+      }
+    }
+
     // Spin-wait for any pending GPU work to complete before freeing physical
-    // memory. In the destructor there are no concurrent callers, so reading
-    // pending_deallocations without the lock is safe.
-    if (state->pinned_timeline != nullptr &&
-        !state->pending_deallocations.empty()) {
-      uint64_t last_seqno = state->pending_deallocations.back().seqno;
+    // memory. pinned_timeline is not ABSL_GUARDED_BY and last_seqno is a local.
+    if (state->pinned_timeline != nullptr && last_seqno > 0) {
       while (LoadTimeline(state->pinned_timeline) < last_seqno) {
         absl::SleepFor(absl::Microseconds(50));
       }
@@ -188,16 +115,9 @@ DeviceAddressVmmAllocator::~DeviceAddressVmmAllocator()
       state->pending_deallocations.clear();
     }
 
-    // Free the pinned timeline allocation. cuMemFreeHost is safe to call
-    // without context activation for CU_MEMHOSTALLOC_PORTABLE memory.
-    if (state->pinned_timeline != nullptr) {
-      auto status = cuda::ToStatus(
-          cuMemFreeHost(const_cast<uint64_t*>(state->pinned_timeline)),
-          "cuMemFreeHost for timeline counter");
-      if (!status.ok()) {
-        LOG(WARNING) << "Failed to free pinned timeline memory for device "
-                     << ordinal << ": " << status;
-      }
+    // Free platform-specific per-device resources (e.g. pinned timeline).
+    if (state->destroy_fn) {
+      state->destroy_fn();
     }
   }
 }
@@ -224,12 +144,8 @@ void DeviceAddressVmmAllocator::ProcessCompletedPendingDeallocations(
   }
 }
 
-// ABSL_NO_THREAD_SAFETY_ANALYSIS because clang's thread-safety analysis cannot
-// reason through manual Unlock()/Lock() pairs. The declaration in the header
-// retains no ABSL_EXCLUSIVE_LOCKS_REQUIRED annotation to reflect that this
-// method manages locking internally.
 void DeviceAddressVmmAllocator::WaitPendingDeallocationsToComplete(
-    PerDeviceState& state, uint64_t size) ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    PerDeviceState& state, uint64_t size) {
   if (state.pending_deallocations.empty()) {
     return;
   }
@@ -263,22 +179,16 @@ void DeviceAddressVmmAllocator::WaitPendingDeallocationsToComplete(
   // Release the lock before spin-waiting to avoid stalling other threads for
   // potentially milliseconds while the GPU drains its work queue.
   state.mu.Unlock();
-  {
-    tsl::profiler::ScopedAnnotation annotation([&] {
-      return absl::StrFormat(
-          "WaitPendingDeallocations:#count=%zu,target_size=%s#", count_to_wait,
-          tsl::strings::HumanReadableNumBytes(target_size));
-    });
 
-    // Poll until the GPU writes a timeline value >= target_seqno.
-    // Since timeline values are written in stream order, this guarantees all
-    // earlier pending deallocations have also completed.
-    // Sleep 10us per iteration to release the CPU core while waiting rather
-    // than hot-spinning.
-    while (LoadTimeline(state.pinned_timeline) < target_seqno) {
-      absl::SleepFor(absl::Microseconds(50));
-    }
+  // Poll until the GPU writes a timeline value >= target_seqno.
+  // Since timeline values are written in stream order, this guarantees all
+  // earlier pending deallocations have also completed.
+  // Sleep 50us per iteration to release the CPU core while waiting rather
+  // than hot-spinning.
+  while (LoadTimeline(state.pinned_timeline) < target_seqno) {
+    absl::SleepFor(absl::Microseconds(50));
   }
+
   // Reacquire the lock before modifying the maps.
   state.mu.Lock();
 
@@ -316,14 +226,13 @@ absl::StatusOr<DeviceAddressBase> DeviceAddressVmmAllocator::AllocateWithBudget(
         state.pa_allocated, rounded_size, state.pa_budget));
   }
 
-  // Create physical memory allocation (cuMemCreate).
-  TF_ASSIGN_OR_RETURN(auto raw_alloc, gpu::CudaRawMemoryAllocation::Create(
-                                          state.executor, size));
+  // Create physical memory allocation (e.g. cuMemCreate).
+  TF_ASSIGN_OR_RETURN(auto raw_alloc, CreateAllocation(state.executor, size));
   const uint64_t padded_size = raw_alloc->address().size();
 
-  // Reserve virtual address range (cuMemAddressReserve).
+  // Reserve virtual address range (e.g. cuMemAddressReserve).
   TF_ASSIGN_OR_RETURN(auto reservation,
-                      gpu::CudaMemoryReservation::Create(state.executor, size));
+                      CreateReservation(state.executor, size));
 
   // Map physical memory into the virtual address range and enable access.
   TF_ASSIGN_OR_RETURN(
@@ -429,9 +338,8 @@ DeviceAddressVmmAllocator::Allocate(int device_ordinal, uint64_t size,
   }
 
   VLOG(3) << absl::StreamFormat(
-      "Allocated virtual address %s (%uB) on device ordinal %d: %p",
-      tsl::strings::HumanReadableNumBytes(size), size, device_ordinal,
-      result->opaque());
+      "Allocated virtual address %p (%uB) on device ordinal %d",
+      result->opaque(), size, device_ordinal);
 
   return ScopedDeviceAddress<uint8_t>(*result, device_ordinal, this);
 }
@@ -454,19 +362,11 @@ absl::Status DeviceAddressVmmAllocator::Deallocate(int device_ordinal,
       "on device ordinal %d",
       mem.opaque(), mem.size(), device_ordinal);
 
-  // Get the underlying CUDA stream handle.
-  CUstream cu_stream =
-      static_cast<CUstream>(state->stream->platform_specific_handle().stream);
-
   // Assign the next sequence number and enqueue a GPU write to the pinned
   // timeline when the stream reaches this point. The CPU polls the timeline
   // value to know when it is safe to free the memory.
   uint64_t seqno = state->next_seqno++;
-  TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuStreamWriteValue64(cu_stream,
-                           static_cast<CUdeviceptr>(state->timeline_dev_ptr),
-                           seqno, /*flags=*/0),
-      "cuStreamWriteValue64"));
+  TF_RETURN_IF_ERROR(EnqueueDeferredDeallocation(*state, seqno));
 
   state->pending_deallocations.push_back({mem, seqno});
 
