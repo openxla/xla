@@ -580,6 +580,9 @@ SpmdPartitioningVisitor::ConstructHaloExchangeSuperShard(
           }
           std::vector<int64_t> dst_idx(indices.begin(), indices.end());
           dst_idx[dim] += 1;
+          if (!handle_last_shard && dst_idx[dim] == participating_shards) {
+            return;
+          }
           dst_idx[dim] %= participating_shards;
           pairs.emplace_back(device,
                              element_sharding.tile_assignment()(dst_idx));
@@ -629,7 +632,10 @@ SpmdPartitioningVisitor::ConstructHaloExchangeSuperShard(
             return;
           }
           std::vector<int64_t> dst_idx(indices.begin(), indices.end());
-          dst_idx[dim] += participating_shards - 1;
+          dst_idx[dim] += 1;
+          if (!handle_last_shard && dst_idx[dim] == participating_shards) {
+            return;
+          }
           dst_idx[dim] %= participating_shards;
           pairs.emplace_back(device,
                              element_sharding.tile_assignment()(dst_idx));
