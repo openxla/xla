@@ -31,8 +31,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/translate/stablehlo.h"
 #include "xla/mlir/utils/error_util.h"
+#include "xla/service/spmd/shardy/sdy_round_trip/pipelines.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_export.h"
-#include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_import.h"
 
 namespace xla::spmd {
 
@@ -71,11 +71,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToShardyStablehlo(
         "Failed to verify transformed StableHLO module.");
   }
   mlir::PassManager pm(context);
-  llvm::SmallVector<bool> prop_args = {false};
-  llvm::SmallVector<bool> prop_results = {false};
-  xla::sdy::addStablehloImportPipeline(
-      pm, prop_args, prop_results,
-      /*enableStablehloCanonicalizeFromHloImport=*/false);
+  xla::sdy::addSdyRoundTripImportPipeline(pm);
   // TODO(hanruobing): Explore reinserting the original mesh and calling
   // xla::sdy::createDedupMeshesPass
   if (mlir::failed(pm.run(stablehlo_module.get()))) {
