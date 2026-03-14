@@ -1829,6 +1829,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
          rocm_cc != nullptr)) {
       pipeline.AddPass<GemvRewriter>();
       pipeline.AddPass<GemmFusion>(gpu_version);
+      pipeline.AddPass<HoistFusedBitcasts>();
       pipeline.AddPass<GemmFusionSwapOperands>();
       pipeline.AddPass<HoistFusedBitcasts>();
     } else if (cuda_cc != nullptr &&
