@@ -344,6 +344,22 @@ class FileSystem {
     return absl::OkStatus();
   }
 
+  /// \brief Overwrites the target if `overwrite` is true.
+  virtual absl::Status RenameFile(const std::string& src,
+                                  const std::string& target, bool overwrite) {
+    return RenameFile(src, target, overwrite, nullptr);
+  }
+
+  virtual absl::Status RenameFile(const std::string& src,
+                                  const std::string& target, bool overwrite,
+                                  TransactionToken* token) {
+    if (overwrite) {
+      return RenameFile(src, target, token);
+    }
+    return absl::UnimplementedError(
+        "RenameFile with overwrite=false not implemented");
+  }
+
   /// \brief Copy the src to target.
   virtual absl::Status CopyFile(const std::string& src,
                                 const std::string& target) {
