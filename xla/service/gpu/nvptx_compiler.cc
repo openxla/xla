@@ -46,9 +46,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/conv_padding_legalization.h"
 #include "xla/backends/gpu/transforms/conv_rewriter.h"
 #include "xla/backends/gpu/transforms/cublas_pad_for_gemms.h"
-#include "xla/backends/gpu/transforms/cudnn_custom_call_compiler.h"
 #include "xla/backends/gpu/transforms/cudnn_fused_conv_rewriter.h"
-#include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
 #include "xla/backends/gpu/transforms/cudnn_norm_rewriter.h"
 #include "xla/backends/gpu/transforms/cudnn_pad_for_convolutions.h"
 #include "xla/backends/gpu/transforms/cudnn_simplify_padding.h"
@@ -104,6 +102,11 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
+
+#if GOOGLE_CUDA
+#include "xla/backends/gpu/transforms/cudnn_custom_call_compiler.h"
+#include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
+#endif  // GOOGLE_CUDA
 
 namespace xla {
 namespace gpu {
@@ -325,6 +328,7 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
 absl::Status NVPTXCompiler::RunCudnnCompilerPasses(
     HloModule* module, se::dnn::DnnSupport& dnn_support,
     BinaryMap* dnn_compiled_graphs) {
+#if GOOGLE_CUDA
   if (module->config()
           .debug_options()
           .xla_gpu_experimental_disable_binary_libraries()) {
@@ -341,6 +345,9 @@ absl::Status NVPTXCompiler::RunCudnnCompilerPasses(
   CuDnnCustomCallCompiler call_compiler(dnn_support, *dnn_compiled_graphs);
   return call_compiler.Run(module, {HloInstruction::kMainExecutionThread})
       .status();
+#else
+  return absl::UnimplementedError("CuDNN passes require CUDA.");
+#endif  // GOOGLE_CUDA
 }
 
 namespace {

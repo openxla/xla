@@ -26,7 +26,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
-#include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -52,6 +51,10 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
+
+#if GOOGLE_CUDA
+#include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
+#endif  // GOOGLE_CUDA
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -255,6 +258,7 @@ absl::StatusOr<std::vector<CudnnBackendConfig>> GetAlgorithms(
   return configs;
 }
 
+#if GOOGLE_CUDA
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
 GetCudnnFusionConfigs(const HloInstruction& instr,
                       se::StreamExecutor* stream_executor) {
@@ -272,6 +276,7 @@ GetCudnnFusionConfigs(const HloInstruction& instr,
   }
   return configs;
 }
+#endif  // GOOGLE_CUDA
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
 GetConvolutionCustomCallConfigs(const HloCustomCallInstruction* instr,
@@ -386,7 +391,11 @@ CudnnBackend::GetSupportedConfigs(const HloInstruction& instr) {
     return std::vector<std::unique_ptr<BackendConfig>>();
   }
   if (instr.opcode() == HloOpcode::kFusion) {
+#if GOOGLE_CUDA
     return GetCudnnFusionConfigs(instr, stream_executor());
+#else
+    return std::vector<std::unique_ptr<BackendConfig>>();
+#endif  // GOOGLE_CUDA
   }
   if (IsCustomCallToDnnConvolution(instr)) {
     auto custom_call_instr = Cast<HloCustomCallInstruction>(&instr);
