@@ -15,13 +15,13 @@ limitations under the License.
 
 #include "xla/backends/autotuner/autotuner.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "google/protobuf/any.pb.h"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "google/protobuf/any.pb.h"
 #include "google/protobuf/text_format.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
@@ -39,7 +40,9 @@ limitations under the License.
 #include "xla/backends/autotuner/profiler.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/literal_util.h"
@@ -49,6 +52,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/kernel_stats.h"
 #include "xla/tsl/distributed_runtime/call_options.h"
@@ -60,6 +64,7 @@ limitations under the License.
 #include "xla/tsl/testing/temporary_directory.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/tsl/util/proto/proto_utils.h"
+#include "tsl/platform/fingerprint.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/protobuf.h"
 
@@ -1057,6 +1062,105 @@ TEST_F(AutotunerTest, ShardedAutotuning) {
   EXPECT_THAT(
       autotuner->Autotune(module.get(), should_autotune, sharding_kv_store),
       IsOk());
+}
+
+std::unique_ptr<HloModule> BuildConstantHeavyModule(int constant_count,
+                                                    bool reverse_tuple_order) {
+  auto module = std::make_unique<HloModule>("test_module", HloModuleConfig{});
+  HloComputation::Builder builder("main");
+
+  Shape scalar_shape = ShapeUtil::MakeShape(F32, {});
+  HloInstruction* p0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, scalar_shape, "p0"));
+
+  std::vector<HloInstruction*> broadcasts;
+  broadcasts.reserve(constant_count);
+  for (int i = 0; i < constant_count; ++i) {
+    Shape broadcast_shape = ShapeUtil::MakeShape(F32, {i + 1});
+    broadcasts.push_back(builder.AddInstruction(
+        HloInstruction::CreateBroadcast(broadcast_shape, p0, {})));
+  }
+
+  if (reverse_tuple_order) {
+    std::reverse(broadcasts.begin(), broadcasts.end());
+  }
+  builder.AddInstruction(HloInstruction::CreateTuple(broadcasts));
+  module->AddEntryComputation(builder.Build());
+  return module;
+}
+
+TEST_F(AutotunerTest, ShardedAutotuningAppliesConfigsInDeterministicOrder) {
+  constexpr int constant_count = 256;
+
+  auto run_sharded_autotune =
+      [&](HloModule* module) -> absl::StatusOr<std::vector<std::string>> {
+    std::vector<std::string> apply_order;
+    auto backend = std::make_unique<MockCodegenBackend>();
+    EXPECT_CALL(*backend, name()).WillRepeatedly(Return("mock_backend"));
+    EXPECT_CALL(*backend, backend())
+        .WillRepeatedly(Return(autotuner::Backend::UNSPECIFIED_BACKEND));
+    EXPECT_CALL(*backend, GetSupportedConfigs(_)).Times(0);
+    EXPECT_CALL(*backend, ApplyConfig(_, _))
+        .Times(constant_count)
+        .WillRepeatedly([&](HloInstruction& instr, const BackendConfig&) {
+          apply_order.push_back(std::string(instr.name()));
+          return absl::OkStatus();
+        });
+
+    auto cache = std::make_unique<MockAutotunerCache>();
+    AutotunerCacheInterface::Config cache_config =
+        GetCacheConfig("best_config");
+    EXPECT_CALL(*cache, Lookup(_))
+        .Times(2 * constant_count)
+        .WillRepeatedly(Return(cache_config));
+    EXPECT_CALL(*cache, Insert(_, _)).Times(0);
+    EXPECT_CALL(*cache, Serialize(_)).WillOnce(Return("serialized_autotune"));
+
+    auto kv_store = std::make_shared<MockKeyValueStore>();
+    EXPECT_CALL(*kv_store, TryGet(_))
+        .WillOnce(Return(absl::NotFoundError("not found")));
+    EXPECT_CALL(*kv_store, Set(_, "serialized_autotune"))
+        .WillOnce(Return(absl::OkStatus()));
+    EXPECT_CALL(*kv_store, Get(_, _)).Times(0);
+
+    std::vector<std::unique_ptr<CodegenBackend>> backends;
+    backends.push_back(std::move(backend));
+    absl::StatusOr<std::unique_ptr<Autotuner>> autotuner_or = Autotuner::Create(
+        std::move(backends), /*profiler=*/nullptr, config_, std::move(cache));
+    if (!autotuner_or.ok()) {
+      return autotuner_or.status();
+    }
+    std::unique_ptr<Autotuner> autotuner = std::move(*autotuner_or);
+
+    MultiProcessKeyValueStore sharding_kv_store;
+    sharding_kv_store.key_value_store = kv_store;
+    sharding_kv_store.process_count = 1;
+    sharding_kv_store.process_index = 0;
+
+    absl::Status status = autotuner->Autotune(
+        module,
+        /*should_autotune=*/
+        [](const HloInstruction& instruction) {
+          return instruction.opcode() == HloOpcode::kBroadcast;
+        },
+        sharding_kv_store);
+    if (!status.ok()) {
+      return status;
+    }
+    return apply_order;
+  };
+
+  std::unique_ptr<HloModule> module_a =
+      BuildConstantHeavyModule(constant_count, /*reverse_tuple_order=*/false);
+  std::unique_ptr<HloModule> module_b =
+      BuildConstantHeavyModule(constant_count, /*reverse_tuple_order=*/true);
+
+  ASSERT_OK_AND_ASSIGN(std::vector<std::string> order_a,
+                       run_sharded_autotune(module_a.get()));
+  ASSERT_OK_AND_ASSIGN(std::vector<std::string> order_b,
+                       run_sharded_autotune(module_b.get()));
+  ASSERT_EQ(order_a.size(), constant_count);
+  EXPECT_EQ(order_a, order_b);
 }
 
 TEST_F(AutotunerTest, DumpHlos) {
