@@ -126,8 +126,9 @@ std::vector<CommandOperation> CreateCommandOperationsWithConcurrentMode(
   // dependency inference.
   for (size_t i = 0; i < commands.size(); ++i) {
     operations.emplace_back(commands[i].get(),
-                            extra_resources.empty() ? absl::Span<const ResourceUse>{}
-                                                    : extra_resources[i]);
+                            extra_resources.empty()
+                                ? absl::Span<const ResourceUse>{}
+                                : extra_resources[i]);
   }
 
   VlogOperations(operations);
@@ -262,10 +263,9 @@ absl::StatusOr<CommandExecutor> CommandExecutor::Create(
   // sequence of commands and derive the structure of command dependencies
   // from the buffer use conflicts.
   if (synchronization_mode != SynchronizationMode::kSerialize) {
-    TF_ASSIGN_OR_RETURN(
-        auto operations,
-        CreateCommandOperations(commands, synchronization_mode,
-                                extra_resources));
+    TF_ASSIGN_OR_RETURN(auto operations,
+                        CreateCommandOperations(commands, synchronization_mode,
+                                                extra_resources));
     TF_ASSIGN_OR_RETURN(execution_graph,
                         ExecutionGraph::Create<CommandOperation>(operations));
     VLOG(3) << "Execution graph: " << execution_graph->ToString();
@@ -720,10 +720,9 @@ absl::StatusOr<std::string> CommandExecutor::RenderExecutionGraph() {
         "concurrent/LHS synchronization mode");
   }
 
-  TF_ASSIGN_OR_RETURN(
-      auto operations,
-      CreateCommandOperations(commands_, synchronization_mode_,
-                              /*extra_resources=*/{}));
+  TF_ASSIGN_OR_RETURN(auto operations,
+                      CreateCommandOperations(commands_, synchronization_mode_,
+                                              /*extra_resources=*/{}));
   absl::InlinedVector<const ExecutionGraph::Operation*, 32> operations_ptrs;
   operations_ptrs.reserve(operations.size());
   for (const auto& operation : operations) {
