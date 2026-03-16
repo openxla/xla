@@ -917,7 +917,6 @@ cc_library(
         ":cuda_raw_memory_allocation",
         ":cuda_status",
         "//xla/stream_executor:activate_context",
-        "//xla/stream_executor:device_address",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:memory_reservation",
         "//xla/stream_executor:platform",
