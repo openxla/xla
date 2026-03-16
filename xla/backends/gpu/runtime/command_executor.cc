@@ -60,7 +60,7 @@ class CommandOperation : public ExecutionGraph::Operation {
  public:
   explicit CommandOperation(const Command* cmd,
                             absl::Span<const ResourceUse> extra_resources = {})
-      : name_(absl::StrFormat("cmd %s: %s", cmd->ToString(),
+      : name_(absl::StrFormat("cmd %s: %s", cmd->ToString(0),
                               cmd->profile_annotation())),
         cmd_(cmd),
         buffers_(CollectBufferUses(cmd)),
@@ -87,7 +87,7 @@ class CommandOperation : public ExecutionGraph::Operation {
       resource_reprs.push_back(
           absl::StrFormat("%s@%p(%s)", kind, use.resource().get(), access));
     }
-    return absl::StrFormat("%s resources=[%s]", cmd_->ToString(),
+    return absl::StrFormat("%s resources=[%s]", cmd_->ToString(0),
                            absl::StrJoin(resource_reprs, ", "));
   }
 
@@ -614,7 +614,7 @@ absl::Status CommandExecutor::RecordUpdate(
 
     // Skip updating command if it doesn't use any of the updated allocations.
     if (skip_command_update(id)) {
-      VLOG(3) << "Skip updating command " << command->ToString();
+      VLOG(3) << "Skip updating command " << command->ToString(0);
       ++num_skipped_command_updates;
       continue;
     }
