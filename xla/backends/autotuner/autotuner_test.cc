@@ -34,10 +34,11 @@ limitations under the License.
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/autotuner_cache_interface.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/profiler.h"
-#include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -221,8 +222,8 @@ class AutotunerTest : public HloHardwareIndependentTestBase {
 
 std::unique_ptr<Executable> RegisterSpillingExecutable(int spilled = 8) {
   gpu::GpuExecutable::Params params;
-  params.executable = std::make_unique<gpu::SequentialThunk>(
-      gpu::Thunk::ThunkInfo{}, gpu::ThunkSequence{});
+  params.executable =
+      std::make_unique<gpu::ThunkExecutor>(gpu::ThunkSequence{});
   KernelStats kernel_stats;
   kernel_stats.store_bytes_spilled = spilled;
   kernel_stats.load_bytes_spilled = spilled;

@@ -26,6 +26,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
@@ -48,6 +49,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_tpu_topology_extension.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -221,7 +223,7 @@ class PjRtCApiCompiler : public PjRtCompiler {
       const PjRtTopologyDescription& topology, PjRtClient* client) override;
 
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
-      CompileOptions options, mlir::ModuleOp module,
+      CompileOptions options, MaybeOwningMlirModule module,
       const PjRtTopologyDescription& topology, PjRtClient* client) override;
 
   absl::StatusOr<std::unique_ptr<PjRtTopologyDescription>>
@@ -398,8 +400,15 @@ class PjRtCApiClient : public PjRtClient {
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
       const XlaComputation& computation, CompileOptions options) override;
 
+  absl::StatusOr<std::unique_ptr<PjRtExecutable>> Compile(
+      MaybeOwningMlirModule module, CompileOptions options) override;
+
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileAndLoad(
-      mlir::ModuleOp module, CompileOptions options) override;
+      MaybeOwningMlirModule module, CompileOptions options) override;
+
+  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Load(
+      std::shared_ptr<PjRtExecutable> executable,
+      const LoadOptions& load_options) override;
 
   // `PjRtCApiClient::LoadSerializedExecutable()` ignores `LoadOptions` arg
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
@@ -512,6 +521,13 @@ class PjRtCApiClient : public PjRtClient {
   absl::Status InvokeCallbacks(PJRT_Callback_Type callback_type,
                                void* callback_args);
 
+  using ProgramVariant =
+      std::variant<xla::MaybeOwningMlirModule, xla::XlaComputation>;
+
+  // Serialize PJRT program, returns serialized code and format.
+  absl::StatusOr<std::pair<std::string, std::string>> SerializeProgram(
+      ProgramVariant program, const CompileOptions& options);
+
  private:
   void InitDevicesAndMemorySpaces();
   void InitAttributes();
@@ -552,8 +568,9 @@ class PjRtCApiClient : public PjRtClient {
   const std::string platform_name_;
   const PjRtPlatformId platform_id_;
   absl::flat_hash_map<std::string, xla::PjRtValueType> attributes_;
-  std::vector<std::unique_ptr<std::function<void(void*)>>>
-      registered_callbacks_;
+  absl::Mutex registered_callbacks_mu_;
+  std::vector<std::unique_ptr<std::function<void(void*)>>> registered_callbacks_
+      ABSL_GUARDED_BY(registered_callbacks_mu_);
 };
 
 class PjRtCApiBuffer : public PjRtBuffer {
@@ -618,6 +635,10 @@ class PjRtCApiBuffer : public PjRtBuffer {
 
   void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
                           RemoteSendCallback on_done) override;
+
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> Bitcast(
+      PrimitiveType element_type, absl::Span<const int64_t> dims,
+      const Layout* device_layout) override;
 
   Future<> GetReadyFuture() override;
 
@@ -765,8 +786,7 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
 
   absl::Span<const LogicalDeviceIds> addressable_device_logical_ids()
       const override {
-    CHECK(false)
-        << "PJRT C API does not support addressable_device_logical_ids";
+    return addressable_device_logical_ids_;
   }
 
   absl::Span<PjRtDevice* const> addressable_devices() const override {
@@ -866,6 +886,7 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
   }
 
  private:
+  std::vector<LogicalDeviceIds> addressable_device_logical_ids_;
   // Groups data needed to support send/recv execution callbacks.
   struct SendRecvCallbackData {
     std::vector<std::vector<PJRT_SendCallbackInfo>> c_send_callbacks;
@@ -915,6 +936,7 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
   std::vector<PjRtDevice*> addressable_devices_;
   std::unique_ptr<const DeviceAssignment> device_assignment_;
 
+  void InitAddressableDeviceLogicalIds();
   void InitDevices();
   void InitDeviceAssignment();
 };

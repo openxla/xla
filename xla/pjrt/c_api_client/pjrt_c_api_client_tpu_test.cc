@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -26,6 +27,9 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -34,6 +38,8 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_callback_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
+#include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -374,6 +380,128 @@ TEST(PjRtCApiClientTpuTest, GetParameterAndOutputLayouts) {
        output_layouts) {
     EXPECT_EQ(output_layout->xla_layout(), expected_layout);
   }
+}
+
+TEST(PjRtCApiClientTpuTest, CompileMlirModule) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetXlaPjrtTpuClient());
+  constexpr char kProgram[] = "func.func @main() {return}";
+  auto context = std::make_unique<mlir::MLIRContext>();
+  TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                          ParseMlirModuleString(kProgram, *context));
+  CompileOptions options;
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutable> executable,
+      client->Compile(
+          xla::MaybeOwningMlirModule(std::move(context), std::move(module)),
+          options));
+  EXPECT_NE(executable.get(), nullptr);
+}
+
+TEST(PjRtCApiClientTpuTest, LoadExecutable) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetXlaPjrtTpuClient());
+  constexpr char kProgram[] = "func.func @main() {return}";
+  auto context = std::make_unique<mlir::MLIRContext>();
+  TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                          ParseMlirModuleString(kProgram, *context));
+  CompileOptions options;
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutable> executable,
+      client->Compile(
+          xla::MaybeOwningMlirModule(std::move(context), std::move(module)),
+          options));
+  ASSERT_NE(executable.get(), nullptr);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> loaded_executable,
+      client->Load(std::move(executable), LoadOptions{}));
+  ASSERT_NE(loaded_executable.get(), nullptr);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> results,
+      loaded_executable->Execute(/*argument_handles=*/{{}}, ExecuteOptions()));
+  ASSERT_EQ(results.size(), 1);
+  EXPECT_EQ(results[0].size(), 0);
+}
+
+TEST(PjRtCApiClientTpuTest, LoadSameExecutableTwice) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetXlaPjrtTpuClient());
+  constexpr char kProgram[] = "func.func @main() {return}";
+  auto context = std::make_unique<mlir::MLIRContext>();
+  TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                          ParseMlirModuleString(kProgram, *context));
+  CompileOptions options;
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::shared_ptr<PjRtExecutable> executable,
+      client->Compile(
+          xla::MaybeOwningMlirModule(std::move(context), std::move(module)),
+          options));
+  ASSERT_NE(executable.get(), nullptr);
+
+  // Load the executable twice.
+  {
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PjRtLoadedExecutable> loaded_executable,
+        client->Load(executable, LoadOptions{}));
+    ASSERT_NE(loaded_executable.get(), nullptr);
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> results,
+        loaded_executable->Execute(/*argument_handles=*/{{}},
+                                   ExecuteOptions()));
+    ASSERT_EQ(results.size(), 1);
+    EXPECT_EQ(results[0].size(), 0);
+  }
+  {
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PjRtLoadedExecutable> loaded_executable,
+        client->Load(executable, LoadOptions{}));
+    ASSERT_NE(loaded_executable.get(), nullptr);
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> results,
+        loaded_executable->Execute(/*argument_handles=*/{{}},
+                                   ExecuteOptions()));
+    ASSERT_EQ(results.size(), 1);
+    EXPECT_EQ(results[0].size(), 0);
+  }
+}
+
+TEST(PjRtCApiClientTpuTest, Bitcast) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetXlaPjrtTpuClient());
+
+  std::vector<int32_t> data{3};
+  Shape shape = ShapeUtil::MakeShape(S32, {});
+  TF_ASSERT_OK_AND_ASSIGN(
+      *shape.mutable_layout(),
+      client->GetDefaultLayout(shape.element_type(), shape.dimensions()));
+
+  Shape new_shape = ShapeUtil::MakeShape(S32, {1});
+  TF_ASSERT_OK_AND_ASSIGN(*new_shape.mutable_layout(),
+                          client->GetDefaultLayout(new_shape.element_type(),
+                                                   new_shape.dimensions()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          client->memory_spaces()[0], /*device_layout=*/nullptr));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto bitcast_buffer,
+      buffer->Bitcast(new_shape.element_type(), new_shape.dimensions(),
+                      &new_shape.layout()));
+  EXPECT_TRUE(buffer->IsDeleted());
+  ASSERT_EQ(bitcast_buffer->on_device_shape(), new_shape);
+
+  auto future = bitcast_buffer->ToLiteral();
+  TF_ASSERT_OK_AND_ASSIGN(auto shared_literal, future.Await());
+  std::vector<int32_t> expected = {3};
+  EXPECT_EQ(shared_literal->data<int32_t>(), expected);
 }
 
 }  // namespace

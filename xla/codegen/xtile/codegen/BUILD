@@ -39,7 +39,9 @@ cc_library(
         "//xla/mlir_hlo:map_mhlo_to_scalar_op",
         "//xla/mlir_hlo:transformation_helpers",
         "//xla/service/llvm_ir:llvm_util",
+        "//xla/stream_executor:device_description",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -60,8 +62,14 @@ cc_library(
 
 cc_library(
     name = "fusion_emitter",
-    srcs = ["fusion_emitter.cc"],
-    hdrs = ["fusion_emitter.h"],
+    srcs = [
+        "experimental_fusion_emitter.cc",
+        "fusion_emitter.cc",
+    ],
+    hdrs = [
+        "experimental_fusion_emitter.h",
+        "fusion_emitter.h",
+    ],
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":dot_algorithms",
@@ -81,6 +89,7 @@ cc_library(
         "//xla/codegen/tiling:tiled_hlo_instruction",
         "//xla/codegen/tiling:tiled_hlo_schedule",
         "//xla/codegen/tiling:tiling_specification",
+        "//xla/codegen/tiling/experimental:tiled_hlo",
         "//xla/codegen/xtile/ir:xtile",
         "//xla/codegen/xtile/ir/transforms:passes",
         "//xla/hlo/analysis:indexing_analysis",
@@ -92,6 +101,7 @@ cc_library(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/llvm_ir:llvm_util",
+        "//xla/stream_executor:device_description",
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
         "//xla/tsl/platform:errors",

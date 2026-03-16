@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/mesh_and_axis.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout.h"
@@ -301,7 +302,7 @@ bool EvenlyPartitions(const Shape& shape, const HloSharding& sharding) {
   if (sharding.IsManual()) {
     return true;
   }
-  if (sharding.IsTileMaximal()) {
+  if (sharding.IsReplicatedOrSingleDevice()) {
     return sharding.IsReplicated();
   }
   if (shape.IsArray()) {
@@ -359,7 +360,7 @@ Shape MakeNonPaddedShapeForGivenPartition(const Shape& shape,
   if (sharding.IsReplicated()) {
     return shape;
   }
-  if (sharding.IsTileMaximal()) {
+  if (sharding.IsReplicatedOrSingleDevice()) {
     if (partition_id == *sharding.UniqueDevice()) {
       return shape;
     }
@@ -399,7 +400,7 @@ std::vector<HloInstruction*> MakePartitionOffsets(
 
 std::vector<HloInstruction*> MakeTiledPartitionOrdinals(
     const HloSharding& sharding, HloInstruction* partition_id, SpmdBuilder* b) {
-  CHECK(!sharding.IsTileMaximal());
+  CHECK(!sharding.IsReplicatedOrSingleDevice());
   auto dimensions = sharding.dimensions();
   if (sharding.ReplicateOnLastTileDim()) {
     dimensions.remove_suffix(1);
@@ -410,7 +411,7 @@ std::vector<HloInstruction*> MakeTiledPartitionOrdinals(
 
 Shape GetPaddedShapeForUnevenPartitioning(const Shape& base_shape,
                                           const HloSharding& sharding) {
-  if (sharding.IsTileMaximal()) {
+  if (sharding.IsReplicatedOrSingleDevice()) {
     return base_shape;
   }
   if (EvenlyPartitions(base_shape, sharding)) {
@@ -905,7 +906,7 @@ std::optional<HloInstruction*> PadFromPartialReplicateShape(
 }
 
 std::optional<int64_t> UniqueTiledDim(const HloSharding& sharding) {
-  if (sharding.IsTileMaximal()) {
+  if (sharding.IsReplicatedOrSingleDevice()) {
     return std::nullopt;
   }
   int64_t dim = -1;
@@ -1917,7 +1918,7 @@ std::optional<HloInstruction*> ExchangeHaloAndGetValidData(
 
 HloInstruction* HaloExchangeToPadOnLeft(PartitionedHlo& original,
                                         absl::Span<const int64_t> dims) {
-  if (original.sharding().IsTileMaximal()) {
+  if (original.sharding().IsReplicatedOrSingleDevice()) {
     return original.hlo();
   }
   // Create a window config to halo exchange for unevenly partitioned reverse
@@ -2073,7 +2074,7 @@ std::optional<int64_t> GetKValueInTopKWhenPartitionSortDim(
   }
   const HloSharding& sharding = sort->operand(0)->sharding();
 
-  if (sharding.IsTileMaximal()) {
+  if (sharding.IsReplicatedOrSingleDevice()) {
     return std::nullopt;
   }
 
@@ -2121,7 +2122,7 @@ HloInstruction* SliceFirstK(HloInstruction* hlo, SpmdBuilder* builder,
 
 // Check if a dimension is sharded.
 int64_t ShardCountAtDim(const HloSharding& sharding, int64_t dim) {
-  if (sharding.IsTileMaximal()) {
+  if (sharding.IsReplicatedOrSingleDevice()) {
     return 1;
   }
   if (dim == -1) {
@@ -2135,7 +2136,8 @@ int64_t ShardCountAtDim(const HloSharding& sharding, int64_t dim) {
 std::optional<std::vector<std::pair<int64_t, int64_t>>>
 GetReshardAllToAllSourceTargetDims(const HloSharding& source,
                                    const HloSharding& target) {
-  if (source.IsTileMaximal() || target.IsTileMaximal() ||
+  if (source.IsReplicatedOrSingleDevice() ||
+      target.IsReplicatedOrSingleDevice() ||
       source.num_dimensions() != target.num_dimensions() ||
       source.NumTiles() != target.NumTiles()) {
     return std::nullopt;
@@ -2219,7 +2221,8 @@ GetReshardAllToAllSourceTargetDims(const HloSharding& source,
 
 bool CanReshardWithCollectivePermute(const HloSharding& source,
                                      const HloSharding& target) {
-  return !source.IsTileMaximal() && !target.IsTileMaximal() &&
+  return !source.IsReplicatedOrSingleDevice() &&
+         !target.IsReplicatedOrSingleDevice() &&
          source.dimensions() == target.dimensions() &&
          source.ReplicateOnLastTileDim() == target.ReplicateOnLastTileDim() &&
          source.tile_assignment() != target.tile_assignment();
@@ -2300,7 +2303,8 @@ std::optional<GroupedSharding> AlignGroupsWithInternal(
       }
     }
   }
-  if (matching_groups && !grouped_sharding.sharding.IsTileMaximal()) {
+  if (matching_groups &&
+      !grouped_sharding.sharding.IsReplicatedOrSingleDevice()) {
     auto tiles = [&] {
       auto array =
           grouped_sharding.sharding.tile_assignment().shared_array_clone();
@@ -2438,7 +2442,7 @@ HloInstruction* PerGroupSliceFromReplicated(
 std::optional<std::vector<int64_t>> FindMatchingPartitionedDimsForGrouping(
     const HloSharding& sharding,
     const hlo_sharding_util::DeviceGroupTileAssignment& device_groups) {
-  if (sharding.IsTileMaximal() || device_groups.num_groups() < 2) {
+  if (sharding.IsReplicatedOrSingleDevice() || device_groups.num_groups() < 2) {
     return std::nullopt;
   }
   const int64_t num_devices = sharding.num_devices();
@@ -3121,16 +3125,77 @@ GetMeshAxesPartitionGroupsAcrossTargetDims(
   axis_refs.reserve(target_dims.size());
   for (int64_t i = 0; i < target_dims.size(); ++i) {
     int64_t target_dim = target_dims[i];
-    int64_t axis_size = mesh->axis_size(target_dim);
     int64_t group_size = group_sizes[i];
-    if (axis_size == group_size) {
-      axis_refs.push_back(AxisRef(target_dim));
+    if (group_size <= 1) {
       continue;
     }
-    axis_refs.push_back(
-        AxisRef(target_dim, {axis_size / group_size, group_size}));
+
+    // If we have a NamedSharding (V3), we must explicitly look up which mesh
+    // axes the tensor dimension is sharded across.
+    if (sharding.UseNamedShardingLeaf()) {
+      CHECK_LT(target_dim, sharding.num_dimensions());
+      const NamedSharding::DimensionSharding& dim_sharding =
+          sharding.named_sharding().dim_sharding(target_dim);
+      int64_t remaining_group_size = group_size;
+
+      // We consume the axes in reverse order (minor-to-major) to satisfy the
+      // group_size. This follows the convention where the most minor mesh axes
+      // are grouped first.
+      std::vector<AxisRef> axis_refs_for_dim;
+      for (auto it = dim_sharding.axes().rbegin();
+           it != dim_sharding.axes().rend(); ++it) {
+        if (remaining_group_size <= 1) {
+          break;
+        }
+
+        const AxisRef& axis = *it;
+        int64_t axis_size = axis.size(*mesh);
+
+        // If the remaining group size covers the entire axis, take the whole
+        // axis.
+        if (remaining_group_size >= axis_size) {
+          axis_refs_for_dim.push_back(axis);
+          CHECK_EQ(remaining_group_size % axis_size, 0);
+          remaining_group_size /= axis_size;
+        } else {
+          // Otherwise, we take a sub-portion of the axis.
+          CHECK_EQ(axis_size % remaining_group_size, 0);
+          axis_refs_for_dim.push_back(
+              AxisRef(axis.mesh_axis_index(),
+                      {axis.pre_size() * (axis_size / remaining_group_size),
+                       remaining_group_size}));
+          remaining_group_size = 1;
+        }
+      }
+
+      CHECK_EQ(remaining_group_size, 1)
+          << "Could not satisfy group_size " << group_size << " for target_dim "
+          << target_dim;
+      // The axis refs for this dim were collected in minor-to-major order.
+      // Append them to axis_refs in reverse (major-to-minor) order.
+      for (auto it = axis_refs_for_dim.rbegin(); it != axis_refs_for_dim.rend();
+           ++it) {
+        axis_refs.push_back(*it);
+      }
+      continue;
+    }
+
+    // For sharding version < V3 we can use positional since mesh axes
+    // correspond to target dims.
+    int64_t axis_size = mesh->axis_size(target_dim);
+    CHECK_EQ(axis_size % group_size, 0);
+    if (axis_size == group_size) {
+      axis_refs.push_back(AxisRef(target_dim));
+    } else {
+      // Partial grouping across a single mesh axis.
+      axis_refs.push_back(
+          AxisRef(target_dim, {axis_size / group_size, group_size}));
+    }
   }
-  return MeshAxesReplicaGroupList(mesh.value(), axis_refs);
+  if (axis_refs.empty()) {
+    return std::nullopt;
+  }
+  return MeshAxesReplicaGroupList(*mesh, axis_refs);
 }
 
 std::unique_ptr<CollectiveDeviceListBase> GetPartitionGroupsAcrossTargetDims(
@@ -3195,14 +3260,25 @@ PartitionedHlo MakeACopyAndReturnItsPartitionedHlo(const PartitionedHlo& phlo,
 
 DynamicUpdateSliceAnalysis AnalyzeDynamicUpdateSlice(
     const HloInstruction* hlo) {
-  CHECK(!hlo->sharding().IsTileMaximal());
+  CHECK(!hlo->sharding().IsReplicatedOrSingleDevice());
 
   DynamicUpdateSliceAnalysis analysis;
+  bool is_enzyme_opt_enabled = hlo->parent()
+                                   ->parent()
+                                   ->config()
+                                   .debug_options()
+                                   .xla_enable_enzyme_comms_opt();
 
   bool update_on_a_single_partition = true;
   bool has_partitioned_slice_dim_with_dynamic_index = false;
   for (int64_t i = 0; i < hlo->shape().dimensions().size(); ++i) {
     if (hlo->operand(1)->shape().dimensions(i) == hlo->shape().dimensions(i)) {
+      if (is_enzyme_opt_enabled && hlo->sharding().dimension(i) != 1) {
+        update_on_a_single_partition = false;
+        if (!hlo->operand(i + 2)->IsConstant()) {
+          has_partitioned_slice_dim_with_dynamic_index = true;
+        }
+      }
       continue;
     }
     analysis.slice_dims.push_back(i);
@@ -3248,11 +3324,6 @@ DynamicUpdateSliceAnalysis AnalyzeDynamicUpdateSlice(
   }
 
   // For now, only enable Method 3 if enzyme optimization is enabled.
-  bool is_enzyme_opt_enabled = hlo->parent()
-                                   ->parent()
-                                   ->config()
-                                   .debug_options()
-                                   .xla_enable_enzyme_comms_opt();
   if (!is_enzyme_opt_enabled &&
       analysis.method == DynamicUpdateSliceMethod::
                              kAllPartitionedSliceDimsHaveConstantIndices) {

@@ -285,9 +285,6 @@ CollectivePermuteStartThunk::FromProto(
 }
 
 absl::StatusOr<ThunkProto> CollectivePermuteStartThunk::ToProto() const {
-  CHECK_EQ(config_.validation_kind, P2PConfig::ValidationKind::kValid);
-  CHECK(config_.source_target_to_bounds.empty());
-
   ThunkProto proto;
   *proto.mutable_thunk_info() = thunk_info().ToProto();
 
@@ -324,7 +321,7 @@ absl::StatusOr<ThunkProto> CollectivePermuteStartThunk::ToProto() const {
   return proto;
 }
 
-absl::StatusOr<bool> CollectivePermuteStartThunk::RunCollective(
+absl::Status CollectivePermuteStartThunk::RunCollective(
     const ExecuteParams& params, const GpuCliqueKey& clique_key,
     se::Stream& stream, Communicator& comm) {
   TF_ASSIGN_OR_RETURN(
@@ -421,7 +418,7 @@ absl::StatusOr<bool> CollectivePermuteStartThunk::RunCollective(
     }
   }
 
-  return !use_memcpy;
+  return absl::OkStatus();
 }
 
 absl::Status RunCollectivePermute(

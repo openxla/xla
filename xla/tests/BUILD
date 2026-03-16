@@ -161,10 +161,10 @@ cc_library(
 )
 
 cc_library(
-    name = "hlo_test_base",
+    name = "hlo_test_base_legacy",
     testonly = True,
-    srcs = ["hlo_test_base.cc"],
-    hdrs = ["hlo_test_base.h"],
+    srcs = ["hlo_test_base_legacy.cc"],
+    hdrs = ["hlo_test_base_legacy.h"],
     deps = [
         ":hlo_runner_agnostic_reference_mixin",
         ":hlo_runner_agnostic_test_base",
@@ -180,21 +180,37 @@ cc_library(
         "//xla/service:compiler",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_module_util",
-        "//xla/service:hlo_runner",
         "//xla/service:hlo_runner_interface",
+        "//xla/service:hlo_runner_legacy",
         "//xla/service:interpreter_plugin",  # reference backend
         "//xla/service:platform_util",
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "hlo_test_base",
+    testonly = True,
+    hdrs = ["hlo_test_base.h"],
+    deps = [
+        ":hlo_test_base_legacy",
+        "//xla:util",
+        "//xla/service:hlo_runner",
+        "//xla/service:hlo_runner_legacy",
+        "//xla/stream_executor:platform",
+        "@com_google_absl//absl/base:core_headers",
     ],
 )
 
@@ -406,12 +422,16 @@ cc_library(
     srcs = ["llvm_irgen_test_base.cc"],
     hdrs = ["llvm_irgen_test_base.h"],
     deps = [
-        ":codegen_test_base",
+        ":hlo_test_base_legacy",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
+        "//xla/service:executable",
         "//xla/service:llvm_compiler",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -434,19 +454,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:ir_headers",
-    ],
-)
-
-cc_library(
-    name = "codegen_test_base",
-    testonly = True,
-    srcs = ["codegen_test_base.cc"],
-    hdrs = ["codegen_test_base.h"],
-    deps = [
-        ":hlo_test_base",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:compiler",
-        "//xla/service:executable",
     ],
 )
 
@@ -566,7 +573,6 @@ xla_test(
 
 xla_test(
     name = "conv_depthwise_test",
-    timeout = "long",
     srcs = [
         "conv_depthwise_test.cc",
     ],
@@ -591,22 +597,21 @@ xla_test(
     name = "conv_depthwise_backprop_filter_test",
     timeout = "long",
     srcs = ["conv_depthwise_backprop_filter_test.cc"],
-    shard_count = 40,
-    tags = [
-        "nozapfhahn",
-        "pjrt_migration_candidate",
-    ],  # TODO: b/445492433 - Re-enable when it doesn't time out.
-    use_legacy_runtime = True,
+    shard_count = 50,
+    tags = ["nozapfhahn"],  # TODO: b/445492433 - Re-enable when it doesn't time out.
     deps = [
-        ":client_library_test_base",
-        ":hlo_test_base",
-        ":xla_internal_test_main",
+        ":hlo_pjrt_interpreter_reference_mixin",
+        ":hlo_pjrt_test_base",
+        "//xla:error_spec",
         "//xla:execution_options_util",
         "//xla:status_macros",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/testlib:test",
         "//xla/hlo/transforms:despecializer",
-        "//xla/hlo/transforms/simplifiers:float_normalization",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -751,7 +756,6 @@ xla_test(
 
 xla_test(
     name = "params_test",
-    timeout = "long",
     srcs = ["params_test.cc"],
     shard_count = 15,
     tags = ["optonly"],
@@ -909,11 +913,11 @@ xla_test(
 xla_test(
     name = "deallocation_test",
     srcs = ["deallocation_test.cc"],
-    tags = ["pjrt_migration_candidate"],
     use_legacy_runtime = True,
     deps = [
-        ":client_library_test_base",
+        ":local_client_test_base",
         ":xla_internal_test_main",
+        "//xla:execution_options_util",
         "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
@@ -929,26 +933,18 @@ xla_test(
 xla_test(
     name = "deconstruct_tuple_test",
     srcs = ["deconstruct_tuple_test.cc"],
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
     deps = [
-        ":client_library_test_base",
+        ":client_library_test_runner_mixin",
+        ":hlo_pjrt_interpreter_reference_mixin",
+        ":hlo_pjrt_test_base",
         ":literal_test_util",
         ":xla_internal_test_main",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:xla_data_proto_cc",
-        "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",
-        "//xla/hlo/builder:xla_computation",
-        "//xla/hlo/testlib:test",
-        "//xla/hlo/testlib:test_helpers",
-        "//xla/service",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/types:span",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -1428,7 +1424,6 @@ xla_test(
 
 xla_test(
     name = "convolution_test",
-    timeout = "long",
     srcs = ["convolution_test.cc"],
     shard_count = 50,
     tags = [
@@ -1464,18 +1459,14 @@ xla_test(
 
 xla_test(
     name = "convolution_1d_test",
-    timeout = "long",
     srcs = ["convolution_test_1d.cc"],
     # Turn on logging so that VLOG statements don't appear uncovered to zapfhahn.
-    args = ["--vmodule=convolution_emitter=7"],
-    # In the open source build, convolution_test_1d_gpu fails because it doesn't
-    # recognize --vmodule.
-    disabled_backends = [
-        "cpu",
-        "gpu",
-    ],
+    args = if_google(["--vmodule=convolution_emitter=7"]),
     shard_count = 40,
-    tags = ["optonly"],
+    tags = [
+        "cuda-only",
+        "optonly",
+    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1495,44 +1486,11 @@ xla_test(
     ],
 )
 
-xla_test(
-    name = "convolution_1d_no_vmodule_test",
-    timeout = "long",
-    srcs = ["convolution_test_1d.cc"],
-    backends = [
-        "cpu",
-        "gpu",
-    ],
-    shard_count = 50,
-    tags = [
-        "cuda-only",
-        "optonly",
-    ],
-    deps = [
-        ":client_library_test_runner_mixin",
-        ":hlo_pjrt_interpreter_reference_mixin",
-        ":hlo_pjrt_test_base",
-        ":xla_internal_test_main",  # fixdeps: keep
-        "//xla:array3d",
-        "//xla:error_spec",
-        "//xla:literal",
-        "//xla:literal_util",
-        "//xla:shape_util",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/builder:padding",
-        "//xla/hlo/builder:xla_builder",
-        "//xla/tests:xla_test_backend_predicates",
-        "//xla/tsl/platform:test",
-        "@eigen_archive//:eigen3",
-    ],
-)
-
 # Run convolution tests with auto-tuning disabled.  This just does a basic
 # sanity check that setting xla_gpu_autotune_level to 0 does not break simple
 # graphs.
 xla_test(
     name = "convolution_autotune_disabled_test",
-    timeout = "long",
     srcs = ["convolution_test.cc"],
     args = ["--xla_gpu_autotune_level=0"],
     backends = ["gpu"],
@@ -1566,7 +1524,6 @@ xla_test(
 
 xla_test(
     name = "convolution_1d_autotune_disabled_test",
-    timeout = "long",
     srcs = ["convolution_test_1d.cc"],
     args = ["--xla_gpu_autotune_level=0"],
     backends = ["gpu"],
@@ -1593,7 +1550,6 @@ xla_test(
 
 xla_test(
     name = "convolution_gpu_alternative_layout_test",
-    timeout = "long",
     srcs = ["convolution_test.cc"],
     backend_args = {"gpu": ["--xla_backend_extra_options=xla_gpu_experimental_conv_disable_layout_heuristic"]},
     backends = ["gpu"],
@@ -1626,7 +1582,6 @@ xla_test(
 
 xla_test(
     name = "convolution_1d_gpu_alternative_layout_test",
-    timeout = "long",
     srcs = ["convolution_test_1d.cc"],
     backend_args = {"gpu": ["--xla_backend_extra_options=xla_gpu_experimental_conv_disable_layout_heuristic"]},
     backends = ["gpu"],
@@ -1653,12 +1608,7 @@ xla_test(
 
 xla_test(
     name = "convolution_variants_test",
-    timeout = "long",
     srcs = ["convolution_variants_test.cc"],
-    backend_tags = {
-        # TODO(b/31436974): Fix msan failure. Failed on 2016-09-12.
-        "cpu": ["nomsan"],
-    },
     shard_count = 30,
     deps = [
         ":client_library_test_runner_mixin",
@@ -1682,7 +1632,6 @@ xla_test(
 
 xla_test(
     name = "convolution_dimension_numbers_test",
-    timeout = "long",
     srcs = ["convolution_dimension_numbers_test.cc"],
     shard_count = 4,
     deps = [
@@ -1707,7 +1656,6 @@ xla_test(
 
 xla_test(
     name = "convolution_cudnn_test",
-    timeout = "long",
     srcs = ["convolution_cudnn_test.cc"],
     backends = [
         "v100",
@@ -1716,14 +1664,16 @@ xla_test(
         "b200",
     ],
     data = ["data/cudnn_reproducer.hlo"],
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
     deps = [
-        ":hlo_test_base",
-        ":xla_internal_test_main",
+        ":hlo_pjrt_interpreter_reference_mixin",
+        "//xla:error_spec",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_module_util",
+        "//xla/service/gpu/tests:hlo_pjrt_gpu_test_base",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -2944,6 +2894,7 @@ xla_test(
         "//xla/ffi",
         "//xla/ffi:ffi_api",
         "//xla/ffi/api:c_api",
+        "//xla/runtime:device_id",
         "//xla/service:collective_ops_utils",
         "//xla/service:rendezvous",
         "//xla/service/gpu/tests:collective_ops_e2e_test_base",
@@ -3114,15 +3065,12 @@ xla_test(
     backends = [
         "gpu",
     ],
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
     deps = [
-        ":hlo_test_base",
+        ":hlo_pjrt_interpreter_reference_mixin",
         ":xla_internal_test_main",
-        "//xla:literal",
-        "//xla:shape_util",
+        "//xla:error_spec",
         "//xla/hlo/testlib:test",
-        "//xla/hlo/testlib:test_helpers",
+        "//xla/service/gpu/tests:hlo_pjrt_gpu_test_base",
     ],
 )
 
@@ -3282,7 +3230,6 @@ xla_test(
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Core",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -3295,14 +3242,15 @@ xla_test(
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
+        ":local_client_test_base",
         ":xla_internal_test_main",
         "//xla:literal",
         "//xla:packed_literal_reader",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
-        "//xla/client:local_client",
         "//xla/service",
         "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/log:check",
@@ -3401,8 +3349,6 @@ xla_test(
 
 xla_test(
     name = "local_client_execute_test",
-    # TODO(b/79375911): Test times out in LLVM at normal size.
-    size = "large",
     srcs = ["local_client_execute_test.cc"],
     shard_count = 30,
     tags = [
@@ -3482,16 +3428,18 @@ xla_cc_test(
 xla_test(
     name = "round_trip_transfer_test",
     srcs = ["round_trip_transfer_test.cc"],
-    tags = ["pjrt_migration_candidate"],
     use_legacy_runtime = True,
     deps = [
-        ":client_library_test_base",
         ":literal_test_util",
+        ":local_client_test_base",
         ":xla_internal_test_main",
+        "//xla:array2d",
         "//xla:array4d",
         "//xla:literal",
-        "//xla/client:local_client",
+        "//xla:literal_util",
+        "//xla/service",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -3630,10 +3578,14 @@ xla_test(
         ":local_client_test_base",
         ":test_utils",
         ":xla_internal_test_main",
+        "//xla:literal",
         "//xla:shape_util",
         "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_set",
     ],
@@ -3994,6 +3946,7 @@ cc_library(
             "tests:__pkg__",
             "tools:__pkg__",
         ]) + [
+            "//xla/codegen/intrinsic/accuracy:__pkg__",
             "//xla/tests/exhaustive:__pkg__",
         ],
         ["//visibility:public"],
@@ -4030,12 +3983,16 @@ xla_test(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/runtime:all_reduce",
+        "//xla/core/collectives:reduction_kind",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:collective_ops_utils",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu/tests:collective_ops_e2e_test_base",
         "//xla/stream_executor/gpu:all_reduce_kernel",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",

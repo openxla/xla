@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/executable_run_options.h"
 #include "xla/future.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
@@ -65,9 +66,21 @@ class CommonPjRtClient : public PjRtClient {
   virtual bool allows_recursion() const { return true; }
   virtual bool allows_execute_recursion() const { return allows_recursion(); }
   virtual bool allow_fallback_for_donation() const { return false; }
+  virtual bool supports_two_phase_launch() const { return true; }
 
   // Backend specific handlers for when an oom is detected during execute.
   virtual void CallOomHandlers() const {}
+
+  virtual void LaunchOnDevice(PjRtDevice* device,
+                              absl::AnyInvocable<void()> execute_fn) const {
+    async_work_runner()->Schedule(std::move(execute_fn));
+  }
+
+  virtual bool ShouldRetryOnOom(int attempts, PjRtDevice* device,
+                                const PjRtLoadedExecutable* executable,
+                                absl::Status perpare_status) {
+    return false;
+  }
 
   // Computes the memory requirements for storing shape on memory_space.
   // TODO(parkers): make pure virtual and update all clients.
@@ -306,9 +319,6 @@ class PjRtRawLoadedExecutable {
 
   virtual PjRtDevice* device() = 0;
 
-  virtual absl::Status Load(const ExecuteOptions& options,
-                            size_t host_callback_idx) = 0;
-
   struct RawExecuteResult {
     std::optional<tsl::Future<>> future;
     tsl::RCReference<PjRtDeviceEvent> primary_execute_event;
@@ -318,7 +328,8 @@ class PjRtRawLoadedExecutable {
       const ExecuteOptions& options,
       absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> inputs,
       absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> results,
-      PjRtDeviceEventSet& extra_deps, PjRtDeviceEventSet& control_deps,
+      std::unique_ptr<PjRtDeviceEventSet> extra_deps,
+      std::unique_ptr<PjRtDeviceEventSet> control_deps,
       bool is_predetermined_error, bool fill_future) && = 0;
 };
 
@@ -328,18 +339,29 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
       std::vector<Shape> parameter_device_shapes, Shape output_device_shape,
       std::vector<int> output_memory_space_kind_ids,
       std::vector<PjRtDevice*> addressable_devices,
-      std::vector<LogicalDeviceIds> addressable_device_logical_ids)
+      std::vector<LogicalDeviceIds> addressable_device_logical_ids,
+      std::shared_ptr<DeviceAssignment> device_assignment)
       : parameter_device_shapes_(std::move(parameter_device_shapes)),
         output_device_shape_(std::move(output_device_shape)),
         output_memory_space_kind_ids_(std::move(output_memory_space_kind_ids)),
         addressable_devices_(std::move(addressable_devices)),
         addressable_device_logical_ids_(
-            std::move(addressable_device_logical_ids)) {}
+            std::move(addressable_device_logical_ids)),
+        device_assignment_(std::move(device_assignment)) {}
 
   CommonPjRtClient* client() const override = 0;
 
   absl::Span<PjRtDevice* const> addressable_devices() const override {
     return addressable_devices_;
+  }
+
+  const DeviceAssignment& device_assignment() const override {
+    return *device_assignment_;
+  }
+
+  absl::Span<const LogicalDeviceIds> addressable_device_logical_ids()
+      const override {
+    return addressable_device_logical_ids_;
   }
 
   using PjRtLoadedExecutable::Execute;
@@ -379,9 +401,22 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
     const ExecuteOptions* options;
   };
 
+  struct DeviceAndAssignment {
+    PjRtDevice* device;
+    std::shared_ptr<DeviceAssignment> device_assignment;
+    std::optional<int32_t> slice_id;
+    int replica;
+    int partition;
+  };
+
+  virtual absl::StatusOr<DeviceAndAssignment> LookupDeviceAndAssignment(
+      const ExecuteOptions& options, int replica, int partition,
+      PjRtDevice* device) const;
+
   virtual absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>>
-  StartRawExecutable(const ExecuteOptions& options, xla::RunId run_id,
-                     int replica, int partition, PjRtDevice* device) const = 0;
+  LoadRawExecutable(const ExecuteOptions& options, size_t host_callback_idx,
+                    xla::RunId run_id,
+                    DeviceAndAssignment device_and_assign) const = 0;
 
   // Returns a sorted list of the parameters that must be donated as a
   // side-effect of the execution. Derived classes may use custom logic.
@@ -416,14 +451,6 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
       int replica, int partition, const ExecuteOptions& options,
       size_t host_callback_idx, PjRtDevice* device = nullptr) const;
 
-  virtual void LaunchOnDevice(PjRtDevice* device,
-                              absl::AnyInvocable<void()> execute_fn) const = 0;
-
-  virtual bool ShouldRetryOnOom(int attempts, PjRtDevice* device,
-                                absl::Status perpare_status) const {
-    return false;
-  }
-
   absl::StatusOr<Result> ExecuteLaunch(ExecuteLaunchArgs& launch_args,
                                        bool fill_future) const;
 
@@ -450,6 +477,8 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
   // partitions on a single host platform, size of
   // addressable_device_logical_ids_ is 4*2 = 8.
   std::vector<LogicalDeviceIds> addressable_device_logical_ids_;
+
+  std::shared_ptr<DeviceAssignment> device_assignment_;
 };
 
 // TODO(parkers): Merge everything here into CommonPjRtBuffer.
@@ -491,6 +520,10 @@ class CommonPjRtBufferImpl : public CommonPjRtBuffer {
 
   void CopyToRemoteDevice(Future<std::string> serialized_descriptor,
                           RemoteSendCallback on_done) override;
+
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> Bitcast(
+      xla::PrimitiveType element_type, absl::Span<const int64_t> dims,
+      const Layout* device_layout) override;
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override;

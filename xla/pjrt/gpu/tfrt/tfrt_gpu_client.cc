@@ -71,6 +71,7 @@ limitations under the License.
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/layout_mode.h"
+#include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -423,18 +424,20 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> TfrtGpuClient::CompileInternal(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> TfrtGpuClient::Compile(
-    mlir::ModuleOp module, CompileOptions options) {
-  TF_RETURN_IF_ERROR(pjrt::MaybeDumpCompileInputs(options, module, topology_));
-  return Compile(module, options, /*lookup_addressable_devices=*/false);
+    MaybeOwningMlirModule module, CompileOptions options) {
+  TF_RETURN_IF_ERROR(
+      pjrt::MaybeDumpCompileInputs(options, module.mlir_module(), topology_));
+  return Compile(std::move(module), options,
+                 /*lookup_addressable_devices=*/false);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> TfrtGpuClient::Compile(
-    mlir::ModuleOp module, CompileOptions options,
+    MaybeOwningMlirModule module, CompileOptions options,
     bool lookup_addressable_devices) {
   XlaComputation xla_computation;
   ExecutableBuildOptions& exec_build_options = options.executable_build_options;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
-      module, xla_computation,
+      module.mlir_module(), xla_computation,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
       /*return_tuple=*/false, &exec_build_options,
       mlir::mhlo::getGpuChloToHighLevelMhloOptions()));
@@ -446,13 +449,16 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> TfrtGpuClient::Compile(
   }
 
   TF_ASSIGN_OR_RETURN(std::vector<LayoutMode> arg_layout_modes,
-                      GetArgLayoutModes(module));
+                      GetArgLayoutModes(module.mlir_module()));
   TF_ASSIGN_OR_RETURN(std::vector<LayoutMode> out_layout_modes,
-                      GetOutputLayoutModes(module));
+                      GetOutputLayoutModes(module.mlir_module()));
   TF_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> arg_memory_spaces,
-                      GetArgMemoryKinds(module));
+                      GetArgMemoryKinds(module.mlir_module()));
   TF_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> out_memory_spaces,
-                      GetOutputMemoryKinds(module));
+                      GetOutputMemoryKinds(module.mlir_module()));
+
+  // MLIR module no longer required - release any memory if owned.
+  module = MaybeOwningMlirModule();
 
   // If auto-sharding modifies shapes of arguments and/or result,
   // we get a callback to restore the layouts. Let us restore the layouts
@@ -497,9 +503,10 @@ TfrtGpuClient::CompileAndLoad(const XlaComputation& computation,
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-TfrtGpuClient::CompileAndLoad(mlir::ModuleOp module, CompileOptions options) {
+TfrtGpuClient::CompileAndLoad(MaybeOwningMlirModule module,
+                              CompileOptions options) {
   TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtExecutable> executable,
-                      Compile(module, options,
+                      Compile(std::move(module), options,
                               /*lookup_addressable_devices=*/true));
   return Load(std::move(executable), LoadOptions());
 }
@@ -638,9 +645,10 @@ TfrtGpuClient::BuildPjRtExecutable(
   }
 
   return std::make_unique<StreamExecutorExecutable>(
-      std::move(compile_options), std::move(unoptimized_hlo_module_proto),
-      std::move(local_executables), xla_client_, num_replicas, num_partitions,
-      name, fingerprint, memory_spaces()[0]->kind());
+      platform_id(), std::move(compile_options),
+      std::move(unoptimized_hlo_module_proto), std::move(local_executables),
+      xla_client_, num_replicas, num_partitions, name, fingerprint,
+      memory_spaces()[0]->kind());
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>
@@ -778,10 +786,10 @@ TfrtGpuClient::LoadInternal(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> TfrtGpuClient::Load(
-    std::unique_ptr<PjRtExecutable> executable,
+    std::shared_ptr<PjRtExecutable> executable,
     const LoadOptions& load_options) {
-  auto se_executable = absl::WrapUnique(
-      tensorflow::down_cast<StreamExecutorExecutable*>(executable.release()));
+  auto se_executable =
+      std::static_pointer_cast<StreamExecutorExecutable>(executable);
   CompileOptions compile_options = se_executable->compile_options();
 
   tsl::profiler::TraceMe traceme("TfrtGpuClient::Load");

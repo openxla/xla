@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
 #include "xla/stream_executor/sycl/sycl_context.h"
+#include "xla/stream_executor/sycl/sycl_device_description.h"
 #include "xla/stream_executor/sycl/sycl_event.h"
 #include "xla/stream_executor/sycl/sycl_gpu_runtime.h"
 #include "xla/stream_executor/sycl/sycl_kernel.h"
@@ -64,6 +65,7 @@ namespace dnn = stream_executor::dnn;
 namespace sycl = ::sycl;
 namespace DeviceInfo = sycl::info::device;
 
+// TODO(intel-tf): Use common error utility code across level zero api uses.
 #define RETURN_IF_ZE_ERROR(expr, msg)                            \
   do {                                                           \
     ze_result_t result = (expr);                                 \
@@ -344,6 +346,7 @@ absl::StatusOr<void*> HostAllocate(SyclContext* context, int device_ordinal,
                                    uint64_t bytes) {
   TF_ASSIGN_OR_RETURN(void* host_mem, SyclMallocHost(device_ordinal, bytes));
   if (host_mem == nullptr) {
+    // Allocation failed, possibly due to out-of-memory.
     return absl::InternalError(
         absl::StrFormat("HostAllocate: failed to allocate %u bytes of host "
                         "memory for device ordinal %d.",
@@ -742,11 +745,7 @@ absl::Status SyclExecutor::SynchronousMemcpy(void* host_dst,
 
 absl::StatusOr<std::unique_ptr<DeviceDescription>>
 SyclExecutor::CreateDeviceDescription(int device_ordinal) {
-  // TODO(intel-tf): Properly populate SYCL device description.
-  // Returns a default-constructed DeviceDescription to allow StreamExecutor
-  // initialization for tests and code paths that do not require device info.
-  DeviceDescription desc;
-  return std::make_unique<DeviceDescription>(desc);
+  return CreateOneApiDeviceDescription(device_ordinal);
 }
 
 absl::StatusOr<std::unique_ptr<Stream>> SyclExecutor::CreateStream(

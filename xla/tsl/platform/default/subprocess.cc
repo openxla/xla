@@ -650,7 +650,6 @@ SubProcess::WaitStatus SubProcess::WaitOrCheckRunningInternal(int flags,
     absl::MutexLock lock(&proc_mu_);
     if (running_ && pid_ == pid) {
       running_ = false;
-      pid_ = -1;
       cb_to_run = exit_cb_;
       if (cb_to_run != nullptr) {
         exit_cb_tid_ = Env::Default()->GetCurrentThreadId();
@@ -672,6 +671,11 @@ SubProcess::WaitStatus SubProcess::WaitOrCheckRunningInternal(int flags,
 
 bool SubProcess::WaitInternal(int* status) {
   return WaitOrCheckRunningInternal(/*flags=*/0, status) == WaitStatus::kExited;
+}
+
+bool SubProcess::running() const {
+  absl::MutexLock lock(&proc_mu_);
+  return running_;
 }
 
 bool SubProcess::CheckRunning() {

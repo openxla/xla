@@ -36,7 +36,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.pb.h"
 #include "xla/backends/gpu/runtime/gemm_thunk.h"
-#include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_proto_deserialization.h"
 #include "xla/ffi/attribute_map.h"
@@ -118,10 +117,15 @@ void CheckProtoRoundTrip(const DynamicSliceThunk& thunk,
       [](const ThunkProto& thunk_proto,
          absl::Span<const BufferAllocation> fake_allocations_span)
       -> absl::StatusOr<std::unique_ptr<Thunk>> {
-    return DeserializeThunkProto(thunk_proto, fake_allocations_span,
-                                 /*hlo_module*/ nullptr,
-                                 /*platform_name=*/"TEST_PLATFORM",
-                                 /*gpu_compute_capability=*/{});
+    ThunkSequenceProto thunk_sequence_proto;
+    *thunk_sequence_proto.add_thunks() = thunk_proto;
+    TF_ASSIGN_OR_RETURN(ThunkSequence sequence,
+                        DeserializeThunkSequenceProto(
+                            thunk_sequence_proto, fake_allocations_span,
+                            /*hlo_module=*/nullptr,
+                            /*platform_name=*/"TEST_PLATFORM",
+                            /*gpu_compute_capability=*/{}));
+    return std::move(sequence.front());
   };
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -2126,7 +2130,7 @@ TEST_F(DynamicSliceThunkTest,
   EXPECT_EQ(proto.offsets().offsets(0).hlo_module_offset_idx(), 0);
 }
 
-TEST_F(DynamicSliceThunkTest, TransformAllNestedThunks) {
+TEST_F(DynamicSliceThunkTest, TransformNested) {
   auto seq = std::make_unique<ThunkSequence>();
   seq->emplace_back(
       std::make_unique<DummyThunk>(Thunk::Kind::kGemm, Thunk::ThunkInfo()));
@@ -2139,14 +2143,13 @@ TEST_F(DynamicSliceThunkTest, TransformAllNestedThunks) {
                           /*sliced_shapes=*/{},
                           /*offset_byte_sizes=*/{});
 
-  TF_EXPECT_OK(thunk.TransformAllNestedThunks([](auto) {
+  TF_EXPECT_OK(thunk.TransformNested([](auto) {
     return std::make_unique<DummyThunk>(Thunk::Kind::kCustomCall,
                                         Thunk::ThunkInfo());
   }));
 
-  EXPECT_THAT(thunk.get_embedded_thunk(), NotNull());
-  EXPECT_THAT(thunk.get_embedded_thunk()->thunks(), SizeIs(1));
-  EXPECT_THAT(thunk.get_embedded_thunk()->thunks()[0]->kind(),
+  EXPECT_THAT(thunk.get_embedded_executor().thunks(), SizeIs(1));
+  EXPECT_THAT(thunk.get_embedded_executor().thunks()[0]->kind(),
               Thunk::Kind::kCustomCall);
 }
 

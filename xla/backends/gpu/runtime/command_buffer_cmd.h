@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/attribute_map.h"
@@ -135,8 +136,6 @@ class EmptyCmd : public Command {
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override { return {}; }
 };
 
 //===----------------------------------------------------------------------===//
@@ -171,7 +170,8 @@ class LaunchCmd : public Command {
             absl::Span<const BufferUse::MemoryAccess> args_access,
             LaunchDimensions dims, int64_t shmem_bytes,
             std::optional<stream_executor::gpu::TmaMetadata> tma_metadata =
-                std::nullopt);
+                std::nullopt,
+            bool use_pdl = false);
 
   absl::Status Initialize(const Thunk::InitializeParams& params) override;
 
@@ -181,6 +181,7 @@ class LaunchCmd : public Command {
       se::CommandBuffer* command_buffer) override;
 
   BufferUses buffer_uses() const override;
+  bool use_pdl() const { return use_pdl_; }
 
  private:
   std::string kernel_name_;
@@ -189,6 +190,8 @@ class LaunchCmd : public Command {
   LaunchDimensions dims_;
   int64_t shmem_bytes_;
   std::optional<stream_executor::gpu::TmaMetadata> tma_metadata_;
+  // Programmatic Dependent Launch.
+  bool use_pdl_;
 
   // Command sequence can be recorded concurrently for multiple command buffers
   // on different stream executors and we need to synchronize mutable state.
@@ -303,14 +306,6 @@ class ChildCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  bool requires_initialization() override;
-
-  bool force_update() override;
-
-  bool support_loop_unroll() override { return false; }
-
-  BufferUses buffer_uses() const override;
-
   absl::Status WalkNested(
       absl::FunctionRef<absl::Status(Command*)> callback) override;
 
@@ -332,12 +327,6 @@ class CaseCmd : public Command {
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
-
-  bool requires_initialization() override;
-
-  bool force_update() override;
-
-  bool support_loop_unroll() override { return false; }
 
   BufferUses buffer_uses() const override;
 
@@ -369,14 +358,6 @@ class WhileCmd : public Command {
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
-
-  bool requires_initialization() override;
-
-  bool force_update() override;
-
-  // We have not tried unrolling the loop inside another loop, so marking it
-  // unsupported for now.
-  bool support_loop_unroll() override { return false; }
 
   BufferUses buffer_uses() const override;
 
@@ -494,13 +475,14 @@ class CustomCallCmd : public Command {
   CustomCallCmd(std::string target_name, XLA_FFI_Handler* handler,
                 std::vector<NullableShapedSlice> operands,
                 std::vector<NullableShapedSlice> results,
-                ffi::CallFrame call_frame,
+                ffi::CallFrame call_frame, ThunkId thunk_id,
                 std::shared_ptr<ffi::ExecutionState> execution_state,
                 const HloComputation* called_computation)
       : Command(CommandType::kCustomCallCmd),
         target_name_(std::move(target_name)),
         handler_(handler),
         call_frame_(std::move(call_frame)),
+        thunk_id_(thunk_id),
         execution_state_(std::move(execution_state)),
         call_frames_([this] { return call_frame_->Copy(); }),
         called_computation_(called_computation),
@@ -541,6 +523,9 @@ class CustomCallCmd : public Command {
   // Reference call frame pre-initialized at construction time.
   std::optional<ffi::CallFrame> call_frame_;
 
+  // Thunk ID of the thunk this command is associated with.
+  ThunkId thunk_id_;
+
   // Execution state bound to the FFI handler. It is initialized by the
   // corresponding Thunk at construction time.
   std::shared_ptr<ffi::ExecutionState> execution_state_;
@@ -566,7 +551,7 @@ class CollectiveCmd : public AsyncStartCommand {
 
   absl::Status Prepare(const Thunk::PrepareParams& params) final;
 
-  bool requires_initialization() override { return true; }
+  bool requires_initialization() const final { return true; }
 
   bool IsNestedCommandBuffer() const final { return true; }
 
@@ -603,8 +588,6 @@ class CollectiveDoneCmd : public AsyncDoneCommand {
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
-
-  BufferUses buffer_uses() const override { return {}; }
 
   std::shared_ptr<CollectiveThunk::AsyncEvents> async_events() const {
     return async_events_;
@@ -818,13 +801,9 @@ class DynamicSliceFusionCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  BufferUses buffer_uses() const override;
+  bool force_update() const final { return true; }
 
-  bool force_update() override { return true; }
-
-  bool requires_initialization() override;
-
-  bool support_loop_unroll() override { return true; }
+  bool requires_initialization() const final;
 
   bool IsNestedCommandBuffer() const final { return true; }
 
@@ -879,9 +858,7 @@ class DynamicSliceCopyFusionCmd : public Command {
       const RecordParams& record_params, RecordAction record_action,
       se::CommandBuffer* command_buffer) override;
 
-  bool force_update() override { return offsets_.depends_on_loop; }
-
-  bool support_loop_unroll() override { return true; }
+  bool force_update() const final { return offsets_.depends_on_loop; }
 
   BufferUses buffer_uses() const override;
 

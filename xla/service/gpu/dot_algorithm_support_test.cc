@@ -15,7 +15,6 @@ limitations under the License.
 
 #include <string>
 #include <tuple>
-#include <variant>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -24,10 +23,10 @@ limitations under the License.
 #include "absl/strings/substitute.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/primitive_util.h"
+#include "xla/service/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -110,18 +109,16 @@ std::string TestParamsToString(
 // the usage of ::testing::ConvertGenerator, which broke the build in some OSS
 // configurations.
 class DotAlgorithmSupportTest
-    : public HloTestBase,
+    : public HloPjRtGpuTestBase,
       public WithParamInterface<TestParams::TupleType> {
  public:
-  se::DeviceDescription GetDeviceDescription() {
-    return backend().default_stream_executor()->GetDeviceDescription();
-  }
+  se::DeviceDescription GetDeviceDescription() { return device_description(); }
   se::GpuComputeCapability GetGpuComputeCapability() {
     return GetDeviceDescription().gpu_compute_capability();
   }
 
   DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
+    DebugOptions debug_options = HloPjRtGpuTestBase::GetDebugOptionsForTest();
     // Setting this explicitly to make sure that we also test the case when the
     // dot's dimensions are under the rewrite size threshold:
     // (2 * non_contracting_size * contracting_size < threshold).
@@ -199,7 +196,12 @@ TEST_P(DotAlgorithmSupportTest, AlgorithmIsSupportedFromCudaCapability) {
     )");
     }
   } else {
-    EXPECT_THAT(Run(hlo_text).message(), HasSubstr("Unsupported algorithm"));
+    // Note: If the algorithm is not supported either the emitter will decline
+    // to emit it, or the autotuner will not find any supported configs.
+    EXPECT_THAT(
+        Run(hlo_text).message(),
+        ::testing::AnyOf(HasSubstr("Unsupported algorithm"),
+                         HasSubstr("could not find any supported configs")));
   }
 }
 
