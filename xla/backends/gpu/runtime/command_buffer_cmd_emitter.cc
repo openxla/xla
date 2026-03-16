@@ -73,6 +73,10 @@ struct ConversionContext {
   // collective command.
   absl::flat_hash_map<CollectiveThunk::AsyncEvents*, const AsyncStartCommand*>
       async_start;
+
+  // Per-command extra resource uses derived from thunk control dependencies.
+  // Indexed by position in the flat CommandSequence being built.
+  std::vector<Command::ResourceUses> extra_resources;
 };
 }  // namespace
 
@@ -450,18 +454,22 @@ static absl::Status AppendCommands(ConversionContext& ctx,
     thunk_to_index[thunk.get()] = cmd_sequence.size() - 1;
   }
 
+  // Ensure extra_resources is sized to cover all commands added so far
+  // (including those added by nested AppendCommands calls).
+  ctx.extra_resources.resize(cmd_sequence.size());
+
   // Convert thunk control dependencies to token resource dependency, where the
   // predecessor has the token write, and control successor does the token read.
   for (const std::unique_ptr<Thunk>& thunk : sequence) {
     for (const Thunk* control_predecessor : thunk->control_predecessors()) {
-      cmd_sequence[thunk_to_index[control_predecessor]]->add_resource_use(
+      ctx.extra_resources[thunk_to_index[control_predecessor]].push_back(
           ResourceUse::Read(
               cmd_sequence[thunk_to_index[thunk.get()]]->token()));
     }
   }
 
   return absl::OkStatus();
-}  // namespace xla::gpu
+}
 
 absl::StatusOr<CommandExecutor> ConvertToCommands(
     const ThunkSequence& sequence, const ConvertToCommandsOptions& options) {
@@ -472,7 +480,8 @@ absl::StatusOr<CommandExecutor> ConvertToCommands(
   CommandSequence cmd_sequence;
   TF_RETURN_IF_ERROR(AppendCommands(ctx, cmd_sequence, sequence, options));
   return CommandExecutor::Create(std::move(cmd_sequence),
-                                 options.synchronization_mode);
+                                 options.synchronization_mode,
+                                 std::move(ctx.extra_resources));
 }
 
 }  // namespace xla::gpu
