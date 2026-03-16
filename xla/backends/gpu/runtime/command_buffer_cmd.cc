@@ -113,13 +113,13 @@ limitations under the License.
 #include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla::gpu {
 
@@ -1066,8 +1066,7 @@ Command::BufferUses GemmCmd::buffer_uses() const {
 //===----------------------------------------------------------------------===//
 
 CublasLtCmd::CublasLtCmd(const CublasLtMatmulThunk& matmul_thunk)
-    : TracedCommandBufferCmd(CommandType::kCublasLtCmd),
-      thunk_(matmul_thunk) {}
+    : TracedCommandBufferCmd(CommandType::kCublasLtCmd), thunk_(matmul_thunk) {}
 
 absl::Status CublasLtCmd::Initialize(const Thunk::InitializeParams& params) {
   return thunk_.Initialize(params);
