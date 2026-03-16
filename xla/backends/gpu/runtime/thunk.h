@@ -156,6 +156,7 @@ class Thunk {
     kCollectivePermute,
     kCollectivePermuteDone,
     kCollectivePermuteStart,
+    kCommand,
     kCommandBuffer,
     kConditional,
     kConvolution,
@@ -566,6 +567,10 @@ class Thunk {
 
  protected:
   friend class ThunkSequence;
+
+  void set_profile_annotation(absl::string_view profile_annotation) {
+    thunk_info_.profile_annotation = std::string(profile_annotation);
+  }
 
   // Walks all nested thunks and calls `callback` for them.
   using Walker = absl::FunctionRef<absl::Status(Thunk*)>;
