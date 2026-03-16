@@ -14,18 +14,13 @@ limitations under the License.
 ==============================================================================*/
 
 // Generic lowering of BlockBarrierOp for Triton XLA using only Triton ops.
+// This implementation eliminates the need for thread IDs, using only
+// program IDs (block IDs) and tensor operations.
 //
-// This implementation uses tensor-based atomic operations to implement a
-// multi-rank block barrier without platform-specific inline assembly.
-//
-// Key design principles:
-// 1. Uses program IDs (block IDs) instead of thread IDs for indexing
-// 2. Leverages Triton's SPMD model where tensor operations are automatically
-//    distributed across threads (one thread per tensor element)
-// 3. Each tensor element represents one rank in the collective operation
-//
-// This approach makes it suitable for ROCm and other targets that don't
-// support CUDA-specific PTX inline assembly.
+// Unlike the CUDA implementation which uses thread IDs to limit participation,
+// this generic version uses tensor operations where each element represents a
+// rank, and Triton's SPMD model automatically handles the distribution.
+// This approach makes it suitable for ROCm and other targets.
 
 #include <cstdint>
 #include <memory>
@@ -92,6 +87,7 @@ LogicalResult LowerBlockBarrierOp(BlockBarrierOp block_barrier,
   VLOG(3) << "LowerBlockBarrierOp: Block ID created successfully";
 
   // Generic approach: Use tensor operations for all ranks
+  // No thread ID check needed - all work is done via tensor operations
 
   // tensor<world_size x i32>
   const auto i32_tensor_type =
@@ -160,8 +156,7 @@ LogicalResult LowerBlockBarrierOp(BlockBarrierOp block_barrier,
   // Emit AtomicWriteOp with release semantics
   // This takes a scalar value and tensor of pointers
   // The atomics pass will lower this to vectorized atomic_rmw XCHG
-  // No mask needed - tensor size determines participation (all world_size
-  // threads)
+  // No mask needed - all elements are valid
   mlir::triton::xla::AtomicWriteOp::create(
       builder,
       /*resultTypes=*/mlir::TypeRange{},
@@ -200,8 +195,7 @@ LogicalResult LowerBlockBarrierOp(BlockBarrierOp block_barrier,
       all_ranks);
 
   // Wait for all ranks (tensor-based atomic spin-wait)
-  // No mask needed - tensor size determines participation (all world_size
-  // threads)
+  // No mask needed - all elements are valid
   mlir::triton::xla::AtomicSpinWaitOp::create(
       builder,
       /*resultTypes=*/mlir::TypeRange{},

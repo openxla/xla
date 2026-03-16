@@ -14,23 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 // Generic lowering of atomic operations for Triton XLA using only Triton ops.
-//
-// This implementation uses pure Triton atomic operations (tt.atomic_rmw and
-// tt.atomic_cas) instead of platform-specific inline assembly.
-//
-// Key transformations:
-// 1. AtomicWriteOp → tt.atomic_rmw with XCHG (exchange) operation
-// 2. AtomicSpinWaitOp → scf.while loop with tt.atomic_cas for polling
-//
-// Supports both scalar and tensor (vectorized) operations:
-// - Scalar: Single pointer (!tt.ptr<T>) and value
-// - Tensor: Tensor of pointers (tensor<N x !tt.ptr<T>>) with scalar or tensor
-// values
-//   In tensor mode, each element is processed by a separate thread in Triton's
-//   SPMD model, enabling vectorized atomic operations.
-//
-// This approach makes it suitable for ROCm and other targets that don't
-// support CUDA-specific PTX inline assembly.
+// This implementation uses pure Triton atomic operations (AtomicRMWOp and
+// AtomicCASOp), avoiding platform-specific inline assembly.
 
 #include <cstdint>
 #include <memory>
@@ -60,15 +45,9 @@ namespace mlir::triton::xla {
 
 namespace {
 
-// Lower AtomicWriteOp to Triton atomic_rmw XCHG operation.
-//
-// Handles both scalar and tensor pointer types:
-// - Scalar: !tt.ptr<T> → single atomic operation
-// - Tensor: tensor<N x !tt.ptr<T>> → N parallel atomic operations
-//
-// When the pointer is a tensor, creates a vectorized atomic operation where
-// each tensor element (processed by a separate thread) performs an atomic
-// exchange on its corresponding pointer.
+// Lower AtomicWriteOp to vectorized Triton atomic_rmw XCHG operation.
+// This handles both scalar and tensor pointer types, creating a vectorized
+// atomic operation when the pointer is a tensor.
 LogicalResult LowerAtomicWriteOpROCm(AtomicWriteOp atomic_write,
                                      PatternRewriter& rewriter) {
   VLOG(2) << "LowerAtomicWriteOpROCm: Starting";
@@ -134,18 +113,10 @@ LogicalResult LowerAtomicWriteOpROCm(AtomicWriteOp atomic_write,
   return success();
 }
 
-// Lower AtomicSpinWaitOp to scf.while loop with tensor atomic CAS.
-//
-// Creates a spin-wait loop that polls memory locations using atomic
-// compare-and-swap operations until a condition is met.
-//
-// Currently only supports tensor pointers (tensor<N x !tt.ptr<T>>):
-// - Each tensor element represents a memory location to poll
-// - Each element is processed by a separate thread in Triton's SPMD model
-// - Uses reduction to check if all elements are ready
+// Lower AtomicSpinWaitOp using tensor atomics.
 LogicalResult LowerAtomicSpinWaitOpROCm(AtomicSpinWaitOp atomic_wait,
                                         PatternRewriter& rewriter) {
-  VLOG(2) << "LowerAtomicSpinWaitOpROCm: Starting";
+  VLOG(2) << "LowerAtomicSpinWaitOpROCm: Starting tensor atomic implementation";
   mlir::ImplicitLocOpBuilder builder(atomic_wait.getLoc(), rewriter);
 
   mlir::Value ptr = atomic_wait.getPtr();
@@ -207,74 +178,72 @@ LogicalResult LowerAtomicSpinWaitOpROCm(AtomicSpinWaitOp atomic_wait,
           mlir::ValueRange args) {
         mlir::ImplicitLocOpBuilder loop_builder(location, op_builder);
 
-        // Atomic CAS with tensor operands
-        mlir::Value cas_results = triton::AtomicCASOp::create(
-            loop_builder,
-            /*result=*/result_tensor_type,
-            /*ptr=*/ptr,
-            /*cmp=*/expected_tensor,
-            /*val=*/expected_tensor,
-            /*sem=*/semantic,
-            /*scope=*/atomic_wait.getMemSyncScope());
-
-        // Compare results with expected value
         auto bool_tensor_type = mlir::RankedTensorType::get(
             tensor_type.getShape(), loop_builder.getI1Type());
 
-        // Use the predicate that was determined outside the lambda
-        mlir::Value comparison_result = mlir::arith::CmpIOp::create(
-            loop_builder, predicate, cas_results, expected_tensor);
+        // Create a zero tensor for atomic ADD (ADD 0 = no-op read)
+        auto zero_tensor = mlir::arith::ConstantOp::create(
+            loop_builder,
+            mlir::DenseElementsAttr::get(result_tensor_type,
+                                         loop_builder.getZeroAttr(elem_type)));
 
-        // Apply mask if provided: arith.select %mask, %comparison_result,
-        // %false
-        mlir::Value masked_comparison = comparison_result;
+        // Use AtomicRMWOp with ADD 0 as a masked atomic read
+        // This in need to properly guard memory accesses with the mask
+        mlir::Value loaded_values = triton::AtomicRMWOp::create(
+            loop_builder,
+            /*result_type=*/result_tensor_type,
+            /*atomic_rmw_op=*/triton::RMWOp::ADD,
+            /*ptr=*/ptr,
+            /*val=*/zero_tensor,  // ADD 0 = no-op, just reads the value
+            /*mask=*/mask,
+            /*sem=*/semantic,
+            /*scope=*/atomic_wait.getMemSyncScope());
+
+        // Compare loaded values with expected value
+        mlir::Value comparison_result = mlir::arith::CmpIOp::create(
+            loop_builder, predicate, loaded_values, expected_tensor);
+
+        // For masked-out elements, the atomic operation wasn't performed,
+        // and the result is undefined. We need to treat them as "ready"
+        mlir::Value final_comparison = comparison_result;
         if (mask) {
           auto false_tensor = mlir::arith::ConstantOp::create(
               loop_builder,
               mlir::DenseElementsAttr::get(bool_tensor_type, false));
-          masked_comparison = mlir::arith::SelectOp::create(
+
+          // arith.select %mask, %comparison_result, %false
+          // If mask[i] is true: use comparison_result[i]
+          // If mask[i] is false: use false (treat as ready, don't wait)
+          final_comparison = mlir::arith::SelectOp::create(
               loop_builder, mask, comparison_result, false_tensor);
         }
 
-        // Extend booleans to i32 for reduction (matching Triton Python)
-        // arith.extui %masked_comparison : tensor<Nxi1> to tensor<Nxi32>
-        auto i32_tensor_type = mlir::RankedTensorType::get(
-            tensor_type.getShape(), loop_builder.getI32Type());
-        mlir::Value comparison_i32 = mlir::arith::ExtUIOp::create(
-            loop_builder, i32_tensor_type, masked_comparison);
-
-        // Reduce with ADD (matching Triton Python, not OR)
-        // tt.reduce %comparison_i32 {axis = 0} : tensor<Nxi32> -> i32
+        // Reduce with OR to check if any element is true (not ready)
+        // tt.reduce %final_comparison {axis = 0} : tensor<Nxi1> -> i1
         auto reduce_op = triton::ReduceOp::create(
-            loop_builder, mlir::ValueRange{comparison_i32},
+            loop_builder, mlir::ValueRange{final_comparison},
             /*axis=*/0);
 
-        // Build ADD combiner region
+        // Build OR combiner region
         mlir::Region& combine_region = reduce_op.getCombineOp();
         mlir::Block* combine_block = new mlir::Block();
         combine_region.push_back(combine_block);
 
-        combine_block->addArgument(loop_builder.getI32Type(), location);
-        combine_block->addArgument(loop_builder.getI32Type(), location);
+        combine_block->addArgument(loop_builder.getI1Type(), location);
+        combine_block->addArgument(loop_builder.getI1Type(), location);
 
         {
           mlir::OpBuilder::InsertionGuard guard(loop_builder);
           loop_builder.setInsertionPointToStart(combine_block);
 
-          mlir::Value add_result = mlir::arith::AddIOp::create(
+          mlir::Value or_result = mlir::arith::OrIOp::create(
               loop_builder, combine_block->getArgument(0),
               combine_block->getArgument(1));
           triton::ReduceReturnOp::create(loop_builder,
-                                         mlir::ValueRange{add_result});
+                                         mlir::ValueRange{or_result});
         }
 
-        mlir::Value sum = *reduce_op.getResult().begin();
-
-        // Check if any element is not ready: arith.cmpi sgt, %sum, %c0
-        auto zero = mlir::arith::ConstantOp::create(
-            loop_builder, loop_builder.getI32IntegerAttr(0));
-        mlir::Value any_not_ready = mlir::arith::CmpIOp::create(
-            loop_builder, mlir::arith::CmpIPredicate::sgt, sum, zero);
+        mlir::Value any_not_ready = *reduce_op.getResult().begin();
 
         // Yield the continue condition
         mlir::scf::YieldOp::create(loop_builder,
