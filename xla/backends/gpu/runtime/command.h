@@ -176,13 +176,6 @@ class Command : public Thunk {
         "Command cannot be executed directly as a Thunk; use Record() instead");
   }
 
-  // See Thunk documentation for XLA execution stages (prepare, initialize,
-  // execute). Commands mirror thunks as they are executed as CommandBufferThunk
-  // that is plugged into the Thunk execution cycle.
-  //
-  // Prepare and Initialize are inherited from Thunk with default no-op impls.
-  // Subclasses can override them as needed.
-
   // Records commands into the command buffer. Returned commands will be passed
   // back on the next call to `Record` into the same command buffer, so that it
   // can do efficient command buffer updates.
@@ -229,9 +222,9 @@ class Command : public Thunk {
   se::StreamPriority priority() const { return priority_; }
   void set_priority(se::StreamPriority priority) { priority_ = priority; }
 
-  // Overrides Thunk::ToString(int indent) to delegate to the no-arg version.
-  std::string ToString(int indent) const override { return ToString(); }
-  virtual std::string ToString() const { return CommandTypeString(cmd_type_); }
+  std::string ToString(int indent) const override {
+    return CommandTypeString(cmd_type_);
+  }
 
   // Recursively walks all the commands nested inside *this one and calls
   // the user-provided callback on every command. Always starts traversal with
@@ -337,7 +330,7 @@ class CommandSequence : public std::vector<std::unique_ptr<Command>> {
   std::string ToString() const {
     std::string result;
     for (const auto& cmd : *this) {
-      result += cmd->ToString() + "\n";
+      result += cmd->ToString(0) + "\n";
     }
     return result;
   }

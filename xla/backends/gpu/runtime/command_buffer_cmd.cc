@@ -277,7 +277,7 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
     if (ABSL_PREDICT_TRUE(absl::c_equal(entries_[i].recorded_allocs, allocs) &&
                           entries_[i].command_buffer)) {
       VLOG(6) << "Command buffer trace cache hit for command "
-              << trace_cmd_->ToString();
+              << trace_cmd_->ToString(0);
       return shift_right(i).command_buffer.get();
     }
 
@@ -292,7 +292,7 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
         TF_RETURN_IF_ERROR(entries_[i].command_buffer->SetPriority(priority));
       }
       VLOG(6) << "Command buffer trace cache create new item for command "
-              << trace_cmd_->ToString();
+              << trace_cmd_->ToString(0);
       return shift_right(i).command_buffer.get();
     }
   }
@@ -305,7 +305,7 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
       se::TraceCommandBufferFactory::Create(executor, stream, trace));
   entries_[capacity_ - 1].recorded_allocs.assign(allocs.begin(), allocs.end());
   VLOG(6) << "Command buffer trace cache does replacement for command "
-          << trace_cmd_->ToString();
+          << trace_cmd_->ToString(0);
   return shift_right(capacity_ - 1).command_buffer.get();
 }
 
