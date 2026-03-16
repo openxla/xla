@@ -389,17 +389,13 @@ class CpuPjRtRawLoadedExecutable : public PjRtRawLoadedExecutable {
   explicit CpuPjRtRawLoadedExecutable(RunId run_id) : run_id_(run_id) {}
   PjRtDevice* device() override { return device_; }
 
-  absl::Status Load(const ExecuteOptions& options,
-                    size_t host_callback_idx) override {
-    return absl::OkStatus();
-  }
-
   PjRtRawLoadedExecutable::RawExecuteResult Execute(
       const ExecuteOptions& options,
       absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
       absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>>
           output_leaf_buffers,
-      PjRtDeviceEventSet& extra_deps, PjRtDeviceEventSet& control_deps,
+      std::unique_ptr<PjRtDeviceEventSet> extra_deps,
+      std::unique_ptr<PjRtDeviceEventSet> control_deps,
       bool is_predetermined_error, bool fill_future) &&
       override;
 
@@ -528,19 +524,6 @@ class PjRtCpuLoadedExecutable final : public CommonPjRtLoadedExecutable {
 
   PjRtCpuClient* client() const override { return client_; }
 
-  const DeviceAssignment& device_assignment() const override {
-    return *device_assignment_;
-  }
-
-  absl::Span<const LogicalDeviceIds> addressable_device_logical_ids()
-      const override {
-    return addressable_device_logical_ids_;
-  }
-
-  absl::Span<PjRtDevice* const> addressable_devices() const override {
-    return addressable_devices_;
-  }
-
   using PjRtLoadedExecutable::Execute;
   absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
       absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
@@ -579,9 +562,9 @@ class PjRtCpuLoadedExecutable final : public CommonPjRtLoadedExecutable {
       absl::Span<const CommonPjRtBuffer::ScopedHold> input_buffers,
       absl::Span<PjRtBuffer* const> argument_handles) const;
 
-  absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>> StartRawExecutable(
-      const ExecuteOptions& options, RunId run_id, int replica, int partition,
-      PjRtDevice* device) const override;
+  absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>> LoadRawExecutable(
+      const ExecuteOptions& options, size_t host_callback_idx,
+      xla::RunId run_id, DeviceAndAssignment device_and_assign) const override;
 
   absl::StatusOr<Result> ExecuteHelper(
       absl::Span<PjRtBuffer* const> argument_handles, int replica,
@@ -590,7 +573,6 @@ class PjRtCpuLoadedExecutable final : public CommonPjRtLoadedExecutable {
 
   PjRtCpuClient* client_;
   std::shared_ptr<PjRtCpuExecutable> executable_;
-  std::shared_ptr<DeviceAssignment> device_assignment_;
 };
 
 absl::StatusOr<std::unique_ptr<PjRtClient>> ABSL_DEPRECATED(

@@ -1058,6 +1058,7 @@ xla_cc_test(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:parse_text_proto",
         "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
@@ -1376,6 +1377,7 @@ cc_library(
         ":hlo_buffer",
         ":hlo_cost_analysis",
         ":hlo_value",
+        ":scheduling_annotations_util",
         "//xla:shape_util",
         "//xla:side_effect_util",
         "//xla:status_macros",
@@ -1392,6 +1394,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
@@ -1729,6 +1732,22 @@ cc_library(
 )
 
 cc_library(
+    name = "mock_compiled_module",
+    testonly = True,
+    hdrs = ["mock_compiled_module.h"],
+    deps = [
+        ":buffer_assignment",
+        ":compiled_module",
+        ":executable",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:platform_id",
+        "//xla/stream_executor/abi:executable_abi_version",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_for_library",
+    ],
+)
+
+cc_library(
     name = "compiler",
     srcs = ["compiler.cc"],
     hdrs = ["compiler.h"],
@@ -1765,6 +1784,25 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_protobuf//:protobuf",
+    ],
+)
+
+cc_library(
+    name = "mock_compiler",
+    testonly = True,
+    hdrs = ["mock_compiler.h"],
+    deps = [
+        ":compiled_module",
+        ":compiler",
+        ":executable",
+        ":hlo_cost_analysis",
+        "//xla/client:executable_build_options",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_id",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_for_library",
     ],
 )
 
@@ -3496,6 +3534,7 @@ xla_cc_test(
         ":hlo_cost_analysis",
         ":service",
         "//xla:array4d",
+        "//xla:debug_options_flags",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -5496,6 +5535,7 @@ cc_library(
         "//xla/runtime:device_id",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",

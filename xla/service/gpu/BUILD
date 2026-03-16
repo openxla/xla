@@ -51,8 +51,6 @@ filegroup(
     ]),
 )
 
-exports_files(srcs = ["gpu_compiler_test_autotune_db.textproto"])
-
 tf_proto_library(
     name = "backend_configs",
     srcs = ["backend_configs.proto"],
@@ -502,8 +500,6 @@ cc_library(
         "//xla/backends/gpu/runtime:convolution_thunk",
         "//xla/backends/gpu/runtime:copy_done_thunk",
         "//xla/backends/gpu/runtime:copy_thunk",
-        "//xla/backends/gpu/runtime:cub_scan_thunk",
-        "//xla/backends/gpu/runtime:cub_sort_thunk",
         "//xla/backends/gpu/runtime:cudnn_thunk",
         "//xla/backends/gpu/runtime:custom_call_target",
         "//xla/backends/gpu/runtime:custom_call_thunk",
@@ -1695,7 +1691,6 @@ cc_library(
         "//xla/backends/gpu/transforms:hoist_fused_bitcasts",
         "//xla/backends/gpu/transforms:layout_assignment",
         "//xla/backends/gpu/transforms:move_copy_to_users",
-        "//xla/backends/gpu/transforms:nest_gemm_fusion",
         "//xla/backends/gpu/transforms:onehot_rewriter",
         "//xla/backends/gpu/transforms:ragged_all_to_all_canonicalizer",
         "//xla/backends/gpu/transforms:ragged_all_to_all_decomposer",
@@ -1963,7 +1958,6 @@ xla_test(
         ],
     },
     backends = ["gpu"],
-    data = ["gpu_compiler_test_autotune_db.textproto"],
     shard_count = 2,
     deps = [
         ":alias_info",
@@ -2224,10 +2218,7 @@ xla_test(
     name = "auto_sharding_gpu_compiler_test",
     srcs = ["auto_sharding_gpu_compiler_test.cc"],
     backends = ["gpu"],
-    tags = [
-        "no_oss",
-        "pjrt_migration_candidate",
-    ],  # TODO(b/277355322): Make autosharding work in OSS
+    tags = ["no_oss"],  # TODO(b/277355322): Make autosharding work in OSS
     use_legacy_runtime = True,
     deps = [
         "//xla:xla_data_proto_cc",
@@ -2236,7 +2227,7 @@ xla_test(
         "//xla/hlo/testlib:pattern_matcher_gmock",
         "//xla/service:hlo_module_config",
         "//xla/service:pattern_matcher",
-        "//xla/tests:hlo_test_base",
+        "//xla/tests:hlo_test_base_legacy",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/log",
         "@com_google_googletest//:gtest",
@@ -2496,6 +2487,34 @@ xla_cc_test(
     ],
 )
 
+xla_test(
+    name = "gb200_cross_compilation_test",
+    srcs = [
+        "gb200_cross_compilation_test.cc",
+    ],
+    backends = ["gb200"],
+    deps = [
+        ":gpu_executable_proto_cc",
+        "//xla/backends/gpu/target_config",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:compiled_module",
+        "//xla/service:compiler",
+        "//xla/service:gpu_topology",
+        "//xla/service:platform_util",
+        "//xla/service/gpu/autotuning:autotuner_cache",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
 cc_library(
     name = "amdgpu_compiler",
     srcs = [
@@ -2674,7 +2693,6 @@ xla_test(
         "gpu_hlo_schedule_test.cc",
     ],
     backends = ["gpu"],
-    tags = ["pjrt_migration_candidate"],
     use_legacy_runtime = True,
     deps = [
         ":alias_info",
@@ -2689,7 +2707,7 @@ xla_test(
         "//xla/service:backend",
         "//xla/service:hlo_module_config",
         "//xla/stream_executor:device_description",
-        "//xla/tests:hlo_test_base",
+        "//xla/tests:hlo_test_base_legacy",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
@@ -2971,7 +2989,6 @@ cc_library(
         ":alias_info",
         ":backend_configs_cc",
         ":cublas_cudnn",
-        ":ir_emission_utils",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_description",
@@ -2990,12 +3007,9 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test",
-        "//xla/hlo/testlib:test_helpers",
-        "//xla/service:copy_insertion",
         "//xla/stream_executor:device_description",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/log:check",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 

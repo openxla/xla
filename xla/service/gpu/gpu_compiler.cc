@@ -118,7 +118,6 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/hoist_fused_bitcasts.h"
 #include "xla/backends/gpu/transforms/layout_assignment.h"
 #include "xla/backends/gpu/transforms/move_copy_to_users.h"
-#include "xla/backends/gpu/transforms/nest_gemm_fusion.h"
 #include "xla/backends/gpu/transforms/onehot_rewriter.h"
 #include "xla/backends/gpu/transforms/ragged_all_to_all_canonicalizer.h"
 #include "xla/backends/gpu/transforms/ragged_all_to_all_decomposer.h"
@@ -390,27 +389,10 @@ MaybeOwningThreadPool CreateMaybeOwningThreadPool(
   }
 }
 
-DeviceOrDevicelessConfig GetDeviceConfig(
-    se::StreamExecutor* stream_exec, const GpuCompiler::CompileOptions& options,
-    const GpuTargetConfig& gpu_target_config) {
-  if (stream_exec) {
-    return DeviceOrDevicelessConfig{
-        DeviceConfig{stream_exec, options.device_allocator}};
-  }
-  return DeviceOrDevicelessConfig{
-      DevicelessConfig{gpu_target_config.device_description}};
-}
-
-bool IsDevicelessCompilation(const Compiler::CompileOptions& options,
-                             const se::StreamExecutor* stream_exec) {
-  return options.early_exit_with_layouts || stream_exec == nullptr;
-}
-
 absl::StatusOr<int> GetNumVisibleDevices(
     const Compiler::CompileOptions& options,
     const se::StreamExecutor* stream_exec, se::Platform::Id platform_id) {
-  if (IsDevicelessCompilation(options, stream_exec) &&
-      options.gpu_topology.has_value()) {
+  if (options.gpu_topology.has_value()) {
     return options.gpu_topology->num_devices_per_host();
   }
 
@@ -1363,11 +1345,9 @@ absl::Status RunPostFusionVerificationPasses(
   if (hlo_module->config()
           .debug_options()
           .xla_gpu_verify_triton_fusion_numerics()) {
-    DeviceOrDevicelessConfig device_config =
-        GetDeviceConfig(stream_exec, options, gpu_target_config);
-    if (!device_config.IsDeviceless()) {
-      pipeline.AddPass<TritonFusionNumericsVerifier>(device_config, alias_info,
-                                                     mlir_context);
+    if (stream_exec != nullptr) {
+      pipeline.AddPass<TritonFusionNumericsVerifier>(
+          *stream_exec, options.device_allocator, alias_info, mlir_context);
     }
   }
 
@@ -1837,6 +1817,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
       pipeline.AddPass<GemvRewriter>();
       pipeline.AddPass<GemmFusion>(gpu_version);
       pipeline.AddPass<GemmFusionSwapOperands>();
+      pipeline.AddPass<HoistFusedBitcasts>();
     } else if (cuda_cc != nullptr &&
                cuda_cc->major == se::CudaComputeCapability::kVolta) {
       // Greedy pattern matching for custom kernel fusions.
@@ -1940,13 +1921,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // normalized again.
   add_float_normalization(pipeline);
 
-  // GemmFusionAutotuner runs hoist-fused-bitcasts and nest-gemm-fusion,
-  // matching its behavior here.
-  pipeline.AddPass<HoistFusedBitcasts>();
   pipeline.AddPass<ConvertTritonGemmConfig>(
       gpu_target_config.device_description, &mlir_context_);
-  pipeline.AddPass<NestGemmFusion>(gpu_target_config.device_description,
-                                   &mlir_context_);
 
   // Clean up new_tuple described above.
   pipeline.AddPass<TupleSimplifier>();
@@ -2045,7 +2021,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     }
     return target_config;
   }
-  return absl::InternalError(
+  return absl::InvalidArgumentError(
       "Either GPU has to be attached, or --xla_gpu_target_config_filename "
       "has to be specified to specify the target to compile for.");
 }
@@ -2060,9 +2036,6 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
 
   const DebugOptions debug_opts = module->config().debug_options();
   RETURN_IF_ERROR(LoadAutotuneResultsFromFile(debug_opts));
-  bool is_deviceless = options.early_exit_with_layouts ||
-                       options.gpu_topology.has_value() ||
-                       !debug_opts.xla_gpu_target_config_filename().empty();
 
   std::unique_ptr<CompilationStats> compilation_stats;
 
@@ -2089,9 +2062,9 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
   const se::DeviceDescription& device_description =
       gpu_target_config.device_description;
   std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(device_description);
-  RETURN_IF_ERROR(OptimizeHloModule(
-      module.get(), is_deviceless ? nullptr : stream_exec, options,
-      gpu_target_config, alias_info.get(), compilation_stats.get()));
+  RETURN_IF_ERROR(OptimizeHloModule(module.get(), stream_exec, options,
+                                    gpu_target_config, alias_info.get(),
+                                    compilation_stats.get()));
   if (options.early_exit_with_layouts) {
     return std::move(module);
   }
@@ -2108,7 +2081,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
   DumpHloModuleMetadataIfEnabled(module.get());
 
   AutotuneResults autotune_results;
-  if (!is_deviceless) {
+  if (stream_exec != nullptr) {
     RETURN_IF_ERROR(
         AutotunerCache::SerializeAutotuneResults(&autotune_results));
     RETURN_IF_ERROR(SerializeAutotuneResultsToFile(debug_opts));
@@ -3319,16 +3292,24 @@ GpuCompiler::GetAutotunerBackends(
     disabled_autotune_backends.push_back(autotuner::Backend::CUBLAS);
     disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT);
     disabled_autotune_backends.push_back(autotuner::Backend::CUDNN);
+    disabled_autotune_backends.push_back(autotuner::Backend::ROCBLAS);
+    disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT);
+    disabled_autotune_backends.push_back(autotuner::Backend::MIOPEN);
+    disabled_autotune_backends.push_back(autotuner::Backend::ROCBLAS_FISSION);
+    disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT_FISSION);
   }
 
   if (!debug_options.xla_gpu_enable_cublaslt()) {
     disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT);
     disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT_FISSION);
+    disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT);
+    disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT_FISSION);
   } else {
     // Breaks xla/backends/gpu/transforms:gemm_rewriter_test_b200, it requires
     // CUBLAS and CUBLASLT both to be available. TODO: fix tests and uncomment.
     // disabled_autotune_backends.push_back(autotuner::Backend::CUBLAS);
     disabled_autotune_backends.push_back(autotuner::Backend::CUBLAS_FISSION);
+    disabled_autotune_backends.push_back(autotuner::Backend::ROCBLAS_FISSION);
   }
 
   autotune_backends.erase(

@@ -241,7 +241,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   // By default, copy TF's Eigen style min_max behavior with nans.
   opts.set_xla_cpu_enable_fast_min_max(true);
 
-  opts.set_xla_gpu_enable_cublaslt(false);
+  opts.set_xla_gpu_enable_cublaslt(true);
 
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
@@ -453,10 +453,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_parallel_collective_overlap_limit(1);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
-  opts.set_xla_gpu_unsupported_disable_nested_gemm_fusions(true);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
   opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(false);
-  opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(false);
+  opts.set_xla_gpu_unsupported_use_all_reduce_one_shot_kernel(true);
   opts.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(true);
   opts.set_xla_gpu_experimental_enable_fusion_autotuner(true);
   opts.set_xla_gpu_experimental_max_unroll_factor(32);
@@ -500,6 +499,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_rocm_max_trace_events(4 * 1024 * 1024);
 
   opts.set_xla_gpu_print_compilation_stats(false);
+
+  opts.set_xla_gpu_enable_pdl(false);
   return opts;
 }
 
@@ -2638,12 +2639,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "pass to decompose ragged-all-to-all operation in intra-host and "
       "inter-host parts."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_unsupported_disable_nested_gemm_fusions",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_unsupported_disable_nested_gemm_fusions),
-      debug_options->xla_gpu_unsupported_disable_nested_gemm_fusions(),
-      "Enable the new pipeline that does not use nesting at HLO level"));
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_unsupported_override_fast_interconnect_slice_size",
       int64_setter_for(
           &DebugOptions::
@@ -2959,6 +2954,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_print_compilation_stats(),
       "Prints statistics about the HLO passes: how many times each pass was "
       "run, and how long it took."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_enable_pdl",
+                bool_setter_for(&DebugOptions::set_xla_gpu_enable_pdl),
+                debug_options->xla_gpu_enable_pdl(),
+                "Enable PDL (Programmatic Dependent Launch)."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

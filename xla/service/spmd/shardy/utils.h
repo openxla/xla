@@ -176,13 +176,11 @@ mlir::sdy::AxisRefAttr toSdyAxisRefAttr(const AxisRef& axisRef,
 
 // Converts a non-tuple XLA HloSharding to an SDY TensorShardingAttr.
 mlir::sdy::TensorShardingAttr convertToSdyShardingAttr(
-    const HloSharding& hloSharding, mlir::Type type,
-    mlir::MLIRContext* context);
+    const HloSharding& hloSharding, mlir::MLIRContext* context);
 
 // Converts a tuple XLA HloSharding to an SDY TensorShardingPerValueAttr.
 mlir::sdy::TensorShardingPerValueAttr convertToSdySharding(
-    const HloSharding& hloSharding, mlir::TypeRange types,
-    mlir::MLIRContext* context);
+    const HloSharding& hloSharding, mlir::MLIRContext* context);
 
 // TODO(enver): Add a parameter on how to handle 'inlineable' manual
 // computations func names, that is, either hard-fail, or accept as a manual
@@ -199,8 +197,12 @@ bool isManualComputation(mlir::func::FuncOp funcOp);
 mlir::StringAttr getOriginalFuncName(mlir::func::FuncOp funcOp);
 
 // Clones given `funcOp` recursively and returns the (top) cloned funcOp.
-mlir::func::FuncOp cloneFuncRecursively(mlir::func::FuncOp funcOp,
-                                        mlir::SymbolTable& symbolTable);
+// Overrides the func result sharding as `callOpResultShardings` in case
+// `callOpResultShardings` is non-null.
+mlir::func::FuncOp cloneFuncRecursively(
+    mlir::func::FuncOp funcOp,
+    mlir::sdy::TensorShardingPerValueAttr callOpResultShardings,
+    mlir::SymbolTable& symbolTable);
 
 }  // namespace sdy
 }  // namespace xla

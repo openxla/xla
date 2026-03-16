@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
+#include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -434,8 +435,8 @@ class PjRtStreamExecutorClient : public CommonPjRtClient {
   CreateLinkedEventPromise(PjRtMemorySpace* memory_space,
                            absl::string_view debug_info) override;
 
-  void WaitForAllocation(se::Stream* stream,
-                         const CommonPjRtRawBuffer& raw_buffer);
+  absl::Status WaitForAllocation(se::Stream* stream,
+                                 const CommonPjRtRawBuffer& raw_buffer);
 
   void LaunchOnDevice(PjRtDevice* device,
                       absl::AnyInvocable<void()> execute_fn) const override;
@@ -557,18 +558,14 @@ class PjRtStreamExecutorRawLoadedExecutable : public PjRtRawLoadedExecutable {
         on_device_executable_parameter_shapes_(
             std::move(on_device_executable_parameter_shapes)) {}
 
-  absl::Status Load(const ExecuteOptions& options,
-                    size_t host_callback_idx) override {
-    return absl::OkStatus();
-  }
-
   PjRtDevice* device() override { return device_; }
 
   PjRtRawLoadedExecutable::RawExecuteResult Execute(
       const ExecuteOptions& options,
       absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> inputs,
       absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> results,
-      PjRtDeviceEventSet& extra_deps, PjRtDeviceEventSet& control_deps,
+      std::unique_ptr<PjRtDeviceEventSet> extra_deps,
+      std::unique_ptr<PjRtDeviceEventSet> control_deps,
       bool is_predetermined_error, bool fill_future) &&
       override;
 
@@ -611,22 +608,9 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
     return executable_->executable()->module().input_output_alias_config();
   }
 
-  absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>> StartRawExecutable(
-      const ExecuteOptions& options, xla::RunId run_id, int replica,
-      int partition, PjRtDevice* device) const override;
-
-  const DeviceAssignment& device_assignment() const override {
-    return *device_assignment_;
-  }
-
-  absl::Span<const LogicalDeviceIds> addressable_device_logical_ids()
-      const override {
-    return addressable_device_logical_ids_;
-  }
-
-  absl::Span<PjRtDevice* const> addressable_devices() const override {
-    return addressable_devices_;
-  }
+  absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>> LoadRawExecutable(
+      const ExecuteOptions& options, size_t host_callback_idx,
+      xla::RunId run_id, DeviceAndAssignment device_and_assign) const override;
 
   using PjRtLoadedExecutable::Execute;
   absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>> Execute(
@@ -669,6 +653,9 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
             HloModuleProto(std::move(hlo_module)), std::move(debug_options)});
   }
 
+  absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>> GetAbiVersion()
+      const override;
+
  protected:
   bool parameter_is_tupled_arguments() const {
     return parameter_is_tupled_arguments_;
@@ -692,7 +679,6 @@ class PjRtStreamExecutorLoadedExecutable : public CommonPjRtLoadedExecutable {
   std::shared_ptr<PjRtExecutable> pjrt_executable_;
   // On device shapes of the executable parameters.
   std::shared_ptr<std::vector<Shape>> on_device_executable_parameter_shapes_;
-  std::shared_ptr<DeviceAssignment> device_assignment_;
   CompileOptions compile_options_;
 
   // True if the executables were compiled expecting arguments in a single

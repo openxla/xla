@@ -24,6 +24,8 @@ limitations under the License.
 #include "mlir/Pass/PassOptions.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/Passes.h"
 #include "shardy/dialect/sdy/transforms/import/passes.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/spmd/shardy/round_trip_common/import_func_calls.h"
@@ -55,7 +57,7 @@ void addSdyRoundTripExportPipeline(mlir::OpPassManager& pm,
   }
   pm.addPass(createSdyRoundTripDedupMeshesPass());
   pm.addPass(createSdyRoundTripExportOpsPass());
-  pm.addPass(createSdyRoundTripShardMapExportPass());
+  pm.addPass(createSdyRoundTripShardMapExportPass(enableHloShardingV3));
   // Preserve the SDY shardings for `createExportStablehloShardingsPass` so that
   // we have both `mhlo.sharding`s and hidden `sdy.sharding`s on the module. We
   // want to have `mhlo.sharding`s for Pathways to read from.
@@ -67,19 +69,30 @@ void addSdyRoundTripExportPipeline(mlir::OpPassManager& pm,
 void addSdyRoundTripImportPipeline(mlir::OpPassManager& pm,
                                    bool enableConstantImport,
                                    bool liftAndDedupMeshes,
-                                   bool enableHloShardingV3) {
+                                   bool enableHloShardingV3,
+                                   bool enableNativeNonFlatSupport) {
   addCommonPreImportPasses(pm, enableConstantImport);
   pm.addPass(createSdyRoundTripImportShardyAttrsPass(enableHloShardingV3));
   pm.addPass(createSdyRoundTripFlattenCallGraphPass());
   pm.addPass(createSdyRoundTripShardMapImportPass());
   pm.addPass(createImportSdyCustomCallsPass());
   pm.addNestedPass<mlir::func::FuncOp>(createOpenWhileFreeVarsShardingPass());
-  if (liftAndDedupMeshes) {
-    // Lift and dedup meshes required here because of sdy shardings added
+  if (enableHloShardingV3 || liftAndDedupMeshes) {
+    // Lift and dedup inlined meshes in case of HloShardingV3 as meshes are:
+    // * Inlined in HloShardingV3 and the converted sdy shardings.
+    // * Inlined during sdy shard map export for storing shardy shardings.
+    //
+    // liftAndDedupMeshes is required here because of sdy shardings added
     // directly to hlo in tf2xla.
     pm.addPass(mlir::sdy::createLiftInlinedMeshesPass());
     pm.addPass(createSdyRoundTripDedupMeshesPass());
   }
+  pm.addPass(createCanonicalizerPass(
+      mlir::GreedyRewriteConfig()
+          .setUseTopDownTraversal(true)
+          .setRegionSimplificationLevel(mlir::GreedySimplifyRegionLevel::Normal)
+          .enableFolding(false)
+          .enableConstantCSE(false)));
   pm.addPass(createImportFuncCallsPass());
 }
 

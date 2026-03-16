@@ -133,12 +133,6 @@ class ThunkEmitter {
   absl::StatusOr<ThunkSequence> EmitCuDnnThunk(
       const HloCustomCallInstruction* hlo);
 
-  absl::StatusOr<ThunkSequence> EmitCubDeviceRadixSort(
-      const HloCustomCallInstruction* hlo);
-
-  absl::StatusOr<ThunkSequence> EmitCubDeviceScan(
-      const HloCustomCallInstruction* hlo);
-
   absl::StatusOr<ThunkSequence> EmitCublasLtMatmulThunk(
       const HloCustomCallInstruction* hlo);
 
@@ -146,6 +140,9 @@ class ThunkEmitter {
       const HloCustomCallInstruction* hlo);
 
   absl::StatusOr<ThunkSequence> EmitCublasLtGroupedMatmulThunk(
+      const HloCustomCallInstruction* hlo);
+
+  absl::StatusOr<ThunkSequence> EmitCublasLtMatmulThunkMx(
       const HloCustomCallInstruction* hlo);
 
   absl::StatusOr<ThunkSequence> EmitCustomCallThunk(

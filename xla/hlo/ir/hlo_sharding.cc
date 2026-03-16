@@ -194,7 +194,7 @@ std::vector<AxisRef> GetOrderedAxisRefs(const NamedSharding& sharding) {
 
 }  // namespace
 
-HloSharding HloSharding::AssignDevice(int64_t device_id,
+HloSharding HloSharding::SingleDevice(int64_t device_id,
                                       absl::Span<const OpMetadata> metadata,
                                       bool use_named_sharding) {
   if (use_named_sharding) {
@@ -886,7 +886,7 @@ absl::Status HloSharding::ValidateNonTuple(
     return absl::InvalidArgumentError(
         "Tile assignment only contains a single device. If a replicated "
         "sharding was intended, use HloSharding::Replicated(). If a device "
-        "placement was intended, use HloSharding::AssignDevice()");
+        "placement was intended, use HloSharding::SingleDevice()");
   }
 
   // The tile assignment tensor must have the same rank as the tiled data rank.
@@ -1282,15 +1282,13 @@ OpSharding HloSharding::ToProto() const {
 /*static*/ HloSharding HloSharding::V3ToV2Sharding(
     const NamedSharding& sharding) {
   // TODO(b/477900810): Remove sharding conversions.
-  LOG(WARNING) << "V3ToV2Sharding method involves sharding conversions for "
-                  "HloShardingV3, its use cases should be avoided.";
   const Mesh& mesh = sharding.mesh();
   absl::Span<const OpMetadata> metadata = sharding.metadata();
   if (sharding.IsReplicated()) {
     return HloSharding::Replicate(metadata);
   }
   if (sharding.IsSingleDevice()) {
-    return HloSharding::AssignDevice(mesh.device_assignment()(0), metadata);
+    return HloSharding::SingleDevice(mesh.device_assignment()(0), metadata);
   }
 
   std::vector<int64_t> tile_assignment_dims;
@@ -1408,6 +1406,9 @@ int64_t HloSharding::NumTiles() const {
     return 1;
   }
   CHECK(!IsManualLeaf() && !IsUnknownLeaf());
+  if (UseNamedShardingLeaf()) {
+    return Product(dimensions());
+  }
   return Product(dimensions().subspan(0, TiledDataRank()));
 }
 
@@ -1419,7 +1420,7 @@ int64_t HloSharding::NumTiles(absl::Span<const int64_t> dims) const {
   CHECK(!ReplicateOnLastTileDim() ||
         !absl::c_linear_search(dims, num_dimensions() - 1));
   int64_t num_tiles = 1;
-  for (auto d : dims) {
+  for (int64_t d : dims) {
     CHECK(d < num_dimensions());
     num_tiles *= dimension(d);
   }

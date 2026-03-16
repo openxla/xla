@@ -1484,6 +1484,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     std::vector<HloInstruction*> operands_list = {a.fp8_input, b.fp8_input,
                                                   scales_f32[0], scales_f32[1]};
 
+    gemm_backend_config.set_scale_mode(
+        static_cast<int32_t>(se::gpu::ScaleMode::kTensorScaling));
+
     HloInstruction* new_custom_call =
         instr->AddInstruction(HloInstruction::CreateCustomCall(
             ShapeUtil::MakeShapeWithDenseLayout(
@@ -2421,6 +2424,10 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
          PrimitiveType::F8E4M3FNUZ, DataType::kHalf},
         {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2FNUZ,
          PrimitiveType::F8E4M3FNUZ, DataType::kFloat},
+
+        // TF32
+        {ComputationType::kTF32AsF32, DataType::kFloat, PrimitiveType::F32,
+         PrimitiveType::F32, DataType::kFloat},
     };
     if (gpu_version_.IsRocm() &&
         absl::c_linear_search(supported_hipblas_type_combinations,

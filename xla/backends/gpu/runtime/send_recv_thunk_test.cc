@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 
@@ -58,7 +59,7 @@ namespace {
 using ::testing::UnorderedElementsAre;
 using Kind = Thunk::Kind;
 
-class GpuSendRecvTest : public HloTestBase {};
+using GpuSendRecvTest = HloTestBase;
 
 // Test case to verify that Send HLO instruction is correctly
 // converted into a sequence of command buffer commands (Send and SendDone).

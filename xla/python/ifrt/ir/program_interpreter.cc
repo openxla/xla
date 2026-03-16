@@ -47,12 +47,14 @@ limitations under the License.
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
+#include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/ir/atom_program_compiler.h"
 #include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
+#include "xla/python/ifrt/ir/ifrt_ir_program.h"
 #include "xla/python/ifrt/ir/ifrt_ops.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
 #include "xla/python/ifrt/memory.h"
@@ -100,6 +102,18 @@ std::string PrettyPrintGeneric(mlir::Operation* op) {
 
 }  // namespace
 
+enum class ProgramFillStatus {
+  // Do not fill the status of any executables.
+  kFillNone,
+  // Fill the status of only leaf executables. Note that this assumes that
+  // no executables have side effects (e.g., custom calls, host callbacks, etc)
+  // because otherwise waiting for leaf ops isn't a sufficient signal for
+  // program completion.
+  kFillLeafOps,
+  // Fill the status of all executables.
+  kFillAll,
+};
+
 struct Environment {
   // Associates array with an opaque handle.
   void AssociateArray(ArrayHandle handle, ArrayState array) {
@@ -117,8 +131,9 @@ struct Environment {
   absl::flat_hash_map<ArrayHandle, ArrayState> handle_to_array;
   // Outputs of the program.
   std::vector<ArrayRef> outputs;
-  // `ExecuteOptions.fill_status` passed to Execute().
-  bool fill_status;
+  // Policy that controls how `ExecuteOptions.fill_status` is passed to
+  // `Execute()` calls.
+  ProgramFillStatus program_fill_status;
   // Contains a future for each ifrt.CallOp that is a leaf (i.e., has no outputs
   // or all its outputs are returned from the program).
   std::vector<tsl::Future<>> leaf_call_op_futures;
@@ -177,7 +192,29 @@ struct ProgramInterpreterState {
 
     Environment env;
     env.client = client;
-    env.fill_status = options.fill_status;
+    // TODO(icgog): Set default fill status to kFillLeafOps instead of kFillNone
+    // when  options.fill_status is set.
+    env.program_fill_status = options.fill_status
+                                  ? ProgramFillStatus::kFillAll
+                                  : ProgramFillStatus::kFillNone;
+    if (options.fill_status && options.custom_options.has_value()) {
+      absl::StatusOr<bool> fill_all_statuses =
+          options.custom_options->Get<bool>(
+              std::string(IfrtIRProgram::kFillAllStatuses));
+      if (fill_all_statuses.ok()) {
+        env.program_fill_status = *fill_all_statuses
+                                      ? ProgramFillStatus::kFillAll
+                                      : ProgramFillStatus::kFillLeafOps;
+      } else if (absl::Status status = fill_all_statuses.status();
+                 !absl::IsNotFound(status)) {
+        tsl::errors::AppendToMessage(
+            &status, absl::StrCat("Execute of IFRT IR program ", program_name,
+                                  " failed to get `fill_all_statuses` custom "
+                                  "option."));
+        return status;
+      }
+    }
+
     for (int idx = 0; idx < input_handles.size(); ++idx) {
       // Add to the environment the arrays that are used.
       bool is_donated = donated_input_indices.contains(idx) &&
@@ -203,7 +240,7 @@ struct ProgramInterpreterState {
 
     VLOG(2) << "Finished interpreting program: " << program_name;
     ExecuteResult result;
-    if (env.fill_status) {
+    if (env.program_fill_status != ProgramFillStatus::kFillNone) {
       result.status =
           tsl::JoinFutures(absl::MakeSpan(env.leaf_call_op_futures));
     }
@@ -238,8 +275,8 @@ ProgramInterpreter::BuildExecuteFn() {
   for (mlir::Operation& op : main_func.getOps()) {
     auto op_fn =
         llvm::TypeSwitch<const mlir::Operation&, absl::StatusOr<OpFn>>(op)
-            .Case<CallLoadedExecutableOp, RemapArraysOp, CopyArraysOp,
-                  mlir::func::ReturnOp>(
+            .Case<CallLoadedExecutableOp, BitcastArraysOp, RemapArraysOp,
+                  CopyArraysOp, mlir::func::ReturnOp>(
                 [this](const auto& op) { return HandleOp(op); })
             .Default([](const mlir::Operation& op) {
               return absl::InvalidArgumentError(absl::StrCat(
@@ -292,7 +329,11 @@ struct CallLoadedExecutableOpState {
     VLOG(3) << pretty_print;
 
     ExecuteOptions options = execute_options;
-    options.fill_status = env.fill_status;
+    if (env.program_fill_status == ProgramFillStatus::kFillAll ||
+        (env.program_fill_status == ProgramFillStatus::kFillLeafOps &&
+         is_leaf_op)) {
+      options.fill_status = true;
+    }
 
     std::vector<ArrayHandle> arrays_to_remove;
     {
@@ -396,7 +437,7 @@ struct CallLoadedExecutableOpState {
                                    });
       }
     }
-    if (is_leaf_op && env.fill_status) {
+    if (is_leaf_op && env.program_fill_status != ProgramFillStatus::kFillNone) {
       env.leaf_call_op_futures.push_back(std::move(result.status));
     }
     return absl::OkStatus();
@@ -632,6 +673,132 @@ absl::StatusOr<ProgramInterpreter::OpFn> ProgramInterpreter::HandleOp(
   }
 
   return absl::bind_front(&RemapArraysOpState::Run, std::move(state));
+}
+
+namespace {
+struct BitcastArraysOpState {
+  std::string pretty_print;
+
+  std::vector<ArrayHandle> input_handles;
+  absl::flat_hash_set<ArrayHandle> dead_inputs;
+  bool bitcast_is_donated;
+
+  std::vector<ArrayHandle> output_handles;
+  std::vector<ArraySpec> output_specs;
+
+  absl::Status Run(Environment& env) const {
+    TraceMe traceme([&]() {
+      return TraceMeEncode("DispatchBitcastArraysOp",
+                           {{"ifrt_ir_program", env.program_name}});
+    });
+    VLOG(3) << pretty_print;
+
+    std::vector<ArrayRef> inputs;
+    inputs.reserve(input_handles.size());
+
+    std::vector<ArrayHandle> arrays_to_remove;
+
+    for (int idx = 0; idx < input_handles.size(); ++idx) {
+      const ArrayHandle handle = input_handles[idx];
+
+      auto array_it = env.handle_to_array.find(handle);
+      TF_RET_CHECK(array_it != env.handle_to_array.end())
+          << "Input array #" << idx << " not found. " << pretty_print;
+      if (array_it->second.array->IsDeleted()) {
+        // We explicitly check here for deletion in order to provide a more
+        // informative error message.
+        return absl::InvalidArgumentError(absl::StrCat(
+            "Input array #", idx, " has already been deleted or donated. ",
+            pretty_print));
+      }
+
+      // The default buffer donation semantic is finalized at compilation time.
+      // Users can override the donation semantic at runtime. In the meantime,
+      // the IFRT client BitcastArrays API requires all input arrays have the
+      // same donation semantic. Insert a CopyArrays op if BitcastArrays
+      // requires all input arrays to be donated, but some of the input arrays
+      // have been marked as non-donatable.
+      if (bitcast_is_donated && !array_it->second.can_be_donated) {
+        ArrayRef array = array_it->second.array;
+        LOG_FIRST_N(WARNING, 5)
+            << "Array is cloned because is have been marked as non-donatable "
+               "at runtime, but BitcastArrays requires all arrays to be "
+               "donated. array="
+            << array->DebugString()
+            << " (this warning is logged only at most 5 times)."
+            << pretty_print;
+        TF_ASSIGN_OR_RETURN(
+            std::vector<ArrayRef> copied_arrays,
+            env.client->CopyArrays(
+                absl::MakeSpan(&array, 1), /*devices=*/std::nullopt,
+                /*memory_kind=*/std::nullopt, ArrayCopySemantics::kAlwaysCopy));
+        inputs.push_back(std::move(copied_arrays[0]));
+      } else {
+        inputs.push_back(array_it->second.array);
+      }
+      if ((bitcast_is_donated && array_it->second.can_be_donated) ||
+          dead_inputs.contains(handle)) {
+        arrays_to_remove.push_back(handle);
+      }
+    }
+
+    TF_ASSIGN_OR_RETURN(
+        std::vector<ArrayRef> bitcast_arrays,
+        env.client->BitcastArrays(
+            absl::MakeSpan(inputs), absl::MakeSpan(output_specs),
+            bitcast_is_donated ? ArrayCopySemantics::kDonateInput
+                               : ArrayCopySemantics::kReuseInput));
+
+    for (const auto handle : arrays_to_remove) {
+      // Donated bitcast arrays are proactively deleted, and aliased arrays
+      // cannot be deleted later. Thus, remove the arrays from the deletable
+      // program arguments set.
+      env.deletable_program_arguments.erase(handle);
+      env.handle_to_array.erase(handle);
+    }
+
+    TF_RET_CHECK(bitcast_arrays.size() == inputs.size())
+        << "Got " << bitcast_arrays.size() << " results, but op has "
+        << inputs.size() << ". " << pretty_print;
+    for (int i = 0; i < output_handles.size(); ++i) {
+      const ArrayHandle handle = output_handles[i];
+      if (handle != 0) {
+        env.AssociateArray(handle, ArrayState{
+                                       /*array=*/std::move(bitcast_arrays[i]),
+                                       /*can_be_donated=*/true,
+                                   });
+      }
+    }
+
+    return absl::OkStatus();
+  }
+};
+
+}  // namespace
+
+absl::StatusOr<ProgramInterpreter::OpFn> ProgramInterpreter::HandleOp(
+    BitcastArraysOp bitcast_op) {
+  BitcastArraysOpState state;
+  state.pretty_print = PrettyPrint(bitcast_op);
+
+  for (const auto [idx, input] : llvm::enumerate(bitcast_op.getInputs())) {
+    state.input_handles.push_back(ToArrayHandle(input));
+    if (liveness_.isDeadAfter(input, bitcast_op)) {
+      state.dead_inputs.insert(ToArrayHandle(input));
+    }
+  }
+  state.bitcast_is_donated = bitcast_op.getDonated();
+
+  for (const auto output : bitcast_op.getOutputs()) {
+    const ArrayHandle handle = output.use_empty() ? 0 : ToArrayHandle(output);
+    state.output_handles.push_back(handle);
+    TF_ASSIGN_OR_RETURN(
+        ArraySpec spec,
+        ArraySpecFromMlirType(output.getType(), client_, devices_));
+    state.output_specs.push_back(std::move(spec));
+  }
+
+  return absl::bind_front(&BitcastArraysOpState::Run, std::move(state));
 }
 
 namespace {

@@ -436,11 +436,6 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   EnableIRPrintingIfRequested(pm, &mlir_context, hlo_module, kernel_name,
                               "triton-to-llvm");
   pm.enableVerifier(should_verify);
-  CreateTritonXlaPipeline(
-      &pm, gpu_cc, /*rewrite_int4=*/is_xla_fusion,
-      block_level_parameters.is_tma_allowed, block_level_parameters.num_stages,
-      block_level_parameters.is_warp_specialization_allowed);
-
   int num_warps = block_level_parameters.num_warps;
   int num_ctas = block_level_parameters.num_ctas;
   int num_stages = block_level_parameters.num_stages;
@@ -449,6 +444,13 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
         "(num_warps, num_ctas, num_stages) must be positive, but got: (",
         num_warps, ", ", num_ctas, ", ", num_stages, ")"));
   }
+  const bool enable_pdl = hlo_config.debug_options().xla_gpu_enable_pdl() &&
+                          gpu_cc.IsCuda() &&
+                          gpu_cc.cuda_compute_capability()->IsAtLeastHopper();
+  CreateTritonXlaPipeline(&pm, gpu_cc, /*rewrite_int4=*/is_xla_fusion,
+                          block_level_parameters.is_tma_allowed, num_stages,
+                          block_level_parameters.is_warp_specialization_allowed,
+                          enable_pdl);
 
   CreateTritonPipeline(&pm, gpu_cc, num_warps, num_ctas, num_stages);
 
@@ -485,6 +487,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   VLOG(2) << "Global scratch memory usage: " << global_scratch_memory_size
           << " B";
   if (shared_mem_bytes > device_info.shared_memory_per_block_optin()) {
+    error_handler();
     return absl::ResourceExhaustedError(absl::StrFormat(
         "Shared memory size limit exceeded: requested %d, available: %d",
         shared_mem_bytes, device_info.shared_memory_per_block_optin()));
@@ -556,6 +559,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
                                 global_scratch_memory_size,
                                 tma_metadata,
                                 thread_dims,
+                                enable_pdl,
                                 captured_nvvm_annotations,
                                 std::move(ll_triton_module)};
   return result;

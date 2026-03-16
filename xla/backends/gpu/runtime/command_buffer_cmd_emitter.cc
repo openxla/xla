@@ -100,7 +100,8 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const KernelThunk& thunk) {
   return std::make_unique<LaunchCmd>(
       thunk.kernel_name(), thunk.arguments(), ArgsAccess(thunk.written()),
-      thunk.launch_dimensions(), thunk.shmem_bytes(), thunk.tma_metadata());
+      thunk.launch_dimensions(), thunk.shmem_bytes(), thunk.tma_metadata(),
+      thunk.use_pdl());
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
@@ -247,7 +248,7 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const DynamicSliceThunk& thunk, const ConvertToCommandsOptions& options) {
   TF_ASSIGN_OR_RETURN(
       CommandExecutor embedded_cmds,
-      ConvertToCommands(thunk.get_embedded_thunk()->thunks(), options));
+      ConvertToCommands(thunk.get_embedded_executor().thunks(), options));
 
   auto& thunk_fake_allocations = thunk.get_fake_allocations();
   std::vector<BufferAllocation> fake_allocations;
@@ -430,7 +431,7 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return Internal(
           "Error trying to emit command for a CommandBufferThunk. Input HLO "
           "must already contain command buffers and XLA should not run command "
-          "buffer scheduling pass the second time. It it happens in the test, "
+          "buffer scheduling pass the second time. If it happens in the test, "
           "try explicitly disabling command buffers in tested HLO module.");
 
     default:

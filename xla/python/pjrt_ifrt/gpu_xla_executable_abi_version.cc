@@ -13,21 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_STREAM_EXECUTOR_CUDA_CUB_PREFIX_SUM_KERNEL_CUDA_H_
-#define XLA_STREAM_EXECUTOR_CUDA_CUB_PREFIX_SUM_KERNEL_CUDA_H_
+#include "xla/python/pjrt_ifrt/gpu_xla_executable_abi_version.h"
 
-#include <cstddef>
+namespace xla {
 
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cuda/include/driver_types.h"
+[[maybe_unused]] char GpuXlaExecutableAbiVersion::ID = 0;
 
-namespace stream_executor::cuda {
-
-template <typename KeyT>
-cudaError_t CubPrefixSum(void* d_temp_storage, size_t& temp_bytes,
-                         const void* d_in, void* d_out, size_t num_items,
-                         CUstream stream);
-
-}  // namespace stream_executor::cuda
-
-#endif  // XLA_STREAM_EXECUTOR_CUDA_CUB_PREFIX_SUM_KERNEL_CUDA_H_
+}  // namespace xla

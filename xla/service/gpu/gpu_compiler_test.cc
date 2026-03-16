@@ -645,6 +645,8 @@ ENTRY main {
   triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::CUBLAS_FISSION);
   triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
+      autotuner::Backend::CUBLASLT_FISSION);
+  triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::NATIVE_EMITTER);
   config.set_debug_options(triton_enabled_debug_options);
   ASSERT_OK_AND_ASSIGN(auto triton_enabled_module_and_executable,
@@ -656,7 +658,9 @@ ENTRY main {
   AutotuneResults results;
   ASSERT_OK(AutotunerCache::SerializeAutotuneResults(&results));
   EXPECT_FALSE(results.results().empty());
-  EXPECT_TRUE(absl::StrContains(results.DebugString(), "CUBLAS_FISSION"));
+  EXPECT_TRUE(absl::StrContains(results.DebugString(), "CUBLAS_FISSION") ||
+              // CUBLASLT_FISSION is dumpes as GemmKey in the AutotunerResult.
+              absl::StrContains(results.DebugString(), "gemm"));
 
   // Triton disabled - this will skip the GemmFusion pass and use cuBLAS.
   DebugOptions triton_disabled_debug_options = GetDebugOptionsForTest();
@@ -705,6 +709,8 @@ ENTRY main {
   triton_enabled_debug_options.clear_xla_gpu_experimental_autotune_backends();
   triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::CUBLAS_FISSION);
+  triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
+      autotuner::Backend::CUBLASLT_FISSION);
   triton_enabled_debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::NATIVE_EMITTER);
   config.set_debug_options(triton_enabled_debug_options);
@@ -1443,12 +1449,23 @@ TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
   VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
 }
 
-TEST_F(PassOrderTest, HoistFusedBitcastsRunsAfterAutotuner) {
-  VerifyPassRunsAtLeastOnceBefore("autotuner", "hoist-fused-bitcasts");
+TEST_F(PassOrderTest, HoistFusedBitcastsRunsAfterGemmFusion) {
+  if (!get_cuda_cc().IsAtLeastAmpere()) {
+    GTEST_SKIP() << "GemmFusion requires Ampere+ to run.";
+  }
+  VerifyPassRunsAtLeastOnceBefore("triton-gemm-rewriter",
+                                  "hoist-fused-bitcasts");
 }
 
-TEST_F(PassOrderTest, ConvertTritonGemmConfigRunsAfterHoistFusedBitcasts) {
-  VerifyPassOrder("hoist-fused-bitcasts", "convert_triton_gemm_config");
+TEST_F(PassOrderTest, AutotunerRunsAfterHoistFusedBitcasts) {
+  if (!get_cuda_cc().IsAtLeastAmpere()) {
+    GTEST_SKIP() << "GemmFusion requires Ampere+ to run.";
+  }
+  VerifyPassRunsAtLeastOnceBefore("hoist-fused-bitcasts", "autotuner");
+}
+
+TEST_F(PassOrderTest, ConvertTritonGemmConfigRunsAfterAutotuner) {
+  VerifyPassRunsAtLeastOnceBefore("autotuner", "convert_triton_gemm_config");
 }
 
 TEST_F(PassOrderTest,
@@ -1908,9 +1925,9 @@ ENTRY main {
         // LLVM
         EXPECT_THAT(kinds, ElementsAre(Thunk::Kind::kCommandBuffer));
       } else if (kinds.size() == 4) {
-        // CUBSort
+        // CUB sort via FFI custom call
         EXPECT_THAT(kinds,
-                    ElementsAre(Thunk::Kind::kKernel, Thunk::Kind::kCubSort,
+                    ElementsAre(Thunk::Kind::kKernel, Thunk::Kind::kCustomCall,
                                 Thunk::Kind::kKernel, Thunk::Kind::kKernel));
       } else {
         FAIL() << "Unexpected thunk sequence size: " << kinds.size();

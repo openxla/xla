@@ -83,7 +83,7 @@ class HloSharding {
 
   // Creates a sharding that emulates device placement; a tile shape equal to
   // the input shape (one tile) assigned to a single device.
-  static HloSharding AssignDevice(int64_t device_id,
+  static HloSharding SingleDevice(int64_t device_id,
                                   absl::Span<const OpMetadata> metadata = {},
                                   bool use_named_sharding = false);
 
@@ -478,9 +478,6 @@ class HloSharding {
   // Retrieves the unique device or fails with a CHECK.
   int64_t GetUniqueDevice() const;
 
-  // Returns true if this op only uses a single device.
-  bool HasUniqueDevice() const { return UniqueDevice().has_value(); }
-
   // Returns the ShapeTree containing the shardings for each element of this
   // tuple, if IsTuple, or a ShapeTree with a single element containing this
   // sharding. Only the leaf elements are populated. This creates a new
@@ -677,6 +674,9 @@ class HloSharding {
   // This method is not defined for tuple shardings.
   int64_t TiledDataRank() const {
     CHECK(IsTiledLeaf());
+    if (UseNamedShardingLeaf()) {
+      return num_dimensions();
+    }
     int64_t rank = num_dimensions();
     if (ReplicateOnLastTileDim()) {
       rank--;

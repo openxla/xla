@@ -30,7 +30,7 @@ namespace gpu {
 
 bool IsCublasGemm(const HloInstruction& hlo) {
   return IsLegacyCublasMatmul(hlo) || IsCublasLtMatmul(hlo) ||
-         IsCublasLtMatmulF8(hlo);
+         IsCublasLtMatmulF8(hlo) || IsCublasLtMatmulMx(hlo);
 }
 
 bool IsLegacyCublasMatmul(const HloInstruction& hlo) {
@@ -51,6 +51,11 @@ bool IsCublasLtGroupedMatmul(const HloInstruction& hlo) {
 bool IsCublasLtMatmulF8(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kCustomCall &&
          hlo.custom_call_target() == kCublasLtMatmulF8CallTarget;
+}
+
+bool IsCublasLtMatmulMx(const HloInstruction& hlo) {
+  return hlo.opcode() == HloOpcode::kCustomCall &&
+         hlo.custom_call_target() == kCublasLtMatmulMxCallTarget;
 }
 
 bool IsTriangularSolve(const HloInstruction& hlo) {

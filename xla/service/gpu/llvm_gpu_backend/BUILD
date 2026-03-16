@@ -1,5 +1,5 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("//xla:py_strict.bzl", "py_strict_binary")
+load("@xla//third_party/rules_python/python:py_binary.bzl", "py_binary")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load(
     "//xla/tsl:tsl.bzl",
@@ -118,9 +118,10 @@ cc_library(
     ],
 )
 
-py_strict_binary(
+py_binary(
     name = "generate_amdgpu_device_lib_data_tool",
     srcs = ["generate_amdgpu_device_lib_data_tool.py"],
+    strict_deps = True,
 )
 
 genrule(
@@ -307,6 +308,7 @@ xla_cc_test(
     deps = [
         ":amdgpu_backend",
         ":load_ir_module",
+        "//xla:debug_options_flags",
         "//xla/tsl/platform:rocm_rocdl_path",
         "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest_main",
@@ -332,6 +334,7 @@ xla_cc_test(
     deps = [
         ":amdgpu_backend",
         ":load_ir_module",
+        "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:kernel_stats",
