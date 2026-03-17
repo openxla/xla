@@ -378,15 +378,15 @@ class MemorySpaceAssignmentTestBase : public HloPjRtTestBase {
 
   // Returns a std::vector of HloPositions for the given instruction names and
   // shape_index.
-  std::vector<HloPosition> GetHloPositions(
+  absl::flat_hash_set<HloPosition> GetHloPositions(
       const HloModule* module, std::vector<std::string> instruction_names,
       ShapeIndex shape_index = {}) {
-    std::vector<HloPosition> block_prefetched_positions;
+    absl::flat_hash_set<HloPosition> block_prefetched_positions;
     for (const auto& instruction_name : instruction_names) {
       HloInstruction* param = FindInstruction(module, instruction_name);
       EXPECT_NE(param, nullptr);
       HloPosition param_position{param, shape_index};
-      block_prefetched_positions.push_back(param_position);
+      block_prefetched_positions.insert(param_position);
     }
     return block_prefetched_positions;
   }

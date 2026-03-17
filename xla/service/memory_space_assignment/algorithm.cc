@@ -94,6 +94,28 @@ namespace xla {
 namespace memory_space_assignment {
 namespace {
 
+HloPosition GetFirstNonTrivialPosition(HloPosition position) {
+  while (position.instruction->opcode() == HloOpcode::kGetTupleElement ||
+         position.instruction->opcode() == HloOpcode::kTuple ||
+         position.instruction->opcode() == HloOpcode::kBitcast) {
+    if (position.instruction->opcode() == HloOpcode::kGetTupleElement) {
+      int64_t tuple_index = position.instruction->tuple_index();
+      position.instruction = position.instruction->mutable_operand(0);
+      position.index.push_front(tuple_index);
+    } else if (position.instruction->opcode() == HloOpcode::kTuple) {
+      if (position.index.empty()) {
+        return position;
+      }
+      int64_t tuple_index = position.index.front();
+      position.index.pop_front();
+      position.instruction = position.instruction->mutable_operand(tuple_index);
+    } else if (position.instruction->opcode() == HloOpcode::kBitcast) {
+      position.instruction = position.instruction->mutable_operand(0);
+    }
+  }
+  return position;
+}
+
 // Define a dummy chunk for chunks that will be allocated in the default memory
 // space and for keeping track of number of asynchronous copies.
 const HeapSimulator::Chunk kDummyChunk =
@@ -2581,7 +2603,9 @@ absl::Status MsaAlgorithm::CreateNewBlockPrefetches(
     const HloValue* value =
         &alias_analysis_.dataflow_analysis().GetUniqueValueAt(
             position.instruction, position.index);
-    if (!aliased_parameter_positions.contains(value->defining_position())) {
+    if (!aliased_parameter_positions.contains(value->defining_position()) &&
+        IsAsyncConversionSliceCandidate(value->defining_instruction()) !=
+            AsyncConversionResult::kSuccess) {
       block_prefetched_values.push_back(value);
     } else {
       // TODO(b/441344194): Add support for block allocations for parameters
@@ -2590,13 +2614,19 @@ absl::Status MsaAlgorithm::CreateNewBlockPrefetches(
                    << position.ToString()
                    << " because it is aliased to a program output.";
     }
-
+    VLOG(3) << "Block prefetched value: " << value->ToShortString();
     // As mentioned above, we also track slices of block prefetched values.
     for (const HloUse& use : value->GetUses()) {
-      if (use.instruction->opcode() == HloOpcode::kSlice) {
+      if (IsAsyncConversionSliceCandidate(use.instruction) ==
+              AsyncConversionResult::kSuccess &&
+          IsAsyncConversionSliceCandidate(value->defining_instruction()) !=
+              AsyncConversionResult::kSuccess) {
         const HloValue* slice_value =
             &alias_analysis_.dataflow_analysis().GetUniqueValueAt(
                 use.instruction, {});
+        VLOG(3) << "Block prefetched slice value: ("
+                << slice_value->ToShortString() << ") for original value: ("
+                << value->ToShortString() << ")";
         block_prefetched_values.push_back(slice_value);
         sliced_value_to_original_value[slice_value] = value;
       }
@@ -2614,8 +2644,14 @@ absl::Status MsaAlgorithm::CreateNewBlockPrefetches(
     for (const HloUse& use : value->GetUses()) {
       // We skip slices here because they have been explicitly added to
       // block_prefetched_values and will be handled in the outer for loop.
-      if (is_original_value && use.instruction->opcode() == HloOpcode::kSlice) {
+      if (is_original_value &&
+          IsAsyncConversionSliceCandidate(use.instruction) ==
+              AsyncConversionResult::kSuccess) {
         continue;
+      }
+      if (use.instruction->opcode() == HloOpcode::kWhile) {
+        use_interval.last_use_time = -1;
+        break;
       }
       auto it = instruction_schedule.find(use.instruction);
       if (it == instruction_schedule.end()) {
@@ -2645,11 +2681,13 @@ absl::Status MsaAlgorithm::CreateNewBlockPrefetches(
       block_prefetched_values.end());
 
   // Sort block prefetched value values in ascending order of first use time.
-  absl::c_sort(block_prefetched_values,
-               [&](const HloValue* a, const HloValue* b) {
-                 return value_to_use_intervals.at(a).first_use_time <
-                        value_to_use_intervals.at(b).first_use_time;
-               });
+  absl::c_sort(
+      block_prefetched_values, [&](const HloValue* a, const HloValue* b) {
+        return std::forward_as_tuple(
+                   value_to_use_intervals.at(a).first_use_time, a->id()) <
+               std::forward_as_tuple(
+                   value_to_use_intervals.at(b).first_use_time, b->id());
+      });
 
   int64_t block_prefetching_limit_bytes =
       block_prefetching_starting_offset +
@@ -2663,7 +2701,8 @@ absl::Status MsaAlgorithm::CreateNewBlockPrefetches(
   std::vector<int64_t> prefetch_end_times;
   std::vector<int64_t> prefetch_done_schedule_before_times;
 
-  absl::flat_hash_map<const HloValue*, Allocation*> value_to_pinned_allocation;
+  absl::flat_hash_map<HloPosition, Allocation*>
+      allocation_value_position_to_pinned_allocation;
 
   // For each block prefetched value, we try to find a chunk within the block
   // prefetching limit, ensuring FIFO ordering. After a suitable chunk is found
@@ -2686,15 +2725,32 @@ absl::Status MsaAlgorithm::CreateNewBlockPrefetches(
     UseInterval use_interval = value_to_use_intervals.at(maybe_sliced_value);
     int64_t first_use_time = use_interval.first_use_time;
     int64_t last_use_time = use_interval.last_use_time;
-    auto it = sliced_value_to_original_value.find(maybe_sliced_value);
+    auto sliced_to_original_value_it =
+        sliced_value_to_original_value.find(maybe_sliced_value);
     const HloValue* original_value;
-    if (it != sliced_value_to_original_value.end()) {
-      original_value = it->second;
+    HloPosition defining_position;
+    bool is_async_conversion_slice =
+        sliced_to_original_value_it != sliced_value_to_original_value.end();
+    if (is_async_conversion_slice) {
+      original_value = sliced_to_original_value_it->second;
+      defining_position = GetFirstNonTrivialPosition(
+          {maybe_sliced_value->defining_instruction()->mutable_operand(0), {}});
     } else {
       original_value = maybe_sliced_value;
+      defining_position = maybe_sliced_value->defining_position();
     }
     int64_t definition_time =
-        instruction_schedule.at(original_value->defining_instruction());
+        instruction_schedule.at(defining_position.instruction);
+    if (is_async_conversion_slice) {
+      for (HloInstruction* operand :
+           maybe_sliced_value->defining_instruction()->operands()) {
+        HloPosition operand_position =
+            GetFirstNonTrivialPosition({operand, {}});
+        definition_time =
+            std::max(definition_time,
+                     instruction_schedule.at(operand_position.instruction));
+      }
+    }
     int64_t end_time = last_use_time;
     int64_t buffer_size = buffer_intervals_.at(maybe_sliced_value).size;
     // Find the earliest start time for which a chunk can be allocated for the
@@ -2728,14 +2784,19 @@ absl::Status MsaAlgorithm::CreateNewBlockPrefetches(
     // Add a pinned allocation in the default memory to serve as the prev
     // allocation for the copy allocation or extend the existing pinned
     // allocation.
-    auto pinned_allocation_it = value_to_pinned_allocation.find(original_value);
+    auto pinned_allocation_it =
+        allocation_value_position_to_pinned_allocation.find(defining_position);
     Allocation* pinned_allocation;
-    if (pinned_allocation_it == value_to_pinned_allocation.end()) {
+    if (pinned_allocation_it ==
+        allocation_value_position_to_pinned_allocation.end()) {
       allocations_->push_back(std::make_unique<PinnedAllocation>(
-          original_value->defining_position(), MemorySpace::kDefault,
-          kDummyChunk, definition_time, end_time));
-      value_to_pinned_allocation[original_value] = allocations_->back().get();
+          defining_position, MemorySpace::kDefault, kDummyChunk,
+          definition_time, end_time));
+      allocation_value_position_to_pinned_allocation[defining_position] =
+          allocations_->back().get();
       pinned_allocation = allocations_->back().get();
+      AddRequiredAssignment(defining_position, MemorySpace::kDefault,
+                            "block_prefetch", nullptr, false);
     } else {
       pinned_allocation = pinned_allocation_it->second;
       pinned_allocation->Extend(end_time);
@@ -2771,7 +2832,8 @@ absl::Status MsaAlgorithm::CreateNewBlockPrefetches(
 
     for (const HloUse& use : maybe_sliced_value->GetUses()) {
       if (original_value == maybe_sliced_value &&
-          use.instruction->opcode() == HloOpcode::kSlice) {
+          IsAsyncConversionSliceCandidate(use.instruction) ==
+              AsyncConversionResult::kSuccess) {
         // The use is a slice of the original value, so we don't need to add it
         // to the alternate memory map or to the uses of the copy allocation.
         continue;
@@ -2824,15 +2886,9 @@ absl::Status MsaAlgorithm::CreateNewBlockPrefetches(
       }
       // If a pinned allocation already exists for the aliased value, add the
       // uses of the original value to the pinned allocation.
-      auto it = value_to_pinned_allocation.find(aliased_value);
-      if (it != value_to_pinned_allocation.end()) {
-        Allocation* allocation = it->second;
-        for (const HloUse& use : original_value->GetUses()) {
-          if (use.instruction->parent() ==
-              original_value->instruction()->parent()) {
-            allocation->AddUse(use);
-          }
-        }
+      for (const HloUse& use : aliased_value->GetUses()) {
+        AddRequiredAssignment(use, MemorySpace::kDefault,
+                              "block prefetched buffer alias", nullptr, false);
       }
       finalized_values_.insert(aliased_value);
     }
