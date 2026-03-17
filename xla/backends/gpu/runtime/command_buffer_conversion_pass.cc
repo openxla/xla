@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_memcpy_thunk.h"
+#include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -255,6 +256,16 @@ bool IsConvertible(const RaggedAllToAllStartThunk& ra2a_thunk,
   return true;
 }
 
+// Returns true if the DynamicSliceThunk is convertible to a command buffer
+// operation. This requires that all embedded thunks are also convertible,
+// e.g. a DynamicSliceThunk wrapping a collective is not convertible if
+// collectives are not enabled for command buffer capture.
+static bool IsConvertible(const DynamicSliceThunk& dynamic_slice_thunk,
+                          const CommandBufferConfig& config) {
+  return ThunkSequenceIsConvertible(
+      dynamic_slice_thunk.get_embedded_executor().thunks(), config);
+}
+
 // Returns true if the AsyncStartThunk is convertible to a command buffer
 // operation. This requires that all nested thunks are convertible.
 static bool IsConvertible(const AsyncStartThunk& async_start_thunk,
@@ -302,6 +313,10 @@ bool IsConvertible(const Thunk& thunk, const CommandBufferConfig& config) {
 
   if (thunk.kind() == Thunk::kCustomCall) {
     return IsConvertible(static_cast<const CustomCallThunk&>(thunk), config);
+  }
+
+  if (thunk.kind() == Thunk::kDynamicSlice) {
+    return IsConvertible(static_cast<const DynamicSliceThunk&>(thunk), config);
   }
 
   if (thunk.kind() == Thunk::kRaggedAllToAllStart) {

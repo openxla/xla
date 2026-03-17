@@ -4070,6 +4070,7 @@ cc_library(
         ":custom_call_thunk",
         ":device_to_device_copy_thunk",
         ":dynamic_memcpy_thunk",
+        ":dynamic_slice_thunk",
         ":ragged_all_to_all_thunk",
         ":sequential_thunk",
         ":thunk",
