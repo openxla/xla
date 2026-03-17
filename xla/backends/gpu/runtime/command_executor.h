@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -85,12 +86,41 @@ class CommandExecutor {
     }
   }
 
+  // Construction mode controls how the underlying command buffer (CUDA graph)
+  // is built.
+  enum class ConstructionMode {
+    // Explicitly records each command into the command buffer using
+    // RecordCreate/RecordUpdate.
+    kExplicit,
+
+    // Constructs the command buffer via a single CUDA stream capture:
+    //   begin_capture()
+    //   for each command: command->ExecuteOnStream(params_on_capture_stream)
+    //   end_capture()
+    // In this mode memory addresses are assumed to be persistent; RecordUpdate
+    // is never called.
+    kCapture,
+  };
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, ConstructionMode mode) {
+    switch (mode) {
+      case ConstructionMode::kExplicit:
+        sink.Append("explicit");
+        break;
+      case ConstructionMode::kCapture:
+        sink.Append("capture");
+        break;
+    }
+  }
+
   // Creates a command executor from a sequence of commands using given
   // synchronization mode. `extra_resources` provides per-command additional
   // resource uses (e.g. control-dependency tokens from the emitter); if empty,
   // no extra resource uses are added.
   static absl::StatusOr<CommandExecutor> Create(
       CommandSequence commands, SynchronizationMode synchronization_mode,
+      ConstructionMode construction_mode = ConstructionMode::kExplicit,
       std::vector<Command::ResourceUses> extra_resources = {});
 
   // Prepares all commands added to a sequence.
@@ -143,6 +173,11 @@ class CommandExecutor {
 
   // Returns buffer allocations indices referenced by commands in this sequence.
   absl::Span<const BufferAllocation::Index> allocs_indices() const;
+
+  SynchronizationMode synchronization_mode() const {
+    return synchronization_mode_;
+  }
+  ConstructionMode construction_mode() const { return construction_mode_; }
 
   bool empty() const { return commands_.empty(); }
   size_t size() const { return commands_.size(); }
@@ -205,10 +240,13 @@ class CommandExecutor {
     // to values valid during the execution we use a node hash map container.
     using Key = std::pair<const CommandExecutor*, RecordId>;
     absl::node_hash_map<Key, RecordedCommands> recorded_commands;
+    // Owns captured command buffers created in kCapture mode.
+    absl::node_hash_map<Key, std::unique_ptr<se::CommandBuffer>>
+        captured_command_buffers;
   };
 
   CommandExecutor(SynchronizationMode synchronization_mode,
-                  CommandSequence commands,
+                  ConstructionMode construction_mode, CommandSequence commands,
                   std::optional<ExecutionGraph> execution_graph);
 
   absl::Status CheckCommandBufferState(
@@ -228,6 +266,7 @@ class CommandExecutor {
       RecordId record_id) const;
 
   SynchronizationMode synchronization_mode_;
+  ConstructionMode construction_mode_;
   CommandSequence commands_;
 
   // In automatic synchronization mode we build an execution graph for the

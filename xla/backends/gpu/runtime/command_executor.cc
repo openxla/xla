@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/runtime/execution_graph.h"
 #include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -256,6 +257,7 @@ static absl::StatusOr<std::vector<CommandOperation>> CreateCommandOperations(
 
 absl::StatusOr<CommandExecutor> CommandExecutor::Create(
     CommandSequence commands, SynchronizationMode synchronization_mode,
+    ConstructionMode construction_mode,
     std::vector<Command::ResourceUses> extra_resources) {
   std::optional<ExecutionGraph> execution_graph = std::nullopt;
 
@@ -271,14 +273,16 @@ absl::StatusOr<CommandExecutor> CommandExecutor::Create(
     VLOG(3) << "Execution graph: " << execution_graph->ToString();
   }
 
-  return CommandExecutor(synchronization_mode, std::move(commands),
-                         std::move(execution_graph));
+  return CommandExecutor(synchronization_mode, construction_mode,
+                         std::move(commands), std::move(execution_graph));
 }
 
 CommandExecutor::CommandExecutor(SynchronizationMode synchronization_mode,
+                                 ConstructionMode construction_mode,
                                  CommandSequence commands,
                                  std::optional<ExecutionGraph> execution_graph)
     : synchronization_mode_(synchronization_mode),
+      construction_mode_(construction_mode),
       commands_(std::move(commands)),
       execution_graph_(std::move(execution_graph)) {
   // Walk all nested commands and collect all buffers used by this executor.
@@ -453,6 +457,51 @@ CommandExecutor::RecordCreate(
     se::CommandBuffer* command_buffer,
     absl::Span<const se::CommandBuffer::Command* const> dependencies,
     RecordId record_id) const {
+  // In capture mode build the command buffer via stream capture, then add it
+  // as a single child node into the outer command buffer.
+  if (construction_mode_ == ConstructionMode::kCapture) {
+    se::StreamExecutor* executor = execute_params.stream->parent();
+    se::Stream* trace_stream = execute_params.command_buffer_trace_stream;
+
+    auto* state = command_buffer->GetOrCreateResource<CommandExecutorsState>();
+    auto key = std::make_pair(this, record_id);
+
+    if (state->captured_command_buffers.contains(key)) {
+      return Internal(
+          "Captured command buffer already exists for this executor/record_id "
+          "pair. Capture mode records the command buffer only once.");
+    }
+
+    // Capture all commands onto the trace stream.
+    TF_ASSIGN_OR_RETURN(
+        std::unique_ptr<se::CommandBuffer> traced_cb,
+        se::TraceCommandBufferFactory::Create(
+            executor, trace_stream,
+            [&](se::Stream* stream) -> absl::Status {
+              Thunk::ExecuteParams capture_params = execute_params;
+              capture_params.stream = stream;
+              for (auto& cmd : commands_) {
+                TF_RETURN_IF_ERROR(cmd->ExecuteOnStream(capture_params));
+              }
+              return absl::OkStatus();
+            },
+            se::CommandBuffer::Mode::kNested));
+
+    // Embed the captured graph as a single child node in the outer buffer.
+    TF_ASSIGN_OR_RETURN(
+        const se::CommandBuffer::Command* child_cmd,
+        command_buffer->CreateChildCommand(*traced_cb, dependencies));
+
+    // Transfer ownership to the command buffer resource so it lives as long
+    // as the outer command buffer.
+    state->captured_command_buffers[key] = std::move(traced_cb);
+
+    // Store the child command so RecordUpdate can reference it.
+    state->recorded_commands[key] = {child_cmd};
+
+    return std::vector<const se::CommandBuffer::Command*>{child_cmd};
+  }
+
   // Command buffer must be in create state.
   TF_RETURN_IF_ERROR(CheckCommandBufferState(
       command_buffer, se::CommandBuffer::State::kCreate));
@@ -536,6 +585,50 @@ absl::Status CommandExecutor::RecordUpdate(
     const Thunk::ExecuteParams& execute_params,
     const Command::RecordParams& record_params,
     se::CommandBuffer* command_buffer, RecordId record_id) const {
+  // In capture mode, re-capture all commands and update the existing child
+  // node.
+  if (construction_mode_ == ConstructionMode::kCapture) {
+    auto* state = command_buffer->GetOrCreateResource<CommandExecutorsState>();
+    auto key = std::make_pair(this, record_id);
+
+    RecordedCommands& recorded_commands = state->recorded_commands[key];
+    if (recorded_commands.size() != 1) {
+      return Internal(
+          "Expected exactly one recorded child command in kCapture mode "
+          "update, "
+          "got %d",
+          recorded_commands.size());
+    }
+    const se::CommandBuffer::Command* child_cmd = recorded_commands[0];
+
+    se::StreamExecutor* executor = execute_params.stream->parent();
+    se::Stream* trace_stream = execute_params.command_buffer_trace_stream;
+
+    // Re-capture all commands onto the trace stream.
+    TF_ASSIGN_OR_RETURN(
+        std::unique_ptr<se::CommandBuffer> new_traced_cb,
+        se::TraceCommandBufferFactory::Create(
+            executor, trace_stream,
+            [&](se::Stream* stream) -> absl::Status {
+              Thunk::ExecuteParams capture_params = execute_params;
+              capture_params.stream = stream;
+              for (auto& cmd : commands_) {
+                TF_RETURN_IF_ERROR(cmd->ExecuteOnStream(capture_params));
+              }
+              return absl::OkStatus();
+            },
+            se::CommandBuffer::Mode::kNested));
+
+    // Update the child command node with the new captured graph.
+    TF_RETURN_IF_ERROR(
+        command_buffer->UpdateChildCommand(child_cmd, *new_traced_cb));
+
+    // Replace the owned captured command buffer.
+    state->captured_command_buffers[key] = std::move(new_traced_cb);
+
+    return absl::OkStatus();
+  }
+
   VLOG(1) << absl::StreamFormat(
       "Record update %d commands into command buffer %p: record_id=%v",
       commands_.size(), command_buffer, record_id);

@@ -757,6 +757,32 @@ absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
     se::CommandBuffer* command_buffer) {
   VLOG(5) << "Record ChildCmd " << child_commands_.size() << " commands";
 
+  // In capture mode, delegate directly to RecordCreate/RecordUpdate so that
+  // the captured subgraph is embedded as a single child node without an extra
+  // nesting level introduced by the callback-based CreateChildCommand.
+  if (child_commands_.construction_mode() ==
+      CommandExecutor::ConstructionMode::kCapture) {
+    return Handle(
+        std::move(record_action),
+        [&](absl::Span<const se::CommandBuffer::Command* const> dependencies)
+            -> absl::StatusOr<const se::CommandBuffer::Command*> {
+          TF_ASSIGN_OR_RETURN(auto sinks, child_commands_.RecordCreate(
+                                              execute_params, record_params,
+                                              command_buffer, dependencies));
+          if (sinks.size() != 1) {
+            return Internal(
+                "Expected exactly 1 sink command from kCapture RecordCreate, "
+                "got %d",
+                sinks.size());
+          }
+          return sinks[0];
+        },
+        [&](const se::CommandBuffer::Command* command) {
+          return child_commands_.RecordUpdate(execute_params, record_params,
+                                              command_buffer);
+        });
+  }
+
   auto record_fn = [&](se::CommandBuffer* command_buffer) {
     return child_commands_
         .RecordCreate(execute_params, record_params, command_buffer,
