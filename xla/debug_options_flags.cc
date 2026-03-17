@@ -2800,13 +2800,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
               set_xla_gpu_experimental_enable_collective_multi_streaming),
       debug_options->xla_gpu_experimental_enable_collective_multi_streaming(),
       "Enable multi-stream runtime for collectives."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_use_autotuner_pass",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_experimental_use_autotuner_pass),
-      debug_options->xla_gpu_experimental_use_autotuner_pass(),
-      "If true, use the AutotunerPass to autotune fusions, instead of the "
-      "gemm_fusion_autotuner."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_experimental_max_unroll_factor",
                 setter_for_unroll_factor(

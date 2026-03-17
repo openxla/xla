@@ -717,7 +717,7 @@ message DebugOptions {
   // inputs/outputs.
   optional bool xla_gpu_experimental_enable_checksum_tracing_on_thunks = 414;
 
-  // If true, use nultiple streams for asynchronous collective operations.
+  // If true, use multiple streams for asynchronous collective operations.
   optional bool xla_gpu_experimental_enable_collective_multi_streaming = 462;
 
   // Experimentally enable rewriting conv as fusion in GPU compiler passes.
