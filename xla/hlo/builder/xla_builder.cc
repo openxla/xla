@@ -2415,11 +2415,12 @@ XlaOp XlaBuilder::ConvGeneralDilated(
                         ShapeInference::InferWindowFromDimensions(
                             window_dimensions, window_strides, padding,
                             lhs_dilation, rhs_dilation, window_reversal));
-    TF_ASSIGN_OR_RETURN(
-        Shape shape,
-        ShapeInference::InferConvolveShape(
-            *lhs_shape, *rhs_shape, feature_group_count, batch_group_count,
-            window, dimension_numbers, preferred_element_type));
+    SparsityConfig sparsity_config;
+    TF_ASSIGN_OR_RETURN(Shape shape,
+                        ShapeInference::InferConvolveShape(
+                            *lhs_shape, *rhs_shape, feature_group_count,
+                            batch_group_count, window, dimension_numbers,
+                            sparsity_config, preferred_element_type));
     return ConvGeneralDilatedInternal(shape, lhs, rhs, window, window_strides,
                                       padding, lhs_dilation, rhs_dilation,
                                       dimension_numbers, feature_group_count,
@@ -2449,11 +2450,12 @@ absl::StatusOr<HloInstructionProto> XlaBuilder::DynamicConvInstruction(
   TF_ASSIGN_OR_RETURN(Window window, ShapeInference::InferWindowFromDimensions(
                                          window_dimensions, window_strides,
                                          padding, lhs_dilation, rhs_dilation));
+  SparsityConfig sparsity_config;
   TF_ASSIGN_OR_RETURN(
       Shape shape,
       ShapeInference::InferConvolveShape(
           *lhs_shape, *rhs_shape, feature_group_count, batch_group_count,
-          window, dimension_numbers, preferred_element_type));
+          window, dimension_numbers, sparsity_config, preferred_element_type));
 
   HloInstructionProto instr;
   *instr.mutable_shape() = shape.ToProto();
@@ -2639,7 +2641,7 @@ XlaOp XlaBuilder::Infeed(const Shape& shape, const std::string& config) {
     };
     if (sharding()) {
       // Arbitrarily assign token to device 0.
-      OpSharding sharding = sharding_builder::AssignDevice(0);
+      OpSharding sharding = sharding_builder::SingleDevice(0);
       XlaScopedShardingAssignment scoped_sharding(this, sharding);
       TF_ASSIGN_OR_RETURN(token, make_token());
     } else {
@@ -2657,7 +2659,7 @@ XlaOp XlaBuilder::Infeed(const Shape& shape, const std::string& config) {
       OpSharding infeed_instruction_sharding = *sharding();
       // Arbitrarily assign the token to device 0.
       *infeed_instruction_sharding.add_tuple_shardings() =
-          sharding_builder::AssignDevice(0);
+          sharding_builder::SingleDevice(0);
       XlaScopedShardingAssignment scoped_sharding(this,
                                                   infeed_instruction_sharding);
       TF_ASSIGN_OR_RETURN(infeed, AddInstruction(std::move(instr),
@@ -2676,7 +2678,7 @@ XlaOp XlaBuilder::Infeed(const Shape& shape, const std::string& config) {
     };
     if (sharding()) {
       // Arbitrarily assign token to device 0.
-      OpSharding sharding = sharding_builder::AssignDevice(0);
+      OpSharding sharding = sharding_builder::SingleDevice(0);
       XlaScopedShardingAssignment scoped_sharding(this, sharding);
       TF_ASSIGN_OR_RETURN(infeed_token_, get_token());
     } else {
@@ -2773,7 +2775,7 @@ void XlaBuilder::Outfeed(XlaOp operand, const Shape& shape_with_layout,
     };
     if (sharding()) {
       XlaScopedShardingAssignment scoped_sharding(
-          this, sharding_builder::AssignDevice(0));
+          this, sharding_builder::SingleDevice(0));
       TF_ASSIGN_OR_RETURN(token, make_token());
     } else {
       TF_ASSIGN_OR_RETURN(token, make_token());
@@ -2784,7 +2786,7 @@ void XlaBuilder::Outfeed(XlaOp operand, const Shape& shape_with_layout,
         tuple_sharding = sharding_builder::Tuple({});
         *tuple_sharding.add_tuple_shardings() = *sharding();
       }
-      *tuple_sharding.add_tuple_shardings() = sharding_builder::AssignDevice(0);
+      *tuple_sharding.add_tuple_shardings() = sharding_builder::SingleDevice(0);
       XlaScopedShardingAssignment scoped_sharding(this, tuple_sharding);
       TF_RETURN_IF_ERROR(make_outfeed(token));
     } else {

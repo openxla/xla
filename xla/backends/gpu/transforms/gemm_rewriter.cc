@@ -542,6 +542,24 @@ auto OptionalBitcast(HloInstruction** optional_bitcast, Pattern pattern) {
                                   std::move(pattern));
 }
 
+// Counts the number of final users of an instruction, recursively traversing
+// through slice and bitcast operations. If a user is a slice or bitcast, we
+// recursively count its users. Otherwise, we count it as a final user.
+uint32_t CountFinalUsers(const HloInstruction* instr) {
+  uint32_t final_user_count = 0;
+  for (const HloInstruction* user : instr->users()) {
+    if (user->opcode() == HloOpcode::kSlice ||
+        user->opcode() == HloOpcode::kBitcast) {
+      // Recursively count users of slice/bitcast operations
+      final_user_count += CountFinalUsers(user);
+    } else {
+      // This is a final user (not a slice or bitcast)
+      final_user_count += 1;
+    }
+  }
+  return final_user_count;
+}
+
 // The rewriting proceeds in a bottom-up way:
 //
 // (kDot A B) is rewritten into a (kCustomCall:gemm A B)
@@ -695,6 +713,77 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         }
       } break;
     };
+    return absl::OkStatus();
+  }
+
+  absl::Status HandleRaggedDot(HloInstruction* instr) override {
+    if (!IsGpublasLtSupportedGroupedMatMul(*instr)) {
+      return absl::OkStatus();
+    }
+    HloRaggedDotInstruction* ragged_dot =
+        DynCast<HloRaggedDotInstruction>(instr);
+    if (ragged_dot == nullptr) {
+      return absl::OkStatus();
+    }
+    const auto& ragged_dims = ragged_dot->ragged_dot_dimension_numbers();
+    const auto& dot_dims = ragged_dims.dot_dimension_numbers();
+    if (ragged_dims.lhs_ragged_dimensions().size() != 1) {
+      return absl::UnimplementedError("lhs_ragged_dimensions must have size 1");
+    }
+    int lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
+
+    auto isLhsRaggedDimInContractingDim = [](int lhs_ragged_dim,
+                                             const DotDimensionNumbers& dnums) {
+      return std::any_of(dnums.lhs_contracting_dimensions().begin(),
+                         dnums.lhs_contracting_dimensions().end(),
+                         [&](auto dim) { return dim == lhs_ragged_dim; });
+    };
+
+    auto isLhsRaggedDimInBatchDim = [](int lhs_ragged_dim,
+                                       const DotDimensionNumbers& dnums) {
+      return std::any_of(dnums.lhs_batch_dimensions().begin(),
+                         dnums.lhs_batch_dimensions().end(),
+                         [&](auto dim) { return dim == lhs_ragged_dim; });
+    };
+
+    if (!isLhsRaggedDimInContractingDim(lhs_ragged_dim, dot_dims) &&
+        !isLhsRaggedDimInBatchDim(lhs_ragged_dim, dot_dims) &&
+        ragged_dims.rhs_group_dimensions().size() != 1) {
+      return absl::UnimplementedError(
+          "rhs_group_dimensions must have size equal to 1 when lhs ragged "
+          "dimension is a non-contracting dimension");
+    }
+    HloInstruction* grouped_gemm_call =
+        instr->AddInstruction(HloInstruction::CreateCustomCall(
+            ragged_dot->shape(), ragged_dot->mutable_operands(),
+            gpu::kCublasLtGroupedMatmulCallTarget));
+
+    // Create a GroupedGemmBackendConfig based on the instruction.
+    TF_ASSIGN_OR_RETURN(
+        gpu::GpuBackendConfig gpu_backend_config,
+        grouped_gemm_call->backend_config<gpu::GpuBackendConfig>());
+    GroupedGemmBackendConfig& grouped_gemm_backend_config =
+        *gpu_backend_config.mutable_grouped_gemm_backend_config();
+    RaggedDotDimensionNumbers& ragged_dot_dimension_numbers =
+        *grouped_gemm_backend_config.mutable_ragged_dot_dimension_numbers();
+    ragged_dot_dimension_numbers = ragged_dot->ragged_dot_dimension_numbers();
+
+    // Create a GemmBackendConfig based on the instruction.
+    GemmBackendConfig& gemm_backend_config =
+        *grouped_gemm_backend_config.mutable_gemm_backend_config();
+    gemm_backend_config.set_alpha_real(1.0);
+    gemm_backend_config.set_alpha_imag(0.0);
+    gemm_backend_config.set_beta(0.0);
+    *gemm_backend_config.mutable_dot_dimension_numbers() = dot_dims;
+
+    auto attributes = instr->frontend_attributes().map();
+    gemm_backend_config.set_grad_x(attributes["grad_x"] == "true");
+    gemm_backend_config.set_grad_y(attributes["grad_y"] == "true");
+
+    TF_RETURN_IF_ERROR(
+        grouped_gemm_call->set_backend_config(gpu_backend_config));
+
+    TF_RETURN_IF_ERROR(ReplaceInstruction(instr, grouped_gemm_call));
     return absl::OkStatus();
   }
 
@@ -1395,6 +1484,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     std::vector<HloInstruction*> operands_list = {a.fp8_input, b.fp8_input,
                                                   scales_f32[0], scales_f32[1]};
 
+    gemm_backend_config.set_scale_mode(
+        static_cast<int32_t>(se::gpu::ScaleMode::kTensorScaling));
+
     HloInstruction* new_custom_call =
         instr->AddInstruction(HloInstruction::CreateCustomCall(
             ShapeUtil::MakeShapeWithDenseLayout(
@@ -1999,8 +2091,13 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
 
-    // There are four users of the gemm output within the GELU calculation.
-    bool has_aux = gemm->user_count() > 4;
+    // There are 2 final users of the gemm output within the Swish calculation.
+    bool has_aux = CountFinalUsers(gemm) > 2;
+    if (has_aux) {
+      // SILU_AUX epilogue is not supported yet.
+      // https://rocm.docs.amd.com/projects/hipBLASLt/en/latest/reference/datatypes.html
+      return absl::OkStatus();
+    }
 
     TF_ASSIGN_OR_RETURN(auto gpu_config,
                         gemm->backend_config<GpuBackendConfig>());
@@ -2014,9 +2111,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
 
-    std::unique_ptr<HloInstruction> output = gemm->CloneWithNewShape(
-        has_aux ? ShapeUtil::MakeTupleShape({gemm->shape(), gemm->shape()})
-                : gemm->shape());
+    std::unique_ptr<HloInstruction> output =
+        gemm->CloneWithNewShape(gemm->shape());
     TF_RETURN_IF_ERROR(output->set_backend_config(gpu_config));
     TF_RETURN_IF_ERROR(SetName(multiply->GetModule(), output.get()));
 
@@ -2024,14 +2120,6 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       output = slice_or_bitcast->CloneWithNewOperands(
           slice_or_bitcast->shape(),
           {gemm->parent()->AddInstruction(std::move(output))});
-    }
-
-    if (has_aux) {
-      HloInstruction* tuple_output =
-          gemm->parent()->AddInstruction(std::move(output));
-      TF_RETURN_IF_ERROR(ReplaceWithNewInstruction(
-          gemm, HloInstruction::CreateGetTupleElement(tuple_output, 1)));
-      output = HloInstruction::CreateGetTupleElement(tuple_output, 0);
     }
 
     return ReplaceWithNewInstruction(multiply, std::move(output));
@@ -2336,6 +2424,10 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
          PrimitiveType::F8E4M3FNUZ, DataType::kHalf},
         {ComputationType::kF32, DataType::kFloat, PrimitiveType::F8E5M2FNUZ,
          PrimitiveType::F8E4M3FNUZ, DataType::kFloat},
+
+        // TF32
+        {ComputationType::kTF32AsF32, DataType::kFloat, PrimitiveType::F32,
+         PrimitiveType::F32, DataType::kFloat},
     };
     if (gpu_version_.IsRocm() &&
         absl::c_linear_search(supported_hipblas_type_combinations,
@@ -2512,6 +2604,11 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
             instr->shape().IsArray())) {
         return absl::OkStatus();
       }
+    } else if (instr->custom_call_target() ==
+               kCublasLtGroupedMatmulCallTarget) {
+      if (!instr->shape().IsArray()) {
+        return absl::OkStatus();
+      }
     } else if (instr->custom_call_target() != kGemmCallTarget ||
                !instr->shape().IsArray()) {
       return absl::OkStatus();
@@ -2547,6 +2644,12 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
         operands_byte_size += ShapeUtil::ByteSizeOf(operand->shape());
       }
       workspace = std::min(workspace, operands_byte_size);
+    }
+
+    // For grouped matmul, add workspace for user args updates
+    if (instr->custom_call_target() == kCublasLtGroupedMatmulCallTarget) {
+      size_t num_groups = instr->operand(2)->shape().dimensions().back();
+      workspace = GroupedGemmConfig::kUserArgsSizeBytes * num_groups;
     }
 
     // Append workspace buffer to instruction outputs.

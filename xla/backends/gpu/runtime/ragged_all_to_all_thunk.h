@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -110,6 +111,10 @@ struct RaggedAllToAllStreamState {
         clique_key(std::move(clique_key)) {}
 };
 
+// Returns true if all replicas in every replica group of the collective
+// are located on the same host (node).
+bool IsAllReplicasLocal(int64_t device_count, const CollectiveConfig& config);
+
 // Thunk that performs a NCCL-based Ragged-All-to-All among CUDA GPU-based
 // replicas.
 class RaggedAllToAllStartThunk : public CollectiveThunk {
@@ -146,6 +151,15 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
 
   absl::Span<const Buffer> buffers() const { return buffers_; }
 
+  bool is_one_shot_kernel_enabled() const { return one_shot_kernel_enabled_; }
+
+  bool use_multi_gpu_barrier_in_one_shot_kernel() const {
+    return use_multi_gpu_barrier_in_one_shot_kernel_;
+  }
+
+  // Returns true if one shot kernel is supported
+  bool IsOneShotKernelSupported() const;
+
   static absl::StatusOr<std::unique_ptr<RaggedAllToAllStartThunk>> FromProto(
       ThunkInfo thunk_info, const RaggedAllToAllStartThunkProto& thunk_proto,
       absl::Span<const BufferAllocation> buffer_allocations,
@@ -166,17 +180,21 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
   }
 
  protected:
-  absl::StatusOr<bool> RunCollective(const ExecuteParams& params,
-                                     const GpuCliqueKey& clique_key,
-                                     se::Stream& stream,
-                                     Communicator& comm) override;
+  // No rendezvous needed when using one-shot kernel in local mode instead of
+  // NCCL.
+  bool RequiresRendezvous() const override { return !one_shot_kernel_enabled_; }
+
+  absl::Status RunCollective(const ExecuteParams& params,
+                             const GpuCliqueKey& clique_key, se::Stream& stream,
+                             Communicator& comm) override;
 
  private:
-  bool is_local() const;
+  bool is_local(int device_count) const {
+    return IsAllReplicasLocal(device_count, config_.config);
+  }
 
   const RaggedAllToAllConfig config_;
   const std::vector<Buffer> buffers_;
-  int64_t device_count_ = -1;
   const bool one_shot_kernel_enabled_;
   const bool use_multi_gpu_barrier_in_one_shot_kernel_;
 
@@ -188,6 +206,14 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
   absl::StatusOr<RaggedAllToAllStreamState*> InitializeOnce(
       const InitializeParams& params);
 };
+
+// Executes the rendezvous to exchange buffer addresses and barrier signal
+// buffers.
+absl::StatusOr<std::shared_ptr<std::vector<RaggedAllToAllRendezvousValue>>>
+RendezvousResources(int device_ordinal, RankId rank,
+                    const GpuCliqueKey& clique_key,
+                    const se::DeviceAddressBase& output_buffer,
+                    const se::DeviceAddressBase& barrier_signal_buffer);
 
 // Executes a generic Ragged All-to-All collective operation using the provided
 // communicator (e.g., NCCL).

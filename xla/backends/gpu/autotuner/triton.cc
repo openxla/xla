@@ -29,10 +29,11 @@ limitations under the License.
 #include "google/protobuf/text_format.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/backends/gpu/autotuner/triton/dot_search_space.h"
+#include "xla/backends/gpu/autotuner/triton/triton_configs.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
 #include "xla/backends/gpu/transforms/hoist_fused_bitcasts.h"
-#include "xla/backends/gpu/transforms/nest_gemm_fusion.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -42,8 +43,6 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/compiler.h"
-#include "xla/service/gpu/autotuning/dot_search_space.h"
-#include "xla/service/gpu/autotuning/triton_configs.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -86,6 +85,12 @@ std::vector<TritonGemmConfig> GetDefaultTritonConfigs(
   return configs;
 }
 
+bool IsWarpSpecializationAvailable(
+    se::GpuComputeCapability compute_capability) {
+  return compute_capability.IsCuda() &&
+         compute_capability.cuda_compute_capability()->IsAtLeastBlackwell();
+}
+
 }  // namespace
 
 absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>>
@@ -109,6 +114,13 @@ TritonBackend::GetSupportedConfigs(const HloInstruction& instr) {
       hlo_query::GetFirstInstructionWithOpcode(
           *instr.fused_instructions_computation(), HloOpcode::kScaledDot);
   if (scaled_dot_instr != nullptr) {
+    // Triton scaled dot emitter is not supported on ROCm; skip to allow
+    // other backends (e.g. HipblasLtBackend) to handle kScaledDot.
+    const auto& gpu_cc =
+        target_config().device_description.gpu_compute_capability();
+    if (gpu_cc.IsRocm()) {
+      return std::vector<std::unique_ptr<BackendConfig>>();
+    }
     return GetSupportedConfigsForScaledDot(scaled_dot_instr);
   }
   return std::vector<std::unique_ptr<BackendConfig>>();
@@ -126,6 +138,11 @@ TritonBackend::GetSupportedConfigsForDot(const HloInstruction* instr) {
   bool autotune_contracting_split =
       supports_contracting_split &&
       debug_options().xla_gpu_enable_split_k_autotuning();
+  bool autotune_warp_specialization =
+      debug_options()
+          .xla_gpu_experimental_enable_triton_warp_specialization() &&
+      IsWarpSpecializationAvailable(
+          target_config().device_description.gpu_compute_capability());
 
   std::vector<std::unique_ptr<BackendConfig>> configs;
   VLOG(1) << "Generating configs from search space: "
@@ -135,7 +152,8 @@ TritonBackend::GetSupportedConfigsForDot(const HloInstruction* instr) {
   std::vector<TritonGemmConfig> gemm_configs = search_space.GenerateConfigs(
       /*force_contracting_split=*/autotune_contracting_split
           ? std::nullopt
-          : std::make_optional(1));
+          : std::make_optional(1),
+      /*autotune_warp_specialization=*/autotune_warp_specialization);
 
   if (!debug_options().xla_gpu_exhaustive_tiling_search()) {
     VLOG(1) << "Restricting configs to the default set.";
@@ -280,15 +298,12 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonBackend::RunHloPasses(
   // into fusions.
   FusionWrapper fusion_wrapper(gpu_device_info);
   TF_RETURN_IF_ERROR(fusion_wrapper.Run(hlo_module.get()).status());
+  // TODO: b/487920266 - remove once microbenchmarks have been regenerated to
+  // include this pass (it now runs before the autotuner).
   TF_RETURN_IF_ERROR(HoistFusedBitcasts().Run(hlo_module.get()).status());
-  if (debug_options().xla_gpu_unsupported_disable_nested_gemm_fusions()) {
-    ConvertTritonGemmConfig convert_triton_gemm_config(gpu_device_info,
-                                                       mlir_context_);
-    RETURN_IF_ERROR(convert_triton_gemm_config.Run(hlo_module.get()).status());
-  } else {
-    NestGemmFusion nest_gemm_fusion(gpu_device_info, mlir_context_);
-    RETURN_IF_ERROR(nest_gemm_fusion.Run(hlo_module.get()).status());
-  }
+  ConvertTritonGemmConfig convert_triton_gemm_config(gpu_device_info,
+                                                     mlir_context_);
+  RETURN_IF_ERROR(convert_triton_gemm_config.Run(hlo_module.get()).status());
   return hlo_module;
 }
 

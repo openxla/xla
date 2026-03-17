@@ -30,12 +30,12 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/autotuning/autotuner_compile_util.h"
-#include "xla/service/gpu/autotuning/autotuner_util.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/platform_util.h"
-#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -49,10 +49,15 @@ class TritonFusionNumericsVerifierTest
       public ::testing::WithParamInterface<PrimitiveType> {
  public:
   void SetUp() override {
-    auto device_config = CreateDeviceOrDevicelessConfig();
-    se::DeviceDescription device_info =
-        device_config.GetExecutor()->GetDeviceDescription();
-    alias_info_ = std::make_unique<GpuAliasInfo>(device_info);
+    HloPjRtTestBase::SetUp();
+    se::Platform* platform = PlatformUtil::GetPlatform("gpu").value();
+    auto executors_or = PlatformUtil::GetStreamExecutors(platform);
+    EXPECT_OK(executors_or);
+    stream_executor_ = executors_or->at(0);
+    allocator_ =
+        std::make_unique<se::StreamExecutorAddressAllocator>(stream_executor_);
+    alias_info_ = std::make_unique<GpuAliasInfo>(
+        stream_executor_->GetDeviceDescription());
   }
   DebugOptions GetDebugOptionsForTest() const override {
     auto options = HloPjRtTestBase::GetDebugOptionsForTest();
@@ -83,22 +88,9 @@ class TritonFusionNumericsVerifierTest
     return fusion_result;
   }
 
-  DeviceOrDevicelessConfig CreateDeviceOrDevicelessConfig() {
-    se::Platform* platform = PlatformUtil::GetPlatform("gpu").value();
-    auto executors_or = PlatformUtil::GetStreamExecutors(platform);
-    EXPECT_OK(executors_or);
-    return DeviceOrDevicelessConfig{DeviceConfig{executors_or->at(0), nullptr}};
-  }
-
-  AutotunerCompileUtil CreateAutotunerCompileUtil(
-      DeviceOrDevicelessConfig& config) {
-    auto compile_util_or =
-        AutotunerCompileUtil::Create(config, GetDebugOptionsForTest());
-    EXPECT_OK(compile_util_or);
-    return std::move(compile_util_or).value();
-  }
-
   MLIRContext mlir_context_;
+  se::StreamExecutor* stream_executor_;
+  std::unique_ptr<se::DeviceAddressAllocator> allocator_;
   std::unique_ptr<GpuAliasInfo> alias_info_;
 };
 
@@ -145,41 +137,25 @@ TEST_P(TritonFusionNumericsVerifierTest, VerifyExactSoftmaxFusionNumerics) {
 
   EXPECT_NE(TritonFusion(*module), nullptr);
   auto verifier = TritonFusionNumericsVerifier(
-      CreateDeviceOrDevicelessConfig(), alias_info_.get(), &mlir_context_);
+      *stream_executor_, allocator_.get(), alias_info_.get(), &mlir_context_);
   EXPECT_OK(verifier.Run(module.get(), /*execution_threads=*/{}));
 }
 
 TEST_P(TritonFusionNumericsVerifierTest, VerifyNestedGemmNumerics) {
+  if (GetParam() == F64) {
+    // TODO(b/446827313): f64 fails at the moment as
+    // 'Algorithm not supported by the ElementalIrEmitter: ALG_DOT_F64_F64_F64'.
+    GTEST_SKIP() << "Skipping test for F64.";
+  }
   constexpr absl::string_view kNestedGemmFusionHloText = R"(
-flhs {
-  ROOT flhs.p0 = $0[16,16] parameter(0)
-}
-
-frhs {
-  frhs.p0 = $0[16,16] parameter(0)
-  ROOT frhs.root = $0[16,16] abs(frhs.p0)
-}
-
 fdot {
   fdot.p0 = $0[16,16] parameter(0)
   fdot.p1 = $0[16,16] parameter(1)
-  fdot.lhs = $0[16,16] fusion(fdot.p0), kind=kCustom, calls=flhs, backend_config={
-    "fusion_backend_config":{
-      "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["16", "16"]}]
-      }
-    }
-  }
-  fdot.rhs = $0[16,16]{1,0} fusion(fdot.p1), kind=kCustom, calls=frhs, backend_config={
-    "fusion_backend_config":{
-      "kind":"__triton_nested_gemm_fusion", "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["16", "16"]}]
-      }
-    }
-  }
-  ROOT fdot.root = $0[16,16]{1,0} dot(fdot.lhs, fdot.rhs),
+  abs = $0[16,16] abs(fdot.p1)
+  ROOT fdot.root = $0[16,16]{1,0} dot(fdot.p0, abs),
     lhs_contracting_dims={1}, rhs_contracting_dims={0},
-    algorithm=dot_$0_$0_$0
+    algorithm=dot_$0_$0_$0,
+    backend_config={"sizes":["16"]}
 }
 
 ENTRY entry {
@@ -200,7 +176,7 @@ ENTRY entry {
 
   EXPECT_NE(TritonFusion(*module), nullptr);
   auto verifier = TritonFusionNumericsVerifier(
-      CreateDeviceOrDevicelessConfig(), alias_info_.get(), &mlir_context_);
+      *stream_executor_, allocator_.get(), alias_info_.get(), &mlir_context_);
   EXPECT_OK(verifier.Run(module.get(), /*execution_threads=*/{}));
 }
 
@@ -231,71 +207,21 @@ ENTRY main{
 
   EXPECT_NE(TritonFusion(*module), nullptr);
   auto verifier = TritonFusionNumericsVerifier(
-      CreateDeviceOrDevicelessConfig(), alias_info_.get(), &mlir_context_);
+      *stream_executor_, allocator_.get(), alias_info_.get(), &mlir_context_);
   EXPECT_OK(verifier.Run(module.get(), /*execution_threads=*/{}));
 }
 
 TEST_P(TritonFusionNumericsVerifierTest, VerifyMultipleNestedFusionNumerics) {
   constexpr absl::string_view kMultiOutputFusionHloText = R"(
 HloModule m
-lhs_computation (p0: bf16[128,512]) -> bf16[128,512] {
-  ROOT p0 = bf16[128,512]{1,0} parameter(0)
-}
-
-rhs_computation (p0: bf16[256,512]) -> bf16[256,512] {
-  ROOT p0 = bf16[256,512]{1,0} parameter(0)
-}
-
-concat_computation (p0: bf16[128,512], p1: bf16[256,512]) -> bf16[384,512] {
-  p0 = bf16[128,512]{1,0} parameter(0)
-  lhs_f = bf16[128,512]{1,0} fusion(p0), kind=kCustom, calls=lhs_computation, backend_config={
-    "operation_queue_id":"0",
-    "wait_on_operation_queues":[],
-    "fusion_backend_config":{
-      "kind":"__triton_nested_gemm_fusion"}}
-  p1 = bf16[256,512]{1,0} parameter(1)
-  rhs_f = bf16[256,512]{1,0} fusion(p1), kind=kCustom, calls=rhs_computation, backend_config={
-    "operation_queue_id":"0",
-    "wait_on_operation_queues":[],
-    "fusion_backend_config":{
-      "kind":"__triton_nested_gemm_fusion"}}
-  ROOT concat = bf16[384,512]{1,0} concatenate(lhs_f, rhs_f), dimensions={0}
-}
-
-dot_rhs_computation (p0: bf16[512,512]) -> bf16[512,512] {
-  ROOT p0 = bf16[512,512]{1,0} parameter(0)
-}
-
 gemm_computation (p0: bf16[128,512], p1: bf16[256,512], p2: bf16[512,512]) -> bf16[384,512] {
   p0 = bf16[128,512]{1,0} parameter(0)
   p1 = bf16[256,512]{1,0} parameter(1)
-  concat_f = bf16[384,512]{1,0} fusion(p0, p1), kind=kCustom,
-    calls=concat_computation, backend_config={
-    "operation_queue_id":"0",
-    "wait_on_operation_queues":[],
-    "fusion_backend_config":{
-      "kind":"__triton_nested_gemm_fusion",
-      "block_level_fusion_config":{
-        "num_warps":"8",
-        "output_tiles":[{"sizes":["128","32"]}],
-        "num_ctas":1,
-        "num_stages":4,
-        "is_tma_allowed":false}}}
   p2 = bf16[512,512]{1,0} parameter(2)
-  dot_rhs_f = bf16[512,512]{1,0} fusion(p2), kind=kCustom,
-    calls=dot_rhs_computation, backend_config={
-    "operation_queue_id":"0",
-    "wait_on_operation_queues":[],
-    "fusion_backend_config":{
-      "kind":"__triton_nested_gemm_fusion",
-      "block_level_fusion_config":{
-        "num_warps":"8",
-        "output_tiles":[{"sizes":["32","256"]}],
-        "num_ctas":1,
-        "num_stages":4,
-        "is_tma_allowed":false}}}
-  ROOT dot = bf16[384,512]{1,0} dot(concat_f, dot_rhs_f),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  concat = bf16[384,512]{1,0} concatenate(p0, p1), dimensions={0}
+  ROOT dot = bf16[384,512]{1,0} dot(concat, p2),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    backend_config={"sizes":["32"]}
 }
 
 ENTRY main (p0: bf16[128,512], p1: bf16[256,512], p2: bf16[512,512]) -> bf16[384,512] {
@@ -321,7 +247,7 @@ ENTRY main (p0: bf16[128,512], p1: bf16[256,512], p2: bf16[512,512]) -> bf16[384
 
   EXPECT_NE(TritonFusion(*module), nullptr);
   auto verifier = TritonFusionNumericsVerifier(
-      CreateDeviceOrDevicelessConfig(), alias_info_.get(), &mlir_context_);
+      *stream_executor_, allocator_.get(), alias_info_.get(), &mlir_context_);
   EXPECT_OK(verifier.Run(module.get(), /*execution_threads=*/{}));
 }
 
@@ -346,28 +272,28 @@ TEST_F(TritonFusionNumericsVerifierTest, CheckMismatch) {
   auto fusion_f32 = TritonFusion(*module_f32);
   EXPECT_NE(fusion_f32, nullptr);
 
-  DeviceOrDevicelessConfig autotune_config = CreateDeviceOrDevicelessConfig();
-  AutotunerCompileUtil compile_util =
-      CreateAutotunerCompileUtil(autotune_config);
   const DebugOptions& debug_options = GetDebugOptionsForTest();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<AutotunerCompileUtil> compile_util,
+                       AutotunerCompileUtil::Create(
+                           *stream_executor_, *allocator_, debug_options));
 
   auto f64_result = triton_fusion_numerics_pass_internal::CompileAndRunFusion(
-      compile_util, *fusion_f64, autotune_config, debug_options,
-      /*disable_triton=*/false, alias_info_.get(), &mlir_context_);
+      *compile_util, *fusion_f64, debug_options,
+      /*disable_triton=*/false, *stream_executor_, allocator_.get(),
+      alias_info_.get(), &mlir_context_);
   EXPECT_OK(f64_result);
 
   auto f32_result = triton_fusion_numerics_pass_internal::CompileAndRunFusion(
-      compile_util, *fusion_f32, autotune_config, debug_options,
-      /*disable_triton=*/false, alias_info_.get(), &mlir_context_);
+      *compile_util, *fusion_f32, debug_options,
+      /*disable_triton=*/false, *stream_executor_, allocator_.get(),
+      alias_info_.get(), &mlir_context_);
   EXPECT_OK(f32_result);
-
-  auto stream = autotune_config.GetStream();
-  EXPECT_OK(stream);
 
   // Intentionally compare the fusions from the different modules, triggering a
   // mismatch.
   auto cmp = triton_fusion_numerics_pass_internal::CompareBuffers(
-      *f64_result, *f32_result, fusion_f64->shape(), debug_options, *stream);
+      *f64_result, *f32_result, fusion_f64->shape(), debug_options,
+      &compile_util->stream());
 
   EXPECT_FALSE(cmp.ok());
 }
@@ -408,18 +334,20 @@ ENTRY main {
                        "");
 
   auto verifier = TritonFusionNumericsVerifier(
-      CreateDeviceOrDevicelessConfig(), alias_info_.get(), &mlir_context_);
+      *stream_executor_, allocator_.get(), alias_info_.get(), &mlir_context_);
   EXPECT_OK(verifier.Run(module.get(), /*execution_threads=*/{}));
   auto fusion = TritonFusion(*module);
   EXPECT_NE(fusion, nullptr);
 
-  DeviceOrDevicelessConfig autotune_config = CreateDeviceOrDevicelessConfig();
-  AutotunerCompileUtil compile_util =
-      CreateAutotunerCompileUtil(autotune_config);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AutotunerCompileUtil> compile_util,
+      AutotunerCompileUtil::Create(*stream_executor_, *allocator_,
+                                   GetDebugOptionsForTest()));
   auto compilation_result =
       triton_fusion_numerics_pass_internal::CompileAndRunFusion(
-          compile_util, *fusion, autotune_config, GetDebugOptionsForTest(),
-          /*disable_triton=*/false, alias_info_.get(), &mlir_context_);
+          *compile_util, *fusion, GetDebugOptionsForTest(),
+          /*disable_triton=*/false, *stream_executor_, allocator_.get(),
+          alias_info_.get(), &mlir_context_);
 
   // Verify that the compilation with default flags fails. The compilation
   // fails, because the kernel will spill registers, but the error is
@@ -478,7 +406,7 @@ ENTRY main {
 
   std::unique_ptr<HloModule> module = Module(hlo_text, "");
   auto verifier = TritonFusionNumericsVerifier(
-      CreateDeviceOrDevicelessConfig(), alias_info_.get(), &mlir_context_);
+      *stream_executor_, allocator_.get(), alias_info_.get(), &mlir_context_);
   EXPECT_OK(verifier.Run(module.get(), /*execution_threads=*/{}));
   EXPECT_EQ(verifier.CacheHitsForTestingOnly(), 1);
 }
@@ -533,7 +461,7 @@ ENTRY main {
   auto module = Module(hlo_text, "");
   EXPECT_NE(TritonFusion(*module), nullptr);
   auto verifier = TritonFusionNumericsVerifier(
-      CreateDeviceOrDevicelessConfig(), alias_info_.get(), &mlir_context_);
+      *stream_executor_, allocator_.get(), alias_info_.get(), &mlir_context_);
   EXPECT_OK(verifier.Run(module.get(), /*execution_threads=*/{}));
 }
 

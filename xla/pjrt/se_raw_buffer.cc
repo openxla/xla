@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/buffer_sequencing_event.h"
 #include "xla/pjrt/device_event.h"
+#include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"
@@ -141,18 +142,20 @@ PjRtStreamExecutorRawBuffer::CopyRawHostToDeviceAndReturnEvent(
     if (transfer_size < sub_buffer.size()) {
       sub_buffer = sub_buffer.GetByteSlice(offset, transfer_size);
     }
-    client->WaitForAllocation(stream, *buf);
     std::shared_ptr<void> staging_buffer;
     auto status = [&]() -> absl::Status {
+      TF_RETURN_IF_ERROR(client->WaitForAllocation(stream, *buf));
       if (transfer_size > 0) {
         if (client->ShouldStageHostToDeviceTransfers(src, transfer_size)) {
-          if (client->host_memory_allocator() == nullptr) {
+          if (client->GetHostMemoryAllocator() == nullptr) {
             return absl::InvalidArgumentError(
                 "host_memory_allocator should be initialized for "
                 "staging buffer transfer.");
           }
-          staging_buffer =
-              client->host_memory_allocator()->Allocate(transfer_size);
+          HostMemoryAllocator::AllocateOptions alloc_opts;
+          alloc_opts.numa_node = stream->parent()->numa_node();
+          staging_buffer = client->GetHostMemoryAllocator()->Allocate(
+              transfer_size, alloc_opts);
           auto copy_to_staging_buffer = [src, transfer_size,
                                          staging_buffer]() mutable {
             std::memcpy(staging_buffer.get(), src, transfer_size);
@@ -197,17 +200,20 @@ PjRtStreamExecutorRawBuffer::CopyRawDeviceToHostAndReturnEvent(
     if (transfer_size < sub_buffer.size()) {
       sub_buffer = sub_buffer.GetByteSlice(offset, transfer_size);
     }
-    client->WaitForAllocation(stream, *buf);
     auto status = [&]() -> absl::Status {
+      TF_RETURN_IF_ERROR(client->WaitForAllocation(stream, *buf));
       if (transfer_size > 0) {
         if (client->ShouldStageHostToDeviceTransfers(dst, transfer_size)) {
-          if (client->host_memory_allocator() == nullptr) {
+          if (client->GetHostMemoryAllocator() == nullptr) {
             return absl::InvalidArgumentError(
                 "host_memory_allocator should be initialized for "
                 "staging buffer transfer.");
           }
+          HostMemoryAllocator::AllocateOptions alloc_opts;
+          alloc_opts.numa_node = stream->parent()->numa_node();
           std::shared_ptr<void> staging_buffer =
-              client->host_memory_allocator()->Allocate(transfer_size);
+              client->GetHostMemoryAllocator()->Allocate(transfer_size,
+                                                         alloc_opts);
           TF_RETURN_IF_ERROR(
               stream->Memcpy(staging_buffer.get(), sub_buffer, transfer_size));
           auto copy_from_staging_buffer = [dst, transfer_size,
@@ -469,8 +475,11 @@ void PjRtStreamExecutorRawBuffer::CopyTo(
     src_usage_event_promise->Set(*std::move(d2h_event));
     return;
   } else {
+    HostMemoryAllocator::AllocateOptions alloc_opts;
+    alloc_opts.numa_node = local_device_->executor()->numa_node();
     std::shared_ptr<void> staging_buffer =
-        client_->host_memory_allocator()->Allocate(GetOnDeviceSizeInBytes());
+        client_->GetHostMemoryAllocator()->Allocate(GetOnDeviceSizeInBytes(),
+                                                    alloc_opts);
     auto d2h_event = CopyRawDeviceToHostAndReturnEvent(
         staging_buffer.get(), 0, GetOnDeviceSizeInBytes());
     if (!d2h_event.ok()) {
@@ -614,10 +623,14 @@ void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
                 dst_raw_buffer.get())
                 ->device_buffer();
         auto dst_buffer_mem = dst_buffer->mem();
-        client->WaitForAllocation(stream, *src_raw_buffer);
-        client->WaitForAllocation(stream, *dst_raw_buffer);
-        auto status = stream->MemcpyD2D(&dst_buffer_mem, src_buffer->mem(),
-                                        dst_buffer_mem.size());
+        absl::Status status = [&]() -> absl::Status {
+          TF_RETURN_IF_ERROR(
+              client->WaitForAllocation(stream, *src_raw_buffer));
+          TF_RETURN_IF_ERROR(
+              client->WaitForAllocation(stream, *dst_raw_buffer));
+          return stream->MemcpyD2D(&dst_buffer_mem, src_buffer->mem(),
+                                   dst_buffer_mem.size());
+        }();
         if (!status.ok()) {
           client->SetEventAsError(usage_event, status);
           return;

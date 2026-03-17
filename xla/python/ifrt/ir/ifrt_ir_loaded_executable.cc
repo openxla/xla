@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Casting.h"
 #include "mlir/IR/OperationSupport.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -50,8 +51,8 @@ limitations under the License.
 #include "xla/python/ifrt/ir/transforms/utils.h"
 #include "xla/python/ifrt/ir/version.h"
 #include "xla/python/ifrt/memory.h"
-#include "xla/python/ifrt/support/sharding_conversions.h"
 #include "xla/python/ifrt/user_context.h"
+#include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -67,17 +68,62 @@ char IfrtIrLoadedExecutable::ID = 0;
 
 namespace {
 
+using DeviceIdToLogicalDeviceIdMap =
+    absl::flat_hash_map<DeviceId, IfrtIrLogicalDeviceId>;
+
 // Returns a DeviceList for the given device ids.
-absl::StatusOr<xla::ifrt::DeviceListRef> LookUpDevices(
-    xla::ifrt::Client* client, absl::Span<const xla::ifrt::DeviceId> ids) {
-  absl::InlinedVector<xla::ifrt::Device*, 1> devices;
+absl::StatusOr<DeviceListRef> LookUpDevices(Client* client,
+                                            absl::Span<const DeviceId> ids) {
+  absl::InlinedVector<Device*, 1> devices;
   devices.reserve(ids.size());
-  for (xla::ifrt::DeviceId id : ids) {
-    TF_ASSIGN_OR_RETURN(xla::ifrt::Device * device, client->LookupDevice(id));
+  for (DeviceId id : ids) {
+    TF_ASSIGN_OR_RETURN(Device * device, client->LookupDevice(id));
     devices.push_back(device);
   }
   return client->MakeDeviceList(devices);
 }
+
+// Create a map from runtime device id to logical device id.
+absl::StatusOr<DeviceIdToLogicalDeviceIdMap> CreateDeviceIdToLogicalDeviceIdMap(
+    std::shared_ptr<CompiledIfrtIrProgram> program) {
+  DeviceIdToLogicalDeviceIdMap device_id_to_logical_device_id;
+  for (int i = 0; i < program->device_assignments.size(); ++i) {
+    const xla::ifrt::DeviceId device_id = program->device_assignments[i];
+    auto [_, inserted] = device_id_to_logical_device_id.insert(
+        {device_id, IfrtIrLogicalDeviceId(i)});
+    if (!inserted) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Duplicate device id ", device_id.value(),
+                       " found in device assignments"));
+    }
+  }
+  return device_id_to_logical_device_id;
+}
+
+absl::StatusOr<IfrtIrExecutableVersion::AtomExecutableVersion>
+CreateAtomExecutableVersion(
+    std::shared_ptr<const xla::ifrt::LoadedExecutable> executable,
+    absl::flat_hash_map<xla::ifrt::DeviceId, IfrtIrLogicalDeviceId>&
+        device_id_to_logical_device_id) {
+  std::optional<xla::ifrt::DeviceListRef> device_list = executable->devices();
+  if (!device_list.has_value()) {
+    return absl::UnimplementedError("Portable executables are not supported.");
+  }
+  absl::Span<xla::ifrt::Device* const> devices = (*device_list)->devices();
+
+  IfrtIrExecutableVersion::AtomExecutableVersion atom_executable_version;
+  TF_ASSIGN_OR_RETURN(
+      std::shared_ptr<const xla::ifrt::ExecutableVersion> version,
+      executable->executable_version());
+  atom_executable_version.runtime_abi_version = std::move(version);
+  atom_executable_version.logical_device_ids.reserve(devices.size());
+  for (xla::ifrt::Device* device : devices) {
+    atom_executable_version.logical_device_ids.push_back(
+        device_id_to_logical_device_id[device->Id()]);
+  }
+  return atom_executable_version;
+}
+
 }  // namespace
 
 absl::StatusOr<std::optional<std::string>> IfrtIrLoadedExecutable::Fingerprint()
@@ -97,27 +143,16 @@ IfrtIrLoadedExecutable::executable_version() const {
       std::vector<IfrtIrExecutableVersion::AtomExecutableVersion>
           runtime_abi_versions;
       runtime_abi_versions.reserve(program_->atom_program_executables->size());
+      TF_ASSIGN_OR_RETURN(
+          DeviceIdToLogicalDeviceIdMap device_id_to_logical_device_id,
+          CreateDeviceIdToLogicalDeviceIdMap(program_));
 
       for (const auto& [name, executable] :
            *program_->atom_program_executables) {
-        std::optional<xla::ifrt::DeviceListRef> device_list =
-            executable->devices();
-        if (!device_list.has_value()) {
-          return absl::UnimplementedError(
-              "Portable executables are not supported.");
-        }
-        absl::Span<xla::ifrt::Device* const> devices =
-            (*device_list)->devices();
-
-        IfrtIrExecutableVersion::AtomExecutableVersion atom_executable_version;
-        TF_ASSIGN_OR_RETURN(
-            std::shared_ptr<const xla::ifrt::ExecutableVersion> version,
-            executable->executable_version());
-        atom_executable_version.devices.reserve(devices.size());
-        for (xla::ifrt::Device* device : devices) {
-          atom_executable_version.devices.push_back(device->Id());
-        }
-        atom_executable_version.runtime_abi_version = std::move(version);
+        TF_ASSIGN_OR_RETURN(IfrtIrExecutableVersion::AtomExecutableVersion
+                                atom_executable_version,
+                            CreateAtomExecutableVersion(
+                                executable, device_id_to_logical_device_id));
         runtime_abi_versions.push_back(std::move(atom_executable_version));
       }
 
@@ -190,12 +225,12 @@ IfrtIrLoadedExecutable::GetParameterShardings() const {
       []() { return "IfrtIrLoadedExecutable::GetParameterShardings"; });
   std::vector<xla::OpSharding> parameter_shardings;
   for (const auto& [idx, spec] : llvm::enumerate(program_->in_specs)) {
-    auto sharding = xla::ifrt::support::ToOpSharding(*spec.sharding);
-    if (sharding.ok()) {
-      parameter_shardings.push_back(*sharding);
+    if (auto hlo_sharding = llvm::dyn_cast_or_null<xla::ifrt::HloSharding>(
+            spec.sharding.get())) {
+      parameter_shardings.push_back(hlo_sharding->xla_hlo_sharding().ToProto());
     } else {
-      LOG(ERROR) << "Failed to convert parameter sharding #" << idx
-                 << sharding.status().message();
+      LOG(ERROR) << "Failed to get sharding of parameter #" << idx
+                 << ". Sharding is not an HloSharding.";
       return std::nullopt;
     }
   }
@@ -209,12 +244,12 @@ IfrtIrLoadedExecutable::GetOutputShardings() const {
       []() { return "IfrtIrLoadedExecutable::GetOutputShardings"; });
   std::vector<xla::OpSharding> output_shardings;
   for (const auto& [idx, spec] : llvm::enumerate(program_->out_specs)) {
-    auto sharding = xla::ifrt::support::ToOpSharding(*spec.sharding);
-    if (sharding.ok()) {
-      output_shardings.push_back(*sharding);
+    if (auto hlo_sharding = llvm::dyn_cast_or_null<xla::ifrt::HloSharding>(
+            spec.sharding.get())) {
+      output_shardings.push_back(hlo_sharding->xla_hlo_sharding().ToProto());
     } else {
-      LOG(ERROR) << "Failed to convert output sharding #" << idx
-                 << sharding.status().message();
+      LOG(ERROR) << "Failed to get sharding of output #" << idx
+                 << ". Sharding is not an HloSharding.";
       return std::nullopt;
     }
   }
@@ -305,13 +340,12 @@ IfrtIrLoadedExecutable::GetOutputMemoryKinds() const {
   return output_memory_kinds_vector;
 }
 
-absl::StatusOr<xla::ifrt::AttributeMap>
-IfrtIrLoadedExecutable::GetCostAnalysis() const {
+absl::StatusOr<AttributeMap> IfrtIrLoadedExecutable::GetCostAnalysis() const {
   return xla::Unimplemented(
       "IfrtIrLoadedExecutable does not support GetCostAnalysis()");
 }
 
-absl::StatusOr<absl::flat_hash_map<std::string, xla::ifrt::AttributeMap>>
+absl::StatusOr<absl::flat_hash_map<std::string, AttributeMap>>
 IfrtIrLoadedExecutable::GetMpmdCostAnalysis() const {
   absl::flat_hash_map<std::string, xla::ifrt::AttributeMap> mpmd_cost_analysis;
   for (const auto& [name, executable] : *program_->atom_program_executables) {
@@ -322,8 +356,7 @@ IfrtIrLoadedExecutable::GetMpmdCostAnalysis() const {
   return mpmd_cost_analysis;
 }
 
-absl::Span<xla::ifrt::Device* const>
-IfrtIrLoadedExecutable::addressable_devices() const {
+absl::Span<Device* const> IfrtIrLoadedExecutable::addressable_devices() const {
   DCHECK(this);
   return devices_->devices();
 }
@@ -332,10 +365,9 @@ std::optional<DeviceListRef> IfrtIrLoadedExecutable::devices() const {
   return devices_;
 }
 
-absl::StatusOr<
-    absl::flat_hash_map<std::string, absl::Span<xla::ifrt::Device* const>>>
+absl::StatusOr<absl::flat_hash_map<std::string, absl::Span<Device* const>>>
 IfrtIrLoadedExecutable::GetMpmdAddressableDevices() const {
-  absl::flat_hash_map<std::string, absl::Span<xla::ifrt::Device* const>>
+  absl::flat_hash_map<std::string, absl::Span<Device* const>>
       mpmd_addressable_devices;
   mpmd_addressable_devices.reserve(program_->atom_program_executables->size());
   for (const auto& [name, executable] : *program_->atom_program_executables) {
@@ -344,11 +376,11 @@ IfrtIrLoadedExecutable::GetMpmdAddressableDevices() const {
   return mpmd_addressable_devices;
 }
 
-absl::StatusOr<xla::ifrt::LoadedExecutableRef> IfrtIrLoadedExecutable::Create(
-    xla::ifrt::Client* client, std::shared_ptr<CompiledIfrtIrProgram> program) {
+absl::StatusOr<LoadedExecutableRef> IfrtIrLoadedExecutable::Create(
+    Client* client, std::shared_ptr<CompiledIfrtIrProgram> program) {
   tsl::profiler::TraceMe traceme("IfrtIrLoadedExecutable::Create");
 
-  TF_ASSIGN_OR_RETURN(xla::ifrt::DeviceListRef device_list,
+  TF_ASSIGN_OR_RETURN(DeviceListRef device_list,
                       LookUpDevices(client, program->device_assignments));
   TF_ASSIGN_OR_RETURN(auto memory_tracer, ProgramMemoryTracer::Create(
                                               program, client, device_list));
@@ -358,19 +390,17 @@ absl::StatusOr<xla::ifrt::LoadedExecutableRef> IfrtIrLoadedExecutable::Create(
 }
 
 IfrtIrLoadedExecutable::IfrtIrLoadedExecutable(
-    xla::ifrt::Client* client, std::shared_ptr<CompiledIfrtIrProgram> program,
-    xla::ifrt::DeviceListRef devices,
-    std::unique_ptr<ProgramMemoryTracer> memory_tracer)
+    Client* client, std::shared_ptr<CompiledIfrtIrProgram> program,
+    DeviceListRef devices, std::unique_ptr<ProgramMemoryTracer> memory_tracer)
     : client_(client),
       program_(std::move(program)),
       devices_(std::move(devices)),
       memory_tracer_(std::move(memory_tracer)),
-      user_context_(xla::ifrt::UserContextScope::current()) {}
+      user_context_(UserContextScope::current()) {}
 
-absl::StatusOr<xla::ifrt::LoadedExecutable::ExecuteResult>
-IfrtIrLoadedExecutable::Execute(
-    absl::Span<xla::ifrt::ArrayRef> args, const ExecuteOptions& options,
-    std::optional<xla::ifrt::DeviceListRef> devices) {
+absl::StatusOr<LoadedExecutable::ExecuteResult> IfrtIrLoadedExecutable::Execute(
+    absl::Span<ArrayRef> args, const ExecuteOptions& options,
+    std::optional<DeviceListRef> devices) {
   return program_->execute_fn(args, options, std::move(devices));
 }
 

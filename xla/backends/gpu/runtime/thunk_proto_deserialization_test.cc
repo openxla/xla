@@ -15,16 +15,21 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/thunk_proto_deserialization.h"
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/base/nullability.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/copy_done_thunk.h"
 #include "xla/backends/gpu/runtime/copy_thunk.h"
@@ -56,6 +61,24 @@ limitations under the License.
 
 namespace xla::gpu {
 namespace {
+
+absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProto(
+    const ThunkProto& thunk_proto,
+    absl::Span<const BufferAllocation> buffer_allocations,
+    const HloModule* absl_nullable hlo_module, absl::string_view platform_name,
+    const se::GpuComputeCapability& gpu_compute_capability,
+    const std::optional<stream_executor::KernelLoaderSpec::SymbolResolver>&
+        symbol_resolver = std::nullopt) {
+  ThunkSequenceProto thunk_sequence_proto;
+  *thunk_sequence_proto.add_thunks() = thunk_proto;
+  TF_ASSIGN_OR_RETURN(
+      ThunkSequence sequence,
+      DeserializeThunkSequenceProto(thunk_sequence_proto, buffer_allocations,
+                                    hlo_module, platform_name,
+                                    gpu_compute_capability, symbol_resolver));
+  return std::move(sequence.front());
+}
+
 using ::testing::ElementsAre;
 using ::testing::Field;
 using ::testing::IsEmpty;
@@ -1200,5 +1223,60 @@ TEST(ThunkProtoDeserializationTest, HostToDeviceCopyThunksRoundTrip) {
   EXPECT_THAT(round_trip_proto, EqualsProto(proto));
 }
 
+TEST(ThunkProtoDeserializationTest, AsyncStartAndDoneThunk) {
+  // Serialize an AsyncStartThunk with an empty nested thunk sequence and a
+  // corresponding AsyncDoneThunk, then deserialize them and verify the
+  // round-trip.
+  Thunk::ThunkInfo start_info;
+  start_info.profile_annotation = "async_start";
+  start_info.execution_stream_id = ExecutionStreamId(1);
+
+  AsyncStartThunk start_thunk(start_info, AsyncStartThunk::AsyncKind::kCompute,
+                              ThunkSequence{});
+
+  AsyncDoneThunk done_thunk(Thunk::ThunkInfo(), start_thunk.async_execution());
+
+  TF_ASSERT_OK_AND_ASSIGN(ThunkProto start_proto, start_thunk.ToProto());
+  TF_ASSERT_OK_AND_ASSIGN(ThunkProto done_proto, done_thunk.ToProto());
+
+  // Deserialize both thunks together so the AsyncExecutionMap connects them.
+  ThunkSequenceProto thunk_protos;
+  *thunk_protos.add_thunks() = start_proto;
+  *thunk_protos.add_thunks() = done_proto;
+  TF_ASSERT_OK_AND_ASSIGN(
+      ThunkSequence sequence,
+      DeserializeThunkSequenceProto(thunk_protos, /*buffer_allocations=*/{},
+                                    /*hlo_module=*/nullptr, kTestPlatformName,
+                                    se::GpuComputeCapability()));
+
+  ASSERT_EQ(sequence.size(), 2);
+  EXPECT_EQ(sequence[0]->kind(), Kind::kAsyncStart);
+  EXPECT_EQ(sequence[1]->kind(), Kind::kAsyncDone);
+
+  // Both thunks share the same AsyncExecution instance.
+  auto* deserialized_start = dynamic_cast<AsyncStartThunk*>(sequence[0].get());
+  auto* deserialized_done = dynamic_cast<AsyncDoneThunk*>(sequence[1].get());
+  ASSERT_NE(deserialized_start, nullptr);
+  ASSERT_NE(deserialized_done, nullptr);
+  EXPECT_EQ(deserialized_start->async_execution().get(),
+            deserialized_done->async_execution().get());
+
+  // Verify the round-trip by re-serializing and comparing protos. The
+  // async_execution_id is derived from the shared_ptr address, so it changes
+  // across serialization boundaries. Overwrite it to match the original.
+  TF_ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_start,
+                          deserialized_start->ToProto());
+  TF_ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_done,
+                          deserialized_done->ToProto());
+
+  uint64_t new_id = round_trip_start.async_start_thunk().async_execution_id();
+  start_proto.mutable_async_start_thunk()->set_async_execution_id(new_id);
+  done_proto.mutable_async_done_thunk()->set_async_execution_id(new_id);
+
+  EXPECT_THAT(round_trip_start, EqualsProto(start_proto));
+  EXPECT_THAT(round_trip_done, EqualsProto(done_proto));
+}
+
 }  // namespace
+
 }  // namespace xla::gpu

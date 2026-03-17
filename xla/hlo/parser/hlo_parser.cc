@@ -62,7 +62,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
+#include "xla/hlo/ir/mesh_and_axis.h"
+#include "xla/hlo/ir/named_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
+#include "xla/hlo/ir/stack_frames.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/hlo/parser/hlo_lexer.h"
 #include "xla/layout.h"
@@ -293,6 +296,8 @@ class HloParserImpl : public HloParser {
   absl::StatusOr<CollectiveDeviceList> ParseCollectiveDeviceListOnly();
   absl::StatusOr<std::unique_ptr<CollectiveDeviceListBase>>
   ParseCollectiveDeviceListBaseOnly();
+  bool ParseSparsityConfig(SparsityConfig* result);
+  bool ParseTensorSparsityConfig(SparsityConfig::TensorSparsityConfig* result);
 
  private:
   // Types of attributes.
@@ -348,6 +353,7 @@ class HloParserImpl : public HloParser {
     kOriginalValueRecoveryTable,
     kMode,
     kConvKind,
+    kSparsityConfig,
   };
 
   struct AttrConfig {
@@ -384,7 +390,7 @@ class HloParserImpl : public HloParser {
   bool ParseHloModule(HloModule* module,
                       bool parse_module_without_header = false);
 
-  bool ParseStackFrameIndex(HloModule* module);
+  bool ParseStackFrameIndex();
   bool ParseComputations(HloModule* module);
   bool ParseComputation(HloComputation** entry_computation);
   bool ParseInstructionList(HloComputation** computation,
@@ -536,12 +542,23 @@ class HloParserImpl : public HloParser {
       std::unique_ptr<CollectiveDeviceListBase>* device_list);
   bool ParseFrontendAttributes(FrontendAttributes* frontend_attributes);
   bool ParseStatisticsViz(StatisticsViz* statistics_viz);
+  bool ParseMesh(std::optional<Mesh>& mesh);
+  bool ParseDimensionSharding(const Mesh& mesh,
+                              NamedSharding::DimensionSharding& dim_sharding);
+  bool ParseDimensionShardingList(
+      const Mesh& mesh,
+      std::vector<NamedSharding::DimensionSharding>& dim_shardings);
+  bool ParseAxisRef(
+      const Mesh& mesh, AxisRef& axis,
+      const absl::flat_hash_map<absl::string_view, int64_t>& axis_name_to_idx);
+  bool ParseAxisRefList(const Mesh& mesh, std::vector<AxisRef>& axes);
   bool ParseIotaTileAssignmentArray(std::vector<int64_t>& iota_reshape_dims,
                                     std::vector<int>& iota_transpose_perm);
   bool ParseTileAssignment(std::vector<int64_t>& tile_assignment_dimensions,
                            std::vector<int64_t>& iota_reshape_dims,
                            std::vector<int>& iota_transpose_perm,
                            std::vector<int64_t>* devices);
+  bool ParseSingleSharding(std::optional<NamedSharding>& sharding);
   bool ParseSingleSharding(std::optional<HloSharding>& sharding,
                            bool lbrace_pre_lexed);
   bool ParseParameterReplication(ParameterReplication* parameter_replication);
@@ -712,6 +729,7 @@ class HloParserImpl : public HloParser {
   NameUniquer name_uniquer_{/*separator=*/"."};
 
   const HloParserOptions options_;
+  StackFrameIndexProto stack_frame_index_proto_;
 };
 
 bool SplitToInt64s(absl::string_view s, char delim, std::vector<int64_t>* out) {
@@ -1148,9 +1166,10 @@ bool HloParserImpl::ParseHloModule(HloModule* module,
     module->set_name(name);
   }
 
-  if (!ParseStackFrameIndex(module) || !ParseComputations(module)) {
+  if (!ParseStackFrameIndex() || !ParseComputations(module)) {
     return false;
   }
+  module->CanonicalizeStackFrameIds(stack_frame_index_proto_);
 
   if (parse_module_without_header) {
     name = absl::StrCat("module_", module->entry_computation()->name());
@@ -1297,15 +1316,14 @@ bool HloParserImpl::ParseStackFramesList(
   return true;
 }
 
-bool HloParserImpl::ParseStackFrameIndex(HloModule* module) {
+bool HloParserImpl::ParseStackFrameIndex() {
   if (!EatIfPresent(TokKind::kw_FileNames)) {
     return true;
   }
-  StackFrameIndexProto stack_frame_index;
 
   // Parse file names.
   while (EatIfPresent(TokKind::kInt)) {
-    ParseString(stack_frame_index.add_file_names());
+    ParseString(stack_frame_index_proto_.add_file_names());
   }
 
   // Parse function names.
@@ -1313,17 +1331,16 @@ bool HloParserImpl::ParseStackFrameIndex(HloModule* module) {
     return false;
   }
   while (EatIfPresent(TokKind::kInt)) {
-    ParseString(stack_frame_index.add_function_names());
+    ParseString(stack_frame_index_proto_.add_function_names());
   }
 
   // Parse file locations and stack frames.
   if (!ParseToken(TokKind::kw_FileLocations, "expects 'FileLocations'") ||
-      !ParseFileLocationList(&stack_frame_index) ||
+      !ParseFileLocationList(&stack_frame_index_proto_) ||
       !ParseToken(TokKind::kw_StackFrames, "expects 'StackFrames'") ||
-      !ParseStackFramesList(&stack_frame_index)) {
+      !ParseStackFramesList(&stack_frame_index_proto_)) {
     return false;
   }
-  module->set_stack_frame_index(std::move(stack_frame_index));
   return true;
 }
 
@@ -1883,12 +1900,12 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       }
       if (opcode == HloOpcode::kAllGather) {
         return builder->AddInstruction(HloInstruction::CreateAllGather(
-            *shape, operands, dimensions->at(0), *device_list,
+            *shape, operands, dimensions->at(0), std::move(device_list),
             constrain_layout ? *constrain_layout : false, channel_id,
             use_global_device_ids ? *use_global_device_ids : false));
       }
       return builder->AddInstruction(HloInstruction::CreateAllGatherStart(
-          *shape, operands, dimensions->at(0), *device_list,
+          *shape, operands, dimensions->at(0), std::move(device_list),
           constrain_layout ? *constrain_layout : false, channel_id,
           use_global_device_ids ? *use_global_device_ids : false));
     }
@@ -1944,19 +1961,19 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       }
       if (opcode == HloOpcode::kAllReduce) {
         return builder->AddInstruction(HloInstruction::CreateAllReduce(
-            *shape, operands, *to_apply, *device_list,
+            *shape, operands, *to_apply, std::move(device_list),
             constrain_layout ? *constrain_layout : false, channel_id,
             use_global_device_ids ? *use_global_device_ids : false));
       }
       if (opcode == HloOpcode::kReduceScatter) {
         return builder->AddInstruction(HloInstruction::CreateReduceScatter(
-            *shape, operands, *to_apply, *device_list,
+            *shape, operands, *to_apply, std::move(device_list),
             constrain_layout ? *constrain_layout : false, channel_id,
             use_global_device_ids ? *use_global_device_ids : false,
             dimensions->at(0)));
       }
       return builder->AddInstruction(HloInstruction::CreateAllReduceStart(
-          *shape, operands, *to_apply, *device_list,
+          *shape, operands, *to_apply, std::move(device_list),
           constrain_layout ? *constrain_layout : false, channel_id,
           use_global_device_ids ? *use_global_device_ids : false));
     }
@@ -1983,7 +2000,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         split_dimension = dimensions->at(0);
       }
       return builder->AddInstruction(HloInstruction::CreateAllToAll(
-          *shape, operands, *device_list,
+          *shape, operands, std::move(device_list),
           constrain_layout ? *constrain_layout : false, channel_id,
           split_dimension));
     }
@@ -2003,7 +2020,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         return nullptr;
       }
       return builder->AddInstruction(HloInstruction::CreateRaggedAllToAll(
-          *shape, operands, *device_list, channel_id));
+          *shape, operands, std::move(device_list), channel_id));
     }
     case HloOpcode::kCollectiveBroadcast: {
       std::unique_ptr<CollectiveDeviceListBase> device_list =
@@ -2017,7 +2034,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         return nullptr;
       }
       return builder->AddInstruction(HloInstruction::CreateCollectiveBroadcast(
-          *shape, operands, *device_list, false, channel_id));
+          *shape, operands, std::move(device_list), false, channel_id));
     }
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectivePermuteStart: {
@@ -2544,6 +2561,9 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       optional<std::vector<PrecisionConfig::Precision>> operand_precision;
       attrs["operand_precision"] = {/*required=*/false, AttrTy::kPrecisionList,
                                     &operand_precision};
+      optional<SparsityConfig> parsed_sparsity_config;
+      attrs["sparsity_config"] = {/*required=*/false, AttrTy::kSparsityConfig,
+                                  &parsed_sparsity_config};
       if ((!preset_operands &&
            !ParseOperands(&operands, builder, /*expected_size=*/2)) ||
           !ParseAttributes(attrs, allow_attributes, shape)) {
@@ -2566,26 +2586,24 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         precision_config.mutable_operand_precision()->Resize(
             operands.size(), PrecisionConfig::DEFAULT);
       }
+      SparsityConfig sparsity_config =
+          parsed_sparsity_config.value_or(SparsityConfig());
       if (!maybe_infer_shape([&] {
             return ShapeInference::InferConvolveShape(
                 operands[0]->shape(), operands[1]->shape(),
                 *feature_group_count, *batch_group_count, *window, *dnums,
-                /*preferred_element_type=*/std::nullopt);
+                sparsity_config, /*preferred_element_type=*/std::nullopt);
           })) {
         return nullptr;
       }
       auto convolution = builder->AddInstruction(HloInstruction::CreateConvolve(
           *shape, /*lhs=*/operands[0], /*rhs=*/operands[1],
           feature_group_count.value(), batch_group_count.value(), *window,
-          *dnums, precision_config));
+          *dnums, precision_config, sparsity_config));
       if (conv_kind) {
         Cast<HloConvolutionInstruction>(convolution)->set_conv_kind(*conv_kind);
       }
       return convolution;
-      return builder->AddInstruction(HloInstruction::CreateConvolve(
-          *shape, /*lhs=*/operands[0], /*rhs=*/operands[1],
-          feature_group_count.value(), batch_group_count.value(), *window,
-          *dnums, precision_config));
     }
     case HloOpcode::kFft: {
       optional<FftType> fft_type;
@@ -3976,6 +3994,345 @@ bool HloParserImpl::ParseStatisticsViz(StatisticsViz* statistics_viz) {
   return ParseToken(TokKind::kRbrace, "expects '}' at the end of statistics");
 }
 
+bool HloParserImpl::ParseMesh(std::optional<Mesh>& mesh) {
+  std::string kind = lexer_.GetStrVal();
+  lexer_.Lex();
+
+  if (kind == "maximal_mesh") {
+    if (!ParseToken(TokKind::kLsquare, "expected '[' after maximal_mesh")) {
+      return false;
+    }
+    std::string device_ids_str;
+    if (!ParseAttributeName(&device_ids_str) || device_ids_str != "device_id") {
+      return TokenError("expected device_id= attribute in maximal_mesh");
+    }
+    int64_t device_id;
+    if (!ParseInt64(&device_id)) {
+      return false;
+    }
+    if (!ParseToken(TokKind::kRsquare, "expected ']' to end maximal_mesh")) {
+      return false;
+    }
+    mesh.emplace(device_id);
+    return true;
+  }
+
+  if (kind != "mesh") {
+    return TokenError("Expected 'mesh' or 'maximal_mesh'");
+  }
+
+  // Parse @mesh[...]
+  if (!ParseToken(TokKind::kLsquare, "expected '[' after mesh")) {
+    return false;
+  }
+
+  std::vector<std::string> axis_names_storage;
+  std::vector<int64_t> axis_sizes;
+  if (lexer_.GetKind() != TokKind::kRsquare) {
+    while (true) {
+      std::string axis_name;
+      if (!ParseString(&axis_name)) {
+        return false;
+      }
+      if (!ParseToken(TokKind::kEqual, "expects '=' after axis name")) {
+        return false;
+      }
+      int64_t axis_size;
+      if (!ParseInt64(&axis_size)) {
+        return false;
+      }
+      axis_names_storage.push_back(axis_name);
+      axis_sizes.push_back(axis_size);
+
+      if (!EatIfPresent(TokKind::kComma)) {
+        break;
+      }
+    }
+  }
+
+  if (!ParseToken(TokKind::kRsquare, "expected ']' to end mesh axes")) {
+    return false;
+  }
+
+  // Empty mesh
+  if (axis_sizes.empty() && axis_names_storage.empty()) {
+    mesh.emplace();
+    return true;
+  }
+
+  std::vector<absl::string_view> axis_names_views(axis_names_storage.begin(),
+                                                  axis_names_storage.end());
+
+  // Optional device_ids=(...)
+  std::string device_ids_str;
+  if (EatIfPresent(TokKind::kComma) && ParseAttributeName(&device_ids_str) &&
+      device_ids_str == "device_ids") {
+    if (!ParseToken(TokKind::kLparen, "expected '(' for device_ids")) {
+      return false;
+    }
+
+    // Iota device_ids with reshape/transpose: [r1,r2,...]T(p1,p2,...)
+    if (lexer_.GetKind() == TokKind::kLsquare) {
+      std::vector<int64_t> iota_reshape_dims;
+      std::vector<int> iota_transpose_perm;
+      if (!ParseIotaTileAssignmentArray(iota_reshape_dims,
+                                        iota_transpose_perm) ||
+          !ParseToken(TokKind::kRparen, "expected ')' to end device_ids")) {
+        return false;
+      }
+      mesh.emplace(
+          TileAssignment(axis_sizes, iota_reshape_dims, iota_transpose_perm),
+          axis_names_views);
+      return true;
+    }
+
+    // Non-iota: d1,d2,d3...
+    std::vector<int64_t> devices;
+    if (lexer_.GetKind() != TokKind::kRparen) {
+      int64_t device;
+      if (!ParseInt64(&device)) {
+        return false;
+      }
+      devices.push_back(device);
+      while (EatIfPresent(TokKind::kComma)) {
+        if (!ParseInt64(&device)) {
+          return false;
+        }
+        devices.push_back(device);
+      }
+    }
+    if (!ParseToken(TokKind::kRparen, "expected ')' to end device_ids")) {
+      return false;
+    }
+    Array<int64_t> device_ids_array(axis_sizes);
+    CHECK_EQ(devices.size(), device_ids_array.num_elements())
+        << absl::StrFormat(
+               "Expected %d device_ids based on mesh axes, but got %d",
+               device_ids_array.num_elements(), devices.size());
+    absl::c_copy(devices, device_ids_array.begin());
+    mesh.emplace(device_ids_array, axis_names_views);
+    return true;
+  }
+
+  // Simple iota case
+  mesh.emplace(axis_sizes, axis_names_views);
+  return true;
+}
+
+bool HloParserImpl::ParseAxisRef(
+    const Mesh& mesh, AxisRef& axis,
+    const absl::flat_hash_map<absl::string_view, int64_t>& axis_name_to_idx) {
+  std::string axis_name_or_index;
+  if (!ParseString(&axis_name_or_index)) {
+    return false;
+  }
+  // Axis can be specified by name or index based on if mesh was specified while
+  // printing.
+  int64_t axis_index = -1;
+  auto it = axis_name_to_idx.find(axis_name_or_index);
+  if (it != axis_name_to_idx.end()) {
+    axis_index = it->second;
+  } else {
+    CHECK(absl::SimpleAtoi(axis_name_or_index, &axis_index))
+        << "axis '" << axis_name_or_index
+        << "' is not a valid axis name or index in mesh " << mesh.ToString();
+  }
+
+  CHECK(axis_index >= 0 && axis_index < mesh.axis_names().size())
+      << "axis index " << axis_index << " is out of bounds for mesh "
+      << mesh.ToString() << " which has " << mesh.axis_names().size()
+      << " axes";
+
+  if (!EatIfPresent(TokKind::kColon)) {
+    axis = AxisRef(axis_index);
+    return true;
+  }
+
+  // Sub-axis
+  if (!ParseToken(TokKind::kLparen,
+                  "expected '(' before pre_size in sub axis")) {
+    return false;
+  }
+    int64_t pre_size;
+    if (!ParseInt64(&pre_size)) {
+      return false;
+    }
+    if (!ParseToken(TokKind::kRparen,
+                    "expected ')' after pre_size in sub axis")) {
+      return false;
+    }
+    int64_t size;
+    if (!ParseInt64(&size)) {
+      return false;
+    }
+    axis = AxisRef(axis_index, {pre_size, size});
+    return true;
+}
+
+bool HloParserImpl::ParseAxisRefList(const Mesh& mesh,
+                                     std::vector<AxisRef>& axes) {
+  absl::flat_hash_map<absl::string_view, int64_t> axis_name_to_idx;
+  for (int64_t i = 0; i < mesh.axis_names().size(); ++i) {
+    axis_name_to_idx[mesh.axis_names()[i]] = i;
+  }
+  auto parse_and_add_item = [&]() {
+    axes.emplace_back(0);
+    return ParseAxisRef(mesh, axes.back(), axis_name_to_idx);
+  };
+  return ParseList(TokKind::kLbrace, TokKind::kRbrace, TokKind::kComma,
+                   parse_and_add_item);
+}
+
+bool HloParserImpl::ParseDimensionSharding(
+    const Mesh& mesh, NamedSharding::DimensionSharding& dim_sharding) {
+  std::vector<AxisRef> axes;
+  bool is_closed = true;
+  bool question_mark_seen = false;
+  absl::flat_hash_map<absl::string_view, int64_t> axis_name_to_idx;
+  for (int64_t i = 0; i < mesh.axis_names().size(); ++i) {
+    axis_name_to_idx[mesh.axis_names()[i]] = i;
+  }
+  auto parse_and_add_item = [&]() {
+    if (question_mark_seen) {
+      return TokenError("Saw axis ref after '?'");
+    }
+    if (lexer_.GetKind() == TokKind::kQuestionMark) {
+      is_closed = false;
+      lexer_.Lex();
+      question_mark_seen = true;
+      return true;
+    }
+    axes.emplace_back(0);
+    return ParseAxisRef(mesh, axes.back(), axis_name_to_idx);
+  };
+  if (!ParseList(TokKind::kLbrace, TokKind::kRbrace, TokKind::kComma,
+                 parse_and_add_item)) {
+    return false;
+  }
+  dim_sharding = NamedSharding::DimensionSharding(axes, is_closed);
+  return true;
+}
+
+bool HloParserImpl::ParseDimensionShardingList(
+    const Mesh& mesh,
+    std::vector<NamedSharding::DimensionSharding>& dim_shardings) {
+  auto parse_and_add_item = [&]() {
+    dim_shardings.emplace_back();
+    return ParseDimensionSharding(mesh, dim_shardings.back());
+  };
+  return ParseList(TokKind::kLsquare, TokKind::kRsquare, TokKind::kComma,
+                   parse_and_add_item);
+}
+
+bool HloParserImpl::ParseSingleSharding(
+    std::optional<NamedSharding>& sharding) {
+  std::optional<Mesh> mesh;
+  if (!ParseMesh(mesh)) {
+    return false;
+  }
+
+  auto parse_metadata_if_present =
+      [&](std::vector<OpMetadata>& metadata) -> bool {
+    if (EatIfPresent(TokKind::kComma)) {
+      std::string attr_name;
+      if (!ParseAttributeName(&attr_name) || attr_name != "metadata" ||
+          !ParseSingleOrListMetadata(metadata)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // Maximal sharding
+  if (mesh->IsMaximal()) {
+    std::vector<OpMetadata> metadata;
+    if (!parse_metadata_if_present(metadata)) {
+      return false;
+    }
+    sharding = NamedSharding(*mesh, /*dim_shardings=*/{},
+                             /*replicated_axes=*/{}, /*unreduced_axes=*/{},
+                             /*manual_axes=*/{}, metadata);
+    return ParseToken(TokKind::kRbrace,
+                      "expected '}' to end sharding attribute");
+  }
+
+  EatIfPresent(TokKind::kComma);
+
+  std::vector<OpMetadata> metadata;
+
+  // Special cases for fully replicated, unreduced, or manual sharding.
+  if (lexer_.GetKind() == TokKind::kw_replicated) {
+    lexer_.Lex();
+    if (!parse_metadata_if_present(metadata)) {
+      return false;
+    }
+    sharding = NamedSharding(*mesh, {}, {}, {}, {}, metadata);
+    return ParseToken(TokKind::kRbrace,
+                      "expected '}' to end sharding attribute");
+  }
+  if (lexer_.GetKind() == TokKind::kw_unreduced) {
+    lexer_.Lex();
+    if (!parse_metadata_if_present(metadata)) {
+      return false;
+    }
+    sharding = NamedSharding::Unreduced(*mesh, metadata);
+    return ParseToken(TokKind::kRbrace,
+                      "expected '}' to end sharding attribute");
+  }
+  if (lexer_.GetKind() == TokKind::kw_manual) {
+    lexer_.Lex();
+    if (!parse_metadata_if_present(metadata)) {
+      return false;
+    }
+    sharding = NamedSharding::Manual(*mesh, metadata);
+    return ParseToken(TokKind::kRbrace,
+                      "expected '}' to end sharding attribute");
+  }
+
+  std::vector<NamedSharding::DimensionSharding> dim_shardings;
+  if (!ParseDimensionShardingList(*mesh, dim_shardings)) {
+    return false;
+  }
+
+  std::vector<AxisRef> replicated_axes;
+  std::vector<AxisRef> unreduced_axes;
+  std::vector<AxisRef> manual_axes;
+
+  while (lexer_.GetKind() != TokKind::kRbrace) {
+    if (!ParseToken(TokKind::kComma, "expected ',' before next attribute")) {
+      return false;
+    }
+    std::string attr_name;
+    if (!ParseAttributeName(&attr_name)) {
+      return false;
+    }
+    if (attr_name == "replicated") {
+      if (!ParseAxisRefList(*mesh, replicated_axes)) {
+        return false;
+      }
+    } else if (attr_name == "unreduced") {
+      if (!ParseAxisRefList(*mesh, unreduced_axes)) {
+        return false;
+      }
+    } else if (attr_name == "manual") {
+      if (!ParseAxisRefList(*mesh, manual_axes)) {
+        return false;
+      }
+    } else if (attr_name == "metadata") {
+      if (!ParseSingleOrListMetadata(metadata)) {
+        return false;
+      }
+    } else {
+      return TokenError(
+          "unknown attribute in named sharding: expected replicated, "
+          "unreduced, manual or metadata");
+    }
+  }
+  sharding = NamedSharding(*mesh, dim_shardings, replicated_axes,
+                           unreduced_axes, manual_axes, metadata);
+  return ParseToken(TokKind::kRbrace, "expected '}' to end sharding attribute");
+}
+
 bool HloParserImpl::ParseIotaTileAssignmentArray(
     std::vector<int64_t>& iota_reshape_dims,
     std::vector<int>& iota_transpose_perm) {
@@ -4095,6 +4452,16 @@ bool HloParserImpl::ParseSingleSharding(std::optional<HloSharding>& sharding,
     return false;
   }
 
+  if (lexer_.GetKind() == TokKind::kIdent &&
+      (lexer_.GetStrVal() == "mesh" || lexer_.GetStrVal() == "maximal_mesh")) {
+    std::optional<NamedSharding> named_sharding;
+    if (ParseSingleSharding(named_sharding)) {
+      sharding = HloSharding(std::move(*named_sharding));
+      return true;
+    }
+    return false;
+  }
+
   LocTy loc = lexer_.GetLoc();
   bool maximal = false;
   bool replicated = false;
@@ -4204,7 +4571,7 @@ bool HloParserImpl::ParseSingleSharding(std::optional<HloSharding>& sharding,
       return Error(loc,
                    "maximal shardings should have exactly one device assigned");
     }
-    sharding = HloSharding::AssignDevice(devices[0], metadata);
+    sharding = HloSharding::SingleDevice(devices[0], metadata);
   } else if (manual) {
     if (!devices.empty()) {
       return Error(loc,
@@ -5655,6 +6022,14 @@ bool HloParserImpl::ParseAttributeHelper(
             ->emplace(mode);
         return true;
       }
+      case AttrTy::kSparsityConfig: {
+        SparsityConfig result;
+        if (!ParseSparsityConfig(&result)) {
+          return false;
+        }
+        static_cast<optional<SparsityConfig>*>(attr_out_ptr)->emplace(result);
+        return true;
+      }
     }
   }();
   if (!success) {
@@ -6762,6 +7137,88 @@ bool HloParserImpl::ParseJsonDict(std::string* result) {
   *result = lexer_.GetStrVal();
   lexer_.Lex();
   return true;
+}
+
+bool HloParserImpl::ParseSparsityConfig(SparsityConfig* result) {
+  VLOG(kDebugLevel) << "ParseSparsityConfig";
+  if (!ParseToken(TokKind::kLbrace, "expected '{' to start SparsityConfig")) {
+    return false;
+  }
+  if (lexer_.GetKind() == TokKind::kRbrace) {
+    // empty
+  } else {
+    do {
+      std::string attribute;
+      if (!ParseAttributeName(&attribute)) {
+        return false;
+      }
+      if (attribute == "lhs" || attribute == "rhs") {
+        SparsityConfig::TensorSparsityConfig* tensor_sparsity_config;
+        if (attribute == "lhs") {
+          tensor_sparsity_config = result->mutable_lhs();
+        } else {
+          tensor_sparsity_config = result->mutable_rhs();
+        }
+        if (!ParseTensorSparsityConfig(tensor_sparsity_config)) {
+          return false;
+        }
+      } else {
+        return Error(lexer_.GetLoc(), "unknown attribute");
+      }
+    } while (lexer_.GetKind() != TokKind::kRbrace);
+  }
+  return ParseToken(TokKind::kRbrace,
+                    "expects '}' at the end of SparsityConfig");
+}
+
+// We need to implement a custom parser for TensorSparsityConfig because we want
+// to print sparsity as "1:4" but parse it as (num_non_zero, block_size).
+bool HloParserImpl::ParseTensorSparsityConfig(
+    SparsityConfig::TensorSparsityConfig* result) {
+  VLOG(kDebugLevel) << "ParseTensorSparsityConfig";
+  CHECK(result != nullptr);
+  if (!ParseToken(TokKind::kLbrace,
+                  "expected '{' to start TensorSparsityConfig")) {
+    return false;
+  }
+  if (lexer_.GetKind() == TokKind::kRbrace) {
+    // empty
+  } else {
+    do {
+      std::string attribute;
+      if (!ParseAttributeName(&attribute)) {
+        return false;
+      }
+      if (attribute == "sparsity") {
+        // Parse "num_non_zero:block_size"
+        std::vector<int64_t> sparsity;
+        if (!ParseDxD("sparsity", &sparsity)) {
+          return Error(lexer_.GetLoc(), "expects string");
+        }
+        if (sparsity.size() != 2) {
+          return Error(lexer_.GetLoc(), "expects 'num_non_zero:block_size'");
+        }
+        result->set_num_non_zero(sparsity[0]);
+        result->set_block_size(sparsity[1]);
+      } else if (attribute == "dimension") {
+        int64_t dimension;
+        if (!ParseInt64(&dimension)) {
+          return Error(lexer_.GetLoc(), "expects int64_t");
+        }
+        result->set_dimension(dimension);
+      } else if (attribute == "stride") {
+        int64_t stride;
+        if (!ParseInt64(&stride)) {
+          return Error(lexer_.GetLoc(), "expects int64_t");
+        }
+        result->set_stride(stride);
+      } else {
+        return Error(lexer_.GetLoc(), "unknown attribute");
+      }
+    } while (lexer_.GetKind() != TokKind::kRbrace);
+  }
+  return ParseToken(TokKind::kRbrace,
+                    "expects '}' at the end of TensorSparsityConfig");
 }
 
 bool HloParserImpl::ParseDxD(const std::string& name,

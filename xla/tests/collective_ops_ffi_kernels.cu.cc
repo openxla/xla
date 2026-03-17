@@ -94,6 +94,21 @@ static __global__ void MulticastAllReduce(uint32_t* src_mmem, uint32_t* dst,
 #endif  // __CUDA_ARCH__ >= 900
 }
 
+// A trivial all-reduce for S32 data type that uses peer access.
+//
+// WARNING: This kernel doesn't have any barriers and it is a caller
+// responsibility to make sure that data is ready on all ranks.
+static __global__ void PeerAllReduce(uint32_t* src0, uint32_t* src1,
+                                     uint32_t* dst, size_t count) {
+  int64_t offset = blockIdx.x * blockDim.x + threadIdx.x;
+  int64_t stride = blockDim.x * gridDim.x;
+
+  for (int64_t i = offset; i < count; i += stride) {
+    uint32_t data = src0[i] + src1[i];
+    dst[i] = data;
+  }
+}
+
 static se::KernelLoaderSpec SymmetricAllReduceKernelSpec(int32_t arity) {
   return se::KernelLoaderSpec::CreateInProcessSymbolSpec(
       absl::bit_cast<void*>(&NcclDevAllReduce<int32_t>),
@@ -104,6 +119,11 @@ static se::KernelLoaderSpec MulticastAllReduceKernelSpec(int32_t arity) {
   return se::KernelLoaderSpec::CreateInProcessSymbolSpec(
       absl::bit_cast<void*>(&MulticastAllReduce), "MulticastAllReduce_S32",
       arity);
+}
+
+static se::KernelLoaderSpec Peer2AllReduceKernelSpec(int32_t arity) {
+  return se::KernelLoaderSpec::CreateInProcessSymbolSpec(
+      absl::bit_cast<void*>(&PeerAllReduce), "Peer2AllReduce_S32", arity);
 }
 
 }  // namespace xla::gpu
@@ -117,3 +137,7 @@ GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
     CollectiveMulticastAllReduce, xla::gpu::MultimemAllReduce,
     stream_executor::cuda::kCudaPlatformId,
     xla::gpu::MulticastAllReduceKernelSpec);
+
+GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
+    CollectivePeer2AllReduce, xla::gpu::Peer2AllReduce,
+    stream_executor::cuda::kCudaPlatformId, xla::gpu::Peer2AllReduceKernelSpec);

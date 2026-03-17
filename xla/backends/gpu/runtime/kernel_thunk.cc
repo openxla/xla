@@ -66,7 +66,8 @@ KernelThunk::KernelThunk(Thunk::ThunkInfo thunk_info, std::string kernel_name,
                          std::optional<se::ClusterDim> cluster_dim,
                          int64_t shmem_bytes,
                          stream_executor::gpu::TmaMetadata tma_metadata,
-                         std::vector<int64_t> zeroed_output_buffer_indices)
+                         std::vector<int64_t> zeroed_output_buffer_indices,
+                         bool use_pdl)
     : Thunk(Kind::kKernel, std::move(thunk_info)),
       args_(kernel_arguments.GetArgumentShapedSlices()),
       written_(kernel_arguments.GetArgumentOutputFlags()),
@@ -75,11 +76,14 @@ KernelThunk::KernelThunk(Thunk::ThunkInfo thunk_info, std::string kernel_name,
       launch_dimensions_(std::move(launch_dimensions)),
       cluster_dim_(std::move(cluster_dim)),
       shmem_bytes_(shmem_bytes),
-      tma_metadata_(std::move(tma_metadata)) {}
+      tma_metadata_(std::move(tma_metadata)),
+      use_pdl_(use_pdl) {}
 
 std::string KernelThunk::ToString(int indent) const {
   return absl::StrFormat(
-      ", kernel = %s, launch dimensions = %s, cluster_dim = %s", kernel_name_,
+      ", kernel = %s, profile_annotation = %s, launch dimensions = %s, "
+      "cluster_dim = %s",
+      kernel_name_, thunk_info().profile_annotation,
       launch_dimensions_.ToString(),
       cluster_dim_.has_value() ? cluster_dim_->ToString() : "nullopt");
 }
@@ -100,6 +104,7 @@ absl::StatusOr<ThunkProto> KernelThunk::ToProto() const {
     *kernel_proto->mutable_cluster_dim() = cluster_dim_->ToProto();
   }
   kernel_proto->set_shmem_bytes(shmem_bytes_);
+  kernel_proto->set_use_pdl(use_pdl_);
   *kernel_proto->mutable_tma_metadata() = tma_metadata_.ToProto();
   return proto;
 }
@@ -148,7 +153,7 @@ absl::StatusOr<std::unique_ptr<KernelThunk>> KernelThunk::FromProto(
       thunk_info, proto.kernel_name(),
       emitters::KernelArguments(std::move(arguments)), launch_dimensions,
       cluster_dim, proto.shmem_bytes(), tma_metadata,
-      std::move(zeroed_output_buffer_indices));
+      std::move(zeroed_output_buffer_indices), proto.use_pdl());
 }
 
 absl::Status KernelThunk::Initialize(const InitializeParams& params) {
@@ -164,12 +169,12 @@ absl::Status KernelThunk::Initialize(const InitializeParams& params) {
     if (!params.src.binary.empty()) {
       TF_ASSIGN_OR_RETURN(
           kernel, CreateKernel(kernel_name_, args_.size(), params.src.binary,
-                               params.executor, shmem_bytes_));
+                               params.executor, shmem_bytes_, use_pdl_));
 
     } else {
       TF_ASSIGN_OR_RETURN(
           kernel, CreateKernel(kernel_name_, args_.size(), params.src.text,
-                               params.executor, shmem_bytes_));
+                               params.executor, shmem_bytes_, use_pdl_));
     }
 
     kernel_cache_.emplace(params.executor, std::move(kernel));

@@ -46,7 +46,7 @@ namespace gpu {
 
 struct FusionEmissionResult {
   std::unique_ptr<llvm::Module> module;
-  std::vector<std::unique_ptr<Thunk>> thunks;
+  ThunkSequence thunks;
 };
 
 class FusionInterface {
@@ -65,6 +65,7 @@ class KernelFusionInterface : public FusionInterface {
 
   // Returns the fusion's launch dimensions.
   virtual LaunchDimensions launch_dimensions() const = 0;
+  virtual int unroll_factor() const { return 0; }
 
   // Computes an indexing map from thread to output element(s) of the **hero**.
   //

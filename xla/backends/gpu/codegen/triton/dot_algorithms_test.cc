@@ -289,7 +289,7 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
   )";
   // Single dot was replaced with 3 dots.
   constexpr absl::string_view kPattern = R"(
-    CHECK-COUNT-3: custom_call_target="__cublas$gemm"
+    CHECK-COUNT-3: custom_call_target="__cublas${{gemm|lt\$matmul}}"
   )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
@@ -356,7 +356,7 @@ TEST_F(BlasAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
   )";
   // Single dot was replaced with 3 dots.
   constexpr absl::string_view kPattern = R"(
-    CHECK-COUNT-6: custom_call_target="__cublas$gemm"
+    CHECK-COUNT-6: custom_call_target="__cublas${{gemm|lt\$matmul}}"
   )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
@@ -430,9 +430,9 @@ TEST_F(BlasAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
     }
   )";
   constexpr absl::string_view kPattern = R"(
-      CHECK: custom_call_target="__cublas$gemm"{{.*}}"algorithm":"ALG_DOT_TF32_TF32_F32"
-      CHECK: custom_call_target="__cublas$gemm"{{.*}}"algorithm":"ALG_DOT_TF32_TF32_F32"
-      CHECK: custom_call_target="__cublas$gemm"{{.*}}"algorithm":"ALG_DOT_TF32_TF32_F32"
+      CHECK: custom_call_target="__cublas${{gemm|lt\$matmul}}"{{.*}}"algorithm":"ALG_DOT_TF32_TF32_F32"
+      CHECK: custom_call_target="__cublas${{gemm|lt\$matmul}}"{{.*}}"algorithm":"ALG_DOT_TF32_TF32_F32"
+      CHECK: custom_call_target="__cublas${{gemm|lt\$matmul}}"{{.*}}"algorithm":"ALG_DOT_TF32_TF32_F32"
   )";
   TF_ASSERT_OK_AND_ASSIGN(auto module, GetOptimizedModule(kHloText));
   TF_ASSERT_OK_AND_ASSIGN(auto ok, RunFileCheck(module->ToString(), kPattern));
@@ -470,15 +470,22 @@ TEST_F(BlasAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
                                     ::testing::HasSubstr("cutlass_80"),
                                     ::testing::HasSubstr("cutlass_80")));
       break;
-    case CudaComputeCapabilities::kHopper:
+    case CudaComputeCapabilities::kHopper: {
+      DebugOptions debug_options = GetDebugOptionsForTest();
+      std::string dot_kernel_name = "tf32f32";
+      if (debug_options.xla_gpu_enable_cublaslt()) {
+        // CublasLt uses cutlass for TF32.
+        dot_kernel_name = "cutlass_80";
+      }
       EXPECT_THAT(kernel_names, ::testing::UnorderedElementsAre(
                                     ::testing::HasSubstr("loop_and_subtract"),
                                     ::testing::HasSubstr("loop_and_subtract"),
                                     ::testing::HasSubstr("loop_select_fusion"),
-                                    ::testing::HasSubstr("tf32f32"),
-                                    ::testing::HasSubstr("tf32f32"),
-                                    ::testing::HasSubstr("tf32f32")));
+                                    ::testing::HasSubstr(dot_kernel_name),
+                                    ::testing::HasSubstr(dot_kernel_name),
+                                    ::testing::HasSubstr(dot_kernel_name)));
       break;
+    }
     default:
       GTEST_SKIP() << "Unsupported compute capability: " << cc.major
                    << " has the kernel name: " << kernel_names[0];
@@ -489,28 +496,13 @@ TEST_F(Triton6xBF16GemmTest, Emit6xBF16GemmWhenBothInputsAreF32) {
   constexpr absl::string_view kHloText = R"(
     HloModule Emit6xBF16GemmWhenBothInputsAreF32
 
-    lhs {
-      ROOT p0 = f32[5,7] parameter(0)
-    }
-
-    rhs {
-      ROOT p0 = f32[7,33] parameter(0)
-    }
-
     triton_dot {
       p0 = f32[5,7] parameter(0)
       p1 = f32[7,33] parameter(1)
-      lhs = f32[5,7] fusion(p0), kind=kCustom, calls=lhs,
-       backend_config={"fusion_backend_config":{
-        "kind":"__triton_nested_gemm_fusion",
-        "block_level_fusion_config":{"output_tiles":[{"sizes":["32","32"]}]}}}
-      rhs = f32[7,33] fusion(p1), kind=kCustom, calls=rhs,
-       backend_config={"fusion_backend_config":{
-        "kind":"__triton_nested_gemm_fusion",
-        "block_level_fusion_config":{"output_tiles":[{"sizes":["32","32"]}]}}}
-      ROOT dot = f32[5,33] dot(lhs, rhs),
+      ROOT dot = f32[5,33] dot(p0, p1),
         lhs_contracting_dims={1}, rhs_contracting_dims={0},
-        algorithm=dot_bf16_bf16_f32_x6
+        algorithm=dot_bf16_bf16_f32_x6,
+        backend_config={sizes:[32]}
     }
 
     ENTRY e {
@@ -558,28 +550,13 @@ TEST_F(Triton6xBF16GemmTest, Triton6xBF16GemmWorksForLongContractingDimension) {
   constexpr absl::string_view kHloText = R"(
     HloModule Triton6xBF16GemmWorksForLongContractingDimension
 
-    lhs {
-      ROOT p0 = f32[5,2048] parameter(0)
-    }
-
-    rhs {
-      ROOT p0 = f32[2048,33] parameter(0)
-    }
-
     triton_dot {
       p0 = f32[5,2048] parameter(0)
       p1 = f32[2048,33] parameter(1)
-      lhs = f32[5,2048] fusion(p0), kind=kCustom, calls=lhs,
-       backend_config={"fusion_backend_config":{
-        "kind":"__triton_nested_gemm_fusion",
-        "block_level_fusion_config":{"output_tiles":[{"sizes":["64","32"]}]}}}
-      rhs = f32[2048,33] fusion(p1), kind=kCustom, calls=rhs,
-       backend_config={"fusion_backend_config":{
-        "kind":"__triton_nested_gemm_fusion",
-        "block_level_fusion_config":{"output_tiles":[{"sizes":["32","32"]}]}}}
-      ROOT dot = f32[5,33] dot(lhs, rhs),
+      ROOT dot = f32[5,33] dot(p0, p1),
         lhs_contracting_dims={1}, rhs_contracting_dims={0},
-        algorithm=dot_bf16_bf16_f32_x6
+        algorithm=dot_bf16_bf16_f32_x6,
+        backend_config={sizes:[32]}
     }
 
     ENTRY e {
@@ -635,28 +612,13 @@ TEST_F(Triton3xBF16GemmTest, Emit3xBF16GemmWhenBothInputsAreF32) {
   constexpr absl::string_view kHloText = R"(
     HloModule Emit3xBF16GemmWhenBothInputsAreF32
 
-    lhs {
-      ROOT p0 = f32[5,7] parameter(0)
-    }
-
-    rhs {
-      ROOT p0 = f32[7,33] parameter(0)
-    }
-
     triton_dot {
       p0 = f32[5,7] parameter(0)
       p1 = f32[7,33] parameter(1)
-      lhs = f32[5,7] fusion(p0), kind=kCustom, calls=lhs,
-       backend_config={"fusion_backend_config":{
-        "kind":"__triton_nested_gemm_fusion",
-        "block_level_fusion_config":{"output_tiles":[{"sizes":["32","32"]}]}}}
-      rhs = f32[7,33] fusion(p1), kind=kCustom, calls=rhs,
-       backend_config={"fusion_backend_config":{
-        "kind":"__triton_nested_gemm_fusion",
-        "block_level_fusion_config":{"output_tiles":[{"sizes":["32","32"]}]}}}
-      ROOT dot = f32[5,33] dot(lhs, rhs),
+      ROOT dot = f32[5,33] dot(p0, p1),
         lhs_contracting_dims={1}, rhs_contracting_dims={0},
-        algorithm=dot_bf16_bf16_f32_x3
+        algorithm=dot_bf16_bf16_f32_x3,
+        backend_config={sizes:[32]}
     }
 
     ENTRY e {
@@ -698,28 +660,13 @@ TEST_F(Triton3xBF16GemmTest, Triton3xBF16GemmWorksForLongContractingDimension) {
   constexpr absl::string_view kHloText = R"(
     HloModule Triton3xBF16GemmWorksForLongContractingDimension
 
-    lhs {
-      ROOT p0 = f32[5,2048] parameter(0)
-    }
-
-    rhs {
-      ROOT p0 = f32[2048,33] parameter(0)
-    }
-
     triton_dot {
       p0 = f32[5,2048] parameter(0)
       p1 = f32[2048,33] parameter(1)
-      lhs = f32[5,2048] fusion(p0), kind=kCustom, calls=lhs,
-       backend_config={"fusion_backend_config":{
-        "kind":"__triton_nested_gemm_fusion",
-        "block_level_fusion_config":{"output_tiles":[{"sizes":["64","32"]}]}}}
-      rhs = f32[2048,33] fusion(p1), kind=kCustom, calls=rhs,
-       backend_config={"fusion_backend_config":{
-        "kind":"__triton_nested_gemm_fusion",
-        "block_level_fusion_config":{"output_tiles":[{"sizes":["32","32"]}]}}}
-      ROOT dot = f32[5,33] dot(lhs, rhs),
+      ROOT dot = f32[5,33] dot(p0, p1),
         lhs_contracting_dims={1}, rhs_contracting_dims={0},
-        algorithm=dot_bf16_bf16_f32_x3
+        algorithm=dot_bf16_bf16_f32_x3,
+        backend_config={sizes:[32]}
     }
 
     ENTRY e {
@@ -891,29 +838,15 @@ TEST_F(TritonAlgorithmTest, Dot_BF16_X6_WithConst) {
   constexpr absl::string_view kHloText = R"(
     HloModule Dot_BF16_X6_WithConst
 
-    lhs {
-      constant = f32[] constant(-1.22474492)
-      ROOT broadcast = f32[1,1] broadcast(constant)
-    }
-
-    rhs {
-      ROOT p0 = f32[258,1] parameter(0)
-    }
-
     triton_fusion_dot {
       p0 = f32[258,1] parameter(0)
-      lhs = f32[1,1] fusion(), kind=kCustom, calls=lhs,
-       backend_config={"fusion_backend_config":{
-        "kind":"__triton_nested_gemm_fusion",
-        "block_level_fusion_config":{"output_tiles":[{"sizes":["16","16"]}]}}}
-      rhs = f32[258,1] fusion(p0), kind=kCustom, calls=rhs,
-       backend_config={"fusion_backend_config":{
-        "kind":"__triton_nested_gemm_fusion",
-        "block_level_fusion_config":{"output_tiles":[{"sizes":["16","256"]}]}}}
-      dot = f32[1,258] dot(lhs, rhs),
+      constant_lhs = f32[] constant(-1.22474492)
+      broadcast_lhs = f32[1,1] broadcast(constant_lhs)
+      dot = f32[1,258] dot(broadcast_lhs, p0),
           lhs_contracting_dims={0},
           rhs_contracting_dims={1},
-          algorithm=dot_bf16_bf16_f32_x6
+          algorithm=dot_bf16_bf16_f32_x6,
+          backend_config={sizes:[16]}
       constant = f32[] constant(0.282094777)
       broadcast = f32[1,258] broadcast(constant), dimensions={}
       ROOT root = f32[1,258] multiply(dot, broadcast)
@@ -1072,7 +1005,7 @@ class NumericTestsForBlas : public BlasAlgorithmTest,
   }
 
   static constexpr absl::string_view kCheckTritionNestedGemm =
-      R"(CHECK: __cublas$gemm)";
+      R"(CHECK: __cublas${{gemm|lt\$matmul}})";
 
   static constexpr absl::string_view kReferenceHloText = R"(
     HloModule %s
@@ -1158,8 +1091,8 @@ class NumericTestsForTriton : public TritonAlgorithmTest,
       p1 = f32[8,8]{1, 0} parameter(1)
       ROOT _ = f32[8,8] fusion(p0, p1), kind=kCustom, calls=triton_dot,
         backend_config={"fusion_backend_config": {kind: "__triton_gemm",
-        triton_gemm_config:
-        {"block_m":32,"block_n":32,"block_k":32,"split_k":1,"num_stages":1,"num_warps":1, "num_ctas":1}}}
+        triton_gemm_config: {"block_m":32,"block_n":32,"block_k":32,
+        "split_k":1,"num_stages":1,"num_warps":1, "num_ctas":1}}}
     }
   )";
   std::string algorithm_;
@@ -1451,7 +1384,8 @@ class TritonAndBlasSupportForDifferentTensorSizes
 
   std::string algorithm_;
 
-  static constexpr absl::string_view kBlasPattern = "__cublas$gemm";
+  static constexpr absl::string_view kBlasPattern =
+      "__cublas${{gemm|lt\\$matmul}}";
   static constexpr absl::string_view kTritonGemmPattern = "__triton_gemm";
   static constexpr int kMaxSize = 8192;
   static constexpr int kStepSize = 8;
@@ -1903,7 +1837,8 @@ class PrecisionTests
       TF_RETURN_IF_ERROR(CheckGemmPattern(
           *module, "CHECK: {{__triton_gemm|__triton_nested_gemm_fusion}}"));
     } else if (backend == Backend::kBlas) {
-      TF_RETURN_IF_ERROR(CheckGemmPattern(*module, "CHECK: __cublas$gemm"));
+      TF_RETURN_IF_ERROR(
+          CheckGemmPattern(*module, "CHECK: __cublas${{gemm|lt\\$matmul}}"));
     } else {
       return absl::InvalidArgumentError("Invalid backend");
     }
