@@ -21,7 +21,6 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,6 +37,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/blocking_counter.h"
+#include "xla/tsl/platform/status_macros.h"  // gloop
 #include "llvm/ADT/StringRef.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/DataLayout.h"
@@ -62,7 +62,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/block_level_emitter.h"
 #include "xla/backends/gpu/autotuner/factory.h"
 #include "xla/backends/gpu/autotuner/native_emitter.h"
-#include "xla/backends/gpu/codegen/llvm/llvm_ir_compiler.h"
+#include "xla/backends/gpu/codegen/cubin_custom_kernel_compiler.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
 #include "xla/backends/gpu/runtime/runtime_intrinsics.h"
@@ -340,7 +340,6 @@ limitations under the License.
 #include "tsl/platform/stacktrace.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 #ifdef PLATFORM_GOOGLE
 #include "xla/hlo/experimental/auto_sharding/auto_sharding.h"
@@ -2558,14 +2557,20 @@ GpuCompiler::CompileToBackendResult(
     auto llvm_compiler =
         [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
             const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
-      if (user_pre_optimization_hook_) {
-        user_pre_optimization_hook_(llvm_module);
-      }
       ASSIGN_OR_RETURN(BackendCompileResult result,
                        CompileSingleModule(module->config(), descr, module,
                                            &llvm_module, false, std::nullopt));
       return std::move(result.binary);
     };
+    CubinCustomKernelCompiler kernel_compiler(
+        std::move(llvm_compiler),
+        gpu_topology.gpu_target_config().device_description,
+        module->config().debug_options());
+    if (user_pre_optimization_hook_) {
+      kernel_compiler.SetPreOptimizationHook([&](const llvm::Module& module) {
+        user_pre_optimization_hook_(module);
+      });
+    }
 
     // Compile the module to thunks and llvm IR.
     xla::cpu::TargetMachineOptions cpu_target_machine_options =
@@ -2577,7 +2582,7 @@ GpuCompiler::CompileToBackendResult(
             module, llvm_context, target_triple_, data_layout_, PlatformId(),
             gpu_topology.gpu_target_config().device_description,
             alias_info.get(), std::move(buffer_size_bytes_function),
-            llvm_options_lock, std::move(llvm_compiler),
+            llvm_options_lock, &kernel_compiler,
             std::move(cpu_target_machine_options)));
   }
 
@@ -3210,20 +3215,26 @@ GpuCompiler::LoadExecutableFromAotResult(
   auto llvm_compiler =
       [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
           const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
-    if (user_pre_optimization_hook_) {
-      user_pre_optimization_hook_(llvm_module);
-    }
     ASSIGN_OR_RETURN(
         BackendCompileResult result,
         CompileSingleModule(hlo_module->config(), descr, hlo_module.get(),
                             &llvm_module, false, std::nullopt));
     return std::move(result.binary);
   };
+  CubinCustomKernelCompiler kernel_compiler(
+      std::move(llvm_compiler), device_description,
+      hlo_module->config().debug_options());
+  if (user_pre_optimization_hook_) {
+    kernel_compiler.SetPreOptimizationHook([&](const llvm::Module& module) {
+      user_pre_optimization_hook_(module);
+    });
+  }
+
   IrEmitterContext ir_emitter_context(
       hlo_module.get(), buffer_assignment.get(), &execution_stream_assignment,
       platform_name, device_description, mlir_context(), &llvm_context,
       /*emit_kernels=*/false, llvm::Triple(target_triple()), data_layout(),
-      std::move(llvm_compiler),
+      &kernel_compiler,
       cpu::TargetMachineOptions(hlo_module->config().debug_options()));
 
   absl::string_view cache_file_path =

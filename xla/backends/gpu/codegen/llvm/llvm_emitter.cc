@@ -53,16 +53,14 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/TargetParser/Triple.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
-#include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
-#include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
 #include "xla/backends/gpu/codegen/llvm/parallel_loop_emitter.h"
 #include "xla/backends/gpu/codegen/llvm/sort_util.h"
-#include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/codegen/emitters/computation_fingerprint.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
+#include "xla/codegen/llvm_kernel_source.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -687,17 +685,21 @@ void CreateStore(llvm::Value* data, llvm::Value* address, int alignment_bytes,
 
 const uint64_t kBitonicSortUnrollFactor = 4;
 
-absl::StatusOr<std::unique_ptr<llvm::Module>> EmitModuleForBitonicSortStage(
-    const HloSortInstruction* sort, IrEmitterContext* ir_emitter_context,
+absl::StatusOr<LlvmKernelSource> EmitModuleForBitonicSortStage(
+    const HloSortInstruction* sort, IrEmitterContext* parent_context,
     const std::string& sanitized_kernel_name,
     const emitters::KernelArguments& kernel_arguments,
     const LaunchDimensions& launch_dimensions,
     absl::Span<const int64_t> xor_masks, bool emit_iota_operands,
     uint64_t tile_size, uint64_t num_iterations_in_sort_dim) {
+  auto llvm_context = std::make_unique<llvm::LLVMContext>();
+  std::unique_ptr<IrEmitterContext> ir_emitter_context =
+      parent_context->SubContext(llvm_context.get());
+
   std::string op_name(sort->name());
   std::unique_ptr<llvm::Module> llvm_module =
       ir_emitter_context->CreateLLVMModule(op_name);
-  IrEmitter ir_emitter(ir_emitter_context, llvm_module.get(),
+  IrEmitter ir_emitter(ir_emitter_context.get(), llvm_module.get(),
                        /*is_nested=*/false);
 
   bool is_fusion = sort->parent()->IsFusionComputation();
@@ -744,7 +746,7 @@ absl::StatusOr<std::unique_ptr<llvm::Module>> EmitModuleForBitonicSortStage(
                                      output);
       }));
 
-  return llvm_module;
+  return LlvmKernelSource(std::move(llvm_context), std::move(llvm_module));
 }
 
 }  // namespace
@@ -925,7 +927,7 @@ absl::StatusOr<ThunkSequence> EmitBitonicSortLLVMIR(
                          GetDefaultBufferAlignment(), hlo_with_buffers));
 
     ASSIGN_OR_RETURN(
-        std::unique_ptr<llvm::Module> llvm_module,
+        LlvmKernelSource llvm_kernel_source,
         EmitModuleForBitonicSortStage(
             sort, ir_emitter_context, sanitized_kernel_name, kernel_arguments,
             launch_dimensions, xor_masks, emit_iota_operands, tile_size,
@@ -933,22 +935,17 @@ absl::StatusOr<ThunkSequence> EmitBitonicSortLLVMIR(
                                  : standard_num_iterations_in_sort_dim));
     emit_iota_operands = false;
 
-    ASSIGN_OR_RETURN(std::vector<uint8_t> cubin,
-                     ir_emitter_context->llvm_ir_compiler()(
-                         *llvm_module, ir_emitter_context->gpu_device_info(),
-                         ir_emitter_context->debug_options()));
-
     ASSIGN_OR_RETURN(
-        CustomKernel custom_kernel,
-        kernel::CreateOwnedCubinCustomKernel(
-            sanitized_kernel_name, std::move(cubin),
-            kernel_arguments.args().size(), launch_dimensions.block_counts(),
-            launch_dimensions.thread_counts_per_block(), 0));
+        std::unique_ptr<Thunk> thunk,
+        ir_emitter_context->kernel_compiler()
+            ->Compile(
+                Thunk::ThunkInfo::WithProfileAnnotation(
+                    hlo_with_buffers, ir_emitter_context->GetNextThunkId()),
+                std::move(llvm_kernel_source), sanitized_kernel_name,
+                kernel_arguments, launch_dimensions)
+            .Await());
 
-    thunks.push_back(std::make_unique<CustomKernelThunk>(
-        Thunk::ThunkInfo::WithProfileAnnotation(
-            hlo_with_buffers, ir_emitter_context->GetNextThunkId()),
-        std::move(custom_kernel), kernel_arguments));
+    thunks.push_back(std::move(thunk));
 
     return absl::OkStatus();
   };

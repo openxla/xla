@@ -26,12 +26,13 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/TargetParser/Triple.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
 #include "xla/backends/cpu/target_machine_options.h"
-#include "xla/backends/gpu/codegen/llvm/llvm_ir_compiler.h"
+#include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/host_execute_thunk.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
@@ -70,7 +71,7 @@ class IrEmitterContext {
                    mlir::MLIRContext* mlir_context,
                    llvm::LLVMContext* llvm_context, bool emit_kernels,
                    llvm::Triple target_triple, std::string data_layout,
-                   LlvmIrCompiler compiler,
+                   KernelCompiler* compiler,
                    xla::cpu::TargetMachineOptions cpu_target_machine_options)
       : hlo_module_(hlo_module),
         buffer_assignment_(buffer_assignment),
@@ -82,12 +83,21 @@ class IrEmitterContext {
         data_layout_(std::move(data_layout)),
         target_triple_(std::move(target_triple)),
         emit_kernels_(emit_kernels),
-        compiler_(std::move(compiler)),
+        compiler_(compiler),
         cpu_target_machine_options_(std::move(cpu_target_machine_options)) {}
 
   // Disallow copy and assign.
   IrEmitterContext(const IrEmitterContext&) = delete;
   IrEmitterContext& operator=(const IrEmitterContext&) = delete;
+
+  std::unique_ptr<IrEmitterContext> SubContext(
+      llvm::LLVMContext* llvm_context) {
+    return std::make_unique<IrEmitterContext>(
+        hlo_module_, buffer_assignment_, execution_stream_assignment_,
+        platform_name_, gpu_device_info_, mlir_context_, llvm_context,
+        emit_kernels_, target_triple_, data_layout_, compiler_,
+        cpu_target_machine_options_);
+  }
 
   // Simple accessors.
   const HloModule& hlo_module() const { return *hlo_module_; }
@@ -158,7 +168,7 @@ class IrEmitterContext {
     return llvm_module;
   }
 
-  LlvmIrCompiler& llvm_ir_compiler() { return compiler_; }
+  KernelCompiler* kernel_compiler() { return compiler_; }
 
  private:
   const HloModule* hlo_module_;
@@ -183,7 +193,7 @@ class IrEmitterContext {
   // Generates unique IDs for thunk creation.
   ThunkIdGenerator thunk_id_generator_;
 
-  LlvmIrCompiler compiler_;
+  KernelCompiler* compiler_;
   const xla::cpu::TargetMachineOptions cpu_target_machine_options_;
 };
 
