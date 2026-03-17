@@ -3600,10 +3600,9 @@ TEST(StreamExecutorGpuClientTest, VmmAllocatorCanBeSet) {
 
   auto* pjrt_se_client =
       tensorflow::down_cast<PjRtStreamExecutorClient*>(client.get());
-  EXPECT_NE(
-      dynamic_cast<se::gpu::CudaDeviceAddressVmmAllocator*>(
-          pjrt_se_client->allocator()),
-      nullptr);
+  EXPECT_NE(dynamic_cast<se::gpu::CudaDeviceAddressVmmAllocator*>(
+                pjrt_se_client->allocator()),
+            nullptr);
 }
 #endif  // GOOGLE_CUDA
 
