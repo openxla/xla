@@ -626,7 +626,8 @@ bool IsTf32Allowed(PrecisionConfig::Algorithm algorithm,
           output_shape.layout().minor_to_major();
       output_stride_ragged_dim = 1;
       for (auto dim : output_minor_to_major) {
-        if(dim == 0 /*the group dimension is always the outer dim (dim 0) for outputs*/){
+        // The group dimension is always the outer dim (dim 0) for outputs
+        if (dim == 0) {
           break;
         }
         output_stride_ragged_dim *= output_shape.dimensions(dim);
