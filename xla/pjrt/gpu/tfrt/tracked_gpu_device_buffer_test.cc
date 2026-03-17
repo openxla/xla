@@ -134,6 +134,9 @@ TEST(GpuDeviceMemoryTest, OwningToNonOwning) {
 }
 
 TEST(GpuDeviceMemoryTest, AsShapeBuffer) {
+#if !defined(PLATFORM_GOOGLE)
+  GTEST_SKIP() << "LocalClient unavailable: no GPU platform registered in OSS build";
+#endif
   LocalClient* client = ClientLibrary::LocalClientOrDie();
   TestDevice device;
   Shape shape = ShapeUtil::MakeShape(F32, {1, 2, 3});
