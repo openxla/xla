@@ -24,6 +24,7 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/debug_options_flags.h"
 #include "xla/tsl/platform/env_time.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
 #include "tsl/profiler/lib/profiler_factory.h"
 #include "tsl/profiler/lib/profiler_interface.h"
@@ -110,8 +111,8 @@ absl::Status GpuTracer::DoStart() {
   rocm_trace_collector_ = CreateRocmCollector(
       trace_collector_options, start_walltime_ns, start_gputime_ns);
 
-  rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
-
+  TF_RETURN_IF_ERROR(
+      rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get()));
   return absl::OkStatus();
 }
 
