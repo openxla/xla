@@ -726,7 +726,10 @@ xla_test(
     env = {
         "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
     },
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":nvshmem_collectives",
         "//xla:debug_options_flags",

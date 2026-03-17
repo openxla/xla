@@ -21,7 +21,10 @@ cuda_library(
     name = "sm_bw_kernels",
     srcs = ["sm_bw_kernels.cu.cc"],
     hdrs = ["sm_bw_kernels.h"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":sm_bw_utils",
     ],

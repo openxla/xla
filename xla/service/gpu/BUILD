@@ -2365,6 +2365,7 @@ xla_test(
     ],
     tags = [
         "cuda-only",
+        "gpu",
         "nomsan",  # Pulls in precompiled NVIDIA libraries which cause false positives in msan.
     ],
     deps = [
@@ -2409,6 +2410,7 @@ xla_test(
     ],
     tags = [
         "cuda-only",
+        "gpu",
         "nomsan",  # Pulls in precompiled NVIDIA libraries which cause false positives in msan.
         "pjrt_migration_candidate",
     ],

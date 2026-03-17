@@ -1869,7 +1869,10 @@ lit_test_suite(
     ),
     cfg = "//xla:lit.cfg.py",
     data = ["//xla/backends/gpu/target_config:all_gpu_specs"],
-    default_tags = ["cuda-only"] + tf_cuda_tests_tags(),
+    default_tags = [
+        "cuda-only",
+        "gpu",
+    ] + tf_cuda_tests_tags(),
     tools = [
         "//xla/tools:hlo-opt",
         "@llvm-project//llvm:FileCheck",
@@ -2769,7 +2772,10 @@ xla_test(
     name = "estimate_cub_scratch_size_test",
     srcs = ["estimate_cub_scratch_size_test.cc"],
     backends = ["h100"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":estimate_cub_scratch_size",
         "//xla:xla_data_proto_cc",

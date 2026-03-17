@@ -569,7 +569,10 @@ xla_test(
     name = "cuda_command_buffer_thunk_test",
     srcs = ["cuda_command_buffer_thunk_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":command",
         ":command_buffer_cmd",
@@ -1537,7 +1540,10 @@ cuda_library(
         "-fexceptions",
         "-DLIBCUDACXX_ENABLE_EXPERIMENTAL_MEMORY_RESOURCE",
     ],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         "//xla:status_macros",
         "//xla:types",
@@ -1578,6 +1584,7 @@ xla_test(
     ],
     tags = [
         "cuda-only",
+        "gpu",
     ],
     deps = [
         ":select_k_exec_raft",

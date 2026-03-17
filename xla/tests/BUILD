@@ -1465,6 +1465,7 @@ xla_test(
     shard_count = 40,
     tags = [
         "cuda-only",
+        "gpu",
         "optonly",
     ],
     deps = [
@@ -1586,7 +1587,10 @@ xla_test(
     backend_args = {"gpu": ["--xla_backend_extra_options=xla_gpu_experimental_conv_disable_layout_heuristic"]},
     backends = ["gpu"],
     shard_count = 25,
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",

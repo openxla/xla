@@ -70,6 +70,7 @@ xla_test(
     ],
     tags = [
         "cuda-only",
+        "gpu",
     ],
     deps = [
         ":kernel_name_tracer",

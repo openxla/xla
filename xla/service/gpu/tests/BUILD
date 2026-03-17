@@ -332,7 +332,10 @@ xla_test(
         "gpu_too_many_blocks_test.cc",
     ],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     use_legacy_runtime = True,
     deps = [
         ":gpu_codegen_test",
@@ -352,7 +355,10 @@ xla_test(
         "swap_conv_operands_test.cc",
     ],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     use_legacy_runtime = True,
     deps = [
         ":gpu_codegen_test",
@@ -883,7 +889,10 @@ xla_test(
     name = "dynamic_shared_memory_test",
     srcs = if_cuda_is_configured(["dynamic_shared_memory_test.cc"]),
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         "//xla:shape_util",
         "//xla:types",
@@ -1122,7 +1131,10 @@ xla_test(
     name = "ptx_kernel_test",
     srcs = ["ptx_kernel_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         "//xla:literal",
         "//xla/tests:hlo_pjrt_test_base",

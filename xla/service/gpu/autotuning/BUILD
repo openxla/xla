@@ -27,7 +27,10 @@ xla_test(
     name = "autotuner_pass_test",
     srcs = ["autotuner_pass_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":autotuner_pass",
         "//xla/backends/autotuner",

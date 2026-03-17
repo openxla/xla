@@ -100,6 +100,7 @@ xla_test(
     ],
     tags = [
         "cuda-only",
+        "gpu",
         "no_mac",
     ],
     use_legacy_runtime = True,
@@ -185,6 +186,7 @@ xla_test(
     ],
     tags = [
         "cuda-only",
+        "gpu",
         "no_mac",
     ],
     use_legacy_runtime = True,
@@ -253,6 +255,7 @@ xla_test(
     ],
     tags = [
         "cuda-only",
+        "gpu",
         "no_mac",
     ],
     use_legacy_runtime = True,
@@ -337,6 +340,7 @@ xla_test(
     ],
     tags = [
         "cuda-only",
+        "gpu",
         "no_mac",
     ],
     use_legacy_runtime = True,
@@ -844,7 +848,10 @@ xla_test(
     name = "gpu_profiler_test",
     srcs = ["gpu_profiler_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     use_legacy_runtime = True,
     deps = [
         ":gpu_profiler",

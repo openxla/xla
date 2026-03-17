@@ -149,7 +149,10 @@ xla_test(
     name = "cutlass_gemm_fusion_test",
     srcs = ["cutlass_gemm_fusion_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":custom_kernel_fusion_pattern",
         ":cutlass_gemm_custom_kernel",
@@ -210,7 +213,10 @@ xla_test(
     srcs = ["cutlass_gemm_custom_kernel_test.cc"],
     backends = ["gpu"],
     linkstatic = False,  # This test is incompatible with linkstatic in the OSS build.
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cutlass_gemm_custom_kernel",
         "//xla:xla_data_proto_cc",
@@ -277,7 +283,10 @@ cuda_library(
         [],
         ["-Wno-unknown-attributes"],
     ),  # __grid_constant__ is not supported by clang
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cutlass_gemm",
         "@cutlass_archive//:cutlass",
@@ -287,7 +296,10 @@ cuda_library(
 
 cuda_library(
     name = "cutlass_gemm_epilogue",
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     # TODO(ezhulenev): Update to regular hdrs after fixing CUTLASS headers.
     textual_hdrs = ["cutlass_gemm_epilogue.cu.h"],
     deps = ["@cutlass_archive//:cutlass"],
@@ -331,7 +343,10 @@ cuda_library(
         [],
         ["-Wno-unknown-attributes"],
     ),
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cutlass_gemm_adaptor",
         "@cutlass_archive//:cutlass",
@@ -345,7 +360,10 @@ cuda_library(
         [],
         ["-Wno-unknown-attributes"],
     ),
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cutlass_gemm_adaptor",
         "@cutlass_archive//:cutlass",
@@ -362,7 +380,10 @@ cuda_library(
         [],
         ["-Wno-unknown-attributes"],
     ),
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cutlass_gemm_adaptor",
         "@cutlass_archive//:cutlass",
@@ -379,7 +400,10 @@ cuda_library(
         [],
         ["-Wno-unknown-attributes"],
     ),
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cutlass_gemm_adaptor",
         "@cutlass_archive//:cutlass",
@@ -429,7 +453,10 @@ xla_test(
     name = "ptx_custom_kernel_test",
     srcs = ["ptx_custom_kernel_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":custom_kernel",
         ":ptx_custom_kernel",

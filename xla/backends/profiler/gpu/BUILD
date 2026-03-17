@@ -188,6 +188,7 @@ xla_test(
     backends = ["gpu"],
     tags = [
         "cuda-only",
+        "gpu",
         "no_mac",
     ],
     deps = [
@@ -209,7 +210,10 @@ cuda_library(
     testonly = 1,
     srcs = ["cuda_test.cu.cc"],
     hdrs = ["cuda_test.h"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         "@com_google_googletest//:gtest_for_library",
@@ -836,6 +840,7 @@ xla_test(
     backends = ["gpu"],
     tags = [
         "cuda-only",
+        "gpu",
         "no_mac",
     ],
     deps = [
@@ -868,6 +873,7 @@ xla_test(
     ],
     tags = [
         "cuda-only",
+        "gpu",
         "no_mac",
         "nomsan",
     ],
