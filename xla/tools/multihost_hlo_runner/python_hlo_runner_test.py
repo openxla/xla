@@ -18,7 +18,11 @@ import os
 import pathlib
 
 from absl.testing import absltest
-from transformer_engine import transformer_engine_jax
+
+try:
+  from transformer_engine import transformer_engine_jax
+except ImportError:
+  transformer_engine_jax = None
 
 from xla.tools.multihost_hlo_runner import py_hlo_multihost_runner
 
@@ -47,6 +51,8 @@ class RunTEHloTest(absltest.TestCase):
 
   def setUp(self):
     super().setUp()
+    if transformer_engine_jax is None:
+      self.skipTest("transformer_engine_jax not available")
     _register_transformer_engine_custom_calls()
     self.config = py_hlo_multihost_runner.PyHloRunnerConfig()
     self.config.input_format = py_hlo_multihost_runner.InputFormat.Text
