@@ -19,11 +19,9 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
-#include "google/protobuf/any.pb.h"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
@@ -33,6 +31,7 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "google/protobuf/any.pb.h"
 #include "google/protobuf/text_format.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
@@ -1172,16 +1171,18 @@ TEST_F(AutotunerTest, ProfileAllUnloadsCandidatesBeforeReleasingProfilerLock) {
 
   absl::Status status1;
   absl::Status status2;
-  std::thread t1([&]() {
-    status1 = autotuner->Autotune(
-        module->entry_computation()->GetInstructionWithName("add"));
-  });
-  std::thread t2([&]() {
-    status2 = autotuner->Autotune(
-        module->entry_computation()->GetInstructionWithName("copy"));
-  });
-  t1.join();
-  t2.join();
+  std::unique_ptr<tsl::Thread> t1(
+      tsl::Env::Default()->StartThread({}, "autotuner-test-t1", [&]() {
+        status1 = autotuner->Autotune(
+            module->entry_computation()->GetInstructionWithName("add"));
+      }));
+  std::unique_ptr<tsl::Thread> t2(
+      tsl::Env::Default()->StartThread({}, "autotuner-test-t2", [&]() {
+        status2 = autotuner->Autotune(
+            module->entry_computation()->GetInstructionWithName("copy"));
+      }));
+  t1.reset();
+  t2.reset();
   ASSERT_OK(status1);
   ASSERT_OK(status2);
 }
