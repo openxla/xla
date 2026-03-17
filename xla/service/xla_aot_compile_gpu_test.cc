@@ -41,6 +41,12 @@ namespace xla {
 namespace xla_compile {
 namespace {
 
+#if !defined(PLATFORM_GOOGLE)
+TEST(XlaAotCompileGpuTest, NotAvailableInOSS) {
+  GTEST_SKIP() << "CUDA platform not registered in OSS build";
+}
+#else
+
 class XlaAotCompileTest : public ::testing::TestWithParam<absl::string_view> {};
 
 TEST_P(XlaAotCompileTest, LoadGpuExecutable) {
@@ -221,6 +227,8 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConvolution) {
   }});
   EXPECT_EQ(expected, output);
 }
+
+#endif  // defined(PLATFORM_GOOGLE)
 
 }  // namespace
 }  // namespace xla_compile
