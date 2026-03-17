@@ -51,6 +51,12 @@ namespace {
 
 using ::tsl::thread::ThreadPool;
 
+#if !defined(PLATFORM_GOOGLE)
+TEST(TfrtGpuBufferTest, NotAvailableInOSS) {
+  GTEST_SKIP() << "Test uses absl::down_cast not available in OSS build";
+}
+#else
+
 class TfrtGpuBufferTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -358,6 +364,8 @@ TEST_F(TfrtGpuBufferTest, Bitcast) {
 
 // TODO: b/382117736 - Add test for logical shape when shape is dynamic after
 // TfrtGpuClient::Execute() is ready.
+
+#endif  // defined(PLATFORM_GOOGLE)
 
 }  // namespace
 }  // namespace xla
