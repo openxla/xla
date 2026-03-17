@@ -275,7 +275,6 @@ xla_test(
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream",
         "//xla/stream_executor/cuda:cuda_compute_capability",
-        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
         "//xla/tests:literal_test_util",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
@@ -310,7 +309,9 @@ xla_test(
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:platform_port",
-    ] + if_google([
+    ] + if_cuda([
+        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
+    ]) + if_google([
         # In OSS this dependency is added automatically for xla_test targets. See
         # third_party/tensorflow/compiler/xla/xla.default.bzl.
         "//xla/tsl/framework:allocator",
