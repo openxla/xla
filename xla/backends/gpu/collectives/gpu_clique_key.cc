@@ -99,6 +99,7 @@ bool GpuCliqueKey::IsSubsetOf(const CliqueKey& other) const {
                           return absl::c_linear_search(other_gpu->devices(),
                                                        id);
                         }) &&
+         !incarnations_.empty() &&
          absl::c_all_of(incarnations_, [&](IncarnationId id) {
            return absl::c_linear_search(other_gpu->incarnations_, id);
          });
