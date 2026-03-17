@@ -321,6 +321,7 @@ xla_test(
     backends = ["gpu"],
     tags = [
         "cuda-only",
+        "gpu",
         "requires-gpu-nvidia",
     ],
     deps = [

@@ -386,7 +386,10 @@ xla_test(
     name = "gpu_cudamallocasync_allocator_test",
     srcs = ["gpu_cudamallocasync_allocator_test.cc"],
     backends = ["nvgpu_any"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":gpu_cudamallocasync_allocator",
         "//xla/service:platform_util",

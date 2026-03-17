@@ -186,7 +186,10 @@ xla_test(
     name = "cuda_diagnostics_test",
     srcs = ["cuda_diagnostics_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_diagnostics",
         ":cuda_platform",
@@ -244,6 +247,7 @@ xla_test(
     backends = ["gpu"],
     tags = [
         "cuda-only",
+        "gpu",
     ],
     deps = [
         ":cuda_diagnostics",
@@ -449,7 +453,10 @@ xla_test(
     name = "buffer_debug_xor_checksum_kernel_cuda_test",
     srcs = ["buffer_debug_xor_checksum_kernel_cuda_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":buffer_debug_xor_checksum_kernel_cuda",
         "//xla/backends/gpu/runtime:buffer_debug_log_structs",
@@ -504,7 +511,10 @@ xla_test(
     name = "buffer_debug_float_check_kernel_cuda_test",
     srcs = ["buffer_debug_float_check_kernel_cuda_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":buffer_debug_float_check_kernel_cuda",
         "//xla:types",
@@ -721,7 +731,10 @@ xla_test(
     name = "cuda_kernel_test",
     srcs = ["cuda_kernel_test.cc"],
     backends = ["nvgpu_any"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
@@ -841,7 +854,10 @@ xla_test(
     name = "cuda_event_test",
     srcs = ["cuda_event_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_event",
         ":cuda_executor",
@@ -865,7 +881,10 @@ xla_test(
     name = "cuda_raw_memory_allocation_test",
     srcs = ["cuda_raw_memory_allocation_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_platform_id",
         ":cuda_raw_memory_allocation",
@@ -886,7 +905,10 @@ xla_test(
     name = "cuda_memory_reservation_test",
     srcs = ["cuda_memory_reservation_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_memory_reservation",
         ":cuda_platform_id",
@@ -1078,7 +1100,10 @@ xla_test(
     name = "cuda_platform_test",
     srcs = ["cuda_platform_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_platform",
         "//xla/stream_executor:platform",
@@ -1097,6 +1122,7 @@ xla_cc_test(
     srcs = ["ptx_compiler_test.cc"],
     tags = [
         "cuda-only",
+        "gpu",
         "nomsan",
     ],
     deps = [
@@ -1536,7 +1562,10 @@ xla_test(
     name = "cuda_executor_test",
     srcs = ["cuda_executor_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_compute_capability",
         ":cuda_executor",
@@ -1564,7 +1593,10 @@ cuda_library(
     name = "cuda_executor_multigpu_test_kernels",
     srcs = ["cuda_executor_multigpu_test_kernels.cu.cc"],
     hdrs = ["cuda_executor_multigpu_test_kernels.h"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_status",
         "//xla/tsl/platform:errors",
@@ -1586,7 +1618,10 @@ xla_test(
         ],
     },
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_executor",
         ":cuda_executor_multigpu_test_kernels",
@@ -1650,7 +1685,10 @@ cc_library(
 
 cc_library(
     name = "stream_executor_cuda",
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_platform_id",
         "//xla/stream_executor:dnn",
@@ -1760,7 +1798,10 @@ xla_test(
     name = "cuda_stream_test",
     srcs = ["cuda_stream_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_event",
         ":cuda_executor",
@@ -1816,7 +1857,10 @@ xla_test(
     name = "cuda_timer_test",
     srcs = ["cuda_timer_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_executor",
         ":cuda_platform_id",
@@ -1887,7 +1931,10 @@ xla_test(
     name = "cuda_command_buffer_test",
     srcs = ["cuda_command_buffer_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_compute_capability",
         ":cudnn_plugin",
@@ -2681,7 +2728,10 @@ xla_test(
         ],
     },
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_platform_id",
         ":multi_gpu_barrier_kernel_cuda",
@@ -2821,7 +2871,10 @@ xla_test(
     name = "cub_prefix_sum_kernel_cuda_test",
     srcs = ["cub_prefix_sum_kernel_cuda_test.cc"],
     backends = ["gpu"],
-    tags = ["cuda-only"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":cuda_status",
         "//xla:shape_util",
