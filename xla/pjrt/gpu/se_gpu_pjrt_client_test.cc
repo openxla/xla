@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
-#include <stdlib.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -56,6 +54,7 @@ limitations under the License.
 #include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
+#include <stdlib.h>
 #include "xla/backends/gpu/ffi.h"
 #include "xla/debug_options_flags.h"
 #include "xla/ffi/ffi.h"
@@ -98,6 +97,9 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#if GOOGLE_CUDA
+#include "xla/stream_executor/cuda/cuda_device_address_vmm_allocator.h"
+#endif  // GOOGLE_CUDA
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tests/literal_test_util.h"
@@ -3587,6 +3589,23 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::ValuesIn(std::vector<ShardedAutotuningTestInfo>{
         {2, 0}, {2, 1}, {2, 2}}),
     ShardedAutotuningTestInfo::Name);
+
+#if GOOGLE_CUDA
+TEST(StreamExecutorGpuClientTest, VmmAllocatorCanBeSet) {
+  GpuClientOptions options;
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kVmm;
+  options.allowed_devices = {0};
+
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+
+  auto* pjrt_se_client =
+      tensorflow::down_cast<PjRtStreamExecutorClient*>(client.get());
+  EXPECT_NE(
+      dynamic_cast<se::gpu::CudaDeviceAddressVmmAllocator*>(
+          pjrt_se_client->allocator()),
+      nullptr);
+}
+#endif  // GOOGLE_CUDA
 
 }  // namespace
 }  // namespace xla
