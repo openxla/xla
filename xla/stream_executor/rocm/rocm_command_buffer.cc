@@ -400,6 +400,18 @@ absl::Status RocmCommandBuffer::Trace(
   VLOG(5) << "Traced into the GPU command buffer graph " << graph_ << " (took "
           << (end_nanos - start_nanos) / 1000 << " μs)";
 
+  size_t num_root_nodes = 0;
+  TF_RETURN_IF_ERROR(
+      ToStatus(wrap::hipGraphGetRootNodes(graph_, nullptr, &num_root_nodes),
+               "Failed to get HIP graph root node count"));
+
+  if (num_root_nodes == 0) {
+    return absl::InternalError(
+        "Traced HIP graph is empty. Traced function (custom call) did not "
+        "launch any HIP operations on the captured HIP stream. Instantiating "
+        "empty child nodes leads to crashes.");
+  }
+
   return absl::OkStatus();
 }
 
@@ -421,6 +433,20 @@ absl::StatusOr<size_t> RocmCommandBuffer::GetNodeCount() const {
 }
 
 absl::Status RocmCommandBuffer::PrepareFinalization() {
+  TF_ASSIGN_OR_RETURN(auto node_count, GetNodeCount());
+  if (node_count > 0) {
+    return absl::OkStatus();
+  }
+
+  // HIP graph conditional nodes (once supported) may not handle empty body
+  // graphs. Insert an empty node so the graph is non-empty, analogous to
+  // CUDA's NoOp kernel insertion for the same case.
+  hipGraphNode_t node_handle = nullptr;
+  TF_RETURN_IF_ERROR(
+      ToStatus(wrap::hipGraphAddEmptyNode(&node_handle, graph_,
+                                          /*pDependencies=*/nullptr,
+                                          /*numDependencies=*/0),
+               "Failed to add empty node in PrepareFinalization"));
   return absl::OkStatus();
 }
 
