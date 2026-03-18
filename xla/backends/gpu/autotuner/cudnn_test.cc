@@ -190,7 +190,7 @@ TEST_F(CudnnBackendTest, GetSupportedConfigsFromTritonGemmFusion) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
                           ParseAndReturnVerifiedModule(kTritonGemmFusionHlo));
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
-      backend_.GetSupportedConfigs(
+      backend_->GetSupportedConfigs(
           (*hlo_module->entry_computation()->root_instruction()));
   EXPECT_THAT(configs, absl_testing::IsOkAndHolds(SizeIs(Gt(0))));
 }
