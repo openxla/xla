@@ -54,6 +54,7 @@ cc_library(
     defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm(["TENSORFLOW_USE_ROCM=1"]) + if_sycl([
         "TENSORFLOW_USE_SYCL=1",
     ]),
+    tags = ["nofixdeps"],
     visibility = internal_visibility(["//xla/pjrt/gpu:legacy_gpu_client_users"]),
     deps = [
         ":gpu_helpers",
