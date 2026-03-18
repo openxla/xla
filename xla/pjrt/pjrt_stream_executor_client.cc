@@ -892,8 +892,14 @@ PjRtStreamExecutorClient::LinearizeInto(
   // it includes linearization that may be slow.
   // TODO(misard) assess if it would be preferable to introduce a heuristic to
   // put the transfer into the calling thread for small literals.
+  //
+  // Clone the literal to ensure its data remains valid until the async H2D
+  // transfer executes. The caller may have passed a temporary whose lifetime
+  // does not extend past the current call (e.g. via BufferFromHostLiteral).
+  Literal literal_copy = literal.Clone();
   auto transfer_h2d = [this, local_client = client(), transfer_manager,
-                       local_device, raw_buffer, device, event, literal,
+                       local_device, raw_buffer, device, event,
+                       literal = std::move(literal_copy),
                        on_device_shape = std::move(on_device_shape)]() mutable {
     // This function uses CHECK_OK and value() since we have no way
     // to report failures from a callback. However, the operations here are
