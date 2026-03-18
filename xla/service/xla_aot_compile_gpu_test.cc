@@ -41,12 +41,6 @@ namespace xla {
 namespace xla_compile {
 namespace {
 
-#if !defined(PLATFORM_GOOGLE)
-TEST(XlaAotCompileGpuTest, NotAvailableInOSS) {
-  GTEST_SKIP() << "CUDA platform not registered in OSS build";
-}
-#else
-
 class XlaAotCompileTest : public ::testing::TestWithParam<absl::string_view> {};
 
 TEST_P(XlaAotCompileTest, LoadGpuExecutable) {
@@ -71,6 +65,14 @@ TEST_P(XlaAotCompileTest, LoadGpuExecutable) {
       LocalClient * client,
       ClientLibrary::GetOrCreateLocalClient(local_client_options));
 
+  const se::GpuComputeCapability& gpu_cc =
+      client->backend().default_stream_executor()
+          ->GetDeviceDescription().gpu_compute_capability();
+  const auto* cuda_cc = gpu_cc.cuda_compute_capability();
+  if (cuda_cc == nullptr || cuda_cc->major != 9) {
+    GTEST_SKIP() << "Test requires SM 9.0, device has: " << gpu_cc.ToString();
+  }
+
   // Load from AOT result.
   ExecutableBuildOptions executable_build_options;
   TF_ASSERT_OK_AND_ASSIGN(
@@ -88,9 +90,10 @@ TEST_P(XlaAotCompileTest, LoadGpuExecutable) {
       client->LiteralToShapedBuffer(input2, client->default_device_ordinal()));
   ExecutableRunOptions executable_run_options;
   executable_run_options.set_allocator(client->backend().memory_allocator());
+  const ShapedBuffer* args[] = {&array1, &array2};
   TF_ASSERT_OK_AND_ASSIGN(
       ScopedShapedBuffer result,
-      local_executable->Run({&array1, &array2}, executable_run_options));
+      local_executable->Run(args, executable_run_options));
 
   TF_ASSERT_OK_AND_ASSIGN(Literal output,
                           client->ShapedBufferToLiteral(result));
@@ -125,6 +128,14 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConstant) {
       LocalClient * client,
       ClientLibrary::GetOrCreateLocalClient(local_client_options));
 
+  const se::GpuComputeCapability& gpu_cc =
+      client->backend().default_stream_executor()
+          ->GetDeviceDescription().gpu_compute_capability();
+  const auto* cuda_cc = gpu_cc.cuda_compute_capability();
+  if (cuda_cc == nullptr || cuda_cc->major != 9) {
+    GTEST_SKIP() << "Test requires SM 9.0, device has: " << gpu_cc.ToString();
+  }
+
   // Load from AOT result.
   ExecutableBuildOptions executable_build_options;
   TF_ASSERT_OK_AND_ASSIGN(
@@ -138,9 +149,10 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConstant) {
       client->LiteralToShapedBuffer(input, client->default_device_ordinal()));
   ExecutableRunOptions executable_run_options;
   executable_run_options.set_allocator(client->backend().memory_allocator());
+  const ShapedBuffer* args[] = {&array};
   TF_ASSERT_OK_AND_ASSIGN(
       ScopedShapedBuffer result,
-      local_executable->Run({&array}, executable_run_options));
+      local_executable->Run(args, executable_run_options));
 
   TF_ASSERT_OK_AND_ASSIGN(Literal output,
                           client->ShapedBufferToLiteral(result));
@@ -170,6 +182,14 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConvolution) {
   TF_ASSERT_OK_AND_ASSIGN(
       LocalClient * client,
       ClientLibrary::GetOrCreateLocalClient(local_client_options));
+
+  const se::GpuComputeCapability& gpu_cc =
+      client->backend().default_stream_executor()
+          ->GetDeviceDescription().gpu_compute_capability();
+  const auto* cuda_cc = gpu_cc.cuda_compute_capability();
+  if (cuda_cc == nullptr || cuda_cc->major != 9) {
+    GTEST_SKIP() << "Test requires SM 9.0, device has: " << gpu_cc.ToString();
+  }
 
   // Load from AOT result.
   ExecutableBuildOptions executable_build_options;
@@ -215,9 +235,10 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConvolution) {
 
   ExecutableRunOptions executable_run_options;
   executable_run_options.set_allocator(client->backend().memory_allocator());
+  const ShapedBuffer* args2[] = {&array1, &array2};
   TF_ASSERT_OK_AND_ASSIGN(
       ScopedShapedBuffer result,
-      local_executable->Run({&array1, &array2}, executable_run_options));
+      local_executable->Run(args2, executable_run_options));
 
   TF_ASSERT_OK_AND_ASSIGN(Literal output,
                           client->ShapedBufferToLiteral(result));
@@ -227,8 +248,6 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConvolution) {
   }});
   EXPECT_EQ(expected, output);
 }
-
-#endif  // defined(PLATFORM_GOOGLE)
 
 }  // namespace
 }  // namespace xla_compile
