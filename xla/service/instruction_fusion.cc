@@ -1119,6 +1119,8 @@ FusionDecision InstructionFusion::ShouldFuse(
   if (!legality_check_only && FusionWouldDuplicate(*producer, *consumer) &&
       (!may_duplicate_ || is_expensive_(*producer)) &&
       !IsAlwaysDuplicable(*producer)) {
+    VLOG(2) << "Fusion rejected: producer '" << producer->name() 
+            << "' is too expensive to duplicate into '" << consumer->name() << "'.";
     return FusionDecision::Forbid(may_duplicate_
                                       ? "expensive producer would be duplicated"
                                       : "fusion pass cannot duplicate");
