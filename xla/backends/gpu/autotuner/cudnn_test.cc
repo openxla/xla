@@ -262,7 +262,7 @@ TEST_F(CudnnBackendTest, ApplyConfigToTritonGemmFusionSetsCudnnKind) {
       hlo_module->entry_computation()->root_instruction();
   google::protobuf::Any any;
   any.PackFrom(config);
-  TF_ASSERT_OK(backend_.ApplyConfig(*fusion_instr, any));
+  TF_ASSERT_OK(backend_->ApplyConfig(*fusion_instr, any));
   TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
                           fusion_instr->backend_config<GpuBackendConfig>());
   EXPECT_EQ(gpu_config.fusion_backend_config().kind(), kCuDnnFusionKind);
