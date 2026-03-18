@@ -51,9 +51,7 @@ absl::Status DeviceToHostCopyThunk::ExecuteOnStream(
   se::DeviceAddressBase source_data =
       params.buffer_allocations->GetDeviceAddress(source().slice);
   void* cpu_dst = destination_data.opaque();
-  TF_ASSIGN_OR_RETURN(
-      se::Stream * stream,
-      GetStreamForExecution(Thunk::execution_stream_id(), params));
+  se::Stream* stream = params.stream;
   XLA_VLOG_DEVICE(2, stream->parent()->device_ordinal())
       << "Memcpy D2H on stream " << stream;
   return stream->Memcpy(cpu_dst, source_data, size_bytes());
