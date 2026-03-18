@@ -547,6 +547,13 @@ static std::optional<int64_t> NextDep(
   return std::nullopt;
 }
 
+void ThunkSequence::Append(ThunkSequence other) {
+  reserve(size() + other.size());
+  for (auto& thunk : other) {
+    push_back(std::move(thunk));
+  }
+}
+
 absl::Status ThunkSequence::WalkNested(Thunk::Walker callback) {
   for (auto& thunk : *this) {
     RETURN_IF_ERROR(thunk->Walk(callback));

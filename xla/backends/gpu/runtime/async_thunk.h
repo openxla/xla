@@ -74,8 +74,6 @@ class AsyncStartThunk : public Thunk {
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
-  const ThunkSequence& thunks() const { return executor_.thunks(); }
-
   absl::StatusOr<ThunkProto> ToProto() const override;
   static absl::StatusOr<std::unique_ptr<AsyncStartThunk>> FromProto(
       ThunkInfo thunk_info, const AsyncStartThunkProto& proto,
@@ -83,6 +81,9 @@ class AsyncStartThunk : public Thunk {
 
   AsyncExecutionId async_execution_id() const;
   std::shared_ptr<AsyncExecution> async_execution() const;
+
+  const ThunkSequence& thunks() const { return executor_.thunks(); }
+  ThunkSequence& thunks() { return executor_.thunks(); }
 
  protected:
   absl::Status WalkNested(Walker callback) override;
