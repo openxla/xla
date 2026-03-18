@@ -541,6 +541,11 @@ message DebugOptions {
   // Determine the types of commands that are recorded into command buffers.
   repeated CommandBufferCmdType xla_gpu_enable_command_buffer = 258;
 
+  // Enable VA remapping for command buffer thunks. When enabled, command buffer
+  // thunks use fixed virtual addresses across executions, allowing the command
+  // buffer to be recorded once and replayed without updates.
+  optional bool xla_gpu_enable_command_buffer_va_remapping = 463;
+
   // Enable radix sort using CUB.
   optional bool xla_gpu_enable_cub_radix_sort = 259;
 
