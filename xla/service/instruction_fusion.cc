@@ -1104,9 +1104,13 @@ FusionDecision InstructionFusion::ShouldFuse(
         inplace_op_fusion_decider,
     bool legality_check_only /*=false*/) {
   HloInstruction* producer = consumer->mutable_operand(operand_index);
-
+  VLOG(2) << "Evaluating fusion: producer '" << producer->name()
+          << "' into consumer '" << consumer->name() << "'.";
   // Don't fuse across a root instruction.
   if (producer == producer->parent()->root_instruction()) {
+    VLOG(2) << "Fusion rejected: producer '" << producer->name() 
+            << "' is the root instruction. Cannot fuse into consumer '" << consumer->name()
+            << "'.";
     return FusionDecision::Forbid(
         "not fusing into the output of the root instruction");
   }
