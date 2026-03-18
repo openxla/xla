@@ -52,8 +52,7 @@ class NvshmemSendThunk : public NvshmemCollectiveThunk {
   static absl::StatusOr<std::unique_ptr<NvshmemSendThunk>> FromProto(
       ThunkInfo thunk_info, const NvshmemSendThunkProto& proto,
       absl::Span<const BufferAllocation> buffer_allocations,
-      std::shared_ptr<NvshmemBufferAddresses> absl_nonnull buffer_addresses,
-      CollectiveThunk::AsyncEventsMap& async_events_map);
+      std::shared_ptr<NvshmemBufferAddresses> absl_nonnull buffer_addresses);
 
  protected:
   const CollectiveConfig& config() const override { return config_.config; }
@@ -61,11 +60,10 @@ class NvshmemSendThunk : public NvshmemCollectiveThunk {
                                     se::Stream& stream) override;
 
  private:
-  NvshmemSendThunk(
-      ThunkInfo thunk_info, const P2PConfig& config,
-      const CollectiveThunk::Buffer& buffer, std::string hlo_name,
-      std::shared_ptr<NvshmemBufferAddresses> absl_nonnull buffer_addresses,
-      std::shared_ptr<CollectiveThunk::AsyncEvents> async_events);
+  NvshmemSendThunk(ThunkInfo thunk_info, const P2PConfig& config,
+                   const CollectiveThunk::Buffer& buffer, std::string hlo_name,
+                   std::shared_ptr<NvshmemBufferAddresses> absl_nonnull
+                       buffer_addresses);
 
   const P2PConfig config_;
   const CollectiveThunk::Buffer buffer_;
