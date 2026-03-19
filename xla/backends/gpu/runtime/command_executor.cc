@@ -457,90 +457,69 @@ CommandExecutor::RecordCreate(
     se::CommandBuffer* command_buffer,
     absl::Span<const se::CommandBuffer::Command* const> dependencies,
     RecordId record_id) const {
-  // In capture mode build the command buffer via stream capture, then add it
-  // as a single child node into the outer command buffer.
-  if (construction_mode_ == ConstructionMode::kCapture) {
-    se::StreamExecutor* executor = execute_params.stream->parent();
-    se::Stream* trace_stream = execute_params.command_buffer_trace_stream;
+  auto* state = command_buffer->GetOrCreateResource<CommandExecutorsState>();
+  auto key = std::make_pair(this, record_id);
 
-    auto* state = command_buffer->GetOrCreateResource<CommandExecutorsState>();
-    auto key = std::make_pair(this, record_id);
-
-    if (state->captured_command_buffers.contains(key)) {
-      return Internal(
-          "Captured command buffer already exists for this executor/record_id "
-          "pair. Capture mode records the command buffer only once.");
+  // Runs all commands via ExecuteOnStream on the given stream. Used as the
+  // capture function for both kCapture and kCaptureInline modes.
+  auto run_on_stream = [&](se::Stream* stream) -> absl::Status {
+    Thunk::ExecuteParams capture_params = execute_params;
+    capture_params.stream = stream;
+    for (auto& cmd : commands_) {
+      TF_RETURN_IF_ERROR(cmd->ExecuteOnStream(capture_params));
     }
+    return absl::OkStatus();
+  };
 
-    // Capture all commands onto the trace stream.
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<se::CommandBuffer> traced_cb,
-        se::TraceCommandBufferFactory::Create(
-            executor, trace_stream,
-            [&](se::Stream* stream) -> absl::Status {
-              Thunk::ExecuteParams capture_params = execute_params;
-              capture_params.stream = stream;
-              for (auto& cmd : commands_) {
-                TF_RETURN_IF_ERROR(cmd->ExecuteOnStream(capture_params));
-              }
-              return absl::OkStatus();
-            },
-            se::CommandBuffer::Mode::kNested));
-
-    // Embed the captured graph as a single child node in the outer buffer.
-    TF_ASSIGN_OR_RETURN(
-        const se::CommandBuffer::Command* child_cmd,
-        command_buffer->CreateChildCommand(*traced_cb, dependencies));
-
-    // Transfer ownership to the command buffer resource so it lives as long
-    // as the outer command buffer.
-    state->captured_command_buffers[key] = std::move(traced_cb);
-
-    // Store the child command so RecordUpdate can reference it.
-    state->recorded_commands[key] = {child_cmd};
-
-    return std::vector<const se::CommandBuffer::Command*>{child_cmd};
-  }
-
-  // In capture-inline mode, capture all commands directly into the outer
-  // command buffer at the current graph level (no child node).
-  if (construction_mode_ == ConstructionMode::kCaptureInline) {
-    se::Stream* trace_stream = execute_params.command_buffer_trace_stream;
-
-    auto* state = command_buffer->GetOrCreateResource<CommandExecutorsState>();
-    auto key = std::make_pair(this, record_id);
-
+  // Both capture modes share the same "already recorded" guard and
+  // trace-stream lookup; they differ only in how the captured graph is
+  // embedded into the outer command buffer.
+  if (construction_mode_ == ConstructionMode::kCapture ||
+      construction_mode_ == ConstructionMode::kCaptureInline) {
     if (state->recorded_commands.contains(key)) {
       return Internal(
-          "Inline-captured commands already exist for this executor/record_id "
-          "pair. kCaptureInline mode records the command buffer only once.");
+          "Commands already recorded for this executor/record_id pair. "
+          "Capture modes record the command buffer only once.");
     }
 
+    se::Stream* trace_stream = execute_params.command_buffer_trace_stream;
+
+    if (construction_mode_ == ConstructionMode::kCapture) {
+      // Capture all commands into a nested buffer, then embed it as a single
+      // child node in the outer command buffer.
+      TF_ASSIGN_OR_RETURN(
+          std::unique_ptr<se::CommandBuffer> traced_cb,
+          se::TraceCommandBufferFactory::Create(
+              execute_params.stream->parent(), trace_stream, run_on_stream,
+              se::CommandBuffer::Mode::kNested));
+
+      TF_ASSIGN_OR_RETURN(
+          const se::CommandBuffer::Command* child_cmd,
+          command_buffer->CreateChildCommand(*traced_cb, dependencies));
+
+      // Transfer ownership so traced_cb lives as long as the outer buffer.
+      state->captured_command_buffers[key] = std::move(traced_cb);
+      state->recorded_commands[key] = {child_cmd};
+      return std::vector<const se::CommandBuffer::Command*>{child_cmd};
+    }
+
+    // kCaptureInline: capture directly into the outer buffer at the current
+    // graph level (no child node).
     VLOG(1) << absl::StreamFormat(
         "Record create (inline capture) %d commands into command buffer %p: "
         "deps=%d, record_id=%v",
         commands_.size(), command_buffer, dependencies.size(), record_id);
-
     TF_ASSIGN_OR_RETURN(
         std::vector<const se::CommandBuffer::Command*> sinks,
         command_buffer->Trace(
-            trace_stream,
-            [&]() -> absl::Status {
-              Thunk::ExecuteParams capture_params = execute_params;
-              capture_params.stream = trace_stream;
-              for (auto& cmd : commands_) {
-                TF_RETURN_IF_ERROR(cmd->ExecuteOnStream(capture_params));
-              }
-              return absl::OkStatus();
-            },
+            trace_stream, [&] { return run_on_stream(trace_stream); },
             dependencies));
-
     state->recorded_commands[key] =
         RecordedCommands(sinks.begin(), sinks.end());
     return sinks;
   }
 
-  // Command buffer must be in create state.
+  // kExplicit: record each command individually into the command buffer.
   TF_RETURN_IF_ERROR(CheckCommandBufferState(
       command_buffer, se::CommandBuffer::State::kCreate));
 
@@ -555,9 +534,7 @@ CommandExecutor::RecordCreate(
     return std::vector<const se::CommandBuffer::Command*>{};
   }
 
-  auto* state = command_buffer->GetOrCreateResource<CommandExecutorsState>();
-  RecordedCommands& recorded_commands =
-      state->recorded_commands[std::make_pair(this, record_id)];
+  RecordedCommands& recorded_commands = state->recorded_commands[key];
 
   // Check that this executor was not already recorded into the command buffer.
   if (!recorded_commands.empty()) {
