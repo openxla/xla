@@ -306,6 +306,23 @@ class CommandBuffer {
                                    UpdateCommands update_cond,
                                    UpdateCommands update_body) = 0;
 
+  //--------------------------------------------------------------------------//
+  // Tracing API
+  //--------------------------------------------------------------------------//
+
+  // Captures `function` invocation by recording all stream operations directly
+  // into this command buffer at the current graph level (not as a child node).
+  // Appended nodes are ordered after `dependencies`; pass {} for a root
+  // capture (equivalent to the old Trace() with no deps). Returns the sink
+  // commands of the captured subgraph. Callers that only need status can call
+  // .status() on the result. Requires CUDA 12.3+.
+  virtual absl::StatusOr<std::vector<const Command*>> Trace(
+      Stream* stream, absl::AnyInvocable<absl::Status()> function,
+      absl::Span<const Command* const> dependencies) {
+    return absl::UnimplementedError(
+        "Trace is not implemented for this command buffer.");
+  }
+
   // Set the priority of all nodes in the command buffer.
   virtual absl::Status SetPriority(StreamPriority priority) = 0;
 
@@ -365,18 +382,6 @@ class CommandBuffer {
   }
 
  private:
-  friend class TraceCommandBufferFactory;
-
-  // Tracing APIs are private because they do not compose with command buffer
-  // updates. Instead of tracing directly into the command buffer users should
-  // create traced command buffers using factory methods and add them to primary
-  // command buffers as nested operations.
-
-  // Traces `function` invocation by recording all operations on the `stream`
-  // into the command buffer. Command buffer must be empty.
-  virtual absl::Status Trace(Stream* stream,
-                             absl::AnyInvocable<absl::Status()> function) = 0;
-
   // We use ResourceTypeId to distinguish between different resource types.
   TSL_LIB_GTL_DEFINE_INT_TYPE(ResourceTypeId, int64_t);
 

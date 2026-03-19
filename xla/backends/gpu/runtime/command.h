@@ -127,11 +127,35 @@ bool IsCollectiveCommand(CommandType type);
 // done with a state manager.
 class Command : public Thunk {
  public:
-  explicit Command(CommandType cmd_type,
-                   se::StreamPriority priority = se::StreamPriority::Default)
+  enum class ConstructionMode {
+    // Explicitly records each command using RecordCreate/RecordUpdate.
+    kExplicit,
+
+    // Captures command execution directly into the outer command buffer via
+    // stream tracing. RecordUpdate is not supported. Requires CUDA 12.3+.
+    kCapture,
+  };
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, ConstructionMode mode) {
+    switch (mode) {
+      case ConstructionMode::kExplicit:
+        sink.Append("explicit");
+        break;
+      case ConstructionMode::kCapture:
+        sink.Append("capture");
+        break;
+    }
+  }
+
+  explicit Command(
+      CommandType cmd_type,
+      se::StreamPriority priority = se::StreamPriority::Default,
+      ConstructionMode construction_mode = ConstructionMode::kExplicit)
       : Thunk(Thunk::Kind::kCommand, ThunkInfo{}),
         cmd_type_(cmd_type),
-        priority_(priority) {
+        priority_(priority),
+        construction_mode_(construction_mode) {
     token_ = Resource::Create(Resource::kToken);
   }
 
@@ -194,15 +218,28 @@ class Command : public Thunk {
         "Command cannot be executed directly as a Thunk; use Record() instead");
   }
 
+  // Execute this command directly on a stream. Used by kCapture mode in
+  // CommandExecutor to perform stream-capture recording. Subclasses that
+  // support execution via stream capture must override this.
+
+  // This is a hack to avoid building error, and we are planning to make Command
+  // sub-class of Thunk, after that change, ExecuteOnStream is defined by each
+  // thunk subclass.
+  virtual absl::Status ExecuteOnStream(const Thunk::ExecuteParams& params) {
+    return absl::UnimplementedError(
+        "Command cannot be executed directly; use Record() instead.");
+  }
+
   // Records commands into the command buffer. Returned commands will be passed
   // back on the next call to `Record` into the same command buffer, so that it
   // can do efficient command buffer updates.
+  //
+  // The base implementation handles kCapture mode by tracing ExecuteOnStream.
+  // Subclasses that support kExplicit mode must override this method.
   virtual absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,
       const RecordParams& record_params, RecordAction record_action,
-      se::CommandBuffer* command_buffer) {
-    return absl::UnimplementedError("Record is not implemented");
-  }
+      se::CommandBuffer* command_buffer);
 
   // Returns true if command requires initialization (has to be recorded at
   // command buffer thunk initialization).
@@ -235,6 +272,7 @@ class Command : public Thunk {
   CommandType command_type() const { return cmd_type_; }
   se::StreamPriority priority() const { return priority_; }
   void set_priority(se::StreamPriority priority) { priority_ = priority; }
+  ConstructionMode construction_mode() const { return construction_mode_; }
 
   std::string ToString(int indent) const override {
     return CommandTypeString(cmd_type_);
@@ -265,6 +303,8 @@ class Command : public Thunk {
   // Command priority, currently only support default, lowest and highest
   // priority.
   se::StreamPriority priority_ = se::StreamPriority::Default;
+
+  ConstructionMode construction_mode_ = ConstructionMode::kExplicit;
 };
 
 // Returns true if command is a collective one.

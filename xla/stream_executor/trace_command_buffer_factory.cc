@@ -54,7 +54,8 @@ TraceCommandBufferFactory::Create(
 
   // Trace and finalize the command buffer.
   TF_RETURN_IF_ERROR(
-      command_buffer->Trace(stream, [&]() { return function(stream); }));
+      command_buffer->Trace(stream, [&]() { return function(stream); }, {})
+          .status());
   TF_RETURN_IF_ERROR(command_buffer->Finalize());
 
   return command_buffer;
