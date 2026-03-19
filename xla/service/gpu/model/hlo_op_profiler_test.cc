@@ -29,19 +29,17 @@ namespace gpu {
 namespace {
 
 class HloOpProfilerTest : public HloPjRtGpuTestBase {
+ protected:
   void SetUp() override {
-    platform_id_ = HloTestBase::GetTestPlatform()->id();
-    if (platform_id_ != se::cuda::kCudaPlatformId &&
-        platform_id_ != se::rocm::kROCmPlatformId) {
+    const auto& cap = device_description().gpu_compute_capability();
+    if (!cap.IsCuda() && !cap.IsRocm()) {
       GTEST_SKIP() << "Not built with --config=cuda or --config=rocm";
     }
   }
 
-  const int kMinClockCyclesAddF32_ = 0;
-  const int kMinClockCyclesDivideF64_ = 
-      platform_id_ == se::cuda::kCudaPlatformId ? 280 : 100;
-  const int kMinClockCyclesSqrtC128_ = 1000;
-  se::Platform::Id platform_id_;
+  bool IsRocm() const {
+    return device_description().gpu_compute_capability().IsRocm();
+  }
 };
 
 TEST_F(HloOpProfilerTest, BasicMeasurementsAreCorrect) {
@@ -50,17 +48,17 @@ TEST_F(HloOpProfilerTest, BasicMeasurementsAreCorrect) {
   EXPECT_GT(profiler.MeasureClockCyclesPerOp(HloOpcode::kAdd, F32)
                 .value()
                 .clock_cycles(),
-            kMinClockCyclesAddF32_);
+            0);
   // f64 divide is somewhat slow.
   EXPECT_GT(profiler.MeasureClockCyclesPerOp(HloOpcode::kDivide, F64)
                 .value()
                 .clock_cycles(),
-            kMinClockCyclesDivideF64_);
+            IsRocm() ? 100 : 280);
   // c128 sqrt is slow.
   EXPECT_GT(profiler.MeasureClockCyclesPerOp(HloOpcode::kSqrt, C128)
                 .value()
                 .clock_cycles(),
-            kMinClockCyclesSqrtC128_);
+            1000);
 }
 
 TEST_F(HloOpProfilerTest, UnsupportedCombinationsDoNotCrash) {
@@ -103,9 +101,6 @@ TEST_F(HloOpProfilerTest, AllSupportedCombinationsAreMeasurable) {
       // go/keep-sorted end
   };
 
-  FloatTypes.insert(MeasurebleInFloat.begin(), MeasurebleInFloat.end());
-  HloOpProfiler profiler(&test_runner(), &device_description());
-
   // TODO(esjoblom): These ops fail with too fast to measure on ROCm
   // but let's just skip them for now.
   const std::unordered_set<HloOpcode> skip_on_rocm = {
@@ -115,9 +110,9 @@ TEST_F(HloOpProfilerTest, AllSupportedCombinationsAreMeasurable) {
   };
 
   FloatTypes.insert(MeasurebleInFloat.begin(), MeasurebleInFloat.end());
-  HloOpProfiler profiler(test_runner_as_hlo_runner());
+  HloOpProfiler profiler(&test_runner(), &device_description());
 
-  const bool is_rocm = platform_id_ == se::rocm::kROCmPlatformId;
+  const bool is_rocm = IsRocm();
   for (const HloOpcode op : HloOpProfiler::AllSupportedOps()) {
     if (!HloOpProfiler::TooFastToMeasure().count(op) &&
         !HloOpProfiler::Unsupported().count(op) &&

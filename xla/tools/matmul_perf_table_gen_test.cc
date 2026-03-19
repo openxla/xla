@@ -327,7 +327,7 @@ TEST_F(MatmulPerfTableGenTest, ProfilesSmallMatmul) {
   cfg.dtypes.emplace_back(
       MatmulPerfTableGen::DataTypeSpec{"f32", "f32", "f32"});
 
-  MatmulPerfTableGen gen(cfg);
+  MatmulPerfTableGen gen(&test_runner(), &device_description(), cfg);
   DeviceHloInstructionProfiles profiles = gen.ComputeTable();
 
   ASSERT_THAT(profiles.entries(), ::testing::SizeIs(1));
