@@ -93,6 +93,25 @@ SymbolicExpr BasicAddSimplify(SymbolicExpr lhs, SymbolicExpr rhs) {
                                 lhs.GetContext());
 }
 
+// TODO(b/459357586): Remove this function and use CanonicalizeMod instead.
+SymbolicExpr BasicFloorDivSimplify(SymbolicExpr lhs, SymbolicExpr rhs) {
+  if (rhs.GetType() == SymbolicExprType::kConstant && rhs.GetValue() == 1) {
+    return lhs;
+  }
+  return CreateSymbolicBinaryOp(SymbolicExprType::kFloorDiv, lhs, rhs,
+                                lhs.GetContext());
+}
+
+// TODO(b/459357586): Remove this function and use CanonicalizeMod instead.
+SymbolicExpr BasicModSimplify(SymbolicExpr lhs, SymbolicExpr rhs) {
+  if (rhs.GetType() == SymbolicExprType::kConstant &&
+      std::abs(rhs.GetValue()) == 1) {
+    return CreateSymbolicConstant(0, lhs.GetContext());
+  }
+  return CreateSymbolicBinaryOp(SymbolicExprType::kMod, lhs, rhs,
+                                lhs.GetContext());
+}
+
 // Pass to construct exprs by combining:
 //   (X floordiv C) * C * Y + (X % C) * Y => X * Y
 bool ConstructExprsCombiningFloorDivAndMod(
@@ -483,6 +502,15 @@ SymbolicExpr CanonicalizeMod(SymbolicExpr lhs, SymbolicExpr rhs) {
     if (SymbolicExpr gcd_simplified =
             TrySimplifyDivModByGCD(SymbolicExprType::kMod, lhs, divisor)) {
       return gcd_simplified;
+    }
+
+    // Rewrite `(x % a) % b` to `x % b` if `a % b == 0`.
+    if (lhs.GetType() == SymbolicExprType::kMod &&
+        lhs.GetRHS().GetType() == SymbolicExprType::kConstant) {
+      int64_t inner_divisor = lhs.GetRHS().GetValue();
+      if (inner_divisor % divisor == 0) {
+        return (lhs.GetLHS() % divisor).Canonicalize();
+      }
     }
 
     // Distributivity for (A + C1) mod C2 where C1 % C2 == 0
@@ -933,16 +961,14 @@ SymbolicExpr SymbolicExpr::operator%(int64_t v) const {
   return this->operator%(CreateSymbolicConstant(v, GetContext()));
 }
 SymbolicExpr SymbolicExpr::operator%(SymbolicExpr other) const {
-  return CreateSymbolicBinaryOp(SymbolicExprType::kMod, *this, other,
-                                GetContext());
+  return BasicModSimplify(*this, other);
 }
 
 SymbolicExpr SymbolicExpr::floorDiv(int64_t v) const {
   return this->floorDiv(CreateSymbolicConstant(v, GetContext()));
 }
 SymbolicExpr SymbolicExpr::floorDiv(SymbolicExpr other) const {
-  return CreateSymbolicBinaryOp(SymbolicExprType::kFloorDiv, *this, other,
-                                GetContext());
+  return BasicFloorDivSimplify(*this, other);
 }
 
 SymbolicExpr SymbolicExpr::ceilDiv(int64_t v) const {

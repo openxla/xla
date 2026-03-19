@@ -1,5 +1,13 @@
 # PJRT C API changelog
 
+## 0.103
+
+* Added `payload` and `num_payload` to `PJRT_Client_CreateErrorBuffer_Args` to support passing status payloads during error buffer creation.
+
+## 0.102
+
+* Added `PJRT_Executable_ParameterMemoryKinds`. This API complements `PJRT_Executable_OutputMemoryKinds`.
+
 ## 0.101
 
 * Added `PJRT_TopologyDescription_Fingerprint`.
