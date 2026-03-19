@@ -1215,25 +1215,40 @@ class CuDnnFusionRewriteTest : public CuDnnFusionTest {
   }
 };
 
-TEST_F(CuDnnFusionRewriteTest,
-       DoNotExecuteGemmFusionWithCuDnnWhenNotSupported) {
-  // Dimension size 61 does not satisfy the requirement on alignment
-  // (multiple of 2).
-  const std::string hlo = R"(
-ENTRY e {
+TEST_F(CuDnnFusionRewriteTest, OddDimensionsAreSupported) {
+  if (!IsAtLeastCuDnnVersion(9, 15)) {
+    GTEST_SKIP() << "Requires cuDNN 9.15+.";
+  }
+  // Other backends are disabled, so cuDNN must be picked.
+  MatchOptimizedHlo(R"(
+e {
   p0 = f16[20,40,61] parameter(0)
   p0n = f16[20,40,61] negate(p0)
   p1 = f16[20,80,61] parameter(1)
-  ROOT r = f16[20,40,80] dot(p0n, p1),
+  r = f16[20,40,80] dot(p0n, p1),
     lhs_batch_dims={0}, rhs_batch_dims={0},
     lhs_contracting_dims={2}, rhs_contracting_dims={2}
-})";
+})",
+                    R"(
+; CHECK: __cudnn$fusion
+)");
+}
 
+TEST_F(CuDnnFusionRewriteTest,
+       DoNotExecuteGemmFusionWithCuDnnWhenNotSupported) {
+  // f64 is not a supported data type in cuDNN GEMM fusions yet.
+  // With other backends disabled, compilation must fail.
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(hlo));
-  // Triton backend is disabled meaning that the compilation should fail.
+                          ParseAndReturnVerifiedModule(R"(
+e {
+  p0 = f64[20,40,64] parameter(0)
+  p0n = f64[20,40,64] negate(p0)
+  p1 = f64[20,80,64] parameter(1)
+  r = f64[20,40,80] dot(p0n, p1),
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_contracting_dims={2}, rhs_contracting_dims={2}
+})"));
   auto status = CompileToExecutable(std::move(module)).status();
-
   EXPECT_FALSE(status.ok());
   EXPECT_THAT(
       status.ToString(),
