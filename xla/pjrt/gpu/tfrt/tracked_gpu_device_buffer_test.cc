@@ -30,8 +30,6 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "xla/client/client_library.h"
-#include "xla/client/local_client.h"
 #include "xla/literal.h"
 #include "xla/pjrt/gpu/tfrt/gpu_event.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -134,20 +132,14 @@ TEST(GpuDeviceMemoryTest, OwningToNonOwning) {
 }
 
 TEST(GpuDeviceMemoryTest, AsShapeBuffer) {
-#if !defined(PLATFORM_GOOGLE)
-  GTEST_SKIP() << "LocalClient unavailable: no GPU platform registered in OSS build";
-#endif
-  LocalClient* client = ClientLibrary::LocalClientOrDie();
   TestDevice device;
   Shape shape = ShapeUtil::MakeShape(F32, {1, 2, 3});
   TestAllocator allocator;
-  int64_t byte_size =
-      client->backend().transfer_manager()->GetByteSizeRequirement(shape);
+  int64_t byte_size = ShapeUtil::ByteSizeOf(shape);
   TF_ASSERT_OK_AND_ASSIGN(auto memory,
                           GpuDeviceMemory::Allocate(&allocator, 0, byte_size));
-  ShapedBuffer result_shaped_buffer = memory.AsShapedBuffer(
-      client->backend().transfer_manager()->HostShapeToDeviceShape(shape),
-      &device);
+  ShapedBuffer result_shaped_buffer =
+      memory.AsShapedBuffer(shape, &device);
   EXPECT_EQ(result_shaped_buffer.root_buffer().size(), byte_size);
 }
 
