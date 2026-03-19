@@ -1206,6 +1206,7 @@ rocm_library(
         "cub_scan_kernel_rocm.h",
         "cub_scan_kernel_rocm_impl.cu.cc",
     ],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
         "rocm-only",
@@ -1226,6 +1227,7 @@ cc_library(
     name = "cub_scan_kernel_rocm",
     srcs = ["cub_scan_kernel_rocm.cc"],
     hdrs = ["cub_scan_kernel_rocm.h"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = [
         "gpu",
         "rocm-only",
@@ -1247,6 +1249,7 @@ xla_test(
     name = "cub_scan_kernel_rocm_test",
     srcs = ["cub_scan_kernel_rocm_test.cc"],
     backends = ["gpu"],
+    # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = ["rocm-only"],
     deps = [
         ":cub_scan_kernel_rocm",
