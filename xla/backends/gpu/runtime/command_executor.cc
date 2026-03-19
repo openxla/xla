@@ -45,7 +45,6 @@ limitations under the License.
 #include "xla/runtime/execution_graph.h"
 #include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -460,51 +459,26 @@ CommandExecutor::RecordCreate(
   auto* state = command_buffer->GetOrCreateResource<CommandExecutorsState>();
   auto key = std::make_pair(this, record_id);
 
-  // Runs all commands via ExecuteOnStream on the given stream. Used as the
-  // capture function for both kCapture and kCaptureInline modes.
-  auto run_on_stream = [&](se::Stream* stream) -> absl::Status {
-    Thunk::ExecuteParams capture_params = execute_params;
-    capture_params.stream = stream;
-    for (auto& cmd : commands_) {
-      TF_RETURN_IF_ERROR(cmd->ExecuteOnStream(capture_params));
-    }
-    return absl::OkStatus();
-  };
-
-  // Both capture modes share the same "already recorded" guard and
-  // trace-stream lookup; they differ only in how the captured graph is
-  // embedded into the outer command buffer.
-  if (construction_mode_ == ConstructionMode::kCapture ||
-      construction_mode_ == ConstructionMode::kCaptureInline) {
+  // kCaptureInline: capture directly into the outer buffer at the current
+  // graph level (no child node).
+  if (construction_mode_ == ConstructionMode::kCaptureInline) {
     if (state->recorded_commands.contains(key)) {
       return Internal(
           "Commands already recorded for this executor/record_id pair. "
-          "Capture modes record the command buffer only once.");
+          "kCaptureInline records the command buffer only once.");
     }
 
     se::Stream* trace_stream = execute_params.command_buffer_trace_stream;
 
-    if (construction_mode_ == ConstructionMode::kCapture) {
-      // Capture all commands into a nested buffer, then embed it as a single
-      // child node in the outer command buffer.
-      TF_ASSIGN_OR_RETURN(
-          std::unique_ptr<se::CommandBuffer> traced_cb,
-          se::TraceCommandBufferFactory::Create(
-              execute_params.stream->parent(), trace_stream, run_on_stream,
-              se::CommandBuffer::Mode::kNested));
+    auto run_on_stream = [&](se::Stream* stream) -> absl::Status {
+      Thunk::ExecuteParams capture_params = execute_params;
+      capture_params.stream = stream;
+      for (auto& cmd : commands_) {
+        TF_RETURN_IF_ERROR(cmd->ExecuteOnStream(capture_params));
+      }
+      return absl::OkStatus();
+    };
 
-      TF_ASSIGN_OR_RETURN(
-          const se::CommandBuffer::Command* child_cmd,
-          command_buffer->CreateChildCommand(*traced_cb, dependencies));
-
-      // Transfer ownership so traced_cb lives as long as the outer buffer.
-      state->captured_command_buffers[key] = std::move(traced_cb);
-      state->recorded_commands[key] = {child_cmd};
-      return std::vector<const se::CommandBuffer::Command*>{child_cmd};
-    }
-
-    // kCaptureInline: capture directly into the outer buffer at the current
-    // graph level (no child node).
     VLOG(1) << absl::StreamFormat(
         "Record create (inline capture) %d commands into command buffer %p: "
         "deps=%d, record_id=%v",
@@ -607,50 +581,6 @@ absl::Status CommandExecutor::RecordUpdate(
     return absl::UnimplementedError(
         "RecordUpdate is not supported for kCaptureInline construction mode. "
         "Memory addresses must be persistent.");
-  }
-
-  // In capture mode, re-capture all commands and update the existing child
-  // node.
-  if (construction_mode_ == ConstructionMode::kCapture) {
-    auto* state = command_buffer->GetOrCreateResource<CommandExecutorsState>();
-    auto key = std::make_pair(this, record_id);
-
-    RecordedCommands& recorded_commands = state->recorded_commands[key];
-    if (recorded_commands.size() != 1) {
-      return Internal(
-          "Expected exactly one recorded child command in kCapture mode "
-          "update, "
-          "got %d",
-          recorded_commands.size());
-    }
-    const se::CommandBuffer::Command* child_cmd = recorded_commands[0];
-
-    se::StreamExecutor* executor = execute_params.stream->parent();
-    se::Stream* trace_stream = execute_params.command_buffer_trace_stream;
-
-    // Re-capture all commands onto the trace stream.
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<se::CommandBuffer> new_traced_cb,
-        se::TraceCommandBufferFactory::Create(
-            executor, trace_stream,
-            [&](se::Stream* stream) -> absl::Status {
-              Thunk::ExecuteParams capture_params = execute_params;
-              capture_params.stream = stream;
-              for (auto& cmd : commands_) {
-                TF_RETURN_IF_ERROR(cmd->ExecuteOnStream(capture_params));
-              }
-              return absl::OkStatus();
-            },
-            se::CommandBuffer::Mode::kNested));
-
-    // Update the child command node with the new captured graph.
-    TF_RETURN_IF_ERROR(
-        command_buffer->UpdateChildCommand(child_cmd, *new_traced_cb));
-
-    // Replace the owned captured command buffer.
-    state->captured_command_buffers[key] = std::move(new_traced_cb);
-
-    return absl::OkStatus();
   }
 
   VLOG(1) << absl::StreamFormat(

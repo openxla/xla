@@ -93,19 +93,10 @@ class CommandExecutor {
     // RecordCreate/RecordUpdate.
     kExplicit,
 
-    // Constructs the command buffer via a single CUDA stream capture:
-    //   begin_capture()
-    //   for each command: command->ExecuteOnStream(params_on_capture_stream)
-    //   end_capture()
-    // In this mode memory addresses are assumed to be persistent; RecordUpdate
-    // is never called.
-    kCapture,
-
-    // Like kCapture but embeds the captured nodes directly into the outer
-    // command buffer at the current graph level rather than as a child graph
-    // node. This avoids one level of CUDA graph nesting. Requires CUDA 12.3+.
-    // Memory addresses are assumed to be persistent; RecordUpdate is not
-    // supported.
+    // Captures the command sequence directly into the outer command buffer at
+    // the current graph level (no child graph node). This avoids one level of
+    // CUDA graph nesting. Requires CUDA 12.3+. Memory addresses are assumed to
+    // be persistent; RecordUpdate is not supported.
     kCaptureInline,
   };
 
@@ -114,9 +105,6 @@ class CommandExecutor {
     switch (mode) {
       case ConstructionMode::kExplicit:
         sink.Append("explicit");
-        break;
-      case ConstructionMode::kCapture:
-        sink.Append("capture");
         break;
       case ConstructionMode::kCaptureInline:
         sink.Append("capture_inline");
@@ -250,9 +238,6 @@ class CommandExecutor {
     // to values valid during the execution we use a node hash map container.
     using Key = std::pair<const CommandExecutor*, RecordId>;
     absl::node_hash_map<Key, RecordedCommands> recorded_commands;
-    // Owns captured command buffers created in kCapture mode.
-    absl::node_hash_map<Key, std::unique_ptr<se::CommandBuffer>>
-        captured_command_buffers;
   };
 
   CommandExecutor(SynchronizationMode synchronization_mode,

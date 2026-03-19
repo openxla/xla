@@ -117,7 +117,6 @@ cc_library(
         "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",
         "//xla/stream_executor:command_buffer",
-        "//xla/stream_executor:trace_command_buffer_factory",
         "//xla/tsl/lib/gtl:int_type",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
