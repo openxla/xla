@@ -285,6 +285,17 @@ CommandExecutor::CommandExecutor(SynchronizationMode synchronization_mode,
     : synchronization_mode_(synchronization_mode),
       commands_(std::move(commands)),
       execution_graph_(std::move(execution_graph)) {
+  // Derive construction mode from commands: kCapture only if the sequence is
+  // non-empty and every command is kCapture; otherwise kExplicit.
+  construction_mode_ = ConstructionMode::kExplicit;
+  if (!commands_.empty()) {
+    construction_mode_ = ConstructionMode::kCapture;
+    commands_.Walk([&](const Command* command) {
+      if (command->construction_mode() != ConstructionMode::kCapture) {
+        construction_mode_ = ConstructionMode::kExplicit;
+      }
+    });
+  }
   // Walk all nested commands and collect all buffers used by this executor.
   commands_.Walk([&](const Command* command) {
     Command::BufferUses buffer_uses = command->buffer_uses();
@@ -467,14 +478,57 @@ CommandExecutor::RecordCreate(
       commands_.size(), command_buffer, dependencies.size(), record_id);
   uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
+  auto* state = command_buffer->GetOrCreateResource<CommandExecutorsState>();
+  auto key = std::make_pair(this, record_id);
+
+  // kCapture: run all commands via ExecuteOnStream inside a single Trace call.
+  if (construction_mode_ == ConstructionMode::kCapture) {
+    if (state->recorded_commands.contains(key)) {
+      return Internal(
+          "Commands already recorded for this executor/record_id pair. "
+          "kCapture records the command buffer only once.");
+    }
+
+    se::Stream* trace_stream = execute_params.command_buffer_trace_stream;
+
+    auto run_on_stream = [&](se::Stream* stream) -> absl::Status {
+      Thunk::ExecuteParams capture_params = execute_params;
+      capture_params.stream = stream;
+      for (auto& cmd : commands_) {
+        TF_RETURN_IF_ERROR(cmd->ExecuteOnStream(capture_params));
+      }
+      return absl::OkStatus();
+    };
+
+    VLOG(1) << absl::StreamFormat(
+        "Record create (inline capture) %d commands into command buffer %p: "
+        "deps=%d, record_id=%v",
+        commands_.size(), command_buffer, dependencies.size(), record_id);
+    TF_ASSIGN_OR_RETURN(
+        std::vector<const se::CommandBuffer::Command*> sinks,
+        command_buffer->Trace(
+            trace_stream, [&] { return run_on_stream(trace_stream); },
+            dependencies));
+    // Trace returns a 1-element vector containing the GpuTraceCommand*.
+    state->recorded_commands[key] =
+        RecordedCommands(sinks.begin(), sinks.end());
+    return sinks;
+  }
+
+  // kExplicit: record each command individually into the command buffer.
+
   // Short-circuit if there are no commands to record.
   if (commands_.empty()) {
     return std::vector<const se::CommandBuffer::Command*>{};
   }
 
+<<<<<<< HEAD
   auto* state = command_buffer->GetOrConstructResource<CommandExecutorsState>();
   RecordedCommands& recorded_commands =
       state->recorded_commands[std::make_pair(this, record_id)];
+=======
+  RecordedCommands& recorded_commands = state->recorded_commands[key];
+>>>>>>> 0be423353d ([XLA:GPU] Add ConstructionMode (kExplicit/kCapture) to CommandExecutor)
 
   // Check that this executor was not already recorded into the command buffer.
   if (!recorded_commands.empty()) {
@@ -594,6 +648,15 @@ absl::Status CommandExecutor::RecordUpdate(
   auto* state = command_buffer->GetOrConstructResource<CommandExecutorsState>();
   RecordedCommands& recorded_commands =
       state->recorded_commands[std::make_pair(this, record_id)];
+
+  // kCapture does not support update: the captured nodes are inline in
+  // the outer graph and cannot be atomically swapped. Memory addresses must be
+  // persistent.
+  if (construction_mode_ == ConstructionMode::kCapture) {
+    return absl::UnimplementedError(
+        "RecordUpdate is not supported for kCapture construction mode. "
+        "Memory addresses must be persistent.");
+  }
 
   // Check this this executor was correctly recorded into the command buffer.
   if (recorded_commands.size() != commands_.size()) {
