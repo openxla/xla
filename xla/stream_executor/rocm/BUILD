@@ -394,6 +394,7 @@ cc_library(
         "//xla/tsl/platform:macros",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:determinism_hdr_lib",
+        "//xla/tsl/util:determinism",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -530,6 +531,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/protobuf:dnn_proto_cc",
         "//xla/tsl/util:determinism_for_kernels",
+        "//xla/tsl/util:determinism",
         "//xla/tsl/util:env_var",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
@@ -850,12 +852,6 @@ cc_library(
         "rocm-only",
     ],
     deps = [
-        ":rocm_platform_id",
-        "//xla/stream_executor:dnn",
-        "//xla/stream_executor:platform_manager",
-        "//xla/stream_executor:scratch_allocator",
-        "//xla/stream_executor/cuda:cuda_platform_id",
-        "//xla/stream_executor/host:host_platform_id",
         "@local_config_rocm//rocm:rocm_rpath",
     ] + if_static(
         [":all_runtime"],
