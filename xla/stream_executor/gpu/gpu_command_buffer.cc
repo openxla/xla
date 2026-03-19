@@ -221,6 +221,25 @@ absl::Status GpuCommandBuffer::UpdateLaunch(const Command* command,
   return absl::InternalError("Unsupported kernel arguments type");
 }
 
+absl::StatusOr<std::vector<const CommandBuffer::Command*>>
+GpuCommandBuffer::Trace(Stream* stream,
+                        absl::AnyInvocable<absl::Status()> function,
+                        absl::Span<const Command* const> dependencies) {
+  TF_RETURN_IF_ERROR(CheckInState(State::kCreate));
+
+  TF_ASSIGN_OR_RETURN(
+      std::vector<GraphNodeHandle> sink_handles,
+      CaptureInlineAndReturnSinks(ToGraphNodeDependencies(dependencies), stream,
+                                  std::move(function)));
+
+  std::vector<const Command*> sinks;
+  sinks.reserve(sink_handles.size());
+  for (GraphNodeHandle handle : sink_handles) {
+    sinks.push_back(AppendCommand(GpuCommand{handle}));
+  }
+  return sinks;
+}
+
 absl::StatusOr<const CommandBuffer::Command*>
 GpuCommandBuffer::CreateChildCommand(
     const CommandBuffer& nested,

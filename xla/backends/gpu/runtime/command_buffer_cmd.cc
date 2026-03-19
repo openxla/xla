@@ -783,6 +783,35 @@ absl::StatusOr<const se::CommandBuffer::Command*> ChildCmd::Record(
         });
   }
 
+  // In capture-inline mode, delegate directly to RecordCreate so that captured
+  // nodes are added inline to the outer buffer at the current level. Multiple
+  // sink nodes are collapsed into a single barrier empty node so that ChildCmd
+  // can return a single Command*.
+  if (child_commands_.construction_mode() ==
+      CommandExecutor::ConstructionMode::kCaptureInline) {
+    return Handle(
+        std::move(record_action),
+        [&](absl::Span<const se::CommandBuffer::Command* const> dependencies)
+            -> absl::StatusOr<const se::CommandBuffer::Command*> {
+          TF_ASSIGN_OR_RETURN(auto sinks, child_commands_.RecordCreate(
+                                              execute_params, record_params,
+                                              command_buffer, dependencies));
+          if (sinks.empty()) {
+            return Internal(
+                "Expected at least 1 sink command from kCaptureInline "
+                "RecordCreate, got 0");
+          }
+          if (sinks.size() == 1) return sinks[0];
+          // Collapse multiple sinks into a single barrier node so ChildCmd
+          // returns one Command* to its caller.
+          return command_buffer->CreateEmptyCmd(sinks);
+        },
+        [&](const se::CommandBuffer::Command* /*command*/) {
+          return child_commands_.RecordUpdate(execute_params, record_params,
+                                              command_buffer);
+        });
+  }
+
   auto record_fn = [&](se::CommandBuffer* command_buffer) {
     return child_commands_
         .RecordCreate(execute_params, record_params, command_buffer,

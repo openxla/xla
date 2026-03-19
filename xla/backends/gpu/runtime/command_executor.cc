@@ -502,6 +502,44 @@ CommandExecutor::RecordCreate(
     return std::vector<const se::CommandBuffer::Command*>{child_cmd};
   }
 
+  // In capture-inline mode, capture all commands directly into the outer
+  // command buffer at the current graph level (no child node).
+  if (construction_mode_ == ConstructionMode::kCaptureInline) {
+    se::Stream* trace_stream = execute_params.command_buffer_trace_stream;
+
+    auto* state = command_buffer->GetOrCreateResource<CommandExecutorsState>();
+    auto key = std::make_pair(this, record_id);
+
+    if (state->recorded_commands.contains(key)) {
+      return Internal(
+          "Inline-captured commands already exist for this executor/record_id "
+          "pair. kCaptureInline mode records the command buffer only once.");
+    }
+
+    VLOG(1) << absl::StreamFormat(
+        "Record create (inline capture) %d commands into command buffer %p: "
+        "deps=%d, record_id=%v",
+        commands_.size(), command_buffer, dependencies.size(), record_id);
+
+    TF_ASSIGN_OR_RETURN(
+        std::vector<const se::CommandBuffer::Command*> sinks,
+        command_buffer->Trace(
+            trace_stream,
+            [&]() -> absl::Status {
+              Thunk::ExecuteParams capture_params = execute_params;
+              capture_params.stream = trace_stream;
+              for (auto& cmd : commands_) {
+                TF_RETURN_IF_ERROR(cmd->ExecuteOnStream(capture_params));
+              }
+              return absl::OkStatus();
+            },
+            dependencies));
+
+    state->recorded_commands[key] =
+        RecordedCommands(sinks.begin(), sinks.end());
+    return sinks;
+  }
+
   // Command buffer must be in create state.
   TF_RETURN_IF_ERROR(CheckCommandBufferState(
       command_buffer, se::CommandBuffer::State::kCreate));
@@ -585,6 +623,15 @@ absl::Status CommandExecutor::RecordUpdate(
     const Thunk::ExecuteParams& execute_params,
     const Command::RecordParams& record_params,
     se::CommandBuffer* command_buffer, RecordId record_id) const {
+  // kCaptureInline does not support update: the captured nodes are inline in
+  // the outer graph and cannot be atomically swapped. Memory addresses must be
+  // persistent.
+  if (construction_mode_ == ConstructionMode::kCaptureInline) {
+    return absl::UnimplementedError(
+        "RecordUpdate is not supported for kCaptureInline construction mode. "
+        "Memory addresses must be persistent.");
+  }
+
   // In capture mode, re-capture all commands and update the existing child
   // node.
   if (construction_mode_ == ConstructionMode::kCapture) {

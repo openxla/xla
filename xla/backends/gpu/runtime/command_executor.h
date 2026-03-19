@@ -100,6 +100,13 @@ class CommandExecutor {
     // In this mode memory addresses are assumed to be persistent; RecordUpdate
     // is never called.
     kCapture,
+
+    // Like kCapture but embeds the captured nodes directly into the outer
+    // command buffer at the current graph level rather than as a child graph
+    // node. This avoids one level of CUDA graph nesting. Requires CUDA 12.3+.
+    // Memory addresses are assumed to be persistent; RecordUpdate is not
+    // supported.
+    kCaptureInline,
   };
 
   template <typename Sink>
@@ -110,6 +117,9 @@ class CommandExecutor {
         break;
       case ConstructionMode::kCapture:
         sink.Append("capture");
+        break;
+      case ConstructionMode::kCaptureInline:
+        sink.Append("capture_inline");
         break;
     }
   }
