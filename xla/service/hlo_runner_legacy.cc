@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/nullability.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -824,6 +825,8 @@ ServiceExecutableRunOptions HloRunnerLegacy::GetServiceRunOptionsForDevice(
     RunId run_id, int local_device_count) {
   ExecutableRunOptions run_options;
   run_options.set_device_ordinal(device);
+  run_options.set_command_buffer_va_range_idx(
+      GetNextCommandBufferVaRangeIdx(static_cast<int>(device)));
   run_options.set_local_device_count(local_device_count);
 
   run_options.set_stream(stream);

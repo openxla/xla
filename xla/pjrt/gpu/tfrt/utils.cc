@@ -94,6 +94,7 @@ limitations under the License.
 #include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/stream_executor_vmm_allocator.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -637,6 +638,9 @@ absl::StatusOr<std::unique_ptr<tsl::Allocator>> CreateAllocatorForDevice(
     case GpuAllocatorConfig::Kind::kPlatform:
       LOG(FATAL) << "Platform allocator should be handled before calling this "
                     "function.";
+    case GpuAllocatorConfig::Kind::kVmm:
+      LOG(FATAL) << "VMM allocator should be handled before calling this "
+                    "function.";
   }
 }
 
@@ -652,6 +656,32 @@ absl::StatusOr<MaybeOwning<se::DeviceAddressAllocator>> CreateDeviceAllocator(
     }
     return MaybeOwning<se::DeviceAddressAllocator>(
         xla_client->backend().memory_allocator());
+  }
+
+  if (allocator_config.kind == GpuAllocatorConfig::Kind::kVmm) {
+    LOG(INFO) << "Using VMM (Virtual Memory Management) allocator.";
+    // Count devices with a valid executor.
+    se::StreamExecutor* vmm_executor = nullptr;
+    se::Stream* vmm_stream = nullptr;
+    int device_count = 0;
+    for (const auto& device : devices) {
+      se::StreamExecutor* executor = device->executor();
+      if (executor != nullptr) {
+        ++device_count;
+        vmm_executor = executor;
+        vmm_stream = device->stream();
+      }
+    }
+    if (device_count != 1) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "VMM allocator only supports a single addressable device, but %d "
+          "devices were provided.",
+          device_count));
+    }
+    TF_ASSIGN_OR_RETURN(auto vmm_alloc,
+                        se::DeviceAddressVmmAllocator::Create(vmm_executor,
+                                                              vmm_stream));
+    return MaybeOwning<se::DeviceAddressAllocator>(std::move(vmm_alloc));
   }
 
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;

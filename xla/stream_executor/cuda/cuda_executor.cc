@@ -909,7 +909,8 @@ absl::StatusOr<size_t> CudaExecutor::GetVmmGranularity() const {
   return granularity;
 }
 
-absl::StatusOr<void*> CudaExecutor::VmmAllocateMemory(uint64_t bytes) {
+absl::StatusOr<DeviceAddressBase> CudaExecutor::VmmAllocateMemory(
+    uint64_t bytes) {
   if (!is_vmm_supported_) {
     return absl::InternalError("VMM is not supported on this device.");
   }
@@ -937,26 +938,31 @@ absl::StatusOr<void*> CudaExecutor::VmmAllocateMemory(uint64_t bytes) {
 
   XLA_VLOG_DEVICE(3, device_ordinal())
       << "VMM allocated " << ptr << " requested size: " << bytes
-      << " padded size: " << padded_size << " granularity: " << granularity;
+      << " padded size: " << padded_size << " granularity: " << granularity
+      << " handle: " << handle;
 
-  int device_count = 0;
-  TF_RETURN_IF_ERROR(cuda::ToStatus(cudaGetDeviceCount(&device_count)));
-  for (int peer = 0; peer < device_count; peer++) {
-    if (peer == device_ordinal() || CanEnablePeerAccessTo(peer)) {
-      CUmemAccessDesc accessDesc = GetVmmAccessDescriptor(peer);
-      TF_RETURN_IF_ERROR(
-          cuda::ToStatus(cuMemSetAccess(ptr, padded_size, &accessDesc, 1)));
-    }
-  }
+  // Set VMM access for local device.
+  CUmemAccessDesc accessDesc = GetVmmAccessDescriptor(device_ordinal());
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuMemSetAccess(ptr, padded_size, &accessDesc, 1),
+      absl::StrFormat("Failed to set VMM access for address 0x%x with size %u",
+                      ptr, padded_size)));
 
   if (!vmm_memory_tracker_.Insert(ptr)) {
     LOG(WARNING) << "[" << device_ordinal()
                  << "] VMM memory already tracked: " << ptr;
   }
-  return reinterpret_cast<void*>(ptr);
+
+  {
+    absl::MutexLock lock(&vmm_virtual_to_handle_mu_);
+    vmm_virtual_to_handle_[reinterpret_cast<void*>(ptr)] = handle;
+  }
+
+  return DeviceAddressBase(reinterpret_cast<void*>(ptr), bytes);
 }
 
-absl::StatusOr<bool> CudaExecutor::VmmDeallocateMemory(void* ptr) {
+absl::StatusOr<bool> CudaExecutor::VmmDeallocateMemory(DeviceAddressBase addr) {
+  void* ptr = addr.opaque();
   CUdeviceptr device_ptr = reinterpret_cast<CUdeviceptr>(ptr);
   if (!vmm_memory_tracker_.Remove(device_ptr)) {
     return false;
@@ -973,12 +979,19 @@ absl::StatusOr<bool> CudaExecutor::VmmDeallocateMemory(void* ptr) {
 
   std::unique_ptr<ActivateContext> activation = Activate();
 
-  CUmemGenericAllocationHandle handle = 0;
+  CUmemGenericAllocationHandle raw_handle = 0;
   {
-    TF_ASSIGN_OR_RETURN(VmmMemoryHandle scoped_handle,
-                        RetainVmmMemoryHandle(ptr));
-    handle = static_cast<CUmemGenericAllocationHandle>(scoped_handle.handle());
+    absl::MutexLock lock(&vmm_virtual_to_handle_mu_);
+    auto it = vmm_virtual_to_handle_.find(ptr);
+    if (it == vmm_virtual_to_handle_.end()) {
+      return absl::InvalidArgumentError(
+          "DeviceAddressBase does not have a VMM handle mapping.");
+    }
+    raw_handle = it->second;
+    vmm_virtual_to_handle_.erase(it);
   }
+  CUmemGenericAllocationHandle handle = raw_handle;
+
   size_t size = 0;
   TF_RETURN_IF_ERROR(
       cuda::ToStatus(cuMemGetAddressRange(nullptr, &size, device_ptr)));
@@ -989,6 +1002,38 @@ absl::StatusOr<bool> CudaExecutor::VmmDeallocateMemory(void* ptr) {
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemAddressFree(device_ptr, size)));
   deletion_completed = true;
   return true;
+}
+
+absl::Status CudaExecutor::VmmSetAccess(DeviceAddressBase* address,
+                                        CUmemAccessDesc access_desc,
+                                        uint64_t count) {
+  if (address == nullptr || address->is_null()) {
+    return absl::InvalidArgumentError("Cannot set VMM access on null address.");
+  }
+  if (address->size() == 0) {
+    return absl::OkStatus();
+  }
+
+  std::unique_ptr<ActivateContext> activation = Activate();
+
+  CUdeviceptr ptr = reinterpret_cast<CUdeviceptr>(address->opaque());
+
+  // Round size up to allocation granularity.
+  uint64_t granularity = GetAllocationGranularity();
+  uint64_t size =
+      ((address->size() + granularity - 1) / granularity) * granularity;
+
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuMemSetAccess(ptr, size, &access_desc, count),
+      absl::StrFormat("Failed to set VMM access for address %p with size %llu",
+                      address->opaque(),
+                      static_cast<unsigned long long>(size))));
+
+  XLA_VLOG_DEVICE(3, device_ordinal())
+      << "Set VMM access for address " << address->opaque() << " with size "
+      << size << " location.id=" << access_desc.location.id;
+
+  return absl::OkStatus();
 }
 
 absl::StatusOr<void*> CollectiveMemoryAllocate(StreamExecutor* executor,
@@ -1429,16 +1474,32 @@ DeviceAddressBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
 
   if (memory_space == static_cast<int64_t>(MemorySpace::kP2P) &&
       is_vmm_supported_) {
-    auto device_buf_base = VmmAllocateMemory(size);
-
-    if (device_buf_base.ok()) {
-      return DeviceAddressBase(device_buf_base.value(), size);
+    auto result = VmmAllocateMemory(size);
+    if (!result.ok()) {
+      XLA_LOG_DEVICE(ERROR, device_ordinal())
+          << "Failed to allocate VMM memory: " << result.status();
+      return DeviceAddressBase(nullptr, 0);
     }
+    DeviceAddressBase device_address = result.value();
 
-    XLA_LOG_DEVICE(ERROR, device_ordinal())
-        << "Failed to allocate memory with VMM: " << device_buf_base.status();
-
-    return DeviceAddressBase(nullptr, 0);
+    int device_count = 0;
+    auto count_status = cuda::ToStatus(cudaGetDeviceCount(&device_count));
+    if (!count_status.ok()) {
+      LOG(WARNING) << "Failed to get device count for peer access: "
+                   << count_status;
+      return device_address;
+    }
+    for (int peer = 0; peer < device_count; peer++) {
+      if (peer != device_ordinal() && CanEnablePeerAccessTo(peer)) {
+        CUmemAccessDesc accessDesc = GetVmmAccessDescriptor(peer);
+        auto access_status = VmmSetAccess(&device_address, accessDesc, 1);
+        if (!access_status.ok()) {
+          LOG(WARNING) << "Failed to set VMM access for peer " << peer << ": "
+                       << access_status;
+        }
+      }
+    }
+    return device_address;
   }
 
   CHECK(memory_space == static_cast<int64_t>(MemorySpace::kDevice) ||
@@ -1471,7 +1532,7 @@ void CudaExecutor::Deallocate(DeviceAddressBase* mem) {
     // Memory space is always kDevice here, so the only way to check if the
     // memory was allocated with VMM API is to try to retain the handle with VMM
     // API (which VmmDeallocateMemory does).
-    auto result = VmmDeallocateMemory(mem->opaque());
+    auto result = VmmDeallocateMemory(*mem);
     if (!result.ok()) {
       LOG(WARNING) << "Failed to deallocate VMM memory handle: "
                    << result.status();
@@ -1479,6 +1540,29 @@ void CudaExecutor::Deallocate(DeviceAddressBase* mem) {
       DeviceDeallocate(cuda_context_, mem->opaque());
     }
   }
+}
+
+uint64_t CudaExecutor::GetAllocationGranularity() const {
+  absl::call_once(allocation_granularity_once_, [this]() {
+    CUmemAllocationProp properties =
+        GetVmmAllocationProperties(device_, is_rdma_supported_);
+    size_t granularity = 0;
+    absl::Status status = cuda::ToStatus(cuMemGetAllocationGranularity(
+        &granularity, &properties, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
+    if (!status.ok()) {
+      XLA_LOG_DEVICE(ERROR, device_ordinal())
+          << "Failed to get allocation granularity: " << status;
+      allocation_granularity_query_ok_ = false;
+      return;
+    }
+    allocation_granularity_ = static_cast<uint64_t>(granularity);
+    allocation_granularity_query_ok_ = true;
+  });
+
+  if (!allocation_granularity_query_ok_) {
+    return 0;
+  }
+  return allocation_granularity_;
 }
 
 bool CudaExecutor::SynchronizeAllActivity() {
