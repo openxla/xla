@@ -90,10 +90,11 @@ TEST_P(XlaAotCompileTest, LoadGpuExecutable) {
       client->LiteralToShapedBuffer(input2, client->default_device_ordinal()));
   ExecutableRunOptions executable_run_options;
   executable_run_options.set_allocator(client->backend().memory_allocator());
-  const ShapedBuffer* args[] = {&array1, &array2};
   TF_ASSERT_OK_AND_ASSIGN(
       ScopedShapedBuffer result,
-      local_executable->Run(args, executable_run_options));
+      local_executable->Run(
+          absl::Span<const ShapedBuffer* const>{&array1, &array2},
+          executable_run_options));
 
   TF_ASSERT_OK_AND_ASSIGN(Literal output,
                           client->ShapedBufferToLiteral(result));
@@ -149,10 +150,11 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConstant) {
       client->LiteralToShapedBuffer(input, client->default_device_ordinal()));
   ExecutableRunOptions executable_run_options;
   executable_run_options.set_allocator(client->backend().memory_allocator());
-  const ShapedBuffer* args[] = {&array};
   TF_ASSERT_OK_AND_ASSIGN(
       ScopedShapedBuffer result,
-      local_executable->Run(args, executable_run_options));
+      local_executable->Run(
+          absl::Span<const ShapedBuffer* const>{&array},
+          executable_run_options));
 
   TF_ASSERT_OK_AND_ASSIGN(Literal output,
                           client->ShapedBufferToLiteral(result));
@@ -235,10 +237,11 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConvolution) {
 
   ExecutableRunOptions executable_run_options;
   executable_run_options.set_allocator(client->backend().memory_allocator());
-  const ShapedBuffer* args2[] = {&array1, &array2};
   TF_ASSERT_OK_AND_ASSIGN(
       ScopedShapedBuffer result,
-      local_executable->Run(args2, executable_run_options));
+      local_executable->Run(
+          absl::Span<const ShapedBuffer* const>{&array1, &array2},
+          executable_run_options));
 
   TF_ASSERT_OK_AND_ASSIGN(Literal output,
                           client->ShapedBufferToLiteral(result));
