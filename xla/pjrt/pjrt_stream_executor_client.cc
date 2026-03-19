@@ -893,13 +893,13 @@ PjRtStreamExecutorClient::LinearizeInto(
   // TODO(misard) assess if it would be preferable to introduce a heuristic to
   // put the transfer into the calling thread for small literals.
   //
-  // Clone the literal to ensure its data remains valid until the async H2D
-  // transfer executes. The caller may have passed a temporary whose lifetime
-  // does not extend past the current call (e.g. via BufferFromHostLiteral).
-  Literal literal_copy = literal.Clone();
+  // The caller must ensure that the literal's data remains valid until the
+  // definition event fires (i.e., until the H2D stream has processed all
+  // enqueued operations, including DoHostCallback-based staging). Callers that
+  // cannot guarantee this lifetime (e.g. BufferFromHostLiteral) must clone the
+  // literal and attach the clone to the definition event via AndThen.
   auto transfer_h2d = [this, local_client = client(), transfer_manager,
-                       local_device, raw_buffer, device, event,
-                       literal = std::move(literal_copy),
+                       local_device, raw_buffer, device, event, literal,
                        on_device_shape = std::move(on_device_shape)]() mutable {
     // This function uses CHECK_OK and value() since we have no way
     // to report failures from a callback. However, the operations here are
