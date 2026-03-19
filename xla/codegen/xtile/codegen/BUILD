@@ -174,13 +174,13 @@ cc_library(
     deps = [
         ":emitter_helpers",
         "//xla:util",
-        "//xla/codegen/tiling:affine_map_evaluator",
         "//xla/codegen/tiling:constraint_expression",
         "//xla/codegen/tiling:symbolic_tile",
         "//xla/codegen/tiling:symbolic_tile_analysis",
         "//xla/codegen/tiling:symbolic_tiled_hlo_instruction",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/analysis:interval",
+        "//xla/hlo/analysis:symbolic_map",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
         "@com_google_absl//absl/log",
@@ -190,7 +190,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:IR",
     ],
 )
 
