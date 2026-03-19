@@ -71,6 +71,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
+        "@shardy//shardy/dialect/sdy/ir:register",
         "@stablehlo//:stablehlo_serialization",
     ],
     alwayslink = True,
