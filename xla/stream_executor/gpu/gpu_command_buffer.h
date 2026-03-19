@@ -117,6 +117,12 @@ class GpuCommandBuffer : public CommandBuffer {
     std::unique_ptr<CommandBuffer> command_buffer;
   };
 
+  // A GpuTraceCommand is created by tracing a function invocation. It contains
+  // the handles of the sink nodes that were added by the traced function.
+  struct GpuTraceCommand : public CommandBuffer::Command {
+    std::vector<GraphNodeHandle> sink_nodes;
+  };
+
   GpuCommandBuffer(Mode mode, StreamExecutor* executor);
 
   // Bring CreateLaunch and UpdateLaunch template functions into scope.
@@ -197,6 +203,10 @@ class GpuCommandBuffer : public CommandBuffer {
   absl::Status UpdateWhile(const Command* command, DeviceAddress<bool> pred,
                            UpdateCommands update_cond,
                            UpdateCommands update_body) override;
+
+  absl::StatusOr<std::vector<const Command*>> Trace(
+      Stream* stream, absl::AnyInvocable<absl::Status()> function,
+      absl::Span<const Command* const> dependencies) override;
 
   absl::Status Finalize() override;
   absl::Status Update() override;
@@ -310,6 +320,14 @@ class GpuCommandBuffer : public CommandBuffer {
   // Adds a new empty node to the underlying graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateEmptyNode(
       absl::Span<const GraphNodeHandle> dependencies) = 0;
+
+  // Captures `function` invocation directly into the underlying graph starting
+  // from `dependencies`, and returns the handles of the sink nodes added by the
+  // capture. Called by Trace(). Requires platform support (CUDA 12.3+).
+  virtual absl::StatusOr<std::vector<GraphNodeHandle>>
+  CaptureInlineAndReturnSinks(
+      absl::Span<const GraphNodeHandle> dependencies, Stream* stream,
+      absl::AnyInvocable<absl::Status()> function) = 0;
 
   // Adds a new conditional node to the graph and creates a corresponding
   // nested command buffer.

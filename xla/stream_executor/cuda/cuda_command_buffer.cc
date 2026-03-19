@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/debugging/leak_check.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -660,67 +661,123 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateEmptyNode(
   return FromCudaGraphHandle(node_handle);
 }
 
-absl::Status CudaCommandBuffer::Trace(
-    Stream* stream, absl::AnyInvocable<absl::Status()> function) {
+absl::StatusOr<std::vector<GpuCommandBuffer::GraphNodeHandle>>
+CudaCommandBuffer::CaptureInlineAndReturnSinks(
+    absl::Span<const GraphNodeHandle> dependencies, Stream* stream,
+    absl::AnyInvocable<absl::Status()> function) {
 #if CUDA_VERSION < 12030
   return absl::UnimplementedError(
-      "StreamBeginCaptureToGraph is not implemented for CUDA below version "
-      "12.3. Therefore tracing is not supported.");
+      "CaptureInlineAndReturnSinks is not implemented for CUDA below version "
+      "12.3.");
 #else
   if (stream_exec_->GetDeviceDescription().driver_version() <
       SemanticVersion{12, 3, 0}) {
     return absl::UnimplementedError(
-        "StreamBeginCaptureToGraph is not implemented for CUDA below version "
-        "12.3. Therefore tracing is not supported.");
+        "CaptureInlineAndReturnSinks is not implemented for CUDA below version "
+        "12.3.");
   }
 
   TF_RETURN_IF_ERROR(CheckNotFinalized());
 
-  VLOG(5) << "Trace into GPU command buffer graph " << graph_
-          << " on a stream: " << stream;
-
   CUstream stream_handle =
       absl::bit_cast<CUstream>(stream->platform_specific_handle().stream);
+  std::vector<CUgraphNode> dep_handles = ToCudaGraphHandles(dependencies);
 
-  // Switch stream into the capture mode.
-  uint64_t start_nanos = tsl::Env::Default()->NowNanos();
-
+  // Snapshot the nodes currently in the graph so we can identify new ones.
+  size_t num_nodes_before = 0;
   TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuStreamBeginCaptureToGraph(stream_handle, graph_,
-                                  /*dependencies=*/nullptr,
-                                  /*dependencyData=*/nullptr,
-                                  /*numDependencies=*/0,
-                                  CU_STREAM_CAPTURE_MODE_THREAD_LOCAL),
-      "Failed to begin stream capture to graph"));
+      cuGraphGetNodes(graph_, nullptr, &num_nodes_before)));
+  std::vector<CUgraphNode> nodes_before(num_nodes_before);
+  if (num_nodes_before > 0) {
+    TF_RETURN_IF_ERROR(cuda::ToStatus(
+        cuGraphGetNodes(graph_, nodes_before.data(), &num_nodes_before)));
+  }
+  absl::flat_hash_set<CUgraphNode> nodes_before_set(nodes_before.begin(),
+                                                    nodes_before.end());
+
+  VLOG(5) << "CaptureInlineAndReturnSinks into graph " << graph_
+          << " on stream " << stream << "; deps=" << dep_handles.size()
+          << " existing_nodes=" << num_nodes_before;
+
+  // Begin capturing directly into graph_.
+  TF_RETURN_IF_ERROR(cuda::ToStatus(
+      cuStreamBeginCaptureToGraph(
+          stream_handle, graph_,
+          dep_handles.empty() ? nullptr : dep_handles.data(),
+          /*dependencyData=*/nullptr, dep_handles.size(),
+          CU_STREAM_CAPTURE_MODE_THREAD_LOCAL),
+      "Failed to begin inline stream capture to graph"));
+
   auto traced = function();
 
-  // Always stop capturing the stream before checking `traced` result.
-  VLOG(5) << "End stream " << stream << " capture";
   CUgraph captured_graph;
   TF_RETURN_IF_ERROR(
       cuda::ToStatus(cuStreamEndCapture(stream_handle, &captured_graph),
-                     "Failed to end stream capture"));
-  DCHECK(captured_graph == graph_) << "Stream capture should update graph_";
+                     "Failed to end inline stream capture"));
+  DCHECK(captured_graph == graph_)
+      << "Inline stream capture should update graph_";
+
   TF_RETURN_IF_ERROR(traced);
 
-  uint64_t end_nanos = tsl::Env::Default()->NowNanos();
-  VLOG(5) << "Traced into the GPU command buffer graph " << graph_ << " (took "
-          << (end_nanos - start_nanos) / 1000 << " μs)";
-
-  // Check that traced graph is not empty. Trying to instantiate a CUDA graph
-  // with empty child node leads to a crash.
-  size_t num_root_nodes = 0;
+  // Enumerate all nodes now in graph_ and find the newly-added ones.
+  size_t num_nodes_after = 0;
   TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuGraphGetRootNodes(captured_graph, nullptr, &num_root_nodes)));
-
-  if (num_root_nodes == 0) {
-    return absl::InternalError(
-        "Traced CUDA graph is empty. Traced function (custom call) did not "
-        "launch any CUDA operations on the captured CUDA stream. Instantiating "
-        "empty child nodes leads to CUDA crashes.");
+      cuGraphGetNodes(graph_, nullptr, &num_nodes_after)));
+  std::vector<CUgraphNode> nodes_after(num_nodes_after);
+  if (num_nodes_after > 0) {
+    TF_RETURN_IF_ERROR(cuda::ToStatus(
+        cuGraphGetNodes(graph_, nodes_after.data(), &num_nodes_after)));
   }
 
-  return absl::OkStatus();
+  std::vector<CUgraphNode> new_nodes;
+  new_nodes.reserve(num_nodes_after - num_nodes_before);
+  absl::flat_hash_set<CUgraphNode> new_nodes_set;
+  for (CUgraphNode node : nodes_after) {
+    if (!nodes_before_set.contains(node)) {
+      new_nodes.push_back(node);
+      new_nodes_set.insert(node);
+    }
+  }
+
+  // Find sinks: new nodes that no other new node depends on.
+  absl::flat_hash_set<CUgraphNode> has_successor;
+  for (CUgraphNode new_node : new_nodes) {
+    size_t num_deps = 0;
+    TF_RETURN_IF_ERROR(cuda::ToStatus(
+        cuGraphNodeGetDependentNodes(new_node, nullptr, &num_deps)));
+    if (num_deps == 0) continue;
+    std::vector<CUgraphNode> dependents(num_deps);
+    TF_RETURN_IF_ERROR(cuda::ToStatus(
+        cuGraphNodeGetDependentNodes(new_node, dependents.data(), &num_deps)));
+    for (CUgraphNode dep : dependents) {
+      if (new_nodes_set.contains(dep)) {
+        has_successor.insert(new_node);
+        break;
+      }
+    }
+  }
+
+  std::vector<GraphNodeHandle> sinks;
+  for (CUgraphNode new_node : new_nodes) {
+    if (!has_successor.contains(new_node)) {
+      sinks.push_back(FromCudaGraphHandle(new_node));
+    }
+  }
+
+  VLOG(5) << "CaptureInlineAndReturnSinks: captured " << new_nodes.size()
+          << " nodes, " << sinks.size() << " sinks";
+
+  // When capturing into a previously-empty graph (factory use case), require
+  // that at least one node was recorded. An empty captured graph used as a
+  // child node leads to CUDA crashes.
+  if (num_nodes_before == 0 && new_nodes.empty()) {
+    return absl::InternalError(
+        "Traced CUDA graph is empty. The traced function did not launch any "
+        "CUDA operations on the captured stream. Instantiating empty child "
+        "nodes leads to CUDA crashes.");
+  }
+
+  return sinks;
 #endif
 }
 
