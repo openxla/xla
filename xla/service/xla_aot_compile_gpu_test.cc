@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -41,6 +42,13 @@ namespace xla {
 namespace xla_compile {
 namespace {
 
+std::optional<absl::string_view> CCMismatchMessage(const absl::Status& s) {
+  if (!s.ok() && absl::StrContains(s.message(), "compute capability")) {
+    return s.message();
+  }
+  return std::nullopt;
+}
+
 class XlaAotCompileTest : public ::testing::TestWithParam<absl::string_view> {};
 
 TEST_P(XlaAotCompileTest, LoadGpuExecutable) {
@@ -65,19 +73,15 @@ TEST_P(XlaAotCompileTest, LoadGpuExecutable) {
       LocalClient * client,
       ClientLibrary::GetOrCreateLocalClient(local_client_options));
 
-  const se::GpuComputeCapability& gpu_cc =
-      client->backend().default_stream_executor()
-          ->GetDeviceDescription().gpu_compute_capability();
-  const auto* cuda_cc = gpu_cc.cuda_compute_capability();
-  if (cuda_cc == nullptr || cuda_cc->major != 9) {
-    GTEST_SKIP() << "Test requires SM 9.0, device has: " << gpu_cc.ToString();
-  }
-
   // Load from AOT result.
   ExecutableBuildOptions executable_build_options;
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LocalExecutable> local_executable,
-      client->Load(serialized_aot_result, executable_build_options));
+  auto load_result =
+      client->Load(serialized_aot_result, executable_build_options);
+  if (auto msg = CCMismatchMessage(load_result.status())) {
+    GTEST_SKIP() << *msg;
+  }
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LocalExecutable> local_executable,
+                           std::move(load_result));
 
   // Run loaded executable.
   Literal input1 = LiteralUtil::CreateR1<double>({0.0f, 1.0f, 2.0f});
@@ -129,19 +133,15 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConstant) {
       LocalClient * client,
       ClientLibrary::GetOrCreateLocalClient(local_client_options));
 
-  const se::GpuComputeCapability& gpu_cc =
-      client->backend().default_stream_executor()
-          ->GetDeviceDescription().gpu_compute_capability();
-  const auto* cuda_cc = gpu_cc.cuda_compute_capability();
-  if (cuda_cc == nullptr || cuda_cc->major != 9) {
-    GTEST_SKIP() << "Test requires SM 9.0, device has: " << gpu_cc.ToString();
-  }
-
   // Load from AOT result.
   ExecutableBuildOptions executable_build_options;
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LocalExecutable> local_executable,
-      client->Load(serialized_aot_result, executable_build_options));
+  auto load_result =
+      client->Load(serialized_aot_result, executable_build_options);
+  if (auto msg = CCMismatchMessage(load_result.status())) {
+    GTEST_SKIP() << *msg;
+  }
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LocalExecutable> local_executable,
+                           std::move(load_result));
 
   // Run loaded executable.
   Literal input = LiteralUtil::CreateR1<double>({3.0f, 3.0f, 3.0f});
@@ -185,19 +185,15 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConvolution) {
       LocalClient * client,
       ClientLibrary::GetOrCreateLocalClient(local_client_options));
 
-  const se::GpuComputeCapability& gpu_cc =
-      client->backend().default_stream_executor()
-          ->GetDeviceDescription().gpu_compute_capability();
-  const auto* cuda_cc = gpu_cc.cuda_compute_capability();
-  if (cuda_cc == nullptr || cuda_cc->major != 9) {
-    GTEST_SKIP() << "Test requires SM 9.0, device has: " << gpu_cc.ToString();
-  }
-
   // Load from AOT result.
   ExecutableBuildOptions executable_build_options;
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LocalExecutable> local_executable,
-      client->Load(serialized_aot_result, executable_build_options));
+  auto load_result =
+      client->Load(serialized_aot_result, executable_build_options);
+  if (auto msg = CCMismatchMessage(load_result.status())) {
+    GTEST_SKIP() << *msg;
+  }
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LocalExecutable> local_executable,
+                           std::move(load_result));
 
   // Check that GpuConvAlgorithmPicker successfully loaded autotune results.
   bool found_algo = false;
