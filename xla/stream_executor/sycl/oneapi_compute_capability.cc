@@ -45,8 +45,7 @@ OneAPIComputeCapabilityProto OneAPIComputeCapability::ToProto() const {
 std::string OneAPIComputeCapability::ToString() const {
   // TODO(intel-tf): Remove proto conversion and expose utility methods to get
   // device architecture.
-  auto proto = ToProto();
-  return proto.architecture();
+  return ToProto().architecture();
 }
 
 std::pair<uint32_t, uint32_t> OneAPIComputeCapability::BaseVersionTupleFor(
