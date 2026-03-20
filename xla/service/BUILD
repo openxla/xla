@@ -6563,7 +6563,7 @@ cc_library(
         "//tensorflow/core/common_runtime/eager:__subpackages__",
         ":__subpackages__",
         "//xla/tools:__subpackages__",
-        "//xla/backends/gpu/autotuner:__subpackages__",
+        "//xla/backends/gpu:__subpackages__",
     ]),
     deps = [
         ":gpu_topology_proto_cc",
