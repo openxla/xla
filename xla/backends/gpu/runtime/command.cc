@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <string>
 #include <variant>
-#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -53,19 +52,12 @@ absl::StatusOr<const se::CommandBuffer::Command*> Command::Record(
   auto& create = std::get<RecordCreate>(record_action);
   se::Stream* trace_stream = execute_params.command_buffer_trace_stream;
 
-  TF_ASSIGN_OR_RETURN(
-      std::vector<const se::CommandBuffer::Command*> sinks,
-      command_buffer->Trace(
-          trace_stream,
-          [this, &execute_params]() -> absl::Status {
-            return ExecuteOnStream(execute_params);
-          },
-          create.dependencies));
-
-  if (sinks.empty()) {
-    return absl::InternalError("Trace returned no commands");
-  }
-  return sinks[0];
+  return command_buffer->Trace(
+      trace_stream,
+      [this, &execute_params]() -> absl::Status {
+        return ExecuteOnStream(execute_params);
+      },
+      create.dependencies);
 }
 
 bool IsCollectiveCommand(CommandType type) {

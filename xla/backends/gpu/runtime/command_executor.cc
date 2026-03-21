@@ -505,14 +505,12 @@ CommandExecutor::RecordCreate(
         "deps=%d, record_id=%v",
         commands_.size(), command_buffer, dependencies.size(), record_id);
     TF_ASSIGN_OR_RETURN(
-        std::vector<const se::CommandBuffer::Command*> sinks,
+        const se::CommandBuffer::Command* sink,
         command_buffer->Trace(
             trace_stream, [&] { return run_on_stream(trace_stream); },
             dependencies));
-    // Trace returns a 1-element vector containing the GpuTraceCommand*.
-    state->recorded_commands[key] =
-        RecordedCommands(sinks.begin(), sinks.end());
-    return sinks;
+    state->recorded_commands[key] = RecordedCommands({sink});
+    return {{sink}};
   }
 
   // kExplicit: record each command individually into the command buffer.
