@@ -314,6 +314,7 @@ cc_library(
     deps = [
         "//xla:future",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/core/collectives:communicator",
         "//xla/core/collectives:rank_id",
         "//xla/core/collectives:reduction_kind",
