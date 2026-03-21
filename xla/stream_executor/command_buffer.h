@@ -311,7 +311,7 @@ class CommandBuffer {
   // capture (equivalent to the old Trace() with no deps). Returns the sink
   // commands of the captured subgraph. Callers that only need status can call
   // .status() on the result. Requires CUDA 12.3+.
-  virtual absl::StatusOr<std::vector<const Command*>> Trace(
+  virtual absl::StatusOr<const Command*> Trace(
       Stream* stream, absl::AnyInvocable<absl::Status()> function,
       absl::Span<const Command* const> dependencies) {
     return absl::UnimplementedError(
