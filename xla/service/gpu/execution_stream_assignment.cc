@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/collective_opt_utils.h"
+#include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/side_effect_util.h"
 
 namespace xla::gpu {
@@ -123,8 +124,9 @@ std::optional<ExecutionScopeKind> IsExecutionScopeStart(
     const HloInstruction* hlo) {
   // Async operation that starts a new execution scope.
   if (auto* start = DynCast<HloAsyncStartInstruction>(hlo)) {
-    return IsWrappedCollective(start) ? ExecutionScopeKind::kCollective
-                                      : ExecutionScopeKind::kCompute;
+    return IsWrappedCollective(start) || IsCustomCollectiveOp(start)
+               ? ExecutionScopeKind::kCollective
+               : ExecutionScopeKind::kCompute;
   }
 
   // Async-collective operations not yet migrated to async wrappers.
@@ -155,8 +157,9 @@ std::optional<ExecutionScopeKind> IsExecutionScopeUse(
     const HloInstruction* hlo) {
   if (HloPredicateIsOp<HloOpcode::kAsyncUpdate>(hlo)) {
     auto* update = Cast<HloAsyncInstruction>(hlo);
-    return IsWrappedCollective(update) ? ExecutionScopeKind::kCollective
-                                       : ExecutionScopeKind::kCompute;
+    return IsWrappedCollective(update) || IsCustomCollectiveOp(update)
+               ? ExecutionScopeKind::kCollective
+               : ExecutionScopeKind::kCompute;
   }
 
   // A special case for partially pipelined send/recv operations. If this is
@@ -176,8 +179,9 @@ std::optional<ExecutionScopeKind> IsExecutionScopeEnd(
   // Async operation that ends the execution scope.
   if (HloPredicateIsOp<HloOpcode::kAsyncDone>(hlo)) {
     auto* done = Cast<HloAsyncInstruction>(hlo);
-    return IsWrappedCollective(done) ? ExecutionScopeKind::kCollective
-                                     : ExecutionScopeKind::kCompute;
+    return IsWrappedCollective(done) || IsWrappedCollective(done)
+               ? ExecutionScopeKind::kCollective
+               : ExecutionScopeKind::kCompute;
   }
 
   // Async-collective operations not yet migrated to async wrappers.
@@ -228,7 +232,9 @@ const HloInstruction* FindExecutionScopeStart(const HloInstruction* hlo) {
 std::optional<ExecutionStreamId> FindAssignedStreamId(
     const HloInstruction* instr) {
   auto& attrs = instr->frontend_attributes().map();
-  if (auto it = attrs.find(kXlaStreamAnnotationAttr); it != attrs.end()) {
+  if (auto it = attrs.find(kXlaStreamAnnotationAttr);
+      it != attrs.end() &&
+      !absl::EqualsIgnoreCase(it->second, kXlaCollectiveStreamAnnotation)) {
     int32_t assigned_stream_id;
     CHECK(absl::SimpleAtoi(it->second, &assigned_stream_id));  // Crash OK
     return ExecutionStreamId(assigned_stream_id);
