@@ -327,6 +327,65 @@ bool TracedCommandBuffer::HasEntry(
   return false;
 }
 
+absl::StatusOr<se::CommandBuffer*>
+TracedCommandBuffer::ForceTraceCommandBuffer(
+    const BufferAllocations* buffer_allocation, se::StreamExecutor* executor,
+    se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
+    se::StreamPriority priority) {
+  absl::InlinedVector<se::DeviceAddressBase, 4> allocs;
+  allocs.reserve(allocs_indices_.size());
+  for (auto& index : allocs_indices_) {
+    allocs.emplace_back(buffer_allocation->GetDeviceAddress(index));
+  }
+
+  auto shift_right = [&](size_t i) -> Entry& {
+    if (i == 0) {
+      return entries_[0];
+    }
+    Entry entry = std::move(entries_[i]);
+    do {
+      entries_[i] = std::move(entries_[i - 1]);
+    } while (--i > 0);
+    return entries_[0] = std::move(entry);
+  };
+
+  for (size_t i = 0; i < capacity_; ++i) {
+    if (absl::c_equal(entries_[i].recorded_allocs, allocs) &&
+        entries_[i].command_buffer) {
+      TF_ASSIGN_OR_RETURN(
+          entries_[i].command_buffer,
+          se::TraceCommandBufferFactory::Create(executor, stream, trace));
+      if (priority != se::StreamPriority::Default) {
+        TF_RETURN_IF_ERROR(entries_[i].command_buffer->SetPriority(priority));
+      }
+      VLOG(6) << "Command buffer trace cache force-retrace for command "
+              << trace_cmd_->ToString();
+      return shift_right(i).command_buffer.get();
+    }
+
+    if (entries_[i].command_buffer == nullptr) {
+      TF_ASSIGN_OR_RETURN(
+          entries_[i].command_buffer,
+          se::TraceCommandBufferFactory::Create(executor, stream, trace));
+      entries_[i].recorded_allocs.assign(allocs.begin(), allocs.end());
+      if (priority != se::StreamPriority::Default) {
+        TF_RETURN_IF_ERROR(entries_[i].command_buffer->SetPriority(priority));
+      }
+      VLOG(6) << "Command buffer trace cache force-trace new entry for command "
+              << trace_cmd_->ToString();
+      return shift_right(i).command_buffer.get();
+    }
+  }
+
+  TF_ASSIGN_OR_RETURN(
+      entries_[capacity_ - 1].command_buffer,
+      se::TraceCommandBufferFactory::Create(executor, stream, trace));
+  entries_[capacity_ - 1].recorded_allocs.assign(allocs.begin(), allocs.end());
+  VLOG(6) << "Command buffer trace cache force-trace eviction for command "
+          << trace_cmd_->ToString();
+  return shift_right(capacity_ - 1).command_buffer.get();
+}
+
 //===----------------------------------------------------------------------===//
 // TracedCommandBufferCmd
 //===----------------------------------------------------------------------===//
@@ -1487,8 +1546,14 @@ CollectiveCmd::RecordTracedCommand(
   se::CommandBuffer* nested_cmd_ptr = nullptr;
   std::unique_ptr<se::CommandBuffer> nested_cmd_owned;
 
+  // For local cliques, coordinate the cache decision across all participants
+  // via Rendezvous to maintain NCCL call symmetry: either all ranks use
+  // cached graphs or all ranks re-trace together.
+  bool use_cache = false;
+  TracedCommandBuffer* traced_cmd = nullptr;
+
   if (clique_key.is_local()) {
-    auto traced_cmd = record_params.state.GetOrCreate<TracedCommandBuffer>(
+    traced_cmd = record_params.state.GetOrCreate<TracedCommandBuffer>(
         this, command_buffer, [&] {
           const auto& debug_options = xla::GetDebugOptionsFromFlags();
           return std::make_unique<TracedCommandBuffer>(
@@ -1511,24 +1576,31 @@ CollectiveCmd::RecordTracedCommand(
             /*warn_stuck_timeout=*/absl::Seconds(10),
             /*terminate_timeout=*/absl::Seconds(30)));
 
-    if (*all_hit) {
-      VLOG(5) << "Collective trace cache: all ranks hit, using cached graph";
-      TF_ASSIGN_OR_RETURN(
-          nested_cmd_ptr,
-          traced_cmd->GetOrTraceCommandBuffer(
-              execute_params.buffer_allocations,
-              execute_params.stream->parent(),
-              execute_params.command_buffer_trace_stream, trace, priority()));
-    } else {
-      VLOG(5) << "Collective trace cache: not all ranks hit, all retracing";
-      TF_ASSIGN_OR_RETURN(
-          nested_cmd_owned,
-          se::TraceCommandBufferFactory::Create(
-              execute_params.stream->parent(),
-              execute_params.command_buffer_trace_stream, trace));
-      nested_cmd_ptr = nested_cmd_owned.get();
-    }
+    use_cache = *all_hit;
+  }
+
+  if (use_cache) {
+    VLOG(5) << "Collective trace cache hit: all ranks using cached graph";
+    TF_ASSIGN_OR_RETURN(
+        nested_cmd_ptr,
+        traced_cmd->GetOrTraceCommandBuffer(
+            execute_params.buffer_allocations,
+            execute_params.stream->parent(),
+            execute_params.command_buffer_trace_stream, trace, priority()));
+  } else if (traced_cmd) {
+    // Local clique but not all ranks hit — all must re-trace together.
+    // ForceTrace ensures NCCL calls are symmetric AND the cache is populated.
+    VLOG(5) << "Collective trace cache miss: all ranks retracing";
+    TF_ASSIGN_OR_RETURN(
+        nested_cmd_ptr,
+        traced_cmd->ForceTraceCommandBuffer(
+            execute_params.buffer_allocations,
+            execute_params.stream->parent(),
+            execute_params.command_buffer_trace_stream, trace, priority()));
   } else {
+    // Non-local clique: in-process Rendezvous cannot coordinate across hosts,
+    // so always trace without caching.
+    VLOG(5) << "Non-local clique: tracing without cache";
     TF_ASSIGN_OR_RETURN(
         nested_cmd_owned,
         se::TraceCommandBufferFactory::Create(

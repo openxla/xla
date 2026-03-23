@@ -96,6 +96,14 @@ class TracedCommandBuffer : public CommandState {
 
   bool HasEntry(const BufferAllocations* buffer_allocation) const;
 
+  // Always traces and updates the cache, even if a matching entry exists.
+  // Used by collective operations where all ranks must trace together to
+  // maintain NCCL call symmetry.
+  absl::StatusOr<se::CommandBuffer*> ForceTraceCommandBuffer(
+      const BufferAllocations* buffer_allocation, se::StreamExecutor* executor,
+      se::Stream* stream, absl::FunctionRef<absl::Status(se::Stream*)> trace,
+      se::StreamPriority priority = se::StreamPriority::Default);
+
  private:
   std::vector<BufferAllocation::Index> allocs_indices_;
 
