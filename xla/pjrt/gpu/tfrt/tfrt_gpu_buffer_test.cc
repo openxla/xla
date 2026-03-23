@@ -64,8 +64,7 @@ class TfrtGpuBufferTest : public ::testing::Test {
 
 TEST_F(TfrtGpuBufferTest, CreateBuffer) {
   Shape on_device_shape = ShapeUtil::MakeShapeWithType<int32_t>({4, 4});
-  TfrtGpuDevice* device =
-      tsl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
+  TfrtGpuDevice* device = tsl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
@@ -93,8 +92,7 @@ TEST_F(TfrtGpuBufferTest, CreateBuffer) {
 
 TEST_F(TfrtGpuBufferTest, AcquireExternalReference) {
   Shape on_device_shape = ShapeUtil::MakeShapeWithType<int32_t>({4, 4});
-  TfrtGpuDevice* device =
-      tsl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
+  TfrtGpuDevice* device = tsl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
@@ -136,8 +134,7 @@ TEST_F(TfrtGpuBufferTest, AcquireExternalReference) {
 
 TEST_F(TfrtGpuBufferTest, ReleaseDeviceMemoryOwnershipNoWait) {
   Shape on_device_shape = ShapeUtil::MakeShapeWithType<int32_t>({4, 4});
-  TfrtGpuDevice* device =
-      tsl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
+  TfrtGpuDevice* device = tsl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
@@ -180,8 +177,7 @@ TEST_F(TfrtGpuBufferTest, ReleaseDeviceMemoryOwnershipNoWait) {
 
 TEST_F(TfrtGpuBufferTest, ReleaseDeviceMemoryOwnershipWait) {
   Shape on_device_shape = ShapeUtil::MakeShapeWithType<int32_t>({4, 4});
-  TfrtGpuDevice* device =
-      tsl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
+  TfrtGpuDevice* device = tsl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
@@ -245,8 +241,7 @@ TEST_F(TfrtGpuBufferTest, ReleaseDeviceMemoryOwnershipWait) {
 
 TEST_F(TfrtGpuBufferTest, Delete) {
   Shape on_device_shape = ShapeUtil::MakeShapeWithType<int32_t>({4, 4});
-  TfrtGpuDevice* device =
-      tsl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
+  TfrtGpuDevice* device = tsl::down_cast<TfrtGpuDevice*>(client_->devices()[0]);
   auto size_in_bytes = ShapeUtil::ByteSizeOf(on_device_shape);
   TF_ASSERT_OK_AND_ASSIGN(
       auto device_buffer,
