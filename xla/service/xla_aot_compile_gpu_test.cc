@@ -81,7 +81,7 @@ TEST_P(XlaAotCompileTest, LoadGpuExecutable) {
     GTEST_SKIP() << *msg;
   }
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LocalExecutable> local_executable,
-                           std::move(load_result));
+                          std::move(load_result));
 
   // Run loaded executable.
   Literal input1 = LiteralUtil::CreateR1<double>({0.0f, 1.0f, 2.0f});
@@ -141,7 +141,7 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConstant) {
     GTEST_SKIP() << *msg;
   }
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LocalExecutable> local_executable,
-                           std::move(load_result));
+                          std::move(load_result));
 
   // Run loaded executable.
   Literal input = LiteralUtil::CreateR1<double>({3.0f, 3.0f, 3.0f});
@@ -152,9 +152,8 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConstant) {
   executable_run_options.set_allocator(client->backend().memory_allocator());
   TF_ASSERT_OK_AND_ASSIGN(
       ScopedShapedBuffer result,
-      local_executable->Run(
-          absl::Span<const ShapedBuffer* const>{&array},
-          executable_run_options));
+      local_executable->Run(absl::Span<const ShapedBuffer* const>{&array},
+                            executable_run_options));
 
   TF_ASSERT_OK_AND_ASSIGN(Literal output,
                           client->ShapedBufferToLiteral(result));
@@ -193,7 +192,7 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConvolution) {
     GTEST_SKIP() << *msg;
   }
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LocalExecutable> local_executable,
-                           std::move(load_result));
+                          std::move(load_result));
 
   // Check that GpuConvAlgorithmPicker successfully loaded autotune results.
   bool found_algo = false;
