@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_runtime_abi_version.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
+#include "xla/pjrt/layout_mode.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_abi_version.h"
@@ -47,6 +48,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/stream_executor_executable.h"
 #include "xla/pjrt/utils.h"
+#include "xla/primitive_util.h"
 #include "xla/service/compiled_module.h"
 #include "xla/service/compiler.h"
 #include "xla/service/dump.h"
@@ -157,13 +159,18 @@ absl::StatusOr<gpu::GpuTargetConfig> GetGpuTargetConfig(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>
-StreamExecutorGpuCompiler::Compile(CompileOptions options,
-                                   const XlaComputation& computation,
-                                   const PjRtTopologyDescription& topology,
-                                   PjRtClient* client) {
+StreamExecutorGpuCompiler::Compile(
+    CompileOptions options, const XlaComputation& computation,
+    const PjRtTopologyDescription& topology, PjRtClient* client,
+    LayoutCanonicalizationCallback layout_callback) {
   TF_ASSIGN_OR_RETURN(Compiler * gpu_compiler, GetOrCreateCompiler());
 
+  // This function does a bunch of temporary modifications to the CompileOptions
+  // which should not be reflected in the options that we keep with the
+  // resulting executable. Therefore we make a copy here. `input_options` are
+  // the options as provided by the caller.
   CompileOptions input_options = options;
+
   absl::StatusOr<Compiler::GpuTargetConfig> gpu_target_config =
       GetGpuTargetConfig(topology, options);
   if (!gpu_target_config.ok() && client == nullptr) {
@@ -182,10 +189,16 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
         << "JIT compilation requires a GPU PjRt client.";
     TF_RETURN_IF_ERROR(IsValidTopologyAndClientForCompile(topology, client));
     TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtExecutable> executable,
-                        client->Compile(computation, options));
+                        client->Compile(computation, input_options));
     return executable;
   }
+
   ASSIGN_OR_RETURN(options.gpu_target_config, gpu_target_config);
+  if (layout_callback != nullptr) {
+    options.executable_build_options.set_layout_canonicalization_callback(
+        std::move(layout_callback));
+  }
+
   if (client != nullptr) {
     LOG(INFO) << "Found GPU target config and a PjRtClient. Performing a cross "
                  "compilation.";
@@ -264,6 +277,15 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>
 StreamExecutorGpuCompiler::Compile(CompileOptions options,
+                                   const XlaComputation& computation,
+                                   const PjRtTopologyDescription& topology,
+                                   PjRtClient* client) {
+  return Compile(std::move(options), computation, topology, client,
+                 /*layout_callback=*/nullptr);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtExecutable>>
+StreamExecutorGpuCompiler::Compile(CompileOptions options,
                                    MaybeOwningMlirModule module,
                                    const PjRtTopologyDescription& topology,
                                    PjRtClient* client) {
@@ -274,22 +296,10 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
     TF_RET_CHECK(IsGpuClient(*client))
         << "GPU compilation requires a GPU PjRt client.";
     TF_RETURN_IF_ERROR(IsValidTopologyAndClientForCompile(topology, client));
-    // Note that handing the MLIR module to the client directly has a different
-    // effect on layouts than converting to HLO first. This probably should be
-    // unified at some point.
     TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtExecutable> executable,
                         client->Compile(std::move(module), options));
     return executable;
   }
-  if (!gpu_target_config.ok() && client == nullptr) {
-    // Note that we have code that depends on this being an UnimplementedError,
-    // therefore we have this explicit early return here.
-    return absl::UnimplementedError(absl::StrCat(
-        "Compilation without client and without target config specified is not "
-        "implemented. Details: ",
-        gpu_target_config.status().ToString()));
-  }
-  ASSIGN_OR_RETURN(options.gpu_target_config, gpu_target_config);
 
   XlaComputation xla_computation;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
@@ -298,9 +308,52 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
       /*return_tuple=*/false,
       /*exec_build_options=*/&options.executable_build_options,
       mlir::mhlo::getGpuChloToHighLevelMhloOptions()));
+
+  TF_ASSIGN_OR_RETURN(std::vector<LayoutMode> arg_layout_modes,
+                      GetArgLayoutModes(module.mlir_module()));
+  TF_ASSIGN_OR_RETURN(std::vector<LayoutMode> out_layout_modes,
+                      GetOutputLayoutModes(module.mlir_module()));
+  TF_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> arg_memory_spaces,
+                      GetArgMemoryKinds(module.mlir_module()));
+  TF_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> out_memory_spaces,
+                      GetOutputMemoryKinds(module.mlir_module()));
+
   // MLIR module no longer required - release any memory if owned.
   module = MaybeOwningMlirModule();
-  return Compile(std::move(options), xla_computation, topology, client);
+
+  const auto choose_compact_layout_for_shape =
+      [](const Shape& shape) -> absl::StatusOr<Shape> {
+    Shape compact_shape = LayoutUtil::GetWithDefaultLayout(shape);
+    if (primitive_util::IsSubByteNonPredType(compact_shape.element_type())) {
+      compact_shape.mutable_layout()->set_element_size_in_bits(
+          primitive_util::BitWidth(compact_shape.element_type()));
+    }
+    return compact_shape;
+  };
+
+  // If auto-sharding modifies shapes of arguments and/or result,
+  // we get a callback to restore the layouts. Let us restore the layouts
+  // according to the attributes we parsed from MLIR.
+  auto layout_callback = [&choose_compact_layout_for_shape, &arg_layout_modes,
+                          &out_layout_modes, &arg_memory_spaces,
+                          &out_memory_spaces](const HloModule& module)
+      -> absl::StatusOr<std::pair<std::vector<Shape>, Shape>> {
+    XlaComputation xla_computation(XlaComputation(module.ToProto()));
+    return LayoutModesToXlaShapes(
+        xla_computation, arg_layout_modes, out_layout_modes, arg_memory_spaces,
+        out_memory_spaces, choose_compact_layout_for_shape);
+  };
+
+  TF_ASSIGN_OR_RETURN(
+      auto arg_layouts_and_pointers,
+      LayoutModesToXla(xla_computation, arg_layout_modes, out_layout_modes,
+                       arg_memory_spaces, out_memory_spaces,
+                       choose_compact_layout_for_shape,
+                       options.executable_build_options));
+
+  options.argument_layouts = std::move(arg_layouts_and_pointers.first);
+  return Compile(std::move(options), xla_computation, topology, client,
+                 std::move(layout_callback));
 }
 
 absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>>

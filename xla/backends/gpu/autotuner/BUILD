@@ -191,6 +191,7 @@ xla_test(
     deps = [
         ":cublas",
         "//xla:autotuning_proto_cc",
+        "//xla:shape_util",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
         "//xla/hlo/ir:hlo",
@@ -222,6 +223,7 @@ cc_library(
         "//xla:shape_layout",
         "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
@@ -259,6 +261,7 @@ xla_test(
     deps = [
         ":cublaslt",
         "//xla:autotuning_proto_cc",
+        "//xla:shape_util",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
         "//xla/hlo/ir:hlo",
@@ -349,6 +352,7 @@ xla_test(
         "//xla/service:compiler",
         "//xla/service:platform_util",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:nvptx_compiler_impl",
         "//xla/stream_executor:device_description_proto_cc",
         "//xla/stream_executor:stream_executor_h",
@@ -669,6 +673,7 @@ cc_library(
         "//xla:autotuning_proto_cc",
         "//xla:shape_layout",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
@@ -1236,6 +1241,7 @@ xla_test(
     ),
     deps = [
         ":factory",
+        "//xla:xla_proto_cc",
         "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
         "//xla/hlo/analysis:alias_info",

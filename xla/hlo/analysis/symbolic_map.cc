@@ -74,6 +74,12 @@ SymbolicMap::SymbolicMap(mlir::MLIRContext* ctx, int64_t num_dimensions,
   return SymbolicMap(ctx, num_dimensions, num_symbols, std::move(exprs));
 }
 
+/*static*/ SymbolicMap SymbolicMap::GetMultiDimIdentityMap(
+    int64_t num_dimensions, mlir::MLIRContext* ctx) {
+  return SymbolicMap(ctx, num_dimensions, /*num_symbols=*/0,
+                     CreateVariableRange(ctx, num_dimensions));
+}
+
 std::string SymbolicMap::ToString() const {
   std::string s;
   llvm::raw_string_ostream os(s);
@@ -129,6 +135,25 @@ llvm::SmallVector<int64_t> SymbolicMap::GetConstantResults() const {
     constants.push_back(expr.GetValue());
   }
   return constants;
+}
+
+llvm::SmallVector<int64_t> SymbolicMap::Evaluate(
+    absl::Span<int64_t const> dim_values,
+    absl::Span<int64_t const> symbol_values) const {
+  CHECK_EQ(GetNumDims(), dim_values.size());
+  CHECK_EQ(GetNumSymbols(), symbol_values.size());
+
+  llvm::SmallVector<int64_t> variable_values;
+  variable_values.reserve(dim_values.size() + symbol_values.size());
+  variable_values.append(dim_values.begin(), dim_values.end());
+  variable_values.append(symbol_values.begin(), symbol_values.end());
+
+  llvm::SmallVector<int64_t> results;
+  results.reserve(GetNumResults());
+  for (SymbolicExpr expr : exprs_) {
+    results.push_back(expr.Evaluate(variable_values));
+  }
+  return results;
 }
 
 SymbolicMap SymbolicMap::ReplaceDimsAndSymbols(

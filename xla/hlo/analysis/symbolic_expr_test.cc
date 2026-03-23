@@ -286,11 +286,20 @@ TEST_F(SymbolicExprTest, BasicSimplificationsAtCreationTime) {
   SymbolicExpr mul_2_v0 = 2 * v0;
   SymbolicExpr mul_2_v0_3 = mul_2_v0 * 3;
   EXPECT_EQ(mul_2_v0_3.ToString(), "((2 * v0) * 3)");
+
+  // x / 1 = x
+  EXPECT_EQ(v0 / c1, v0);
+
+  // Mod 1 simplification.
+  EXPECT_EQ(v0 % 1, c0);
 }
 
 TEST_F(SymbolicExprTest, Canonicalization_Basic) {
   SymbolicExpr constants = (c2 * 3) + 5;
   EXPECT_EQ(constants.Canonicalize().ToString(), "11");
+
+  SymbolicExpr constants_div_mod = (c5 / c2) % -3;
+  EXPECT_EQ(constants_div_mod.Canonicalize().ToString(), "2");
 
   SymbolicExpr add_commutativity = c2 + v0;
   EXPECT_EQ(add_commutativity.Canonicalize().ToString(), "(v0 + 2)");
@@ -365,6 +374,15 @@ TEST_F(SymbolicExprTest, Canonicalization_DivMod) {
 
   EXPECT_EQ(((v0 * 8) % 4).Canonicalize().ToString(), "0");
   EXPECT_EQ(((v0 * 8 + 3) % 4).Canonicalize().ToString(), "3");
+  EXPECT_EQ(((v0 * 2 + v1) % 2).Canonicalize().ToString(), "(v1 mod 2)");
+
+  // Mod of Mod simplification
+  EXPECT_EQ(((v0 % 21) % 7).Canonicalize().ToString(), "(v0 mod 7)");
+  EXPECT_EQ(((v0 % 20) % 7).Canonicalize().ToString(), "((v0 mod 20) mod 7)");
+
+  // Pattern: (X floordiv C) * C + X mod C -> X
+  EXPECT_EQ(((v0.floorDiv(16) * 16) + (v0 % 16)).Canonicalize().ToString(),
+            "v0");
 
   // Test ceilDiv with negative divisor.
   EXPECT_EQ((v0.ceilDiv(-1)).Canonicalize().ToString(), "(v0 * -1)");

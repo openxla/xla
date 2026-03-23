@@ -70,6 +70,8 @@ class SymbolicMap {
   static SymbolicMap Get(mlir::MLIRContext* ctx, int64_t num_dimensions,
                          int64_t num_symbols,
                          llvm::SmallVector<SymbolicExpr> exprs);
+  static SymbolicMap GetMultiDimIdentityMap(int64_t num_dimensions,
+                                            mlir::MLIRContext* ctx);
 
   explicit operator bool() const { return ctx_ != nullptr; }
   bool operator!() const { return ctx_ == nullptr; }
@@ -106,6 +108,11 @@ class SymbolicMap {
   // Returns a vector containing the values of all the results. CHECK-fails if
   // any result expression is not a constant.
   llvm::SmallVector<int64_t> GetConstantResults() const;
+
+  // Evaluates the map with the given dimension and symbol values.
+  llvm::SmallVector<int64_t> Evaluate(
+      absl::Span<int64_t const> dim_values,
+      absl::Span<int64_t const> symbol_values = {}) const;
 
   // Replaces the dimensions and symbols in the map with the given expressions.
   // The number of dimension and symbol replacements must match the number of

@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"  // IWYU pragma: keep
 #include "xla/primitive_util.h"
+#include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/xla_data.pb.h"
 #include "xla/tsl/platform/status_macros.h"
@@ -107,11 +108,6 @@ absl::StatusOr<SortPairsFn> GetSortPairsFn(xla::PrimitiveType key_type,
     case xla::U16:
       return GetSortPairsFnForValueWidth<uint16_t>(value_bit_width);
     case xla::S32:
-      if (value_bit_width != 32) {
-        return absl::InvalidArgumentError(absl::StrCat(
-            "Unsupported value type for CUB sort with key S32 and value: ",
-            xla::primitive_util::LowercasePrimitiveTypeName(key_type)));
-      }
       return GetSortPairsFnForValueWidth<int32_t>(value_bit_width);
     case xla::U32:
       return GetSortPairsFnForValueWidth<uint32_t>(value_bit_width);
@@ -231,8 +227,8 @@ XLA_FFI_DEFINE_HANDLER(kCubSortKeysExecute, CubSortKeysExecute,
                            .Attr<int64_t>("batch_size")
                            .Ctx<xla::ffi::PlatformStream<CUstream>>());
 
-XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(), "xla.gpu.ext.cub_sort_keys",
-                         "CUDA",
+XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
+                         xla::gpu::kCubDeviceRadixSortKeysTarget.data(), "CUDA",
                          {/* .instantiate = */ kCubSortKeysInstantiate,
                           /* .prepare = */ nullptr,
                           /* .initialize = */ nullptr,
@@ -304,7 +300,8 @@ XLA_FFI_DEFINE_HANDLER(kCubSortPairsExecute, CubSortPairsExecute,
                            .Attr<int64_t>("batch_size")
                            .Ctx<xla::ffi::PlatformStream<CUstream>>());
 
-XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(), "xla.gpu.ext.cub_sort_pairs",
+XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
+                         xla::gpu::kCubDeviceRadixSortPairsTarget.data(),
                          "CUDA",
                          {/* .instantiate = */ kCubSortPairsInstantiate,
                           /* .prepare = */ nullptr,

@@ -186,6 +186,19 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "infer_dispatch_info",
+    srcs = ["infer_dispatch_info.cc"],
+    hdrs = ["infer_dispatch_info.h"],
+    visibility = internal_visibility([
+        ":friends",
+    ]),
+    deps = [
+        ":common_pjrt_client",
+        ":utils",
+    ],
+)
+
 xla_cc_test(
     name = "tracked_device_buffer_test",
     srcs = ["tracked_device_buffer_test.cc"],
@@ -259,8 +272,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/profiler/lib:connected_traceme",
-        "@tsl//tsl/profiler/lib:context_types_hdrs",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -331,13 +342,13 @@ cc_library(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_cost_analysis",
         "//xla/tsl/framework:allocator",
         "//xla/tsl/lib/gtl:int_type",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
-        "//xla/tsl/protobuf:coordination_service_proto_cc",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -717,6 +728,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service:compiled_module",
         "//xla/service:compiler",
+        "//xla/service:computation_layout",
         "//xla/service:executable",
         "//xla/service:hlo_proto_cc",
         "//xla/stream_executor/abi:executable_abi_version",
@@ -954,6 +966,7 @@ xla_cc_test(
         "//xla/hlo/testlib:test",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
@@ -1435,13 +1448,13 @@ cc_library(
 
 cc_library(
     name = "async_work_runner",
-    srcs = ["async_work_runner.cc"],
     hdrs = ["async_work_runner.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:executor",
         "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/types:span",
     ],
@@ -1453,11 +1466,9 @@ cc_library(
     hdrs = ["thread_pool_async_work_runner.h"],
     deps = [
         ":async_work_runner",
-        "//xla/tsl/concurrency:async_value",
-        "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:env",
         "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/types:span",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:unbounded_work_queue",
     ],
 )

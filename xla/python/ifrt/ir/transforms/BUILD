@@ -26,6 +26,8 @@ gentbl_cc_library(
 cc_library(
     name = "passes",
     srcs = [
+        # go/keep-sorted start
+        "ifrt_add_control_dependencies.cc",
         "ifrt_atom_programs_from_vhlo_pass.cc",
         "ifrt_atom_programs_to_vhlo_pass.cc",
         "ifrt_compile_atom_program_pass.cc",
@@ -34,7 +36,7 @@ cc_library(
         "ifrt_legalize_to_vifrt_pass.cc",
         "ifrt_lower_atom_program_metadata_to_xla_pass.cc",
         "ifrt_lower_mpmd_reshard_to_call_pass.cc",
-        "ifrt_merge_reshards_pass.cc",
+        "ifrt_merge_copies_and_reshards_pass.cc",
         "ifrt_outline_atom_program_to_module_pass.cc",
         "ifrt_populate_atom_program_metadata_pass.cc",
         "ifrt_precompile_atom_program_preprocessing_pass.cc",
@@ -52,6 +54,7 @@ cc_library(
         "spmd_expansion_pass.cc",
         "vifrt_legalize_to_ifrt_pass.cc",
         "vifrt_to_version_pass.cc",
+        # go/keep-sorted end
     ],
     hdrs = [
         "map_ifrt_to_vifrt.h",

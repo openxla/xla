@@ -841,7 +841,6 @@ absl::Status RunOptimizationPasses(
                                              gpu_version);
   }();
 
-  pipeline.AddPass<SplitkRewriter>(gpu_target_config.device_description);
   pipeline.AddPass<HloComputationDeduplicator>(
       /*mark_fusion_duplications=*/false);
   return pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
@@ -1241,8 +1240,6 @@ void AddDoubleBufferingPasses(const HloModule& module,
   }
 }
 
-constexpr int kCombineThresholdCount = 256;
-
 void AddCollectiveCombinerPasses(
     HloPassPipeline& pipeline, const HloModule& module,
     const se::DeviceDescription& device_description,
@@ -1259,21 +1256,22 @@ void AddCollectiveCombinerPasses(
 
   pipeline.AddPass<GpuAllGatherCombiner>(
       kDefaultAllGatherCombineThreshold,
-      opts.xla_gpu_all_gather_combine_threshold_bytes(), kCombineThresholdCount,
+      opts.xla_gpu_all_gather_combine_threshold_bytes(),
+      opts.xla_gpu_collective_combine_threshold_count(),
       opts.xla_gpu_enable_all_gather_combine_by_dim(),
       /*combine_different_dtypes=*/true);
   pipeline.AddPass<GpuAllReduceCombiner>(
       kDefaultAllReduceCombineThreshold,
       opts.xla_gpu_all_reduce_combine_threshold_bytes(),
-      kCombineThresholdCount);
+      opts.xla_gpu_collective_combine_threshold_count());
   pipeline.AddPass<GpuReduceScatterCombiner>(
       kDefaultReduceScatterCombineThreshold,
       opts.xla_gpu_reduce_scatter_combine_threshold_bytes(),
-      kCombineThresholdCount,
+      opts.xla_gpu_collective_combine_threshold_count(),
       opts.xla_gpu_enable_reduce_scatter_combine_by_dim());
   pipeline.AddPass<CollectivePermuteCombiner>(
       opts.xla_gpu_collective_permute_combine_threshold_bytes(),
-      kCombineThresholdCount);
+      opts.xla_gpu_collective_combine_threshold_count());
 }
 
 absl::Status RunPostFusionPasses(
@@ -1412,7 +1410,7 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
     pipeline.AddPass<GpuReduceScatterCombiner>(
         kDefaultReduceScatterCombineThreshold,
         opts.xla_gpu_reduce_scatter_combine_threshold_bytes(),
-        kCombineThresholdCount,
+        opts.xla_gpu_collective_combine_threshold_count(),
         opts.xla_gpu_enable_reduce_scatter_combine_by_dim());
     pipeline.AddPass<DynamicSliceFusionRewriter>(platform_id);
     pipeline.AddPass<AsyncWrapper>([](const HloInstruction* instr) {
@@ -1815,6 +1813,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
           cuda_cc->IsAtLeast(se::CudaComputeCapability::kAmpere)) ||
          rocm_cc != nullptr)) {
       pipeline.AddPass<GemvRewriter>();
+      pipeline.AddPass<SplitkRewriter>(gpu_target_config.device_description,
+                                       /*normalize_dots=*/true);
       pipeline.AddPass<GemmFusion>(gpu_version);
       pipeline.AddPass<GemmFusionSwapOperands>();
       pipeline.AddPass<HoistFusedBitcasts>();
@@ -2304,7 +2304,8 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
     const HloModuleConfig& module_config,
     CompileModuleResults& compile_module_results,
     const se::DeviceDescription& device_description,
-    const CompileOptions& options, const HloModule* debug_module) {
+    const CompileOptions& options, const HloModule* debug_module,
+    se::StreamExecutor* stream_exec) {
   tsl::profiler::TraceMe traceme("CompileAndLink");
 
   absl::string_view cache_path =
@@ -2452,7 +2453,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
 
   auto maybe_backend_result =
       LinkModules(device_description, std::move(binaries_to_link),
-                  module_config.debug_options());
+                  module_config.debug_options(), stream_exec);
   if (!maybe_backend_result.ok()) {
     LOG(ERROR) << "The CUDA linking API did not work. Please use XLA_FLAGS="
                   "--xla_gpu_enable_llvm_module_compilation_parallelism=false "
@@ -2484,8 +2485,8 @@ absl::StatusOr<xla::cpu::CompilationResultProto> GetCpuCompilationResult(
 absl::StatusOr<GpuCompiler::CompileResultWithMetadata>
 GpuCompiler::CompileToBackendResult(
     HloModule* module, llvm::LLVMContext* llvm_context,
-    const CompileOptions& options,
-    const se::DeviceDescription& gpu_device_info) {
+    const CompileOptions& options, const se::DeviceDescription& gpu_device_info,
+    se::StreamExecutor* stream_exec) {
   tsl::profiler::TraceMe traceme("CompileToBackendResult");
   std::unique_ptr<GpuAliasInfo> alias_info = GetAliasInfo(gpu_device_info);
   RETURN_IF_ERROR(
@@ -2500,8 +2501,9 @@ GpuCompiler::CompileToBackendResult(
       RunPostSchedulingPipelines(module, schedule_metadata.scheduler_mem_limit,
                                  gpu_device_info, alias_info.get()));
 
-  ASSIGN_OR_RETURN(bool can_use_link_modules,
-                   CanUseLinkModules(module->config(), gpu_device_info));
+  ASSIGN_OR_RETURN(
+      bool can_use_link_modules,
+      CanUseLinkModules(module->config(), gpu_device_info, stream_exec));
   const bool split_modules =
       can_use_link_modules &&
       module->config()
@@ -2552,9 +2554,10 @@ GpuCompiler::CompileToBackendResult(
   // TODO(anlunx): Enable multi-threading once deviceless AOT compilation is
   // enabled.
   if (split_modules) {
-    ASSIGN_OR_RETURN(backend_result,
-                     CompileAndLink(module->config(), compile_module_results,
-                                    gpu_device_info, options, module));
+    ASSIGN_OR_RETURN(
+        backend_result,
+        CompileAndLink(module->config(), compile_module_results,
+                       gpu_device_info, options, module, stream_exec));
     LinkLlvmModulesInPlace(compile_module_results.llvm_modules);
   } else {
     LinkLlvmModulesInPlace(compile_module_results.llvm_modules);
@@ -2666,7 +2669,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
 
   ASSIGN_OR_RETURN(CompileResultWithMetadata res,
                    CompileToBackendResult(module.get(), &llvm_context, options,
-                                          gpu_device_info));
+                                          gpu_device_info, stream_exec));
   ModuleStats module_stats = res.backend_result.module_stats;
 
   if (DumpingEnabledForHloModule(*module)) {
@@ -2822,10 +2825,10 @@ GpuCompiler::LegacyCompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
       target_config.has_value() ? target_config->device_description
                                 : options.executor()->GetDeviceDescription();
   llvm::LLVMContext llvm_context;
-  ASSIGN_OR_RETURN(
-      CompileResultWithMetadata res,
-      CompileToBackendResult(hlo_module.get(), &llvm_context,
-                             {options.device_allocator()}, gpu_device_info));
+  ASSIGN_OR_RETURN(CompileResultWithMetadata res,
+                   CompileToBackendResult(hlo_module.get(), &llvm_context,
+                                          {options.device_allocator()},
+                                          gpu_device_info, nullptr));
 
   // Create GpuThunkAotCompilationResult if thunk runtime is enabled.
   std::vector<std::unique_ptr<CompiledModule>> results;

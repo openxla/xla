@@ -69,13 +69,15 @@ using ::mlir::Operation;
 using ::mlir::SmallVector;
 using ::mlir::StringAttr;
 using ::mlir::StringRef;
+using ::mlir::SymbolTable;
 using xla::sdy::kFrontendAttributesAttr;
 
 using ::mlir::func::CallOp;
 using ::mlir::func::FuncOp;
 using ::mlir::sdy::AxisRefAttr;
-using ::mlir::sdy::AxisRefListAttr;
 using ::mlir::sdy::DimensionShardingAttr;
+using ::mlir::sdy::getTensorRank;
+using ::mlir::sdy::kShardingAttr;
 using ::mlir::sdy::MeshAttr;
 using ::mlir::sdy::MeshAxisAttr;
 using ::mlir::sdy::SubAxisInfoAttr;
@@ -306,6 +308,16 @@ std::string duplicateShardingsAtIndices(
 
 namespace {
 
+// Check if attr uses HloShardingV3 representation.
+bool isV3ShardingAttr(mlir::Attribute attr) {
+  // We could also check this by parsing the sharding string and checking if it
+  // is NamedSharding but simply checking for the presence of "mesh" is cheaper.
+  if (auto stringAttr = mlir::dyn_cast_or_null<mlir::StringAttr>(attr)) {
+    return stringAttr.getValue().contains("mesh");
+  }
+  return false;
+}
+
 // Check if the func result is meant for Shardy.
 bool isFuncResultForShardy(FuncOp func, int64_t resultIndex) {
   if (func.getResultAttr(resultIndex, mlir::sdy::kShardingAttr)) {
@@ -327,7 +339,9 @@ bool isFuncResultForShardy(FuncOp func, int64_t resultIndex) {
 bool areFuncResultShardingsForGspmd(FuncOp func) {
   for (int64_t resultIndex = 0; resultIndex < func.getNumResults();
        ++resultIndex) {
-    if (func.getResultAttr(resultIndex, sdy::kXlaShardingAttr) &&
+    mlir::Attribute xlaShardingAttr =
+        func.getResultAttr(resultIndex, sdy::kXlaShardingAttr);
+    if (xlaShardingAttr && !isV3ShardingAttr(xlaShardingAttr) &&
         !isFuncResultForShardy(func, resultIndex)) {
       return true;
     }
@@ -346,7 +360,9 @@ bool hasGspmdAttrsOrOps(mlir::ModuleOp module) {
     if (func.getSymName() != "main") {
       for (int64_t argIndex = 0; argIndex < func.getNumArguments();
            ++argIndex) {
-        if (func.getArgAttr(argIndex, sdy::kXlaShardingAttr) &&
+        mlir::Attribute xlaShardingAttr =
+            func.getArgAttr(argIndex, sdy::kXlaShardingAttr);
+        if (xlaShardingAttr && !isV3ShardingAttr(xlaShardingAttr) &&
             !func.getArgAttr(argIndex, mlir::sdy::kShardingAttr) &&
             !hasKey(sdy::getFuncArgFrontendAttrs(func, argIndex),
                     xla::ToStringRef(HloSharding::kShardingFrontendAttrName))) {
@@ -367,14 +383,17 @@ bool hasGspmdAttrsOrOps(mlir::ModuleOp module) {
     // Check the func for a `Sharding` custom call.
     func->walk([&hasGspmd](mlir::stablehlo::CustomCallOp customCall) {
       if (customCall.getCallTargetName() ==
-              sdy::kShardingCustomCallTargetName &&
-          customCall->hasAttr(sdy::kXlaShardingAttr) &&
-          !customCall->hasAttr(mlir::sdy::kShardingAttr) &&
-          !hasFrontendAttr(
-              customCall,
-              xla::ToStringRef(HloSharding::kShardingFrontendAttrName))) {
-        hasGspmd = true;
-        return mlir::WalkResult::interrupt();
+          sdy::kShardingCustomCallTargetName) {
+        mlir::Attribute xlaShardingAttr =
+            customCall->getAttr(sdy::kXlaShardingAttr);
+        if (xlaShardingAttr && !isV3ShardingAttr(xlaShardingAttr) &&
+            !customCall->hasAttr(mlir::sdy::kShardingAttr) &&
+            !hasFrontendAttr(
+                customCall,
+                xla::ToStringRef(HloSharding::kShardingFrontendAttrName))) {
+          hasGspmd = true;
+          return mlir::WalkResult::interrupt();
+        }
       }
       return mlir::WalkResult::advance();
     });
@@ -390,28 +409,30 @@ bool hasShardyMesh(mlir::ModuleOp module) {
 }
 
 namespace {
-// Returns the first non-maximal mesh on the result shardings, if there is
-// one. Otherwise returns `std::nullopt`.
-// TODO(enver): Use a common helper that takes an std::function to get the
-// sharding given an index.
-std::optional<Attribute> getMeshOrRefOnResults(
-    mlir::func::FuncOp funcOp, const mlir::SymbolTable& symbolTable) {
-  for (int64_t resultNum = 0; resultNum < funcOp.getNumResults(); ++resultNum) {
-    if (mlir::sdy::TensorShardingAttr sdySharding =
-            mlir::sdy::getFuncResultSharding(funcOp, resultNum);
+// Returns the first non-maximal mesh on the given shardings, if there is
+// one. Otherwise returns `nullptr`.
+mlir::Attribute getMeshOrRef(
+    int64_t numElements, const mlir::SymbolTable& symbolTable,
+    std::function<mlir::sdy::TensorShardingAttr(int64_t)> getSharding) {
+  for (int64_t i = 0; i < numElements; ++i) {
+    if (mlir::sdy::TensorShardingAttr sdySharding = getSharding(i);
         sdySharding && !sdySharding.getMesh(symbolTable).isMaximal()) {
-      return std::make_optional(sdySharding.getMeshOrRef());
+      return sdySharding.getMeshOrRef();
     }
   }
-  return std::nullopt;
+  return nullptr;
+}
+
+int64_t getFuncResultTensorRank(FuncOp funcOp, int64_t resNum) {
+  return mlir::sdy::getTensorRank(funcOp.getResultTypes()[resNum]);
 }
 }  // namespace
 
 mlir::sdy::TensorShardingPerValueAttr getFuncResultShardings(
-    mlir::func::CallOp callOp, mlir::func::FuncOp funcOp,
-    const mlir::SymbolTable& symbolTable) {
-  std::optional<mlir::Attribute> meshOrRef =
-      getMeshOrRefOnResults(funcOp, symbolTable);
+    mlir::func::FuncOp funcOp, const mlir::SymbolTable& symbolTable) {
+  mlir::Attribute meshOrRef = getMeshOrRef(
+      funcOp.getNumResults(), symbolTable,
+      [&](int64_t i) { return mlir::sdy::getFuncResultSharding(funcOp, i); });
   if (!meshOrRef) {
     return nullptr;
   }
@@ -421,14 +442,38 @@ mlir::sdy::TensorShardingPerValueAttr getFuncResultShardings(
     mlir::sdy::TensorShardingAttr sdySharding =
         mlir::sdy::getFuncResultSharding(funcOp, resultNum);
     resultShardings.push_back(
-        sdySharding ? sdySharding
-                    : mlir::sdy::TensorShardingAttr::getFullyOpen(
-                          funcOp.getContext(),
-                          mlir::sdy::getTensorRank(callOp.getResult(resultNum)),
-                          *meshOrRef));
+        sdySharding
+            ? sdySharding
+            : mlir::sdy::TensorShardingAttr::getFullyOpen(
+                  funcOp.getContext(),
+                  getFuncResultTensorRank(funcOp, resultNum), meshOrRef));
   }
   return mlir::sdy::TensorShardingPerValueAttr::get(funcOp.getContext(),
                                                     resultShardings);
+}
+
+TensorShardingPerValueAttr getFuncArgShardings(FuncOp funcOp,
+                                               const SymbolTable& symbolTable) {
+  mlir::Attribute meshOrRef =
+      getMeshOrRef(funcOp.getNumArguments(), symbolTable, [&](int64_t i) {
+        return funcOp.getArgAttrOfType<TensorShardingAttr>(i, kShardingAttr);
+      });
+  if (!meshOrRef) {
+    return nullptr;
+  }
+  mlir::SmallVector<TensorShardingAttr> argShardings;
+  argShardings.reserve(funcOp.getNumArguments());
+  for (int64_t argNum = 0; argNum < funcOp.getNumArguments(); ++argNum) {
+    TensorShardingAttr sdySharding =
+        funcOp.getArgAttrOfType<TensorShardingAttr>(argNum, kShardingAttr);
+    argShardings.push_back(sdySharding
+                               ? sdySharding
+                               : TensorShardingAttr::getFullyOpen(
+                                     funcOp.getContext(),
+                                     getTensorRank(funcOp.getArgument(argNum)),
+                                     meshOrRef));
+  }
+  return TensorShardingPerValueAttr::get(funcOp.getContext(), argShardings);
 }
 
 mlir::sdy::MeshAttr toSdyMeshAttr(const Mesh& mesh,

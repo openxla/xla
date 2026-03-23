@@ -13,30 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/pjrt/async_work_runner.h"
+#ifndef XLA_BACKENDS_GPU_TARGET_CONFIG_GPU_TOPOLOGY_UTILS_H_
+#define XLA_BACKENDS_GPU_TARGET_CONFIG_GPU_TOPOLOGY_UTILS_H_
 
-#include <memory>
-#include <utility>
+#include "absl/status/statusor.h"
+#include "xla/service/gpu_topology.h"
 
-#include "xla/tsl/concurrency/executor.h"
+namespace xla::gpu {
 
-namespace xla {
+// Returns true if a host with `compiler_topology` can be used to compile for a
+// host with `target_topology`.
+absl::StatusOr<bool> IsCompatibleWithTargetTopology(
+    const GpuTopology& compiler_topology, const GpuTopology& target_topology);
 
-namespace {
+}  // namespace xla::gpu
 
-class AsyncWorkRunnerExecutor : public tsl::Executor {
- public:
-  explicit AsyncWorkRunnerExecutor(AsyncWorkRunner* runner) : runner_(runner) {}
-
-  void Execute(Task task) override { runner_->Schedule(std::move(task)); }
-
- private:
-  AsyncWorkRunner* const runner_;
-};
-
-}  // namespace
-
-AsyncWorkRunner::AsyncWorkRunner()
-    : executor_(std::make_unique<AsyncWorkRunnerExecutor>(this)) {}
-
-}  // namespace xla
+#endif  // XLA_BACKENDS_GPU_TARGET_CONFIG_GPU_TOPOLOGY_UTILS_H_

@@ -32,6 +32,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/Support/LLVM.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
@@ -160,11 +161,15 @@ bool hasGspmdAttrsOrOps(mlir::ModuleOp module);
 // TODO(b/420837831): delete this once we don't fall back to GSPMD.
 bool hasShardyMesh(mlir::ModuleOp module);
 
-// Returns the func result shardings of `funcOp`, with fully-replicated
-// shardings for empty shardings on `funcOp`, by using the ranks from `callOp`.
+// Returns the shardings for the results of `funcOp`, with fully replicated
+// shardings for empty shardings on `funcOp`.
 mlir::sdy::TensorShardingPerValueAttr getFuncResultShardings(
-    mlir::func::CallOp callOp, mlir::func::FuncOp funcOp,
-    const mlir::SymbolTable& symbolTable);
+    mlir::func::FuncOp funcOp, const mlir::SymbolTable& symbolTable);
+
+// Returns the shardings for the arguments of `funcOp`, with fully replicated
+// shardings for empty shardings on `funcOp`.
+mlir::sdy::TensorShardingPerValueAttr getFuncArgShardings(
+    mlir::func::FuncOp funcOp, const mlir::SymbolTable& symbolTable);
 
 // Converts an XLA Mesh to an SDY MeshAttr.
 mlir::sdy::MeshAttr toSdyMeshAttr(const Mesh& mesh, mlir::MLIRContext* context);

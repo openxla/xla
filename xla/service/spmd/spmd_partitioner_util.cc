@@ -180,9 +180,9 @@ ConvolutionDimensionNumbers GenNewConvDNums(
     if (lhs_concat_dim <= input_feature_dimension) {
       input_feature_dimension++;
     }
-    for (int64_t i = 0; i < input_spatial_dimensions.size(); ++i) {
-      if (lhs_concat_dim <= input_spatial_dimensions[i]) {
-        input_spatial_dimensions[i]++;
+    for (int64_t& dim : input_spatial_dimensions) {
+      if (lhs_concat_dim <= dim) {
+        dim++;
       }
     }
     input_spatial_dimensions.push_back(lhs_concat_dim);
@@ -207,9 +207,9 @@ ConvolutionDimensionNumbers GenNewConvDNums(
     if (rhs_concat_dim <= kernel_output_feature_dimension) {
       kernel_output_feature_dimension++;
     }
-    for (int64_t i = 0; i < kernel_spatial_dimensions.size(); ++i) {
-      if (rhs_concat_dim <= kernel_spatial_dimensions[i]) {
-        kernel_spatial_dimensions[i]++;
+    for (int64_t& dim : kernel_spatial_dimensions) {
+      if (rhs_concat_dim <= dim) {
+        dim++;
       }
     }
     kernel_spatial_dimensions.push_back(rhs_concat_dim);
@@ -235,9 +235,9 @@ ConvolutionDimensionNumbers GenNewConvDNums(
     if (output_slice_dim <= output_feature_dimension) {
       output_feature_dimension++;
     }
-    for (int64_t i = 0; i < output_spatial_dimensions.size(); ++i) {
-      if (output_slice_dim <= output_spatial_dimensions[i]) {
-        output_spatial_dimensions[i]++;
+    for (int64_t& dim : output_spatial_dimensions) {
+      if (output_slice_dim <= dim) {
+        dim++;
       }
     }
     output_spatial_dimensions.push_back(output_slice_dim);
@@ -2221,6 +2221,12 @@ GetReshardAllToAllSourceTargetDims(const HloSharding& source,
 
 bool CanReshardWithCollectivePermute(const HloSharding& source,
                                      const HloSharding& target) {
+  CHECK_EQ(source.UseNamedShardingLeaf(), target.UseNamedShardingLeaf());
+  if (source.UseNamedShardingLeaf()) {
+    return source.dimensions() == target.dimensions() &&
+           source.named_sharding().dim_shardings() !=
+               target.named_sharding().dim_shardings();
+  }
   return !source.IsReplicatedOrSingleDevice() &&
          !target.IsReplicatedOrSingleDevice() &&
          source.dimensions() == target.dimensions() &&
@@ -3314,6 +3320,10 @@ DynamicUpdateSliceAnalysis AnalyzeDynamicUpdateSlice(
 
   if (analysis.partitioned_slice_dims.empty()) {
     analysis.method = DynamicUpdateSliceMethod::kDefault;
+  } else if (is_enzyme_opt_enabled &&
+             !has_partitioned_slice_dim_with_dynamic_index) {
+    analysis.method =
+        DynamicUpdateSliceMethod::kAllPartitionedSliceDimsHaveConstantIndices;
   } else if (update_on_a_single_partition) {
     analysis.method = DynamicUpdateSliceMethod::kUpdateOnASinglePartition;
   } else if (has_partitioned_slice_dim_with_dynamic_index) {
