@@ -66,8 +66,10 @@ class Profiler {
 
   // Creates Input buffers for a given executable on the device. The buffers
   // are created with the same shape as the input parameters of the executable.
+  // The optional instr parameter can be provided to enable operation-specific
+  // buffer initialization.
   virtual absl::StatusOr<std::unique_ptr<InputBuffers>> CreateInputBuffers(
-      const Executable* executable) = 0;
+      const Executable* executable, const HloInstruction* instr = nullptr) = 0;
 
   // Profiles a single executable with the provided buffers. The buffers
   // must be created by calling CreateInputBuffers from the same profiler.
