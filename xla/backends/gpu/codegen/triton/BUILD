@@ -145,6 +145,7 @@ cc_library(
     deps = [
         "//xla/backends/gpu/codegen/emitters/transforms:passes",
         "//xla/backends/gpu/codegen/triton/transforms:passes",
+        "//xla/backends/gpu/codegen/triton/transforms:triton_xla_implement_extern_atomics_cuda_pass",
         "//xla/backends/gpu/codegen/triton/transforms:triton_xla_implement_extern_atomics_rocm_pass",
         "//xla/codegen/emitters/transforms:convert_pure_call_ops_pass",
         "//xla/codegen/emitters/transforms:passes",

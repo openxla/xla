@@ -13,15 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "nvidia/hopper/include/Transforms/Passes.h"
-#include "nvidia/include/NVGPUToLLVM/Passes.h"
-#include "nvidia/include/TritonNVIDIAGPUToLLVM/Passes.h"
 #include "absl/strings/str_format.h"
 #include "mlir/Conversion/NVVMToLLVM/NVVMToLLVM.h"
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
+#include "nvidia/hopper/include/Transforms/Passes.h"
+#include "nvidia/include/NVGPUToLLVM/Passes.h"
+#include "nvidia/include/TritonNVIDIAGPUToLLVM/Passes.h"
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
@@ -172,6 +172,11 @@ static void MakeLLIR(mlir::OpPassManager* pm,
   pm->addPass(mlir::createCSEPass());
   pm->addPass(mlir::createSymbolDCEPass());
   pm->addPass(mlir::createConvertNVVMToLLVMPass());
+
+  // Add XLA custom pass to implement extern_elementwise atomic functions
+  // This must run after MLIR->LLVM conversion but before final optimizations
+  pm->addPass(mt_xla::CreateTritonXLAImplementExternAtomicsCudaPass());
+
   // Note: translateTritonGPUToLLVMIR adds line info with LLVMDIScopePass.
 }
 

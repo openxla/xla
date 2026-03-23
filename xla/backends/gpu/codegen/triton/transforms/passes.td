@@ -118,16 +118,6 @@ def RoundF32ToTF32ForTf32DotRewritePass
   let constructor = "CreateRoundF32ToTF32ForTf32DotRewritePass()";
 }
 
-def TritonXLALowerGetTidPass
-    : Pass<"triton-xla-get-tid", "mlir::ModuleOp"> {
-  let summary = "Lower get_tid to the PTX intrinsic.";
-  let description = [{
-    This pass lowers get_tid to the PTX intrinsic by loading the thread ID from
-    the register and returning it.
-  }];
-  let constructor = "CreateTritonXLALowerGetTidPass()";
-}
-
 def TritonXLALowerExternGetTidPass
     : Pass<"triton-xla-lower-extern-get-tid", "mlir::ModuleOp"> {
   let summary = "Lower get_tid using tt.extern_elementwise.";
@@ -136,16 +126,6 @@ def TritonXLALowerExternGetTidPass
     in platform-specific passes. This makes it suitable for ROCm and other targets.
   }];
   let constructor = "CreateTritonXLALowerExternGetTidPass()";
-}
-
-def TritonXLALowerAtomicsPass
-    : Pass<"triton-xla-atomics", "mlir::ModuleOp"> {
-  let summary = "Lower triton_xla.atomic operations.";
-  let description = [{
-    This pass lowers atomic operations to the PTX intrinsic with the given
-    memory semantics.
-  }];
-  let constructor = "CreateTritonXLALowerAtomicsPass()";
 }
 
 def TritonXLALowerExternAtomicsPass
@@ -308,6 +288,17 @@ def TritonXLAImplementExternAtomicsROCmPass
     It runs in the Triton ROCm pipeline after MLIR has been converted to LLVM dialect.
   }];
   let constructor = "CreateTritonXLAImplementExternAtomicsROCmPass()";
+}
+
+def TritonXLAImplementExternAtomicsCudaPass
+    : Pass<"triton-xla-implement-extern-atomics-cuda", "mlir::ModuleOp"> {
+  let summary = "Implement extern_elementwise atomic functions for CUDA.";
+  let description = [{
+    This pass implements custom atomic functions declared by tt.extern_elementwise
+    operations using PTX inline assembly with proper memory ordering and sync scopes.
+    It runs in the Triton CUDA pipeline after MLIR has been converted to LLVM dialect.
+  }];
+  let constructor = "CreateTritonXLAImplementExternAtomicsCudaPass()";
 }
 
 #endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_PASSES_TD_

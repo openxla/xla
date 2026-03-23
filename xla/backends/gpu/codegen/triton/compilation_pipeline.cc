@@ -39,17 +39,11 @@ void CreateTritonXlaPipeline(
 
   pm->addPass(mlir::triton::xla::CreateTritonXLALowerBlockBarrierPass());
 
-  // Use CUDA-specific passes only for CUDA, generic passes for all other
-  // targets
-  if (gpu_cc.cuda_compute_capability() != nullptr) {
-    // CUDA-specific passes using PTX inline assembly
-    pm->addPass(mlir::triton::xla::CreateTritonXLALowerAtomicsPass());
-    pm->addPass(mlir::triton::xla::CreateTritonXLALowerGetTidPass());
-  } else {
-    // Generic passes using pure Triton ops (ROCm and other targets)
-    pm->addPass(mlir::triton::xla::CreateTritonXLALowerExternAtomicsPass());
-    pm->addPass(mlir::triton::xla::CreateTritonXLALowerExternGetTidPass());
-  }
+  // Use extern atomics approach for all targets
+  // This declares external functions that will be implemented later in the
+  // pipeline
+  pm->addPass(mlir::triton::xla::CreateTritonXLALowerExternAtomicsPass());
+  pm->addPass(mlir::triton::xla::CreateTritonXLALowerExternGetTidPass());
   pm->addPass(mlir::triton::xla::CreateTritonXLALowerXTilePass());
   pm->addPass(mlir::triton::xla::CreateStableHLOLowerToTritonPass(
       warp_specialization_allowed));
