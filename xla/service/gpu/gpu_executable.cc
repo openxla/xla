@@ -28,7 +28,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
-#include "absl/base/no_destructor.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -132,15 +131,6 @@ namespace xla {
 namespace gpu {
 
 namespace {
-
-HangWatchdog& StaticHangWatchDog() {
-  // Create a GPU execution hang watchdog with 2 threads. One thread counts down
-  // a grace period before aborting. The other thread reports detected hangs for
-  // all devices in the current process.
-  static absl::NoDestructor<HangWatchdog> watchdog(
-      tsl::Env::Default(), "gpu-executable", /*num_threads=*/2);
-  return *watchdog;
-}
 
 // Chooses the correct allocations to be used within the GpuExecutable code.
 std::vector<const BufferAllocation*> GatherAllocationPtrs(
@@ -503,7 +493,7 @@ absl::Status ExecuteThunksImpl(
       };
     }
 
-    guard = StaticHangWatchDog().Watch(
+    guard = HangWatchdog::Global().Watch(
         watchdog_name, watchdog_timeout,
         HangWatchdog::Abort(watchdog_name, watchdog_timeout,
                             std::move(pre_abort)));
