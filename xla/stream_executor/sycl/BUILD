@@ -102,11 +102,7 @@ cc_library(
         "oneapi-only",
     ],
     deps = [
-        ":sycl_platform_id",
         ":sycl_rpath",
-        "//xla/stream_executor:dnn",
-        "//xla/stream_executor:platform_manager",
-        "//xla/stream_executor:scratch_allocator",
     ] + if_static([":all_runtime"]),
 )
 
@@ -539,6 +535,7 @@ xla_test(
     deps = [
         ":sycl_device_description",
         "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "@com_google_googletest//:gtest_main",
     ],
