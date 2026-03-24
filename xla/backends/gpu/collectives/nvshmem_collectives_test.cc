@@ -23,8 +23,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/time/time.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
-#include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/collectives_registry.h"
+#include "xla/core/collectives/communicator.h"
 #include "xla/debug_options_flags.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
@@ -85,29 +85,29 @@ absl::Status InitializationTestBody(const int node_id, const int num_nodes) {
       GetDistributedKeyValueStore(distributed_client, /*key_prefix=*/"gpu:");
 
   TF_ASSIGN_OR_RETURN(auto platform, xla::PlatformUtil::GetPlatform("gpu"));
-  TF_ASSIGN_OR_RETURN(auto collectives,
-      xla::CollectivesRegistry::Get(platform->Name(), "nvshmem"));
+  TF_ASSIGN_OR_RETURN(auto collectives, xla::CollectivesRegistry::Get(
+                                            platform->Name(), "nvshmem"));
 
-  auto* gpu_collectives =
-          tsl::down_cast<GpuCollectives*>(collectives);
+  auto* gpu_collectives = tsl::down_cast<GpuCollectives*>(collectives);
   if (gpu_collectives == nullptr) {
     return absl::InternalError(
         "Unsupported collectives implementation for NVSHMEM");
   }
-  
+
   TF_ASSIGN_OR_RETURN(auto executors, xla::PlatformUtil::GetStreamExecutors(
-      platform, std::set< int >{ node_id }));
+                                          platform, std::set<int>{node_id}));
 
   EXPECT_TRUE(!executors.empty());
-  auto ctx = executors[0]->Activate(); // select device for this node_id
+  auto ctx = executors[0]->Activate();  // select device for this node_id
 
-  TF_ASSIGN_OR_RETURN(auto callback, gpu_collectives->InitializeTopology(
-    GpuCollectives::Topology{
-    .process_id = ProcessId(node_id),
-    .num_processes = static_cast< size_t >(num_nodes),
-    .device_count_per_process = 1,
-    .kv_store = kv_store,
-  }));
+  TF_ASSIGN_OR_RETURN(
+      auto callback,
+      gpu_collectives->InitializeTopology(GpuCollectives::Topology{
+          .process_id = ProcessId(node_id),
+          .num_processes = static_cast<size_t>(num_nodes),
+          .device_count_per_process = 1,
+          .kv_store = kv_store,
+      }));
   TF_ASSIGN_OR_RETURN(void* ptr, gpu_collectives->Allocate(1024));
 
   TF_RET_CHECK(ptr != nullptr);

@@ -9,32 +9,31 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include <stdlib.h>
-
 #include <cstdint>
-#include <memory>
 #include <fstream>
+#include <memory>
 #include <optional>
-#include <string>
 #include <sstream>
+#include <string>
 #include <vector>
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/substitute.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include <stdlib.h>
 #include "xla/debug_options_flags.h"
 #include "xla/ffi/ffi.h"
-#include "xla/literal_comparison.h"
-#include "xla/literal_util.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/test.h"
+#include "xla/literal_comparison.h"
+#include "xla/literal_util.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
 #include "xla/pjrt/distributed/service.h"
@@ -125,11 +124,10 @@ TEST(NvshmemGpuCollectivesTest, NvshmemAllReduceUint8) {
   RunNvshmemTest(PrimitiveType::U8, "all_reduce");
 }
 
-absl::Status NvshmemRunAllReduce(
-      PjRtClient& client, uint32_t num_ranks, 
-      const CompileOptions& compile_options, PrimitiveType dtype) {
-  
-  const char *kProgram = R"(HloModule Test
+absl::Status NvshmemRunAllReduce(PjRtClient& client, uint32_t num_ranks,
+                                 const CompileOptions& compile_options,
+                                 PrimitiveType dtype) {
+  const char* kProgram = R"(HloModule Test
       apply_op {
         x = $0[] parameter(0)
         y = $0[] parameter(1)
@@ -176,10 +174,10 @@ absl::Status NvshmemRunAllReduce(
   // TF_ASSIGN_OR_RETURN(auto hlo_modules, executable->GetHloModules());
 
   auto param = LiteralUtil::CreateFull({}, num_ranks);
-  //PrimitiveTypeBitWidth
+  // PrimitiveTypeBitWidth
   PjRtDevice* const device = client.addressable_devices()[0];
- 
-    // TF_ASSIGN_OR_RETURN(auto fake_args, 
+
+  // TF_ASSIGN_OR_RETURN(auto fake_args,
   //       xla::MakeFakeArguments(hlo_modules[0].get(), /*pseudo_random*/true,
   //       /*use_large_range*/false));
   /*  std::normal_distribution<double> generator(mean, stddev);
@@ -196,29 +194,27 @@ absl::Status NvshmemRunAllReduce(
   //       shape, &engine, 0.0, /*stddev*/1.0
   //     );
   // };
-  // TF_ASSIGN_OR_RETURN(auto literal, 
+  // TF_ASSIGN_OR_RETURN(auto literal,
   //   primitive_util::ArrayTypeSwitch(func, dtype));
 
- TF_ASSIGN_OR_RETURN(
-      auto input, client.BufferFromHostLiteral(
-          param, *device->default_memory_space()));
-  
+  TF_ASSIGN_OR_RETURN(auto input, client.BufferFromHostLiteral(
+                                      param, *device->default_memory_space()));
+
   TF_ASSIGN_OR_RETURN(auto result,
-                        executable->Execute({{input.get()}}, ExecuteOptions()));
+                      executable->Execute({{input.get()}}, ExecuteOptions()));
 
   auto& result_buffers = result[0];
   TF_ASSIGN_OR_RETURN(auto output, result_buffers[0]->ToLiteralSync());
-  //VLOG(0) << "Got literal output " << output->ToString();
+  // VLOG(0) << "Got literal output " << output->ToString();
   auto expected = LiteralUtil::CreateFull({}, 0.0f);
-  return literal_comparison::Near(expected, *output,
-                  ErrorSpec(1e-5, 1e-5), {}, nullptr);
+  return literal_comparison::Near(expected, *output, ErrorSpec(1e-5, 1e-5), {},
+                                  nullptr);
 }
 
-absl::Status NvshmemRunCollectivePermute(
-      PjRtClient& client, uint32_t num_ranks, 
-      const CompileOptions& compile_options, PrimitiveType dtype) {
-
-  const char *kProgram = R"(HloModule Test
+absl::Status NvshmemRunCollectivePermute(PjRtClient& client, uint32_t num_ranks,
+                                         const CompileOptions& compile_options,
+                                         PrimitiveType dtype) {
+  const char* kProgram = R"(HloModule Test
 addu {
   x = u32[] parameter(0)
   y = u32[] parameter(1)
@@ -244,31 +240,30 @@ ENTRY Xtest {
 })";
   std::ostringstream sprogram;
   {
-  std::ifstream ifs("input.hlo");
-  if (!ifs) return absl::InternalError("Ops wrong HLO file!");
+    std::ifstream ifs("input.hlo");
+    if (!ifs) return absl::InternalError("Ops wrong HLO file!");
     sprogram << ifs.rdbuf();
   }
   std::stringstream channels;
   for (uint32_t i = 0; i < num_ranks; i++) {
-    channels << '{' << (i == num_ranks-1 ? 0 : i + 1) << ',' << i << '}';
-    if (i < num_ranks-1) channels << ',';
+    channels << '{' << (i == num_ranks - 1 ? 0 : i + 1) << ',' << i << '}';
+    if (i < num_ranks - 1) channels << ',';
   }
   auto dtype_str = primitive_util::LowercasePrimitiveTypeName(dtype);
-  auto hlo_text = absl::Substitute(kProgram, 
-        dtype_str, "[10,20]", channels.str());
+  auto hlo_text =
+      absl::Substitute(kProgram, dtype_str, "[10,20]", channels.str());
 
   TF_ASSIGN_OR_RETURN(auto executable,
                       CompileExecutable(hlo_text, client, compile_options));
 
   auto param = LiteralUtil::CreateFull({}, num_ranks);
-  auto *device = client.addressable_devices()[0];
+  auto* device = client.addressable_devices()[0];
 
-  TF_ASSIGN_OR_RETURN(
-      auto input, client.BufferFromHostLiteral(
-          param, *device->default_memory_space()));
-  
+  TF_ASSIGN_OR_RETURN(auto input, client.BufferFromHostLiteral(
+                                      param, *device->default_memory_space()));
+
   TF_ASSIGN_OR_RETURN(auto result,
-                        executable->Execute({{input.get()}}, ExecuteOptions()));
+                      executable->Execute({{input.get()}}, ExecuteOptions()));
 
   auto& result_buffers = result[0];
   TF_ASSIGN_OR_RETURN(auto output, result_buffers[0]->ToLiteralSync());
@@ -278,11 +273,11 @@ ENTRY Xtest {
   return literal_comparison::Equal(expected, *output, nullptr);
 }
 
-absl::Status NvshmemRunSendRecv(
-      PjRtClient& client, uint32_t rank_id, uint32_t num_ranks, 
-      const CompileOptions& compile_options, PrimitiveType dtype) {
-
-  const char *kProgram = R"(HloModule Test
+absl::Status NvshmemRunSendRecv(PjRtClient& client, uint32_t rank_id,
+                                uint32_t num_ranks,
+                                const CompileOptions& compile_options,
+                                PrimitiveType dtype) {
+  const char* kProgram = R"(HloModule Test
 addf {
   x = f32[] parameter(0)
   y = f32[] parameter(1)
@@ -304,38 +299,39 @@ ENTRY Xtest {
 })";
   std::ostringstream sprogram;
   {
-  std::ifstream ifs("input.hlo");
-  if (!ifs) return absl::InternalError("Ops wrong HLO file!");
+    std::ifstream ifs("input.hlo");
+    if (!ifs) return absl::InternalError("Ops wrong HLO file!");
     sprogram << ifs.rdbuf();
   }
   int64_t N = 10000;
   auto dtype_str = primitive_util::LowercasePrimitiveTypeName(dtype);
-  //auto hlo_text = sprogram.str();
-  auto hlo_text = absl::Substitute(kProgram, 
-        dtype_str, absl::StrFormat("[%lld]", N));
-  //VLOG(0) << "input text " << hlo_text;
-  
+  // auto hlo_text = sprogram.str();
+  auto hlo_text =
+      absl::Substitute(kProgram, dtype_str, absl::StrFormat("[%lld]", N));
+  // VLOG(0) << "input text " << hlo_text;
+
   TF_ASSIGN_OR_RETURN(auto executable,
                       CompileExecutable(hlo_text, client, compile_options));
 
   TF_ASSIGN_OR_RETURN(auto result,
-                        executable->Execute({{ //input.get()
-                        }}, ExecuteOptions()));
+                      executable->Execute({{
+                                              // input.get()
+                                          }},
+                                          ExecuteOptions()));
 
   auto& result_buffers = result[0];
   TF_ASSIGN_OR_RETURN(auto output, result_buffers[0]->ToLiteralSync());
 
   VLOG(0) << "Got literal output " << output->ToString();
-  if (rank_id == 0) return absl::OkStatus(); // 0-th rank just sends
+  if (rank_id == 0) return absl::OkStatus();  // 0-th rank just sends
 
-  auto expected = LiteralUtil::CreateFull({}, (float)N/2*(N-1));
+  auto expected = LiteralUtil::CreateFull({}, (float)N / 2 * (N - 1));
   return literal_comparison::Equal(expected, *output, nullptr);
 }
 
 absl::Status NvshmemCollectiveTestBody(int rank_id, int num_ranks,
                                        int input_data_type,
                                        absl::string_view test_case) {
-
   xla::PrimitiveType data_type = (xla::PrimitiveType)input_data_type;
   std::unique_ptr<xla::DistributedRuntimeService> service;
   if (rank_id == 0) {
@@ -354,7 +350,7 @@ absl::Status NvshmemCollectiveTestBody(int rank_id, int num_ranks,
 
   GpuClientOptions client_options;
   // client_options.allocator_config.kind = GpuAllocatorConfig::Kind::kPlatform;
-  
+
   client_options.node_id = rank_id;
   client_options.allowed_devices = {rank_id};
   client_options.num_nodes = num_ranks;
@@ -405,7 +401,7 @@ int main(int argc, char* argv[]) {
   testing::InitGoogleTest(&argc, argv);
   if (rank_id >= 0) {
     auto s = xla::NvshmemCollectiveTestBody(rank_id, num_ranks, input_data_type,
-                                          test_case);
+                                            test_case);
     if (!s.ok()) {
       VLOG(0) << "Failed with " << s;
     } else {
