@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/gpu/collectives/nvshmem_collectives.h"
-
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,15 +22,16 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/time/time.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/collectives_registry.h"
 #include "xla/debug_options_flags.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
 #include "xla/pjrt/distributed/service.h"
 #include "xla/runtime/process_id.h"
+#include "xla/service/platform_util.h"
 #include "xla/status_macros.h"
-#include "xla/stream_executor/cuda/nvshmem.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
@@ -85,13 +84,36 @@ absl::Status InitializationTestBody(const int node_id, const int num_nodes) {
   auto kv_store =
       GetDistributedKeyValueStore(distributed_client, /*key_prefix=*/"gpu:");
 
-  se::gpu::nvshmem::SetEnvInfo(ProcessId(node_id), num_nodes, 1, kv_store);
-  cudaSetDevice(node_id);
-  TF_ASSIGN_OR_RETURN(void* ptr, NvshmemCollectives::Default()->Allocate(1024));
+  TF_ASSIGN_OR_RETURN(auto platform, xla::PlatformUtil::GetPlatform("gpu"));
+  TF_ASSIGN_OR_RETURN(auto collectives,
+      xla::CollectivesRegistry::Get(platform->Name(), "nvshmem"));
+
+  auto* gpu_collectives =
+          tsl::down_cast<GpuCollectives*>(collectives);
+  if (gpu_collectives == nullptr) {
+    return absl::InternalError(
+        "Unsupported collectives implementation for NVSHMEM");
+  }
+  
+  TF_ASSIGN_OR_RETURN(auto executors, xla::PlatformUtil::GetStreamExecutors(
+      platform, std::set< int >{ node_id }));
+
+  EXPECT_TRUE(!executors.empty());
+  auto ctx = executors[0]->Activate(); // select device for this node_id
+
+  TF_ASSIGN_OR_RETURN(auto callback, gpu_collectives->InitializeTopology(
+    GpuCollectives::Topology{
+    .process_id = ProcessId(node_id),
+    .num_processes = static_cast< size_t >(num_nodes),
+    .device_count_per_process = 1,
+    .kv_store = kv_store,
+  }));
+  TF_ASSIGN_OR_RETURN(void* ptr, gpu_collectives->Allocate(1024));
+
   TF_RET_CHECK(ptr != nullptr);
-  TF_RETURN_IF_ERROR(NvshmemCollectives::Default()->Deallocate(ptr));
+  TF_RETURN_IF_ERROR(gpu_collectives->Deallocate(ptr));
   TF_ASSIGN_OR_RETURN(std::unique_ptr<Communicator> comm,
-                      NvshmemCollectives::Default()->CreateCommunicator());
+                      gpu_collectives->CreateCommunicator());
   TF_RET_CHECK(*comm->NumRanks() == num_nodes);
   TF_RET_CHECK(*comm->CurrentRank() == node_id);
   return absl::OkStatus();

@@ -380,6 +380,7 @@ xla_test(
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:service",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
+        "//xla/tests:test_utils",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:subprocess",
