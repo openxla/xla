@@ -169,16 +169,16 @@ static void MakeLLIR(mlir::OpPassManager* pm,
   pm->addPass(mlir::createCSEPass());
   pm->addPass(mlir::createSymbolDCEPass());
   
-  // Add XLA custom pass to implement extern_elementwise atomic functions
-  // This must run after MLIR->LLVM conversion but before final optimizations
-  pm->addPass(mlir::triton::xla::CreateTritonXLAImplementExternAtomicsROCmPass());
-  
   if (/*(instruction_sched_variant=="none") == */ /* DISABLES CODE */ (false)) {
     pm->addPass(mt::createTritonAMDGPULowerInstructionSchedHintsPass(
         rocm_cc.gfx_version(), num_stages));
   }
   pm->addPass(mt::createConvertBuiltinFuncToLLVMPass(rocm_cc.gfx_version(),
                                                      /*ftz=*/true));
+
+  // Add XLA custom pass to implement extern_elementwise atomic functions
+  // This must run after MLIR->LLVM conversion
+  pm->addPass(mlir::triton::xla::CreateTritonXLAImplementExternAtomicsROCmPass());
 }
 
 void CreateTritonRocmPipeline(
