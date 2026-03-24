@@ -15,8 +15,8 @@ limitations under the License.
 
 // Generic lowering of atomic operations for Triton XLA using
 // tt.extern_elementwise. This implementation uses tt.extern_elementwise to call
-// custom atomic functions that will be implemented in a separate ROCm-specific
-// pass in the Triton pipeline.
+// custom atomic functions that will be implemented in platform-specific passes
+// (CUDA and ROCm) later in the Triton pipeline.
 
 #include <cstdint>
 #include <memory>

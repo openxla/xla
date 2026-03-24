@@ -17,8 +17,9 @@ module {
   // CHECK-LABEL: llvm.func @test_atomic_write_unmasked
   llvm.func @test_atomic_write_unmasked(%ptr: !llvm.ptr<1>, %value: i32) -> i32 {
     // CHECK-NOT: llvm.call @xla_atomic_write_release_system
-    // CHECK: [[RESULT:%.*]] = llvm.atomicrmw xchg %arg0, %arg1 release : !llvm.ptr<1>, i32
-    // CHECK: llvm.return [[RESULT]]
+    // CHECK: llvm.store %arg1, %arg0 atomic release {alignment = 4 : i64} : i32, !llvm.ptr<1>
+    // CHECK: [[POISON:%.*]] = llvm.mlir.poison : i32
+    // CHECK: llvm.return [[POISON]]
     %result = llvm.call @xla_atomic_write_release_system(%ptr, %value) : (!llvm.ptr<1>, i32) -> i32
     llvm.return %result : i32
   }
@@ -39,21 +40,27 @@ module {
   
   // CHECK-LABEL: llvm.func @test_relaxed_ordering
   llvm.func @test_relaxed_ordering(%ptr: !llvm.ptr<1>, %value: i32) -> i32 {
-    // CHECK: llvm.atomicrmw xchg %arg0, %arg1 monotonic : !llvm.ptr<1>, i32
+    // CHECK: llvm.store %arg1, %arg0 atomic monotonic {alignment = 4 : i64} : i32, !llvm.ptr<1>
+    // CHECK: [[POISON:%.*]] = llvm.mlir.poison : i32
+    // CHECK: llvm.return [[POISON]]
     %result = llvm.call @xla_atomic_write_relaxed_system(%ptr, %value) : (!llvm.ptr<1>, i32) -> i32
     llvm.return %result : i32
   }
   
   // CHECK-LABEL: llvm.func @test_agent_scope
   llvm.func @test_agent_scope(%ptr: !llvm.ptr<1>, %value: i32) -> i32 {
-    // CHECK: llvm.atomicrmw xchg %arg0, %arg1 syncscope("agent") release : !llvm.ptr<1>, i32
+    // CHECK: llvm.store %arg1, %arg0 atomic syncscope("agent") release {alignment = 4 : i64} : i32, !llvm.ptr<1>
+    // CHECK: [[POISON:%.*]] = llvm.mlir.poison : i32
+    // CHECK: llvm.return [[POISON]]
     %result = llvm.call @xla_atomic_write_release_gpu(%ptr, %value) : (!llvm.ptr<1>, i32) -> i32
     llvm.return %result : i32
   }
   
   // CHECK-LABEL: llvm.func @test_workgroup_scope
   llvm.func @test_workgroup_scope(%ptr: !llvm.ptr<1>, %value: i32) -> i32 {
-    // CHECK: llvm.atomicrmw xchg %arg0, %arg1 syncscope("workgroup") release : !llvm.ptr<1>, i32
+    // CHECK: llvm.store %arg1, %arg0 atomic syncscope("workgroup") release {alignment = 4 : i64} : i32, !llvm.ptr<1>
+    // CHECK: [[POISON:%.*]] = llvm.mlir.poison : i32
+    // CHECK: llvm.return [[POISON]]
     %result = llvm.call @xla_atomic_write_release_cta(%ptr, %value) : (!llvm.ptr<1>, i32) -> i32
     llvm.return %result : i32
   }
@@ -74,14 +81,13 @@ module {
     // CHECK-NOT: llvm.call @xla_atomic_write_release_system
     // CHECK: [[ZERO:%.*]] = llvm.mlir.constant(0 : i32)
     // CHECK: [[MASK_NONZERO:%.*]] = llvm.icmp "ne" %arg2, [[ZERO]]
-    // CHECK: llvm.cond_br [[MASK_NONZERO]], ^[[ATOMIC:.*]], ^[[SKIP:.*]]
+    // CHECK: llvm.cond_br [[MASK_NONZERO]], ^[[ATOMIC:.*]], ^[[EXIT:.*]]
     // CHECK: ^[[ATOMIC]]:
-    // CHECK:   [[ATOMIC_RESULT:%.*]] = llvm.atomicrmw xchg %arg0, %arg1 release : !llvm.ptr<1>, i32
-    // CHECK:   llvm.br ^[[EXIT:.*]]([[ATOMIC_RESULT]]
-    // CHECK: ^[[SKIP]]:
-    // CHECK:   llvm.br ^[[EXIT]]([[ZERO]]
-    // CHECK: ^[[EXIT]]([[PHI:%.*]]: i32):
-    // CHECK:   llvm.return [[PHI]]
+    // CHECK:   llvm.store %arg1, %arg0 atomic release {alignment = 4 : i64} : i32, !llvm.ptr<1>
+    // CHECK:   llvm.br ^[[EXIT]]
+    // CHECK: ^[[EXIT]]:
+    // CHECK:   [[POISON:%.*]] = llvm.mlir.poison : i32
+    // CHECK:   llvm.return [[POISON]]
     %result = llvm.call @xla_atomic_write_release_system(%ptr, %value, %mask) : (!llvm.ptr<1>, i32, i32) -> i32
     llvm.return %result : i32
   }
