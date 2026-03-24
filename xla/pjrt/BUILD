@@ -1291,6 +1291,7 @@ cc_library(
     visibility = internal_visibility([":friends"]),
     deps = [
         "//xla/backends/gpu/codegen/triton:compilation_pipeline",
+        "//xla/codegen/emitters/ir:xla_to_llvm_ir_translation",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/platform:env",
@@ -1350,6 +1351,7 @@ cc_library(
     deps = [
         "//xla:debug_options_flags",
         "//xla/backends/gpu/codegen/triton:compilation_pipeline",
+        "//xla/codegen/emitters/ir:xla_to_llvm_ir_translation",
         "//xla/service/gpu:target_constants",
         "//xla/service/gpu/llvm_gpu_backend:amdgpu_backend",
         "//xla/stream_executor:device_description",
