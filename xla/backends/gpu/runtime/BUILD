@@ -2913,6 +2913,7 @@ cc_library(
         ":annotation",
         ":collective_thunk",
         ":thunk",
+        ":while_loop",
         "//xla:util",
         "//xla/stream_executor:event",
         "//xla/stream_executor:stream",
@@ -2928,6 +2929,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/profiler/lib:scoped_annotation",
         "@tsl//tsl/profiler/lib:traceme",
     ],
@@ -3059,6 +3061,7 @@ cc_library(
     hdrs = ["while_loop.h"],
     deps = [
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
