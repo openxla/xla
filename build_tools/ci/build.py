@@ -53,9 +53,6 @@ _XLA_DEFAULT_TARGET_PATTERNS = (
     "//build_tools/...",
     "@tsl//tsl/...",
 )
-_XLA_ROCM_TARGET_PATTERNS = (
-    "//xla/...",
-)
 _XLA_ONEAPI_TARGET_PATTERNS = (
     "//xla/stream_executor/sycl/...",
     "//xla/service/gpu/...",
@@ -293,6 +290,7 @@ def _tag_filters_for_compute_capability(
   tag_filters += ("-requires-gpu-amd",)
   tag_filters += ("-requires-gpu-intel",)
   return tag_filters
+
 
 nvidia_single_gpu_filters = (
     "-no_oss",
