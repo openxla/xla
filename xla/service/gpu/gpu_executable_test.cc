@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "riegeli/bytes/cfile_reader.h"
 #include "riegeli/bytes/string_reader.h"
+#include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
@@ -480,15 +481,18 @@ TEST(GpuExecutableTest, ProtoConversion) {
   params.module_name = "test_module";
   params.enable_debug_info_manager = false;
   params.mlir_allocations = {BufferAllocation(0, 1024, 0)};
+  params.cpu_target_machine_options = xla::cpu::TargetMachineOptions(
+      "test_triple", "test_cpu", "+test_features");
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> reference_executable,
                           GpuExecutable::Create(std::move(params)));
   TF_ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto,
                           reference_executable->ToProto());
 
+  DebugOptions debug_options = GetDebugOptionsFromFlags();
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuExecutable> reconstructed_executable,
       GpuExecutable::FromProto(proto, device_description, "TEST_PLATFORM",
-                               DebugOptions()));
+                               debug_options));
   EXPECT_THAT(reconstructed_executable->text(), "test_asm_text");
   EXPECT_THAT(reconstructed_executable->binary(), ElementsAre(1, 2, 3));
   EXPECT_THAT(
@@ -499,12 +503,17 @@ TEST(GpuExecutableTest, ProtoConversion) {
   EXPECT_THAT(reconstructed_executable->GetAllocations(),
               ElementsAre(Pointee(Property(&BufferAllocation::size, 1024))));
   EXPECT_THAT(reconstructed_executable->name(), "test_module");
+  ASSERT_TRUE(
+      reconstructed_executable->cpu_target_machine_options().has_value());
+  EXPECT_EQ(reconstructed_executable->cpu_target_machine_options().value(),
+            xla::cpu::TargetMachineOptions("test_triple", "test_cpu",
+                                           "+test_features"));
 }
 
 TEST(GpuExecutableTest, GpuExecutableDump) {
   tsl::Env* env = tsl::Env::Default();
 
-  DebugOptions debug_options;
+  DebugOptions debug_options = GetDebugOptionsFromFlags();
   debug_options.set_xla_gpu_experimental_dump_gpu_executable(true);
   TF_ASSERT_OK_AND_ASSIGN(TemporaryDirectory temp_dir,
                           TemporaryDirectory::CreateForCurrentTestcase());
@@ -634,10 +643,11 @@ TEST(GpuExecutableTest, FromProtoWithSymbolResolver) {
     return kCudaSymbol;
   };
 
+  DebugOptions debug_options = GetDebugOptionsFromFlags();
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<GpuExecutable> executable,
       GpuExecutable::FromProto(proto, device_description, "TEST_PLATFORM",
-                               DebugOptions(), symbol_resolver));
+                               debug_options, symbol_resolver));
 
   const CustomKernelThunk* custom_kernel_thunk =
       dynamic_cast<const CustomKernelThunk*>(
@@ -650,7 +660,7 @@ TEST(GpuExecutableTest, FromProtoWithSymbolResolver) {
 }
 
 TEST(GpuExecutableTest, ToProtoReturnsUnchangedThunkGraph) {
-  DebugOptions debug_options;
+  DebugOptions debug_options = GetDebugOptionsFromFlags();
   debug_options.set_xla_gpu_graph_min_graph_size(1);
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
 
@@ -760,7 +770,7 @@ TEST(GpuExecutableTest, FromProtoRegistersHloModuleWithDebugInfoManager) {
   device_description.set_gpu_compute_capability(
       se::GpuComputeCapability{se::CudaComputeCapability::Hopper()});
 
-  DebugOptions debug_options;
+  DebugOptions debug_options = GetDebugOptionsFromFlags();
   debug_options.set_xla_gpu_executable_embed_debug_info(true);
 
   TF_ASSERT_OK_AND_ASSIGN(

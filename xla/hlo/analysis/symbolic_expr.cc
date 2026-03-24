@@ -93,6 +93,83 @@ SymbolicExpr BasicAddSimplify(SymbolicExpr lhs, SymbolicExpr rhs) {
                                 lhs.GetContext());
 }
 
+// TODO(b/459357586): Remove this function and use CanonicalizeMod instead.
+SymbolicExpr BasicFloorDivSimplify(SymbolicExpr lhs, SymbolicExpr rhs) {
+  if (rhs.GetType() == SymbolicExprType::kConstant && rhs.GetValue() == 1) {
+    return lhs;
+  }
+  return CreateSymbolicBinaryOp(SymbolicExprType::kFloorDiv, lhs, rhs,
+                                lhs.GetContext());
+}
+
+// TODO(b/459357586): Remove this function and use CanonicalizeMod instead.
+SymbolicExpr BasicModSimplify(SymbolicExpr lhs, SymbolicExpr rhs) {
+  if (rhs.GetType() == SymbolicExprType::kConstant &&
+      std::abs(rhs.GetValue()) == 1) {
+    return CreateSymbolicConstant(0, lhs.GetContext());
+  }
+  return CreateSymbolicBinaryOp(SymbolicExprType::kMod, lhs, rhs,
+                                lhs.GetContext());
+}
+
+// Pass to construct exprs by combining:
+//   (X floordiv C) * C * Y + (X % C) * Y => X * Y
+bool ConstructExprsCombiningFloorDivAndMod(
+    llvm::DenseMap<SymbolicExpr, int64_t>& term_map,
+    llvm::SmallVector<SymbolicExpr>& exprs, mlir::MLIRContext* ctx) {
+  bool changed = false;
+
+  // We are looking for two terms in the sum that conceptually represent:
+  // 1. A floor division: `(X floordiv C) * (C * Y)`
+  // 2. A modulo:         `(X mod C) * Y`
+  // If we find both, we can replace them with a single term: `X * Y`.
+  for (auto& [base, value] : term_map) {
+    if (value == 0 || base.GetType() != SymbolicExprType::kFloorDiv) {
+      continue;
+    }
+
+    SymbolicExpr rhs = base.GetRHS();
+    if (rhs.GetType() == SymbolicExprType::kConstant) {
+      int64_t C = rhs.GetValue();
+      int64_t Y_times_C = value;
+
+      // Ensure C is positive (valid divisor for the identity used) and that
+      // the coefficient is cleanly divisible by C (so we can extract the
+      // factor Y). The identity (X // C) * C + (X % C) == X only holds
+      // for the current Evaluate implementation when C > 0.
+      if (C > 0 && Y_times_C % C == 0) {
+        int64_t Y = Y_times_C / C;
+
+        // Construct the expected modulo term `(X mod C)` to look for.
+        SymbolicExpr mod_expr = (base.GetLHS() % rhs).Canonicalize();
+
+        auto it = term_map.find(mod_expr);
+        if (it != term_map.end()) {
+          if (it->second == Y) {
+            SymbolicExpr X = base.GetLHS();
+
+            // "Erase" both terms by zeroing their coefficients.
+            value = 0;
+            it->second = 0;
+
+            // Emit the cleanly collapsed algebraic result `X * Y`.
+            exprs.push_back((X * Y).Canonicalize());
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+
+  for (const auto& [term, coeff] : term_map) {
+    if (coeff != 0) {
+      exprs.push_back((term * coeff).Canonicalize());
+    }
+  }
+
+  return changed;
+}
+
 SymbolicExpr CanonicalizeAdd(SymbolicExpr lhs, SymbolicExpr rhs) {
   mlir::MLIRContext* ctx = lhs.GetContext();
 
@@ -104,7 +181,7 @@ SymbolicExpr CanonicalizeAdd(SymbolicExpr lhs, SymbolicExpr rhs) {
   absl::c_sort(terms,
                [](const auto& a, const auto& b) { return a.first < b.first; });
 
-  llvm::SmallVector<SymbolicExpr> exprs;
+  llvm::DenseMap<SymbolicExpr, int64_t> term_map;
   int64_t const_val = 0;
 
   for (int i = 0; i < terms.size(); ++i) {
@@ -123,9 +200,13 @@ SymbolicExpr CanonicalizeAdd(SymbolicExpr lhs, SymbolicExpr rhs) {
     if (current_base.GetType() == SymbolicExprType::kConstant) {
       const_val += current_base.GetValue() * current_coeff;
     } else {
-      exprs.push_back((current_base * current_coeff).Canonicalize());
+      term_map[current_base] += current_coeff;
     }
   }
+
+  llvm::SmallVector<SymbolicExpr> exprs;
+
+  bool changed = ConstructExprsCombiningFloorDivAndMod(term_map, exprs, ctx);
 
   // Add the combined constant term as an expression
   if (const_val != 0) {
@@ -142,7 +223,7 @@ SymbolicExpr CanonicalizeAdd(SymbolicExpr lhs, SymbolicExpr rhs) {
     result =
         CreateSymbolicBinaryOp(SymbolicExprType::kAdd, result, exprs[i], ctx);
   }
-  return result;
+  return changed ? result.Canonicalize() : result;
 }
 
 // Helper to simplify multiplication when the RHS is a constant.
@@ -285,6 +366,18 @@ SymbolicExpr TrySimplifyDivModByGCD(SymbolicExprType op_type, SymbolicExpr lhs,
   }
 }
 
+// Simplifies (A + B) mod C = B mod C if A is a multiple of C.
+SymbolicExpr SimplifyModAddOperand(SymbolicExpr a, SymbolicExpr b,
+                                   int64_t div) {
+  if (a.IsMultipleOf(div)) {
+    return (b % div).Canonicalize();
+  }
+  if (b.IsMultipleOf(div)) {
+    return (a % div).Canonicalize();
+  }
+  return SymbolicExpr();  // Cannot simplify
+}
+
 // Simplifies (A + B) floordiv C = (A / C) + (B floordiv C) if A is a multiple
 // of C.
 SymbolicExpr SimplifyFloorDivAddOperand(SymbolicExpr a, SymbolicExpr b,
@@ -398,20 +491,38 @@ SymbolicExpr CanonicalizeMod(SymbolicExpr lhs, SymbolicExpr rhs) {
     int64_t divisor = rhs.GetValue();
     CHECK_NE(divisor, 0) << "Modulo by zero";
 
+    if (divisor == 1 || divisor == -1) {
+      return CreateSymbolicConstant(0, ctx);
+    }
+
+    if (lhs.IsMultipleOf(divisor)) {
+      return CreateSymbolicConstant(0, ctx);
+    }
+
     if (SymbolicExpr gcd_simplified =
             TrySimplifyDivModByGCD(SymbolicExprType::kMod, lhs, divisor)) {
       return gcd_simplified;
     }
+
+    // Rewrite `(x % a) % b` to `x % b` if `a % b == 0`.
+    if (lhs.GetType() == SymbolicExprType::kMod &&
+        lhs.GetRHS().GetType() == SymbolicExprType::kConstant) {
+      int64_t inner_divisor = lhs.GetRHS().GetValue();
+      if (inner_divisor % divisor == 0) {
+        return (lhs.GetLHS() % divisor).Canonicalize();
+      }
+    }
+
+    // Distributivity for (A + C1) mod C2 where C1 % C2 == 0
+    if (lhs.GetType() == SymbolicExprType::kAdd) {
+      if (auto simplified =
+              SimplifyModAddOperand(lhs.GetLHS(), lhs.GetRHS(), divisor)) {
+        return simplified;
+      }
+    }
   }
 
-  // Fallback: A mod B = A - (A floordiv B) * B
-  SymbolicExpr floor_div_expr = lhs.floorDiv(rhs).Canonicalize();
-  if (floor_div_expr.GetType() == SymbolicExprType::kConstant &&
-      floor_div_expr.GetValue() == 0) {
-    return lhs;  // If A floordiv B is 0, then A mod B is A
-  }
-  SymbolicExpr product = (floor_div_expr * rhs).Canonicalize();
-  return (lhs - product).Canonicalize();
+  return CreateSymbolicBinaryOp(SymbolicExprType::kMod, lhs, rhs, ctx);
 }
 
 uint64_t GetLargestKnownDivisor(SymbolicExpr expr) {
@@ -654,8 +765,26 @@ SymbolicExpr SymbolicExpr::ReplaceVariables(
 }
 
 SymbolicExpr SymbolicExpr::ReplaceDims(
-    absl::Span<const SymbolicExpr> dim_replacements) const {
-  return ReplaceVariables(dim_replacements);
+    absl::Span<const SymbolicExpr> dim_replacements, int64_t current_num_dims,
+    int64_t new_num_dims, int64_t num_symbols) const {
+  CHECK_LE(dim_replacements.size(), current_num_dims);
+  if (current_num_dims == new_num_dims) {
+    return ReplaceVariables(dim_replacements);
+  }
+
+  llvm::SmallVector<SymbolicExpr> all_replacements;
+  int64_t num_dims_to_replace = dim_replacements.size();
+  all_replacements.reserve(current_num_dims + num_symbols);
+  all_replacements.append(dim_replacements.begin(), dim_replacements.end());
+  for (int64_t i = 0; i < current_num_dims - num_dims_to_replace; ++i) {
+    all_replacements.push_back(
+        CreateSymbolicVariable(i + num_dims_to_replace, GetContext()));
+  }
+  for (int64_t i = 0; i < num_symbols; ++i) {
+    all_replacements.push_back(
+        CreateSymbolicVariable(new_num_dims + i, GetContext()));
+  }
+  return ReplaceVariables(all_replacements);
 }
 
 SymbolicExpr SymbolicExpr::ReplaceSymbols(
@@ -832,16 +961,14 @@ SymbolicExpr SymbolicExpr::operator%(int64_t v) const {
   return this->operator%(CreateSymbolicConstant(v, GetContext()));
 }
 SymbolicExpr SymbolicExpr::operator%(SymbolicExpr other) const {
-  return CreateSymbolicBinaryOp(SymbolicExprType::kMod, *this, other,
-                                GetContext());
+  return BasicModSimplify(*this, other);
 }
 
 SymbolicExpr SymbolicExpr::floorDiv(int64_t v) const {
   return this->floorDiv(CreateSymbolicConstant(v, GetContext()));
 }
 SymbolicExpr SymbolicExpr::floorDiv(SymbolicExpr other) const {
-  return CreateSymbolicBinaryOp(SymbolicExprType::kFloorDiv, *this, other,
-                                GetContext());
+  return BasicFloorDivSimplify(*this, other);
 }
 
 SymbolicExpr SymbolicExpr::ceilDiv(int64_t v) const {

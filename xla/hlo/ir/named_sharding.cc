@@ -49,7 +49,7 @@ NamedSharding::NamedSharding(Mesh mesh,
                              absl::Span<const AxisRef> manual_axes,
                              absl::Span<const OpMetadata> metadata)
     : mesh_(std::move(mesh)),
-      dim_shardings_(CanonicalizedDimShardings(dim_shardings)),
+      dim_shardings_(dim_shardings.begin(), dim_shardings.end()),
       replicated_axes_(replicated_axes.begin(), replicated_axes.end()),
       unreduced_axes_(unreduced_axes.begin(), unreduced_axes.end()),
       manual_axes_(manual_axes.begin(), manual_axes.end()),
@@ -230,7 +230,7 @@ std::string NamedSharding::ToString(bool include_metadata) const {
   absl::StrAppend(&result, mesh_.ToString());
 
   // Special cases.
-  if (IsReplicated() && replicated_axes_.empty()) {
+  if (IsReplicated() && num_dimensions() == 0 && replicated_axes_.empty()) {
     absl::StrAppend(&result, ", replicated");
     absl::StrAppend(&result, metadata_str);
     absl::StrAppend(&result, "}");
@@ -243,14 +243,14 @@ std::string NamedSharding::ToString(bool include_metadata) const {
     return result;
   }
 
-  if (IsUnreduced()) {
+  if (IsUnreduced() && num_dimensions() == 0) {
     absl::StrAppend(&result, ", unreduced");
     absl::StrAppend(&result, metadata_str);
     absl::StrAppend(&result, "}");
     return result;
   }
 
-  if (IsManual()) {
+  if (IsManual() && num_dimensions() == 0) {
     absl::StrAppend(&result, ", manual");
     absl::StrAppend(&result, metadata_str);
     absl::StrAppend(&result, "}");

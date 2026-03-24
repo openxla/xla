@@ -236,6 +236,9 @@ std::vector<IntrinsicAccuracyTestParam> GetAccuracyTestParams() {
       {"log-plus-one", F32, accuracy::kGoldenLog1p, accuracy::kLog1pF32Budget},
       {"log-plus-one", F64, accuracy::kGoldenLog1p, accuracy::kLog1pF64Budget},
 
+      {"log", F32, accuracy::kGoldenLog, accuracy::kLogF32Budget},
+      {"log", F64, accuracy::kGoldenLog, accuracy::kLogF64Budget},
+
       {"rsqrt", F32, accuracy::kGoldenRsqrt, accuracy::kRsqrtF32Budget},
       {"rsqrt", F64, accuracy::kGoldenRsqrt, accuracy::kRsqrtF64Budget},
 
@@ -305,6 +308,10 @@ class HloIntrinsicAccuracyParamTest
     return test_runner().HasProperty(HloRunnerPropertyTag::kCpu);
   }
 
+  bool is_rocm() const {
+    return test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuRocm);
+  }
+
  private:
   template <typename T>
   void DoRunAccuracyTest(const IntrinsicAccuracyTestParam& param) {
@@ -343,7 +350,10 @@ class HloIntrinsicAccuracyParamTest
                                            result_data.size());
     LogAccuracyReport(report, ToPascalCase(param.hlo_op_name));
 
-    const UlpBudget& budget = is_cpu() ? param.budget.cpu : param.budget.gpu;
+    const UlpBudget& budget = is_cpu() ? param.budget.cpu
+                              : (is_rocm() && param.budget.rocm_gpu.has_value())
+                                  ? *param.budget.rocm_gpu
+                                  : param.budget.gpu;
 
     EXPECT_LE(report.regular.max_ulp_error, budget.regular)
         << "Regular max ULP error " << report.regular.max_ulp_error

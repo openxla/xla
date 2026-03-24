@@ -734,7 +734,7 @@ TEST(HloShardingUtilTest, ReshapeShardingDimensionSizeOnePartitioned5) {
 TEST(HloShardingUtilTest, ReshapeShardingMaximal) {
   Shape input_shape = ShapeUtil::MakeShape(F32, {2, 3, 5});
   Shape output_shape = ShapeUtil::MakeShape(F32, {3, 5, 2});
-  HloSharding sharding = HloSharding::AssignDevice(7);
+  HloSharding sharding = HloSharding::SingleDevice(7);
   std::optional<HloSharding> result =
       ReshapeSharding(input_shape, output_shape, sharding);
   EXPECT_EQ(result, sharding);
@@ -2062,7 +2062,7 @@ TEST(HloShardingUtilTest, TileShapeWithMixedUnreducedSubgroupSharding) {
                                                  /*unreduced_axes=*/{"b"});
   HloSharding sharding_1 = HloSharding::V3ToV2Sharding(ns_1);
   EXPECT_EQ(sharding_1, HloSharding::Subgroup(
-                            TileAssignment({2, 2}, {2, 2}, {1, 0}),
+                            TileAssignment({1, 1, 2, 2}, {2, 2}, {1, 0}),
                             {OpSharding::UNREDUCED, OpSharding::REPLICATED}));
   EXPECT_EQ(hlo_sharding_util::TileShape(sharding_1, shape),
             ShapeUtil::MakeShape(F32, {6, 6}));

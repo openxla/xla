@@ -74,6 +74,23 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+bool IsGpublasLtSupportedGroupedMatMul(const HloInstruction& instr) {
+  if (instr.opcode() == HloOpcode::kRaggedDot) {
+    switch (instr.shape().element_type()) {
+      // Only float 16 and bf 16 are supported by HipBlasLt GroupGemm
+      case F16:
+      case BF16:
+        return (((instr.operand(0)->shape().element_type() == F16) ||
+                 (instr.operand(0)->shape().element_type() == BF16)) &&
+                ((instr.operand(1)->shape().element_type() == F16) ||
+                 (instr.operand(1)->shape().element_type() == BF16)));
+      default:
+        return false;
+    }
+  }
+  return false;
+}
+
 absl::StatusOr<bool> IsCublasSupportedMatMul(
     const HloInstruction& dot, bool allow_matrix_vector_multiplication) {
   if (dot.opcode() != HloOpcode::kDot) {
@@ -86,18 +103,17 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
     TF_ASSIGN_OR_RETURN(DotOperandDims dims,
                         DotOperandDims::FromDotOperand(&dot, operand));
     // cuBLAS only supports single contracting dimension.
-    if (dims.DimensionCount(DotOperandDims::kContracting) != 1) {
+    if (dims.Rank(DotOperandDims::kContracting) != 1) {
       return false;
     }
     // cuBLAS doesn't support minor batch dimension.
-    if (absl::c_any_of(dims.DimensionIndices(DotOperandDims::kBatch),
-                       [&](int64_t dim) {
-                         return dim == dims.shape().dimensions().size() - 1;
-                       })) {
+    if (absl::c_any_of(dims.Indices(DotOperandDims::kBatch), [&](int64_t dim) {
+          return dim == dims.shape().dimensions().size() - 1;
+        })) {
       return false;
     }
     // cuBLAS supports up to one non-contracting dimension.
-    const auto& nc_dims = dims.DimensionSizes(DotOperandDims::kNonContracting);
+    const auto& nc_dims = dims.Sizes(DotOperandDims::kNonContracting);
     if (nc_dims.size() > 1) {
       return false;
     }

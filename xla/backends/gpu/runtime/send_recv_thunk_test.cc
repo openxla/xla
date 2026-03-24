@@ -45,10 +45,11 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/hlo_test_base_legacy.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 
@@ -58,7 +59,7 @@ namespace {
 using ::testing::UnorderedElementsAre;
 using Kind = Thunk::Kind;
 
-class GpuSendRecvTest : public HloTestBase {};
+using GpuSendRecvTest = HloTestBaseLegacy;
 
 // Test case to verify that Send HLO instruction is correctly
 // converted into a sequence of command buffer commands (Send and SendDone).

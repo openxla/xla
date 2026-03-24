@@ -901,14 +901,20 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
       HloInstruction* hlo, const HloInstruction* input_tensor,
       const HloInstruction* update_tensor);
 
-  // Handler for dot instructions with no conflicts.
+  // Handler for operations with no conflicts.
+  // go/keep-sorted start
   absl::Status HandleDotWithoutConflicts(HloInstruction* hlo);
+  absl::Status HandleGatherWithoutConflicts(HloInstruction* hlo);
+  // go/keep-sorted end
 
   // Handlers for specific custom call targets.
   // go/keep-sorted start
+  // multi_rotate(x, dim, L, R) = (rotate_left(x, L), ..., rotate_left(x, -R))
   absl::Status HandleCustomCallSPMDInternal_MultiRotate(HloInstruction* hlo);
+  // mult_slice(x[idxs...], dim, amt) = (x[idxs...], ..., x[idx+amt...])
   absl::Status HandleCustomCallSPMDInternal_MultiSlice(HloInstruction* hlo);
   absl::Status HandleCustomCallSPMDInternal_RotateRight(HloInstruction* hlo);
+  // wrap(x, L, R) = (x[-L:], x, x[0:R])
   absl::Status HandleCustomCallSPMDInternal_Wrap(HloInstruction* hlo);
   absl::Status HandleCustomCallTopK(HloInstruction* hlo);
   // go/keep-sorted end
@@ -917,6 +923,7 @@ class SpmdPartitioningVisitor : public DfsHloVisitorWithDefault {
   ConstructHaloExchangeSuperShard(const HloInstruction* input_operand,
                                   int64_t dim, int64_t left_amount,
                                   int64_t right_amount, bool handle_last_shard,
+                                  int64_t max_start_index,
                                   int64_t post_halo_shard_size);
 };
 

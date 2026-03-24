@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
+#include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
@@ -884,6 +885,10 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
             .xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
         module->config().debug_options().xla_gpu_enable_cublaslt();
     if (has_grouped_gemm) {
+      // At the moment, if Gpublaslt support is available, it is prefered
+      // over triton fused ragged-dot. Therefore, we skip this pass and
+      // does not fused the ragged-dot op if the Gpublaslt support
+      // is available for this operation.
       return absl::OkStatus();
     }
 
@@ -999,7 +1004,7 @@ absl::StatusOr<bool> GemmFusion::RunImpl(
 
   bool changed = false;
   for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
+       GetFusibleComputations(*module, execution_threads)) {
     TF_ASSIGN_OR_RETURN(bool result,
                         RunOnComputation(computation, compute_capability_));
     changed |= result;

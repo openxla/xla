@@ -124,7 +124,8 @@ struct GemmConfig : public se::gpu::GemmConfig {
       double alpha_real, double alpha_imag, double beta,
       PrecisionConfig::Algorithm precision_algorithm,
       std::optional<int64_t> algorithm, int64_t compute_precision, bool grad_x,
-      bool grad_y, const se::GpuComputeCapability& gpu_version);
+      bool grad_y, se::gpu::ScaleMode scale_mode,
+      const se::GpuComputeCapability& gpu_version);
 
   // As above with additional `c_shape` and `bias_shape_ptr` parameter, both
   // which are only necessarily for F8 gemms.
@@ -137,7 +138,8 @@ struct GemmConfig : public se::gpu::GemmConfig {
       double alpha_imag, double beta,
       PrecisionConfig::Algorithm precision_algorithm,
       std::optional<int64_t> algorithm, int64_t compute_precision, bool grad_x,
-      bool grad_y, const se::GpuComputeCapability& gpu_version);
+      bool grad_y, se::gpu::ScaleMode scale_mode,
+      const se::GpuComputeCapability& gpu_version);
 
   struct DescriptorsTuple {
     se::gpu::MatrixDescriptor lhs;
@@ -149,6 +151,41 @@ struct GemmConfig : public se::gpu::GemmConfig {
       se::DeviceAddressBase lhs_buf, se::DeviceAddressBase rhs_buf,
       se::DeviceAddressBase out_buf,
       const se::GpuComputeCapability& gpu_version) const;
+};
+
+struct GroupedGemmConfig : public se::gpu::GroupedGemmConfig {
+  GroupedGemmConfig() = default;
+  explicit GroupedGemmConfig(const se::gpu::GroupedGemmConfig& base)
+      : se::gpu::GroupedGemmConfig(base) {}
+  explicit GroupedGemmConfig(se::gpu::GroupedGemmConfig&& base)
+      : se::gpu::GroupedGemmConfig(std::move(base)) {}
+
+  // For legacy Gemm operations XLA:GPU allocates its own workspace and passes
+  // it to all BLAS API calls.
+  static constexpr int64_t kUserArgsSizeBytes = 196;
+
+  // Gets the GroupedGemmConfig of the `grouped_gemm` instruction with
+  // overridden GroupedGemmBackendConfig.
+  static absl::StatusOr<GroupedGemmConfig> For(
+      const HloInstruction* grouped_gemm,
+      const GroupedGemmBackendConfig& config,
+      const se::GpuComputeCapability& gpu_version);
+
+  static absl::StatusOr<GroupedGemmConfig> For(
+      const Shape& lhs_shape, absl::Span<const int64_t> lhs_batch_dims,
+      absl::Span<const int64_t> lhs_contracting_dims,
+      int64_t lhs_ragged_dimension, const Shape& rhs_shape,
+      absl::Span<const int64_t> rhs_batch_dims,
+      absl::Span<const int64_t> rhs_contracting_dims,
+      absl::Span<const int64_t> rhs_group_dimensions, const Shape& output_shape,
+      double alpha_real, double alpha_imag, double beta,
+      PrecisionConfig::Algorithm precision_algorithm,
+      std::optional<int64_t> algorithm, int64_t compute_precision,
+      uint64_t group_count, const se::GpuComputeCapability& gpu_version);
+
+  static absl::StatusOr<GroupedGemmConfig> For(
+      const HloInstruction* groupe_gemm,
+      const se::GpuComputeCapability& gpu_version);
 };
 
 // Run the given GEMM instruction `gemm` subject to the configuration

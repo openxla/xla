@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/all_gather_thunk.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/all_to_all_thunk.h"
+#include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/collective_broadcast_thunk.h"
 #include "xla/backends/gpu/runtime/collective_permute_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -100,7 +101,8 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const KernelThunk& thunk) {
   return std::make_unique<LaunchCmd>(
       thunk.kernel_name(), thunk.arguments(), ArgsAccess(thunk.written()),
-      thunk.launch_dimensions(), thunk.shmem_bytes(), thunk.tma_metadata());
+      thunk.launch_dimensions(), thunk.shmem_bytes(), thunk.tma_metadata(),
+      thunk.use_pdl());
 }
 
 static absl::StatusOr<std::unique_ptr<Command>> Convert(
@@ -247,7 +249,7 @@ static absl::StatusOr<std::unique_ptr<Command>> Convert(
     const DynamicSliceThunk& thunk, const ConvertToCommandsOptions& options) {
   TF_ASSIGN_OR_RETURN(
       CommandExecutor embedded_cmds,
-      ConvertToCommands(thunk.get_embedded_thunk()->thunks(), options));
+      ConvertToCommands(thunk.get_embedded_executor().thunks(), options));
 
   auto& thunk_fake_allocations = thunk.get_fake_allocations();
   std::vector<BufferAllocation> fake_allocations;
@@ -389,6 +391,20 @@ static absl::Status AppendCommands(ConversionContext& ctx,
                             static_cast<const SequentialThunk&>(thunk).thunks(),
                             options);
 
+    // Async start/done thunks are no-op from command buffer perspective as
+    // command buffers resolve dependencies using buffer conflicts. We inline
+    // the nested thunk sequence from async start into the command buffer.
+    case Thunk::Kind::kAsyncStart:
+      return AppendCommands(ctx, cmd_sequence,
+                            static_cast<const AsyncStartThunk&>(thunk).thunks(),
+                            options);
+    case Thunk::Kind::kAsyncDone:
+      if (thunk.control_predecessors().empty()) {
+        return absl::OkStatus();
+      }
+      return append(absl::StatusOr<std::unique_ptr<Command>>(
+          std::make_unique<EmptyCmd>()));
+
     case Thunk::Kind::kAllGatherDone:
     case Thunk::Kind::kAllReduceDone:
     case Thunk::Kind::kAllToAllDone:
@@ -430,7 +446,7 @@ static absl::Status AppendCommands(ConversionContext& ctx,
       return Internal(
           "Error trying to emit command for a CommandBufferThunk. Input HLO "
           "must already contain command buffers and XLA should not run command "
-          "buffer scheduling pass the second time. It it happens in the test, "
+          "buffer scheduling pass the second time. If it happens in the test, "
           "try explicitly disabling command buffers in tested HLO module.");
 
     default:

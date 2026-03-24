@@ -46,9 +46,23 @@ bool IsIdentifierCharacter(char c) {
   return absl::ascii_isalnum(c) || c == '_';
 }
 
+int GetPrecedence(SymbolicExprType type) {
+  switch (type) {
+    case SymbolicExprType::kAdd:
+      return 1;
+    case SymbolicExprType::kMul:
+    case SymbolicExprType::kFloorDiv:
+    case SymbolicExprType::kCeilDiv:
+    case SymbolicExprType::kMod:
+      return 2;
+    default:
+      return 3;
+  }
+}
+
 void PrintImpl(SymbolicExpr expr, llvm::raw_ostream& os,
                std::optional<int64_t> num_dims,
-               absl::Span<const std::string> var_names) {
+               absl::Span<const std::string> var_names, int parent_prec = 0) {
   switch (expr.GetType()) {
     case SymbolicExprType::kConstant:
       os << expr.GetValue();
@@ -82,20 +96,27 @@ void PrintImpl(SymbolicExpr expr, llvm::raw_ostream& os,
     case SymbolicExprType::kCeilDiv:
     case SymbolicExprType::kMod: {
       auto bin_op_str = GetBinaryOpString(expr.GetType());
-      os << "(";
-      PrintImpl(expr.GetLHS(), os, num_dims, var_names);
+      int prec = GetPrecedence(expr.GetType());
+      bool needs_parens = prec < parent_prec;
+      if (needs_parens) {
+        os << "(";
+      }
+      PrintImpl(expr.GetLHS(), os, num_dims, var_names, prec);
       os << " " << bin_op_str << " ";
-      PrintImpl(expr.GetRHS(), os, num_dims, var_names);
-      os << ")";
+      int rhs_prec = prec + 1;
+      PrintImpl(expr.GetRHS(), os, num_dims, var_names, rhs_prec);
+      if (needs_parens) {
+        os << ")";
+      }
       return;
     }
     case SymbolicExprType::kMax:
     case SymbolicExprType::kMin: {
       auto bin_op_str = GetBinaryOpString(expr.GetType());
       os << bin_op_str << "(";
-      PrintImpl(expr.GetLHS(), os, num_dims, var_names);
+      PrintImpl(expr.GetLHS(), os, num_dims, var_names, 0);
       os << ", ";
-      PrintImpl(expr.GetRHS(), os, num_dims, var_names);
+      PrintImpl(expr.GetRHS(), os, num_dims, var_names, 0);
       os << ")";
       return;
     }

@@ -27,15 +27,14 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/ascii.h"
 #include "xla/backends/gpu/ffi.h"
+#include "xla/backends/gpu/runtime/async_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
-#include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion_rewriter.h"
 #include "xla/error_spec.h"
 #include "xla/ffi/ffi.h"
-#include "xla/ffi/ffi_api.h"
 #include "xla/hlo/builder/lib/constants.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -52,9 +51,10 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/platform_manager.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tests/hlo_test_base.h"
+#include "xla/tests/hlo_test_base_legacy.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
@@ -107,7 +107,7 @@ bool IsAtLeastCuda12900(const se::StreamExecutor* stream_executor) {
   return false;
 }
 
-class DynamicSliceFusionTest : public HloTestBase {
+class DynamicSliceFusionTest : public HloTestBaseLegacy {
  public:
   HloModuleConfig GetModuleConfigWithoutCommandBuffer() {
     DebugOptions debug_options = GetDebugOptionsForTest();
@@ -3065,7 +3065,7 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterSlice) {
   )";
 
   HloModuleConfig config;
-  DebugOptions options;
+  DebugOptions options = GetDebugOptionsForTest();
   options.set_xla_gpu_enable_dynamic_slice_fusion(false);
   options.clear_xla_gpu_enable_command_buffer();
   config.set_debug_options(options);
@@ -3098,17 +3098,19 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterSlice) {
   // The pattern we have here is a static slice along with reduce-scatter
   // operation. With this pattern, we can compute the offset at compile time and
   // we do not need to emit a dynamic slice thunk to compute the offset at
-  // runtime. So, we expect to see kNcclReduceScatterStart and
-  // kNcclReduceScatterDone thunks. We also expect to see surrounding
-  // kWaitsForStreams thunks because dynamic slice fusion with a collective hero
-  // is converted into an async operation. The kWaitForStreams thunks are
-  // expected because of the async operation.
-  ASSERT_EQ(gpu_exec->thunk_executor().thunks().size(), 4ul);
+  // runtime. The reduce-scatter runs synchronously inside the AsyncStart
+  // region, and AsyncDone handles the stream synchronization.
+  ASSERT_EQ(gpu_exec->thunk_executor().thunks().size(), 2ul);
   EXPECT_THAT(gpu_exec->thunk_executor().thunks(),
-              ::testing::ElementsAre(ThunkKindIs(Thunk::kWaitForStreams),
-                                     ThunkKindIs(Thunk::kReduceScatterStart),
-                                     ThunkKindIs(Thunk::kReduceScatterDone),
-                                     ThunkKindIs(Thunk::kWaitForStreams)));
+              ::testing::ElementsAre(ThunkKindIs(Thunk::kAsyncStart),
+                                     ThunkKindIs(Thunk::kAsyncDone)));
+
+  // Check that the async start thunk wraps a synchronous reduce-scatter.
+  auto* async_start_thunk = dynamic_cast<AsyncStartThunk*>(
+      gpu_exec->thunk_executor().thunks()[0].get());
+  ASSERT_NE(async_start_thunk, nullptr);
+  EXPECT_THAT(async_start_thunk->thunks(),
+              ::testing::ElementsAre(ThunkKindIs(Thunk::kReduceScatterStart)));
 
   ErrorSpec error{/*aabs=*/1e-3, /*arel=*/1e-3};
   EXPECT_TRUE(RunAndCompareTwoModulesReplicated(std::move(module_ref_opt),
@@ -3136,7 +3138,7 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterDynamicSlice) {
   })";
 
   HloModuleConfig config;
-  DebugOptions options;
+  DebugOptions options = GetDebugOptionsForTest();
   options.set_xla_gpu_enable_dynamic_slice_fusion(false);
   options.clear_xla_gpu_enable_command_buffer();
   config.set_debug_options(options);
@@ -3293,26 +3295,23 @@ TEST_F(DynamicSliceFusionTest,
   const ThunkSequence& thunks = gpu_exec->thunk_executor().thunks();
 
   // This is only needed to ensure that the next checks don't fail.
-  ASSERT_EQ(thunks.size(), 6);
+  ASSERT_EQ(thunks.size(), 4);
 
   // In the following checks, only the order of the thunks matter.
-  EXPECT_THAT(thunks,
-              ::testing::ElementsAre(ThunkKindIs(Thunk::kCopy),
-                                     ThunkKindIs(Thunk::kWaitForStreams),
-                                     ThunkKindIs(Thunk::kDynamicSlice),
-                                     ThunkKindIs(Thunk::kKernel),
-                                     ThunkKindIs(Thunk::kReduceScatterDone),
-                                     ThunkKindIs(Thunk::kWaitForStreams)));
+  EXPECT_THAT(thunks, ::testing::ElementsAre(ThunkKindIs(Thunk::kCopy),
+                                             ThunkKindIs(Thunk::kAsyncStart),
+                                             ThunkKindIs(Thunk::kKernel),
+                                             ThunkKindIs(Thunk::kAsyncDone)));
 
-  // Check that the dynamic slice thunk only produces a start thunk, and not a
-  // done thunk.
+  // Check that the async start thunk wraps a dynamic slice thunk which runs
+  // the reduce-scatter synchronously inside the async region.
+  auto* async_start_thunk = dynamic_cast<AsyncStartThunk*>(thunks[1].get());
+  ASSERT_NE(async_start_thunk, nullptr);
+  ASSERT_EQ(async_start_thunk->thunks().size(), 1);
   DynamicSliceThunk* dynamic_slice_thunk =
-      dynamic_cast<DynamicSliceThunk*>(thunks[2].get());
+      dynamic_cast<DynamicSliceThunk*>(async_start_thunk->thunks()[0].get());
   ASSERT_NE(dynamic_slice_thunk, nullptr);
-  const SequentialThunk* embedded_thunk = dynamic_cast<const SequentialThunk*>(
-      dynamic_slice_thunk->embedded_thunk());
-  ASSERT_NE(embedded_thunk, nullptr);
-  EXPECT_THAT(embedded_thunk->thunks(),
+  EXPECT_THAT(dynamic_slice_thunk->get_embedded_executor().thunks(),
               ::testing::ElementsAre(ThunkKindIs(Thunk::kReduceScatterStart)));
 
   // Check that the offsets were propagated as constants, and not as device

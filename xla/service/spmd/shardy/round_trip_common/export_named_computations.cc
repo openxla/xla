@@ -226,12 +226,13 @@ void exportNamedComputations(ModuleOp moduleOp, SymbolTable& symbolTable,
         namedComputationOp, namedComputationOp.getResultTypes(), funcSymName,
         namedComputationOp.getOperands());
     callOp->setAttrs(callOpAttrs);
+    // TODO(enver): Use utils methods for inserting copies/reshards instead.
 
-    // Copy the func output shardings to the call op.
     FuncOp funcOp = symbolTable.lookup<FuncOp>(funcSymName);
+    maybeInsertReshardsOnFuncArguments(funcOp, callOp, symbolTable, rewriter);
+    // Copy the func output shardings to the call op.
     if (TensorShardingPerValueAttr funcResultShardings =
-            getFuncResultShardings(callOp, funcOp, symbolTable);
-        funcResultShardings) {
+            getFuncResultShardings(funcOp, symbolTable)) {
       mlir::sdy::setShardings(callOp, funcResultShardings);
       if (outShardings.has_value()) {
         for (auto [funcResultSharding, outSharding, result] : llvm::zip_equal(
@@ -251,23 +252,6 @@ void exportNamedComputations(ModuleOp moduleOp, SymbolTable& symbolTable,
       }
     }
   });
-}
-
-void eraseUncalledInlineableManualComputations(
-    ModuleOp moduleOp, SymbolTable& symbolTable,
-    const SymbolUserMap& symbolUserMap) {
-  llvm::SmallVector<FuncOp> uncalledInlineableManualComputationFuncs;
-  for (FuncOp funcOp : moduleOp.getOps<FuncOp>()) {
-    if (StringRef funcSymName = funcOp.getName();
-        funcSymName.contains(kInlineableManualComputationFuncName) &&
-        symbolUserMap.useEmpty(funcOp)) {
-      uncalledInlineableManualComputationFuncs.push_back(funcOp);
-    }
-  }
-  // TODO(enver): Erase directly without collecting on a vector.
-  for (FuncOp funcOp : uncalledInlineableManualComputationFuncs) {
-    symbolTable.erase(funcOp);
-  }
 }
 
 // Converts a `NamedComputationOp` into a `CallOp`.
@@ -294,12 +278,6 @@ class ExportNamedComputationsPass
 
     SymbolTable& symbolTable = symbolTableCollection.getSymbolTable(moduleOp);
     exportNamedComputations(moduleOp, symbolTable, dedupFunctionsFully);
-
-    // Drop uncalled inlineable manual computation funcs.
-    // TODO(enver): Drop generically, not just inlined manual computation funcs.
-    SymbolUserMap symbolUserMap(symbolTableCollection, moduleOp);
-    eraseUncalledInlineableManualComputations(moduleOp, symbolTable,
-                                              symbolUserMap);
   }
 
   StringRef getArgument() const override {

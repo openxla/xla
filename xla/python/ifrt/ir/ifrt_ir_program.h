@@ -68,6 +68,12 @@ struct IfrtIRProgram : llvm::RTTIExtends<IfrtIRProgram, Program> {
   // Returns true if the program exclusively owns the MLIR context.
   bool OwnsMlirContext() const { return mlir_context != nullptr; }
 
+  // Key for the `fill_all_statuses` attribute in the custom_options attribute
+  // map. If set to true, all executables will have their status filled if
+  // `options.fill_status` is set. Otherwise, only leaf executables will have
+  // their status filled.
+  static constexpr absl::string_view kFillAllStatuses = "fill_all_statuses";
+
   static char ID;  // NOLINT
 
  private:
@@ -112,10 +118,9 @@ struct DeserializeIfrtIRProgramOptions
                         DeserializeExecutableOptions> {
   explicit DeserializeIfrtIRProgramOptions(mlir::MLIRContext* context)
       : context(context) {}
-  DeserializeIfrtIRProgramOptions(
-      mlir::MLIRContext* context,
-      std::optional<xla::ifrt::DeviceListRef> device_list,
-      absl::Span<Device* const> device_assignments)
+  DeserializeIfrtIRProgramOptions(mlir::MLIRContext* context,
+                                  std::optional<DeviceListRef> device_list,
+                                  absl::Span<Device* const> device_assignments)
       : llvm::RTTIExtends<DeserializeIfrtIRProgramOptions,
                           DeserializeExecutableOptions>(device_list),
         context(context),
@@ -136,8 +141,8 @@ struct IfrtIRCompileOptions
       std::vector<DeviceId> device_assignments,
       absl::flat_hash_map<std::string, LoadedExecutableRef>
           loaded_exec_binding = {},
-      std::shared_ptr<absl::flat_hash_map<
-          std::string, std::unique_ptr<xla::ifrt::CompileOptions>>>
+      std::shared_ptr<
+          absl::flat_hash_map<std::string, std::unique_ptr<CompileOptions>>>
           compile_options_overrides = {},
       std::string mlir_dump_to = "", std::string mlir_dump_pass_re = "",
       std::string mlir_dump_func_re = ".*", bool mlir_enable_timing = false,
@@ -171,8 +176,8 @@ struct IfrtIRCompileOptions
   // Mapping from values of `ifrt.compile_option_key` attribute of a `CallOp` to
   // compile options. If a `CallOp` does not have have the attribute set or does
   // not have an entry in this map then default compile options are used.
-  std::shared_ptr<absl::flat_hash_map<
-      std::string, std::unique_ptr<xla::ifrt::CompileOptions>>>
+  std::shared_ptr<
+      absl::flat_hash_map<std::string, std::unique_ptr<CompileOptions>>>
       compile_options_overrides;
 
   // Constructs `IfrtIRCompileOptions` from `IfrtIrCompileOptionsProto`.
@@ -210,7 +215,7 @@ llvm::raw_ostream& operator<<(llvm::raw_ostream& os,
 llvm::raw_ostream& operator<<(llvm::raw_ostream& os,
                               std::shared_ptr<IfrtIRCompileOptions> options);
 
-// Gets `xla::ifrt::IfrtIRCompileOptions` from `xla::ifrt::CompileOptions`.
+// Gets `IfrtIRCompileOptions` from `CompileOptions`.
 absl::StatusOr<std::unique_ptr<IfrtIRCompileOptions>> GetIfrtIRCompileOptions(
     std::unique_ptr<CompileOptions> options);
 

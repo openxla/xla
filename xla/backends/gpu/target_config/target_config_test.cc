@@ -71,6 +71,8 @@ INSTANTIATE_TEST_SUITE_P(
         {"P100", GpuModel::P100, true},
         {"V100", GpuModel::V100, true},
         {"GB200", GpuModel::GB200, true},
+        {"GB300", GpuModel::GB300, true},
+        {"RTX6000PRO", GpuModel::RTX6000PRO, true},
     }),
     [](const ::testing::TestParamInfo<GetGpuTargetConfigTest::ParamType>&
            info) { return info.param.test_name; });

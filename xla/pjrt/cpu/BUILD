@@ -166,6 +166,7 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:thunk_executor",
         "//xla/backends/cpu/runtime:xfeed_manager",
+        "//xla/backends/cpu/runtime/thunk_serdes:all_thunk_serdes",  # buildcleaner: keep
         "//xla/client:executable_build_options",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
@@ -235,7 +236,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@eigen_archive//:eigen3",  # TODO(zhangqiaorjc): Remove if use TFRT threadpool.
+        "@eigen_archive//:eigen3",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:denormal",

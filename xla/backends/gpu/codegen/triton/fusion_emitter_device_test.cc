@@ -315,16 +315,7 @@ ENTRY entry_computation {
           "num_ctas":"1",
           "num_stages":"1"}}}
 })";
-
-  if (GetParam()) {
-    TF_EXPECT_OK(
-        CreateTritonIrFromHloTextAndFileCheck(kHloText, "computation", R"(
-           // CHECK:xtile.entry_func
-           // CHECK-NEXT: xtile.return
-        )"));
-  } else {
-    EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
-  }
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
 TEST_F(TritonEmitterTest, DivByZeroIsEmittedCorrectly) {
@@ -4253,13 +4244,13 @@ TEST_F(TritonEmitterTest, ScaledDotIsSupportedByReferencePlatform) {
     HloModule ScaledDotIsSupportedByReferencePlatform
 
     ENTRY entry {
-     lhs = bf16[4,4] parameter(0)
-     rhs = bf16[4,4] parameter(1)
-     lhs_scale = bf16[1,1] parameter(2)
-     rhs_scale = bf16[1,1] parameter(3)
-     ROOT dot = bf16[4,4] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+     lhs = bf16[16,128] parameter(0)
+     rhs = bf16[128,16] parameter(1)
+     lhs_scale = bf16[1,4] parameter(2)
+     rhs_scale = bf16[4,1] parameter(3)
+     ROOT dot = bf16[16,16] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
          lhs_contracting_dims={1},
-         rhs_contracting_dims={1}
+         rhs_contracting_dims={0}
     }
   )";
 
@@ -4721,7 +4712,6 @@ class TritonScaledDotTest : public TritonEmitterTest {
     debug_options.set_xla_gpu_experimental_scaled_dot_with_triton(true);
     debug_options.set_xla_gpu_autotune_level(0);
     debug_options.set_xla_gpu_cublas_fallback(false);
-    debug_options.set_xla_gpu_unsupported_disable_nested_gemm_fusions(true);
     return debug_options;
   }
 
@@ -4782,8 +4772,8 @@ ENTRY e {
   constexpr absl::string_view kExpectedTritonIr = R"(
       CHECK: tt.dot_scaled
       CHECK: tensor<128x128xbf16>
-      CHECK: tensor<128x32xf8E4M3FN>, tensor<32x4xi8>
-      CHECK: -> tensor<128x32xf32>
+      CHECK: tensor<128x16xf8E4M3FN>, tensor<16x4xi8>
+      CHECK: -> tensor<128x16xf32>
   )";
   EXPECT_THAT(CreateTritonIrAndFileCheckForDot(*scaled_dot_computation,
                                                kExpectedTritonIr),
@@ -4829,8 +4819,8 @@ ENTRY e {
   constexpr absl::string_view kExpectedTritonIr = R"(
       CHECK: tt.dot_scaled
       CHECK: tensor<128x128xf8E4M3FN>, tensor<128x4xi8>
-      CHECK: tensor<128x32xf8E4M3FN>, tensor<32x4xi8>
-      CHECK: -> tensor<128x32xf32>
+      CHECK: tensor<128x16xf8E4M3FN>, tensor<16x4xi8>
+      CHECK: -> tensor<128x16xf32>
   )";
   EXPECT_THAT(CreateTritonIrAndFileCheckForDot(*scaled_dot_computation,
                                                kExpectedTritonIr),
@@ -4888,8 +4878,8 @@ ENTRY e {
   constexpr absl::string_view kExpectedTritonIr = R"(
       CHECK: tt.dot_scaled
       CHECK: tensor<128x128xf8E4M3FN>, tensor<128x4xi8>
-      CHECK: tensor<128x32xf8E4M3FN>, tensor<32x4xi8>
-      CHECK: -> tensor<128x32xf32>
+      CHECK: tensor<128x16xf8E4M3FN>, tensor<16x4xi8>
+      CHECK: -> tensor<128x16xf32>
   )";
   EXPECT_THAT(CreateTritonIrAndFileCheckForDot(*scaled_dot_computation,
                                                kExpectedTritonIr),
@@ -4925,7 +4915,6 @@ TEST_F(TritonScaledDotTest, Fp4Succeeds) {
   constexpr absl::string_view kExpectedTritonIr = R"(
       CHECK: tt.dot_scaled
       CHECK: tensor<128x64xi8>, tensor<128x4xi8>
-      CHECK: *
       CHECK: tensor<128x16xi8>, tensor<32x4xi8>
       CHECK: -> tensor<128x32xf32>
   )";

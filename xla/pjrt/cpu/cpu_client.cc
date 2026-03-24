@@ -281,11 +281,8 @@ PjRtCpuClient::PjRtCpuClient(
       eigen_intraop_device_(
           new Eigen::ThreadPoolDevice(eigen_intraop_pool_->AsEigenThreadPool(),
                                       eigen_intraop_pool_->NumThreads())),
-      pjrt_client_thread_pool_(
-          new tsl::thread::ThreadPool(tsl::Env::Default(), GetThreadOptions(),
-                                      "XLAPjRtCpuClient", num_threads)),
-      async_work_runner_(
-          MakeThreadPoolAsyncWorkRunner(pjrt_client_thread_pool_.get())),
+      async_work_runner_(std::make_unique<ThreadPoolAsyncWorkRunner>(
+          tsl::Env::Default(), "XLAPjRtCpuClient", num_threads)),
       max_transpose_threads_(max_transpose_threads) {
   for (const std::unique_ptr<PjRtCpuDevice>& device : owned_devices_) {
     devices_.push_back(device.get());
@@ -884,9 +881,8 @@ PjRtCpuClient::CompileInternal(
         build_options.device_allocator(), build_options.compile_thread_pool(),
         build_options.layout_canonicalization_callback()};
     if (!compile_options.thread_pool) {
-      compile_options.thread_pool = pjrt_client_thread_pool();
+      compile_options.thread_pool = async_work_runner_->thread_pool();
     }
-
     const cpu::TargetMachineOptions& target_machine_options =
         topology_->cpu_topology().target_machine_options();
 
@@ -1121,7 +1117,7 @@ PjRtCpuClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
 }
 
 absl::StatusOr<int64_t> PjRtCpuClient::GetOnDeviceBytesCount(
-    PjRtMemorySpace* memory_space, const xla::Shape& shape) const {
+    int memory_space_kind, const xla::Shape& shape) const {
   return xla::ShapeUtil::ByteSizeOf(shape);
 }
 
@@ -1231,14 +1227,13 @@ PjRtCpuLoadedExecutable::PjRtCpuLoadedExecutable(
     std::shared_ptr<DeviceAssignment> device_assignment,
     std::vector<LogicalDeviceIds> addressable_device_logical_ids,
     std::vector<PjRtDevice*> addressable_devices, PjRtCpuClient* client)
-    : CommonPjRtLoadedExecutable(executable->parameter_device_shapes_,
-                                 executable->cpu_executable_->result_shape(),
-                                 executable->output_memory_space_kind_ids_,
-                                 addressable_devices,
-                                 addressable_device_logical_ids),
+    : CommonPjRtLoadedExecutable(
+          executable->parameter_device_shapes_,
+          executable->cpu_executable_->result_shape(),
+          executable->output_memory_space_kind_ids_, addressable_devices,
+          addressable_device_logical_ids, std::move(device_assignment)),
       client_(client),
-      executable_(std::move(executable)),
-      device_assignment_(std::move(device_assignment)) {
+      executable_(std::move(executable)) {
   input_buffer_sizes_in_bytes_ = executable_->input_buffer_sizes_in_bytes_;
   parameters_that_must_be_donated_ =
       executable_->parameters_that_must_be_donated_;
@@ -1428,34 +1423,15 @@ absl::Status PjRtCpuLoadedExecutable::CheckBufferCompatibilities(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>>
-PjRtCpuLoadedExecutable::StartRawExecutable(const ExecuteOptions& options,
-                                            RunId run_id, int replica,
-                                            int partition,
-                                            PjRtDevice* device) const {
-  std::shared_ptr<DeviceAssignment> device_assignment;
-  if (device == nullptr) {
-    CHECK(device_assignment_ != nullptr);
-    const int64_t device_id = (*device_assignment_)(replica, partition);
-    GlobalDeviceId global_device_id(device_id);
-    TF_ASSIGN_OR_RETURN(PjRtDevice * pjrt_device,
-                        client_->LookupDevice(global_device_id));
-    device = tsl::down_cast<PjRtCpuDevice*>(pjrt_device);
-    device_assignment = device_assignment_;
-  } else {
-    CHECK(device_assignment_ == nullptr);
-    CHECK_EQ(replica, 0);
-    CHECK_EQ(partition, 0);
-    CHECK(addressable_devices_.empty());
-    device_assignment = std::make_shared<DeviceAssignment>(1, 1);
-    (*device_assignment)(0, 0) = device->id();
-  }
-  CHECK_EQ(device->process_index(), client_->process_index());
+PjRtCpuLoadedExecutable::LoadRawExecutable(
+    const ExecuteOptions& options, size_t host_callback_idx, xla::RunId run_id,
+    DeviceAndAssignment device_and_assign) const {
   auto result = std::make_unique<CpuPjRtRawLoadedExecutable>(run_id);
   result->executable_ = executable_.get();
   result->client_ = client_;
   result->num_addressable_devices_ = addressable_devices_.size();
-  result->device_assignment_ = device_assignment;
-  result->device_ = tsl::down_cast<PjRtCpuDevice*>(device);
+  result->device_assignment_ = std::move(device_and_assign.device_assignment);
+  result->device_ = tsl::down_cast<PjRtCpuDevice*>(device_and_assign.device);
   return result;
 }
 
@@ -1492,7 +1468,8 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     const ExecuteOptions& options,
     absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> input_buffers,
     absl::Span<const tsl::RCReference<CommonPjRtRawBuffer>> output_leaf_buffers,
-    PjRtDeviceEventSet& extra_deps, PjRtDeviceEventSet& control_deps,
+    std::unique_ptr<PjRtDeviceEventSet> extra_deps,
+    std::unique_ptr<PjRtDeviceEventSet> control_deps,
     bool is_predetermined_error, bool fill_future) && {
   PjRtRawLoadedExecutable::RawExecuteResult result;
   // `returned_future_can_be_set_event` indicates when `returned_future` can be
@@ -1506,10 +1483,11 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
       tsl::MakeConstructedAsyncValueRef<CpuEvent>();
 
   auto& input_deps =
-      *tensorflow::down_cast<CpuTrackedDeviceEventSet*>(&control_deps);
+      *tensorflow::down_cast<CpuTrackedDeviceEventSet*>(control_deps.get());
   size_t num_control_deps = input_deps.events().size();
   for (auto& event :
-       std::move(*tensorflow::down_cast<CpuTrackedDeviceEventSet*>(&extra_deps))
+       std::move(
+           *tensorflow::down_cast<CpuTrackedDeviceEventSet*>(extra_deps.get()))
            .Consume()) {
     input_deps.AddEvent(std::move(event));
   }

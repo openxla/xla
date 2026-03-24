@@ -32,6 +32,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/Support/LLVM.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
@@ -160,11 +161,15 @@ bool hasGspmdAttrsOrOps(mlir::ModuleOp module);
 // TODO(b/420837831): delete this once we don't fall back to GSPMD.
 bool hasShardyMesh(mlir::ModuleOp module);
 
-// Returns the func result shardings of `funcOp`, with fully-replicated
-// shardings for empty shardings on `funcOp`, by using the ranks from `callOp`.
+// Returns the shardings for the results of `funcOp`, with fully replicated
+// shardings for empty shardings on `funcOp`.
 mlir::sdy::TensorShardingPerValueAttr getFuncResultShardings(
-    mlir::func::CallOp callOp, mlir::func::FuncOp funcOp,
-    const mlir::SymbolTable& symbolTable);
+    mlir::func::FuncOp funcOp, const mlir::SymbolTable& symbolTable);
+
+// Returns the shardings for the arguments of `funcOp`, with fully replicated
+// shardings for empty shardings on `funcOp`.
+mlir::sdy::TensorShardingPerValueAttr getFuncArgShardings(
+    mlir::func::FuncOp funcOp, const mlir::SymbolTable& symbolTable);
 
 // Converts an XLA Mesh to an SDY MeshAttr.
 mlir::sdy::MeshAttr toSdyMeshAttr(const Mesh& mesh, mlir::MLIRContext* context);
@@ -176,13 +181,11 @@ mlir::sdy::AxisRefAttr toSdyAxisRefAttr(const AxisRef& axisRef,
 
 // Converts a non-tuple XLA HloSharding to an SDY TensorShardingAttr.
 mlir::sdy::TensorShardingAttr convertToSdyShardingAttr(
-    const HloSharding& hloSharding, mlir::Type type,
-    mlir::MLIRContext* context);
+    const HloSharding& hloSharding, mlir::MLIRContext* context);
 
 // Converts a tuple XLA HloSharding to an SDY TensorShardingPerValueAttr.
 mlir::sdy::TensorShardingPerValueAttr convertToSdySharding(
-    const HloSharding& hloSharding, mlir::TypeRange types,
-    mlir::MLIRContext* context);
+    const HloSharding& hloSharding, mlir::MLIRContext* context);
 
 // TODO(enver): Add a parameter on how to handle 'inlineable' manual
 // computations func names, that is, either hard-fail, or accept as a manual
@@ -199,8 +202,29 @@ bool isManualComputation(mlir::func::FuncOp funcOp);
 mlir::StringAttr getOriginalFuncName(mlir::func::FuncOp funcOp);
 
 // Clones given `funcOp` recursively and returns the (top) cloned funcOp.
-mlir::func::FuncOp cloneFuncRecursively(mlir::func::FuncOp funcOp,
-                                        mlir::SymbolTable& symbolTable);
+// Overrides the func result sharding as `callOpResultShardings` in case
+// `callOpResultShardings` is non-null.
+mlir::func::FuncOp cloneFuncRecursively(
+    mlir::func::FuncOp funcOp,
+    mlir::sdy::TensorShardingPerValueAttr callOpResultShardings,
+    mlir::SymbolTable& symbolTable);
+
+// Adds reshard/copy operations to resolve conflicts between call argument
+// sharding and func input sharding. Does not insert reshards in case `funcOp`
+// does not have a non-empty `TensorShardingPerValueAttr` for its arguments.
+void maybeInsertReshardsOnFuncArguments(mlir::func::FuncOp funcOp,
+                                        mlir::func::CallOp callOp,
+                                        const mlir::SymbolTable& symbolTable,
+                                        mlir::IRRewriter& rewriter);
+
+// Adds reshard/copy operations to resolve conflicts between call result
+// sharding and func output sharding. Sets the call result sharding to the func
+// output shardings. Does not insert reshards in case `funcOp` does not have a
+// non-empty `TensorShardingPerValueAttr` for its results.
+void maybeInsertReshardsOnFuncResults(mlir::func::FuncOp funcOp,
+                                      mlir::func::CallOp callOp,
+                                      const mlir::SymbolTable& symbolTable,
+                                      mlir::IRRewriter& rewriter);
 
 }  // namespace sdy
 }  // namespace xla

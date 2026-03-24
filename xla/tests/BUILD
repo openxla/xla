@@ -161,10 +161,10 @@ cc_library(
 )
 
 cc_library(
-    name = "hlo_test_base",
+    name = "hlo_test_base_legacy",
     testonly = True,
-    srcs = ["hlo_test_base.cc"],
-    hdrs = ["hlo_test_base.h"],
+    srcs = ["hlo_test_base_legacy.cc"],
+    hdrs = ["hlo_test_base_legacy.h"],
     deps = [
         ":hlo_runner_agnostic_reference_mixin",
         ":hlo_runner_agnostic_test_base",
@@ -180,21 +180,37 @@ cc_library(
         "//xla/service:compiler",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_module_util",
-        "//xla/service:hlo_runner",
         "//xla/service:hlo_runner_interface",
+        "//xla/service:hlo_runner_legacy",
         "//xla/service:interpreter_plugin",  # reference backend
         "//xla/service:platform_util",
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "hlo_test_base",
+    testonly = True,
+    hdrs = ["hlo_test_base.h"],
+    deps = [
+        ":hlo_test_base_legacy",
+        "//xla:util",
+        "//xla/service:hlo_runner",
+        "//xla/service:hlo_runner_legacy",
+        "//xla/stream_executor:platform",
+        "@com_google_absl//absl/base:core_headers",
     ],
 )
 
@@ -406,7 +422,7 @@ cc_library(
     srcs = ["llvm_irgen_test_base.cc"],
     hdrs = ["llvm_irgen_test_base.h"],
     deps = [
-        ":hlo_test_base",
+        ":hlo_test_base_legacy",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/service:executable",
@@ -579,7 +595,6 @@ xla_test(
 
 xla_test(
     name = "conv_depthwise_backprop_filter_test",
-    timeout = "long",
     srcs = ["conv_depthwise_backprop_filter_test.cc"],
     shard_count = 50,
     tags = ["nozapfhahn"],  # TODO: b/445492433 - Re-enable when it doesn't time out.
@@ -587,11 +602,7 @@ xla_test(
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
         "//xla:error_spec",
-        "//xla:execution_options_util",
-        "//xla:status_macros",
-        "//xla/hlo/builder:xla_computation",
         "//xla/hlo/testlib:test",
-        "//xla/hlo/transforms:despecializer",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -897,11 +908,11 @@ xla_test(
 xla_test(
     name = "deallocation_test",
     srcs = ["deallocation_test.cc"],
-    tags = ["pjrt_migration_candidate"],
     use_legacy_runtime = True,
     deps = [
-        ":client_library_test_base",
+        ":local_client_test_base",
         ":xla_internal_test_main",
+        "//xla:execution_options_util",
         "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
@@ -917,26 +928,18 @@ xla_test(
 xla_test(
     name = "deconstruct_tuple_test",
     srcs = ["deconstruct_tuple_test.cc"],
-    tags = ["pjrt_migration_candidate"],
-    use_legacy_runtime = True,
     deps = [
-        ":client_library_test_base",
+        ":client_library_test_runner_mixin",
+        ":hlo_pjrt_interpreter_reference_mixin",
+        ":hlo_pjrt_test_base",
         ":literal_test_util",
         ":xla_internal_test_main",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:xla_data_proto_cc",
-        "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",
-        "//xla/hlo/builder:xla_computation",
-        "//xla/hlo/testlib:test",
-        "//xla/hlo/testlib:test_helpers",
-        "//xla/service",
         "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/types:span",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -1775,6 +1778,8 @@ xla_test(
         "gpu",
         "interpreter",
     ],
+    # TODO(intel-tf): Enable on oneAPI once int4 support is added to oneAPI.
+    tags = ["no-oneapi"],
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -1976,8 +1981,9 @@ cc_library(
     # `cc_library` definition that is used in this file.
     compatible_with = [],
     deps = [
-        ":client_library_test_base",
-        ":hlo_test_base",
+        ":client_library_test_runner_mixin",
+        ":hlo_pjrt_interpreter_reference_mixin",
+        ":hlo_pjrt_test_base",
         "//xla:array2d",
         "//xla:array3d",
         "//xla:array4d",
@@ -1996,10 +2002,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
+        "@com_google_googletest//:gtest_for_library",
     ],
     alwayslink = True,  # This library registers test cases at static initialization time.
 )
@@ -2009,11 +2012,7 @@ xla_test(
     timeout = "long",
     srcs = [],
     shard_count = 50,
-    tags = [
-        "optonly",
-        "pjrt_migration_candidate",
-    ],
-    use_legacy_runtime = True,
+    tags = ["optonly"],
     deps = [
         ":reduce_window_test_library",
         ":xla_internal_test_main",
@@ -2022,7 +2021,6 @@ xla_test(
 
 xla_test(
     name = "select_and_scatter_test",
-    timeout = "long",
     srcs = ["select_and_scatter_test.cc"],
     shard_count = 25,
     tags = [
@@ -2360,7 +2358,6 @@ xla_test(
 
 xla_test(
     name = "matrix_ops_simple_test",
-    timeout = "long",
     srcs = ["matrix_ops_simple_test.cc"],
     deps = [
         ":client_library_test_runner_mixin",
@@ -3565,16 +3562,15 @@ xla_test(
     srcs = ["test_utils_test.cc"],
     # There is nothing backend specific in this test, so just pick an arbitrary backend.
     backends = ["cpu"],
-    use_legacy_runtime = True,
     deps = [
-        ":local_client_test_base",
+        ":hlo_pjrt_test_base",
         ":test_utils",
         ":xla_internal_test_main",
         "//xla:literal",
         "//xla:shape_util",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/parser:hlo_parser",
+        "//xla/service:hlo_runner_interface",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
@@ -3585,11 +3581,7 @@ xla_test(
 
 xla_test(
     name = "iota_test",
-    timeout = "long",
     srcs = ["iota_test.cc"],
-    backend_tags = {
-        "cpu": ["optonly"],
-    },
     shard_count = 50,
     deps = [
         ":client_library_test_runner_mixin",
@@ -3975,12 +3967,16 @@ xla_test(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/gpu/runtime:all_reduce",
+        "//xla/core/collectives:reduction_kind",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:collective_ops_utils",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu/tests:collective_ops_e2e_test_base",
         "//xla/stream_executor/gpu:all_reduce_kernel",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",

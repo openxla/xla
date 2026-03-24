@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <tuple>
@@ -94,8 +95,13 @@ bool GpuCliqueKey::IsSubsetOf(const CliqueKey& other) const {
   }
 
   return is_p2p() == other_gpu->is_p2p() &&
-         absl::c_all_of(devices(), [&](GlobalDeviceId id) {
-           return absl::c_linear_search(other_gpu->devices(), id);
+         absl::c_all_of(devices(),
+                        [&](GlobalDeviceId id) {
+                          return absl::c_linear_search(other_gpu->devices(),
+                                                       id);
+                        }) &&
+         absl::c_all_of(incarnations_, [&](IncarnationId id) {
+           return absl::c_linear_search(other_gpu->incarnations_, id);
          });
 }
 
@@ -141,6 +147,10 @@ bool operator==(const GpuCliqueKey& a, const GpuCliqueKey& b) {
   return a.devices() == b.devices() &&
          a.num_local_participants_ == b.num_local_participants_ &&
          a.incarnations_ == b.incarnations_;
+}
+
+bool operator!=(const GpuCliqueKey& a, const GpuCliqueKey& b) {
+  return !(a == b);
 }
 
 // Constructs a tuple from the clique key for comparison purposes.

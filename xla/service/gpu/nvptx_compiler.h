@@ -18,9 +18,11 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
@@ -29,6 +31,7 @@ limitations under the License.
 #include "llvm/IR/Module.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/compilation_stats.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -65,7 +68,7 @@ class NVPTXCompiler : public GpuCompiler {
       CompilationStats* compilation_stats) override;
 
   absl::Status RunCudnnCompilerPasses(HloModule* module,
-                                      se::StreamExecutor* stream_exec,
+                                      se::dnn::DnnSupport& dnn_support,
                                       BinaryMap* dnn_compiled_graphs) override;
 
   std::unique_ptr<GpuAliasInfo> GetAliasInfo(
@@ -79,13 +82,15 @@ class NVPTXCompiler : public GpuCompiler {
 
   absl::StatusOr<bool> CanUseLinkModules(
       const HloModuleConfig& module_config,
-      const stream_executor::DeviceDescription& device_description) override;
+      const stream_executor::DeviceDescription& device_description,
+      se::StreamExecutor* absl_nullable stream_exec) override;
 
  private:
   absl::StatusOr<std::vector<uint8_t>> LinkModules(
       const stream_executor::DeviceDescription& device_description,
       std::vector<std::vector<uint8_t>> modules,
-      const DebugOptions& debug_options) override;
+      const DebugOptions& debug_options,
+      se::StreamExecutor* absl_nullable stream_exec) override;
 
   absl::Mutex compilation_providers_mutex_;
   absl::flat_hash_map<se::cuda::CompilationProviderOptions,
@@ -93,7 +98,8 @@ class NVPTXCompiler : public GpuCompiler {
       compilation_providers_ ABSL_GUARDED_BY(compilation_providers_mutex_);
 
   absl::StatusOr<const se::cuda::CompilationProvider*> GetCompilationProvider(
-      const DebugOptions& debug_options);
+      const DebugOptions& debug_options,
+      se::StreamExecutor* absl_nullable stream_exec);
 
   NVPTXCompiler(const NVPTXCompiler&) = delete;
   NVPTXCompiler& operator=(const NVPTXCompiler&) = delete;

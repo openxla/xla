@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -63,7 +64,6 @@ limitations under the License.
 #include "xla/tsl/lib/gtl/int_type.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -557,7 +557,7 @@ class PjRtClient {
 
   // Updates the client with information about all global processes.
   virtual void UpdateGlobalProcessInfo(
-      absl::Span<tensorflow::CoordinatedTaskStateInfo> infos) {
+      absl::Span<xla::coordination::TaskInfo> infos) {
     LOG(WARNING) << "UpdateGlobalProcessInfo is not supported.";
   }
 
@@ -1588,8 +1588,15 @@ class PjRtLoadedExecutable {
     return GetExecutable()->GetOutputLayouts();
   }
 
-  // Returns a list of lists of memory kind strings for output. The returned
-  // should be equal to `GetHloModules()`.
+  // Returns a list of lists of memory kind strings for parameter. The size of
+  // the outer list should be equal to `GetHloModules()`.
+  virtual absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+  GetParameterMemoryKinds() const {
+    return GetExecutable()->GetParameterMemoryKinds();
+  }
+
+  // Returns a list of lists of memory kind strings for output. The size of the
+  // outer list should be equal to `GetHloModules()`.
   virtual absl::StatusOr<std::vector<std::vector<absl::string_view>>>
   GetOutputMemoryKinds() const {
     return GetExecutable()->GetOutputMemoryKinds();
@@ -1600,6 +1607,12 @@ class PjRtLoadedExecutable {
     return GetExecutable()->GetCompileOptions();
   }
   // end of convenience forwarding methods
+
+  virtual absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>>
+  GetAbiVersion() const {
+    return absl::UnimplementedError(absl::StrCat(
+        "GetAbiVersion not implemented for type ", typeid(*this).name()));
+  }
 
  protected:
   // Value returned internally from routines that enqueue an execution,
@@ -1647,6 +1660,15 @@ class PjRtExecutableForwarder : public PjRtExecutable {
     return executable_->GetHloModules();
   }
 
+  // Returns a list of lists of memory kind strings for parameter. The returned
+  // value is `[num_programs, num_parameter]`. The size of the outer list should
+  // be equal to `GetHloModules()`. Under SPMD, one can use
+  // `GetParameterMemoryKinds().front()`.
+  absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+  GetParameterMemoryKinds() const override {
+    return executable_->GetParameterMemoryKinds();
+  }
+
   // Returns a list of lists of memory kind strings for output. The returned
   // value is `[num_programs, num_output]`. The size of the outer list should
   // be equal to `GetHloModules()`. Under SPMD, one can use
@@ -1678,6 +1700,11 @@ class PjRtExecutableForwarder : public PjRtExecutable {
 
   absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
     return executable_->GetCompiledMemoryStats();
+  }
+
+  absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>> GetAbiVersion()
+      const override {
+    return executable_->GetAbiVersion();
   }
 
  private:

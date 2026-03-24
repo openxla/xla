@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/layout.h"
+#include "xla/pjrt/compiled_memory_stats.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/gpu/tfrt/gpu_event.h"
 #include "xla/pjrt/gpu/tfrt/tfrt_gpu_client.h"
@@ -57,12 +58,14 @@ limitations under the License.
 #include "xla/pjrt/gpu/tfrt/utils.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/host_memory_spaces.h"
+#include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/semaphore.h"
+#include "xla/pjrt/stream_executor_pjrt_abi_version.h"
 #include "xla/pjrt/utils.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
@@ -80,6 +83,7 @@ limitations under the License.
 #include "xla/shape_layout.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/abi/executable_abi_version.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.pb.h"
@@ -852,7 +856,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtGpuExecutable::ExecuteHelper(
     for (const std::unique_ptr<CliqueKey>& clique_key : clique_keys) {
       gpu::GpuCliqueKey* gpu_clique_key = CHECK_NOTNULL(
           tensorflow::down_cast<gpu::GpuCliqueKey*>(clique_key.get()));
-      if (absl::Status s = CheckCliqueIsntStale(*gpu_clique_key); !s.ok()) {
+      if (absl::Status s = CheckCliqueIsNotStale(*gpu_clique_key); !s.ok()) {
         VLOG(1) << "GPU clique key " << gpu_clique_key->ToString()
                 << " is stale";
         complete_event.SetError(s);
@@ -1186,6 +1190,31 @@ TfrtGpuExecutable::GetHloModules() const {
 }
 
 absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+TfrtGpuExecutable::GetParameterMemoryKinds() const {
+  if (addressable_devices().empty()) {
+    return Unimplemented(
+        "GetParameterMemoryKinds is not supported when there are no "
+        "addressable devices in TfrtGpuExecutable.");
+  }
+  TF_ASSIGN_OR_RETURN(PjRtMemorySpace * default_memory_space,
+                      addressable_devices()[0]->default_memory_space());
+  std::vector<std::vector<absl::string_view>> out;
+  out.reserve(on_device_executable_parameter_shapes_.size());
+  for (const std::shared_ptr<std::vector<Shape>>& shapes :
+       on_device_executable_parameter_shapes_) {
+    std::vector<absl::string_view>& memory_kinds = out.emplace_back();
+    memory_kinds.reserve(shapes->size());
+    for (const xla::Shape& shape : *shapes) {
+      TF_ASSIGN_OR_RETURN(
+          absl::string_view memory_kind,
+          MemoryKindFromSimpleShape(shape, default_memory_space->kind()));
+      memory_kinds.push_back(memory_kind);
+    }
+  }
+  return out;
+}
+
+absl::StatusOr<std::vector<std::vector<absl::string_view>>>
 TfrtGpuExecutable::GetOutputMemoryKinds() const {
   TF_ASSIGN_OR_RETURN(auto shapes, GetOutputShapes());
   if (addressable_devices().empty()) {
@@ -1237,5 +1266,21 @@ absl::StatusOr<CompiledMemoryStats> TfrtGpuExecutable::GetCompiledMemoryStats()
   memory_stats.PopulateBufferStatsFromAllocations(
       executables_[0]->executable()->GetAllocations());
   return memory_stats;
+}
+
+absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>>
+TfrtGpuExecutable::GetAbiVersion() const {
+  if (executables_.empty()) {
+    return absl::InternalError("No executables.");
+  }
+  if (executables_.size() > 1) {
+    return absl::InternalError("Multiple executables are not supported.");
+  }
+  ASSIGN_OR_RETURN(
+      stream_executor::ExecutableAbiVersion se_abi_version,
+      executables_.front()->executable()->GetExecutableAbiVersion());
+
+  return std::make_unique<StreamExecutorPjRtExecutableAbiVersion>(
+      client_->platform_id(), std::move(se_abi_version));
 }
 }  // namespace xla

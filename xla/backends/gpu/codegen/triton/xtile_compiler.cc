@@ -395,12 +395,12 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
   VLOG(3) << fusion->fused_instructions_computation()->ToString(
       HloPrintOptions::ShortParsable());
 
-  const auto error_handler = [fusion]() -> void {
-    LOG(ERROR) << "Fusion: "
-               << fusion->ToString(HloPrintOptions::ShortParsable());
-    LOG(ERROR) << "Computation: "
-               << fusion->fused_instructions_computation()->ToString(
-                      HloPrintOptions::ShortParsable());
+  const auto error_ctx_provider = [fusion]() -> std::string {
+    return absl::StrCat(
+        "Fusion: ", fusion->ToString(HloPrintOptions::ShortParsable()),
+        "Computation: ",
+        fusion->fused_instructions_computation()->ToString(
+            HloPrintOptions::ShortParsable()));
   };
 
   // Compile Triton kernel to LLVM.
@@ -409,7 +409,7 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
       fn_name, *hlo_module, device_info, block_level_parameters,
       triton_module.get(), target_triple, data_layout, llvm_context,
       mlir_context,
-      /*is_xla_fusion=*/true, /*emit_kernel=*/true, error_handler);
+      /*is_xla_fusion=*/true, /*emit_kernel=*/true, error_ctx_provider);
 }
 
 absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
@@ -419,7 +419,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     mlir::ModuleOp triton_module, const llvm::Triple& target_triple,
     const std::string& data_layout, llvm::LLVMContext& llvm_context,
     mlir::MLIRContext& mlir_context, bool is_xla_fusion, bool emit_kernel,
-    absl::AnyInvocable<void()> error_handler) {
+    absl::AnyInvocable<std::string()> error_ctx_provider) {
   const auto& gpu_cc = device_info.gpu_compute_capability();
   TF_RETURN_IF_ERROR(CheckAtLeastAmpere(gpu_cc));
   std::string arch_name = gpu_cc.ToString();
@@ -436,11 +436,6 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   EnableIRPrintingIfRequested(pm, &mlir_context, hlo_module, kernel_name,
                               "triton-to-llvm");
   pm.enableVerifier(should_verify);
-  CreateTritonXlaPipeline(
-      &pm, gpu_cc, /*rewrite_int4=*/is_xla_fusion,
-      block_level_parameters.is_tma_allowed, block_level_parameters.num_stages,
-      block_level_parameters.is_warp_specialization_allowed);
-
   int num_warps = block_level_parameters.num_warps;
   int num_ctas = block_level_parameters.num_ctas;
   int num_stages = block_level_parameters.num_stages;
@@ -449,6 +444,13 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
         "(num_warps, num_ctas, num_stages) must be positive, but got: (",
         num_warps, ", ", num_ctas, ", ", num_stages, ")"));
   }
+  const bool enable_pdl = hlo_config.debug_options().xla_gpu_enable_pdl() &&
+                          gpu_cc.IsCuda() &&
+                          gpu_cc.cuda_compute_capability()->IsAtLeastHopper();
+  CreateTritonXlaPipeline(&pm, gpu_cc, /*rewrite_int4=*/is_xla_fusion,
+                          block_level_parameters.is_tma_allowed, num_stages,
+                          block_level_parameters.is_warp_specialization_allowed,
+                          enable_pdl);
 
   CreateTritonPipeline(&pm, gpu_cc, num_warps, num_ctas, num_stages);
 
@@ -459,19 +461,17 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   pm.addPass(mlir::createStripDebugInfoPass());
 
   // Register handler to capture LLVM-level fatal errors
-  XlaScopedFatalErrorHandler fatal_error_handler([&error_handler](
+  XlaScopedFatalErrorHandler fatal_error_handler([&error_ctx_provider](
                                                      absl::string_view reason) {
-    LOG(ERROR) << "LLVM Fatal Error while compiling Triton kernel: " << reason;
-    if (error_handler) {
-      error_handler();
-    }
+    std::string error_ctx = error_ctx_provider ? error_ctx_provider() : "";
+    LOG(ERROR) << "LLVM Fatal Error while compiling Triton kernel: " << reason
+               << " Context: " << error_ctx;
   });
 
   if (failed(pm.run(triton_module))) {
-    if (error_handler) {
-      error_handler();
-    }
-    return Internal("Failed to compile Triton kernel.");
+    std::string error_ctx = error_ctx_provider ? error_ctx_provider() : "";
+    return absl::InternalError(absl::StrFormat(
+        "Failed to compile Triton kernel. Context: [%s]", error_ctx));
   }
 
   const int shared_mem_bytes =
@@ -485,9 +485,12 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   VLOG(2) << "Global scratch memory usage: " << global_scratch_memory_size
           << " B";
   if (shared_mem_bytes > device_info.shared_memory_per_block_optin()) {
+    std::string error_ctx = error_ctx_provider ? error_ctx_provider() : "";
     return absl::ResourceExhaustedError(absl::StrFormat(
-        "Shared memory size limit exceeded: requested %d, available: %d",
-        shared_mem_bytes, device_info.shared_memory_per_block_optin()));
+        "Shared memory size limit exceeded: requested %d, "
+        "available: %d, context: [%s]",
+        shared_mem_bytes, device_info.shared_memory_per_block_optin(),
+        error_ctx));
   }
 
   if (auto* cuda_cc = gpu_cc.cuda_compute_capability();
@@ -556,6 +559,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
                                 global_scratch_memory_size,
                                 tma_metadata,
                                 thread_dims,
+                                enable_pdl,
                                 captured_nvvm_annotations,
                                 std::move(ll_triton_module)};
   return result;

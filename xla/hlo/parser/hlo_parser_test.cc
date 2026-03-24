@@ -2127,6 +2127,25 @@ ENTRY AllReduceWithSubgroupsIotaList {
 )",
 /*replica_count=*/20,
 },
+// all-reduce with subgroups in mesh axes replica group list format
+{
+"AllReduceWithMeshAxesReplicaGroupList",
+R"(HloModule CRS_Subgroups, entry_computation_layout={(f32[128,32]{0,1})->f32[128,32]{0,1}}, replica_count=4
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY AllReduceWithMeshAxesReplicaGroupList {
+  input = f32[128,32]{0,1} parameter(0)
+  ROOT all-reduce = f32[128,32]{0,1} all-reduce(input), replica_groups=mesh['axis_0'=2,'axis_1'=2] {'axis_1'}, to_apply=add
+}
+
+)",
+/*replica_count=*/4,
+},
 // all-reduce with constrained layout
 {
 "AllReduceWithLayout",
@@ -4639,14 +4658,13 @@ TEST(HloParserSingleOpTest, ConvolutionTrivialFeatureGroupCount) {
 
 TEST(HloParserSingleOpTest, ConvolutionWithKind) {
   const std::string text =
-      R"(%convolution = f32[1,2,1]{2,0,1} convolution(f32[1,2,1]{2,0,1} %copy, f32[1,1,1]{2,1,0} %filter), window={size=1}, dim_labels=b0f_0io->b0f, conv_kind=fprop)";
+      R"(%convolution = f32[1,2,1]{2,0,1} convolution(f32[1,2,1]{2,0,1} %copy, f32[1,1,1]{2,1,0} %filter), window={size=1}, dim_labels=b0f_0io->b0f, convolution_kind=fprop)";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(text));
   const HloComputation* computation = module->entry_computation();
   ASSERT_NE(computation, nullptr);
   auto* convolution =
       Cast<HloConvolutionInstruction>(computation->root_instruction());
-  EXPECT_EQ(convolution->conv_kind(),
-            HloConvolutionInstruction::ConvKind::FPROP);
+  EXPECT_EQ(convolution->convolution_kind(), CONVOLUTION_KIND_FPROP);
 }
 
 TEST(HloParserSingleOpTest, MultipleOpsProducesError) {

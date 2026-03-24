@@ -91,6 +91,16 @@ TEST(AutotuneCacheKeyTest, DeviceDescriptionToCacheKey) {
                 device_description("mi200.txtpb")),
             "ROCM: gfx90a, Cores: 110, GPU clock: 1.7 GHz, Memory bandwidth: "
             "1638 GB/s, L2 cache: 8 MB, DNN version: 0.0.0");
+
+  EXPECT_EQ(AutotuneCacheKey::DeviceDescriptionToCacheKey(
+                device_description("bmg_g21.txtpb")),
+            "oneAPI: BMG, Cores: 20, GPU clock: 2.85 GHz, Memory "
+            "bandwidth: 456 GB/s, L2 cache: 18 MB, DNN version: 0.0.0");
+
+  EXPECT_EQ(AutotuneCacheKey::DeviceDescriptionToCacheKey(
+                device_description("rtx6000pro.txtpb")),
+            "CUDA: 12.0, Cores: 188, GPU clock: 2.6 GHz, Memory bandwidth: "
+            "1792 GB/s, L2 cache: 128 MB, DNN version: 0.0.0");
 }
 
 TEST(AutotuneCacheKeyTest, VersionIsIncludedInCacheKey) {

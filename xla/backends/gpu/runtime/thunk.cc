@@ -94,6 +94,16 @@ Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
       params.additional_compute_streams);
 }
 
+Thunk::ExecuteParams Thunk::ExecuteParams::WithComputeStream(
+    se::Stream* stream) const {
+  return ExecuteParams(buffer_allocations, stream, command_buffer_trace_stream,
+                       collective_params, collective_cliques, collective_memory,
+                       device_to_host_stream, host_to_device_stream,
+                       send_device_memory_function, recv_device_memory_function,
+                       ffi_execution_context, additional_compute_streams,
+                       execution_scoped_state, mock_collectives, execution_id);
+}
+
 Thunk::ExecuteParams::ExecuteParams(
     const BufferAllocations* buffer_allocations, se::Stream* stream,
     se::Stream* command_buffer_trace_stream,
@@ -144,6 +154,10 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_ALL_TO_ALL_DONE;
     case kAllToAllStart:
       return THUNK_KIND_ALL_TO_ALL_START;
+    case kAsyncDone:
+      return THUNK_KIND_ASYNC_DONE;
+    case kAsyncStart:
+      return THUNK_KIND_ASYNC_START;
     case kBuffersDebugChecksum:
       return THUNK_KIND_BUFFERS_DEBUG_CHECKSUM;
     case kBuffersDebugFloatCheck:
@@ -178,8 +192,6 @@ ThunkKindProto Thunk::KindToProto(Kind kind) {
       return THUNK_KIND_COPY_DONE;
     case kCuDnn:
       return THUNK_KIND_CU_DNN;
-    case kCubSort:
-      return THUNK_KIND_CUB_SORT;
     case kCublasLtMatmul:
       return THUNK_KIND_CUBLAS_LT_MATMUL;
     case kCustomCall:
@@ -295,6 +307,10 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kAllToAllDone;
     case THUNK_KIND_ALL_TO_ALL_START:
       return kAllToAllStart;
+    case THUNK_KIND_ASYNC_DONE:
+      return kAsyncDone;
+    case THUNK_KIND_ASYNC_START:
+      return kAsyncStart;
     case THUNK_KIND_BUFFERS_DEBUG_CHECKSUM:
       return kBuffersDebugChecksum;
     case THUNK_KIND_BUFFERS_DEBUG_FLOAT_CHECK:
@@ -329,8 +345,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
       return kCopyDone;
     case THUNK_KIND_CU_DNN:
       return kCuDnn;
-    case THUNK_KIND_CUB_SORT:
-      return kCubSort;
     case THUNK_KIND_CUBLAS_LT_MATMUL:
       return kCublasLtMatmul;
     case THUNK_KIND_CUSTOM_CALL:
@@ -443,6 +457,8 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kAllToAll);
     CASE(kAllToAllDone);
     CASE(kAllToAllStart);
+    CASE(kAsyncDone);
+    CASE(kAsyncStart);
     CASE(kBuffersDebugChecksum);
     CASE(kBuffersDebugFloatCheck);
     CASE(kCollectiveBroadcast);
@@ -460,7 +476,6 @@ absl::StatusOr<Thunk::Kind> Thunk::KindFromProto(ThunkKindProto kind) {
     CASE(kCopy);
     CASE(kCopyDone);
     CASE(kCuDnn);
-    CASE(kCubSort);
     CASE(kCublasLtMatmul);
     CASE(kCustomCall);
     CASE(kCustomKernel);

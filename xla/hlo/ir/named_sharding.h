@@ -160,24 +160,19 @@ class NamedSharding {
 
   bool IsSingleDevice() const { return mesh_.IsMaximal(); }
 
+  // This checks for replicated or single-device sharding.
+  bool IsReplicatedOrSingleDevice() const {
+    return IsReplicated() || IsSingleDevice();
+  }
+
   bool IsManual() const {
-    return !IsSingleDevice() && AllDimShardingsEmpty(dim_shardings_) &&
-           replicated_axes_.empty() && unreduced_axes_.empty() &&
+    return mesh_.num_axes() != 0 &&
            mesh_.ContainsAllMeshAxesInOrder(manual_axes_);
   }
 
   bool IsUnreduced() const {
-    return !IsSingleDevice() && AllDimShardingsEmpty(dim_shardings_) &&
-           replicated_axes_.empty() && manual_axes_.empty() &&
+    return mesh_.num_axes() != 0 &&
            mesh_.ContainsAllMeshAxesInOrder(unreduced_axes_);
-  }
-
-  // Returns true if the tile size is the same as the input size.
-  //
-  // This checks for replicated or single-device sharding, as in both cases tile
-  // size is same as input size.
-  bool IsReplicatedOrSingleDevice() const {
-    return IsReplicated() || IsSingleDevice();
   }
 
   bool HasPartialReplication() const {
@@ -249,15 +244,6 @@ class NamedSharding {
     return absl::c_all_of(dim_shardings, [](const DimensionSharding& s) {
       return s.axes().empty();
     });
-  }
-
-  std::vector<DimensionSharding> CanonicalizedDimShardings(
-      absl::Span<const DimensionSharding> dim_shardings) const {
-    if (AllDimShardingsEmpty(dim_shardings)) {
-      return {};
-    }
-    return std::vector<DimensionSharding>(dim_shardings.begin(),
-                                          dim_shardings.end());
   }
 
   static std::vector<AxisRef> GetAllMeshAxes(const Mesh& mesh) {
