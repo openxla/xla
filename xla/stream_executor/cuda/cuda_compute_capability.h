@@ -188,7 +188,7 @@ struct CudaComputeCapability {
   }
 
   // TensorCore 5th Generation Family Instructions (tcgen05)
-  // are available on SM 10.0, 10.3, and 11.0 but not on SM 12.0+.
+  // are available on SM 10.0, 10.3, and 11.0 but not on SM 12.0.
   bool HasTcgen05() const {
     return major == CudaComputeCapabilities::kBlackwell ||
            major == CudaComputeCapabilities::kBlackwell_11;
