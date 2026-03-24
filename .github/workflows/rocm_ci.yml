@@ -29,7 +29,6 @@ concurrency:
 
 jobs:
   jax:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: JAX Linux x86 AMD Instinct GPU
     runs-on: linux-x86-64-8gpu-amd
     env:
@@ -89,7 +88,6 @@ jobs:
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE=${DOCKER_IMAGE}
 
   xla:
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: XLA Linux x86 AMD Instinct GPU
     runs-on: linux-x86-64-8gpu-amd
     env:
