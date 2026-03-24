@@ -126,12 +126,13 @@ class CommandBufferThunk : public Thunk {
         command_buffers ABSL_GUARDED_BY(mutex);
   };
 
-  // Returns a command buffer for (executor, first_alloc_address) or creates a
-  // new one. Pass nullptr for first_alloc_address when VA remapping is disabled
-  // or the address is not yet known (e.g. during Initialize).
+  // Returns a command buffer for (executor, buffer_allocations) or creates a
+  // new one. When VA remapping is enabled the key includes the first
+  // allocation's device address to distinguish per-VA-range command buffers;
+  // otherwise the key uses nullptr.
   absl::StatusOr<std::shared_ptr<ExecutorCommandBuffer>>
   GetOrCreateCommandBuffer(se::StreamExecutor* executor,
-                           void* first_alloc_address);
+                           const BufferAllocations& buffer_allocations);
 
   // Each individual command buffer allocates state on device (CUDA graph) and
   // it adds up pretty quickly. To prevent OOM errors we proactively evict

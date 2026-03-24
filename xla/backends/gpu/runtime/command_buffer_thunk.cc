@@ -158,12 +158,6 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
     return absl::OkStatus();
   }
 
-  TF_ASSIGN_OR_RETURN(
-      std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-      GetOrCreateCommandBuffer(params.executor,
-                               /*first_alloc_address=*/nullptr));
-  absl::MutexLock lock(cmd_buffer->mutex);
-
   // Initialize commands.
   TF_RETURN_IF_ERROR(commands_.Initialize(params));
 
@@ -182,6 +176,11 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
     TraceMe trace("WARNING: CommandBuffer disabled when profiling");
     return absl::OkStatus();
   }
+
+  TF_ASSIGN_OR_RETURN(
+      std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
+      GetOrCreateCommandBuffer(params.executor, *params.buffer_allocations));
+  absl::MutexLock lock(cmd_buffer->mutex);
 
   // If there are no thunks, or command buffer does not require initialization,
   // we can mark warm up as done immediately.
@@ -268,17 +267,9 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
   }
 
   se::StreamExecutor* executor = params.stream->parent();
-  // When VA remapping is enabled, distinguish command buffers by VA range using
-  // the first allocation's device address as a key. Different VA ranges have
-  // different base addresses, so each gets its own command buffer recorded once
-  // with fixed VA addresses. Pass nullptr when remapping is disabled.
-  void* first_alloc_address =
-      (enable_command_buffer_va_remapping_ && !allocs_indices().empty())
-          ? params.buffer_allocations->GetDeviceAddress(allocs_indices()[0])
-                .opaque()
-          : nullptr;
-  TF_ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-                      GetOrCreateCommandBuffer(executor, first_alloc_address));
+  TF_ASSIGN_OR_RETURN(
+      std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
+      GetOrCreateCommandBuffer(executor, *params.buffer_allocations));
 
   absl::MutexLock lock(cmd_buffer->mutex);
 
@@ -353,12 +344,14 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 }
 
 absl::StatusOr<std::shared_ptr<CommandBufferThunk::ExecutorCommandBuffer>>
-CommandBufferThunk::GetOrCreateCommandBuffer(se::StreamExecutor* executor,
-                                             void* first_alloc_address) {
-  absl::MutexLock lock(state_->mutex);
-
+CommandBufferThunk::GetOrCreateCommandBuffer(
+    se::StreamExecutor* executor, const BufferAllocations& buffer_allocations) {
+  void* first_alloc_address =
+      (enable_command_buffer_va_remapping_ && !allocs_indices().empty())
+          ? buffer_allocations.GetDeviceAddress(allocs_indices()[0]).opaque()
+          : nullptr;
   auto key = std::make_pair(executor, first_alloc_address);
-
+  absl::MutexLock lock(state_->mutex);
   // Check if command buffer already exists
   if (auto it = state_->command_buffers.find(key);
       it != state_->command_buffers.end()) {

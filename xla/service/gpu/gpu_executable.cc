@@ -1396,10 +1396,6 @@ absl::Status GpuExecutable::ExecuteThunksWithVaRemapping(
     current_offset += round_up_to_granularity(size);
   }
 
-  if (!allocation_va_offsets.empty() && va_ranges->va_reservation == nullptr) {
-    return Internal("Reserved VA address range is null");
-  }
-
   // Map physical memory to reserved VA addresses.
   std::vector<se::DeviceAddressBase> mapped_buffers;
   mapped_buffers.reserve(buffer_allocations.size());
