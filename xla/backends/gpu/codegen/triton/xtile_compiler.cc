@@ -492,7 +492,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   }
 
   if (auto* cuda_cc = gpu_cc.cuda_compute_capability();
-      cuda_cc != nullptr && cuda_cc->IsBlackwell()) {
+      cuda_cc != nullptr && cuda_cc->IsAtLeastBlackwell()) {
     // https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-memory
     constexpr int kTensorMemoryColumns = 512;
     const int tensor_mem_columns =
