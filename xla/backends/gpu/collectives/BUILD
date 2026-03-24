@@ -633,6 +633,7 @@ cc_library(
         "nvshmem_communicator.h",
     ],
     tags = [
+        "cuda-only",
         "gpu",
     ],
     visibility = ["//visibility:private"],
