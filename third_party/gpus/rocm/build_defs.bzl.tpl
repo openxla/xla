@@ -14,8 +14,9 @@ def if_rocm(if_true, if_false = []):
     })
 
 def select_threshold(value, threshold_dict):
-    result = []
-    for key in sorted(threshold_dict.keys()):
+    sorted_keys = sorted(threshold_dict.keys())
+    result = threshold_dict[sorted_keys[0]]  # Default to the first threshold's value
+    for key in sorted_keys:
         if value >= key:
             result = threshold_dict[key]
 
