@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,16 +15,21 @@ limitations under the License.
 
 #include <memory>
 
+#include "absl/log/check.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_compiler.h"
 #include "xla/pjrt/pjrt_compiler.h"
-#include "xla/stream_executor/platform/initialize.h"
+#include "xla/pjrt/stream_executor_platform_id_mapping.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
+#include "xla/stream_executor/platform/initialize.h"
 
 namespace xla {
 
 STREAM_EXECUTOR_REGISTER_MODULE_INITIALIZER(pjrt_register_se_gpu_compiler, {
-  PjRtRegisterDefaultCompiler(OneapiName(), std::make_unique<StreamExecutorGpuCompiler>(
-                                       stream_executor::sycl::kSyclPlatformId));
+  PjRtRegisterDefaultCompiler(
+      OneapiName(), std::make_unique<StreamExecutorGpuCompiler>(
+                      OneapiId(), stream_executor::sycl::kSyclPlatformId));
+  CHECK_OK(StreamExecutorPlatformIdMapping::Global().AddMapping(
+      stream_executor::sycl::kSyclPlatformId, OneapiId()));
 });
 
 }  // namespace xla
