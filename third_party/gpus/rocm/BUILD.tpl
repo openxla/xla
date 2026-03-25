@@ -511,6 +511,23 @@ cc_library(
     deps = [":rocm_config"],
 )
 
+cc_library(
+    name = "hipblaslt",
+    srcs = ["%{rocm_root}/lib/libhipblaslt.so"],
+    hdrs = glob(["%{rocm_root}/include/hipblaslt/**"]),
+    data = glob(["%{rocm_root}/lib/hipblaslt/**"]),
+    include_prefix = "rocm",
+    includes = [
+        "%{rocm_root}/include/hipblaslt",
+    ],
+    strip_include_prefix = "%{rocm_root}",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":hip_runtime",
+        ":rocm_config",
+        ":rocm_rpath",
+    ],
+)
 
 cc_library(
     name = "rocrand",
@@ -615,24 +632,6 @@ cc_library(
     data = glob([
         "%{rocm_root}/lib/rocm_sysdeps/share/**",
     ]),
-)
-
-cc_library(
-    name = "hipblaslt",
-    srcs = ["%{rocm_root}/lib/libhipblaslt.so"],
-    hdrs = glob(["%{rocm_root}/include/hipblaslt/**"]),
-    data = glob(["%{rocm_root}/lib/hipblaslt/**"]),
-    include_prefix = "rocm",
-    includes = [
-        "%{rocm_root}/include/hipblaslt",
-    ],
-    strip_include_prefix = "%{rocm_root}",
-    visibility = ["//visibility:public"],
-    deps = [
-        ":hip_runtime",
-        ":rocm_config",
-        ":rocm_rpath",
-    ],
 )
 
 filegroup(

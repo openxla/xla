@@ -3659,7 +3659,7 @@ class GroupedGemmRewriteTest
   }
 };
 
-TEST_F(GroupedGemmRewriteTest, CheckCustomCallTargetGroupedGemm) {
+TEST_F(GroupedGemmRewriteTest, CustomCallTargetGroupedGemm) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -3698,8 +3698,7 @@ ENTRY AddRaggedDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-5}));
 }
 
-TEST_F(GroupedGemmRewriteTest,
-       CheckCustomCallTargetGroupedGemmLargeGroupCount600) {
+TEST_F(GroupedGemmRewriteTest, CustomCallTargetGroupedGemmLargeGroupCount600) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -3724,7 +3723,7 @@ ENTRY AddRaggedDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
 }
 
-TEST_F(GroupedGemmRewriteTest, CheckCustomCallTargetGroupedGemmMulipleGroups) {
+TEST_F(GroupedGemmRewriteTest, CustomCallTargetGroupedGemmMulipleGroups) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -3764,7 +3763,7 @@ ENTRY AddRaggedDotsFunc {
 }
 
 TEST_F(GroupedGemmRewriteTest,
-       CheckCustomCallTargetGroupedGemmMulipleGroupsOutputColumnMajor) {
+       CustomCallTargetGroupedGemmMulipleGroupsOutputColumnMajor) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -3804,7 +3803,7 @@ ENTRY AddRaggedDotsFunc {
 }
 
 TEST_F(GroupedGemmRewriteTest,
-       CheckCustomCallTargetGroupedGemmNonContractingWithBatchDim) {
+       CustomCallTargetGroupedGemmNonContractingWithBatchDim) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -3845,7 +3844,7 @@ ENTRY AddRaggedDotsFunc {
 }
 
 TEST_F(GroupedGemmRewriteTest,
-       CheckCustomCallTargetGroupedGemmRaggedDimInContractingDim) {
+       CustomCallTargetGroupedGemmRaggedDimInContractingDim) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -3884,9 +3883,8 @@ ENTRY AddRaggedDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-5}));
 }
 
-TEST_F(
-    GroupedGemmRewriteTest,
-    CheckCustomCallTargetGroupedGemmRaggedDimInContractingDimMultipleGroups) {
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedDimInContractingDimMultipleGroups) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -3927,7 +3925,7 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(
     GroupedGemmRewriteTest,
-    CheckCustomCallTargetGroupedGemmRaggedDimInContractingDimMultipleGroupsOutputColumnMajor) {
+    CustomCallTargetGroupedGemmRaggedDimInContractingDimMultipleGroupsOutputColumnMajor) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -3966,9 +3964,8 @@ ENTRY AddRaggedDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-5}));
 }
 
-TEST_F(
-    GroupedGemmRewriteTest,
-    CheckCustomCallTargetGroupedGemmRaggedDimInContractingDimLargeGroupCount600) {
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedDimInContractingDimLargeGroupCount600) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -3994,7 +3991,7 @@ ENTRY AddRaggedDotsFunc {
 }
 
 TEST_F(GroupedGemmRewriteTest,
-       CheckCustomCallTargetGroupedGemmRaggedDimInContractingDimWithBatchDim) {
+       CustomCallTargetGroupedGemmRaggedDimInContractingDimWithBatchDim) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -4033,8 +4030,7 @@ ENTRY AddRaggedDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-4, 1e-5}));
 }
 
-TEST_F(GroupedGemmRewriteTest,
-       CheckCustomCallTargetGroupedGemmRaggedDimInBatchDim) {
+TEST_F(GroupedGemmRewriteTest, CustomCallTargetGroupedGemmRaggedDimInBatchDim) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -4074,7 +4070,7 @@ ENTRY AddRaggedDotsFunc {
 }
 
 TEST_F(GroupedGemmRewriteTest,
-       CheckCustomCallTargetGroupedGemmRaggedDimInBatchDimMultipleGroups) {
+       CustomCallTargetGroupedGemmRaggedDimInBatchDimMultipleGroups) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -4115,7 +4111,7 @@ ENTRY AddRaggedDotsFunc {
 
 TEST_F(
     GroupedGemmRewriteTest,
-    CheckCustomCallTargetGroupedGemmRaggedDimInBatchDimMultipleGroupsOutputColumnMajor) {
+    CustomCallTargetGroupedGemmRaggedDimInBatchDimMultipleGroupsOutputColumnMajor) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -4155,7 +4151,7 @@ ENTRY AddRaggedDotsFunc {
 }
 
 TEST_F(GroupedGemmRewriteTest,
-       CheckCustomCallTargetGroupedGemmRaggedDimInBatchDimLargeGroupCount600) {
+       CustomCallTargetGroupedGemmRaggedDimInBatchDimLargeGroupCount600) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -4180,9 +4176,8 @@ ENTRY AddRaggedDotsFunc {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
 }
 
-TEST_F(
-    GroupedGemmRewriteTest,
-    CheckCustomCallTargetGroupedGemmRaggedInNonContractingGroupDimNoOuterDim) {
+TEST_F(GroupedGemmRewriteTest,
+       CustomCallTargetGroupedGemmRaggedInNonContractingGroupDimNoOuterDim) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -4222,7 +4217,7 @@ ENTRY AddRaggedDotsFunc {
 }
 
 TEST_F(GroupedGemmRewriteTest,
-       CheckCustomCallTargetGroupedGemmRaggedInContractingGroupDimNoOuterDim) {
+       CustomCallTargetGroupedGemmRaggedInContractingGroupDimNoOuterDim) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -4262,7 +4257,7 @@ ENTRY AddRaggedDotsFunc {
 }
 
 TEST_F(GroupedGemmRewriteTest,
-       CheckCustomCallTargetGroupedGemmRaggedInContractingTranspose) {
+       CustomCallTargetGroupedGemmRaggedInContractingTranspose) {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
@@ -4302,9 +4297,10 @@ ENTRY AddRaggedDotsFunc {
 }
 
 TEST_F(GroupedGemmRewriteTest,
-       CheckCustomCallTargetGroupedGemmRaggedNonContractingTranspose) {
+       CustomCallTargetGroupedGemmRaggedNonContractingTranspose) {
   if (SkipGpuBlasLtTest()) {
-    GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
+    GTEST_SKIP() << "Grouped GEMM is only supported on ROCm with hipBLASLt on "
+                    "gfx942 or gfx950";
   }
   const char* hlo_text = R"(
 HloModule GroupedGemm

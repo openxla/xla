@@ -72,8 +72,9 @@ bool GemmRewriteTestBase::SkipGpuBlasLtTest() {
 }
 
 bool GemmRewriteTestBase::SkipGroupedGemmTest() {
-  // Grouped GEMM is only supported on ROCm with hipBLASLt
-  return IsCuda() || !Capability().rocm_compute_capability()->has_hipblaslt();
+  // Grouped GEMM is only supported on ROCm with hipBLASLt on gfx942 or gfx950
+  return IsCuda() || !Capability().rocm_compute_capability()->has_hipblaslt() ||
+         !Capability().rocm_compute_capability()->gfx9_mi300_series();
 }
 
 bool GemmRewriteTestBase::HasFp8Support() const {
