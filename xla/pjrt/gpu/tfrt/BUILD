@@ -329,8 +329,8 @@ xla_cc_test(
     name = "tracked_gpu_device_buffer_test",
     srcs = ["tracked_gpu_device_buffer_test.cc"],
     tags = [
+        "cuda-only",
         "gpu",
-        "no_oss",
         "noasan",
         "nomsan",
         "requires-gpu-nvidia:2",
