@@ -94,6 +94,7 @@ jobs:
     env:
       DOCKER_IMAGE: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
       EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/leo/upstream-script/build_tools/rocm/execute_ci_build_upstream.sh
+      ROCM_XLA_BAZELRC_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/leo/upstream-script/build_tools/rocm/rocm_xla_upstream.bazelrc
     container:
       image: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
       volumes:
@@ -118,9 +119,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Fetch execute_ci_build.sh from ROCm/xla
+      - name: Fetch ROCm XLA CI Files from ROCm/xla
         run: |
           wget -O build_tools/rocm/execute_ci_build.sh ${EXECUTE_CI_BUILD_URL}
+          wget -O build_tools/rocm/rocm_xla.bazelrc ${ROCM_XLA_BAZELRC_URL}
           chmod +x build_tools/rocm/execute_ci_build.sh
 
       - name: CPU Info
