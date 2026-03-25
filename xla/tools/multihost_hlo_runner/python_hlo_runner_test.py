@@ -19,12 +19,12 @@ import pathlib
 
 from absl.testing import absltest
 
+from xla.tools.multihost_hlo_runner import py_hlo_multihost_runner
+
 try:
   from transformer_engine import transformer_engine_jax
 except ImportError:
   transformer_engine_jax = None
-
-from xla.tools.multihost_hlo_runner import py_hlo_multihost_runner
 
 
 def _register_transformer_engine_custom_calls():
