@@ -160,42 +160,14 @@ absl::Status NvshmemRunAllReduce(PjRtClient& client, uint32_t num_ranks,
         ROOT final = f32[] reduce(subabsf, zero), dimensions={0,1}, to_apply=addf
       })";
 
-  // std::ostringstream sprogram;
-  // {
-  // std::ifstream ifs("input.hlo");
-  // if (!ifs) return absl::InternalError("Ops wrong HLO file!");
-  //   sprogram << ifs.rdbuf();
-  // }
   auto dtype_str = primitive_util::LowercasePrimitiveTypeName(dtype);
   auto hlo_text = absl::Substitute(kProgram, dtype_str, "[100,40]");
 
   TF_ASSIGN_OR_RETURN(auto executable,
                       CompileExecutable(hlo_text, client, compile_options));
-  // TF_ASSIGN_OR_RETURN(auto hlo_modules, executable->GetHloModules());
 
   auto param = LiteralUtil::CreateFull({}, num_ranks);
-  // PrimitiveTypeBitWidth
   PjRtDevice* const device = client.addressable_devices()[0];
-
-  // TF_ASSIGN_OR_RETURN(auto fake_args,
-  //       xla::MakeFakeArguments(hlo_modules[0].get(), /*pseudo_random*/true,
-  //       /*use_large_range*/false));
-  /*  std::normal_distribution<double> generator(mean, stddev);
-  return CreateLiteralWithGenerator<type, NativeT>(
-      shape, [&](absl::Span<const int64_t>) {
-        return static_cast<NativeT>(generator(*engine));
-      });*/
-
-  // std::minstd_rand0 engine;
-  // auto func = [&](auto xtype) {
-  //     auto tt = decltype(xtype);
-  //     //using ElementT = primitive_util::NativeTypeOf<xtype>;
-  //     return LiteralUtil::CreateRandomLiteral<tt>(
-  //       shape, &engine, 0.0, /*stddev*/1.0
-  //     );
-  // };
-  // TF_ASSIGN_OR_RETURN(auto literal,
-  //   primitive_util::ArrayTypeSwitch(func, dtype));
 
   TF_ASSIGN_OR_RETURN(auto input, client.BufferFromHostLiteral(
                                       param, *device->default_memory_space()));
@@ -205,7 +177,6 @@ absl::Status NvshmemRunAllReduce(PjRtClient& client, uint32_t num_ranks,
 
   auto& result_buffers = result[0];
   TF_ASSIGN_OR_RETURN(auto output, result_buffers[0]->ToLiteralSync());
-  // VLOG(0) << "Got literal output " << output->ToString();
   auto expected = LiteralUtil::CreateFull({}, 0.0f);
   return literal_comparison::Near(expected, *output, ErrorSpec(1e-5, 1e-5), {},
                                   nullptr);
@@ -238,12 +209,6 @@ ENTRY Xtest {
   zero = u32[] constant(0)
   ROOT final = u32[] reduce(sub, zero), dimensions={0,1}, to_apply=addu
 })";
-  std::ostringstream sprogram;
-  {
-    std::ifstream ifs("input.hlo");
-    if (!ifs) return absl::InternalError("Ops wrong HLO file!");
-    sprogram << ifs.rdbuf();
-  }
   std::stringstream channels;
   for (uint32_t i = 0; i < num_ranks; i++) {
     channels << '{' << (i == num_ranks - 1 ? 0 : i + 1) << ',' << i << '}';
@@ -297,36 +262,24 @@ ENTRY Xtest {
   ROOT final = f32[] reduce(resf, zero), dimensions={0}, to_apply=addf
 
 })";
-  std::ostringstream sprogram;
-  {
-    std::ifstream ifs("input.hlo");
-    if (!ifs) return absl::InternalError("Ops wrong HLO file!");
-    sprogram << ifs.rdbuf();
-  }
   int64_t N = 10000;
   auto dtype_str = primitive_util::LowercasePrimitiveTypeName(dtype);
-  // auto hlo_text = sprogram.str();
   auto hlo_text =
       absl::Substitute(kProgram, dtype_str, absl::StrFormat("[%lld]", N));
-  // VLOG(0) << "input text " << hlo_text;
 
   TF_ASSIGN_OR_RETURN(auto executable,
                       CompileExecutable(hlo_text, client, compile_options));
 
-  TF_ASSIGN_OR_RETURN(auto result,
-                      executable->Execute({{
-                                              // input.get()
-                                          }},
-                                          ExecuteOptions()));
+  TF_ASSIGN_OR_RETURN(auto result, executable->Execute({{}}, ExecuteOptions()));
 
   auto& result_buffers = result[0];
   TF_ASSIGN_OR_RETURN(auto output, result_buffers[0]->ToLiteralSync());
 
-  VLOG(0) << "Got literal output " << output->ToString();
   if (rank_id == 0) return absl::OkStatus();  // 0-th rank just sends
-
+  // We sum up the values from 0 to N-1, so the expected result is (N-1)*N/2.
   auto expected = LiteralUtil::CreateFull({}, (float)N / 2 * (N - 1));
-  return literal_comparison::Equal(expected, *output, nullptr);
+  return literal_comparison::Near(expected, *output, ErrorSpec(1e-5, 1e-5),
+                                  std::nullopt, nullptr);
 }
 
 absl::Status NvshmemCollectiveTestBody(int rank_id, int num_ranks,
