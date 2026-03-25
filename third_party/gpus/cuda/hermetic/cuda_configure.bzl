@@ -38,13 +38,13 @@ load("@cuda_nvjitlink//:version.bzl", _nvjitlink_version = "VERSION")
 load("@cuda_nvml//:version.bzl", _nvml_version = "VERSION")
 load("@cuda_nvtx//:version.bzl", _nvtx_version = "VERSION")
 load(
+    "@rules_ml_toolchain//gpu/cuda:cuda_redist_versions.bzl",
+    "PTX_VERSION_DICT",
+)
+load(
     "//third_party/gpus:compiler_common_tools.bzl",
     "get_cxx_inc_directories",
     "to_list_of_strings",
-)
-load(
-    "//third_party/gpus/cuda/hermetic:cuda_redist_versions.bzl",
-    "PTX_VERSION_DICT",
 )
 load(
     "//third_party/remote_config:common.bzl",

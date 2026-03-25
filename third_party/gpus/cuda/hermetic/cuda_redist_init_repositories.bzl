@@ -15,18 +15,18 @@
 """Hermetic CUDA repositories initialization. Consult the WORKSPACE on how to use it."""
 
 load(
-    "//third_party/gpus:nvidia_common_rules.bzl",
-    "get_redistribution_urls",
-    "get_version_and_template_lists",
-    "redist_init_repository",
-)
-load(
-    "//third_party/gpus/cuda/hermetic:cuda_redist_versions.bzl",
+    "@rules_ml_toolchain//gpu/cuda:cuda_redist_versions.bzl",
     "CUDA_REDIST_PATH_PREFIX",
     "CUDNN_REDIST_PATH_PREFIX",
     "MIRRORED_TAR_CUDA_REDIST_PATH_PREFIX",
     "MIRRORED_TAR_CUDNN_REDIST_PATH_PREFIX",
     "REDIST_VERSIONS_TO_BUILD_TEMPLATES",
+)
+load(
+    "//third_party/gpus:nvidia_common_rules.bzl",
+    "get_redistribution_urls",
+    "get_version_and_template_lists",
+    "redist_init_repository",
 )
 
 def cudnn_redist_init_repository(
