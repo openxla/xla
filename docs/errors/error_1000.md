@@ -154,6 +154,9 @@ for the current hardware setup.
     -   Specify
         [sharding hints](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html#constraining-shardings-of-intermediates-in-jitted-code)
         for intermediate values and outputs.
+
+    Note that this may cause an increase in network communication overhead due
+    to splitting tensors across multiple chips.
 -   **Use JAX host offloading:** Host offloading techniques allow the user to
     offload large tensors to the host CPU memory (e.g.
     [activation offloading](https://docs.jax.dev/en/latest/notebooks/host-offloading.html#activation-offloading)
@@ -236,7 +239,7 @@ errors and information that will help you decide what to do.
 
 | Intervention | Safe to do? (Will it change the behavior of the program?) | Potential gains | Telltale signs (is this actually the bottleneck that you're experiencing?) |
 | --- | --- | --- | --- |
-| Using advanced sharding techniques | **Yes.** It almost never changes the numerical correctness of the experiment. | **Massive gains** (up to a 256x reduction) | Unexpectedly large individual allocations in the memory viewer (e.g., a single tensor replicated across all TPUs that is 256x bigger than the others). Active arrays showing as un-sharded in TensorBoard hooks. |
+| Using advanced sharding techniques | **Yes.** It almost never changes the numerical correctness of the experiment, although it can cause network communication overhead due to splitting tensors across multiple chips. | **Massive gains** (up to a 256x reduction) | Unexpectedly large individual allocations in the memory viewer (e.g., a single tensor replicated across all TPUs that is 256x bigger than the others). Active arrays showing as un-sharded in TensorBoard hooks. |
 | Reducing batch size | **No.** It changes the training dynamics and usually requires retuning the learning rate. (Note: **Microbatching** is a safe alternative that reduces memory without changing behavior). | **Massive gains** (can save a factor of thousands). | "Temporaries" failing to allocate during gradient calculations. Seeing "JVP" in the operation name, and encountering many batch-size-shaped tensors in the memory profile. |
 | Enabling mixed Precision (e.g., Bfloat16) | **Risky.** It alters numerical precision, which can change experiment results or cause the model to fail to converge entirely. | **Moderate gains** (typically a factor of 2x, as it halves memory usage). | The memory viewer confirms that the largest tensors are currently utilizing 32-bit floats (`float32`). |
 | Manual checkpointing (`jax.checkpoint`) | **Yes.** It does not alter behavior; it merely trades computation time (flops) to save memory by recomputing tensors instead of storing them. | **Large gains** (e.g., can result in only half of the activations needing to exist in memory at the same time). | Multiple tensors of the exact same size filling up memory during a backward pass. Often accompanied by "JVP" in the operation name. |
