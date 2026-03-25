@@ -364,6 +364,8 @@ xla_test(
         ":se_gpu_pjrt_client",
         "//xla:debug_options_flags",
         "//xla:literal",
+        "//xla:literal_util",
+        "//xla:literal_comparison",
         "//xla:status_macros",
         "//xla:types",
         "//xla:util",
