@@ -1,4 +1,4 @@
-// RUN: xla-opt %s -triton-xla-implement-extern-atomics-rocm | FileCheck %s
+// RUN: xla-opt %s -triton-xla-implement-extern-atomics="target=rocm" | FileCheck %s
 
 // Test ROCm implementation of extern_elementwise atomic functions
 // This pass operates on LLVM dialect and inlines the implementations
@@ -38,6 +38,19 @@ module {
     llvm.return %result : i32
   }
   
+  // CHECK-LABEL: llvm.func @test_atomic_spin_wait_eq
+  llvm.func @test_atomic_spin_wait_eq(%ptr: !llvm.ptr<1>, %expected: i32) -> i32 {
+    // CHECK: llvm.br ^[[LOOP:.*]]
+    // CHECK: ^[[LOOP]]:
+    // CHECK:   [[LOADED:%.*]] = llvm.load %arg0 atomic acquire {alignment = 4 : i64} : !llvm.ptr<1> -> i32
+    // CHECK:   [[COND:%.*]] = llvm.icmp "ne" [[LOADED]], %arg1
+    // CHECK:   llvm.cond_br [[COND]], ^[[LOOP]], ^[[EXIT:.*]]([[LOADED]]
+    // CHECK: ^[[EXIT]]([[RESULT:%.*]]: i32):
+    // CHECK:   llvm.return [[RESULT]]
+    %result = llvm.call @xla_atomic_spin_wait_acquire_system_eq(%ptr, %expected) : (!llvm.ptr<1>, i32) -> i32
+    llvm.return %result : i32
+  }
+  
   // CHECK-LABEL: llvm.func @test_relaxed_ordering
   llvm.func @test_relaxed_ordering(%ptr: !llvm.ptr<1>, %value: i32) -> i32 {
     // CHECK: llvm.store %arg1, %arg0 atomic monotonic {alignment = 4 : i64} : i32, !llvm.ptr<1>
@@ -72,6 +85,7 @@ module {
   llvm.func @xla_atomic_write_release_gpu(!llvm.ptr<1>, i32) -> i32
   llvm.func @xla_atomic_write_release_cta(!llvm.ptr<1>, i32) -> i32
   llvm.func @xla_atomic_spin_wait_acquire_system_lt(!llvm.ptr<1>, i32) -> i32
+  llvm.func @xla_atomic_spin_wait_acquire_system_eq(!llvm.ptr<1>, i32) -> i32
 }
 
 // Test masked operations in separate module to avoid function redefinition
@@ -108,7 +122,23 @@ module {
     llvm.return %result : i32
   }
   
+  // CHECK-LABEL: llvm.func @test_atomic_spin_wait_masked_eq
+  llvm.func @test_atomic_spin_wait_masked_eq(%ptr: !llvm.ptr<1>, %expected: i32, %mask: i32) -> i32 {
+    // CHECK: [[ZERO:%.*]] = llvm.mlir.constant(0 : i32)
+    // CHECK: [[MASK_NONZERO:%.*]] = llvm.icmp "ne" %arg2, [[ZERO]]
+    // CHECK: llvm.cond_br [[MASK_NONZERO]], ^[[LOOP:.*]], ^[[EXIT:.*]]([[ZERO]]
+    // CHECK: ^[[LOOP]]:
+    // CHECK:   [[LOADED:%.*]] = llvm.load %arg0 atomic acquire {alignment = 4 : i64} : !llvm.ptr<1> -> i32
+    // CHECK:   [[COND:%.*]] = llvm.icmp "ne" [[LOADED]], %arg1
+    // CHECK:   llvm.cond_br [[COND]], ^[[LOOP]], ^[[EXIT]]([[LOADED]]
+    // CHECK: ^[[EXIT]]([[RESULT:%.*]]: i32):
+    // CHECK:   llvm.return [[RESULT]]
+    %result = llvm.call @xla_atomic_spin_wait_acquire_system_eq(%ptr, %expected, %mask) : (!llvm.ptr<1>, i32, i32) -> i32
+    llvm.return %result : i32
+  }
+  
   // Extern function declarations for masked versions
   llvm.func @xla_atomic_write_release_system(!llvm.ptr<1>, i32, i32) -> i32
   llvm.func @xla_atomic_spin_wait_acquire_system_lt(!llvm.ptr<1>, i32, i32) -> i32
+  llvm.func @xla_atomic_spin_wait_acquire_system_eq(!llvm.ptr<1>, i32, i32) -> i32
 }

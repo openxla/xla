@@ -175,7 +175,8 @@ static void MakeLLIR(mlir::OpPassManager* pm,
 
   // Add XLA custom pass to implement extern_elementwise atomic functions
   // This must run after MLIR->LLVM conversion but before final optimizations
-  pm->addPass(mt_xla::CreateTritonXLAImplementExternAtomicsCudaPass());
+  pm->addPass(mt_xla::CreateTritonXLAImplementExternAtomicsPass(
+      mt_xla::TargetBackend::CUDA));
 
   // Note: translateTritonGPUToLLVMIR adds line info with LLVMDIScopePass.
 }

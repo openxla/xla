@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// ROCm-specific implementation of extern_elementwise atomic functions.
-// This pass runs in the Triton ROCm pipeline and inlines the implementations
-// of custom atomic functions by replacing llvm.call operations with actual
-// LLVM dialect operations (intrinsics, atomics, loops).
+// Unified implementation of extern_elementwise atomic functions for both
+// CUDA and ROCm backends. This pass runs in the Triton pipeline and inlines
+// the implementations of custom atomic functions by replacing llvm.call
+// operations with actual LLVM dialect operations (intrinsics, atomics, loops).
 
 #include <memory>
 #include <string>
@@ -29,28 +29,43 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/backends/gpu/codegen/triton/transforms/passes.h"
 
 namespace mlir::triton::xla {
 
-#define GEN_PASS_DEF_TRITONXLAIMPLEMENTEXTERNATOMICSROCMPASS
+#define GEN_PASS_DEF_TRITONXLAIMPLEMENTEXTERNATOMICSPASS
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h.inc"
 
 namespace {
 
-// Helper to parse syncscope from function name
+// Helper to parse syncscope from function name for the target backend
 // Function names follow pattern: xla_atomic_*_<semantic>_<scope>_<comparator>
-llvm::StringRef ParseSyncScope(llvm::StringRef func_name) {
-  // Per AMDGPU memory model:
-  // - "" (empty) = system scope (cross-device visibility)
-  // - "agent" = GPU scope (single device)
-  // - "workgroup" = CTA/block scope
-
-  if (func_name.contains("_system")) {
-    return "";  // System scope for cross-GPU visibility
-  } else if (func_name.contains("_gpu")) {
-    return "agent";
-  } else if (func_name.contains("_cta")) {
-    return "workgroup";
+llvm::StringRef ParseSyncScope(llvm::StringRef func_name,
+                               TargetBackend target) {
+  if (target == TargetBackend::CUDA) {
+    // Per NVPTX memory model:
+    // - "" (empty) = system scope (cross-device visibility)
+    // - "gpu" = GPU scope (single device)
+    // - "cta" = CTA/block scope
+    if (func_name.contains("_system")) {
+      return "";  // System scope for cross-GPU visibility
+    } else if (func_name.contains("_gpu")) {
+      return "gpu";
+    } else if (func_name.contains("_cta")) {
+      return "cta";
+    }
+  } else {  // ROCM
+    // Per AMDGPU memory model:
+    // - "" (empty) = system scope (cross-device visibility)
+    // - "agent" = GPU scope (single device)
+    // - "workgroup" = CTA/block scope
+    if (func_name.contains("_system")) {
+      return "";  // System scope for cross-GPU visibility
+    } else if (func_name.contains("_gpu")) {
+      return "agent";
+    } else if (func_name.contains("_cta")) {
+      return "workgroup";
+    }
   }
 
   LOG(FATAL) << "Unable to parse syncscope from function name: "
@@ -75,16 +90,31 @@ LLVM::AtomicOrdering ParseAtomicOrdering(llvm::StringRef func_name) {
 }
 
 // MLIR pass that inlines extern function calls with actual implementations
-class TritonXLAImplementExternAtomicsROCmPass
-    : public impl::TritonXLAImplementExternAtomicsROCmPassBase<
-          TritonXLAImplementExternAtomicsROCmPass> {
+class TritonXLAImplementExternAtomicsPass
+    : public impl::TritonXLAImplementExternAtomicsPassBase<
+          TritonXLAImplementExternAtomicsPass> {
  public:
   using Base::Base;
+
+  explicit TritonXLAImplementExternAtomicsPass(TargetBackend target_backend) {
+    target_ = target_backend == TargetBackend::CUDA ? "cuda" : "rocm";
+  }
 
  private:
   void runOnOperation() override {
     mlir::ModuleOp module = getOperation();
     mlir::OpBuilder builder(module.getContext());
+
+    // Parse target backend from option
+    TargetBackend target;
+    if (target_ == "cuda") {
+      target = TargetBackend::CUDA;
+    } else if (target_ == "rocm") {
+      target = TargetBackend::ROCM;
+    } else {
+      LOG(FATAL) << "Invalid target backend: " << target_
+                 << ". Must be 'cuda' or 'rocm'";
+    }
 
     // Find all llvm.call operations to our extern functions
     llvm::SmallVector<LLVM::CallOp> calls_to_replace;
@@ -107,9 +137,10 @@ class TritonXLAImplementExternAtomicsROCmPass
       auto i32_type = builder.getI32Type();
 
       if (absl::StartsWith(callee_name, "xla_get_thread_id")) {
-        // Replace with direct intrinsic call
-        auto intrinsic_name =
-            builder.getStringAttr("llvm.amdgcn.workitem.id.x");
+        // Replace with direct intrinsic call (backend-specific)
+        auto intrinsic_name = builder.getStringAttr(
+            target == TargetBackend::CUDA ? "llvm.nvvm.read.ptx.sreg.tid.x"
+                                          : "llvm.amdgcn.workitem.id.x");
         auto intrinsic_call = builder.create<LLVM::CallIntrinsicOp>(
             loc, i32_type, intrinsic_name, mlir::ValueRange{});
         call_op.replaceAllUsesWith(intrinsic_call->getResults());
@@ -122,7 +153,7 @@ class TritonXLAImplementExternAtomicsROCmPass
         auto value = operands[1];
         mlir::Value mask = operands.size() > 2 ? operands[2] : mlir::Value{};
 
-        llvm::StringRef syncscope = ParseSyncScope(callee_name);
+        llvm::StringRef syncscope = ParseSyncScope(callee_name, target);
         LLVM::AtomicOrdering ordering = ParseAtomicOrdering(callee_name);
 
         // Prepare atomic store location
@@ -170,8 +201,13 @@ class TritonXLAImplementExternAtomicsROCmPass
         auto expected = operands[1];
         mlir::Value mask = operands.size() > 2 ? operands[2] : mlir::Value{};
 
-        llvm::StringRef syncscope = ParseSyncScope(callee_name);
+        llvm::StringRef syncscope = ParseSyncScope(callee_name, target);
         LLVM::AtomicOrdering ordering = ParseAtomicOrdering(callee_name);
+        // acq_rel is not valid for loads (only for RMW operations)
+        if (ordering == LLVM::AtomicOrdering::acq_rel) {
+          LOG(FATAL) << "acq_rel ordering is not supported for atomic loads in "
+                     << callee_name.str() << ". Use acquire ordering instead.";
+        }
         bool is_lt = callee_name.ends_with("_lt");
 
         // Create block structure (common for both masked and unmasked)
@@ -238,17 +274,14 @@ class TritonXLAImplementExternAtomicsROCmPass
     for (auto func : to_erase) {
       func.erase();
     }
-
-    VLOG(2) << "TritonXLAImplementExternAtomicsROCmPass: Replaced "
-            << calls_to_replace.size() << " calls, removed " << to_erase.size()
-            << " declarations";
   }
 };
 
 }  // namespace
 
-std::unique_ptr<mlir::Pass> CreateTritonXLAImplementExternAtomicsROCmPass() {
-  return std::make_unique<TritonXLAImplementExternAtomicsROCmPass>();
+std::unique_ptr<mlir::Pass> CreateTritonXLAImplementExternAtomicsPass(
+    TargetBackend target) {
+  return std::make_unique<TritonXLAImplementExternAtomicsPass>(target);
 }
 
 }  // namespace mlir::triton::xla

@@ -41,6 +41,7 @@ cc_library(
         "triton_xla_convert_unsupported_types.cc",
         "triton_xla_extract_insert_to_triton_pass.cc",
         "triton_xla_fold_transpose_pass.cc",
+        "triton_xla_implement_extern_atomics_pass.cc",
         "triton_xla_lower_extern_atomics_pass.cc",
         "triton_xla_lower_block_barrier_pass.cc",
         "triton_xla_lower_extern_get_tid_pass.cc",
@@ -109,32 +110,13 @@ cc_library(
 )
 
 cc_library(
-    name = "triton_xla_implement_extern_atomics_rocm_pass",
-    srcs = ["triton_xla_implement_extern_atomics_rocm_pass.cc"],
+    name = "triton_xla_implement_extern_atomics_pass",
+    srcs = ["triton_xla_implement_extern_atomics_pass.cc"],
     hdrs = ["passes.h"],
     deps = [
         ":passes_inc_gen",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:LLVMDialect",
-        "@llvm-project//mlir:Pass",
-        "@llvm-project//mlir:Support",
-        "@llvm-project//mlir:ToLLVMIRTranslation",
-    ],
-)
-
-cc_library(
-    name = "triton_xla_implement_extern_atomics_cuda_pass",
-    srcs = ["triton_xla_implement_extern_atomics_cuda_pass.cc"],
-    hdrs = ["passes.h"],
-    deps = [
-        ":passes_inc_gen",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",

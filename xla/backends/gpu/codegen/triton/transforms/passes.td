@@ -279,26 +279,20 @@ def UnsupportedElementwiseToTritonPass
   ];
 }
 
-def TritonXLAImplementExternAtomicsROCmPass
-    : Pass<"triton-xla-implement-extern-atomics-rocm", "mlir::ModuleOp"> {
-  let summary = "Implement extern_elementwise atomic functions for ROCm.";
+def TritonXLAImplementExternAtomicsPass
+    : Pass<"triton-xla-implement-extern-atomics", "mlir::ModuleOp"> {
+  let summary = "Implement extern_elementwise atomic functions for CUDA and ROCm.";
   let description = [{
     This pass implements custom atomic functions declared by tt.extern_elementwise
-    operations using LLVM IR with proper GCN atomic instructions and memory ordering.
-    It runs in the Triton ROCm pipeline after MLIR has been converted to LLVM dialect.
+    operations using LLVM IR intrinsics and atomic operations with proper memory
+    ordering and sync scopes. It supports both CUDA (NVPTX) and ROCm (AMDGPU) backends.
+    It runs in the Triton pipeline after MLIR has been converted to LLVM dialect.
+    The target backend must be specified via the target option.
   }];
-  let constructor = "CreateTritonXLAImplementExternAtomicsROCmPass()";
-}
-
-def TritonXLAImplementExternAtomicsCudaPass
-    : Pass<"triton-xla-implement-extern-atomics-cuda", "mlir::ModuleOp"> {
-  let summary = "Implement extern_elementwise atomic functions for CUDA.";
-  let description = [{
-    This pass implements custom atomic functions declared by tt.extern_elementwise
-    operations using PTX inline assembly with proper memory ordering and sync scopes.
-    It runs in the Triton CUDA pipeline after MLIR has been converted to LLVM dialect.
-  }];
-  let constructor = "CreateTritonXLAImplementExternAtomicsCudaPass()";
+  let options = [
+    Option<"target_", "target", "std::string", "\"cuda\"",
+           "Target backend: 'cuda' or 'rocm'">,
+  ];
 }
 
 #endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_PASSES_TD_
