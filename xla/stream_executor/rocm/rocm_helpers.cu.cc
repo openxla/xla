@@ -21,6 +21,7 @@ limitations under the License.
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 #include <hipcub/hipcub.hpp>
+#include "xla/stream_executor/gpu/gpu_blas_lt.h"
 
 namespace stream_executor {
 namespace gpu {
@@ -172,13 +173,11 @@ __device__ __forceinline__ void copy_shared_to_global(void* shared_src,
   size_t count_uint4 = total_bytes / sizeof(uint4);
 
   // Vectorized copy using uint4 (16 bytes per iteration)
-  if (count_uint4 > 0) {
-    uint4* src_ptr = reinterpret_cast<uint4*>(shared_src);
-    uint4* dest_ptr = reinterpret_cast<uint4*>(global_dest);
+  uint4* src_ptr = reinterpret_cast<uint4*>(shared_src);
+  uint4* dest_ptr = reinterpret_cast<uint4*>(global_dest);
 
-    for (size_t i = threadIdx.x; i < count_uint4; i += blockDim.x) {
-      dest_ptr[i] = src_ptr[i];
-    }
+  for (size_t i = threadIdx.x; i < count_uint4; i += blockDim.x) {
+    dest_ptr[i] = src_ptr[i];
   }
 
   // Handle remaining bytes (if total_bytes is not a multiple of 16)
@@ -249,11 +248,6 @@ __launch_bounds__(BLOCK_SIZE) __global__
     uint32_t batch_size =
         min(BLOCK_SIZE, static_cast<uint32_t>(num_gemms - batch_start));
 
-    // Last active thread updates cumulative offset for next batch
-    if (threadIdx.x == batch_size - 1) {
-      cumulative_offset += offset_in_batch + group_size;
-    }
-
     if (idx < num_gemms) {
       auto& arg = sharedUserArgs[threadIdx.x];
       if (must_swap_operands) {
@@ -322,6 +316,11 @@ __launch_bounds__(BLOCK_SIZE) __global__
 
     __barrier(__CLK_LOCAL_MEM_FENCE);
 
+    // Last active thread updates cumulative offset for next batch
+    if (threadIdx.x == batch_size - 1) {
+      cumulative_offset += offset_in_batch + group_size;
+    }
+
     // Copy from shared memory to global memory
     size_t total_bytes = batch_size * sizeof(hipblaslt_ext::UserArguments);
     copy_shared_to_global(sharedUserArgs, &dest_args[batch_start], total_bytes);
@@ -386,11 +385,6 @@ __launch_bounds__(BLOCK_SIZE) __global__
     uint32_t batch_size =
         min(BLOCK_SIZE, static_cast<uint32_t>(num_gemms - batch_start));
 
-    // Last thread updates cumulative offset for next batch
-    if (threadIdx.x == batch_size - 1) {
-      cumulative_offset += offset_in_batch + group_size;
-    }
-
     if (idx < num_gemms) {
       auto& arg = sharedUserArgs[threadIdx.x];
 
@@ -445,6 +439,11 @@ __launch_bounds__(BLOCK_SIZE) __global__
     }
 
     __barrier(__CLK_LOCAL_MEM_FENCE);
+
+    // Last thread updates cumulative offset for next batch
+    if (threadIdx.x == batch_size - 1) {
+      cumulative_offset += offset_in_batch + group_size;
+    }
 
     // Copy from shared memory to global memory
     size_t total_bytes = batch_size * sizeof(hipblaslt_ext::UserArguments);
@@ -508,11 +507,6 @@ __launch_bounds__(BLOCK_SIZE) __global__ void SetUserArgsKernelRaggedInBatchDim(
     uint32_t batch_size =
         min(BLOCK_SIZE, static_cast<uint32_t>(num_gemms - batch_start));
 
-    // Last active thread updates cumulative offset for next batch
-    if (threadIdx.x == batch_size - 1) {
-      cumulative_offset += offset_in_batch + group_size;
-    }
-
     if (idx < num_gemms) {
       auto& arg = sharedUserArgs[threadIdx.x];
 
@@ -568,6 +562,11 @@ __launch_bounds__(BLOCK_SIZE) __global__ void SetUserArgsKernelRaggedInBatchDim(
 
     __barrier(__CLK_LOCAL_MEM_FENCE);
 
+    // Last active thread updates cumulative offset for next batch
+    if (threadIdx.x == batch_size - 1) {
+      cumulative_offset += offset_in_batch + group_size;
+    }
+
     // Copy from shared memory to global memory
     size_t total_bytes = batch_size * sizeof(hipblaslt_ext::UserArguments);
     copy_shared_to_global(sharedUserArgs, &dest_args[batch_start], total_bytes);
@@ -577,32 +576,32 @@ __launch_bounds__(BLOCK_SIZE) __global__ void SetUserArgsKernelRaggedInBatchDim(
 }
 
 void GroupGemmUpdateArgs(
-    hipStream_t stream, hipblaslt_ext::UserArguments* args, const void* a,
-    const void* b, void* d, const void* group_sizes,
+    hipStream_t stream, DeviceMemoryBase args, DeviceMemoryBase a,
+    DeviceMemoryBase b, DeviceMemoryBase d, DeviceMemoryBase group_sizes,
     uint8_t group_size_bytewidth, uint8_t log2_byte_width_elem_a,
     uint8_t log2_byte_width_elem_b, uint8_t log2_byte_width_elem_d,
     uint32_t stride_ragged_dim, uint32_t stride_group_dim,
     uint32_t output_stride_ragged_dim, bool must_swap_operands, uint32_t m,
     uint32_t n, uint32_t k, uint32_t batch, uint32_t strideA1,
     uint32_t strideA2, uint32_t strideB1, uint32_t strideB2, uint32_t strideD1,
-    uint32_t strideD2, const uint8_t ragged_mode, uint32_t num_gemms) {
+    uint32_t strideD2, gpu::RaggedDotMode ragged_mode, uint32_t num_gemms) {
   const uint32_t block_sz = BLOCK_SIZE;
   auto kernel = SetUserArgsKernelRaggedInNonContractingDim<uint64_t>;
   switch (ragged_mode) {
-    case 0: {  // RaggedInNonContractingDim
+    case gpu::RaggedDotMode::kRaggedNonContracting: {
       if (group_size_bytewidth == 4) {
         kernel = SetUserArgsKernelRaggedInNonContractingDim<uint32_t>;
       }
       break;
     }
-    case 1: {  // RaggedInContractingDim
+    case gpu::RaggedDotMode::kRaggedContracting: {
       kernel = SetUserArgsKernelRaggedInContractingDim<uint64_t>;
       if (group_size_bytewidth == 4) {
         kernel = SetUserArgsKernelRaggedInContractingDim<uint32_t>;
       }
       break;
     }
-    case 2: {  // RaggedInBatchDim
+    case gpu::RaggedDotMode::kRaggedBatch: {
       kernel = SetUserArgsKernelRaggedInBatchDim<uint64_t>;
       if (group_size_bytewidth == 4) {
         kernel = SetUserArgsKernelRaggedInBatchDim<uint32_t>;
@@ -620,12 +619,13 @@ void GroupGemmUpdateArgs(
   size_t shared_mem_size =
       min(block_sz, num_gemms) * sizeof(hipblaslt_ext::UserArguments);
 
-  hipLaunchKernelGGL(kernel, dim3(1), dim3(block_sz), shared_mem_size, stream,
-                     args, a, b, d, group_sizes, log2_byte_width_elem_a,
-                     log2_byte_width_elem_b, log2_byte_width_elem_d, stride_a,
-                     stride_b, output_stride_ragged_dim, must_swap_operands, m,
-                     n, k, batch, strideA1, strideA2, strideB1, strideB2,
-                     strideD1, strideD2, num_gemms);
+  hipLaunchKernelGGL(
+      kernel, dim3(1), dim3(block_sz), shared_mem_size, stream,
+      static_cast<hipblaslt_ext::UserArguments*>(args.opaque()), a.opaque(),
+      b.opaque(), d.opaque(), group_sizes.opaque(), log2_byte_width_elem_a,
+      log2_byte_width_elem_b, log2_byte_width_elem_d, stride_a, stride_b,
+      output_stride_ragged_dim, must_swap_operands, m, n, k, batch, strideA1,
+      strideA2, strideB1, strideB2, strideD1, strideD2, num_gemms);
 }
 };  // namespace rocm
 

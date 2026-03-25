@@ -800,6 +800,7 @@ rocm_library(
         "rocm-only",
     ],
     deps = [
+        "//xla/stream_executor/gpu:gpu_blas_lt",
         "@local_config_rocm//rocm:rocm_headers",
     ],
     alwayslink = True,
