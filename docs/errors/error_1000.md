@@ -159,6 +159,9 @@ for the current hardware setup.
     [activation offloading](https://docs.jax.dev/en/latest/notebooks/host-offloading.html#activation-offloading)
     and
     [optimizer state offloading](https://docs.jax.dev/en/latest/notebooks/host-offloading.html#optimizer-state-offloading)).
+    Note that host offloading techniques can severely impact performance, since
+    these operations will force the system to constantly move large tensors back
+    and forth between TPU HBM and CPU RAM.
 
 #### Scenario 3.C Check tensor padding and alignment
 
