@@ -732,11 +732,13 @@ xla_test(
     },
     tags = ["cuda-only"],
     deps = [
+        ":gpu_collectives",
         ":nvshmem_collectives",
         "//xla:debug_options_flags",
         "//xla:status_macros",
         "//xla/service:platform_util",
         "//xla/core/collectives:communicator",
+        "//xla/core/collectives:collectives_registry",
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:service",
