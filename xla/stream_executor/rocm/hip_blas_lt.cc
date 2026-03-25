@@ -225,8 +225,9 @@ absl::Status BlasLt::Init() {
 }
 
 auto BlasLt::MatmulPlan::GetAlgorithmsForGroupedMatmul(
-    const Stream *stream, size_t max_algorithm_count, size_t max_workspace_size)
-    const -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
+    const Stream *stream, size_t max_algorithm_count,
+    size_t max_workspace_size) const
+    -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
   std::vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
 
   auto blas_lt = static_cast<BlasLt *>(gpu::BlasLt::Get(stream));
