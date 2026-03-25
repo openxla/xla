@@ -29,6 +29,7 @@ concurrency:
 
 jobs:
   jax:
+    if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' }}
     name: JAX Linux x86 AMD Instinct GPU
     runs-on: linux-x86-64-8gpu-amd
     env:
