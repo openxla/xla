@@ -346,8 +346,8 @@ struct TargetDeviceFunction GetDeviceFunctionRoot(
 }  // namespace
 
 bool HasF16Implementation(TargetDeviceFunctionID func_id,
-                          llvm::Triple target_triple) {
-  return target_triple.isAMDGPU() &&
+                          llvm::Triple target_triple, PrimitiveType type) {
+  return target_triple.isAMDGPU() && type == F16 &&
          (func_id == TargetDeviceFunctionID::kAtan2 ||
           func_id == TargetDeviceFunctionID::kCbrt ||
           func_id == TargetDeviceFunctionID::kCos ||
@@ -410,7 +410,8 @@ std::string ObtainDeviceFunctionName(TargetDeviceFunctionID func_id,
   } else if (target_triple.getArch() == llvm::Triple::amdgcn) {
     // TODO(b/370452608): Are there approximate functions we can use for BF16
     // and F16 types?
-    if (output_type == F16 && HasF16Implementation(func_id, target_triple)) {
+    if (output_type == F16 &&
+        HasF16Implementation(func_id, target_triple, output_type)) {
       // All these functions have f16 implementation - no need for conversion
       return StrCat(gpu_root_names.amdgpu_root, "_f16");
     }
