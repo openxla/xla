@@ -93,7 +93,7 @@ jobs:
     runs-on: linux-x86-64-8gpu-amd
     env:
       DOCKER_IMAGE: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
-      EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/leo/upstream-script/build_tools/rocm/execute_ci_build_usptream.sh
+      EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/leo/upstream-script/build_tools/rocm/execute_ci_build_upstream.sh
     container:
       image: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
       volumes:
