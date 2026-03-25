@@ -60,7 +60,6 @@ build:ci_multi_gpu --test_env=HIP_VISIBLE_DEVICES=0,1,2,3
 test:xla_sgpu -- \
 //xla/... \
 -//xla/tests:iota_test_amdgpu_any \
--//xla/tests:iota_test_amdgpu_any_notfrt \
 -//xla/backends/gpu/collectives:gpu_clique_key_test \
 -//xla/service:collective_ops_utils_test \
 -//xla/service:collective_pipeliner_test \
