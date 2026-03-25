@@ -224,3 +224,18 @@ is crucial for understanding exactly what consumes HBM at the point of peak
 utilization. For general profiling setup, see
 [Getting started with Xprof](https://openxla.org/xprof#getting_started) and
 [TensorBoard Profiling](https://docs.jax.dev/en/latest/profiling.html#xprof-tensorboard-profiling).
+
+## Summary table
+
+The following table contains a summary of potential interventions to solve OOM
+errors and information that will help you decide what to do.
+
+| Intervention | Safe to do? (Will it change the behavior of the program?) | Potential gains | Telltale signs (is this actually the bottleneck that you're experiencing?) |
+| --- | --- | --- | --- |
+| Using advanced sharding techniques | **Yes.** It almost never changes the numerical correctness of the experiment. | **Massive gains** (up to a 256x reduction) | Unexpectedly large individual allocations in the memory viewer (e.g., a single tensor replicated across all TPUs that is 256x bigger than the others). Active arrays showing as un-sharded in TensorBoard hooks. |
+| Reducing batch size | **No.** It changes the training dynamics and usually requires retuning the learning rate. (Note: **Microbatching** is a safe alternative that reduces memory without changing behavior). | **Massive gains** (can save a factor of thousands). | "Temporaries" failing to allocate during gradient calculations. Seeing "JVP" in the operation name, and encountering many batch-size-shaped tensors in the memory profile. |
+| Enabling mixed Precision (e.g., Bfloat16) | **Risky.** It alters numerical precision, which can change experiment results or cause the model to fail to converge entirely. | **Moderate gains** (typically a factor of 2x, as it halves memory usage). | The memory viewer confirms that the largest tensors are currently utilizing 32-bit floats (`float32`). |
+| Explicit checkpointing (`jax.checkpoint`) | **Yes.** It does not alter behavior; it merely trades computation time (flops) to save memory by recomputing tensors instead of storing them. | **Large gains** (e.g., can result in only half of the activations needing to exist in memory at the same time). | Multiple tensors of the exact same size filling up memory during a backward pass. Often accompanied by "JVP" in the operation name. |
+| Donating input buffers (`donate_argnums`) | **Yes.** Maintains experiment integrity. If applied incorrectly, it will not corrupt data but will simply throw a clear error message. | **Marginal gains** (~1% memory savings). | There is no specific telltale sign, but it is considered a "free win" that is always worth trying. |
+| Changing model dimensions | **No.** Directly alters the model's behavior. Modifying input or output dimensions can completely break compatibility with the dataset. | **Variable gains** depending on how drastically hidden dimensions or layers are reduced. | The Xprof memory viewer shows a large amount of memory wasted on "padding" because array dimensions are not powers of two or multiples of 128 (e.g., a dimension of 2050 instead of 2048). |
+| Host offloading (CPU) | **Yes (numerically)**, but **No (performance)**. While mathematically safe, it is considered a "foot gun" that may cause severe speed bottlenecks due to data transfer between the CPU and TPU. | **Marginal gains** (the CPU only has about 3x the memory of the TPU). | Typically a last resort for massive optimizer states or for memory-heavy data preparation/pre-processing steps. |
