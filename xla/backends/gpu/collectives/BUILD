@@ -530,7 +530,6 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         ":gpu_collectives",
-        "//xla:util",
         "//xla/core/collectives",
         "//xla/core/collectives:clique_id",
         "//xla/core/collectives:clique_key",
@@ -539,6 +538,7 @@ cc_library(
         "//xla/core/collectives:rank_id",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
     ],
     alwayslink = True,  # registers collectives implementation
 )
