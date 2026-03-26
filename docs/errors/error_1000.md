@@ -133,10 +133,11 @@ You can often resolve OOMs with these configuration adjustments:
     size can often help reduce memory usage, although you may need to retune
     your learning rate, momentum, or optimizer hyperparameters to maintain
     model stability.
--   **Donate input buffers:** When using `jax.jit`, specify
-    [donate_argnums](https://docs.jax.dev/en/latest/buffer_donation.html) for
-    your model parameters. This allows XLA to overwrite the input memory with
-    the output.
+-   **Donate input buffers:** When JAX executes a computation it uses buffers on
+    the device for all inputs and outputs. If you know that one of the inputs is
+    not needed after the computation, and if it matches the shape and element
+    type of one of the outputs, you can specify that you want the corresponding
+    input buffer to be donated to hold an output. This will reduce the memory required for the execution by the size of the donated buffer. You can achieve this by specifying [donate_argnums](https://docs.jax.dev/en/latest/buffer_donation.html) parameter as an argument when using `jax.jit`.
 -   **Enable mixed precision (bfloat16):** Use bfloat16 or quantization (int8
     etc) for the largest tensors in the program if the model architecture and
     quality requirements allow. Note that this change can affect model behaviour
