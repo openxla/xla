@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/service/collective_opt_utils.h"
 #include "xla/side_effect_util.h"
 
@@ -57,6 +58,18 @@ void AbslStringify(Sink sink, ExecutionScopeKind kind) {
       sink.Append("collective");
       break;
   }
+}
+
+// Returns dedicated P2P stream ID based on _xla_send_recv_pipeline attribute.
+// Uses separate streams (1 and 2) for pipeline 0/1 to avoid deadlocks in cyclic
+// patterns, stream 0 is the main stream.
+ExecutionStreamId GetP2PStreamId(const HloInstruction* instruction) {
+  const auto& fe_map = instruction->frontend_attributes().map();
+  auto it = fe_map.find(kSendRecvPipelineAttr);
+  if (it != fe_map.end() && it->second == "1") {
+    return ExecutionStreamId(2);
+  }
+  return ExecutionStreamId(1);
 }
 
 // A helper class to generate the next execution stream id. We assign ids
@@ -275,10 +288,14 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(const HloModule* module,
       // If operation starts an async execution scope, assign a pair of
       // execution stream ids to it, and maybe enqueue nested computation.
       if (std::optional<ExecutionScopeKind> kind = IsExecutionScopeStart(hlo)) {
-        // Try to find explicitly assigned stream id, otherwise generate a new
-        // execution stream id for the new execution scope.
+        // Try to find explicitly assigned stream id, or use dedicated P2P
+        // stream for pipelined send/recv, otherwise generate a new execution
+        // stream id for the new execution scope.
         std::optional<ExecutionStreamId> async_stream_id =
             FindAssignedStreamId(hlo);
+        if (!async_stream_id.has_value() && IsPipelinedP2P(hlo)) {
+          async_stream_id = GetP2PStreamId(hlo);
+        }
         if (!async_stream_id.has_value()) {
           async_stream_id = execution_streams.Next(*kind);
         }
