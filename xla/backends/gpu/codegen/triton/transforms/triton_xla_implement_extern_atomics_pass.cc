@@ -43,16 +43,16 @@ namespace {
 llvm::StringRef ParseSyncScope(llvm::StringRef func_name,
                                TargetBackend target) {
   if (target == TargetBackend::CUDA) {
-    // Per NVPTX memory model:
+    // Per NVPTX memory model (LLVM standard syncscope names):
     // - "" (empty) = system scope (cross-device visibility)
-    // - "gpu" = GPU scope (single device)
-    // - "cta" = CTA/block scope
+    // - "device" = GPU/device scope (single device)
+    // - "block" = CTA/block scope (thread block)
     if (func_name.contains("_system")) {
       return "";  // System scope for cross-GPU visibility
     } else if (func_name.contains("_gpu")) {
-      return "gpu";
+      return "device";
     } else if (func_name.contains("_cta")) {
-      return "cta";
+      return "block";
     }
   } else {  // ROCM
     // Per AMDGPU memory model:

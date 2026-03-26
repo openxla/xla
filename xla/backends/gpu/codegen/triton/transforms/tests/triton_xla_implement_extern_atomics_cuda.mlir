@@ -62,7 +62,7 @@ module {
   
   // CHECK-LABEL: llvm.func @test_gpu_scope
   llvm.func @test_gpu_scope(%ptr: !llvm.ptr<1>, %value: i32) -> i32 {
-    // CHECK: llvm.store %arg1, %arg0 atomic syncscope("gpu") release {alignment = 4 : i64} : i32, !llvm.ptr<1>
+    // CHECK: llvm.store %arg1, %arg0 atomic syncscope("device") release {alignment = 4 : i64} : i32, !llvm.ptr<1>
     // CHECK: [[POISON:%.*]] = llvm.mlir.poison : i32
     // CHECK: llvm.return [[POISON]]
     %result = llvm.call @xla_atomic_write_release_gpu(%ptr, %value) : (!llvm.ptr<1>, i32) -> i32
@@ -71,7 +71,7 @@ module {
   
   // CHECK-LABEL: llvm.func @test_cta_scope
   llvm.func @test_cta_scope(%ptr: !llvm.ptr<1>, %value: i32) -> i32 {
-    // CHECK: llvm.store %arg1, %arg0 atomic syncscope("cta") release {alignment = 4 : i64} : i32, !llvm.ptr<1>
+    // CHECK: llvm.store %arg1, %arg0 atomic syncscope("block") release {alignment = 4 : i64} : i32, !llvm.ptr<1>
     // CHECK: [[POISON:%.*]] = llvm.mlir.poison : i32
     // CHECK: llvm.return [[POISON]]
     %result = llvm.call @xla_atomic_write_release_cta(%ptr, %value) : (!llvm.ptr<1>, i32) -> i32
