@@ -624,8 +624,8 @@ TEST_F(CublasFissionBackendTest, CublasFallbackForBf16Bf16F32Algorithm) {
       EXPECT_FALSE(hasCublasConfig(configs));
     }
   } else {
-    // ROCm
-    EXPECT_TRUE(hasCublasConfig(configs));
+    // ROCm does not support kBF16AsF32
+    EXPECT_FALSE(hasCublasConfig(configs));
   }
 }
 
