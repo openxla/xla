@@ -43,60 +43,13 @@ namespace xla {
 // pointer value is recycled, the tagged pointer will differ.
 template <typename T, typename... Args>
 class ObjectPool {
+ protected:
   struct alignas(64) Entry {
     // Keep `object` as optional to allow using object pool for objects that
     // cannot be default-constructed.
     std::optional<T> object;
     Entry* next = nullptr;
   };
-
-  // Tagged pointer layout: [hi tag bits | pointer | lo tag bits]
-  //
-  // We pack a monotonic version counter into bits that are unused in Entry
-  // pointers. The tag is split across two regions:
-  //
-  //  - High bits: above the usable virtual address space. On x86-64 with
-  //    5-level paging (LA57), userspace uses up to 57-bit virtual addresses.
-  //    This leaves 7 high bits.
-  //
-  //  - Low bits: Entry is alignas(64) (cache-line aligned), so the low 6
-  //    bits of any Entry* are always zero.
-  //
-  // Combined: 7 + 6 = 13 tag bits (8192 versions). ABA requires the same
-  // pointer to be popped and re-pushed 8192 times while a single CAS is in
-  // flight. This is a pragmatic choice for XLA where pooled objects (e.g.
-  // stream executor events or XNNPACK executors) used sparingly during a single
-  // execution and we don't expect millions of push/pop events per second.
-  static constexpr int kPtrBits = 57;
-  static constexpr int kLowTagBits = 6;
-  static constexpr uintptr_t kLowTagMask = (uintptr_t{1} << kLowTagBits) - 1;
-  static constexpr uintptr_t kPtrMask =
-      ((uintptr_t{1} << kPtrBits) - 1) & ~kLowTagMask;
-  static constexpr uintptr_t kTagIncr = uintptr_t{1} << kPtrBits;
-
-  static_assert(sizeof(uintptr_t) == 8,
-                "ObjectPool tagged pointer requires a 64-bit platform");
-  static_assert(alignof(Entry) >= (1 << kLowTagBits),
-                "Entry alignment must provide enough low tag bits");
-
-  static Entry* GetPtr(uintptr_t tagged) {
-    return tsl::safe_reinterpret_cast<Entry*>(tagged & kPtrMask);
-  }
-
-  static uintptr_t MakeTagged(Entry* ptr, uintptr_t old_tagged) {
-    uintptr_t raw = tsl::safe_reinterpret_cast<uintptr_t>(ptr);
-    // Increment the combined tag. Low bits overflow naturally into the pointer
-    // region and then into the high bits — but we must not let tag bits
-    // corrupt the pointer. Instead, manage high and low tag independently:
-    // increment the low tag, and when it wraps, increment the high tag.
-    uintptr_t old_lo = old_tagged & kLowTagMask;
-    uintptr_t new_lo = (old_lo + 1) & kLowTagMask;
-    uintptr_t hi = old_tagged & ~kPtrMask & ~kLowTagMask;
-    if (new_lo == 0) {
-      hi = (hi + kTagIncr);  // carry into high bits
-    }
-    return raw | hi | new_lo;
-  }
 
  public:
   explicit ObjectPool(absl::AnyInvocable<absl::StatusOr<T>(Args...)> builder);
@@ -127,6 +80,54 @@ class ObjectPool {
     return num_created_.load(std::memory_order_relaxed);
   }
 
+ protected:
+  // Tagged pointer layout: [hi tag bits | pointer | lo tag bits]
+  //
+  // We pack a monotonic version counter into bits that are unused in Entry
+  // pointers. The tag is split across two regions:
+  //
+  //  - High bits: above the usable virtual address space. On x86-64 with
+  //    5-level paging (LA57), userspace uses up to 57-bit virtual addresses.
+  //    This leaves 7 high bits.
+  //
+  //  - Low bits: Entry is alignas(64) (cache-line aligned), so the low 6
+  //    bits of any Entry* are always zero.
+  //
+  // Combined: 7 + 6 = 13 tag bits (8192 versions). ABA requires the same
+  // pointer to be popped and re-pushed 8192 times while a single CAS is in
+  // flight. This is a pragmatic choice for XLA where pooled objects (e.g.
+  // stream executor events or XNNPACK executors) used sparingly during a single
+  // execution and we don't expect millions of push/pop events per second.
+  static constexpr int32_t kPtrBits = 57;
+  static constexpr int32_t kLowTagBits = 6;
+
+  static constexpr uintptr_t kLowTagMask = (uintptr_t{1} << kLowTagBits) - 1;
+  static constexpr uintptr_t kPtrMask =
+      ((uintptr_t{1} << kPtrBits) - 1) & ~kLowTagMask;
+  static constexpr uintptr_t kTagIncr = uintptr_t{1} << kPtrBits;
+
+  static Entry* GetPtr(uintptr_t tagged) {
+    return tsl::safe_reinterpret_cast<Entry*>(tagged & kPtrMask);
+  }
+
+  static size_t GetTag(uintptr_t tagged) {
+    uintptr_t lo = tagged & kLowTagMask;
+    uintptr_t hi = (tagged >> kPtrBits);
+    return (hi << kLowTagBits) | lo;
+  }
+
+  static uintptr_t PackTagBits(size_t tag) {
+    uintptr_t lo = tag & kLowTagMask;
+    uintptr_t hi = tag >> kLowTagBits;
+    return (hi << kPtrBits) | lo;
+  }
+
+  static uintptr_t MakeTagged(Entry* ptr, uintptr_t old_tagged) {
+    uintptr_t raw = tsl::safe_reinterpret_cast<uintptr_t>(ptr);
+    DCHECK_EQ(raw & ~kPtrMask, 0) << "pointer has non-zero tag bits";
+    return raw | PackTagBits(GetTag(old_tagged) + 1);
+  }
+
  private:
   absl::StatusOr<std::unique_ptr<Entry>> CreateEntry(Args... args);
 
@@ -141,7 +142,12 @@ class ObjectPool {
 template <typename T, typename... Args>
 ObjectPool<T, Args...>::ObjectPool(
     absl::AnyInvocable<absl::StatusOr<T>(Args...)> builder)
-    : builder_(std::move(builder)), head_(0), num_created_(0) {}
+    : builder_(std::move(builder)), head_(0), num_created_(0) {
+  static_assert(sizeof(uintptr_t) == 8,
+                "ObjectPool tagged pointer requires a 64-bit platform");
+  static_assert(alignof(Entry) >= (1 << kLowTagBits),
+                "Entry alignment must provide enough low tag bits");
+}
 
 template <typename T, typename... Args>
 ObjectPool<T, Args...>::~ObjectPool() {
