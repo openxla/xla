@@ -158,6 +158,7 @@ limitations under the License.
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
@@ -169,7 +170,6 @@ limitations under the License.
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/mem.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 
@@ -1681,6 +1681,25 @@ PjRtStreamExecutorClient::RunAsync(
   return PjRtStreamExecutorExecutionOutput({{}, std::move(se_to_be_released)});
 }
 
+// Number of VA reservation sets used for command buffer remapping multiplexing.
+// With 2 sets, one VA range can be remapped by the CPU while the GPU executes
+// commands on the other, enabling CPU/GPU overlap.
+constexpr int kNumOfVaReservationSets = 2;
+
+// Returns the next VA range index for the given device ordinal, round-robining
+// between [0, kNumOfVaReservationSets). Must be computed at lambda scheduling
+// time (not inside the async lambda) so that the scheduling order determines
+// the counter order, keeping all ranks in sync.
+int GetNextCommandBufferVaRangeIdx(int device_ordinal) {
+  static absl::Mutex mu;
+  static auto* counters = new absl::flat_hash_map<int, int>();
+  absl::MutexLock lock(&mu);
+  int& idx = (*counters)[device_ordinal];
+  int result = idx;
+  idx = (idx + 1) % kNumOfVaReservationSets;
+  return result;
+}
+
 // Enqueues a computation onto the compute stream. Each buffer returned in
 // device_buffers has a usage hold added that must be dropped on error or
 // converted on success.
@@ -1738,9 +1757,15 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
         compute_semaphore.ScopedAcquire(1));
   }
 
+  // Compute the VA range index at scheduling time so the scheduling order
+  // determines the counter order, keeping all ranks in sync.
+  int command_buffer_va_range_idx =
+      GetNextCommandBufferVaRangeIdx(device_ordinal);
+
   auto launch_on_device =
       [device_state, gpu_run_options = client_->gpu_run_options(options),
        launch_id = options.launch_id, run_id = run_id_,
+       command_buffer_va_range_idx,
        context = options.context, client = client_, device = device_,
        device_assignment = device_assignment_,
        compute_reservation = std::move(compute_reservation),
@@ -1780,6 +1805,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
         client->client()->backend().eigen_intra_op_thread_pool_device());
     run_options.set_device_assignment(device_assignment.get());
     run_options.set_run_id(run_id);
+    run_options.set_command_buffer_va_range_idx(command_buffer_va_range_idx);
     run_options.set_rng_seed(device_state->GetNewPrngSeed());
     run_options.set_gpu_executable_run_options(std::move(gpu_run_options));
     run_options.set_launch_id(launch_id);

@@ -583,6 +583,11 @@ message DebugOptions {
   // Enable PDL - Programmatic Dependent Launch.
   optional bool xla_gpu_enable_pdl = 460;
 
+  // Enable VA remapping for command buffer thunks. When enabled, command buffer
+  // thunks use fixed virtual addresses across executions, allowing the command
+  // buffer to be recorded once and replayed without updates.
+  optional bool xla_gpu_enable_command_buffer_va_remapping = 463;
+
   optional bool xla_gpu_enable_pipelined_all_gather = 227;
 
   optional bool xla_gpu_enable_pipelined_all_reduce = 217;
