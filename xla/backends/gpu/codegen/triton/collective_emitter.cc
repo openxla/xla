@@ -286,7 +286,7 @@ GetBlockLevelFusionConfigForAllReduce(
     const HloAllReduceInstruction* all_reduce) {
   // Check if the device supports Triton collective codegen
   bool is_supported = false;
-  
+
   const auto compute_capability = device_info.cuda_compute_capability();
   // CUDA: Requires compute capability 9.0+ (Hopper or newer)
   if (compute_capability.IsAtLeastHopper()) {

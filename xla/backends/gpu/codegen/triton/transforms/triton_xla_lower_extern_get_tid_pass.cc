@@ -45,7 +45,7 @@ LogicalResult LowerGetTidOp(GetTidOp get_flat_tid, PatternRewriter& rewriter) {
   const Location loc = get_flat_tid.getLoc();
 
   const mlir::Type i32_type = rewriter.getI32Type();
-  
+
   // Use tt.extern_elementwise to call a custom function that returns thread ID
   // This function will be implemented in platform-specific passes
   auto tid_op = rewriter.create<triton::ExternElementwiseOp>(
@@ -56,7 +56,7 @@ LogicalResult LowerGetTidOp(GetTidOp get_flat_tid, PatternRewriter& rewriter) {
       /*libpath=*/"",
       /*symbol=*/"xla_get_thread_id",
       /*pure=*/true);  // Thread ID is pure (deterministic for a given thread)
-  
+
   rewriter.replaceOp(get_flat_tid, tid_op->getResults());
   return success();
 }
