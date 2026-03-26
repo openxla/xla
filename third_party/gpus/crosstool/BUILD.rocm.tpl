@@ -36,6 +36,20 @@ cc_toolchain_suite(
     },
 )
 
+# Toolchain suite for local (non-hermetic) builds using system clang.
+# Use with --crosstool_top=@local_config_rocm//crosstool:toolchain-local
+cc_toolchain_suite(
+    name = "toolchain-local",
+    toolchains = {
+        "local|compiler": ":cc-compiler-local-nonhermetic",
+        "arm": ":cc-compiler-local-nonhermetic",
+        "aarch64": ":cc-compiler-local-nonhermetic",
+        "k8": ":cc-compiler-local-nonhermetic",
+        "piii": ":cc-compiler-local-nonhermetic",
+        "ppc": ":cc-compiler-local-nonhermetic",
+    },
+)
+
 cc_toolchain(
     name = "cc-compiler-hermetic",
     all_files = "@local_config_rocm//rocm:all_files",
@@ -172,6 +186,7 @@ cc_toolchain_config(
         "-Wunused-but-set-parameter",
         "-Wno-free-nonheap-object",
         "-fno-omit-frame-pointer",
+        "-no-canonical-prefixes",
     ],
     opt_compile_flags = [
         "-g0",

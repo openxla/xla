@@ -102,7 +102,9 @@ def local_clang():
     )
 
     # Ensure clang resource include directory is present (contains stddef.h, stdint.h, etc.)
-    if include_dir and include_dir not in include_directories:
+    # Always prepend it to ensure it's first in the search path, removing any duplicate
+    if include_dir:
+        include_directories = [d for d in include_directories if d != include_dir]
         include_directories = [include_dir] + include_directories
 
     # Generate clang.bzl with the detected configuration
