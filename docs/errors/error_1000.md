@@ -221,11 +221,14 @@ performance.
 #### Scenario 3.E Tune XLA rematerialization pass/manual checkpointing
 
 If the model is close to fitting into memory, you can use the
-[jax.checkpoint](https://docs.jax.dev/en/latest/notebooks/autodiff_remat.html)
+[jax.checkpoint](https://docs.jax.dev/en/latest/_autosummary/jax.checkpoint.html)
 decorator with `jax.grad` to manually control which intermediates are saved on
 the forward pass versus recomputed on the backward pass. Note that this
 operation may impact performance, since you are explicitly trading compute
-cycles for HBM.
+cycles for HBM. Check out the JAX documentation for more information:
+- [Gradient checkpointing with `jax.checkpoint` (`jax.remat`)](https://docs.jax.dev/en/latest/gradient-checkpointing.html)
+- [Control autodiff’s saved values with `jax.checkpoint` (aka `jax.remat`)](https://docs.jax.dev/en/latest/notebooks/autodiff_remat.html)
+- [JAX Memories and Host Offloading](https://docs.jax.dev/en/latest/notebooks/host-offloading.html)
 
 Alternatively, you can force the `XLA::Rematerialization` pass to prioritize
 memory savings, potentially at the cost of slower compilations:
