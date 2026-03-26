@@ -130,7 +130,9 @@ You can often resolve OOMs with these configuration adjustments:
 
 -   **Reduce batch size:** The memory needed for intermediate activations and
     gradients is directly proportional to the batch size. Reducing the batch
-    size can often help reduce memory usage.
+    size can often help reduce memory usage, although you may need to retune
+    your learning rate, momentum, or optimizer hyperparameters to maintain
+    model stability.
 -   **Donate input buffers:** When using `jax.jit`, specify
     [donate_argnums](https://docs.jax.dev/en/latest/buffer_donation.html) for
     your model parameters. This allows XLA to overwrite the input memory with
@@ -139,6 +141,26 @@ You can often resolve OOMs with these configuration adjustments:
     etc) for the largest tensors in the program if the model architecture and
     quality requirements allow. Note that this change can affect model behaviour
     and should be considered carefully.
+
+##### Micro-batching (optional)
+
+If reducing the global batch size or increasing the chip count is not viable,
+and the batch size per chip is not already minimized, you can try a
+micro-batching strategy:
+
+- Split each batch into `n` micro-batches;
+- For each micro-batch, process the forward and backward pass;
+- Once this is done, accumulate the gradients and update the weight as a whole.
+
+This process reduces the activation memory as we divided each batch into `n`
+micro-batches, so that the if the original batch had size `M`, the activation
+memory size becomes `M/n`.
+
+**Potential issues:**
+- This process increases step time as we have multiple forward and backward
+  passes.
+- If the sizes of the model and micro-batch are too different, you may face
+  convergence issues in your model.
 
 #### Scenario 3.B Optimize architecture and sharding
 
