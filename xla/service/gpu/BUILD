@@ -3414,6 +3414,7 @@ cc_library(
     srcs = ["execution_stream_assignment.cc"],
     hdrs = ["execution_stream_assignment.h"],
     deps = [
+        ":gpu_latency_hiding_scheduler",
         "//xla:side_effect_util",
         "//xla/backends/gpu/runtime:thunk",
         "//xla/hlo/ir:hlo",
@@ -3452,6 +3453,7 @@ cc_library(
         ":backend_configs_cc",
         ":cublas_cudnn",
         "//xla:shape_util",
+        "//xla:side_effect_util",
         "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
