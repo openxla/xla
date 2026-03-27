@@ -118,6 +118,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/sorted_range.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_executable_and_options_writer.h"
@@ -126,7 +127,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -485,6 +485,11 @@ absl::Status ExecuteThunksImpl(
         auto log_progress = [&](auto label, auto thunks) {
           LOG(ERROR) << absl::StreamFormat("[%d] %s: size=%d", device_ordinal,
                                            label, thunks.size());
+          // We want to report all thunks in chronological order for
+          // readability according to the time they were executed.
+          absl::c_sort(thunks, [](const auto& a, const auto& b) {
+            return a.executed < b.executed;
+          });
           for (auto& thunk : thunks) {
             LOG(ERROR) << absl::StreamFormat(
                 "  - thunk[%d/%d]: %s at %s", thunk.index,
