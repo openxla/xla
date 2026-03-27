@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
@@ -33,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
@@ -40,6 +43,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
@@ -48,6 +52,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
+#include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
@@ -62,7 +67,77 @@ namespace se = ::stream_executor;
 
 using CudnnBackendConfig = stream_executor::dnn::AlgorithmProto;
 
+// Marker in AlgorithmProto indicating that this config was generated as a BF16
+// fallback for an FP8 conv that had no acceptable cuDNN plans. When the
+// autotuner selects such a config, ApplyConfig will insert FP8→BF16 converts on
+// the operands and BF16→FP8 on the output.
+namespace bf16_fallback_internal {
+
+bool IsBf16FallbackConfig(const CudnnBackendConfig& config) {
+  return config.is_bf16_fallback();
+}
+
+void MarkAsBf16Fallback(CudnnBackendConfig& config) {
+  config.set_is_bf16_fallback(true);
+}
+
+CudnnBackendConfig StripBf16FallbackMarker(const CudnnBackendConfig& config) {
+  CudnnBackendConfig clean = config;
+  clean.set_is_bf16_fallback(false);
+  return clean;
+}
+
+// Returns true if any operand of the convolution custom call has FP8 types.
+bool IsFp8ConvCustomCall(const HloCustomCallInstruction* instr) {
+  return absl::c_any_of(instr->operands(), [](const HloInstruction* op) {
+    return primitive_util::IsF8Type(op->shape().element_type());
+  });
+}
+
+absl::StatusOr<se::dnn::ConvolutionKind> GetBf16FallbackConvolutionKind(
+    se::dnn::ConvolutionKind conv_kind) {
+  switch (conv_kind) {
+    case se::dnn::ConvolutionKind::FORWARD:
+    case se::dnn::ConvolutionKind::BACKWARD_DATA:
+    case se::dnn::ConvolutionKind::BACKWARD_FILTER:
+    case se::dnn::ConvolutionKind::FORWARD_BIAS_ACTIVATION:
+      return conv_kind;
+    case se::dnn::ConvolutionKind::FORWARD_GRAPH:
+      // BF16 fallback uses regular forward conv runners.
+      return se::dnn::ConvolutionKind::FORWARD;
+    default:
+      return absl::InvalidArgumentError(
+          "BF16 fallback is unsupported for convolution kind.");
+  }
+}
+
+absl::StatusOr<absl::string_view> GetBf16FallbackCustomCallTarget(
+    const HloCustomCallInstruction& instr) {
+  TF_ASSIGN_OR_RETURN(CudnnConvKind conv_kind, GetCudnnConvKind(&instr));
+  switch (conv_kind) {
+    case CudnnConvKind::kForward:
+    case CudnnConvKind::kForwardGraph:
+      return kCudnnConvForwardCallTarget;
+    case CudnnConvKind::kBackwardInput:
+      return kCudnnConvBackwardInputCallTarget;
+    case CudnnConvKind::kBackwardFilter:
+      return kCudnnConvBackwardFilterCallTarget;
+    case CudnnConvKind::kForwardActivation:
+      return kCudnnConvBiasActivationForwardCallTarget;
+  }
+  return absl::InvalidArgumentError(
+      "BF16 fallback target mapping is unavailable for convolution kind.");
+}
+
+}  // namespace bf16_fallback_internal
+
 namespace {
+
+using bf16_fallback_internal::GetBf16FallbackConvolutionKind;
+using bf16_fallback_internal::GetBf16FallbackCustomCallTarget;
+using bf16_fallback_internal::IsFp8ConvCustomCall;
+using bf16_fallback_internal::MarkAsBf16Fallback;
+using bf16_fallback_internal::StripBf16FallbackMarker;
 
 // Replaces the instruction with a new instruction with the same name in the
 // parent computation. The given instruction will be replaced by a tuple of the
@@ -304,6 +379,44 @@ GetConvolutionCustomCallConfigs(const HloCustomCallInstruction* instr,
                       gpu_conv_config, engine_options, /*use_fallback=*/true));
   }
 
+  // BF16 fallback: if the convolution uses FP8 types and cuDNN returned zero
+  // acceptable plans, probe cuDNN with BF16 types instead. The resulting
+  // configs are tagged with a sentinel so that ApplyConfig can insert the
+  // necessary FP8↔BF16 conversion ops.
+  if (algorithm_configs.empty() && IsFp8ConvCustomCall(instr)) {
+    VLOG(1) << "No cuDNN plans found for FP8 conv " << instr->name()
+            << "; probing BF16 fallback.";
+    TF_ASSIGN_OR_RETURN(se::dnn::DataType bf16_type,
+                        GetDNNDataTypeFromPrimitiveType(BF16));
+    TF_ASSIGN_OR_RETURN(se::dnn::ConvolutionKind bf16_conv_kind,
+                        GetBf16FallbackConvolutionKind(conv_kind));
+    TF_ASSIGN_OR_RETURN(
+        algorithm_configs,
+        GetAlgorithms(dnn, bf16_conv_kind, bf16_type, bf16_type, stream,
+                      gpu_conv_config, engine_options, /*use_fallback=*/false));
+    if (algorithm_configs.empty()) {
+      TF_ASSIGN_OR_RETURN(
+          algorithm_configs,
+          GetAlgorithms(dnn, bf16_conv_kind, bf16_type, bf16_type, stream,
+                        gpu_conv_config, engine_options,
+                        /*use_fallback=*/true));
+    }
+    for (auto& config : algorithm_configs) {
+      MarkAsBf16Fallback(config);
+    }
+    if (!algorithm_configs.empty()) {
+      LOG(WARNING) << "FP8 conv " << instr->name()
+                   << " has no cuDNN FP8 plans; using BF16 fallback ("
+                   << algorithm_configs.size()
+                   << " BF16 plan(s) available). Try different convolution "
+                      "dimensions/group counts to regain FP8, or continue "
+                      "with BF16.";
+    } else {
+      LOG(WARNING) << "FP8 conv " << instr->name()
+                   << " has no cuDNN plans for either FP8 or BF16.";
+    }
+  }
+
   std::vector<std::unique_ptr<BackendConfig>> configs;
   configs.reserve(algorithm_configs.size());
   for (const auto& algorithm_config : algorithm_configs) {
@@ -323,6 +436,110 @@ absl::Status ApplyConfigToCudnnFusion(HloInstruction& instr,
   backend_config->set_kind(kCuDnnFusionKind);
   backend_config->mutable_cudnn_fusion_config()->set_plan_id(config.algo_id());
   TF_RETURN_IF_ERROR(instr.set_backend_config(std::move(gpu_config)));
+  return absl::OkStatus();
+}
+
+// Applies a BF16 fallback config to an FP8 conv custom call.
+//
+// This inserts convert(FP8→BF16) on each FP8 operand, creates a new custom
+// call with BF16 types and the chosen algorithm, converts the BF16 result back
+// to the original FP8 type, and replaces the original instruction.
+//
+// The custom call target is changed from any graph conv target to the plain
+// forward conv target, since the BF16 path does not use the FP8-specific
+// serialized execution graph.
+absl::Status ApplyBf16FallbackConfig(HloInstruction& instr,
+                                     const CudnnBackendConfig& config) {
+  if (!instr.shape().IsTuple() || instr.shape().tuple_shapes_size() < 2) {
+    return absl::InvalidArgumentError(
+        "Expected (result, workspace) tuple from conv custom call");
+  }
+  HloComputation* computation = instr.parent();
+  auto* original_custom_call = Cast<HloCustomCallInstruction>(&instr);
+  TF_RET_CHECK(IsFp8ConvCustomCall(original_custom_call))
+      << "BF16 fallback config applied to non-FP8 conv: " << instr.name();
+  CudnnBackendConfig clean_config = StripBf16FallbackMarker(config);
+  TF_ASSIGN_OR_RETURN(
+      absl::string_view bf16_target,
+      GetBf16FallbackCustomCallTarget(*original_custom_call));
+
+  // 1. Convert FP8 operands to BF16.
+  std::vector<HloInstruction*> new_operands;
+  new_operands.reserve(instr.operand_count());
+  for (HloInstruction* operand : instr.operands()) {
+    if (primitive_util::IsF8Type(operand->shape().element_type())) {
+      Shape bf16_shape =
+          ShapeUtil::ChangeElementType(operand->shape(), BF16);
+      HloInstruction* convert = computation->AddInstruction(
+          HloInstruction::CreateConvert(bf16_shape, operand));
+      new_operands.push_back(convert);
+    } else {
+      new_operands.push_back(operand);
+    }
+  }
+
+  // 2. Build new output shape with BF16 result element(s).
+  //    The last tuple element is the workspace.
+  std::vector<Shape> new_call_element_shapes;
+  new_call_element_shapes.reserve(instr.shape().tuple_shapes().size());
+  for (int i = 0; i < instr.shape().tuple_shapes().size() - 1; ++i) {
+    Shape elem = instr.shape().tuple_shapes(i);
+    if (primitive_util::IsF8Type(elem.element_type())) {
+      elem = ShapeUtil::ChangeElementType(elem, BF16);
+    }
+    new_call_element_shapes.push_back(elem);
+  }
+  int64_t workspace_size =
+      clean_config.has_workspace_size() ? clean_config.workspace_size().value()
+                                        : 0;
+  new_call_element_shapes.push_back(
+      ShapeUtil::MakeShape(U8, {workspace_size}));
+  Shape new_call_shape = ShapeUtil::MakeTupleShape(new_call_element_shapes);
+
+  // 3. Create the new BF16 custom call, using the BF16-compatible target for
+  //    the original convolution kind (FORWARD_GRAPH maps to plain FORWARD).
+  HloInstruction* new_call = computation->AddInstruction(
+      instr.CloneWithNewOperands(new_call_shape, new_operands));
+  new_call->SetAndSanitizeName(instr.name());
+  auto* custom_call = Cast<HloCustomCallInstruction>(new_call);
+  custom_call->set_custom_call_target(bf16_target);
+
+  // 4. Set the backend config with the BF16 algorithm, clearing graph state.
+  TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
+                      instr.backend_config<GpuBackendConfig>());
+  CudnnConvBackendConfig* cudnn_conv_config =
+      gpu_backend_config.mutable_cudnn_conv_backend_config();
+  *cudnn_conv_config->mutable_algorithm() = clean_config;
+  if (original_custom_call->custom_call_target() ==
+      kCudnnConvForwardGraphCallTarget) {
+    cudnn_conv_config->clear_serialized_graph();
+  }
+  TF_RETURN_IF_ERROR(new_call->set_backend_config(gpu_backend_config));
+
+  // 5. Extract results and convert BF16 back to original FP8 types.
+  std::vector<HloInstruction*> new_tuple_elements;
+  new_tuple_elements.reserve(instr.shape().tuple_shapes().size());
+  for (int i = 0; i < instr.shape().tuple_shapes().size() - 1; ++i) {
+    HloInstruction* gte = computation->AddInstruction(
+        HloInstruction::CreateGetTupleElement(
+            new_call->shape().tuple_shapes(i), new_call, i));
+    Shape original_shape = instr.shape().tuple_shapes(i);
+    if (gte->shape().element_type() != original_shape.element_type()) {
+      gte = computation->AddInstruction(
+          HloInstruction::CreateConvert(original_shape, gte));
+    }
+    new_tuple_elements.push_back(gte);
+  }
+  // Empty workspace placeholder for the output tuple.
+  new_tuple_elements.push_back(computation->AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR1<uint8_t>({}))));
+
+  // 6. Repackage as a tuple with the same shape as the original instruction.
+  HloInstruction* new_tuple =
+      computation->AddInstruction(HloInstruction::CreateTuple(
+          new_tuple_elements));
+  TF_RETURN_IF_ERROR(computation->ReplaceInstruction(&instr, new_tuple));
+  VLOG(1) << "Applied BF16 fallback config to FP8 conv: " << new_call->name();
   return absl::OkStatus();
 }
 
@@ -408,6 +625,9 @@ absl::Status CudnnBackend::ApplyConfig(HloInstruction& instr,
   }
 
   if (instr.opcode() == HloOpcode::kCustomCall) {
+    if (bf16_fallback_internal::IsBf16FallbackConfig(algorithm_config)) {
+      return ApplyBf16FallbackConfig(instr, algorithm_config);
+    }
     return ApplyConfigToCudnnCustomCall(instr, algorithm_config);
   }
 
