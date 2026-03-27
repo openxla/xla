@@ -199,8 +199,8 @@ class ConvertToLibdevice : public mlir::OpRewritePattern<OpTy> {
 
     llvm::SmallVector<Value, 2> casted_inputs;
     if (output_type_is_16bit_float &&
-        !::xla::gpu::HasF16Implementation(OpInfo<OpTy>::kFunctionID, triple_,
-                                          primitive_type_or.value())) {
+        !(output_type.isF16() && ::xla::gpu::HasF16Implementation(
+                                     OpInfo<OpTy>::kFunctionID, triple_))) {
       // Upcast the inputs to F32.
       for (auto operand : op->getOperands()) {
         Type f32_type = rewriter.getF32Type();

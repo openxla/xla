@@ -98,7 +98,7 @@ std::string ObtainDeviceFunctionName(TargetDeviceFunctionID func_id,
                                      llvm::Triple target_triple);
 
 bool HasF16Implementation(TargetDeviceFunctionID func_id,
-                          llvm::Triple target_triple, PrimitiveType type);
+                          llvm::Triple target_triple);
 }  // namespace gpu
 }  // namespace xla
 
