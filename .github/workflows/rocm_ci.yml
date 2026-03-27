@@ -31,7 +31,7 @@ jobs:
   jax:
     if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' }}
     name: JAX Linux x86 AMD Instinct GPU
-    runs-on: linux-x86-64-4gpu-amd
+    runs-on: linux-x86-64-1gpu-amd
     env:
       DOCKER_IMAGE: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
     container:
@@ -73,24 +73,21 @@ jobs:
 
       - name: Run JAX Unit Tests
         timeout-minutes: 120
-        env:
-          JAXCI_HERMETIC_PYTHON_VERSION: "3.14"
-          JAXCI_ENABLE_X64: "1"
-          JAXCI_ROCM_VERSION: "7"
-          JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: "0"
-          JAXCI_BUILD_JAX: "true"
-          JAXCI_BUILD_JAXLIB: wheel
         working-directory: jax
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh \
             --override_repository=xla=${GITHUB_WORKSPACE} \
             --config=single_gpu \
+            --//jax:build_jaxlib=wheel \
+            --//jax:build_jax=true \
             --local_test_jobs=4 \
+            --action_env=JAX_ENABLE_X64=1 \
+            --repo_env=HERMETIC_PYTHON_VERSION=3.14 \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE=${DOCKER_IMAGE}
 
   xla:
     name: XLA Linux x86 AMD Instinct GPU
-    runs-on: linux-x86-64-8gpu-amd
+    runs-on: linux-x86-64-4gpu-amd
     env:
       DOCKER_IMAGE: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
       EXECUTE_CI_BUILD_URL: https://raw.githubusercontent.com/ROCm/xla/refs/heads/leo/upstream-script/build_tools/rocm/execute_ci_build_upstream.sh
@@ -134,19 +131,18 @@ jobs:
         run: |
           build_tools/rocm/execute_ci_build_upstream.sh \
             --config=rocm_ci \
-            --config=rocm_rbe_dynamic \
+            --config=rocm_rbe \
             --config=ci_single_gpu \
             --local_test_jobs=4 \
             --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL=linux_x64_gpu_gfx90a \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE=${DOCKER_IMAGE} \
 
       - name: Test XLA [multi_gpu]
-        if: always() && !cancelled()
         timeout-minutes: 120
         run: |
           build_tools/rocm/execute_ci_build_upstream.sh \
             --config=rocm_ci \
-            --config=rocm_rbe_dynamic \
+            --config=rocm_rbe \
             --config=ci_multi_gpu \
             --local_test_jobs=1 \
             --strategy=TestRunner=local \
