@@ -205,31 +205,130 @@ def _get_injected_local_wheels(
                     ctx.attr.local_wheel_exclusion_list,
                 )
 
-    for wheel_name, wheel_path in wheels.items():
-        # Normalize `foo_bar` to `foo-bar`. We assume that, if `foo_bar`
-        # isn't present in requirements, it must be named `foo-bar`. The
-        # exact same distribution name needs to be used to ensure it is
-        # correctly overridden.
-        if "_" in wheel_name and wheel_name not in base_requirements:
-            local_package_name = wheel_name.replace("_", "-")
-        else:
-            local_package_name = wheel_name
+    local_wheel_paths = {}
+    local_wheel_versions = {}
+    for wheel_name in sorted(wheels.keys()):
+        wheel_path = wheels[wheel_name]
+        local_package_name = _normalize_package_name(wheel_name)
 
         # Wheel name in dist/ looks like: jaxlib-0.9.1.dev0+selfbuilt-cp311...
         exact_version = wheel_path.basename.split("-")[1]
-        dist_dir = wheel_path.dirname.realpath
+        local_wheel_paths[local_package_name] = wheel_path
+        local_wheel_versions[local_package_name] = exact_version
 
-        # Add --find-links starting rules_python 1.7.0+
-        local_wheel_requirements.append("--find-links {prefix}{dir}".format(
-            prefix = local_file_path_prefix,
-            dir = dist_dir,
-        ))
+    local_wheel_atomic_groups = _parse_local_wheel_atomic_groups(
+        ctx.os.environ.get("HERMETIC_LOCAL_WHEEL_ATOMIC_GROUPS", ""),
+    )
+    _validate_local_wheel_atomic_groups(local_wheel_versions, local_wheel_atomic_groups)
+    local_wheel_atomic_packages = {}
+    for local_wheel_atomic_group in local_wheel_atomic_groups:
+        for package_name in local_wheel_atomic_group:
+            local_wheel_atomic_packages[package_name] = True
+
+    added_find_links = {}
+    for local_package_name in sorted(local_wheel_paths.keys()):
+        wheel_path = local_wheel_paths[local_package_name]
+        exact_version = local_wheel_versions[local_package_name]
+        dist_dir = wheel_path.dirname.realpath
+        dist_dir_key = str(dist_dir)
+
+        # Keep direct wheel references for configured local wheel atomic
+        # groups to avoid partial/indirect resolution when both lockfile and
+        # local wheels are present.
+        if local_package_name in local_wheel_atomic_packages:
+            local_wheel_requirements.append("{pkg} @ {prefix}{wheel}".format(
+                pkg = local_package_name,
+                prefix = local_file_path_prefix,
+                wheel = wheel_path.realpath,
+            ))
+            continue
+
+        # Add --find-links for all other wheels.
+        if dist_dir_key not in added_find_links:
+            local_wheel_requirements.append("--find-links {prefix}{dir}".format(
+                prefix = local_file_path_prefix,
+                dir = dist_dir,
+            ))
+            added_find_links[dist_dir_key] = True
+
         local_wheel_requirements.append("{pkg}=={version}".format(
             pkg = local_package_name,
             version = exact_version,
         ))
 
     return local_wheel_requirements
+
+def _parse_local_wheel_atomic_groups(raw_config):
+    if not raw_config:
+        return []
+
+    parsed_groups = []
+    for raw_group in raw_config.split(";"):
+        if not raw_group:
+            continue
+        parsed_group = []
+        for package_name in raw_group.split(","):
+            normalized_package_name = _normalize_package_name(package_name)
+            if normalized_package_name:
+                parsed_group.append(normalized_package_name)
+        if parsed_group:
+            parsed_groups.append(parsed_group)
+    return parsed_groups
+
+def _normalize_package_name(package_name):
+    if not package_name:
+        return ""
+
+    # Normalize `foo_bar` to `foo-bar`. We assume that, if `foo_bar`
+    # isn't present in requirements, it must be named `foo-bar`. The
+    # exact same distribution name needs to be used to ensure it is
+    # correctly overridden.
+    return package_name.strip().replace("_", "-").lower()
+
+def _validate_local_wheel_atomic_groups(local_wheel_versions, local_wheel_atomic_groups):
+    if not local_wheel_atomic_groups:
+        return
+
+    for local_wheel_atomic_group in local_wheel_atomic_groups:
+        present_local_wheels = [
+            package_name
+            for package_name in local_wheel_atomic_group
+            if package_name in local_wheel_versions
+        ]
+        if not present_local_wheels:
+            continue
+
+        if len(present_local_wheels) != len(local_wheel_atomic_group):
+            missing_local_wheels = [
+                package_name
+                for package_name in local_wheel_atomic_group
+                if package_name not in local_wheel_versions
+            ]
+            fail("""Found partial local wheels for configured atomic group.
+Atomic group: {atomic_group}
+Present local wheels: {present_local_wheels}
+Missing local wheels: {missing_local_wheels}
+Please provide all wheels in an atomic group from the same build.""".format(
+                atomic_group = local_wheel_atomic_group,
+                present_local_wheels = present_local_wheels,
+                missing_local_wheels = missing_local_wheels,
+            ))
+
+        group_versions = {
+            local_wheel_versions[package_name]: True
+            for package_name in local_wheel_atomic_group
+        }
+        if len(group_versions.keys()) != 1:
+            fail("""Found mismatched local wheel versions for configured atomic group.
+Atomic group: {atomic_group}
+Resolved versions: {resolved_versions}
+Please provide all wheels in an atomic group from the same build.""".format(
+                atomic_group = local_wheel_atomic_group,
+                resolved_versions = {
+                    package_name: local_wheel_versions[package_name]
+                    for package_name in local_wheel_atomic_group
+                },
+            ))
 
 python_repository = repository_rule(
     implementation = _python_repository_impl,
@@ -269,6 +368,7 @@ python_repository = repository_rule(
         "HERMETIC_PYTHON_URL",
         "HERMETIC_PYTHON_SHA256",
         "HERMETIC_REQUIREMENTS_LOCK",
+        "HERMETIC_LOCAL_WHEEL_ATOMIC_GROUPS",
         "HERMETIC_PYTHON_PREFIX",
         "WHEEL_NAME",
         "WHEEL_COLLAB",
