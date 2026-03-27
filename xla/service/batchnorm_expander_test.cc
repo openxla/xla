@@ -157,6 +157,140 @@ ENTRY entry {
   }
 }
 
+// Test that we expand BatchNormInference.
+TEST_F(BatchNormExpanderTest, BatchNormInference) {
+  Shape input_shape = ShapeUtil::MakeShape(F32, {2, 2, 2, 2});
+  Shape scale_shape = ShapeUtil::MakeShape(F32, {2});
+  Shape offset_shape = ShapeUtil::MakeShape(F32, {2});
+  Shape mean_shape = ShapeUtil::MakeShape(F32, {2});
+  Shape var_shape = ShapeUtil::MakeShape(F32, {2});
+
+  HloComputation::Builder builder(TestName());
+  HloInstruction* param0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, input_shape, "activation"));
+
+  HloInstruction* param1 = builder.AddInstruction(
+      HloInstruction::CreateParameter(1, scale_shape, "scale"));
+
+  HloInstruction* param2 = builder.AddInstruction(
+      HloInstruction::CreateParameter(2, offset_shape, "offset"));
+
+  HloInstruction* param3 = builder.AddInstruction(
+      HloInstruction::CreateParameter(3, mean_shape, "mean"));
+
+  HloInstruction* param4 = builder.AddInstruction(
+      HloInstruction::CreateParameter(4, var_shape, "var"));
+
+  builder.AddInstruction(HloInstruction::CreateBatchNormInference(
+      input_shape, param0, param1, param2, param3, param4,
+      /*epsilon=*/0.001, /*feature_index=*/3));
+
+  auto module = CreateNewVerifiedModule();
+  auto computation = module->AddEntryComputation(builder.Build());
+  HloInstruction* root = computation->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kBatchNormInference);
+  BatchNormExpander rewriter(/*rewrite_training_op=*/false,
+                             /*rewrite_inference_op=*/true,
+                             /*rewrite_grad_op=*/false);
+  ASSERT_TRUE(rewriter.Run(module.get()).value());
+  root = computation->root_instruction();
+  // BatchNormInference expands to a single result (not a tuple).
+  EXPECT_NE(root->opcode(), HloOpcode::kBatchNormInference);
+}
+
+TEST_F(BatchNormExpanderTest, BatchNormInferenceSharding) {
+  const char* module_str = R"(
+HloModule module
+ENTRY entry {
+  %param.0 = f32[8,4] parameter(0)
+  %param.1 = f32[4] parameter(1)
+  %param.2 = f32[4] parameter(2)
+  %param.3 = f32[4] parameter(3)
+  %param.4 = f32[4] parameter(4)
+  ROOT %batch-norm-inference = f32[8,4]
+    batch-norm-inference(f32[8,4] %param.0, f32[4] %param.1, f32[4] %param.2,
+                         f32[4] %param.3, f32[4] %param.4),
+    epsilon=0.001, feature_index=1, sharding={maximal device=1}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  BatchNormExpander rewriter(/*rewrite_training_op=*/false,
+                             /*rewrite_inference_op=*/true,
+                             /*rewrite_grad_op=*/false);
+  ASSERT_TRUE(rewriter.Run(m.get()).value());
+
+  for (auto* instruction : m->entry_computation()->instructions()) {
+    if (instruction->opcode() == HloOpcode::kParameter) {
+      continue;
+    }
+    auto device = instruction->sharding_unique_device();
+    ASSERT_TRUE(device);
+    EXPECT_EQ(*device, 1);
+  }
+}
+
+TEST_F(BatchNormExpanderTest, BatchNormGradSharding) {
+  const char* module_str = R"(
+HloModule module
+ENTRY entry {
+  %param.0 = f32[8,4] parameter(0)
+  %param.1 = f32[4] parameter(1)
+  %param.2 = f32[4] parameter(2)
+  %param.3 = f32[4] parameter(3)
+  %param.4 = f32[8,4] parameter(4)
+  ROOT %batch-norm-grad = (f32[8,4], f32[4], f32[4])
+    batch-norm-grad(f32[8,4] %param.0, f32[4] %param.1, f32[4] %param.2,
+                    f32[4] %param.3, f32[8,4] %param.4),
+    epsilon=0.001, feature_index=1, sharding={{maximal device=1},{maximal device=1},{maximal device=1}}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  BatchNormExpander rewriter(/*rewrite_training_op=*/false,
+                             /*rewrite_inference_op=*/false,
+                             /*rewrite_grad_op=*/true);
+  ASSERT_TRUE(rewriter.Run(m.get()).value());
+
+  for (auto* instruction : m->entry_computation()->instructions()) {
+    if (instruction->opcode() == HloOpcode::kParameter) {
+      continue;
+    }
+    auto device = instruction->sharding_unique_device();
+    ASSERT_TRUE(device);
+    EXPECT_EQ(*device, 1);
+  }
+}
+
+TEST_F(BatchNormExpanderTest, DisabledFlagsAreNoop) {
+  Shape input_shape = ShapeUtil::MakeShape(F32, {2, 2, 2, 2});
+  Shape scale_shape = ShapeUtil::MakeShape(F32, {2});
+  Shape offset_shape = ShapeUtil::MakeShape(F32, {2});
+
+  HloComputation::Builder builder(TestName());
+  HloInstruction* param0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, input_shape, "activation"));
+
+  HloInstruction* param1 = builder.AddInstruction(
+      HloInstruction::CreateParameter(1, scale_shape, "scale"));
+
+  HloInstruction* param2 = builder.AddInstruction(
+      HloInstruction::CreateParameter(2, offset_shape, "offset"));
+
+  builder.AddInstruction(HloInstruction::CreateBatchNormTraining(
+      ShapeUtil::MakeTupleShape({input_shape, scale_shape, offset_shape}),
+      param0, param1, param2,
+      /*epsilon=*/0.001, /*feature_index=*/3));
+
+  auto module = CreateNewVerifiedModule();
+  auto computation = module->AddEntryComputation(builder.Build());
+  // All rewrite flags disabled — pass should not change the module.
+  BatchNormExpander rewriter(/*rewrite_training_op=*/false,
+                             /*rewrite_inference_op=*/false,
+                             /*rewrite_grad_op=*/false);
+  EXPECT_FALSE(rewriter.Run(module.get()).value());
+  HloInstruction* root = computation->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kBatchNormTraining);
+}
+
 TEST_F(BatchNormExpanderTest, Execution) {
   const char* module_str = R"(
 HloModule module
