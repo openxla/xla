@@ -32,11 +32,13 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
+#include "absl/base/log_severity.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/globals.h"
 #include "absl/log/log.h"
+#include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -3706,7 +3708,11 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingFusionOps) {
 
   // 3 runs cover VA reservation set indices 0, 1, 0.
   int old_vlog = absl::SetVLogLevel("gpu_executable", 3);
-  ::testing::internal::CaptureStderr();
+  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
+                            ::testing::HasSubstr("VA remapping: Mapped")))
+      .Times(::testing::AtLeast(1));
+  mock_log.StartCapturingLogs();
   for (int run = 0; run < 3; ++run) {
     float base = static_cast<float>(run * 10);
     auto x_lit =
@@ -3729,9 +3735,8 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingFusionOps) {
         *result_lit))
         << "Mismatch on run " << run;
   }
-  std::string log_output = ::testing::internal::GetCapturedStderr();
+  mock_log.StopCapturingLogs();
   absl::SetVLogLevel("gpu_executable", old_vlog);
-  EXPECT_THAT(log_output, HasSubstr("VA remapping: Mapped"));
 }
 
 // Tests that GEMM operations (CUBLAS/CUBLASLT command type) produce correct
@@ -3765,7 +3770,11 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingGemmOps) {
       {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}});
 
   int old_vlog = absl::SetVLogLevel("gpu_executable", 3);
-  ::testing::internal::CaptureStderr();
+  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
+                            ::testing::HasSubstr("VA remapping: Mapped")))
+      .Times(::testing::AtLeast(1));
+  mock_log.StartCapturingLogs();
   for (int run = 0; run < 3; ++run) {
     float s = static_cast<float>(run + 1);
     // lhs = s * identity.
@@ -3783,9 +3792,8 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingGemmOps) {
     EXPECT_TRUE(LiteralTestUtil::Near(lhs, *result_lit, ErrorSpec{1e-5}))
         << "Mismatch on run " << run;
   }
-  std::string log_output = ::testing::internal::GetCapturedStderr();
+  mock_log.StopCapturingLogs();
   absl::SetVLogLevel("gpu_executable", old_vlog);
-  EXPECT_THAT(log_output, HasSubstr("VA remapping: Mapped"));
 }
 
 // Tests that conditional operations (CONDITIONAL command type) produce correct
@@ -3830,7 +3838,11 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingConditional) {
       {true, 5.0f, 15.0f}, {false, 5.0f, 25.0f}, {true, 7.0f, 17.0f}};
 
   int old_vlog = absl::SetVLogLevel("gpu_executable", 3);
-  ::testing::internal::CaptureStderr();
+  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
+                            ::testing::HasSubstr("VA remapping: Mapped")))
+      .Times(::testing::AtLeast(1));
+  mock_log.StartCapturingLogs();
   for (const auto& cfg : runs) {
     auto cond_lit = LiteralUtil::CreateR0<bool>(cfg.cond);
     auto val_lit = LiteralUtil::CreateR0<float>(cfg.val);
@@ -3846,9 +3858,8 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingConditional) {
     EXPECT_TRUE(LiteralTestUtil::Equal(
         LiteralUtil::CreateR0<float>(cfg.expected), *result_lit));
   }
-  std::string log_output = ::testing::internal::GetCapturedStderr();
+  mock_log.StopCapturingLogs();
   absl::SetVLogLevel("gpu_executable", old_vlog);
-  EXPECT_THAT(log_output, HasSubstr("VA remapping: Mapped"));
 }
 
 // Tests that while-loop operations (WHILE command type) produce correct results
@@ -3892,7 +3903,11 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingWhileLoop) {
   TF_ASSERT_OK_AND_ASSIGN(auto* mem, device->default_memory_space());
 
   int old_vlog = absl::SetVLogLevel("gpu_executable", 3);
-  ::testing::internal::CaptureStderr();
+  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
+                            ::testing::HasSubstr("VA remapping: Mapped")))
+      .Times(::testing::AtLeast(1));
+  mock_log.StartCapturingLogs();
   for (int run = 0; run < 3; ++run) {
     float init_val = static_cast<float>(run);
     auto init_lit = LiteralUtil::CreateR0<float>(init_val);
@@ -3906,9 +3921,8 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingWhileLoop) {
         LiteralUtil::CreateR0<float>(init_val + 4.0f), *result_lit))
         << "Mismatch on run " << run;
   }
-  std::string log_output = ::testing::internal::GetCapturedStderr();
+  mock_log.StopCapturingLogs();
   absl::SetVLogLevel("gpu_executable", old_vlog);
-  EXPECT_THAT(log_output, HasSubstr("VA remapping: Mapped"));
 }
 
 // Tests that dynamic-slice fusion operations (DYNAMIC_SLICE_FUSION command
@@ -3951,7 +3965,11 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingDynamicSliceFusion) {
   };
 
   int old_vlog = absl::SetVLogLevel("gpu_executable", 3);
-  ::testing::internal::CaptureStderr();
+  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
+                            ::testing::HasSubstr("VA remapping: Mapped")))
+      .Times(::testing::AtLeast(1));
+  mock_log.StartCapturingLogs();
   for (const auto& cfg : runs) {
     auto src_lit = LiteralUtil::CreateR1<float>({1, 2, 3, 4, 5, 6, 7, 8});
     auto offset_lit = LiteralUtil::CreateR0<int32_t>(cfg.offset);
@@ -3968,9 +3986,8 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingDynamicSliceFusion) {
         LiteralUtil::CreateR1<float>(cfg.expected), *result_lit))
         << "Mismatch at offset " << cfg.offset;
   }
-  std::string log_output = ::testing::internal::GetCapturedStderr();
+  mock_log.StopCapturingLogs();
   absl::SetVLogLevel("gpu_executable", old_vlog);
-  EXPECT_THAT(log_output, HasSubstr("VA remapping: Mapped"));
 }
 
 // Tests the kNumOfVaReservationSets=2 multiplexing: runs 6 iterations so the
@@ -3998,7 +4015,11 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingMultiplexing) {
 
   // 6 runs → VA range indices: 0, 1, 0, 1, 0, 1.
   int old_vlog = absl::SetVLogLevel("gpu_executable", 3);
-  ::testing::internal::CaptureStderr();
+  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
+                            ::testing::HasSubstr("VA remapping: Mapped")))
+      .Times(::testing::AtLeast(1));
+  mock_log.StartCapturingLogs();
   for (int run = 0; run < 6; ++run) {
     float base = static_cast<float>(run * 10);
     auto x_lit = LiteralUtil::CreateR1<float>({base, base, base, base});
@@ -4013,9 +4034,8 @@ TEST(StreamExecutorGpuClientTest, CommandBufferVaRemappingMultiplexing) {
         *result_lit))
         << "Mismatch on run " << run << " (VA range index " << (run % 2) << ")";
   }
-  std::string log_output = ::testing::internal::GetCapturedStderr();
+  mock_log.StopCapturingLogs();
   absl::SetVLogLevel("gpu_executable", old_vlog);
-  EXPECT_THAT(log_output, HasSubstr("VA remapping: Mapped"));
 }
 
 #endif  // GOOGLE_CUDA
