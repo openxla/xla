@@ -419,33 +419,30 @@ TEST_F(CudnnBackendTest, IsFp8ConvCustomCallHelperDetectsOperandTypes) {
 }
 
 TEST_F(CudnnBackendTest, GetBf16FallbackConvolutionKindHelperMapsCorrectly) {
-  EXPECT_THAT(
-      bf16_fallback_internal::GetBf16FallbackConvolutionKind(
-          stream_executor::dnn::ConvolutionKind::FORWARD),
-      absl_testing::IsOkAndHolds(stream_executor::dnn::ConvolutionKind::FORWARD));
-  EXPECT_THAT(
-      bf16_fallback_internal::GetBf16FallbackConvolutionKind(
-          stream_executor::dnn::ConvolutionKind::BACKWARD_DATA),
-      absl_testing::IsOkAndHolds(
-          stream_executor::dnn::ConvolutionKind::BACKWARD_DATA));
-  EXPECT_THAT(
-      bf16_fallback_internal::GetBf16FallbackConvolutionKind(
-          stream_executor::dnn::ConvolutionKind::BACKWARD_FILTER),
-      absl_testing::IsOkAndHolds(
-          stream_executor::dnn::ConvolutionKind::BACKWARD_FILTER));
+  EXPECT_THAT(bf16_fallback_internal::GetBf16FallbackConvolutionKind(
+                  stream_executor::dnn::ConvolutionKind::FORWARD),
+              absl_testing::IsOkAndHolds(
+                  stream_executor::dnn::ConvolutionKind::FORWARD));
+  EXPECT_THAT(bf16_fallback_internal::GetBf16FallbackConvolutionKind(
+                  stream_executor::dnn::ConvolutionKind::BACKWARD_DATA),
+              absl_testing::IsOkAndHolds(
+                  stream_executor::dnn::ConvolutionKind::BACKWARD_DATA));
+  EXPECT_THAT(bf16_fallback_internal::GetBf16FallbackConvolutionKind(
+                  stream_executor::dnn::ConvolutionKind::BACKWARD_FILTER),
+              absl_testing::IsOkAndHolds(
+                  stream_executor::dnn::ConvolutionKind::BACKWARD_FILTER));
   EXPECT_THAT(
       bf16_fallback_internal::GetBf16FallbackConvolutionKind(
           stream_executor::dnn::ConvolutionKind::FORWARD_BIAS_ACTIVATION),
       absl_testing::IsOkAndHolds(
           stream_executor::dnn::ConvolutionKind::FORWARD_BIAS_ACTIVATION));
-  EXPECT_THAT(
-      bf16_fallback_internal::GetBf16FallbackConvolutionKind(
-          stream_executor::dnn::ConvolutionKind::FORWARD_GRAPH),
-      absl_testing::IsOkAndHolds(stream_executor::dnn::ConvolutionKind::FORWARD));
-  EXPECT_THAT(
-      bf16_fallback_internal::GetBf16FallbackConvolutionKind(
-          static_cast<stream_executor::dnn::ConvolutionKind>(-1)),
-      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(bf16_fallback_internal::GetBf16FallbackConvolutionKind(
+                  stream_executor::dnn::ConvolutionKind::FORWARD_GRAPH),
+              absl_testing::IsOkAndHolds(
+                  stream_executor::dnn::ConvolutionKind::FORWARD));
+  EXPECT_THAT(bf16_fallback_internal::GetBf16FallbackConvolutionKind(
+                  static_cast<stream_executor::dnn::ConvolutionKind>(-1)),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 TEST_F(CudnnBackendTest, GetBf16FallbackCustomCallTargetHelperMapsKinds) {
@@ -455,19 +452,19 @@ TEST_F(CudnnBackendTest, GetBf16FallbackCustomCallTargetHelperMapsKinds) {
   auto* forward_custom_call = static_cast<HloCustomCallInstruction*>(
       forward_module->entry_computation()->root_instruction()->mutable_operand(
           0));
-  EXPECT_THAT(
-      bf16_fallback_internal::GetBf16FallbackCustomCallTarget(
-          *forward_custom_call),
-      absl_testing::IsOkAndHolds(kCudnnConvForwardCallTarget));
+  EXPECT_THAT(bf16_fallback_internal::GetBf16FallbackCustomCallTarget(
+                  *forward_custom_call),
+              absl_testing::IsOkAndHolds(kCudnnConvForwardCallTarget));
 
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> graph_module,
       ParseAndReturnVerifiedModule(kFp8ConvGraphCustomCallHlo));
   auto* graph_custom_call = static_cast<HloCustomCallInstruction*>(
-      graph_module->entry_computation()->root_instruction()->mutable_operand(0));
-  EXPECT_THAT(
-      bf16_fallback_internal::GetBf16FallbackCustomCallTarget(*graph_custom_call),
-      absl_testing::IsOkAndHolds(kCudnnConvForwardCallTarget));
+      graph_module->entry_computation()->root_instruction()->mutable_operand(
+          0));
+  EXPECT_THAT(bf16_fallback_internal::GetBf16FallbackCustomCallTarget(
+                  *graph_custom_call),
+              absl_testing::IsOkAndHolds(kCudnnConvForwardCallTarget));
 
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> backward_input_module,
@@ -476,10 +473,9 @@ TEST_F(CudnnBackendTest, GetBf16FallbackCustomCallTargetHelperMapsKinds) {
       backward_input_module->entry_computation()
           ->root_instruction()
           ->mutable_operand(0));
-  EXPECT_THAT(
-      bf16_fallback_internal::GetBf16FallbackCustomCallTarget(
-          *backward_input_custom_call),
-      absl_testing::IsOkAndHolds(kCudnnConvBackwardInputCallTarget));
+  EXPECT_THAT(bf16_fallback_internal::GetBf16FallbackCustomCallTarget(
+                  *backward_input_custom_call),
+              absl_testing::IsOkAndHolds(kCudnnConvBackwardInputCallTarget));
 
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> backward_filter_module,
@@ -488,10 +484,9 @@ TEST_F(CudnnBackendTest, GetBf16FallbackCustomCallTargetHelperMapsKinds) {
       backward_filter_module->entry_computation()
           ->root_instruction()
           ->mutable_operand(0));
-  EXPECT_THAT(
-      bf16_fallback_internal::GetBf16FallbackCustomCallTarget(
-          *backward_filter_custom_call),
-      absl_testing::IsOkAndHolds(kCudnnConvBackwardFilterCallTarget));
+  EXPECT_THAT(bf16_fallback_internal::GetBf16FallbackCustomCallTarget(
+                  *backward_filter_custom_call),
+              absl_testing::IsOkAndHolds(kCudnnConvBackwardFilterCallTarget));
 
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> forward_activation_module,
@@ -678,19 +673,16 @@ TEST_F(CudnnBackendTest, ApplyBf16FallbackConfigConvertsGraphConvToForward) {
 
   // Backend config should have the algorithm set (without the fallback marker)
   // and serialized_graph cleared.
-  TF_ASSERT_OK_AND_ASSIGN(
-      GpuBackendConfig gpu_config,
-      new_conv->backend_config<GpuBackendConfig>());
-  EXPECT_EQ(
-      gpu_config.cudnn_conv_backend_config().algorithm().algo_id(), 42);
+  TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
+                          new_conv->backend_config<GpuBackendConfig>());
+  EXPECT_EQ(gpu_config.cudnn_conv_backend_config().algorithm().algo_id(), 42);
   EXPECT_FALSE(
       gpu_config.cudnn_conv_backend_config().algorithm().is_bf16_fallback());
   EXPECT_TRUE(
       gpu_config.cudnn_conv_backend_config().serialized_graph().empty());
 }
 
-TEST_F(CudnnBackendTest,
-       ApplyBf16FallbackConfigHandlesNonGraphFp8Conv) {
+TEST_F(CudnnBackendTest, ApplyBf16FallbackConfigHandlesNonGraphFp8Conv) {
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> hlo_module,
       ParseAndReturnVerifiedModule(kFp8ConvForwardCustomCallHlo));
@@ -802,8 +794,7 @@ TEST_F(CudnnBackendTest, ApplyBf16FallbackConfigHandlesBackwardFilterFp8Conv) {
   EXPECT_EQ(new_conv->operand(1)->opcode(), HloOpcode::kConvert);
 }
 
-TEST_F(CudnnBackendTest,
-       ApplyNonFallbackConfigToFp8ConvDoesNotInsertConverts) {
+TEST_F(CudnnBackendTest, ApplyNonFallbackConfigToFp8ConvDoesNotInsertConverts) {
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> hlo_module,
       ParseAndReturnVerifiedModule(kFp8ConvForwardCustomCallHlo));
@@ -819,11 +810,9 @@ TEST_F(CudnnBackendTest,
   TF_ASSERT_OK(backend_->ApplyConfig(*conv_instr, any));
 
   // The instruction should be updated in place (no new tuple wrapper).
-  TF_ASSERT_OK_AND_ASSIGN(
-      GpuBackendConfig gpu_config,
-      conv_instr->backend_config<GpuBackendConfig>());
-  EXPECT_EQ(
-      gpu_config.cudnn_conv_backend_config().algorithm().algo_id(), 3);
+  TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
+                          conv_instr->backend_config<GpuBackendConfig>());
+  EXPECT_EQ(gpu_config.cudnn_conv_backend_config().algorithm().algo_id(), 3);
   // Output type remains FP8.
   EXPECT_EQ(conv_instr->shape().tuple_shapes(0).element_type(), F8E4M3FN);
 }

@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/status_macros.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
@@ -52,7 +53,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
-#include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
@@ -459,17 +459,15 @@ absl::Status ApplyBf16FallbackConfig(HloInstruction& instr,
   TF_RET_CHECK(IsFp8ConvCustomCall(original_custom_call))
       << "BF16 fallback config applied to non-FP8 conv: " << instr.name();
   CudnnBackendConfig clean_config = StripBf16FallbackMarker(config);
-  TF_ASSIGN_OR_RETURN(
-      absl::string_view bf16_target,
-      GetBf16FallbackCustomCallTarget(*original_custom_call));
+  TF_ASSIGN_OR_RETURN(absl::string_view bf16_target,
+                      GetBf16FallbackCustomCallTarget(*original_custom_call));
 
   // 1. Convert FP8 operands to BF16.
   std::vector<HloInstruction*> new_operands;
   new_operands.reserve(instr.operand_count());
   for (HloInstruction* operand : instr.operands()) {
     if (primitive_util::IsF8Type(operand->shape().element_type())) {
-      Shape bf16_shape =
-          ShapeUtil::ChangeElementType(operand->shape(), BF16);
+      Shape bf16_shape = ShapeUtil::ChangeElementType(operand->shape(), BF16);
       HloInstruction* convert = computation->AddInstruction(
           HloInstruction::CreateConvert(bf16_shape, operand));
       new_operands.push_back(convert);
@@ -489,11 +487,10 @@ absl::Status ApplyBf16FallbackConfig(HloInstruction& instr,
     }
     new_call_element_shapes.push_back(elem);
   }
-  int64_t workspace_size =
-      clean_config.has_workspace_size() ? clean_config.workspace_size().value()
-                                        : 0;
-  new_call_element_shapes.push_back(
-      ShapeUtil::MakeShape(U8, {workspace_size}));
+  int64_t workspace_size = clean_config.has_workspace_size()
+                               ? clean_config.workspace_size().value()
+                               : 0;
+  new_call_element_shapes.push_back(ShapeUtil::MakeShape(U8, {workspace_size}));
   Shape new_call_shape = ShapeUtil::MakeTupleShape(new_call_element_shapes);
 
   // 3. Create the new BF16 custom call, using the BF16-compatible target for
@@ -520,8 +517,8 @@ absl::Status ApplyBf16FallbackConfig(HloInstruction& instr,
   std::vector<HloInstruction*> new_tuple_elements;
   new_tuple_elements.reserve(instr.shape().tuple_shapes().size());
   for (int i = 0; i < instr.shape().tuple_shapes().size() - 1; ++i) {
-    HloInstruction* gte = computation->AddInstruction(
-        HloInstruction::CreateGetTupleElement(
+    HloInstruction* gte =
+        computation->AddInstruction(HloInstruction::CreateGetTupleElement(
             new_call->shape().tuple_shapes(i), new_call, i));
     Shape original_shape = instr.shape().tuple_shapes(i);
     if (gte->shape().element_type() != original_shape.element_type()) {
@@ -535,9 +532,8 @@ absl::Status ApplyBf16FallbackConfig(HloInstruction& instr,
       HloInstruction::CreateConstant(LiteralUtil::CreateR1<uint8_t>({}))));
 
   // 6. Repackage as a tuple with the same shape as the original instruction.
-  HloInstruction* new_tuple =
-      computation->AddInstruction(HloInstruction::CreateTuple(
-          new_tuple_elements));
+  HloInstruction* new_tuple = computation->AddInstruction(
+      HloInstruction::CreateTuple(new_tuple_elements));
   TF_RETURN_IF_ERROR(computation->ReplaceInstruction(&instr, new_tuple));
   VLOG(1) << "Applied BF16 fallback config to FP8 conv: " << new_call->name();
   return absl::OkStatus();
