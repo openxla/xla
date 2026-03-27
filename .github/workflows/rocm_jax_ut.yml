@@ -33,7 +33,7 @@ jobs:
   execute-jax-ut:
     if: github.event.repository.fork == false
     name: JAX Linux x86 AMD Instinct GPU
-    runs-on: linux-x86-64-8gpu-amd
+    runs-on: linux-x86-64-1gpu-amd
     env:
       DOCKER_IMAGE: rocm/tensorflow-build@sha256:7fcfbd36b7ac8f6b0805b37c4248e929e31cf5ee3af766c8409dd70d5ab65faa
     container:
@@ -83,5 +83,5 @@ jobs:
           ./ci/run_bazel_test_rocm_rbe.sh \
             --override_repository=xla=${GITHUB_WORKSPACE} \
             --config=single_gpu \
-            --local_test_jobs=4 \
+            --local_test_jobs=1 \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE=${DOCKER_IMAGE}
