@@ -2769,6 +2769,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/transforms/collectives:collective_permute_cse",
         "//xla/hlo/transforms/simplifiers:algebraic_simplifier",
         "//xla/hlo/transforms/simplifiers:hlo_constant_folding",
         "//xla/hlo/transforms/simplifiers:hlo_constant_splitter",
