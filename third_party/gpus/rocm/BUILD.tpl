@@ -513,11 +513,9 @@ cc_library(
 
 cc_library(
     name = "hipblaslt",
+    srcs = ["%{rocm_root}/lib/libhipblaslt.so"],
     hdrs = glob(["%{rocm_root}/include/hipblaslt/**"]),
-    data = glob([
-        "%{rocm_root}/lib/hipblaslt/**",
-        "%{rocm_root}/lib/libhipblaslt.so*",
-    ]),
+    data = glob(["%{rocm_root}/lib/hipblaslt/**"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/hipblaslt",
