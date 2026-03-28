@@ -29,8 +29,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/util.h"
 #include "xla/tsl/platform/status_macros.h"
+#include "xla/util.h"
 
 namespace xla::gpu {
 
@@ -44,6 +44,14 @@ AsyncStartThunk::AsyncStartThunk(ThunkInfo thunk_info, AsyncKind async_kind,
       async_kind_(async_kind),
       executor_(std::move(thunks)),
       async_execution_(std::make_shared<AsyncExecution>(this)) {}
+
+AsyncStartThunk::AsyncStartThunk(
+    ThunkInfo thunk_info, AsyncKind async_kind, ThunkSequence thunks,
+    std::shared_ptr<AsyncExecution> async_execution)
+    : Thunk(Thunk::kAsyncStart, std::move(thunk_info)),
+      async_kind_(async_kind),
+      executor_(std::move(thunks)),
+      async_execution_(std::move(async_execution)) {}
 
 absl::Status AsyncStartThunk::Prepare(const PrepareParams& params) {
   return executor_.Prepare(params);

@@ -55,9 +55,9 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/gtl/int_type.h"
+#include "xla/tsl/platform/status_macros.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
-#include "xla/tsl/platform/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -135,26 +135,16 @@ class Thunk {
   enum Kind {
     // # go/keep-sorted start
     kAllGather,
-    kAllGatherDone,
-    kAllGatherStart,
     kAllReduce,
-    kAllReduceDone,
-    kAllReduceStart,
     kAllToAll,
-    kAllToAllDone,
-    kAllToAllStart,
     kAsyncDone,
     kAsyncStart,
     kBuffersDebugChecksum,
     kBuffersDebugFloatCheck,
     kCollectiveBroadcast,
-    kCollectiveBroadcastDone,
-    kCollectiveBroadcastStart,
     kCollectiveKernel,
     kCollectiveMetadata,
     kCollectivePermute,
-    kCollectivePermuteDone,
-    kCollectivePermuteStart,
     kCommandBuffer,
     kConditional,
     kConvolution,
@@ -181,29 +171,18 @@ class Thunk {
     kMemset32BitValue,
     kMemzero,
     kNorm,
-    kNvshmemAllReduceDone,
-    kNvshmemAllReduceStart,
+    kNvshmemAllReduce,
     kNvshmemCollectivePermute,
-    kNvshmemCollectivePermuteDone,
-    kNvshmemCollectivePermuteStart,
     kNvshmemRecv,
-    kNvshmemRecvDone,
     kNvshmemSend,
-    kNvshmemSendDone,
     kOutfeed,
     kPartitionId,
     kRaggedAllToAll,
-    kRaggedAllToAllDone,
-    kRaggedAllToAllStart,
     kRecv,
-    kRecvDone,
     kReduceScatter,
-    kReduceScatterDone,
-    kReduceScatterStart,
     kReplicaId,
     kSelectK,
     kSend,
-    kSendDone,
     kSequential,
     kTriangularSolve,
     kWaitForStreams,

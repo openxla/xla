@@ -54,10 +54,9 @@ class ThunkEmitter {
     return ir_emitter_context_->platform_name();
   }
 
-  explicit ThunkEmitter(
-      IrEmitterContext* absl_nonnull ir_emitter_context,
-      llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
-          llvm_options_lock);
+  explicit ThunkEmitter(IrEmitterContext* absl_nonnull ir_emitter_context,
+                        llvm_ir::LLVMCommandLineOptionsReleasableLock*
+                            absl_nonnull llvm_options_lock);
   ThunkEmitter(const ThunkEmitter&) = delete;
   ThunkEmitter& operator=(const ThunkEmitter&) = delete;
 
@@ -102,7 +101,7 @@ class ThunkEmitter {
       const HloInstruction* hlo);
 
   absl::StatusOr<ThunkSequence> EmitCollectiveAsyncDone(
-      Thunk::Kind kind, const HloInstruction* hlo);
+      const HloInstruction* hlo);
 
   absl::StatusOr<ThunkSequence> EmitCollectiveGroupStartThunk(
       const HloInstruction* hlo);
@@ -171,8 +170,7 @@ class ThunkEmitter {
       const HloAllReduceInstruction* inst,
       std::optional<bool> use_global_device_ids);
 
-  absl::StatusOr<ThunkSequence> EmitNvshmemAsyncDone(Thunk::Kind kind,
-                                                     const HloInstruction* hlo);
+  absl::StatusOr<ThunkSequence> EmitNvshmemAsyncDone(const HloInstruction* hlo);
 
   absl::StatusOr<ThunkSequence> EmitNormThunk(
       const HloCustomCallInstruction* hlo);
@@ -226,10 +224,6 @@ class ThunkEmitter {
       const HloInstruction* instr, const ShapeIndex& index = {}) const;
   absl::StatusOr<ShapedSlice> GetShapedSliceForHlo(
       const HloInstruction* instr, const ShapeIndex& index = {}) const;
-
-  CollectivesAsyncEvents& GetCollectivesAsyncEvents() {
-    return ir_emitter_context_->collectives_async_events();
-  }
 
   InstructionToHostExecuteAsyncEvents&
   GetInstructionToHostExecuteAsyncEvents() {
