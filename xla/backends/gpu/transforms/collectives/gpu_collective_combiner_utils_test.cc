@@ -119,7 +119,11 @@ TEST_F(CollectiveCombinerUtilsTest,
       });
 
   hlo_query::ForEachInstructionWithPred(
-      *module, HloPredicateIsNotOp<HloOpcode::kAllReduce>,
+      *module,
+      [](const HloInstruction* instr) {
+        return instr->opcode() != HloOpcode::kAllReduce &&
+               instr->opcode() != HloOpcode::kWhile;
+      },
       [](HloInstruction* instr) {
         EXPECT_FALSE(instr->backend_config<GpuBackendConfig>()
                          ->collective_backend_config()
@@ -208,7 +212,11 @@ TEST_F(CollectiveCombinerUtilsTest,
       });
 
   hlo_query::ForEachInstructionWithPred(
-      *module, HloPredicateIsNotOp<HloOpcode::kAllReduce>,
+      *module,
+      [](const HloInstruction* instr) {
+        return instr->opcode() != HloOpcode::kAllReduce &&
+               instr->opcode() != HloOpcode::kWhile;
+      },
       [](HloInstruction* instr) {
         EXPECT_FALSE(instr->backend_config<GpuBackendConfig>()
                          ->collective_backend_config()

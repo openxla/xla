@@ -1994,11 +1994,19 @@ absl::StatusOr<HloInstruction*> TransformLoopForward(
   // Add indices to access the slices for the previous iteration to the
   // loop state. Indices used multiple times for multiple slices have been
   // deduped.
+  std::vector<int64_t> induction_var_pipeline_counter_positions;
   for (auto& dus : loop_analysis.GetDUSIndices()) {
     new_parameter_shapes[dus.second + initial_inputs] = dus.first->shape();
     new_root_operands[dus.second + initial_inputs] = dus.first;
     new_init_operands[dus.second + initial_inputs] =
         while_body_to_peeled[dus.first];
+    if (dus.first->opcode() == HloOpcode::kGetTupleElement &&
+        dus.first->operand(0) == loop_parameter &&
+        loop_analysis.GetLoopIterationIdx().has_value() &&
+        dus.first->tuple_index() == *loop_analysis.GetLoopIterationIdx()) {
+      induction_var_pipeline_counter_positions.push_back(dus.second +
+                                                         initial_inputs);
+    }
   }
   absl::flat_hash_map<int64_t, int64_t> moves_requiring_special_output_to_idx;
   for (int i = 0; i < moves_requiring_special_output.size(); ++i) {
@@ -2344,6 +2352,24 @@ absl::StatusOr<HloInstruction*> TransformLoopForward(
         absl::MakeSpan(loop_output_to_replace), output_stacked_data));
   }
   TF_RETURN_IF_ERROR(loop_computation->parent()->RemoveUnusedComputations());
+  if (!induction_var_pipeline_counter_positions.empty() &&
+      loop_analysis.GetLoopStart().has_value() &&
+      loop_analysis.GetLoopIncrement().has_value()) {
+    WhileLoopBackendConfig config;
+    auto config_or = new_while_loop->backend_config<WhileLoopBackendConfig>();
+    if (config_or.ok()) {
+      config = *config_or;
+    }
+    int64_t init = loop_analysis.GetLoopStart()->GetSignedValue();
+    int64_t step = loop_analysis.GetLoopIncrement()->GetSignedValue();
+    for (int64_t tuple_pos : induction_var_pipeline_counter_positions) {
+      auto* dv = config.add_dynamic_variables();
+      dv->set_tuple_index(tuple_pos);
+      dv->set_init(init);
+      dv->set_step(step);
+    }
+    TF_RETURN_IF_ERROR(new_while_loop->set_backend_config(config));
+  }
   return new_while_loop;
 }
 

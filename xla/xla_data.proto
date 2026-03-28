@@ -1428,6 +1428,18 @@ message WhileLoopBackendConfig {
   // Variables that should be treated as induction variables for dynamic memcpy
   // analysis, even though they are not the primary induction variable.
   repeated int64 dynamic_variable_tuple_indices = 4;
+
+  message DynamicVariable {
+    int64 tuple_index = 1;
+    int64 init = 2;
+    int64 step = 3;
+  }
+
+  // Per-variable init/step for dynamic variables. When present, these take
+  // precedence over known_init_step for offset computation in
+  // FusionDynamicMemcpyRewriter. Each entry corresponds to a variable whose
+  // tuple_index also appears in dynamic_variable_tuple_indices.
+  repeated DynamicVariable dynamic_variables = 5;
 }
 
 // Specifies a pair of output/operand buffers that alias each other for
