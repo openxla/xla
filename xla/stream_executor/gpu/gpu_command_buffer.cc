@@ -118,6 +118,10 @@ GpuCommandBuffer::ToGraphNodeDependencies(
       handles.push_back(gpu_command->conditional_node.handle);
     } else if (auto* gpu_command = dynamic_cast<const GpuChildCommand*>(dep)) {
       handles.push_back(gpu_command->handle);
+    } else if (auto* gpu_command = dynamic_cast<const GpuTraceCommand*>(dep)) {
+      for (const GraphNodeHandle& node : gpu_command->sink_nodes) {
+        handles.push_back(node);
+      }
     } else {
       LOG(FATAL) << "Unsupported command type";  // Crash OK
     }
@@ -219,6 +223,21 @@ absl::Status GpuCommandBuffer::UpdateLaunch(const Command* command,
   }
 
   return absl::InternalError("Unsupported kernel arguments type");
+}
+
+absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::Trace(
+    Stream* stream, absl::AnyInvocable<absl::Status()> function,
+    absl::Span<const Command* const> dependencies) {
+  TF_RETURN_IF_ERROR(CheckInState(State::kCreate));
+
+  TF_ASSIGN_OR_RETURN(
+      std::vector<GraphNodeHandle> sink_handles,
+      CaptureInlineAndReturnSinks(ToGraphNodeDependencies(dependencies), stream,
+                                  std::move(function)));
+
+  GpuTraceCommand trace_cmd;
+  trace_cmd.sink_nodes = std::move(sink_handles);
+  return AppendCommand(std::move(trace_cmd));
 }
 
 absl::StatusOr<const CommandBuffer::Command*>

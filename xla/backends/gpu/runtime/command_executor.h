@@ -85,8 +85,14 @@ class CommandExecutor {
     }
   }
 
+  // Construction mode controls how the underlying command buffer (CUDA graph)
+  // is built. See Command::ConstructionMode for values and documentation.
+  using ConstructionMode = Command::ConstructionMode;
+
   // Creates a command executor from a sequence of commands using given
-  // synchronization mode.
+  // synchronization mode. Construction mode is derived from the commands
+  // themselves: if all commands are kCapture, the executor is kCapture;
+  // otherwise it is kExplicit.
   static absl::StatusOr<CommandExecutor> Create(
       CommandSequence commands, SynchronizationMode synchronization_mode);
 
@@ -140,6 +146,11 @@ class CommandExecutor {
 
   // Returns buffer allocations indices referenced by commands in this sequence.
   absl::Span<const BufferAllocation::Index> allocs_indices() const;
+
+  SynchronizationMode synchronization_mode() const {
+    return synchronization_mode_;
+  }
+  ConstructionMode construction_mode() const { return construction_mode_; }
 
   bool empty() const { return commands_.empty(); }
   size_t size() const { return commands_.size(); }
@@ -225,6 +236,7 @@ class CommandExecutor {
       RecordId record_id) const;
 
   SynchronizationMode synchronization_mode_;
+  ConstructionMode construction_mode_;
   CommandSequence commands_;
 
   // In automatic synchronization mode we build an execution graph for the
