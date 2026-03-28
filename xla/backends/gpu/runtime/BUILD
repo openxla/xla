@@ -409,6 +409,57 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "async_thunk_passes",
+    srcs = ["async_thunk_passes.cc"],
+    hdrs = ["async_thunk_passes.h"],
+    deps = [
+        ":async_execution",
+        ":async_thunk",
+        ":conditional_thunk",
+        ":sequential_thunk",
+        ":thunk",
+        ":thunk_pass_pipeline",
+        ":while_thunk",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/runtime:buffer_use",
+        "//xla/runtime:resource_use",
+        "//xla/stream_executor:device_description",
+        "//xla/tsl/platform:status_macros",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:casts",
+    ],
+)
+
+xla_cc_test(
+    name = "async_thunk_passes_test",
+    srcs = ["async_thunk_passes_test.cc"],
+    deps = [
+        ":async_thunk",
+        ":async_thunk_passes",
+        ":conditional_thunk",
+        ":sequential_thunk",
+        ":thunk",
+        ":thunk_pass_pipeline",
+        ":while_thunk",
+        "//xla:debug_options_flags",
+        "//xla:shape_util",
+        "//xla:xla_proto_cc",
+        "//xla/runtime:buffer_use",
+        "//xla/service:buffer_assignment",
+        "//xla/service:shaped_slice",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 xla_test(
     name = "async_thunk_test",
     srcs = ["async_thunk_test.cc"],
