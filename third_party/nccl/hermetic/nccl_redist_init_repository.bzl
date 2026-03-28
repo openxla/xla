@@ -14,6 +14,11 @@
 
 """Hermetic NCCL repositories initialization. Consult the WORKSPACE on how to use it."""
 
+load(
+    "@rules_ml_toolchain//gpu/cuda:cuda_redist_versions.bzl",
+    "CUDA_NCCL_WHEELS",
+    "REDIST_VERSIONS_TO_BUILD_TEMPLATES",
+)
 load("//third_party:repo.bzl", "tf_mirror_urls")
 load(
     "//third_party/gpus:nvidia_common_rules.bzl",
@@ -28,11 +33,6 @@ load(
     "get_major_library_version",
     "get_version_and_template_lists",
     "use_local_redist_path",
-)
-load(
-    "//third_party/gpus/cuda/hermetic:cuda_redist_versions.bzl",
-    "CUDA_NCCL_WHEELS",
-    "REDIST_VERSIONS_TO_BUILD_TEMPLATES",
 )
 
 def _use_downloaded_nccl_wheel(repository_ctx):

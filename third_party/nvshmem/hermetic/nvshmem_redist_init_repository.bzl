@@ -15,16 +15,16 @@
 """Hermetic NVSHMEM repository initialization. Consult the WORKSPACE on how to use it."""
 
 load(
+    "@rules_ml_toolchain//gpu/cuda:cuda_redist_versions.bzl",
+    "MIRRORED_TAR_NVSHMEM_REDIST_PATH_PREFIX",
+    "NVSHMEM_REDIST_PATH_PREFIX",
+    "NVSHMEM_REDIST_VERSIONS_TO_BUILD_TEMPLATES",
+)
+load(
     "//third_party/gpus:nvidia_common_rules.bzl",
     "get_redistribution_urls",
     "get_version_and_template_lists",
     "redist_init_repository",
-)
-load(
-    "//third_party/gpus/cuda/hermetic:cuda_redist_versions.bzl",
-    "MIRRORED_TAR_NVSHMEM_REDIST_PATH_PREFIX",
-    "NVSHMEM_REDIST_PATH_PREFIX",
-    "NVSHMEM_REDIST_VERSIONS_TO_BUILD_TEMPLATES",
 )
 
 def nvshmem_redist_init_repository(

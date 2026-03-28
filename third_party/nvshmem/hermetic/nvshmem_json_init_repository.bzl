@@ -15,13 +15,13 @@
 """Hermetic NVSHMEM redistributions JSON repository initialization. Consult the WORKSPACE on how to use it."""
 
 load(
-    "//third_party/gpus:nvidia_common_rules.bzl",
-    "json_init_repository",
-)
-load(
-    "//third_party/gpus/cuda/hermetic:cuda_redist_versions.bzl",
+    "@rules_ml_toolchain//gpu/cuda:cuda_redist_versions.bzl",
     "MIRRORED_TARS_NVSHMEM_REDIST_JSON_DICT",
     "NVSHMEM_REDIST_JSON_DICT",
+)
+load(
+    "//third_party/gpus:nvidia_common_rules.bzl",
+    "json_init_repository",
 )
 
 def nvshmem_json_init_repository(

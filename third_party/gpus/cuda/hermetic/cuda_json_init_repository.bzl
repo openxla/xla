@@ -15,15 +15,15 @@
 """Hermetic CUDA redistributions JSON repository initialization. Consult the WORKSPACE on how to use it."""
 
 load(
-    "//third_party/gpus:nvidia_common_rules.bzl",
-    "json_init_repository",
-)
-load(
-    "//third_party/gpus/cuda/hermetic:cuda_redist_versions.bzl",
+    "@rules_ml_toolchain//gpu/cuda:cuda_redist_versions.bzl",
     "CUDA_REDIST_JSON_DICT",
     "CUDNN_REDIST_JSON_DICT",
     "MIRRORED_TARS_CUDA_REDIST_JSON_DICT",
     "MIRRORED_TARS_CUDNN_REDIST_JSON_DICT",
+)
+load(
+    "//third_party/gpus:nvidia_common_rules.bzl",
+    "json_init_repository",
 )
 
 def _combined_redist_json_impl(repository_ctx):

@@ -1,10 +1,17 @@
 """Configurations of RBE builds used with remote config."""
 
-load("//tools/toolchains/remote_config:rbe_config.bzl", "ml_build_rbe_config", "sigbuild_tf_configs", "tensorflow_local_config", "tensorflow_rbe_config", "tensorflow_rbe_win_config")
+load("//tensorflow/tools/toolchains/remote_config:rbe_config.bzl", "ml_build_rbe_config", "sigbuild_tf_configs", "tensorflow_local_config", "tensorflow_rbe_config")
 
 def initialize_rbe_configs():
     tensorflow_local_config(
         name = "local_execution",
+    )
+
+    tensorflow_rbe_config(
+        name = "ubuntu20.04-clang_manylinux2014-cuda13.1-cudnn9.5",
+        cuda_version = "13.1.1",
+        cudnn_version = "9.5.0",
+        os = "ubuntu20.04-manylinux2014-multipython",
     )
 
     tensorflow_rbe_config(
@@ -40,11 +47,6 @@ def initialize_rbe_configs():
         cuda_version = "12.3.2",
         cudnn_version = "8.9.7.29",
         os = "ubuntu22.04-manylinux2014-multipython",
-    )
-
-    tensorflow_rbe_win_config(
-        name = "windows_py37",
-        python_bin_path = "C:/Python37/python.exe",
     )
 
     # The `ml-build`'s base image is a standard `ubuntu22.04` image.
