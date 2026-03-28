@@ -27,6 +27,12 @@ limitations under the License.
 
 namespace mlir::triton::xla {
 
+// Target backend for atomic operations implementation
+enum class TargetBackend {
+  CUDA,
+  ROCM,
+};
+
 #define GEN_PASS_DECL
 #include "xla/backends/gpu/codegen/triton/transforms/passes.h.inc"
 
@@ -42,9 +48,11 @@ std::unique_ptr<mlir::Pass> CreateInt4ToPackedInt4RewritePass(
 std::unique_ptr<mlir::Pass> CreateRoundF32ToTF32ForTf32DotRewritePass();
 std::unique_ptr<mlir::Pass> CreateExtractTmaInfoPass();
 std::unique_ptr<mlir::Pass> CreateTritonXLAUnswitchLoopsPass();
-std::unique_ptr<mlir::Pass> CreateTritonXLALowerGetTidPass();
-std::unique_ptr<mlir::Pass> CreateTritonXLALowerAtomicsPass();
+std::unique_ptr<mlir::Pass> CreateTritonXLALowerExternGetTidPass();
+std::unique_ptr<mlir::Pass> CreateTritonXLALowerExternAtomicsPass();
 std::unique_ptr<mlir::Pass> CreateTritonXLALowerBlockBarrierPass();
+std::unique_ptr<mlir::Pass> CreateTritonXLAImplementExternAtomicsPass(
+    TargetBackend target);
 std::unique_ptr<mlir::Pass> CreateTritonXLAConvertUnsupportedTypesPass();
 std::unique_ptr<mlir::Pass> CreateTritonXLALowerRemoteAccessPass();
 std::unique_ptr<mlir::Pass> CreateTritonXLALowerXTilePass();

@@ -118,24 +118,25 @@ def RoundF32ToTF32ForTf32DotRewritePass
   let constructor = "CreateRoundF32ToTF32ForTf32DotRewritePass()";
 }
 
-def TritonXLALowerGetTidPass
-    : Pass<"triton-xla-get-tid", "mlir::ModuleOp"> {
-  let summary = "Lower get_tid to the PTX intrinsic.";
+def TritonXLALowerExternGetTidPass
+    : Pass<"triton-xla-lower-extern-get-tid", "mlir::ModuleOp"> {
+  let summary = "Lower get_tid using tt.extern_elementwise.";
   let description = [{
-    This pass lowers get_tid to the PTX intrinsic by loading the thread ID from
-    the register and returning it.
+    This pass lowers get_tid to tt.extern_elementwise, which will be implemented
+    in platform-specific passes. This makes it suitable for ROCm and other targets.
   }];
-  let constructor = "CreateTritonXLALowerGetTidPass()";
+  let constructor = "CreateTritonXLALowerExternGetTidPass()";
 }
 
-def TritonXLALowerAtomicsPass
-    : Pass<"triton-xla-atomics", "mlir::ModuleOp"> {
-  let summary = "Lower triton_xla.atomic operations.";
+def TritonXLALowerExternAtomicsPass
+    : Pass<"triton-xla-lower-extern-atomics", "mlir::ModuleOp"> {
+  let summary = "Lower triton_xla.atomic operations using tt.extern_elementwise.";
   let description = [{
-    This pass lowers atomic operations to the PTX intrinsic with the given
-    memory semantics.
+    This pass lowers atomic operations to tt.extern_elementwise calls that will
+    be implemented in platform-specific passes. This makes it suitable for ROCm
+    and other targets.
   }];
-  let constructor = "CreateTritonXLALowerAtomicsPass()";
+  let constructor = "CreateTritonXLALowerExternAtomicsPass()";
 }
 
 def TritonXLALowerBlockBarrierPass
@@ -275,6 +276,22 @@ def UnsupportedElementwiseToTritonPass
     "Converts unsupported elementwise operations to their Triton equivalent.";
   let dependentDialects = [
     "::mlir::arith::ArithDialect",
+  ];
+}
+
+def TritonXLAImplementExternAtomicsPass
+    : Pass<"triton-xla-implement-extern-atomics", "mlir::ModuleOp"> {
+  let summary = "Implement extern_elementwise atomic functions for CUDA and ROCm.";
+  let description = [{
+    This pass implements custom atomic functions declared by tt.extern_elementwise
+    operations using LLVM IR intrinsics and atomic operations with proper memory
+    ordering and sync scopes. It supports both CUDA (NVPTX) and ROCm (AMDGPU) backends.
+    It runs in the Triton pipeline after MLIR has been converted to LLVM dialect.
+    The target backend must be specified via the target option.
+  }];
+  let options = [
+    Option<"target_", "target", "std::string", "\"cuda\"",
+           "Target backend: 'cuda' or 'rocm'">,
   ];
 }
 
