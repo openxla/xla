@@ -233,11 +233,11 @@ filegroup(
   srcs = [
       ":clang/bin/crosstool_wrapper_driver_is_not_gcc",
       "@local_config_rocm//rocm:toolchain_data",
-      "@llvm18_linux_x86_64//:clang",
-      "@llvm18_linux_x86_64//:includes",
-      "@llvm18_linux_x86_64//:ld",
-      "@llvm18_linux_x86_64//:rt_asan",
-      "@llvm18_linux_x86_64//:rt_tsan",
+      "@llvm_linux_x86_64//:clang",
+      "@llvm_linux_x86_64//:includes",
+      "@llvm_linux_x86_64//:ld",
+      "@llvm_linux_x86_64//:rt_asan",
+      "@llvm_linux_x86_64//:rt_tsan",
       "@sysroot_linux_x86_64//:sysroot",
   ],
 )
