@@ -49,19 +49,6 @@ bool NvshmemCollectives::IsInitialized() const {
   return se::gpu::nvshmem::IsInitialized();
 }
 
-NvshmemCollectives* NvshmemCollectives::Default() {
-  absl::StatusOr<Collectives*> collectives =
-      CollectivesRegistry::Get("CUDA", "nvshmem");
-  CHECK_OK(collectives) << "Failed to get NVSHMEM collectives";  // Crash OK
-
-  if (auto* nvshmem_collectives =
-          tsl::down_cast<NvshmemCollectives*>(*collectives)) {
-    return nvshmem_collectives;
-  }
-
-  LOG(FATAL) << "Unsupported collectives implementation for NVSHMEM";
-}
-
 absl::StatusOr<GpuCollectives::CliqueIdCallback>
 NvshmemCollectives::InitializeTopology(const Topology& topology) {
   se::gpu::nvshmem::SetEnvInfo(topology.process_id, topology.num_processes,
