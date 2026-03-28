@@ -86,6 +86,9 @@ StringAttr createFuncOp(NamedComputationOp namedComputationOp,
                                namedComputationOp.getResultTypes()),
       rewriter.getStringAttr("private"),
       /*argAttrs=*/ArrayAttr(), /*resultAttrs=*/ArrayAttr());
+  if (manualAxesAttr) {
+    funcOp->setAttr(kManualAxes, manualAxesAttr);
+  }
 
   rewriter.setInsertionPointToStart(funcOp->getBlock());
   mlir::sdy::inlineRegionAndConvertTerminatorOp<mlir::func::ReturnOp>(
@@ -226,30 +229,19 @@ void exportNamedComputations(ModuleOp moduleOp, SymbolTable& symbolTable,
         namedComputationOp, namedComputationOp.getResultTypes(), funcSymName,
         namedComputationOp.getOperands());
     callOp->setAttrs(callOpAttrs);
-    // TODO(enver): Use utils methods for inserting copies/reshards instead.
+    if (manualAxesAttr) {
+      callOp->setAttr(kManualAxes, manualAxesAttr);
+    }
 
     FuncOp funcOp = symbolTable.lookup<FuncOp>(funcSymName);
     maybeInsertReshardsOnFuncArguments(funcOp, callOp, symbolTable, rewriter);
     // Copy the func output shardings to the call op.
     if (TensorShardingPerValueAttr funcResultShardings =
             getFuncResultShardings(funcOp, symbolTable)) {
-      mlir::sdy::setShardings(callOp, funcResultShardings);
-      if (outShardings.has_value()) {
-        for (auto [funcResultSharding, outSharding, result] : llvm::zip_equal(
-                 funcResultShardings.getShardings(),
-                 outShardings->getShardings(), callOp.getResults())) {
-          if (!funcResultSharding.isEquivalent(outSharding)) {
-            rewriter.setInsertionPointAfterValue(result);
-            auto copyOp =
-                mlir::mhlo::CopyOp::create(rewriter, result.getLoc(), result);
-            mlir::sdy::setShardings(copyOp, outSharding);
-            rewriter.replaceAllUsesExcept(result, copyOp, copyOp);
-          }
-        }
-      }
-      if (manualAxesAttr) {
-        callOp->setAttr(kManualAxes, manualAxesAttr);
-      }
+      mlir::sdy::setShardings(
+          callOp, outShardings ? *outShardings
+                               : getFullyClosedLike(funcResultShardings));
+      insertReshardsOnFuncResults(funcResultShardings, callOp, rewriter);
     }
   });
 }

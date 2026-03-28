@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <utility>
+#include <optional>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/core/collectives/communicator.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_handle.h"
-#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/util/tied_ref.h"
@@ -54,15 +54,25 @@ struct RaggedAllToAllConfig {
   int64_t num_total_updates = 1;
   int64_t num_input_rows = 1;
   int64_t num_row_elements = 1;
+
+  // Whether the one-shot kernel is enabled. If true, the thunk will use the
+  // one-shot kernel when possible.
+  bool one_shot_kernel_enabled = false;
+
+  // If true, the thunk will use the MultiGpuBarrierWithNcclKernel in the
+  // one-shot kernel for multi-host synchronization. Works when devices are on
+  // multiple hosts connected via a fast interconnect (e.g., MNNVL).
+  bool use_multi_gpu_barrier_with_nccl_in_one_shot_kernel = false;
+
+  // If set, the will be used to determine if optimized kernels that assume a
+  // fast interconnect can be used.
+  std::optional<int64_t> fast_interconnect_slice_size_override = std::nullopt;
 };
 
 // Contains the values that are passed between host threads with rendezvous.
 struct RaggedAllToAllRendezvousValue {
   RankId rank;
   se::DeviceAddressBase output_buffer;
-  // Legacy: Event Synchronization (To be removed)
-  se::Event* start_event = nullptr;
-  se::Event* end_event = nullptr;
 
   // Exchange the address of the SIGNAL BUFFER array.
   // Peers will write to their_rank's-th cell in the signals array.
@@ -76,6 +86,7 @@ struct RaggedAllToAllRendezvousValue {
 struct RaggedAllToAllStreamState {
   int device_ordinal;
   RankId rank;
+  std::optional<int64_t> lsa_size;
   GpuCliqueKey clique_key;
 
   // Host memory allocations for ragged metadata.
@@ -84,15 +95,6 @@ struct RaggedAllToAllStreamState {
 
   // Device memory buffer for output offsets.
   se::DeviceAddressHandle output_offsets_device_buffer;
-
-  // Legacy: Event Synchronization (To be removed)
-  // Event to synchronize streams on different devices at the start of the
-  // kernel.
-  std::unique_ptr<se::Event> start_event;
-
-  // Event to synchronize streams on different devices at the end of the
-  // kernel.
-  std::unique_ptr<se::Event> end_event;
 
   // MultiGpuBarrier: Device memory buffer for signal values (one per peer).
   // Peers write specific slots in this array to signal this device.
@@ -104,6 +106,12 @@ struct RaggedAllToAllStreamState {
   // MultiGpuBarrier: Device memory for the current local step counter.
   // This value is incremented locally by the kernel after every barrier.
   std::unique_ptr<se::MemoryAllocation> barrier_signal_value;
+
+  // Device memory buffer to store the output buffer pointers.
+  std::unique_ptr<se::MemoryAllocation> output_buffer_ptr_storage;
+
+  // Reference to the symmetric memory handler for the pointer storage.
+  tsl::TiedRef<xla::SymmetricMemory> output_buffer_ptr_storage_symmetric_memory;
 
   // Contains the output buffer pointers and barrier signal buffers for all
   // peers.
@@ -128,19 +136,19 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
                            const HloRaggedAllToAllInstruction* instr,
                            std::vector<Buffer> buffers,
                            bool p2p_memcpy_enabled);
-  RaggedAllToAllStartThunk(
-      ThunkInfo thunk_info, const RaggedAllToAllConfig& config,
-      std::shared_ptr<AsyncEvents> async_events,
-      std::vector<CollectiveThunk::Buffer> buffers,
-      bool one_shot_kernel_enabled,
-      bool use_multi_gpu_barrier_in_one_shot_kernel,
-      bool use_multi_gpu_barrier_with_nccl_in_one_shot_kernel);
+  RaggedAllToAllStartThunk(ThunkInfo thunk_info,
+                           const RaggedAllToAllConfig& config,
+                           std::shared_ptr<AsyncEvents> async_events,
+                           std::vector<CollectiveThunk::Buffer> buffers);
 
   // Returns whether the given instruction can be lowered to a nccl
   // ragged-all-to-all call.
   static absl::Status CheckImplementable(
       const HloRaggedAllToAllInstruction* instr, int64_t replica_count,
       int64_t partition_count);
+
+  CollectiveCliqueRequests::CliqueRequirements GetCliqueRequirements(
+      const GpuCliqueKey& clique_key) override;
 
   absl::Status Initialize(const InitializeParams& params) override;
 
@@ -157,14 +165,12 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
 
   absl::Span<const Buffer> buffers() const { return buffers_; }
 
-  bool is_one_shot_kernel_enabled() const { return one_shot_kernel_enabled_; }
-
-  bool use_multi_gpu_barrier_in_one_shot_kernel() const {
-    return use_multi_gpu_barrier_in_one_shot_kernel_;
+  bool is_one_shot_kernel_enabled() const {
+    return config_.one_shot_kernel_enabled;
   }
 
   bool use_multi_gpu_barrier_with_nccl_in_one_shot_kernel() const {
-    return use_multi_gpu_barrier_with_nccl_in_one_shot_kernel_;
+    return config_.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel;
   }
 
   // Returns true if one shot kernel is supported
@@ -192,7 +198,9 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
  protected:
   // No rendezvous needed when using one-shot kernel in local mode instead of
   // NCCL.
-  bool RequiresRendezvous() const override { return !one_shot_kernel_enabled_; }
+  bool RequiresRendezvous() const override {
+    return !is_one_shot_kernel_enabled();
+  }
 
   absl::Status RunCollective(const ExecuteParams& params,
                              const GpuCliqueKey& clique_key, se::Stream& stream,
@@ -205,9 +213,6 @@ class RaggedAllToAllStartThunk : public CollectiveThunk {
 
   const RaggedAllToAllConfig config_;
   const std::vector<Buffer> buffers_;
-  const bool one_shot_kernel_enabled_;
-  const bool use_multi_gpu_barrier_in_one_shot_kernel_;
-  const bool use_multi_gpu_barrier_with_nccl_in_one_shot_kernel_;
 
   mutable absl::Mutex mutex_;
   absl::flat_hash_map<se::StreamExecutor*,
@@ -256,16 +261,6 @@ absl::Status RunRaggedAllToAll(
 // custom kernel or specialized P2P sequence) to reduce host-device
 // synchronization overhead.
 //
-// Legacy: Event Synchronization (To be removed)
-// It explicitly utilizes `start_event` and `end_event` to manage
-// synchronization dependencies between the compute stream and the
-// communication/copy mechanism without stalling the host.
-absl::Status RunOneShotRaggedAllToAll(
-    const GpuCliqueKey& clique_key, se::Stream& stream, RankId rank,
-    se::Event* start_event, se::Event* end_event, int64_t num_total_updates,
-    int64_t num_input_rows, int64_t num_row_elements,
-    absl::Span<DeviceBufferPair const> buffers);
-
 // It utilizes `MultiGpuBarrierKernel` to enforce device-side synchronization.
 // This ensures input/output buffers are safe to access without requiring
 // Event-based coordination, enabling compatibility with CUDA Graphs.
@@ -284,9 +279,10 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
     const GpuCliqueKey& clique_key, se::Stream& stream, RankId rank,
     std::shared_ptr<xla::SymmetricMemory> barrier_signal_symmetric_memory,
     const se::DeviceAddressBase& barrier_signal_value,
+    std::shared_ptr<xla::SymmetricMemory>
+        output_buffer_ptr_storage_symmetric_memory,
     int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
-    absl::Span<DeviceBufferPair const> buffers,
-    const std::vector<RaggedAllToAllRendezvousValue>& participants);
+    absl::Span<DeviceBufferPair const> buffers);
 
 }  // namespace gpu
 }  // namespace xla

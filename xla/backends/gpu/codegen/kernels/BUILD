@@ -161,9 +161,9 @@ xla_test(
         "//xla:literal_util",
         "//xla:types",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/backends/gpu/transforms:custom_kernel_fusion_rewriter",
         "//xla/service/gpu:gpu_device_info_for_tests",
-        "//xla/service/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
@@ -409,10 +409,6 @@ cc_library(
     name = "ptx_custom_kernel",
     srcs = ["ptx_custom_kernel.cc"],
     hdrs = ["ptx_custom_kernel.h"],
-    tags = [
-        "cuda-only",
-        "gpu",
-    ],
     visibility = [":friends"],
     deps = [
         ":custom_kernel",

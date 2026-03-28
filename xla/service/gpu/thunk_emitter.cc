@@ -55,6 +55,7 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
+#include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/fusions.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
@@ -985,6 +986,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
       TF_ASSIGN_OR_RETURN(attributes, xla::ffi::BuildAttributesMap(dict));
     }
     auto released_lock_keeper = llvm_options_lock_->TemporarilyReleaseLock();
+    std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options =
+        std::nullopt;
+    if (ir_emitter_context_->cpu_target_machine_options()) {
+      cpu_target_machine_options =
+          *ir_emitter_context_->cpu_target_machine_options();
+    }
     return CustomCallThunk::Create(
         Thunk::ThunkInfo::WithProfileAnnotation(
             instr, ir_emitter_context_->GetNextThunkId()),
@@ -992,7 +999,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
         std::move(attributes),
         called_computations.empty() ? nullptr : called_computations[0],
         ir_emitter_context_->platform_name(),
-        ir_emitter_context_->gpu_compute_capability());
+        ir_emitter_context_->gpu_compute_capability(),
+        /*execution_state=*/nullptr, std::move(cpu_target_machine_options));
   };
 
   auto legacy_thunk =
@@ -1497,13 +1505,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSort(
     }
   }
 
-  auto local_llvm_module = ir_emitter_context_->CreateLLVMModule(op_name);
-
-  TF_ASSIGN_OR_RETURN(ThunkSequence sort_thunks,
-                      EmitBitonicSortLLVMIR(sort, local_llvm_module.get(),
-                                            ir_emitter_context_));
+  ASSIGN_OR_RETURN(ThunkSequence sort_thunks,
+                   EmitBitonicSortLLVMIR(sort, ir_emitter_context_));
   AppendThunkSequence(thunks, sort_thunks);
-  kernel_modules_.push_back(std::move(local_llvm_module));
   return thunks;
 }
 

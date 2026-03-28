@@ -482,7 +482,6 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":collective_memory_requests",
-        ":collective_multimem_registry",
         ":custom_call_thunk",
         ":dynamic_slice_thunk",
         ":dynamic_slice_thunk_proto_cc",
@@ -1035,6 +1034,7 @@ cc_library(
         "//xla:executable_run_options",
         "//xla:shape_util",
         "//xla:util",
+        "//xla/backends/cpu:target_machine_options",
         "//xla/ffi",
         "//xla/ffi:attribute_map",
         "//xla/ffi:call_frame",
@@ -1083,11 +1083,12 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":collective_memory_requests",
-        ":collective_multimem_registry",
         ":custom_call_thunk",
         ":thunk",
         "//xla:executable_run_options",
         "//xla:shape_util",
+        "//xla/backends/cpu:target_machine_options",
+        "//xla/backends/gpu:ffi",
         "//xla/ffi",
         "//xla/ffi:attribute_map",
         "//xla/ffi:execution_state",
@@ -1666,6 +1667,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -1845,6 +1847,7 @@ cc_library(
     srcs = ["ragged_all_to_all_thunk.cc"],
     hdrs = ["ragged_all_to_all_thunk.h"],
     deps = [
+        ":collective_clique_requests",
         ":collective_kernel_api",
         ":collective_thunk",
         ":collective_thunk_proto_cc",
@@ -1868,7 +1871,6 @@ cc_library(
         "//xla/service:rendezvous",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_handle",
-        "//xla/stream_executor:event",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:memory_allocator",
         "//xla/stream_executor:memory_space",
@@ -2202,54 +2204,6 @@ cc_library(
 )
 
 cc_library(
-    name = "collective_multimem",
-    srcs = ["collective_multimem.cc"],
-    hdrs = ["collective_multimem.h"],
-    compatible_with = get_compatible_with_portable(),
-    deps = [
-        "//xla:util",
-        "//xla/backends/gpu/collectives:gpu_clique_key",
-        "//xla/core/collectives:rank_id",
-        "//xla/runtime:device_id",
-        "//xla/service:rendezvous",
-        "//xla/stream_executor:device_address",
-        "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor/gpu:gpu_executor_header",
-        "//xla/stream_executor/gpu:multicast_memory",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:btree",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:span",
-    ],
-)
-
-cc_library(
-    name = "collective_multimem_registry",
-    srcs = ["collective_multimem_registry.cc"],
-    hdrs = ["collective_multimem_registry.h"],
-    compatible_with = get_compatible_with_portable(),
-    deps = [
-        ":collective_multimem",
-        "//xla/backends/gpu/collectives:gpu_clique_key",
-        "//xla/runtime:device_id",
-        "//xla/stream_executor:device_address",
-        "//xla/stream_executor:stream_executor_h",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/base:nullability",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
-    ],
-)
-
-cc_library(
     name = "collective_params",
     srcs = ["collective_params.cc"],
     hdrs = ["collective_params.h"],
@@ -2331,6 +2285,7 @@ cc_library(
     srcs = ["collective_thunk.cc"],
     hdrs = ["collective_thunk.h"],
     deps = [
+        ":collective_clique_requests",
         ":collective_execution",
         ":collective_params",
         ":collective_thunk_proto_cc",
@@ -2815,7 +2770,6 @@ cc_library(
         ":collective_cliques",
         ":collective_memory",
         ":collective_memory_requests",
-        ":collective_multimem_registry",
         ":collective_params",
         ":thunk_id",
         ":thunk_kind_proto_cc",
@@ -2873,6 +2827,7 @@ cc_library(
         ":annotation",
         ":collective_thunk",
         ":thunk",
+        ":while_loop",
         "//xla:util",
         "//xla/stream_executor:event",
         "//xla/stream_executor:stream",
@@ -2888,6 +2843,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/profiler/lib:scoped_annotation",
         "@tsl//tsl/profiler/lib:traceme",
     ],
@@ -3019,6 +2975,7 @@ cc_library(
     hdrs = ["while_loop.h"],
     deps = [
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -4304,7 +4261,6 @@ xla_test(
         ":buffers_checksum_thunk",
         ":collective_clique_requests",
         ":collective_memory_requests",
-        ":collective_multimem_registry",
         ":collective_params",
         ":thunk",
         ":thunk_id",
@@ -4314,8 +4270,6 @@ xla_test(
         "//xla/service/gpu:buffer_allocations",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_description",
-        "//xla/stream_executor:mock_stream",
-        "//xla/stream_executor:mock_stream_executor",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
@@ -4382,7 +4336,6 @@ xla_test(
         ":buffers_float_check_thunk",
         ":collective_clique_requests",
         ":collective_memory_requests",
-        ":collective_multimem_registry",
         ":collective_params",
         ":thunk",
         ":thunk_id",
@@ -4398,7 +4351,6 @@ xla_test(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_address_allocator",
-        "//xla/stream_executor:stream_executor_memory_allocator",
         "//xla/stream_executor/gpu:buffer_debug_log",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",

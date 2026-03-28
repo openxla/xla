@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -91,7 +92,6 @@ TEST_F(GpuRaggedAllToAllTest, TestConvertToCommands) {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   debug_options.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(
       true);
-  debug_options.set_xla_gpu_experimental_ragged_all_to_all_use_barrier(true);
   config.set_debug_options(debug_options);
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
@@ -179,7 +179,6 @@ TEST_F(GpuRaggedAllToAllTest, TestCommandBufferThunkContainsCorrectThunks) {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   debug_options.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(
       true);
-  debug_options.set_xla_gpu_experimental_ragged_all_to_all_use_barrier(true);
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(hlo_text, config));
@@ -257,6 +256,12 @@ TEST(CollectiveThunkTest, ProtoRoundTrip) {
                            thunk_info, proto.ragged_all_to_all_start_thunk(),
                            buffer_allocations, async_events_map));
   ASSERT_NE(thunk->async_events(), nullptr);
+
+  // We're not setting the fast interconnect slice size override in the
+  // proto, so it should be nullopt in the thunk.
+  EXPECT_EQ(
+      thunk->ragged_all_to_all_config().fast_interconnect_slice_size_override,
+      std::nullopt);
 
   ASSERT_OK_AND_ASSIGN(ThunkProto round_trip_proto, thunk->ToProto());
 
