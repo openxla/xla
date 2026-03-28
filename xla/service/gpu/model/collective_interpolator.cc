@@ -41,7 +41,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/gpu/model/collective_interpolator_data.h"
+#include "xla/service/gpu/model/default_collective_perf_table.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/hlo_op_profile.pb.h"
 #include "xla/service/gpu/model/hlo_op_profiles.h"
@@ -62,8 +62,8 @@ namespace {
 static const DeviceHloInstructionProfiles& Profile() {
   static const DeviceHloInstructionProfiles* profile = []() {
     auto* profile = new DeviceHloInstructionProfiles();
-    CHECK(tsl::protobuf::TextFormat::ParseFromString(kDefaultCollectivePTable,
-                                                     profile))
+    CHECK(tsl::protobuf::TextFormat::ParseFromString(
+        get_default_collective_perf_table(), profile))
         << "Cannot parse a default profile.";
     return profile;
   }();
