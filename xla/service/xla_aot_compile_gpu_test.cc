@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -41,6 +42,13 @@ namespace xla {
 namespace xla_compile {
 namespace {
 
+std::optional<absl::string_view> CCMismatchMessage(const absl::Status& s) {
+  if (!s.ok() && absl::StrContains(s.message(), "compute capability")) {
+    return s.message();
+  }
+  return std::nullopt;
+}
+
 class XlaAotCompileTest : public ::testing::TestWithParam<absl::string_view> {};
 
 TEST_P(XlaAotCompileTest, LoadGpuExecutable) {
@@ -67,9 +75,13 @@ TEST_P(XlaAotCompileTest, LoadGpuExecutable) {
 
   // Load from AOT result.
   ExecutableBuildOptions executable_build_options;
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LocalExecutable> local_executable,
-      client->Load(serialized_aot_result, executable_build_options));
+  auto load_result =
+      client->Load(serialized_aot_result, executable_build_options);
+  if (auto msg = CCMismatchMessage(load_result.status())) {
+    GTEST_SKIP() << *msg;
+  }
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LocalExecutable> local_executable,
+                          std::move(load_result));
 
   // Run loaded executable.
   Literal input1 = LiteralUtil::CreateR1<double>({0.0f, 1.0f, 2.0f});
@@ -84,7 +96,9 @@ TEST_P(XlaAotCompileTest, LoadGpuExecutable) {
   executable_run_options.set_allocator(client->backend().memory_allocator());
   TF_ASSERT_OK_AND_ASSIGN(
       ScopedShapedBuffer result,
-      local_executable->Run({&array1, &array2}, executable_run_options));
+      local_executable->Run(
+          absl::Span<const ShapedBuffer* const>{&array1, &array2},
+          executable_run_options));
 
   TF_ASSERT_OK_AND_ASSIGN(Literal output,
                           client->ShapedBufferToLiteral(result));
@@ -121,9 +135,13 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConstant) {
 
   // Load from AOT result.
   ExecutableBuildOptions executable_build_options;
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LocalExecutable> local_executable,
-      client->Load(serialized_aot_result, executable_build_options));
+  auto load_result =
+      client->Load(serialized_aot_result, executable_build_options);
+  if (auto msg = CCMismatchMessage(load_result.status())) {
+    GTEST_SKIP() << *msg;
+  }
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LocalExecutable> local_executable,
+                          std::move(load_result));
 
   // Run loaded executable.
   Literal input = LiteralUtil::CreateR1<double>({3.0f, 3.0f, 3.0f});
@@ -134,7 +152,8 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConstant) {
   executable_run_options.set_allocator(client->backend().memory_allocator());
   TF_ASSERT_OK_AND_ASSIGN(
       ScopedShapedBuffer result,
-      local_executable->Run({&array}, executable_run_options));
+      local_executable->Run(absl::Span<const ShapedBuffer* const>{&array},
+                            executable_run_options));
 
   TF_ASSERT_OK_AND_ASSIGN(Literal output,
                           client->ShapedBufferToLiteral(result));
@@ -167,9 +186,13 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConvolution) {
 
   // Load from AOT result.
   ExecutableBuildOptions executable_build_options;
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LocalExecutable> local_executable,
-      client->Load(serialized_aot_result, executable_build_options));
+  auto load_result =
+      client->Load(serialized_aot_result, executable_build_options);
+  if (auto msg = CCMismatchMessage(load_result.status())) {
+    GTEST_SKIP() << *msg;
+  }
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LocalExecutable> local_executable,
+                          std::move(load_result));
 
   // Check that GpuConvAlgorithmPicker successfully loaded autotune results.
   bool found_algo = false;
@@ -211,7 +234,9 @@ TEST(XlaCompileTest, LoadGpuExecutableWithConvolution) {
   executable_run_options.set_allocator(client->backend().memory_allocator());
   TF_ASSERT_OK_AND_ASSIGN(
       ScopedShapedBuffer result,
-      local_executable->Run({&array1, &array2}, executable_run_options));
+      local_executable->Run(
+          absl::Span<const ShapedBuffer* const>{&array1, &array2},
+          executable_run_options));
 
   TF_ASSERT_OK_AND_ASSIGN(Literal output,
                           client->ShapedBufferToLiteral(result));

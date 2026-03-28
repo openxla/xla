@@ -6236,6 +6236,7 @@ xla_cc_test(
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/stream_executor/cuda:cuda_platform",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
