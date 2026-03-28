@@ -144,6 +144,9 @@ class LockableGpuClique : public Lockable<GpuClique, GpuClique::LockableName> {
   // is still valid — no need to abandon and re-split.
   bool IsParentSupersetOf(const GpuCliqueKey& clique_key) const;
 
+  // Returns the parent clique pointer, or nullptr if not created by splitting.
+  const GpuClique* parent() const;
+
   std::string DebugString() const;
 
   // Checks for async errors for all the communicators in the clique without

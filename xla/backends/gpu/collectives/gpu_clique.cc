@@ -149,6 +149,10 @@ bool LockableGpuClique::IsParentSupersetOf(
   return clique_key.IsSubsetOf(p->key());
 }
 
+const GpuClique* LockableGpuClique::parent() const {
+  return this->value().parent();
+}
+
 std::string LockableGpuClique::DebugString() const {
   return absl::StrFormat("LockableGpuClique: %s", value().DebugString());
 }
