@@ -56,6 +56,12 @@ struct XlaCompileOptions
   DeviceListRef devices;
   std::vector<tsl::RCReference<LoadedHostCallback>> loaded_host_callbacks;
 
+  // Optional PjRtClient for GPU autotuning during cross-compilation. When
+  // compiling for a virtual topology (e.g. 1024 H100s) via a compile-only
+  // client, this provides access to local GPU device(s) that can be used for
+  // kernel autotuning. Topology must have compatible device type.
+  xla::PjRtClient* autotuning_client = nullptr;
+
   // CompileOptions implementation.
 
   ~XlaCompileOptions() override = default;

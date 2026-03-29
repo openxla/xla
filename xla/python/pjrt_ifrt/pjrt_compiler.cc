@@ -159,16 +159,17 @@ tsl::Future<ExecutableRef> PjRtCompiler::Compile(
   if (pjrt_topology == nullptr) {
     return absl::InvalidArgumentError("PjRtCompiler requires a PjRtTopology");
   }
-  auto compile =
-      [program = std::move(program), xla_program = std::move(xla_program),
-       xla_compile_options = std::move(xla_compile_options), pjrt_topology,
-       user_context = UserContextScope::current()]() mutable {
-        UserContextScope scope(std::move(user_context));
-        return PjRtExecutable::Create(
-            std::move(*xla_program).ToMaybeOwningMlirModule(),
-            std::move(xla_compile_options->compile_options),
-            *pjrt_topology->description());
-      };
+  auto compile = [program = std::move(program),
+                  xla_program = std::move(xla_program),
+                  xla_compile_options = std::move(xla_compile_options),
+                  pjrt_topology,
+                  user_context = UserContextScope::current()]() mutable {
+    UserContextScope scope(std::move(user_context));
+    return PjRtExecutable::Create(
+        std::move(*xla_program).ToMaybeOwningMlirModule(),
+        std::move(xla_compile_options->compile_options),
+        *pjrt_topology->description(), xla_compile_options->autotuning_client);
+  };
   if (thread_pool_.has_value()) {
     return tsl::MakeFutureOn(*thread_pool_->AsExecutor(), std::move(compile));
   }
