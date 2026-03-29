@@ -9,7 +9,6 @@ fusion {
   p1 = f32[8,4] parameter(1)
   ROOT minimum = f32[8,4] minimum(p0, p1)
 }
-
 // CHECK: arith.minimumf %{{.*}}, %{{.*}} : tensor<1x4xf32>
 
 ENTRY main {

@@ -69,12 +69,14 @@ absl::Status RealMain(absl::string_view input_file,
   mlir::MLIRContext mlir_context;
   // Note that CreateTritonModule creates an xtile dialect module that
   // CreateTritonXlaPipeline() will lower to TTIR.
-  ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> triton_module,
-                   CreateTritonModule("triton_fn", fusion_instr,
-                                      TestGpuDeviceInfo::RTXA6000DeviceInfo(),
-                                      block_level_parameters, mlir_context,
-                                      use_experimental_tiling));
-  triton_module->print(llvm::outs());
+  auto status_or_module = CreateTritonModule(
+      "triton_fn", fusion_instr, TestGpuDeviceInfo::RTXA6000DeviceInfo(),
+      block_level_parameters, mlir_context, use_experimental_tiling);
+  if (status_or_module.ok()) {
+    (*status_or_module)->print(llvm::outs());
+  } else {
+    std::cerr << status_or_module.status() << "\n";
+  }
   return absl::OkStatus();
 }
 
