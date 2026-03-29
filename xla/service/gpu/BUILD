@@ -2109,7 +2109,7 @@ cc_library(
     name = "legacy_gpu_aot_compilation_result",
     srcs = ["legacy_gpu_aot_compilation_result.cc"],
     hdrs = ["legacy_gpu_aot_compilation_result.h"],
-    # Explicitely restrict the visibility since this is an internal implementation detail of the
+    # Explicitly restrict the visibility since this is an internal implementation detail of the
     # gpu_compiler.
     visibility = [],
     deps = [
@@ -2763,6 +2763,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/transforms/collectives:collective_permute_cse",
         "//xla/hlo/transforms/simplifiers:algebraic_simplifier",
         "//xla/hlo/transforms/simplifiers:hlo_constant_folding",
         "//xla/hlo/transforms/simplifiers:hlo_constant_splitter",
