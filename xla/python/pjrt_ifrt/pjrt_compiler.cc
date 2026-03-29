@@ -90,8 +90,9 @@ static absl::Status TranslateDeviceIds(PjRtClient* client,
   return absl::OkStatus();
 }
 
-PjRtCompiler::PjRtCompiler(PjRtClient* client, int num_threads)
-    : client_(client) {
+PjRtCompiler::PjRtCompiler(PjRtClient* client, int num_threads,
+                           bool is_autotuning_only_client)
+    : client_(client), is_autotuning_only_client_(is_autotuning_only_client) {
   if (num_threads > 0) {
     tsl::ThreadOptions thread_options;
 #if defined(ABSL_HAVE_THREAD_SANITIZER)
@@ -149,9 +150,7 @@ tsl::Future<ExecutableRef> PjRtCompiler::Compile(
       llvm::cast<HloProgram>(std::move(program));
   TF_ASSIGN_OR_RETURN(auto xla_compile_options,
                       GetXlaCompileOptions(std::move(options)));
-  if (client_ != nullptr) {
-    // Device ID translation is unnecessary because it is a property of the
-    // client.
+  if (client_ != nullptr && !is_autotuning_only_client_) {
     TF_RETURN_IF_ERROR(
         TranslateDeviceIds(client_, xla_compile_options->compile_options));
   }
@@ -159,16 +158,24 @@ tsl::Future<ExecutableRef> PjRtCompiler::Compile(
   if (pjrt_topology == nullptr) {
     return absl::InvalidArgumentError("PjRtCompiler requires a PjRtTopology");
   }
-  auto compile =
-      [program = std::move(program), xla_program = std::move(xla_program),
-       xla_compile_options = std::move(xla_compile_options), pjrt_topology,
-       user_context = UserContextScope::current()]() mutable {
-        UserContextScope scope(std::move(user_context));
-        return PjRtExecutable::Create(
-            std::move(*xla_program).ToMaybeOwningMlirModule(),
-            std::move(xla_compile_options->compile_options),
-            *pjrt_topology->description());
-      };
+
+  // When we have autotuning client, forward it to PjRtCompile via
+  // PjRtExecutable::Create(), so that XLA can use it for kernel autotuning.
+  xla::PjRtClient* autotuning_client = (client_ && is_autotuning_only_client_)
+                                           ? client_->pjrt_client()
+                                           : nullptr;
+
+  auto compile = [program = std::move(program),
+                  xla_program = std::move(xla_program),
+                  xla_compile_options = std::move(xla_compile_options),
+                  pjrt_topology, autotuning_client,
+                  user_context = UserContextScope::current()]() mutable {
+    UserContextScope scope(std::move(user_context));
+    return PjRtExecutable::Create(
+        std::move(*xla_program).ToMaybeOwningMlirModule(),
+        std::move(xla_compile_options->compile_options),
+        *pjrt_topology->description(), autotuning_client);
+  };
   if (thread_pool_.has_value()) {
     return tsl::MakeFutureOn(*thread_pool_->AsExecutor(), std::move(compile));
   }

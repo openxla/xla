@@ -41,7 +41,13 @@ class PjRtClient;
 // requirement of `PjRtClient`, which will enable ahead-of-time compilation.
 class PjRtCompiler final : public llvm::RTTIExtends<PjRtCompiler, Compiler> {
  public:
-  PjRtCompiler(PjRtClient* client, int num_threads);
+  // When `is_autotuning_only_client` is true, `client` is not the target
+  // execution client but an auxiliary client whose underlying PjRtClient is
+  // passed to the platform compiler for kernel autotuning during
+  // cross-compilation. Device ID translation is skipped in this case because
+  // the client's device IDs don't correspond to the compilation topology.
+  PjRtCompiler(PjRtClient* client, int num_threads,
+               bool is_autotuning_only_client = false);
 
   // Compiler implementation.
 
@@ -69,6 +75,7 @@ class PjRtCompiler final : public llvm::RTTIExtends<PjRtCompiler, Compiler> {
 
  private:
   PjRtClient* client_;
+  bool is_autotuning_only_client_;
   std::optional<tsl::thread::ThreadPool> thread_pool_;
 };
 

@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -54,6 +55,7 @@ limitations under the License.
 #include "xla/python/ifrt/tuple.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
+#include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_compiler.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/pjrt_ifrt/pjrt_layout.h"
@@ -165,8 +167,18 @@ class CompileOnlyDevice
 class CompileOnlyIfRtClient final
     : public llvm::RTTIExtends<CompileOnlyIfRtClient, ifrt::Client> {
  public:
-  explicit CompileOnlyIfRtClient(std::shared_ptr<ifrt::PjRtTopology> topology)
-      : topology_(std::move(topology)),
+  // `autotuning_client`, when non-null, provides an IFRT client with access to
+  // real devices for kernel autotuning during cross-compilation. Must be an
+  // ifrt::PjRtClient. The caller must ensure the client outlives this object.
+  explicit CompileOnlyIfRtClient(std::shared_ptr<ifrt::PjRtTopology> topology,
+                                 ifrt::Client* autotuning_client = nullptr)
+      : default_compiler_(
+            autotuning_client
+                ? llvm::dyn_cast<ifrt::PjRtClient>(autotuning_client)
+                : nullptr,
+            /*num_threads=*/0,
+            /*is_autotuning_only_client=*/autotuning_client != nullptr),
+        topology_(std::move(topology)),
         descriptions_(topology_->DeviceDescriptions()),
         attributes_(ifrt::AttributeMap::Map()) {
     int offset = 0;
@@ -366,10 +378,7 @@ class CompileOnlyIfRtClient final
   }
 
  private:
-  xla::ifrt::PjRtCompiler default_compiler_{
-      /*client=*/nullptr,
-      /*num_threads=*/0,
-  };
+  xla::ifrt::PjRtCompiler default_compiler_;
   std::shared_ptr<ifrt::PjRtTopology> topology_;
   std::vector<std::unique_ptr<const PjRtDeviceDescription>> descriptions_;
   ifrt::AttributeMap attributes_;

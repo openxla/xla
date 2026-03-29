@@ -95,10 +95,13 @@ class PjRtExecutable final
     : public llvm::RTTIExtends<PjRtExecutable, PjRtCompatibleExecutable> {
  public:
   // Creates PjRtExecutable from an MLIR module. Internally, it compiles the
-  // provided MLIR module into an `xla::PjRtExecutable`.
+  // provided MLIR module into an `xla::PjRtExecutable`. When non-null,
+  // `autotuning_client` provides a client with real devices that can be used
+  // for kernel autotuning during cross-compilation.
   static absl::StatusOr<ExecutableRef> Create(
       xla::MaybeOwningMlirModule module, xla::CompileOptions compile_options,
-      const xla::PjRtTopologyDescription& topology);
+      const xla::PjRtTopologyDescription& topology,
+      xla::PjRtClient* autotuning_client = nullptr);
 
   // PjRtCompatibleExecutable implementation.
 
