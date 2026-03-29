@@ -83,6 +83,13 @@ class StreamExecutor {
   // activated for the duration of the returned ActivateContext's scope.
   virtual std::unique_ptr<ActivateContext> Activate() = 0;
 
+  // Clears any pending sticky error state from the GPU runtime on the calling
+  // thread. On HIP, hipGetLastError() is sticky and per-thread; a prior
+  // failed operation leaves a latent error that the next hipGetLastError()
+  // call will pick up. Call this before dispatching work that will check
+  // hipGetLastError to ensure a clean baseline.
+  virtual void ClearError() {}
+
   // Returns a reference to the platform that created this executor.
   virtual const Platform* GetPlatform() const = 0;
 

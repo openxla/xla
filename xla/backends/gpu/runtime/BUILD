@@ -1051,6 +1051,7 @@ cc_library(
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status_macros",
         "//xla/tsl/platform:statusor",
@@ -1461,6 +1462,7 @@ xla_test(
     ],
     deps = [
         ":select_k_exec_raft",
+        ":select_k_exec_stub",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",

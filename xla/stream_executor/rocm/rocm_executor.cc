@@ -525,6 +525,13 @@ std::unique_ptr<ActivateContext> RocmExecutor::Activate() {
   return std::make_unique<ScopedActivateContext>(rocm_context_);
 }
 
+void RocmExecutor::ClearError() {
+  hipError_t err = wrap::hipGetLastError();
+  if (err != hipSuccess) {
+    VLOG(3) << "Cleared stale GPU error: " << ToString(err);
+  }
+}
+
 bool RocmExecutor::UnloadModule(ModuleHandle module_handle) {
   absl::MutexLock lock{in_memory_modules_mu_};
   return UnloadGpuBinary(module_handle);
