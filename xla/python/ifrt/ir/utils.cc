@@ -57,6 +57,12 @@ absl::StatusOr<int64_t> GetDeviceMemoryInBytes(absl::string_view device_kind) {
   if (device_kind == "NVIDIA B200") {
     return 192LL * kGB;
   }
+  if (device_kind == "NVIDIA GB200") {
+    return 192LL * kGB;
+  }
+  if (device_kind == "NVIDIA GB300") {
+    return 288LL * kGB;
+  }
   return absl::InvalidArgumentError(absl::StrCat(
       "`GetDeviceMemoryInBytes` is not supported for device kind: ",
       device_kind));
