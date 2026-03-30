@@ -1112,8 +1112,7 @@ class SupportTestWithDeviceParam
 
 using ConcatenateDeviceTest = SupportTestWithDeviceParam;
 
-TEST_P(ConcatenateDeviceTest,
-       TritonDoesNotSupportConcatenateOfUnnestedParameters) {
+TEST_P(ConcatenateDeviceTest, TritonSupportsConcatenateOfUnnestedParameters) {
   auto cc = GetParam();
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
