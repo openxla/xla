@@ -146,6 +146,21 @@ class FloatNormalizationTest : public HloHardwareIndependentTestBase {
   }
 };
 
+class FloatNormalizationExcessPrecisionTest
+    : public FloatNormalizationTest,
+      public ::testing::WithParamInterface<bool> {
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options =
+        HloHardwareIndependentTestBase::GetDebugOptionsForTest();
+    debug_options.set_xla_allow_excess_precision(GetParam());
+    return debug_options;
+  }
+};
+
+INSTANTIATE_TEST_SUITE_P(FloatNormalizationExcessPrecisionTestSuite,
+                         FloatNormalizationExcessPrecisionTest,
+                         ::testing::Bool());
+
 class FloatNormalizationF8Test
     : public FloatNormalizationTest,
       public ::testing::WithParamInterface<PrimitiveType> {};
@@ -877,47 +892,31 @@ TEST_F(FloatNormalizationTest, KeepEntryInputOutputAlias) {
             HloInputOutputAliasConfig::AliasKind::kMustAlias);
 }
 
-TEST_F(FloatNormalizationTest, AllowExcessPrecisionTrue) {
+TEST_P(FloatNormalizationExcessPrecisionTest, BF16DotTuple) {
   const std::string hlo_text = R"(
     HloModule dot_with_convert
 
     ENTRY main {
       Arg_0 = bf16[2,2]{1,0} parameter(0)
-      dot = bf16[2,2]{1,0} dot(Arg_0, Arg_0), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      dot = bf16[2,2]{1,0} dot(Arg_0, Arg_0), lhs_contracting_dims={1},
+                                              rhs_contracting_dims={0}
       convert = f32[2,2]{1,0} convert(dot)
       ROOT tuple = (f32[2,2]{1,0}, bf16[2,2]{1,0}) tuple(convert, dot)
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_allow_excess_precision(true);
 
   EXPECT_TRUE(Normalize(module.get(), BF16));
-  EXPECT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::Tuple(m::Dot(), m::Convert())));
-}
 
-TEST_F(FloatNormalizationTest, AllowExcessPrecisionFalse) {
-  const std::string hlo_text = R"(
-    HloModule dot_with_convert
-
-    ENTRY main {
-      Arg_0 = bf16[2,2]{1,0} parameter(0)
-      dot = bf16[2,2]{1,0} dot(Arg_0, Arg_0), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-      convert = f32[2,2]{1,0} convert(dot)
-      ROOT tuple = (f32[2,2]{1,0}, bf16[2,2]{1,0}) tuple(convert, dot)
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_allow_excess_precision(false);
-
-  EXPECT_TRUE(Normalize(module.get(), BF16));
-  EXPECT_THAT(
-      module->entry_computation()->root_instruction(),
-      GmockMatch(m::Tuple(m::Convert(m::Convert(m::Dot())), m::Convert())));
+  bool allow_excess_precision = GetParam();
+  if (allow_excess_precision) {
+    EXPECT_THAT(module->entry_computation()->root_instruction(),
+                GmockMatch(m::Tuple(m::Dot(), m::Convert())));
+  } else {
+    EXPECT_THAT(
+        module->entry_computation()->root_instruction(),
+        GmockMatch(m::Tuple(m::Convert(m::Convert(m::Dot())), m::Convert())));
+  }
 }
 
 }  // namespace
