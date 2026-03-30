@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tools/hlo_decomposer.h"
@@ -126,7 +127,13 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
 
     return parameter;
   }
-
+  if (hlo->opcode() == HloOpcode::kConstant) {
+    if (ShapeUtil::IsEffectiveScalar(hlo->shape())) {
+      return EmitConstant(b, *hlo);
+    }
+    return absl::UnimplementedError(
+        absl::StrCat("Unsupported non-scalar constant ", hlo->ToString()));
+  }
   if (hlo->IsElementwise()) {
     std::vector<Value> operands;
     operands.reserve(hlo->operands().size());
