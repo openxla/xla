@@ -697,5 +697,23 @@ void insertReshardsOnFuncResults(TensorShardingPerValueAttr funcResultShardings,
   mlir::sdy::setShardings(callOp, funcResultShardings);
 }
 
+void insertReshardsOnFuncResults(FuncOp funcOp, CallOp callOp,
+                                 const SymbolTable& symbolTable,
+                                 mlir::IRRewriter& rewriter) {
+  TensorShardingPerValueAttr funcResultShardings =
+      sdy::getFuncResultShardings(funcOp, symbolTable);
+  if (!funcResultShardings) {
+    TensorShardingPerValueAttr callResultShardings =
+        mlir::sdy::getShardingPerValue(callOp);
+    // Return without inserting reshards as neither func arguments have a
+    // sharding with non-maximal mesh nor call has non-empty shardings.
+    if (!callResultShardings) {
+      return;
+    }
+    funcResultShardings = getFullyClosedLike(callResultShardings);
+  }
+  insertReshardsOnFuncResults(funcResultShardings, callOp, rewriter);
+}
+
 }  // namespace sdy
 }  // namespace xla
