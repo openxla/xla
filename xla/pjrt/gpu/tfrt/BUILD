@@ -331,6 +331,7 @@ xla_cc_test(
     tags = [
         "cuda-only",
         "gpu",
+        "no_oss",
         "noasan",
         "nomsan",
         "requires-gpu-nvidia:2",
