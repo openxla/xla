@@ -497,17 +497,22 @@ absl::Status ExecuteThunksImpl(
                                               state.loop_iteration));
             }
             LOG(ERROR) << absl::StreamFormat(
-                "  - thunk[%d/%d]: %s at %s%s", thunk.index,
-                tracker->num_thunks(), thunk.name,
+                "  - exec[%d] thunk[%d/%d] %v: %s at %s%s", thunk.exec_idx,
+                thunk.thunk_idx, tracker->num_thunks(), thunk.kind, thunk.name,
                 absl::FormatTime("%Y-%m-%d %H:%M:%S.%E6f", thunk.executed,
                                  absl::LocalTimeZone()),
                 loop_info);
           }
         };
 
+        size_t num_executions = tracker->num_executions();
         LOG(ERROR) << absl::StreamFormat(
-            "[%d] Pending thunks: %d/%d", device_ordinal,
-            tracker->NumPendingThunks(), tracker->num_thunks());
+            "[%d] Completed thunks: %d/%d (unique thunks: %d)", device_ordinal,
+            tracker->NumCompletedThunks(), num_executions,
+            tracker->num_thunks());
+        LOG(ERROR) << absl::StreamFormat(
+            "[%d] Pending thunks: %d/%d (unique thunks: %d)", device_ordinal,
+            tracker->NumPendingThunks(), num_executions, tracker->num_thunks());
 
         log_progress("Last completed thunks",
                      tracker->LastCompletedThunks(progress_tracking_n));
@@ -596,12 +601,10 @@ absl::Status ExecuteThunksImpl(
   CollectiveMemoryRequests collective_memory_requests(buffer_allocations);
 
   {  // Prepare thunks for execution and collect requested GPU cliques.
-    Thunk::PrepareParams prepare_params{&collective_params,
-                                        &collective_clique_requests,
-                                        &collective_memory_requests,
-                                        executor,
-                                        &buffer_allocations,
-                                        &execution_scoped_state};
+    Thunk::PrepareParams prepare_params{
+        &collective_params,          &collective_clique_requests,
+        &collective_memory_requests, executor,
+        &buffer_allocations,         &execution_scoped_state};
 
     tsl::profiler::TraceMe trace_prepare("Thunks::Prepare");
     RETURN_IF_ERROR(thunk_executor.Prepare(prepare_params));

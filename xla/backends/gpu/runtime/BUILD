@@ -2863,7 +2863,6 @@ cc_library(
     hdrs = ["thunk_executor.h"],
     deps = [
         ":annotation",
-        ":collective_thunk",
         ":event_pool",
         ":thunk",
         ":while_loop",

@@ -32,7 +32,6 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/annotation.h"
-#include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/event_pool.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_loop.h"
@@ -103,18 +102,7 @@ absl::Status ThunkExecutor::ExecuteOnStream(
     if (tracker) {
       // Borrow an event from the pool and record it on the execution stream.
       ASSIGN_OR_RETURN(auto event, tracker->event_pool->GetOrCreateEvent());
-
-      // Record execution completion event on a stream.
-      se::Stream* execution_stream = params.stream;
-
-      // Async collectives launch work on a dedicated async stream, so we
-      // must record the event there instead of on the main compute stream.
-      if (auto* collective = dynamic_cast<const CollectiveThunk*>(thunk.get());
-          thunk->IsAsyncStart() && collective && params.collective_params) {
-        execution_stream = params.collective_params->async_streams.at(
-            thunk->execution_stream_id().value());
-      }
-      RETURN_IF_ERROR(execution_stream->RecordEvent(event->get()));
+      RETURN_IF_ERROR(params.stream->RecordEvent(event->get()));
 
       absl::MutexLock lock(tracker->mu);
       tracker->events.emplace_back(thunk.get(), std::move(event),
@@ -162,6 +150,11 @@ ThunkExecutor::ScopedProgressTracker::~ScopedProgressTracker() {
   }
 }
 
+size_t ThunkExecutor::ScopedProgressTracker::num_executions() const {
+  absl::MutexLock lock(tracker_->mu);
+  return tracker_->events.size();
+}
+
 size_t ThunkExecutor::ScopedProgressTracker::NumPendingThunks() {
   absl::MutexLock lock(tracker_->mu);
   return absl::c_count_if(tracker_->events, [](const auto& event) {
@@ -187,26 +180,27 @@ std::vector<ThunkExecution> ThunkExecutor::ScopedProgressTracker::CollectThunks(
   // for oldest-first or backward for most-recent-first.
   std::vector<ThunkExecution> result;
 
-  auto collect = [&](const ThunkExecutionEvent& event) {
+  auto collect = [&](size_t exec_idx, const ThunkExecutionEvent& event) {
     if (event.event->get()->PollForStatus() == status) {
-      result.push_back({indexing.at(event.thunk), event.executed,
-                        event.thunk->profile_annotation(), event.loop_nest});
+      result.push_back({exec_idx, indexing.at(event.thunk), event.executed,
+                        event.thunk->kind(), event.thunk->profile_annotation(),
+                        event.loop_nest});
     }
   };
 
   if (most_recent_first) {
-    for (auto it = events.rbegin(); it != events.rend(); ++it) {
+    for (size_t i = events.size(); i > 0; --i) {
       if (result.size() >= n) {
         break;
       }
-      collect(*it);
+      collect(i - 1, events[i - 1]);
     }
   } else {
-    for (auto it = events.begin(); it != events.end(); ++it) {
+    for (size_t i = 0; i < events.size(); ++i) {
       if (result.size() >= n) {
         break;
       }
-      collect(*it);
+      collect(i, events[i]);
     }
   }
 
