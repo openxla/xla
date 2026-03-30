@@ -1835,7 +1835,7 @@ diff --git b/python/tutorials/BUILD b/python/tutorials/BUILD
 new file mode 100644
 --- /dev/null
 +++ b/python/tutorials/BUILD
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,193 @@
 +load("@xla//third_party/rules_python/python:py_library.bzl", "py_library")
 +load("@xla//third_party/rules_python/python:py_test.bzl", "py_test")
 +
@@ -1932,7 +1932,8 @@ new file mode 100644
 +    name = "05-layer-norm",
 +    srcs = ["05-layer-norm.py"],
 +    strict_deps = False,
-+    tags = _requires_gpu_sm90,
++    # Test is 2% flaky b/497760029
++    tags = _requires_gpu_sm90 + ["notap"],
 +    target_compatible_with = _requires_config_cuda,
 +    deps = [
 +        "//third_party/py/torch:pytorch",
