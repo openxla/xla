@@ -1804,12 +1804,11 @@ xla_test(
     ],
 )
 
-# TODO(b/475838852): Re-enable once fixed.
 xla_test(
     name = "slice_test",
-    timeout = "long",
     srcs = ["slice_test.cc"],
     shard_count = 50,
+    tags = ["optonly"],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
