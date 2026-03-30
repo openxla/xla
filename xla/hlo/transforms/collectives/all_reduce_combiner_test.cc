@@ -542,5 +542,55 @@ TEST_F(AllReduceCombinerTest, PreservesMetadata) {
                         op::GetTupleElement(combined_all_reduce, 1)));
 }
 
+TEST_F(AllReduceCombinerTest, IndependentBlocksWithDependentStages) {
+  const char* const hlo_string = R"(
+HloModule test
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY entry {
+  p0 = f32[128] parameter(0)
+  p1 = f32[128] parameter(1)
+  p2 = f32[128] parameter(2)
+  p3 = f32[128] parameter(3)
+
+  ar_a1 = f32[128] all-reduce(p0), replica_groups={}, to_apply=add
+  neg_a = f32[128] negate(ar_a1)
+  ar_a2 = f32[128] all-reduce(neg_a), replica_groups={}, to_apply=add
+
+  ar_b1 = f32[128] all-reduce(p1), replica_groups={}, to_apply=add
+  neg_b = f32[128] negate(ar_b1)
+  ar_b2 = f32[128] all-reduce(neg_b), replica_groups={}, to_apply=add
+
+  ar_c1 = f32[128] all-reduce(p2), replica_groups={}, to_apply=add
+  neg_c = f32[128] negate(ar_c1)
+  ar_c2 = f32[128] all-reduce(neg_c), replica_groups={}, to_apply=add
+
+  ar_d1 = f32[128] all-reduce(p3), replica_groups={}, to_apply=add
+  neg_d = f32[128] negate(ar_d1)
+  ar_d2 = f32[128] all-reduce(neg_d), replica_groups={}, to_apply=add
+
+  ROOT tuple = (f32[128], f32[128], f32[128], f32[128]) tuple(ar_a2, ar_b2, ar_c2, ar_d2)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                           ParseAndReturnVerifiedModule(hlo_string));
+
+  AllReduceCombiner combine(1024 * 1024, kMaxCombineCount);
+  ASSERT_EQ(AllReduceCount(*module), 8);
+  EXPECT_THAT(combine.Run(module.get()), absl_testing::IsOkAndHolds(true));
+
+  // Optimal: all stage-1 ARs combined + all stage-2 ARs combined = 2.
+  EXPECT_EQ(AllReduceCount(*module), 2)
+      << "Expected all independent stage-1 ARs to be combined together and "
+         "all independent stage-2 ARs to be combined together, but the "
+         "combiner produced " << AllReduceCount(*module)
+      << " all-reduces instead of 2.";
+}
+
 }  // namespace
 }  // namespace xla
