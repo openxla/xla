@@ -92,6 +92,7 @@ limitations under the License.
 #include "xla/codegen/tiling/experimental/tiling_space.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
 #include "xla/codegen/tiling/tiling_specification.h"
+#include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "xla/codegen/xtile/codegen/experimental_fusion_emitter.h"
 #include "xla/codegen/xtile/codegen/fusion_emitter.h"
 #include "xla/codegen/xtile/ir/transforms/passes.h"
@@ -216,8 +217,9 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
           "roots.",
           block_level_parameters.output_tile_sizes.size());
     }
-    tiling_space->AssignTileSizes(
-        block_level_parameters.output_tile_sizes.front());
+    // Triton requires that all block dimensions are a power of 2.
+    tiling_space->AssignTileSizes(xtile::GetPaddedTileSizes(
+        block_level_parameters.output_tile_sizes.front()));
 
     TileAnalysisOrError tiled_computation_or =
         TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space));

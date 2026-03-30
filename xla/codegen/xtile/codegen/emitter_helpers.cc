@@ -30,12 +30,14 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/bit.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -92,6 +94,12 @@ namespace mm = ::mlir::math;
 
 namespace {
 using TensorValue = mlir::TypedValue<mlir::RankedTensorType>;
+
+bool ArePowersOfTwo(ArrayRef<int64_t> values) {
+  return llvm::all_of(values, [](int64_t size) {
+    return size > 0 && llvm::has_single_bit(static_cast<uint64_t>(size));
+  });
+}
 
 // Emit a value as Index clamped to [lower, upper].
 Value EmitClampedIndex(mlir::ImplicitLocOpBuilder& b, Value value,
@@ -543,7 +551,8 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
                    tiled_hlo.tile().GetStaticTileSizes());
   ASSIGN_OR_RETURN(SmallVector<int64_t> tile_strides,
                    tiled_hlo.tile().GetStaticTileStrides());
-  auto padded_tile_sizes = GetPaddedTileSizes(tile_sizes);
+  DCHECK(ArePowersOfTwo(tile_sizes)) << "Tile sizes must be a power of 2.";
+
   const Shape& shape = tiled_hlo.hlo()->shape();
   SmallVector<int64_t> original_shape;
   original_shape.assign(shape.dimensions().begin(), shape.dimensions().end());
@@ -554,7 +563,7 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
 
   auto minor_to_major_layout = llvm::to_vector(LayoutUtil::MinorToMajor(shape));
 
-  return TileInfo(offsets, tile_strides, original_shape, padded_tile_sizes,
+  return TileInfo(offsets, tile_strides, original_shape, tile_sizes,
                   minor_to_major_layout, storage_type);
 }
 
