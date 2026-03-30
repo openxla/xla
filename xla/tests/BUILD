@@ -51,10 +51,45 @@ cc_library(
 )
 
 cc_library(
-    name = "test_utils",
-    srcs = ["test_utils.cc"],
-    hdrs = ["test_utils.h"],
+    name = "constraint_state",
+    hdrs = ["constraint_state.h"],
     deps = [
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
+    name = "constraint_propagator",
+    srcs = ["constraint_propagator.cc"],
+    hdrs = [
+        "constraint_propagator.h",
+    ],
+    deps = [
+        ":constraint_state",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:types",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "test_utils",
+    srcs = [
+        "test_utils.cc",
+    ],
+    hdrs = [
+        "test_utils.h",
+    ],
+    deps = [
+        ":constraint_propagator",
+        ":constraint_state",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
@@ -63,7 +98,7 @@ cc_library(
         "//xla/hlo/analysis:hlo_dataflow_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_verifier",
-        "//xla/service:transfer_manager",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -3556,5 +3591,22 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_for_library",
+    ],
+)
+
+xla_test(
+    name = "constraint_propagator_test",
+    srcs = ["constraint_propagator_test.cc"],
+    backends = [
+        "cpu",
+    ],
+    deps = [
+        ":constraint_propagator",
+        ":constraint_state",
+        ":hlo_pjrt_test_base",
+        ":xla_internal_test_main",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:test",
+        "//xla/tsl/platform:statusor",
     ],
 )
