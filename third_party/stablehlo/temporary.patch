@@ -1,1 +1,2089 @@
+diff --ruN a/stablehlo/BUILD.bazel b/stablehlo/BUILD.bazel
+--- stablehlo/BUILD.bazel
++++ stablehlo/BUILD.bazel
+@@ -649,6 +649,7 @@
+         ":reference_token",
+         ":reference_types",
+         ":reference_value",
++        ":replica_group_utils",
+         ":stablehlo_ops",
+         ":stablehlo_type_inference",
+         "@llvm-project//llvm:Support",
+@@ -1183,6 +1184,7 @@
+         ":broadcast_utils",
+         ":chlo_ops",
+         ":chlo_rewriters_inc_gen",
++        ":replica_group_utils",
+         ":stablehlo_aggressive_simplification_inc_gen",
+         ":stablehlo_broadcast_lowering",
+         ":stablehlo_create_compatibility_expander_inc_gen",
+@@ -1354,6 +1356,23 @@
+         "@llvm-project//mlir:IR",
+         "@llvm-project//mlir:InferTypeOpInterface",
+         "@llvm-project//mlir:QuantOps",
++        "@llvm-project//mlir:Support",
++    ],
++)
++
++cc_library(
++    name = "replica_group_utils",
++    srcs = [
++        "stablehlo/dialect/ReplicaGroupUtils.cpp",
++    ],
++    hdrs = [
++        "stablehlo/dialect/ReplicaGroupUtils.h",
++    ],
++    strip_include_prefix = ".",
++    deps = [
++        ":stablehlo_ops",
++        "@llvm-project//llvm:Support",
++        "@llvm-project//mlir:IR",
+         "@llvm-project//mlir:Support",
+     ],
+ )
+diff --ruN a/stablehlo/docs/spec.md b/stablehlo/docs/spec.md
+--- stablehlo/docs/spec.md
++++ stablehlo/docs/spec.md
+@@ -736,13 +736,13 @@
+ 
+ #### Inputs
+ 
+-| Label | Name                    | Type                                                        | Constraints |
+-|-------|-------------------------|-------------------------------------------------------------|-------------|
+-| (I1)  | `operands`              | variadic number of tensors or per-tensor quantized tensors  | (C1), (C6)  |
+-| (I2)  | `all_gather_dim`        | constant of type `si64`                                     | (C1), (C6)  |
+-| (I3)  | `replica_groups`        | 2-dimensional tensor constant of type `si64`                | (C2-C4)     |
+-| (I4)  | `channel_id`            | constant of type `si64`                                     | (C5)        |
+-| (I5)  | `use_global_device_ids` | constant of type `i1`                                       | (C5)        |
++| Label | Name                    | Type                                                                                    | Constraints |
++|-------|-------------------------|-----------------------------------------------------------------------------------------|-------------|
++| (I1)  | `operands`              | variadic number of tensors or per-tensor quantized tensors                              | (C1), (C6)  |
++| (I2)  | `all_gather_dim`        | constant of type `si64`                                                                 | (C1), (C6)  |
++| (I3)  | `replica_groups`        | 2-dimensional tensor constant of type `si64` or `ReplicaGroupMeshAxes`             | (C2-C4)     |
++| (I4)  | `channel_id`            | constant of type `si64`                                                                 | (C5)        |
++| (I5)  | `use_global_device_ids` | constant of type `i1`                                                                   | (C5)        |
+ 
+ #### Outputs
+ 
+@@ -818,13 +818,13 @@
+ 
+ #### Inputs
+ 
+-| Label | Name                    | Type                                                             | Constraints |
+-|-------|-------------------------|------------------------------------------------------------------|-------------|
+-| (I1)  | `operands`              | variadic number of tensors or per-tensor quantized tensors       | (C5), (C6)  |
+-| (I2)  | `replica_groups`        | variadic number of 1-dimensional tensor constants of type `si64` | (C1-C3)     |
+-| (I3)  | `channel_id`            | constant of type `si64`                                          | (C4)        |
+-| (I4)  | `use_global_device_ids` | constant of type `i1`                                            | (C4)        |
+-| (I5)  | `computation`           | function                                                         | (C5)        |
++| Label | Name                    | Type                                                                                                        | Constraints |
++|-------|-------------------------|-------------------------------------------------------------------------------------------------------------|-------------|
++| (I1)  | `operands`              | variadic number of tensors or per-tensor quantized tensors                                                  | (C5), (C6)  |
++| (I2)  | `replica_groups`        | variadic number of 1-dimensional tensor constants of type `si64` or `ReplicaGroupMeshAxes`             | (C1-C3)     |
++| (I3)  | `channel_id`            | constant of type `si64`                                                                                     | (C4)        |
++| (I4)  | `use_global_device_ids` | constant of type `i1`                                                                                       | (C4)        |
++| (I5)  | `computation`           | function                                                                                                    | (C5)        |
+ 
+ #### Outputs
+ 
+@@ -900,14 +900,14 @@
+ 
+ #### Inputs
+ 
+-| Label | Name               | Type                                                         | Constraints            |
+-|-------|--------------------|--------------------------------------------------------------|------------------------|
+-| (I1)  | `operands`         |  variadic number of tensors or per-tensor quantized tensors  | (C1-C3), (C9)          |
+-| (I2)  | `split_dimension`  | constant of type `si64`                                      | (C1), (C2), (C9)       |
+-| (I3)  | `concat_dimension` | constant of type `si64`                                      | (C3), (C9)             |
+-| (I4)  | `split_count`      | constant of type `si64`                                      | (C2), (C4), (C8), (C9) |
+-| (I5)  | `replica_groups`   | 2-dimensional tensor constant of type `si64`                 | (C5-C8)                |
+-| (I6)  | `channel_id`       | constant of type `si64`                                      |                        |
++| Label | Name               | Type                                                                                    | Constraints            |
++|-------|--------------------|-----------------------------------------------------------------------------------------|------------------------|
++| (I1)  | `operands`         |  variadic number of tensors or per-tensor quantized tensors                             | (C1-C3), (C9)          |
++| (I2)  | `split_dimension`  | constant of type `si64`                                                                 | (C1), (C2), (C9)       |
++| (I3)  | `concat_dimension` | constant of type `si64`                                                                 | (C3), (C9)             |
++| (I4)  | `split_count`      | constant of type `si64`                                                                 | (C2), (C4), (C8), (C9) |
++| (I5)  | `replica_groups`   | 2-dimensional tensor constant of type `si64` or `ReplicaGroupMeshAxes`             | (C5-C8)                |
++| (I6)  | `channel_id`       | constant of type `si64`                                                                 |                        |
+ 
+ #### Outputs
+ 
+@@ -1811,11 +1811,11 @@
+ 
+ #### Inputs
+ 
+-| Label | Name             | Type                                                             | Constraints |
+-|-------|------------------|------------------------------------------------------------------|-------------|
+-| (I1)  | `operand`        | tensor or per-tensor quantized tensor                            | (C3)        |
+-| (I2)  | `replica_groups` | variadic number of 1-dimensional tensor constants of type `si64` | (C1), (C2)  |
+-| (I3)  | `channel_id`     | constant of type `si64`                                          |             |
++| Label | Name             | Type                                                                                                        | Constraints |
++|-------|------------------|-------------------------------------------------------------------------------------------------------------|-------------|
++| (I1)  | `operand`        | tensor or per-tensor quantized tensor                                                                       | (C3)        |
++| (I2)  | `replica_groups` | variadic number of 1-dimensional tensor constants of type `si64` or `ReplicaGroupMeshAxes`             | (C1), (C2)  |
++| (I3)  | `channel_id`     | constant of type `si64`                                                                                     |             |
+ 
+ #### Outputs
+ 
+@@ -5124,14 +5124,14 @@
+ 
+ #### Inputs
+ 
+-| Label | Name                    | Type                                         | Constraints            |
+-|-------|-------------------------|----------------------------------------------|------------------------|
+-| (I1)  | `operand`               | tensor or per-tensor quantized tensor        | (C1), (C2), (C7), (C8) |
+-| (I2)  | `scatter_dimension`     | constant of type `si64`                      | (C1), (C2), (C8)       |
+-| (I3)  | `replica_groups`        | 2-dimensional tensor constant of type `si64` | (C3-C5)                |
+-| (I4)  | `channel_id`            | constant of type `si64`                      | (C6)                   |
+-| (I5)  | `use_global_device_ids` | constant of type `i1`                        | (C6)                   |
+-| (I6)  | `computation`           | function                                     | (C7)                   |
++| Label | Name                    | Type                                                                                    | Constraints            |
++|-------|-------------------------|-----------------------------------------------------------------------------------------|------------------------|
++| (I1)  | `operand`               | tensor or per-tensor quantized tensor                                                   | (C1), (C2), (C7), (C8) |
++| (I2)  | `scatter_dimension`     | constant of type `si64`                                                                 | (C1), (C2), (C8)       |
++| (I3)  | `replica_groups`        | 2-dimensional tensor constant of type `si64` or `ReplicaGroupMeshAxes`             | (C3-C5)                |
++| (I4)  | `channel_id`            | constant of type `si64`                                                                 | (C6)                   |
++| (I5)  | `use_global_device_ids` | constant of type `i1`                                                                   | (C6)                   |
++| (I6)  | `computation`           | function                                                                                | (C7)                   |
+ 
+ #### Outputs
+ 
+@@ -7144,11 +7144,31 @@
+ and are described in this section. More formally, StableHLO supports the
+ following four strategies.
+ 
++#### Replica groups
++
++Collective operations use `replica_groups` to define the groups of devices the computation will be executed on. The
++`replica_groups` can be either a tensor constant of type `si64` (representing
++a list of lists of ids) or a `ReplicaGroupMeshAxes` object.
++
++A `ReplicaGroupMeshAxes` defines the replica groups based on a Shardy mesh representation. `ReplicaGroupMeshAxes` fields include:
++
++* `mesh`, an `attribute` representing the Shardy mesh to be used.
++* `axes`, a 1-dimensional tensor constant of `AxisRef` elements.
++
++An `AxisRef` defines a reference to either a full axis or a split sub-axis. `AxisRef` fields include:
++
++* `name`, a constant of type `string` representing the name of this axis.
++* `sub_axis_info`, an optional `SubAxisInfo` object that provides additional information if this is a sub axis.
++
++A `SubAxisInfo` defines how this sub-axis is derived from the full axis. `SubAxisInfo` fields include:
++
++* `pre_size`, a constant of type `si64`.
++* `size`, a constant of type `si64`.
++
+ #### cross_replica
+ 
+ Only cross-replica communications happen within each process group. This
+-strategy takes `replica_groups` - a list of lists of replica ids - and computes
+-a Cartesian product of `replica_groups` by `partition_ids`. `replica_groups`
++strategy takes `replica_groups` and computes a Cartesian product of `replica_groups` by `partition_ids`. `replica_groups`
+ must have unique elements and cover all `replica_ids`. More formally, using
+ Python syntax:
+ 
+@@ -7169,7 +7189,7 @@
+ #### cross_partition
+ 
+ Only cross-partition communications happen within each process group. This
+-strategy takes `partition_groups` - a list of lists of partition ids - and
++strategy takes `partition_groups` and
+ computes a Cartesian product of `partition_groups` by `replica_ids`.
+ `partition_groups` must have unique elements and cover all `partition_ids`.
+ More formally, using Python syntax:
+@@ -7191,8 +7211,7 @@
+ #### cross_replica_and_partition
+ 
+ Both cross-replica and cross-partition communications may happen within each
+-process group. This strategy takes `replica_groups` - a list of lists of
+-replica ids - and computes Cartesian products of each `replica_group` by
++process group. This strategy takes `replica_groups` and computes Cartesian products of each `replica_group` by
+ `partition_ids`. `replica_groups` must have unique elements and cover all
+ `replica_ids`. More formally, using Python syntax:
+ 
+diff --ruN a/stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp b/stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp
+--- stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp
++++ stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp
+@@ -0,0 +1,159 @@
++#include "stablehlo/dialect/ReplicaGroupUtils.h"
++
++#include <cstddef>
++#include <cstdint>
++#include <utility>
++
++#include "llvm/ADT/DenseSet.h"
++#include "llvm/ADT/SmallVector.h"
++#include "llvm/ADT/StringRef.h"
++#include "mlir/IR/Attributes.h"
++#include "mlir/IR/BuiltinAttributes.h"
++#include "mlir/IR/Diagnostics.h"
++#include "mlir/Support/LLVM.h"
++#include "stablehlo/dialect/StablehloOps.h"
++
++namespace mlir {
++namespace stablehlo {
++
++static SmallVector<SmallVector<int64_t>>
++flattenedReplicaGroupsFromTransposePermutation(
++    const SmallVector<StringRef>& meshAxisNames,
++    const SmallVector<StringRef>& commAxisNames,
++    const llvm::DenseSet<StringRef>& commAxisSet,
++    const SmallVector<int64_t>& axisSizes,
++    const SmallVector<int64_t>& deviceIds, int64_t totalDevices) {
++  // Reshape and Transpose equivalence bridging XLA TileAssignment behavior.
++  SmallVector<int> transposeAxes;
++  // Non-grouped axes first
++  for (size_t i = 0; i < meshAxisNames.size(); ++i) {
++    if (!commAxisSet.count(meshAxisNames[i])) {
++      transposeAxes.push_back(i);
++    }
++  }
++  // Grouped axes
++  for (const auto& name : commAxisNames) {
++    for (size_t i = 0; i < meshAxisNames.size(); ++i) {
++      if (meshAxisNames[i] == name) {
++        transposeAxes.push_back(i);
++        break;
++      }
++    }
++  }
++
++  SmallVector<int64_t> transposedSizes(meshAxisNames.size());
++  for (size_t i = 0; i < meshAxisNames.size(); ++i) {
++    transposedSizes[i] = axisSizes[transposeAxes[i]];
++  }
++
++  // Compute strides for original shape
++  SmallVector<int64_t> originalStrides(meshAxisNames.size(), 1);
++  for (int i = static_cast<int>(meshAxisNames.size()) - 2; i >= 0; --i) {
++    originalStrides[i] = originalStrides[i + 1] * axisSizes[i + 1];
++  }
++
++  // Compute strides for transposed shape
++  SmallVector<int64_t> transposedStrides(meshAxisNames.size(), 1);
++  for (int i = static_cast<int>(meshAxisNames.size()) - 2; i >= 0; --i) {
++    transposedStrides[i] = transposedStrides[i + 1] * transposedSizes[i + 1];
++  }
++
++  // Generate chunks
++  int64_t numDevicesPerGroup = 1;
++  for (auto name : commAxisNames) {
++    for (size_t i = 0; i < meshAxisNames.size(); ++i) {
++      if (meshAxisNames[i] == name) {
++        numDevicesPerGroup *= axisSizes[i];
++        break;
++      }
++    }
++  }
++  int64_t numGroups = totalDevices / numDevicesPerGroup;
++
++  SmallVector<SmallVector<int64_t>> groups;
++  groups.reserve(numGroups);
++  for (int64_t i = 0; i < numGroups; ++i) {
++    SmallVector<int64_t> group;
++    group.reserve(numDevicesPerGroup);
++    for (int64_t j = 0; j < numDevicesPerGroup; ++j) {
++      int64_t linearTransposeIdx = i * numDevicesPerGroup + j;
++      int64_t originalIndex = 0;
++      for (size_t k = 0; k < meshAxisNames.size(); ++k) {
++        int64_t coord =
++            (linearTransposeIdx / transposedStrides[k]) % transposedSizes[k];
++        originalIndex += coord * originalStrides[transposeAxes[k]];
++      }
++      group.push_back(deviceIds[originalIndex]);
++    }
++    groups.push_back(std::move(group));
++  }
++
++  return groups;
++}
++
++FailureOr<SmallVector<SmallVector<int64_t>>> flattenReplicaGroupMeshAxes(
++    Attribute meshAttr, ArrayAttr commAxes, Location loc) {
++  // Reference implementation for flattening a mesh-axes based replica group
++  // to the list of lists implementation.
++  //
++  // Note, that this function is only intended for reference implementation
++  // purposes or when a fallback is required in VHLO legalization if the current
++  // version doesn't support mesh-axes based replica groups. In all other cases
++  // we don't flatten mesh-axes based replica groups, since we intend to persist
++  // them throughout the pipeline.
++  auto mesh = dyn_cast<stablehlo::MeshAttr>(meshAttr);
++  if (!mesh)
++    return emitOptionalError(loc, "expected stablehlo.mesh for mesh attribute");
++
++  auto axesInMesh = mesh.getAxes();
++
++  // Identify which axes are communication axes.
++  llvm::SmallVector<StringRef> commAxisNames;
++  llvm::DenseSet<StringRef> commAxisSet;
++  for (auto axisRefAttr : commAxes) {
++    if (auto shloAxisRef = dyn_cast<stablehlo::AxisRefAttr>(axisRefAttr)) {
++      if (shloAxisRef.getSubAxisInfo()) {
++        return emitError(loc) << "Subaxes are not supported in "
++                                 "flattenReplicaGroupMeshAxes";
++      }
++      commAxisNames.push_back(shloAxisRef.getName());
++      commAxisSet.insert(shloAxisRef.getName());
++    } else if (auto strAttr = dyn_cast<StringAttr>(axisRefAttr)) {
++      commAxisNames.push_back(strAttr.getValue());
++      commAxisSet.insert(strAttr.getValue());
++    } else {
++      return emitError(loc) << "Expected stablehlo.axis_ref or string for "
++                               "communication axis";
++    }
++  }
++
++  // Calculate total devices and axis sizes
++  int64_t totalDevices = 1;
++  SmallVector<int64_t> axisSizes;
++  SmallVector<StringRef> meshAxisNames;
++  for (auto axisAttr : axesInMesh) {
++    auto meshAxis = dyn_cast<stablehlo::MeshAxisAttr>(axisAttr);
++    if (!meshAxis) {
++      return emitError(loc) << "Expected stablehlo.mesh_axis in mesh";
++    }
++    axisSizes.push_back(meshAxis.getSize());
++    meshAxisNames.push_back(meshAxis.getName());
++    totalDevices *= meshAxis.getSize();
++  }
++
++  SmallVector<int64_t> deviceIds;
++  if (!mesh.getDeviceIds() || mesh.getDeviceIds().empty()) {
++    for (int64_t i = 0; i < totalDevices; ++i) deviceIds.push_back(i);
++  } else {
++    for (auto id : mesh.getDeviceIds().getValues<int64_t>()) {
++      deviceIds.push_back(id);
++    }
++  }
++
++  return flattenedReplicaGroupsFromTransposePermutation(
++      meshAxisNames, commAxisNames, commAxisSet, axisSizes, deviceIds,
++      totalDevices);
++}
++
++}  // namespace stablehlo
++}  // namespace mlir
+diff --ruN a/stablehlo/stablehlo/dialect/ReplicaGroupUtils.h b/stablehlo/stablehlo/dialect/ReplicaGroupUtils.h
+--- stablehlo/stablehlo/dialect/ReplicaGroupUtils.h
++++ stablehlo/stablehlo/dialect/ReplicaGroupUtils.h
+@@ -0,0 +1,25 @@
++#ifndef STABLEHLO_TRANSFORMS_REPLICA_GROUP_UTILS_H
++#define STABLEHLO_TRANSFORMS_REPLICA_GROUP_UTILS_H
++
++#include <cstdint>
++
++#include "mlir/IR/Attributes.h"
++#include "mlir/IR/BuiltinAttributes.h"
++#include "mlir/IR/Location.h"
++#include "mlir/Support/LLVM.h"
++#include "mlir/Support/LogicalResult.h"
++
++namespace mlir {
++namespace stablehlo {
++
++// Flattens replica groups represented by a mesh and a list of communication
++// axes into a flat list of replica groups.
++// Returns a 2D array of device IDs representing the flattened replica
++// groups, or failure if the conversion fails.
++FailureOr<SmallVector<SmallVector<int64_t>>> flattenReplicaGroupMeshAxes(
++    Attribute meshAttr, ArrayAttr commAxes, Location loc);
++
++}  // namespace stablehlo
++}  // namespace mlir
++
++#endif  // STABLEHLO_TRANSFORMS_REPLICA_GROUP_UTILS_H
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloAttrs.td b/stablehlo/stablehlo/dialect/StablehloAttrs.td
+--- stablehlo/stablehlo/dialect/StablehloAttrs.td
++++ stablehlo/stablehlo/dialect/StablehloAttrs.td
+@@ -233,4 +233,54 @@
+   ];
+ }
+ 
++def StableHLO_SubAxisInfo : AttrDef<StableHLO_Dialect, "SubAxisInfo"> {
++  let mnemonic = "sub_axis_info";
++  let summary = "Info about how this sub-axis is derived from the full axis";
++  let parameters = (ins
++      "int64_t":$pre_size,
++      "int64_t":$size
++  );
++  let assemblyFormat = "`(` $pre_size `)` `` $size";
++}
++
++def StableHLO_AxisRef : AttrDef<StableHLO_Dialect, "AxisRef"> {
++  let mnemonic = "axis_ref";
++  let summary = "Reference to either a full axis or a split sub-axis";
++  let parameters = (ins
++      StringRefParameter<"name of this axis">:$name,
++      OptionalParameter<"SubAxisInfoAttr", "additional info if this is a sub axis">:$sub_axis_info
++  );
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
++def StableHLO_MeshAxis : AttrDef<StableHLO_Dialect, "MeshAxis"> {
++  let mnemonic = "mesh_axis";
++  let summary = "A single axis of a mesh";
++  let parameters = (ins
++    StringRefParameter<"name">:$name,
++    "int64_t":$size
++  );
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
++def StableHLO_Mesh : AttrDef<StableHLO_Dialect, "Mesh"> {
++  let mnemonic = "mesh";
++  let summary = "A named mesh definition with device IDs";
++  let parameters = (ins
++    "ArrayAttr":$axes, // Array of MeshAxisAttr
++    OptionalParameter<"DenseIntElementsAttr">:$device_ids
++  );
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
++def StableHLO_ReplicaGroupMeshAxes : AttrDef<StableHLO_Dialect, "ReplicaGroupMeshAxes"> {
++  let mnemonic = "replica_group_mesh_axes";
++  let summary = "mesh and axes based replica groups representation.";
++  let parameters = (ins
++    "Attribute":$mesh,
++    "ArrayAttr":$axes
++  );
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
+ #endif // STABLEHLO_DIALECT_STABLEHLO_ATTRS
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloBytecode.cpp b/stablehlo/stablehlo/dialect/StablehloBytecode.cpp
+--- stablehlo/stablehlo/dialect/StablehloBytecode.cpp
++++ stablehlo/stablehlo/dialect/StablehloBytecode.cpp
+@@ -193,6 +193,36 @@
+   //   ulps: svarint
+   // }
+   kResultAccuracyAttr = 17,
++
++  // ReplicaGroupMeshAxesAttr {
++  //   mesh: Attribute
++  //   axes: Attribute[]
++  // }
++  kReplicaGroupMeshAxesAttr = 18,
++
++  // SubAxisInfoAttr {
++  //   preSize: svarint
++  //   size: svarint
++  // }
++  kSubAxisInfoAttr = 19,
++
++  // AxisRefAttr {
++  //   name: string
++  //   subAxisInfo: Attribute (optional)
++  // }
++  kAxisRefAttr = 20,
++
++  // MeshAxisAttr {
++  //   name: string
++  //   size: svarint
++  // }
++  kMeshAxisAttr = 21,
++
++  // MeshAttr {
++  //   axes: Attribute[]
++  //   device_ids: DenseIntElementsAttr (optional)
++  // }
++  kMeshAttr = 22,
+ };
+ 
+ /// This enum contains marker codes used to indicate which type is
+@@ -271,6 +301,12 @@
+   TransposeAttr readTransposeAttr(DialectBytecodeReader& reader) const;
+   TypeExtensionsAttr readTypeExtensionsAttr(
+       DialectBytecodeReader& reader) const;
++  ReplicaGroupMeshAxesAttr readReplicaGroupMeshAxesAttr(
++      DialectBytecodeReader& reader) const;
++  SubAxisInfoAttr readSubAxisInfoAttr(DialectBytecodeReader& reader) const;
++  AxisRefAttr readAxisRefAttr(DialectBytecodeReader& reader) const;
++  MeshAxisAttr readMeshAxisAttr(DialectBytecodeReader& reader) const;
++  MeshAttr readMeshAttr(DialectBytecodeReader& reader) const;
+ 
+   // TO ADD ATTRIBUTE: Include a write method for each attribute in StableHLO
+   // Ex: void write(SomeAttr attr, DialectBytecodeWriter &writer) const;
+@@ -294,6 +330,12 @@
+              DialectBytecodeWriter& writer) const;
+   void write(TransposeAttr attr, DialectBytecodeWriter& writer) const;
+   void write(TypeExtensionsAttr attr, DialectBytecodeWriter& writer) const;
++  void write(ReplicaGroupMeshAxesAttr attr,
++             DialectBytecodeWriter& writer) const;
++  void write(SubAxisInfoAttr attr, DialectBytecodeWriter& writer) const;
++  void write(AxisRefAttr attr, DialectBytecodeWriter& writer) const;
++  void write(MeshAxisAttr attr, DialectBytecodeWriter& writer) const;
++  void write(MeshAttr attr, DialectBytecodeWriter& writer) const;
+ 
+   //===--------------------------------------------------------------------===//
+   // Types
+@@ -367,6 +409,16 @@
+       return readTransposeAttr(reader);
+     case stablehlo_encoding::kTypeExtensionsAttr:
+       return readTypeExtensionsAttr(reader);
++    case stablehlo_encoding::kReplicaGroupMeshAxesAttr:
++      return readReplicaGroupMeshAxesAttr(reader);
++    case stablehlo_encoding::kSubAxisInfoAttr:
++      return readSubAxisInfoAttr(reader);
++    case stablehlo_encoding::kAxisRefAttr:
++      return readAxisRefAttr(reader);
++    case stablehlo_encoding::kMeshAxisAttr:
++      return readMeshAxisAttr(reader);
++    case stablehlo_encoding::kMeshAttr:
++      return readMeshAttr(reader);
+     default:
+       reader.emitError() << "unknown stablehlo attribute code: " << code;
+       return Attribute();
+@@ -384,11 +436,13 @@
+             FftTypeAttr, GatherDimensionNumbersAttr, OutputOperandAliasAttr,
+             PrecisionAttr, ResultAccuracyAttr, ResultAccuracyModeAttr,
+             RngAlgorithmAttr, RngDistributionAttr, ScatterDimensionNumbersAttr,
+-            TransposeAttr, TypeExtensionsAttr>([&](auto attr) {
+-        LOG_WRITE_CALL;
+-        write(attr, writer);
+-        return success();
+-      })
++            TransposeAttr, TypeExtensionsAttr, ReplicaGroupMeshAxesAttr,
++            SubAxisInfoAttr, AxisRefAttr, MeshAxisAttr, MeshAttr>(
++          [&](auto attr) {
++            LOG_WRITE_CALL;
++            write(attr, writer);
++            return success();
++          })
+       .Default([&](Attribute) {
+         LOG_NOT_IMPLEMENTED;
+         return failure();
+@@ -758,6 +812,152 @@
+                                        DialectBytecodeWriter& writer) const {
+   writer.writeVarInt(stablehlo_encoding::kTypeExtensionsAttr);
+   writer.writeSignedVarInts(attr.getBounds());
++}
++
++//===----------------------------------------------------------------------===//
++// ReplicaGroupMeshAxesAttr
++
++//===----------------------------------------------------------------------===//
++// SubAxisInfoAttr
++
++SubAxisInfoAttr StablehloBytecodeInterface::readSubAxisInfoAttr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  int64_t preSize, size;
++  if (failed(reader.readSignedVarInt(preSize)) ||
++      failed(reader.readSignedVarInt(size)))
++    return SubAxisInfoAttr();
++  return SubAxisInfoAttr::get(getContext(), preSize, size);
++}
++
++void StablehloBytecodeInterface::write(SubAxisInfoAttr attr,
++                                       DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(stablehlo_encoding::kSubAxisInfoAttr);
++  writer.writeSignedVarInt(attr.getPreSize());
++  writer.writeSignedVarInt(attr.getSize());
++}
++
++//===----------------------------------------------------------------------===//
++// AxisRefAttr
++
++AxisRefAttr StablehloBytecodeInterface::readAxisRefAttr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  StringRef name;
++  if (failed(reader.readString(name))) return AxisRefAttr();
++  bool hasSubAxisInfo;
++  if (failed(reader.readBool(hasSubAxisInfo))) return AxisRefAttr();
++  SubAxisInfoAttr subAxisInfo;
++  if (hasSubAxisInfo) {
++    Attribute attr;
++    if (failed(reader.readAttribute(attr))) return AxisRefAttr();
++    subAxisInfo = llvm::dyn_cast<SubAxisInfoAttr>(attr);
++    if (!subAxisInfo) return AxisRefAttr();
++  }
++  return AxisRefAttr::get(getContext(), name, subAxisInfo);
++}
++
++void StablehloBytecodeInterface::write(AxisRefAttr attr,
++                                       DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(stablehlo_encoding::kAxisRefAttr);
++  writer.writeOwnedString(attr.getName());
++  bool hasSubAxisInfo = (bool)attr.getSubAxisInfo();
++  writer.writeOwnedBool(hasSubAxisInfo);
++  if (hasSubAxisInfo) {
++    writer.writeAttribute(attr.getSubAxisInfo());
++  }
++}
++
++//===----------------------------------------------------------------------===//
++// ReplicaGroupMeshAxesAttr
++
++ReplicaGroupMeshAxesAttr
++StablehloBytecodeInterface::readReplicaGroupMeshAxesAttr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  Attribute mesh;
++  if (failed(reader.readAttribute(mesh))) return ReplicaGroupMeshAxesAttr();
++
++  uint64_t axesSize;
++  if (failed(reader.readVarInt(axesSize))) return ReplicaGroupMeshAxesAttr();
++
++  SmallVector<Attribute> axes;
++  axes.reserve(axesSize);
++  for (uint64_t i = 0; i < axesSize; ++i) {
++    Attribute axis;
++    if (failed(reader.readAttribute(axis))) return ReplicaGroupMeshAxesAttr();
++    axes.push_back(axis);
++  }
++
++  return ReplicaGroupMeshAxesAttr::get(getContext(), mesh,
++                                       ArrayAttr::get(getContext(), axes));
++}
++
++void StablehloBytecodeInterface::write(ReplicaGroupMeshAxesAttr attr,
++                                       DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(stablehlo_encoding::kReplicaGroupMeshAxesAttr);
++  writer.writeAttribute(attr.getMesh());
++
++  ArrayAttr axes = attr.getAxes();
++  writer.writeVarInt(axes.size());
++  for (auto axis : axes) {
++    writer.writeAttribute(axis);
++  }
++}
++
++//===----------------------------------------------------------------------===//
++// MeshAxisAttr
++
++MeshAxisAttr StablehloBytecodeInterface::readMeshAxisAttr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  StringRef name;
++  int64_t size;
++  if (failed(reader.readString(name)) || failed(reader.readSignedVarInt(size)))
++    return MeshAxisAttr();
++  return MeshAxisAttr::get(getContext(), name, size);
++}
++
++void StablehloBytecodeInterface::write(MeshAxisAttr attr,
++                                       DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(stablehlo_encoding::kMeshAxisAttr);
++  writer.writeOwnedString(attr.getName());
++  writer.writeSignedVarInt(attr.getSize());
++}
++
++//===----------------------------------------------------------------------===//
++// MeshAttr
++
++MeshAttr StablehloBytecodeInterface::readMeshAttr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  Attribute axesAttr;
++  if (failed(reader.readAttribute(axesAttr))) return MeshAttr();
++  auto axes = llvm::dyn_cast<ArrayAttr>(axesAttr);
++  if (!axes) return MeshAttr();
++
++  bool hasDeviceIds;
++  if (failed(reader.readBool(hasDeviceIds))) return MeshAttr();
++  DenseIntElementsAttr deviceIds;
++  if (hasDeviceIds) {
++    Attribute deviceIdsAttr;
++    if (failed(reader.readAttribute(deviceIdsAttr))) return MeshAttr();
++    deviceIds = llvm::dyn_cast<DenseIntElementsAttr>(deviceIdsAttr);
++    if (!deviceIds) return MeshAttr();
++  }
++
++  return MeshAttr::get(getContext(), axes, deviceIds);
++}
++
++void StablehloBytecodeInterface::write(MeshAttr attr,
++                                       DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(stablehlo_encoding::kMeshAttr);
++  writer.writeAttribute(attr.getAxes());
++  bool hasDeviceIds = (bool)attr.getDeviceIds();
++  writer.writeOwnedBool(hasDeviceIds);
++  if (hasDeviceIds) {
++    writer.writeAttribute(attr.getDeviceIds());
++  }
+ }
+ 
+ //===----------------------------------------------------------------------===//
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.cpp b/stablehlo/stablehlo/dialect/StablehloOps.cpp
+--- stablehlo/stablehlo/dialect/StablehloOps.cpp
++++ stablehlo/stablehlo/dialect/StablehloOps.cpp
+@@ -1462,8 +1462,7 @@
+ 
+ void CollectiveBroadcastOp::build(OpBuilder& odsBuilder,
+                                   OperationState& odsState, Type resultType,
+-                                  Value operand,
+-                                  DenseIntElementsAttr replica_groups) {
++                                  Value operand, Attribute replica_groups) {
+   CollectiveBroadcastOp::build(odsBuilder, odsState, resultType, operand,
+                                replica_groups, /*channel_handle=*/nullptr);
+ }
+@@ -1646,8 +1645,7 @@
+ void AllToAllOp::build(OpBuilder& odsBuilder, OperationState& odsState,
+                        Type resultType, Value operand,
+                        IntegerAttr splitDimension, IntegerAttr concatDimension,
+-                       IntegerAttr splitCount,
+-                       DenseIntElementsAttr replicaGroups) {
++                       IntegerAttr splitCount, Attribute replicaGroups) {
+   AllToAllOp::build(odsBuilder, odsState, resultType, operand, splitDimension,
+                     concatDimension, splitCount, replicaGroups,
+                     /*channel_handle=*/nullptr);
+@@ -1716,8 +1714,7 @@
+ //===----------------------------------------------------------------------===//
+ 
+ void AllReduceOp::build(OpBuilder& odsBuilder, OperationState& odsState,
+-                        Type resultType, Value operand,
+-                        DenseIntElementsAttr replicaGroups,
++                        Type resultType, Value operand, Attribute replicaGroups,
+                         ChannelHandleAttr channelHandle,
+                         bool useGlobalDeviceIds) {
+   build(odsBuilder, odsState, resultType, ValueRange(operand), replicaGroups,
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.td b/stablehlo/stablehlo/dialect/StablehloOps.td
+--- stablehlo/stablehlo/dialect/StablehloOps.td
++++ stablehlo/stablehlo/dialect/StablehloOps.td
+@@ -1479,6 +1479,10 @@
+   let hasCustomAssemblyFormat = 1;
+ }
+ 
++def StableHLO_ReplicaGroups : AnyAttrOf<[I64ElementsAttr, StableHLO_ReplicaGroupMeshAxes]> {
++  let description = "Attribute that models the replica groups (either tensor or ReplicaGroupMeshAxes)";
++}
++
+ def StableHLO_AllGatherOp : StableHLO_Op<"all_gather",
+     [ConditionallySpeculatable,
+      HLO_PairwiseSameOperandAndResultElementType, /*all_gather_c6*/]> {
+@@ -1495,7 +1499,9 @@
+     ```mlir
+     %result:2 = "stablehlo.all_gather"(%operand0, %operand1) {
+       all_gather_dim = 1 : i64,
+-      replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>,
++      replica_groups = #stablehlo.replica_group_mesh_axes<
++        mesh = #stablehlo.mesh<axes = [#stablehlo.mesh_axis<name = "foo", size = 2>]>, axes = ["foo"]
++      >,
+       channel_handle = #stablehlo.channel_handle<handle = 0, type = 0>
+     } : (tensor<2x2xi64>, tensor<2x2xi64>) -> (tensor<2x4xi64>, tensor<2x4xi64>)
+     ```
+@@ -1504,7 +1510,8 @@
+   let arguments = (ins
+     Variadic<HLO_Tensor>:$operands, /*all_gather_i1*/
+     ConfinedAttr<I64Attr, [IntNonNegative]>:$all_gather_dim, /*all_gather_c1, all_gather_i2*/
+-    I64ElementsAttr:$replica_groups, /*all_gather_i3*/
++    StableHLO_ReplicaGroups:$replica_groups, /*all_gather_i3*/
++
+     OptionalAttr<StableHLO_ChannelHandle>:$channel_handle, /*all_gather_i4*/
+     UnitAttr:$use_global_device_ids /*all_gather_i5*/
+   );
+@@ -1537,7 +1544,9 @@
+       %0 = "stablehlo.add"(%arg0, %arg1) : (tensor<i64>, tensor<i64>) -> tensor<i64>
+       "stablehlo.return"(%0) : (tensor<i64>) -> ()
+     }) {
+-      replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>,
++      replica_groups = #stablehlo.replica_group_mesh_axes<
++        mesh = #stablehlo.mesh<axes = [#stablehlo.mesh_axis<name = "foo", size = 2>]>, axes = ["foo"]
++      >,
+       channel_handle = #stablehlo.channel_handle<handle = 0, type = 0>
+     } : (tensor<4xi64>, tensor<4xi64>) -> (tensor<4xi64>, tensor<4xi64>)
+     ```
+@@ -1545,7 +1554,8 @@
+ 
+   let arguments = (ins
+     Variadic<HLO_Tensor>:$operands, /*all_reduce_i1*/
+-    I64ElementsAttr:$replica_groups, /*all_reduce_i2*/
++    StableHLO_ReplicaGroups:$replica_groups, /*all_reduce_i2*/
++
+     OptionalAttr<StableHLO_ChannelHandle>:$channel_handle, /*all_reduce_i3*/
+     UnitAttr:$use_global_device_ids /*all_reduce_i4*/
+   );
+@@ -1555,7 +1565,7 @@
+   let builders = [
+     OpBuilder<(ins
+       "::mlir::Type":$result_type, "::mlir::Value":$operand,
+-      "::mlir::DenseIntElementsAttr":$replica_groups,
++      "::mlir::Attribute":$replica_groups,
+       "::mlir::stablehlo::ChannelHandleAttr":$channel_handle,
+       CArg<"bool", "false">:$use_global_device_ids)>,
+  ];
+@@ -1580,7 +1590,9 @@
+       stablehlo.return %0 : tensor<i64>
+     }) {
+       scatter_dimension = 1 : i64,
+-      replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>,
++      replica_groups = #stablehlo.replica_group_mesh_axes<
++        mesh = #stablehlo.mesh<axes = [#stablehlo.mesh_axis<name = "foo", size = 2>]>, axes = ["foo"]
++      >,
+       channel_handle = #stablehlo.channel_handle<handle = 0, type = 0>
+     } : (tensor<2x4xi64>) -> tensor<2x2xi64>
+     ```
+@@ -1589,7 +1601,8 @@
+   let arguments = (ins
+     HLO_Tensor:$operand, /*reduce_scatter_i1*/
+     ConfinedAttr<I64Attr, [IntNonNegative]>:$scatter_dimension, /*reduce_scatter_c2, reduce_scatter_i2*/
+-    I64ElementsAttr:$replica_groups, /*reduce_scatter_i3*/
++    StableHLO_ReplicaGroups:$replica_groups, /*reduce_scatter_i3*/
++
+     OptionalAttr<StableHLO_ChannelHandle>:$channel_handle, /*reduce_scatter_i4*/
+     UnitAttr:$use_global_device_ids /*reduce_scatter_i5*/
+   );
+@@ -1623,7 +1636,9 @@
+       split_dimension = 1 : i64,
+       concat_dimension = 0 : i64,
+       split_count = 2 : i64,
+-      replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>
++      replica_groups = #stablehlo.replica_group_mesh_axes<
++        mesh = #stablehlo.mesh<axes = [#stablehlo.mesh_axis<name = "foo", size = 2>]>, axes = ["foo"]
++      >
+     } : (tensor<2x4xi64>, tensor<2x4xi64>) -> (tensor<4x2xi64>, tensor<4x2xi64>)
+     ```
+   }];
+@@ -1633,7 +1648,8 @@
+     ConfinedAttr<I64Attr, [IntNonNegative]>:$split_dimension, /*all_to_all_c1, all_to_all_i2*/
+     ConfinedAttr<I64Attr, [IntNonNegative]>:$concat_dimension, /*all_to_all_c3, all_to_all_i3*/
+     ConfinedAttr<I64Attr, [IntPositive]>:$split_count, /*all_to_all_c4, all_to_all_i4*/
+-    I64ElementsAttr:$replica_groups, /*all_to_all_i5*/
++    StableHLO_ReplicaGroups:$replica_groups, /*all_to_all_i5*/
++
+     OptionalAttr<StableHLO_ChannelHandle>:$channel_handle /*all_to_all_i6*/
+   );
+   let results = (outs Variadic<HLO_Tensor>);
+@@ -1646,7 +1662,7 @@
+       "::mlir::IntegerAttr": $split_dimension,
+       "::mlir::IntegerAttr": $concat_dimension,
+       "::mlir::IntegerAttr": $split_count,
+-      "::mlir::DenseIntElementsAttr": $replica_groups)>];
++      "::mlir::Attribute": $replica_groups)>];
+ 
+   let extraClassDeclaration = commonClassDeclaration # [{
+     /// Interface method for ConditionallySpeculatable.
+@@ -2353,7 +2369,9 @@
+     Example:
+     ```mlir
+     %result = "stablehlo.collective_broadcast"(%operand) {
+-      replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>,
++      replica_groups = #stablehlo.replica_group_mesh_axes<
++        mesh = #stablehlo.mesh<axes = [#stablehlo.mesh_axis<name = "foo", size = 2>]>, axes = ["foo"]
++      >,
+       channel_handle = #stablehlo.channel_handle<handle = 0, type = 0>
+     } : (tensor<1x2xi64>) -> tensor<1x2xi64>
+     ```
+@@ -2361,7 +2379,7 @@
+ 
+   let arguments = (ins
+     HLO_Tensor:$operand, /*collective_broadcast_i1*/
+-    I64ElementsAttr:$replica_groups, /*collective_broadcast_i2*/
++    StableHLO_ReplicaGroups:$replica_groups, /*collective_broadcast_i2*/
+     OptionalAttr<StableHLO_ChannelHandle>:$channel_handle /*collective_broadcast_i3*/
+   );
+   let results = (outs HLO_Tensor);
+@@ -2371,7 +2389,7 @@
+   let builders = [
+     OpBuilder<(ins
+       "::mlir::Type":$result_type, "::mlir::Value":$operand,
+-      "::mlir::DenseIntElementsAttr":$replica_groups)>];
++      "::mlir::Attribute":$replica_groups)>];
+ }
+ 
+ def StableHLO_CollectivePermuteOp: StableHLO_Op<"collective_permute",
+diff --ruN a/stablehlo/stablehlo/dialect/TypeInference.cpp b/stablehlo/stablehlo/dialect/TypeInference.cpp
+--- stablehlo/stablehlo/dialect/TypeInference.cpp
++++ stablehlo/stablehlo/dialect/TypeInference.cpp
+@@ -74,6 +74,7 @@
+ #include "mlir/Support/LogicalResult.h"
+ #include "stablehlo/dialect/AssemblyFormat.h"
+ #include "stablehlo/dialect/Base.h"
++#include "stablehlo/dialect/TypeInference.h"
+ 
+ #define DEBUG_TYPE "stablehlo-type-inference"
+ 
+@@ -863,11 +864,16 @@
+ }
+ 
+ LogicalResult verifyReplicaGroups(std::optional<Location> location,
+-                                  DenseIntElementsAttr replicaGroups,
++                                  Attribute replicaGroups,
+                                   bool allGroupsMustHaveSameSize,
+                                   bool useGlobalDeviceIds,
+                                   std::optional<size_t> expectedGroupSize) {
+-  auto replicaGroupType = cast<RankedTensorType>(replicaGroups.getType());
++  auto denseGroups = dyn_cast<DenseIntElementsAttr>(replicaGroups);
++  if (!denseGroups) {
++    return success();
++  }
++
++  auto replicaGroupType = cast<RankedTensorType>(denseGroups.getType());
+   // all_gather_i3, all_to_all_i5
+   if (replicaGroupType.getRank() != 2)
+     return emitOptionalError(location,
+@@ -880,14 +886,13 @@
+                              "if `use_global_device_ids` is set, the replica "
+                              "groups cannot be empty");
+ 
+-  auto replicaIds = replicaGroups.getValues<int64_t>();
++  auto replicaIds = denseGroups.getValues<int64_t>();
+ 
+   // Large programs can have many replicas, use a set with efficient lookup.
+   llvm::DenseSet<int64_t> replicaIdsSeen;
+   for (int64_t replicaId : replicaIds) {
+     // Replica groups are stored in a 2D tensor. If the op supports non-uniform
+-    // groups, null replica IDs are stored as -1.
+-    // all_gather_c4
++    // groups, null replica IDs are stored as -1. all_gather_c4
+     if (replicaId == -1) {
+       if (!allGroupsMustHaveSameSize) continue;
+       return emitOptionalError(location, "Invalid replica id -1");
+@@ -1128,7 +1133,8 @@
+     if (failed(mlir::verifyCompatibleShape(witnessType, inputTypes[i])))
+       return emitOptionalError(
+           location,
+-          "expects all inputs to have compatible shapes. Shape at input-index ",
++          "expects all inputs to have compatible shapes. Shape at "
++          "input-index ",
+           i, " is not compatible with shape at input-index 0");
+ 
+   // reduce_window_c12, reduce_window_i7
+@@ -1158,10 +1164,10 @@
+   return success();
+ }
+ 
+-// Shape function can be called directly from autogenerated `build()` function,
+-// which may not guarantee the added region(s) in `odsState.regions` to be
+-// non-empty. Need check it here to avoid a crash for the ops that need regions
+-// in type inference, i.e. `IfOp/CaseOp/MapOp`.
++// Shape function can be called directly from autogenerated `build()`
++// function, which may not guarantee the added region(s) in `odsState.regions`
++// to be non-empty. Need check it here to avoid a crash for the ops that need
++// regions in type inference, i.e. `IfOp/CaseOp/MapOp`.
+ LogicalResult verifyRegionNotEmpty(std::optional<Location> location,
+                                    Region& region) {
+   if (region.empty())
+@@ -1576,10 +1582,10 @@
+ 
+   // dynamic_gather_c15, gather_c15
+   if (llvm::is_contained(startIndicesBatchingDims, indexVectorDim))
+-    return emitOptionalError(
+-        location,
+-        "expects start_indices_batching_dims not to include index_vector_dim ",
+-        indexVectorDim);
++    return emitOptionalError(location,
++                             "expects start_indices_batching_dims not to "
++                             "include index_vector_dim ",
++                             indexVectorDim);
+ 
+   // dynamic_gather_c16, gather_c16
+   if (operandBatchingDims.size() != startIndicesBatchingDims.size()) {
+@@ -1678,8 +1684,8 @@
+     // This can never run into the special case where start_indices gets
+     // implicitly expanded with a trailing 1 if
+     // index_vector_dim = start_indices.rank because then index would equal
+-    // index_vector_dim, which means we'd be looking at index+1, which would be
+-    // out of bounds anyway.
++    // index_vector_dim, which means we'd be looking at index+1, which would
++    // be out of bounds anyway.
+     if (index >= indexVectorDim) ++index;
+     shape.push_back(getStartIndicesDim(index));
+   }
+@@ -1728,10 +1734,10 @@
+                             indexVectorDim, shape);
+ 
+   // The dimension sizes of result, corresponding to offset dimensions, depend
+-  // on attributes (like `collapsed_slice_dims` and `slice_sizes`) and hence are
+-  // always static. Whereas, the dimension sizes of result, corresponding to
+-  // batch dimensions, depends on input `start_indices` and could be dynamic.
+-  // The corresponding bounds, in that case,  are propagated from the
++  // on attributes (like `collapsed_slice_dims` and `slice_sizes`) and hence
++  // are always static. Whereas, the dimension sizes of result, corresponding
++  // to batch dimensions, depends on input `start_indices` and could be
++  // dynamic. The corresponding bounds, in that case,  are propagated from the
+   // `start_indices`.
+   Attribute encoding =
+       cast<RankedTensorType>(startIndices.getType()).getEncoding();
+@@ -1840,7 +1846,7 @@
+ LogicalResult inferAllToAllOp(
+     std::optional<Location> location, ValueRange operands,
+     int64_t splitDimension, int64_t concatDimension, int64_t splitCount,
+-    DenseIntElementsAttr replicaGroups,
++    Attribute replicaGroups,
+     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes) {
+   // all_to_all_c5, all_to_all_c7, all_to_all_i5
+   if (failed(verifyReplicaGroups(location, replicaGroups,
+@@ -2069,7 +2075,8 @@
+     }
+   }
+ 
+-  // Infer the most specific (size, bound) of all dimensions of the return type
++  // Infer the most specific (size, bound) of all dimensions of the return
++  // type
+   SmallVector<int64_t> inferredSizes(rank, ShapedType::kDynamic);
+   SmallVector<int64_t> inferredBounds(rank, ShapedType::kDynamic);
+   // Note: for the concatenate dimension, 0 should be the identity element:
+@@ -2108,9 +2115,9 @@
+       inferredSizes, witnessType.getElementType(),
+       boundsToEncoding(
+           witnessType.getEncoding(),
+-          // Empty array as argument is an indicator to boundsToEncoding() that
+-          // there are no bounds at all in inputs, thus sparsity attributes will
+-          // be included in the return type
++          // Empty array as argument is an indicator to boundsToEncoding()
++          // that there are no bounds at all in inputs, thus sparsity
++          // attributes will be included in the return type
+           anyInputHaveBounds ? inferredBounds : llvm::ArrayRef<int64_t>({}))));
+   return success();
+ }
+@@ -3038,7 +3045,8 @@
+     if (dimensions.size() != operandType.getShape().size())
+       return emitOptionalError(
+           location,
+-          "applied to a subset of dimensions currently not supported: operand "
++          "applied to a subset of dimensions currently not supported: "
++          "operand "
+           "dimensions = ",
+           operandType.getShape().size(),
+           ", requested map dimensions size = ", dimensions.size());
+@@ -3235,7 +3243,8 @@
+   auto shapeOperandType = cast<ShapedType>(shape.getType());
+   Type elementType = getElementTypeOrSelf(b);
+ 
+-  // Operand `shape` (static 1D by ODS) may be a constant or not, if `shape` is:
++  // Operand `shape` (static 1D by ODS) may be a constant or not, if `shape`
++  // is:
+   // 1. not constant (e.g. tensor<3xi64>): infer tensor<?x?x?x>.
+   // 2. constant (e.g. dense<[2, 3, 5]>): infer tensor<2x3x5x>.
+ 
+@@ -3628,9 +3637,8 @@
+ 
+ LogicalResult verifyAllGatherOp(std::optional<Location> location,
+                                 ValueRange operands, int64_t allGatherDim,
+-                                DenseIntElementsAttr replicaGroups,
+-                                int64_t channelId, bool useGlobalDeviceIds,
+-                                ValueRange results) {
++                                Attribute replicaGroups, int64_t channelId,
++                                bool useGlobalDeviceIds, ValueRange results) {
+   // all_gather_i3, all_gather_c2, all_gather_c4
+   if (failed(verifyReplicaGroups(location, replicaGroups,
+                                  /*allGroupsMustHaveSameSize=*/true,
+@@ -3692,8 +3700,7 @@
+ }
+ 
+ LogicalResult verifyAllReduceOp(std::optional<Location> location,
+-                                ValueRange operands,
+-                                DenseIntElementsAttr replicaGroups,
++                                ValueRange operands, Attribute replicaGroups,
+                                 int64_t channelId, bool useGlobalDeviceIds,
+                                 Region& computation) {
+   // TODO(#498): AllReduceOp does not have rank-2 replicaGroups.
+@@ -3706,10 +3713,10 @@
+ 
+   // all_reduce_c4
+   if (useGlobalDeviceIds && channelId <= 0)
+-    return emitOptionalError(
+-        location,
+-        "channel_id must be positive when useGlobalDeviceIds is set but got: ",
+-        channelId);
++    return emitOptionalError(location,
++                             "channel_id must be positive when "
++                             "useGlobalDeviceIds is set but got: ",
++                             channelId);
+ 
+   for (const Value& operand : operands) {
+     auto operandType = cast<ShapedType>(operand.getType());
+@@ -3848,15 +3855,21 @@
+ }
+ 
+ LogicalResult verifyCollectiveBroadcastOp(std::optional<Location> location,
+-                                          DenseIntElementsAttr replicaGroups) {
++                                          Attribute replicaGroups) {
++  // TODO(b/477928179): Add verification for v3 replica groups.
++  auto denseGroups = dyn_cast<DenseIntElementsAttr>(replicaGroups);
++  if (!denseGroups) {
++    return success();
++  }
++
+   // collective_permute_i2
+-  auto replicaGroupType = cast<RankedTensorType>(replicaGroups.getType());
++  auto replicaGroupType = cast<RankedTensorType>(denseGroups.getType());
+   if (replicaGroupType.getRank() != 2)
+     return emitOptionalError(
+         location, "replica groups should be a rank 2 tensor,",
+         "but instead it is of rank ", replicaGroupType.getRank());
+ 
+-  auto replicaIds = replicaGroups.getValues<int64_t>();
++  auto replicaIds = denseGroups.getValues<int64_t>();
+   llvm::DenseSet<int64_t> replicaIdsSeen;
+   for (int64_t replicaId : replicaIds) {
+     // collective_broadcast_c2
+@@ -3872,6 +3885,7 @@
+       return emitOptionalError(location, "replica id #", replicaId,
+                                " seen more than once");
+   }
++  return success();
+ 
+   return success();
+ }
+@@ -4162,8 +4176,8 @@
+     return emitError() << "num primitive operations must be positive";
+ 
+   // Best effort algorithm verification, support algorithm combinations
+-  // known to be supported on some hardware, not necessarily the target hardware
+-  // dot_general_i8, dot_general_i9, dot_general_i10
++  // known to be supported on some hardware, not necessarily the target
++  // hardware dot_general_i8, dot_general_i9, dot_general_i10
+   if (!isKnownDotAlgorithm(lhsPrecisionType, rhsPrecisionType, accumulationType,
+                            lhsComponentCount, rhsComponentCount,
+                            numPrimitiveOperations, allowImpreciseAccumulation))
+@@ -4464,11 +4478,11 @@
+   // infeed_c2
+   for (auto resultType : results.drop_back().getTypes())
+     if (!isa<TensorType>(resultType))
+-      return emitOptionalError(
+-          location,
+-          "all elements of result types, except the last element, are expected "
+-          "to be of tensor type, but got ",
+-          resultType);
++      return emitOptionalError(location,
++                               "all elements of result types, except the "
++                               "last element, are expected "
++                               "to be of tensor type, but got ",
++                               resultType);
+ 
+   // infeed_c3
+   if (!dialect->isTokenType(results.back().getType()))
+@@ -4483,18 +4497,19 @@
+                              "layout-attribute expected to be of array-type.");
+ 
+   if (layout.value().size() != resultTypes.size() - 1)
+-    return emitOptionalError(
+-        location, "layout-attribute size must be ", resultTypes.size() - 1,
+-        " (which is the number of op-results - 1 (for token result)), but got ",
+-        layout.value().size());
++    return emitOptionalError(location, "layout-attribute size must be ",
++                             resultTypes.size() - 1,
++                             " (which is the number of op-results - 1 (for "
++                             "token result)), but got ",
++                             layout.value().size());
+ 
+   for (auto childLayout : layout.value()) {
+     mlir::ArrayAttr childLayoutArr = dyn_cast<mlir::ArrayAttr>(childLayout);
+     if (!childLayoutArr)
+-      return emitOptionalError(
+-          location,
+-          "layout-attribute expected to have elements of type array, but got ",
+-          childLayout);
++      return emitOptionalError(location,
++                               "layout-attribute expected to have elements "
++                               "of type array, but got ",
++                               childLayout);
+ 
+     for (auto i : childLayoutArr) {
+       mlir::IntegerAttr attr = dyn_cast<mlir::IntegerAttr>(i);
+@@ -4614,8 +4629,8 @@
+ 
+ LogicalResult verifyReduceScatterOp(std::optional<Location> location,
+                                     Value operand, int64_t scatterDimension,
+-                                    DenseIntElementsAttr replicaGroups,
+-                                    int64_t channelId, bool useGlobalDeviceIds,
++                                    Attribute replicaGroups, int64_t channelId,
++                                    bool useGlobalDeviceIds,
+                                     Region& computation, Value result) {
+   if (failed(verifyReplicaGroups(location, replicaGroups,
+                                  /*allGroupsMustHaveSameSize=*/true,
+@@ -4778,10 +4793,10 @@
+   auto outputShape = cast<RankedTensorType>(outputState.getType());
+   if (failed(verifyCompatibleShape(initialShape.getShape(),
+                                    outputShape.getShape())))
+-    return emitOptionalError(
+-        location,
+-        "output state shape must be compatible with initial state shape. Got: ",
+-        initialShape, " and ", outputShape);
++    return emitOptionalError(location,
++                             "output state shape must be compatible with "
++                             "initial state shape. Got: ",
++                             initialShape, " and ", outputShape);
+   return success();
+ }
+ 
+@@ -4940,7 +4955,8 @@
+ }
+ 
+ //  We intend to verify the following properties:
+-//   P1. Check if the select function has a proper shape of (T,T) -> PRED, where
++//   P1. Check if the select function has a proper shape of (T,T) -> PRED,
++//   where
+ //        T is a 0-D tensor with element-type same as 'operand' element-type.
+ //   P2. Verify scatter-computation type.
+ //   P3. size-of(window_dimension) == rank-of(input),
+@@ -4987,10 +5003,10 @@
+   // select_and_scatter_c9
+   if (!selectResultType || !selectResultType.getElementType().isInteger(1) ||
+       selectResultType.getRank() != 0)
+-    return emitOptionalError(
+-        location,
+-        "expects the return-type of select-region to be tensor<i1>, but got: ",
+-        selectResult[0].getType());
++    return emitOptionalError(location,
++                             "expects the return-type of select-region to be "
++                             "tensor<i1>, but got: ",
++                             selectResult[0].getType());
+   // select_and_scatter_c10
+   if (failed(verifyReducerShape(
+           location, scatter.front(),
+diff --ruN a/stablehlo/stablehlo/dialect/TypeInference.h b/stablehlo/stablehlo/dialect/TypeInference.h
+--- stablehlo/stablehlo/dialect/TypeInference.h
++++ stablehlo/stablehlo/dialect/TypeInference.h
+@@ -94,7 +94,7 @@
+                                             ArrayRef<WindowDimension> window);
+ 
+ LogicalResult verifyReplicaGroups(std::optional<Location> location,
+-                                  DenseIntElementsAttr replicaGroups,
++                                  Attribute replicaGroups,
+                                   bool allGroupsMustHaveSameSize,
+                                   bool useGlobalDeviceIds,
+                                   std::optional<size_t> expectedGroupSize);
+@@ -134,7 +134,7 @@
+ LogicalResult inferAllToAllOp(
+     std::optional<Location> location, ValueRange operands,
+     int64_t splitDimension, int64_t concatDimension, int64_t splitCount,
+-    DenseIntElementsAttr replicaGroups,
++    Attribute replicaGroups,
+     SmallVectorImpl<ShapedTypeComponents>& inferredReturnShapes);
+ 
+ LogicalResult inferAllReduceOp(
+@@ -426,13 +426,11 @@
+ 
+ LogicalResult verifyAllGatherOp(std::optional<Location> location,
+                                 ValueRange operands, int64_t allGatherDim,
+-                                DenseIntElementsAttr replicaGroups,
+-                                int64_t channelId, bool useGlobalDeviceIds,
+-                                ValueRange results);
++                                Attribute replicaGroups, int64_t channelId,
++                                bool useGlobalDeviceIds, ValueRange results);
+ 
+ LogicalResult verifyAllReduceOp(std::optional<Location> location,
+-                                ValueRange operands,
+-                                DenseIntElementsAttr replicaGroups,
++                                ValueRange operands, Attribute replicaGroups,
+                                 int64_t channelId, bool useGlobalDeviceIds,
+                                 Region& computation);
+ 
+@@ -445,7 +443,7 @@
+                                      Value result);
+ 
+ LogicalResult verifyCollectiveBroadcastOp(std::optional<Location> location,
+-                                          DenseIntElementsAttr replicaGroups);
++                                          Attribute replicaGroups);
+ 
+ LogicalResult verifyCollectivePermuteOp(std::optional<Location> location,
+                                         DenseIntElementsAttr sourceTargetPairs);
+@@ -549,8 +547,8 @@
+ 
+ LogicalResult verifyReduceScatterOp(std::optional<Location> location,
+                                     Value operand, int64_t scatterDimension,
+-                                    DenseIntElementsAttr replicaGroups,
+-                                    int64_t channelId, bool useGlobalDeviceIds,
++                                    Attribute replicaGroups, int64_t channelId,
++                                    bool useGlobalDeviceIds,
+                                     Region& computation, Value result);
+ 
+ LogicalResult verifyReduceWindowOp(
+diff --ruN a/stablehlo/stablehlo/dialect/Version.h b/stablehlo/stablehlo/dialect/Version.h
+--- stablehlo/stablehlo/dialect/Version.h
++++ stablehlo/stablehlo/dialect/Version.h
+@@ -38,7 +38,7 @@
+   static FailureOr<Version> fromString(llvm::StringRef versionRef);
+ 
+   /// Return a Version representing the current VHLO dialect version.
+-  static Version getCurrentVersion() { return Version(1, 15, 0); }
++  static Version getCurrentVersion() { return Version(1, 16, 0); }
+ 
+   /// Return a Version representing the minimum supported VHLO dialect version.
+   static Version getMinimumVersion() { return Version(0, 9, 0); }
+diff --ruN a/stablehlo/stablehlo/dialect/VhloAttrs.td b/stablehlo/stablehlo/dialect/VhloAttrs.td
+--- stablehlo/stablehlo/dialect/VhloAttrs.td
++++ stablehlo/stablehlo/dialect/VhloAttrs.td
+@@ -195,4 +195,28 @@
+   }];
+ }
+ 
++def VHLO_SubAxisInfoV1Attr : VHLO_AttrDef<"SubAxisInfoV1", "1.16.0", "current"> {
++  let mnemonic = "sub_axis_info_v1";
++  let parameters = (ins "int64_t":$pre_size, "int64_t":$size);
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
++def VHLO_AxisRefV1Attr : VHLO_AttrDef<"AxisRefV1", "1.16.0", "current"> {
++  let mnemonic = "axis_ref_v1";
++  let parameters = (ins
++    "mlir::Attribute":$name,
++    OptionalParameter<"mlir::Attribute">:$sub_axis_info
++  );
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
++def VHLO_ReplicaGroupMeshAxesV1Attr : VHLO_AttrDef<"ReplicaGroupMeshAxesV1", "1.16.0", "current"> {
++  let mnemonic = "replica_group_mesh_axes_v1";
++  let parameters = (ins
++    "mlir::Attribute":$mesh,
++    "mlir::Attribute":$axes
++  );
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
+ #endif // STABLEHLO_DIALECT_VHLO_ATTRS
+diff --ruN a/stablehlo/stablehlo/dialect/VhloBytecode.cpp b/stablehlo/stablehlo/dialect/VhloBytecode.cpp
+--- stablehlo/stablehlo/dialect/VhloBytecode.cpp
++++ stablehlo/stablehlo/dialect/VhloBytecode.cpp
+@@ -192,6 +192,9 @@
+   //   ulps: svarint
+   // }
+   kResultAccuracyV1Attr = 20,
++  kSubAxisInfoV1Attr = 21,
++  kAxisRefV1Attr = 22,
++  kReplicaGroupMeshAxesV1Attr = 23,
+ };
+ 
+ /// This enum contains marker codes used to indicate which type is
+@@ -460,6 +463,10 @@
+       DialectBytecodeReader& reader) const;
+   ResultAccuracyV1Attr readResultAccuracyV1Attr(
+       DialectBytecodeReader& reader) const;
++  SubAxisInfoV1Attr readSubAxisInfoV1Attr(DialectBytecodeReader& reader) const;
++  AxisRefV1Attr readAxisRefV1Attr(DialectBytecodeReader& reader) const;
++  ReplicaGroupMeshAxesV1Attr readReplicaGroupMeshAxesV1Attr(
++      DialectBytecodeReader& reader) const;
+ 
+   // TO ADD ATTRIBUTE: Include a write method for each attribute in VHLO
+   // Ex: void write(SomeAttr attr, DialectBytecodeWriter &writer) const;
+@@ -487,6 +494,10 @@
+   void write(ResultAccuracyModeV1Attr attr,
+              DialectBytecodeWriter& writer) const;
+   void write(ResultAccuracyV1Attr attr, DialectBytecodeWriter& writer) const;
++  void write(SubAxisInfoV1Attr attr, DialectBytecodeWriter& writer) const;
++  void write(AxisRefV1Attr attr, DialectBytecodeWriter& writer) const;
++  void write(ReplicaGroupMeshAxesV1Attr attr,
++             DialectBytecodeWriter& writer) const;
+ 
+   //===--------------------------------------------------------------------===//
+   // Types
+@@ -580,6 +591,12 @@
+       return readResultAccuracyModeV1Attr(reader);
+     case vhlo_encoding::kResultAccuracyV1Attr:
+       return readResultAccuracyV1Attr(reader);
++    case vhlo_encoding::kSubAxisInfoV1Attr:
++      return readSubAxisInfoV1Attr(reader);
++    case vhlo_encoding::kAxisRefV1Attr:
++      return readAxisRefV1Attr(reader);
++    case vhlo_encoding::kReplicaGroupMeshAxesV1Attr:
++      return readReplicaGroupMeshAxesV1Attr(reader);
+     default:
+       reader.emitError() << "unknown vhlo attribute code: " << code;
+       return Attribute();
+@@ -598,7 +615,8 @@
+             PrecisionV1Attr, RngAlgorithmV1Attr, RngDistributionV1Attr,
+             StringV1Attr, TensorV1Attr, TransposeV1Attr, TypeV1Attr,
+             TypeExtensionsV1Attr, ResultAccuracyV1Attr,
+-            ResultAccuracyModeV1Attr>([&](auto attr) {
++            ResultAccuracyModeV1Attr, SubAxisInfoV1Attr, AxisRefV1Attr,
++            ReplicaGroupMeshAxesV1Attr>([&](auto attr) {
+         LOG_WRITE_CALL;
+         write(attr, writer);
+         return success();
+@@ -1666,6 +1684,78 @@
+   writer.writeAttribute(attr.getMode());
+ }
+ 
++//===----------------------------------------------------------------------===//
++// SubAxisInfoV1Attr
++
++SubAxisInfoV1Attr VhloBytecodeInterface::readSubAxisInfoV1Attr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  int64_t preSize, size;
++  if (failed(reader.readSignedVarInt(preSize)) ||
++      failed(reader.readSignedVarInt(size))) {
++    return SubAxisInfoV1Attr();
++  }
++  return SubAxisInfoV1Attr::get(getContext(), preSize, size);
++}
++
++void VhloBytecodeInterface::write(SubAxisInfoV1Attr attr,
++                                  DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(vhlo_encoding::kSubAxisInfoV1Attr);
++  writer.writeSignedVarInt(attr.getPreSize());
++  writer.writeSignedVarInt(attr.getSize());
++}
++
++//===----------------------------------------------------------------------===//
++// AxisRefV1Attr
++
++AxisRefV1Attr VhloBytecodeInterface::readAxisRefV1Attr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  Attribute name;
++  if (failed(reader.readAttribute(name))) return AxisRefV1Attr();
++  uint64_t hasSubAxisInfo;
++  if (failed(reader.readVarInt(hasSubAxisInfo))) return AxisRefV1Attr();
++  Attribute subAxisInfo;
++  if (hasSubAxisInfo) {
++    if (failed(reader.readAttribute(subAxisInfo))) return AxisRefV1Attr();
++  }
++  return AxisRefV1Attr::get(getContext(), name, subAxisInfo);
++}
++
++void VhloBytecodeInterface::write(AxisRefV1Attr attr,
++                                  DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(vhlo_encoding::kAxisRefV1Attr);
++  writer.writeAttribute(attr.getName());
++  if (attr.getSubAxisInfo()) {
++    writer.writeVarInt(1);
++    writer.writeAttribute(attr.getSubAxisInfo());
++  } else {
++    writer.writeVarInt(0);
++  }
++}
++
++//===----------------------------------------------------------------------===//
++// ReplicaGroupMeshAxesV1Attr
++
++ReplicaGroupMeshAxesV1Attr
++VhloBytecodeInterface::readReplicaGroupMeshAxesV1Attr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  Attribute mesh, axes;
++  if (failed(reader.readAttribute(mesh)) ||
++      failed(reader.readAttribute(axes))) {
++    return ReplicaGroupMeshAxesV1Attr();
++  }
++  return ReplicaGroupMeshAxesV1Attr::get(getContext(), mesh, axes);
++}
++
++void VhloBytecodeInterface::write(ReplicaGroupMeshAxesV1Attr attr,
++                                  DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(vhlo_encoding::kReplicaGroupMeshAxesV1Attr);
++  writer.writeAttribute(attr.getMesh());
++  writer.writeAttribute(attr.getAxes());
++}
++
+ }  // namespace
+ 
+ void addBytecodeInterface(VhloDialect* dialect) {
+diff --ruN a/stablehlo/stablehlo/reference/Ops.cpp b/stablehlo/stablehlo/reference/Ops.cpp
+--- stablehlo/stablehlo/reference/Ops.cpp
++++ stablehlo/stablehlo/reference/Ops.cpp
+@@ -51,6 +51,7 @@
+ #include "mlir/Support/LLVM.h"
+ #include "mlir/Support/LogicalResult.h"
+ #include "stablehlo/dialect/Base.h"
++#include "stablehlo/dialect/ReplicaGroupUtils.h"
+ #include "stablehlo/dialect/StablehloOps.h"
+ #include "stablehlo/dialect/TypeInference.h"
+ #include "stablehlo/reference/Axes.h"
+@@ -237,6 +238,26 @@
+     }
+   }
+   return replicaGroups;
++}
++
++SmallVector<SmallVector<uint32_t>> getReplicaGroups(
++    ReplicaGroupMeshAxesAttr meshAxesAttr, Location loc) {
++  auto meshAttr = dyn_cast<stablehlo::MeshAttr>(meshAxesAttr.getMesh());
++  if (!meshAttr) {
++    report_fatal_error(
++        invalidArgument("Expected stablehlo.mesh for mesh attribute view"));
++  }
++  auto groupsOrFailure =
++      flattenReplicaGroupMeshAxes(meshAttr, meshAxesAttr.getAxes(), loc);
++  if (failed(groupsOrFailure)) {
++    report_fatal_error(
++        invalidArgument("Failed to flatten replica group mesh axes"));
++  }
++  SmallVector<SmallVector<uint32_t>> u32Groups;
++  for (const auto& group : groupsOrFailure.value()) {
++    u32Groups.push_back(SmallVector<uint32_t>(group.begin(), group.end()));
++  }
++  return u32Groups;
+ }
+ 
+ Tensor convolutionOp(
+@@ -383,13 +404,17 @@
+     } else if (auto op = dyn_cast<AllGatherOp>(operation)) {
+       auto operands = scope.findTensors(op.getOperands());
+ 
+-      auto replicaGroupsAttr = op.getReplicaGroups();
+-      auto replicaGroupsShape = replicaGroupsAttr.getShapedType().getShape();
+-      SmallVector<SmallVector<uint32_t>> replicaGroups(replicaGroupsShape[0]);
+-      auto replicaGroupsIt = replicaGroupsAttr.getValues<int64_t>().begin();
+-      for (auto& replicaGroup : replicaGroups)
+-        for (auto i = 0; i < replicaGroupsShape[1]; ++i, ++replicaGroupsIt)
+-          replicaGroup.push_back(*replicaGroupsIt);
++      SmallVector<SmallVector<uint32_t>> replicaGroups;
++      if (auto denseGroups =
++              dyn_cast<DenseIntElementsAttr>(op.getReplicaGroups())) {
++        replicaGroups = getReplicaGroups(denseGroups);
++      } else if (auto meshAxesGroups = dyn_cast<ReplicaGroupMeshAxesAttr>(
++                     op.getReplicaGroups())) {
++        replicaGroups = getReplicaGroups(meshAxesGroups, op->getLoc());
++      } else {
++        report_fatal_error(
++            invalidArgument("Unsupported replica groups attribute type"));
++      }
+ 
+       ChannelId channelId = 0;
+       if (auto channelHandle = op.getChannelHandle())
+@@ -402,7 +427,17 @@
+       scope.add(op.getResults(), results);
+     } else if (auto op = dyn_cast<AllReduceOp>(operation)) {
+       auto operands = scope.findTensors(op.getOperands());
+-      auto replicaGroups = getReplicaGroups(op.getReplicaGroups());
++      SmallVector<SmallVector<uint32_t>> replicaGroups;
++      if (auto denseGroups =
++              dyn_cast<DenseIntElementsAttr>(op.getReplicaGroups())) {
++        replicaGroups = getReplicaGroups(denseGroups);
++      } else if (auto meshAxesGroups = dyn_cast<ReplicaGroupMeshAxesAttr>(
++                     op.getReplicaGroups())) {
++        replicaGroups = getReplicaGroups(meshAxesGroups, op->getLoc());
++      } else {
++        report_fatal_error(
++            invalidArgument("Unsupported replica groups attribute type"));
++      }
+ 
+       ChannelId channelId = 0;
+       if (auto channelHandle = op.getChannelHandle())
+@@ -415,13 +450,17 @@
+       scope.add(op.getResults(), results);
+     } else if (auto op = dyn_cast<AllToAllOp>(operation)) {
+       auto operands = scope.findTensors(op.getOperands());
+-      auto replicaGroupsAttr = op.getReplicaGroups();
+-      auto replicaGroupsShape = replicaGroupsAttr.getShapedType().getShape();
+-      SmallVector<SmallVector<uint32_t>> replicaGroups(replicaGroupsShape[0]);
+-      auto replicaGroupsIt = replicaGroupsAttr.getValues<int64_t>().begin();
+-      for (auto& replicaGroup : replicaGroups)
+-        for (auto i = 0; i < replicaGroupsShape[1]; ++i, ++replicaGroupsIt)
+-          replicaGroup.push_back(*replicaGroupsIt);
++      SmallVector<SmallVector<uint32_t>> replicaGroups;
++      if (auto denseGroups =
++              dyn_cast<DenseIntElementsAttr>(op.getReplicaGroups())) {
++        replicaGroups = getReplicaGroups(denseGroups);
++      } else if (auto meshAxesGroups = dyn_cast<ReplicaGroupMeshAxesAttr>(
++                     op.getReplicaGroups())) {
++        replicaGroups = getReplicaGroups(meshAxesGroups, op->getLoc());
++      } else {
++        report_fatal_error(
++            invalidArgument("Unsupported replica groups attribute type"));
++      }
+ 
+       ChannelId channelId = 0;
+       if (auto channelHandle = op.getChannelHandle())
+@@ -493,13 +532,17 @@
+     } else if (auto op = dyn_cast<CollectiveBroadcastOp>(operation)) {
+       auto operand = scope.findTensor(op.getOperand());
+ 
+-      auto replicaGroupsAttr = op.getReplicaGroups();
+-      auto replicaGroupsShape = replicaGroupsAttr.getShapedType().getShape();
+-      SmallVector<SmallVector<uint32_t>> replicaGroups(replicaGroupsShape[0]);
+-      auto replicaGroupsIt = replicaGroupsAttr.getValues<int64_t>().begin();
+-      for (auto& replicaGroup : replicaGroups)
+-        for (auto i = 0; i < replicaGroupsShape[1]; ++i, ++replicaGroupsIt)
+-          replicaGroup.push_back(*replicaGroupsIt);
++      SmallVector<SmallVector<uint32_t>> replicaGroups;
++      if (auto denseGroups =
++              dyn_cast<DenseIntElementsAttr>(op.getReplicaGroups())) {
++        replicaGroups = getReplicaGroups(denseGroups);
++      } else if (auto meshAxesGroups = dyn_cast<ReplicaGroupMeshAxesAttr>(
++                     op.getReplicaGroups())) {
++        replicaGroups = getReplicaGroups(meshAxesGroups, op->getLoc());
++      } else {
++        report_fatal_error(
++            invalidArgument("Unsupported replica groups attribute type"));
++      }
+ 
+       ChannelId channelId = 0;
+       if (auto channelHandle = op.getChannelHandle())
+@@ -892,7 +935,17 @@
+     } else if (auto op = dyn_cast<ReduceScatterOp>(operation)) {
+       auto operand = scope.findTensor(op.getOperand());
+       int64_t scatterDimension = op.getScatterDimension();
+-      auto replicaGroups = getReplicaGroups(op.getReplicaGroups());
++      SmallVector<SmallVector<uint32_t>> replicaGroups;
++      if (auto denseGroups =
++              dyn_cast<DenseIntElementsAttr>(op.getReplicaGroups())) {
++        replicaGroups = getReplicaGroups(denseGroups);
++      } else if (auto meshAxesGroups = dyn_cast<ReplicaGroupMeshAxesAttr>(
++                     op.getReplicaGroups())) {
++        replicaGroups = getReplicaGroups(meshAxesGroups, op->getLoc());
++      } else {
++        report_fatal_error(
++            invalidArgument("Unsupported replica groups attribute type"));
++      }
+ 
+       ChannelId channelId = 0;
+       if (auto channelHandle = op.getChannelHandle())
+diff --ruN a/stablehlo/stablehlo/tests/ops_stablehlo.mlir b/stablehlo/stablehlo/tests/ops_stablehlo.mlir
+--- stablehlo/stablehlo/tests/ops_stablehlo.mlir
++++ stablehlo/stablehlo/tests/ops_stablehlo.mlir
+@@ -6821,3 +6821,12 @@
+   } : (tuple<tuple<memref<2xf32>>, memref<2xf32>>) -> (memref<2xf32>, memref<2xf32>, memref<2xf32>)
+   func.return %2#0, %2#1, %2#2 : memref<2xf32>, memref<2xf32>, memref<2xf32>
+ }
++
++func.func @all_gather_with_mesh_axes_replica_group(%operand: tensor<16x8xf32>) -> tensor<16x16xf32> {
++  %result = "stablehlo.all_gather"(%operand) {
++    all_gather_dim = 1 : i64,
++    replica_groups = #stablehlo.replica_group_mesh_axes<mesh = @mesh, axes = [0 : i64, 1 : i64]>,
++    channel_handle = #stablehlo.channel_handle<handle = 1, type = 0>
++  } : (tensor<16x8xf32>) -> tensor<16x16xf32>
++  func.return %result : tensor<16x16xf32>
++}
+diff --ruN a/stablehlo/stablehlo/tests/replica_groups_mesh_axes.mlir b/stablehlo/stablehlo/tests/replica_groups_mesh_axes.mlir
+--- stablehlo/stablehlo/tests/replica_groups_mesh_axes.mlir
++++ stablehlo/stablehlo/tests/replica_groups_mesh_axes.mlir
+@@ -0,0 +1,16 @@
++// RUN: stablehlo-opt %s | stablehlo-opt | FileCheck %s
++// RUN: stablehlo-opt -emit-bytecode %s | stablehlo-opt | FileCheck %s
++
++// CHECK-LABEL: @test_replica_groups_mesh_axes
++func.func @test_replica_groups_mesh_axes(%arg0: tensor<f32>) -> tensor<f32> {
++  // CHECK: replica_groups = #stablehlo.replica_group_mesh_axes<mesh = #stablehlo.mesh<axes = [#stablehlo.mesh_axis<name = "foo", size = 2>, #stablehlo.mesh_axis<name = "bar", size = 4>]>, axes = ["foo", "bar"]>
++  %0 = "stablehlo.custom_call"(%arg0) {
++    call_target_name = "test",
++    has_side_effect = false,
++    replica_groups = #stablehlo.replica_group_mesh_axes<
++      mesh = #stablehlo.mesh<axes = [#stablehlo.mesh_axis<name = "foo", size = 2>, #stablehlo.mesh_axis<name = "bar", size = 4>]>,
++      axes = ["foo", "bar"]
++    >
++  } : (tensor<f32>) -> tensor<f32>
++  func.return %0 : tensor<f32>
++}
+diff --ruN a/stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compatibility.mlir b/stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compatibility.mlir
+--- stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compatibility.mlir
++++ stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compatibility.mlir
+@@ -0,0 +1,39 @@
++// RUN: stablehlo-opt %s -stablehlo-compatibility-expander="target=1.14.0" | FileCheck %s
++
++module {
++
++  // CHECK-LABEL: @all_reduce_rgv3
++  func.func @all_reduce_rgv3(%arg0: tensor<4xf32>) -> tensor<4xf32> {
++    // CHECK: replica_groups = dense<{{\[\[}}0, 2], [1, 3]]> : tensor<2x2xi64>
++    %0 = "stablehlo.all_reduce"(%arg0) ({
++    ^bb0(%arg1: tensor<f32>, %arg2: tensor<f32>):
++      %1 = "stablehlo.add"(%arg1, %arg2) : (tensor<f32>, tensor<f32>) -> tensor<f32>
++      "stablehlo.return"(%1) : (tensor<f32>) -> ()
++    }) {
++      replica_groups = #stablehlo.replica_group_mesh_axes<mesh = #stablehlo.mesh<axes = [#stablehlo.mesh_axis<name = "x", size = 2>, #stablehlo.mesh_axis<name = "y", size = 2>]>, axes = ["x"]>
++    } : (tensor<4xf32>) -> tensor<4xf32>
++    return %0 : tensor<4xf32>
++  }
++
++  // CHECK-LABEL: @all_gather_rgv3
++  func.func @all_gather_rgv3(%arg0: tensor<4xf32>) -> tensor<8xf32> {
++    // CHECK: replica_groups = dense<{{\[\[}}0, 1], [2, 3]]> : tensor<2x2xi64>
++    %0 = "stablehlo.all_gather"(%arg0) {
++      all_gather_dim = 0 : i64,
++      replica_groups = #stablehlo.replica_group_mesh_axes<mesh = #stablehlo.mesh<axes = [#stablehlo.mesh_axis<name = "x", size = 2>, #stablehlo.mesh_axis<name = "y", size = 2>]>, axes = ["y"]>
++    } : (tensor<4xf32>) -> tensor<8xf32>
++    return %0 : tensor<8xf32>
++  }
++
++  // CHECK-LABEL: @all_to_all_rgv3
++  func.func @all_to_all_rgv3(%arg0: tensor<4xf32>) -> tensor<4xf32> {
++    // CHECK: replica_groups = dense<{{\[\[}}0, 2], [1, 3]]> : tensor<2x2xi64>
++    %0 = "stablehlo.all_to_all"(%arg0) {
++      concat_dimension = 0 : i64,
++      split_dimension = 0 : i64,
++      split_count = 2 : i64,
++      replica_groups = #stablehlo.replica_group_mesh_axes<mesh = #stablehlo.mesh<axes = [#stablehlo.mesh_axis<name = "x", size = 2>, #stablehlo.mesh_axis<name = "y", size = 2>]>, axes = ["x"]>
++    } : (tensor<4xf32>) -> tensor<4xf32>
++    return %0 : tensor<4xf32>
++  }
++}
+diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_compatibility_expander.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_compatibility_expander.mlir
+--- stablehlo/stablehlo/tests/transforms/stablehlo_compatibility_expander.mlir
++++ stablehlo/stablehlo/tests/transforms/stablehlo_compatibility_expander.mlir
+@@ -561,3 +561,23 @@
+   }) : (tensor<?x2x4x7x9xi32>, tensor<4x?x5x2xi32>, tensor<4x?x5x8xi32>) -> tensor<?x2x4x7x9xi32>
+   func.return %0 : tensor<?x2x4x7x9xi32>
+ }
++
++// -----
++
++// CHECK-LABEL: @all_reduce_mesh_axes_expansion
++func.func @all_reduce_mesh_axes_expansion(%arg0: tensor<4xf32>) -> tensor<4xf32> {
++  // CHECK: %{{.*}} = "stablehlo.all_reduce"(%arg0) <{
++  // CHECK-SAME{LITERAL}: replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>
++  // CHECK-SAME: }>
++  %0 = "stablehlo.all_reduce"(%arg0) <{
++    replica_groups = #stablehlo.replica_group_mesh_axes<
++      mesh = #stablehlo.mesh<axes = [#stablehlo.mesh_axis<name = "x", size = 2>]>,
++      axes = [#stablehlo.axis_ref<name = "x">]
++    >
++  }> ({
++  ^bb0(%arg1: tensor<f32>, %arg2: tensor<f32>):
++    %1 = stablehlo.add %arg1, %arg2 : tensor<f32>
++    stablehlo.return %1 : tensor<f32>
++  }) : (tensor<4xf32>) -> tensor<4xf32>
++  return %0 : tensor<4xf32>
++}
+diff --ruN a/stablehlo/stablehlo/tests/verify_replica_groups_mesh_axes.mlir b/stablehlo/stablehlo/tests/verify_replica_groups_mesh_axes.mlir
+--- stablehlo/stablehlo/tests/verify_replica_groups_mesh_axes.mlir
++++ stablehlo/stablehlo/tests/verify_replica_groups_mesh_axes.mlir
+@@ -0,0 +1,11 @@
++// RUN: stablehlo-opt %s -verify-diagnostics -split-input-file | FileCheck %s
++
++// CHECK-LABEL: func @all_gather_replica_group_mesh_axes
++func.func @all_gather_replica_group_mesh_axes(%operand: tensor<16x8xf32>) -> tensor<16x16xf32> {
++  %result = "stablehlo.all_gather"(%operand) {
++    all_gather_dim = 1 : i64,
++    replica_groups = #stablehlo.replica_group_mesh_axes<mesh = #stablehlo.mesh<axes = [#stablehlo.mesh_axis<name = "foo", size = 2>, #stablehlo.mesh_axis<name = "bar", size = 4>]>, axes = ["foo", "bar"]>,
++    channel_handle = #stablehlo.channel_handle<handle = 1, type = 0>
++  } : (tensor<16x8xf32>) -> tensor<16x16xf32>
++  func.return %result : tensor<16x16xf32>
++}
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir b/stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir
+--- stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir
++++ stablehlo/stablehlo/tests/vhlo/stablehlo_legalize_to_vhlo.mlir
+@@ -484,6 +484,29 @@
+       "stablehlo.return"(%1) : (tensor<f32>) -> ()
+   }) {
+     replica_groups = dense<[[0], [1]]> : tensor<2x1xi64>
++  } : (tensor<f32>) -> tensor<f32>
++  func.return %0 : tensor<f32>
++}
++
++// CHECK-LABEL: "attr_replica_group_mesh_axes"
++func.func @attr_replica_group_mesh_axes(%arg0: tensor<f32>) -> tensor<f32> {
++  // CHECK: "vhlo.all_reduce_v2"
++  // CHECK-SAME: replica_groups = #vhlo.replica_group_mesh_axes_v1<
++  // CHECK-SAME:   mesh = #vhlo.array_v1<[#vhlo.string_v1<"x">, #vhlo.string_v1<"y">]>,
++  // CHECK-SAME:   axes = #vhlo.array_v1<[#vhlo.axis_ref_v1<name = #vhlo.string_v1<"x">, sub_axis_info = #vhlo.sub_axis_info_v1<pre_size = 1, size = 2>>, #vhlo.axis_ref_v1<name = #vhlo.string_v1<"y">>]>
++  // CHECK-SAME: >
++  %0 = "stablehlo.all_reduce"(%arg0) ({
++    ^bb0(%arg1: tensor<f32>, %arg2: tensor<f32>):
++      %1 = "stablehlo.add"(%arg1, %arg2) : (tensor<f32>, tensor<f32>) -> tensor<f32>
++      "stablehlo.return"(%1) : (tensor<f32>) -> ()
++  }) {
++    replica_groups = #stablehlo.replica_group_mesh_axes<
++      mesh = ["x", "y"],
++      axes = [
++        #stablehlo.axis_ref<name = "x", sub_axis_info = (1)2>,
++        #stablehlo.axis_ref<name = "y">
++      ]
++    >
+   } : (tensor<f32>) -> tensor<f32>
+   func.return %0 : tensor<f32>
+ }
+diff --ruN a/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_15_0.mlir b/stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_15_0.mlir
+--- stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_15_0.mlir
++++ stablehlo/stablehlo/tests/vhlo/vhlo_to_version_downgrade_invalid.1_15_0.mlir
+@@ -0,0 +1,21 @@
++// RUN: not stablehlo-opt --stablehlo-legalize-to-vhlo --vhlo-to-version='target=1.15.0' %s 2>&1 | FileCheck %s
++
++// Future types cannot be downgraded to v1.15.0 (v1).
++
++// CHECK: failed to legalize operation
++func.func @attr_replica_group_mesh_axes(%arg0: tensor<f32>) -> tensor<f32> {
++  %0 = "stablehlo.all_reduce"(%arg0) ({
++    ^bb0(%arg1: tensor<f32>, %arg2: tensor<f32>):
++      %1 = "stablehlo.add"(%arg1, %arg2) : (tensor<f32>, tensor<f32>) -> tensor<f32>
++      "stablehlo.return"(%1) : (tensor<f32>) -> ()
++  }) {
++    replica_groups = #stablehlo.replica_group_mesh_axes<
++      mesh = ["x", "y"],
++      axes = [
++        #stablehlo.axis_ref<name = "x", sub_axis_info = (1)2>,
++        #stablehlo.axis_ref<name = "y">
++      ]
++    >
++  } : (tensor<f32>) -> tensor<f32>
++  func.return %0 : tensor<f32>
++}
+diff --ruN a/stablehlo/stablehlo/tools/StablehloOptMain.cpp b/stablehlo/stablehlo/tools/StablehloOptMain.cpp
+--- stablehlo/stablehlo/tools/StablehloOptMain.cpp
++++ stablehlo/stablehlo/tools/StablehloOptMain.cpp
+@@ -18,6 +18,7 @@
+ #include "mlir/InitAllExtensions.h"
+ #include "mlir/InitAllPasses.h"
+ #include "mlir/Tools/mlir-opt/MlirOptMain.h"
++#include "shardy/dialect/sdy/ir/register.h"
+ #include "stablehlo/conversions/linalg/transforms/Passes.h"
+ #include "stablehlo/conversions/tosa/transforms/Passes.h"
+ #include "stablehlo/dialect/Register.h"
+@@ -42,6 +43,7 @@
+   mlir::registerAllDialects(registry);
+   mlir::registerAllExtensions(registry);
+   mlir::stablehlo::registerAllDialects(registry);
++  mlir::sdy::registerAllDialects(registry);
+   registry.insert<mlir::stablehlo::check::CheckDialect>();
+   registry.insert<mlir::stablehlo::interpreter::InterpreterDialect>();
+ 
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloCompatibilityExpander.cpp b/stablehlo/stablehlo/transforms/StablehloCompatibilityExpander.cpp
+--- stablehlo/stablehlo/transforms/StablehloCompatibilityExpander.cpp
++++ stablehlo/stablehlo/transforms/StablehloCompatibilityExpander.cpp
+@@ -42,6 +42,7 @@
+ #include "mlir/Rewrite/FrozenRewritePatternSet.h"
+ #include "mlir/Support/LLVM.h"
+ #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
++#include "stablehlo/dialect/ReplicaGroupUtils.h"
+ #include "stablehlo/dialect/StablehloOps.h"
+ #include "stablehlo/dialect/Version.h"
+ #include "stablehlo/transforms/PassUtils.h"  // IWYU pragma: keep
+@@ -310,6 +311,63 @@
+   }
+ };
+ 
++// ReplicaGroupMeshAxesExpander handles the conversion of
++// #stablehlo.replica_group_mesh_axes to a dense I64ElementsAttr for target
++// versions that do not support it.
++struct ReplicaGroupMeshAxesExpander : public RewritePattern {
++  ReplicaGroupMeshAxesExpander(MLIRContext* context,
++                               vhlo::Version targetVersion)
++      : RewritePattern(MatchAnyOpTypeTag(), 1, context),
++        targetVersion(targetVersion) {}
++
++  LogicalResult matchAndRewrite(Operation* op,
++                                PatternRewriter& rewriter) const override {
++    auto replicaGroupsAttr = op->getAttrOfType<Attribute>("replica_groups");
++    if (!replicaGroupsAttr) return failure();
++
++    if (!(targetVersion < vhlo::Version(1, 16, 0))) return failure();
++
++    if (auto meshAxesAttr =
++            dyn_cast<ReplicaGroupMeshAxesAttr>(replicaGroupsAttr)) {
++      // Resolve Mesh.
++      auto meshAttr = dyn_cast<stablehlo::MeshAttr>(meshAxesAttr.getMesh());
++      if (!meshAttr) {
++        return op->emitError("Expected stablehlo.mesh for mesh attribute view");
++      }
++
++      // Flattening logic.
++      auto commAxes = meshAxesAttr.getAxes();
++      auto groupsOrFailure =
++          flattenReplicaGroupMeshAxes(meshAttr, commAxes, op->getLoc());
++      if (failed(groupsOrFailure)) return failure();
++
++      const auto& groups = groupsOrFailure.value();
++
++      int64_t numGroups = groups.size();
++      int64_t groupSize = groups.empty() ? 0 : groups[0].size();
++
++      // Create the dense attribute.
++      SmallVector<int64_t> flattenedGroups;
++      for (const auto& group : groups) {
++        flattenedGroups.append(group.begin(), group.end());
++      }
++      auto type =
++          RankedTensorType::get({numGroups, groupSize}, rewriter.getI64Type());
++      auto newDenseAttr = DenseIntElementsAttr::get(type, flattenedGroups);
++
++      rewriter.modifyOpInPlace(
++          op, [&] { op->setAttr("replica_groups", newDenseAttr); });
++
++      return success();
++    }
++
++    return failure();
++  }
++
++ private:
++  vhlo::Version targetVersion;
++};
++
+ //===----------------------------------------------------------------------===//
+ // Pass
+ //===----------------------------------------------------------------------===//
+@@ -380,6 +438,10 @@
+   // incompats.
+   if (targetVersion < vhlo::Version(1, 9, 0))
+     patterns->add<FileLineColRangeToLoc>(context);
++
++  // StableHLO RGV3 (replica_group_mesh_axes) is introduced in v1.16.0 or later.
++  if (targetVersion < vhlo::Version(1, 16, 0))
++    patterns->add<ReplicaGroupMeshAxesExpander>(context, targetVersion);
+ }
+ 
+ }  // namespace stablehlo
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp b/stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
+--- stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
++++ stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
+@@ -174,6 +174,33 @@
+     return vhlo::ResultAccuracyV1Attr::get(attr.getContext(), attr.getAtol(),
+                                            attr.getRtol(), attr.getUlps(),
+                                            modeAttr);
++  }
++  if (auto attr = dyn_cast<stablehlo::SubAxisInfoAttr>(stablehloAttr)) {
++    return vhlo::SubAxisInfoV1Attr::get(attr.getContext(), attr.getPreSize(),
++                                        attr.getSize());
++  }
++  if (auto attr = dyn_cast<stablehlo::AxisRefAttr>(stablehloAttr)) {
++    auto vhloName = convertGeneric(
++        StringAttr::get(attr.getContext(), attr.getName()), typeConverter);
++    auto vhloSubAxisInfo =
++        attr.getSubAxisInfo()
++            ? convertGeneric(attr.getSubAxisInfo(), typeConverter)
++            : Attribute();
++    return vhlo::AxisRefV1Attr::get(attr.getContext(), vhloName,
++                                    vhloSubAxisInfo);
++  }
++  if (auto attr =
++          dyn_cast<stablehlo::ReplicaGroupMeshAxesAttr>(stablehloAttr)) {
++    Attribute vhloMesh;
++    if (auto symbolRef = dyn_cast<FlatSymbolRefAttr>(attr.getMesh())) {
++      vhloMesh = vhlo::StringV1Attr::get(attr.getContext(),
++                                         "@" + symbolRef.getValue().str());
++    } else {
++      vhloMesh = convertGeneric(attr.getMesh(), typeConverter);
++    }
++    auto vhloAxes = convertGeneric(attr.getAxes(), typeConverter);
++    return vhlo::ReplicaGroupMeshAxesV1Attr::get(attr.getContext(), vhloMesh,
++                                                 vhloAxes);
+   }
+   if (llvm::isa<stablehlo::StablehloDialect>(stablehloAttr.getDialect())) {
+     // All StableHLO attributes must have counterparts in VHLO.
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
+--- stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
++++ stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
+@@ -51,6 +51,7 @@
+ #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+ #include "stablehlo/dialect/Base.h"
+ #include "stablehlo/dialect/ChloOps.h"
++#include "stablehlo/dialect/ReplicaGroupUtils.h"
+ #include "stablehlo/dialect/StablehloOps.h"
+ #include "stablehlo/dialect/TypeInference.h"
+ #include "stablehlo/transforms/Passes.h"
+@@ -113,9 +114,6 @@
+       // verification of the op.
+       if (isa<chlo::ChloDialect, StablehloDialect>(user->getDialect()))
+         continue;
+-      // TODO(bartchr): Consider if the dialect allow-listing approach is too
+-      // strict. In the meantime, allow some shape interop with the shardy
+-      // dialect.
+       if (user->getDialect()->getNamespace() == "sdy") continue;
+ 
+       // Simply changing operand type of `func.return` won't work because
+@@ -510,8 +508,25 @@
+       // don't know num_partitions at this point, we error out.
+       if (op.getChannelHandle() && !op.getUseGlobalDeviceIds())
+         return rewriter.notifyMatchFailure(op, "unsupported strategy");
+-      DenseIntElementsAttr replicaGroups = op.getReplicaGroups();
+-      auto shardCount = replicaGroups.getType().getDimSize(1);
++      int64_t shardCount = 0;
++      Attribute replicaGroupsAttr = op.getReplicaGroups();
++      if (auto denseGroups =
++              dyn_cast<DenseIntElementsAttr>(replicaGroupsAttr)) {
++        shardCount = denseGroups.getType().getDimSize(1);
++      } else if (auto meshAxesAttr =
++                     dyn_cast<ReplicaGroupMeshAxesAttr>(replicaGroupsAttr)) {
++        auto flattenedGroupsOr = flattenReplicaGroupMeshAxes(
++            meshAxesAttr.getMesh(), meshAxesAttr.getAxes(), op.getLoc());
++        if (failed(flattenedGroupsOr))
++          return rewriter.notifyMatchFailure(
++              op, "failed to flatten replica groups");
++        if (flattenedGroupsOr->empty())
++          return rewriter.notifyMatchFailure(op,
++                                             "empty flattened replica groups");
++        shardCount = (*flattenedGroupsOr)[0].size();
++      } else {
++        return rewriter.notifyMatchFailure(op, "unsupported replica groups");
++      }
+       SmallVector<int64_t> refinement(operandType.getShape());
+       if (!operandType.isDynamicDim(op.getAllGatherDim()))
+         refinement[op.getAllGatherDim()] *= shardCount;
+@@ -876,8 +891,24 @@
+     // num_partitions at this point, we error out.
+     if (op.getChannelHandle() && !op.getUseGlobalDeviceIds())
+       return rewriter.notifyMatchFailure(op, "unsupported strategy");
+-    DenseIntElementsAttr replicaGroups = op.getReplicaGroups();
+-    auto shardCount = replicaGroups.getType().getDimSize(1);
++    int64_t shardCount = 0;
++    Attribute replicaGroupsAttr = op.getReplicaGroups();
++    if (auto denseGroups = dyn_cast<DenseIntElementsAttr>(replicaGroupsAttr)) {
++      shardCount = denseGroups.getType().getDimSize(1);
++    } else if (auto meshAxesAttr =
++                   dyn_cast<ReplicaGroupMeshAxesAttr>(replicaGroupsAttr)) {
++      auto flattenedGroupsOr = flattenReplicaGroupMeshAxes(
++          meshAxesAttr.getMesh(), meshAxesAttr.getAxes(), op.getLoc());
++      if (failed(flattenedGroupsOr))
++        return rewriter.notifyMatchFailure(op,
++                                           "failed to flatten replica groups");
++      if (flattenedGroupsOr->empty())
++        return rewriter.notifyMatchFailure(op,
++                                           "empty flattened replica groups");
++      shardCount = (*flattenedGroupsOr)[0].size();
++    } else {
++      return rewriter.notifyMatchFailure(op, "unsupported replica groups");
++    }
+ 
+     SmallVector<int64_t> refinement(operandType.getShape());
+     if (!operandType.isDynamicDim(op.getScatterDimension()))
+diff --ruN a/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp b/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
+--- stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
++++ stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
+@@ -190,12 +190,44 @@
+     RETURN_CONVERTED_ENUM_ATTR(ResultAccuracyMode, V1);
+   }
+   if (auto attr = dyn_cast<vhlo::ResultAccuracyV1Attr>(vhloAttr)) {
+-    auto modeAttr = dyn_cast_or_null<stablehlo::ResultAccuracyModeAttr>(
++    auto modeAttr = cast<stablehlo::ResultAccuracyModeAttr>(
+         convertGeneric(attr.getMode(), typeConverter));
+-    if (!modeAttr) return {};
+     return stablehlo::ResultAccuracyAttr::get(attr.getContext(), attr.getAtol(),
+                                               attr.getRtol(), attr.getUlps(),
+                                               modeAttr);
++  }
++  if (auto attr = dyn_cast<vhlo::SubAxisInfoV1Attr>(vhloAttr)) {
++    return stablehlo::SubAxisInfoAttr::get(attr.getContext(), attr.getPreSize(),
++                                           attr.getSize());
++  }
++  if (auto attr = dyn_cast<vhlo::AxisRefV1Attr>(vhloAttr)) {
++    auto stablehloName =
++        cast<StringAttr>(convertGeneric(attr.getName(), typeConverter))
++            .getValue();
++    auto stablehloSubAxisInfo =
++        attr.getSubAxisInfo() ? cast<stablehlo::SubAxisInfoAttr>(convertGeneric(
++                                    attr.getSubAxisInfo(), typeConverter))
++                              : stablehlo::SubAxisInfoAttr();
++    return stablehlo::AxisRefAttr::get(attr.getContext(), stablehloName,
++                                       stablehloSubAxisInfo);
++  }
++  if (auto attr = dyn_cast<vhlo::ReplicaGroupMeshAxesV1Attr>(vhloAttr)) {
++    Attribute stablehloMesh;
++    if (auto vhloString = dyn_cast<vhlo::StringV1Attr>(attr.getMesh())) {
++      StringRef value = vhloString.getValue();
++      if (value.consume_front("@")) {
++        stablehloMesh =
++            FlatSymbolRefAttr::get(StringAttr::get(attr.getContext(), value));
++      } else {
++        stablehloMesh = StringAttr::get(attr.getContext(), value);
++      }
++    } else {
++      stablehloMesh = convertGeneric(attr.getMesh(), typeConverter);
++    }
++    auto stablehloAxes =
++        cast<ArrayAttr>(convertGeneric(attr.getAxes(), typeConverter));
++    return stablehlo::ReplicaGroupMeshAxesAttr::get(
++        attr.getContext(), stablehloMesh, stablehloAxes);
+   }
+ 
+   // All VHLO Attributes must be converted by now.
+diff --ruN a/stablehlo/stablehlo/transforms/VhloToVersion.cpp b/stablehlo/stablehlo/transforms/VhloToVersion.cpp
+--- stablehlo/stablehlo/transforms/VhloToVersion.cpp
++++ stablehlo/stablehlo/transforms/VhloToVersion.cpp
+@@ -153,6 +153,18 @@
+     return isLegalType(typeAttr.getValue(), targetVersion);
+   if (auto resultAccuracyAttr = dyn_cast<ResultAccuracyV1Attr>(attr))
+     return isLegalAttribute(resultAccuracyAttr.getMode(), targetVersion);
++  if (auto axisRefAttr = dyn_cast<AxisRefV1Attr>(attr)) {
++    return success(
++        succeeded(isLegalAttribute(axisRefAttr.getName(), targetVersion)) &&
++        (!axisRefAttr.getSubAxisInfo() ||
++         succeeded(
++             isLegalAttribute(axisRefAttr.getSubAxisInfo(), targetVersion))));
++  }
++  if (auto meshAxesAttr = dyn_cast<ReplicaGroupMeshAxesV1Attr>(attr)) {
++    return success(
++        succeeded(isLegalAttribute(meshAxesAttr.getMesh(), targetVersion)) &&
++        succeeded(isLegalAttribute(meshAxesAttr.getAxes(), targetVersion)));
++  }
+ 
+   // Is VHLO and valid version, success.
+   return success();
 
