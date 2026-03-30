@@ -31,14 +31,13 @@ namespace stream_executor::gpu {
 // and accessible from the device and its peers.
 class RocmVmmAllocator : public MemoryAllocator {
  public:
-  RocmVmmAllocator(StreamExecutor* executor, bool is_rdma_supported);
+  explicit RocmVmmAllocator(StreamExecutor* executor);
 
   absl::StatusOr<std::unique_ptr<MemoryAllocation>> Allocate(
       uint64_t size) final;
 
  private:
   StreamExecutor* executor_;
-  bool is_rdma_supported_;
 };
 
 }  // namespace stream_executor::gpu

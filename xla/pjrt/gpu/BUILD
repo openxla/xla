@@ -198,6 +198,7 @@ cc_library(
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm([
         # keep sorted
+        "//xla/stream_executor/rocm:rocm_device_address_vmm_allocator",
         "@local_config_rocm//rocm:rocm_headers",
     ]),
 )
@@ -309,8 +310,8 @@ xla_test(
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:platform_port",
-    ] + if_cuda([
-        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
+    ] + if_cuda_or_rocm([
+        "//xla/stream_executor:vmm_device_address_allocator",
     ]) + if_google([
         # In OSS this dependency is added automatically for xla_test targets. See
         # third_party/tensorflow/compiler/xla/xla.default.bzl.

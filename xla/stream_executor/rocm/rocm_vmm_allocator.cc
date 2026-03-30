@@ -20,6 +20,7 @@ limitations under the License.
 #include <string>
 #include <tuple>
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -28,6 +29,7 @@ limitations under the License.
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/rocm/rocm_driver_wrapper.h"
 #include "xla/stream_executor/rocm/rocm_status.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -36,16 +38,6 @@ limitations under the License.
 #include "tsl/platform/statusor.h"
 
 namespace stream_executor::gpu {
-
-static hipMemAllocationProp GetVmmAllocationProperties(
-    hipDevice_t device, bool is_rdma_supported) {
-  hipMemAllocationProp properties = {};
-  properties.type = hipMemAllocationTypePinned;
-  properties.location.type = hipMemLocationTypeDevice;
-  properties.location.id = device;
-  properties.requestedHandleTypes = hipMemHandleTypeNone;
-  return properties;
-}
 
 static hipMemAccessDesc GetVmmAccessDescriptor(int device) {
   hipMemAccessDesc descriptor = {};
@@ -59,15 +51,18 @@ static hipMemAccessDesc GetVmmAccessDescriptor(int device) {
 // the padded size, and the allocation handle.
 static absl::StatusOr<
     std::tuple<void*, uint64_t, hipMemGenericAllocationHandle_t>>
-VmmAllocate(StreamExecutor* executor, bool is_rdma_supported, uint64_t size) {
+VmmAllocate(StreamExecutor* executor, uint64_t size) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
 
   hipDevice_t device;
   TF_RETURN_IF_ERROR(
       ToStatus(wrap::hipDeviceGet(&device, executor->device_ordinal())));
 
-  hipMemAllocationProp properties =
-      GetVmmAllocationProperties(device, is_rdma_supported);
+  hipMemAllocationProp properties = {};
+  properties.type = hipMemAllocationTypePinned;
+  properties.location.type = hipMemLocationTypeDevice;
+  properties.location.id = device;
+  properties.requestedHandleTypes = hipMemHandleTypeNone;
   size_t granularity = 0;
   TF_RETURN_IF_ERROR(ToStatus(wrap::hipMemGetAllocationGranularity(
       &granularity, &properties, hipMemAllocationGranularityRecommended)));
@@ -94,28 +89,39 @@ VmmAllocate(StreamExecutor* executor, bool is_rdma_supported, uint64_t size) {
     return status;
   }
 
+  // Cleanup on error: unmap + free VA + release physical memory.
+  absl::Cleanup cleanup = [&]() {
+    ToStatus(wrap::hipMemUnmap(ptr, padded_size)).IgnoreError();
+    ToStatus(wrap::hipMemAddressFree(ptr, padded_size)).IgnoreError();
+    ToStatus(wrap::hipMemRelease(handle)).IgnoreError();
+  };
+
   VLOG(3) << "VMM allocated " << ptr
           << " requested size: " << size
           << " padded size: " << padded_size
           << " granularity: " << granularity
           << " device: " << executor->device_ordinal();
 
-  // Set access for the owning device and all peers.
+  // Set access for this device and all P2P-capable peers, matching the CUDA
+  // pattern that gates on CanEnablePeerAccessTo().
   int device_count = 0;
   TF_RETURN_IF_ERROR(ToStatus(wrap::hipGetDeviceCount(&device_count)));
   for (int peer = 0; peer < device_count; peer++) {
-    hipMemAccessDesc access_desc = GetVmmAccessDescriptor(peer);
-    auto access_status =
-        ToStatus(wrap::hipMemSetAccess(ptr, padded_size, &access_desc, 1));
-    if (!access_status.ok()) {
-      if (peer == executor->device_ordinal()) {
-        return access_status;
+    if (peer != executor->device_ordinal()) {
+      auto peer_executor_or =
+          const_cast<Platform*>(executor->GetPlatform())
+              ->ExecutorForDevice(peer);
+      if (!peer_executor_or.ok() ||
+          !executor->CanEnablePeerAccessTo(peer_executor_or.value())) {
+        continue;
       }
-      VLOG(3) << "Could not set VMM access for peer device " << peer << ": "
-              << access_status;
     }
+    hipMemAccessDesc access_desc = GetVmmAccessDescriptor(peer);
+    TF_RETURN_IF_ERROR(
+        ToStatus(wrap::hipMemSetAccess(ptr, padded_size, &access_desc, 1)));
   }
 
+  std::move(cleanup).Cancel();
   return std::make_tuple(ptr, padded_size, handle);
 }
 
@@ -144,7 +150,7 @@ static void VmmDeallocate(StreamExecutor* executor, void* ptr,
 
 namespace {
 
-class RocmVmmMemoryAllocation : public MemoryAllocation {
+class RocmVmmMemoryAllocation final : public MemoryAllocation {
  public:
   RocmVmmMemoryAllocation(StreamExecutor* executor, void* ptr,
                           uint64_t requested_size, uint64_t padded_size,
@@ -181,9 +187,8 @@ class RocmVmmMemoryAllocation : public MemoryAllocation {
 
 }  // namespace
 
-RocmVmmAllocator::RocmVmmAllocator(StreamExecutor* executor,
-                                   bool is_rdma_supported)
-    : executor_(executor), is_rdma_supported_(is_rdma_supported) {}
+RocmVmmAllocator::RocmVmmAllocator(StreamExecutor* executor)
+    : executor_(executor) {}
 
 absl::StatusOr<std::unique_ptr<MemoryAllocation>> RocmVmmAllocator::Allocate(
     uint64_t size) {
@@ -192,8 +197,7 @@ absl::StatusOr<std::unique_ptr<MemoryAllocation>> RocmVmmAllocator::Allocate(
                                                      nullptr);
   }
 
-  TF_ASSIGN_OR_RETURN(auto result,
-                      VmmAllocate(executor_, is_rdma_supported_, size));
+  TF_ASSIGN_OR_RETURN(auto result, VmmAllocate(executor_, size));
   auto [ptr, padded_size, handle] = result;
 
   return std::make_unique<RocmVmmMemoryAllocation>(executor_, ptr, size,
