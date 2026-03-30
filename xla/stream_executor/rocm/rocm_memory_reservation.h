@@ -44,11 +44,15 @@ class RocmMemoryReservation : public MemoryReservation {
   DeviceAddressBase address() const override;
 
   ~RocmMemoryReservation() override;
+
+  // Move is disabled to prevent double-free of the virtual address range:
+  // the destructor calls hipMemUnmap + hipMemAddressFree unconditionally.
+  // Matches CudaMemoryReservation.
   RocmMemoryReservation(RocmMemoryReservation&&) = delete;
   RocmMemoryReservation& operator=(RocmMemoryReservation&&) = delete;
 
  private:
-  explicit RocmMemoryReservation(StreamExecutor* executor, hipDeviceptr_t ptr,
+  explicit RocmMemoryReservation(StreamExecutor* executor, char* ptr,
                                  uint64_t size);
 
   absl::Status Map(size_t reservation_offset, size_t allocation_offset,
@@ -59,7 +63,7 @@ class RocmMemoryReservation : public MemoryReservation {
   absl::Status UnMap(size_t reservation_offset, size_t size) override;
 
   StreamExecutor* executor_;
-  hipDeviceptr_t ptr_;  // nullptr means moved-from / released
+  char* ptr_;  // nullptr means moved-from / released
   uint64_t size_;
 };
 

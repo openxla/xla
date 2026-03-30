@@ -34,23 +34,6 @@ limitations under the License.
 #include "tsl/platform/statusor.h"
 
 namespace stream_executor::gpu {
-namespace {
-
-hipMemAllocationProp BuildAllocationProperties(hipDevice_t device) {
-  hipMemAllocationProp props = {};
-  props.type = hipMemAllocationTypePinned;
-  props.location.type = hipMemLocationTypeDevice;
-  props.location.id = device;
-  props.requestedHandleTypes = hipMemHandleTypeNone;
-  return props;
-}
-
-// hipDeviceptr_t is void* on HIP, so pointer arithmetic requires casting.
-hipDeviceptr_t PtrAdd(hipDeviceptr_t base, size_t offset) {
-  return static_cast<char*>(base) + offset;
-}
-
-}  // namespace
 
 absl::StatusOr<std::unique_ptr<RocmMemoryReservation>>
 RocmMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
@@ -60,7 +43,11 @@ RocmMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
   TF_RETURN_IF_ERROR(
       ToStatus(wrap::hipDeviceGet(&device, executor->device_ordinal())));
 
-  hipMemAllocationProp props = BuildAllocationProperties(device);
+  hipMemAllocationProp props = {};
+  props.type = hipMemAllocationTypePinned;
+  props.location.type = hipMemLocationTypeDevice;
+  props.location.id = device;
+  props.requestedHandleTypes = hipMemHandleTypeNone;
 
   size_t granularity = 0;
   TF_RETURN_IF_ERROR(ToStatus(wrap::hipMemGetAllocationGranularity(
@@ -68,17 +55,17 @@ RocmMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
 
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
 
-  hipDeviceptr_t ptr = nullptr;
+  void* ptr = nullptr;
   TF_RETURN_IF_ERROR(ToStatus(
       wrap::hipMemAddressReserve(&ptr, padded_size, granularity, nullptr,
                                     0ULL)));
 
   return std::unique_ptr<RocmMemoryReservation>(
-      new RocmMemoryReservation(executor, ptr, padded_size));
+      new RocmMemoryReservation(executor, static_cast<char*>(ptr), padded_size));
 }
 
 RocmMemoryReservation::RocmMemoryReservation(StreamExecutor* executor,
-                                             hipDeviceptr_t ptr, uint64_t size)
+                                             char* ptr, uint64_t size)
     : executor_(executor), ptr_(ptr), size_(size) {}
 
 DeviceAddressBase RocmMemoryReservation::address() const {
@@ -94,7 +81,7 @@ absl::Status RocmMemoryReservation::Map(size_t reservation_offset,
         "RocmMemoryReservation::Map requires a RocmRawMemoryAllocation");
   }
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  return ToStatus(wrap::hipMemMap(PtrAdd(ptr_, reservation_offset), size,
+  return ToStatus(wrap::hipMemMap(ptr_ + reservation_offset, size,
                                   allocation_offset, rocm_alloc->GetHandle(),
                                   0ULL));
 }
@@ -107,12 +94,12 @@ absl::Status RocmMemoryReservation::SetAccess(uint64_t reservation_offset,
   desc.location.id = static_cast<int>(executor_->device_ordinal());
   desc.flags = hipMemAccessFlagsProtReadWrite;
   return ToStatus(
-      wrap::hipMemSetAccess(PtrAdd(ptr_, reservation_offset), size, &desc, 1));
+      wrap::hipMemSetAccess(ptr_ + reservation_offset, size, &desc, 1));
 }
 
 absl::Status RocmMemoryReservation::UnMap(size_t offset, size_t size) {
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  return ToStatus(wrap::hipMemUnmap(PtrAdd(ptr_, offset), size));
+  return ToStatus(wrap::hipMemUnmap(ptr_ + offset, size));
 }
 
 RocmMemoryReservation::~RocmMemoryReservation() {

@@ -31,18 +31,6 @@ limitations under the License.
 #include "tsl/platform/statusor.h"
 
 namespace stream_executor::gpu {
-namespace {
-
-hipMemAllocationProp BuildAllocationProperties(hipDevice_t device) {
-  hipMemAllocationProp props = {};
-  props.type = hipMemAllocationTypePinned;
-  props.location.type = hipMemLocationTypeDevice;
-  props.location.id = device;
-  props.requestedHandleTypes = hipMemHandleTypeNone;
-  return props;
-}
-
-}  // namespace
 
 absl::StatusOr<std::unique_ptr<RocmRawMemoryAllocation>>
 RocmRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size) {
@@ -52,7 +40,11 @@ RocmRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size) {
   TF_RETURN_IF_ERROR(
       ToStatus(wrap::hipDeviceGet(&device, executor->device_ordinal())));
 
-  hipMemAllocationProp props = BuildAllocationProperties(device);
+  hipMemAllocationProp props = {};
+  props.type = hipMemAllocationTypePinned;
+  props.location.type = hipMemLocationTypeDevice;
+  props.location.id = device;
+  props.requestedHandleTypes = hipMemHandleTypeNone;
 
   size_t granularity = 0;
   TF_RETURN_IF_ERROR(ToStatus(wrap::hipMemGetAllocationGranularity(
@@ -74,6 +66,9 @@ RocmRawMemoryAllocation::RocmRawMemoryAllocation(
     : executor_(executor), handle_(handle), size_(size) {}
 
 DeviceAddressBase RocmRawMemoryAllocation::address() const {
+  // handle_ is an opaque allocation handle, not a device pointer. We expose it
+  // as a DeviceAddressBase so the base class can use opaque() for identity
+  // tracking; callers never dereference this address.
   return DeviceAddressBase(static_cast<void*>(handle_), size_);
 }
 

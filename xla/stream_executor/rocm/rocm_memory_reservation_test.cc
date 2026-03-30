@@ -27,7 +27,6 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/memory_reservation.h"
-#include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/rocm/rocm_raw_memory_allocation.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -52,10 +51,15 @@ class FakeAllocation : public MemoryAllocation {
 class RocmMemoryReservationTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    TF_ASSERT_OK_AND_ASSIGN(
-        Platform * platform,
-        PlatformManager::PlatformWithId(rocm::kROCmPlatformId));
-    TF_ASSERT_OK_AND_ASSIGN(executor_, platform->ExecutorForDevice(0));
+    auto platform_or = PlatformManager::PlatformWithName("ROCM");
+    if (!platform_or.ok()) {
+      GTEST_SKIP() << "ROCM platform not available";
+    }
+    auto executor_or = platform_or.value()->ExecutorForDevice(0);
+    if (!executor_or.ok()) {
+      GTEST_SKIP() << "ROCM executor not available: " << executor_or.status();
+    }
+    executor_ = executor_or.value();
   }
 
   StreamExecutor* executor_ = nullptr;

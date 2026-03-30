@@ -1397,12 +1397,15 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_cc_test(
     name = "rocm_raw_memory_allocation_test",
     srcs = ["rocm_raw_memory_allocation_test.cc"],
-    backends = ["gpu"],
-    tags = ["rocm-only"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
     deps = [
+        ":rocm_platform",
         ":rocm_platform_id",
         ":rocm_raw_memory_allocation",
         "//xla/stream_executor:platform",
@@ -1444,13 +1447,16 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_cc_test(
     name = "rocm_memory_reservation_test",
     srcs = ["rocm_memory_reservation_test.cc"],
-    backends = ["gpu"],
-    tags = ["rocm-only"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
     deps = [
         ":rocm_memory_reservation",
+        ":rocm_platform",
         ":rocm_platform_id",
         ":rocm_raw_memory_allocation",
         "//xla/stream_executor:device_address",
@@ -1481,11 +1487,13 @@ cc_library(
     deps = [
         "@local_config_rocm//rocm:hip",  # buildcleaner: keep
         ":rocm_status",
+        "@com_google_absl//absl/cleanup",
         "//xla:util",
         "//xla/stream_executor:activate_context",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:memory_allocator",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -1527,11 +1535,13 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_cc_test(
     name = "rocm_vmm_allocator_test",
     srcs = ["rocm_vmm_allocator_test.cc"],
-    backends = ["gpu"],
-    tags = ["rocm-only"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
     deps = [
         ":rocm_platform",
         ":rocm_vmm_allocator",

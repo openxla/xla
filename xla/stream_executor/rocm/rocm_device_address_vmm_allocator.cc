@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -77,6 +78,8 @@ RocmDeviceAddressVmmAllocator::Create(
           absl::StrFormat("Failed to query available memory from device %i",
                           executor->device_ordinal()));
     }
+    DCHECK(memory_fraction >= 0.0 && memory_fraction <= 1.0)
+        << "memory_fraction must be in [0, 1], got " << memory_fraction;
     uint64_t pa_budget = total_memory * memory_fraction;
     if (gpu_system_memory_size.has_value()) {
       pa_budget = gpu_system_memory_size.value();
@@ -92,50 +95,47 @@ absl::Status RocmDeviceAddressVmmAllocator::InitializeDeviceState(
     PerDeviceState& state) {
   int ordinal = state.executor->device_ordinal();
 
-  // Allocate signal memory for the per-device timeline counter.
-  // hipStreamWriteValue64 on AMD hardware requires the target pointer to be
-  // allocated with hipMallocSignalMemory.
-  void* signal_ptr = nullptr;
+  // Query allocation granularity for this device.
+  size_t granularity = 0;
   {
     std::unique_ptr<ActivateContext> activation = state.executor->Activate();
-    TF_RETURN_IF_ERROR(ToStatus(
-        wrap::hipExtMallocWithFlags(&signal_ptr, sizeof(uint64_t),
-                                    hipMallocSignalMemory),
-        "hipExtMallocWithFlags(hipMallocSignalMemory) for timeline counter"));
-    *static_cast<volatile uint64_t*>(signal_ptr) = 0;
+    hipDevice_t hip_device;
+    TF_RETURN_IF_ERROR(
+        ToStatus(wrap::hipDeviceGet(&hip_device, ordinal), "hipDeviceGet"));
+    hipMemAllocationProp alloc_props = {};
+    alloc_props.type = hipMemAllocationTypePinned;
+    alloc_props.location.type = hipMemLocationTypeDevice;
+    alloc_props.location.id = hip_device;
+    alloc_props.requestedHandleTypes = hipMemHandleTypeNone;
+    TF_RETURN_IF_ERROR(ToStatus(wrap::hipMemGetAllocationGranularity(
+        &granularity, &alloc_props, hipMemAllocationGranularityRecommended)));
   }
+  state.allocation_granularity = static_cast<uint64_t>(granularity);
+
+  // Allocate coherent host memory for the per-device timeline counter.
+  // hipStreamWriteValue64 writes to this location; the CPU polls it to
+  // determine when deferred deallocations are safe to execute.
+  void* host_ptr = nullptr;
+  TF_RETURN_IF_ERROR(ToStatus(
+      wrap::hipHostMalloc(&host_ptr, sizeof(uint64_t), hipHostMallocCoherent),
+      "hipHostMalloc for timeline counter"));
+  *static_cast<volatile uint64_t*>(host_ptr) = 0;
 
   // Set timeline fields and destroy_fn immediately so that any early return
-  // below still cleans up the signal memory via ~DeviceAddressVmmAllocator.
-  state.pinned_timeline = static_cast<volatile uint64_t*>(signal_ptr);
-  state.timeline_dev_ptr = reinterpret_cast<uint64_t>(signal_ptr);
-  state.destroy_fn = [signal_ptr, ordinal]() {
+  // still cleans up via ~DeviceAddressVmmAllocator.
+  state.pinned_timeline = static_cast<volatile uint64_t*>(host_ptr);
+  // HIP's hipStreamWriteValue64 accepts void*, so the host pointer is
+  // directly usable as the target (unlike CUDA which needs a separate
+  // device pointer via cuMemHostGetDevicePointer).
+  state.timeline_dev_ptr = reinterpret_cast<uint64_t>(host_ptr);
+  state.destroy_fn = [host_ptr, ordinal]() {
     auto status =
-        ToStatus(wrap::hipFree(signal_ptr), "hipFree for signal memory");
+        ToStatus(wrap::hipHostFree(host_ptr), "hipHostFree for timeline");
     if (!status.ok()) {
-      LOG(WARNING) << "Failed to free signal memory for device " << ordinal
+      LOG(WARNING) << "Failed to free timeline memory for device " << ordinal
                    << ": " << status;
     }
   };
-
-  // Query allocation granularity for this device.
-  hipDevice_t hip_device;
-  TF_RETURN_IF_ERROR(
-      ToStatus(wrap::hipDeviceGet(&hip_device, ordinal), "hipDeviceGet"));
-
-  hipMemAllocationProp alloc_props = {};
-  alloc_props.type = hipMemAllocationTypePinned;
-  alloc_props.location.type = hipMemLocationTypeDevice;
-  alloc_props.location.id = hip_device;
-  alloc_props.requestedHandleTypes = hipMemHandleTypeNone;
-  size_t granularity = 0;
-  TF_RETURN_IF_ERROR(ToStatus(
-      wrap::hipMemGetAllocationGranularity(
-          &granularity, &alloc_props,
-          hipMemAllocationGranularityRecommended),
-      "hipMemGetAllocationGranularity"));
-
-  state.allocation_granularity = static_cast<uint64_t>(granularity);
 
   return absl::OkStatus();
 }

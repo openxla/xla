@@ -142,6 +142,7 @@ cc_library(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor:vmm_device_address_allocator_factory",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/stream_executor/integrations:tf_allocator_adapter",
@@ -199,7 +200,6 @@ cc_library(
         "//xla/service/gpu:stream_executor_util",
     ]) + if_cuda([
         # keep sorted
-        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
         "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm([
@@ -327,8 +327,8 @@ xla_test(
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:platform_port",
-    ] + if_cuda([
-        "//xla/stream_executor/cuda:cuda_device_address_vmm_allocator",
+    ] + if_cuda_or_rocm([
+        "//xla/stream_executor:vmm_device_address_allocator",
     ]) + if_google([
         # In OSS this dependency is added automatically for xla_test targets. See
         # third_party/tensorflow/compiler/xla/xla.default.bzl.

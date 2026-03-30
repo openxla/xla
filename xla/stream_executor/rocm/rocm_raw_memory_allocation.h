@@ -47,6 +47,8 @@ class RocmRawMemoryAllocation : public MemoryAllocation {
   ~RocmRawMemoryAllocation() override;
   RocmRawMemoryAllocation(const RocmRawMemoryAllocation&) = delete;
   RocmRawMemoryAllocation& operator=(const RocmRawMemoryAllocation&) = delete;
+  RocmRawMemoryAllocation(RocmRawMemoryAllocation&&) = delete;
+  RocmRawMemoryAllocation& operator=(RocmRawMemoryAllocation&&) = delete;
 
  private:
   explicit RocmRawMemoryAllocation(StreamExecutor* executor,
