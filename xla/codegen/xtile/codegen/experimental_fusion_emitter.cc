@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -50,12 +51,14 @@ limitations under the License.
 #include "xla/codegen/xtile/ir/transforms/passes.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/indexing_map_serialization.h"  // IWYU pragma: keep
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tools/hlo_decomposer.h"
@@ -67,8 +70,8 @@ limitations under the License.
 namespace xla::xtile {
 namespace {
 
+using ::llvm::ArrayRef;
 using ::llvm::SmallVector;
-using ::mlir::ArrayRef;
 using ::mlir::FunctionOpInterface;
 using ::mlir::ImplicitLocOpBuilder;
 using ::mlir::Location;
@@ -77,7 +80,14 @@ using ::mlir::Type;
 using ::mlir::Value;
 using ::stream_executor::GpuComputeCapability;
 
+namespace arith = ::mlir::arith;
+namespace stablehlo = ::mlir::stablehlo;
 namespace ge = ::xla::gpu::experimental;
+
+TensorValue Iota(mlir::ImplicitLocOpBuilder& b, int32_t limit) {
+  auto type = mlir::RankedTensorType::get(limit, b.getI32Type());
+  return stablehlo::IotaOp::create(b, type, /*iota_dimension=*/0);
+}
 
 TensorValue EmitTranspose(mlir::ImplicitLocOpBuilder& b,
                           ArrayRef<int64_t> tile_sizes,
@@ -91,6 +101,70 @@ TensorValue EmitTranspose(mlir::ImplicitLocOpBuilder& b,
   mlir::DenseI64ArrayAttr order = b.getDenseI64ArrayAttr(dimensions);
   return ::mlir::stablehlo::TransposeOp::create(b, output_tensor_type, input,
                                                 order);
+}
+
+absl::StatusOr<TensorValue> EmitPad(
+    mlir::ImplicitLocOpBuilder& b, const ge::TiledHloInstruction& tiled_pad,
+    absl::flat_hash_map<const ge::TiledHloInstruction*, TensorValue>& values,
+    Value pid, const ::xla::IndexingMap& schedule) {
+  ASSIGN_OR_RETURN(SmallVector<int64_t> tile_sizes,
+                   tiled_pad.tile().GetStaticTileSizes());
+
+  const ge::TiledHloInstruction* tiled_operand = tiled_pad.operand(0);
+  const auto& pad_input_shape = tiled_operand->hlo()->shape().dimensions();
+
+  // Compute tile offsets.
+  ASSIGN_OR_RETURN(TileInfo tile_info,
+                   TileInfo::Construct(b, pid, tiled_pad, schedule));
+  SmallVector<Value, 3> tile_offsets = tile_info.offsets();
+
+  // Compute mask.
+  Type i32_type = b.getI32Type();
+  Value mask;
+  for (auto [dim_index, sizes] : llvm::enumerate(
+           llvm::zip(pad_input_shape, tile_sizes, tile_offsets,
+                     tiled_pad.hlo()->padding_config().dimensions()))) {
+    auto [pad_input_dim_size, pad_output_dim_size, tile_offset, dim_config] =
+        sizes;
+    if (dim_config.edge_padding_low() != 0) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Low padding is not supported but got edge_padding_low: ",
+          dim_config.edge_padding_low()));
+    }
+    if (dim_config.interior_padding() != 0) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Interior padding is not supported but got interior_padding: ",
+          dim_config.interior_padding()));
+    }
+
+    if (pad_input_dim_size == pad_output_dim_size) {
+      continue;
+    }
+
+    // LHS for the compare is an iota broadcasted to the output shape.
+    TensorValue range = Iota(b, pad_output_dim_size);
+    TensorValue bcast = xtile::BroadcastInDims(
+        b, range, tile_sizes, {static_cast<int64_t>(dim_index)});
+
+    // RHS for the compare is splat(pad_input_dim_size - tile_offset).
+    Value tile_offset_i32 = Cast(b, tile_offset, i32_type);
+    Value threshold = arith::SubIOp::create(
+        b, CreateConst(b, i32_type, pad_input_dim_size), tile_offset_i32);
+    TensorValue threshold_splat = xtile::Splat(b, threshold, tile_sizes);
+    Value cmp = arith::CmpIOp::create(b, arith::CmpIPredicate::slt, bcast,
+                                      threshold_splat);
+    mask = mask ? stablehlo::AndOp::create(b, mask, cmp) : cmp;
+  }
+  if (!mask) {
+    return values[tiled_operand];
+  }
+  const ge::TiledHloInstruction* padding_value = tiled_pad.operand(1);
+
+  TensorValue pad_value_splat =
+      xtile::Splat(b, values[padding_value], tile_sizes);
+  return mlir::cast<TensorValue>(
+      arith::SelectOp::create(b, mask, values[tiled_operand], pad_value_splat)
+          .getResult());
 }
 
 absl::StatusOr<TensorValue> EmitTiledHloInstruction(
@@ -157,7 +231,6 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
     ASSIGN_OR_RETURN(Value result, EmitElementwise(b, *hlo, operands));
     return mlir::cast<TensorValue>(result);
   }
-
   switch (hlo->opcode()) {
     case HloOpcode::kTranspose: {
       ASSIGN_OR_RETURN(auto static_tile_sizes,
@@ -165,6 +238,9 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
       auto padded_tile_sizes = GetPaddedTileSizes(static_tile_sizes);
       return EmitTranspose(b, padded_tile_sizes, hlo->dimensions(),
                            mlir::cast<TensorValue>(operands[0]));
+    }
+    case HloOpcode::kPad: {
+      return EmitPad(b, tiled_hlo, values, pid, schedule);
     }
     default:
       return absl::UnimplementedError(
