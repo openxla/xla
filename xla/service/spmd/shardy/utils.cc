@@ -673,6 +673,7 @@ void maybeInsertReshardsOnFuncArguments(FuncOp funcOp, CallOp callOp,
   }
 }
 
+namespace {
 void insertReshardsOnFuncResults(TensorShardingPerValueAttr funcResultShardings,
                                  CallOp callOp, mlir::IRRewriter& rewriter) {
   for (auto [funcResultSharding, result] : llvm::zip_equal(
@@ -696,6 +697,7 @@ void insertReshardsOnFuncResults(TensorShardingPerValueAttr funcResultShardings,
   }
   mlir::sdy::setShardings(callOp, funcResultShardings);
 }
+}  // namespace
 
 void insertReshardsOnFuncResults(FuncOp funcOp, CallOp callOp,
                                  const SymbolTable& symbolTable,
