@@ -435,6 +435,7 @@ cc_library(
         ":gpu_indexing_performance_model",
         ":gpu_performance_model",
         ":gpu_performance_model_base",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:hlo_cost_analysis",
