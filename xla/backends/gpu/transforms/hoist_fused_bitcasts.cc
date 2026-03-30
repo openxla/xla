@@ -834,21 +834,22 @@ absl::StatusOr<bool> MaybeInsertRootBitcast(
   return true;
 }
 
+}  // namespace
+
 // Try hoisting bitcasts and reshapes in the computation away from 'dot' to the
 // callers of the computation. Some bitcasts or reshapes may remain in the
 // computation, because they cannot be hoisted across all ops, e.g. across some
 // transposes and broadcasts. This is not reported as an error.
 absl::StatusOr<bool> TryHoistBitcastsInComputationToCallers(
-    HloInstruction* dot, CallGraph* call_graph) {
+    HloInstruction* dot, absl::Span<HloInstruction*> computation_callers) {
   bool changed = false;
   // Instead of implementing a logic to hoist bitcast upwards and downwards
   // we insert a bitcast at the root that and always hoist bitcasts upwards.
   // That significantly simplifies the implementation.
   VLOG(2) << "Before hoisting bitcasts: " << dot->parent()->ToString();
 
-  auto callers = call_graph->GetComputationCallers(dot->parent());
   absl::StatusOr<bool> inserted =
-      MaybeInsertRootBitcast(dot, absl::MakeSpan(callers));
+      MaybeInsertRootBitcast(dot, computation_callers);
   if (!inserted.ok()) {
     VLOG(2) << "Failed to insert root bitcast: " << inserted.status();
   } else {
@@ -864,8 +865,8 @@ absl::StatusOr<bool> TryHoistBitcastsInComputationToCallers(
       continue;
     }
     VLOG(2) << "Hoisting bitcast upwards " << instruction->ToString();
-    auto status =
-        HoistBitcastUpwardsToCallers(instruction, absl::MakeSpan(callers));
+    auto status = HoistBitcastUpwardsToCallers(
+        instruction, absl::MakeSpan(computation_callers));
     if (!status.ok()) {
       VLOG(2) << "Failed to hoist " << instruction->ToString()
               << " upwards: " << status;
@@ -877,6 +878,8 @@ absl::StatusOr<bool> TryHoistBitcastsInComputationToCallers(
   VLOG(2) << "After hoisting bitcasts: " << dot->parent()->ToString();
   return changed;
 }
+
+namespace {
 
 class HoistFusedBitcastsVisitor : public DfsHloRewriteVisitor {
  public:
@@ -899,8 +902,10 @@ class HoistFusedBitcastsVisitor : public DfsHloRewriteVisitor {
       }
     }
 
-    ASSIGN_OR_RETURN(bool changed,
-                     TryHoistBitcastsInComputationToCallers(instr, call_graph));
+    std::vector<HloInstruction*> callers =
+        call_graph->GetComputationCallers(instr->parent());
+    ASSIGN_OR_RETURN(bool changed, TryHoistBitcastsInComputationToCallers(
+                                       instr, absl::MakeSpan(callers)));
     if (changed) {
       MarkAsChanged();
     }

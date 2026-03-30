@@ -1445,19 +1445,11 @@ TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
   VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
 }
 
-TEST_F(PassOrderTest, HoistFusedBitcastsRunsAfterGemmFusion) {
+TEST_F(PassOrderTest, AutotunerRunsAfterGemmFusion) {
   if (!get_cuda_cc().IsAtLeastAmpere()) {
     GTEST_SKIP() << "GemmFusion requires Ampere+ to run.";
   }
-  VerifyPassRunsAtLeastOnceBefore("triton-gemm-rewriter",
-                                  "hoist-fused-bitcasts");
-}
-
-TEST_F(PassOrderTest, AutotunerRunsAfterHoistFusedBitcasts) {
-  if (!get_cuda_cc().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "GemmFusion requires Ampere+ to run.";
-  }
-  VerifyPassRunsAtLeastOnceBefore("hoist-fused-bitcasts", "autotuner");
+  VerifyPassRunsAtLeastOnceBefore("triton-gemm-rewriter", "autotuner");
 }
 
 TEST_F(PassOrderTest, ConvertTritonGemmConfigRunsAfterAutotuner) {

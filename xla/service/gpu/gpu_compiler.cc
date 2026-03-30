@@ -1898,9 +1898,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
          rocm_cc != nullptr)) {
       pipeline.AddPass<GemvRewriter>();
       pipeline.AddPass<SplitkRewriter>(gpu_target_config.device_description,
-                                       /*normalize_dots=*/true);
+                                       /*normalize_dots=*/false);
       pipeline.AddPass<GemmFusion>(gpu_version);
-      pipeline.AddPass<HoistFusedBitcasts>();
+      // pipeline.AddPass<HoistFusedBitcasts>();
       pipeline.AddPass<GemmFusionSwapOperands>();
     } else if (cuda_cc != nullptr &&
                cuda_cc->major == se::CudaComputeCapability::kVolta) {
