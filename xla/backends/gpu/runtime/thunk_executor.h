@@ -92,11 +92,22 @@ class ThunkExecutor::ScopedProgressTracker {
   // the index that is used by `ThunkExecutor` progress v-logging.
   using ThunkIndexing = absl::flat_hash_map<const Thunk*, size_t>;
 
-  // Thunk execution record: the thunk's global index, the wall-clock time it
-  // was launched, its human-readable name, and the enclosing loop nest state.
+  // Thunk execution record: captures both the identity and the execution order
+  // of a thunk launch, along with wall-clock time and loop nest context.
   struct ThunkExecution {
-    size_t index;
+    // Monotonically increasing index reflecting the real order in which thunks
+    // were launched on the GPU stream. In the presence of while loops, the same
+    // thunk can be launched multiple times, each with a distinct exec_idx.
+    // This is the position of the corresponding event in the events vector.
+    size_t exec_idx;
+
+    // The thunk's identity within the thunk sequence, assigned by DFS traversal
+    // via WalkNested. This is stable across loop iterations: the same thunk
+    // always has the same thunk_idx regardless of how many times it executes.
+    size_t thunk_idx;
+
     absl::Time executed;
+    Thunk::Kind kind;
     absl::string_view name;
     std::vector<WhileLoopState> loop_nest;
   };
@@ -106,9 +117,13 @@ class ThunkExecutor::ScopedProgressTracker {
   ScopedProgressTracker(ScopedProgressTracker&&) = default;
   ScopedProgressTracker& operator=(ScopedProgressTracker&&) = default;
 
-  // Returns the number of thunks in the tracked thunk sequence. This includes
-  // all thunks nested inside others.
+  // Returns the number of unique thunks in the tracked thunk sequence. This
+  // includes all thunks nested inside others.
   size_t num_thunks() const { return tracker_->indexing.size(); }
+
+  // Returns the total number of thunk executions (launches). This can exceed
+  // num_thunks() when thunks are executed multiple times inside while loops.
+  size_t num_executions() const;
 
   // Returns the number of thunks that have been launched on the GPU stream and
   // have completed execution. This polls all executed thunk events.
