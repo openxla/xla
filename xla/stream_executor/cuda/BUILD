@@ -2904,8 +2904,8 @@ cuda_library(
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/stream_executor/gpu:multi_gpu_barrier_kernel",
+        "//xla/tsl/cuda:nccl",
         "@com_google_absl//absl/base",
-        "@local_config_nccl//:nccl",
     ],
     alwayslink = 1,
 )
