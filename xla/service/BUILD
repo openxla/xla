@@ -6207,9 +6207,10 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "xla_aot_compile_gpu_test",
     srcs = ["xla_aot_compile_gpu_test.cc"],
+    backends = ["h100"],
     data = [
         ":xla_aot_compile_test_gpu_executable",
         ":xla_aot_compile_test_gpu_executable_constant",
@@ -6237,7 +6238,6 @@ xla_cc_test(
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/gpu:backend_configs_cc",
-        "//xla/stream_executor/cuda:cuda_platform",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
