@@ -47,6 +47,9 @@ class HoistFusedBitcasts : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads);
 };
 
+absl::StatusOr<bool> TryHoistBitcastsInComputationToCallers(
+    HloInstruction* dot, absl::Span<HloInstruction*> computation_callers);
+
 namespace detail {
 
 // Returns the start indices of consecutive non-overlapping subsequences of `a`

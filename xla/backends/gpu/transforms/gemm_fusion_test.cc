@@ -136,7 +136,8 @@ ENTRY e {
                     .value();
   EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
   EXPECT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::Fusion(m::Parameter(), m::Parameter())));
+              GmockMatch(m::Fusion(m::Bitcast(m::Parameter()),
+                                   m::Bitcast(m::Parameter()))));
 }
 
 TEST_F(GemmFusionTest, SplitDimensionTwice) {
@@ -154,8 +155,9 @@ ENTRY e {
 })")
                     .value();
   EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
-  EXPECT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::Fusion(m::Parameter(), m::Parameter())));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Bitcast(m::Parameter()), m::Parameter())));
 }
 
 TEST_F(GemmFusionTest, DoNotTriggerOnUnsupportedOutputConversions) {
@@ -186,8 +188,9 @@ ENTRY e {
 })")
                     .value();
   EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
-  EXPECT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::Fusion(m::Parameter(), m::Parameter())));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Bitcast(m::Parameter()), m::Parameter())));
 }
 
 TEST_F(GemmFusionTest, HandleDotIfCublasRequiresPadding) {
@@ -535,8 +538,9 @@ ENTRY e {
 })"));
 
   EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
-  EXPECT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::Fusion(m::Parameter(), m::Parameter())));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Parameter(), m::Bitcast(m::Parameter()))));
 }
 
 TEST_F(GemmFusionTest, DoNotFuseIncompatibleDimensionSplits) {
@@ -557,9 +561,9 @@ ENTRY e {
 })"));
 
   EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
-  EXPECT_THAT(
-      module->entry_computation()->root_instruction(),
-      GmockMatch(m::Fusion(m::Transpose(), m::Parameter(), m::Parameter())));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Fusion(m::Bitcast(m::Transpose()), m::Parameter(),
+                                   m::Parameter())));
 }
 
 TEST_F(GemmFusionTest, DoNotFuseTooManyParameters) {
@@ -927,8 +931,9 @@ e {
 
   EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
   EXPECT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch((m::Fusion(m::Parameter(), m::Parameter(),
-                                    m::Parameter(), m::Parameter()))));
+              GmockMatch((m::Fusion(m::Bitcast(m::Parameter()),
+                                    m::Bitcast(m::Parameter()), m::Parameter(),
+                                    m::Parameter()))));
 }
 
 TEST_F(GemmFusionTest, GemmFusionBailsOutPreAmpere) {
@@ -1300,7 +1305,8 @@ ENTRY e {
   EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch((m::Fusion(m::Parameter(), m::Parameter(),
-                                    m::Parameter(), m::Parameter()))));
+                                    m::Bitcast(m::Parameter()),
+                                    m::Bitcast(m::Parameter())))));
 }
 
 TEST_F(GemmFusionTest, BroadcastsOfParametersAreFusedAsEpilogueInputs) {
@@ -1319,7 +1325,7 @@ e {
   EXPECT_TRUE(GemmFusion(gpu_version_).Run(module.get()).value());
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch((m::Fusion(m::Parameter(), m::Parameter(),
-                                    m::GetTupleElement()))));
+                                    m::Bitcast(m::GetTupleElement())))));
 }
 
 TEST_F(GemmFusionTest, DoNotFuseNonProfitableDot) {

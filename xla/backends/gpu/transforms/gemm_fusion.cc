@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/codegen/triton/support_legacy.h"
+#include "xla/backends/gpu/transforms/hoist_fused_bitcasts.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -44,6 +45,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
 #include "xla/service/gpu/gpu_fusible.h"
@@ -811,6 +813,7 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
   // if so - fuses all its compatible inputs and outputs as a new computation
   // and replaces the original dot() with a call to the computation.
   absl::Status HandleDot(HloInstruction* dot) override {
+    LOG(INFO) << "module pre gemm fusion: " << dot->GetModule()->ToString();
     CHECK_EQ(dot->opcode(), HloOpcode::kDot);
 
     int64_t gemm_rewrite_size_threshold =
@@ -873,7 +876,19 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
     } else {
       TF_RETURN_IF_ERROR(ReplaceInstruction(fusion_output, dot_fusion));
     }
-    XLA_VLOG_LINES(5, computation->ToString(HloPrintOptions::ShortParsable()));
+    LOG(INFO) << "module post gemm fusion: "
+              << dot_fusion->GetModule()->ToString();
+    HloInstruction* new_dot =
+        hlo_query::GetFirstInstructionWithOpcode(*computation, HloOpcode::kDot);
+    auto callers = computation->caller_instructions();
+    TF_ASSIGN_OR_RETURN(bool changed, TryHoistBitcastsInComputationToCallers(
+                                          new_dot, absl::MakeSpan(callers)));
+    if (changed) {
+      MarkAsChanged();
+    }
+    LOG(INFO) << "module post hoisting bitcasts: "
+              << dot_fusion->GetModule()->ToString();
+    VLOG(5) << computation->ToString(HloPrintOptions::ShortParsable());
     return absl::OkStatus();
   }
 
