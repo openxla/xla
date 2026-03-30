@@ -2547,6 +2547,47 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "scatter_determinism_expander",
+    srcs = ["scatter_determinism_expander.cc"],
+    hdrs = ["scatter_determinism_expander.h"],
+    deps = [
+        "//xla:array",
+        "//xla:array2d",
+        "//xla:comparison_util",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/transforms/expanders:op_expander_pass",
+        "//xla/service:hlo_creation_utils",
+        "//xla/service:scatter_utils",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_test(
+    name = "scatter_determinism_expander_test",
+    srcs = ["scatter_determinism_expander_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":scatter_determinism_expander",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla/hlo/testlib:test",
+        "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
     name = "scatter_slice_simplifier",
     srcs = ["scatter_slice_simplifier.cc"],
     hdrs = ["scatter_slice_simplifier.h"],
