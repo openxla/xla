@@ -1,1 +1,905 @@
+diff --ruN a/stablehlo/BUILD.bazel b/stablehlo/BUILD.bazel
+--- stablehlo/BUILD.bazel
++++ stablehlo/BUILD.bazel
+@@ -1183,6 +1183,7 @@
+         ":broadcast_utils",
+         ":chlo_ops",
+         ":chlo_rewriters_inc_gen",
++        ":replica_group_utils",
+         ":stablehlo_aggressive_simplification_inc_gen",
+         ":stablehlo_broadcast_lowering",
+         ":stablehlo_create_compatibility_expander_inc_gen",
+@@ -1354,6 +1355,23 @@
+         "@llvm-project//mlir:IR",
+         "@llvm-project//mlir:InferTypeOpInterface",
+         "@llvm-project//mlir:QuantOps",
++        "@llvm-project//mlir:Support",
++    ],
++)
++
++cc_library(
++    name = "replica_group_utils",
++    srcs = [
++        "stablehlo/dialect/ReplicaGroupUtils.cpp",
++    ],
++    hdrs = [
++        "stablehlo/dialect/ReplicaGroupUtils.h",
++    ],
++    strip_include_prefix = ".",
++    deps = [
++        ":stablehlo_ops",
++        "@llvm-project//llvm:Support",
++        "@llvm-project//mlir:IR",
+         "@llvm-project//mlir:Support",
+     ],
+ )
+diff --ruN a/stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp b/stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp
+--- stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp
++++ stablehlo/stablehlo/dialect/ReplicaGroupUtils.cpp
+@@ -0,0 +1,159 @@
++#include "stablehlo/dialect/ReplicaGroupUtils.h"
++
++#include <cstddef>
++#include <cstdint>
++#include <utility>
++
++#include "llvm/ADT/DenseSet.h"
++#include "llvm/ADT/SmallVector.h"
++#include "llvm/ADT/StringRef.h"
++#include "mlir/IR/Attributes.h"
++#include "mlir/IR/BuiltinAttributes.h"
++#include "mlir/IR/Diagnostics.h"
++#include "mlir/Support/LLVM.h"
++#include "stablehlo/dialect/StablehloOps.h"
++
++namespace mlir {
++namespace stablehlo {
++
++static SmallVector<SmallVector<int64_t>>
++flattenedReplicaGroupsFromTransposePermutation(
++    const SmallVector<StringRef>& meshAxisNames,
++    const SmallVector<StringRef>& commAxisNames,
++    const llvm::DenseSet<StringRef>& commAxisSet,
++    const SmallVector<int64_t>& axisSizes,
++    const SmallVector<int64_t>& deviceIds, int64_t totalDevices) {
++  // Reshape and Transpose equivalence bridging XLA TileAssignment behavior.
++  SmallVector<int> transposeAxes;
++  // Non-grouped axes first
++  for (size_t i = 0; i < meshAxisNames.size(); ++i) {
++    if (!commAxisSet.count(meshAxisNames[i])) {
++      transposeAxes.push_back(i);
++    }
++  }
++  // Grouped axes
++  for (const auto& name : commAxisNames) {
++    for (size_t i = 0; i < meshAxisNames.size(); ++i) {
++      if (meshAxisNames[i] == name) {
++        transposeAxes.push_back(i);
++        break;
++      }
++    }
++  }
++
++  SmallVector<int64_t> transposedSizes(meshAxisNames.size());
++  for (size_t i = 0; i < meshAxisNames.size(); ++i) {
++    transposedSizes[i] = axisSizes[transposeAxes[i]];
++  }
++
++  // Compute strides for original shape
++  SmallVector<int64_t> originalStrides(meshAxisNames.size(), 1);
++  for (int i = static_cast<int>(meshAxisNames.size()) - 2; i >= 0; --i) {
++    originalStrides[i] = originalStrides[i + 1] * axisSizes[i + 1];
++  }
++
++  // Compute strides for transposed shape
++  SmallVector<int64_t> transposedStrides(meshAxisNames.size(), 1);
++  for (int i = static_cast<int>(meshAxisNames.size()) - 2; i >= 0; --i) {
++    transposedStrides[i] = transposedStrides[i + 1] * transposedSizes[i + 1];
++  }
++
++  // Generate chunks
++  int64_t numDevicesPerGroup = 1;
++  for (auto name : commAxisNames) {
++    for (size_t i = 0; i < meshAxisNames.size(); ++i) {
++      if (meshAxisNames[i] == name) {
++        numDevicesPerGroup *= axisSizes[i];
++        break;
++      }
++    }
++  }
++  int64_t numGroups = totalDevices / numDevicesPerGroup;
++
++  SmallVector<SmallVector<int64_t>> groups;
++  groups.reserve(numGroups);
++  for (int64_t i = 0; i < numGroups; ++i) {
++    SmallVector<int64_t> group;
++    group.reserve(numDevicesPerGroup);
++    for (int64_t j = 0; j < numDevicesPerGroup; ++j) {
++      int64_t linearTransposeIdx = i * numDevicesPerGroup + j;
++      int64_t originalIndex = 0;
++      for (size_t k = 0; k < meshAxisNames.size(); ++k) {
++        int64_t coord =
++            (linearTransposeIdx / transposedStrides[k]) % transposedSizes[k];
++        originalIndex += coord * originalStrides[transposeAxes[k]];
++      }
++      group.push_back(deviceIds[originalIndex]);
++    }
++    groups.push_back(std::move(group));
++  }
++
++  return groups;
++}
++
++FailureOr<SmallVector<SmallVector<int64_t>>> flattenReplicaGroupMeshAxes(
++    Attribute meshAttr, ArrayAttr commAxes, Location loc) {
++  // Reference implementation for flattening a mesh-axes based replica group
++  // to the list of lists implementation.
++  //
++  // Note, that this function is only intended for reference implementation
++  // purposes or when a fallback is required in VHLO legalization if the current
++  // version doesn't support mesh-axes based replica groups. In all other cases
++  // we don't flatten mesh-axes based replica groups, since we intend to persist
++  // them throughout the pipeline.
++  auto mesh = dyn_cast<stablehlo::MeshAttr>(meshAttr);
++  if (!mesh)
++    return emitOptionalError(loc, "expected stablehlo.mesh for mesh attribute");
++
++  auto axesInMesh = mesh.getAxes();
++
++  // Identify which axes are communication axes.
++  llvm::SmallVector<StringRef> commAxisNames;
++  llvm::DenseSet<StringRef> commAxisSet;
++  for (auto axisRefAttr : commAxes) {
++    if (auto shloAxisRef = dyn_cast<stablehlo::AxisRefAttr>(axisRefAttr)) {
++      if (shloAxisRef.getSubAxisInfo()) {
++        return emitError(loc) << "Subaxes are not supported in "
++                                 "flattenReplicaGroupMeshAxes";
++      }
++      commAxisNames.push_back(shloAxisRef.getName());
++      commAxisSet.insert(shloAxisRef.getName());
++    } else if (auto strAttr = dyn_cast<StringAttr>(axisRefAttr)) {
++      commAxisNames.push_back(strAttr.getValue());
++      commAxisSet.insert(strAttr.getValue());
++    } else {
++      return emitError(loc) << "Expected stablehlo.axis_ref or string for "
++                               "communication axis";
++    }
++  }
++
++  // Calculate total devices and axis sizes
++  int64_t totalDevices = 1;
++  SmallVector<int64_t> axisSizes;
++  SmallVector<StringRef> meshAxisNames;
++  for (auto axisAttr : axesInMesh) {
++    auto meshAxis = dyn_cast<stablehlo::MeshAxisAttr>(axisAttr);
++    if (!meshAxis) {
++      return emitError(loc) << "Expected stablehlo.mesh_axis in mesh";
++    }
++    axisSizes.push_back(meshAxis.getSize());
++    meshAxisNames.push_back(meshAxis.getName());
++    totalDevices *= meshAxis.getSize();
++  }
++
++  SmallVector<int64_t> deviceIds;
++  if (!mesh.getDeviceIds() || mesh.getDeviceIds().empty()) {
++    for (int64_t i = 0; i < totalDevices; ++i) deviceIds.push_back(i);
++  } else {
++    for (auto id : mesh.getDeviceIds().getValues<int64_t>()) {
++      deviceIds.push_back(id);
++    }
++  }
++
++  return flattenedReplicaGroupsFromTransposePermutation(
++      meshAxisNames, commAxisNames, commAxisSet, axisSizes, deviceIds,
++      totalDevices);
++}
++
++}  // namespace stablehlo
++}  // namespace mlir
+diff --ruN a/stablehlo/stablehlo/dialect/ReplicaGroupUtils.h b/stablehlo/stablehlo/dialect/ReplicaGroupUtils.h
+--- stablehlo/stablehlo/dialect/ReplicaGroupUtils.h
++++ stablehlo/stablehlo/dialect/ReplicaGroupUtils.h
+@@ -0,0 +1,25 @@
++#ifndef STABLEHLO_TRANSFORMS_REPLICA_GROUP_UTILS_H
++#define STABLEHLO_TRANSFORMS_REPLICA_GROUP_UTILS_H
++
++#include <cstdint>
++
++#include "mlir/IR/Attributes.h"
++#include "mlir/IR/BuiltinAttributes.h"
++#include "mlir/IR/Location.h"
++#include "mlir/Support/LLVM.h"
++#include "mlir/Support/LogicalResult.h"
++
++namespace mlir {
++namespace stablehlo {
++
++// Flattens replica groups represented by a mesh and a list of communication
++// axes into a flat list of replica groups.
++// Returns a 2D array of device IDs representing the flattened replica
++// groups, or failure if the conversion fails.
++FailureOr<SmallVector<SmallVector<int64_t>>> flattenReplicaGroupMeshAxes(
++    Attribute meshAttr, ArrayAttr commAxes, Location loc);
++
++}  // namespace stablehlo
++}  // namespace mlir
++
++#endif  // STABLEHLO_TRANSFORMS_REPLICA_GROUP_UTILS_H
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloAttrs.td b/stablehlo/stablehlo/dialect/StablehloAttrs.td
+--- stablehlo/stablehlo/dialect/StablehloAttrs.td
++++ stablehlo/stablehlo/dialect/StablehloAttrs.td
+@@ -233,4 +233,54 @@
+   ];
+ }
+ 
++def StableHLO_SubAxisInfo : AttrDef<StableHLO_Dialect, "SubAxisInfo"> {
++  let mnemonic = "sub_axis_info";
++  let summary = "Info about how this sub-axis is derived from the full axis";
++  let parameters = (ins
++      "int64_t":$pre_size,
++      "int64_t":$size
++  );
++  let assemblyFormat = "`(` $pre_size `)` `` $size";
++}
++
++def StableHLO_AxisRef : AttrDef<StableHLO_Dialect, "AxisRef"> {
++  let mnemonic = "axis_ref";
++  let summary = "Reference to either a full axis or a split sub-axis";
++  let parameters = (ins
++      StringRefParameter<"name of this axis">:$name,
++      OptionalParameter<"SubAxisInfoAttr", "additional info if this is a sub axis">:$sub_axis_info
++  );
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
++def StableHLO_MeshAxis : AttrDef<StableHLO_Dialect, "MeshAxis"> {
++  let mnemonic = "mesh_axis";
++  let summary = "A single axis of a mesh";
++  let parameters = (ins
++    StringRefParameter<"name">:$name,
++    "int64_t":$size
++  );
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
++def StableHLO_Mesh : AttrDef<StableHLO_Dialect, "Mesh"> {
++  let mnemonic = "mesh";
++  let summary = "A named mesh definition with device IDs";
++  let parameters = (ins
++    "ArrayAttr":$axes, // Array of MeshAxisAttr
++    OptionalParameter<"DenseIntElementsAttr">:$device_ids
++  );
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
++def StableHLO_ReplicaGroupMeshAxes : AttrDef<StableHLO_Dialect, "ReplicaGroupMeshAxes"> {
++  let mnemonic = "replica_group_mesh_axes";
++  let summary = "mesh and axes based replica groups representation.";
++  let parameters = (ins
++    "Attribute":$mesh,
++    "ArrayAttr":$axes
++  );
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
+ #endif // STABLEHLO_DIALECT_STABLEHLO_ATTRS
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloBytecode.cpp b/stablehlo/stablehlo/dialect/StablehloBytecode.cpp
+--- stablehlo/stablehlo/dialect/StablehloBytecode.cpp
++++ stablehlo/stablehlo/dialect/StablehloBytecode.cpp
+@@ -193,6 +193,36 @@
+   //   ulps: svarint
+   // }
+   kResultAccuracyAttr = 17,
++
++  // ReplicaGroupMeshAxesAttr {
++  //   mesh: Attribute
++  //   axes: Attribute[]
++  // }
++  kReplicaGroupMeshAxesAttr = 18,
++
++  // SubAxisInfoAttr {
++  //   preSize: svarint
++  //   size: svarint
++  // }
++  kSubAxisInfoAttr = 19,
++
++  // AxisRefAttr {
++  //   name: string
++  //   subAxisInfo: Attribute (optional)
++  // }
++  kAxisRefAttr = 20,
++
++  // MeshAxisAttr {
++  //   name: string
++  //   size: svarint
++  // }
++  kMeshAxisAttr = 21,
++
++  // MeshAttr {
++  //   axes: Attribute[]
++  //   device_ids: DenseIntElementsAttr (optional)
++  // }
++  kMeshAttr = 22,
+ };
+ 
+ /// This enum contains marker codes used to indicate which type is
+@@ -271,6 +301,12 @@
+   TransposeAttr readTransposeAttr(DialectBytecodeReader& reader) const;
+   TypeExtensionsAttr readTypeExtensionsAttr(
+       DialectBytecodeReader& reader) const;
++  ReplicaGroupMeshAxesAttr readReplicaGroupMeshAxesAttr(
++      DialectBytecodeReader& reader) const;
++  SubAxisInfoAttr readSubAxisInfoAttr(DialectBytecodeReader& reader) const;
++  AxisRefAttr readAxisRefAttr(DialectBytecodeReader& reader) const;
++  MeshAxisAttr readMeshAxisAttr(DialectBytecodeReader& reader) const;
++  MeshAttr readMeshAttr(DialectBytecodeReader& reader) const;
+ 
+   // TO ADD ATTRIBUTE: Include a write method for each attribute in StableHLO
+   // Ex: void write(SomeAttr attr, DialectBytecodeWriter &writer) const;
+@@ -294,6 +330,12 @@
+              DialectBytecodeWriter& writer) const;
+   void write(TransposeAttr attr, DialectBytecodeWriter& writer) const;
+   void write(TypeExtensionsAttr attr, DialectBytecodeWriter& writer) const;
++  void write(ReplicaGroupMeshAxesAttr attr,
++             DialectBytecodeWriter& writer) const;
++  void write(SubAxisInfoAttr attr, DialectBytecodeWriter& writer) const;
++  void write(AxisRefAttr attr, DialectBytecodeWriter& writer) const;
++  void write(MeshAxisAttr attr, DialectBytecodeWriter& writer) const;
++  void write(MeshAttr attr, DialectBytecodeWriter& writer) const;
+ 
+   //===--------------------------------------------------------------------===//
+   // Types
+@@ -367,6 +409,16 @@
+       return readTransposeAttr(reader);
+     case stablehlo_encoding::kTypeExtensionsAttr:
+       return readTypeExtensionsAttr(reader);
++    case stablehlo_encoding::kReplicaGroupMeshAxesAttr:
++      return readReplicaGroupMeshAxesAttr(reader);
++    case stablehlo_encoding::kSubAxisInfoAttr:
++      return readSubAxisInfoAttr(reader);
++    case stablehlo_encoding::kAxisRefAttr:
++      return readAxisRefAttr(reader);
++    case stablehlo_encoding::kMeshAxisAttr:
++      return readMeshAxisAttr(reader);
++    case stablehlo_encoding::kMeshAttr:
++      return readMeshAttr(reader);
+     default:
+       reader.emitError() << "unknown stablehlo attribute code: " << code;
+       return Attribute();
+@@ -384,11 +436,13 @@
+             FftTypeAttr, GatherDimensionNumbersAttr, OutputOperandAliasAttr,
+             PrecisionAttr, ResultAccuracyAttr, ResultAccuracyModeAttr,
+             RngAlgorithmAttr, RngDistributionAttr, ScatterDimensionNumbersAttr,
+-            TransposeAttr, TypeExtensionsAttr>([&](auto attr) {
+-        LOG_WRITE_CALL;
+-        write(attr, writer);
+-        return success();
+-      })
++            TransposeAttr, TypeExtensionsAttr, ReplicaGroupMeshAxesAttr,
++            SubAxisInfoAttr, AxisRefAttr, MeshAxisAttr, MeshAttr>(
++          [&](auto attr) {
++            LOG_WRITE_CALL;
++            write(attr, writer);
++            return success();
++          })
+       .Default([&](Attribute) {
+         LOG_NOT_IMPLEMENTED;
+         return failure();
+@@ -758,6 +812,152 @@
+                                        DialectBytecodeWriter& writer) const {
+   writer.writeVarInt(stablehlo_encoding::kTypeExtensionsAttr);
+   writer.writeSignedVarInts(attr.getBounds());
++}
++
++//===----------------------------------------------------------------------===//
++// ReplicaGroupMeshAxesAttr
++
++//===----------------------------------------------------------------------===//
++// SubAxisInfoAttr
++
++SubAxisInfoAttr StablehloBytecodeInterface::readSubAxisInfoAttr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  int64_t preSize, size;
++  if (failed(reader.readSignedVarInt(preSize)) ||
++      failed(reader.readSignedVarInt(size)))
++    return SubAxisInfoAttr();
++  return SubAxisInfoAttr::get(getContext(), preSize, size);
++}
++
++void StablehloBytecodeInterface::write(SubAxisInfoAttr attr,
++                                       DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(stablehlo_encoding::kSubAxisInfoAttr);
++  writer.writeSignedVarInt(attr.getPreSize());
++  writer.writeSignedVarInt(attr.getSize());
++}
++
++//===----------------------------------------------------------------------===//
++// AxisRefAttr
++
++AxisRefAttr StablehloBytecodeInterface::readAxisRefAttr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  StringRef name;
++  if (failed(reader.readString(name))) return AxisRefAttr();
++  bool hasSubAxisInfo;
++  if (failed(reader.readBool(hasSubAxisInfo))) return AxisRefAttr();
++  SubAxisInfoAttr subAxisInfo;
++  if (hasSubAxisInfo) {
++    Attribute attr;
++    if (failed(reader.readAttribute(attr))) return AxisRefAttr();
++    subAxisInfo = llvm::dyn_cast<SubAxisInfoAttr>(attr);
++    if (!subAxisInfo) return AxisRefAttr();
++  }
++  return AxisRefAttr::get(getContext(), name, subAxisInfo);
++}
++
++void StablehloBytecodeInterface::write(AxisRefAttr attr,
++                                       DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(stablehlo_encoding::kAxisRefAttr);
++  writer.writeOwnedString(attr.getName());
++  bool hasSubAxisInfo = (bool)attr.getSubAxisInfo();
++  writer.writeOwnedBool(hasSubAxisInfo);
++  if (hasSubAxisInfo) {
++    writer.writeAttribute(attr.getSubAxisInfo());
++  }
++}
++
++//===----------------------------------------------------------------------===//
++// ReplicaGroupMeshAxesAttr
++
++ReplicaGroupMeshAxesAttr
++StablehloBytecodeInterface::readReplicaGroupMeshAxesAttr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  Attribute mesh;
++  if (failed(reader.readAttribute(mesh))) return ReplicaGroupMeshAxesAttr();
++
++  uint64_t axesSize;
++  if (failed(reader.readVarInt(axesSize))) return ReplicaGroupMeshAxesAttr();
++
++  SmallVector<Attribute> axes;
++  axes.reserve(axesSize);
++  for (uint64_t i = 0; i < axesSize; ++i) {
++    Attribute axis;
++    if (failed(reader.readAttribute(axis))) return ReplicaGroupMeshAxesAttr();
++    axes.push_back(axis);
++  }
++
++  return ReplicaGroupMeshAxesAttr::get(getContext(), mesh,
++                                       ArrayAttr::get(getContext(), axes));
++}
++
++void StablehloBytecodeInterface::write(ReplicaGroupMeshAxesAttr attr,
++                                       DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(stablehlo_encoding::kReplicaGroupMeshAxesAttr);
++  writer.writeAttribute(attr.getMesh());
++
++  ArrayAttr axes = attr.getAxes();
++  writer.writeVarInt(axes.size());
++  for (auto axis : axes) {
++    writer.writeAttribute(axis);
++  }
++}
++
++//===----------------------------------------------------------------------===//
++// MeshAxisAttr
++
++MeshAxisAttr StablehloBytecodeInterface::readMeshAxisAttr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  StringRef name;
++  int64_t size;
++  if (failed(reader.readString(name)) || failed(reader.readSignedVarInt(size)))
++    return MeshAxisAttr();
++  return MeshAxisAttr::get(getContext(), name, size);
++}
++
++void StablehloBytecodeInterface::write(MeshAxisAttr attr,
++                                       DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(stablehlo_encoding::kMeshAxisAttr);
++  writer.writeOwnedString(attr.getName());
++  writer.writeSignedVarInt(attr.getSize());
++}
++
++//===----------------------------------------------------------------------===//
++// MeshAttr
++
++MeshAttr StablehloBytecodeInterface::readMeshAttr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  Attribute axesAttr;
++  if (failed(reader.readAttribute(axesAttr))) return MeshAttr();
++  auto axes = llvm::dyn_cast<ArrayAttr>(axesAttr);
++  if (!axes) return MeshAttr();
++
++  bool hasDeviceIds;
++  if (failed(reader.readBool(hasDeviceIds))) return MeshAttr();
++  DenseIntElementsAttr deviceIds;
++  if (hasDeviceIds) {
++    Attribute deviceIdsAttr;
++    if (failed(reader.readAttribute(deviceIdsAttr))) return MeshAttr();
++    deviceIds = llvm::dyn_cast<DenseIntElementsAttr>(deviceIdsAttr);
++    if (!deviceIds) return MeshAttr();
++  }
++
++  return MeshAttr::get(getContext(), axes, deviceIds);
++}
++
++void StablehloBytecodeInterface::write(MeshAttr attr,
++                                       DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(stablehlo_encoding::kMeshAttr);
++  writer.writeAttribute(attr.getAxes());
++  bool hasDeviceIds = (bool)attr.getDeviceIds();
++  writer.writeOwnedBool(hasDeviceIds);
++  if (hasDeviceIds) {
++    writer.writeAttribute(attr.getDeviceIds());
++  }
+ }
+ 
+ //===----------------------------------------------------------------------===//
+diff --ruN a/stablehlo/stablehlo/dialect/VhloAttrs.td b/stablehlo/stablehlo/dialect/VhloAttrs.td
+--- stablehlo/stablehlo/dialect/VhloAttrs.td
++++ stablehlo/stablehlo/dialect/VhloAttrs.td
+@@ -195,4 +195,28 @@
+   }];
+ }
+ 
++def VHLO_SubAxisInfoV1Attr : VHLO_AttrDef<"SubAxisInfoV1", "1.16.0", "current"> {
++  let mnemonic = "sub_axis_info_v1";
++  let parameters = (ins "int64_t":$pre_size, "int64_t":$size);
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
++def VHLO_AxisRefV1Attr : VHLO_AttrDef<"AxisRefV1", "1.16.0", "current"> {
++  let mnemonic = "axis_ref_v1";
++  let parameters = (ins
++    "mlir::Attribute":$name,
++    OptionalParameter<"mlir::Attribute">:$sub_axis_info
++  );
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
++def VHLO_ReplicaGroupMeshAxesV1Attr : VHLO_AttrDef<"ReplicaGroupMeshAxesV1", "1.16.0", "current"> {
++  let mnemonic = "replica_group_mesh_axes_v1";
++  let parameters = (ins
++    "mlir::Attribute":$mesh,
++    "mlir::Attribute":$axes
++  );
++  let assemblyFormat = "`<` struct(params) `>`";
++}
++
+ #endif // STABLEHLO_DIALECT_VHLO_ATTRS
+diff --ruN a/stablehlo/stablehlo/dialect/VhloBytecode.cpp b/stablehlo/stablehlo/dialect/VhloBytecode.cpp
+--- stablehlo/stablehlo/dialect/VhloBytecode.cpp
++++ stablehlo/stablehlo/dialect/VhloBytecode.cpp
+@@ -192,6 +192,9 @@
+   //   ulps: svarint
+   // }
+   kResultAccuracyV1Attr = 20,
++  kSubAxisInfoV1Attr = 21,
++  kAxisRefV1Attr = 22,
++  kReplicaGroupMeshAxesV1Attr = 23,
+ };
+ 
+ /// This enum contains marker codes used to indicate which type is
+@@ -460,6 +463,10 @@
+       DialectBytecodeReader& reader) const;
+   ResultAccuracyV1Attr readResultAccuracyV1Attr(
+       DialectBytecodeReader& reader) const;
++  SubAxisInfoV1Attr readSubAxisInfoV1Attr(DialectBytecodeReader& reader) const;
++  AxisRefV1Attr readAxisRefV1Attr(DialectBytecodeReader& reader) const;
++  ReplicaGroupMeshAxesV1Attr readReplicaGroupMeshAxesV1Attr(
++      DialectBytecodeReader& reader) const;
+ 
+   // TO ADD ATTRIBUTE: Include a write method for each attribute in VHLO
+   // Ex: void write(SomeAttr attr, DialectBytecodeWriter &writer) const;
+@@ -487,6 +494,10 @@
+   void write(ResultAccuracyModeV1Attr attr,
+              DialectBytecodeWriter& writer) const;
+   void write(ResultAccuracyV1Attr attr, DialectBytecodeWriter& writer) const;
++  void write(SubAxisInfoV1Attr attr, DialectBytecodeWriter& writer) const;
++  void write(AxisRefV1Attr attr, DialectBytecodeWriter& writer) const;
++  void write(ReplicaGroupMeshAxesV1Attr attr,
++             DialectBytecodeWriter& writer) const;
+ 
+   //===--------------------------------------------------------------------===//
+   // Types
+@@ -580,6 +591,12 @@
+       return readResultAccuracyModeV1Attr(reader);
+     case vhlo_encoding::kResultAccuracyV1Attr:
+       return readResultAccuracyV1Attr(reader);
++    case vhlo_encoding::kSubAxisInfoV1Attr:
++      return readSubAxisInfoV1Attr(reader);
++    case vhlo_encoding::kAxisRefV1Attr:
++      return readAxisRefV1Attr(reader);
++    case vhlo_encoding::kReplicaGroupMeshAxesV1Attr:
++      return readReplicaGroupMeshAxesV1Attr(reader);
+     default:
+       reader.emitError() << "unknown vhlo attribute code: " << code;
+       return Attribute();
+@@ -598,7 +615,8 @@
+             PrecisionV1Attr, RngAlgorithmV1Attr, RngDistributionV1Attr,
+             StringV1Attr, TensorV1Attr, TransposeV1Attr, TypeV1Attr,
+             TypeExtensionsV1Attr, ResultAccuracyV1Attr,
+-            ResultAccuracyModeV1Attr>([&](auto attr) {
++            ResultAccuracyModeV1Attr, SubAxisInfoV1Attr, AxisRefV1Attr,
++            ReplicaGroupMeshAxesV1Attr>([&](auto attr) {
+         LOG_WRITE_CALL;
+         write(attr, writer);
+         return success();
+@@ -1666,6 +1684,78 @@
+   writer.writeAttribute(attr.getMode());
+ }
+ 
++//===----------------------------------------------------------------------===//
++// SubAxisInfoV1Attr
++
++SubAxisInfoV1Attr VhloBytecodeInterface::readSubAxisInfoV1Attr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  int64_t preSize, size;
++  if (failed(reader.readSignedVarInt(preSize)) ||
++      failed(reader.readSignedVarInt(size))) {
++    return SubAxisInfoV1Attr();
++  }
++  return SubAxisInfoV1Attr::get(getContext(), preSize, size);
++}
++
++void VhloBytecodeInterface::write(SubAxisInfoV1Attr attr,
++                                  DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(vhlo_encoding::kSubAxisInfoV1Attr);
++  writer.writeSignedVarInt(attr.getPreSize());
++  writer.writeSignedVarInt(attr.getSize());
++}
++
++//===----------------------------------------------------------------------===//
++// AxisRefV1Attr
++
++AxisRefV1Attr VhloBytecodeInterface::readAxisRefV1Attr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  Attribute name;
++  if (failed(reader.readAttribute(name))) return AxisRefV1Attr();
++  uint64_t hasSubAxisInfo;
++  if (failed(reader.readVarInt(hasSubAxisInfo))) return AxisRefV1Attr();
++  Attribute subAxisInfo;
++  if (hasSubAxisInfo) {
++    if (failed(reader.readAttribute(subAxisInfo))) return AxisRefV1Attr();
++  }
++  return AxisRefV1Attr::get(getContext(), name, subAxisInfo);
++}
++
++void VhloBytecodeInterface::write(AxisRefV1Attr attr,
++                                  DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(vhlo_encoding::kAxisRefV1Attr);
++  writer.writeAttribute(attr.getName());
++  if (attr.getSubAxisInfo()) {
++    writer.writeVarInt(1);
++    writer.writeAttribute(attr.getSubAxisInfo());
++  } else {
++    writer.writeVarInt(0);
++  }
++}
++
++//===----------------------------------------------------------------------===//
++// ReplicaGroupMeshAxesV1Attr
++
++ReplicaGroupMeshAxesV1Attr
++VhloBytecodeInterface::readReplicaGroupMeshAxesV1Attr(
++    DialectBytecodeReader& reader) const {
++  LOG_READ_CALL;
++  Attribute mesh, axes;
++  if (failed(reader.readAttribute(mesh)) ||
++      failed(reader.readAttribute(axes))) {
++    return ReplicaGroupMeshAxesV1Attr();
++  }
++  return ReplicaGroupMeshAxesV1Attr::get(getContext(), mesh, axes);
++}
++
++void VhloBytecodeInterface::write(ReplicaGroupMeshAxesV1Attr attr,
++                                  DialectBytecodeWriter& writer) const {
++  writer.writeVarInt(vhlo_encoding::kReplicaGroupMeshAxesV1Attr);
++  writer.writeAttribute(attr.getMesh());
++  writer.writeAttribute(attr.getAxes());
++}
++
+ }  // namespace
+ 
+ void addBytecodeInterface(VhloDialect* dialect) {
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloCompatibilityExpander.cpp b/stablehlo/stablehlo/transforms/StablehloCompatibilityExpander.cpp
+--- stablehlo/stablehlo/transforms/StablehloCompatibilityExpander.cpp
++++ stablehlo/stablehlo/transforms/StablehloCompatibilityExpander.cpp
+@@ -42,6 +42,7 @@
+ #include "mlir/Rewrite/FrozenRewritePatternSet.h"
+ #include "mlir/Support/LLVM.h"
+ #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
++#include "stablehlo/dialect/ReplicaGroupUtils.h"
+ #include "stablehlo/dialect/StablehloOps.h"
+ #include "stablehlo/dialect/Version.h"
+ #include "stablehlo/transforms/PassUtils.h"  // IWYU pragma: keep
+@@ -310,6 +311,63 @@
+   }
+ };
+ 
++// ReplicaGroupMeshAxesExpander handles the conversion of
++// #stablehlo.replica_group_mesh_axes to a dense I64ElementsAttr for target
++// versions that do not support it.
++struct ReplicaGroupMeshAxesExpander : public RewritePattern {
++  ReplicaGroupMeshAxesExpander(MLIRContext* context,
++                               vhlo::Version targetVersion)
++      : RewritePattern(MatchAnyOpTypeTag(), 1, context),
++        targetVersion(targetVersion) {}
++
++  LogicalResult matchAndRewrite(Operation* op,
++                                PatternRewriter& rewriter) const override {
++    auto replicaGroupsAttr = op->getAttrOfType<Attribute>("replica_groups");
++    if (!replicaGroupsAttr) return failure();
++
++    if (!(targetVersion < vhlo::Version(1, 16, 0))) return failure();
++
++    if (auto meshAxesAttr =
++            dyn_cast<ReplicaGroupMeshAxesAttr>(replicaGroupsAttr)) {
++      // Resolve Mesh.
++      auto meshAttr = dyn_cast<stablehlo::MeshAttr>(meshAxesAttr.getMesh());
++      if (!meshAttr) {
++        return op->emitError("Expected stablehlo.mesh for mesh attribute view");
++      }
++
++      // Flattening logic.
++      auto commAxes = meshAxesAttr.getAxes();
++      auto groupsOrFailure =
++          flattenReplicaGroupMeshAxes(meshAttr, commAxes, op->getLoc());
++      if (failed(groupsOrFailure)) return failure();
++
++      const auto& groups = groupsOrFailure.value();
++
++      int64_t numGroups = groups.size();
++      int64_t groupSize = groups.empty() ? 0 : groups[0].size();
++
++      // Create the dense attribute.
++      SmallVector<int64_t> flattenedGroups;
++      for (const auto& group : groups) {
++        flattenedGroups.append(group.begin(), group.end());
++      }
++      auto type =
++          RankedTensorType::get({numGroups, groupSize}, rewriter.getI64Type());
++      auto newDenseAttr = DenseIntElementsAttr::get(type, flattenedGroups);
++
++      rewriter.modifyOpInPlace(
++          op, [&] { op->setAttr("replica_groups", newDenseAttr); });
++
++      return success();
++    }
++
++    return failure();
++  }
++
++ private:
++  vhlo::Version targetVersion;
++};
++
+ //===----------------------------------------------------------------------===//
+ // Pass
+ //===----------------------------------------------------------------------===//
+@@ -380,6 +438,10 @@
+   // incompats.
+   if (targetVersion < vhlo::Version(1, 9, 0))
+     patterns->add<FileLineColRangeToLoc>(context);
++
++  // StableHLO RGV3 (replica_group_mesh_axes) is introduced in v1.16.0 or later.
++  if (targetVersion < vhlo::Version(1, 16, 0))
++    patterns->add<ReplicaGroupMeshAxesExpander>(context, targetVersion);
+ }
+ 
+ }  // namespace stablehlo
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp b/stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
+--- stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
++++ stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
+@@ -174,6 +174,33 @@
+     return vhlo::ResultAccuracyV1Attr::get(attr.getContext(), attr.getAtol(),
+                                            attr.getRtol(), attr.getUlps(),
+                                            modeAttr);
++  }
++  if (auto attr = dyn_cast<stablehlo::SubAxisInfoAttr>(stablehloAttr)) {
++    return vhlo::SubAxisInfoV1Attr::get(attr.getContext(), attr.getPreSize(),
++                                        attr.getSize());
++  }
++  if (auto attr = dyn_cast<stablehlo::AxisRefAttr>(stablehloAttr)) {
++    auto vhloName = convertGeneric(
++        StringAttr::get(attr.getContext(), attr.getName()), typeConverter);
++    auto vhloSubAxisInfo =
++        attr.getSubAxisInfo()
++            ? convertGeneric(attr.getSubAxisInfo(), typeConverter)
++            : Attribute();
++    return vhlo::AxisRefV1Attr::get(attr.getContext(), vhloName,
++                                    vhloSubAxisInfo);
++  }
++  if (auto attr =
++          dyn_cast<stablehlo::ReplicaGroupMeshAxesAttr>(stablehloAttr)) {
++    Attribute vhloMesh;
++    if (auto symbolRef = dyn_cast<FlatSymbolRefAttr>(attr.getMesh())) {
++      vhloMesh = vhlo::StringV1Attr::get(attr.getContext(),
++                                         "@" + symbolRef.getValue().str());
++    } else {
++      vhloMesh = convertGeneric(attr.getMesh(), typeConverter);
++    }
++    auto vhloAxes = convertGeneric(attr.getAxes(), typeConverter);
++    return vhlo::ReplicaGroupMeshAxesV1Attr::get(attr.getContext(), vhloMesh,
++                                                 vhloAxes);
+   }
+   if (llvm::isa<stablehlo::StablehloDialect>(stablehloAttr.getDialect())) {
+     // All StableHLO attributes must have counterparts in VHLO.
+diff --ruN a/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp b/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
+--- stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
++++ stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
+@@ -190,12 +190,44 @@
+     RETURN_CONVERTED_ENUM_ATTR(ResultAccuracyMode, V1);
+   }
+   if (auto attr = dyn_cast<vhlo::ResultAccuracyV1Attr>(vhloAttr)) {
+-    auto modeAttr = dyn_cast_or_null<stablehlo::ResultAccuracyModeAttr>(
++    auto modeAttr = cast<stablehlo::ResultAccuracyModeAttr>(
+         convertGeneric(attr.getMode(), typeConverter));
+-    if (!modeAttr) return {};
+     return stablehlo::ResultAccuracyAttr::get(attr.getContext(), attr.getAtol(),
+                                               attr.getRtol(), attr.getUlps(),
+                                               modeAttr);
++  }
++  if (auto attr = dyn_cast<vhlo::SubAxisInfoV1Attr>(vhloAttr)) {
++    return stablehlo::SubAxisInfoAttr::get(attr.getContext(), attr.getPreSize(),
++                                           attr.getSize());
++  }
++  if (auto attr = dyn_cast<vhlo::AxisRefV1Attr>(vhloAttr)) {
++    auto stablehloName =
++        cast<StringAttr>(convertGeneric(attr.getName(), typeConverter))
++            .getValue();
++    auto stablehloSubAxisInfo =
++        attr.getSubAxisInfo() ? cast<stablehlo::SubAxisInfoAttr>(convertGeneric(
++                                    attr.getSubAxisInfo(), typeConverter))
++                              : stablehlo::SubAxisInfoAttr();
++    return stablehlo::AxisRefAttr::get(attr.getContext(), stablehloName,
++                                       stablehloSubAxisInfo);
++  }
++  if (auto attr = dyn_cast<vhlo::ReplicaGroupMeshAxesV1Attr>(vhloAttr)) {
++    Attribute stablehloMesh;
++    if (auto vhloString = dyn_cast<vhlo::StringV1Attr>(attr.getMesh())) {
++      StringRef value = vhloString.getValue();
++      if (value.consume_front("@")) {
++        stablehloMesh =
++            FlatSymbolRefAttr::get(StringAttr::get(attr.getContext(), value));
++      } else {
++        stablehloMesh = StringAttr::get(attr.getContext(), value);
++      }
++    } else {
++      stablehloMesh = convertGeneric(attr.getMesh(), typeConverter);
++    }
++    auto stablehloAxes =
++        cast<ArrayAttr>(convertGeneric(attr.getAxes(), typeConverter));
++    return stablehlo::ReplicaGroupMeshAxesAttr::get(
++        attr.getContext(), stablehloMesh, stablehloAxes);
+   }
+ 
+   // All VHLO Attributes must be converted by now.
+diff --ruN a/stablehlo/stablehlo/transforms/VhloToVersion.cpp b/stablehlo/stablehlo/transforms/VhloToVersion.cpp
+--- stablehlo/stablehlo/transforms/VhloToVersion.cpp
++++ stablehlo/stablehlo/transforms/VhloToVersion.cpp
+@@ -153,6 +153,18 @@
+     return isLegalType(typeAttr.getValue(), targetVersion);
+   if (auto resultAccuracyAttr = dyn_cast<ResultAccuracyV1Attr>(attr))
+     return isLegalAttribute(resultAccuracyAttr.getMode(), targetVersion);
++  if (auto axisRefAttr = dyn_cast<AxisRefV1Attr>(attr)) {
++    return success(
++        succeeded(isLegalAttribute(axisRefAttr.getName(), targetVersion)) &&
++        (!axisRefAttr.getSubAxisInfo() ||
++         succeeded(
++             isLegalAttribute(axisRefAttr.getSubAxisInfo(), targetVersion))));
++  }
++  if (auto meshAxesAttr = dyn_cast<ReplicaGroupMeshAxesV1Attr>(attr)) {
++    return success(
++        succeeded(isLegalAttribute(meshAxesAttr.getMesh(), targetVersion)) &&
++        succeeded(isLegalAttribute(meshAxesAttr.getAxes(), targetVersion)));
++  }
+ 
+   // Is VHLO and valid version, success.
+   return success();
 
