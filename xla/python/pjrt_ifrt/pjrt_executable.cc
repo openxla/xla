@@ -356,8 +356,7 @@ char PjRtLoadedExecutable::ID = 0;
 
 absl::StatusOr<ExecutableRef> PjRtExecutable::Create(
     xla::MaybeOwningMlirModule module, xla::CompileOptions compile_options,
-    const xla::PjRtTopologyDescription& topology,
-    xla::PjRtClient* autotuning_client) {
+    const xla::PjRtTopologyDescription& topology) {
   const bool is_portable = compile_options.compile_portable_executable;
 
   // We have to do process the MLIR before the compile call, since the latter
@@ -374,7 +373,7 @@ absl::StatusOr<ExecutableRef> PjRtExecutable::Create(
   TF_ASSIGN_OR_RETURN(
       auto pjrt_executable,
       PjRtCompile(std::move(compile_options), std::move(module), topology,
-                  /*client=*/autotuning_client));
+                  /*client=*/nullptr));
 
   TF_ASSIGN_OR_RETURN(auto output_dtypes_and_shapes,
                       GetDTypesAndShapes(mlir_module_output_xla_shapes));
