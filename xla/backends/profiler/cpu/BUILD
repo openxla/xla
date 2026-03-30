@@ -127,6 +127,21 @@ cc_library(
 )
 
 xla_cc_test(
+    name = "metadata_utils_test",
+    srcs = ["metadata_utils_test.cc"],
+    deps = [
+        ":metadata_utils",
+        "//xla/service:hlo_proto_cc",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/profiler/convert:xla_op_utils",
+        "//xla/tsl/profiler/utils:xplane_builder",
+        "//xla/tsl/profiler/utils:xplane_schema",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+)
+
+xla_cc_test(
     name = "host_tracer_test",
     srcs = ["host_tracer_test.cc"],
     deps = [
