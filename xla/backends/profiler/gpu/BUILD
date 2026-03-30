@@ -459,6 +459,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -714,9 +715,7 @@ cc_library(
         "//xla/tsl/util:env_var",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/log",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings:string_view",
-        "//xla/tsl/platform:logging",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:stringpiece",
     ],
@@ -795,7 +794,6 @@ xla_cc_test(
         ":cupti_buffer_events",
         ":cupti_collector",  # buildcleaner: keep
         ":cupti_utils",
-        "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
