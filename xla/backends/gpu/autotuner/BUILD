@@ -21,6 +21,7 @@ cc_library(
     name = "gpu_codegen_backend",
     hdrs = ["gpu_codegen_backend.h"],
     deps = [
+        "//xla:status_macros",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/autotuner:codegen_backend",
@@ -32,6 +33,7 @@ cc_library(
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
     ],
