@@ -80,6 +80,11 @@ ENTRY AddDotsFunc {
 }
 
 TEST_F(GemmRewriteTest, CheckCustomCallHipblasLtBF16) {
+  if (!IsRocm()) {
+    GTEST_SKIP() << "Test is ROCm-specific: verifies that MI200 falls back to "
+                    "legacy cuBLAS for BF16->F32 GEMMs (hipblasLt limitation), "
+                    "while other ROCm architectures use hipblasLt";
+  }
   DebugOptions debug_options = GetDebugOptionsForTest();
   HloModuleConfig config;
   config.set_debug_options(debug_options);
