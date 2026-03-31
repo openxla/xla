@@ -420,11 +420,7 @@ cc_library(
 xla_test(
     name = "qr_test",
     srcs = ["qr_test.cc"],
-    tags = [
-        "optonly",
-        "pjrt_migration_candidate",
-    ],
-    use_legacy_runtime = True,
+    tags = ["optonly"],
     deps = [
         ":matrix",
         ":qr",
@@ -432,14 +428,17 @@ xla_test(
         "//xla:array2d",
         "//xla:array3d",
         "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/testlib:test",
-        "//xla/tests:client_library_test_base",
+        "//xla/tests:client_library_test_runner_mixin",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tests:hlo_pjrt_test_base",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
