@@ -16,7 +16,6 @@ limitations under the License.
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <utility>
 #include <vector>
 
