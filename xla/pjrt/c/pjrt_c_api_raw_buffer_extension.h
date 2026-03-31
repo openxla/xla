@@ -130,7 +130,7 @@ struct PJRT_Client_DefineBuffer_Args {
   PJRT_RawBuffer* raw_buffer;
 
   int num_definition_events;
-  PJRT_DeviceEvent* device_events;
+  PJRT_DeviceEvent** device_events;
 
   PJRT_Buffer* defined_buffer;  // out
 };

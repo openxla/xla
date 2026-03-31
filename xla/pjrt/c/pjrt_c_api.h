@@ -386,6 +386,17 @@ typedef PJRT_Error* PJRT_Event_Set(PJRT_Event_Set_Args* args);
 
 typedef struct PJRT_DeviceEvent PJRT_DeviceEvent;
 
+struct PJRT_DeviceEvent_Destroy_Args {
+  size_t struct_size;
+  PJRT_Extension_Base* extension_start;
+  PJRT_DeviceEvent* device_event;
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_DeviceEvent_Destroy_Args, device_event);
+
+// Frees `device_event`. `device_event` can be `nullptr`.
+typedef PJRT_Error* PJRT_DeviceEvent_Destroy(
+    PJRT_DeviceEvent_Destroy_Args* args);
+
 struct PJRT_DeviceEvent_GetPJRTEvent_Args {
   size_t struct_size;
   PJRT_Extension_Base* extension_start;
@@ -2670,10 +2681,6 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Buffer_DonateWithControlDependency_Args,
 typedef PJRT_Error* PJRT_Buffer_DonateWithControlDependency(
     PJRT_Buffer_DonateWithControlDependency_Args* args);
 
-// -------------------------------- Raw Buffers --------------------------------
-
-// TODO.
-
 // ---------------------------- CopyToDeviceStream -----------------------------
 
 struct PJRT_CopyToDeviceStream_Destroy_Args {
@@ -3089,11 +3096,12 @@ typedef struct PJRT_Api {
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_ParameterMemoryKinds);
 
   _PJRT_API_STRUCT_FIELD(PJRT_DeviceEvent_GetPJRTEvent);
+  _PJRT_API_STRUCT_FIELD(PJRT_DeviceEvent_Destroy);
 } PJRT_Api;
 
 enum {
   PJRT_Api_STRUCT_SIZE =
-      PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Executable_ParameterMemoryKinds)
+      PJRT_STRUCT_SIZE(PJRT_Api, PJRT_DeviceEvent_Destroy)
 };
 
 #undef _PJRT_API_STRUCT_FIELD

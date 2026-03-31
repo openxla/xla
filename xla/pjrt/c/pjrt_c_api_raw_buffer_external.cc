@@ -143,37 +143,6 @@ absl::StatusOr<PJRT_RawBuffer*> PjRtCApiBuffer_CreateRawAliasOfBuffer(
 
 namespace xla {
 
-PjRtCApiRawBuffer::~PjRtCApiRawBuffer() {
-  pjrt::PjRtCApiRawBuffer_Destroy(c_api_, c_extension_, c_buffer_);
-}
-
-PjRtMemorySpace* PjRtCApiRawBuffer::memory_space() const {
-  return client_->GetCppMemory(
-      pjrt::PjRtCApiRawBuffer_GetMemorySpace(c_api_, c_extension_, c_buffer_));
-}
-
-void* PjRtCApiRawBuffer::GetHostPointer() const {
-  return pjrt::PjRtCApiRawBuffer_GetHostPointer(c_api_, c_extension_,
-                                                c_buffer_);
-}
-
-size_t PjRtCApiRawBuffer::GetOnDeviceSizeInBytes() const {
-  return pjrt::PjRtCApiRawBuffer_GetOnDeviceSizeInBytes(c_api_, c_extension_,
-                                                        c_buffer_);
-}
-
-Future<> PjRtCApiRawBuffer::CopyRawHostToDevice(const void* src, int64_t offset,
-                                                int64_t transfer_size) {
-  return pjrt::PjRtCApiRawBuffer_CopyRawHostToDevice(
-      c_api_, c_extension_, c_buffer_, src, offset, transfer_size);
-}
-
-Future<> PjRtCApiRawBuffer::CopyRawDeviceToHost(void* dst, int64_t offset,
-                                                int64_t transfer_size) {
-  return pjrt::PjRtCApiRawBuffer_CopyRawDeviceToHost(
-      c_api_, c_extension_, c_buffer_, dst, offset, transfer_size);
-}
-
 static std::optional<absl::StatusOr<tsl::RCReference<PjRtRawBuffer>>>
 PjRtCApiBuffer_CreateRawAliasOfBuffer_Factory(PjRtBuffer* buffer) {
   if (auto* c_api_buffer = dynamic_cast<xla::PjRtCApiBuffer*>(buffer)) {

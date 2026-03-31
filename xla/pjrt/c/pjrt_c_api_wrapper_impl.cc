@@ -2717,8 +2717,8 @@ PJRT_Error* PJRT_Buffer_CopyRawToHostFuture(
       future, args->offset, args->transfer_size);
   args->event = new PJRT_Event{std::move(wrapped_promise)};
 
-  typedef absl::AnyInvocable<
-      void(PJRT_Buffer_CopyRawToHostFuture_Callback_Args*) &&>
+  typedef absl::AnyInvocable<void(
+      PJRT_Buffer_CopyRawToHostFuture_Callback_Args*) &&>
       Callback;
   auto callback = new Callback(
       [promise = std::move(promise)](
@@ -3073,6 +3073,15 @@ PJRT_Error* PJRT_Event_Set(PJRT_Event_Set_Args* args) {
 }
 
 // ------------------------------- Device Events -------------------------------
+
+PJRT_Error* PJRT_DeviceEvent_Destroy(PJRT_DeviceEvent_Destroy_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_DeviceEvent_Destroy", PJRT_DeviceEvent_Destroy_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  delete args->device_event;
+  return nullptr;
+}
 
 PJRT_Error* PJRT_DeviceEvent_GetPJRTEvent(
     PJRT_DeviceEvent_GetPJRTEvent_Args* args) {
@@ -3851,6 +3860,8 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
 
       /*PJRT_DeviceEvent_GetPJRTEvent=*/
       pjrt::PJRT_DeviceEvent_GetPJRTEvent,
+      /*PJRT_DeviceEvent_Destroy=*/
+      pjrt::PJRT_DeviceEvent_Destroy,
   };
 }
 

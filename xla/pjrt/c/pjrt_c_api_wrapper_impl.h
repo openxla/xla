@@ -317,6 +317,7 @@ PJRT_Error* PJRT_Event_OnReady(PJRT_Event_OnReady_Args* args);
 PJRT_Error* PJRT_Event_Create(PJRT_Event_Create_Args* args);
 PJRT_Error* PJRT_Event_Set(PJRT_Event_Set_Args* args);
 
+PJRT_Error* PJRT_DeviceEvent_Destroy(PJRT_DeviceEvent_Destroy_Args* args);
 PJRT_Error* PJRT_DeviceEvent_GetPJRTEvent(
     PJRT_DeviceEvent_GetPJRTEvent_Args* args);
 

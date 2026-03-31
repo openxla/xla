@@ -62,6 +62,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_memory_descriptions_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_phase_compile_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_profiler_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_raw_buffer_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_shardings_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_stream_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_tpu_topology_extension.h"
@@ -108,6 +109,30 @@ limitations under the License.
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/context_types.h"
 #include "tsl/profiler/lib/traceme.h"
+
+namespace pjrt {
+
+void PjRtCApiRawBuffer_Destroy(const PJRT_Api* c_api,
+                 const PJRT_RawBuffer_Extension* extension,
+                 PJRT_RawBuffer* buffer);
+PJRT_Memory* PjRtCApiRawBuffer_GetMemorySpace(
+  const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
+  PJRT_RawBuffer* buffer);
+void* PjRtCApiRawBuffer_GetHostPointer(
+  const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
+  PJRT_RawBuffer* buffer);
+size_t PjRtCApiRawBuffer_GetOnDeviceSizeInBytes(
+  const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
+  PJRT_RawBuffer* buffer);
+xla::Future<> PjRtCApiRawBuffer_CopyRawHostToDevice(
+  const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
+  PJRT_RawBuffer* buffer, const void* src, int64_t offset,
+  int64_t transfer_size);
+xla::Future<> PjRtCApiRawBuffer_CopyRawDeviceToHost(
+  const PJRT_Api* c_api, const PJRT_RawBuffer_Extension* extension,
+  PJRT_RawBuffer* buffer, void* dst, int64_t offset, int64_t transfer_size);
+
+}  // namespace pjrt
 
 namespace xla {
 
@@ -980,6 +1005,81 @@ PjRtCApiClient::CreateAliasBuffer(const Shape& shape,
 
   return std::make_pair(std::move(alias_buffer),
                         std::move(fulfill_alias_buffer_cb));
+}
+
+absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiClient::DefineBuffer(
+    const Shape& shape, PjRtMemorySpace* memory_space,
+    tsl::RCReference<PjRtRawBuffer> raw_buffer,
+    absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
+        definition_device_events) {
+  const PJRT_Api* c_api = pjrt_c_api();
+  auto* extension = FindExtension<PJRT_RawBuffer_Extension>(
+      PJRT_Extension_Type::PJRT_Extension_Type_RawBuffer);
+  if (extension == nullptr) {
+    return absl::UnimplementedError(
+        "DefineBuffer is not implemented in this PJRT plugin.");
+  }
+  if (extension->PJRT_Client_DefineBuffer == nullptr) {
+    return absl::UnimplementedError(
+        "PJRT_Client_DefineBuffer is not implemented in this PJRT plugin.");
+  }
+
+  auto* c_api_raw_buffer = dynamic_cast<PjRtCApiRawBuffer*>(raw_buffer.get());
+  if (c_api_raw_buffer == nullptr) {
+    return absl::InvalidArgumentError(
+        "DefineBuffer requires a PjRtCApiRawBuffer when called via "
+        "PjRtCApiClient.");
+  }
+  if (c_api_raw_buffer->client() != this) {
+    return absl::InvalidArgumentError(
+        "raw_buffer passed to PjRtCApiClient::DefineBuffer() belongs to a "
+        "different client.");
+  }
+
+  PJRT_Client_DefineBuffer_Args args;
+  args.struct_size = PJRT_Client_DefineBuffer_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.client = c_client_.get();
+
+  args.shape_dims = shape.dimensions().data();
+  args.shape_num_dims = shape.dimensions().size();
+  args.shape_element_type = pjrt::ConvertToPjRtBufferType(shape.element_type());
+
+  std::optional<pjrt::BufferMemoryLayoutData> c_layout_data;
+  if (shape.has_layout()) {
+    TF_ASSIGN_OR_RETURN(c_layout_data,
+                        pjrt::ConvertToBufferMemoryLayoutData(shape.layout()));
+    args.shape_layout = &c_layout_data->c_layout;
+  } else {
+    args.shape_layout = nullptr;
+  }
+
+  args.memory =
+      tensorflow::down_cast<PjRtCApiMemorySpace*>(memory_space)->c_memory();
+
+  args.raw_buffer = c_api_raw_buffer->c_buffer();
+
+  args.num_definition_events = definition_device_events.size();
+
+  std::vector<PJRT_DeviceEvent*> device_events;
+  device_events.reserve(definition_device_events.size());
+  for (tsl::RCReference<PjRtDeviceEvent> device_event :
+       definition_device_events) {
+    auto* c_api_device_event =
+        dynamic_cast<PjRtCApiDeviceEvent*>(device_event.get());
+    if (c_api_device_event == nullptr) {
+      return absl::InvalidArgumentError(
+          "PjRtCApiClient::DefineBuffer requires input definition events to be "
+          "PjRtCApiDeviceEvents.");
+    }
+    device_events.push_back(c_api_device_event->c_device_event());
+  }
+  args.device_events = device_events.data();
+
+  RETURN_STATUS_IF_PJRT_ERROR(extension->PJRT_Client_DefineBuffer(&args),
+                              c_api);
+
+  return std::make_unique<PjRtCApiBuffer>(this, args.defined_buffer);
 }
 
 absl::StatusOr<const PjRtTopologyDescription*>
@@ -2080,6 +2180,23 @@ PjRtCApiAsyncTrackingEvent::~PjRtCApiAsyncTrackingEvent() {
 void PjRtCApiAsyncTrackingEvent::AddDependency(
     tsl::RCReference<tsl::AsyncValue> dependency) {
   LOG(FATAL) << "AddDependency is not supported in C API yet.";
+}
+
+// ---------------------------- Device Events ----------------------------------
+
+PjRtCApiDeviceEvent::PjRtCApiDeviceEvent(
+    std::unique_ptr<PJRT_DeviceEvent, ::pjrt::PJRT_DeviceEventDeleter>
+        device_event,
+    const PJRT_Api* c_api)
+    : device_event_(std::move(device_event)) {
+  PJRT_DeviceEvent_GetPJRTEvent_Args args;
+  args.struct_size = PJRT_DeviceEvent_GetPJRTEvent_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.device_event = device_event_.get();
+  args.event = nullptr;
+
+  pjrt::LogFatalIfPjrtError(c_api->PJRT_DeviceEvent_GetPJRTEvent(&args), c_api);
+  ready_future_ = pjrt::ConvertCEventToCppFuture(args.event, c_api);
 }
 
 // ------------------------------- Memory --------------------------------------
@@ -4104,6 +4221,38 @@ absl::Status PjRtCApiExternalReference::WaitUntilBufferReadyOnStream(
   args.buffer = buffer_->c_buffer();
   RETURN_STATUS_IF_PJRT_ERROR(extension->wait_stream(&args), c_api);
   return absl::OkStatus();
+}
+
+PjRtCApiRawBuffer::~PjRtCApiRawBuffer() {
+  pjrt::PjRtCApiRawBuffer_Destroy(c_api_, c_extension_, c_buffer_);
+}
+
+PjRtMemorySpace* PjRtCApiRawBuffer::memory_space() const {
+  return client_->GetCppMemory(
+      pjrt::PjRtCApiRawBuffer_GetMemorySpace(c_api_, c_extension_, c_buffer_));
+}
+
+void* PjRtCApiRawBuffer::GetHostPointer() const {
+  return pjrt::PjRtCApiRawBuffer_GetHostPointer(c_api_, c_extension_,
+                                                c_buffer_);
+}
+
+size_t PjRtCApiRawBuffer::GetOnDeviceSizeInBytes() const {
+  return pjrt::PjRtCApiRawBuffer_GetOnDeviceSizeInBytes(c_api_, c_extension_,
+                                                        c_buffer_);
+}
+
+Future<> PjRtCApiRawBuffer::CopyRawHostToDevice(const void* src,
+                                                int64_t offset,
+                                                int64_t transfer_size) {
+  return pjrt::PjRtCApiRawBuffer_CopyRawHostToDevice(
+      c_api_, c_extension_, c_buffer_, src, offset, transfer_size);
+}
+
+Future<> PjRtCApiRawBuffer::CopyRawDeviceToHost(void* dst, int64_t offset,
+                                                int64_t transfer_size) {
+  return pjrt::PjRtCApiRawBuffer_CopyRawDeviceToHost(
+      c_api_, c_extension_, c_buffer_, dst, offset, transfer_size);
 }
 
 // ------------------------------ Device Topology ------------------------------

@@ -108,6 +108,12 @@ using PJRT_EventDeleter = std::function<void(PJRT_Event*)>;
 // The lifetime of the Api pointed to must be longer than the event.
 PJRT_EventDeleter MakeEventDeleter(const PJRT_Api* api);
 
+using PJRT_DeviceEventDeleter = std::function<void(PJRT_DeviceEvent*)>;
+
+// Pass in an API pointer; receive a custom deleter for smart pointers.
+// The lifetime of the Api pointed to must be longer than the device event.
+PJRT_DeviceEventDeleter MakeDeviceEventDeleter(const PJRT_Api* api);
+
 using PJRT_SerializedExecutableDeleter =
     std::function<void(PJRT_SerializedExecutable*)>;
 

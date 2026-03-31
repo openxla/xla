@@ -288,6 +288,18 @@ PJRT_EventDeleter MakeEventDeleter(const PJRT_Api* api) {
   };
 }
 
+PJRT_DeviceEventDeleter MakeDeviceEventDeleter(const PJRT_Api* api) {
+  CHECK(api != nullptr);
+  return [api](PJRT_DeviceEvent* managed) {
+    PJRT_DeviceEvent_Destroy_Args args;
+    args.struct_size = PJRT_DeviceEvent_Destroy_Args_STRUCT_SIZE;
+    args.extension_start = nullptr;
+    args.device_event = managed;
+
+    LogFatalIfPjrtError(api->PJRT_DeviceEvent_Destroy(&args), api);
+  };
+}
+
 PJRT_Buffer_Type ConvertToPjRtBufferType(xla::PrimitiveType type) {
   switch (type) {
     case xla::PrimitiveType::PRIMITIVE_TYPE_INVALID:
