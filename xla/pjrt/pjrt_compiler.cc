@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/attributes.h"
+#include "absl/base/casts.h"
 #include "absl/base/const_init.h"
 #include "absl/base/no_destructor.h"
 #include "absl/base/thread_annotations.h"
@@ -186,6 +187,21 @@ absl::StatusOr<PjRtCompiler*> GetDefaultPjRtCompiler(
     absl::string_view platform_name) {
   return PjRtCompilerRegistry::Global().GetCompiler(platform_name,
                                                     /*variant_name=*/"");
+}
+
+absl::StatusOr<PjRtPhaseCompiler*> GetDefaultPjRtPhaseCompiler(
+    absl::string_view platform) {
+  TF_ASSIGN_OR_RETURN(PjRtCompiler * compiler,
+                      GetDefaultPjRtCompiler(platform));
+  PjRtPhaseCompiler* phase_compiler =
+      absl::down_cast<PjRtPhaseCompiler*>(compiler);
+  if (phase_compiler == nullptr) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("The compiler for platform ", platform,
+                     " does not support phased compilation."));
+  }
+
+  return phase_compiler;
 }
 
 absl::StatusOr<PjRtCompiler*> GetPjRtCompiler(
