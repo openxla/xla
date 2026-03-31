@@ -149,26 +149,34 @@ tsl::Future<ExecutableRef> PjRtCompiler::Compile(
       llvm::cast<HloProgram>(std::move(program));
   TF_ASSIGN_OR_RETURN(auto xla_compile_options,
                       GetXlaCompileOptions(std::move(options)));
-  if (client_ != nullptr) {
-    // Device ID translation is unnecessary because it is a property of the
-    // client.
-    TF_RETURN_IF_ERROR(
-        TranslateDeviceIds(client_, xla_compile_options->compile_options));
-  }
   const auto* pjrt_topology = llvm::dyn_cast<PjRtTopology>(&topology);
   if (pjrt_topology == nullptr) {
     return absl::InvalidArgumentError("PjRtCompiler requires a PjRtTopology");
   }
+
+  // Only translate device IDs when the client is present and the compile
+  // options contain a device list referencing this client's devices.
+  // When cross-compiling, the caller passes an empty device list because
+  // device IDs belong to the target topology, not this client.
+  if (client_ != nullptr && xla_compile_options->devices) {
+    TF_RETURN_IF_ERROR(
+        TranslateDeviceIds(client_, xla_compile_options->compile_options));
+  }
+
+  xla::PjRtClient* compile_client =
+      client_ != nullptr ? client_->pjrt_client() : nullptr;
+
   auto compile =
       [program = std::move(program), xla_program = std::move(xla_program),
        xla_compile_options = std::move(xla_compile_options), pjrt_topology,
-       user_context = UserContextScope::current()]() mutable {
+       compile_client, user_context = UserContextScope::current()]() mutable {
         UserContextScope scope(std::move(user_context));
         return PjRtExecutable::Create(
             std::move(*xla_program).ToMaybeOwningMlirModule(),
             std::move(xla_compile_options->compile_options),
-            *pjrt_topology->description());
+            *pjrt_topology->description(), compile_client);
       };
+
   if (thread_pool_.has_value()) {
     return tsl::MakeFutureOn(*thread_pool_->AsExecutor(), std::move(compile));
   }
