@@ -558,13 +558,23 @@ PjRtStreamExecutorClient::AllocateRawBufferForExecute(
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 PjRtStreamExecutorClient::DefineBuffer(
     const Shape& on_device_shape, PjRtMemorySpace* memory_space,
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+    tsl::RCReference<PjRtRawBuffer> raw_buffer,
     absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
         definition_device_events) {
-  if (raw_buffer && raw_buffer->memory_space() != memory_space) {
+  auto* common_raw_buffer_ptr =
+      dynamic_cast<CommonPjRtRawBuffer*>(raw_buffer.get());
+  if (common_raw_buffer_ptr == nullptr) {
+    return absl::InvalidArgumentError(
+        "PjRtStreamExecutorClient::DefineBuffer requires a "
+        "CommonPjRtRawBuffer.");
+  }
+  tsl::RCReference<CommonPjRtRawBuffer> common_raw_buffer =
+      tsl::FormRef(common_raw_buffer_ptr);
+
+  if (common_raw_buffer && common_raw_buffer->memory_space() != memory_space) {
     return absl::InvalidArgumentError(
         absl::StrFormat("DefineBuffer: Mismatch in memory spaces: %s vs %s",
-                        raw_buffer->memory_space()->DebugString(),
+                        common_raw_buffer->memory_space()->DebugString(),
                         memory_space->DebugString()));
   }
   absl::InlinedVector<BufferSequencingEventRef, 2> definition_events;
@@ -578,7 +588,7 @@ PjRtStreamExecutorClient::DefineBuffer(
       memory_space->devices()[0]);
 
   auto dst_device_buffer = std::make_unique<TrackedDeviceBuffer>(
-      device, std::move(raw_buffer), definition_events);
+      device, std::move(common_raw_buffer), definition_events);
 
   auto py_buffer = std::make_unique<CommonPjRtBufferImpl>(
       on_device_shape, std::move(dst_device_buffer), memory_space);

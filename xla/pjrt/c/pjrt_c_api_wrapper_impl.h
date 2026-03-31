@@ -233,6 +233,10 @@ struct PJRT_Event {
   xla::Promise<> promise;
 };
 
+struct PJRT_DeviceEvent {
+  tsl::RCReference<xla::PjRtDeviceEvent> device_event;
+};
+
 struct PJRT_SerializedExecutable {
   std::string serialized;
 };
@@ -312,6 +316,9 @@ PJRT_Error* PJRT_Event_Await(PJRT_Event_Await_Args* args);
 PJRT_Error* PJRT_Event_OnReady(PJRT_Event_OnReady_Args* args);
 PJRT_Error* PJRT_Event_Create(PJRT_Event_Create_Args* args);
 PJRT_Error* PJRT_Event_Set(PJRT_Event_Set_Args* args);
+
+PJRT_Error* PJRT_DeviceEvent_GetPJRTEvent(
+    PJRT_DeviceEvent_GetPJRTEvent_Args* args);
 
 PJRT_Error* PJRT_Client_Destroy(PJRT_Client_Destroy_Args* args);
 PJRT_Error* PJRT_Client_PlatformName(PJRT_Client_PlatformName_Args* args);

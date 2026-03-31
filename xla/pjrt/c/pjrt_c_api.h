@@ -110,7 +110,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 103
+#define PJRT_API_MINOR 104
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -376,6 +376,28 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Event_Set_Args, error_message_size);
 
 // Sets the PJRT_Event as completed with the given error code and message.
 typedef PJRT_Error* PJRT_Event_Set(PJRT_Event_Set_Args* args);
+
+// ------------------------------- Device Events -------------------------------
+
+// Represents a device-side event. These are similar to PJRT_Event, but they
+// may occur on a device instead of on the host. This means that the host can
+// enqueue executables and transfers on unfulfilled device events without
+// blocking.
+
+typedef struct PJRT_DeviceEvent PJRT_DeviceEvent;
+
+struct PJRT_DeviceEvent_GetPJRTEvent_Args {
+  size_t struct_size;
+  PJRT_Extension_Base* extension_start;
+  PJRT_DeviceEvent* device_event;
+  PJRT_Event* event;  // Output.
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_DeviceEvent_GetPJRTEvent_Args, event);
+
+// Get a host-side PJRT_Event that is fulfilled when the input device event is
+// completed on the device.
+typedef PJRT_Error* PJRT_DeviceEvent_GetPJRTEvent(
+    PJRT_DeviceEvent_GetPJRTEvent_Args* args);
 
 // ---------------------------------- Client -----------------------------------
 
@@ -2648,6 +2670,10 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Buffer_DonateWithControlDependency_Args,
 typedef PJRT_Error* PJRT_Buffer_DonateWithControlDependency(
     PJRT_Buffer_DonateWithControlDependency_Args* args);
 
+// -------------------------------- Raw Buffers --------------------------------
+
+// TODO.
+
 // ---------------------------- CopyToDeviceStream -----------------------------
 
 struct PJRT_CopyToDeviceStream_Destroy_Args {
@@ -3061,6 +3087,8 @@ typedef struct PJRT_Api {
   _PJRT_API_STRUCT_FIELD(PJRT_Error_ForEachPayload);
   _PJRT_API_STRUCT_FIELD(PJRT_TopologyDescription_Fingerprint);
   _PJRT_API_STRUCT_FIELD(PJRT_Executable_ParameterMemoryKinds);
+
+  _PJRT_API_STRUCT_FIELD(PJRT_DeviceEvent_GetPJRTEvent);
 } PJRT_Api;
 
 enum {

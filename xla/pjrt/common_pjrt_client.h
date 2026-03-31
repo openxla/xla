@@ -140,15 +140,6 @@ class CommonPjRtClient : public PjRtClient {
     return absl::UnimplementedError("LinearizeInto is not supported");
   }
 
-  // Defines a pjrt buffer from a shape, raw_buffer and definition events.
-  virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
-      const Shape& on_device_shape, PjRtMemorySpace* memory_space,
-      tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
-      absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
-          definition_device_events) {
-    return absl::UnimplementedError("DefineBuffer is not supported");
-  }
-
   // When calling APIs that take extra debug information, we may want
   // to omit this debug information if it is not going to be used.
   virtual bool event_tracking_enabled() { return false; }

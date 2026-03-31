@@ -75,6 +75,7 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/concurrency/interop.h"
 #include "xla/tsl/distributed_runtime/call_options.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service_agent.h"
 #include "xla/tsl/framework/allocator.h"
@@ -2716,8 +2717,8 @@ PJRT_Error* PJRT_Buffer_CopyRawToHostFuture(
       future, args->offset, args->transfer_size);
   args->event = new PJRT_Event{std::move(wrapped_promise)};
 
-  typedef absl::AnyInvocable<void(
-      PJRT_Buffer_CopyRawToHostFuture_Callback_Args*) &&>
+  typedef absl::AnyInvocable<
+      void(PJRT_Buffer_CopyRawToHostFuture_Callback_Args*) &&>
       Callback;
   auto callback = new Callback(
       [promise = std::move(promise)](
@@ -3068,6 +3069,25 @@ PJRT_Error* PJRT_Event_Set(PJRT_Event_Set_Args* args) {
       PjrtErrorCodeToStatusCode(args->error_code),
       absl::string_view(args->error_message, args->error_message_size));
   args->event->promise.Set(std::move(status));
+  return nullptr;
+}
+
+// ------------------------------- Device Events -------------------------------
+
+PJRT_Error* PJRT_DeviceEvent_GetPJRTEvent(
+    PJRT_DeviceEvent_GetPJRTEvent_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_DeviceEvent_GetPJRTEvent",
+      PJRT_DeviceEvent_GetPJRTEvent_Args_STRUCT_SIZE, args->struct_size));
+
+  auto [promise, future] = xla::MakePromise();
+
+  tsl::Future<> backing_future =
+      tsl::MakeFutureWhenReady(args->device_event->device_event->async_value());
+  backing_future.OnReady(
+      [&promise](const absl::Status& status) { promise.Set(status); });
+
+  args->event = new PJRT_Event{std::move(future), std::move(promise)};
   return nullptr;
 }
 
@@ -3828,6 +3848,9 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       pjrt::PJRT_TopologyDescription_Fingerprint,
       /*PJRT_Executable_ParameterMemoryKinds=*/
       pjrt::PJRT_Executable_ParameterMemoryKinds,
+
+      /*PJRT_DeviceEvent_GetPJRTEvent=*/
+      pjrt::PJRT_DeviceEvent_GetPJRTEvent,
   };
 }
 

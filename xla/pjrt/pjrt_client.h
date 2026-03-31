@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/pjrt/device_event.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/host_memory_allocator.h"
@@ -55,6 +56,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/scoped_async_tracking_event.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -708,6 +710,15 @@ class PjRtClient {
       std::pair<std::unique_ptr<PjRtBuffer>, PjRtFulfillAliasBufferCallback>>
   CreateAliasBuffer(const Shape& shape, PjRtMemorySpace* memory_space) {
     return absl::UnimplementedError("CreateAliasBuffer is not supported.");
+  }
+
+  // Defines a pjrt buffer from a shape, raw_buffer and definition events.
+  virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> DefineBuffer(
+      const Shape& shape, PjRtMemorySpace* memory_space,
+      tsl::RCReference<PjRtRawBuffer> raw_buffer,
+      absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
+          definition_device_events) {
+    return absl::UnimplementedError("DefineBuffer is not supported");
   }
 
   // Creates buffer in the given memory space that carries an error future

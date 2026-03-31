@@ -1043,9 +1043,18 @@ std::unique_ptr<PjRtDeviceEventSet> PjRtCpuClient::CreateDeviceEventSet(
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::DefineBuffer(
     const Shape& on_device_shape, PjRtMemorySpace* memory_space,
-    tsl::RCReference<CommonPjRtRawBuffer> raw_buffer,
+    tsl::RCReference<PjRtRawBuffer> raw_buffer,
     absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>, 4>
         definition_device_events) {
+  auto* common_raw_buffer_ptr =
+      dynamic_cast<CommonPjRtRawBuffer*>(raw_buffer.get());
+  if (common_raw_buffer_ptr == nullptr) {
+    return absl::InvalidArgumentError(
+        "PjRtCpuClient::DefineBuffer requires a CommonPjRtRawBuffer.");
+  }
+  tsl::RCReference<CommonPjRtRawBuffer> common_raw_buffer =
+      tsl::FormRef(common_raw_buffer_ptr);
+
   if (raw_buffer && raw_buffer->memory_space() != memory_space) {
     return absl::InvalidArgumentError(
         absl::StrFormat("DefineBuffer: Mismatch in memory spaces: %s vs %s",
@@ -1055,7 +1064,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCpuClient::DefineBuffer(
   return std::unique_ptr<PjRtBuffer>(std::make_unique<CommonPjRtBufferImpl>(
       on_device_shape,
       std::make_unique<TrackedCpuDeviceBuffer>(
-          std::move(raw_buffer),
+          std::move(common_raw_buffer),
           CpuTrackedDeviceEvent::AfterAll(definition_device_events)),
       memory_space));
 }

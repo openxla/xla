@@ -26,7 +26,6 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/device_event.h"
-#include "xla/pjrt/pjrt_client.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
@@ -43,8 +42,8 @@ std::vector<RegisterRawBufferFactory::FactoryFuncT>& GetFactoryFuncs() {
 absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
 CommonPjRtRawBuffer::RemoveDynamicShapeMetadataIfPresent(
     const xla::Shape& logical_shape) {
-  return absl::InvalidArgumentError(absl::StrCat(
-      "Dynamic shapes are not supported for ", memory_space()->DebugString()));
+  return absl::InvalidArgumentError(
+      "Dynamic shapes are not supported for current memory space.");
 }
 
 absl::StatusOr<tsl::RCReference<CommonPjRtRawBuffer>>
@@ -55,8 +54,8 @@ CommonPjRtRawBuffer::Slice(int64_t offset, int64_t size) {
 
 absl::StatusOr<std::vector<tsl::RCReference<CommonPjRtRawBuffer>>>
 CommonPjRtRawBuffer::MultiSlice(absl::Span<const SliceInfo> slices) {
-  return absl::UnimplementedError(absl::StrCat("Slicing is not supported for ",
-                                               memory_space()->DebugString()));
+  return absl::UnimplementedError(
+      "Slicing is not supported for current memory_space.");
 }
 
 void CommonPjRtRawBuffer::ScheduleCopyTo(
@@ -105,9 +104,7 @@ PjRtRawBuffer::CreateRawAliasOfBuffer(PjRtBuffer* buffer) {
   if (buffer == nullptr) {
     return absl::InvalidArgumentError("Cannot create view of null buffer.");
   }
-  return absl::UnimplementedError(
-      absl::StrCat("CreateRawAliasOfBuffer not implemented for: ",
-                   buffer->client()->platform_version()));
+  return absl::UnimplementedError("CreateRawAliasOfBuffer not implemented.");
 }
 
 RegisterRawBufferFactory::RegisterRawBufferFactory(

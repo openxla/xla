@@ -104,6 +104,34 @@ PJRT_Error* PJRT_RawBuffer_CopyRawDeviceToHost(
   return nullptr;
 }
 
+PJRT_Error* PJRT_Client_DefineBuffer(PJRT_Client_DefineBuffer_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Client_DefineBuffer_Args",
+      PJRT_Client_DefineBuffer_Args_STRUCT_SIZE, args->struct_size));
+
+  PJRT_ASSIGN_OR_RETURN(
+      xla::Shape shape,
+      pjrt::BuildXlaShapeFromC(args->shape_element_type, args->shape_dims,
+                               args->shape_num_dims, args->shape_layout));
+
+  absl::InlinedVector<tsl::RCReference<PjRtDeviceEvent>> definition_events;
+  definition_events.reserve(args->num_definition_events);
+  for (int i = 0; i < args->num_definition_events; ++i) {
+    definition_events.push_back(args->device_events[i]->device_event);
+  }
+
+  PJRT_ASSIGN_OR_RETURN(std::unique_ptr<PjRtBuffer> defined_cpp_buffer,
+                        args->client->client->DefineBuffer(
+                            shape, args->memory->memory_space,
+                            args->raw_buffer->raw_buffer, definition_events));
+
+  PJRT_Buffer* defined_buffer =
+      new PJRT_Buffer{std::move(defined_cpp_buffer), args->client};
+
+  args->defined_buffer = defined_buffer;
+  return nullptr;
+}
+
 PJRT_RawBuffer_Extension CreateRawBufferExtension(PJRT_Extension_Base* next) {
   return {
       PJRT_Extension_Base{
@@ -123,6 +151,8 @@ PJRT_RawBuffer_Extension CreateRawBufferExtension(PJRT_Extension_Base* next) {
       pjrt::PJRT_RawBuffer_CopyRawDeviceToHost,
       /*PJRT_RawBuffer_GetHostPointer=*/
       pjrt::PJRT_RawBuffer_GetHostPointer,
+      /*PJRT_Client_DefineBuffer=*/
+      pjrt::PJRT_Client_DefineBuffer,
   };
 }
 

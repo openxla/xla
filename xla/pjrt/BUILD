@@ -348,6 +348,8 @@ cc_library(
         ":pjrt_abi_version",
         ":pjrt_common",
         ":pjrt_compiler",
+        ":device_event",
+        ":raw_buffer",
         ":pjrt_device_description",
         ":pjrt_executable",
         ":pjrt_layout",
@@ -1428,7 +1430,6 @@ cc_library(
     deps = [
         ":async_work_runner",
         ":device_event",
-        ":pjrt_client",
         "//xla:future",
         "//xla:literal",
         "//xla:shape_util",

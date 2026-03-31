@@ -114,11 +114,36 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_RawBuffer_CopyRawHostToDevice_Args, event);
 typedef PJRT_Error* PJRT_RawBuffer_CopyRawHostToDevice(
     PJRT_RawBuffer_CopyRawHostToDevice_Args* args);
 
+struct PJRT_Client_DefineBuffer_Args {
+  size_t struct_size;
+  PJRT_Extension_Base* extension_start;
+  PJRT_Client* client;
+
+  // Shape fields.
+  const int64_t* shape_dims;
+  size_t shape_num_dims;
+  PJRT_Buffer_Type shape_element_type;
+  PJRT_Buffer_MemoryLayout* shape_layout;
+
+  PJRT_Memory* memory;
+
+  PJRT_RawBuffer* raw_buffer;
+
+  int num_definition_events;
+  PJRT_DeviceEvent* device_events;
+
+  PJRT_Buffer* defined_buffer;  // out
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Client_DefineBuffer_Args, defined_buffer);
+
+typedef PJRT_Error* PJRT_Client_DefineBuffer(
+    PJRT_Client_DefineBuffer_Args* args);
+
 // This extension provides capabilities around constructing raw buffers which
 // alias PJRT_Buffers. The extension is both optional and experimental, meaning
 // ABI-breaking and other incompatible changes may be introduced at any time.
 
-#define PJRT_API_RAW_BUFFER_EXTENSION_VERSION 2
+#define PJRT_API_RAW_BUFFER_EXTENSION_VERSION 3
 #define _PJRT_API_STRUCT_FIELD(fn_type) fn_type* fn_type
 
 typedef struct PJRT_RawBuffer_Extension {
@@ -130,9 +155,9 @@ typedef struct PJRT_RawBuffer_Extension {
   _PJRT_API_STRUCT_FIELD(PJRT_RawBuffer_CopyRawHostToDevice);
   _PJRT_API_STRUCT_FIELD(PJRT_RawBuffer_CopyRawDeviceToHost);
   _PJRT_API_STRUCT_FIELD(PJRT_RawBuffer_GetHostPointer);
+  _PJRT_API_STRUCT_FIELD(PJRT_Client_DefineBuffer);
 } PJRT_RawBuffer_Extension;
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_RawBuffer_Extension,
-                          PJRT_RawBuffer_GetHostPointer);
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_RawBuffer_Extension, PJRT_Client_DefineBuffer);
 
 #undef _PJRT_API_STRUCT_FIELD
 
