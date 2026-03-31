@@ -157,6 +157,116 @@ ENTRY entry {
   }
 }
 
+// Test that we expand BatchNormInference.
+TEST_F(BatchNormExpanderTest, BatchNormInference) {
+  const char* module_str = R"(
+HloModule module
+ENTRY entry {
+  %param.0 = f32[2,2,2,2] parameter(0)
+  %param.1 = f32[2] parameter(1)
+  %param.2 = f32[2] parameter(2)
+  %param.3 = f32[2] parameter(3)
+  %param.4 = f32[2] parameter(4)
+  ROOT %batch-norm-inference = f32[2,2,2,2]
+    batch-norm-inference(f32[2,2,2,2] %param.0, f32[2] %param.1, f32[2] %param.2,
+                         f32[2] %param.3, f32[2] %param.4),
+    epsilon=0.001, feature_index=3
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  BatchNormExpander rewriter(/*rewrite_training_op=*/false,
+                             /*rewrite_inference_op=*/true,
+                             /*rewrite_grad_op=*/false);
+  ASSERT_TRUE(rewriter.Run(m.get()).value());
+  // BatchNormInference expands to a single result (not a tuple).
+  EXPECT_NE(m->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kBatchNormInference);
+}
+
+TEST_F(BatchNormExpanderTest, BatchNormInferenceSharding) {
+  const char* module_str = R"(
+HloModule module
+ENTRY entry {
+  %param.0 = f32[8,4] parameter(0)
+  %param.1 = f32[4] parameter(1)
+  %param.2 = f32[4] parameter(2)
+  %param.3 = f32[4] parameter(3)
+  %param.4 = f32[4] parameter(4)
+  ROOT %batch-norm-inference = f32[8,4]
+    batch-norm-inference(f32[8,4] %param.0, f32[4] %param.1, f32[4] %param.2,
+                         f32[4] %param.3, f32[4] %param.4),
+    epsilon=0.001, feature_index=1, sharding={maximal device=1}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  BatchNormExpander rewriter(/*rewrite_training_op=*/false,
+                             /*rewrite_inference_op=*/true,
+                             /*rewrite_grad_op=*/false);
+  ASSERT_TRUE(rewriter.Run(m.get()).value());
+
+  for (auto* instruction : m->entry_computation()->instructions()) {
+    if (instruction->opcode() == HloOpcode::kParameter) {
+      continue;
+    }
+    auto device = instruction->sharding_unique_device();
+    ASSERT_TRUE(device);
+    EXPECT_EQ(*device, 1);
+  }
+}
+
+TEST_F(BatchNormExpanderTest, BatchNormGradSharding) {
+  const char* module_str = R"(
+HloModule module
+ENTRY entry {
+  %param.0 = f32[8,4] parameter(0)
+  %param.1 = f32[4] parameter(1)
+  %param.2 = f32[4] parameter(2)
+  %param.3 = f32[4] parameter(3)
+  %param.4 = f32[8,4] parameter(4)
+  ROOT %batch-norm-grad = (f32[8,4], f32[4], f32[4])
+    batch-norm-grad(f32[8,4] %param.0, f32[4] %param.1, f32[4] %param.2,
+                    f32[4] %param.3, f32[8,4] %param.4),
+    epsilon=0.001, feature_index=1, sharding={{maximal device=1},{maximal device=1},{maximal device=1}}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  BatchNormExpander rewriter(/*rewrite_training_op=*/false,
+                             /*rewrite_inference_op=*/false,
+                             /*rewrite_grad_op=*/true);
+  ASSERT_TRUE(rewriter.Run(m.get()).value());
+
+  for (auto* instruction : m->entry_computation()->instructions()) {
+    if (instruction->opcode() == HloOpcode::kParameter) {
+      continue;
+    }
+    auto device = instruction->sharding_unique_device();
+    ASSERT_TRUE(device);
+    EXPECT_EQ(*device, 1);
+  }
+}
+
+TEST_F(BatchNormExpanderTest, DisabledFlagsAreNoop) {
+  const char* module_str = R"(
+HloModule module
+ENTRY entry {
+  %param.0 = f32[2,2,2,2] parameter(0)
+  %param.1 = f32[2] parameter(1)
+  %param.2 = f32[2] parameter(2)
+  ROOT %batch-norm-training = (f32[2,2,2,2], f32[2], f32[2])
+    batch-norm-training(f32[2,2,2,2] %param.0, f32[2] %param.1, f32[2] %param.2),
+    epsilon=0.001, feature_index=3
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(module_str));
+  // All rewrite flags disabled — pass should not change the module.
+  BatchNormExpander rewriter(/*rewrite_training_op=*/false,
+                             /*rewrite_inference_op=*/false,
+                             /*rewrite_grad_op=*/false);
+  EXPECT_FALSE(rewriter.Run(m.get()).value());
+  EXPECT_EQ(m->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kBatchNormTraining);
+}
+
 TEST_F(BatchNormExpanderTest, Execution) {
   const char* module_str = R"(
 HloModule module
