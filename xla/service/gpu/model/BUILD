@@ -756,6 +756,7 @@ cc_library(
     tags = [
         "gpu",
         "manual",
+        "cuda-only",
     ],
     deps = [
         ":hlo_op_profile_proto_cc",
