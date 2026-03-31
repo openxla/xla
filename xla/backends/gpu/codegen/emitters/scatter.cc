@@ -55,7 +55,6 @@ limitations under the License.
 #include "xla/codegen/emitters/utils.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
-#include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -103,7 +102,6 @@ using mlir::func::FuncOp;
 using mlir::func::ReturnOp;
 using primitive_util::IsUnsignedIntegralType;
 
-constexpr int64_t kGpuGridDims = 6;
 constexpr int64_t kNumWarpsPerBlock = 4;
 constexpr int64_t kMaxVectorizedBits = 128;
 constexpr int64_t kScatterOperandIndex = 0;
@@ -431,9 +429,10 @@ void ScatterWithDistributedUpdates::ComputeIndexing(
   if (indices_map) {
     // Create a map from scatter update to scatter indices.
     *indices_map = IndexingMap{
-        SymbolicMap::Get(mlir_context, kGpuGridDims, /*num_symbols=*/1,
-                         {scatter_update_map.GetSymbolicMap().GetResult(0),
-                          CreateSymbolExpr(0, kGpuGridDims, mlir_context)}),
+        AffineMap::get(6, 1,
+                       {scatter_update_map.GetAffineMap().getResult(0),
+                        getAffineSymbolExpr(0, mlir_context)},
+                       mlir_context),
         DimVarsFromGPUGrid({num_warps_ * warp_size_, 1, 1, num_blocks_, 1, 1}),
         RangeVarsFromTensorSizes({description_.index_vector_length}),
         /*rt_vars=*/{}};
@@ -480,8 +479,8 @@ void EmitNaiveImplementation(ImplicitLocOpBuilder& b,
           .scatter_dims_to_operand_dims();
   MLIRContext* mlir_context = b.getContext();
   auto thread_id_to_update_id_map = IndexingMap(
-      SymbolicMap::Get(mlir_context, kGpuGridDims, /*num_symbols=*/0,
-                       {updates_map.GetSymbolicMap().GetResult(0)}),
+      AffineMap::get(6, 0, {updates_map.GetAffineMap().getResult(0)},
+                     mlir_context),
       updates_map.GetDimVars(),
       /*range_vars = */ {}, /*rt vars = */ {});
   Value thread_id_to_index_id_value =
@@ -676,13 +675,13 @@ absl::Status ScatterWithDistributedIndices::EmitEntryFunctionImpl(
   MLIRContext* mlir_context = b.getContext();
 
   auto thread_id_to_update_id_map = IndexingMap(
-      SymbolicMap::Get(mlir_context, kGpuGridDims, /*num_symbols=*/2,
-                       {indices_map.GetSymbolicMap().GetResult(0)}),
+      AffineMap::get(6, 2, {indices_map.GetAffineMap().getResult(0)},
+                     mlir_context),
       indices_map.GetDimVars(),
       /*range_vars = */
       {indices_map.GetRangeVars().begin(),
        indices_map.GetRangeVars().begin() + 2},
-      /*rt vars = */ {}, indices_map.GetSymbolicConstraints());
+      /*rt vars = */ {}, indices_map.GetConstraints());
 
   // Convert index_id_loop and index_vector_id to dimension variables.
   IndexingMap slice_indexing =
