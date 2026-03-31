@@ -532,7 +532,7 @@ absl::Status ProcessWindowedEinsumLoopForActivationCaching(
 }
 
 bool HasReplicaGroups(const HloInstruction* inst) {
-  return inst->replica_groups().size() > 0;
+  return !inst->replica_groups().empty();
 }
 
 bool ShouldAddToChain(const HloInstruction* inst) {
@@ -709,7 +709,7 @@ absl::Status PostProcessUnrolledLoop(HloInstruction* loop, int64_t stream_id) {
       partial_accumulations.push_back(partial_dot);
     }
   }
-  if (partial_accumulations.size() > 0 &&
+  if (!partial_accumulations.empty() &&
       absl::StrContains(while_body->name(),
                         WindowedEinsumHandler::kWindowedEinsumAgLoopName)) {
     TF_RETURN_IF_ERROR(

@@ -209,7 +209,7 @@ absl::StatusOr<HloComputation*> CreateFusionBody(
 
   // Create a tuple if the hero is a tuple to make sure there's a buffer
   // assigned for each of the elements. Make sure the tuple is not nil first.
-  if (hero->shape().IsTuple() && hero->shape().tuple_shapes().size() > 0) {
+  if (hero->shape().IsTuple() && !hero->shape().tuple_shapes().empty()) {
     TF_RETURN_IF_ERROR(
         CreateRootTuple(hero, builder, sliced_user_paths, instr_mapping));
   }

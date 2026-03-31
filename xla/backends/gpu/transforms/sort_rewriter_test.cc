@@ -641,10 +641,10 @@ ENTRY %main {
     if (is_cuda) {
       return {TestGpuDeviceInfo::RTXA6000DeviceInfo(),
               TestGpuDeviceInfo::H100SXMDeviceInfo()};
-    } else {
-      return {TestGpuDeviceInfo::AMDMI210DeviceInfo(),
-              TestGpuDeviceInfo::AMDRX7900DeviceInfo()};
     }
+    return {TestGpuDeviceInfo::AMDMI210DeviceInfo(),
+            TestGpuDeviceInfo::AMDRX7900DeviceInfo()};
+   
   };
 
   for (const auto& device_desc : device_list()) {

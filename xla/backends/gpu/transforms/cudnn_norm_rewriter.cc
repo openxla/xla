@@ -108,8 +108,8 @@ absl::StatusOr<int64_t> CConstant(
     se::CudaComputeCapability cuda_compute_capability) {
   if (cuda_compute_capability.major == se::CudaComputeCapability::kAmpere) {
     return 32 * 128;
-  } else if (cuda_compute_capability.major ==
-             se::CudaComputeCapability::kHopper) {
+  }
+  if (cuda_compute_capability.major == se::CudaComputeCapability::kHopper) {
     return 32 * 144;
   }
   return xla::Internal("Norm kernels require Ampere or Hopper architecture.");

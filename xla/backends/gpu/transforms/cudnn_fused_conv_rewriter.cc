@@ -109,10 +109,10 @@ bool IsNonDepthwiseConvCustomCall(const HloInstruction* instr) {
 bool ShouldUseCudnnRuntimeFusion(const DebugOptions& debug_opts,
                                  se::GpuComputeCapability cc) {
   const auto* cuda_cc = cc.cuda_compute_capability();
-  if (cuda_cc != nullptr)
+  if (cuda_cc != nullptr) {
     return debug_opts.xla_gpu_use_runtime_fusion() && cuda_cc->IsAtLeast(7, 5);
-  else
-    return true;
+  }
+  return true;
 }
 
 bool IsSuitableForCudnnRuntimeFusion(HloInstruction* conv) {
@@ -1454,7 +1454,9 @@ absl::StatusOr<bool> FuseConvertToF16(HloComputation* comp) {
 
 absl::StatusOr<bool> FuseConvertToS8(HloComputation* comp,
                                      se::GpuComputeCapability cc) {
-  if (cc.IsRocm()) return false;
+  if (cc.IsRocm()) {
+    return false;
+  }
   bool changed = false;
   for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
     HloInstruction* gte = nullptr;

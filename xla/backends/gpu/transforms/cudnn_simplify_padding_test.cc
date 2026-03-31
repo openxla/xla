@@ -216,7 +216,9 @@ TEST_F(CudnnSimplifyPaddingTest, PaddedConstantWeightIsNotLargeEnough) {
     SetConstantValue<int8_t>(
         weights, [](absl::Span<const int64_t> dims, int8_t old_val) -> int8_t {
           // The sixth feature dimension (i.e. index 5) is only partially 0.
-          if (dims[3] < 5 /*|| (dims[3] == 5 && dims[2] > 1)*/) return 0;
+          if (dims[3] < 5 /*|| (dims[3] == 5 && dims[2] > 1)*/) {
+            return 0;
+          }
           return 1;
         });
   }
