@@ -2329,6 +2329,7 @@ xla_test(
 xla_test(
     name = "pad_test",
     srcs = ["pad_test.cc"],
+    args = ["--xla_tpu_sparse_core_offloading_options="],
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2472,6 +2473,7 @@ xla_test(
 xla_test(
     name = "reshape_test",
     srcs = ["reshape_test.cc"],
+    args = ["--xla_tpu_sparse_core_offloading_options="],
     shard_count = 30,
     deps = [
         ":client_library_test_runner_mixin",
