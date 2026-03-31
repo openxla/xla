@@ -91,6 +91,7 @@ xla_cc_test(
         "//xla/hlo/parser:hlo_parser",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
+        "//xla/stream_executor:semantic_version",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
