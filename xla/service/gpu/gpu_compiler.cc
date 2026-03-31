@@ -3375,8 +3375,6 @@ GpuCompiler::GetAutotunerBackends(
     disabled_autotune_backends.push_back(autotuner::Backend::CUBLASLT_FISSION);
     // NOTE(ROCm): Do not disable hipblaslt backends even with
     // xla_gpu_enable_cublaslt=false since we need them for fp8
-    // disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT);
-    // disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT_FISSION);
   } else {
     // Breaks xla/backends/gpu/transforms:gemm_rewriter_test_b200, it requires
     // CUBLAS and CUBLASLT both to be available. TODO: fix tests and uncomment.
