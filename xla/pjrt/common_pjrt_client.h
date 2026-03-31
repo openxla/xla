@@ -397,6 +397,7 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
           output_layouts;
       std::optional<std::vector<OpSharding>> parameter_shardings;
       std::optional<std::vector<OpSharding>> output_shardings;
+      std::vector<absl::string_view> parameter_memory_kinds;
       std::vector<absl::string_view> output_memory_kinds;
       absl::StatusOr<std::string> fingerprint;
       HloInputOutputAliasConfig input_output_alias_config;
@@ -533,6 +534,14 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
       return extras_->parameter_shardings;
     }
     return GetExecutable()->GetParameterShardings();
+  }
+  absl::StatusOr<std::vector<std::vector<absl::string_view>>>
+  GetParameterMemoryKinds() const override {
+    if (extras_) {
+      return std::vector<std::vector<absl::string_view>>(
+          {extras_->parameter_memory_kinds});
+    }
+    return GetExecutable()->GetParameterMemoryKinds();
   }
   absl::StatusOr<std::vector<std::vector<absl::string_view>>>
   GetOutputMemoryKinds() const override {

@@ -286,6 +286,18 @@ absl::StatusOr<CommonPjRtLoadedExecutable::DispatchInfo> InferDispatchInfo(
                         tuple_inputs));
 
   result.extras->fingerprint = "";
+  result.extras->parameter_memory_kinds.reserve(
+      result.parameter_memory_space_kind_ids.size());
+  for (size_t i = 0; i < result.parameter_memory_space_kind_ids.size(); ++i) {
+    auto* device = result.addressable_devices[0];
+    TF_ASSIGN_OR_RETURN(auto* memory_space, device->default_memory_space());
+    for (auto* ms : device->memory_spaces()) {
+      if (ms->kind_id() == result.parameter_memory_space_kind_ids[i]) {
+        memory_space = ms;
+      }
+    }
+    result.extras->parameter_memory_kinds.push_back(memory_space->kind());
+  }
   result.extras->output_memory_kinds.reserve(
       result.output_memory_space_kind_ids.size());
   for (size_t i = 0; i < result.output_memory_space_kind_ids.size(); ++i) {
