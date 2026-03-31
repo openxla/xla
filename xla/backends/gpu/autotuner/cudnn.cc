@@ -136,7 +136,10 @@ bool IsSupportedCudnnFusion(const HloInstruction& instr,
     hero = hlo_query::GetFirstInstructionWithOpcode(*computation,
                                                     HloOpcode::kScaledDot);
   }
-
+  if (hero == nullptr) {
+    hero = hlo_query::GetFirstInstructionWithOpcode(*computation,
+                                                    HloOpcode::kRaggedDot);
+  }
   if (hero == nullptr) {
     VLOG(1) << "Fusion does not contain a dot or convolution.";
     return false;
@@ -149,6 +152,8 @@ bool IsSupportedCudnnFusion(const HloInstruction& instr,
     algorithm = conv->precision_config().algorithm();
   } else if (auto* scaled_dot = DynCast<HloScaledDotInstruction>(hero)) {
     algorithm = scaled_dot->precision_config().algorithm();
+  } else if (auto* ragged_dot = DynCast<HloRaggedDotInstruction>(hero)) {
+    algorithm = ragged_dot->precision_config().algorithm();
   }
 
   if (!algorithm_util::IsSupportedByCudnn(algorithm)) {
@@ -161,7 +166,8 @@ bool IsSupportedCudnnFusion(const HloInstruction& instr,
     return false;
   }
 
-  if (hero->opcode() == HloOpcode::kConvolution) {
+  if (hero->opcode() == HloOpcode::kConvolution ||
+      hero->opcode() == HloOpcode::kRaggedDot) {
     return true;
   }
 

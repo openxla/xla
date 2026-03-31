@@ -883,7 +883,11 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
             .debug_options()
             .xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
         module->config().debug_options().xla_gpu_enable_cublaslt();
-    if (has_grouped_gemm) {
+    const bool ragged_dot_fusion_enabled =
+        module->config()
+            .debug_options()
+            .xla_gpu_experimental_use_ragged_dot_fusion();
+    if (has_grouped_gemm || ragged_dot_fusion_enabled) {
       // At the moment, if Gpublaslt support is available, it is prefered
       // over triton fused ragged-dot. Therefore, we skip this pass and
       // does not fused the ragged-dot op if the Gpublaslt support

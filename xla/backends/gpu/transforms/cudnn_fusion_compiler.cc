@@ -191,6 +191,84 @@ struct Result {
   std::optional<std::vector<std::pair<int64_t, int64_t>>> slices;
 };
 
+class RaggedDotDimensionAdapter {
+  explicit RaggedDotDimensionAdapter(const HloInstruction& ragged_dot,
+                                RaggedDotDimensionNumbers dums)
+      : ragged_dot_(ragged_dot), dums_(dums) {}
+
+ public:
+  const HloInstruction& ragged_dot_;
+
+  static absl::StatusOr<std::optional<RaggedDotDimensionAdapter>> Create(
+      const HloFusionInstruction& fusion, const HloComputation& computation) {
+    const HloInstruction* maybe_ragged_dot = hlo_query::GetFirstInstructionWithOpcode(
+        computation, HloOpcode::kRaggedDot);
+    if (maybe_ragged_dot == nullptr) {
+      VLOG(3) << "Not a ragged dot fusion.";
+      return std::nullopt;
+    }
+
+    const RaggedDotDimensionNumbers& dnums =
+        DynCast<HloRaggedDotInstruction>(maybe_ragged_dot)
+            ->ragged_dot_dimension_numbers();
+
+    return RaggedDotDimensionAdapter{*maybe_ragged_dot, dnums};
+  }
+
+  std::optional<Result> DimensionsAndStrides(const HloInstruction& hlo) {
+    // placeholder FP32 data type here, it is not used
+    auto desc = se::dnn::TensorDescriptor::For(
+        se::dnn::DataType::kFloat, hlo.shape().dimensions(),
+        hlo.shape().layout().minor_to_major());
+    std::vector<int64_t> dims = desc.dimensions();
+    std::vector<int64_t> strides = desc.GetLogicalStrides();
+
+    std::vector<int64_t> fixed_dims;
+    std::vector<int64_t> fixed_strides;
+
+    bool is_output = (&hlo == &ragged_dot_);
+    int operand_idx = -1;
+
+    if (!is_output) {
+      operand_idx = ragged_dot_.operand_index(&hlo);
+    }
+    if (is_output || operand_idx == 0) {
+      // input & output
+      fixed_dims = {1, dims[0], dims[1]};
+      fixed_strides = {dims[0] * strides[0], strides[0], strides[1]};
+    } else if (operand_idx == 1) {
+      // weight
+      const auto& dot_dims = dums_.dot_dimension_numbers();
+      const int rhs_contracting_dim = dot_dims.rhs_contracting_dimensions()[0];
+      const int rhs_non_contracting_dim =
+          GetNonContractingDims(ragged_dot_.operand(1)->shape(),
+                                dums_.rhs_group_dimensions(),
+                                dot_dims.rhs_contracting_dimensions())
+              .value()[0];
+      fixed_dims = {dims[0], dims[rhs_contracting_dim],
+                    dims[rhs_non_contracting_dim]};
+      // fixed_strides = {strides[0], strides[1], strides[2]};
+      // fixed_strides = {strides[0], 1, dims[1]};
+      fixed_strides = {strides[0], strides[rhs_contracting_dim],
+                       strides[rhs_non_contracting_dim]};
+    } else if (operand_idx == 2) {
+      // group size
+      fixed_dims = {dims[0], 1, 1};
+      fixed_strides = {1, 1, 1};
+    } else {
+      return std::nullopt;
+    }
+
+    Result result;
+    result.sizes = fixed_dims;
+    result.strides = fixed_strides;
+    return result;
+  }
+
+ private:
+  RaggedDotDimensionNumbers dums_;
+};
+
 class GemmDimensionAdapter {
   explicit GemmDimensionAdapter(const HloInstruction& dot,
                                 TritonFusionAnalysis analysis)
@@ -552,8 +630,12 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
                       GemmDimensionAdapter::Create(computation));
   TF_ASSIGN_OR_RETURN(std::optional<ConvDimensionAdapter> conv_adapter,
                       ConvDimensionAdapter::Create(fusion, computation));
-  if (!gemm_adapter.has_value() && !conv_adapter.has_value()) {
-    VLOG(3) << "No dot or conv found inside cudnn fusion.";
+  TF_ASSIGN_OR_RETURN(
+      std::optional<RaggedDotDimensionAdapter> ragged_dot_adapter,
+      RaggedDotDimensionAdapter::Create(fusion, computation));
+  if (!gemm_adapter.has_value() && !conv_adapter.has_value() &&
+      !ragged_dot_adapter.has_value()) {
+    VLOG(3) << "No dot or conv or ragged_dot found inside cudnn fusion.";
     return std::nullopt;
   }
 
@@ -593,6 +675,20 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
       // inputs to conv, for example, bias add after conv.
       const std::optional<Result> dims =
           conv_adapter->DimensionsAndStrides(*parameter);
+      VLOG(3) << "parameter: " << parameter->ToString() << "\n";
+      if (!dims.has_value()) {
+        VLOG(3) << "Unsupported dimensions.";
+        return std::nullopt;
+      }
+      if (!add_parameter(*parameter, *dims)) {
+        return std::nullopt;
+      }
+    }
+  } else if (ragged_dot_adapter.has_value()) {
+    for (const HloInstruction* parameter :
+         computation.parameter_instructions()) {
+      const std::optional<Result> dims =
+          ragged_dot_adapter->DimensionsAndStrides(*parameter);
       VLOG(3) << "parameter: " << parameter->ToString() << "\n";
       if (!dims.has_value()) {
         VLOG(3) << "Unsupported dimensions.";
@@ -811,6 +907,20 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
       const std::optional<Result> dims =
           conv_adapter->DimensionsAndStrides(*hlo);
       hlo_to_cudnn[hlo]->set_dim(dims->sizes);
+    } else if (HloPredicateIsOp<HloOpcode::kRaggedDot>(hlo)) {
+      const auto compute_dtype =
+          GetComputeDataType(hlo->shape().element_type());
+      if (!compute_dtype.has_value()) {
+        return std::nullopt;
+      }
+      auto moe_grouped_matmul_attr =
+          graph::Moe_grouped_matmul_attributes()
+              .set_mode(fe::MoeGroupedMatmulMode_t::NONE)
+              .set_compute_data_type(compute_dtype.value())
+              .set_top_k(1);
+      hlo_to_cudnn[hlo] =
+          graph.moe_grouped_matmul(operand(0), operand(1), operand(2), nullptr,
+                                   nullptr, moe_grouped_matmul_attr);
     } else {
       VLOG(3) << "Unimplemented operation.";
       return std::nullopt;
@@ -835,11 +945,16 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
     output = instructions.back()->operand(0);
   }
 
-  const std::optional<Result> dims =
-      conv_adapter.has_value()
-          ? conv_adapter->DimensionsAndStrides(*output)
-          : gemm_adapter->DimensionsAndStrides(
-                *output, TritonFusionAnalysis::Scope::OUTPUT);
+  std::optional<Result> dims = std::nullopt;
+  if (conv_adapter.has_value())
+    dims = conv_adapter->DimensionsAndStrides(*output);
+  else if (ragged_dot_adapter.has_value())
+    dims = ragged_dot_adapter->DimensionsAndStrides(*output);
+  else {
+    dims = gemm_adapter->DimensionsAndStrides(
+        *output, TritonFusionAnalysis::Scope::OUTPUT);
+  }
+
   if (!dims.has_value()) {
     VLOG(3) << "Unsupported dimensions.";
     return std::nullopt;

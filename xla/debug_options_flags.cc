@@ -2838,6 +2838,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_use_ragged_dot_grouped_gemm(),
       "If true, use grouped GEMM (hipBLASLt) for ragged dot operations."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_use_ragged_dot_fusion",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_use_ragged_dot_fusion),
+      debug_options->xla_gpu_experimental_use_ragged_dot_fusion(),
+      "If true, use cuDNN fusion for ragged dot operations."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_scaled_dot_with_triton",
       bool_setter_for(
           &DebugOptions::set_xla_gpu_experimental_scaled_dot_with_triton),
