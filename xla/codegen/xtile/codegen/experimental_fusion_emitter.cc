@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -88,6 +89,30 @@ namespace ge = ::xla::gpu::experimental;
 TensorValue Iota(mlir::ImplicitLocOpBuilder& b, int32_t limit) {
   auto type = mlir::RankedTensorType::get(limit, b.getI32Type());
   return stablehlo::IotaOp::create(b, type, /*iota_dimension=*/0);
+}
+
+template <typename T>
+ArrayRef<T> MakeArrayRef(const absl::Span<const T> span) {
+  return ArrayRef(span.data(), span.size());
+}
+
+absl::StatusOr<TensorValue> EmitBroadcast(
+    mlir::ImplicitLocOpBuilder& b,
+    const ge::TiledHloInstruction& tiled_broadcast,
+    absl::flat_hash_map<const ge::TiledHloInstruction*, TensorValue>& values) {
+  ASSIGN_OR_RETURN(SmallVector<int64_t> input_tile_shape,
+                   tiled_broadcast.operand(0)->tile().GetStaticTileSizes());
+  ASSIGN_OR_RETURN(SmallVector<int64_t> output_tile_shape,
+                   tiled_broadcast.tile().GetStaticTileSizes());
+  if (input_tile_shape.empty() && output_tile_shape.empty()) {
+    return values[tiled_broadcast.operand(0)];
+  }
+  CHECK(!output_tile_shape.empty());
+
+  TensorValue input = values[tiled_broadcast.operand(0)];
+  return xtile::BroadcastInDims(
+      b, input, output_tile_shape,
+      MakeArrayRef(tiled_broadcast.hlo()->dimensions()));
 }
 
 absl::StatusOr<TensorValue> EmitIota(mlir::ImplicitLocOpBuilder& b, Value pid,
@@ -267,6 +292,9 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
       auto padded_tile_sizes = GetPaddedTileSizes(static_tile_sizes);
       return EmitTranspose(b, padded_tile_sizes, hlo->dimensions(),
                            mlir::cast<TensorValue>(operands[0]));
+    }
+    case HloOpcode::kBroadcast: {
+      return EmitBroadcast(b, tiled_hlo, values);
     }
     case HloOpcode::kConstant: {
       if (ShapeUtil::IsEffectiveScalar(hlo->shape())) {

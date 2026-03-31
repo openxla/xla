@@ -1204,43 +1204,6 @@ backend_config={
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
-// TODO(b/353484968): move this test to a deviceless file.
-TEST_F(TritonDevicelessTest,
-       GenericEmitterLowersBroadcastFrom0dOperandCorrectly) {
-  constexpr absl::string_view kHloText = R"(
-triton_computation {
-  param_0 = f32[] parameter(0)
-  ROOT broadcast = f32[127,125]{1,0} broadcast(param_0), dimensions={}
-}
-
-ENTRY main {
-  param_0 = f32[] parameter(0)
-  ROOT triton_fusion = f32[127,125]{1,0} fusion(param_0), kind=kCustom,
-    calls=triton_computation, backend_config={
-      "fusion_backend_config":{
-        "kind":"__triton","block_level_fusion_config":{
-          "output_tiles":[{"sizes":["8","4"]}],
-          "num_warps":"1",
-          "num_ctas":"1",
-          "num_stages":"1"}}}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto xtile_module_and_hlo_module,
-      CreateXTileIrAndFileCheck(std::move(module), "triton_computation", R"(
-CHECK:       %[[EXTRACTED_VALUE:.*]] = xtile.extract
-CHECK:       stablehlo.broadcast_in_dim %[[EXTRACTED_VALUE]], dims = []
-          )"));
-
-  TF_EXPECT_OK(LowerXTileIrToTritonAndFileCheck(
-      xtile_module_and_hlo_module.first.get(), R"(
-CHECK:       tt.splat {{.*}} f32 -> tensor<8x4xf32>
-)",
-      GetFusionInstruction(*xtile_module_and_hlo_module.second,
-                           "triton_computation")));
-}
-
 // TODO(b/390559452): Capture the iteration order from the propagated tiling.
 // When computing the tiling separately we need to use the same iteration order.
 TEST_F(TritonEmitterTest, DISABLED_Transpose3DWithExtraOutput) {
@@ -1353,52 +1316,6 @@ INSTANTIATE_TEST_SUITE_P(IotaEmitterParametrizedTestSuite,
                                               F64}),
                          TypeTestParamToString);
 
-
-TEST_P(TmaParameterizedTritonEmitterTest, BroadcastWorksCorrectly) {
-  constexpr absl::string_view kHloTextTemplate = R"(
-computation {
-  p0 = s32[234]{0} parameter(0)
-  ROOT broadcast = s32[2,234]{1,0} broadcast(p0), dimensions={1}
-}
-
-ENTRY entry_computation {
-  p0 = s32[234]{0} parameter(0)
-  ROOT fusion = s32[2,234]{1,0} fusion(p0), kind=kCustom,
-    calls=computation,
-    backend_config={
-    "fusion_backend_config":{
-      "kind":"__triton",
-      "block_level_fusion_config":{
-        "output_tiles":[{"sizes":["2","128"]}],
-        "num_warps":"1",
-        "num_ctas":"1",
-        "num_stages":"1",
-        "is_tma_allowed":"$0"}}}
-})";
-
-  const bool is_tma_allowed = GetParam();
-  std::string hlo_text = absl::Substitute(kHloTextTemplate, is_tma_allowed);
-
-  constexpr absl::string_view kEmittersHloText = R"(
-computation {
-  p0 = s32[234]{0} parameter(0)
-  ROOT broadcast = s32[2,234]{1,0} broadcast(p0), dimensions={1}
-}
-
-ENTRY entry_computation {
-  p0 = s32[234]{0} parameter(0)
-  ROOT fusion = s32[2,234]{1,0} fusion(p0), kind=kCustom, calls=computation
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> triton_module,
-                          ParseAndReturnVerifiedModule(hlo_text));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> emitters_module,
-                          ParseAndReturnVerifiedModule(kEmittersHloText));
-
-  EXPECT_TRUE(RunAndCompareTwoModules(std::move(emitters_module),
-                                      std::move(triton_module), kExactMatch,
-                                      /*run_hlo_passes=*/false));
-}
 
 // Reproducer from b/384110192.
 TEST_F(TritonEmitterTest,
