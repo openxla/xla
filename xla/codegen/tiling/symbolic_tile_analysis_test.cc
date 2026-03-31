@@ -1223,6 +1223,14 @@ TEST(GetValidTilingsTest, ReturnsPowersOfTwoAndTheDimSizeForRankOne) {
               IsOkAndHolds(TilingVector({{1}, {2}, {4}, {8}, {11}})));
 }
 
+TEST(GetValidTilingsTest, HandlesLargeDimensions) {
+  // Test case for dimension larger than 2**32.
+  TF_ASSERT_OK_AND_ASSIGN(auto tilings_large,
+                          GetFlatTilingsForInputSpace({8589934592LL}));
+  ASSERT_GT(tilings_large.size(), 0);
+  EXPECT_EQ(tilings_large.back()[0], 8589934592LL);
+}
+
 TEST(GetValidTilingsTest, CreatesCartesianProductForRankTwo) {
   EXPECT_THAT(GetFlatTilingsForInputSpace({3, 4}),
               IsOkAndHolds(TilingVector({{1, 1},
