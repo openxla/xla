@@ -120,10 +120,7 @@ TEST_F(CollectiveCombinerUtilsTest,
 
   hlo_query::ForEachInstructionWithPred(
       *module,
-      [](const HloInstruction* instr) {
-        return instr->opcode() != HloOpcode::kAllReduce &&
-               instr->opcode() != HloOpcode::kWhile;
-      },
+      HloPredicateIsNotOp<HloOpcode::kAllReduce, HloOpcode::kWhile>,
       [](HloInstruction* instr) {
         EXPECT_FALSE(instr->backend_config<GpuBackendConfig>()
                          ->collective_backend_config()
@@ -213,10 +210,7 @@ TEST_F(CollectiveCombinerUtilsTest,
 
   hlo_query::ForEachInstructionWithPred(
       *module,
-      [](const HloInstruction* instr) {
-        return instr->opcode() != HloOpcode::kAllReduce &&
-               instr->opcode() != HloOpcode::kWhile;
-      },
+      HloPredicateIsNotOp<HloOpcode::kAllReduce, HloOpcode::kWhile>,
       [](HloInstruction* instr) {
         EXPECT_FALSE(instr->backend_config<GpuBackendConfig>()
                          ->collective_backend_config()
