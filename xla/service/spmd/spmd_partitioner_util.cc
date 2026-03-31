@@ -685,9 +685,7 @@ bool AxesOverlap(absl::Span<const AxisRef> axes1,
 
 std::optional<HloSharding> PartialReplicateReshardCompatibleSharding(
     const HloSharding& partial_sharding, const HloSharding& target_sharding) {
-  if (!(partial_sharding.UseNamedShardingLeaf()
-            ? partial_sharding.HasPartialReplication()
-            : partial_sharding.ReplicateOnLastTileDim())) {
+  if (!partial_sharding.HasPartialReplication()) {
     return std::nullopt;
   }
   if (partial_sharding.num_devices() != target_sharding.num_devices()) {
