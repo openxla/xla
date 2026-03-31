@@ -1583,8 +1583,6 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCollectivePermute(
           /*destination_buffer=*/
           ShapedSlice{result_slice, result_buffer_shape},
           /*mem_size=*/ShapeUtil::ByteSizeOf(operand_shape)));
-      // Signal that start thunk not created (degenerate) with nullptr.
-      hlo_async_executions_.try_emplace(instr, nullptr);
     } else {
       const CollectiveThunk::Buffer buffer = {
           /*element_count=*/ShapeUtil::ElementsIn(operand_shape),
