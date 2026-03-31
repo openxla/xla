@@ -28,7 +28,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
-#include "xla/service/cpu/small_while_loop_hoisting_pass.h"
 #include "xla/service/hlo_module_config.h"
 
 namespace xla::cpu::options {
@@ -88,7 +87,7 @@ absl::StatusOr<int64_t> SmallWhileLoopByteThreshold(
 
   auto itr = extra_options_map.find(kSmallWhileLoopByteThreshold);
   if (itr == extra_options_map.end()) {
-    return xla::cpu::transforms::kSmallWhileLoopByteLimit;  // Default value.
+    return 1024;  // Default value.
   }
 
   int64_t byte_threshold;

@@ -25,9 +25,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 namespace xla::cpu {
-namespace transforms {
-constexpr int kSmallWhileLoopByteLimit = 1024;
-}
 
 // Hoists small while loops into a separate function.
 // This pass enables the thunk emitter to emit small while loops as a single

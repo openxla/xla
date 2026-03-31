@@ -36,9 +36,7 @@ namespace {
 class SmallWhileLoopHoistingPassTest : public HloHardwareIndependentTestBase {
  protected:
   absl::StatusOr<bool> RunSmallWhileLoopHoistingPass(HloModule* module) {
-    return cpu::SmallWhileLoopHoistingPass(
-               cpu::transforms::kSmallWhileLoopByteLimit)
-        .Run(module);
+    return cpu::SmallWhileLoopHoistingPass(256).Run(module);
   }
 };
 
