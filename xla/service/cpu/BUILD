@@ -1277,6 +1277,7 @@ cc_library(
     srcs = ["cpu_options.cc"],
     hdrs = ["cpu_options.h"],
     deps = [
+        ":small_while_loop_hoisting_pass",
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
