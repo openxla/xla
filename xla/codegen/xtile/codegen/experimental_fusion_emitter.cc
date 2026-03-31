@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/analysis/indexing_map_serialization.h"  // IWYU pragma: keep
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -87,6 +88,45 @@ namespace ge = ::xla::gpu::experimental;
 TensorValue Iota(mlir::ImplicitLocOpBuilder& b, int32_t limit) {
   auto type = mlir::RankedTensorType::get(limit, b.getI32Type());
   return stablehlo::IotaOp::create(b, type, /*iota_dimension=*/0);
+}
+
+absl::StatusOr<TensorValue> EmitIota(mlir::ImplicitLocOpBuilder& b, Value pid,
+                                     const ge::TiledHloInstruction& tiled_iota,
+                                     const ::xla::IndexingMap& schedule) {
+  const HloIotaInstruction* hlo_iota =
+      ::xla::Cast<HloIotaInstruction>(tiled_iota.hlo());
+  int64_t iota_dim = hlo_iota->iota_dimension();
+
+  ASSIGN_OR_RETURN(SmallVector<int64_t> padded_tile_sizes,
+                   tiled_iota.tile().GetStaticTileSizes());
+
+  // We can treat iota more or less as a parameter load, except that we need to
+  // generate the right values in the right place as opposed to loading them.
+  ASSIGN_OR_RETURN(TileInfo tile_info,
+                   TileInfo::Construct(b, pid, tiled_iota, schedule));
+
+  // First, stride as needed between the iota components.
+  Value range = arith::MulIOp::create(
+      b, Iota(b, padded_tile_sizes[iota_dim]),
+      xtile::Splat(
+          b, CreateConst(b, b.getI32Type(), tile_info.tile_strides()[iota_dim]),
+          padded_tile_sizes[iota_dim]));
+
+  // Cast the offset to the iota dimension to i32, because
+  // stable_hlo.broadcast_in_dims does not support index type.
+  auto iota_dim_offset = Cast(b, tile_info.offsets()[iota_dim], b.getI32Type());
+  // Then, add the base offset to the iota components.
+  range = arith::AddIOp::create(
+      b, range, xtile::Splat(b, iota_dim_offset, padded_tile_sizes[iota_dim]));
+
+  // Cast the result to the targeted type.
+  range = Cast(b, range, tile_info.storage_type());
+
+  // And finally, produce a broadcast along the non-iota dimensions in order to
+  // produce the whole iota tile.
+  return xtile::BroadcastInDims(b, mlir::cast<TensorValue>(range),
+                                padded_tile_sizes,
+                                /*dims=*/{iota_dim});
 }
 
 TensorValue EmitTranspose(mlir::ImplicitLocOpBuilder& b,
@@ -215,21 +255,10 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
 
     return parameter;
   }
-  if (hlo->opcode() == HloOpcode::kConstant) {
-    if (ShapeUtil::IsEffectiveScalar(hlo->shape())) {
-      return EmitConstant(b, *hlo);
-    }
-    return absl::UnimplementedError(
-        absl::StrCat("Unsupported non-scalar constant ", hlo->ToString()));
-  }
   std::vector<Value> operands;
   operands.reserve(hlo->operands().size());
   for (const ge::TiledHloInstruction* operand : tiled_hlo.operands()) {
     operands.push_back(values[operand]);
-  }
-  if (hlo->IsElementwise()) {
-    ASSIGN_OR_RETURN(Value result, EmitElementwise(b, *hlo, operands));
-    return mlir::cast<TensorValue>(result);
   }
   switch (hlo->opcode()) {
     case HloOpcode::kTranspose: {
@@ -239,12 +268,28 @@ absl::StatusOr<TensorValue> EmitTiledHloInstruction(
       return EmitTranspose(b, padded_tile_sizes, hlo->dimensions(),
                            mlir::cast<TensorValue>(operands[0]));
     }
+    case HloOpcode::kConstant: {
+      if (ShapeUtil::IsEffectiveScalar(hlo->shape())) {
+        return EmitConstant(b, *hlo);
+      }
+      return absl::UnimplementedError(
+          absl::StrCat("Unsupported non-scalar constant ", hlo->ToString()));
+    }
+    case HloOpcode::kIota: {
+      return EmitIota(b, pid, tiled_hlo, schedule);
+    }
+    case HloOpcode::kSlice: {
+      return values[tiled_hlo.operand(0)];
+    }
     case HloOpcode::kPad: {
       return EmitPad(b, tiled_hlo, values, pid, schedule);
     }
     default:
-      return absl::UnimplementedError(
-          absl::StrCat("Unsupported operation ", hlo->ToString()));
+      break;
+  }
+  if (hlo->IsElementwise()) {
+    ASSIGN_OR_RETURN(Value result, EmitElementwise(b, *hlo, operands));
+    return mlir::cast<TensorValue>(result);
   }
   return absl::UnimplementedError(
       absl::StrCat("Unsupported operation ", hlo->ToString()));

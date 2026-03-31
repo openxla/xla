@@ -210,6 +210,9 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
     std::unique_ptr<TilingSpace> tiling_space =
         TilingSpace::Create(*fusion_adaptor, &mlir_context);
 
+    VLOG(6) << "fusion instruction: " << fusion->ToString() << "\n";
+    VLOG(6) << "tiling space: " << tiling_space->ToString();
+
     // TODO(pifon): Support contraction tile sizes here.
     if (block_level_parameters.output_tile_sizes.size() != 1) {
       return Internal(
@@ -229,6 +232,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
     }
     const auto& tiled_computation =
         std::get<TiledHloComputation>(tiled_computation_or);
+    VLOG(6) << "tiled computation: " << tiled_computation.ToString();
     return xtile::EmitXTileModule(
         fn_name, fusion, tiled_computation, mlir_context,
         absl::MakeSpan(opaque_args_types),
@@ -322,6 +326,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
     auto suffix = absl::StrCat(fusion->name(), ".before_validation.ttir.txt");
     DumpToFileInDirOrStdout(*hlo_computation->parent(), "", suffix,
                             GetModuleIrString(triton_module.get()));
+    VLOG(6) << "xtile_module: " << GetModuleIrString(triton_module.get());
     std::string fusion_suffix = absl::StrCat(fusion->name(), ".hlo");
     DumpToFileInDirOrStdout(
         *hlo_computation->parent(), "", fusion_suffix,
