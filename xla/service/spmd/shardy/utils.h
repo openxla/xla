@@ -168,16 +168,6 @@ bool hasShardyMesh(mlir::ModuleOp module);
 mlir::sdy::TensorShardingPerValueAttr getFullyClosedLike(
     mlir::sdy::TensorShardingPerValueAttr shardings);
 
-// Returns the shardings for the results of `funcOp`, with fully replicated
-// shardings for empty shardings on `funcOp`.
-mlir::sdy::TensorShardingPerValueAttr getFuncResultShardings(
-    mlir::func::FuncOp funcOp, const mlir::SymbolTable& symbolTable);
-
-// Returns the shardings for the arguments of `funcOp`, with fully replicated
-// shardings for empty shardings on `funcOp`.
-mlir::sdy::TensorShardingPerValueAttr getFuncArgShardings(
-    mlir::func::FuncOp funcOp, const mlir::SymbolTable& symbolTable);
-
 // Converts an XLA Mesh to an SDY MeshAttr.
 mlir::sdy::MeshAttr toSdyMeshAttr(const Mesh& mesh, mlir::MLIRContext* context);
 
@@ -203,10 +193,6 @@ bool isManualComputation(mlir::func::CallOp callOp);
 // Returns whether the func is a manual computation. Returns false for
 // an 'inlineable' manual computation.
 bool isManualComputation(mlir::func::FuncOp funcOp);
-
-// Gets `kOriginalFuncName` attribute attached to `funcOp`. In
-// case there is no such attribute attached, create one on the name of `funcOp`.
-mlir::StringAttr getOriginalFuncName(mlir::func::FuncOp funcOp);
 
 // Clones given `funcOp` recursively and returns the (top) cloned funcOp.
 // Overrides the func result sharding as `callOpResultShardings` in case
