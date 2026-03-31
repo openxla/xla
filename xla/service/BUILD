@@ -6162,9 +6162,10 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "xla_aot_compile_gpu_test",
     srcs = ["xla_aot_compile_gpu_test.cc"],
+    backends = ["h100"],
     data = [
         ":xla_aot_compile_test_gpu_executable",
         ":xla_aot_compile_test_gpu_executable_constant",
