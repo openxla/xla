@@ -74,7 +74,7 @@ class CommonPjRtClient : public PjRtClient {
 
   virtual void LaunchOnDevice(PjRtDevice* device,
                               absl::AnyInvocable<void()> execute_fn) const {
-    async_work_runner()->Schedule(std::move(execute_fn));
+    async_work_runner()->Execute(std::move(execute_fn));
   }
 
   virtual bool ShouldRetryOnOom(int attempts, PjRtDevice* device,
