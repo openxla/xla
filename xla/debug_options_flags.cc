@@ -823,6 +823,20 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         return true;
       };
 
+  auto setter_for_xla_cpu_opt_preset =
+      [debug_options](absl::string_view input) {
+        std::string upper_input = absl::AsciiStrToUpper(input);
+        if (!absl::StartsWith(upper_input, "CPU_OPT_PRESET_")) {
+          upper_input = absl::StrCat("CPU_OPT_PRESET_", upper_input);
+        }
+        DebugOptions::CpuOptPreset preset;
+        if (!DebugOptions::CpuOptPreset_Parse(upper_input, &preset)) {
+          return false;
+        }
+        debug_options->set_xla_cpu_opt_preset(preset);
+        return true;
+      };
+
   auto setter_for_xla_cpu_enable_concurrency_optimized_scheduler =
       [debug_options](bool value) {
         if (value) {
@@ -1219,6 +1233,10 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_cpu_use_acl", bool_setter_for(&DebugOptions::set_xla_cpu_use_acl),
       debug_options->xla_cpu_use_acl(),
       "Generate calls to ACL (Arm Compute Library) in the CPU backend."));
+  flag_list->push_back(tsl::Flag(
+      "xla_cpu_opt_preset", setter_for_xla_cpu_opt_preset,
+      DebugOptions::CpuOptPreset_Name(debug_options->xla_cpu_opt_preset()),
+      "Set CPU optimization preset (FAST_RUNTIME, FAST_COMPILE)"));
   flag_list->push_back(
       tsl::Flag("xla_cpu_use_fusion_emitters",
                 bool_setter_for(&DebugOptions::set_xla_cpu_use_fusion_emitters),
