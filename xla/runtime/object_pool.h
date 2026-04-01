@@ -153,7 +153,7 @@ template <typename T, typename... Args>
 ObjectPool<T, Args...>::~ObjectPool() {
   Entry* entry = GetPtr(head_.load(std::memory_order_acquire));
   while (entry) {
-    Entry* next = entry->next;
+    Entry* next = entry->next.load(std::memory_order_relaxed);
     delete entry;
     entry = next;
   }
