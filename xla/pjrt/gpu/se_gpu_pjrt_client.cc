@@ -1742,7 +1742,13 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   }
 
   if (!gpu_target_config.has_value()) {
-    return absl::InternalError("Failed to get GPU target config.");
+    // A PjRtClient without any devices makes no sense, but we need to support
+    // it for compatibility with Tensorflow. So we create an empty GPU target
+    // config.
+    stream_executor::GpuTargetConfigProto gpu_target_config_proto;
+    gpu_target_config_proto.set_platform_name(platform_name);
+    ASSIGN_OR_RETURN(gpu_target_config,
+                     gpu::GpuTargetConfig::FromProto(gpu_target_config_proto));
   }
 
   GlobalTopologyProto global_topology;
