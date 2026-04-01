@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/dynamic_memcpy_thunk.h"
 #include "xla/backends/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
+#include "xla/backends/gpu/runtime/legacy_custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/p2p_thunk_common.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/recv_thunk.h"
@@ -1211,27 +1212,16 @@ Command::BufferUses CuDnnCmd::buffer_uses() const {
 }
 
 //===----------------------------------------------------------------------===//
-// CustomCallCmd
+// LegacyCustomCallCmd
 //===----------------------------------------------------------------------===//
-
-absl::StatusOr<const se::CommandBuffer::Command*> CustomCallCmd::Record(
-    const Thunk::ExecuteParams& execute_params,
-    const RecordParams& record_params, RecordAction record_action,
-    se::CommandBuffer* command_buffer) {
-  if (handler_ == nullptr) {
-    return RecordLegacyCustomCall(execute_params, record_params,
-                                  std::move(record_action), command_buffer);
-  }
-  return RecordXlaFfiCall(execute_params, record_params,
-                          std::move(record_action), command_buffer);
-}
 
 namespace {
 // Records each buffer associated with each slice into the provided vector.
 // Returns an error if any of the slices is missing a buffer allocation.
-absl::Status GetBuffers(const Thunk::ExecuteParams& execute_params,
-                        absl::Span<const NullableShapedSlice> slices,
-                        std::vector<void*>& buffers, absl::string_view label) {
+static absl::Status GetBuffers(const Thunk::ExecuteParams& execute_params,
+                               absl::Span<const NullableShapedSlice> slices,
+                               std::vector<void*>& buffers,
+                               absl::string_view label) {
   for (int i = 0; i < slices.size(); ++i) {
     if (!slices[i].has_value()) {
       buffers.push_back(nullptr);
@@ -1253,21 +1243,18 @@ absl::Status GetBuffers(const Thunk::ExecuteParams& execute_params,
 }
 }  // namespace
 
-absl::StatusOr<const se::CommandBuffer::Command*>
-CustomCallCmd::RecordLegacyCustomCall(
+absl::StatusOr<const se::CommandBuffer::Command*> LegacyCustomCallCmd::Record(
     const Thunk::ExecuteParams& execute_params,
     const RecordParams& record_params, RecordAction record_action,
     se::CommandBuffer* command_buffer) {
   std::vector<void*> buffers;
   buffers.reserve(operands_.size() + results_.size());
 
-  VLOG(5) << "CustomCallCmd: target_name=" << target_name_;
-  TF_RETURN_IF_ERROR(
-      GetBuffers(execute_params, operands_, buffers, "  Operand "));
-  TF_RETURN_IF_ERROR(
-      GetBuffers(execute_params, results_, buffers, "  Result "));
+  VLOG(5) << "LegacyCustomCallCmd: target_name=" << target_name_;
+  RETURN_IF_ERROR(GetBuffers(execute_params, operands_, buffers, "  Operand "));
+  RETURN_IF_ERROR(GetBuffers(execute_params, results_, buffers, "  Result "));
 
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       auto nested_cmd,
       se::TraceCommandBufferFactory::Create(
           execute_params.stream->parent(),
@@ -1293,11 +1280,26 @@ CustomCallCmd::RecordLegacyCustomCall(
       });
 }
 
-absl::StatusOr<const se::CommandBuffer::Command*>
-CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
-                                const RecordParams& record_params,
-                                RecordAction record_action,
-                                se::CommandBuffer* command_buffer) {
+Command::BufferUses LegacyCustomCallCmd::buffer_uses() const {
+  Command::BufferUses buffer_usage;
+  for (auto& slices : {operands_, results_}) {
+    for (const std::optional<ShapedSlice>& slice : slices) {
+      if (slice.has_value()) {
+        buffer_usage.push_back(BufferUse::Write(slice->slice, slice->shape));
+      }
+    }
+  }
+  return buffer_usage;
+}
+
+//===----------------------------------------------------------------------===//
+// CustomCallCmd (FFI)
+//===----------------------------------------------------------------------===//
+
+absl::StatusOr<const se::CommandBuffer::Command*> CustomCallCmd::Record(
+    const Thunk::ExecuteParams& execute_params,
+    const RecordParams& record_params, RecordAction record_action,
+    se::CommandBuffer* command_buffer) {
   // TODO(ezhulenev): This is not the most optimal approach, as we'll be doing
   // a lot of extra allocation on every call. We have to keep attributes
   // separate from arguments, as they do not change after thunk is
@@ -1342,8 +1344,8 @@ CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
 
   // Borrow the FFI call frame from the object pool and update with the actual
   // device memory addresses.
-  TF_ASSIGN_OR_RETURN(auto call_frame, call_frames_->GetOrCreate());
-  TF_RETURN_IF_ERROR(call_frame->UpdateWithBuffers(arguments, results));
+  ASSIGN_OR_RETURN(auto call_frame, call_frames_->GetOrCreate());
+  RETURN_IF_ERROR(call_frame->UpdateWithBuffers(arguments, results));
 
   RunId run_id = execute_params.collective_params->run_id;
 
@@ -1360,7 +1362,7 @@ CustomCallCmd::RecordXlaFfiCall(const Thunk::ExecuteParams& execute_params,
     }
   }
 
-  TF_ASSIGN_OR_RETURN(
+  ASSIGN_OR_RETURN(
       auto nested_cmd,
       se::TraceCommandBufferFactory::Create(
           execute_params.stream->parent(),
