@@ -6048,7 +6048,9 @@ xla_cc_binary(
         "//xla/service/gpu:amdgpu_compiler_impl",
         "//xla/stream_executor/rocm:all_runtime",
         "//xla/stream_executor/rocm:rocm_platform",
-    ]) + xla_internal(["tools:xsymbol_repository"]),
+    ]) + xla_internal(["tools:xsymbol_repository"]) + if_google([
+        "//third_party/py/jax/jaxlib/cuda:cuda_gpu_kernels",
+    ]),
 )
 
 # A simple test of xla_aot_compile which generates an output file from an mhlo file.
