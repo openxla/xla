@@ -216,60 +216,6 @@ std::unique_ptr<ConvolutionThunk> CreateConvolutionThunk(
   return std::move(thunk).value();
 }
 
-std::unique_ptr<ConvolutionThunk> CreateConvolutionThunk(
-    const BufferAllocation& alloc) {
-  std::vector<ShapedSlice> operand_slices, result_slices;
-  for (int i = 0, num = 3; i < num; i++) {
-    operand_slices.emplace_back(
-        ShapedSlice{BufferAllocation::Slice{&alloc, i * 16, 16}, Shape{}});
-    result_slices.emplace_back(ShapedSlice{
-        BufferAllocation::Slice{&alloc, (i + num) * 16, 16}, Shape{}});
-  }
-
-  ConvolutionDimensionNumbers dnums;
-  dnums.set_input_batch_dimension(0);
-  dnums.set_input_feature_dimension(1);
-  dnums.add_input_spatial_dimensions(2);
-  dnums.add_input_spatial_dimensions(3);
-  dnums.set_kernel_input_feature_dimension(0);
-  dnums.set_kernel_output_feature_dimension(1);
-  dnums.add_kernel_spatial_dimensions(2);
-  dnums.add_kernel_spatial_dimensions(3);
-  dnums.set_output_batch_dimension(0);
-  dnums.set_output_feature_dimension(1);
-  dnums.add_output_spatial_dimensions(2);
-  dnums.add_output_spatial_dimensions(3);
-
-  Window window;
-  const auto dim0 = window.add_dimensions();
-  const auto dim1 = window.add_dimensions();
-  dim0->set_size(4);
-  dim1->set_size(4);
-  dim0->set_base_dilation(1);
-  dim1->set_base_dilation(1);
-  dim0->set_stride(1);
-  dim1->set_stride(1);
-  dim0->set_window_dilation(3);
-  dim1->set_window_dilation(2);
-
-  GpuConvDescriptor desc{
-      .kind = CudnnConvKind::kForward,
-      .backend_config = CudnnConvBackendConfig{},
-      .operand0_shape = ShapeUtil::MakeShape(F32, {60, 38, 17, 13}),
-      .operand1_shape = ShapeUtil::MakeShapeWithDenseLayout(F32, {38, 10, 4, 4},
-                                                            {3, 2, 0, 1}),
-      .result_shape = ShapeUtil::MakeShapeWithType<float>({64, 64, 64, 13}),
-      .scratch_size = 128 * 1024,
-      .window = window,
-      .dnums = dnums,
-      .feature_group_count = 1};
-  auto thunk =
-      ConvolutionThunk::Create(Thunk::ThunkInfo(), desc, operand_slices,
-                               result_slices, result_slices.back().slice);
-  TF_CHECK_OK(thunk.status());
-  return std::move(thunk).value();
-}
-
 std::unique_ptr<AsyncStartThunk> WrapInAsyncStartThunk(
     std::unique_ptr<AllGatherThunk> start_thunk) {
   ThunkSequence sequence;
