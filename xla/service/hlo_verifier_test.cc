@@ -1867,10 +1867,7 @@ TEST_F(HloVerifierTest, AllGatherStartAndDone) {
   }
   )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnUnverifiedModule(kModuleStr));
-
-  auto status = verifier().Run(module.get()).status();
-  ASSERT_TRUE(status.ok());
+                          ParseAndReturnVerifiedModule(kModuleStr));
 }
 
 TEST_F(HloVerifierTest, AllGatherStartAndMultipleDone) {
