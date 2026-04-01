@@ -42,7 +42,6 @@ limitations under the License.
 #include "shardy/dialect/sdy/ir/constants.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/utils.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/utils.h"
 
@@ -237,7 +236,6 @@ void exportNamedComputations(ModuleOp moduleOp, SymbolTable& symbolTable,
     }
 
     FuncOp funcOp = symbolTable.lookup<FuncOp>(funcSymName);
-    insertReshardsOnFuncArguments(funcOp, callOp, symbolTable, rewriter);
     // Copy the func output shardings to the call op.
     if (TensorShardingPerValueAttr funcResultShardings =
             getFuncResultShardings(funcOp, symbolTable);
@@ -245,7 +243,6 @@ void exportNamedComputations(ModuleOp moduleOp, SymbolTable& symbolTable,
       mlir::sdy::setShardings(
           callOp, outShardings ? *outShardings
                                : getFullyClosedLike(funcResultShardings));
-      insertReshardsOnFuncResults(funcOp, callOp, symbolTable, rewriter);
     }
   });
 }
@@ -288,7 +285,7 @@ class ExportNamedComputationsPass
   }
 
   void getDependentDialects(mlir::DialectRegistry& registry) const final {
-    registry.insert<mlir::sdy::SdyDialect, mlir::mhlo::MhloDialect>();
+    registry.insert<mlir::sdy::SdyDialect>();
   }
 
   Option<bool> dedupFunctionsFully{
