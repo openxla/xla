@@ -522,7 +522,7 @@ class PartitionedHlo {
   // Reshards the HLO to a usable partitioned input for a windowed user. Could
   // only modify the reshard cache.
   std::optional<WindowedInputShardReturnValue> ReshardAsWindowedInput(
-      const Window& window, const HloSharding& target,
+      const Window& window, const HloSharding& raw_target,
       HloInstruction* pad_value, bool mask_invalid_region = true,
       bool force_mask_in_compact = false);
 

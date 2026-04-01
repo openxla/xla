@@ -808,11 +808,15 @@ PartitionedHlo PartitionedHlo::PadWithZeroOnSpecifiedDims(
 
 std::optional<PartitionedHlo::WindowedInputShardReturnValue>
 PartitionedHlo::ReshardAsWindowedInput(const Window& window,
-                                       const HloSharding& target,
+                                       const HloSharding& raw_target,
                                        HloInstruction* pad_value,
                                        bool mask_invalid_region,
                                        bool force_mask_in_compact) {
   auto& cache = state_.reshard_cache->per_hlo_cache[hlo()].window_reshard_cache;
+  HloSharding target =
+      raw_target.UseNamedShardingLeaf()
+          ? HloSharding::V3ToV2Sharding(raw_target.named_sharding())
+          : raw_target;
   for (auto& entry : cache) {
     if (std::get<0>(entry) == target &&
         protobuf_util::HaveSameSerialization(std::get<1>(entry), window)) {
