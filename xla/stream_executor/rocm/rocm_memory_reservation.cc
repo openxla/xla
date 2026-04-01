@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_driver_wrapper.h"
 #include "xla/stream_executor/rocm/rocm_raw_memory_allocation.h"
 #include "xla/stream_executor/rocm/rocm_status.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
 #include "tsl/platform/statusor.h"
@@ -89,12 +90,30 @@ absl::Status RocmMemoryReservation::Map(size_t reservation_offset,
 absl::Status RocmMemoryReservation::SetAccess(uint64_t reservation_offset,
                                               size_t size) {
   std::unique_ptr<ActivateContext> activation = executor_->Activate();
-  hipMemAccessDesc desc = {};
-  desc.location.type = hipMemLocationTypeDevice;
-  desc.location.id = static_cast<int>(executor_->device_ordinal());
-  desc.flags = hipMemAccessFlagsProtReadWrite;
-  return ToStatus(
-      wrap::hipMemSetAccess(ptr_ + reservation_offset, size, &desc, 1));
+
+  int device_count = 0;
+  TF_RETURN_IF_ERROR(
+      ToStatus(wrap::hipGetDeviceCount(&device_count), "hipGetDeviceCount"));
+
+  for (int peer = 0; peer < device_count; ++peer) {
+    if (peer != executor_->device_ordinal()) {
+      auto peer_executor_or =
+          const_cast<Platform*>(executor_->GetPlatform())
+              ->ExecutorForDevice(peer);
+      if (!peer_executor_or.ok() ||
+          !executor_->CanEnablePeerAccessTo(peer_executor_or.value())) {
+        continue;
+      }
+    }
+    hipMemAccessDesc desc = {};
+    desc.location.type = hipMemLocationTypeDevice;
+    desc.location.id = peer;
+    desc.flags = hipMemAccessFlagsProtReadWrite;
+    TF_RETURN_IF_ERROR(ToStatus(
+        wrap::hipMemSetAccess(ptr_ + reservation_offset, size, &desc, 1),
+        "hipMemSetAccess for peer device"));
+  }
+  return absl::OkStatus();
 }
 
 absl::Status RocmMemoryReservation::UnMap(size_t offset, size_t size) {
