@@ -830,19 +830,6 @@ cc_library(
     ] + if_google(["//xla/python/ifrt/ir/google:tpu_transfer_size_util_impl"]),
 )
 
-cc_library(
-    name = "utils",
-    srcs = ["utils.cc"],
-    hdrs = ["utils.h"],
-    compatible_with = get_compatible_with_portable(),
-    visibility = internal_visibility(["//xla/python/ifrt:users"]),
-    deps = [
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-    ],
-)
-
 tf_proto_library(
     name = "serialized_executable_metadata_proto",
     srcs = ["serialized_executable_metadata.proto"],
