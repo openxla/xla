@@ -62,6 +62,7 @@ using ::mlir::SymbolUserMap;
 using ::mlir::func::CallOp;
 using ::mlir::func::FuncOp;
 
+using ::mlir::sdy::getFuncResultShardings;
 using ::mlir::sdy::kShardingAttr;
 using ::mlir::sdy::ManualAxesAttr;
 using ::mlir::sdy::NamedComputationOp;
