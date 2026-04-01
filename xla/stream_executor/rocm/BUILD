@@ -52,7 +52,6 @@ xla_cc_test(
 
 cc_library(
     name = "rocm_context",
-    srcs = ["rocm_context.cc"],
     hdrs = ["rocm_context.h"],
     tags = [
         "gpu",
@@ -62,15 +61,10 @@ cc_library(
         ":rocm_driver_wrapper",
         ":rocm_status",
         "//xla/stream_executor/gpu:context",
-        "//xla/stream_executor/gpu:context_map",
         "//xla/stream_executor/gpu:scoped_activate_context",
         "//xla/tsl/platform:errors",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@local_config_rocm//rocm:rocm_headers",
     ],
 )
 
