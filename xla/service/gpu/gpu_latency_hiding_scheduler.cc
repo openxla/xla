@@ -297,7 +297,8 @@ bool GpuScheduleCrossesOverlapLimit(
           auto occupier_replica_group = GetAsyncReplicaGroups(occupier);
           CHECK_OK(occupier_replica_group);
           size_t overlapping_count = CountOverlappingRanks(
-              *curr_start_replica_group, *occupier_replica_group);
+              (*curr_start_replica_group)->flattened_replica_groups(),
+              (*occupier_replica_group)->flattened_replica_groups());
           if (overlapping_count > 1) {
             can_overlap = false;
             VLOG(3) << "Collectives have " << overlapping_count
