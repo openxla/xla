@@ -1652,5 +1652,23 @@ TEST_F(IndexingMapTest, ConvertRangeVariablesToDimensionsWithRuntimeVars) {
   )"));
 }
 
+TEST_F(IndexingMapTest, SymbolicMapGetResultsLvalueIteration) {
+  // Related to b/498518750. This test ensures we can safely iterate over its
+  // GetResults(). Before fixing it, the SymbolicMap temporary was destroyed,
+  // leading to a use-after-free when accessing the ArrayRef view.
+  IndexingMap indexing_map = Parse(R"(
+    (d0) -> (d0),
+    domain:
+      d0 in [0, 3]
+  )");
+
+  std::vector<SymbolicExpr> results;
+  for (const auto& expr : indexing_map.GetSymbolicMap().GetResults()) {
+    results.push_back(expr);
+  }
+
+  ASSERT_EQ(results.size(), 1);
+}
+
 }  // namespace
 }  // namespace xla

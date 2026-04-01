@@ -489,6 +489,18 @@ TEST_F(SymbolicMapTest, Hashing) {
   EXPECT_EQ(set.size(), 2);
 }
 
+TEST_F(SymbolicMapTest, GetResultsFromTemporaryIsSafe) {
+  // This is the specific scenario that was failing in b/497764702.
+  // GetSubMap returns a temporary SymbolicMap. Calling GetResults() on it
+  // must return a container by value so the loop remains safe.
+  int count = 0;
+  for (const auto& expr : sample_map.GetSubMap({0}).GetResults()) {
+    EXPECT_EQ(expr, d0 + s0);
+    count++;
+  }
+  EXPECT_EQ(count, 1);
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
